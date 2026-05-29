@@ -20,6 +20,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -220,7 +221,7 @@ def download_all(
     Raises:
         KinoforgeError: Propagated from any failing :func:`download_one` call.
     """
-    results: list[Artifact | None] = [None] * len(artifacts)
+    results: list[Artifact] = [cast(Artifact, None)] * len(artifacts)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_to_idx = {
@@ -229,7 +230,8 @@ def download_all(
         }
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
-            results[idx] = future.result()  # re-raises on exception
+            results[idx] = (
+                future.result()
+            )  # re-raises on exception; all slots filled on success.
 
-    # All futures completed; every slot should be filled.
-    return [r for r in results if r is not None]
+    return results
