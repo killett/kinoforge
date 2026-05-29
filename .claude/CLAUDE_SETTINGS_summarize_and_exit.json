@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PreCompact": [{
+      "matcher": "auto",
+      "hooks": [{
+        "type": "command",
+        "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/summarize-and-exit.sh"
+      }]
+    }]
+  }
+}
