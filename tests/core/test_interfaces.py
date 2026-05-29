@@ -74,3 +74,15 @@ def test_mode_role_requirements_table_is_authoritative():
 def test_errors_share_common_base():
     assert issubclass(errors.ProfileNotCached, errors.KinoforgeError)
     assert issubclass(errors.ConfigError, errors.KinoforgeError)
+
+
+def test_capability_key_no_collision_on_control_char_in_field():
+    # Bug this catches: derive() using a control char (e.g. \x1f) as separator
+    # collides when a field legitimately contains that char.
+    a = CapabilityKey(base_model="a\x1fb", loras=(), engine="e", precision="p")
+    b = CapabilityKey(base_model="a", loras=("b",), engine="e", precision="p")
+    assert a.derive() != b.derive()
+
+    c = CapabilityKey(base_model="x", loras=("y\x1ez",), engine="e", precision="p")
+    d = CapabilityKey(base_model="x", loras=("y", "z"), engine="e", precision="p")
+    assert c.derive() != d.derive()
