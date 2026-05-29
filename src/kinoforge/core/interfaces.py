@@ -7,6 +7,7 @@ module, never the reverse.
 from __future__ import annotations
 
 import hashlib
+import json
 from abc import ABC, abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass, field
@@ -175,13 +176,9 @@ class CapabilityKey:
 
     def derive(self) -> str:
         """Stable, order-sensitive sha256 over all fields (VAE excluded by design)."""
-        payload = "\x1f".join(
-            [
-                self.base_model,
-                "\x1e".join(self.loras),
-                self.engine,
-                self.precision,
-            ]
+        payload = json.dumps(
+            [self.base_model, list(self.loras), self.engine, self.precision],
+            ensure_ascii=False,
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
