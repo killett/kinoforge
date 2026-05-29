@@ -11,7 +11,7 @@ first unchecked task without redoing committed work.
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
 ## Phase
-Brainstorm complete. Design committed. Implementation plan committed. Awaiting execution-mode choice (subagent-driven vs parallel session) — once chosen, Task 1 starts red-first.
+Execution started. Task 1 complete. Continuing Phase 1.
 
 ## Task checklist (high-level; plan refines into 28 bite-sized tasks)
 - [x] Read SPEC.md, explore project context
@@ -20,6 +20,7 @@ Brainstorm complete. Design committed. Implementation plan committed. Awaiting e
 - [x] Design review gate — approved
 - [x] Write + commit implementation plan + native tasks + tasks.json
 - [ ] Phase 1: interfaces + registry + config model + tests (Tasks 1–4)
+  - [x] Task 1: Core interfaces, errors, structured logging (`src/kinoforge/core/{__init__,errors,interfaces,logging}.py`, `tests/core/test_interfaces.py`) — commit e636df4
 - [ ] Phase 2: downloader + HTTP source
 - [ ] Phase 3: GenerationEngine iface + FakeEngine + provisioner + LocalProvider (e2e vs fake)
 - [ ] Phase 4: profiles + strategy decision point + pool/SequentialPool + GenerateClipStage + local ArtifactStore
@@ -39,7 +40,7 @@ Brainstorm complete. Design committed. Implementation plan committed. Awaiting e
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-Pick the execution mode (subagent-driven in this session, OR parallel session via worktree +
-`executing-plans`). Then begin Task 1 red-first: write the failing tests in
-`tests/core/test_interfaces.py`, confirm they fail, implement `core/{errors,interfaces,logging}.py`,
-confirm green, commit. Update + commit `PROGRESS.md` after each task per the durability rule.
+Task 2: Registry (name + scheme routing). Create `src/kinoforge/core/registry.py` with
+`register_provider(name, cls)`, `register_source(scheme, cls)`, `register_engine(name, cls)`,
+`get_provider(name)`, `get_source(scheme)`, `get_engine(name)` — all typed, raising `UnknownAdapter`
+on miss. Tests first in `tests/core/test_registry.py`.
