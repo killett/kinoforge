@@ -1,11 +1,11 @@
 {
   "planPath": "docs/superpowers/plans/2026-05-29-kinoforge.md",
-  "lastUpdated": "2026-05-29T00:00:00Z",
+  "lastUpdated": "2026-05-29T01:00:00Z",
   "tasks": [
     {
       "id": 1,
       "subject": "Task 1: Core interfaces, errors, logging",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** Define every ABC + dataclass the spec names, the typed error hierarchy, and a structured logger.\n\n**Files:** src/kinoforge/core/{errors,interfaces,logging}.py; tests/core/test_interfaces.py.\n\n**Verify:** pixi run test tests/core/test_interfaces.py\n\nSee plan doc Task 1 for full code blocks.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/logging.py\", \"tests/core/test_interfaces.py\"], \"verifyCommand\": \"pixi run test tests/core/test_interfaces.py\", \"acceptanceCriteria\": [\"CapabilityKey.derive stable + order-sensitive\", \"max_segment_seconds = frames/fps\", \"MODE_ROLE_REQUIREMENTS exact\", \"errors share KinoforgeError base\"]}\n```"
     },
