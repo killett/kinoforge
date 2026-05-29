@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-05-29-kinoforge.md",
-  "lastUpdated": "2026-05-29T01:00:00Z",
+  "lastUpdated": "2026-05-29T02:00:00Z",
   "tasks": [
     {
       "id": 1,
@@ -12,7 +12,7 @@
     {
       "id": 2,
       "subject": "Task 2: Registry (name + scheme routing)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Adapter registry by name (providers/engines) + scheme (sources); explicit register_* + UnknownAdapter on miss.\n\n**Files:** src/kinoforge/core/registry.py; tests/core/test_registry.py.\n\n**Verify:** pixi run test tests/core/test_registry.py\n\nSee plan doc Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/registry.py\", \"tests/core/test_registry.py\"], \"verifyCommand\": \"pixi run test tests/core/test_registry.py\", \"acceptanceCriteria\": [\"register/get round-trips\", \"source_for_ref dispatches via handles()\", \"unknown raises UnknownAdapter\", \"overwrites on re-register\"]}\n```"
     },
