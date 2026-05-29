@@ -34,6 +34,7 @@ Execution started. Tasks 1–10 complete. Phases 1–3 complete. Phase 4 in prog
   - [x] Task 10: Provisioner (`src/kinoforge/core/provisioner.py`, `tests/core/test_provisioner.py`) — commit fb53c46. `provision()` function with `_ProvisionConfig`/`_ModelEntryLike` structural Protocols; walks model entries, resolves via registry, merges sha256+target onto artifacts with dataclasses.replace; calls downloader only when `requires_local_weights=True`; runs `post_provision_hook(instance)` before delegating `engine.provision()` last. 7/7 tests pass (5 ACs fully covered).
 - [x] Phase 3 (remaining): provisioner + e2e vs fake
 - [ ] Phase 4: profiles + strategy decision point + pool/SequentialPool + GenerateClipStage + local ArtifactStore
+  - [x] Task 11: ArtifactStore ABC + LocalArtifactStore + store registry (`src/kinoforge/stores/base.py`, `src/kinoforge/stores/local.py`, `src/kinoforge/core/registry.py`, `tests/stores/test_local.py`) — commit 55e8668. `put_bytes`/`get_bytes`/`put_json`/`get_json`/`list`/`delete`; run_id-namespaced layout `<root>/<run_id>/<name>`; resolved absolute URIs; `list()` returns relative names, empty list for unknown run_ids; `delete()` raises `FileNotFoundError`; self-registers under `"local"`; `register_store`/`get_store` in registry raising `UnknownAdapter`. 22/22 tests pass.
 - [ ] Phase 5: cost-safety (timers, sweeper, ledger, teardown, budget) vs LocalProvider+clock
 - [ ] Phase 6: CivitAI + HuggingFace sources
 - [ ] Phase 7: ComfyUI engine (+node installer) + RunPodProvider (pod+serverless)
@@ -50,4 +51,4 @@ Execution started. Tasks 1–10 complete. Phases 1–3 complete. Phase 4 in prog
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-Task 11: ArtifactStore — base interface + local filesystem implementation + store registry.
+Task 12: ModelProfileProvider — cache + discover + verify + single-flight dedup.
