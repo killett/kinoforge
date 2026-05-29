@@ -238,6 +238,18 @@ class Config(BaseModel):
                     f"allowed targets for {entry.kind!r}: {sorted(allowed)}"
                 )
 
+        # Exactly one base model — the CapabilityKey is undefined otherwise, and
+        # silently picking the last would be a footgun the user can't see.
+        base_count = sum(1 for e in self.models if e.kind == "base")
+        if base_count == 0:
+            raise ValueError(
+                "models: must contain exactly one entry with kind: base (found 0)"
+            )
+        if base_count > 1:
+            raise ValueError(
+                f"models: must contain exactly one entry with kind: base (found {base_count})"
+            )
+
         # Validate lifecycle timing constraints
         lc = self._effective_lifecycle_config()
         if lc is not None:

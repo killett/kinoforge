@@ -111,3 +111,25 @@ def test_hardware_requirements_defaults_applied():
     assert reqs.max_cost_rate_usd_per_hr == 2.20
     assert reqs.disk_gb == 100
     assert reqs.gpu_preference == ("RTX 4090",)
+
+
+def test_zero_base_models_rejected():
+    # Bug this catches: capability_key() raising late instead of load_config rejecting
+    # at parse time; user wouldn't see the problem until they tried to derive a key.
+    bad = WAN.replace(
+        '  - {ref: "hf:Wan-AI/Wan2.2-T2V-A14B", kind: base, target: diffusion_models}\n',
+        "",
+    )
+    with pytest.raises(ConfigError, match="base"):
+        load_config(bad)
+
+
+def test_multiple_base_models_rejected():
+    # Bug this catches: silently using the LAST base entry — the CapabilityKey is
+    # then a function of declaration order in a way the user can't see.
+    bad = WAN.replace(
+        '  - {ref: "civitai:1234@5678", kind: lora, target: loras}',
+        '  - {ref: "hf:other/base", kind: base, target: diffusion_models}',
+    )
+    with pytest.raises(ConfigError, match="base"):
+        load_config(bad)
