@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-05-29-kinoforge.md",
-  "lastUpdated": "2026-05-29T02:00:00Z",
+  "lastUpdated": "2026-05-29T07:00:00Z",
   "tasks": [
     {
       "id": 1,
@@ -19,35 +19,35 @@
     {
       "id": 3,
       "subject": "Task 3: Env-backed credential provider",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** EnvCredentialProvider.get(key) reads os.environ.\n\n**Files:** src/kinoforge/core/credentials.py; tests/core/test_credentials.py.\n\n**Verify:** pixi run test tests/core/test_credentials.py\n\nSee plan doc Task 3.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/credentials.py\", \"tests/core/test_credentials.py\"], \"verifyCommand\": \"pixi run test tests/core/test_credentials.py\", \"acceptanceCriteria\": [\"reads env var when present\", \"returns None when unset\", \"is CredentialProvider\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Config model (pydantic v2 + YAML + cross-field validation)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Typed YAML config with duration parsing, cross-field validation, CapabilityKey derivation, Lifecycle + HardwareRequirements.\n\n**Files:** src/kinoforge/core/config.py; tests/core/test_config.py.\n\n**Verify:** pixi run test tests/core/test_config.py && pixi run typecheck\n\nSee plan doc Task 4 for AC + steps.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run test tests/core/test_config.py\", \"acceptanceCriteria\": [\"durations parsed\", \"idle>=lifetime rejected\", \"job>lifetime rejected\", \"compute+hosted rejected\", \"bad kind/target rejected\", \"unknown engine/provider rejected\", \"budget required\", \"capability_key derivation correct\", \"defaults applied\", \"Lifecycle/HardwareRequirements exposed\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: filter_offers pure helper",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Pure offer-filter applying HardwareRequirements (vram/cuda/cost/preference).\n\n**Files:** src/kinoforge/core/offers.py; tests/core/test_offers.py.\n\n**Verify:** pixi run test tests/core/test_offers.py\n\nSee plan doc Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/offers.py\", \"tests/core/test_offers.py\"], \"verifyCommand\": \"pixi run test tests/core/test_offers.py\", \"acceptanceCriteria\": [\"excludes undersized vram + old cuda\", \"pod-only cost filter (serverless exempt)\", \"gpu_preference orders survivors\", \"stable for empty preference\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: Downloader (parallel, resumable, checksum-verifying)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Stdlib ranged-GET downloader: skip-when-complete, .part resume, sha256 verify, parallel download_all.\n\n**Files:** src/kinoforge/core/downloader.py; tests/core/test_downloader.py; tests/conftest.py (Range-aware HTTP fixture).\n\n**Verify:** pixi run test tests/core/test_downloader.py\n\nSee plan doc Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/downloader.py\", \"tests/core/test_downloader.py\", \"tests/conftest.py\"], \"verifyCommand\": \"pixi run test tests/core/test_downloader.py\", \"acceptanceCriteria\": [\"downloads file from loopback\", \"idempotent skip when complete+sha matches\", \"resume from .part via Range\", \"sha mismatch raises\", \"concurrent download_all\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: HTTPSource",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** HTTPSource resolves https:// refs to a single Artifact; self-registers.\n\n**Files:** src/kinoforge/sources/{__init__.py,http/__init__.py}; tests/sources/test_http.py.\n\n**Verify:** pixi run test tests/sources/test_http.py\n\nSee plan doc Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/sources/__init__.py\", \"src/kinoforge/sources/http/__init__.py\", \"tests/sources/test_http.py\"], \"verifyCommand\": \"pixi run test tests/sources/test_http.py\", \"acceptanceCriteria\": [\"handles https/http only\", \"resolve returns Artifact with url+filename\", \"self-registers on import\"]}\n```"
     },
