@@ -2,10 +2,11 @@ import pytest
 
 from kinoforge.core import registry
 from kinoforge.core.errors import UnknownAdapter
+from kinoforge.core.interfaces import ModelSource
 
 
-class _Src:
-    """Minimal ModelSource-shaped fake for routing tests."""
+class _Src(ModelSource):
+    """Minimal ModelSource subclass for routing tests."""
 
     def __init__(self, scheme: str, prefix: str) -> None:
         self.scheme = scheme
@@ -19,14 +20,14 @@ class _Src:
 
 
 def test_provider_factory_round_trips():
-    registry.register_provider("dummy", lambda: "P")
+    registry.register_provider("dummy", lambda: "P")  # type: ignore[arg-type, return-value]
     # Bug this catches: get_provider returning the constructed value instead of the factory.
-    assert registry.get_provider("dummy")() == "P"
+    assert registry.get_provider("dummy")() == "P"  # type: ignore[comparison-overlap]
 
 
 def test_engine_factory_round_trips():
-    registry.register_engine("dummy_e", lambda: "E")
-    assert registry.get_engine("dummy_e")() == "E"
+    registry.register_engine("dummy_e", lambda: "E")  # type: ignore[arg-type, return-value]
+    assert registry.get_engine("dummy_e")() == "E"  # type: ignore[comparison-overlap]
 
 
 def test_unknown_provider_raises_named():
@@ -57,10 +58,10 @@ def test_unknown_ref_raises_named():
 
 
 def test_provider_re_registration_overwrites():
-    registry.register_provider("dup", lambda: "first")
-    registry.register_provider("dup", lambda: "second")
+    registry.register_provider("dup", lambda: "first")  # type: ignore[arg-type, return-value]
+    registry.register_provider("dup", lambda: "second")  # type: ignore[arg-type, return-value]
     # Bug this catches: append-only registry that returns the first registration.
-    assert registry.get_provider("dup")() == "second"
+    assert registry.get_provider("dup")() == "second"  # type: ignore[comparison-overlap]
 
 
 def test_source_re_registration_replaces_by_scheme():
