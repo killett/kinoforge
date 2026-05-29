@@ -74,3 +74,24 @@ def test_source_re_registration_replaces_by_scheme():
     with pytest.raises(UnknownAdapter):
         registry.source_for_ref("dup:old:x")
     assert registry.source_for_ref("dup:new:x") is s2
+
+
+# --- artifact-store registry -------------------------------------------------
+
+
+def test_store_factory_round_trips():
+    """register_store + get_store return the registered factory callable.
+
+    Bug this catches: get_store returning the constructed value instead of the factory.
+    """
+    registry.register_store("dummy_store", lambda: "S")  # type: ignore[arg-type, return-value]
+    assert registry.get_store("dummy_store")() == "S"  # type: ignore[comparison-overlap]
+
+
+def test_unknown_store_raises_unknown_adapter():
+    """get_store raises UnknownAdapter for an unregistered name.
+
+    Bug this catches: raising KeyError instead of the typed UnknownAdapter.
+    """
+    with pytest.raises(UnknownAdapter, match="nope_store"):
+        registry.get_store("nope_store")
