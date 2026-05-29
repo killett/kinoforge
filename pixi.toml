@@ -58,6 +58,8 @@ git-delta = "*"
 difftastic = "*"
 hyperfine = "*"
 go-yq = "*"
+pydantic = ">=2.13.4,<3"
+pyyaml = ">=6.0.3,<7"
 
 [pypi-dependencies]
 # Group-derived PyPI-only packages are inserted on the line below.
