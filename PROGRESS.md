@@ -7,18 +7,19 @@ first unchecked task without redoing committed work.
 ## Pointers
 - **Spec (the *what*):** `SPEC.md`
 - **Design (validated):** `DESIGN.md`
-- **Implementation plan:** _not written yet — next action_
+- **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
+- **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
 ## Phase
-Brainstorm complete. Design written + committed. Implementation plan not yet produced.
+Brainstorm complete. Design committed. Implementation plan committed. Awaiting execution-mode choice (subagent-driven vs parallel session) — once chosen, Task 1 starts red-first.
 
-## Task checklist (high-level; plan will refine into bite-sized tasks)
+## Task checklist (high-level; plan refines into 28 bite-sized tasks)
 - [x] Read SPEC.md, explore project context
 - [x] Resolve open design questions (8 decisions locked — see DESIGN.md §1)
 - [x] Write + commit DESIGN.md
-- [ ] User review of DESIGN.md (review gate)
-- [ ] Write implementation plan to disk + commit (writing-plans skill)
-- [ ] Phase 1: interfaces + registry + config model + tests
+- [x] Design review gate — approved
+- [x] Write + commit implementation plan + native tasks + tasks.json
+- [ ] Phase 1: interfaces + registry + config model + tests (Tasks 1–4)
 - [ ] Phase 2: downloader + HTTP source
 - [ ] Phase 3: GenerationEngine iface + FakeEngine + provisioner + LocalProvider (e2e vs fake)
 - [ ] Phase 4: profiles + strategy decision point + pool/SequentialPool + GenerateClipStage + local ArtifactStore
@@ -38,5 +39,7 @@ Brainstorm complete. Design written + committed. Implementation plan not yet pro
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-Run brainstorming review gate: ask user to review `DESIGN.md`. On approval, invoke `writing-plans`
-to produce the implementation plan, write it to disk, and commit before any execution.
+Pick the execution mode (subagent-driven in this session, OR parallel session via worktree +
+`executing-plans`). Then begin Task 1 red-first: write the failing tests in
+`tests/core/test_interfaces.py`, confirm they fail, implement `core/{errors,interfaces,logging}.py`,
+confirm green, commit. Update + commit `PROGRESS.md` after each task per the durability rule.
