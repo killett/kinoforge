@@ -17,10 +17,12 @@ from collections.abc import Callable
 
 from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import ComputeProvider, GenerationEngine, ModelSource
+from kinoforge.stores.base import ArtifactStore
 
 _providers: dict[str, Callable[[], ComputeProvider]] = {}
 _engines: dict[str, Callable[[], GenerationEngine]] = {}
 _sources: list[ModelSource] = []
+_artifact_stores: dict[str, Callable[[], ArtifactStore]] = {}
 
 
 def register_provider(name: str, factory: Callable[[], ComputeProvider]) -> None:
@@ -111,3 +113,33 @@ def source_for_ref(ref: str) -> ModelSource:
         if s.handles(ref):
             return s
     raise UnknownAdapter(f"no model source handles ref: {ref!r}")
+
+
+def register_store(name: str, factory: Callable[[], ArtifactStore]) -> None:
+    """Register an artifact-store factory under ``name`` (overwrites).
+
+    Args:
+        name: The registry key for this store (e.g. ``"local"``).
+        factory: Zero-arg callable that returns an :class:`~kinoforge.stores.base.ArtifactStore`
+            instance.  Construction is deferred — the factory is called only when
+            the caller invokes ``get_store(name)()``.
+    """
+    _artifact_stores[name] = factory
+
+
+def get_store(name: str) -> Callable[[], ArtifactStore]:
+    """Return the artifact-store factory for ``name`` or raise ``UnknownAdapter``.
+
+    Args:
+        name: The registry key to look up.
+
+    Returns:
+        The zero-arg factory registered under ``name``.
+
+    Raises:
+        UnknownAdapter: No artifact store is registered under ``name``.
+    """
+    try:
+        return _artifact_stores[name]
+    except KeyError:
+        raise UnknownAdapter(f"no artifact store registered: {name!r}") from None
