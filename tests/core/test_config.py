@@ -1,0 +1,113 @@
+"""Tests for the pydantic config loader."""
+
+import pytest
+
+from kinoforge.core.config import load_config, parse_duration
+from kinoforge.core.errors import ConfigError
+
+HOSTED = """
+engine:
+  kind: hosted
+  precision: ""
+  hosted: {provider: fal, endpoint: "x", model: ltx-2}
+lifecycle: {budget: 25.0}
+models:
+  - {ref: "hf:org/m", kind: base, target: diffusion_models}
+"""
+
+WAN = """
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui: {version: v0.3.40}
+models:
+  - {ref: "hf:Wan-AI/Wan2.2-T2V-A14B", kind: base, target: diffusion_models}
+  - {ref: "civitai:1234@5678", kind: lora, target: loras}
+  - {ref: "https://e/x.vae", kind: vae, target: vae, sha256: abc}
+compute:
+  provider: runpod
+  image: "img:tag"
+  mode: pod
+  requirements: {gpu_preference: ["RTX 4090"]}
+  lifecycle: {idle_timeout: 2h, job_timeout: 30m, max_lifetime: 5h, budget: 25.0}
+"""
+
+
+def test_parse_duration_units():
+    assert parse_duration("2h") == 2 * 3600
+    assert parse_duration("30m") == 30 * 60
+    assert parse_duration("90s") == 90
+
+
+def test_bare_int_duration_rejected():
+    # Bug this catches: silently treating "120" as 120 seconds — easy to mis-author.
+    with pytest.raises(ConfigError):
+        parse_duration("120")
+
+
+def test_idle_ge_lifetime_rejected():
+    bad = WAN.replace("idle_timeout: 2h", "idle_timeout: 6h")
+    with pytest.raises(ConfigError, match="idle_timeout"):
+        load_config(bad)
+
+
+def test_job_gt_lifetime_rejected():
+    bad = WAN.replace("job_timeout: 30m", "job_timeout: 6h")
+    with pytest.raises(ConfigError, match="job_timeout"):
+        load_config(bad)
+
+
+def test_compute_present_for_hosted_rejected():
+    bad = HOSTED + "compute: {provider: runpod, image: x, lifecycle: {budget: 1.0}}\n"
+    with pytest.raises(ConfigError, match="hosted"):
+        load_config(bad)
+
+
+def test_inconsistent_kind_target_rejected():
+    # Bug this catches: routing a base-model file into the loras dir would break the engine.
+    bad = WAN.replace(
+        '{ref: "hf:Wan-AI/Wan2.2-T2V-A14B", kind: base, target: diffusion_models}',
+        '{ref: "hf:Wan-AI/Wan2.2-T2V-A14B", kind: base, target: loras}',
+    )
+    with pytest.raises(ConfigError):
+        load_config(bad)
+
+
+def test_unknown_engine_kind_rejected():
+    with pytest.raises(ConfigError, match="engine"):
+        load_config(WAN.replace("kind: comfyui", "kind: bogus"))
+
+
+def test_budget_required():
+    with pytest.raises(ConfigError, match="budget"):
+        load_config(WAN.replace(", budget: 25.0", ""))
+
+
+def test_capability_key_derivation_orders_loras_and_excludes_vae():
+    cfg = load_config(WAN)
+    key = cfg.capability_key()
+    # Bug this catches: including VAE in the key (VAE doesn't change generation capability).
+    assert key.base_model == "hf:Wan-AI/Wan2.2-T2V-A14B"
+    assert key.loras == ("civitai:1234@5678",)
+    assert key.engine == "comfyui"
+    assert key.precision == "fp16"
+
+
+def test_lifecycle_defaults_applied():
+    cfg = load_config(HOSTED)
+    lc = cfg.lifecycle()
+    assert lc.idle_timeout_s == 2 * 3600
+    assert lc.job_timeout_s == 30 * 60
+    assert lc.time_buffer_s == 30 * 60
+    assert lc.max_lifetime_s == 5 * 3600
+
+
+def test_hardware_requirements_defaults_applied():
+    cfg = load_config(WAN)
+    reqs = cfg.hardware_requirements()
+    # Bug this catches: dropping defaults when user only set gpu_preference.
+    assert reqs.min_vram_gb == 48
+    assert reqs.min_cuda == "12.8"
+    assert reqs.max_cost_rate_usd_per_hr == 2.20
+    assert reqs.disk_gb == 100
+    assert reqs.gpu_preference == ("RTX 4090",)
