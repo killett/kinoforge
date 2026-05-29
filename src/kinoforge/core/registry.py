@@ -1,7 +1,14 @@
-"""Runtime registry: name (providers/engines) + scheme (sources) -> impl.
+"""Runtime registry: name (providers/engines) + ref-dispatch (sources) -> impl.
 
 Adapters self-register via ``register_*`` at import time. Core resolves by
-name/scheme only and MUST NEVER import a concrete adapter module.
+name (providers/engines) or by asking each source ``handles(ref)`` and
+returning the first match (sources). It MUST NEVER import a concrete adapter
+module.
+
+Sources use behavioural dispatch rather than a name-keyed lookup because the
+same ref (e.g. ``https://...``) may be claimed by more than one source, and a
+source may legitimately handle multiple schemes; the choice belongs in the
+source, not the caller.
 """
 
 from __future__ import annotations
@@ -73,11 +80,16 @@ def get_engine(name: str) -> Callable[[], GenerationEngine]:
 
 
 def register_source(source: ModelSource) -> None:
-    """Register a model source; an existing entry with the same scheme is replaced.
+    """Register a model source instance.
+
+    The source is stored as an instance (not a factory) because routing goes
+    through ``source.handles(ref)`` — the registry needs a live object to ask.
+    An existing entry sharing ``source.scheme`` is replaced so module re-imports
+    are idempotent.
 
     Args:
-        source: The ``ModelSource`` instance to register. Its ``.scheme`` attribute
-            is used to deduplicate on re-registration.
+        source: The ``ModelSource`` instance to register. Its ``.scheme``
+            attribute is used to deduplicate on re-registration.
     """
     global _sources
     _sources = [s for s in _sources if s.scheme != source.scheme] + [source]
