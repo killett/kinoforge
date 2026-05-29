@@ -24,8 +24,9 @@ Execution started. Tasks 1–4 complete. Phase 1 complete. Starting Phase 2.
   - [x] Task 2: Adapter registry (`src/kinoforge/core/registry.py`, `tests/core/test_registry.py`) — commit f33ec13. API: register_provider/engine/source + get_provider/engine/source_for_ref via handles(). Sources dispatch by handles() not scheme equality; re-registration overwrites. pyproject.toml: added ignore_errors=true to tests.* mypy override to allow duck-typed fakes.
   - [x] Task 3: Env-backed credential provider (`src/kinoforge/core/credentials.py`, `tests/core/test_credentials.py`) — commit 85699ee. `EnvCredentialProvider.get(key)` reads from `os.environ`; returns `None` when unset. Subclasses `CredentialProvider` ABC.
   - [x] Task 4: Config model (`src/kinoforge/core/config.py`, `tests/core/test_config.py`) — commit 36e7e1a. `load_config()`/`parse_duration()`; pydantic v2 `Config` with `LifecycleConfig`, `EngineConfig`, `ModelEntry`, `ComputeConfig`, `RequirementsConfig`; cross-field validators; `capability_key()`, `lifecycle()`, `hardware_requirements()`. types-pyyaml added for mypy stubs. 11/11 AC tests pass.
-- [x] Phase 2 (partial): Task 5 complete; Tasks 6–7 remain
+- [x] Phase 2 (partial): Tasks 5–6 complete; Task 7 remains
   - [x] Task 5: `filter_offers` pure helper (`src/kinoforge/core/offers.py`, `tests/core/test_offers.py`) — commit 57e04ca. Semantic CUDA compare via `_cuda_tuple()`; pod-only cost filter; stable `gpu_preference` sort. 6/6 AC tests pass.
+  - [x] Task 6: Downloader (`src/kinoforge/core/downloader.py`, `tests/core/test_downloader.py`, `tests/conftest.py`) — commit 566d9d9. stdlib ThreadPool downloader: skip (sha256 or filename), resume via Range header, sha256 verify, corrupt-.part detect-and-raise, concurrent download_all. Range-aware loopback HTTP fixture in conftest.py. 8/8 tests pass. Corrupt-.part strategy: append + sha verify; mismatch → delete .part + raise; next call retries from scratch.
 - [ ] Phase 3: GenerationEngine iface + FakeEngine + provisioner + LocalProvider (e2e vs fake)
 - [ ] Phase 4: profiles + strategy decision point + pool/SequentialPool + GenerateClipStage + local ArtifactStore
 - [ ] Phase 5: cost-safety (timers, sweeper, ledger, teardown, budget) vs LocalProvider+clock
@@ -44,5 +45,6 @@ Execution started. Tasks 1–4 complete. Phase 1 complete. Starting Phase 2.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-Task 6: Downloader — parallel, resumable, checksum-verifying HTTP downloader.
-Creates `src/kinoforge/core/downloader.py` + `tests/core/test_downloader.py`.
+Task 7: HTTPSource — `ModelSource` subclass that resolves bare HTTP/HTTPS URLs into
+`Artifact` lists (HEAD for size, resolve filename from URL or Content-Disposition).
+Creates `src/kinoforge/sources/http.py` + `tests/sources/test_http_source.py`.
