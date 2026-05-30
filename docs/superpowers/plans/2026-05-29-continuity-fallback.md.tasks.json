@@ -5,23 +5,26 @@
     {
       "id": 4,
       "subject": "Add inject_tail_frame helper + extract_last_frame ABC default + FakeEngine impl + tests",
-      "status": "pending",
+      "status": "completed",
+      "commit": "b9cb44b",
       "description": "**Goal:** New pure helper + ABC default + Fake override land together with full TDD coverage. After this task, the building blocks exist; Task 2 wires them into the stage.\n\n**Files:**\n- Create: src/kinoforge/core/continuity.py\n- Modify: src/kinoforge/core/interfaces.py (add extract_last_frame after the 5 existing abstract methods)\n- Modify: src/kinoforge/engines/fake/__init__.py (override extract_last_frame)\n- Create: tests/core/test_continuity.py\n- Modify: tests/core/test_interfaces.py (add ABC default-raises test)\n- Modify: tests/engines/test_fake.py (add extract_last_frame test)\n\n**Acceptance Criteria:**\n- core/continuity.py exposes inject_tail_frame\n- GenerationEngine.extract_last_frame default raises NotImplementedError with class name\n- FakeEngine.extract_last_frame returns ConditioningAsset(kind=image, role=init_image, ref.filename derived deterministically)\n- 6 new tests pass\n- pre-commit clean\n- coverage >= 90%\n\n**Verify:** pixi run test tests/core/test_continuity.py tests/core/test_interfaces.py tests/engines/test_fake.py -v\n\n**Spec:** docs/superpowers/specs/2026-05-29-continuity-fallback-design.md §5.1, §5.2, §5.3, §6.1, §6.2, §6.3\n**Plan:** docs/superpowers/plans/2026-05-29-continuity-fallback.md Task 1\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/continuity.py\", \"src/kinoforge/core/interfaces.py\", \"src/kinoforge/engines/fake/__init__.py\", \"tests/core/test_continuity.py\", \"tests/core/test_interfaces.py\", \"tests/engines/test_fake.py\"], \"verifyCommand\": \"pixi run test tests/core/test_continuity.py tests/core/test_interfaces.py tests/engines/test_fake.py -v\", \"acceptanceCriteria\": [\"continuity helper exposed\", \"ABC default raises with class name\", \"FakeEngine override returns deterministic asset\", \"6 new tests pass\", \"pre-commit clean\", \"coverage >= 90%\"], \"specPath\": \"docs/superpowers/specs/2026-05-29-continuity-fallback-design.md\", \"planPath\": \"docs/superpowers/plans/2026-05-29-continuity-fallback.md\"}\n```"
     },
     {
       "id": 5,
       "subject": "Wire continuity into GenerateClipStage non-native branch",
-      "status": "pending",
+      "status": "completed",
+      "commit": "270accd",
       "blockedBy": [4],
       "description": "**Goal:** Stage replaces pool.map(jobs) with a mode-aware sequential loop that calls inject_tail_frame between adjacent jobs when the mode's role contract contains init_image. Orchestrator + tests updated for the new engine field.\n\n**Files:**\n- Modify: src/kinoforge/pipeline/generate_clip.py (add engine field, replace pool.map, update imports)\n- Modify: src/kinoforge/core/orchestrator.py (line 477: add engine=resolved_engine kwarg)\n- Modify: tests/pipeline/test_generate_clip.py (update 3 construction sites; add 4 new behaviour tests)\n- Modify: tests/core/test_pool.py (line 153 stage_kwargs dict: add engine=)\n\n**Acceptance Criteria:**\n- engine field added to GenerateClipStage\n- MODE_ROLE_REQUIREMENTS used for chain dispatch\n- orchestrator.py:477 passes engine=resolved_engine\n- all existing construction sites updated\n- 4 new behavioural tests pass\n- grep for continuity DEFERRED comment returns 0\n- pre-commit clean\n- coverage >= 90%\n- Closes #1 in commit message\n\n**Verify:** pixi run test tests/pipeline/test_generate_clip.py tests/core/test_pool.py -v && grep -n 'DEFERRED.*continuity\\|DEFER stitching/continuity' src/kinoforge/pipeline/generate_clip.py\n\n**Spec:** docs/superpowers/specs/2026-05-29-continuity-fallback-design.md §5.4, §5.5, §6.4, §6.5\n**Plan:** docs/superpowers/plans/2026-05-29-continuity-fallback.md Task 2\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/pipeline/test_generate_clip.py\", \"tests/core/test_pool.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/test_generate_clip.py tests/core/test_pool.py -v && grep -n 'DEFERRED.*continuity\\\\|DEFER stitching/continuity' src/kinoforge/pipeline/generate_clip.py\", \"acceptanceCriteria\": [\"engine field added\", \"MODE_ROLE_REQUIREMENTS dispatch\", \"4 new stage tests pass\", \"grep DEFERRED continuity = 0\", \"Closes #1 trailer\", \"pre-commit clean\", \"coverage >= 90%\"], \"specPath\": \"docs/superpowers/specs/2026-05-29-continuity-fallback-design.md\", \"planPath\": \"docs/superpowers/plans/2026-05-29-continuity-fallback.md\"}\n```"
     },
     {
       "id": 6,
       "subject": "Update PROGRESS.md: mark Layer B complete; point next action at Layer C",
-      "status": "pending",
+      "status": "completed",
+      "commit": "9ba2916",
       "blockedBy": [5],
       "description": "**Goal:** Per project CLAUDE.md durability rules — keep the recovery index current. Single next action now points at Layer C (S3/GCS stores, GitHub issue #5; unblocked by Layer A's uri_for).\n\n**Files:**\n- Modify: PROGRESS.md (append under Post-MVP; update Single next action)\n\n**Acceptance Criteria:**\n- Phase 12 entry under Post-MVP after Phase 11 with both Task 1 + Task 2 SHAs\n- Single next action points at Layer C (S3/GCS, issue #5)\n- pre-commit green on PROGRESS.md\n\n**Verify:** git diff PROGRESS.md && pixi run pre-commit run --files PROGRESS.md\n\n**Plan:** docs/superpowers/plans/2026-05-29-continuity-fallback.md Task 3\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"git diff PROGRESS.md && pixi run pre-commit run --files PROGRESS.md\", \"acceptanceCriteria\": [\"Phase 12 subsection added with both SHAs\", \"Single next action points at Layer C\", \"pre-commit green\"], \"specPath\": \"docs/superpowers/specs/2026-05-29-continuity-fallback-design.md\", \"planPath\": \"docs/superpowers/plans/2026-05-29-continuity-fallback.md\"}\n```"
     }
   ],
-  "lastUpdated": "2026-05-30T05:37:30Z"
+  "lastUpdated": "2026-05-30T06:00:40Z"
 }
