@@ -208,8 +208,10 @@ class DiffusersBackend(GenerationBackend):
             data = self._http_get(url)
             if data.get("status") == "done":
                 filename = str(data.get("filename", ""))
-                url = str(data.get("url", ""))
-                return Artifact(filename=filename, url=url, meta={"job_id": job_id})
+                artifact_url = str(data.get("url", ""))
+                return Artifact(
+                    filename=filename, url=artifact_url, meta={"job_id": job_id}
+                )
             self._sleep(1.0)
         raise TimeoutError(
             f"Diffusers server did not complete job {job_id!r} within {_MAX_POLL} polls"
