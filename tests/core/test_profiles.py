@@ -565,3 +565,34 @@ def test_verify_supported_modes_drift_raises(tmp_path: Path) -> None:
 
     with pytest.raises(CapabilityMismatch):
         cache.verify(profile, backend)
+
+
+# ---------------------------------------------------------------------------
+# Cross-instance regression — exercises uri_for path for profile lookups
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_works_across_jsonprofilecache_instances(tmp_path: Path) -> None:
+    """A fresh JsonProfileCache reads a profile persisted by a prior instance.
+
+    Bug this catches: the cache leaks _uri_index into the contract; restarting
+    the process (a fresh cache pointed at the same store + run_id) breaks
+    lookups. Pre-uri_for this worked only via hasattr(_path) peek; post-refactor
+    it must work via store.uri_for(run_id, name).
+    """
+    from kinoforge.core.profiles import JsonProfileCache
+
+    store = LocalArtifactStore(tmp_path)
+    key = _make_key()
+    probe = _make_probe(max_frames=24, fps=8)
+    engine = _FakeEngine()
+    backend = _CountingBackend(probe)
+
+    cache_a = JsonProfileCache(store=store)
+    persisted = cache_a.discover(key, engine, backend)
+
+    # Brand-new cache instance on the same store + default run_id.
+    cache_b = JsonProfileCache(store=store)
+    recovered = cache_b.resolve(key)
+
+    assert recovered == persisted
