@@ -463,8 +463,6 @@ def test_cli_loads_env_from_cwd_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """main() loads ./.env from cwd before subcommand dispatch."""
-    from kinoforge.cli import main
-
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("KINOFORGE_TEST_ENV_KEY", raising=False)
     (tmp_path / ".env").write_text(
@@ -472,8 +470,8 @@ def test_cli_loads_env_from_cwd_default(
     )
 
     # `list` is a no-arg subcommand that exits 0 cleanly under empty state.
-    rc = main(["--state-dir", str(tmp_path / "state"), "list"])
-    assert rc == 0
+    code = _call(["list"], tmp_path / "state")
+    assert code == 0
 
     assert os.environ.get("KINOFORGE_TEST_ENV_KEY") == "cwd-value"
 
@@ -482,8 +480,6 @@ def test_cli_env_file_flag_overrides_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """--env-file PATH loads that file instead of the cwd default."""
-    from kinoforge.cli import main
-
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("KINOFORGE_TEST_ENV_KEY", raising=False)
 
@@ -496,15 +492,7 @@ def test_cli_env_file_flag_overrides_default(
     custom = tmp_path / "custom.env"
     custom.write_text("KINOFORGE_TEST_ENV_KEY=custom-value\n", encoding="utf-8")
 
-    rc = main(
-        [
-            "--env-file",
-            str(custom),
-            "--state-dir",
-            str(tmp_path / "state"),
-            "list",
-        ]
-    )
-    assert rc == 0
+    code = _call(["--env-file", str(custom), "list"], tmp_path / "state")
+    assert code == 0
 
     assert os.environ.get("KINOFORGE_TEST_ENV_KEY") == "custom-value"
