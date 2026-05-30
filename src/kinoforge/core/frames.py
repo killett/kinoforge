@@ -41,12 +41,16 @@ def _default_run(argv: list[str], stdin: bytes) -> bytes:
         The subprocess's stdout bytes.
 
     Raises:
-        FrameExtractionError: ffmpeg exited non-zero. Message includes a
-            truncated stderr substring for diagnostics.
+        FrameExtractionError: ffmpeg is not on PATH, or the subprocess
+            exited non-zero. Message includes a truncated stderr substring
+            for diagnostics on non-zero exits.
     """
-    proc = subprocess.run(  # noqa: S603
-        argv, input=stdin, capture_output=True, check=False
-    )
+    try:
+        proc = subprocess.run(  # noqa: S603
+            argv, input=stdin, capture_output=True, check=False
+        )
+    except FileNotFoundError as exc:
+        raise FrameExtractionError(f"ffmpeg not found on PATH: {exc}") from exc
     if proc.returncode != 0:
         stderr_snip = proc.stderr.decode(errors="replace")[:512]
         raise FrameExtractionError(f"ffmpeg exit {proc.returncode}: {stderr_snip}")
