@@ -69,6 +69,8 @@ def _build_store(cfg: Config, state_dir: Path) -> ArtifactStore:
 
     Raises:
         UnknownAdapter: ``cfg.store.kind`` is not one of ``local | s3 | gcs``.
+        ValueError: ``cfg.store.kind`` is ``"s3"`` or ``"gcs"`` and
+            ``cfg.store.bucket`` is ``None``.
     """
     sc = cfg.store
     if sc.kind == "local":
