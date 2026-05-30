@@ -24,7 +24,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values, load_dotenv
 
-_LOG = logging.getLogger(__name__)
+_log = logging.getLogger(__name__)
 
 
 def load_env_file(path: Path | None = None, *, override: bool = False) -> None:
@@ -52,9 +52,9 @@ def load_env_file(path: Path | None = None, *, override: bool = False) -> None:
 
     if not resolved.exists():
         if explicit:
-            raise FileNotFoundError(str(resolved))
+            raise FileNotFoundError(resolved)
         return
 
     parsed = dotenv_values(resolved)
     load_dotenv(resolved, override=override)
-    _LOG.info("loaded .env from %s (%d keys)", str(resolved), len(parsed))
+    _log.info("loaded .env from %s (%d keys)", resolved, len(parsed))
