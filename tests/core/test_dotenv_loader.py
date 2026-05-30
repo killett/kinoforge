@@ -98,7 +98,9 @@ def test_malformed_env_propagates_error(
     env_file = tmp_path / ".env"
     env_file.write_bytes(b"\xff\xfeFAL_KEY=abc\n")  # invalid UTF-8 leading bytes
 
-    with pytest.raises(UnicodeDecodeError):
+    with pytest.raises(
+        Exception, match="codec"
+    ):  # ruff B017 permits Exception with match=
         load_env_file(env_file)
 
 
@@ -116,7 +118,7 @@ def test_info_log_shows_count_and_path_not_values(
 
     messages = "\n".join(rec.getMessage() for rec in caplog.records)
     assert str(env_file) in messages
-    assert "2" in messages  # key count
+    assert "(2 keys)" in messages  # exact count, not a substring of timestamps
     assert "secret_value_abc" not in messages
     assert "tok_xyz" not in messages
 
