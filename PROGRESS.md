@@ -69,20 +69,35 @@ ALL 28 tasks complete. All 9 phases complete.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-**Layer B (continuity, issue #1) complete.** All acceptance criteria met:
-`pixi run pre-commit run --all-files` clean; `pixi run test-cov` reports
-90%+ coverage; non-native multi-segment runs in modes with `init_image`
-in `MODE_ROLE_REQUIREMENTS` (today: i2v) now thread the previous segment's
-tail frame into the next segment's init_image slot via FakeEngine's
-`extract_last_frame` override. Issue #1 closed. Stitching of N intermediate
-artifacts remains deferred (separate issue).
+**Layer C (S3 / GCS stores, issue #5) complete.** All acceptance criteria
+met: `pixi run pre-commit run --all-files` clean; `pixi run test-cov`
+reports 90%+ coverage; both `S3ArtifactStore` and `GCSArtifactStore`
+satisfy the full 7-method `ArtifactStore` ABC with their respective
+`s3://` / `gs://` URI schemes; CLI gains an optional `store:` config block
+(backwards compatible by default); Layer-A's leftover `cli.py:441`
+`store._path` peek now routes through `store.uri_for(...)`. Issue #5
+closed. Stitching of N intermediate continuity artifacts remains
+deferred (separate issue).
 
-**Next: Layer C — S3 / GCS artifact stores (GitHub issue #5).**
-Layer A's `ArtifactStore.uri_for` ABC contract makes this layer
-implementable: add `S3ArtifactStore` and/or `GCSArtifactStore` under
-`src/kinoforge/stores/<name>/`, each satisfying the 7-method ABC including
-`uri_for(run_id, name) -> str` returning the scheme-qualified URL. Adapter
-self-registers under `"s3"` / `"gcs"`. Begin with the
+**Next: pick from the layered roadmap.** Three plausible next layers:
+
+1. **ComfyUI / Diffusers / Hosted `extract_last_frame` implementations**
+   (no GitHub issue yet; smaller per-engine follow-ups). Worth doing
+   before the first real-cloud user trips the post-Layer-B
+   `NotImplementedError` on a multi-segment non-native run. Requires
+   per-engine decisions on extraction mechanism (PIL? ffmpeg via
+   engine's own runtime? hosted-API endpoint?).
+
+2. **Layer #4 — Concurrent backend scheduler (GitHub issue #3).**
+   Drop-in `ConcurrentPool` behind the existing `BackendPool` ABC. Pure
+   dispatch concern; no other modules touched.
+
+3. **Layer #5 — Keyframe / image-generation upstream Stage (GitHub
+   issue #4).** Composable with the splitter via `segments_override`.
+   Forces the engine-kind ADR (image-generation engines vs
+   video-generation engines on the same `kind` axis vs split axes).
+
+Begin the chosen layer with the
 `superpowers-extended-cc:brainstorming` skill.
 
 ## Post-MVP
@@ -100,3 +115,11 @@ self-registers under `"s3"` / `"gcs"`. Begin with the
 ### Phase 12 — continuity fallback (deferred layer B, GitHub issue #1)
 - [x] Task 1: Add `inject_tail_frame` helper + `extract_last_frame` ABC default + FakeEngine impl — commit `b9cb44b`
 - [x] Task 2: Wire continuity into GenerateClipStage non-native branch — commit `270accd` (closes #1)
+
+### Phase 13 — S3 / GCS artifact stores (deferred layer C, GitHub issue #5)
+- [x] Task 1: S3ArtifactStore + deps + invariant patterns + adapters wire + 17 tests — commit `424c7c9`
+- [x] Task 2: GCSArtifactStore + adapters wire + 17 tests — commit `057caaf`
+- [x] Task 3: StoreConfig pydantic block + 6 tests + YAML example — commit `41cc75d`
+- [x] Task 4: CLI _build_store + 3 call-site swaps + 3 tests + Layer-A _path peek fix — commit `1cd1f15` (+ docstring polish at `b661576`) (closes #5)
+
+**CLI breaking change (Task 4):** `kinoforge gc` subcommand gained a required `--config PATH` argument so it can read the optional `store:` block; anyone resuming the project must update existing `gc` invocations accordingly.

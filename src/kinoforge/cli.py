@@ -14,7 +14,7 @@ Entry points
 * ``kinoforge stop --id <id>``
 * ``kinoforge destroy --id <id>``
 * ``kinoforge reap``
-* ``kinoforge gc [--run <id>] [--older-than <dur>]``
+* ``kinoforge gc --config <path> [--run <id>] [--older-than <dur>]``
 
 Every invocation prints an "instance overview" header (id, age, est. spend)
 before running the subcommand.
@@ -28,9 +28,11 @@ import time
 from pathlib import Path
 
 import kinoforge._adapters  # noqa: F401 — triggers all self-registrations
+from kinoforge.core.config import Config
 from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import GenerationRequest
 from kinoforge.core.lifecycle import Ledger, destroy_confirmed, reap
+from kinoforge.stores.base import ArtifactStore
 from kinoforge.stores.local import LocalArtifactStore
 
 # ---------------------------------------------------------------------------
@@ -49,6 +51,43 @@ def _ledger(state_dir: Path) -> Ledger:
     """
     store = LocalArtifactStore(state_dir)
     return Ledger(store=store, run_id="_lifecycle")
+
+
+def _build_store(cfg: Config, state_dir: Path) -> ArtifactStore:
+    """Construct the artifact store for this run.
+
+    Honours ``cfg.store.kind``; falls back to ``LocalArtifactStore(state_dir)``
+    when ``cfg.store`` is at its defaults (``kind='local'``, ``root=None``) —
+    i.e. when no ``store:`` block is present in the YAML config.
+
+    Args:
+        cfg: Loaded kinoforge ``Config``.
+        state_dir: Path to the operator state directory (``--state-dir`` arg).
+
+    Returns:
+        A fresh ``ArtifactStore`` instance.
+
+    Raises:
+        UnknownAdapter: ``cfg.store.kind`` is not one of ``local | s3 | gcs``.
+        ValueError: ``cfg.store.kind`` is ``"s3"`` or ``"gcs"`` and
+            ``cfg.store.bucket`` is ``None``.
+    """
+    sc = cfg.store
+    if sc.kind == "local":
+        return LocalArtifactStore(sc.root or state_dir)
+    if sc.kind == "s3":
+        from kinoforge.stores.s3 import S3ArtifactStore  # noqa: PLC0415 — lazy
+
+        if sc.bucket is None:  # validated by StoreConfig._check_kind_requirements
+            raise ValueError("store.kind='s3' requires store.bucket")
+        return S3ArtifactStore(bucket=sc.bucket, prefix=sc.prefix)
+    if sc.kind == "gcs":
+        from kinoforge.stores.gcs import GCSArtifactStore  # noqa: PLC0415 — lazy
+
+        if sc.bucket is None:  # validated by StoreConfig._check_kind_requirements
+            raise ValueError("store.kind='gcs' requires store.bucket")
+        return GCSArtifactStore(bucket=sc.bucket, prefix=sc.prefix)
+    raise UnknownAdapter(f"unknown store kind: {sc.kind!r}")
 
 
 def _print_instance_overview(state_dir: Path) -> None:
@@ -134,6 +173,7 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
 
     # gc
     p_gc = sub.add_parser("gc", help="garbage-collect stored artifacts")
+    p_gc.add_argument("--config", required=True, metavar="PATH")
     p_gc.add_argument("--run", default=None, metavar="RUN_ID")
     p_gc.add_argument("--older-than", default=None, metavar="DUR")
 
@@ -262,7 +302,7 @@ def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
     from kinoforge.core.orchestrator import generate
 
     cfg = load_config(Path(args.config))
-    store = LocalArtifactStore(state_dir)
+    store = _build_store(cfg, state_dir)
     request = GenerationRequest(prompt=args.prompt, mode=args.mode)
     run_id: str = args.run_id
 
@@ -431,14 +471,17 @@ def _cmd_gc(args: argparse.Namespace, state_dir: Path) -> int:
     Returns:
         Exit code (always 0).
     """
-    store = LocalArtifactStore(state_dir)
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(Path(args.config))
+    store = _build_store(cfg, state_dir)
     run_id: str | None = args.run
     removed = 0
 
     if run_id is not None:
         items = store.list(run_id)
         for name in items:
-            uri = str(store._path(run_id, name))
+            uri = store.uri_for(run_id, name)
             try:
                 store.delete(uri)
                 removed += 1
