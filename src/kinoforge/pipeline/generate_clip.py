@@ -102,7 +102,7 @@ class GenerateClipStage:
         results: list[Artifact] = []
         for i, job in enumerate(jobs):
             if i > 0 and should_chain:
-                job = inject_tail_frame(job, results[-1], self.engine)
+                job = inject_tail_frame(job, results[-1], self.engine)  # type: ignore[call-arg, arg-type]  # Task 3 rewires this
             art = self.pool.submit(job).result()
             results.append(art)
         last = results[-1]
