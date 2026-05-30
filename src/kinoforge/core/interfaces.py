@@ -333,8 +333,11 @@ class GenerationEngine(ABC):
         Default raises; subclass to enable continuity for this engine.
 
         Args:
-            artifact: A clip Artifact returned by backend.result() whose
-                ``url`` field is populated with a fetchable location.
+            artifact: A clip Artifact returned by backend.result(). The
+                ``url`` field (populated by the engine's ``result()`` impl,
+                not the ``uri`` field which is set later by ArtifactStore
+                materialization) must point at a fetchable location of the
+                rendered video bytes.
 
         Returns:
             PNG-encoded bytes of the last frame.
