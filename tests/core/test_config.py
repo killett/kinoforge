@@ -159,3 +159,93 @@ def test_splitter_unknown_kind_parses_at_load_time():
     yaml_with_block = WAN + "\nsplitter:\n  kind: bespoke_xyz\n"
     cfg = load_config(yaml_with_block)
     assert cfg.splitter.kind == "bespoke_xyz"
+
+
+# ---------------------------------------------------------------------------
+# StoreConfig — Phase 13 / Layer C
+# ---------------------------------------------------------------------------
+
+
+def test_default_store_is_local_kind() -> None:
+    """When no store block is present, Config.store defaults to kind='local'.
+
+    Bug this catches: default_factory not wired, or default kind != 'local' —
+    breaking backwards compat for every pre-Layer-C config file.
+    """
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(WAN)
+    assert cfg.store.kind == "local"
+    assert cfg.store.root is None
+    assert cfg.store.bucket is None
+    assert cfg.store.prefix == ""
+
+
+def test_s3_kind_requires_bucket() -> None:
+    """store.kind='s3' without store.bucket raises pydantic ValidationError.
+
+    Bug this catches: validator silently accepts incomplete config, leading
+    to runtime failure deep inside generate() instead of upfront load error.
+    """
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import StoreConfig
+
+    with pytest.raises(ValidationError, match="bucket"):
+        StoreConfig(kind="s3")
+
+
+def test_gcs_kind_requires_bucket() -> None:
+    """store.kind='gcs' without store.bucket raises pydantic ValidationError.
+
+    Bug this catches: validator handles only the s3 case.
+    """
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import StoreConfig
+
+    with pytest.raises(ValidationError, match="bucket"):
+        StoreConfig(kind="gcs")
+
+
+def test_local_kind_rejects_bucket() -> None:
+    """store.kind='local' with store.bucket set raises pydantic ValidationError.
+
+    Bug this catches: validator only guards one direction — users who mistype
+    kind='local' but include bucket get a silently misconfigured store.
+    """
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import StoreConfig
+
+    with pytest.raises(ValidationError, match="local"):
+        StoreConfig(kind="local", bucket="should-not-be-here")
+
+
+def test_prefix_defaults_to_empty_string() -> None:
+    """store.prefix defaults to '' when absent (not None, not 'default').
+
+    Bug this catches: prefix typed as Optional with None default, breaking
+    string-concat in store._key.
+    """
+    from kinoforge.core.config import StoreConfig
+
+    cfg = StoreConfig(kind="s3", bucket="b")
+    assert cfg.prefix == ""
+
+
+def test_parses_full_s3_block_from_yaml() -> None:
+    """A full store block round-trips through load_config.
+
+    Bug this catches: pydantic discriminator gets stuck on kind='s3' or the
+    StoreConfig field isn't merged into Config correctly.
+    """
+    from kinoforge.core.config import load_config
+
+    cfg_yaml = WAN + (
+        "\nstore:\n  kind: s3\n  bucket: my-org-kinoforge\n  prefix: prod/runs\n"
+    )
+    cfg = load_config(cfg_yaml)
+    assert cfg.store.kind == "s3"
+    assert cfg.store.bucket == "my-org-kinoforge"
+    assert cfg.store.prefix == "prod/runs"
