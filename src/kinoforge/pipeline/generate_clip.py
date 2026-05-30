@@ -18,6 +18,7 @@ from kinoforge.core.interfaces import (
     MODE_ROLE_REQUIREMENTS,
     Artifact,
     BackendPool,
+    ConditioningAsset,
     GenerationEngine,
     GenerationRequest,
     ModelProfile,
@@ -102,7 +103,15 @@ class GenerateClipStage:
         results: list[Artifact] = []
         for i, job in enumerate(jobs):
             if i > 0 and should_chain:
-                job = inject_tail_frame(job, results[-1], self.engine)  # type: ignore[call-arg, arg-type]  # Task 3 rewires this
+                tail_bytes = self.engine.extract_last_frame(results[-1])
+                tail_name = f"seg-{i - 1}-tail.png"
+                tail_artifact = self.store.put_bytes(self.run_id, tail_name, tail_bytes)
+                tail_asset = ConditioningAsset(
+                    kind="image",
+                    role="init_image",
+                    ref=tail_artifact,
+                )
+                job = inject_tail_frame(job, tail_asset)
             art = self.pool.submit(job).result()
             results.append(art)
         last = results[-1]
