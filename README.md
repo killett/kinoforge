@@ -60,8 +60,10 @@ chmod 600 .env
 # Edit .env and fill in the keys you need.
 ```
 
-The CLI auto-loads `./.env` from the current working directory at startup.
-To use a different file:
+The CLI auto-loads `./.env` from whatever directory you invoke `kinoforge`
+in (typically the project root). Absent file is a silent no-op — you'll
+get an `AuthError` on first secret use instead. To load a different file
+explicitly:
 
 ```bash
 kinoforge --env-file /path/to/other.env generate --config ...
@@ -86,9 +88,10 @@ Python scripts, call
 AWS / GCP credentials are NOT managed by kinoforge — the `boto3` and
 `google-cloud-storage` SDKs walk their own default credential chains
 (env → `~/.aws/credentials` → IMDS → IAM role / ADC → gcloud config →
-GCE metadata) unchanged. You may put `AWS_ACCESS_KEY_ID`,
-`GOOGLE_APPLICATION_CREDENTIALS`, etc. into your `.env` if you prefer
-a single file; the SDK chains pick them up via `os.environ`.
+GCE metadata) unchanged. You may put `AWS_ACCESS_KEY_ID` +
+`AWS_SECRET_ACCESS_KEY` (boto3 needs both), `GOOGLE_APPLICATION_CREDENTIALS`,
+etc. into your `.env` if you prefer a single file; the SDK chains pick
+them up via `os.environ`.
 
 ### Never commit `.env`
 
