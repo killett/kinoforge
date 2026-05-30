@@ -19,8 +19,8 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from kinoforge.core import registry
-from kinoforge.core.errors import ValidationError
+from kinoforge.core import frames, registry
+from kinoforge.core.errors import FrameExtractionError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -119,6 +119,19 @@ def _shutil_move(src: str, dst_dir: str) -> None:
     """
     os.makedirs(dst_dir, exist_ok=True)
     shutil.move(src, dst_dir)
+
+
+def _urllib_get_bytes(url: str) -> bytes:
+    """GET *url* and return the raw response body as bytes.
+
+    Args:
+        url: Endpoint URL.
+
+    Returns:
+        Response body as bytes.
+    """
+    with urllib.request.urlopen(url) as resp:  # noqa: S310
+        return bytes(resp.read())
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +261,12 @@ class ComfyUIBackend(GenerationBackend):
             outputs = entry.get("outputs")
             if outputs:
                 filename = _first_filename(outputs)
-                return Artifact(filename=filename, meta={"prompt_id": job_id})
+                view_url = f"{self._base_url}/view?filename={filename}&type=output"
+                return Artifact(
+                    filename=filename,
+                    url=view_url,
+                    meta={"prompt_id": job_id},
+                )
             self._sleep(1.0)
         raise TimeoutError(
             f"ComfyUI did not complete prompt {job_id!r} within {_MAX_POLL} polls"
@@ -304,6 +322,8 @@ class ComfyUIEngine(GenerationEngine):
         route_file: Callable[[str, str], None] = _shutil_move,
         http_post: Callable[[str, Any], dict[str, Any]] = _urllib_post_json,
         http_get: Callable[[str], dict[str, Any]] = _urllib_get_json,
+        http_get_bytes: Callable[[str], bytes] = _urllib_get_bytes,
+        ffmpeg_run: Callable[[list[str], bytes], bytes] = frames._default_run,
         sleep: Callable[[float], None] = time.sleep,
         probe_profile: ModelProfile = _DEFAULT_PROBE,
         flags_table: dict[str, dict[str, bool]] | None = None,
@@ -318,6 +338,10 @@ class ComfyUIEngine(GenerationEngine):
                 files into place.
             http_post: Callable ``(url, json_body) -> dict`` for HTTP POST.
             http_get: Callable ``(url) -> dict`` for HTTP GET.
+            http_get_bytes: Callable ``(url) -> bytes`` for raw-byte HTTP GET
+                (used by extract_last_frame to fetch the rendered video).
+            ffmpeg_run: Subprocess seam ``(argv, stdin) -> stdout`` used by
+                extract_last_frame to decode the last frame via ffmpeg.
             sleep: Sleep callable used between polling iterations in
                 :meth:`~ComfyUIBackend.result`.
             probe_profile: ``ModelProfile`` returned by backend capability
@@ -333,6 +357,8 @@ class ComfyUIEngine(GenerationEngine):
         self._route_file = route_file
         self._http_post = http_post
         self._http_get = http_get
+        self._http_get_bytes = http_get_bytes
+        self._ffmpeg_run = ffmpeg_run
         self._sleep = sleep
         self._probe = probe_profile
         self._flags_table: dict[str, dict[str, bool]] = flags_table or {}
@@ -460,6 +486,28 @@ class ComfyUIEngine(GenerationEngine):
             raise ValidationError(
                 f"ComfyUI job.spec is missing required keys: {sorted(missing)}"
             )
+
+    def extract_last_frame(self, artifact: Artifact) -> bytes:
+        """Fetch the rendered video bytes via HTTP and decode the last frame.
+
+        Args:
+            artifact: A clip Artifact returned by :meth:`ComfyUIBackend.result`
+                with ``url`` populated.
+
+        Returns:
+            PNG-encoded last frame as bytes.
+
+        Raises:
+            FrameExtractionError: ``artifact.url`` is empty, or the fetch or
+                ffmpeg decode failed.
+        """
+        if not artifact.url:
+            raise FrameExtractionError(
+                f"{type(self).__name__}: artifact.url is empty; "
+                "cannot fetch video bytes"
+            )
+        video_bytes = self._http_get_bytes(artifact.url)
+        return frames.ffmpeg_last_frame(video_bytes, run=self._ffmpeg_run)
 
 
 # ---------------------------------------------------------------------------
