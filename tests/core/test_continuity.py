@@ -30,8 +30,10 @@ def _tail_asset(filename: str = "tail.png") -> ConditioningAsset:
 def test_inject_tail_frame_replaces_seg0_assets() -> None:
     """seg-0 ends with exactly [tail_asset]; the passed asset is preserved by identity.
 
-    Bug this catches: helper appends instead of replacing, OR wraps/copies the
-    asset so callers can't equate by identity.
+    Bug this catches: helper wraps the asset in another container, copies it,
+    or constructs a new ConditioningAsset from its fields — any of which breaks
+    `is`-identity and prevents callers from equating the injected asset with
+    the one they passed in.
     """
     next_job = _make_job(prompts=["next"])
     asset = _tail_asset()
