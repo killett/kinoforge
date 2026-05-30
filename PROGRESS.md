@@ -69,18 +69,20 @@ ALL 28 tasks complete. All 9 phases complete.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-**Layer A (uri_for ABC, issue #6) complete.** All acceptance criteria met:
-`pixi run pre-commit run --all-files` clean; `pixi run test-cov` reports 90%+
-coverage; both `grep _path` and `grep _uri_index|_reconstruct_uri|_uri_for`
-return 0 matches in `src/kinoforge/core/profiles.py`. Issue #6 closed.
-Issue #5 (S3/GCS stores) is now unblocked.
+**Layer B (continuity, issue #1) complete.** All acceptance criteria met:
+`pixi run pre-commit run --all-files` clean; `pixi run test-cov` reports
+90%+ coverage; non-native multi-segment runs in modes with `init_image`
+in `MODE_ROLE_REQUIREMENTS` (today: i2v) now thread the previous segment's
+tail frame into the next segment's init_image slot via FakeEngine's
+`extract_last_frame` override. Issue #1 closed. Stitching of N intermediate
+artifacts remains deferred (separate issue).
 
-**Next: Layer B — Continuity / stitching fallback (GitHub issue #1).**
-The prompt splitter (Phase 10) ships N-segment plans where segments 1..N-1
-have empty `assets`. Layer B fills them with the previous segment's tail
-frame as the `init_image` `ConditioningAsset` so non-native engines chain
-visually. Touches `core/strategy.py` non-native branch + adds
-`extract_last_frame` on the `GenerationEngine` ABC. Begin with the
+**Next: Layer C — S3 / GCS artifact stores (GitHub issue #5).**
+Layer A's `ArtifactStore.uri_for` ABC contract makes this layer
+implementable: add `S3ArtifactStore` and/or `GCSArtifactStore` under
+`src/kinoforge/stores/<name>/`, each satisfying the 7-method ABC including
+`uri_for(run_id, name) -> str` returning the scheme-qualified URL. Adapter
+self-registers under `"s3"` / `"gcs"`. Begin with the
 `superpowers-extended-cc:brainstorming` skill.
 
 ## Post-MVP
@@ -94,3 +96,7 @@ visually. Touches `core/strategy.py` non-native branch + adds
 ### Phase 11 — uri_for ABC (deferred layer A, GitHub issue #6)
 - [x] Task 1: Add `ArtifactStore.uri_for` ABC method + LocalArtifactStore impl + tests — commit `a6f8950`
 - [x] Task 2: Refactor JsonProfileCache to use `store.uri_for`; delete `_uri_index`, `_uri_for`, `_reconstruct_uri` — commit `dd08f0c` (closes #6)
+
+### Phase 12 — continuity fallback (deferred layer B, GitHub issue #1)
+- [x] Task 1: Add `inject_tail_frame` helper + `extract_last_frame` ABC default + FakeEngine impl — commit `b9cb44b`
+- [x] Task 2: Wire continuity into GenerateClipStage non-native branch — commit `270accd` (closes #1)
