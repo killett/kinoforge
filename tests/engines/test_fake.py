@@ -359,18 +359,14 @@ def test_backend_endpoints_returns_dict_with_generate():
 # ---------------------------------------------------------------------------
 
 
-def test_fake_engine_extract_last_frame_returns_init_image_asset() -> None:
-    """FakeEngine.extract_last_frame returns a deterministic init_image asset.
+def test_fake_engine_extract_last_frame_returns_deterministic_bytes() -> None:
+    """FakeEngine.extract_last_frame returns deterministic bytes derived from
+    artifact.filename. Lets continuity tests assert on exact tail content.
 
-    Bug this catches: override returns wrong kind/role, or filename is not
-    derived deterministically from input (breaks cross-instance test
-    reproducibility).
+    Bug this catches: FakeEngine returns randomized or empty bytes, breaking
+    deterministic continuity assertions downstream.
     """
-    from kinoforge.core.interfaces import (
-        Artifact,
-        ConditioningAsset,
-        ModelProfile,
-    )
+    from kinoforge.core.interfaces import Artifact, ModelProfile
     from kinoforge.engines.fake import FakeEngine
 
     probe = ModelProfile(
@@ -387,12 +383,8 @@ def test_fake_engine_extract_last_frame_returns_init_image_asset() -> None:
         declared_flags_map={},
         required_spec_keys=set(),
     )
+    input_artifact = Artifact(filename="prev.mp4")
 
-    input_artifact = Artifact(filename="clip-deadbeef0123.mp4")
-    asset = engine.extract_last_frame(input_artifact)
+    out = engine.extract_last_frame(input_artifact)
 
-    assert isinstance(asset, ConditioningAsset)
-    assert asset.kind == "image"
-    assert asset.role == "init_image"
-    assert asset.ref.filename == "clip-deadbeef0123.mp4.tail.png"
-    assert asset.ref.meta == {"derived_from": "clip-deadbeef0123.mp4"}
+    assert out == b"FAKE_TAIL:prev.mp4"
