@@ -16,6 +16,7 @@ import pytest
 
 from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
+    GenerationEngine,
     GenerationJob,
     GenerationRequest,
     ModelProfile,
@@ -49,9 +50,12 @@ def _make_stage(
     profile: ModelProfile,
     backend: FakeBackend,
     run_id: str = "run-001",
+    engine: object | None = None,
 ) -> GenerateClipStage:
     pool = SequentialPool(backend)
     store = LocalArtifactStore(tmp_path)
+    if engine is None:
+        engine = _fake_engine_for_tests(profile)
     return GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -60,6 +64,7 @@ def _make_stage(
         accepted_kinds={"image"},
         base_params={},
         base_spec={},
+        engine=engine,  # type: ignore[arg-type]
     )
 
 
@@ -152,6 +157,77 @@ def test_native_extension_false_n_jobs_for_n_segments(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Continuity (Layer B) — chain tail-frame into next segment's init_image
+# ---------------------------------------------------------------------------
+
+
+class RecordingBackend(FakeBackend):
+    """FakeBackend that records each submitted job's seg-0 assets."""
+
+    def __init__(self, probe: ModelProfile) -> None:
+        super().__init__(probe=probe)
+        self.submitted_seg0_assets: list[list] = []  # type: ignore[type-arg]
+
+    def submit(self, job: GenerationJob) -> str:
+        # Capture a snapshot of the first segment's assets at submit time.
+        self.submitted_seg0_assets.append(list(job.segments[0].assets))
+        return super().submit(job)
+
+
+def _fake_engine_for_tests(probe: ModelProfile) -> GenerationEngine:
+    """Construct a FakeEngine with no declared flags and no required spec keys."""
+    from kinoforge.engines.fake import FakeEngine
+
+    return FakeEngine(
+        probe_profile=probe,
+        declared_flags_map={},
+        required_spec_keys=set(),
+    )
+
+
+def test_stage_non_native_i2v_n3_chains_segs_1_and_2(tmp_path: Path) -> None:
+    """Non-native + i2v + 3 segments → jobs 1 and 2 receive prev tail as init_image.
+
+    Bug this catches: chain skips a segment, or order is wrong (e.g. seg 1 gets
+    seg 0's tail but seg 2 also gets seg 0's tail instead of seg 1's).
+    """
+    profile = _profile(supports_native_extension=False)
+    backend = RecordingBackend(probe=profile)
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _fake_engine_for_tests(profile)
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="chain-i2v",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,
+    )
+
+    segments = [Segment(prompt=f"segment {i}") for i in range(3)]
+    stage.run(
+        GenerationRequest(prompt="ignored", mode="i2v"),
+        segments_override=segments,
+    )
+
+    # Job 0: no chain (no prior render to extract from).
+    assert backend.submitted_seg0_assets[0] == []
+    # Jobs 1 and 2: exactly one ConditioningAsset, role=init_image, kind=image.
+    for i in (1, 2):
+        assets = backend.submitted_seg0_assets[i]
+        assert len(assets) == 1
+        asset = assets[0]
+        assert asset.kind == "image"
+        assert asset.role == "init_image"
+        # Filename derived from the prev render's output filename.
+        assert asset.ref.filename.endswith(".tail.png")
+
+
+# ---------------------------------------------------------------------------
 # AC 7: unsupported mode raises ValidationError before any submit
 # ---------------------------------------------------------------------------
 
@@ -187,6 +263,7 @@ def test_round_trip_bytes(tmp_path: Path) -> None:
         accepted_kinds={"image"},
         base_params={},
         base_spec={},
+        engine=_fake_engine_for_tests(profile),
     )
 
     request = GenerationRequest(prompt="round trip check", mode="t2v")
@@ -207,8 +284,128 @@ def test_round_trip_bytes(tmp_path: Path) -> None:
         accepted_kinds={"image"},
         base_params={},
         base_spec={},
+        engine=_fake_engine_for_tests(profile),
     )
     artifact2 = stage2.run(GenerationRequest(prompt="round trip check", mode="t2v"))
     retrieved2 = store2.get_bytes(artifact2.uri)
 
     assert retrieved == retrieved2
+
+
+class _SpyEngine:
+    """Spy engine: asserts extract_last_frame is never called."""
+
+    def __init__(self) -> None:
+        self.extract_calls = 0
+
+    def extract_last_frame(self, artifact):  # noqa: ANN001
+        self.extract_calls += 1
+        # Return a valid asset in case the test does call us — but the assertion
+        # below catches the bug regardless.
+        from kinoforge.core.interfaces import Artifact, ConditioningAsset
+
+        return ConditioningAsset(
+            kind="image", role="init_image", ref=Artifact(filename="spy.tail.png")
+        )
+
+
+def test_stage_native_branch_i2v_no_chain(tmp_path: Path) -> None:
+    """Native branch (1 job) + i2v → chain never triggers (i > 0 never true).
+
+    Bug this catches: chain accidentally runs on N=1 jobs, calling extract_last_frame
+    on the (nonexistent) prior render.
+    """
+    profile = _profile(supports_native_extension=True)
+    backend = RecordingBackend(probe=profile)
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    spy = _SpyEngine()
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="native-i2v",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=spy,  # type: ignore[arg-type]
+    )
+
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
+    stage.run(
+        GenerationRequest(prompt="ignored", mode="i2v"),
+        segments_override=segments,
+    )
+
+    # Native branch: 1 job submitted.
+    assert len(backend.submitted_seg0_assets) == 1
+    assert spy.extract_calls == 0
+
+
+def test_stage_non_native_t2v_n3_no_chain(tmp_path: Path) -> None:
+    """Non-native + t2v + 3 segments → no chain (no init_image in t2v role contract).
+
+    Bug this catches: chain mistakenly triggers for modes that don't accept
+    init_image, breaking validate_spec or producing wrong-shape jobs.
+    """
+    profile = _profile(supports_native_extension=False)
+    backend = RecordingBackend(probe=profile)
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    spy = _SpyEngine()
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="t2v-no-chain",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=spy,  # type: ignore[arg-type]
+    )
+
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
+    stage.run(
+        GenerationRequest(prompt="ignored", mode="t2v"),
+        segments_override=segments,
+    )
+
+    # 3 jobs submitted; all with empty seg-0 assets; spy never invoked.
+    assert len(backend.submitted_seg0_assets) == 3
+    for assets in backend.submitted_seg0_assets:
+        assert assets == []
+    assert spy.extract_calls == 0
+
+
+def test_stage_non_native_i2v_n1_no_chain(tmp_path: Path) -> None:
+    """Non-native + i2v + 1 segment → no chain (i > 0 never true).
+
+    Bug this catches: off-by-one tries to inject on the first segment, calling
+    extract_last_frame with no prior artifact.
+    """
+    profile = _profile(supports_native_extension=False)
+    backend = RecordingBackend(probe=profile)
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    spy = _SpyEngine()
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="i2v-n1",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=spy,  # type: ignore[arg-type]
+    )
+
+    stage.run(
+        GenerationRequest(prompt="ignored", mode="i2v"),
+        segments_override=[Segment(prompt="only")],
+    )
+
+    assert len(backend.submitted_seg0_assets) == 1
+    assert spy.extract_calls == 0

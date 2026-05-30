@@ -482,6 +482,7 @@ def generate(
         accepted_kinds=accepted_kinds,
         base_params={},
         base_spec={},
+        engine=resolved_engine,
     )
     artifact = stage.run(request, segments_override=prompt_segments)
     _log.info("generate completed — artifact uri=%r", artifact.uri)
