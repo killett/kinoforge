@@ -42,3 +42,23 @@ compute:
     time_buffer: 30m
     max_lifetime: 5h
     budget: 25.0
+
+# --- Optional: artifact-store selection (Phase 13 / Layer C) -----------------
+# Absent block → LocalArtifactStore(state_dir) where state_dir is --state-dir.
+#
+# Explicit local with custom root:
+# store:
+#   kind: local
+#   root: ./my-custom-root
+#
+# S3:
+# store:
+#   kind: s3
+#   bucket: my-org-kinoforge
+#   prefix: prod/runs
+#
+# GCS:
+# store:
+#   kind: gcs
+#   bucket: my-org-kinoforge
+#   prefix: prod/runs
