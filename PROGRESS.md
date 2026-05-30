@@ -69,15 +69,14 @@ ALL 28 tasks complete. All 9 phases complete.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-**Layer C (S3 / GCS stores, issue #5) complete.** All acceptance criteria
-met: `pixi run pre-commit run --all-files` clean; `pixi run test-cov`
-reports 90%+ coverage; both `S3ArtifactStore` and `GCSArtifactStore`
-satisfy the full 7-method `ArtifactStore` ABC with their respective
-`s3://` / `gs://` URI schemes; CLI gains an optional `store:` config block
-(backwards compatible by default); Layer-A's leftover `cli.py:441`
-`store._path` peek now routes through `store.uri_for(...)`. Issue #5
-closed. Stitching of N intermediate continuity artifacts remains
-deferred (separate issue).
+**Layer D (.env secrets loader) complete.** All acceptance criteria met:
+`pixi run pre-commit run --all-files` clean; `pixi run test` reports
+450 passed (440 prior + 8 dotenv unit tests + 2 CLI integration tests);
+mypy strict clean across 89 source files; `kinoforge --env-file PATH ...`
+flag works; default `./.env` auto-loads at CLI startup; shell values
+always win over `.env`. `.env` finally added to `.gitignore` (was missing).
+.env.example checked in with the 4 documented kinoforge credential
+variables (FAL_KEY, CIVITAI_TOKEN, HF_TOKEN, RUNPOD_API_KEY).
 
 **Next: pick from the layered roadmap.** Three plausible next layers:
 
@@ -123,3 +122,9 @@ Begin the chosen layer with the
 - [x] Task 4: CLI _build_store + 3 call-site swaps + 3 tests + Layer-A _path peek fix — commit `1cd1f15` (+ docstring polish at `b661576`) (closes #5)
 
 **CLI breaking change (Task 4):** `kinoforge gc` subcommand gained a required `--config PATH` argument so it can read the optional `store:` block; anyone resuming the project must update existing `gc` invocations accordingly.
+
+### Phase 14 — .env secrets loader (post-MVP Layer D)
+- [x] Task 1: python-dotenv dep + .gitignore .env + .env.example — commit `59f732e`
+- [x] Task 2: dotenv_loader module + 8 unit tests — commit `0dc4714` (+ polish at `366ce5d`)
+- [x] Task 3: CLI --env-file flag + 2 integration tests — commit `727ee2f` (+ polish at `b9056cf`)
+- [x] Task 4: README Credentials section + PROGRESS Phase 14 entry — this commit
