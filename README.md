@@ -117,11 +117,14 @@ register_engine("myengine", MyEngine)
 
 Set `engine.kind: myengine` in your YAML.
 
+### Splitter axis
+
+- **Splitter axis** — implement `Splitter` (`core/interfaces.py`) and call `register_splitter("name", lambda: MySplitter())` to plug an LLM-semantic or scene-detect strategy alongside the default `HeuristicSplitter` in `core/splitter.py`.
+
 ## Roadmap (deferred layers and their seams)
 
 Each item below names the deferred layer and the exact seam it plugs into when built:
 
-- **Prompt splitter** — `# DEFERRED:` comment in `orchestrator.generate`; replace the 1-segment stub with a real splitter that returns `list[Segment]`.
 - **Continuity / stitching fallback** — `strategy.decide` non-native branch; the fallback path currently issues N single-segment jobs; stitching post-processing slots in between `pool.map` and `store.put_bytes` in `GenerateClipStage`.
 - **Audio sync layer** — `strategy.decide` sets `spec["_audio_mode"] = "separate"` as a marker; a downstream audio-sync stage reads this key and schedules audio generation after the video clip is stored.
 - **Concurrent / distributed backend scheduler** — `BackendPool` ABC (alongside `SequentialPool`); drop in a `ThreadedPool` or `RayPool` implementation and inject it into `GenerateClipStage`.

@@ -15,6 +15,7 @@ Conventions
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 from kinoforge.core import registry
@@ -398,15 +399,20 @@ def generate(
 
     from kinoforge.core.validation import validate_request
 
-    validate_request(profile, request, accepted_kinds=accepted_kinds)
+    validated = validate_request(profile, request, accepted_kinds=accepted_kinds)
 
     # ------------------------------------------------------------------
-    # Step 6 — splitter stub (DEFERRED: GenerateClipStage builds 1 segment)
+    # Step 6 — split the validated prompt into ordered segments
     # ------------------------------------------------------------------
-    # The splitter lives inside GenerateClipStage.run(); we do not need
-    # to split here.  The stage uses the request directly and constructs
-    # exactly one Segment from the validated request.
-    # DEFERRED: multi-segment splitter will replace this when implemented.
+    splitter = registry.get_splitter(cfg.splitter.kind)()
+    prompt_segments = splitter.split(validated.prompt, profile, {})
+
+    # Attach assets to segment 0 only. Continuity (#02) will fill segments
+    # 1..N-1 with previous-frame conditioning when implemented.
+    if prompt_segments and validated.assets:
+        prompt_segments[0] = dataclasses.replace(
+            prompt_segments[0], assets=list(validated.assets)
+        )
 
     # ------------------------------------------------------------------
     # Step 7 — ensure we have a backend for generation
@@ -477,6 +483,6 @@ def generate(
         base_params={},
         base_spec={},
     )
-    artifact = stage.run(request)
+    artifact = stage.run(request, segments_override=prompt_segments)
     _log.info("generate completed — artifact uri=%r", artifact.uri)
     return artifact
