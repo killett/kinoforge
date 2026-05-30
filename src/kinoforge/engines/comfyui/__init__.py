@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from typing import Any
@@ -261,7 +262,8 @@ class ComfyUIBackend(GenerationBackend):
             outputs = entry.get("outputs")
             if outputs:
                 filename = _first_filename(outputs)
-                view_url = f"{self._base_url}/view?filename={filename}&type=output"
+                encoded_fn = urllib.parse.quote(filename, safe="")
+                view_url = f"{self._base_url}/view?filename={encoded_fn}&type=output"
                 return Artifact(
                     filename=filename,
                     url=view_url,
