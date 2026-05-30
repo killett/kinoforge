@@ -1,0 +1,252 @@
+"""Tests for GCSArtifactStore — all run against FakeGCSClient (no network).
+
+Spec: docs/superpowers/specs/2026-05-29-s3-gcs-stores-design.md §3.2 + §8.2
+"""
+
+from __future__ import annotations
+
+import sys
+
+import pytest
+
+from kinoforge.stores.gcs import GCSArtifactStore
+from tests.stores.conftest import FakeGCSClient
+
+
+@pytest.fixture()
+def fake_client() -> FakeGCSClient:
+    return FakeGCSClient()
+
+
+@pytest.fixture()
+def store(fake_client: FakeGCSClient) -> GCSArtifactStore:
+    return GCSArtifactStore(
+        bucket="bkt",
+        prefix="prefix",
+        client=fake_client,
+        not_found_exc=FakeGCSClient.NotFound,
+    )
+
+
+# --- AC1: put_bytes returns gs://-scheme'd Artifact --------------------------
+
+
+def test_put_bytes_returns_artifact_with_gs_uri(store: GCSArtifactStore) -> None:
+    """put_bytes returns Artifact with uri = gs://<bucket>/<prefix>/<run_id>/<name>.
+
+    Bug this catches: scheme typo (gcs:// vs gs://) or path-style URI.
+    """
+    artifact = store.put_bytes("run-1", "out.bin", b"\x00\x01")
+    assert artifact.uri == "gs://bkt/prefix/run-1/out.bin"
+
+
+# --- AC2: get_bytes round-trips ----------------------------------------------
+
+
+def test_get_bytes_round_trips(store: GCSArtifactStore) -> None:
+    """Bytes written by put_bytes are recovered exactly by get_bytes(uri).
+
+    Bug this catches: download_as_bytes hits the wrong blob name.
+    """
+    artifact = store.put_bytes("run-1", "blob.bin", b"hello gcs")
+    assert store.get_bytes(artifact.uri) == b"hello gcs"
+
+
+# --- AC3: prefix handling ----------------------------------------------------
+
+
+def test_put_get_with_prefix(
+    store: GCSArtifactStore, fake_client: FakeGCSClient
+) -> None:
+    """Non-empty prefix is folded into the blob name.
+
+    Bug this catches: prefix concatenated to URI but not to blob name.
+    """
+    store.put_bytes("rid", "a.bin", b"x")
+    bucket = fake_client.bucket("bkt")
+    assert "prefix/rid/a.bin" in bucket._blobs
+
+
+def test_put_get_with_empty_prefix(fake_client: FakeGCSClient) -> None:
+    """Empty prefix produces no leading slash in blob name.
+
+    Bug this catches: '' prefix yielding key '/rid/name'.
+    """
+    store = GCSArtifactStore(
+        bucket="bkt",
+        prefix="",
+        client=fake_client,
+        not_found_exc=FakeGCSClient.NotFound,
+    )
+    artifact = store.put_bytes("rid", "a.bin", b"x")
+    assert artifact.uri == "gs://bkt/rid/a.bin"
+    bucket = fake_client.bucket("bkt")
+    assert "rid/a.bin" in bucket._blobs
+
+
+def test_put_get_with_slash_normalised_prefix(fake_client: FakeGCSClient) -> None:
+    """Leading and trailing slashes in prefix are stripped during init.
+
+    Bug this catches: blind concatenation producing '/foo/bar//rid/name'.
+    """
+    store = GCSArtifactStore(
+        bucket="bkt",
+        prefix="/foo/bar/",
+        client=fake_client,
+        not_found_exc=FakeGCSClient.NotFound,
+    )
+    artifact = store.put_bytes("rid", "a.bin", b"x")
+    assert artifact.uri == "gs://bkt/foo/bar/rid/a.bin"
+
+
+# --- AC4: put_json round-trips -----------------------------------------------
+
+
+def test_put_json_round_trips(store: GCSArtifactStore) -> None:
+    """A dict written by put_json is recovered as an equivalent dict.
+
+    Bug this catches: encoding drift on read (e.g. int->str).
+    """
+    obj = {"key": "value", "count": 42, "nested": {"x": 1.5}}
+    artifact = store.put_json("rid", "data.json", obj)
+    assert store.get_json(artifact.uri) == obj
+
+
+# --- AC5: run_id isolation ---------------------------------------------------
+
+
+def test_run_ids_are_isolated(store: GCSArtifactStore) -> None:
+    """Same name, different run_ids → different blob names, different bytes.
+
+    Bug this catches: omitting run_id from the blob name.
+    """
+    art_a = store.put_bytes("run-a", "x.bin", b"A")
+    art_b = store.put_bytes("run-b", "x.bin", b"B")
+    assert store.get_bytes(art_a.uri) == b"A"
+    assert store.get_bytes(art_b.uri) == b"B"
+
+
+# --- AC6: list ---------------------------------------------------------------
+
+
+def test_list_returns_names_for_run_id(store: GCSArtifactStore) -> None:
+    """list(run_id) returns the name strings as passed to put_bytes.
+
+    Bug this catches: returning full blob names with prefix still attached.
+    """
+    store.put_bytes("rx", "a.bin", b"a")
+    store.put_bytes("rx", "b.bin", b"b")
+    assert sorted(store.list("rx")) == ["a.bin", "b.bin"]
+
+
+def test_list_nested_name_preserves_subpath(store: GCSArtifactStore) -> None:
+    """A name with subdirectory components survives list() unchanged.
+
+    Bug this catches: '/' stripped — 'profiles/abc.json' becomes 'abc.json'.
+    """
+    store.put_bytes("rx", "profiles/abc.json", b"{}")
+    assert "profiles/abc.json" in store.list("rx")
+
+
+def test_list_empty_run_id_returns_empty_list(store: GCSArtifactStore) -> None:
+    """list() for a run_id with no items returns [] (not an error).
+
+    Bug this catches: list_blobs iterator unhandled when empty.
+    """
+    assert store.list("never-existed") == []
+
+
+def test_list_excludes_other_run_ids(store: GCSArtifactStore) -> None:
+    """list(run_id) shows only items from that run_id, not sibling run_ids.
+
+    Bug this catches: prefix not strict-bounded — 'run-1' accidentally
+    includes items under 'run-10/'.
+    """
+    store.put_bytes("run-1", "item.bin", b"1")
+    store.put_bytes("run-10", "item.bin", b"10")
+    assert store.list("run-1") == ["item.bin"]
+
+
+# --- AC7: delete -------------------------------------------------------------
+
+
+def test_delete_removes_item(store: GCSArtifactStore) -> None:
+    """delete(uri) removes the blob; subsequent get_bytes raises FileNotFoundError.
+
+    Bug this catches: delete() targets wrong blob name.
+    """
+    artifact = store.put_bytes("rid", "to_del.bin", b"bye")
+    store.delete(artifact.uri)
+    with pytest.raises(FileNotFoundError):
+        store.get_bytes(artifact.uri)
+
+
+def test_delete_missing_raises_file_not_found(store: GCSArtifactStore) -> None:
+    """delete() on a non-existent URI raises FileNotFoundError.
+
+    Bug this catches: NotFound from blob.delete propagates unmapped.
+    """
+    with pytest.raises(FileNotFoundError):
+        store.delete("gs://bkt/prefix/never/x.bin")
+
+
+def test_get_bytes_missing_raises_file_not_found(store: GCSArtifactStore) -> None:
+    """get_bytes on a missing key raises FileNotFoundError.
+
+    Bug this catches: NotFound from download_as_bytes propagates unmapped.
+    """
+    with pytest.raises(FileNotFoundError):
+        store.get_bytes("gs://bkt/prefix/missing/x.bin")
+
+
+# --- AC8: uri_for invariant --------------------------------------------------
+
+
+def test_uri_for_matches_put_bytes_artifact_uri(store: GCSArtifactStore) -> None:
+    """uri_for(rid, name) == put_bytes(rid, name, b).uri."""
+    artifact = store.put_bytes("rid", "blob.bin", b"x")
+    assert store.uri_for("rid", "blob.bin") == artifact.uri
+
+
+def test_uri_for_matches_put_json_artifact_uri(store: GCSArtifactStore) -> None:
+    """uri_for(rid, name) == put_json(rid, name, obj).uri."""
+    artifact = store.put_json("rid", "data.json", {"k": 1})
+    assert store.uri_for("rid", "data.json") == artifact.uri
+
+
+# --- AC9: self-registration --------------------------------------------------
+
+
+def test_gcs_store_self_registers_under_gcs() -> None:
+    """Importing kinoforge.stores.gcs registers it under "gcs" in the registry.
+
+    Bug this catches: forgetting register_store("gcs", ...) at module bottom.
+    """
+    import kinoforge.stores.gcs  # noqa: F401 — side-effect import
+    from kinoforge.core.registry import get_store
+
+    factory = get_store("gcs")
+    assert callable(factory)
+
+
+# --- AC10: dual lazy-import gate --------------------------------------------
+
+
+def test_lazy_sdk_import_not_triggered_when_both_injected() -> None:
+    """Constructing with client=fake AND not_found_exc=fake never imports SDK.
+
+    Bug this catches: __init__ imports google.cloud.storage or
+    google.api_core.exceptions eagerly — defeats offline-test invariant.
+    Both lazy gates must hold.
+    """
+    sys.modules.pop("google.cloud.storage", None)
+    sys.modules.pop("google.api_core.exceptions", None)
+
+    GCSArtifactStore(
+        bucket="bkt",
+        client=FakeGCSClient(),
+        not_found_exc=FakeGCSClient.NotFound,
+    )
+
+    assert "google.cloud.storage" not in sys.modules
+    assert "google.api_core.exceptions" not in sys.modules
