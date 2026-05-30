@@ -2,6 +2,9 @@
 name = "kinoforge"
 version = "0.1.0"  # Required by PEP 621. Keep set even without a [build-system] so any uv-using tool that walks up into this directory doesn't fail PEP 621 validation.
 requires-python = ">=3.12,<3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Emmy Killett" }]
 dependencies = []
 
 [tool.ruff.lint]
