@@ -11,7 +11,7 @@ first unchecked task without redoing committed work.
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
 ## Phase
-Execution started. Tasks 1–21c complete. Phases 1–8 complete.
+Execution started. Tasks 1–23 complete. Phases 1–9 complete.
 
 ## Task checklist (high-level; plan refines into 28 bite-sized tasks)
 - [x] Read SPEC.md, explore project context
@@ -55,6 +55,8 @@ Execution started. Tasks 1–21c complete. Phases 1–8 complete.
   - [x] Task 21c: SkyPilotProvider (lazy import) — commit e069dfe. `SkyPilotProvider(ComputeProvider)` with `_get_sky()` lazy import (only inside function body, never at module top level); injectable `sky_client` seam so tests run without skypilot installed; `idle_timeout_s → autostop` (minutes) mapping via `sky_client.launch(task_config, autostop=...)`;  `list_instances()` via `sky_client.status()`; `destroy_instance()` calls `sky_client.down()` then polls until gone; `get_instance()` raises `KeyError` when absent; `endpoints()` returns `{"ssh": "ssh://<id>"}`. 16/16 AC tests pass; mypy/ruff/pre-commit clean.
 - [x] Phase 9 (partial): CLI — Task 22 complete
   - [x] Task 22: CLI + `__main__` — `_adapters.py` (sole concrete-import hub), `cli.py` (deploy/provision/generate/list/status/stop/destroy/reap/gc), `__main__.py` wired. Duplicate-pod guard, UnknownAdapter catch, instance overview header, 8/8 ACs pass. — commit 4b4e31e
+- [x] Phase 9 (complete): Examples, README, CI — Task 23 complete
+  - [x] Task 23: `examples/configs/{wan,diffusers,hosted,local-fake}.yaml`, `README.md` (6 required headings), `.github/workflows/ci.yml` (3-OS matrix), `tests/test_examples.py` (21 tests). All 6 ACs pass. — commit 1b7f662
 
 ## Key decisions & gotchas
 - Core NEVER imports a concrete provider/source/engine — registry-mediated by name/scheme. Reviewer enforces.
@@ -66,4 +68,4 @@ Execution started. Tasks 1–21c complete. Phases 1–8 complete.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-Task 23: Examples, README, CI — example configs (local-fake.yaml etc.), README.md, and 3-OS CI workflow.
+Task 24: Core-invariant guard test — verify that core modules never import concrete provider/source/engine modules (registry-mediated only).
