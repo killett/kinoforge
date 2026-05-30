@@ -1,0 +1,27 @@
+{
+  "planPath": "docs/superpowers/plans/2026-05-29-uri-for-abc.md",
+  "specPath": "docs/superpowers/specs/2026-05-29-uri-for-abc.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Add ArtifactStore.uri_for ABC method + LocalArtifactStore impl + tests",
+      "status": "pending",
+      "description": "**Goal:** New abstract method on `ArtifactStore`, working impl on `LocalArtifactStore`, six tests covering the contract.\n\n**Files:**\n- Modify: src/kinoforge/stores/base.py (add abstract method)\n- Modify: src/kinoforge/stores/local.py (add public uri_for delegating to _path)\n- Modify: tests/stores/test_local.py (add 6 tests)\n\n**Acceptance Criteria:**\n- ABC has new uri_for abstract method with no-I/O contract documented\n- LocalArtifactStore.uri_for(run_id, name) returns str(self._path(run_id, name))\n- 6 new tests pass (put_bytes round-trip, put_json round-trip, no-I/O on miss, stable across instances, nested name preserved, cross-instance get_bytes round-trip)\n- pre-commit clean\n- full test suite green; coverage >= 90%\n\n**Verify:** `pixi run test tests/stores/test_local.py -v`\n\n**Spec:** docs/superpowers/specs/2026-05-29-uri-for-abc.md §1, §4.1, §5.1, §5.2, §6.1\n**Plan:** docs/superpowers/plans/2026-05-29-uri-for-abc.md Task 1\n\n```json:metadata\n{\"files\": [\"src/kinoforge/stores/base.py\", \"src/kinoforge/stores/local.py\", \"tests/stores/test_local.py\"], \"verifyCommand\": \"pixi run test tests/stores/test_local.py -v && pixi run pre-commit run --files src/kinoforge/stores/base.py src/kinoforge/stores/local.py tests/stores/test_local.py\", \"acceptanceCriteria\": [\"ABC uri_for abstract method present with no-I/O contract\", \"LocalArtifactStore.uri_for returns str(self._path(run_id, name))\", \"6 new tests pass\", \"pre-commit clean\", \"coverage >= 90%\"], \"specPath\": \"docs/superpowers/specs/2026-05-29-uri-for-abc.md\", \"planPath\": \"docs/superpowers/plans/2026-05-29-uri-for-abc.md\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Refactor JsonProfileCache to use store.uri_for; delete _uri_index/_reconstruct_uri/_uri_for",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Remove every workaround in `JsonProfileCache` that existed because `uri_for` was missing. Add the missing cross-instance regression test.\n\n**Files:**\n- Modify: src/kinoforge/core/profiles.py (delete _uri_index, _uri_for, _reconstruct_uri; update resolve())\n- Modify: tests/core/test_profiles.py (add cross-instance regression test)\n\n**Acceptance Criteria:**\n- grep -n \"_path\\b\" src/kinoforge/core/profiles.py → 0 matches\n- grep -n \"_uri_index|_reconstruct_uri|_uri_for\" src/kinoforge/core/profiles.py → 0 matches\n- resolve() reads URI via self._store.uri_for(self._run_id, name)\n- New cross-instance regression test passes\n- All existing test_profiles.py tests still pass\n- pre-commit clean\n- coverage ≥ 90%\n\n**Verify:** `pixi run test tests/core/test_profiles.py -v && grep -nE '_path|_uri_index|_reconstruct_uri|_uri_for' src/kinoforge/core/profiles.py`\n\n**Spec:** docs/superpowers/specs/2026-05-29-uri-for-abc.md §4.2, §5.3, §6.2\n**Plan:** docs/superpowers/plans/2026-05-29-uri-for-abc.md Task 2\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/profiles.py\", \"tests/core/test_profiles.py\"], \"verifyCommand\": \"pixi run test tests/core/test_profiles.py -v && grep -nE '_path|_uri_index|_reconstruct_uri|_uri_for' src/kinoforge/core/profiles.py\", \"acceptanceCriteria\": [\"grep _path returns 0 matches\", \"grep _uri_index|_reconstruct_uri|_uri_for returns 0 matches\", \"resolve() calls store.uri_for\", \"cross-instance regression test passes\", \"all existing tests pass\", \"coverage >= 90%\"], \"specPath\": \"docs/superpowers/specs/2026-05-29-uri-for-abc.md\", \"planPath\": \"docs/superpowers/plans/2026-05-29-uri-for-abc.md\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Update PROGRESS.md: mark Layer A complete; point next action at Layer B",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Per project CLAUDE.md durability rules — keep the recovery index current. Single next action now points at Layer B (continuity, issue #1).\n\n**Files:**\n- Modify: PROGRESS.md (append under Post-MVP; update Single next action)\n\n**Acceptance Criteria:**\n- New Phase 11 entry under Post-MVP with both Task 1 + Task 2 SHAs\n- Single next action points at Layer B (continuity, issue #1)\n- pre-commit green on PROGRESS.md\n\n**Verify:** `git diff PROGRESS.md && pixi run pre-commit run --files PROGRESS.md`\n\n**Plan:** docs/superpowers/plans/2026-05-29-uri-for-abc.md Task 3\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"git diff PROGRESS.md && pixi run pre-commit run --files PROGRESS.md\", \"acceptanceCriteria\": [\"Phase 11 subsection added under Post-MVP with both SHAs\", \"Single next action points at Layer B (continuity, issue #1)\", \"pre-commit green on PROGRESS.md\"], \"specPath\": \"docs/superpowers/specs/2026-05-29-uri-for-abc.md\", \"planPath\": \"docs/superpowers/plans/2026-05-29-uri-for-abc.md\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-05-30T04:23:54Z"
+}
