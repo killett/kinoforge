@@ -74,16 +74,17 @@ class GenerateClipStage:
 
         Raises:
             ValidationError: If the request fails mode/role/kind validation.
+                Validation runs only when ``segments_override`` is ``None``;
+                callers that pre-build segments (e.g. the orchestrator after
+                its own ``validate_request`` call) are expected to have
+                validated upstream.
         """
-        validated = validate_request(
-            self.profile, request, accepted_kinds=self.accepted_kinds
-        )
-
         if segments_override is not None:
             segments = segments_override
         else:
-            # DEFERRED: prompt splitter — single-clip happy path uses 1 segment
-            # carrying the request's prompt + assets.
+            validated = validate_request(
+                self.profile, request, accepted_kinds=self.accepted_kinds
+            )
             segments = [Segment(prompt=validated.prompt, assets=list(validated.assets))]
 
         jobs = decide(self.profile, segments, self.base_params, self.base_spec)
