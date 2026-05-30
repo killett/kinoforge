@@ -1,0 +1,44 @@
+# kinoforge example: ComfyUI + RunPod (pod mode) with Wan2.2
+#
+# Demonstrates the canonical production path:
+#   - ComfyUI engine on a RunPod GPU pod
+#   - All three model sources: HuggingFace (base), CivitAI (LoRA), HTTPS (VAE)
+#   - Budget-guarded lifecycle with autostop
+
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+    kind: base
+    target: checkpoints
+
+  - ref: "civitai:123456@78901"
+    kind: lora
+    target: loras
+
+  - ref: "https://cdn.example.com/vae/wan2-vae-fp16.safetensors"
+    kind: vae
+    target: vae
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  requirements:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_cost_rate_usd_per_hr: 3.50
+    gpu_preference:
+      - "A100 80GB"
+      - "H100 80GB"
+    disk_gb: 200
+  lifecycle:
+    idle_timeout: 2h
+    job_timeout: 30m
+    time_buffer: 30m
+    max_lifetime: 5h
+    budget: 25.0
