@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -26,6 +27,7 @@ from kinoforge.core.config import Config
 from kinoforge.core.errors import CapabilityMismatch
 from kinoforge.core.interfaces import (
     Artifact,
+    ConditioningAsset,
     GenerationJob,
     GenerationRequest,
     HardwareRequirements,
@@ -33,9 +35,11 @@ from kinoforge.core.interfaces import (
     InstanceSpec,
     ModelProfile,
     Offer,
+    Segment,
 )
 from kinoforge.core.orchestrator import DeployResult, deploy, generate
 from kinoforge.engines.fake import FakeBackend, FakeEngine
+from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.providers.local import LocalProvider
 from kinoforge.stores.local import LocalArtifactStore
 
@@ -624,3 +628,179 @@ class TestSplitterStub:
             assert len(segs) == 1, (
                 f"Expected 1 segment per job (splitter DEFERRED), got {len(segs)}"
             )
+
+
+# ---------------------------------------------------------------------------
+# O-1..O-4: Splitter wired into orchestrator.generate()
+# ---------------------------------------------------------------------------
+
+
+def _i2v_probe() -> ModelProfile:
+    """ModelProfile that supports both t2v and i2v modes."""
+    return ModelProfile(
+        name="fake",
+        max_frames=16,
+        fps=8,
+        supported_modes={"t2v", "i2v"},
+        max_resolution=(512, 512),
+        supports_native_extension=False,
+        supports_joint_audio=False,
+    )
+
+
+class I2vFakeEngine(FakeEngine):
+    """FakeEngine variant whose backend reports i2v support and accepts images."""
+
+    accepted_kinds: set[str] = {"image"}
+
+    def backend(self, instance: Instance | None, cfg: dict[str, object]) -> FakeBackend:
+        return FakeBackend(probe=_i2v_probe())
+
+
+def _make_i2v_engine() -> I2vFakeEngine:
+    return I2vFakeEngine(
+        probe_profile=_i2v_probe(),
+        declared_flags_map={},
+        required_spec_keys=set(),
+    )
+
+
+def _make_init_image_asset(tmp_path: Path) -> ConditioningAsset:
+    """Write a tiny PNG file and wrap it as an init_image ConditioningAsset."""
+    img = tmp_path / "init.png"
+    img.write_bytes(b"\x89PNG\r\n")
+    return ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(uri=str(img), filename="init.png", meta={}),
+    )
+
+
+class TestSplitterWiring:
+    def test_orchestrator_multi_paragraph_splits_into_n_segments(
+        self, tmp_path: Path
+    ) -> None:
+        # Bug: splitter not wired into generate() — multi-paragraph prompts
+        # silently collapse to one segment and the marquee feature does nothing.
+        cfg = _compute_cfg()
+        store = LocalArtifactStore(tmp_path)
+        request = GenerationRequest(
+            prompt="paragraph one\n\nparagraph two\n\nparagraph three",
+            mode="t2v",
+        )
+        engine = _make_engine()
+        provider = LocalProvider()
+
+        captured: dict[str, list[Segment] | None] = {"segments_override": None}
+        real_run = GenerateClipStage.run
+
+        def _spy(
+            self: GenerateClipStage,
+            req: GenerationRequest,
+            *,
+            segments_override: list[Segment] | None = None,
+        ) -> Artifact:
+            captured["segments_override"] = segments_override
+            return real_run(self, req, segments_override=segments_override)
+
+        with patch.object(GenerateClipStage, "run", _spy):
+            generate(cfg, request, store=store, provider=provider, engine=engine)
+
+        segments = captured["segments_override"]
+        assert segments is not None
+        assert [s.prompt for s in segments] == [
+            "paragraph one",
+            "paragraph two",
+            "paragraph three",
+        ]
+
+    def test_orchestrator_attaches_assets_to_segment_zero_only(
+        self, tmp_path: Path
+    ) -> None:
+        # Bug: assets accidentally copied to every segment — every clip in a
+        # multi-paragraph run gets the same init_image stamped on it, which
+        # is wrong for narrative continuity.
+        engine = _make_i2v_engine()
+        store = LocalArtifactStore(tmp_path)
+        asset = _make_init_image_asset(tmp_path)
+        request = GenerationRequest(
+            prompt="scene one\n\nscene two",
+            mode="i2v",
+            assets=[asset],
+        )
+        cfg = _compute_cfg()
+        provider = LocalProvider()
+
+        captured: dict[str, list[Segment] | None] = {"segments_override": None}
+        real_run = GenerateClipStage.run
+
+        def _spy(
+            self: GenerateClipStage,
+            req: GenerationRequest,
+            *,
+            segments_override: list[Segment] | None = None,
+        ) -> Artifact:
+            captured["segments_override"] = segments_override
+            return real_run(self, req, segments_override=segments_override)
+
+        with patch.object(GenerateClipStage, "run", _spy):
+            generate(cfg, request, store=store, provider=provider, engine=engine)
+
+        segments = captured["segments_override"]
+        assert segments is not None
+        assert len(segments) == 2
+        assert len(segments[0].assets) == 1
+        assert segments[0].assets[0].role == "init_image"
+        assert segments[1].assets == []
+
+    def test_orchestrator_single_paragraph_regression(self, tmp_path: Path) -> None:
+        # Bug: the splitter wiring regresses today's single-segment + assets
+        # happy path. With one paragraph + one asset, exactly one Segment
+        # carrying the asset must reach the stage.
+        engine = _make_i2v_engine()
+        store = LocalArtifactStore(tmp_path)
+        asset = _make_init_image_asset(tmp_path)
+        request = GenerationRequest(
+            prompt="just one paragraph",
+            mode="i2v",
+            assets=[asset],
+        )
+        cfg = _compute_cfg()
+        provider = LocalProvider()
+
+        captured: dict[str, list[Segment] | None] = {"segments_override": None}
+        real_run = GenerateClipStage.run
+
+        def _spy(
+            self: GenerateClipStage,
+            req: GenerationRequest,
+            *,
+            segments_override: list[Segment] | None = None,
+        ) -> Artifact:
+            captured["segments_override"] = segments_override
+            return real_run(self, req, segments_override=segments_override)
+
+        with patch.object(GenerateClipStage, "run", _spy):
+            generate(cfg, request, store=store, provider=provider, engine=engine)
+
+        segments = captured["segments_override"]
+        assert segments is not None
+        assert len(segments) == 1
+        assert segments[0].prompt == "just one paragraph"
+        assert len(segments[0].assets) == 1
+
+    def test_orchestrator_default_splitter_resolved_at_runtime(
+        self, tmp_path: Path
+    ) -> None:
+        # Bug: when the config omits the splitter: block, generate() blows up
+        # looking for a missing field instead of resolving the heuristic default.
+        cfg = _hosted_cfg()
+        store = LocalArtifactStore(tmp_path)
+        request = GenerationRequest(prompt="a calm sea", mode="t2v")
+        engine = _make_engine()
+        provider = LocalProvider()
+
+        artifact = generate(
+            cfg, request, store=store, provider=provider, engine=engine, run_id="r4"
+        )
+        assert artifact.uri  # store URI populated
