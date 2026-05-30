@@ -597,3 +597,38 @@ def test_urllib_get_bytes_default_is_callable() -> None:
     from kinoforge.engines.comfyui import _urllib_get_bytes
 
     assert callable(_urllib_get_bytes)
+
+
+def test_result_url_encodes_filename_with_special_chars() -> None:
+    """ComfyUIBackend.result() percent-encodes the filename in the /view URL.
+
+    Bug this catches: filenames with spaces, '&', '=', '+', or non-ASCII
+    bytes are interpolated raw, producing malformed URLs that urlopen
+    rejects or that silently fetch the wrong resource.
+    """
+    from kinoforge.engines.comfyui import ComfyUIBackend
+
+    payload = {
+        "PID": {
+            "outputs": {
+                "9": {"files": [{"filename": "clip frame&01.mp4"}]},
+            }
+        }
+    }
+    backend = ComfyUIBackend(
+        http_post=lambda url, body: {"prompt_id": "PID"},
+        http_get=lambda url: payload,
+        base_url="http://localhost:8188",
+        probe=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+    )
+
+    artifact = backend.result("PID")
+
+    # Filename preserved as-is on the Artifact.
+    assert artifact.filename == "clip frame&01.mp4"
+    # URL encodes the unsafe chars (space -> %20, & -> %26).
+    assert (
+        artifact.url
+        == "http://localhost:8188/view?filename=clip%20frame%2601.mp4&type=output"
+    )
