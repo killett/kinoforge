@@ -84,4 +84,4 @@ Remaining housekeeping (handed off to `finishing-a-development-branch`):
 - [x] Task 1: Splitter ABC + register/get registry helpers — commit 231fcc4
 - [x] Task 2: HeuristicSplitter + core self-registration trigger — commit f522e2b
 - [x] Task 3: SplitterConfig optional block (defaults to heuristic) — commit fd0978a
-- [x] Task 4: Orchestrator step-6 wiring + stage validate-once + README/PROGRESS — commit 0e37ebc
+- [x] Task 4: Orchestrator step-6 wiring + stage validate-once + README/PROGRESS — commit d1828b7
