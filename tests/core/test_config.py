@@ -133,3 +133,29 @@ def test_multiple_base_models_rejected():
     )
     with pytest.raises(ConfigError, match="base"):
         load_config(bad)
+
+
+def test_splitter_defaults_to_heuristic_when_block_absent():
+    # Bug: pydantic default missing or wrong key; every config that omits
+    # the optional splitter: block would blow up at generate() with an
+    # AttributeError instead of resolving the heuristic default.
+    cfg = load_config(WAN)
+    assert cfg.splitter.kind == "heuristic"
+
+
+def test_splitter_explicit_heuristic_kind_parses():
+    # Bug: schema rejects the explicit-default form, forcing users to omit
+    # the block to avoid validation errors.
+    yaml_with_block = WAN + "\nsplitter:\n  kind: heuristic\n"
+    cfg = load_config(yaml_with_block)
+    assert cfg.splitter.kind == "heuristic"
+
+
+def test_splitter_unknown_kind_parses_at_load_time():
+    # Bug: Config validation couples the schema to global registry state,
+    # so import order or test isolation flakes the loader. The unknown-kind
+    # error must surface at generate() time via registry.get_splitter, not
+    # at config load — matches today's engine/provider behaviour.
+    yaml_with_block = WAN + "\nsplitter:\n  kind: bespoke_xyz\n"
+    cfg = load_config(yaml_with_block)
+    assert cfg.splitter.kind == "bespoke_xyz"
