@@ -69,4 +69,11 @@ ALL 28 tasks complete. All 9 phases complete.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-Run final acceptance pass: `pixi run pre-commit run --all-files`, `pixi run test-cov`, walk SPEC.md DoD.
+**BUILD COMPLETE.** Final acceptance pass green: `pixi run pre-commit run --all-files` clean
+(ruff + ruff-format + mypy all Passed); `pixi run test-cov` reports **357 passed, 90% coverage**
+across 1917 LOC of `src/`. All 28 tasks across 9 phases are committed on branch `build/kinoforge`.
+
+Remaining housekeeping (handed off to `finishing-a-development-branch`):
+1. Decide merge path (PR vs direct merge to `main`).
+2. Walk `SPEC.md` "Definition of done" against the implemented behaviours one final time.
+3. Squash/tidy the build-branch history if desired before merge.
