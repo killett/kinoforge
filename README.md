@@ -165,6 +165,19 @@ register_engine("myengine", MyEngine)
 
 Set `engine.kind: myengine` in your YAML.
 
+### Diffusers inference-server response contract
+
+`DiffusersBackend.result()` polls `GET /status/{job_id}` and reads two
+fields from a successful (`status: done`) response:
+
+- `filename` — display name for the produced clip.
+- `url` — HTTP-fetchable location for the produced clip (e.g.
+  `http://127.0.0.1:8000/file/clip.mp4`). Required for non-native
+  multi-segment runs (`extract_last_frame` GETs this URL to decode the
+  tail frame). Servers that omit it leave `Artifact.url == ""`; calling
+  `extract_last_frame` then raises `FrameExtractionError` with a clear
+  message instead of attempting a corrupt fetch.
+
 ### New Splitter
 
 ```python
