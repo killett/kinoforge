@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from kinoforge.core import registry
-from kinoforge.core.errors import ValidationError
+from kinoforge.core.errors import FrameExtractionError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -69,6 +69,8 @@ def _make_engine(**kwargs: Any) -> DiffusersEngine:
         "run_cmd": lambda argv, cwd=None: None,
         "http_post": lambda url, body: {},
         "http_get": lambda url: {},
+        "http_get_bytes": lambda url: b"",
+        "ffmpeg_run": lambda argv, stdin: b"",
         "sleep": lambda s: None,
         "probe_profile": _DEFAULT_PROBE,
         "declared_flags_map": {},
@@ -464,3 +466,102 @@ class TestClassAttributes:
         engine = _make_engine()
         assert engine.requires_compute is True
         assert engine.requires_local_weights is True
+
+
+# ---------------------------------------------------------------------------
+# extract_last_frame + result() URL passthrough (Layer extract_last_frame)
+# ---------------------------------------------------------------------------
+
+
+def test_result_passes_url_from_server_response() -> None:
+    """DiffusersBackend.result() reads 'url' from the polled response body.
+
+    Bug this catches: backend ignores the new field, leaving extract_last_frame
+    with nothing to fetch.
+    """
+    from kinoforge.engines.diffusers import DiffusersBackend
+
+    payload = {
+        "status": "done",
+        "filename": "clip.mp4",
+        "url": "http://127.0.0.1:8000/file/clip.mp4",
+    }
+    backend = DiffusersBackend(
+        http_post=lambda url, body: {"job_id": "JOB"},
+        http_get=lambda url: payload,
+        base_url="http://127.0.0.1:8000",
+        probe_profile=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+    )
+
+    artifact = backend.result("JOB")
+
+    assert artifact.filename == "clip.mp4"
+    assert artifact.url == "http://127.0.0.1:8000/file/clip.mp4"
+
+
+def test_result_defaults_url_to_empty_string_when_server_omits_field() -> None:
+    """A server that doesn't return 'url' leaves Artifact.url == ''.
+
+    extract_last_frame will then raise FrameExtractionError with a clear
+    message — preferable to a corrupt download.
+
+    Bug this catches: backend crashes with KeyError, leaking server-shape
+    details into engine-layer code.
+    """
+    from kinoforge.engines.diffusers import DiffusersBackend
+
+    backend = DiffusersBackend(
+        http_post=lambda url, body: {"job_id": "JOB"},
+        http_get=lambda url: {"status": "done", "filename": "clip.mp4"},
+        base_url="http://127.0.0.1:8000",
+        probe_profile=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+    )
+
+    artifact = backend.result("JOB")
+
+    assert artifact.url == ""
+
+
+def test_extract_last_frame_fetches_url_and_calls_ffmpeg() -> None:
+    """Same shape as ComfyUI extract test, with DiffusersEngine.
+
+    Bug this catches: engine drops the fetched bytes or skips ffmpeg.
+    """
+    fetch_calls: list[str] = []
+    ffmpeg_calls: list[tuple[list[str], bytes]] = []
+
+    def fake_fetch(url: str) -> bytes:
+        fetch_calls.append(url)
+        return b"VIDEO"
+
+    def fake_ffmpeg(argv: list[str], stdin: bytes) -> bytes:
+        ffmpeg_calls.append((argv, stdin))
+        return b"PNG"
+
+    engine = _make_engine(http_get_bytes=fake_fetch, ffmpeg_run=fake_ffmpeg)
+
+    artifact = Artifact(
+        filename="clip.mp4",
+        url="http://127.0.0.1:8000/file/clip.mp4",
+        meta={"job_id": "X"},
+    )
+
+    out = engine.extract_last_frame(artifact)
+
+    assert out == b"PNG"
+    assert fetch_calls == ["http://127.0.0.1:8000/file/clip.mp4"]
+    assert ffmpeg_calls[0][1] == b"VIDEO"
+
+
+def test_extract_last_frame_raises_on_empty_url() -> None:
+    """artifact.url == '' raises FrameExtractionError mentioning DiffusersEngine.
+
+    Bug this catches: shared body copy-paste leaves the wrong class name.
+    """
+    engine = _make_engine()
+    artifact = Artifact(filename="clip.mp4", url="", meta={})
+
+    with pytest.raises(FrameExtractionError, match="DiffusersEngine"):
+        engine.extract_last_frame(artifact)
