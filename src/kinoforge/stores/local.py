@@ -58,6 +58,21 @@ class LocalArtifactStore(ArtifactStore):
     # ArtifactStore implementation
     # ------------------------------------------------------------------
 
+    def uri_for(self, run_id: str, name: str) -> str:
+        """Return the absolute filesystem path for ``(run_id, name)`` as a string.
+
+        Pure: no FS I/O. Matches what :meth:`put_bytes` / :meth:`put_json` would
+        return for the same args.
+
+        Args:
+            run_id: Run identifier.
+            name: Item name; may contain forward slashes.
+
+        Returns:
+            The resolved absolute path as a str.
+        """
+        return str(self._path(run_id, name))
+
     def put_bytes(self, run_id: str, name: str, data: bytes) -> Artifact:
         """Write *data* under ``<root>/<run_id>/<name>`` and return a handle.
 
