@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from kinoforge.core import errors
 from kinoforge.core.interfaces import (
     MODE_ROLE_REQUIREMENTS,
@@ -86,3 +88,46 @@ def test_capability_key_no_collision_on_control_char_in_field():
     c = CapabilityKey(base_model="x", loras=("y\x1ez",), engine="e", precision="p")
     d = CapabilityKey(base_model="x", loras=("y", "z"), engine="e", precision="p")
     assert c.derive() != d.derive()
+
+
+# ---------------------------------------------------------------------------
+# GenerationEngine.extract_last_frame default behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_extract_last_frame_default_raises_with_engine_name() -> None:
+    """A GenerationEngine subclass that doesn't override extract_last_frame
+    must raise NotImplementedError with the class name in the message.
+
+    Bug this catches: default body forgets to include the engine class name,
+    making runtime errors uninformative when a multi-segment run hits an
+    engine that didn't opt in to continuity.
+    """
+    from kinoforge.core.interfaces import (
+        Artifact,
+        GenerationEngine,
+    )
+
+    class _NonOverriding(GenerationEngine):
+        name: str = "non-overriding"
+        requires_compute: bool = False
+        requires_local_weights: bool = False
+
+        def provision(self, instance, cfg):  # noqa: ANN001
+            pass
+
+        def backend(self, instance, cfg):  # noqa: ANN001
+            raise NotImplementedError
+
+        def profile_for(self, key):  # noqa: ANN001
+            raise NotImplementedError
+
+        def declared_flags(self, key):  # noqa: ANN001
+            return {}
+
+        def validate_spec(self, job):  # noqa: ANN001
+            pass
+
+    eng = _NonOverriding()
+    with pytest.raises(NotImplementedError, match="_NonOverriding"):
+        eng.extract_last_frame(Artifact(filename="x.mp4"))
