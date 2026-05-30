@@ -524,8 +524,7 @@ def main(argv: list[str] | None = None) -> int:
 
     state_dir = Path(args.state_dir)
 
-    # Load secrets from .env (default: cwd/.env; explicit via --env-file).
-    # Shell-set values always win (override=False).
+    # Load .env secrets before dispatch; shell-set values always win.
     env_file = Path(args.env_file) if args.env_file is not None else None
     load_env_file(env_file)
 
