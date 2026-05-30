@@ -29,6 +29,7 @@ from pathlib import Path
 
 import kinoforge._adapters  # noqa: F401 — triggers all self-registrations
 from kinoforge.core.config import Config
+from kinoforge.core.dotenv_loader import load_env_file
 from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import GenerationRequest
 from kinoforge.core.lifecycle import Ledger, destroy_confirmed, reap
@@ -133,6 +134,15 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         default=state_dir_default,
         metavar="DIR",
         help="directory for state/ledger (default: .kinoforge)",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "path to a .env file containing kinoforge credentials "
+            "(default: ./.env if it exists; absent default is silent)"
+        ),
     )
 
     sub = parser.add_subparsers(dest="cmd", metavar="SUBCOMMAND")
@@ -513,6 +523,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     state_dir = Path(args.state_dir)
+
+    # Load secrets from .env (default: cwd/.env; explicit via --env-file).
+    # Shell-set values always win (override=False).
+    env_file = Path(args.env_file) if args.env_file is not None else None
+    load_env_file(env_file)
 
     # Print instance overview on every invocation (before subcommand work).
     _print_instance_overview(state_dir)
