@@ -49,6 +49,54 @@ Browse ready-to-use examples in [`examples/configs/`](examples/configs/):
 | [`hosted.yaml`](examples/configs/hosted.yaml) | Hosted API | fal.ai | Zero-infra hosted |
 | [`local-fake.yaml`](examples/configs/local-fake.yaml) | Fake | Local | Offline / CI smoke test |
 
+## Credentials
+
+Kinoforge reads its API credentials from environment variables. To avoid
+exporting them in `~/.bashrc`, copy the checked-in template:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+# Edit .env and fill in the keys you need.
+```
+
+The CLI auto-loads `./.env` from whatever directory you invoke `kinoforge`
+in (typically the project root). Absent file is a silent no-op — you'll
+get an `AuthError` on first secret use instead. To load a different file
+explicitly:
+
+```bash
+kinoforge --env-file /path/to/other.env generate --config ...
+```
+
+### Precedence
+
+Shell-set values **always win** over `.env` values. CI/prod exports always
+take precedence over a stale dev `.env`. To override this in your own
+Python scripts, call
+`kinoforge.core.dotenv_loader.load_env_file(path, override=True)`.
+
+### Known keys
+
+| Variable | Used by | Required when |
+|---|---|---|
+| `FAL_KEY` | `HostedAPIEngine` (fal.ai) | Hosted engine path against fal.ai |
+| `CIVITAI_TOKEN` | `CivitAISource` | Downloading gated/private CivitAI models |
+| `HF_TOKEN` | `HuggingFaceSource` | Downloading gated/private HF repos |
+| `RUNPOD_API_KEY` | `RunPodProvider` | Provisioning RunPod compute |
+
+AWS / GCP credentials are NOT managed by kinoforge — the `boto3` and
+`google-cloud-storage` SDKs walk their own default credential chains
+(env → `~/.aws/credentials` → IMDS → IAM role / ADC → gcloud config →
+GCE metadata) unchanged. You may put `AWS_ACCESS_KEY_ID` +
+`AWS_SECRET_ACCESS_KEY` (boto3 needs both), `GOOGLE_APPLICATION_CREDENTIALS`,
+etc. into your `.env` if you prefer a single file; the SDK chains pick
+them up via `os.environ`.
+
+### Never commit `.env`
+
+`.env` is in `.gitignore`. Only commit `.env.example` (no values).
+
 ## Extending: add a provider/source/engine
 
 kinoforge's registry lets you add a new adapter in a single file without touching core. Each pattern follows the same three steps: subclass the ABC, implement the required methods, and call the register function once at module import.
