@@ -439,7 +439,9 @@ def test_cli_gc_uses_store_uri_for_not_path_peek() -> None:
     """
     import re
 
-    cli_src = Path("/workspace/src/kinoforge/cli.py").read_text()
+    from kinoforge import cli as _cli
+
+    cli_src = Path(_cli.__file__).read_text()
 
     # The private-attr peek must be gone.
     assert "store._path" not in cli_src, (
