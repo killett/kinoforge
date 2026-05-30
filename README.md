@@ -117,9 +117,26 @@ register_engine("myengine", MyEngine)
 
 Set `engine.kind: myengine` in your YAML.
 
-### Splitter axis
+### New Splitter
 
-- **Splitter axis** — implement `Splitter` (`core/interfaces.py`) and call `register_splitter("name", lambda: MySplitter())` to plug an LLM-semantic or scene-detect strategy alongside the default `HeuristicSplitter` in `core/splitter.py`.
+```python
+# src/kinoforge/splitters/mysplitter/__init__.py
+from kinoforge.core.interfaces import ModelProfile, Segment, Splitter
+from kinoforge.core.registry import register_splitter
+
+class MySplitter(Splitter):
+    name = "mysplitter"
+
+    def split(
+        self, prompt: str, profile: ModelProfile, params: dict
+    ) -> list[Segment]:
+        # Return ordered segments derived from prompt + profile + params.
+        ...
+
+register_splitter("mysplitter", lambda: MySplitter())
+```
+
+Set `splitter.kind: mysplitter` in your YAML. The default `"heuristic"` splitter (`core/splitter.py`) splits on blank lines; plug an LLM-semantic or scene-detect strategy here.
 
 ## Roadmap (deferred layers and their seams)
 
