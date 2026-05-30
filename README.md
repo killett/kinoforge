@@ -178,6 +178,23 @@ fields from a successful (`status: done`) response:
   `extract_last_frame` then raises `FrameExtractionError` with a clear
   message instead of attempting a corrupt fetch.
 
+### Hosted response URL — `url_path`
+
+Hosted providers vary on response body shape. Configure
+`engine.hosted.url_path` as a dot-separated path into the
+`/status/{job_id}` response body where the rendered video's URL lives.
+
+Examples:
+
+| Provider response | `url_path` |
+|---|---|
+| `{"video": {"url": "..."}}` | `video.url` |
+| `{"output_url": "..."}` | `output_url` |
+
+The walker returns `""` for missing paths or non-string terminals; the
+engine then raises `FrameExtractionError` rather than fetching a bogus
+URL. Array indexing (e.g. `results[0].url`) is not supported.
+
 ### New Splitter
 
 ```python

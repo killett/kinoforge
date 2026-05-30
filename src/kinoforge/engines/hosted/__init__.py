@@ -31,8 +31,13 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from kinoforge.core import registry
-from kinoforge.core.errors import AuthError, KinoforgeError, ValidationError
+from kinoforge.core import frames, registry
+from kinoforge.core.errors import (
+    AuthError,
+    FrameExtractionError,
+    KinoforgeError,
+    ValidationError,
+)
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -86,6 +91,41 @@ def _urllib_get_json(url: str) -> dict[str, Any]:
     """
     with urllib.request.urlopen(url) as resp:  # noqa: S310
         return dict(json.loads(resp.read().decode("utf-8")))
+
+
+def _urllib_get_bytes(url: str) -> bytes:
+    """GET *url* and return the raw response body as bytes."""
+    with urllib.request.urlopen(url) as resp:  # noqa: S310
+        return bytes(resp.read())
+
+
+def _walk_dot_path(data: dict[str, Any], path: str) -> str:
+    """Walk dot-separated keys through *data*; return empty string on any miss.
+
+    Args:
+        data: The dict to walk.
+        path: Dot-separated key path, e.g. ``"video.url"``. Empty path
+            returns ``""``.
+
+    Returns:
+        The string at the walked path, or ``""`` if any step is missing,
+        any intermediate node is not a dict, or the terminal value is not
+        a string.
+
+    Examples:
+        >>> _walk_dot_path({"video": {"url": "X"}}, "video.url")
+        'X'
+        >>> _walk_dot_path({"video": {"url": "X"}}, "missing.url")
+        ''
+    """
+    if not path:
+        return ""
+    node: Any = data
+    for key in path.split("."):
+        if not isinstance(node, dict) or key not in node:
+            return ""
+        node = node[key]
+    return node if isinstance(node, str) else ""
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +195,7 @@ class HostedAPIBackend(GenerationBackend):
         endpoint: str,
         probe_profile: ModelProfile,
         sleep: Callable[[float], None] = time.sleep,
+        url_path: str = "",
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -164,12 +205,16 @@ class HostedAPIBackend(GenerationBackend):
             endpoint: Remote hosted inference endpoint URL.
             probe_profile: ``ModelProfile`` returned by ``inspect_capabilities``.
             sleep: Callable invoked between poll iterations in ``result``.
+            url_path: Dot-separated path into the polled response body that
+                locates the rendered video URL (e.g. ``"video.url"``).
+                Empty (default) leaves ``Artifact.url == ""``.
         """
         self._http_post = http_post
         self._http_get = http_get
         self._endpoint = endpoint
         self._probe = probe_profile
         self._sleep = sleep
+        self._url_path = url_path
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -222,7 +267,10 @@ class HostedAPIBackend(GenerationBackend):
             data = self._http_get(status_url)
             if data.get("status") == "done":
                 filename = str(data.get("filename", ""))
-                return Artifact(filename=filename, meta={"job_id": job_id})
+                artifact_url = _walk_dot_path(data, self._url_path)
+                return Artifact(
+                    filename=filename, url=artifact_url, meta={"job_id": job_id}
+                )
             self._sleep(1.0)
         raise TimeoutError(
             f"Hosted API did not complete job {job_id!r} within {_MAX_POLL} polls"
@@ -268,6 +316,8 @@ class HostedAPIEngine(GenerationEngine):
         creds: CredentialProvider | None = None,
         http_post: Callable[[str, dict[str, Any]], dict[str, Any]] = _urllib_post_json,
         http_get: Callable[[str], dict[str, Any]] = _urllib_get_json,
+        http_get_bytes: Callable[[str], bytes] = _urllib_get_bytes,
+        ffmpeg_run: Callable[[list[str], bytes], bytes] = frames._default_run,
         sleep: Callable[[float], None] = time.sleep,
         probe_profile: ModelProfile = _DEFAULT_PROBE,
         declared_flags_map: dict[str, dict[str, bool]] | None = None,
@@ -281,6 +331,10 @@ class HostedAPIEngine(GenerationEngine):
                 :class:`~kinoforge.core.errors.AuthError`).
             http_post: Callable ``(url, json_body) -> dict`` for HTTP POST.
             http_get: Callable ``(url) -> dict`` for HTTP GET.
+            http_get_bytes: Callable ``(url) -> bytes`` for fetching binary
+                content (video bytes) by URL.
+            ffmpeg_run: Injectable subprocess seam ``(argv, stdin) -> stdout``
+                used by :meth:`extract_last_frame`.
             sleep: Sleep callable used between polling iterations in
                 :meth:`~HostedAPIBackend.result`.
             probe_profile: ``ModelProfile`` returned by backend capability
@@ -292,6 +346,8 @@ class HostedAPIEngine(GenerationEngine):
         self._creds: CredentialProvider = creds or _NullCredentialProvider()
         self._http_post = http_post
         self._http_get = http_get
+        self._http_get_bytes = http_get_bytes
+        self._ffmpeg_run = ffmpeg_run
         self._sleep = sleep
         self._probe = probe_profile
         self._declared_flags_map: dict[str, dict[str, bool]] = declared_flags_map or {}
@@ -391,12 +447,14 @@ class HostedAPIEngine(GenerationEngine):
             engine_block.get("hosted", {}) if isinstance(engine_block, dict) else {}
         )
         endpoint: str = str(hosted_cfg.get("endpoint", ""))
+        url_path: str = str(hosted_cfg.get("url_path", ""))
         return HostedAPIBackend(
             http_post=self._http_post,
             http_get=self._http_get,
             endpoint=endpoint,
             probe_profile=self._probe,
             sleep=self._sleep,
+            url_path=url_path,
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
@@ -445,6 +503,33 @@ class HostedAPIEngine(GenerationEngine):
             raise ValidationError(
                 f"Hosted job.spec is missing required keys: {sorted(missing)}"
             )
+
+    def extract_last_frame(self, artifact: Artifact) -> bytes:
+        """Fetch the rendered video bytes via HTTP and decode the last frame.
+
+        The artifact's URL is populated by :meth:`HostedAPIBackend.result`
+        from ``cfg["engine"]["hosted"]["url_path"]`` walked over the API
+        response body. Providers vary on response shape; configure the
+        path per provider.
+
+        Args:
+            artifact: A clip Artifact with ``url`` populated.
+
+        Returns:
+            PNG-encoded last frame as bytes.
+
+        Raises:
+            FrameExtractionError: ``artifact.url`` is empty (url_path
+                unset, missing, or pointed at non-string), or the fetch or
+                ffmpeg decode failed.
+        """
+        if not artifact.url:
+            raise FrameExtractionError(
+                f"{type(self).__name__}: artifact.url is empty; "
+                "cannot fetch video bytes"
+            )
+        video_bytes = self._http_get_bytes(artifact.url)
+        return frames.ffmpeg_last_frame(video_bytes, run=self._ffmpeg_run)
 
 
 # ---------------------------------------------------------------------------
