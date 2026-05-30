@@ -226,6 +226,7 @@ def test_stage_non_native_i2v_n3_chains_segs_1_and_2(tmp_path: Path) -> None:
         assert asset.role == "init_image"
         # URI contains the tail PNG name under the stage's run_id namespace.
         assert asset.ref.uri.endswith("-tail.png")
+        assert asset.ref.filename == f"seg-{i - 1}-tail.png"
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +453,15 @@ def test_stage_chain_persists_tail_via_store(tmp_path: Path) -> None:
     # 3 segments → 2 chain gaps → 2 tail PNGs.
     assert tails == ["seg-0-tail.png", "seg-1-tail.png"]
 
-    # Bytes round-trip: store returned the FakeEngine's deterministic bytes.
+    # Bytes round-trip: store returned the FakeEngine's deterministic bytes
+    # derived from each prior segment's BACKEND-OUTPUT filename (which is
+    # sha256-of-job for FakeBackend — segment-specific).
     seg0_tail_bytes = store.get_bytes(store.uri_for("run-persist", "seg-0-tail.png"))
+    seg1_tail_bytes = store.get_bytes(store.uri_for("run-persist", "seg-1-tail.png"))
+
     assert seg0_tail_bytes.startswith(b"FAKE_TAIL:")
+    assert seg1_tail_bytes.startswith(b"FAKE_TAIL:")
+    # Off-by-one in results[-1] indexing (e.g. always using results[0]) would
+    # leave both tail PNGs identical. They MUST differ because each is derived
+    # from a different prior segment's artifact filename.
+    assert seg0_tail_bytes != seg1_tail_bytes
