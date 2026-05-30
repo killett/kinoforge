@@ -138,6 +138,30 @@ register_splitter("mysplitter", lambda: MySplitter())
 
 Set `splitter.kind: mysplitter` in your YAML. The default `"heuristic"` splitter (`core/splitter.py`) splits on blank lines; plug an LLM-semantic or scene-detect strategy here.
 
+### New ArtifactStore
+
+Three stores ship in-tree: `LocalArtifactStore` (filesystem, default), `S3ArtifactStore` (`s3://` URIs, registered as `"s3"`), and `GCSArtifactStore` (`gs://` URIs, registered as `"gcs"`). Add a fourth backend by subclassing the ABC and self-registering:
+
+```python
+# src/kinoforge/stores/mystore/__init__.py
+from kinoforge.core.interfaces import Artifact
+from kinoforge.core.registry import register_store
+from kinoforge.stores.base import ArtifactStore
+
+class MyArtifactStore(ArtifactStore):
+    def put_bytes(self, run_id: str, name: str, data: bytes) -> Artifact: ...
+    def get_bytes(self, uri: str) -> bytes: ...
+    def put_json(self, run_id: str, name: str, obj: dict) -> Artifact: ...
+    def get_json(self, uri: str) -> dict: ...
+    def list(self, run_id: str) -> list[str]: ...
+    def delete(self, uri: str) -> None: ...
+    def uri_for(self, run_id: str, name: str) -> str: ...
+
+register_store("mystore", lambda: MyArtifactStore(...))
+```
+
+Set `store.kind: mystore` in your YAML.
+
 ## Roadmap (deferred layers and their seams)
 
 Each item below names the deferred layer and the exact seam it plugs into when built:
@@ -146,7 +170,6 @@ Each item below names the deferred layer and the exact seam it plugs into when b
 - **Audio sync layer** — `strategy.decide` sets `spec["_audio_mode"] = "separate"` as a marker; a downstream audio-sync stage reads this key and schedules audio generation after the video clip is stored.
 - **Concurrent / distributed backend scheduler** — `BackendPool` ABC (alongside `SequentialPool`); drop in a `ThreadedPool` or `RayPool` implementation and inject it into `GenerateClipStage`.
 - **Keyframe / image-generation upstream Stage** — `Stage` Protocol + `ConditioningAsset` with `kind="image"`; add an `ImageGenStage` that satisfies `Stage` and feeds its output into the video generation stage's `segments_override`.
-- **S3 / GCS artifact stores** — `ArtifactStore` ABC + `register_store`; implement `S3ArtifactStore` or `GCSArtifactStore` and register under `"s3"` / `"gcs"`.
 - **Cross-process discovery lock** — `ModelProfileProvider` currently uses an in-process threading.Event for single-flight; replace with a file-lock or Redis-backed lock for multi-process / distributed workers.
 
 ## Design references

@@ -209,6 +209,36 @@ class SplitterConfig(BaseModel):
     kind: str = "heuristic"
 
 
+class StoreConfig(BaseModel):
+    """Optional artifact-store selector.
+
+    Absent block defaults to ``kind="local"``, ``root=None`` — the CLI then
+    constructs ``LocalArtifactStore(state_dir)`` from the ``--state-dir``
+    argument, matching the pre-Layer-C behaviour.
+
+    Attributes:
+        kind: One of ``"local"``, ``"s3"``, ``"gcs"``. Defaults to ``"local"``.
+        root: Local-store root directory. Optional; ``None`` → CLI's ``--state-dir``.
+        bucket: Cloud bucket name. Required when ``kind in {"s3", "gcs"}``;
+            rejected when ``kind == "local"``.
+        prefix: Cloud key prefix. Defaults to empty string.
+    """
+
+    kind: Literal["local", "s3", "gcs"] = "local"
+    root: Path | None = None
+    bucket: str | None = None
+    prefix: str = ""
+
+    @model_validator(mode="after")
+    def _check_kind_requirements(self) -> StoreConfig:
+        """Enforce kind <-> bucket cross-field invariants."""
+        if self.kind in ("s3", "gcs") and not self.bucket:
+            raise ValueError(f"store.kind={self.kind!r} requires store.bucket")
+        if self.kind == "local" and self.bucket:
+            raise ValueError("store.kind='local' does not accept store.bucket")
+        return self
+
+
 class Config(BaseModel):
     """Top-level kinoforge configuration.
 
@@ -219,6 +249,7 @@ class Config(BaseModel):
         lifecycle_cfg: Top-level lifecycle config (used for hosted engines).
             Loaded from the YAML ``lifecycle:`` key via an alias.
         splitter: Splitter selection block (defaults to heuristic).
+        store: Artifact store selector block (defaults to kind='local').
     """
 
     engine: EngineConfig
@@ -226,6 +257,7 @@ class Config(BaseModel):
     compute: ComputeConfig | None = None
     lifecycle_cfg: LifecycleConfig | None = Field(default=None, alias="lifecycle")
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
+    store: StoreConfig = Field(default_factory=StoreConfig)
 
     model_config = {"populate_by_name": True}
 

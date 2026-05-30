@@ -177,7 +177,7 @@ def test_gc_removes_run_artifacts(tmp_path: Path) -> None:
     assert len(before) > 0, "expected artifacts before gc"
 
     # run gc
-    code = _call(["gc", "--run", "r1"], state_dir)
+    code = _call(["gc", "--config", str(cfg_path), "--run", "r1"], state_dir)
     assert code == 0
 
     after = store.list("r1")
@@ -372,3 +372,80 @@ def test_help_exits_zero() -> None:
         main(["--help"])
 
     assert exc_info.value.code == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 / Layer C — store selection via config
+# ---------------------------------------------------------------------------
+
+
+def test_cli_generate_uses_local_when_store_block_absent(
+    tmp_path: Path,
+) -> None:
+    """Absent store: block -> CLI uses LocalArtifactStore(state_dir).
+
+    Bug this catches: _build_store regression breaks backwards compat for
+    every config file written before Phase 13.
+    """
+    from kinoforge.cli import _build_store
+    from kinoforge.core.config import Config, StoreConfig
+    from kinoforge.stores.local import LocalArtifactStore
+
+    cfg = Config.model_construct(store=StoreConfig())  # defaults: local, root=None
+    store = _build_store(cfg, tmp_path)
+
+    assert isinstance(store, LocalArtifactStore)
+    assert store.root == tmp_path.resolve()
+
+
+def test_cli_generate_uses_s3_when_store_kind_s3(tmp_path: Path) -> None:
+    """store.kind='s3' -> _build_store returns an S3ArtifactStore.
+
+    Bug this catches: _build_store branch missing or constructs with the
+    wrong bucket/prefix arguments.
+    """
+    import sys
+    import types
+
+    from kinoforge.cli import _build_store
+    from kinoforge.core.config import Config, StoreConfig
+    from kinoforge.stores.s3 import S3ArtifactStore
+    from tests.stores.conftest import FakeS3Client
+
+    cfg = Config.model_construct(
+        store=StoreConfig(kind="s3", bucket="my-bkt", prefix="some/prefix")
+    )
+    # _build_store doesn't inject client= — the lazy gate inside
+    # S3ArtifactStore.__init__ would fire and import boto3. We satisfy
+    # the import by putting a fake module in sys.modules under "boto3".
+    fake_boto3 = types.SimpleNamespace(client=lambda _: FakeS3Client())
+    sys.modules["boto3"] = fake_boto3  # type: ignore[assignment]
+    try:
+        store = _build_store(cfg, tmp_path)
+    finally:
+        sys.modules.pop("boto3", None)
+
+    assert isinstance(store, S3ArtifactStore)
+    assert store.bucket == "my-bkt"
+    assert store.prefix == "some/prefix"
+
+
+def test_cli_gc_uses_store_uri_for_not_path_peek() -> None:
+    """cli._cmd_gc calls store.uri_for(...) — never store._path(...) anymore.
+
+    Bug this catches: Layer A's cleanup pattern was applied to JsonProfileCache
+    but missed cli.py:441; this test pins the fix so a future refactor can't
+    silently reintroduce the private-attr peek.
+    """
+    import re
+
+    cli_src = Path("/workspace/src/kinoforge/cli.py").read_text()
+
+    # The private-attr peek must be gone.
+    assert "store._path" not in cli_src, (
+        "cli.py still calls store._path; "
+        "Layer C should have replaced it with store.uri_for"
+    )
+
+    # And uri_for must be called somewhere in the file.
+    assert re.search(r"\.uri_for\s*\(", cli_src), "cli.py never calls .uri_for(...)"
