@@ -63,6 +63,7 @@ pyyaml = ">=6.0.3,<7"
 types-pyyaml = ">=6.0.12.20260518,<7"
 boto3 = "*"
 google-cloud-storage = "*"
+python-dotenv = ">=1.2.2,<2"
 
 [pypi-dependencies]
 # Group-derived PyPI-only packages are inserted on the line below.
