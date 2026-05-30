@@ -260,6 +260,30 @@ class ModelProfileProvider(ABC):
     def verify(self, profile: ModelProfile, backend: GenerationBackend) -> None: ...  # noqa: D102
 
 
+class Splitter(ABC):
+    """Convert a long-form prompt into ordered ``Segment`` objects.
+
+    A splitter is a pure function: deterministic, side-effect-free, no I/O.
+    The output list must contain at least one ``Segment``; each segment carries
+    only ``prompt``.  ``assets`` and ``params`` default to empty — asset
+    attachment is performed by the orchestrator and per-segment param merging
+    by ``strategy.decide``.
+
+    Attributes:
+        name: The registry key under which the splitter is registered.
+    """
+
+    name: str
+
+    @abstractmethod
+    def split(  # noqa: D102
+        self,
+        prompt: str,
+        profile: ModelProfile,
+        params: dict,  # type: ignore[type-arg]
+    ) -> list[Segment]: ...
+
+
 class GenerationBackend(ABC):
     """A live, ready engine jobs are submitted to."""
 
