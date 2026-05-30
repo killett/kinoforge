@@ -117,11 +117,31 @@ register_engine("myengine", MyEngine)
 
 Set `engine.kind: myengine` in your YAML.
 
+### New Splitter
+
+```python
+# src/kinoforge/splitters/mysplitter/__init__.py
+from kinoforge.core.interfaces import ModelProfile, Segment, Splitter
+from kinoforge.core.registry import register_splitter
+
+class MySplitter(Splitter):
+    name = "mysplitter"
+
+    def split(
+        self, prompt: str, profile: ModelProfile, params: dict
+    ) -> list[Segment]:
+        # Return ordered segments derived from prompt + profile + params.
+        ...
+
+register_splitter("mysplitter", lambda: MySplitter())
+```
+
+Set `splitter.kind: mysplitter` in your YAML. The default `"heuristic"` splitter (`core/splitter.py`) splits on blank lines; plug an LLM-semantic or scene-detect strategy here.
+
 ## Roadmap (deferred layers and their seams)
 
 Each item below names the deferred layer and the exact seam it plugs into when built:
 
-- **Prompt splitter** — `# DEFERRED:` comment in `orchestrator.generate`; replace the 1-segment stub with a real splitter that returns `list[Segment]`.
 - **Continuity / stitching fallback** — `strategy.decide` non-native branch; the fallback path currently issues N single-segment jobs; stitching post-processing slots in between `pool.map` and `store.put_bytes` in `GenerateClipStage`.
 - **Audio sync layer** — `strategy.decide` sets `spec["_audio_mode"] = "separate"` as a marker; a downstream audio-sync stage reads this key and schedules audio generation after the video clip is stored.
 - **Concurrent / distributed backend scheduler** — `BackendPool` ABC (alongside `SequentialPool`); drop in a `ThreadedPool` or `RayPool` implementation and inject it into `GenerateClipStage`.

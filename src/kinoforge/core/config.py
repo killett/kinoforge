@@ -197,6 +197,18 @@ class ComputeConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class SplitterConfig(BaseModel):
+    """Splitter selection block (optional in YAML; defaults to heuristic).
+
+    Attributes:
+        kind: The registry key of the splitter to use. Unknown kinds are
+            permitted at load time and surface as ``UnknownAdapter`` at
+            ``generate()``, matching engine/provider behaviour.
+    """
+
+    kind: str = "heuristic"
+
+
 class Config(BaseModel):
     """Top-level kinoforge configuration.
 
@@ -206,12 +218,14 @@ class Config(BaseModel):
         compute: Optional compute block (omitted for hosted engines).
         lifecycle_cfg: Top-level lifecycle config (used for hosted engines).
             Loaded from the YAML ``lifecycle:`` key via an alias.
+        splitter: Splitter selection block (defaults to heuristic).
     """
 
     engine: EngineConfig
     models: list[ModelEntry]
     compute: ComputeConfig | None = None
     lifecycle_cfg: LifecycleConfig | None = Field(default=None, alias="lifecycle")
+    splitter: SplitterConfig = Field(default_factory=SplitterConfig)
 
     model_config = {"populate_by_name": True}
 
