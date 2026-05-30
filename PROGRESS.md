@@ -64,9 +64,89 @@ ALL 28 tasks complete. All 9 phases complete.
 - 8 open questions resolved in DESIGN.md §1 (submit/result+Pool, models-per-engine, params-vs-spec, profile-cache location, serverless caps, artifact GC, role vocab, under-use warning).
 - Discovery ordering is explicit & guaranteed (resolve→validate→split→provision→verify); fail-hard on drift tears down compute.
 - Cost-safety: invariant universal, mechanism provider-specific. RunPod in-pod self-terminator + least-privilege terminate-only cred; SkyPilot native autostop; LocalProvider injectable clock for tests.
-- Deferred (interface + 1 path only, layers NOT built): splitter, stitching, audio, concurrent pool, keyframe stage, S3/GCS, cross-process discovery lock.
-- Deps stdlib-first: pydantic + PyYAML runtime; skypilot optional/lazy; urllib for all HTTP; stdlib logging.
-- TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
+- `CapabilityKey.derive()` uses `json.dumps`, not separator scheme — JSON escaping guarantees distinct tuples never collide (caught in commit `7e70a57`).
+- Config requires exactly one `kind: base` model entry — zero or many rejected at load time (commit `94afa3e`).
+- Splitter is pluggable ABC+registry, not a single function — future LLM/scene-detect strategies slot in as adapters. `HeuristicSplitter` uses blank-line markers.
+- `validate_request` called exactly once per `generate()` — orchestrator calls it; `GenerateClipStage` `segments_override` branch skips re-validation.
+- Asset attachment is an orchestrator concern, not a splitter concern — splitter returns segments with empty assets; orchestrator attaches to seg-0 via `dataclasses.replace`.
+- Continuity dispatch via `MODE_ROLE_REQUIREMENTS` — injects only when `"init_image"` in role contract (i2v today; t2v/flf2v skip); future modes automatic.
+- `ArtifactStore.uri_for(run_id, name)` is pure, no I/O — returns URI it *would* address; invariant: `uri_for == put_*.uri`. Unblocks S3/GCS.
+- Concrete ABC defaults are a legitimate extension pattern — `GenerationEngine.extract_last_frame` is a concrete default that raises; engines opt in by override.
+- S3/GCS shipped as two independent siblings, no shared cloud-base — ~30 LOC duplication acceptable; avoids locking guesses about future stores (Azure, B2, R2). Factor when third cloud lands.
+- SDK credential discovery uses default chains, not kinoforge plumbing — boto3 walks AWS env → `~/.aws/credentials` → IMDS → IAM role; GCS walks `GOOGLE_APPLICATION_CREDENTIALS` → gcloud ADC → GCE metadata. Routing through `EnvCredentialProvider` would defeat IMDS/IAM-role auto-discovery.
+- `.env` loader is a transparent shim at CLI entry — populates `os.environ` once; every downstream consumer (EnvCredentialProvider, boto3, GCS default chains) reads unchanged. `override=True` is library-only, no CLI flag.
+- Deferred (interface + 1 path only, layers NOT built): stitching, audio, concurrent pool, keyframe stage, cross-process discovery lock. (Splitter, uri_for, continuity, S3/GCS, .env loader now built.)
+- Deps stdlib-first: pydantic + PyYAML + python-dotenv runtime; boto3 + google-cloud-storage lazy-import-gated; skypilot optional/lazy; urllib for all HTTP; stdlib logging.
+- TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock + Fake cloud clients). No real cloud/net/GPU/weights in any test.
+
+## Established patterns for layer development
+
+Patterns proven across MVP + Layers A–D. New layers should follow them by default; deviation needs justification.
+
+- Injected I/O seams on every adapter — HTTP/subprocess/filesystem as constructor params with stdlib defaults; tests pass spies; no real network/subprocess/git/GPU in tests.
+- Self-registration on import — zero-arg factories for engines/providers/stores; instances for sources (dispatch by `handles(ref)`).
+- Source dispatch by behaviour, not key equality — `source_for_ref(ref)` asks each registered source `handles(ref)`, returns first match.
+- Stage protocol + pool-swap — stages talk only to `BackendPool`/`ArtifactStore`/`ModelProfile`; `SequentialPool` is default, future `ConcurrentPool` drops in unchanged.
+- Strategy / validation / continuity / splitter helpers are pure functions — `decide`, `validate_request`, `inject_tail_frame`, `split()` all return new objects, never mutate input.
+- `dataclasses.replace` for every immutable update — no mutation paths; tests verify with `is`-identity on unchanged fields.
+- TDD red-first, every task — write failing test first, confirm FAIL, then implement; `test-design` skill (bug-catch comments, no implementation mirroring, no over-mocking).
+- In-core defaults wire themselves via `core/__init__.py` — `HeuristicSplitter` self-registers here, not in `_adapters.py` (preserves the core-import-ban invariant).
+- `Field(default_factory=NestedModel)` for optional pydantic nested blocks — `Config.splitter`, `Config.store` both use this pattern.
+- Brainstorm → spec → plan → execute → ship — superpowers workflow with brainstorming skill, spec doc committed, plan with full HEREDOC code blocks, subagent per task, two-stage review, whole-branch review, `--no-ff` merge.
+- Spec self-review before commit — strip "implementer must grep" footnotes; provide exact line numbers, variable names, diff snippets. Saves round-trips.
+- ABC change → pre-implementation grep for construction sites — adding a required dataclass field breaks every site; plan must enumerate them.
+- Cloud SDK lazy-import gate — `__init__(client=None)` with `if client is None: import <sdk>` inside; tests inject fake. Dual-gate for GCS (client + exception module).
+- Shared test conftest for sibling adapters — `tests/stores/conftest.py` holds both `FakeS3Client` + `FakeGCSClient` even when only one is used per task.
+- CLI dispatcher with lazy SDK imports per branch — `_build_store(cfg, state_dir)` dispatches by `cfg.store.kind`, imports heavy SDKs only on relevant branches; keeps CLI startup fast.
+- Two-stage review (spec compliance first, then code quality) — spec reviewer catches contract mismatches; quality reviewer focuses on placement, imports, mutations, tests. Different classes of issue.
+- Quality reviewer can escalate NICE → FIX-REQUIRED — if an unraised case is reachable by test or supported caller pattern, it's a gap not a polish nit.
+- `--no-ff` merge pattern with substantive body — merge commit references layer name, AC state, per-task commits, GitHub issue via `Closes #N` trailer. Natural layer boundary.
+- Builder subagent (caveman:cavecrew-builder) has no Bash — use for surgical 1-2 line edits; controller handles verify-and-commit.
+- `import X.Y.Z as alias` for lazy SDK imports — ruff-format wraps `from X.Y import Z` onto multiple lines and splits type-ignore comments off; the alias form keeps comments attached.
+
+## Known limitations & follow-ups
+
+Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future layer.
+
+**Real-cloud verification gaps (offline-tested only):**
+- `RunPodProvider.find_offers` REST shape is a stub — GPU-types JSON shape needs real-key validation.
+- `SkyPilotProvider._get_sky()` lazy path wired but unexercised against real `sky` SDK.
+- `S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.
+
+**Per-engine follow-ups (no GitHub issue yet):**
+- `ComfyUIEngine`, `DiffusersEngine`, `HostedAPIEngine` inherit the `extract_last_frame` ABC default that raises — non-native multi-segment runs on these engines hit `NotImplementedError` at chain time. Each engine needs its own implementation (PIL? ffmpeg? hosted-API endpoint?).
+
+**Architectural follow-ups:**
+- `cli._cmd_status` queries in-process provider state only, not the ledger.
+- `provisioner.provision` typed as `_ProvisionConfig` Protocol — `# type: ignore[arg-type]` at call site for mypy generic variance.
+- `GenerateClipStage` persists only final artifact (intermediates in-memory) — stitching, when shipped, must refactor persistence model or stitching read path.
+- `flf2v + N > 1 + non-native` is a pre-existing gap (no continuity for two-image-bookend non-native).
+- `test_core_invariant.py` allowlist does not yet include a `splitters/` directory — first adapter splitter (LLM, scene-detect) must extend the allowlist.
+
+**Layer C / D residuals:**
+- Ledger remains local-only — `cli._ledger(state_dir)` always constructs a `LocalArtifactStore(state_dir)` even when `store.kind` is `s3`/`gcs`. Multi-node deployments need cloud-backed ledger; intersects issue #7 (cross-process discovery lock).
+- Default zero-arg store factories require env vars set — `register_store("s3", _default_factory)` reads `KINOFORGE_S3_BUCKET`; raises with helpful message when unset. The CLI doesn't use this path (constructs directly via `_build_store`).
+- No multipart threshold knob on cloud stores — SDK defaults (boto3 ~8 MiB) cover the common case; if real workloads need custom control, kwargs are a future layer.
+
+**CI / platform:**
+- Windows CI declined — see `windows-migration-cancelled.md`. Linux + macOS only.
+
+**Breaking changes already shipped:**
+- `kinoforge gc` requires `--config PATH` (since Layer C) — anyone resuming with old shell scripts must update.
+
+## GitHub issues status
+
+| # | Title | Status |
+|---|---|---|
+| #1 | Continuity / stitching fallback | CLOSED (Layer B) |
+| #2 | Audio sync stage | Open |
+| #3 | Concurrent / distributed backend scheduler | Open |
+| #4 | Keyframe / image-generation upstream Stage | Open |
+| #5 | S3 / GCS artifact stores | CLOSED (Layer C) |
+| #6 | `ArtifactStore.uri_for(run_id, name)` ABC | CLOSED (Layer A) |
+| #7 | Cross-process discovery lock | Open — newly relevant for multi-node cloud-backed ledger |
+| #8 | HuggingFaceSource bare-repo listing | Open |
+| #9 | aria2c fast-path | Open |
 
 ## Single next action
 **Layer D (.env secrets loader) complete.** All acceptance criteria met:
