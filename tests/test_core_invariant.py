@@ -74,6 +74,16 @@ _VENDOR_PATTERNS: list[tuple[re.Pattern[str], Path, str]] = [
         SRC_ROOT / "providers" / "runpod",
         "runpod",
     ),
+    (
+        re.compile(r"^\s*(import|from)\s+boto3\b"),
+        SRC_ROOT / "stores" / "s3",
+        "boto3",
+    ),
+    (
+        re.compile(r"^\s*(import|from)\s+google\.cloud\b"),
+        SRC_ROOT / "stores" / "gcs",
+        "google-cloud-storage",
+    ),
 ]
 
 
