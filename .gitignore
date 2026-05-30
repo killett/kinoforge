@@ -20,3 +20,6 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Local-only working scratch (issue drafts, handoff notes, etc.)
+.tracking-issues/
