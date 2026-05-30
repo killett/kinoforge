@@ -16,13 +16,19 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from kinoforge.core.errors import UnknownAdapter
-from kinoforge.core.interfaces import ComputeProvider, GenerationEngine, ModelSource
+from kinoforge.core.interfaces import (
+    ComputeProvider,
+    GenerationEngine,
+    ModelSource,
+    Splitter,
+)
 from kinoforge.stores.base import ArtifactStore
 
 _providers: dict[str, Callable[[], ComputeProvider]] = {}
 _engines: dict[str, Callable[[], GenerationEngine]] = {}
 _sources: list[ModelSource] = []
 _artifact_stores: dict[str, Callable[[], ArtifactStore]] = {}
+_splitters: dict[str, Callable[[], Splitter]] = {}
 
 
 def register_provider(name: str, factory: Callable[[], ComputeProvider]) -> None:
@@ -143,3 +149,31 @@ def get_store(name: str) -> Callable[[], ArtifactStore]:
         return _artifact_stores[name]
     except KeyError:
         raise UnknownAdapter(f"no artifact store registered: {name!r}") from None
+
+
+def register_splitter(name: str, factory: Callable[[], Splitter]) -> None:
+    """Register a splitter factory under ``name`` (overwrites).
+
+    Args:
+        name: The registry key for this splitter.
+        factory: Zero-arg callable that returns a ``Splitter`` instance.
+    """
+    _splitters[name] = factory
+
+
+def get_splitter(name: str) -> Callable[[], Splitter]:
+    """Return the splitter factory for ``name`` or raise ``UnknownAdapter``.
+
+    Args:
+        name: The registry key to look up.
+
+    Returns:
+        The zero-arg factory registered under ``name``.
+
+    Raises:
+        UnknownAdapter: No splitter is registered under ``name``.
+    """
+    try:
+        return _splitters[name]
+    except KeyError:
+        raise UnknownAdapter(f"no splitter registered: {name!r}") from None
