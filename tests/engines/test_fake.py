@@ -352,3 +352,47 @@ def test_backend_endpoints_returns_dict_with_generate():
     backend = engine.backend(instance=None, cfg={})
     eps = backend.endpoints()
     assert "generate" in eps
+
+
+# ---------------------------------------------------------------------------
+# extract_last_frame override
+# ---------------------------------------------------------------------------
+
+
+def test_fake_engine_extract_last_frame_returns_init_image_asset() -> None:
+    """FakeEngine.extract_last_frame returns a deterministic init_image asset.
+
+    Bug this catches: override returns wrong kind/role, or filename is not
+    derived deterministically from input (breaks cross-instance test
+    reproducibility).
+    """
+    from kinoforge.core.interfaces import (
+        Artifact,
+        ConditioningAsset,
+        ModelProfile,
+    )
+    from kinoforge.engines.fake import FakeEngine
+
+    probe = ModelProfile(
+        name="fake",
+        max_frames=16,
+        fps=8,
+        supported_modes={"t2v"},
+        max_resolution=(512, 512),
+        supports_native_extension=False,
+        supports_joint_audio=False,
+    )
+    engine = FakeEngine(
+        probe_profile=probe,
+        declared_flags_map={},
+        required_spec_keys=set(),
+    )
+
+    input_artifact = Artifact(filename="clip-deadbeef0123.mp4")
+    asset = engine.extract_last_frame(input_artifact)
+
+    assert isinstance(asset, ConditioningAsset)
+    assert asset.kind == "image"
+    assert asset.role == "init_image"
+    assert asset.ref.filename == "clip-deadbeef0123.mp4.tail.png"
+    assert asset.ref.meta == {"derived_from": "clip-deadbeef0123.mp4"}
