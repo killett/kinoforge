@@ -11,6 +11,7 @@ Naming convention
 
 from __future__ import annotations
 
+import os
 import textwrap
 import time
 from pathlib import Path
@@ -451,3 +452,57 @@ def test_cli_gc_uses_store_uri_for_not_path_peek() -> None:
 
     # And uri_for must be called somewhere in the file.
     assert re.search(r"\.uri_for\s*\(", cli_src), "cli.py never calls .uri_for(...)"
+
+
+# ---------------------------------------------------------------------------
+# .env loader integration (Task 3 of dotenv-secrets plan)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_loads_env_from_cwd_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main() loads ./.env from cwd before subcommand dispatch."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("KINOFORGE_TEST_ENV_KEY", raising=False)
+    (tmp_path / ".env").write_text(
+        "KINOFORGE_TEST_ENV_KEY=cwd-value\n", encoding="utf-8"
+    )
+
+    # `list` is a no-arg subcommand that exits 0 cleanly under empty state.
+    code = _call(["list"], tmp_path / "state")
+    assert code == 0
+
+    assert os.environ.get("KINOFORGE_TEST_ENV_KEY") == "cwd-value"
+
+
+def test_cli_env_file_flag_overrides_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--env-file PATH loads that file instead of the cwd default."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("KINOFORGE_TEST_ENV_KEY", raising=False)
+
+    # Default cwd .env that we should NOT load.
+    (tmp_path / ".env").write_text(
+        "KINOFORGE_TEST_ENV_KEY=cwd-value\n", encoding="utf-8"
+    )
+
+    # Explicit file we SHOULD load.
+    custom = tmp_path / "custom.env"
+    custom.write_text("KINOFORGE_TEST_ENV_KEY=custom-value\n", encoding="utf-8")
+
+    code = _call(["--env-file", str(custom), "list"], tmp_path / "state")
+    assert code == 0
+
+    assert os.environ.get("KINOFORGE_TEST_ENV_KEY") == "custom-value"
+
+
+def test_cli_env_file_missing_propagates_FileNotFoundError(
+    tmp_path: Path,
+) -> None:
+    """--env-file PATH with a missing file raises FileNotFoundError through main()."""
+    missing = tmp_path / "nope.env"
+
+    with pytest.raises(FileNotFoundError, match=str(missing)):
+        _call(["--env-file", str(missing), "list"], tmp_path / "state")

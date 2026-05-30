@@ -23,3 +23,6 @@ htmlcov/
 
 # Local-only working scratch (issue drafts, handoff notes, etc.)
 .tracking-issues/
+
+# Secrets — never commit .env
+.env
