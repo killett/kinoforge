@@ -86,3 +86,80 @@ def test_register_splitter_reregistration_overwrites():
     registry.register_splitter("dup", lambda: _Other())
     instance = registry.get_splitter("dup")()
     assert isinstance(instance, _Other)
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — HeuristicSplitter tests
+# ---------------------------------------------------------------------------
+
+from kinoforge.core.splitter import HeuristicSplitter  # noqa: E402
+
+
+def test_heuristic_single_paragraph_passthrough():
+    # Bug: regex over-eagerly splits on single newlines or whitespace,
+    # breaking every existing single-segment test in the suite.
+    out = HeuristicSplitter().split("one paragraph", _profile(), {})
+    assert len(out) == 1
+    assert out[0].prompt == "one paragraph"
+
+
+def test_heuristic_double_newline_splits():
+    # Bug: regex fails to recognise the blank-line marker, so the splitter
+    # silently collapses a multi-paragraph prompt into one Segment and the
+    # whole feature does nothing for the simplest case it must handle.
+    out = HeuristicSplitter().split("a\n\nb", _profile(), {})
+    assert [s.prompt for s in out] == ["a", "b"]
+
+
+def test_heuristic_collapses_runs_of_newlines():
+    # Bug: `re.split(r"\n\n")` against `"a\n\n\n\nb"` yields ["a", "", "b"];
+    # we must collapse so the middle empty segment never reaches downstream.
+    out = HeuristicSplitter().split("a\n\n\n\nb", _profile(), {})
+    assert [s.prompt for s in out] == ["a", "b"]
+
+
+def test_heuristic_strips_whitespace_per_segment():
+    # Bug: leading/trailing whitespace silently inflates the prompt sent
+    # to backends; many engines treat "  cat" and "cat" as different prompts
+    # (different tokenisation), so leaks cause spurious cache misses.
+    out = HeuristicSplitter().split("  a  \n\n  b  ", _profile(), {})
+    assert [s.prompt for s in out] == ["a", "b"]
+
+
+def test_heuristic_preserves_inparagraph_single_newline():
+    # Bug: someone over-aggressively normalises whitespace and destroys
+    # intentional line breaks inside a paragraph (e.g. "a\nb" for line layout).
+    out = HeuristicSplitter().split("a\nb\n\nc", _profile(), {})
+    assert [s.prompt for s in out] == ["a\nb", "c"]
+
+
+def test_heuristic_all_whitespace_raises_value_error():
+    # Bug: all-whitespace prompt silently produces zero segments and the
+    # downstream pool gets an empty job list — NPE or worse.
+    with pytest.raises(ValueError):
+        HeuristicSplitter().split("   \n\n   ", _profile(), {})
+
+
+def test_heuristic_segments_have_empty_assets_and_params():
+    # Bug: defaults accidentally share state across calls or splitter
+    # writes back into Segment defaults via mutation.
+    out = HeuristicSplitter().split("a\n\nb", _profile(), {})
+    for seg in out:
+        assert seg.assets == []
+        assert seg.params == {}
+
+
+def test_heuristic_does_not_mutate_caller_params():
+    # Bug: splitter writes into the caller's params dict and downstream
+    # callers see unexpected keys appear.
+    caller_params = {"seed": 42, "steps": 30}
+    snapshot = dict(caller_params)
+    HeuristicSplitter().split("a\n\nb", _profile(), caller_params)
+    assert caller_params == snapshot
+
+
+def test_heuristic_self_registers_under_heuristic():
+    # Bug: someone forgets the registry.register_splitter line at module
+    # footer and the orchestrator default lookup fails at runtime.
+    instance = registry.get_splitter("heuristic")()
+    assert isinstance(instance, HeuristicSplitter)
