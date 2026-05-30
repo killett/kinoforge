@@ -1,2 +1,22 @@
-
 .claude-project-id
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Coverage + test caches
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build/runtime artefacts
+.kinoforge/
+
+# Editor + OS
+.vscode/
+.idea/
+.DS_Store

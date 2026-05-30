@@ -1,0 +1,26 @@
+# kinoforge example: FakeEngine + LocalProvider
+#
+# The offline/CI config. Runs entirely in-process without GPU, cloud, or
+# real model weights. Used by the CLI e2e tests and local smoke testing.
+#
+# Swap engine.kind: fake -> comfyui (+ add comfyui sub-block) and
+# compute.provider: local -> runpod to go live — no other changes needed.
+
+engine:
+  kind: fake
+  precision: fp16
+
+models:
+  - ref: "https://example.com/models/fake-base.safetensors"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: local
+  image: "kinoforge/local:latest"
+  lifecycle:
+    idle_timeout: 1h
+    job_timeout: 30m
+    time_buffer: 30m
+    max_lifetime: 3h
+    budget: 10.0
