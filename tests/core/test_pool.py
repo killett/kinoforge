@@ -150,6 +150,8 @@ def test_pool_swap_same_result(tmp_path: Path) -> None:
     pool_sequential = SequentialPool(backend_a)
     pool_list = _ListPool(backend_b)
 
+    from kinoforge.engines.fake import FakeEngine
+
     stage_kwargs = dict(
         profile=probe,
         store=store1,
@@ -157,6 +159,9 @@ def test_pool_swap_same_result(tmp_path: Path) -> None:
         accepted_kinds={"image"},
         base_params={},
         base_spec={},
+        engine=FakeEngine(
+            probe_profile=probe, declared_flags_map={}, required_spec_keys=set()
+        ),
     )
 
     stage_s = GenerateClipStage(pool=pool_sequential, **stage_kwargs)  # type: ignore[arg-type]

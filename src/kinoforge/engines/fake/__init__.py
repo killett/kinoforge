@@ -25,6 +25,7 @@ from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
+    ConditioningAsset,
     GenerationBackend,
     GenerationEngine,
     GenerationJob,
@@ -227,6 +228,31 @@ class FakeEngine(GenerationEngine):
             raise ValidationError(
                 f"job.spec is missing required keys: {sorted(missing)}"
             )
+
+    def extract_last_frame(self, artifact: Artifact) -> ConditioningAsset:
+        """Deterministic tail-frame asset for tests.
+
+        Returns a ConditioningAsset whose ref carries a synthetic filename
+        derived from the input artifact's filename, so tests can assert on
+        a predictable shape without real image data.
+
+        Args:
+            artifact: A clip Artifact from a prior render.
+
+        Returns:
+            ConditioningAsset(kind="image", role="init_image", ref=Artifact(
+                filename=f"{artifact.filename}.tail.png",
+                meta={"derived_from": artifact.filename},
+            ))
+        """
+        return ConditioningAsset(
+            kind="image",
+            role="init_image",
+            ref=Artifact(
+                filename=f"{artifact.filename}.tail.png",
+                meta={"derived_from": artifact.filename},
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
