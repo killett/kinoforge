@@ -11,7 +11,7 @@ extension vs fallback) directly without a real splitter.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from kinoforge.core.continuity import inject_tail_frame
 from kinoforge.core.interfaces import (
@@ -105,7 +105,11 @@ class GenerateClipStage:
             if i > 0 and should_chain:
                 tail_bytes = self.engine.extract_last_frame(results[-1])
                 tail_name = f"seg-{i - 1}-tail.png"
-                tail_artifact = self.store.put_bytes(self.run_id, tail_name, tail_bytes)
+                stored = self.store.put_bytes(self.run_id, tail_name, tail_bytes)
+                # Stores return Artifact(uri=...) with filename=""; pre-populate
+                # filename so downstream consumers don't have to derive it from
+                # Path(ref.uri).name.
+                tail_artifact = replace(stored, filename=tail_name)
                 tail_asset = ConditioningAsset(
                     kind="image",
                     role="init_image",
