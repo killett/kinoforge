@@ -59,18 +59,20 @@ def test_ffmpeg_last_frame_returns_run_output_verbatim() -> None:
     assert ffmpeg_last_frame(b"anything", run=fake_run) is sentinel
 
 
-def test_ffmpeg_last_frame_wraps_run_exception_as_frame_extraction_error() -> None:
-    """A raising run is the production failure shape; helper must surface it
-    as FrameExtractionError so callers have ONE exception type to catch.
+def test_ffmpeg_last_frame_does_not_wrap_or_swallow_run_exceptions() -> None:
+    """Exceptions from run propagate unchanged. Helper does NOT catch or wrap.
 
-    Bug this catches: callers wrap the wrong exception type and downstream
-    error handling misses the real failure mode.
+    Bug this catches: helper adds a try/except that hides real errors
+    (e.g. OSError or any non-FrameExtractionError) under a generic message.
     """
 
-    def boom(argv: list[str], stdin: bytes) -> bytes:
-        raise FrameExtractionError("ffmpeg exit 1: invalid input")
+    class _Sentinel(RuntimeError):
+        pass
 
-    with pytest.raises(FrameExtractionError, match="ffmpeg exit 1"):
+    def boom(argv: list[str], stdin: bytes) -> bytes:
+        raise _Sentinel("seam blew up")
+
+    with pytest.raises(_Sentinel, match="seam blew up"):
         ffmpeg_last_frame(b"bad", run=boom)
 
 
@@ -83,8 +85,6 @@ def test_default_run_raises_frame_extraction_error_on_nonzero_exit(
     Bug this catches: default path returns silently or raises raw
     CalledProcessError, leaking subprocess details into engine code.
     """
-    import subprocess
-
     from kinoforge.core import frames
 
     class _FakeCompleted:
@@ -95,7 +95,45 @@ def test_default_run_raises_frame_extraction_error_on_nonzero_exit(
     def fake_subprocess_run(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         return _FakeCompleted()
 
-    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr("kinoforge.core.frames.subprocess.run", fake_subprocess_run)
 
     with pytest.raises(FrameExtractionError, match="ffmpeg exit 2"):
         frames._default_run(_EXPECTED_ARGV, b"x")
+
+
+def test_ffmpeg_last_frame_passes_empty_bytes_through_without_special_casing() -> None:
+    """Empty video_bytes still calls run; helper does not short-circuit.
+
+    Bug this catches: helper grows an `if not video_bytes: return b""` guard
+    that hides what is actually a caller bug (empty artifact bytes), making
+    the empty-PNG output silently masquerade as a successful extraction.
+    """
+    calls: list[bytes] = []
+
+    def fake_run(argv: list[str], stdin: bytes) -> bytes:
+        calls.append(stdin)
+        return b"PNG"
+
+    out = ffmpeg_last_frame(b"", run=fake_run)
+
+    assert out == b"PNG"
+    assert calls == [b""]
+
+
+def test_default_run_wraps_file_not_found_as_frame_extraction_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ffmpeg not on PATH surfaces as FrameExtractionError, not raw FileNotFoundError.
+
+    Bug this catches: production deployments without ffmpeg installed get a
+    cryptic FileNotFoundError instead of an actionable 'ffmpeg not found' message.
+    """
+    from kinoforge.core import frames
+
+    def fake_subprocess_run(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise FileNotFoundError(2, "No such file or directory: 'ffmpeg'")
+
+    monkeypatch.setattr("kinoforge.core.frames.subprocess.run", fake_subprocess_run)
+
+    with pytest.raises(FrameExtractionError, match="ffmpeg not found on PATH"):
+        frames._default_run(["ffmpeg"], b"x")
