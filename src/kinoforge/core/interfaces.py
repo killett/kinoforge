@@ -327,6 +327,26 @@ class GenerationEngine(ABC):
     @abstractmethod
     def validate_spec(self, job: GenerationJob) -> None: ...  # noqa: D102
 
+    def extract_last_frame(self, artifact: Artifact) -> ConditioningAsset:
+        """Extract last frame of a rendered clip as an init_image asset.
+
+        Default raises; subclass to enable continuity for this engine.
+
+        Args:
+            artifact: A clip Artifact returned by backend.result() with a
+                populated uri (real engines) or in-memory filename + meta
+                (FakeEngine test path).
+
+        Returns:
+            ConditioningAsset(kind="image", role="init_image", ref=<frame>).
+
+        Raises:
+            NotImplementedError: Engine doesn't support tail-frame extraction.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support tail-frame extraction"
+        )
+
 
 class BackendPool(ABC):
     """Dispatches jobs across one or more GenerationBackends."""

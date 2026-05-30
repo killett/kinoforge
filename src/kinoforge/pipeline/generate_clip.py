@@ -13,9 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from kinoforge.core.continuity import inject_tail_frame
 from kinoforge.core.interfaces import (
+    MODE_ROLE_REQUIREMENTS,
     Artifact,
     BackendPool,
+    GenerationEngine,
     GenerationRequest,
     ModelProfile,
     Segment,
@@ -43,6 +46,7 @@ class GenerateClipStage:
         accepted_kinds: Asset kinds the underlying engine accepts.
         base_params: Engine-neutral params for every produced job.
         base_spec: Engine-interpreted spec template merged into every job.
+        engine: The GenerationEngine providing extract_last_frame for continuity chaining.
     """
 
     profile: ModelProfile
@@ -52,6 +56,7 @@ class GenerateClipStage:
     accepted_kinds: set[str]
     base_params: dict  # type: ignore[type-arg]
     base_spec: dict  # type: ignore[type-arg]
+    engine: GenerationEngine
 
     def run(
         self,
@@ -89,12 +94,18 @@ class GenerateClipStage:
 
         jobs = decide(self.profile, segments, self.base_params, self.base_spec)
 
-        # Single-clip happy path produces one Artifact; native-extension also
-        # produces a single Artifact (one N-segment job). The non-native fan-out
-        # returns N Artifacts — for this single-clip seam we return the last one
-        # and DEFER stitching/continuity.
-        results = self.pool.map(jobs)
-        last = results[-1]  # DEFERRED: stitching across N artifacts.
+        # Continuity: for modes whose role contract accepts init_image (today
+        # i2v only), thread each rendered tail-frame into the next segment's
+        # init_image slot. Stitching across the N artifacts is DEFERRED to its
+        # own follow-up; we still persist only the last artifact below.
+        should_chain = "init_image" in MODE_ROLE_REQUIREMENTS.get(request.mode, set())
+        results: list[Artifact] = []
+        for i, job in enumerate(jobs):
+            if i > 0 and should_chain:
+                job = inject_tail_frame(job, results[-1], self.engine)
+            art = self.pool.submit(job).result()
+            results.append(art)
+        last = results[-1]
 
         # Persist the bytes derived from the engine's Artifact.
         payload = self._artifact_bytes(last)
