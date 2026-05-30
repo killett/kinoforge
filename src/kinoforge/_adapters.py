@@ -35,3 +35,4 @@ import kinoforge.sources.huggingface  # noqa: F401
 
 # Stores
 import kinoforge.stores.local  # noqa: F401
+import kinoforge.stores.s3  # noqa: F401
