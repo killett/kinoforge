@@ -127,4 +127,4 @@ Begin the chosen layer with the
 - [x] Task 1: python-dotenv dep + .gitignore .env + .env.example — commit `59f732e`
 - [x] Task 2: dotenv_loader module + 8 unit tests — commit `0dc4714` (+ polish at `366ce5d`)
 - [x] Task 3: CLI --env-file flag + 2 integration tests — commit `727ee2f` (+ polish at `b9056cf`)
-- [x] Task 4: README Credentials section + PROGRESS Phase 14 entry — this commit
+- [x] Task 4: README Credentials section + PROGRESS Phase 14 entry — commit `d4be826`
