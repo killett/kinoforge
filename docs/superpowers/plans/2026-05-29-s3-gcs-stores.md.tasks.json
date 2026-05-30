@@ -1,0 +1,40 @@
+{
+  "planPath": "docs/superpowers/plans/2026-05-29-s3-gcs-stores.md",
+  "tasks": [
+    {
+      "id": 8,
+      "subject": "Task 1: S3ArtifactStore + deps + invariant patterns + adapters wire + 17 tests",
+      "status": "pending",
+      "description": "**Goal:** Ship S3ArtifactStore end-to-end. Land both pixi deps (boto3 + google-cloud-storage) and both new _VENDOR_PATTERNS entries in this task so the floor is laid for Task 2's GCS work without a separate infrastructure-only commit.\n\n**Files:**\n- Create: src/kinoforge/stores/s3/__init__.py\n- Modify: src/kinoforge/_adapters.py\n- Modify: pixi.toml\n- Modify: tests/test_core_invariant.py\n- Create: tests/stores/conftest.py\n- Create: tests/stores/test_s3.py\n\n**Verify:** pixi run test tests/stores/test_s3.py tests/test_core_invariant.py -v && pixi run test\n\n```json:metadata\n{\"files\": [\"src/kinoforge/stores/s3/__init__.py\", \"src/kinoforge/_adapters.py\", \"pixi.toml\", \"tests/test_core_invariant.py\", \"tests/stores/conftest.py\", \"tests/stores/test_s3.py\"], \"verifyCommand\": \"pixi run test tests/stores/test_s3.py tests/test_core_invariant.py -v && pixi run test\", \"acceptanceCriteria\": [\"S3ArtifactStore implements 7-method ABC\", \"uri_for matches put_bytes/put_json artifact uri\", \"lazy boto3 import gate verified\", \"self-registers under s3\", \"pixi adds boto3 + google-cloud-storage\", \"_VENDOR_PATTERNS extended for both SDKs\", \"_adapters.py imports kinoforge.stores.s3\", \"17 S3 tests pass, full suite green, coverage >= 90%\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 2: GCSArtifactStore + adapters wire + 17 tests",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** Mirror Task 1 for GCS. Same 17-test surface, gs:// scheme, GCS-specific SDK shape.\n\n**Files:**\n- Create: src/kinoforge/stores/gcs/__init__.py\n- Modify: src/kinoforge/_adapters.py\n- Create: tests/stores/test_gcs.py\n\n**Verify:** pixi run test tests/stores/test_gcs.py tests/test_core_invariant.py -v && pixi run test\n\n```json:metadata\n{\"files\": [\"src/kinoforge/stores/gcs/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/stores/test_gcs.py\"], \"verifyCommand\": \"pixi run test tests/stores/test_gcs.py tests/test_core_invariant.py -v && pixi run test\", \"acceptanceCriteria\": [\"GCSArtifactStore implements 7-method ABC\", \"uri_for matches put_bytes/put_json artifact uri (gs:// scheme)\", \"dual lazy SDK import gate verified\", \"self-registers under gcs\", \"_adapters.py imports kinoforge.stores.gcs\", \"17 GCS tests pass, full suite green, coverage >= 90%\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 3: StoreConfig pydantic block + 6 tests + YAML example",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Add the optional store: config block users will eventually fill to switch CLI from LocalArtifactStore to S3 or GCS. Pure schema work.\n\n**Files:**\n- Modify: src/kinoforge/core/config.py\n- Modify: tests/core/test_config.py\n- Modify: examples/configs/wan.yaml\n\n**Verify:** pixi run test tests/core/test_config.py -v && pixi run test\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\", \"examples/configs/wan.yaml\"], \"verifyCommand\": \"pixi run test tests/core/test_config.py -v && pixi run test\", \"acceptanceCriteria\": [\"StoreConfig schema with kind/root/bucket/prefix\", \"model_validator enforces kind <-> bucket invariants\", \"Config.store default_factory preserves backwards compat\", \"6 tests pass, full suite green, coverage >= 90%\", \"wan.yaml documents store: block\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 4: CLI _build_store + 3 call-site swaps + 3 tests + Layer-A _path peek fix",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Wire the new StoreConfig into the CLI so end-users can switch stores via YAML. Backwards-compatible: absent store: block -> LocalArtifactStore(state_dir). Same task fixes the Layer-A leftover store._path peek at cli.py:441.\n\n**Files:**\n- Modify: src/kinoforge/cli.py\n- Modify: tests/test_cli.py\n\n**Verify:** pixi run test tests/test_cli.py -v && pixi run test\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli.py\", \"tests/test_cli.py\"], \"verifyCommand\": \"pixi run test tests/test_cli.py -v && pixi run test\", \"acceptanceCriteria\": [\"_build_store helper handles all 3 store kinds with lazy SDK imports\", \"2 call sites swapped (generate + gc)\", \"cli.py:441 _path peek replaced with uri_for\", \"_ledger unchanged (ledger stays local)\", \"3 new tests pass + 8 existing CLI tests preserved\", \"coverage >= 90%\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 5: README + PROGRESS docs",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "**Goal:** Per project CLAUDE.md durability rules - keep README's Roadmap honest and update the recovery index.\n\n**Files:**\n- Modify: README.md\n- Modify: PROGRESS.md\n\n**Verify:** git diff README.md PROGRESS.md && pixi run pre-commit run --files README.md PROGRESS.md\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"git diff README.md PROGRESS.md && pixi run pre-commit run --files README.md PROGRESS.md\", \"acceptanceCriteria\": [\"README Roadmap drops S3/GCS line\", \"README Extending lists 3 stores\", \"PROGRESS Phase 13 subsection with 4 task SHAs\", \"PROGRESS Single next action repointed\", \"pre-commit green\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-05-30T00:00:00Z"
+}
