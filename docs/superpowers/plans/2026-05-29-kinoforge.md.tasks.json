@@ -1,200 +1,200 @@
 {
   "planPath": "docs/superpowers/plans/2026-05-29-kinoforge.md",
-  "lastUpdated": "2026-05-29T00:00:00Z",
+  "lastUpdated": "2026-05-30T04:00:00Z",
   "tasks": [
     {
       "id": 1,
       "subject": "Task 1: Core interfaces, errors, logging",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** Define every ABC + dataclass the spec names, the typed error hierarchy, and a structured logger.\n\n**Files:** src/kinoforge/core/{errors,interfaces,logging}.py; tests/core/test_interfaces.py.\n\n**Verify:** pixi run test tests/core/test_interfaces.py\n\nSee plan doc Task 1 for full code blocks.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/logging.py\", \"tests/core/test_interfaces.py\"], \"verifyCommand\": \"pixi run test tests/core/test_interfaces.py\", \"acceptanceCriteria\": [\"CapabilityKey.derive stable + order-sensitive\", \"max_segment_seconds = frames/fps\", \"MODE_ROLE_REQUIREMENTS exact\", \"errors share KinoforgeError base\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Registry (name + scheme routing)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Adapter registry by name (providers/engines) + scheme (sources); explicit register_* + UnknownAdapter on miss.\n\n**Files:** src/kinoforge/core/registry.py; tests/core/test_registry.py.\n\n**Verify:** pixi run test tests/core/test_registry.py\n\nSee plan doc Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/registry.py\", \"tests/core/test_registry.py\"], \"verifyCommand\": \"pixi run test tests/core/test_registry.py\", \"acceptanceCriteria\": [\"register/get round-trips\", \"source_for_ref dispatches via handles()\", \"unknown raises UnknownAdapter\", \"overwrites on re-register\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: Env-backed credential provider",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** EnvCredentialProvider.get(key) reads os.environ.\n\n**Files:** src/kinoforge/core/credentials.py; tests/core/test_credentials.py.\n\n**Verify:** pixi run test tests/core/test_credentials.py\n\nSee plan doc Task 3.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/credentials.py\", \"tests/core/test_credentials.py\"], \"verifyCommand\": \"pixi run test tests/core/test_credentials.py\", \"acceptanceCriteria\": [\"reads env var when present\", \"returns None when unset\", \"is CredentialProvider\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Config model (pydantic v2 + YAML + cross-field validation)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Typed YAML config with duration parsing, cross-field validation, CapabilityKey derivation, Lifecycle + HardwareRequirements.\n\n**Files:** src/kinoforge/core/config.py; tests/core/test_config.py.\n\n**Verify:** pixi run test tests/core/test_config.py && pixi run typecheck\n\nSee plan doc Task 4 for AC + steps.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run test tests/core/test_config.py\", \"acceptanceCriteria\": [\"durations parsed\", \"idle>=lifetime rejected\", \"job>lifetime rejected\", \"compute+hosted rejected\", \"bad kind/target rejected\", \"unknown engine/provider rejected\", \"budget required\", \"capability_key derivation correct\", \"defaults applied\", \"Lifecycle/HardwareRequirements exposed\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: filter_offers pure helper",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Pure offer-filter applying HardwareRequirements (vram/cuda/cost/preference).\n\n**Files:** src/kinoforge/core/offers.py; tests/core/test_offers.py.\n\n**Verify:** pixi run test tests/core/test_offers.py\n\nSee plan doc Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/offers.py\", \"tests/core/test_offers.py\"], \"verifyCommand\": \"pixi run test tests/core/test_offers.py\", \"acceptanceCriteria\": [\"excludes undersized vram + old cuda\", \"pod-only cost filter (serverless exempt)\", \"gpu_preference orders survivors\", \"stable for empty preference\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: Downloader (parallel, resumable, checksum-verifying)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Stdlib ranged-GET downloader: skip-when-complete, .part resume, sha256 verify, parallel download_all.\n\n**Files:** src/kinoforge/core/downloader.py; tests/core/test_downloader.py; tests/conftest.py (Range-aware HTTP fixture).\n\n**Verify:** pixi run test tests/core/test_downloader.py\n\nSee plan doc Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/downloader.py\", \"tests/core/test_downloader.py\", \"tests/conftest.py\"], \"verifyCommand\": \"pixi run test tests/core/test_downloader.py\", \"acceptanceCriteria\": [\"downloads file from loopback\", \"idempotent skip when complete+sha matches\", \"resume from .part via Range\", \"sha mismatch raises\", \"concurrent download_all\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: HTTPSource",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** HTTPSource resolves https:// refs to a single Artifact; self-registers.\n\n**Files:** src/kinoforge/sources/{__init__.py,http/__init__.py}; tests/sources/test_http.py.\n\n**Verify:** pixi run test tests/sources/test_http.py\n\nSee plan doc Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/sources/__init__.py\", \"src/kinoforge/sources/http/__init__.py\", \"tests/sources/test_http.py\"], \"verifyCommand\": \"pixi run test tests/sources/test_http.py\", \"acceptanceCriteria\": [\"handles https/http only\", \"resolve returns Artifact with url+filename\", \"self-registers on import\"]}\n```"
     },
     {
       "id": 8,
       "subject": "Task 8: FakeEngine + FakeBackend",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2],
       "description": "**Goal:** Deterministic GPU-free engine/backend pair, declarable flags, fake inspect_capabilities, deterministic Artifact.\n\n**Files:** src/kinoforge/engines/{__init__.py,fake/__init__.py}; tests/engines/test_fake.py.\n\n**Verify:** pixi run test tests/engines/test_fake.py\n\nSee plan doc Task 8.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/__init__.py\", \"src/kinoforge/engines/fake/__init__.py\", \"tests/engines/test_fake.py\"], \"verifyCommand\": \"pixi run test tests/engines/test_fake.py\", \"acceptanceCriteria\": [\"constructable with injected profile + declared_flags\", \"inspect_capabilities returns probe profile\", \"submit/result deterministic\", \"validate_spec raises on missing keys\", \"self-registers under 'fake'\"]}\n```"
     },
     {
       "id": 9,
       "subject": "Task 9: LocalProvider + injectable clock",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 5],
       "description": "**Goal:** In-process ComputeProvider + FakeClock for offline lifecycle/discovery tests.\n\n**Files:** src/kinoforge/providers/{__init__.py,local/__init__.py}; src/kinoforge/core/clock.py; tests/providers/test_local.py; tests/core/test_clock.py.\n\n**Verify:** pixi run test tests/providers/test_local.py tests/core/test_clock.py\n\nSee plan doc Task 9.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/__init__.py\", \"src/kinoforge/providers/local/__init__.py\", \"src/kinoforge/core/clock.py\", \"tests/providers/test_local.py\", \"tests/core/test_clock.py\"], \"verifyCommand\": \"pixi run test tests/providers/test_local.py tests/core/test_clock.py\", \"acceptanceCriteria\": [\"find_offers uses filter_offers\", \"create/get/list/stop/destroy lifecycle\", \"destroy idempotent\", \"heartbeat records clock now()\", \"FakeClock.advance deterministic\", \"self-registers under 'local'\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 10: Provisioner (shared steps + engine delegation)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 6, 7, 8],
       "description": "**Goal:** provision() resolves refs via registry, merges sha256, downloads iff requires_local_weights, runs hook, delegates to engine.provision.\n\n**Files:** src/kinoforge/core/provisioner.py; tests/core/test_provisioner.py.\n\n**Verify:** pixi run test tests/core/test_provisioner.py\n\nSee plan doc Task 10.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/provisioner.py\", \"tests/core/test_provisioner.py\"], \"verifyCommand\": \"pixi run test tests/core/test_provisioner.py\", \"acceptanceCriteria\": [\"downloads when requires_local_weights True\", \"no download when False\", \"post_provision hook runs when set\", \"engine.provision always last\", \"sha256 merged onto resolved Artifact\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 11: ArtifactStore (base + local) + store registry",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** ArtifactStore ABC + LocalArtifactStore (run_id namespaces, bytes+json); register_store added to registry.\n\n**Files:** src/kinoforge/stores/{__init__,base,local}.py; src/kinoforge/core/registry.py (extend); tests/stores/test_local.py; tests/core/test_registry.py (extend).\n\n**Verify:** pixi run test tests/stores/test_local.py tests/core/test_registry.py\n\nSee plan doc Task 11.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/stores/__init__.py\", \"src/kinoforge/stores/base.py\", \"src/kinoforge/stores/local.py\", \"src/kinoforge/core/registry.py\", \"tests/stores/test_local.py\", \"tests/core/test_registry.py\"], \"verifyCommand\": \"pixi run test tests/stores/test_local.py tests/core/test_registry.py\", \"acceptanceCriteria\": [\"put/get bytes round-trip\", \"put/get json round-trip\", \"run_id namespacing isolates\", \"list/delete work\", \"store registry round-trips\"]}\n```"
     },
     {
       "id": 12,
       "subject": "Task 12: ModelProfileProvider (cache + discover + verify + single-flight)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8, 11],
       "description": "**Goal:** Self-populating profile cache (CapabilityKey.derive() key, ArtifactStore-backed); resolve no-compute; discover single-flight + declared_flags merge + persist; verify probeable-fields drift raises CapabilityMismatch.\n\n**Files:** src/kinoforge/core/profiles.py; tests/core/test_profiles.py.\n\n**Verify:** pixi run test tests/core/test_profiles.py\n\nSee plan doc Task 12 for full AC.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/profiles.py\", \"tests/core/test_profiles.py\"], \"verifyCommand\": \"pixi run test tests/core/test_profiles.py\", \"acceptanceCriteria\": [\"resolve miss raises ProfileNotCached\", \"resolve hit no compute\", \"discover probes once + merges declared_flags\", \"key distinctness (lora, engine)\", \"single-flight one probe under concurrency\", \"undeclared flags default False + WARNING\", \"verify drift raises CapabilityMismatch\"]}\n```"
     },
     {
       "id": 13,
       "subject": "Task 13: Request validation (mode + role-authoritative)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** validate_request(profile, request, *, accepted_kinds) enforces mode + MODE_ROLE_REQUIREMENTS contract; single-asset defaults init_image; unsupported kind rejected.\n\n**Files:** src/kinoforge/core/validation.py; tests/core/test_validation.py.\n\n**Verify:** pixi run test tests/core/test_validation.py\n\nSee plan doc Task 13.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/validation.py\", \"tests/core/test_validation.py\"], \"verifyCommand\": \"pixi run test tests/core/test_validation.py\", \"acceptanceCriteria\": [\"mode not supported raises\", \"flf2v required-role check\", \"duplicate init_image raises\", \"lone image i2v defaults init_image\", \"unsupported kind raises\"]}\n```"
     },
     {
       "id": 14,
       "subject": "Task 14: Strategy decision point",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Pure decide(profile, segments, params, spec); native True -> 1 job/N segs; False -> N single-seg jobs; segment-wins params merge; joint_audio routes (separate stubbed).\n\n**Files:** src/kinoforge/core/strategy.py; tests/core/test_strategy.py.\n\n**Verify:** pixi run test tests/core/test_strategy.py\n\nSee plan doc Task 14.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/strategy.py\", \"tests/core/test_strategy.py\"], \"verifyCommand\": \"pixi run test tests/core/test_strategy.py\", \"acceptanceCriteria\": [\"native True -> 1 job with N segments\", \"native False -> N single-segment jobs\", \"segment-wins params merge\", \"joint_audio flag routes correctly\", \"pure (no I/O)\"]}\n```"
     },
     {
       "id": 15,
       "subject": "Task 15: BackendPool/SequentialPool + Stage + GenerateClipStage",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8, 11, 12, 13, 14],
       "description": "**Goal:** SequentialPool returning resolved Futures; Stage protocol; GenerateClipStage e2e against LocalProvider+FakeEngine; pool-swap proven.\n\n**Files:** src/kinoforge/core/pool.py; src/kinoforge/pipeline/{__init__,stage,generate_clip}.py; tests/core/test_pool.py; tests/pipeline/test_generate_clip.py.\n\n**Verify:** pixi run test tests/core/test_pool.py tests/pipeline/test_generate_clip.py\n\nSee plan doc Task 15.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/pool.py\", \"src/kinoforge/pipeline/__init__.py\", \"src/kinoforge/pipeline/stage.py\", \"src/kinoforge/pipeline/generate_clip.py\", \"tests/core/test_pool.py\", \"tests/pipeline/test_generate_clip.py\"], \"verifyCommand\": \"pixi run test tests/core/test_pool.py tests/pipeline/test_generate_clip.py\", \"acceptanceCriteria\": [\"SequentialPool resolved Future\", \"map preserves order\", \"pool-swap with second impl\", \"GenerateClipStage e2e Artifact in store\", \"stage submits 1 vs N by flag\"]}\n```"
     },
     {
       "id": 16,
       "subject": "Task 16: Orchestrator (deploy + generate, discovery ordering, fail-hard teardown, dry-run)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9, 10, 12, 13, 14, 15],
       "description": "**Goal:** deploy() neutral plan / hosted no-compute / dry-run zero calls; generate() guaranteed ordering resolve->discover->validate->split(stub:1)->provision->verify->strategy->pool->result->store; verify drift -> raise + destroy_instance once.\n\n**Files:** src/kinoforge/core/orchestrator.py; tests/core/test_orchestrator.py.\n\n**Verify:** pixi run test tests/core/test_orchestrator.py\n\nSee plan doc Task 16.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator.py\"], \"verifyCommand\": \"pixi run test tests/core/test_orchestrator.py\", \"acceptanceCriteria\": [\"dry-run: zero provider calls + neutral plan printed\", \"hosted: no instance provisioned\", \"generate full ordering produces Artifact\", \"verify drift -> raise + destroy called once + no clip\", \"splitter stub yields 1 segment with request assets\"]}\n```"
     },
     {
       "id": 17,
       "subject": "Task 17: Lifecycle pt 1 (effective_deadline, warm reuse, drain, liveness)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 9],
       "description": "**Goal:** effective_deadline = n*job_timeout+buffer; warm reuse within idle window + reap after; graceful drain never mid-job; in-flight under deadline = liveness; idle past window dead-mans.\n\n**Files:** src/kinoforge/core/lifecycle.py; tests/core/test_lifecycle.py.\n\n**Verify:** pixi run test tests/core/test_lifecycle.py -k 'deadline or reuse or drain or liveness'\n\nSee plan doc Task 17.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lifecycle.py\", \"tests/core/test_lifecycle.py\"], \"verifyCommand\": \"pixi run test tests/core/test_lifecycle.py -k 'deadline or reuse or drain or liveness'\", \"acceptanceCriteria\": [\"effective_deadline = n*job_timeout+buffer\", \"warm reuse within idle window + reap after\", \"graceful drain never kills mid-job\", \"in-flight liveness vs idle dead-man\", \"default timers applied\"]}\n```"
     },
     {
       "id": 18,
       "subject": "Task 18: Lifecycle pt 2 (sweeper, ledger, confirmed teardown, budget)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11, 17],
       "description": "**Goal:** Persistent ledger via store; provider-aware sweeper destroys over-age/orphaned; destroy_confirmed polls + retries + alerts; budget kill on cumulative spend.\n\n**Files:** src/kinoforge/core/lifecycle.py (extend); tests/core/test_lifecycle_sweeper.py.\n\n**Verify:** pixi run test tests/core/test_lifecycle_sweeper.py\n\nSee plan doc Task 18.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lifecycle.py\", \"tests/core/test_lifecycle_sweeper.py\"], \"verifyCommand\": \"pixi run test tests/core/test_lifecycle_sweeper.py\", \"acceptanceCriteria\": [\"destroy_confirmed retries + raises TeardownError on failure\", \"sweeper destroys over-age only\", \"budget kill\", \"ledger persistence round-trip\"]}\n```"
     },
     {
       "id": 19,
       "subject": "Task 19a: CivitAISource",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 6],
       "description": "**Goal:** civitai:<modelId>[@<versionId>] -> Artifact via mocked CivitAI REST; token via creds; 401 -> AuthError.\n\n**Files:** src/kinoforge/sources/civitai/__init__.py; tests/sources/test_civitai.py.\n\n**Verify:** pixi run test tests/sources/test_civitai.py\n\nSee plan doc Task 19a.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/sources/civitai/__init__.py\", \"tests/sources/test_civitai.py\"], \"verifyCommand\": \"pixi run test tests/sources/test_civitai.py\", \"acceptanceCriteria\": [\"parses modelId/versionId\", \"resolve yields Artifact with sha256+filename\", \"auth header from creds\", \"401 -> AuthError\", \"self-registers\"]}\n```"
     },
     {
       "id": 20,
       "subject": "Task 19b: HuggingFaceSource",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 6],
       "description": "**Goal:** hf:<repo>:<path> -> Artifact at huggingface.co/<repo>/resolve/main/<path>; HF_TOKEN auth; bare repo -> ValidationError (listing DEFERRED).\n\n**Files:** src/kinoforge/sources/huggingface/__init__.py; tests/sources/test_huggingface.py.\n\n**Verify:** pixi run test tests/sources/test_huggingface.py\n\nSee plan doc Task 19b.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/sources/huggingface/__init__.py\", \"tests/sources/test_huggingface.py\"], \"verifyCommand\": \"pixi run test tests/sources/test_huggingface.py\", \"acceptanceCriteria\": [\"parse repo:path\", \"Artifact at HF resolve URL\", \"bare repo -> ValidationError\", \"token header when present\", \"self-registers\"]}\n```"
     },
     {
       "id": 21,
       "subject": "Task 20a: ComfyUIEngine (+ git node installer)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 10],
       "description": "**Goal:** ComfyUIEngine with provision (git nodes + file routing + launch flags) + backend (/prompt /history mocked) + validate_spec + declared_flags from cfg. All I/O behind injected seams.\n\n**Files:** src/kinoforge/engines/comfyui/{__init__,nodes}.py; tests/engines/test_comfyui.py.\n\n**Verify:** pixi run test tests/engines/test_comfyui.py\n\nSee plan doc Task 20a.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/engines/comfyui/nodes.py\", \"tests/engines/test_comfyui.py\"], \"verifyCommand\": \"pixi run test tests/engines/test_comfyui.py\", \"acceptanceCriteria\": [\"provision: git clone + requirements + file routing + launch flags\", \"backend submit/result via /prompt /history (mocked)\", \"validate_spec rejects bad graph spec\", \"declared_flags from cfg\", \"self-registers\"]}\n```"
     },
     {
       "id": 22,
       "subject": "Task 20b: RunPodProvider (pod + serverless)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5, 9, 17],
       "description": "**Goal:** RunPodProvider pod+serverless behind one ComputeProvider; in-pod self-term script + terminate-only cred at create (pod); serverless caps; proxy URL endpoints; destroy polls to confirmed-gone. All HTTP via injected seam.\n\n**Files:** src/kinoforge/providers/runpod/{__init__,selfterm}.py; tests/providers/test_runpod.py.\n\n**Verify:** pixi run test tests/providers/test_runpod.py\n\nSee plan doc Task 20b.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"src/kinoforge/providers/runpod/selfterm.py\", \"tests/providers/test_runpod.py\"], \"verifyCommand\": \"pixi run test tests/providers/test_runpod.py\", \"acceptanceCriteria\": [\"find_offers filters\", \"pod create injects terminate-only cred + self-term script\", \"serverless sets proactive caps\", \"endpoints proxy URL\", \"destroy polls to confirmed gone\", \"self-registers\"]}\n```"
     },
     {
       "id": 23,
       "subject": "Task 21a: DiffusersEngine",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 10],
       "description": "**Goal:** DiffusersEngine: pip deps + weights cache + headless server (all seams injected); submit/result via mocked server; validate_spec checks pipeline/scheduler.\n\n**Files:** src/kinoforge/engines/diffusers/__init__.py; tests/engines/test_diffusers.py.\n\n**Verify:** pixi run test tests/engines/test_diffusers.py\n\nSee plan doc Task 21a.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/test_diffusers.py\"], \"verifyCommand\": \"pixi run test tests/engines/test_diffusers.py\", \"acceptanceCriteria\": [\"provision via cfg+seams\", \"submit/result via mocked server\", \"validate_spec rejects bad spec\", \"self-registers\"]}\n```"
     },
     {
       "id": 24,
       "subject": "Task 21b: HostedAPIEngine (no-compute path)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 15],
       "description": "**Goal:** HostedAPIEngine (requires_compute=False, requires_local_weights=False); generate path with instance=None produces Artifact; provision validates creds (missing -> AuthError); CapabilityKey base from hosted.model.\n\n**Files:** src/kinoforge/engines/hosted/__init__.py; tests/engines/test_hosted.py.\n\n**Verify:** pixi run test tests/engines/test_hosted.py\n\nSee plan doc Task 21b.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\"], \"verifyCommand\": \"pixi run test tests/engines/test_hosted.py\", \"acceptanceCriteria\": [\"requires_compute False; e2e with instance=None produces Artifact\", \"provision validates creds; missing -> AuthError\", \"validate_spec rejects bad payload\", \"key-base from hosted.model\", \"self-registers\"]}\n```"
     },
     {
       "id": 25,
       "subject": "Task 21c: SkyPilotProvider (lazy import)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 9, 18],
       "description": "**Goal:** SkyPilotProvider — only place `import sky`/`skypilot` lives; lazy import + injectable client; idle_timeout -> autostop; list/destroy reconcile via sky status.\n\n**Files:** src/kinoforge/providers/skypilot/__init__.py; tests/providers/test_skypilot.py.\n\n**Verify:** pixi run test tests/providers/test_skypilot.py\n\nSee plan doc Task 21c.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/skypilot/__init__.py\", \"tests/providers/test_skypilot.py\"], \"verifyCommand\": \"pixi run test tests/providers/test_skypilot.py\", \"acceptanceCriteria\": [\"sky import only in this module\", \"lazy import + injectable client\", \"idle_timeout -> autostop mapping\", \"list/destroy via sky status\", \"self-registers\"]}\n```"
     },
     {
       "id": 26,
       "subject": "Task 22: CLI + __main__",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [16, 18],
       "description": "**Goal:** argparse CLI deploy|provision|generate|list|status|stop|destroy|reap|gc; --dry-run; running-instances + age + spend on every invocation; refuses dup pod; adapters imported only in kinoforge/_adapters.py.\n\n**Files:** src/kinoforge/cli.py; src/kinoforge/__main__.py; src/kinoforge/_adapters.py; tests/test_cli.py.\n\n**Verify:** pixi run test tests/test_cli.py\n\nSee plan doc Task 22.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli.py\", \"src/kinoforge/__main__.py\", \"src/kinoforge/_adapters.py\", \"tests/test_cli.py\"], \"verifyCommand\": \"pixi run test tests/test_cli.py\", \"acceptanceCriteria\": [\"dry-run prints neutral plan + zero provider calls\", \"generate produces Artifact e2e\", \"gc + reap subcommands\", \"spend/age surfaced each invocation\", \"unknown adapter -> non-zero exit\"]}\n```"
     },
     {
       "id": 27,
       "subject": "Task 23: Examples, README, CI",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 26],
       "description": "**Goal:** wan/diffusers/hosted/local-fake example configs; README (quickstart + extending guide + roadmap + SkyPilot credit); CI on Linux/macOS/Windows.\n\n**Files:** examples/configs/{wan,diffusers,hosted,local-fake}.yaml; README.md; .github/workflows/ci.yml; tests/test_examples.py.\n\n**Verify:** pixi run test tests/test_examples.py\n\nSee plan doc Task 23.\n\n```json:metadata\n{\"files\": [\"examples/configs/wan.yaml\", \"examples/configs/diffusers.yaml\", \"examples/configs/hosted.yaml\", \"examples/configs/local-fake.yaml\", \"README.md\", \".github/workflows/ci.yml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run test tests/test_examples.py\", \"acceptanceCriteria\": [\"all 4 example configs load + validate\", \"config-only swap test passes\", \"README has required sections\", \"CI runs 3-OS matrix\"]}\n```"
     },
     {
       "id": 28,
       "subject": "Task 24: Core-invariant guard test",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [16, 26],
       "description": "**Goal:** Subprocess test: core imports leave providers/sources/engines out of sys.modules. Static scan: sky/runpod/civitai/comfyui imports only in their adapter packages; no core/ file imports concrete adapters.\n\n**Files:** tests/test_core_invariant.py.\n\n**Verify:** pixi run test tests/test_core_invariant.py\n\nSee plan doc Task 24.\n\n```json:metadata\n{\"files\": [\"tests/test_core_invariant.py\"], \"verifyCommand\": \"pixi run test tests/test_core_invariant.py\", \"acceptanceCriteria\": [\"subprocess import of core/* leaves providers/sources/engines absent from sys.modules\", \"static scan: sky imports only in providers/skypilot/\", \"static scan: no core/ imports concrete adapter packages\"]}\n```"
     }

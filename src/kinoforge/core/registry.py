@@ -1,0 +1,145 @@
+"""Runtime registry: name (providers/engines) + ref-dispatch (sources) -> impl.
+
+Adapters self-register via ``register_*`` at import time. Core resolves by
+name (providers/engines) or by asking each source ``handles(ref)`` and
+returning the first match (sources). It MUST NEVER import a concrete adapter
+module.
+
+Sources use behavioural dispatch rather than a name-keyed lookup because the
+same ref (e.g. ``https://...``) may be claimed by more than one source, and a
+source may legitimately handle multiple schemes; the choice belongs in the
+source, not the caller.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from kinoforge.core.errors import UnknownAdapter
+from kinoforge.core.interfaces import ComputeProvider, GenerationEngine, ModelSource
+from kinoforge.stores.base import ArtifactStore
+
+_providers: dict[str, Callable[[], ComputeProvider]] = {}
+_engines: dict[str, Callable[[], GenerationEngine]] = {}
+_sources: list[ModelSource] = []
+_artifact_stores: dict[str, Callable[[], ArtifactStore]] = {}
+
+
+def register_provider(name: str, factory: Callable[[], ComputeProvider]) -> None:
+    """Register a compute provider factory under ``name`` (overwrites).
+
+    Args:
+        name: The registry key for this provider.
+        factory: Zero-arg callable that returns a ``ComputeProvider`` instance.
+    """
+    _providers[name] = factory
+
+
+def get_provider(name: str) -> Callable[[], ComputeProvider]:
+    """Return the provider factory for ``name`` or raise ``UnknownAdapter``.
+
+    Args:
+        name: The registry key to look up.
+
+    Returns:
+        The zero-arg factory registered under ``name``.
+
+    Raises:
+        UnknownAdapter: No provider is registered under ``name``.
+    """
+    try:
+        return _providers[name]
+    except KeyError:
+        raise UnknownAdapter(f"no compute provider registered: {name!r}") from None
+
+
+def register_engine(name: str, factory: Callable[[], GenerationEngine]) -> None:
+    """Register a generation engine factory under ``name`` (overwrites).
+
+    Args:
+        name: The registry key for this engine.
+        factory: Zero-arg callable that returns a ``GenerationEngine`` instance.
+    """
+    _engines[name] = factory
+
+
+def get_engine(name: str) -> Callable[[], GenerationEngine]:
+    """Return the engine factory for ``name`` or raise ``UnknownAdapter``.
+
+    Args:
+        name: The registry key to look up.
+
+    Returns:
+        The zero-arg factory registered under ``name``.
+
+    Raises:
+        UnknownAdapter: No engine is registered under ``name``.
+    """
+    try:
+        return _engines[name]
+    except KeyError:
+        raise UnknownAdapter(f"no generation engine registered: {name!r}") from None
+
+
+def register_source(source: ModelSource) -> None:
+    """Register a model source instance.
+
+    The source is stored as an instance (not a factory) because routing goes
+    through ``source.handles(ref)`` — the registry needs a live object to ask.
+    An existing entry sharing ``source.scheme`` is replaced so module re-imports
+    are idempotent.
+
+    Args:
+        source: The ``ModelSource`` instance to register. Its ``.scheme``
+            attribute is used to deduplicate on re-registration.
+    """
+    global _sources
+    _sources = [s for s in _sources if s.scheme != source.scheme] + [source]
+
+
+def source_for_ref(ref: str) -> ModelSource:
+    """Return the source whose ``handles(ref)`` is True or raise ``UnknownAdapter``.
+
+    Args:
+        ref: The model reference string to route.
+
+    Returns:
+        The first registered ``ModelSource`` whose ``handles(ref)`` returns ``True``.
+
+    Raises:
+        UnknownAdapter: No registered source handles ``ref``.
+    """
+    for s in _sources:
+        if s.handles(ref):
+            return s
+    raise UnknownAdapter(f"no model source handles ref: {ref!r}")
+
+
+def register_store(name: str, factory: Callable[[], ArtifactStore]) -> None:
+    """Register an artifact-store factory under ``name`` (overwrites).
+
+    Args:
+        name: The registry key for this store (e.g. ``"local"``).
+        factory: Zero-arg callable that returns an :class:`~kinoforge.stores.base.ArtifactStore`
+            instance.  Construction is deferred — the factory is called only when
+            the caller invokes ``get_store(name)()``.
+    """
+    _artifact_stores[name] = factory
+
+
+def get_store(name: str) -> Callable[[], ArtifactStore]:
+    """Return the artifact-store factory for ``name`` or raise ``UnknownAdapter``.
+
+    Args:
+        name: The registry key to look up.
+
+    Returns:
+        The zero-arg factory registered under ``name``.
+
+    Raises:
+        UnknownAdapter: No artifact store is registered under ``name``.
+    """
+    try:
+        return _artifact_stores[name]
+    except KeyError:
+        raise UnknownAdapter(f"no artifact store registered: {name!r}") from None

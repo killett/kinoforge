@@ -1,0 +1,23 @@
+# kinoforge example: HostedAPIEngine (fal.ai)
+#
+# Demonstrates the hosted / zero-compute path:
+#   - No compute block — kinoforge does NOT provision GPU instances
+#   - HostedAPIEngine calls the provider's REST endpoint directly
+#   - models block is present but validation-only (weights already on the host)
+#   - Top-level lifecycle carries the budget guard (no instance to lifecycle-manage)
+
+engine:
+  kind: hosted
+  precision: ""
+  hosted:
+    provider: fal
+    endpoint: "/fal-ai/wan/v2/t2v"
+    model: "wan-ai/Wan2.2-T2V-A14B"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+    kind: base
+    target: checkpoints
+
+lifecycle:
+  budget: 5.0
