@@ -101,3 +101,24 @@ class ArtifactStore(ABC):
         Raises:
             FileNotFoundError: No item exists at ``uri``.
         """
+
+    @abstractmethod
+    def uri_for(self, run_id: str, name: str) -> str:
+        """Return the URI that would address ``(run_id, name)`` under this store.
+
+        Pure: performs no I/O.  Does NOT check whether the item exists; callers
+        that care about existence should use :meth:`list` or let
+        :meth:`get_bytes` raise ``FileNotFoundError`` on miss.
+
+        The returned URI MUST equal the ``uri`` field of the
+        :class:`~kinoforge.core.interfaces.Artifact` that :meth:`put_bytes` or
+        :meth:`put_json` would return for the same ``(run_id, name)`` pair — this
+        is the invariant consumers rely on for cross-restart reads.
+
+        Args:
+            run_id: Opaque identifier grouping items from one pipeline run.
+            name: Relative item name within the run.
+
+        Returns:
+            The absolute URI string.
+        """

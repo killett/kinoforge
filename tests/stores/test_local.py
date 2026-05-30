@@ -159,3 +159,77 @@ def test_local_store_self_registers() -> None:
 
     factory = get_store("local")
     assert callable(factory)
+
+
+# --- AC7: uri_for contract ---------------------------------------------------
+
+
+def test_uri_for_matches_put_bytes_artifact_uri(store: LocalArtifactStore) -> None:
+    """uri_for(run_id, name) returns the same uri that put_bytes(run_id, name, ...).uri returns.
+
+    Bug this catches: uri_for diverges from put-time URI -> JsonProfileCache cross-
+    restart lookups read wrong path or miss entirely.
+    """
+    artifact = store.put_bytes("run-1", "blob.bin", b"x")
+    assert store.uri_for("run-1", "blob.bin") == artifact.uri
+
+
+def test_uri_for_matches_put_json_artifact_uri(store: LocalArtifactStore) -> None:
+    """uri_for(run_id, name) matches put_json(run_id, name, obj).uri.
+
+    Bug this catches: put_json uses a different path than put_bytes; uri_for
+    is wired to one but not both -> JSON profiles unreadable after restart.
+    """
+    artifact = store.put_json("run-1", "data.json", {"k": 1})
+    assert store.uri_for("run-1", "data.json") == artifact.uri
+
+
+def test_uri_for_no_io_when_item_missing(store: LocalArtifactStore) -> None:
+    """uri_for returns a string for a never-put name; does NOT raise.
+
+    Bug this catches: impl secretly stats the path, breaking the deterministic
+    contract and adding I/O cost that future S3/GCS stores would inherit.
+    """
+    uri = store.uri_for("run-x", "never-existed.bin")
+    assert isinstance(uri, str)
+    assert uri != ""
+
+
+def test_uri_for_stable_across_store_instances(tmp_path: Path) -> None:
+    """Two LocalArtifactStore instances at the same root return identical URIs.
+
+    Bug this catches: impl uses instance-local state (e.g. an in-memory counter
+    in the URI) -> cross-restart reads break because the second process can't
+    reconstruct the URI.
+    """
+    inst_a = LocalArtifactStore(tmp_path)
+    inst_b = LocalArtifactStore(tmp_path)
+    assert inst_a.uri_for("run-1", "x.bin") == inst_b.uri_for("run-1", "x.bin")
+
+
+def test_uri_for_nested_name_preserves_subpath(store: LocalArtifactStore) -> None:
+    """A name with subdirectory components survives uri_for unchanged.
+
+    Bug this catches: uri_for flattens or strips the subpath -> nested names
+    (e.g. profiles/abc.json) resolve to the wrong file.
+    """
+    uri = store.uri_for("run-1", "profiles/abc.json")
+    # The URI on Linux/macOS is the absolute resolved path; assert the
+    # last two segments match the name.
+    p = Path(uri)
+    assert p.name == "abc.json"
+    assert p.parent.name == "profiles"
+
+
+def test_uri_for_round_trip_via_cross_instance_read(tmp_path: Path) -> None:
+    """Inst A puts; inst B reads via get_bytes(inst_b.uri_for(...)).
+
+    Bug this catches: uri_for returns a URI that's structurally correct but
+    points at a different file than the original put -> get_bytes fails or
+    returns wrong bytes.
+    """
+    inst_a = LocalArtifactStore(tmp_path)
+    inst_b = LocalArtifactStore(tmp_path)
+    inst_a.put_bytes("run-1", "hello.bin", b"hello")
+    uri = inst_b.uri_for("run-1", "hello.bin")
+    assert inst_b.get_bytes(uri) == b"hello"

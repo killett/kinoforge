@@ -20,14 +20,10 @@ not natively JSON-serialisable:
 * ``max_resolution: tuple[int, int]`` → stored as a two-element list;
   deserialised back to ``tuple``.
 
-URI reconstruction
-------------------
-``ArtifactStore.get_json`` takes a ``uri`` (not a ``(run_id, name)`` pair).
-``JsonProfileCache`` keeps an in-process ``_uri_index`` dict seeded by every
-``_persist`` call.  On a fresh instance (e.g. after process restart) the
-index is empty; ``resolve`` falls back to ``_reconstruct_uri`` which derives
-the URI from ``LocalArtifactStore._path`` when available, ensuring
-cross-restart reads work for the local store.
+URI lookup
+----------
+URIs are resolved via ``ArtifactStore.uri_for(run_id, name)`` — pure, no I/O,
+deterministic. No in-process cache is needed.
 """
 
 from __future__ import annotations
@@ -121,8 +117,6 @@ class JsonProfileCache(ModelProfileProvider):
     Attributes:
         _store: The backing :class:`~kinoforge.stores.base.ArtifactStore`.
         _run_id: The run-id namespace used for profile storage.
-        _uri_index: Maps relative item names to absolute URIs; populated by
-            :meth:`_persist` and lazily by :meth:`_reconstruct_uri`.
         _lock: Mutex protecting ``_inflight``.
         _inflight: Maps ``key.derive()`` hashes to ``threading.Event`` objects
             that follower threads wait on while the leader executes
@@ -147,7 +141,6 @@ class JsonProfileCache(ModelProfileProvider):
         """
         self._store = store
         self._run_id = run_id
-        self._uri_index: dict[str, str] = {}
         self._lock = threading.Lock()
         self._inflight: dict[str, threading.Event] = {}
 
@@ -169,64 +162,12 @@ class JsonProfileCache(ModelProfileProvider):
     def _persist(self, key: CapabilityKey, profile: ModelProfile) -> None:
         """Serialise *profile* and write it to the store under *key*'s name.
 
-        Populates ``_uri_index`` so that subsequent :meth:`resolve` calls can
-        retrieve the profile without coupling to store internals.
-
         Args:
             key: The ``CapabilityKey`` that identifies this profile.
             profile: The ``ModelProfile`` to persist.
         """
         name = self._profile_name(key)
-        artifact = self._store.put_json(self._run_id, name, _profile_to_dict(profile))
-        self._uri_index[name] = artifact.uri
-
-    def _uri_for(self, name: str) -> str:
-        """Return the absolute URI for a stored item by name.
-
-        Checks ``_uri_index`` first; falls back to ``_reconstruct_uri`` for
-        cross-restart reads.
-
-        Args:
-            name: Relative item name as returned by :meth:`_profile_name`.
-
-        Returns:
-            The absolute URI string.
-
-        Raises:
-            ProfileNotCached: URI cannot be determined (name not in store or
-                URI reconstruction not supported by the store backend).
-        """
-        if name in self._uri_index:
-            return self._uri_index[name]
-        return self._reconstruct_uri(name)
-
-    def _reconstruct_uri(self, name: str) -> str:
-        """Derive a URI for an existing item without having previously written it.
-
-        This is called on a fresh ``JsonProfileCache`` instance (e.g. after
-        process restart) when ``_uri_index`` has not been populated for *name*.
-        For ``LocalArtifactStore`` the URI is the resolved absolute filesystem
-        path, which can be reconstructed from the store's ``_path`` method.
-
-        Args:
-            name: Relative item name within the run-id namespace.
-
-        Returns:
-            The absolute URI string; also caches the result in ``_uri_index``.
-
-        Raises:
-            ProfileNotCached: The backing store does not expose ``_path`` and
-                the URI cannot be reconstructed after a process restart.
-        """
-        if hasattr(self._store, "_path"):
-            path = self._store._path(self._run_id, name)
-            uri = str(path)
-            self._uri_index[name] = uri
-            return uri
-        raise ProfileNotCached(
-            f"cannot reconstruct URI for {name!r}: store does not expose _path "
-            "and _uri_index was not populated (cross-restart on non-local store)"
-        )
+        self._store.put_json(self._run_id, name, _profile_to_dict(profile))
 
     # ------------------------------------------------------------------
     # ModelProfileProvider implementation
@@ -247,15 +188,12 @@ class JsonProfileCache(ModelProfileProvider):
             ProfileNotCached: No profile has been persisted for *key* yet.
         """
         name = self._profile_name(key)
-        # Check store listing to detect cross-restart case where _uri_index
-        # is empty but the file exists on disk.
-        listed = self._store.list(self._run_id)
-        if name not in listed:
+        if name not in self._store.list(self._run_id):
             raise ProfileNotCached(
                 f"no cached profile for capability key {key.derive()!r}; "
                 "call discover() to populate the cache"
             )
-        uri = self._uri_for(name)
+        uri = self._store.uri_for(self._run_id, name)
         raw = self._store.get_json(uri)
         return _dict_to_profile(raw)
 

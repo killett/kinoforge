@@ -69,14 +69,19 @@ ALL 28 tasks complete. All 9 phases complete.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock). No real cloud/net/GPU/weights in any test.
 
 ## Single next action
-**BUILD COMPLETE.** Final acceptance pass green: `pixi run pre-commit run --all-files` clean
-(ruff + ruff-format + mypy all Passed); `pixi run test-cov` reports **357 passed, 90% coverage**
-across 1917 LOC of `src/`. All 28 tasks across 9 phases are committed on branch `build/kinoforge`.
+**Layer A (uri_for ABC, issue #6) complete.** All acceptance criteria met:
+`pixi run pre-commit run --all-files` clean; `pixi run test-cov` reports 90%+
+coverage; both `grep _path` and `grep _uri_index|_reconstruct_uri|_uri_for`
+return 0 matches in `src/kinoforge/core/profiles.py`. Issue #6 closed.
+Issue #5 (S3/GCS stores) is now unblocked.
 
-Remaining housekeeping (handed off to `finishing-a-development-branch`):
-1. Decide merge path (PR vs direct merge to `main`).
-2. Walk `SPEC.md` "Definition of done" against the implemented behaviours one final time.
-3. Squash/tidy the build-branch history if desired before merge.
+**Next: Layer B — Continuity / stitching fallback (GitHub issue #1).**
+The prompt splitter (Phase 10) ships N-segment plans where segments 1..N-1
+have empty `assets`. Layer B fills them with the previous segment's tail
+frame as the `init_image` `ConditioningAsset` so non-native engines chain
+visually. Touches `core/strategy.py` non-native branch + adds
+`extract_last_frame` on the `GenerationEngine` ABC. Begin with the
+`superpowers-extended-cc:brainstorming` skill.
 
 ## Post-MVP
 
@@ -85,3 +90,7 @@ Remaining housekeeping (handed off to `finishing-a-development-branch`):
 - [x] Task 2: HeuristicSplitter + core self-registration trigger — commit f522e2b
 - [x] Task 3: SplitterConfig optional block (defaults to heuristic) — commit fd0978a
 - [x] Task 4: Orchestrator step-6 wiring + stage validate-once + README/PROGRESS — commit d1828b7
+
+### Phase 11 — uri_for ABC (deferred layer A, GitHub issue #6)
+- [x] Task 1: Add `ArtifactStore.uri_for` ABC method + LocalArtifactStore impl + tests — commit `a6f8950`
+- [x] Task 2: Refactor JsonProfileCache to use `store.uri_for`; delete `_uri_index`, `_uri_for`, `_reconstruct_uri` — commit `dd08f0c` (closes #6)
