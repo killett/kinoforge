@@ -40,8 +40,7 @@ tests/stores/
   test_gcs.py             # ~16 tests
 tests/test_core_invariant.py   # extend _VENDOR_PATTERNS w/ boto3 + google.cloud
 tests/core/test_config.py      # ~6 new StoreConfig tests
-tests/cli/test_cli.py          # ~3 new store-selection tests (if cli test file exists; else
-                               # add a slim new tests/cli/__init__.py + tests/cli/test_cli.py)
+tests/test_cli.py              # ~3 new store-selection tests added to existing file
 
 examples/configs/                       # add optional store: block as commented example to ONE config
                                         # (e.g. wan.yaml). Other configs prove the no-block default still works.
@@ -72,14 +71,10 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
-
-if TYPE_CHECKING:
-    from mypy_boto3_s3 import S3Client  # type: ignore[import-not-found]
 
 
 class S3ArtifactStore(ArtifactStore):
@@ -97,7 +92,7 @@ class S3ArtifactStore(ArtifactStore):
         bucket: str,
         prefix: str = "",
         *,
-        client: "S3Client | None" = None,
+        client: Any = None,
     ) -> None:
         """Initialise the store.
 
@@ -197,19 +192,37 @@ register_store("s3", _default_factory)
 
 Symmetric to `S3ArtifactStore`. Key differences:
 
-- Lazy import: `from google.cloud import storage` inside `__init__` when
-  `client is None`.
-- Constructor: `(bucket: str, prefix: str = "", *, client: "storage.Client | None" = None,
-  not_found_exc: type[BaseException] | None = None)`. `not_found_exc` defaults to the
-  real `google.api_core.exceptions.NotFound` via lazy import; fakes inject
-  `FakeGCSClient.NotFound`. Symmetric to S3 catching exceptions via
-  `self._client.exceptions.NoSuchKey`.
-- URI scheme: `gs://`.
-- Bucket handle pattern: `self._bucket = client.bucket(bucket)`.
-- `put_bytes` → `self._bucket.blob(key).upload_from_string(data)`.
-- `get_bytes` → `self._bucket.blob(key).download_as_bytes()` (catch `not_found_exc`).
-- `list` → `self._bucket.list_blobs(prefix=run_prefix)`, strip prefix.
-- `delete` → `blob.delete()` after `blob.exists()` check; catch `not_found_exc`.
+- Constructor signature:
+  ```python
+  def __init__(
+      self,
+      bucket: str,
+      prefix: str = "",
+      *,
+      client: Any = None,
+      not_found_exc: type[BaseException] | None = None,
+  ) -> None:
+      self.bucket = bucket
+      self.prefix = prefix.strip("/")
+      if client is None:
+          from google.cloud import storage  # noqa: PLC0415 — lazy
+          client = storage.Client()
+      if not_found_exc is None:
+          from google.api_core.exceptions import NotFound  # noqa: PLC0415 — lazy
+          not_found_exc = NotFound
+      self._bucket_handle: Any = client.bucket(bucket)
+      self._not_found_exc: type[BaseException] = not_found_exc
+  ```
+  Both lazy imports gated behind their respective `is None` checks; tests pass
+  *both* `client=fake_gcs_client` *and* `not_found_exc=FakeGCSClient.NotFound`
+  to avoid tripping either gate.
+- URI scheme: `gs://`. `_split_uri` checks `uri.startswith("gs://")`; strips
+  the 5-char prefix.
+- `put_bytes` → `self._bucket_handle.blob(key).upload_from_string(data)` (auto-multipart over SDK default threshold).
+- `get_bytes` → `self._bucket_handle.blob(key).download_as_bytes()`; catch
+  `self._not_found_exc` → `FileNotFoundError(uri)`.
+- `list` → `[blob.name[len(run_prefix):] for blob in self._bucket_handle.list_blobs(prefix=run_prefix)]`.
+- `delete` → call `blob.delete()`; catch `self._not_found_exc` → `FileNotFoundError(uri)`. No pre-check needed (unlike S3) because the GCS SDK raises `NotFound` on a missing-key delete.
 - Default factory reads `KINOFORGE_GCS_BUCKET` + optional `KINOFORGE_GCS_PREFIX`.
 
 ### 3.3 ABC compliance proof
@@ -433,9 +446,12 @@ Both fakes live in `tests/stores/conftest.py`. Pytest fixtures `s3_store` and
 Plus one cross-cutting test per store:
 
 17. `lazy_sdk_import_not_triggered_when_client_injected` — snapshot `sys.modules`
-    before constructing with `client=fake`; assert `boto3` (resp.
-    `google.cloud.storage`) not in `sys.modules` afterwards. Proves the lazy
-    import gate.
+    before constructing the store; assert the SDK module is absent afterwards.
+    For S3: construct with `client=FakeS3Client()`; assert `"boto3"` not in
+    `sys.modules`. For GCS: construct with *both* `client=FakeGCSClient()` and
+    `not_found_exc=FakeGCSClient.NotFound`; assert `"google.cloud.storage"` and
+    `"google.api_core.exceptions"` are both absent from `sys.modules`. Proves
+    each lazy-import gate.
 
 ### 8.3 `StoreConfig` tests (added to `tests/core/test_config.py`)
 
@@ -446,7 +462,7 @@ Plus one cross-cutting test per store:
 5. `prefix_defaults_to_empty_string`
 6. `parses_full_s3_block_from_yaml` (round-trips a YAML doc through `load_config`)
 
-### 8.4 CLI tests (add to existing CLI test file; create `tests/cli/test_cli.py` if absent)
+### 8.4 CLI tests (added to existing `tests/test_cli.py`)
 
 1. `cli_generate_uses_local_when_store_block_absent` — backwards compat
 2. `cli_generate_uses_s3_when_store_kind_s3` — monkeypatch `S3ArtifactStore` to a
