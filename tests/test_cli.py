@@ -496,3 +496,13 @@ def test_cli_env_file_flag_overrides_default(
     assert code == 0
 
     assert os.environ.get("KINOFORGE_TEST_ENV_KEY") == "custom-value"
+
+
+def test_cli_env_file_missing_propagates_FileNotFoundError(
+    tmp_path: Path,
+) -> None:
+    """--env-file PATH with a missing file raises FileNotFoundError through main()."""
+    missing = tmp_path / "nope.env"
+
+    with pytest.raises(FileNotFoundError, match=str(missing)):
+        _call(["--env-file", str(missing), "list"], tmp_path / "state")
