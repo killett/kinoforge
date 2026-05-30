@@ -105,10 +105,17 @@ def load_env_file(path: Path | None = None, *, override: bool = False) -> None:
 Top of `kinoforge.cli.main(argv)`:
 
 1. argparse gains a top-level optional `--env-file PATH`.
-2. Before subcommand dispatch: `load_env_file(args.env_file)`.
+2. Before subcommand dispatch: `load_env_file(args.env_file)` (no
+   `override` kwarg — CLI always uses the default `False`).
 
 That is the only call site.  Order is locked: load happens before
 `_build_orchestrator`, `_build_store`, or any adapter construction.
+
+The `override=True` path on `load_env_file` is **library-only** — exposed for
+library users who explicitly want `.env` to clobber existing `os.environ`
+values.  No CLI flag flips it.  Rationale: the CLI default is the safe
+production behavior (shell wins, CI exports always take precedence); library
+users have full control by calling the function themselves.
 
 ### 4.3 Non-CLI (library) entry points
 
