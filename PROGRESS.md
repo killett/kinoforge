@@ -155,6 +155,19 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - `engine.hosted.model` ↔ `spec.model` duplication collapse (Layer K hosted YAML ambiguity).
 - `kinoforge batch` CLI subcommand: accept multiple `--prompt-file PATH` (or `--prompt TEXT`) with `--concurrent N`. Today producing N clips requires N parallel shell invocations, which is error-prone (e.g. `vars && cmd1 & cmd2` accidentally scopes vars to the backgrounded subshell). A batch subcommand owns the parallel-dispatch shape so users / LLMs never construct the shell pipeline by hand. Needs decisions on per-prompt cfg overrides, naming, shared vs per-call budget/ledger.
 
+**Layer L Task 4 — streaming per-entry log lines (DEFERRED, ships in a later follow-up):**
+- Layer L spec §5 and the plan show streaming per-entry markers during the run
+  (`[batch-...] waves start`, `[batch-...] waves ok 14.2s ...`), but the CLI as
+  shipped at `c940da9` only prints the initial `manifest loaded` header and the
+  final per-entry summary table. The final table already shows everything users
+  need post-run, and none of the 6 batch-CLI tests assert mid-run output, so the
+  visible UAT contract is met — but the spec/plan and the implementation now
+  disagree on intra-run progress. Closing this gap requires a callback hook into
+  `batch_generate` (since `core/` cannot print directly without breaking the
+  core-import-ban invariant); deferring keeps Task 4 focused and lets a future
+  contributor add the seam + a streaming-output test in one self-contained
+  change. Owner: whoever picks up Layer L Task 5 or a follow-up polish phase.
+
 ## Post-MVP
 
 ### Phase 10 — prompt splitter (deferred layer #1 from handoff §7)
