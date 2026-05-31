@@ -49,6 +49,37 @@ Browse ready-to-use examples in [`examples/configs/`](examples/configs/):
 | [`hosted.yaml`](examples/configs/hosted.yaml) | Hosted API | fal.ai | Zero-infra hosted |
 | [`local-fake.yaml`](examples/configs/local-fake.yaml) | Fake | Local | Offline / CI smoke test |
 
+### Concurrency
+
+By default kinoforge runs one generation job at a time (sequential). Add
+`max_in_flight` to your `lifecycle:` block to enable concurrent dispatch:
+
+```yaml
+compute:
+  ...
+  lifecycle:
+    idle_timeout: 2h
+    max_lifetime: 6h
+    budget: 50.0
+    max_in_flight: 4   # send up to 4 jobs to the backend in parallel
+```
+
+Three behaviours determined by `max_in_flight` and the model's generation
+mode:
+
+- **t2v fan-out** — text-to-video segments have no temporal dependency, so
+  `GenerateClipStage` submits all N segments concurrently (up to
+  `max_in_flight` at a time). First failure cancels in-flight jobs and
+  re-raises immediately.
+- **i2v serial** — image-to-video segments must be chained (each segment's
+  tail frame seeds the next), so they are dispatched one-at-a-time
+  regardless of `max_in_flight`.
+- **multi-request** — a backend running on multi-GPU hardware (e.g. a
+  ComfyUI server with 4 GPUs) can process multiple independent requests
+  simultaneously; set `max_in_flight` to match its actual parallelism.
+
+`max_in_flight: 1` (the default) preserves the original sequential behaviour.
+
 ## Credentials
 
 Kinoforge reads its API credentials from environment variables. To avoid
@@ -321,7 +352,7 @@ Each item below names the deferred layer and the exact seam it plugs into when b
 
 - **Continuity / stitching fallback** — `strategy.decide` non-native branch; the fallback path currently issues N single-segment jobs; stitching post-processing slots in between `pool.map` and `store.put_bytes` in `GenerateClipStage`.
 - **Audio sync layer** — `strategy.decide` sets `spec["_audio_mode"] = "separate"` as a marker; a downstream audio-sync stage reads this key and schedules audio generation after the video clip is stored.
-- **Concurrent / distributed backend scheduler** — `BackendPool` ABC (alongside `SequentialPool`); drop in a `ThreadedPool` or `RayPool` implementation and inject it into `GenerateClipStage`.
+- **Distributed / cross-process backend scheduler** — `ConcurrentPool` (Layer G) handles in-process thread-level concurrency; a future `RayPool` or cross-process variant would slot into the same `BackendPool` ABC without touching the stage or orchestrator.
 - **Keyframe / image-generation upstream Stage** — `Stage` Protocol + `ConditioningAsset` with `kind="image"`; add an `ImageGenStage` that satisfies `Stage` and feeds its output into the video generation stage's `segments_override`.
 - **Cross-process discovery lock** — `ModelProfileProvider` currently uses an in-process threading.Event for single-flight; replace with a file-lock or Redis-backed lock for multi-process / distributed workers.
 

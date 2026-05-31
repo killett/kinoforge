@@ -75,7 +75,7 @@ ALL 28 tasks complete. All 9 phases complete.
 - S3/GCS shipped as two independent siblings, no shared cloud-base — ~30 LOC duplication acceptable; avoids locking guesses about future stores (Azure, B2, R2). Factor when third cloud lands.
 - SDK credential discovery uses default chains, not kinoforge plumbing — boto3 walks AWS env → `~/.aws/credentials` → IMDS → IAM role; GCS walks `GOOGLE_APPLICATION_CREDENTIALS` → gcloud ADC → GCE metadata. Routing through `EnvCredentialProvider` would defeat IMDS/IAM-role auto-discovery.
 - `.env` loader is a transparent shim at CLI entry — populates `os.environ` once; every downstream consumer (EnvCredentialProvider, boto3, GCS default chains) reads unchanged. `override=True` is library-only, no CLI flag.
-- Deferred (interface + 1 path only, layers NOT built): stitching, audio, concurrent pool, keyframe stage, cross-process discovery lock. (Splitter, uri_for, continuity, S3/GCS, .env loader now built.)
+- Deferred (interface + 1 path only, layers NOT built): stitching, audio, keyframe stage, cross-process discovery lock. (Splitter, uri_for, continuity, S3/GCS, .env loader, concurrent pool now built.)
 - Deps stdlib-first: pydantic + PyYAML + python-dotenv runtime; boto3 + google-cloud-storage lazy-import-gated; skypilot optional/lazy; urllib for all HTTP; stdlib logging.
 - TDD red-first, fully offline (LocalProvider/FakeProvider/FakeSource/FakeEngine + injectable clock + Fake cloud clients). No real cloud/net/GPU/weights in any test.
 
@@ -86,7 +86,8 @@ Patterns proven across MVP + Layers A–D. New layers should follow them by defa
 - Injected I/O seams on every adapter — HTTP/subprocess/filesystem as constructor params with stdlib defaults; tests pass spies; no real network/subprocess/git/GPU in tests.
 - Self-registration on import — zero-arg factories for engines/providers/stores; instances for sources (dispatch by `handles(ref)`).
 - Source dispatch by behaviour, not key equality — `source_for_ref(ref)` asks each registered source `handles(ref)`, returns first match.
-- Stage protocol + pool-swap — stages talk only to `BackendPool`/`ArtifactStore`/`ModelProfile`; `SequentialPool` is default, future `ConcurrentPool` drops in unchanged.
+- Stage protocol + pool-swap — stages talk only to `BackendPool`/`ArtifactStore`/`ModelProfile`; `SequentialPool` is default, `ConcurrentPool` drops in via same ABC; future distributed variants (Ray, cross-process) follow the same pattern.
+- `ConcurrentPool` semaphore pattern — `_Slot(backend, executor, cap)` per backend; `submit` acquires semaphore before `executor.submit`, releases in Future callback; `map` submits all + `as_completed` drain with fail-fast cancel; `close` shuts down all executors via context-manager `__exit__`.
 - Strategy / validation / continuity / splitter helpers are pure functions — `decide`, `validate_request`, `inject_tail_frame`, `split()` all return new objects, never mutate input.
 - `dataclasses.replace` for every immutable update — no mutation paths; tests verify with `is`-identity on unchanged fields.
 - TDD red-first, every task — write failing test first, confirm FAIL, then implement; `test-design` skill (bug-catch comments, no implementation mirroring, no over-mocking).
@@ -138,7 +139,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 |---|---|---|
 | #1 | Continuity / stitching fallback | CLOSED (Layer B) |
 | #2 | Audio sync stage | Open |
-| #3 | Concurrent / distributed backend scheduler | Open |
+| #3 | Concurrent / distributed backend scheduler | CLOSED (Layer G) |
 | #4 | Keyframe / image-generation upstream Stage | Open |
 | #5 | S3 / GCS artifact stores | CLOSED (Layer C) |
 | #6 | `ArtifactStore.uri_for(run_id, name)` ABC | CLOSED (Layer A) |
@@ -147,19 +148,8 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer F (per-engine asset wiring) complete.** All 6 tasks + post-merge cfg fix shipped (478 → 524 tests).
-The non-native multi-segment chain now produces consumed tail-frames end-to-end:
-- ComfyUI: spec `asset_node_ids: {init_image: <node_id>}` triggers /upload/image + node patch
-- Diffusers: cfg `engine.diffusers.asset_paths: {init_image: <dot.path>}` writes URL into POST body
-- Hosted: cfg `engine.hosted.asset_paths: {init_image: <dot.path>}` writes URL into provider request
-
-Post-merge whole-branch review caught a pydantic cfg-strip defect that also affected Layer E `url_path` (silent drop during `Config.model_dump()` because the keys weren't declared on the pydantic models). Closed in commit `484e368` with typed cfg fields + 9 round-trip/E2E tests.
-
-**Next: Layer #4 — Concurrent backend scheduler (GitHub issue #3).**
-Drop-in `ConcurrentPool` behind the existing `BackendPool` ABC. Pure dispatch concern;
-no other modules touched. Should be a quick layer compared to Layer E/F.
-
-Begin the chosen layer with the `superpowers-extended-cc:brainstorming` skill.
+Layer G (concurrent backend scheduler) complete. All 8 commits + docs shipped (524 → 554 tests).
+**Next: choose from open GitHub issues #2 (audio sync), #4 (keyframe stage), #7 (cross-process discovery lock), #8 (HF bare-repo listing), #9 (aria2c fast-path).**
 
 ## Post-MVP
 
@@ -208,4 +198,15 @@ Begin the chosen layer with the `superpowers-extended-cc:brainstorming` skill.
 - [x] Task 4 (review fix): random multipart boundary + filename escape + AssetFetchError wrapping + 8 tests — commit `e6826c6`
 - [x] Task 5: GenerateClipStage post-chain `validate_spec` + 3 tests — commit `22269ed`
 - [x] Task 6: README + PROGRESS + final gate + merge — commit `a271a03` (+ Phase 16 SHA backfill at `cb94413`; merge commit `3037bde`)
-- [x] Post-merge fix: pydantic cfg strip closed for Layer E `url_path` + Layer F `asset_paths`. `HostedEngineConfig` gains `url_path`/`asset_paths`/`api_key_env`/`health_url`; new `DiffusersEngineConfig` registered on `EngineConfig.diffusers`. 7 cfg round-trip tests + 2 YAML→engine.backend E2E tests close the silent-strip defect that bypassed both Layer F unit tests and Layer E tests — commit `484e368`. Final: 524 tests.
+- [x] Post-merge fix: pydantic cfg strip closed for Layer E `url_path` + Layer F `asset_paths`. `HostedEngineConfig` gains `url_path`/`asset_paths`/`api_key_env`/`health_url`; new `DiffusersEngineConfig` registered on `EngineConfig.diffusers`. 7 cfg round-trip tests + 2 YAML→engine.backend E2E tests close the silent-strip defect that bypassed both Layer F unit tests and Layer E tests — commit `484e368`. Post-Layer-F count: 524 tests.
+
+### Phase 17 — concurrent backend scheduler (post-MVP Layer G, GitHub issue #3)
+- [x] Task 1: `BackendPool.close()` ABC method + context-manager (`__enter__`/`__exit__`) + `SequentialPool` no-op impl + 4 parity tests — commit `a344bc8`
+- [x] Task 1 cleanup: drop `func-returns-value` suppression in close-noop test — commit `f770a8b`
+- [x] Task 2: `ConcurrentPool` core dispatch: `_Slot` (backend + `ThreadPoolExecutor` + semaphore), `submit` (least-loaded pick, semaphore acquire/release), `close` shutdown — commit `a6f504a`
+- [x] Task 2 fix: release slot semaphore counter when `executor.submit` raises to prevent slot leak — commit `0725457`
+- [x] Task 3: `ConcurrentPool.map` with fail-fast cancellation: submits all futures, `as_completed` drain, cancels remaining on first exception, re-raises after drain — commit `a4d4421`
+- [x] Task 4: `GenerateClipStage` branches on `should_chain` (i2v non-native → serial loop; t2v non-native → `pool.map` fan-out) — commit `7ba9974`
+- [x] Task 4 hardening: spy on `pool.map` in 1-job test for discriminating assertion — commit `24356cc`
+- [x] Task 5: `orchestrator.generate()` wraps stage inside `with ConcurrentPool() as pool: pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)`; `SequentialPool` import removed — commit `c90b046`
+- [x] Task 6: `LifecycleConfig.max_in_flight` field + wire through `lifecycle()` method; README Concurrency section; PROGRESS Phase 17 — commit `<DOCS-SHA>`
