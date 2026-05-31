@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import time
@@ -137,6 +138,29 @@ def _urllib_get_bytes(url: str) -> bytes:
         return bytes(resp.read())
 
 
+def _escape_quoted_string(s: str) -> str:
+    r"""Escape *s* for use inside an RFC 2183 quoted-string header value.
+
+    Doubles backslashes and quotes (``\`` -> ``\\``, ``"`` -> ``\"``)
+    so the value can be safely interpolated into a Content-Disposition
+    ``filename="..."`` parameter. Rejects values containing a CR or LF
+    so an attacker-controlled filename cannot inject extra headers into
+    the multipart envelope.
+
+    Args:
+        s: The raw string to escape.
+
+    Returns:
+        The escaped string ready for interpolation.
+
+    Raises:
+        ValueError: ``s`` contains a CR or LF character.
+    """
+    if "\r" in s or "\n" in s:
+        raise ValueError(f"filename contains newline: {s!r}")
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _urllib_post_multipart(
     url: str,
     *,
@@ -151,6 +175,17 @@ def _urllib_post_multipart(
     response and returns ``response["name"]`` per the ComfyUI server
     contract.
 
+    The multipart boundary is generated per call via
+    :func:`secrets.token_hex` so asset bytes that happen to contain a
+    static prefix can never terminate the body prematurely. The
+    ``"----kinoforge-"`` prefix is retained so the boundary remains
+    recognisable in packet captures.
+
+    The supplied *filename* is escaped per RFC 2183 before being
+    interpolated into the Content-Disposition header; a filename
+    containing CR or LF raises :class:`ValueError` (header injection
+    guard).
+
     Args:
         url: Upload endpoint URL.
         field_name: Form field name (ComfyUI expects ``"image"``).
@@ -161,16 +196,20 @@ def _urllib_post_multipart(
         The server-side filename string from the response JSON.
 
     Raises:
+        ValueError: ``filename`` contains a CR or LF character.
+        AssetFetchError: The server returned a body that is not valid
+            JSON, or a body that lacks the required ``"name"`` field.
         urllib.error.URLError: Transport failure (wrapped by the caller
             as :class:`~kinoforge.core.errors.AssetFetchError`).
         OSError: Lower-level socket failure (wrapped likewise).
     """
-    boundary = "----kinoforge-boundary"
+    safe_filename = _escape_quoted_string(filename)
+    boundary = f"----kinoforge-{secrets.token_hex(16)}"
     body = (
         (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="{field_name}"; '
-            f'filename="{filename}"\r\n'
+            f'filename="{safe_filename}"\r\n'
             f"Content-Type: application/octet-stream\r\n\r\n"
         ).encode()
         + content
@@ -181,8 +220,20 @@ def _urllib_post_multipart(
         url, data=body, headers=headers, method="POST"
     )
     with urllib.request.urlopen(req) as resp:  # noqa: S310
-        payload = json.loads(resp.read().decode("utf-8"))
-    return str(payload["name"])
+        raw = resp.read().decode("utf-8")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise AssetFetchError(
+            f"ComfyUI /upload/image returned invalid JSON: {e}"
+        ) from e
+    try:
+        name = payload["name"]
+    except (KeyError, TypeError) as e:
+        raise AssetFetchError(
+            f"ComfyUI /upload/image response missing 'name' field: {payload!r}"
+        ) from e
+    return str(name)
 
 
 # ---------------------------------------------------------------------------

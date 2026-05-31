@@ -978,3 +978,305 @@ def test_submit_patches_node_with_uploaded_filename() -> None:
     backend.submit(job)
     merged = posted[0]["prompt"]
     assert merged["7"]["inputs"]["image"] == "uploaded.png"
+
+
+# ---------------------------------------------------------------------------
+# Task 4 follow-up: hardening _urllib_post_multipart against transport edges
+# ---------------------------------------------------------------------------
+
+
+class _FakeUrlopenResponse:
+    """Minimal context-manager mock for urllib.request.urlopen responses.
+
+    Stores the bytes returned by ``read()`` and exits the context cleanly.
+    Used by tests that exercise the default :func:`_urllib_post_multipart`
+    via ``unittest.mock.patch("urllib.request.urlopen", ...)``.
+    """
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self) -> _FakeUrlopenResponse:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_urllib_post_multipart_uses_random_per_call_boundary() -> None:
+    """Each call to _urllib_post_multipart generates a fresh random boundary.
+
+    Bug catch: a fixed boundary like "----kinoforge-boundary" can appear in
+    asset bytes (binary content or adversarial input), terminating the
+    multipart body prematurely. Per-call randomness eliminates collision
+    risk and proves the design is not fragile to that input pattern.
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    captured: list[bytes] = []
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        captured.append(req.data)
+        return _FakeUrlopenResponse(b'{"name": "ok"}')
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        _urllib_post_multipart(
+            "http://comfy/upload/image",
+            field_name="image",
+            filename="a.png",
+            content=b"AAA",
+        )
+        _urllib_post_multipart(
+            "http://comfy/upload/image",
+            field_name="image",
+            filename="b.png",
+            content=b"BBB",
+        )
+
+    # Two separate bodies were sent.
+    assert len(captured) == 2
+    # Extract the first boundary token from each body (line after b"--").
+    first_boundary = captured[0].split(b"\r\n", 1)[0]
+    second_boundary = captured[1].split(b"\r\n", 1)[0]
+    # Boundaries differ between calls (per-call randomness).
+    assert first_boundary != second_boundary
+    # Each boundary keeps the recognisable "----kinoforge-" prefix so it
+    # remains debuggable in tcpdump / wireshark.
+    assert first_boundary.startswith(b"------kinoforge-")
+    assert second_boundary.startswith(b"------kinoforge-")
+    # Boundary token after the leading "--" is at least 32 hex chars
+    # (secrets.token_hex(16) = 32 chars) plus the "----kinoforge-" prefix.
+    assert len(first_boundary) >= len(b"------kinoforge-") + 32
+
+
+def test_urllib_post_multipart_survives_boundary_prefix_in_content() -> None:
+    """Asset bytes that include the static boundary prefix do NOT corrupt
+    the upload — body still contains the asset bytes verbatim.
+
+    Bug catch: a static boundary collides with content that happens to
+    contain it; this test pins the design to per-call randomness by
+    ensuring the asset bytes survive intact in the body sent to urlopen.
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    captured: list[bytes] = []
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        captured.append(req.data)
+        return _FakeUrlopenResponse(b'{"name": "ok"}')
+
+    # Content includes the prior static boundary prefix as well as the
+    # new shared prefix, simulating an adversarial payload.
+    payload = b"PRE----kinoforge-collision----kinoforge-boundaryPOST"
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        returned = _urllib_post_multipart(
+            "http://comfy/upload/image",
+            field_name="image",
+            filename="x.png",
+            content=payload,
+        )
+
+    assert returned == "ok"
+    assert len(captured) == 1
+    body = captured[0]
+    # The full payload survives in the body (no premature termination).
+    assert payload in body
+    # There is exactly one occurrence of the closing boundary delimiter
+    # ("--<boundary>--"). The opening boundary line uses "--<boundary>"
+    # followed by CRLF; the closing uses an additional trailing "--".
+    # Find the actual boundary from the body's first line.
+    boundary_line = body.split(b"\r\n", 1)[0]  # b"--<boundary>"
+    boundary = boundary_line[2:]
+    closing = b"--" + boundary + b"--"
+    assert body.count(closing) == 1
+
+
+def test_urllib_post_multipart_escapes_quotes_in_filename() -> None:
+    """A filename containing ``"`` or ``\\`` is escaped before being
+    interpolated into the Content-Disposition header (RFC 2183).
+
+    Bug catch: raw interpolation breaks the header so the server either
+    rejects the request or assigns the wrong filename.
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    captured: list[bytes] = []
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        captured.append(req.data)
+        return _FakeUrlopenResponse(b'{"name": "ok"}')
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        _urllib_post_multipart(
+            "http://comfy/upload/image",
+            field_name="image",
+            filename='evil".png',
+            content=b"X",
+        )
+
+    assert len(captured) == 1
+    body = captured[0]
+    # The quote in the filename must be escaped as \" inside the
+    # Content-Disposition header.
+    assert b'filename="evil\\".png"' in body
+    # A naive interpolation would emit the un-escaped quote, which we
+    # must not see anywhere in the header line.
+    header_line_end = body.find(b"\r\n\r\n")
+    assert header_line_end > 0
+    headers = body[:header_line_end]
+    # The un-escaped form would close the quoted-string early and leave
+    # a dangling .png"; assert that exact form is absent.
+    assert b'filename="evil".png"' not in headers
+
+
+def test_urllib_post_multipart_escapes_backslash_in_filename() -> None:
+    """A filename containing ``\\`` is doubled when interpolated.
+
+    Bug catch: an un-escaped backslash before a quote would let the
+    closing quote of the quoted-string slip through unescaped.
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    captured: list[bytes] = []
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        captured.append(req.data)
+        return _FakeUrlopenResponse(b'{"name": "ok"}')
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        _urllib_post_multipart(
+            "http://comfy/upload/image",
+            field_name="image",
+            filename="a\\b.png",
+            content=b"X",
+        )
+
+    body = captured[0]
+    assert b'filename="a\\\\b.png"' in body
+
+
+def test_urllib_post_multipart_leaves_safe_filename_unchanged() -> None:
+    """Safe filenames (e.g. ``seg-0-tail.png``) round-trip verbatim in the
+    Content-Disposition header.
+
+    Bug catch: the escape helper accidentally rewrites characters it
+    shouldn't (e.g. dots, hyphens).
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    captured: list[bytes] = []
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        captured.append(req.data)
+        return _FakeUrlopenResponse(b'{"name": "ok"}')
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        _urllib_post_multipart(
+            "http://comfy/upload/image",
+            field_name="image",
+            filename="seg-0-tail.png",
+            content=b"X",
+        )
+
+    assert b'filename="seg-0-tail.png"' in captured[0]
+
+
+def test_urllib_post_multipart_rejects_newline_in_filename() -> None:
+    """A filename containing ``\\n`` or ``\\r`` raises ValueError before
+    issuing any HTTP request — header injection is prevented.
+
+    Bug catch: an attacker-controlled filename with embedded CRLF could
+    smuggle arbitrary headers into the multipart envelope.
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    called: list[Any] = []
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        called.append(req)
+        return _FakeUrlopenResponse(b'{"name": "ok"}')
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        with pytest.raises(ValueError, match="newline"):
+            _urllib_post_multipart(
+                "http://comfy/upload/image",
+                field_name="image",
+                filename="bad\n.png",
+                content=b"X",
+            )
+        with pytest.raises(ValueError, match="newline"):
+            _urllib_post_multipart(
+                "http://comfy/upload/image",
+                field_name="image",
+                filename="bad\r.png",
+                content=b"X",
+            )
+
+    # No HTTP traffic was attempted because the helper rejected the input
+    # before reaching urlopen.
+    assert called == []
+
+
+def test_urllib_post_multipart_wraps_missing_name_as_AssetFetchError() -> None:
+    """A response body without a ``"name"`` field surfaces as
+    AssetFetchError (per spec §6) instead of a bare KeyError.
+
+    Bug catch: a misbehaving ComfyUI server returns ``{"foo": "bar"}``
+    and callers see KeyError("name") instead of the typed kinoforge
+    error they're expected to catch.
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        return _FakeUrlopenResponse(b'{"other": "value"}')
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        with pytest.raises(AssetFetchError, match="name"):
+            _urllib_post_multipart(
+                "http://comfy/upload/image",
+                field_name="image",
+                filename="x.png",
+                content=b"X",
+            )
+
+
+def test_urllib_post_multipart_wraps_invalid_json_as_AssetFetchError() -> None:
+    """A response body that is not valid JSON surfaces as
+    AssetFetchError instead of a bare json.JSONDecodeError.
+
+    Bug catch: callers expecting a single typed error type get an
+    unrelated decoder exception.
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        return _FakeUrlopenResponse(b"not json at all")
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        with pytest.raises(AssetFetchError, match="JSON"):
+            _urllib_post_multipart(
+                "http://comfy/upload/image",
+                field_name="image",
+                filename="x.png",
+                content=b"X",
+            )
