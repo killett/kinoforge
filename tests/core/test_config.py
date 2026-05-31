@@ -249,3 +249,182 @@ def test_parses_full_s3_block_from_yaml() -> None:
     assert cfg.store.kind == "s3"
     assert cfg.store.bucket == "my-org-kinoforge"
     assert cfg.store.prefix == "prod/runs"
+
+
+# ---------------------------------------------------------------------------
+# Hosted/Diffusers engine config — Layer E url_path + Layer F asset_paths
+# round-trip through model_dump (the orchestrator hands cfg.model_dump() to
+# engine.backend(); silent drop = broken end-to-end).
+# ---------------------------------------------------------------------------
+
+
+def test_hosted_cfg_asset_paths_round_trips_through_model_dump() -> None:
+    """YAML asset_paths under engine.hosted survives model_validate -> model_dump.
+
+    Bug catch: pydantic v2 defaults to extra='ignore', silently dropping any
+    YAML field not declared on HostedEngineConfig. The orchestrator calls
+    cfg.model_dump() before passing the dict into engine.backend(); a dropped
+    asset_paths key means HostedAPIBackend._asset_paths is empty, and every
+    image-to-video / asset-driven hosted job breaks end-to-end.
+    """
+    from kinoforge.core.config import Config
+
+    yaml_text = """
+engine:
+  kind: hosted
+  precision: ""
+  hosted:
+    provider: fal
+    endpoint: "https://fal.run/x"
+    model: "vendor/m"
+    asset_paths:
+      init_image: input.image_url
+lifecycle: {budget: 5.0}
+models:
+  - {ref: "hf:org/m", kind: base, target: diffusion_models}
+"""
+    import yaml
+
+    cfg = Config.model_validate(yaml.safe_load(yaml_text))
+    dumped = cfg.model_dump()
+    # Bug catch: extra='ignore' drops asset_paths; assert it survives.
+    assert dumped["engine"]["hosted"]["asset_paths"] == {
+        "init_image": "input.image_url"
+    }
+
+
+def test_hosted_cfg_url_path_round_trips_through_model_dump() -> None:
+    """YAML url_path under engine.hosted survives model_validate -> model_dump.
+
+    Bug catch: this is the Layer E equivalent of the asset_paths defect —
+    same root cause (undeclared field on HostedEngineConfig + pydantic's
+    default extra='ignore'). Without this, HostedAPIBackend.result() can't
+    walk the configured dot-path and the artifact URL is always empty.
+    """
+    from kinoforge.core.config import Config
+
+    yaml_text = """
+engine:
+  kind: hosted
+  precision: ""
+  hosted:
+    provider: fal
+    endpoint: "https://fal.run/x"
+    model: "vendor/m"
+    url_path: video.url
+lifecycle: {budget: 5.0}
+models:
+  - {ref: "hf:org/m", kind: base, target: diffusion_models}
+"""
+    import yaml
+
+    cfg = Config.model_validate(yaml.safe_load(yaml_text))
+    dumped = cfg.model_dump()
+    assert dumped["engine"]["hosted"]["url_path"] == "video.url"
+
+
+def test_hosted_cfg_asset_paths_defaults_empty() -> None:
+    """HostedEngineConfig.asset_paths defaults to {} when YAML omits it.
+
+    Bug catch: a `None` default would crash engine.backend()'s ``isinstance``
+    check (treating None as 'no paths') asymmetrically; an empty dict is the
+    contract every hosted backend constructor expects.
+    """
+    from kinoforge.core.config import HostedEngineConfig
+
+    cfg = HostedEngineConfig(provider="fal", endpoint="x", model="m")
+    assert cfg.asset_paths == {}
+
+
+def test_hosted_cfg_url_path_defaults_empty() -> None:
+    """HostedEngineConfig.url_path defaults to '' when YAML omits it.
+
+    Bug catch: a None default would propagate as the string "None" through
+    str(hosted_cfg.get("url_path", "")) in the engine; "" is the canonical
+    'walk-no-path' sentinel that result() already checks for.
+    """
+    from kinoforge.core.config import HostedEngineConfig
+
+    cfg = HostedEngineConfig(provider="fal", endpoint="x", model="m")
+    assert cfg.url_path == ""
+
+
+def test_diffusers_cfg_class_exists_and_validates_minimal_yaml() -> None:
+    """DiffusersEngineConfig accepts the minimal example YAML shape.
+
+    Bug catch: previously no DiffusersEngineConfig existed and the diffusers
+    cfg block was an untyped dict on EngineConfig; this asserts the new
+    pydantic model accepts a realistic block without raising.
+    """
+    from kinoforge.core.config import Config
+
+    yaml_text = """
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    pip: ["diffusers==0.30.0"]
+    server_cmd: ["python", "-m", "diffusers_server"]
+    asset_paths:
+      init_image: init_image_url
+models:
+  - {ref: "hf:org/m", kind: base, target: diffusion_models}
+compute:
+  provider: runpod
+  image: "img:tag"
+  lifecycle: {budget: 5.0}
+"""
+    import yaml
+
+    cfg = Config.model_validate(yaml.safe_load(yaml_text))
+    assert cfg.engine.diffusers is not None
+    assert cfg.engine.diffusers.pip == ["diffusers==0.30.0"]
+    assert cfg.engine.diffusers.server_cmd == ["python", "-m", "diffusers_server"]
+
+
+def test_diffusers_cfg_asset_paths_round_trips_through_model_dump() -> None:
+    """YAML asset_paths under engine.diffusers survives model_validate -> model_dump.
+
+    Bug catch: identical root cause to the hosted defect — without a
+    DiffusersEngineConfig model declaring asset_paths, pydantic silently
+    strips the key and DiffusersBackend._asset_paths is {} no matter what
+    the user wrote in YAML.
+    """
+    from kinoforge.core.config import Config
+
+    yaml_text = """
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    asset_paths:
+      init_image: init_image_url
+models:
+  - {ref: "hf:org/m", kind: base, target: diffusion_models}
+compute:
+  provider: runpod
+  image: "img:tag"
+  lifecycle: {budget: 5.0}
+"""
+    import yaml
+
+    cfg = Config.model_validate(yaml.safe_load(yaml_text))
+    dumped = cfg.model_dump()
+    assert dumped["engine"]["diffusers"]["asset_paths"] == {
+        "init_image": "init_image_url"
+    }
+
+
+def test_diffusers_cfg_asset_paths_defaults_empty() -> None:
+    """DiffusersEngineConfig.asset_paths defaults to {} when YAML omits it.
+
+    Bug catch: a None default would break the dict-comprehension path in
+    DiffusersEngine.backend() and produce an AttributeError on .items().
+    """
+    from kinoforge.core.config import DiffusersEngineConfig
+
+    cfg = DiffusersEngineConfig()
+    assert cfg.asset_paths == {}
+    assert cfg.pip == []
+    assert cfg.server_cmd == []
+    assert cfg.base_url == ""

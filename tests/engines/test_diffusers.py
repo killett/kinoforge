@@ -728,3 +728,53 @@ def test_submit_does_not_fetch_asset_bytes() -> None:
     backend.submit(job)
     # Bug catch: submit() must not touch the asset URL via any HTTP seam.
     assert "https://store/s.png" not in fetched
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: YAML -> Config.model_validate -> model_dump -> engine.backend
+# Catches the pydantic-strip defect where unknown YAML keys (asset_paths in
+# pre-fix code) silently drop during model_dump.
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_round_trip_propagates_asset_paths_to_backend() -> None:
+    """End-to-end YAML -> Config -> model_dump -> DiffusersEngine.backend
+    preserves asset_paths so the backend ends up with the configured mapping.
+
+    Catches the pydantic-strip defect where unknown YAML keys (asset_paths in
+    pre-fix code) silently drop during model_dump — the unit tests above
+    construct DiffusersBackend directly with asset_paths kwarg and miss this.
+
+    Bug catch: a regression that removes asset_paths from DiffusersEngineConfig
+    (or otherwise lets pydantic strip it) leaves backend._asset_paths == {}
+    even when YAML declares the mapping, silently breaking every
+    image-to-video diffusers job.
+    """
+    from kinoforge.core.config import Config
+
+    yaml_text = """
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    base_url: "http://127.0.0.1:8000"
+    asset_paths:
+      init_image: init_image_url
+models:
+  - {ref: "hf:org/m", kind: base, target: diffusion_models}
+compute:
+  provider: runpod
+  image: "img:tag"
+  lifecycle: {budget: 5.0}
+"""
+    import yaml
+
+    cfg = Config.model_validate(yaml.safe_load(yaml_text))
+
+    engine = _make_engine()
+    backend = engine.backend(_INSTANCE, cfg.model_dump())
+
+    # Bug catch: pre-fix code would assert {} here.
+    assert backend._asset_paths == {"init_image": "init_image_url"}
+    # Engine mirror must also be populated for validate_spec.
+    assert engine._asset_paths == {"init_image": "init_image_url"}

@@ -117,11 +117,56 @@ class HostedEngineConfig(BaseModel):
         provider: Hosted provider name (e.g. "fal").
         endpoint: API endpoint path.
         model: Model identifier on the provider.
+        api_key_env: Env-var name carrying the API credential.
+        health_url: URL pinged by provision() to verify reachability.
+        url_path: Dot-path walked over the provider response by
+            :meth:`HostedAPIBackend.result` to extract the artifact URL.
+            Defaults to ``""`` (no walk).
+        asset_paths: Mapping from conditioning-asset role
+            (e.g. ``"init_image"``) to a dot-path in the request body
+            where the asset's URL is injected at submit time. Defaults
+            to an empty mapping.
+
+    Declaring ``url_path`` and ``asset_paths`` here is load-bearing:
+    pydantic v2's default ``extra="ignore"`` silently drops any YAML
+    key not present on the model. The orchestrator calls
+    ``cfg.model_dump()`` before passing the dict to ``engine.backend()``,
+    so an undeclared field never reaches the engine — see the
+    fix(config) commit history for the original defect.
     """
 
     provider: str
     endpoint: str
     model: str
+    api_key_env: str = ""
+    health_url: str = ""
+    url_path: str = ""
+    asset_paths: dict[str, str] = Field(default_factory=dict)
+
+
+class DiffusersEngineConfig(BaseModel):
+    """DiffusersEngine-specific parameters.
+
+    Attributes:
+        base_url: Optional override for the inference server URL.
+            ``DiffusersEngine.backend()`` derives the live URL from
+            ``instance.endpoints["diffusers"]`` when available; an
+            empty string defers to that path.
+        pip: Pip packages installed by :meth:`DiffusersEngine.provision`.
+        server_cmd: Argv to launch the local inference server.
+        asset_paths: Mapping from conditioning-asset role to a dot-path
+            in the request body for URL injection at submit time.
+
+    See :class:`HostedEngineConfig` for the rationale behind declaring
+    every YAML-consumed field: without this model, ``EngineConfig``
+    would have no ``diffusers`` field at all and the entire block
+    would be stripped by pydantic before reaching the engine.
+    """
+
+    base_url: str = ""
+    pip: list[str] = Field(default_factory=list)
+    server_cmd: list[str] = Field(default_factory=list)
+    asset_paths: dict[str, str] = Field(default_factory=dict)
 
 
 class EngineConfig(BaseModel):
@@ -132,12 +177,15 @@ class EngineConfig(BaseModel):
         precision: Precision/quantization string (e.g. "fp16", "gguf-q8").
         comfyui: ComfyUI-specific config, required when kind == "comfyui".
         hosted: Hosted API config, required when kind == "hosted".
+        diffusers: Diffusers-specific config, optional even when
+            kind == "diffusers" (all fields default to empty).
     """
 
     kind: str
     precision: str
     comfyui: ComfyUIEngineConfig | None = None
     hosted: HostedEngineConfig | None = None
+    diffusers: DiffusersEngineConfig | None = None
 
 
 class ModelEntry(BaseModel):
