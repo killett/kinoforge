@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -405,6 +405,10 @@ class Config(BaseModel):
             Loaded from the YAML ``lifecycle:`` key via an alias.
         splitter: Splitter selection block (defaults to heuristic).
         store: Artifact store selector block (defaults to kind='local').
+        spec: Engine-agnostic pipeline spec forwarded verbatim to the
+            generation job; arbitrary nested structure, defaults to ``{}``.
+        params: Engine-agnostic generation parameters forwarded verbatim to
+            the generation job; arbitrary nested structure, defaults to ``{}``.
     """
 
     engine: EngineConfig
@@ -413,6 +417,8 @@ class Config(BaseModel):
     lifecycle_cfg: LifecycleConfig | None = Field(default=None, alias="lifecycle")
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     store: StoreConfig = Field(default_factory=StoreConfig)
+    spec: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
 

@@ -667,3 +667,98 @@ def test_diffusers_engine_config_prompt_body_key_null_disables() -> None:
     cfg = DiffusersEngineConfig(prompt_body_key=None)
     assert cfg.prompt_body_key is None
     assert cfg.model_dump()["prompt_body_key"] is None
+
+
+def test_config_spec_defaults_to_empty_dict() -> None:
+    """A YAML without spec: must produce cfg.spec == {} (not None, not missing).
+
+    Bug catch: a typo like `spec: dict | None = None` would let downstream
+    `dict(cfg.spec)` raise TypeError on configs that omit the block.
+    """
+    yaml_text = """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+"""
+    cfg = load_config(yaml_text)
+    assert cfg.spec == {}
+    assert cfg.params == {}
+
+
+def test_config_spec_and_params_loaded_from_yaml() -> None:
+    """spec: and params: blocks populate cfg.spec and cfg.params verbatim."""
+    yaml_text = """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+params:
+  fps: 24
+  num_frames: 81
+spec:
+  model: "wan-ai/Wan2.2-T2V-A14B"
+"""
+    cfg = load_config(yaml_text)
+    assert cfg.spec == {"model": "wan-ai/Wan2.2-T2V-A14B"}
+    assert cfg.params == {"fps": 24, "num_frames": 81}
+
+
+def test_config_spec_preserves_nested_types() -> None:
+    """Nested dicts/lists/floats/ints survive without string coercion.
+
+    Bug catch: a `dict[str, str]` annotation would silently stringify
+    guidance_scale=5.0 -> "5.0" and break hosted's wire request body.
+    """
+    yaml_text = """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+spec:
+  params:
+    guidance_scale: 5.0
+    steps: 30
+  graph:
+    nodes: [1, 2, 3]
+"""
+    cfg = load_config(yaml_text)
+    assert cfg.spec["params"]["guidance_scale"] == 5.0
+    assert isinstance(cfg.spec["params"]["guidance_scale"], float)
+    assert cfg.spec["params"]["steps"] == 30
+    assert isinstance(cfg.spec["params"]["steps"], int)
+    assert cfg.spec["graph"]["nodes"] == [1, 2, 3]
+
+
+def test_config_spec_and_params_round_trip_via_model_dump() -> None:
+    """cfg.model_dump() returns the same spec/params it loaded."""
+    yaml_text = """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+spec:
+  pipeline: "DiffusionPipeline"
+  scheduler: "DDIMScheduler"
+params:
+  seed: 42
+"""
+    cfg = load_config(yaml_text)
+    dumped = cfg.model_dump()
+    assert dumped["spec"] == {
+        "pipeline": "DiffusionPipeline",
+        "scheduler": "DDIMScheduler",
+    }
+    assert dumped["params"] == {"seed": 42}
