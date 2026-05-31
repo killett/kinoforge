@@ -4,48 +4,48 @@
     {
       "id": 1,
       "subject": "Task 1: FrameExtractionError + core/frames.py shared ffmpeg helper",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** New shared frame-extraction helper that all three engines call. Decoder isolated behind an injectable seam so tests pass a fake `run` callable and no real ffmpeg subprocess fires.\n\n**Files:**\n- Create: `src/kinoforge/core/frames.py`\n- Modify: `src/kinoforge/core/errors.py` (add `FrameExtractionError`)\n- Test: `tests/core/test_frames.py` (new)\n\n**Acceptance Criteria:**\n- `ffmpeg_last_frame(b\"video bytes\", run=fake)` calls `fake` exactly once with the canonical argv and given stdin.\n- Returns the bytes returned by `run` verbatim.\n- When `run` raises, the exception type is `FrameExtractionError`.\n- Default `run` raises `FrameExtractionError` on non-zero ffmpeg exit with stderr substring.\n\n**Verify:** `pixi run test tests/core/test_frames.py -v` → 4 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/frames.py\", \"src/kinoforge/core/errors.py\", \"tests/core/test_frames.py\"], \"verifyCommand\": \"pixi run test tests/core/test_frames.py -v\", \"acceptanceCriteria\": [\"ffmpeg_last_frame calls run with canonical argv and given stdin\", \"returns run output bytes verbatim\", \"FrameExtractionError surfaces when run raises\", \"default _default_run raises FrameExtractionError on non-zero exit\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: ABC contract change + helper simplification + FakeEngine bytes",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Change `GenerationEngine.extract_last_frame` to return `bytes`. Simplify `inject_tail_frame` to a pure asset-injection helper (engine arg removed). Update `FakeEngine` to return deterministic bytes. Update the three impacted test files.\n\n**Files:**\n- Modify: `src/kinoforge/core/interfaces.py`\n- Modify: `src/kinoforge/core/continuity.py`\n- Modify: `src/kinoforge/engines/fake/__init__.py`\n- Modify: `tests/core/test_interfaces.py`\n- Modify: `tests/core/test_continuity.py`\n- Modify: `tests/engines/test_fake.py`\n\n**Acceptance Criteria:**\n- ABC `extract_last_frame` returns `bytes`; default still raises `NotImplementedError` with class name.\n- `inject_tail_frame(next_job, tail_asset)` — engine arg removed; no mutation.\n- `FakeEngine.extract_last_frame` returns `f\"FAKE_TAIL:{filename}\".encode()`.\n- Continuity tests cover only replace/preserve/no-mutation.\n\n**Verify:** `pixi run test tests/core/test_continuity.py tests/core/test_interfaces.py tests/engines/test_fake.py -v` → all pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/continuity.py\", \"src/kinoforge/engines/fake/__init__.py\", \"tests/core/test_interfaces.py\", \"tests/core/test_continuity.py\", \"tests/engines/test_fake.py\"], \"verifyCommand\": \"pixi run test tests/core/test_continuity.py tests/core/test_interfaces.py tests/engines/test_fake.py -v\", \"acceptanceCriteria\": [\"ABC extract_last_frame returns bytes; NotImplementedError default unchanged\", \"inject_tail_frame takes (next_job, tail_asset); engine arg removed\", \"FakeEngine returns b\\\"FAKE_TAIL:<filename>\\\"\", \"continuity tests cover replace/preserve/no-mutation only\", \"fake test asserts deterministic bytes content\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: GenerateClipStage non-native rewiring",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Restore the non-native chain by having the stage call `engine.extract_last_frame` for bytes, persist via `store.put_bytes(run_id, ..., bytes)`, wrap into a `ConditioningAsset`, then call the simplified `inject_tail_frame`.\n\n**Files:**\n- Modify: `src/kinoforge/pipeline/generate_clip.py`\n- Modify: `tests/pipeline/test_generate_clip.py`\n\n**Acceptance Criteria:**\n- Stage non-native chain step calls extract → put_bytes → wrap → inject in order.\n- Tail PNG name exactly `f\"seg-{i-1}-tail.png\"`.\n- Existing chain test asserts updated (`.tail.png` → `-tail.png`).\n- `_SpyEngine` deleted; 3 no-chain tests switched to `_CountingExtractEngine`.\n- New persistence test asserts seg-0/seg-1 tails appear in `store.list` with `FAKE_TAIL:` byte prefix.\n\n**Verify:** `pixi run test tests/pipeline/test_generate_clip.py -v` → all pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"tests/pipeline/test_generate_clip.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/test_generate_clip.py -v\", \"acceptanceCriteria\": [\"stage calls extract_last_frame + store.put_bytes + inject_tail_frame in order\", \"tail PNG named seg-{i-1}-tail.png\", \"existing chain test still passes after dot->dash update\", \"_SpyEngine deleted; 3 no-chain tests use _CountingExtractEngine\", \"new persistence test asserts tails in store with FAKE_TAIL: bytes\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: ComfyUI result() URL backfill + extract_last_frame + 2 seams",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** `ComfyUIBackend.result()` populates `Artifact.url = f\"{base_url}/view?filename={fn}&type=output\"`. Engine gains `http_get_bytes` and `ffmpeg_run` seams. `extract_last_frame` body is the 5-liner.\n\n**Files:**\n- Modify: `src/kinoforge/engines/comfyui/__init__.py`\n- Modify: `tests/engines/test_comfyui.py`\n\n**Acceptance Criteria:** see plan §\"Task 4\".\n\n**Verify:** `pixi run test tests/engines/test_comfyui.py -v` → all pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\", \"tests/engines/test_comfyui.py\"], \"verifyCommand\": \"pixi run test tests/engines/test_comfyui.py -v\", \"acceptanceCriteria\": [\"result() Artifact.url is /view?filename=&type=output URL\", \"constructor accepts http_get_bytes + ffmpeg_run seams with stdlib defaults\", \"extract_last_frame: empty url raises FrameExtractionError(ComfyUIEngine ...)\", \"extract_last_frame: GET artifact.url then ffmpeg_last_frame, returns PNG bytes\", \"_urllib_get_bytes default is callable\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: Diffusers result() URL passthrough + extract_last_frame + 2 seams + server doc",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** `DiffusersBackend.result()` reads `data[\"url\"]` and populates `Artifact.url`. Engine gains the standard two seams. README documents server-side `url` field requirement.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/__init__.py`\n- Modify: `tests/engines/test_diffusers.py`\n- Modify: `README.md`\n\n**Acceptance Criteria:** see plan §\"Task 5\".\n\n**Verify:** `pixi run test tests/engines/test_diffusers.py -v` → all pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/test_diffusers.py\", \"README.md\"], \"verifyCommand\": \"pixi run test tests/engines/test_diffusers.py -v\", \"acceptanceCriteria\": [\"result() reads url from response body, defaults to ''\", \"constructor accepts http_get_bytes + ffmpeg_run seams\", \"extract_last_frame: empty url raises FrameExtractionError(DiffusersEngine ...)\", \"extract_last_frame GET+ffmpeg path returns PNG bytes from seam\", \"README documents /status/{job_id} url field contract\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: Hosted url_path cfg + dot-walker + result() backfill + extract_last_frame + 2 seams",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** `HostedAPIBackend` learns `url_path`; `result()` walks the polled response via `_walk_dot_path` to populate `Artifact.url`. Engine gains the standard two seams. Cfg key `cfg[engine][hosted][url_path]` threaded through `backend()`.\n\n**Files:**\n- Modify: `src/kinoforge/engines/hosted/__init__.py`\n- Modify: `tests/engines/test_hosted.py`\n- Modify: `examples/configs/hosted.yaml`\n- Modify: `README.md`\n\n**Acceptance Criteria:** see plan §\"Task 6\".\n\n**Verify:** `pixi run test tests/engines/test_hosted.py -v` → all pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\", \"examples/configs/hosted.yaml\", \"README.md\"], \"verifyCommand\": \"pixi run test tests/engines/test_hosted.py -v\", \"acceptanceCriteria\": [\"_walk_dot_path nested/missing/non-string/empty cases\", \"backend accepts url_path; result() walks it; engine threads cfg key\", \"constructor accepts http_get_bytes + ffmpeg_run seams\", \"extract_last_frame: empty url raises FrameExtractionError(HostedAPIEngine ...)\", \"examples/configs/hosted.yaml includes url_path\", \"README documents url_path under Hosted\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: PROGRESS update + Layer F entry in Known limitations",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 5, 6],
       "description": "**Goal:** Update `PROGRESS.md` to mark Layer E complete; add Layer F entry under Architectural follow-ups; add Phase 15 section under Post-MVP with commit SHAs.\n\n**Files:**\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:** see plan §\"Task 7\".\n\n**Verify:** `grep -A2 'Layer F' PROGRESS.md && grep 'Phase 15' PROGRESS.md`.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"grep -A2 'Layer F' PROGRESS.md && grep 'Phase 15' PROGRESS.md\", \"acceptanceCriteria\": [\"Per-engine extract_last_frame follow-up bullet removed\", \"Layer F entry added under Architectural follow-ups\", \"Single next action rewritten with Layer F + Layer #4 as next options\", \"Phase 15 section added with 6 commit SHAs from git log\"]}\n```"
     }

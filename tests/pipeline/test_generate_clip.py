@@ -16,6 +16,7 @@ import pytest
 
 from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
+    Artifact,
     GenerationEngine,
     GenerationJob,
     GenerationRequest,
@@ -223,8 +224,9 @@ def test_stage_non_native_i2v_n3_chains_segs_1_and_2(tmp_path: Path) -> None:
         asset = assets[0]
         assert asset.kind == "image"
         assert asset.role == "init_image"
-        # Filename derived from the prev render's output filename.
-        assert asset.ref.filename.endswith(".tail.png")
+        # URI contains the tail PNG name under the stage's run_id namespace.
+        assert asset.ref.uri.endswith("-tail.png")
+        assert asset.ref.filename == f"seg-{i - 1}-tail.png"
 
 
 # ---------------------------------------------------------------------------
@@ -292,21 +294,26 @@ def test_round_trip_bytes(tmp_path: Path) -> None:
     assert retrieved == retrieved2
 
 
-class _SpyEngine:
-    """Spy engine: asserts extract_last_frame is never called."""
+class _CountingExtractEngine:
+    """Wraps a FakeEngine; counts extract_last_frame calls for no-chain tests.
 
-    def __init__(self) -> None:
+    The stage type-hints `engine: GenerationEngine`; we duck-type since the
+    only engine method the stage calls is extract_last_frame.
+    """
+
+    def __init__(self, probe: ModelProfile) -> None:
+        from kinoforge.engines.fake import FakeEngine
+
+        self._inner = FakeEngine(
+            probe_profile=probe,
+            declared_flags_map={},
+            required_spec_keys=set(),
+        )
         self.extract_calls = 0
 
-    def extract_last_frame(self, artifact):  # noqa: ANN001
+    def extract_last_frame(self, artifact: Artifact) -> bytes:
         self.extract_calls += 1
-        # Return a valid asset in case the test does call us — but the assertion
-        # below catches the bug regardless.
-        from kinoforge.core.interfaces import Artifact, ConditioningAsset
-
-        return ConditioningAsset(
-            kind="image", role="init_image", ref=Artifact(filename="spy.tail.png")
-        )
+        return self._inner.extract_last_frame(artifact)
 
 
 def test_stage_native_branch_i2v_no_chain(tmp_path: Path) -> None:
@@ -319,7 +326,7 @@ def test_stage_native_branch_i2v_no_chain(tmp_path: Path) -> None:
     backend = RecordingBackend(probe=profile)
     pool = SequentialPool(backend)
     store = LocalArtifactStore(tmp_path)
-    spy = _SpyEngine()
+    engine = _CountingExtractEngine(probe=profile)
 
     stage = GenerateClipStage(
         profile=profile,
@@ -329,7 +336,7 @@ def test_stage_native_branch_i2v_no_chain(tmp_path: Path) -> None:
         accepted_kinds={"image"},
         base_params={},
         base_spec={},
-        engine=spy,  # type: ignore[arg-type]
+        engine=engine,  # type: ignore[arg-type]
     )
 
     segments = [Segment(prompt=f"seg {i}") for i in range(3)]
@@ -340,7 +347,7 @@ def test_stage_native_branch_i2v_no_chain(tmp_path: Path) -> None:
 
     # Native branch: 1 job submitted.
     assert len(backend.submitted_seg0_assets) == 1
-    assert spy.extract_calls == 0
+    assert engine.extract_calls == 0
 
 
 def test_stage_non_native_t2v_n3_no_chain(tmp_path: Path) -> None:
@@ -353,7 +360,7 @@ def test_stage_non_native_t2v_n3_no_chain(tmp_path: Path) -> None:
     backend = RecordingBackend(probe=profile)
     pool = SequentialPool(backend)
     store = LocalArtifactStore(tmp_path)
-    spy = _SpyEngine()
+    engine = _CountingExtractEngine(probe=profile)
 
     stage = GenerateClipStage(
         profile=profile,
@@ -363,7 +370,7 @@ def test_stage_non_native_t2v_n3_no_chain(tmp_path: Path) -> None:
         accepted_kinds={"image"},
         base_params={},
         base_spec={},
-        engine=spy,  # type: ignore[arg-type]
+        engine=engine,  # type: ignore[arg-type]
     )
 
     segments = [Segment(prompt=f"seg {i}") for i in range(3)]
@@ -372,11 +379,11 @@ def test_stage_non_native_t2v_n3_no_chain(tmp_path: Path) -> None:
         segments_override=segments,
     )
 
-    # 3 jobs submitted; all with empty seg-0 assets; spy never invoked.
+    # 3 jobs submitted; all with empty seg-0 assets; engine never invoked.
     assert len(backend.submitted_seg0_assets) == 3
     for assets in backend.submitted_seg0_assets:
         assert assets == []
-    assert spy.extract_calls == 0
+    assert engine.extract_calls == 0
 
 
 def test_stage_non_native_i2v_n1_no_chain(tmp_path: Path) -> None:
@@ -389,7 +396,7 @@ def test_stage_non_native_i2v_n1_no_chain(tmp_path: Path) -> None:
     backend = RecordingBackend(probe=profile)
     pool = SequentialPool(backend)
     store = LocalArtifactStore(tmp_path)
-    spy = _SpyEngine()
+    engine = _CountingExtractEngine(probe=profile)
 
     stage = GenerateClipStage(
         profile=profile,
@@ -399,7 +406,7 @@ def test_stage_non_native_i2v_n1_no_chain(tmp_path: Path) -> None:
         accepted_kinds={"image"},
         base_params={},
         base_spec={},
-        engine=spy,  # type: ignore[arg-type]
+        engine=engine,  # type: ignore[arg-type]
     )
 
     stage.run(
@@ -408,4 +415,53 @@ def test_stage_non_native_i2v_n1_no_chain(tmp_path: Path) -> None:
     )
 
     assert len(backend.submitted_seg0_assets) == 1
-    assert spy.extract_calls == 0
+    assert engine.extract_calls == 0
+
+
+def test_stage_chain_persists_tail_via_store(tmp_path: Path) -> None:
+    """Non-native chain writes one tail PNG per gap via store.put_bytes,
+    under the stage's run_id namespace, with name 'seg-<i>-tail.png'.
+
+    Bug this catches: stage skips persistence, persists under wrong run_id,
+    or names files inconsistently — breaking `kinoforge gc --run` cleanup.
+    """
+    profile = _profile(supports_native_extension=False)
+    backend = RecordingBackend(probe=profile)
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _fake_engine_for_tests(profile)
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="run-persist",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,
+    )
+
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
+    stage.run(
+        GenerationRequest(prompt="ignored", mode="i2v"),
+        segments_override=segments,
+    )
+
+    listed = store.list("run-persist")
+    tails = sorted(n for n in listed if n.endswith("-tail.png"))
+    # 3 segments → 2 chain gaps → 2 tail PNGs.
+    assert tails == ["seg-0-tail.png", "seg-1-tail.png"]
+
+    # Bytes round-trip: store returned the FakeEngine's deterministic bytes
+    # derived from each prior segment's BACKEND-OUTPUT filename (which is
+    # sha256-of-job for FakeBackend — segment-specific).
+    seg0_tail_bytes = store.get_bytes(store.uri_for("run-persist", "seg-0-tail.png"))
+    seg1_tail_bytes = store.get_bytes(store.uri_for("run-persist", "seg-1-tail.png"))
+
+    assert seg0_tail_bytes.startswith(b"FAKE_TAIL:")
+    assert seg1_tail_bytes.startswith(b"FAKE_TAIL:")
+    # Off-by-one in results[-1] indexing (e.g. always using results[0]) would
+    # leave both tail PNGs identical. They MUST differ because each is derived
+    # from a different prior segment's artifact filename.
+    assert seg0_tail_bytes != seg1_tail_bytes

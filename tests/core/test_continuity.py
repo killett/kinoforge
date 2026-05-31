@@ -1,80 +1,47 @@
-"""Tests for core.continuity.inject_tail_frame — pure helper for tail-frame conditioning.
+"""Tests for core.continuity.inject_tail_frame — pure asset-injection helper.
 
-Spec: docs/superpowers/specs/2026-05-29-continuity-fallback-design.md §6.1
+Spec: docs/superpowers/specs/2026-05-30-extract-last-frame-design.md §4.4
 """
 
 from __future__ import annotations
-
-import pytest
 
 from kinoforge.core.continuity import inject_tail_frame
 from kinoforge.core.interfaces import (
     Artifact,
     ConditioningAsset,
-    GenerationEngine,
     GenerationJob,
     Segment,
 )
 
 
-class _FakeExtractor(GenerationEngine):
-    """Minimal engine override: only extract_last_frame is meaningful."""
-
-    name: str = "fake-extractor"
-    requires_compute: bool = False
-    requires_local_weights: bool = False
-
-    def provision(self, instance, cfg):  # noqa: ANN001, D102
-        pass
-
-    def backend(self, instance, cfg):  # noqa: ANN001, D102
-        raise NotImplementedError
-
-    def profile_for(self, key):  # noqa: ANN001, D102
-        raise NotImplementedError
-
-    def declared_flags(self, key):  # noqa: ANN001, D102
-        return {}
-
-    def validate_spec(self, job):  # noqa: ANN001, D102
-        pass
-
-    def extract_last_frame(self, artifact: Artifact) -> ConditioningAsset:
-        return ConditioningAsset(
-            kind="image",
-            role="init_image",
-            ref=Artifact(filename=f"{artifact.filename}.tail.png"),
-        )
-
-
-def _make_job(
-    *, prompts: list[str], seg0_assets: list[ConditioningAsset] | None = None
-) -> GenerationJob:
-    segs = [
-        Segment(prompt=p, assets=list(seg0_assets) if (i == 0 and seg0_assets) else [])
-        for i, p in enumerate(prompts)
-    ]
+def _make_job(*, prompts: list[str]) -> GenerationJob:
+    segs = [Segment(prompt=p, assets=[]) for p in prompts]
     return GenerationJob(spec={}, segments=segs, params={})
 
 
-def test_inject_tail_frame_replaces_seg0_assets() -> None:
-    """When seg-0 starts empty, after inject it contains exactly [tail_asset].
+def _tail_asset(filename: str = "tail.png") -> ConditioningAsset:
+    return ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename=filename, uri=f"file:///{filename}"),
+    )
 
-    Bug this catches: helper appends instead of replacing -> splitter contract drift
-    (segs 1..N-1 are guaranteed empty assets; appending would still work today but
-    breaks the invariant the rest of the pipeline relies on).
+
+def test_inject_tail_frame_replaces_seg0_assets() -> None:
+    """seg-0 ends with exactly [tail_asset]; the passed asset is preserved by identity.
+
+    Bug this catches: helper wraps the asset in another container, copies it,
+    or constructs a new ConditioningAsset from its fields — any of which breaks
+    `is`-identity and prevents callers from equating the injected asset with
+    the one they passed in.
     """
     next_job = _make_job(prompts=["next"])
-    prev_artifact = Artifact(filename="prev.mp4")
-    engine = _FakeExtractor()
+    asset = _tail_asset()
 
-    out = inject_tail_frame(next_job, prev_artifact, engine)
+    out = inject_tail_frame(next_job, asset)
 
     assert len(out.segments[0].assets) == 1
-    asset = out.segments[0].assets[0]
-    assert asset.kind == "image"
-    assert asset.role == "init_image"
-    assert asset.ref.filename == "prev.mp4.tail.png"
+    assert out.segments[0].assets[0] is asset
 
 
 def test_inject_tail_frame_preserves_other_segments() -> None:
@@ -86,7 +53,7 @@ def test_inject_tail_frame_preserves_other_segments() -> None:
     original_seg1 = next_job.segments[1]
     original_seg2 = next_job.segments[2]
 
-    out = inject_tail_frame(next_job, Artifact(filename="p.mp4"), _FakeExtractor())
+    out = inject_tail_frame(next_job, _tail_asset())
 
     assert out.segments[1] is original_seg1
     assert out.segments[2] is original_seg2
@@ -95,27 +62,11 @@ def test_inject_tail_frame_preserves_other_segments() -> None:
 def test_inject_tail_frame_does_not_mutate_input() -> None:
     """Input job's seg-0 assets remain [] after the call.
 
-    Bug this catches: helper mutates in place (e.g. .append) on the input segment.
+    Bug this catches: helper mutates in place (e.g. .append) on the input.
     """
     next_job = _make_job(prompts=["next"])
     assert next_job.segments[0].assets == []
 
-    inject_tail_frame(next_job, Artifact(filename="p.mp4"), _FakeExtractor())
+    inject_tail_frame(next_job, _tail_asset())
 
     assert next_job.segments[0].assets == []
-
-
-def test_inject_tail_frame_raises_when_engine_extract_raises() -> None:
-    """NotImplementedError from engine.extract_last_frame propagates.
-
-    Bug this catches: helper swallows the raise or wraps in a different exception.
-    """
-
-    class _Raising(_FakeExtractor):
-        def extract_last_frame(self, artifact):  # noqa: ANN001
-            raise NotImplementedError("nope")
-
-    with pytest.raises(NotImplementedError, match="nope"):
-        inject_tail_frame(
-            _make_job(prompts=["x"]), Artifact(filename="p.mp4"), _Raising()
-        )

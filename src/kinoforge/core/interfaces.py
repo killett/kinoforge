@@ -327,21 +327,24 @@ class GenerationEngine(ABC):
     @abstractmethod
     def validate_spec(self, job: GenerationJob) -> None: ...  # noqa: D102
 
-    def extract_last_frame(self, artifact: Artifact) -> ConditioningAsset:
-        """Extract last frame of a rendered clip as an init_image asset.
+    def extract_last_frame(self, artifact: Artifact) -> bytes:
+        """Decode the last frame of a rendered clip as PNG bytes.
 
         Default raises; subclass to enable continuity for this engine.
 
         Args:
-            artifact: A clip Artifact returned by backend.result() with a
-                populated uri (real engines) or in-memory filename + meta
-                (FakeEngine test path).
+            artifact: A clip Artifact returned by backend.result(). The
+                ``url`` field (populated by the engine's ``result()`` impl,
+                not the ``uri`` field which is set later by ArtifactStore
+                materialization) must point at a fetchable location of the
+                rendered video bytes.
 
         Returns:
-            ConditioningAsset(kind="image", role="init_image", ref=<frame>).
+            PNG-encoded bytes of the last frame.
 
         Raises:
             NotImplementedError: Engine doesn't support tail-frame extraction.
+            FrameExtractionError: Extraction failed at fetch or decode time.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support tail-frame extraction"

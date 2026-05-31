@@ -1,7 +1,7 @@
-"""Tail-frame conditioning for non-native multi-segment runs.
+"""Tail-frame asset injection for non-native multi-segment runs.
 
-Pure helper. The interleaved render -> extract -> inject -> render loop lives
-in GenerateClipStage; this module is side-effect-free.
+Pure helper. The engine + extract + persist + wrap pipeline lives in
+GenerateClipStage; this module is side-effect-free dataclass juggling.
 """
 
 from __future__ import annotations
@@ -9,34 +9,28 @@ from __future__ import annotations
 from dataclasses import replace
 
 from kinoforge.core.interfaces import (
-    Artifact,
-    GenerationEngine,
+    ConditioningAsset,
     GenerationJob,
 )
 
 
 def inject_tail_frame(
     next_job: GenerationJob,
-    prev_artifact: Artifact,
-    engine: GenerationEngine,
+    tail_asset: ConditioningAsset,
 ) -> GenerationJob:
-    """Return a copy of next_job with prev's tail as seg-0 init_image.
+    """Return a copy of next_job with seg-0 assets replaced by [tail_asset].
 
-    Splitter contract guarantees next_job.segments[0].assets == []; the helper
-    replaces that list with [tail_asset]. Other segments in next_job (if any)
+    Splitter contract guarantees ``next_job.segments[0].assets == []``; this
+    helper replaces that list with ``[tail_asset]``. Segments beyond index 0
     are unchanged. Original is not mutated.
 
     Args:
         next_job: The job that will be submitted next.
-        prev_artifact: The artifact returned by the previous job's render.
-        engine: Engine that knows how to extract a frame.
+        tail_asset: The conditioning asset (typically built by the stage from
+            ``engine.extract_last_frame`` bytes persisted into the store).
 
     Returns:
         New GenerationJob with the conditioning hand-off applied.
-
-    Raises:
-        NotImplementedError: engine.extract_last_frame raises.
     """
-    tail_asset = engine.extract_last_frame(prev_artifact)
     new_seg_0 = replace(next_job.segments[0], assets=[tail_asset])
     return replace(next_job, segments=[new_seg_0, *next_job.segments[1:]])

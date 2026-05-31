@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from kinoforge.core import registry
-from kinoforge.core.errors import ValidationError
+from kinoforge.core.errors import FrameExtractionError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -75,6 +75,8 @@ def _make_engine(**kwargs: Any) -> ComfyUIEngine:
         "route_file": lambda src, dst_dir: None,
         "http_post": lambda url, body: {},
         "http_get": lambda url: {},
+        "http_get_bytes": lambda url: b"",
+        "ffmpeg_run": lambda argv, stdin: b"",
         "sleep": lambda s: None,
         "probe_profile": _DEFAULT_PROBE,
     }
@@ -501,3 +503,157 @@ class TestSelfRegistration:
     def test_requires_local_weights_true(self) -> None:
         """ComfyUIEngine.requires_local_weights is True."""
         assert ComfyUIEngine.requires_local_weights is True
+
+
+# ---------------------------------------------------------------------------
+# extract_last_frame + result() URL backfill (Layer extract_last_frame)
+# ---------------------------------------------------------------------------
+
+
+def test_result_populates_url_with_view_query() -> None:
+    """ComfyUIBackend.result() backfills Artifact.url with /view?filename=...&type=output.
+
+    Bug this catches: URL not set, or wrong query shape, leaving
+    extract_last_frame unable to fetch the rendered bytes.
+    """
+    from kinoforge.engines.comfyui import ComfyUIBackend
+
+    history_payload = {
+        "PROMPT_ID": {
+            "outputs": {
+                "9": {"files": [{"filename": "clip.mp4"}]},
+            }
+        }
+    }
+
+    backend = ComfyUIBackend(
+        http_post=lambda url, body: {"prompt_id": "PROMPT_ID"},
+        http_get=lambda url: history_payload,
+        base_url="http://localhost:8188",
+        probe=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+    )
+
+    artifact = backend.result("PROMPT_ID")
+
+    assert artifact.filename == "clip.mp4"
+    assert artifact.url == "http://localhost:8188/view?filename=clip.mp4&type=output"
+    assert artifact.meta == {"prompt_id": "PROMPT_ID"}
+
+
+def test_extract_last_frame_fetches_url_and_calls_ffmpeg() -> None:
+    """extract_last_frame: http_get_bytes(artifact.url) -> ffmpeg_run -> return.
+
+    Bug this catches: engine fetches the wrong URL (e.g. from meta), or
+    skips ffmpeg, or drops the bytes returned by the decoder.
+    """
+    fetch_calls: list[str] = []
+    ffmpeg_calls: list[tuple[list[str], bytes]] = []
+
+    def fake_fetch(url: str) -> bytes:
+        fetch_calls.append(url)
+        return b"VIDEO_BYTES"
+
+    def fake_ffmpeg(argv: list[str], stdin: bytes) -> bytes:
+        ffmpeg_calls.append((argv, stdin))
+        return b"PNG_BYTES"
+
+    engine = _make_engine(http_get_bytes=fake_fetch, ffmpeg_run=fake_ffmpeg)
+
+    artifact = Artifact(
+        filename="clip.mp4",
+        url="http://localhost:8188/view?filename=clip.mp4&type=output",
+        meta={"prompt_id": "X"},
+    )
+
+    out = engine.extract_last_frame(artifact)
+
+    assert out == b"PNG_BYTES"
+    assert fetch_calls == ["http://localhost:8188/view?filename=clip.mp4&type=output"]
+    assert len(ffmpeg_calls) == 1
+    assert ffmpeg_calls[0][1] == b"VIDEO_BYTES"
+
+
+def test_extract_last_frame_raises_on_empty_url() -> None:
+    """artifact.url == '' is unrecoverable; raise FrameExtractionError with
+    engine class name in the message.
+
+    Bug this catches: engine swallows the bad input and hits ffmpeg with
+    empty bytes (which produces a less actionable error).
+    """
+    engine = _make_engine()
+    artifact = Artifact(filename="clip.mp4", url="", meta={})
+
+    with pytest.raises(FrameExtractionError, match="ComfyUIEngine"):
+        engine.extract_last_frame(artifact)
+
+
+def test_urllib_get_bytes_default_is_callable() -> None:
+    """The shipped default for http_get_bytes is a real callable, not None.
+
+    Bug this catches: engine constructor accepts None for the seam, making
+    extract_last_frame crash at call time on production paths.
+    """
+    from kinoforge.engines.comfyui import _urllib_get_bytes
+
+    assert callable(_urllib_get_bytes)
+
+
+def test_result_url_encodes_filename_with_special_chars() -> None:
+    """ComfyUIBackend.result() percent-encodes the filename in the /view URL.
+
+    Bug this catches: filenames with spaces, '&', '=', '+', or non-ASCII
+    bytes are interpolated raw, producing malformed URLs that urlopen
+    rejects or that silently fetch the wrong resource.
+    """
+    from kinoforge.engines.comfyui import ComfyUIBackend
+
+    payload = {
+        "PID": {
+            "outputs": {
+                "9": {"files": [{"filename": "clip frame&01.mp4"}]},
+            }
+        }
+    }
+    backend = ComfyUIBackend(
+        http_post=lambda url, body: {"prompt_id": "PID"},
+        http_get=lambda url: payload,
+        base_url="http://localhost:8188",
+        probe=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+    )
+
+    artifact = backend.result("PID")
+
+    # Filename preserved as-is on the Artifact.
+    assert artifact.filename == "clip frame&01.mp4"
+    # URL encodes the unsafe chars (space -> %20, & -> %26).
+    assert (
+        artifact.url
+        == "http://localhost:8188/view?filename=clip%20frame%2601.mp4&type=output"
+    )
+
+
+def test_extract_last_frame_wraps_fetch_failure_as_frame_extraction_error() -> None:
+    """HTTP fetch errors surface as FrameExtractionError with the URL in the
+    message, not as raw urllib exceptions.
+
+    Bug this catches: callers expecting the spec-promised single exception
+    type (FrameExtractionError) get an unrelated network exception instead.
+    """
+
+    class _NetBlewUp(RuntimeError):
+        pass
+
+    def boom(url: str) -> bytes:
+        raise _NetBlewUp("connection refused")
+
+    engine = _make_engine(http_get_bytes=boom)
+    artifact = Artifact(
+        filename="clip.mp4",
+        url="http://localhost:8188/view?filename=clip.mp4&type=output",
+        meta={},
+    )
+
+    with pytest.raises(FrameExtractionError, match="fetch from"):
+        engine.extract_last_frame(artifact)

@@ -165,6 +165,55 @@ register_engine("myengine", MyEngine)
 
 Set `engine.kind: myengine` in your YAML.
 
+### Diffusers inference-server response contract
+
+`DiffusersBackend.result()` polls `GET /status/{job_id}` and reads two
+fields from a successful (`status: done`) response:
+
+- `filename` — display name for the produced clip.
+- `url` — HTTP-fetchable location for the produced clip (e.g.
+  `http://127.0.0.1:8000/file/clip.mp4`). Required for non-native
+  multi-segment runs (`extract_last_frame` GETs this URL to decode the
+  tail frame). Servers that omit it leave `Artifact.url == ""`; calling
+  `extract_last_frame` then raises `FrameExtractionError` with a clear
+  message instead of attempting a corrupt fetch.
+
+### Hosted response URL — `url_path`
+
+Hosted providers vary on response body shape. Configure
+`engine.hosted.url_path` as a dot-separated path into the
+`/status/{job_id}` response body where the rendered video's URL lives.
+
+Examples:
+
+| Provider response | `url_path` |
+|---|---|
+| `{"video": {"url": "..."}}` | `video.url` |
+| `{"output_url": "..."}` | `output_url` |
+
+The walker returns `""` for missing paths or non-string terminals; the
+engine then raises `FrameExtractionError` rather than fetching a bogus
+URL. Array indexing (e.g. `results[0].url`) is not supported.
+
+### Known limitation — non-native multi-segment continuity is incomplete
+
+Non-native multi-segment runs (engines whose `ModelProfile` reports
+`supports_native_extension=False`, chained over N > 1 segments) currently
+extract and persist the tail frame of each segment as a PNG in the
+`ArtifactStore` under the run's namespace, and inject a
+`ConditioningAsset(role="init_image")` into the next job's
+`segments[0].assets`. **However, each engine's `submit()` body today reads
+only `job.spec` — it does not consult `job.segments[0].assets`.** The tail
+PNG is currently dead weight at render time, so segments will not be
+visually continuous. ffmpeg must be on `PATH` on whichever host runs the
+engine.
+
+Filling this gap (Layer F: engine asset-wiring) is the next planned layer.
+Until then, expect discontinuous output across segments on non-native
+engines. Native multi-segment engines (those declaring
+`supports_native_extension=True` in their `ModelProfile`) are unaffected —
+they receive all segments in a single job and handle continuity internally.
+
 ### New Splitter
 
 ```python
