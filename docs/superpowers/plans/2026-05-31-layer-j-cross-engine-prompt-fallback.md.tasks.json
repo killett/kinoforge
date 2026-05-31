@@ -1,0 +1,53 @@
+{
+  "planPath": "docs/superpowers/plans/2026-05-31-layer-j-cross-engine-prompt-fallback.md",
+  "tasks": [
+    {
+      "id": 9,
+      "subject": "Task 1: resolve_prompt helper",
+      "status": "pending",
+      "description": "**Goal:** Pure `resolve_prompt(job) -> str | None` helper.\n\n**Files:**\n- Create: `src/kinoforge/core/prompt_routing.py`\n- Test:   `tests/core/test_prompt_routing.py`\n\n**Verify:** `pixi run pytest tests/core/test_prompt_routing.py -v` → 8 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/prompt_routing.py\", \"tests/core/test_prompt_routing.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_prompt_routing.py -v\", \"acceptanceCriteria\": [\"spec prompt returned when non-empty str\", \"segment prompt returned when spec lacks key\", \"spec wins over segment\", \"None when neither present\", \"None when spec '' and no segments\", \"None when spec is non-str\", \"None when segments empty\", \"segment returned when spec is ''\", \"no imports outside stdlib + core.interfaces\", \"pre-commit clean\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 2: prompt_body_key config field",
+      "status": "pending",
+      "description": "**Goal:** Add `prompt_body_key: str | None = \"prompt\"` to `HostedEngineConfig` + `DiffusersEngineConfig`.\n\n**Verify:** `pixi run pytest tests/ -v -k prompt_body_key` → 4 new passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/ -v -k prompt_body_key\", \"acceptanceCriteria\": [\"hosted prompt_body_key='prompt' round-trips\", \"hosted prompt_body_key=None round-trips\", \"default is 'prompt'\", \"same 3 on diffusers\", \"YAML null does not raise\", \"no comfyui cfg change\", \"pre-commit clean\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 3: HostedAPIBackend + Engine prompt wire",
+      "status": "pending",
+      "blockedBy": [9, 10],
+      "description": "**Goal:** HostedAPIBackend.submit routes prompt; Engine.validate_spec opt-in raise; backend() cfg read.\n\n**Verify:** `pixi run pytest tests/engines/test_hosted.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_hosted.py -v\", \"acceptanceCriteria\": [\"submit falls back to segment prompt\", \"submit preserves spec prompt\", \"submit skips when prompt_body_key None\", \"validate_spec raises when configured + no prompt\", \"validate_spec passes when disabled + no prompt\", \"YAML E2E routes through engine.backend\", \"pre-commit clean\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 4: DiffusersBackend + Engine prompt wire",
+      "status": "pending",
+      "blockedBy": [9, 10],
+      "description": "**Goal:** Mirror Task 3 for Diffusers.\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/test_diffusers.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers.py -v\", \"acceptanceCriteria\": [\"submit falls back to segment prompt\", \"submit preserves spec prompt\", \"submit skips when prompt_body_key None\", \"validate_spec raises when configured + no prompt\", \"validate_spec passes when disabled + no prompt\", \"YAML E2E routes through engine.backend\", \"pre-commit clean\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 5: ComfyUIBackend + Engine prompt wire (spec-level)",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** ComfyUI submit reads spec.prompt_node_ids and routes into node_overrides[node_id].inputs.text; validate_spec opt-in raise.\n\n**Verify:** `pixi run pytest tests/engines/test_comfyui.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\", \"tests/engines/test_comfyui.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui.py -v\", \"acceptanceCriteria\": [\"submit routes into node_overrides inputs.text\", \"submit skips when prompt_node_ids absent\", \"submit does not overwrite explicit text (setdefault)\", \"spec prompt wins over segment\", \"validate_spec raises when configured + no prompt\", \"validate_spec passes when disabled + no prompt\", \"pre-commit clean\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 6: FalBackend.submit retrofit",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Replace inline FalBackend prompt fallback with resolve_prompt; behavior identical.\n\n**Verify:** `pixi run pytest tests/engines/test_fal.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/fal/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_fal.py -v\", \"acceptanceCriteria\": [\"inline fallback replaced by resolve_prompt\", \"test_submit_falls_back_to_segment_prompt passes\", \"test_submit_spec_prompt_wins_over_segment_prompt passes\", \"test_validate_spec_accepts_prompt_on_segment passes\", \"FalEngine.validate_spec body unchanged\", \"pre-commit clean\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 7: Examples + README + PROGRESS",
+      "status": "pending",
+      "blockedBy": [11, 12, 13, 14],
+      "description": "**Goal:** Document prompt routing in example YAMLs + README + PROGRESS Phase 20 entry.\n\n**Verify:** `pixi run pytest -q && pixi run pre-commit run --all-files` → green\n\n```json:metadata\n{\"files\": [\"examples/configs/hosted.yaml\", \"examples/configs/diffusers.yaml\", \"examples/configs/wan.yaml\", \"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run pytest -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"hosted.yaml documents prompt_body_key\", \"diffusers.yaml documents prompt_body_key\", \"wan.yaml documents prompt_node_ids\", \"README mentions cross-engine prompt routing\", \"PROGRESS Phase 20 entry added\", \"full suite green\", \"pre-commit all-files green\", \"test_examples.py passes\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-05-31T00:00:00Z"
+}
