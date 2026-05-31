@@ -4,44 +4,44 @@
     {
       "id": 9,
       "subject": "Task 1: BackendPool ABC close() + SequentialPool no-op + parity tests",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Extend the `BackendPool` ABC with `close()` + context-manager protocol; give `SequentialPool` a no-op `close()` and a `max_in_flight` kwarg on `add()`; verify with parity tests that today's `SequentialPool` is unchanged in behaviour.\n\n**Files:**\n- Modify: `src/kinoforge/core/interfaces.py` (BackendPool ABC, around line 354)\n- Modify: `src/kinoforge/core/pool.py` (SequentialPool)\n- Modify: `tests/core/test_pool.py` (add parity tests; update `_ListPool` fixture)\n\n**Acceptance Criteria:**\n- BackendPool declares close() abstractmethod + concrete __enter__/__exit__\n- SequentialPool.close() no-op, idempotent\n- SequentialPool.add accepts max_in_flight kwarg (ignored)\n- _ListPool test fixture gains no-op close\n- with SequentialPool(backend) as pool works (calls close on exit)\n- All pre-existing test_pool tests pass unmodified\n\n**Verify:** `pixi run test -k test_pool -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/pool.py\", \"tests/core/test_pool.py\"], \"verifyCommand\": \"pixi run test -k test_pool -v\", \"acceptanceCriteria\": [\"BackendPool declares close() abstractmethod\", \"BackendPool provides __enter__/__exit__\", \"SequentialPool.close() no-op, idempotent\", \"SequentialPool.add accepts max_in_flight kwarg (ignored)\", \"_ListPool fixture gains no-op close\", \"with SequentialPool(backend) as pool works\", \"all pre-existing test_pool tests still pass\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 2: BlockingFakeBackend helper + ConcurrentPool core (no map)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** Add a deterministic Event-gated test backend, then build `ConcurrentPool` with init/add/_pick/_release/_run_one/submit/close. Defer `map` to Task 3. Cover ACs 1–10 and 16–20 from the spec (15 tests).\n\n**Files:**\n- Create: `tests/core/conftest.py`\n- Modify: `src/kinoforge/core/pool.py` (add `_Slot` + `ConcurrentPool`)\n- Create: `tests/core/test_concurrent_pool.py`\n\n**Acceptance Criteria:**\n- BlockingFakeBackend with submit/result/release/fail_for\n- ConcurrentPool empty/closed pool RuntimeError messages\n- cap=1 serialises, cap=4 parallel\n- two backends caps [1,1] one-each (registration order), [1,4] weighted (4/1 split)\n- pre-occupied skipped for lower-utilization\n- least-loaded re-picked after release\n- close() blocks until in-flight done; idempotent; context-manager\n- stress invariant: in_flight in [0, cap], observed concurrency ≥ 2 at peak\n- backend exception releases slot via finally (next submit succeeds)\n\n**Verify:** `pixi run test tests/core/test_concurrent_pool.py -v && pixi run test -k test_pool -v`\n\n```json:metadata\n{\"files\": [\"tests/core/conftest.py\", \"src/kinoforge/core/pool.py\", \"tests/core/test_concurrent_pool.py\"], \"verifyCommand\": \"pixi run test tests/core/test_concurrent_pool.py -v && pixi run test -k test_pool -v\", \"acceptanceCriteria\": [\"BlockingFakeBackend with submit/result/release/fail_for\", \"ConcurrentPool empty/closed pool RuntimeError messages\", \"cap=1 serialises, cap=4 parallel\", \"two backends caps [1,1] one-each, [1,4] weighted\", \"pre-occupied skipped for lower-utilization\", \"least-loaded re-picked after release\", \"close() blocks until in-flight done; idempotent; context-manager\", \"stress invariant in_flight in [0, cap]\", \"backend exception releases slot via finally\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 3: ConcurrentPool.map with fail-fast cancellation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**Goal:** Implement `map(jobs) -> list[Artifact]` that dispatches all jobs eagerly, returns results in input order, and on first exception cancels queued futures, drains in-flight ones, and re-raises the captured exception. 5 ACs (11–15).\n\n**Files:**\n- Modify: `src/kinoforge/core/pool.py` (replace the `NotImplementedError` stub with the real `map`)\n- Modify: `tests/core/test_concurrent_pool.py` (append 5 tests)\n\n**Acceptance Criteria:**\n- map([]) returns [] with zero backend calls\n- map preserves input order despite reverse release\n- map raises first exception on middle-job failure\n- map fail-fast bounds backend.submit count (queued not started)\n- map fail-fast drains in-flight on other backend (release reachable)\n\n**Verify:** `pixi run test tests/core/test_concurrent_pool.py -v` → 20 tests\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/pool.py\", \"tests/core/test_concurrent_pool.py\"], \"verifyCommand\": \"pixi run test tests/core/test_concurrent_pool.py -v\", \"acceptanceCriteria\": [\"map([]) returns [] with zero backend calls\", \"map preserves input order despite reverse release\", \"map raises first exception on middle-job failure\", \"map fail-fast bounds backend.submit count (queued not started)\", \"map fail-fast drains in-flight on other backend (release reachable)\"]}\n```"
     },
     {
       "id": 12,
       "subject": "Task 4: GenerateClipStage branch for non-chained pool.map",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11],
       "description": "**Goal:** Add one branch to `GenerateClipStage.run`: when `not should_chain and len(jobs) > 1`, use `pool.map(jobs)`. Chained continuity and 1-job native paths preserved verbatim.\n\n**Files:**\n- Modify: `src/kinoforge/pipeline/generate_clip.py` (around the existing for-loop, ~line 102)\n- Modify: `tests/pipeline/test_generate_clip.py` (3 new tests)\n\n**Acceptance Criteria:**\n- t2v N=3 with ConcurrentPool(cap=3) dispatches in parallel (all reach backend.submit before any release)\n- i2v N=3 with ConcurrentPool(cap=3) stays serial (submit-release lockstep)\n- 1-job native skips map (submit_log == 1)\n- all existing test_generate_clip tests pass unmodified\n\n**Verify:** `pixi run test tests/pipeline/test_generate_clip.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"tests/pipeline/test_generate_clip.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/test_generate_clip.py -v\", \"acceptanceCriteria\": [\"t2v N=3 with ConcurrentPool(cap=3) dispatches in parallel\", \"i2v N=3 with ConcurrentPool(cap=3) stays serial\", \"1-job native skips map (submit_log == 1)\", \"all existing test_generate_clip tests pass unmodified\"]}\n```"
     },
     {
       "id": 13,
       "subject": "Task 5: orchestrator.generate() swap SequentialPool → ConcurrentPool",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [12],
       "description": "**Goal:** In `core/orchestrator.py:476`, replace `pool = SequentialPool(backend)` and the stage construction + run + return that follow it with a `with ConcurrentPool() as pool: pool.add(backend, max_in_flight=cfg.lifecycle.max_in_flight); ...`. Add one test that observes shutdown via spy.\n\n**Files:**\n- Modify: `src/kinoforge/core/orchestrator.py` (lines ~474–489, import on line 37, docstring around line 291)\n- Modify: `tests/core/test_orchestrator.py` (1 new test)\n\n**Acceptance Criteria:**\n- orchestrator.generate constructs ConcurrentPool with max_in_flight from cfg.lifecycle\n- stage runs inside with-block; artifact returned from inside\n- ConcurrentPool.close called exactly once on return (spy via monkey-patch)\n- SequentialPool import removed from orchestrator.py\n- all existing test_orchestrator tests pass unmodified\n- docstring updated to reference ConcurrentPool\n\n**Verify:** `pixi run test tests/core/test_orchestrator.py -v && pixi run lint`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator.py\"], \"verifyCommand\": \"pixi run test tests/core/test_orchestrator.py -v && pixi run lint\", \"acceptanceCriteria\": [\"orchestrator.generate constructs ConcurrentPool with max_in_flight from cfg\", \"stage runs inside with-block; artifact returned from inside\", \"ConcurrentPool.close called exactly once on return (spy)\", \"SequentialPool import removed from orchestrator.py\", \"all existing test_orchestrator tests pass unmodified\", \"docstring updated to reference ConcurrentPool\"]}\n```"
     },
     {
       "id": 14,
       "subject": "Task 6: Docs (README + PROGRESS) + final gate + merge",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [13],
       "description": "**Goal:** Document the new `max_in_flight` configuration in `README.md`; record Phase 17 (Layer G) progress in `PROGRESS.md`; run the full quality gate; merge via `--no-ff` following the established layer-merge pattern.\n\n**Files:**\n- Modify: `README.md` (new \"Concurrency\" subsection)\n- Modify: `PROGRESS.md` (Phase 17 entry mirroring Phase 14/15/16; Single next action; GitHub issues table row #3; test count refresh)\n\n**Acceptance Criteria:**\n- README Concurrency subsection with yaml example + 3 behaviour bullets\n- PROGRESS Phase 17 block with real SHAs for all 6 tasks\n- PROGRESS Single next action updated\n- PROGRESS issue #3 row marked CLOSED (Layer G)\n- PROGRESS test count refreshed (528 → 548)\n- Full quality gate clean\n- Merge commit on main with all task SHAs + Closes #3\n\n**Verify:** `pixi run test && pixi run typecheck && pixi run lint && pixi run pre-commit run --all-files`\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test && pixi run typecheck && pixi run lint && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"README Concurrency subsection with yaml example\", \"PROGRESS Phase 17 block with real SHAs for all 6 tasks\", \"PROGRESS Single next action updated\", \"PROGRESS issue #3 row marked CLOSED\", \"PROGRESS test count refreshed to 548\", \"full quality gate clean\", \"merge commit lands on main with all task SHAs + Closes #3\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-05-31T04:42:54.589872Z"
+  "lastUpdated": "2026-05-31T06:00:18.397136Z"
 }

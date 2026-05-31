@@ -211,3 +211,5 @@ Layer G (concurrent backend scheduler) complete. All 8 commits + docs + regressi
 - [x] Task 5: `orchestrator.generate()` wraps stage inside `with ConcurrentPool() as pool: pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)`; `SequentialPool` import removed — commit `c90b046`
 - [x] Task 6: `LifecycleConfig.max_in_flight` field + wire through `lifecycle()` method; README Concurrency section; PROGRESS Phase 17 — commit `b7e57fc` (Phase 17 Task 6 SHA backfill at `eed9706`)
 - [x] Task 6 regression test: lock down YAML→`Lifecycle.max_in_flight` wiring so a future drop of the `lc.max_in_flight=` line in `Config.lifecycle()` fails fast instead of silently defaulting to cap=1 — commit `bab8d64`
+- [x] Task 6 doc corrections: fix Phase 17 Task 2/3 inaccuracies (semaphore → lock-protected counter; `as_completed` → input-order iteration); refresh test count — commits `4622083` + `08eb48b`
+- [x] Merge to main via `--no-ff` — merge commit `9e02e15` (closes #3)
