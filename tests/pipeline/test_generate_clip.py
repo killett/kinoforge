@@ -806,11 +806,28 @@ def test_one_job_native_skips_map_uses_submit(tmp_path: Path) -> None:
         for jid in list(backend._gates.keys()):
             backend.release(jid)
 
+    # Spy on pool.map so we can prove the 1-job path does NOT call it.
+    # Without the spy, len(submit_log) == 1 would pass equally for
+    # pool.submit(j).result() AND pool.map([j]) — both produce one
+    # backend.submit call. The spy is what makes the assertion discriminating.
+    map_calls: list[list[GenerationJob]] = []
+    original_map = pool.map
+
+    def _spy_map(jobs: list[GenerationJob]) -> list[Artifact]:
+        map_calls.append(list(jobs))
+        return original_map(jobs)
+
+    pool.map = _spy_map  # type: ignore[method-assign]
+
     threading.Thread(target=_releaser, daemon=True).start()
     try:
         result = stage.run(request, segments_override=segments)
         assert result is not None
     finally:
+        pool.map = original_map  # type: ignore[method-assign]
         pool.close()
-    # Only one job should have been submitted.
+    # Only one job should have been submitted via pool.submit; map untouched.
     assert len(backend.submit_log) == 1
+    assert map_calls == [], (
+        f"pool.map was called for 1-job path; len(jobs) > 1 guard broke: {map_calls}"
+    )
