@@ -289,32 +289,35 @@ class FalBackend(GenerationBackend):
         status_url = urls["status_url"]
         response_url = urls["response_url"]
 
-        for _ in range(self._max_poll):
-            data = self._http_get(status_url, self._auth_headers())
-            status_str = str(data.get("status", ""))
-            cls = interpret_status(status_str)
-            if cls is FalStatus.COMPLETED:
-                result_data = self._http_get(response_url, self._auth_headers())
-                url = extract_result_url(result_data, self._url_path)
-                filename = basename(urlparse(url).path) or url
-                return Artifact(
-                    filename=filename,
-                    url=url,
-                    meta={"request_id": job_id},
-                )
-            if cls is FalStatus.FAILED:
-                raise KinoforgeError(
-                    f"fal job {job_id!r} failed: {data.get('logs', [])}"
-                )
-            if cls is FalStatus.UNKNOWN:
-                raise KinoforgeError(
-                    f"fal job {job_id!r} unknown status: {status_str!r}"
-                )
-            # PENDING: sleep and loop.
-            self._sleep(1.0)
-        raise TimeoutError(
-            f"fal job {job_id!r} did not complete within {self._max_poll} polls"
-        )
+        try:
+            for _ in range(self._max_poll):
+                data = self._http_get(status_url, self._auth_headers())
+                status_str = str(data.get("status", ""))
+                cls = interpret_status(status_str)
+                if cls is FalStatus.COMPLETED:
+                    result_data = self._http_get(response_url, self._auth_headers())
+                    url = extract_result_url(result_data, self._url_path)
+                    filename = basename(urlparse(url).path) or url
+                    return Artifact(
+                        filename=filename,
+                        url=url,
+                        meta={"request_id": job_id},
+                    )
+                if cls is FalStatus.FAILED:
+                    raise KinoforgeError(
+                        f"fal job {job_id!r} failed: {data.get('logs', [])}"
+                    )
+                if cls is FalStatus.UNKNOWN:
+                    raise KinoforgeError(
+                        f"fal job {job_id!r} unknown status: {status_str!r}"
+                    )
+                # PENDING: sleep and loop.
+                self._sleep(1.0)
+            raise TimeoutError(
+                f"fal job {job_id!r} did not complete within {self._max_poll} polls"
+            )
+        finally:
+            self._jobs.pop(job_id, None)
 
     def endpoints(self) -> dict[str, str]:
         """Return the queue-endpoint map.
