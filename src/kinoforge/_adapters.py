@@ -23,6 +23,7 @@ import kinoforge.engines.diffusers  # noqa: F401
 
 # Engines
 import kinoforge.engines.fake  # noqa: F401
+import kinoforge.engines.fal  # noqa: F401
 import kinoforge.engines.hosted  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.providers.runpod  # noqa: F401

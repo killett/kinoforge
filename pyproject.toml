@@ -59,6 +59,9 @@ disallow_untyped_calls = false
 [tool.pytest.ini_options]
 addopts = "-v"
 pythonpath = ["src"]
+markers = [
+    "live: opt-in tests that hit real APIs (require KINOFORGE_LIVE_TESTS=1 + provider creds)",
+]
 
 [tool.coverage.run]
 source = ["src"]
