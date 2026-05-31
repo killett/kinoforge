@@ -153,6 +153,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 **Pending follow-ups (Layer L candidate):**
 - `GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).
 - `engine.hosted.model` ↔ `spec.model` duplication collapse (Layer K hosted YAML ambiguity).
+- `kinoforge batch` CLI subcommand: accept multiple `--prompt-file PATH` (or `--prompt TEXT`) with `--concurrent N`. Today producing N clips requires N parallel shell invocations, which is error-prone (e.g. `vars && cmd1 & cmd2` accidentally scopes vars to the backgrounded subshell). A batch subcommand owns the parallel-dispatch shape so users / LLMs never construct the shell pipeline by hand. Needs decisions on per-prompt cfg overrides, naming, shared vs per-call budget/ledger.
 
 ## Post-MVP
 
