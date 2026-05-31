@@ -46,12 +46,20 @@ class SequentialPool(BackendPool):
         if backend is not None:
             self._backends.append(backend)
 
-    def add(self, backend: GenerationBackend) -> None:
+    def add(
+        self,
+        backend: GenerationBackend,
+        *,
+        max_in_flight: int = 1,
+    ) -> None:
         """Append *backend* to the internal backend list.
 
         Args:
             backend: The :class:`~kinoforge.core.interfaces.GenerationBackend`
                 to register.
+            max_in_flight: Accepted for :class:`BackendPool` ABC parity with
+                :class:`ConcurrentPool`; ignored by ``SequentialPool`` because
+                only ``_backends[0]`` is ever used.
         """
         self._backends.append(backend)
 
@@ -92,3 +100,12 @@ class SequentialPool(BackendPool):
             List of :class:`~kinoforge.core.interfaces.Artifact` in input order.
         """
         return [self.submit(j).result() for j in jobs]
+
+    def close(self) -> None:
+        """Release any resources held by this pool.
+
+        ``SequentialPool`` owns no threads or open handles; this is a no-op
+        provided for :class:`BackendPool` ABC parity with concurrent pools
+        that must drain worker threads.
+        """
+        return None
