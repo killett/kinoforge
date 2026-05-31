@@ -317,7 +317,9 @@ def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
     run_id: str = args.run_id
 
     try:
-        artifact = generate(cfg, request, store=store, run_id=run_id)
+        artifact = generate(
+            cfg, request, store=store, run_id=run_id, state_dir=state_dir
+        )
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
         return 1
