@@ -63,9 +63,37 @@ def test_partial_store_cannot_be_instantiated() -> None:
 
 
 def test_local_store_stub_raises_not_implemented(tmp_path: Path) -> None:
-    """Local store stub must raise NotImplementedError until Task 3 lands."""
+    """Local store stub must raise NotImplementedError mentioning Task 3.
+
+    The Task-number reference is the load-bearing part: it tells future
+    readers (and Task 3's reviewer) which task replaces the stub.
+    """
     store = LocalArtifactStore(tmp_path)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="Layer H Task 3"):
+        store.acquire_lock("k", ttl_s=10.0)
+
+
+def test_s3_store_stub_raises_not_implemented() -> None:
+    """S3 store stub must raise NotImplementedError mentioning Task 4."""
+    from kinoforge.stores.s3 import S3ArtifactStore
+    from tests.stores.conftest import FakeS3Client
+
+    store = S3ArtifactStore(bucket="b", client=FakeS3Client())
+    with pytest.raises(NotImplementedError, match="Layer H Task 4"):
+        store.acquire_lock("k", ttl_s=10.0)
+
+
+def test_gcs_store_stub_raises_not_implemented() -> None:
+    """GCS store stub must raise NotImplementedError mentioning Task 5."""
+    from kinoforge.stores.gcs import GCSArtifactStore
+    from tests.stores.conftest import FakeGCSClient
+
+    store = GCSArtifactStore(
+        bucket="b",
+        client=FakeGCSClient(),
+        not_found_exc=FakeGCSClient.NotFound,
+    )
+    with pytest.raises(NotImplementedError, match="Layer H Task 5"):
         store.acquire_lock("k", ttl_s=10.0)
 
 
