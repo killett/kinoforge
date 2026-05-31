@@ -462,7 +462,7 @@ def generate(
     # ------------------------------------------------------------------
     if not _just_discovered:
         try:
-            profile_provider.verify(profile, backend)
+            profile_provider.verify(profile, backend, engine=resolved_engine, key=key)
         except CapabilityMismatch:
             _log.warning(
                 "capability mismatch detected; tearing down instance before re-raising"

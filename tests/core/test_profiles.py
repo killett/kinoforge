@@ -398,14 +398,15 @@ def test_single_flight_two_threads_one_probe(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_underuse_warning_when_no_flags_declared(
+def test_discover_with_no_declared_flags_logs_at_debug(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """discover() with empty declared_flags must emit a WARNING containing derive().
+    """Fresh discovery with no declared_flags should be a quiet DEBUG, not WARNING.
 
-    Bug caught: if the warning condition is wrong (e.g., only fires when flags
-    are explicitly False rather than absent), the caplog assertion fails.
-    The message must embed key.derive() so callers can identify the key.
+    Bug catch: previous behaviour emitted WARNING on every fresh-cache run,
+    drowning real signals.  Probe is source of truth on first-discover; the
+    missing-flags condition only matters once a cached profile exists and a
+    later run finds the engine no longer declares them (handled in verify()).
     """
     import logging
 
@@ -419,24 +420,33 @@ def test_underuse_warning_when_no_flags_declared(
     store = LocalArtifactStore(tmp_path)
     cache = JsonProfileCache(store=store)
 
-    with caplog.at_level(logging.WARNING, logger="kinoforge.profiles"):
-        cache.discover(key, engine, backend)
+    caplog.set_level(logging.DEBUG, logger="kinoforge.profiles")
+    cache.discover(key, engine, backend)
 
-    warning_messages = [
-        r.message for r in caplog.records if r.levelno == logging.WARNING
-    ]
-    assert any(key.derive() in msg for msg in warning_messages), (
-        f"expected a WARNING containing {key.derive()!r}; got: {warning_messages}"
+    # No WARNING-or-higher records anywhere on the fresh-discovery path.
+    assert not any(r.levelno >= logging.WARNING for r in caplog.records), (
+        f"unexpected WARNING-or-higher records: "
+        f"{[(r.levelname, r.message) for r in caplog.records]}"
+    )
+    # Confirm the DEBUG message did fire and mentions the fresh-discovery context
+    # (proves the codepath was actually exercised, not silently skipped).
+    debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any(
+        "fresh-discovery" in msg and key.derive() in msg for msg in debug_messages
+    ), (
+        f"expected a DEBUG mentioning 'fresh-discovery' and {key.derive()!r}; "
+        f"got: {debug_messages}"
     )
 
 
-def test_no_underuse_warning_when_one_flag_declared(
+def test_no_debug_or_warning_when_one_flag_declared(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """No WARNING when at least one strategy flag is declared.
+    """No noise (DEBUG nor WARNING) when at least one strategy flag is declared.
 
-    Bug caught: if the guard emits warnings regardless of declared_flags
-    content, this assertion fails.
+    Bug caught: if the guard emits the under-use message regardless of
+    declared_flags content, the key's derive() would still show up in the
+    DEBUG records — this assertion locks that out.
     """
     import logging
 
@@ -452,15 +462,121 @@ def test_no_underuse_warning_when_one_flag_declared(
     store = LocalArtifactStore(tmp_path)
     cache = JsonProfileCache(store=store)
 
-    with caplog.at_level(logging.WARNING, logger="kinoforge.profiles"):
-        cache.discover(key, engine, backend)
+    caplog.set_level(logging.DEBUG, logger="kinoforge.profiles")
+    cache.discover(key, engine, backend)
 
-    warning_messages = [
-        r.message for r in caplog.records if r.levelno == logging.WARNING
+    underuse_records = [
+        r
+        for r in caplog.records
+        if key.derive() in r.message and "fresh-discovery" in r.message
     ]
-    assert not any(key.derive() in msg for msg in warning_messages), (
-        "should not warn when at least one flag is declared"
+    assert not underuse_records, (
+        f"should not emit the under-use message when a flag is declared; "
+        f"got: {[(r.levelname, r.message) for r in underuse_records]}"
     )
+
+
+def test_verify_with_no_declared_flags_logs_at_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """verify() against a stale cache where the engine no longer declares flags must WARN.
+
+    Bug catch: if a cached profile was discovered when the engine still
+    declared strategy flags but the engine has since been downgraded (or its
+    declared_flags_map regressed), the cached strategy bits no longer match
+    reality. discover() is silent on this because it is the source of truth
+    for a fresh probe — but verify() must escalate to WARNING so the drift
+    is surfaced.
+    """
+    import logging
+
+    from kinoforge.core.profiles import JsonProfileCache
+
+    # Build a cached profile by hand — no engine involvement, no extra log records.
+    profile = _make_probe(supports_native_extension=True, supports_joint_audio=True)
+    backend = _CountingBackend(
+        _make_probe(  # same probeable fields → no drift
+            supports_native_extension=True, supports_joint_audio=True
+        )
+    )
+    key = _make_key()
+    # Engine returns empty dict — the "regression" scenario.
+    engine = _FakeEngine(flags_by_derive={})
+
+    store = LocalArtifactStore(tmp_path)
+    cache = JsonProfileCache(store=store)
+
+    caplog.set_level(logging.WARNING, logger="kinoforge.profiles")
+    cache.verify(profile, backend, engine=engine, key=key)
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warning_records, (
+        f"expected at least one WARNING on verify-side regression; "
+        f"got: {[(r.levelname, r.message) for r in caplog.records]}"
+    )
+    # The WARNING should mention the drift, not generic capability mismatch.
+    assert any(
+        "no longer declares" in r.message and key.derive() in r.message
+        for r in warning_records
+    ), (
+        f"expected WARNING to mention 'no longer declares' and the key hash; "
+        f"got: {[r.message for r in warning_records]}"
+    )
+
+
+def test_verify_no_warning_when_engine_still_declares_flags(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """verify() must NOT warn when the engine still declares strategy flags.
+
+    Bug catch: if the verify-side guard fires on every call regardless of
+    declared_flags content, the WARNING becomes background noise again.
+    """
+    import logging
+
+    from kinoforge.core.profiles import JsonProfileCache
+
+    profile = _make_probe(supports_native_extension=True)
+    backend = _CountingBackend(_make_probe(supports_native_extension=True))
+    key = _make_key()
+    engine = _FakeEngine(
+        flags_by_derive={key.derive(): {"supports_native_extension": True}}
+    )
+
+    store = LocalArtifactStore(tmp_path)
+    cache = JsonProfileCache(store=store)
+
+    caplog.set_level(logging.WARNING, logger="kinoforge.profiles")
+    cache.verify(profile, backend, engine=engine, key=key)
+
+    warning_records = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "no longer declares" in r.message
+    ]
+    assert not warning_records, (
+        f"should not warn when engine still declares strategy flags; "
+        f"got: {[r.message for r in warning_records]}"
+    )
+
+
+def test_verify_without_engine_kwarg_does_not_raise(tmp_path: Path) -> None:
+    """verify() must remain callable as verify(profile, backend) — engine is optional.
+
+    Bug catch: if engine becomes required positional, every existing caller
+    (orchestrator + tests above) breaks at runtime. Optionality preserves
+    the ABC contract and lets callers that lack engine reference still verify.
+    """
+    from kinoforge.core.profiles import JsonProfileCache
+
+    profile = _make_probe()
+    backend = _CountingBackend(_make_probe())  # same probeable fields → no drift
+
+    store = LocalArtifactStore(tmp_path)
+    cache = JsonProfileCache(store=store)
+
+    # Must not raise on the engine-less call (also exercises the legacy ABC shape).
+    cache.verify(profile, backend)
 
 
 # ---------------------------------------------------------------------------
