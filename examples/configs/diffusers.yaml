@@ -8,6 +8,9 @@
 engine:
   kind: diffusers
   precision: fp16
+  # diffusers:
+  #   # Optional: top-level body key for prompt routing (default "prompt").
+  #   prompt_body_key: prompt
 
 models:
   - ref: "hf:stabilityai/stable-video-diffusion-img2vid-xt:svd_xt.safetensors"
