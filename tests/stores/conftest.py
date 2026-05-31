@@ -136,23 +136,55 @@ class _GCSNotFound(Exception):
     """Stand-in for google.api_core.exceptions.NotFound."""
 
 
+class _GCSPreconditionFailed(Exception):
+    """Stand-in for google.api_core.exceptions.PreconditionFailed."""
+
+
 class _FakeBlob:
     def __init__(self, bucket: _FakeBucket, name: str) -> None:
         self.bucket = bucket
         self.name = name
+        self._captured_generation: int | None = None
 
-    def upload_from_string(self, data: bytes) -> None:
+    @property
+    def generation(self) -> int | None:
+        """Return the current generation for this blob name from the bucket."""
+        return self.bucket._generations.get(self.name)
+
+    def upload_from_string(
+        self, data: bytes, if_generation_match: int | None = None
+    ) -> None:
+        """Write data; honors if_generation_match precondition."""
+        existing_gen = self.bucket._generations.get(self.name)
+        if if_generation_match is not None:
+            if if_generation_match == 0:
+                if existing_gen is not None:
+                    raise _GCSPreconditionFailed()
+            else:
+                if existing_gen != if_generation_match:
+                    raise _GCSPreconditionFailed()
         self.bucket._blobs[self.name] = data
+        new_gen = (existing_gen or 0) + 1
+        self.bucket._generations[self.name] = new_gen
+        self._captured_generation = new_gen
 
     def download_as_bytes(self) -> bytes:
+        """Read bytes; captures current generation for subsequent release CAS."""
         if self.name not in self.bucket._blobs:
             raise _GCSNotFound()
+        # Capture current generation so the lock can use it for conditional delete.
+        self._captured_generation = self.bucket._generations.get(self.name)
         return self.bucket._blobs[self.name]
 
-    def delete(self) -> None:
+    def delete(self, if_generation_match: int | None = None) -> None:
+        """Delete blob; honors if_generation_match precondition."""
         if self.name not in self.bucket._blobs:
             raise _GCSNotFound()
+        existing_gen = self.bucket._generations.get(self.name)
+        if if_generation_match is not None and existing_gen != if_generation_match:
+            raise _GCSPreconditionFailed()
         del self.bucket._blobs[self.name]
+        self.bucket._generations.pop(self.name, None)
 
     def exists(self) -> bool:
         return self.name in self.bucket._blobs
@@ -162,6 +194,7 @@ class _FakeBucket:
     def __init__(self, name: str) -> None:
         self.name = name
         self._blobs: dict[str, bytes] = {}
+        self._generations: dict[str, int] = {}
 
     def blob(self, key: str) -> _FakeBlob:
         return _FakeBlob(self, key)
@@ -176,6 +209,7 @@ class FakeGCSClient:
     """In-memory stand-in for google.cloud.storage.Client."""
 
     NotFound = _GCSNotFound
+    PreconditionFailed = _GCSPreconditionFailed
 
     def __init__(self) -> None:
         self._buckets: dict[str, _FakeBucket] = {}

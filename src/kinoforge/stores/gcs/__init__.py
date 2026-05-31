@@ -16,6 +16,7 @@ import json
 import os
 from typing import TYPE_CHECKING, Any
 
+import kinoforge.stores.gcs.lock as _gcs_lock  # noqa: PLC0415
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
 
@@ -126,8 +127,16 @@ class GCSArtifactStore(ArtifactStore):
             raise FileNotFoundError(f"artifact not found: {uri!r}") from None
 
     def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
-        """Temporary stub; real implementation lands in Layer H Task 5."""
-        raise NotImplementedError("GCSArtifactStore.acquire_lock — Layer H Task 5")
+        """Return a :class:`GCSCloudLock` rooted under ``<prefix>/_locks/``.
+
+        Args:
+            key: Logical lock key (may contain forward slashes).
+            ttl_s: Lease duration in seconds.
+
+        Returns:
+            A fresh :class:`~kinoforge.stores.gcs.lock.GCSCloudLock` instance.
+        """
+        return _gcs_lock.GCSCloudLock(store=self, key=key, ttl_s=ttl_s)
 
 
 # ---------------------------------------------------------------------------
