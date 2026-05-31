@@ -1280,3 +1280,207 @@ def test_urllib_post_multipart_wraps_invalid_json_as_AssetFetchError() -> None:
                 filename="x.png",
                 content=b"X",
             )
+
+
+# ---------------------------------------------------------------------------
+# Layer J Task 5: prompt routing via spec.prompt_node_ids
+# ---------------------------------------------------------------------------
+
+
+def test_submit_routes_prompt_into_node_overrides_text() -> None:
+    """submit() writes resolve_prompt(job) into node_overrides[node_id].inputs.text
+    for each entry in spec['prompt_node_ids'].
+
+    Bug catch: without this routing, an orchestrator-driven ComfyUI run with
+    spec.prompt_node_ids={'main': '6'} would POST the baked-in graph text
+    unchanged — the user's CLI prompt would never reach the encoder node.
+    """
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.comfyui import ComfyUIBackend
+
+    posts: list[dict[str, Any]] = []
+
+    def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
+        posts.append({"u": u, "b": b})
+        return {"prompt_id": "p1"}
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"",
+        http_post_file=lambda u, **kw: "ignored.png",
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    job = GenerationJob(
+        spec={
+            "graph": {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}},
+            "node_overrides": {},
+            "prompt_node_ids": {"main": "6"},
+        },
+        segments=[Segment(prompt="a hovering dragon", assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0]["b"]["prompt"]["6"]["inputs"]["text"] == "a hovering dragon"
+
+
+def test_submit_skips_when_prompt_node_ids_absent() -> None:
+    """Legacy spec without spec['prompt_node_ids'] must not have any node
+    overrides mutated by the helper.
+
+    Bug catch: an over-eager routing block that inspects segments even
+    when prompt_node_ids is absent could silently overwrite a node whose
+    ID happens to match a hardcoded default.
+    """
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.comfyui import ComfyUIBackend
+
+    posts: list[dict[str, Any]] = []
+
+    def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
+        posts.append({"u": u, "b": b})
+        return {"prompt_id": "p1"}
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"",
+        http_post_file=lambda u, **kw: "ignored.png",
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    job = GenerationJob(
+        spec={
+            "graph": {
+                "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "baked"}}
+            },
+            "node_overrides": {},
+            # NOTE: no prompt_node_ids key
+        },
+        segments=[Segment(prompt="should-not-route", assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    # Baked-in graph text survives — no routing happened.
+    assert posts[0]["b"]["prompt"]["6"]["inputs"]["text"] == "baked"
+
+
+def test_submit_spec_prompt_wins_over_segment_comfyui() -> None:
+    """When spec carries both 'prompt' (read by resolve_prompt) and a
+    segment prompt, the explicit spec.prompt wins and is routed into the
+    encoder node — mirrors the precedence rule across all engines."""
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.comfyui import ComfyUIBackend
+
+    posts: list[dict[str, Any]] = []
+
+    def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
+        posts.append({"u": u, "b": b})
+        return {"prompt_id": "p1"}
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"",
+        http_post_file=lambda u, **kw: "ignored.png",
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    job = GenerationJob(
+        spec={
+            "graph": {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}},
+            "node_overrides": {},
+            "prompt_node_ids": {"main": "6"},
+            "prompt": "explicit-from-spec",
+        },
+        segments=[Segment(prompt="from-seg", assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0]["b"]["prompt"]["6"]["inputs"]["text"] == "explicit-from-spec"
+
+
+def test_submit_does_not_overwrite_explicit_node_override_text() -> None:
+    """If node_overrides already supplies inputs.text for the configured
+    node, the helper must leave it alone (setdefault semantics).
+
+    Bug catch: a naive ``inputs['text'] = prompt`` would clobber a hand-
+    crafted negative-prompt encoder or preset wrapper that the workflow
+    author had already wired in via node_overrides.
+    """
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.comfyui import ComfyUIBackend
+
+    posts: list[dict[str, Any]] = []
+
+    def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
+        posts.append({"u": u, "b": b})
+        return {"prompt_id": "p1"}
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"",
+        http_post_file=lambda u, **kw: "ignored.png",
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    job = GenerationJob(
+        spec={
+            "graph": {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}},
+            "node_overrides": {"6": {"inputs": {"text": "preset-from-override"}}},
+            "prompt_node_ids": {"main": "6"},
+        },
+        segments=[Segment(prompt="ignored-by-setdefault", assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0]["b"]["prompt"]["6"]["inputs"]["text"] == "preset-from-override"
+
+
+def test_validate_spec_raises_when_prompt_node_ids_set_and_no_prompt() -> None:
+    """Opt-in validation: spec.prompt_node_ids configured with no prompt
+    available anywhere must raise before the misconfigured POST hits the
+    ComfyUI server.
+
+    Bug catch: silent fallthrough would resurface the empty-prompt defect
+    after the workflow author intentionally declared a prompt sink.
+    """
+    import pytest
+
+    from kinoforge.core.errors import ValidationError
+    from kinoforge.core.interfaces import GenerationJob, Segment
+
+    engine = _make_engine()
+    job = GenerationJob(
+        spec={
+            "graph": {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}},
+            "node_overrides": {},
+            "prompt_node_ids": {"main": "6"},
+        },
+        segments=[Segment(prompt="", assets=[])],
+        params={},
+    )
+    with pytest.raises(ValidationError, match="prompt_node_ids is configured"):
+        engine.validate_spec(job)
+
+
+def test_validate_spec_passes_when_prompt_node_ids_absent() -> None:
+    """Legacy spec without prompt_node_ids must keep passing — workflows
+    that bake their prompt into the graph never declared a sink and
+    should not gain a new failure mode."""
+    from kinoforge.core.interfaces import GenerationJob, Segment
+
+    engine = _make_engine()
+    job = GenerationJob(
+        spec={
+            "graph": {
+                "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "baked"}}
+            },
+            "node_overrides": {},
+        },
+        segments=[Segment(prompt="", assets=[])],
+        params={},
+    )
+    engine.validate_spec(job)  # must NOT raise
