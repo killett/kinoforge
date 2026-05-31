@@ -100,30 +100,36 @@ class GenerateClipStage:
         # init_image slot. Stitching across the N artifacts is DEFERRED to its
         # own follow-up; we still persist only the last artifact below.
         should_chain = "init_image" in MODE_ROLE_REQUIREMENTS.get(request.mode, set())
-        results: list[Artifact] = []
-        for i, job in enumerate(jobs):
-            if i > 0 and should_chain:
-                tail_bytes = self.engine.extract_last_frame(results[-1])
-                tail_name = f"seg-{i - 1}-tail.png"
-                stored = self.store.put_bytes(self.run_id, tail_name, tail_bytes)
-                # Stores return Artifact(uri=...) with filename=""; pre-populate
-                # filename so downstream consumers don't have to derive it from
-                # Path(ref.uri).name.
-                tail_artifact = replace(stored, filename=tail_name)
-                tail_asset = ConditioningAsset(
-                    kind="image",
-                    role="init_image",
-                    ref=tail_artifact,
-                )
-                job = inject_tail_frame(job, tail_asset)
-                # Layer F: validate the now-asset-bearing job against the
-                # engine's spec contract (e.g. asset_node_ids / asset_paths)
-                # before the engine HTTP round-trip. The orchestrator's
-                # pre-dispatch validate_request saw seg-0's spec only; it
-                # didn't know about the tail-frame asset injected here.
-                self.engine.validate_spec(job)
-            art = self.pool.submit(job).result()
-            results.append(art)
+        if not should_chain and len(jobs) > 1:
+            # Layer G: t2v non-chained fallback fans out via pool.map.
+            # Chained continuity (i2v) and trivial 1-job paths take the
+            # serial loop below.
+            results = list(self.pool.map(jobs))
+        else:
+            results = []
+            for i, job in enumerate(jobs):
+                if i > 0 and should_chain:
+                    tail_bytes = self.engine.extract_last_frame(results[-1])
+                    tail_name = f"seg-{i - 1}-tail.png"
+                    stored = self.store.put_bytes(self.run_id, tail_name, tail_bytes)
+                    # Stores return Artifact(uri=...) with filename=""; pre-populate
+                    # filename so downstream consumers don't have to derive it from
+                    # Path(ref.uri).name.
+                    tail_artifact = replace(stored, filename=tail_name)
+                    tail_asset = ConditioningAsset(
+                        kind="image",
+                        role="init_image",
+                        ref=tail_artifact,
+                    )
+                    job = inject_tail_frame(job, tail_asset)
+                    # Layer F: validate the now-asset-bearing job against the
+                    # engine's spec contract (e.g. asset_node_ids / asset_paths)
+                    # before the engine HTTP round-trip. The orchestrator's
+                    # pre-dispatch validate_request saw seg-0's spec only; it
+                    # didn't know about the tail-frame asset injected here.
+                    self.engine.validate_spec(job)
+                art = self.pool.submit(job).result()
+                results.append(art)
         last = results[-1]
 
         # Persist the bytes derived from the engine's Artifact.
