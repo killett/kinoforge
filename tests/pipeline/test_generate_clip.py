@@ -10,6 +10,8 @@ AC 8: store.get_bytes(artifact.uri) returns original engine output bytes (round-
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -17,16 +19,19 @@ import pytest
 from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
+    ConditioningAsset,
     GenerationEngine,
     GenerationJob,
     GenerationRequest,
     ModelProfile,
     Segment,
 )
-from kinoforge.core.pool import SequentialPool
+from kinoforge.core.pool import ConcurrentPool, SequentialPool
 from kinoforge.engines.fake import FakeBackend
 from kinoforge.pipeline.generate_clip import GenerateClipStage
+from kinoforge.stores.base import ArtifactStore
 from kinoforge.stores.local import LocalArtifactStore
+from tests.core.conftest import BlockingFakeBackend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -641,3 +646,188 @@ def test_stage_aborts_when_validate_spec_raises_on_chained_segment(
     assert len(backend.submitted_seg0_assets) == 1
     # Only one validate_spec call (the one that raised).
     assert len(engine.validate_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Layer G: ConcurrentPool branch coverage
+# ---------------------------------------------------------------------------
+
+
+def _stage_with_concurrent_pool(
+    backend: BlockingFakeBackend,
+    *,
+    cap: int,
+    mode: str,
+    profile: ModelProfile,
+    store: ArtifactStore,
+) -> tuple[GenerateClipStage, ConcurrentPool]:
+    """Build a stage backed by ConcurrentPool(cap) with a non-chaining engine.
+
+    The engine is FakeEngine so extract_last_frame is concrete; the backend is
+    the supplied BlockingFakeBackend, registered into a fresh ConcurrentPool.
+    """
+    pool = ConcurrentPool()
+    pool.add(backend, max_in_flight=cap)
+    from kinoforge.engines.fake import FakeEngine
+
+    fake_engine = FakeEngine(
+        probe_profile=profile,
+        declared_flags_map={},
+        required_spec_keys=set(),
+    )
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="r-concurrent",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=fake_engine,
+    )
+    return stage, pool
+
+
+def test_unchained_branch_uses_pool_map_parallel_dispatch(tmp_path: Path) -> None:
+    """t2v 3-segment fallback: all 3 jobs reach backend.submit before any release."""
+    probe = _profile()
+    store = LocalArtifactStore(root=tmp_path)
+    backend = BlockingFakeBackend()
+    stage, pool = _stage_with_concurrent_pool(
+        backend, cap=3, mode="t2v", profile=probe, store=store
+    )
+
+    segments = [Segment(prompt=f"p{i}", assets=[]) for i in range(3)]
+    request = GenerationRequest(prompt="x", mode="t2v")
+
+    # Spawn a releaser thread that waits until all 3 reach backend.submit,
+    # then releases them.  If the stage were serial, only 1 would arrive
+    # before any release — the releaser's wait would time out.
+    releaser_saw_three = threading.Event()
+
+    def _releaser() -> None:
+        for _ in range(100):
+            if len(backend.submit_log) >= 3:
+                releaser_saw_three.set()
+                break
+            time.sleep(0.01)
+        for jid in list(backend._gates.keys()):
+            backend.release(jid)
+
+    threading.Thread(target=_releaser, daemon=True).start()
+    try:
+        result = stage.run(request, segments_override=segments)
+        assert result is not None
+    finally:
+        pool.close()
+    assert releaser_saw_three.is_set(), (
+        "stage did not dispatch all 3 jobs in parallel — branch missed"
+    )
+
+
+def test_chained_branch_remains_serial_under_concurrent_pool(tmp_path: Path) -> None:
+    """i2v 3-segment chain: each backend.submit preceded by prior release.
+
+    We assert serialness by observing that at any moment, submit_log has
+    at most one MORE entry than the number of completed releases.
+    """
+    probe = _profile()  # standard probe; i2v chaining triggers via
+    # MODE_ROLE_REQUIREMENTS["i2v"] = {"init_image"} in interfaces.py,
+    # not via profile config. Mirror the existing chained-3-segment
+    # test at tests/pipeline/test_generate_clip.py:190.
+    store = LocalArtifactStore(root=tmp_path)
+    backend = BlockingFakeBackend()
+    stage, pool = _stage_with_concurrent_pool(
+        backend, cap=3, mode="i2v", profile=probe, store=store
+    )
+
+    # Seed asset for seg 0.
+    seed_uri = store.put_bytes("r-concurrent", "seed.png", b"seed").uri
+    seed_asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="seed.png", uri=seed_uri),
+    )
+    segments = [
+        Segment(prompt="p0", assets=[seed_asset]),
+        Segment(prompt="p1", assets=[]),
+        Segment(prompt="p2", assets=[]),
+    ]
+    request = GenerationRequest(prompt="x", mode="i2v", assets=[seed_asset])
+
+    released_count = [0]
+
+    def _releaser() -> None:
+        # Watchdog: every 10ms, release one more job if there's a pending one.
+        for _ in range(200):
+            if len(backend.submit_log) > released_count[0]:
+                # Assert serial: only 1 ahead of released.
+                assert len(backend.submit_log) - released_count[0] == 1, (
+                    f"chained branch ran in parallel: "
+                    f"submitted={backend.submit_log}, released={released_count[0]}"
+                )
+                # Release the most recent.
+                with backend._lock:
+                    last_jid = backend.submit_log[-1]
+                backend.release(last_jid)
+                released_count[0] += 1
+                if released_count[0] >= 3:
+                    break
+            time.sleep(0.01)
+
+    threading.Thread(target=_releaser, daemon=True).start()
+    try:
+        result = stage.run(request, segments_override=segments)
+        assert result is not None
+    finally:
+        pool.close()
+    assert released_count[0] == 3
+
+
+def test_one_job_native_skips_map_uses_submit(tmp_path: Path) -> None:
+    """Native single-job path uses pool.submit().result(), not pool.map()."""
+    probe = _profile()
+    store = LocalArtifactStore(root=tmp_path)
+    backend = BlockingFakeBackend()
+    stage, pool = _stage_with_concurrent_pool(
+        backend, cap=3, mode="t2v", profile=probe, store=store
+    )
+
+    # Single segment — strategy.decide produces 1 job for native or
+    # 1-segment fallback; either way len(jobs) == 1.
+    segments = [Segment(prompt="solo", assets=[])]
+    request = GenerationRequest(prompt="x", mode="t2v")
+
+    def _releaser() -> None:
+        for _ in range(50):
+            if backend.submit_log:
+                break
+            time.sleep(0.01)
+        for jid in list(backend._gates.keys()):
+            backend.release(jid)
+
+    # Spy on pool.map so we can prove the 1-job path does NOT call it.
+    # Without the spy, len(submit_log) == 1 would pass equally for
+    # pool.submit(j).result() AND pool.map([j]) — both produce one
+    # backend.submit call. The spy is what makes the assertion discriminating.
+    map_calls: list[list[GenerationJob]] = []
+    original_map = pool.map
+
+    def _spy_map(jobs: list[GenerationJob]) -> list[Artifact]:
+        map_calls.append(list(jobs))
+        return original_map(jobs)
+
+    pool.map = _spy_map  # type: ignore[method-assign]
+
+    threading.Thread(target=_releaser, daemon=True).start()
+    try:
+        result = stage.run(request, segments_override=segments)
+        assert result is not None
+    finally:
+        pool.map = original_map  # type: ignore[method-assign]
+        pool.close()
+    # Only one job should have been submitted via pool.submit; map untouched.
+    assert len(backend.submit_log) == 1
+    assert map_calls == [], (
+        f"pool.map was called for 1-job path; len(jobs) > 1 guard broke: {map_calls}"
+    )

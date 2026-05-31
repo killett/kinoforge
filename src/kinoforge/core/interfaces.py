@@ -11,7 +11,7 @@ import json
 from abc import ABC, abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Self, runtime_checkable
 
 # --- compute axis -----------------------------------------------------------
 
@@ -352,16 +352,30 @@ class GenerationEngine(ABC):
 
 
 class BackendPool(ABC):
-    """Dispatches jobs across one or more GenerationBackends."""
+    """Dispatches jobs across one or more GenerationBackends.
+
+    Implementations may call ``backend.submit`` / ``backend.result`` from
+    multiple threads concurrently; backends MUST be thread-safe (no shared
+    mutable state across calls).
+    """
 
     @abstractmethod
-    def add(self, backend: GenerationBackend) -> None: ...  # noqa: D102
+    def add(self, backend: GenerationBackend, *, max_in_flight: int = 1) -> None: ...  # noqa: D102
 
     @abstractmethod
     def submit(self, job: GenerationJob) -> Future[Artifact]: ...  # noqa: D102
 
     @abstractmethod
     def map(self, jobs: list[GenerationJob]) -> list[Artifact]: ...  # noqa: D102
+
+    @abstractmethod
+    def close(self) -> None: ...  # noqa: D102
+
+    def __enter__(self) -> Self:  # noqa: D105
+        return self
+
+    def __exit__(self, *_exc: object) -> None:  # noqa: D105
+        self.close()
 
 
 @runtime_checkable

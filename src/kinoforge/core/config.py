@@ -81,6 +81,10 @@ class LifecycleConfig(BaseModel):
         time_buffer: Duration string or seconds; default 30m.
         max_lifetime: Duration string or seconds; default 5h.
         budget: Monthly/run budget in USD (required — no default).
+        max_in_flight: Maximum concurrent jobs sent to a single backend.
+            Default 1 (sequential, equivalent to old SequentialPool behaviour).
+            Raise to match your backend's parallel capacity (e.g. 4 for a
+            ComfyUI server with 4-GPU concurrency).
     """
 
     idle_timeout: float = 2 * 3600.0
@@ -88,6 +92,7 @@ class LifecycleConfig(BaseModel):
     time_buffer: float = 30 * 60.0
     max_lifetime: float = 5 * 3600.0
     budget: float
+    max_in_flight: int = 1
 
     @field_validator(
         "idle_timeout", "job_timeout", "time_buffer", "max_lifetime", mode="before"
@@ -422,6 +427,7 @@ class Config(BaseModel):
             time_buffer_s=lc.time_buffer,
             max_lifetime_s=lc.max_lifetime,
             budget_usd=lc.budget,
+            max_in_flight=lc.max_in_flight,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
