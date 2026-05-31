@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.locks import Lock
 
 
 class S3ArtifactStore(ArtifactStore):
@@ -119,6 +122,10 @@ class S3ArtifactStore(ArtifactStore):
                 raise FileNotFoundError(f"artifact not found: {uri!r}") from None
             raise
         self._client.delete_object(Bucket=bucket, Key=key)
+
+    def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
+        """Temporary stub; real implementation lands in Layer H Task 4."""
+        raise NotImplementedError("S3ArtifactStore.acquire_lock — Layer H Task 4")
 
 
 # ---------------------------------------------------------------------------

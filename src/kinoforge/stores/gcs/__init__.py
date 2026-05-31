@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.locks import Lock
 
 
 class GCSArtifactStore(ArtifactStore):
@@ -121,6 +124,10 @@ class GCSArtifactStore(ArtifactStore):
             self._bucket_handle.blob(key).delete()
         except self._not_found_exc:
             raise FileNotFoundError(f"artifact not found: {uri!r}") from None
+
+    def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
+        """Temporary stub; real implementation lands in Layer H Task 5."""
+        raise NotImplementedError("GCSArtifactStore.acquire_lock — Layer H Task 5")
 
 
 # ---------------------------------------------------------------------------

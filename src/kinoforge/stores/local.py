@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.locks import Lock
 
 
 class LocalArtifactStore(ArtifactStore):
@@ -161,6 +165,10 @@ class LocalArtifactStore(ArtifactStore):
         if not p.exists():
             raise FileNotFoundError(f"artifact not found: {uri!r}")
         p.unlink()
+
+    def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
+        """Temporary stub; real implementation lands in Layer H Task 3."""
+        raise NotImplementedError("LocalArtifactStore.acquire_lock — Layer H Task 3")
 
 
 # ---------------------------------------------------------------------------

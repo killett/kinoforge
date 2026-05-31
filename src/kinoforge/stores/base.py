@@ -8,8 +8,12 @@ deletes all go through that uri (or the run_id/name pair for listing).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 from kinoforge.core.interfaces import Artifact
+
+if TYPE_CHECKING:
+    from kinoforge.core.locks import Lock
 
 
 class ArtifactStore(ABC):
@@ -121,4 +125,22 @@ class ArtifactStore(ABC):
 
         Returns:
             The absolute URI string.
+        """
+
+    @abstractmethod
+    def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
+        """Return a fresh :class:`~kinoforge.core.locks.Lock` for ``key``.
+
+        The returned lock is best-effort lease-based: the holder keeps it for
+        up to ``ttl_s`` seconds; after expiry another acquirer may steal.
+
+        Args:
+            key: Logical lock key.  May contain forward slashes (sanitized
+                internally to flat filenames).
+            ttl_s: Lease duration in seconds.
+
+        Returns:
+            A new :class:`~kinoforge.core.locks.Lock` instance.  Each call
+            returns a fresh object; sharing across threads/processes is the
+            caller's concern.
         """
