@@ -638,11 +638,14 @@ def test_submit_writes_asset_uri_at_configured_dot_path() -> None:
 
 
 def test_submit_no_asset_paths_unchanged() -> None:
-    """Regression: pre-Layer-F templates (no asset_paths declared) submit a
-    body identical to job.spec.
+    """Regression: pre-Layer-F templates (no asset_paths declared) AND prompt
+    routing disabled submit a body identical to job.spec.
 
     Bug catch: a new injection branch must not leak spurious keys into the
     POST body when no asset_paths mapping is configured.
+
+    Note: ``prompt_body_key=None`` opts out of Layer J prompt routing so
+    this test isolates the asset-injection invariant.
     """
     posted: list[dict[str, Any]] = []
 
@@ -655,6 +658,7 @@ def test_submit_no_asset_paths_unchanged() -> None:
         http_get=lambda u: {},
         base_url="http://localhost:8000",
         probe_profile=_DEFAULT_PROBE,
+        prompt_body_key=None,
     )
     job = GenerationJob(
         spec={"pipeline": "Stable", "scheduler": "DDIM"},
@@ -778,3 +782,159 @@ compute:
     assert backend._asset_paths == {"init_image": "init_image_url"}
     # Engine mirror must also be populated for validate_spec.
     assert engine._asset_paths == {"init_image": "init_image_url"}
+
+
+# ---------------------------------------------------------------------------
+# Layer J Task 4: cross-engine prompt-routing tests
+# ---------------------------------------------------------------------------
+
+
+def test_submit_falls_back_to_segment_prompt_diffusers() -> None:
+    """submit() routes segments[0].prompt into body["prompt"] when spec lacks it.
+
+    Bug catch: an orchestrator-built diffusers job (which carries the user
+    prompt on Segment, not in spec) would POST a body with no prompt — the
+    diffusers server then either 422s on missing-prompt or runs an
+    empty-prompt render that wastes GPU time.
+    """
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posts.append((url, body))
+        return {"job_id": "j1"}
+
+    backend = DiffusersBackend(
+        http_post=fake_post,
+        http_get=lambda url: {"status": "done"},
+        base_url="http://127.0.0.1:8000",
+        probe_profile=_DEFAULT_PROBE,
+        prompt_body_key="prompt",
+    )
+    job = GenerationJob(
+        spec={"pipeline": "p", "scheduler": "s"},
+        segments=[Segment(prompt="a fox", params={}, assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0][1]["prompt"] == "a fox"
+
+
+def test_submit_spec_prompt_wins_over_segment_prompt_diffusers() -> None:
+    """Explicit spec.prompt is preserved — over-eager fallback would clobber
+    a config-supplied wrapper prompt with the raw segment text."""
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posts.append((url, body))
+        return {"job_id": "j1"}
+
+    backend = DiffusersBackend(
+        http_post=fake_post,
+        http_get=lambda url: {"status": "done"},
+        base_url="http://127.0.0.1:8000",
+        probe_profile=_DEFAULT_PROBE,
+        prompt_body_key="prompt",
+    )
+    job = GenerationJob(
+        spec={"pipeline": "p", "scheduler": "s", "prompt": "explicit"},
+        segments=[Segment(prompt="from-seg", params={}, assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0][1]["prompt"] == "explicit"
+
+
+def test_submit_skips_routing_when_prompt_body_key_none_diffusers() -> None:
+    """prompt_body_key=None opts out — body must NOT gain a "prompt" key
+    from the segment, otherwise a strict diffusers server may reject the
+    unexpected field."""
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posts.append((url, body))
+        return {"job_id": "j1"}
+
+    backend = DiffusersBackend(
+        http_post=fake_post,
+        http_get=lambda url: {"status": "done"},
+        base_url="http://127.0.0.1:8000",
+        probe_profile=_DEFAULT_PROBE,
+        prompt_body_key=None,
+    )
+    job = GenerationJob(
+        spec={"pipeline": "p", "scheduler": "s"},
+        segments=[Segment(prompt="ignored", params={}, assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert "prompt" not in posts[0][1]
+
+
+def test_validate_spec_raises_when_routing_configured_and_no_prompt_diffusers() -> None:
+    """Opt-in validation: prompt_body_key set with no prompt available must
+    raise before the misconfigured POST reaches the diffusers server."""
+    engine = _make_engine()
+    engine._prompt_body_key = "prompt"
+    job = GenerationJob(
+        spec={"pipeline": "p", "scheduler": "s"},
+        segments=[Segment(prompt="", params={}, assets=[])],
+        params={},
+    )
+    with pytest.raises(ValidationError, match="prompt_body_key is configured"):
+        engine.validate_spec(job)
+
+
+def test_validate_spec_passes_when_routing_disabled_and_no_prompt_diffusers() -> None:
+    """Legacy YAML without prompt_body_key (or =None) keeps existing behavior —
+    no new failure mode for jobs that drive the prompt entirely via
+    params.prompt nested inside the body.
+    """
+    engine = _make_engine()
+    engine._prompt_body_key = None
+    job = GenerationJob(
+        spec={"pipeline": "p", "scheduler": "s", "params": {"prompt": "nested"}},
+        segments=[Segment(prompt="", params={}, assets=[])],
+        params={},
+    )
+    engine.validate_spec(job)  # must NOT raise
+
+
+def test_yaml_prompt_body_key_routes_through_engine_backend_diffusers() -> None:
+    """End-to-end: YAML config with engine.diffusers.prompt_body_key="input"
+    produces a backend whose submit writes into body["input"]. Closes the
+    Layer-I cfg-strip defect class for the new field."""
+    import yaml as _yaml
+
+    from kinoforge.core.config import Config
+
+    yaml_doc = """
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    base_url: "http://127.0.0.1:8000"
+    prompt_body_key: input
+models:
+  - {ref: "https://x.example/m.safetensors", kind: base, target: checkpoints}
+lifecycle:
+  budget: 1.0
+"""
+    cfg = Config.model_validate(_yaml.safe_load(yaml_doc))
+    cfg_dict = cfg.model_dump()
+
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posts.append((url, body))
+        return {"job_id": "j1"}
+
+    engine = _make_engine(http_post=fake_post, http_get=lambda url: {"status": "done"})
+    backend = engine.backend(None, cfg_dict)
+    job = GenerationJob(
+        spec={"pipeline": "p", "scheduler": "s"},
+        segments=[Segment(prompt="from-seg", params={}, assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0][1]["input"] == "from-seg"
+    assert "prompt" not in posts[0][1]
