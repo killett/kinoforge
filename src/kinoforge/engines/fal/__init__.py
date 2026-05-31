@@ -223,6 +223,10 @@ class FalBackend(GenerationBackend):
         write its ``ref.uri`` into a copy of the body at the configured
         dot-path.  ``job.spec`` is not mutated.
 
+        The prompt is sourced via
+        :func:`~kinoforge.core.prompt_routing.resolve_prompt` —
+        ``job.spec["prompt"]`` wins, otherwise ``job.segments[0].prompt``.
+
         After the POST, the (server-supplied or constructed) status_url and
         response_url for the request are recorded on the backend so
         :meth:`result` can poll the same job.
@@ -233,14 +237,14 @@ class FalBackend(GenerationBackend):
         Returns:
             The ``request_id`` string returned by the queue.
         """
+        from kinoforge.core.prompt_routing import (
+            resolve_prompt,  # local — avoid circular at module load
+        )
+
         body = dict(job.spec)
-        # If the orchestrator-built spec does not carry an explicit "prompt",
-        # fall back to segments[0].prompt — kinoforge's pipeline places the
-        # user prompt on the Segment, not in the engine spec.
-        if "prompt" not in body and job.segments:
-            seg_prompt = getattr(job.segments[0], "prompt", "")
-            if isinstance(seg_prompt, str) and seg_prompt:
-                body["prompt"] = seg_prompt
+        prompt = resolve_prompt(job)
+        if prompt is not None:
+            body.setdefault("prompt", prompt)
         for role, dot_path in self._asset_paths.items():
             asset = find_asset(job, role)
             if asset is None:
