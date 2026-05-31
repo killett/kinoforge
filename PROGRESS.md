@@ -264,7 +264,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - [x] Task 4: DiffusersBackend + Engine wire + 6 tests — commit `e3e4244`
 - [x] Task 5: ComfyUIBackend + Engine wire (spec-level `prompt_node_ids`) + 6 tests — commit `acf93c2`
 - [x] Task 6: FalBackend retrofit (drop inline fallback, use helper) — commit `36cdc5c`
-- [x] Task 7: Examples + README + PROGRESS — commit `<SHA>` (backfilled after commit)
+- [x] Task 7: Examples + README + PROGRESS — commit `ec65c01`
 
 **Key design decisions:**
 - Shared helper in `core/prompt_routing.py` (Q1=B): single `resolve_prompt(job)` consumed by all 4 engines.
