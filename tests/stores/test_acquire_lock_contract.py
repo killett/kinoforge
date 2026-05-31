@@ -71,14 +71,15 @@ def test_local_store_acquire_lock_returns_file_lock(tmp_path: Path) -> None:
     assert isinstance(lock, FileLock)
 
 
-def test_s3_store_stub_raises_not_implemented() -> None:
-    """S3 store stub must raise NotImplementedError mentioning Task 4."""
+def test_s3_store_acquire_lock_returns_s3_cloud_lock() -> None:
+    """S3 store acquire_lock must return a real S3CloudLock after Task 4."""
     from kinoforge.stores.s3 import S3ArtifactStore
+    from kinoforge.stores.s3.lock import S3CloudLock
     from tests.stores.conftest import FakeS3Client
 
     store = S3ArtifactStore(bucket="b", client=FakeS3Client())
-    with pytest.raises(NotImplementedError, match="Layer H Task 4"):
-        store.acquire_lock("k", ttl_s=10.0)
+    lock = store.acquire_lock("k", ttl_s=10.0)
+    assert isinstance(lock, S3CloudLock)
 
 
 def test_gcs_store_stub_raises_not_implemented() -> None:

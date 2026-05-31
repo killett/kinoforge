@@ -16,6 +16,7 @@ import json
 import os
 from typing import TYPE_CHECKING, Any
 
+import kinoforge.stores.s3.lock as _s3_lock  # noqa: PLC0415 — alias keeps type-ignore comment attached
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
 
@@ -124,8 +125,8 @@ class S3ArtifactStore(ArtifactStore):
         self._client.delete_object(Bucket=bucket, Key=key)
 
     def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
-        """Temporary stub; real implementation lands in Layer H Task 4."""
-        raise NotImplementedError("S3ArtifactStore.acquire_lock — Layer H Task 4")
+        """Return an :class:`S3CloudLock` rooted under ``<prefix>/_locks/``."""
+        return _s3_lock.S3CloudLock(store=self, key=key, ttl_s=ttl_s)
 
 
 # ---------------------------------------------------------------------------
