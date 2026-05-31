@@ -279,20 +279,24 @@ class JsonProfileCache(ModelProfileProvider):
         and ``supports_joint_audio``) are intentionally excluded because they
         are engine-declared rather than probed.
 
-        When *engine* is provided, a ``WARNING`` is emitted if the engine no
-        longer declares either strategy flag for the cached key — this surfaces
-        the case where ``declared_flags_map`` regressed or the engine was
-        downgraded between cache-write and cache-read.  On the discovery path
-        the analogous condition is logged at ``DEBUG`` only (see :meth:`discover`).
+        When *both* ``engine`` and ``key`` are provided, a ``WARNING`` is
+        emitted if the engine no longer declares either strategy flag for the
+        cached key — this surfaces the case where ``declared_flags_map``
+        regressed or the engine was downgraded between cache-write and
+        cache-read.  On the discovery path the analogous condition is logged
+        at ``DEBUG`` only (see :meth:`discover`).
 
         Args:
             profile: The cached profile to verify against.
             backend: A live backend whose ``inspect_capabilities`` is called.
             engine: Optional engine to query for current ``declared_flags``.
-                Required to emit the strategy-flag drift WARNING; omit when
-                the caller has no engine reference (legacy ABC call shape).
+                Must be paired with *key* — passing one without the other is
+                accepted for backward compatibility but skips the drift
+                WARNING silently, because ``declared_flags`` is indexed by
+                ``CapabilityKey`` (which carries engine + precision + LoRAs)
+                and cannot be reconstructed from the profile alone.
             key: ``CapabilityKey`` to query ``engine.declared_flags(key)`` with.
-                Required only when *engine* is provided.
+                Must be paired with *engine*; see above.
 
         Raises:
             CapabilityMismatch: Any probeable field differs between *profile*
@@ -301,20 +305,13 @@ class JsonProfileCache(ModelProfileProvider):
         """
         probe = backend.inspect_capabilities()
 
-        # Strategy-flag drift check — only meaningful when caller supplies
-        # the live engine (and the key its declared_flags is indexed by).
-        if engine is not None:
-            # Fall back to a key derived from the profile name if none provided.
-            # This is best-effort: the caller should pass `key` for correctness
-            # since ``CapabilityKey`` carries more than just the model name.
-            lookup_key = (
-                key
-                if key is not None
-                else CapabilityKey(
-                    base_model=profile.name, loras=(), engine="", precision=""
-                )
-            )
-            declared = engine.declared_flags(lookup_key)
+        # Strategy-flag drift check — only meaningful when the caller supplies
+        # BOTH the live engine and the key its declared_flags is indexed by.
+        # Passing only one is accepted (for ABC/legacy compatibility) but
+        # silently skips the check: synthesising a key from the profile name
+        # would produce a guaranteed lookup miss and a misleading WARNING.
+        if engine is not None and key is not None:
+            declared = engine.declared_flags(key)
             if (
                 "supports_native_extension" not in declared
                 and "supports_joint_audio" not in declared
@@ -323,7 +320,7 @@ class JsonProfileCache(ModelProfileProvider):
                     "engine no longer declares strategy flags for cached key %s; "
                     "either declared_flags_map regressed or the engine was "
                     "downgraded",
-                    lookup_key.derive(),
+                    key.derive(),
                 )
 
         for field_name in _PROBEABLE_FIELDS:
