@@ -381,6 +381,21 @@ class ComfyUIBackend(GenerationBackend):
             inputs = node_patch.setdefault("inputs", {})
             inputs["image"] = uploaded_name
 
+        # Layer J: route the user prompt into the configured text-encoder
+        # nodes. Reads ``spec["prompt_node_ids"]`` — mirrors
+        # ``asset_node_ids`` — and writes via ``setdefault`` so an explicit
+        # ``node_overrides[node_id]["inputs"]["text"]`` from spec wins.
+        prompt_node_ids: dict[str, str] = job.spec.get("prompt_node_ids", {})
+        if prompt_node_ids:
+            from kinoforge.core.prompt_routing import resolve_prompt
+
+            prompt = resolve_prompt(job)
+            if prompt is not None:
+                for _role, node_id in prompt_node_ids.items():
+                    node_patch = overrides.setdefault(str(node_id), {})
+                    inputs = node_patch.setdefault("inputs", {})
+                    inputs.setdefault("text", prompt)
+
         # Deep-merge overrides into the graph at the node level.
         for node_id, node_patch in overrides.items():
             if node_id in graph:
@@ -666,6 +681,18 @@ class ComfyUIEngine(GenerationEngine):
                     f"asset role {asset.role!r} present on segments[0] but "
                     f"spec.asset_node_ids has no mapping; add "
                     f"asset_node_ids.{asset.role}: <node_id> to the spec"
+                )
+
+        prompt_node_ids: dict[str, str] = job.spec.get("prompt_node_ids", {})
+        if prompt_node_ids:
+            from kinoforge.core.prompt_routing import resolve_prompt
+
+            if resolve_prompt(job) is None:
+                raise ValidationError(
+                    "comfyui spec.prompt_node_ids is configured but no "
+                    "prompt found in job.spec or segments[0] — set "
+                    "spec.prompt, set segments[0].prompt, or clear "
+                    "spec.prompt_node_ids"
                 )
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
