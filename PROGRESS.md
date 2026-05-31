@@ -153,39 +153,17 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer E (per-engine `extract_last_frame`) complete.** All acceptance
-criteria met across ComfyUI, Diffusers, and Hosted; shared
-`core/frames.ffmpeg_last_frame` decoder via injectable subprocess seam;
-`GenerateClipStage` persists tail PNGs into the `run_id` namespace via
-`store.put_bytes`; `FrameExtractionError` wraps both ffmpeg path
-(missing-binary + non-zero exit) and HTTP fetch failures so callers
-have one exception type to catch. `pixi run test` reports 478 passed
-(450 prior + 28 new across `core/frames`, continuity rewrite, stage
-persistence, 3 engines, dot-walker, fetch-wrap coverage); mypy strict
-+ ruff + pre-commit clean.
+**Layer F (per-engine asset wiring) complete.** All 6 tasks shipped (478 → 515 tests).
+The non-native multi-segment chain now produces consumed tail-frames end-to-end:
+- ComfyUI: spec `asset_node_ids: {init_image: <node_id>}` triggers /upload/image + node patch
+- Diffusers: cfg `engine.diffusers.asset_paths: {init_image: <dot.path>}` writes URL into POST body
+- Hosted: cfg `engine.hosted.asset_paths: {init_image: <dot.path>}` writes URL into provider request
 
-**Next: pick from the layered roadmap.** Two plausible next layers:
+**Next: Layer #4 — Concurrent backend scheduler (GitHub issue #3).**
+Drop-in `ConcurrentPool` behind the existing `BackendPool` ABC. Pure dispatch concern;
+no other modules touched. Should be a quick layer compared to Layer E/F.
 
-1. **Layer F — engine asset-wiring (`submit()` consumes seg-0 assets).**
-   Closes the rest of the non-native multi-segment story: each engine
-   reads `job.segments[0].assets`, finds the `init_image` role, and
-   folds its `ref.uri` into the spec/graph the engine submits. Surface
-   is per-engine: ComfyUI `LoadImage` node injection, Diffusers
-   `init_image` param, Hosted provider-specific URL field. Until this
-   ships, tail PNGs persist but the next render does not actually
-   consume them.
-
-2. **Layer #4 — Concurrent backend scheduler (GitHub issue #3).**
-   Drop-in `ConcurrentPool` behind the existing `BackendPool` ABC. Pure
-   dispatch concern; no other modules touched.
-
-3. **Layer #5 — Keyframe / image-generation upstream Stage (GitHub
-   issue #4).** Composable with the splitter via `segments_override`.
-   Forces the engine-kind ADR (image-generation engines vs
-   video-generation engines on the same `kind` axis vs split axes).
-
-Begin the chosen layer with the
-`superpowers-extended-cc:brainstorming` skill.
+Begin the chosen layer with the `superpowers-extended-cc:brainstorming` skill.
 
 ## Post-MVP
 
@@ -225,3 +203,12 @@ Begin the chosen layer with the
 - [x] Task 5: Diffusers `result()` URL passthrough + `extract_last_frame` + 2 seams + server contract doc — commit `9df1dfd` (+ url-shadowing rename at `3d6ce7a`)
 - [x] Task 6: Hosted `url_path` cfg + dot-walker + `result()` backfill + `extract_last_frame` + 2 seams — commit `c10b111`
 - [x] Cross-engine fetch-error wrap (Task 4/5/6 retrofit) — commit `0d2d2c3`. All three engines now wrap `http_get_bytes` exceptions as `FrameExtractionError` per spec §4.3.
+
+### Phase 16 — per-engine asset wiring (post-MVP Layer F)
+- [x] Task 1: `AssetFetchError` + `core/assets.py` (find_asset, asset_bytes, set_by_dot_path) + 10 tests — commit `8335ff9`
+- [x] Task 2: Diffusers backend `asset_paths` + submit + validate_spec + 4 tests — commit `a62d110`
+- [x] Task 3: Hosted backend `asset_paths` + submit + validate_spec + 4 tests — commit `d25c5c8`
+- [x] Task 4: ComfyUI backend `http_get_bytes` + `http_post_file` seams + `asset_node_ids` + 8 tests — commit `40dfaec`
+- [x] Task 4 (review fix): random multipart boundary + filename escape + AssetFetchError wrapping + 8 tests — commit `e6826c6`
+- [x] Task 5: GenerateClipStage post-chain `validate_spec` + 3 tests — commit `22269ed`
+- [x] Task 6: README + PROGRESS + final gate + merge — commit `<this commit>`

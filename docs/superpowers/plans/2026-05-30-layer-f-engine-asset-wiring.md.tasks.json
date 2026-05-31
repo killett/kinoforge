@@ -10,7 +10,7 @@
     {
       "id": 10,
       "subject": "Task 2: Diffusers asset wiring",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         9
       ],
@@ -19,7 +19,7 @@
     {
       "id": 11,
       "subject": "Task 3: Hosted asset wiring",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         9
       ],
@@ -28,7 +28,7 @@
     {
       "id": 12,
       "subject": "Task 4: ComfyUI asset wiring",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         9
       ],
@@ -37,7 +37,7 @@
     {
       "id": 13,
       "subject": "Task 5: GenerateClipStage post-chain validate_spec",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         10,
         11,
@@ -59,5 +59,5 @@
       "description": "**Goal:** Update README + PROGRESS, run full quality gate, merge via --no-ff.\n\n**Files:**\n- Modify: README.md \u2014 replace Layer F limitation callout; document asset_paths/asset_node_ids\n- Modify: PROGRESS.md \u2014 Phase 16 entry; Single next action update\n\n**Acceptance Criteria:** README Layer F section replaced; Diffusers/Hosted/ComfyUI examples added; PROGRESS Phase 16 entry mirroring Phase 14/15 style; Single next action updated; full gate clean; merge commit on main.\n\n**Verify:** `pixi run test && pixi run typecheck && pixi run lint && pixi run pre-commit run --all-files`\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test && pixi run typecheck && pixi run lint && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"README Layer F callout replaced with asset wiring section\", \"PROGRESS Phase 16 entry added\", \"Single next action updated\", \"full quality gate clean\", \"merge commit lands on main\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-05-31T01:59:49.351677Z"
+  "lastUpdated": "2026-05-31T02:43:23.265027Z"
 }
