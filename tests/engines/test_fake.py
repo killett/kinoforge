@@ -359,6 +359,28 @@ def test_backend_endpoints_returns_dict_with_generate():
 # ---------------------------------------------------------------------------
 
 
+def test_declared_flags_returns_default_for_local_fake_key() -> None:
+    """Default-registered FakeEngine declares strategy flags for local-fake.yaml key.
+
+    Bug catch: empty declared_flags_map triggers a WARNING in
+    JsonProfileCache.discover on every fresh-cache generate against
+    local-fake.yaml.  Populating the default makes the canonical offline
+    config produce a clean log on the discover path.
+    """
+    importlib.import_module("kinoforge.engines.fake")
+
+    from kinoforge.core import registry
+    from kinoforge.core.config import load_config
+
+    cfg = load_config("examples/configs/local-fake.yaml")
+    engine = registry.get_engine("fake")()
+    flags = engine.declared_flags(cfg.capability_key())
+    assert flags == {
+        "supports_native_extension": False,
+        "supports_joint_audio": False,
+    }
+
+
 def test_fake_engine_extract_last_frame_returns_deterministic_bytes() -> None:
     """FakeEngine.extract_last_frame returns deterministic bytes derived from
     artifact.filename. Lets continuity tests assert on exact tail content.
