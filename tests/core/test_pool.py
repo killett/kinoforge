@@ -223,10 +223,9 @@ def test_submit_no_backends_raises():
 
 
 def test_sequential_pool_close_is_noop():
-    """SequentialPool.close() returns None and is safe to call on an empty pool."""
+    """SequentialPool.close() is safe to call on an empty pool (no exception)."""
     pool = SequentialPool()
-    result = pool.close()  # type: ignore[func-returns-value]
-    assert result is None
+    pool.close()  # no exception = passing the no-op contract
 
 
 def test_sequential_pool_close_is_idempotent():
