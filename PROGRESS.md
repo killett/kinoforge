@@ -123,7 +123,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - `test_core_invariant.py` allowlist does not yet include a `splitters/` directory — first adapter splitter (LLM, scene-detect) must extend the allowlist.
 
 **Layer C / D residuals:**
-- Ledger remains local-only — `cli._ledger(state_dir)` always constructs a `LocalArtifactStore(state_dir)` even when `store.kind` is `s3`/`gcs`. Multi-node deployments need cloud-backed ledger; intersects issue #7 (cross-process discovery lock).
+- Ledger remains local-only by CLI wiring — `cli._ledger(state_dir)` always constructs a `LocalArtifactStore(state_dir)` even when `store.kind` is `s3`/`gcs`. Cross-process safety for cloud-backed ledger is now available via Layer H (`store.acquire_lock`), but routing the CLI through the configured cloud store still needs a follow-up.
 - Default zero-arg store factories require env vars set — `register_store("s3", _default_factory)` reads `KINOFORGE_S3_BUCKET`; raises with helpful message when unset. The CLI doesn't use this path (constructs directly via `_build_store`).
 - No multipart threshold knob on cloud stores — SDK defaults (boto3 ~8 MiB) cover the common case; if real workloads need custom control, kwargs are a future layer.
 
@@ -143,13 +143,13 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #4 | Keyframe / image-generation upstream Stage | Open |
 | #5 | S3 / GCS artifact stores | CLOSED (Layer C) |
 | #6 | `ArtifactStore.uri_for(run_id, name)` ABC | CLOSED (Layer A) |
-| #7 | Cross-process discovery lock | Open — newly relevant for multi-node cloud-backed ledger |
+| #7 | Cross-process discovery lock | CLOSED (Layer H) |
 | #8 | HuggingFaceSource bare-repo listing | Open |
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-Layer G (concurrent backend scheduler) complete. All 8 commits + docs + regression test shipped (524 → 555 tests).
-**Next: choose from open GitHub issues #2 (audio sync), #4 (keyframe stage), #7 (cross-process discovery lock), #8 (HF bare-repo listing), #9 (aria2c fast-path).**
+Layer H (cross-process discovery lock) complete. All 8 commits + docs shipped (555 → ~595 tests).
+**Next: choose from open GitHub issues #2 (audio sync), #4 (keyframe stage), #8 (HF bare-repo listing), #9 (aria2c fast-path).**
 
 ## Post-MVP
 
@@ -213,3 +213,14 @@ Layer G (concurrent backend scheduler) complete. All 8 commits + docs + regressi
 - [x] Task 6 regression test: lock down YAML→`Lifecycle.max_in_flight` wiring so a future drop of the `lc.max_in_flight=` line in `Config.lifecycle()` fails fast instead of silently defaulting to cap=1 — commit `bab8d64`
 - [x] Task 6 doc corrections: fix Phase 17 Task 2/3 inaccuracies (semaphore → lock-protected counter; `as_completed` → input-order iteration); refresh test count — commits `4622083` + `08eb48b`
 - [x] Merge to main via `--no-ff` — merge commit `9e02e15` (closes #3)
+
+### Phase 18 — cross-process discovery lock (post-MVP Layer H, GitHub issue #7)
+- [x] Task 1: `core/locks.py` — `Lock` Protocol + `LockToken` + `InMemoryLock` + `LockError`/`LockTimeout` in `core/errors.py` — commit `a1802d3` (+ fix `81052a8`)
+- [x] Task 2: `ArtifactStore.acquire_lock` abstract method + temporary `NotImplementedError` stubs on 3 stores — commit `6a4d8dc` (+ test gap fix `15742f0`)
+- [x] Task 3: `FileLock` (fcntl) + `LocalArtifactStore.acquire_lock`; subprocess integration test — commit `0ac9d90` (+ fix `98bc569`)
+- [x] Task 4: `S3CloudLock` (`IfNoneMatch="*"`) + `S3ArtifactStore.acquire_lock` + `FakeS3Client` precondition support — commit `b26c6fd`
+- [x] Task 5: `GCSCloudLock` (`if_generation_match=0`) + `GCSArtifactStore.acquire_lock` + `FakeGCSClient` generation tracking — commit `9ac0abd`
+- [x] Task 6: `JsonProfileCache.resolve_or_discover` outer-lock wrap; cache-hit fast path preserved; `discover_ttl_s` kwarg — commit `e03d28a` (+ import cleanup `8c2d175`)
+- [x] Task 7: `Ledger.record`/`forget` outer-lock wrap; `mutate_ttl_s` kwarg; `entries()` stays lock-free — commit `c8372f6`
+- [x] Task 8: README "Multi-node coordination" section + PROGRESS Phase 18 — commit `<SHA8>` (placeholder; backfill after commit)
+- [x] Merge to main via `--no-ff` — merge commit `<MERGE_SHA>` (placeholder; backfill after merge — closes #7)
