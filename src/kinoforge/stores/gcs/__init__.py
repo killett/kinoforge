@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core.interfaces import Artifact
-from kinoforge.core.locks import Lock
 from kinoforge.stores.base import ArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.locks import Lock
 
 
 class GCSArtifactStore(ArtifactStore):
