@@ -328,6 +328,17 @@ def generate(
         resolved_provider = _resolve_provider(cfg, provider)
 
     # ------------------------------------------------------------------
+    # Step 2.5 — UX A hosted preflight (Layer I)
+    #
+    # For hosted engines (requires_compute=False), run engine.provision()
+    # before any backend work so cred-missing / health-failure errors fail
+    # fast with a clear message instead of crashing mid-pipeline inside
+    # backend.submit. Compute engines get their own preflight in Task 9.
+    # ------------------------------------------------------------------
+    if not resolved_engine.requires_compute:
+        resolved_engine.provision(None, cfg_dict)
+
+    # ------------------------------------------------------------------
     # Step 3 — get (or default) profile provider
     # ------------------------------------------------------------------
     if profile_provider is None:
