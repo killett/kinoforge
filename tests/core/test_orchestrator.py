@@ -20,9 +20,10 @@ from unittest.mock import patch
 
 import pytest
 
-# Import providers/engines so they self-register
+# Import providers/engines/sources so they self-register
 import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
+import kinoforge.sources.http  # noqa: F401 — registers https:// source for provisioner
 from kinoforge.core.config import Config
 from kinoforge.core.errors import CapabilityMismatch
 from kinoforge.core.interfaces import (
@@ -52,7 +53,7 @@ engine:
   kind: fake
   precision: fp16
 models:
-  - ref: "fake://base"
+  - ref: "https://example.com/fake-base.safetensors"
     kind: base
     target: diffusion_models
 compute:
@@ -67,7 +68,7 @@ engine:
   kind: fake
   precision: fp16
 models:
-  - ref: "fake://base"
+  - ref: "https://example.com/fake-base.safetensors"
     kind: base
     target: diffusion_models
 """
@@ -842,3 +843,203 @@ def test_generate_closes_concurrent_pool_after_run(tmp_path: Path) -> None:
         )
     finally:
         pool_mod.ConcurrentPool.close = original_close  # type: ignore[method-assign]
+
+
+# ---------------------------------------------------------------------------
+# Layer I Task 8: UX A hosted preflight in orchestrator.generate()
+#
+# For hosted engines (requires_compute=False), generate() must call
+# engine.provision(None, cfg_dict) BEFORE any backend.submit so that
+# missing-cred / health-probe failures surface up-front rather than
+# crashing mid-pipeline inside backend.submit.
+# ---------------------------------------------------------------------------
+
+
+class _PreflightTracker:
+    """Shared monotonic counter so provision/submit get ordered call indices."""
+
+    def __init__(self) -> None:
+        self.counter: int = 0
+
+    def tick(self) -> int:
+        self.counter += 1
+        return self.counter
+
+
+class _OrderTrackingBackend(FakeBackend):
+    """FakeBackend that records the call order of its submit() invocations."""
+
+    def __init__(self, probe: ModelProfile, tracker: _PreflightTracker) -> None:
+        super().__init__(probe=probe)
+        self._tracker = tracker
+        self.submit_call_count: int = 0
+        self.submit_call_order: int | None = None
+
+    def submit(self, job: GenerationJob) -> str:
+        self.submit_call_count += 1
+        # Record only the first submit so AC1's ordering check is unambiguous.
+        if self.submit_call_order is None:
+            self.submit_call_order = self._tracker.tick()
+        return super().submit(job)
+
+
+class _PreflightHostedEngine(FakeEngine):
+    """Hosted engine that records provision() call order and shares a backend.
+
+    requires_compute=False so the orchestrator takes the hosted path.
+    The fake's provision() either records the call or raises an injected
+    exception (used to verify AC2/AC3 — provision failure blocks submit).
+    """
+
+    requires_compute: bool = False
+
+    def __init__(
+        self,
+        *,
+        probe_profile: ModelProfile,
+        tracker: _PreflightTracker,
+        provision_exception: Exception | None = None,
+    ) -> None:
+        super().__init__(
+            probe_profile=probe_profile,
+            declared_flags_map={},
+            required_spec_keys=set(),
+        )
+        self._tracker = tracker
+        self._provision_exception = provision_exception
+        self.provision_call_count: int = 0
+        self.provision_call_order: int | None = None
+        # Share one backend across all backend() calls so the orchestrator's
+        # discover-path and pool-path see the same submit counters.
+        self._shared_backend = _OrderTrackingBackend(
+            probe=probe_profile, tracker=tracker
+        )
+
+    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+        self.provision_call_count += 1
+        self.provision_call_order = self._tracker.tick()
+        if self._provision_exception is not None:
+            raise self._provision_exception
+
+    def backend(
+        self, instance: Instance | None, cfg: dict[str, object]
+    ) -> _OrderTrackingBackend:
+        return self._shared_backend
+
+
+class TestHostedPreflight:
+    def test_hosted_preflight_calls_provision_before_backend_submit(
+        self, tmp_path: Path
+    ) -> None:
+        """generate() must call engine.provision(None, cfg_dict) exactly once
+        before any backend.submit for hosted engines (requires_compute=False).
+
+        Bug catch: previous behavior bypassed engine.provision entirely from
+        generate(), causing cred-missing failures to crash mid-flight inside
+        backend.submit instead of failing fast at the preflight step.
+        """
+        cfg = _compute_cfg()
+        tracker = _PreflightTracker()
+        engine = _PreflightHostedEngine(
+            probe_profile=_probe_profile(),
+            tracker=tracker,
+        )
+        store = LocalArtifactStore(tmp_path)
+        request = GenerationRequest(prompt="a sunset", mode="t2v")
+
+        # Hosted engines must not touch the provider; supply the raising spy
+        # to catch any accidental compute-path call.
+        generate(
+            cfg,
+            request,
+            store=store,
+            provider=_RaisingProviderSpy(),
+            engine=engine,
+        )
+
+        assert engine.provision_call_count == 1, (
+            f"expected exactly one engine.provision() call, "
+            f"got {engine.provision_call_count}"
+        )
+        assert engine.provision_call_order is not None, (
+            "engine.provision() was never called"
+        )
+        assert engine._shared_backend.submit_call_order is not None, (
+            "backend.submit() was never called — generate() did not reach the pipeline"
+        )
+        assert engine.provision_call_order < engine._shared_backend.submit_call_order, (
+            f"engine.provision() (order={engine.provision_call_order}) must run "
+            f"BEFORE backend.submit() (order={engine._shared_backend.submit_call_order})"
+        )
+
+    def test_hosted_preflight_auth_error_blocks_backend_submit(
+        self, tmp_path: Path
+    ) -> None:
+        """When engine.provision raises AuthError, no backend.submit happens.
+
+        Bug catch: if preflight is skipped or runs after submit, the cred
+        failure would surface from deep inside the pipeline rather than from
+        generate()'s preflight step.
+        """
+        from kinoforge.core.errors import AuthError
+
+        cfg = _compute_cfg()
+        tracker = _PreflightTracker()
+        engine = _PreflightHostedEngine(
+            probe_profile=_probe_profile(),
+            tracker=tracker,
+            provision_exception=AuthError("KINOFORGE_FAKE_API_KEY not set"),
+        )
+        store = LocalArtifactStore(tmp_path)
+        request = GenerationRequest(prompt="a sunset", mode="t2v")
+
+        with pytest.raises(AuthError, match="KINOFORGE_FAKE_API_KEY"):
+            generate(
+                cfg,
+                request,
+                store=store,
+                provider=_RaisingProviderSpy(),
+                engine=engine,
+            )
+
+        assert engine._shared_backend.submit_call_count == 0, (
+            f"backend.submit() must not be called when preflight AuthError fires; "
+            f"got submit_call_count={engine._shared_backend.submit_call_count}"
+        )
+
+    def test_hosted_preflight_health_error_blocks_backend_submit(
+        self, tmp_path: Path
+    ) -> None:
+        """When engine.provision raises KinoforgeError (health probe failure),
+        no backend.submit happens.
+
+        Bug catch: an unreachable hosted endpoint must surface at preflight,
+        not as a confusing failure inside backend.submit during pipeline run.
+        """
+        from kinoforge.core.errors import KinoforgeError
+
+        cfg = _compute_cfg()
+        tracker = _PreflightTracker()
+        engine = _PreflightHostedEngine(
+            probe_profile=_probe_profile(),
+            tracker=tracker,
+            provision_exception=KinoforgeError(
+                "hosted endpoint unreachable: connection refused"
+            ),
+        )
+        store = LocalArtifactStore(tmp_path)
+        request = GenerationRequest(prompt="a sunset", mode="t2v")
+
+        with pytest.raises(KinoforgeError, match="unreachable"):
+            generate(
+                cfg,
+                request,
+                store=store,
+                provider=_RaisingProviderSpy(),
+                engine=engine,
+            )
+
+        assert engine._shared_backend.submit_call_count == 0, (
+            f"backend.submit() must not be called when preflight health probe "
+            f"fails; got submit_call_count={engine._shared_backend.submit_call_count}"
+        )

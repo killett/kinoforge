@@ -9,7 +9,11 @@ HOSTED = """
 engine:
   kind: hosted
   precision: ""
-  hosted: {provider: fal, endpoint: "x", model: ltx-2}
+  hosted:
+    provider: fal
+    endpoint: "https://fal.run/x"
+    model: ltx-2
+    api_key_env: FAL_KEY
 lifecycle: {budget: 25.0}
 models:
   - {ref: "hf:org/m", kind: base, target: diffusion_models}
@@ -346,7 +350,9 @@ def test_hosted_cfg_asset_paths_defaults_empty() -> None:
     """
     from kinoforge.core.config import HostedEngineConfig
 
-    cfg = HostedEngineConfig(provider="fal", endpoint="x", model="m")
+    cfg = HostedEngineConfig(
+        provider="fal", endpoint="https://e", model="m", api_key_env="K"
+    )
     assert cfg.asset_paths == {}
 
 
@@ -359,7 +365,9 @@ def test_hosted_cfg_url_path_defaults_empty() -> None:
     """
     from kinoforge.core.config import HostedEngineConfig
 
-    cfg = HostedEngineConfig(provider="fal", endpoint="x", model="m")
+    cfg = HostedEngineConfig(
+        provider="fal", endpoint="https://e", model="m", api_key_env="K"
+    )
     assert cfg.url_path == ""
 
 
@@ -442,3 +450,167 @@ def test_diffusers_cfg_asset_paths_defaults_empty() -> None:
     assert cfg.pip == []
     assert cfg.server_cmd == []
     assert cfg.base_url == ""
+
+
+# ---------------------------------------------------------------------------
+# Layer I Task 4 — HostedEngineConfig load-time validators
+# Move two config errors from runtime to load: empty api_key_env (Bug 7)
+# and relative endpoint (Bug 2).
+# ---------------------------------------------------------------------------
+
+
+def test_hosted_validator_rejects_empty_api_key_env() -> None:
+    """HostedEngineConfig must reject empty api_key_env at load.
+
+    Bug catch: empty api_key_env propagates to runtime as AuthError("missing ")
+    with no context.  Catch it at config load instead.
+    """
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import HostedEngineConfig
+
+    with pytest.raises(ValidationError) as exc_info:
+        HostedEngineConfig(
+            provider="x", endpoint="https://e", model="m", api_key_env=""
+        )
+    assert "api_key_env" in str(exc_info.value)
+
+
+def test_hosted_validator_rejects_relative_endpoint() -> None:
+    """HostedEngineConfig must reject relative endpoint paths at load.
+
+    Bug catch: relative endpoint like '/fal-ai/x' crashes urllib mid-flight
+    with ValueError: unknown url type.  Catch it at config load instead.
+    """
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import HostedEngineConfig
+
+    with pytest.raises(ValidationError) as exc_info:
+        HostedEngineConfig(
+            provider="x", endpoint="/relative/path", model="m", api_key_env="K"
+        )
+    assert "endpoint" in str(exc_info.value)
+
+
+def test_hosted_validator_accepts_well_formed_config() -> None:
+    """A correctly-formed HostedEngineConfig constructs without error."""
+    from kinoforge.core.config import HostedEngineConfig
+
+    cfg = HostedEngineConfig(
+        provider="x",
+        endpoint="https://example.com/api",
+        model="m",
+        api_key_env="MY_KEY",
+        health_url="",
+    )
+    assert cfg.endpoint == "https://example.com/api"
+    assert cfg.api_key_env == "MY_KEY"
+
+
+def test_fal_engine_config_defaults() -> None:
+    """FalEngineConfig fills sensible defaults for queue_base, api_key_env, asset_paths."""
+    from kinoforge.core.config import FalEngineConfig
+
+    cfg = FalEngineConfig(endpoint="fal-ai/wan/v2.2/t2v", url_path="video.url")
+    assert cfg.queue_base == "https://queue.fal.run"
+    assert cfg.api_key_env == "FAL_KEY"
+    assert cfg.asset_paths == {}
+    assert cfg.health_url == ""
+
+
+def test_fal_engine_config_rejects_empty_endpoint() -> None:
+    """Empty endpoint must be rejected at load (would yield a bogus submit URL)."""
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import FalEngineConfig
+
+    with pytest.raises(ValidationError) as exc:
+        FalEngineConfig(endpoint="", url_path="video.url")
+    assert "endpoint" in str(exc.value)
+
+
+def test_fal_engine_config_rejects_empty_url_path() -> None:
+    """Empty url_path must be rejected — result() would have nothing to walk."""
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import FalEngineConfig
+
+    with pytest.raises(ValidationError) as exc:
+        FalEngineConfig(endpoint="fal-ai/wan", url_path="")
+    assert "url_path" in str(exc.value)
+
+
+def test_fal_engine_config_rejects_relative_queue_base() -> None:
+    """queue_base must be an absolute http(s):// URL — relative paths crash urllib."""
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import FalEngineConfig
+
+    with pytest.raises(ValidationError) as exc:
+        FalEngineConfig(endpoint="x", url_path="y", queue_base="not-a-url")
+    assert "queue_base" in str(exc.value)
+
+
+def test_fal_engine_config_rejects_empty_api_key_env() -> None:
+    """Empty api_key_env propagates as AuthError('missing ') with no context — reject here."""
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import FalEngineConfig
+
+    with pytest.raises(ValidationError) as exc:
+        FalEngineConfig(endpoint="x", url_path="y", api_key_env="")
+    assert "api_key_env" in str(exc.value)
+
+
+def test_fal_kind_without_fal_block_raises() -> None:
+    """engine.kind == 'fal' but no engine.fal block must fail at load.
+
+    Note: load_config wraps pydantic ValidationError as ConfigError (see
+    load_config in src/kinoforge/core/config.py), so this test matches the
+    existing pattern of asserting ConfigError rather than ValidationError.
+    """
+    yaml_text = """
+engine:
+  kind: fal
+  precision: ""
+models:
+  - ref: "hf:org/m"
+    kind: base
+    target: checkpoints
+lifecycle:
+  budget: 1.0
+"""
+    with pytest.raises(ConfigError, match=r"requires the engine\.fal block"):
+        load_config(yaml_text)
+
+
+def test_fal_kind_rejects_compute_block() -> None:
+    """engine.kind == 'fal' must reject a compute block (hosted-like).
+
+    Bug catch: a future refactor that drops the cross-field check in
+    Config._validate_cross_fields would let users wire a fal hosted-API
+    engine to a compute provider — accidentally provisioning a pod they
+    don't need. This test fires when the YAML carries both blocks.
+    """
+    yaml_text = """
+engine:
+  kind: fal
+  precision: ""
+  fal:
+    endpoint: "fal-ai/wan"
+    url_path: "video.url"
+compute:
+  provider: runpod
+  image: "img:tag"
+  lifecycle:
+    budget: 1.0
+models:
+  - ref: "hf:org/m"
+    kind: base
+    target: checkpoints
+lifecycle:
+  budget: 1.0
+"""
+    with pytest.raises(ConfigError, match=r"compute.*fal"):
+        load_config(yaml_text)

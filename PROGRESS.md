@@ -148,8 +148,10 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-Layer H (cross-process discovery lock) complete. All 8 commits + docs shipped (555 → ~595 tests).
-**Next: choose from open GitHub issues #2 (audio sync), #4 (keyframe stage), #8 (HF bare-repo listing), #9 (aria2c fast-path).**
+**Layer I complete on branch `build/layer-i` — pending merge to main.** All 13 tasks landed; live fal.ai smoke produced kinoforge's first real public-provider artifact (see Phase 19 entry). Merge is gated on user approval; the controller will not auto-merge to main.
+
+- Design spec: `docs/superpowers/specs/2026-05-31-layer-i-fal-adapter-ux-a-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-05-31-layer-i-fal-adapter-ux-a.md`
 
 ## Post-MVP
 
@@ -224,3 +226,30 @@ Layer H (cross-process discovery lock) complete. All 8 commits + docs shipped (5
 - [x] Task 7: `Ledger.record`/`forget` outer-lock wrap; `mutate_ttl_s` kwarg; `entries()` stays lock-free — commit `c8372f6`
 - [x] Task 8: README "Multi-node coordination" section + PROGRESS Phase 18 — commit `351d691`
 - [x] Merge to main via `--no-ff` — merge commit `4672735` (closes #7)
+
+### Phase 19 — Layer I (fal.ai adapter + UX A + hosted hardening)
+
+- [x] Hot-fix: provisioner cfg-dict — commit `e78cafc` on `main`
+- [x] Task 1: Diffusers + ComfyUI provisioner-cfg regression — commit `78a09e1`
+- [x] Task 2: declared_flags WARNING → DEBUG — commits `46653ec` + `b1d8b1b`
+- [x] Task 3: FakeEngine declared_flags_map default — commit `c586f01`
+- [x] Task 4: HostedEngineConfig validators — commit `c1a1c85`
+- [x] Task 5: HostedAPIEngine AuthError + declared_flags_map default — commit `d7460f8`
+- [x] Task 6: Rewrite hosted.yaml + shim contract docs — commit `bd35810`
+- [x] Task 7: core/provision_state.py — commit `a285c36`
+- [x] Task 8: UX A hosted preflight — commit `9d5bcd8`
+- [x] Task 9: UX A compute preflight + marker — commit `4d573b5`
+- [x] Task 10: FalEngineConfig pydantic block — commits `96d45a8` + `2680b22`
+- [x] Task 11: FalEngine + FalBackend + wire — commits `7e3327a` + `0d324dc`
+- [x] Task 12: _adapters + fal.yaml + invariant + tooling — commit `9be6e67`
+- [x] Task 13: Live opt-in test + manual smoke — commit `bf3841f`
+
+**First real artifact:** `/tmp/kinoforge-fal-smoke/smoke-i-1/n9TG4YoyIIkzR1rouhQCw_tmpykhkugmc.mp4` — 3,073,440 bytes, MP4 (`ftyp isom`), produced by `fal-ai/wan-t2v` via `examples/configs/fal.yaml` (capability_key `2820ed10e74fbea4bb4ab8e3d338f716db8d86383869ebf793bed423f507caaa`, git SHA `9be6e67` at smoke time).
+
+**Live-smoke bug catches integrated into Task 13:**
+- `examples/configs/fal.yaml` endpoint changed `fal-ai/wan/v2.2/t2v` (404 on result URL — fal.ai rewrites the family path back to `fal-ai/wan/...` which 404s on GET) → `fal-ai/wan-t2v` (queue family matches; status/response URLs round-trip cleanly).
+- `FalBackend.submit` now falls back to `segments[0].prompt` when `job.spec` lacks `"prompt"` — the orchestrator places the user prompt on the Segment, not in the engine spec, so without this the fal POST body contained only `_audio_mode` and fal silently completed a no-op job that 422'd on result fetch.
+- `FalEngine.validate_spec` widened to accept a non-empty prompt on `segments[0]` as well as `job.spec` (mirrors the new submit fallback).
+- `GenerateClipStage._artifact_bytes` now resolves `uri` → local file read → `url` → HTTP download → synthetic-fallback (FakeEngine path).  Hosted/queue engines that return `Artifact(url="https://...mp4")` previously had their bytes silently replaced with debug-stub bytes.
+- CLI `provision` and `generate` accept `-c` as a short alias for `--config` so the documented quickstart works verbatim.
+- README "Real providers — fal.ai" quickstart added.
