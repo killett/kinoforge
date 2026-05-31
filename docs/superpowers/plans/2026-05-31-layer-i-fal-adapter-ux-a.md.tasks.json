@@ -24,61 +24,61 @@
     {
       "id": 4,
       "subject": "Task 4: Pydantic validators on HostedEngineConfig",
-      "status": "pending",
+      "status": "completed",
       "description": "Add @field_validator on api_key_env (non-empty) and endpoint (http:// or https:// prefix) to HostedEngineConfig. Move runtime errors to config load. See plan doc Task 4.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -v -k hosted_validator\", \"acceptanceCriteria\": [\"Empty api_key_env rejected\", \"Relative endpoint rejected\", \"Well-formed config constructs\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: HostedAPIEngine runtime AuthError defense-in-depth + declared_flags_map default",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "Replace AuthError(f\"missing {key_name}\") with clearer two-branch message. Populate declared_flags_map default for hosted.yaml key (xfail until Task 6). See plan doc Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_hosted.py -v -k 'auth_error_message or declared_flags_default'\", \"acceptanceCriteria\": [\"AuthError msg contains 'engine.hosted.api_key_env is empty'\", \"declared_flags_map populated (xfail until Task 6)\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: Rewrite examples/configs/hosted.yaml + remove Task 5 xfail",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "Rewrite examples/configs/hosted.yaml with absolute URL + api_key_env + health_url + shim contract docs. Remove Task 5 xfail marker. See plan doc Task 6 for full YAML.\n\n```json:metadata\n{\"files\": [\"examples/configs/hosted.yaml\", \"tests/engines/test_hosted.py\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_hosted.py tests/test_examples.py -v\", \"acceptanceCriteria\": [\"hosted.yaml loads under validators\", \"Top comment documents shim contract\", \"Task 5 xfail removed and passes\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: core/provision_state.py marker helpers + tests",
-      "status": "pending",
+      "status": "completed",
       "description": "Create src/kinoforge/core/provision_state.py with marker_path / read_marker (None on any failure) / write_marker (atomic) / is_marker_current. Foundation for Task 9. See plan doc Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/provision_state.py\", \"tests/core/test_provision_state.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_provision_state.py -v\", \"acceptanceCriteria\": [\"marker_path layout correct\", \"read_marker None on absent/corrupt/missing-keys\", \"write_marker atomic\", \"is_marker_current staleness rule\"]}\n```"
     },
     {
       "id": 8,
       "subject": "Task 8: UX A hosted preflight in orchestrator.generate()",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 5],
       "description": "Add Step 2.5 to orchestrator.generate(): if not requires_compute, call engine.provision(None, cfg_dict). Fail fast on missing cred or unreachable health URL before any backend.submit. See plan doc Task 8.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator.py -v -k hosted_preflight\", \"acceptanceCriteria\": [\"provision called once before any submit\", \"AuthError blocks submit\", \"Health KinoforgeError blocks submit\", \"Compute path unaffected\"]}\n```"
     },
     {
       "id": 9,
       "subject": "Task 9: UX A compute preflight — marker + acquire_lock",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7, 8],
       "description": "Add state_dir arg to generate(). Extract _provision_compute_once helper that acquires store.acquire_lock(f\"provision:{instance.id}\", ttl_s=300), reads marker, runs provisioner.provision if absent/stale, writes marker. Call after both create_instance loops. See plan doc Task 9.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"src/kinoforge/cli.py\", \"tests/core/test_orchestrator_compute.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_compute.py -v\", \"acceptanceCriteria\": [\"First generate writes marker + provisions\", \"Second same-key generate skips provision\", \"Stale-key generate reprovisions\", \"Concurrent generates lock-serialize\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 10: FalEngineConfig pydantic block + KNOWN_ENGINES update",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "Add FalEngineConfig class (endpoint, queue_base, api_key_env, url_path, asset_paths, health_url + 4 validators). Add engine.fal field. Update KNOWN_ENGINES. Extend Config._validate_cross_fields. See plan doc Task 10.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -v -k fal\", \"acceptanceCriteria\": [\"Defaults populated\", \"Required field violations rejected\", \"Bad queue_base URL rejected\", \"fal kind without block rejected\", \"KNOWN_ENGINES contains 'fal'\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 11: FalEngine + FalBackend + wire helpers + tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8, 10],
       "description": "Implement src/kinoforge/engines/fal/{__init__.py,wire.py} with FalEngine + FalBackend targeting fal.ai queue API. Pure wire helpers (interpret_status, build_status_url, build_response_url, extract_result_url) in wire.py. Self-register under 'fal'. See plan doc Task 11.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/fal/__init__.py\", \"src/kinoforge/engines/fal/wire.py\", \"tests/engines/test_fal.py\", \"tests/engines/test_fal_wire.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_fal.py tests/engines/test_fal_wire.py -v\", \"acceptanceCriteria\": [\"FalEngine.provision cred/health behaviours correct\", \"FalBackend.submit POST shape + auth + asset injection\", \"FalBackend.result poll transitions\", \"Wire helpers pass in isolation\", \"Engine self-registers under 'fal'\"]}\n```"
     },
     {
       "id": 12,
       "subject": "Task 12: _adapters.py + fal.yaml + invariant allowlist + tooling",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11],
       "description": "Wire fal engine into _adapters.py. Ship examples/configs/fal.yaml. Extend test_core_invariant.py allowlist. Add live pytest marker to pyproject.toml + test-live task to pixi.toml. See plan doc Task 12.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/_adapters.py\", \"examples/configs/fal.yaml\", \"tests/test_core_invariant.py\", \"tests/test_examples.py\", \"pyproject.toml\", \"pixi.toml\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/test_core_invariant.py -v && pixi run python -m kinoforge deploy --config examples/configs/fal.yaml --dry-run\", \"acceptanceCriteria\": [\"CLI imports + dry-run works\", \"fal.yaml loads\", \"Invariant allowlist extended\", \"live marker + test-live task added\"]}\n```"
     },

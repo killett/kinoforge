@@ -11,7 +11,7 @@ engine:
   kind: fal
   precision: ""
   fal:
-    endpoint: "fal-ai/wan/v2.2/t2v"
+    endpoint: "fal-ai/wan-t2v"
     queue_base: "https://queue.fal.run"
     api_key_env: "FAL_KEY"
     url_path: video.url

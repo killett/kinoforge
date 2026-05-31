@@ -234,6 +234,13 @@ class FalBackend(GenerationBackend):
             The ``request_id`` string returned by the queue.
         """
         body = dict(job.spec)
+        # If the orchestrator-built spec does not carry an explicit "prompt",
+        # fall back to segments[0].prompt — kinoforge's pipeline places the
+        # user prompt on the Segment, not in the engine spec.
+        if "prompt" not in body and job.segments:
+            seg_prompt = getattr(job.segments[0], "prompt", "")
+            if isinstance(seg_prompt, str) and seg_prompt:
+                body["prompt"] = seg_prompt
         for role, dot_path in self._asset_paths.items():
             asset = find_asset(job, role)
             if asset is None:
@@ -496,20 +503,30 @@ class FalEngine(GenerationEngine):
         return dict(self._declared_flags_map.get(key.derive(), {}))
 
     def validate_spec(self, job: GenerationJob) -> None:
-        """Raise :class:`ValidationError` if the spec lacks a non-empty prompt.
+        """Raise :class:`ValidationError` if no non-empty prompt is available.
+
+        The prompt may live either in ``job.spec["prompt"]`` (explicit
+        config-supplied spec) or on ``job.segments[0].prompt`` (the orchestrator
+        path, where the user prompt rides on the Segment).  At least one must
+        be a non-empty string.
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` to check.
 
         Raises:
-            ValidationError: ``job.spec`` has no ``"prompt"`` key or the
-                value is empty.
+            ValidationError: Neither ``job.spec["prompt"]`` nor
+                ``job.segments[0].prompt`` is a non-empty string.
         """
         prompt = job.spec.get("prompt", "")
-        if not isinstance(prompt, str) or not prompt:
-            raise ValidationError(
-                "fal engine requires a non-empty 'prompt' in job.spec"
-            )
+        if isinstance(prompt, str) and prompt:
+            return
+        if job.segments:
+            seg_prompt = getattr(job.segments[0], "prompt", "")
+            if isinstance(seg_prompt, str) and seg_prompt:
+                return
+        raise ValidationError(
+            "fal engine requires a non-empty prompt in job.spec or segments[0]"
+        )
 
 
 # ---------------------------------------------------------------------------

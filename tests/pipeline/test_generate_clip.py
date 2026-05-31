@@ -831,3 +831,79 @@ def test_one_job_native_skips_map_uses_submit(tmp_path: Path) -> None:
     assert map_calls == [], (
         f"pool.map was called for 1-job path; len(jobs) > 1 guard broke: {map_calls}"
     )
+
+
+# ---------------------------------------------------------------------------
+# _artifact_bytes resolution: local file > http(s) URL > synthetic fallback
+# ---------------------------------------------------------------------------
+
+
+def test_artifact_bytes_reads_local_file_when_uri_points_at_file(
+    tmp_path: Path,
+) -> None:
+    """A backend Artifact whose uri points at an existing local file is read
+    verbatim — the synthetic-bytes path is not triggered.
+
+    Bug catch: a hosted engine that writes its result to a tempfile and
+    sets ``Artifact.uri`` to that path would otherwise have its real bytes
+    silently replaced with the FakeEngine debug synthesis.
+    """
+    profile = _profile()
+    stage = _make_stage(tmp_path, profile=profile, backend=FakeBackend(probe=profile))
+    payload = b"\x00\x00\x00\x18ftypiso5...real bytes..."
+    src = tmp_path / "real.mp4"
+    src.write_bytes(payload)
+    artifact = Artifact(filename="real.mp4", uri=str(src))
+    assert stage._artifact_bytes(artifact) == payload
+
+
+def test_artifact_bytes_downloads_when_url_is_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend Artifact with an http(s) ``url`` is downloaded with urlopen.
+
+    Bug catch: returning synthetic ``filename|meta`` bytes for hosted engines
+    means the stored file is a debug stub rather than the real artifact —
+    the very failure that the Layer I live smoke surfaced.
+    """
+    profile = _profile()
+    stage = _make_stage(tmp_path, profile=profile, backend=FakeBackend(probe=profile))
+    expected = b"\x00\x00\x00\x18ftypiso5\x00\x00\x00\x00downloaded"
+    calls: list[str] = []
+
+    class _Resp:
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+
+        def read(self) -> bytes:
+            return self._data
+
+        def __enter__(self) -> _Resp:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    def _fake_urlopen(url: str) -> _Resp:
+        calls.append(url)
+        return _Resp(expected)
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen, raising=True)
+    artifact = Artifact(filename="out.mp4", url="https://example.com/x.mp4")
+    assert stage._artifact_bytes(artifact) == expected
+    assert calls == ["https://example.com/x.mp4"]
+
+
+def test_artifact_bytes_synthetic_fallback_when_no_uri_or_url(
+    tmp_path: Path,
+) -> None:
+    """With neither uri nor url, fall back to FakeEngine-style synthetic bytes.
+
+    Bug catch: removing the synthetic path would break the FakeEngine unit
+    test suite, which relies on deterministic bytes derived from filename+meta.
+    """
+    profile = _profile()
+    stage = _make_stage(tmp_path, profile=profile, backend=FakeBackend(probe=profile))
+    artifact = Artifact(filename="x.mp4", meta={"k": "v"})
+    expected = b"x.mp4" + b"|" + repr(sorted({"k": "v"}.items())).encode("utf-8")
+    assert stage._artifact_bytes(artifact) == expected

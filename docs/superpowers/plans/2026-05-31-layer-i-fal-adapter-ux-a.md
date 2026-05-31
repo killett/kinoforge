@@ -667,7 +667,7 @@ def test_provision_auth_error_message_when_key_name_empty() -> None:
     assert "engine.hosted.api_key_env is empty" in str(exc_info.value)
 
 
-def test_declared_flags_returns_default_for_hosted_key() -> None:
+def test_declared_flags_default_for_hosted_yaml_key() -> None:
     """HostedAPIEngine must declare strategy flags for the shipped hosted.yaml key."""
     from kinoforge.core.config import load_config
     from kinoforge.engines.hosted import HostedAPIEngine
@@ -681,7 +681,7 @@ def test_declared_flags_returns_default_for_hosted_key() -> None:
     }
 ```
 
-**Note:** `test_declared_flags_returns_default_for_hosted_key` will fail until Task 6 rewrites `hosted.yaml` to validator-clean form. Document this in the task ordering: if you run this test before Task 6 lands, it errors at `load_config`. Mark this AC as conditional on Task 6.
+**Note:** `test_declared_flags_default_for_hosted_yaml_key` will fail until Task 6 rewrites `hosted.yaml` to validator-clean form. Document this in the task ordering: if you run this test before Task 6 lands, it errors at `load_config`. Mark this AC as conditional on Task 6.
 
 - [ ] **Step 3: Run the AuthError test, confirm RED**
 
@@ -747,7 +747,7 @@ If the default `declared_flags_map` is class-level, prefer to make it instance-l
 - [ ] **Step 7: Run the declared_flags test (still RED until Task 6)**
 
 ```bash
-pixi run pytest tests/engines/test_hosted.py::test_declared_flags_returns_default_for_hosted_key -v
+pixi run pytest tests/engines/test_hosted.py::test_declared_flags_default_for_hosted_yaml_key -v
 ```
 
 Expected: FAIL because `load_config("examples/configs/hosted.yaml")` raises `ValidationError`. This is OK — Task 6 fixes it. Mark the test with `@pytest.mark.xfail(reason="depends on Task 6 hosted.yaml fix", strict=True)` for now; Task 6 removes the xfail marker.
@@ -756,12 +756,12 @@ Replace the test header to:
 
 ```python
 @pytest.mark.xfail(reason="depends on Layer I Task 6 hosted.yaml fix", strict=True)
-def test_declared_flags_returns_default_for_hosted_key() -> None:
+def test_declared_flags_default_for_hosted_yaml_key() -> None:
     ...
 ```
 
 ```bash
-pixi run pytest tests/engines/test_hosted.py::test_declared_flags_returns_default_for_hosted_key -v
+pixi run pytest tests/engines/test_hosted.py::test_declared_flags_default_for_hosted_yaml_key -v
 ```
 
 Expected: XFAIL (counted as PASS).
