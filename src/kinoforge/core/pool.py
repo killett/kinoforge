@@ -284,5 +284,40 @@ class ConcurrentPool(BackendPool):
             self._release(slot)
 
     def map(self, jobs: list[GenerationJob]) -> list[Artifact]:
-        """DEFERRED to Task 3. Raises NotImplementedError for now."""
-        raise NotImplementedError("map() implemented in Layer G Task 3")
+        """Dispatch every job and return results in input order; fail-fast.
+
+        All jobs are submitted eagerly; results are awaited in input order.
+        On first exception, every still-queued future is cancelled (in-flight
+        jobs continue and their outcomes are discarded), and the first
+        exception is re-raised.
+
+        Args:
+            jobs: Ordered list of :class:`GenerationJob`.  Empty list returns
+                ``[]`` with no backend calls.
+
+        Returns:
+            List of :class:`Artifact` in the same order as *jobs*.
+
+        Raises:
+            BaseException: The first exception raised by any backend; queued
+                futures are cancelled before the re-raise.  In-flight futures
+                are allowed to complete; their results (success or further
+                exceptions) are silently discarded.
+        """
+        if not jobs:
+            return []
+        futures = [self.submit(j) for j in jobs]
+        results: list[Artifact | None] = [None] * len(jobs)
+        first_exc: BaseException | None = None
+        for i, fut in enumerate(futures):
+            if first_exc is not None:
+                fut.cancel()
+                continue
+            try:
+                results[i] = fut.result()
+            except BaseException as exc:  # noqa: BLE001 — re-raised below
+                first_exc = exc
+        if first_exc is not None:
+            raise first_exc
+        # All slots filled; cast is safe because no None remains.
+        return [r for r in results if r is not None]

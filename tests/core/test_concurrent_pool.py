@@ -442,3 +442,127 @@ def test_submit_releases_slot_when_executor_raises():
             assert slot.in_flight == 0
         finally:
             slot.executor.submit = original_submit  # type: ignore[method-assign]
+
+
+# --- AC 11: map([]) returns [] ; no submits -------------------------------
+
+
+def test_map_empty_list_returns_empty_and_makes_no_calls():
+    backend = BlockingFakeBackend()
+    with ConcurrentPool() as pool:
+        pool.add(backend, max_in_flight=2)
+        results = pool.map([])
+        assert results == []
+        assert backend.submit_log == []
+
+
+# --- AC 12: map preserves input order despite reverse release order ------
+
+
+def test_map_preserves_input_order_with_reverse_release():
+    backend = BlockingFakeBackend()
+    with ConcurrentPool() as pool:
+        pool.add(backend, max_in_flight=3)
+        jobs = [_job(f"j{i}") for i in range(3)]
+
+        # Release in reverse on a separate thread once all 3 are picked up.
+        def _releaser() -> None:
+            for _ in range(50):
+                if len(backend.submit_log) >= 3:
+                    break
+                time.sleep(0.01)
+            for jid in reversed(list(backend._gates.keys())):
+                backend.release(jid)
+
+        threading.Thread(target=_releaser, daemon=True).start()
+        results = pool.map(jobs)
+        # Results must be in INPUT order (j0, j1, j2) despite reverse release.
+        assert [r.meta["jid"] for r in results] == ["blk-1", "blk-2", "blk-3"]
+
+
+# --- AC 13: map fail-fast raises first exception ------------------------
+
+
+def test_map_failfast_raises_first_exception_from_middle_job():
+    backend = BlockingFakeBackend()
+    with ConcurrentPool() as pool:
+        pool.add(backend, max_in_flight=3)
+        jobs = [_job(f"j{i}") for i in range(3)]
+
+        def _releaser() -> None:
+            for _ in range(50):
+                if len(backend.submit_log) >= 3:
+                    break
+                time.sleep(0.01)
+            # Fail the middle one; release in order so j0 returns first.
+            backend.release("blk-1")
+            backend.fail_for("blk-2")
+            backend.release("blk-2")
+            backend.release("blk-3")
+
+        threading.Thread(target=_releaser, daemon=True).start()
+        with pytest.raises(RuntimeError, match="deliberately failed blk-2"):
+            pool.map(jobs)
+
+
+# --- AC 14: cap=1, 4 jobs, job 0 raises → queued jobs cancelled ---------
+
+
+def test_map_failfast_cancels_queued_futures():
+    backend = BlockingFakeBackend()
+    with ConcurrentPool() as pool:
+        pool.add(backend, max_in_flight=1)
+        jobs = [_job(f"j{i}") for i in range(4)]
+
+        def _releaser() -> None:
+            for _ in range(50):
+                if backend.submit_log:
+                    break
+                time.sleep(0.01)
+            backend.fail_for("blk-1")
+            backend.release("blk-1")
+
+        threading.Thread(target=_releaser, daemon=True).start()
+        with pytest.raises(RuntimeError, match="deliberately failed blk-1"):
+            pool.map(jobs)
+        # Job 1 must have been picked up before cancel reached it; jobs 2 and
+        # 3 should still be queued and thus cancellable.  However, since map
+        # raised, we only need to verify that at most 1 additional job
+        # reached backend.submit (job 1 is racy; jobs 2 and 3 must NOT).
+        assert len(backend.submit_log) <= 2, (
+            f"too many jobs reached backend after fail-fast: {backend.submit_log}"
+        )
+
+
+# --- AC 15: map fail-fast drains in-flight on other backend ---------------
+
+
+def test_map_failfast_drains_inflight_on_other_backend():
+    """2 backends cap=1, both running; backend[0]'s job fails; backend[1]'s
+    job is released after and completes; map re-raises backend[0]'s exception."""
+    b1 = BlockingFakeBackend(name="A")
+    b2 = BlockingFakeBackend(name="B")
+    with ConcurrentPool() as pool:
+        pool.add(b1, max_in_flight=1)
+        pool.add(b2, max_in_flight=1)
+        jobs = [_job(f"j{i}") for i in range(2)]
+        # Spawn the releaser on a thread so map() can be called synchronously.
+        b2_released = threading.Event()
+
+        def _releaser() -> None:
+            for _ in range(50):
+                if b1.submit_log and b2.submit_log:
+                    break
+                time.sleep(0.01)
+            b1.fail_for("A-1")
+            b1.release("A-1")
+            # Wait a moment so map captures the exception before b2 completes.
+            time.sleep(0.05)
+            b2.release("B-1")
+            b2_released.set()
+
+        threading.Thread(target=_releaser, daemon=True).start()
+        with pytest.raises(RuntimeError, match="deliberately failed A-1"):
+            pool.map(jobs)
+        # Verify b2 was indeed allowed to drain (releaser fired).
+        assert b2_released.wait(timeout=2.0)
