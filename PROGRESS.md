@@ -148,7 +148,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer K merged to main at `<sha>`.** Spec & params routing shipped — hosted/diffusers/comfyui now drive end-to-end through the orchestrator with YAML-supplied `spec:` + `params:` blocks. PROGRESS:154 follow-up #1 closed.
+**Layer K merged to main at `13fc395`.** Spec & params routing shipped — hosted/diffusers/comfyui now drive end-to-end through the orchestrator with YAML-supplied `spec:` + `params:` blocks. PROGRESS:154 follow-up #1 closed.
 
 **Pending follow-ups (Layer L candidate):**
 - `GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).
@@ -282,8 +282,8 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - [x] Task 3: Strategy precedence regression locks (segment-wins + _audio_mode authority) — commit `8b81eb2`
 - [x] Task 4: e2e YAML round-trip via Orchestrator — commit `2b5fa25`
 - [x] Task 5: hosted/diffusers/wan/fal example YAMLs + 4 extended example-load tests — commit `0d3c514`
-- [x] Task 6: README + PROGRESS + full suite gate — commit `<sha>`
-- [x] Merge to main via `--no-ff` — merge commit `<sha>`
+- [x] Task 6: README + PROGRESS + full suite gate — commit `23ca0e0`
+- [x] Merge to main via `--no-ff` — merge commit `13fc395`
 
 **Key design decisions:**
 - Permissive `dict[str, Any]` (Q3=A): Config stays engine-agnostic, preserves the core-import-ban invariant. `engine.validate_spec` is the sole gate.
