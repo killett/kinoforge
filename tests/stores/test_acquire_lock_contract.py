@@ -82,9 +82,10 @@ def test_s3_store_acquire_lock_returns_s3_cloud_lock() -> None:
     assert isinstance(lock, S3CloudLock)
 
 
-def test_gcs_store_stub_raises_not_implemented() -> None:
-    """GCS store stub must raise NotImplementedError mentioning Task 5."""
+def test_gcs_store_acquire_lock_returns_gcs_cloud_lock() -> None:
+    """GCS store acquire_lock must return a real GCSCloudLock after Task 5."""
     from kinoforge.stores.gcs import GCSArtifactStore
+    from kinoforge.stores.gcs.lock import GCSCloudLock
     from tests.stores.conftest import FakeGCSClient
 
     store = GCSArtifactStore(
@@ -92,8 +93,8 @@ def test_gcs_store_stub_raises_not_implemented() -> None:
         client=FakeGCSClient(),
         not_found_exc=FakeGCSClient.NotFound,
     )
-    with pytest.raises(NotImplementedError, match="Layer H Task 5"):
-        store.acquire_lock("k", ttl_s=10.0)
+    lock = store.acquire_lock("k", ttl_s=10.0)
+    assert isinstance(lock, GCSCloudLock)
 
 
 def test_acquire_lock_signature_has_ttl_kwonly() -> None:
