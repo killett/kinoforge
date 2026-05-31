@@ -28,6 +28,54 @@ Expected output sketch for the dry-run:
   models: 1 entry (1 base, 0 lora, 0 vae)
 ```
 
+## Batch generation
+
+Render N clips on one shared deployed instance with continue-on-error
+semantics:
+
+```bash
+kinoforge batch -c examples/configs/wan.yaml \
+                --manifest examples/configs/batch-prompts.yaml
+```
+
+The manifest is a YAML list. Each entry sets exactly one of `prompt`
+(inline text) or `prompt_file` (path resolved relative to the manifest's
+parent directory). Optional per-entry overrides: `params`, `spec`,
+`assets`, `run_id`.
+
+```yaml
+# examples/configs/batch-prompts.yaml
+- prompt: "waves crashing on basalt cliffs at dusk"
+  mode: t2v
+  run_id: waves
+
+- prompt_file: prompts/forest.txt
+  mode: t2v
+  run_id: forest
+  params: { seed: 42 }
+```
+
+**Outputs.** Each entry's artifact lands at
+`<store>/<batch_id>/<run_id>/<name>`. Default `batch_id` is
+`batch-YYYYMMDD-HHMMSS` in **local timezone**; override with
+`--batch-id ID` for a memorable name. A machine-readable summary is
+written to `<batch_id>/_batch_summary.json` on every exit path (success,
+per-entry failures, batch-fatal abort).
+
+**Concurrency.** `--concurrent N` overrides `cfg.lifecycle.max_in_flight`.
+Both layers (outer entry executor and `ConcurrentPool` slot cap) share
+the same value. After the run, the CLI prints a per-entry summary table;
+intra-run streaming progress is a deferred follow-up — see PROGRESS.md
+Phase 22.
+
+**Failure semantics.** Per-entry exceptions become `FAIL` outcomes; the
+batch keeps going. Batch-fatal exceptions (`BudgetExceeded`,
+`CapabilityMismatch`, `TeardownError`) cancel queued entries and exit
+with code 2. The summary JSON is written before the exit in every case.
+
+**Cleanup.** `kinoforge gc --run <batch_id> -c <config>` walks the entire
+batch namespace at once.
+
 ## Configuration
 
 Each kinoforge run is described by a single YAML file with three top-level blocks:
