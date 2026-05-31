@@ -11,7 +11,7 @@ import json
 from abc import ABC, abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Self, runtime_checkable
 
 # --- compute axis -----------------------------------------------------------
 
@@ -360,7 +360,7 @@ class BackendPool(ABC):
     """
 
     @abstractmethod
-    def add(self, backend: GenerationBackend) -> None: ...  # noqa: D102
+    def add(self, backend: GenerationBackend, *, max_in_flight: int = 1) -> None: ...  # noqa: D102
 
     @abstractmethod
     def submit(self, job: GenerationJob) -> Future[Artifact]: ...  # noqa: D102
@@ -371,7 +371,7 @@ class BackendPool(ABC):
     @abstractmethod
     def close(self) -> None: ...  # noqa: D102
 
-    def __enter__(self) -> BackendPool:  # noqa: D105
+    def __enter__(self) -> Self:  # noqa: D105
         return self
 
     def __exit__(self, *_exc: object) -> None:  # noqa: D105
