@@ -25,7 +25,12 @@ from pathlib import Path
 from kinoforge.core import registry
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
-from kinoforge.core.errors import CapabilityMismatch, CapacityError, ValidationError
+from kinoforge.core.errors import (
+    CapabilityMismatch,
+    CapacityError,
+    ProfileNotCached,
+    ValidationError,
+)
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -215,6 +220,82 @@ def _provision_compute_once(
         )
 
 
+def _provision_instance_and_build_backend(
+    *,
+    resolved_engine: GenerationEngine,
+    resolved_provider: ComputeProvider,
+    cfg: Config,
+    run_id: str,
+    key: CapabilityKey,
+    creds: CredentialProvider | None,
+    store: ArtifactStore,
+    state_dir: Path,
+    for_discovery: bool,
+) -> tuple[Instance, GenerationBackend]:
+    """Provision a compute instance and build a backend for it.
+
+    Shared by the cache-miss (discovery) and cache-hit (steady-state)
+    branches of deploy_session.
+
+    Args:
+        resolved_engine: The resolved generation engine.
+        resolved_provider: The resolved compute provider (must be non-None).
+        cfg: Loaded configuration.
+        run_id: Run-id tag for the instance.
+        key: Capability key (used for the kinoforge_key tag).
+        creds: Optional credential provider, forwarded to the provisioner.
+        store: Artifact store (forwarded to the provisioner for marker reads).
+        state_dir: Operator state root.
+        for_discovery: When True, the CapacityError message reads
+            'no offers available for discovery from provider ...' to
+            distinguish the cold-start failure from a steady-state one.
+
+    Returns:
+        ``(instance, backend)`` — instance polled to ``ready``, backend
+        constructed via ``engine.backend(instance, cfg_dict)``.
+
+    Raises:
+        CapacityError: ``find_offers`` returned an empty list.
+    """
+    hw_reqs = cfg.hardware_requirements()
+    offers = resolved_provider.find_offers(hw_reqs)
+    if not offers:
+        prefix = "for discovery " if for_discovery else ""
+        raise CapacityError(
+            f"no offers available {prefix}from provider "
+            f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
+        ) from None
+    lifecycle = cfg.lifecycle()
+    image = cfg.compute.image if cfg.compute is not None else ""
+    key_hash = _key_hash(key)
+    spec = InstanceSpec(
+        image=image,
+        offer=offers[0],
+        lifecycle=lifecycle,
+        tags={
+            "kinoforge_engine": resolved_engine.name,
+            "kinoforge_key": key_hash,
+        },
+        env={},
+        run_id=run_id,
+    )
+    instance = resolved_provider.create_instance(spec)
+    while instance.status != "ready":
+        instance = resolved_provider.get_instance(instance.id)
+    _provision_compute_once(
+        engine=resolved_engine,
+        cfg=cfg,
+        instance=instance,
+        creds=creds,
+        store=store,
+        state_dir=state_dir,
+        capability_key_hex=key.derive(),
+    )
+    cfg_dict = _cfg_dict(cfg)
+    backend = resolved_engine.backend(instance, cfg_dict)
+    return instance, backend
+
+
 # ---------------------------------------------------------------------------
 # deploy_session — shared compute setup yielded to generate() and batch_generate()
 # ---------------------------------------------------------------------------
@@ -357,8 +438,6 @@ def deploy_session(
     # ------------------------------------------------------------------
     # Step 4 — resolve profile; discover on miss
     # ------------------------------------------------------------------
-    from kinoforge.core.errors import ProfileNotCached
-
     backend: GenerationBackend | None = None
     instance: Instance | None = None
     _just_discovered: bool = False
@@ -375,40 +454,17 @@ def deploy_session(
                 raise CapacityError(
                     "requires_compute is True but no provider was resolved"
                 ) from None
-            hw_reqs = cfg.hardware_requirements()
-            offers = resolved_provider.find_offers(hw_reqs)
-            if not offers:
-                raise CapacityError(
-                    f"no offers available for discovery from provider "
-                    f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
-                ) from None
-            lifecycle = cfg.lifecycle()
-            image = cfg.compute.image if cfg.compute is not None else ""
-            key_hash = _key_hash(key)
-            spec = InstanceSpec(
-                image=image,
-                offer=offers[0],
-                lifecycle=lifecycle,
-                tags={
-                    "kinoforge_engine": resolved_engine.name,
-                    "kinoforge_key": key_hash,
-                },
-                env={},
-                run_id=run_id,
-            )
-            instance = resolved_provider.create_instance(spec)
-            while instance.status != "ready":
-                instance = resolved_provider.get_instance(instance.id)
-            _provision_compute_once(
-                engine=resolved_engine,
+            instance, backend = _provision_instance_and_build_backend(
+                resolved_engine=resolved_engine,
+                resolved_provider=resolved_provider,
                 cfg=cfg,
-                instance=instance,
+                run_id=run_id,
+                key=key,
                 creds=creds,
                 store=store,
                 state_dir=state_dir,
-                capability_key_hex=key.derive(),
+                for_discovery=True,
             )
-            backend = resolved_engine.backend(instance, cfg_dict)
         else:
             backend = resolved_engine.backend(None, cfg_dict)
 
@@ -423,41 +479,18 @@ def deploy_session(
             if resolved_provider is None:
                 raise CapacityError(
                     "requires_compute is True but no provider was resolved"
-                )
-            hw_reqs = cfg.hardware_requirements()
-            offers = resolved_provider.find_offers(hw_reqs)
-            if not offers:
-                raise CapacityError(
-                    f"no offers available from provider "
-                    f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
-                )
-            lifecycle = cfg.lifecycle()
-            image = cfg.compute.image if cfg.compute is not None else ""
-            key_hash = _key_hash(key)
-            spec = InstanceSpec(
-                image=image,
-                offer=offers[0],
-                lifecycle=lifecycle,
-                tags={
-                    "kinoforge_engine": resolved_engine.name,
-                    "kinoforge_key": key_hash,
-                },
-                env={},
-                run_id=run_id,
-            )
-            instance = resolved_provider.create_instance(spec)
-            while instance.status != "ready":
-                instance = resolved_provider.get_instance(instance.id)
-            _provision_compute_once(
-                engine=resolved_engine,
+                ) from None
+            instance, backend = _provision_instance_and_build_backend(
+                resolved_engine=resolved_engine,
+                resolved_provider=resolved_provider,
                 cfg=cfg,
-                instance=instance,
+                run_id=run_id,
+                key=key,
                 creds=creds,
                 store=store,
                 state_dir=state_dir,
-                capability_key_hex=key.derive(),
+                for_discovery=False,
             )
-            backend = resolved_engine.backend(instance, cfg_dict)
         else:
             backend = resolved_engine.backend(None, cfg_dict)
 
