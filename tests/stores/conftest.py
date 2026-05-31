@@ -52,7 +52,7 @@ class _BytesBody:
 class _S3Paginator:
     """Stand-in for the paginator returned by client.get_paginator('list_objects_v2')."""
 
-    def __init__(self, objects: dict[tuple[str, str], tuple[bytes, str]]) -> None:
+    def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
         self._objects = objects
 
     def paginate(self, *, Bucket: str, Prefix: str) -> Iterator[dict[str, Any]]:
@@ -122,13 +122,12 @@ class FakeS3Client:
 
     def get_paginator(self, op: str) -> _S3Paginator:
         assert op == "list_objects_v2", f"unexpected paginator op: {op!r}"
-        # Paginator only needs keys; pass through body+etag tuples.
-        return _S3Paginator(self._objects)
+        # Paginator only needs keys; pass through the key set.
+        return _S3Paginator({k: v[0] for k, v in self._objects.items()})
 
 
 # ---------------------------------------------------------------------------
-# GCS fakes (used by Task 2's tests; landed here in Task 1 to avoid two
-# conftest.py edits)
+# GCS fakes
 # ---------------------------------------------------------------------------
 
 
@@ -148,13 +147,11 @@ class _FakeBlob:
 
     @property
     def generation(self) -> int | None:
-        """Return the current generation for this blob name from the bucket."""
         return self.bucket._generations.get(self.name)
 
     def upload_from_string(
         self, data: bytes, if_generation_match: int | None = None
     ) -> None:
-        """Write data; honors if_generation_match precondition."""
         existing_gen = self.bucket._generations.get(self.name)
         if if_generation_match is not None:
             if if_generation_match == 0:
@@ -169,15 +166,13 @@ class _FakeBlob:
         self._captured_generation = new_gen
 
     def download_as_bytes(self) -> bytes:
-        """Read bytes; captures current generation for subsequent release CAS."""
         if self.name not in self.bucket._blobs:
             raise _GCSNotFound()
-        # Capture current generation so the lock can use it for conditional delete.
+        # Capture current generation for release CAS.
         self._captured_generation = self.bucket._generations.get(self.name)
         return self.bucket._blobs[self.name]
 
     def delete(self, if_generation_match: int | None = None) -> None:
-        """Delete blob; honors if_generation_match precondition."""
         if self.name not in self.bucket._blobs:
             raise _GCSNotFound()
         existing_gen = self.bucket._generations.get(self.name)

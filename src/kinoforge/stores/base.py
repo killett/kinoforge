@@ -8,12 +8,9 @@ deletes all go through that uri (or the run_id/name pair for listing).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 
 from kinoforge.core.interfaces import Artifact
-
-if TYPE_CHECKING:
-    from kinoforge.core.locks import Lock
+from kinoforge.core.locks import Lock
 
 
 class ArtifactStore(ABC):

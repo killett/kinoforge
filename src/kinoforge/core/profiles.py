@@ -132,15 +132,21 @@ class JsonProfileCache(ModelProfileProvider):
         self,
         store: ArtifactStore,
         run_id: str = "_profiles",
+        *,
+        discover_ttl_s: float = 300.0,
     ) -> None:
         """Initialise the cache.
 
         Args:
             store: Backing artifact store.
             run_id: Namespace for profile JSON files.
+            discover_ttl_s: Outer cross-process lease duration for discovery.
+                Should cover worst-case ``inspect_capabilities`` round-trip
+                including any provisioner setup.  Default 300s (5 minutes).
         """
         self._store = store
         self._run_id = run_id
+        self._discover_ttl_s = discover_ttl_s
         self._lock = threading.Lock()
         self._inflight: dict[str, threading.Event] = {}
 
@@ -282,32 +288,25 @@ class JsonProfileCache(ModelProfileProvider):
                     f"expected {cached_val!r} got {probed_val!r}"
                 )
 
-    def resolve_or_discover(
+    def _discover_single_flight(
         self,
         key: CapabilityKey,
         engine: GenerationEngine,
         backend: GenerationBackend,
     ) -> ModelProfile:
-        """Return the cached profile for *key*, discovering it if necessary.
+        """In-process leader/follower single-flight body.
 
-        Implements per-key single-flight: if two threads race to discover the
-        same uncached key, exactly one backend probe is issued.  The follower
-        thread waits for the leader to finish persisting, then reads the result
-        from the store.
+        Used as the inner guard under the outer cross-process lock.  Mirrors
+        the pre-Layer-H ``resolve_or_discover`` body.
 
         Args:
-            key: The ``CapabilityKey`` whose profile to return.
-            engine: Passed to :meth:`discover` if discovery is needed.
-            backend: Passed to :meth:`discover` if discovery is needed.
+            key: The ``CapabilityKey`` whose profile to discover.
+            engine: Passed to :meth:`discover` if this thread is the leader.
+            backend: Passed to :meth:`discover` if this thread is the leader.
 
         Returns:
-            The ``ModelProfile`` for *key*, from cache or freshly discovered.
+            The ``ModelProfile`` for *key*.
         """
-        try:
-            return self.resolve(key)
-        except ProfileNotCached:
-            pass
-
         hash_key = key.derive()
 
         with self._lock:
@@ -330,3 +329,41 @@ class JsonProfileCache(ModelProfileProvider):
 
         ev.wait()
         return self.resolve(key)
+
+    def resolve_or_discover(
+        self,
+        key: CapabilityKey,
+        engine: GenerationEngine,
+        backend: GenerationBackend,
+    ) -> ModelProfile:
+        """Return the cached profile for *key*, discovering it if necessary.
+
+        Cache hits return without taking any lock.  On a miss, an outer
+        cross-process lock serializes discovery across processes; the
+        in-process ``_discover_single_flight`` body remains as the inner
+        guard so multi-thread safety within one process is preserved.
+
+        Args:
+            key: The ``CapabilityKey`` whose profile to return.
+            engine: Passed to :meth:`discover` if discovery is needed.
+            backend: Passed to :meth:`discover` if discovery is needed.
+
+        Returns:
+            The ``ModelProfile`` for *key*, from cache or freshly discovered.
+        """
+        # Cache-hit fast path: no lock.
+        try:
+            return self.resolve(key)
+        except ProfileNotCached:
+            pass
+
+        hash_key = key.derive()
+        with self._store.acquire_lock(
+            f"profiles/{hash_key}", ttl_s=self._discover_ttl_s
+        ):
+            # Re-check under outer lock: another process may have populated it.
+            try:
+                return self.resolve(key)
+            except ProfileNotCached:
+                pass
+            return self._discover_single_flight(key, engine, backend)
