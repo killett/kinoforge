@@ -347,8 +347,10 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
     Returns:
         Exit code:
           * ``0`` — every entry succeeded.
-          * ``1`` — one+ per-entry failure, setup error, batch-id
-            collision, or invalid ``--concurrent`` flag.
+          * ``1`` — one+ per-entry failure, setup-fatal exception
+            (any other ``KinoforgeError`` from ``deploy_session.__enter__``
+            such as ``CapacityError`` / ``AuthError`` / ``UnknownAdapter``),
+            batch-id collision, or invalid ``--concurrent`` flag.
           * ``2`` — batch-fatal exception mid-run
             (``BudgetExceeded`` / ``CapabilityMismatch`` / ``TeardownError``).
     """
@@ -362,6 +364,7 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
         BudgetExceeded,
         CapabilityMismatch,
         ConfigError,
+        KinoforgeError,
         TeardownError,
     )
 
@@ -397,10 +400,11 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
     )
 
     # Collision check via the existing store API; pre-compute on purpose.
-    try:
-        existing = store.list(batch_id)
-    except Exception:  # noqa: BLE001 — list on empty namespace returns [].
-        existing = []
+    # ``LocalArtifactStore.list`` returns ``[]`` for an unknown ``batch_id``;
+    # real S3/GCS adapter errors (auth, permission denied) must NOT be
+    # swallowed — they propagate and are caught by the outer
+    # ``KinoforgeError`` handler below.
+    existing = store.list(batch_id)
     if existing:
         print(
             f"error: batch_id collision: {batch_id} already has artifacts "
@@ -429,14 +433,27 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
             file=sys.stderr,
         )
         return 2
+    except KinoforgeError as exc:
+        # Setup-fatal: spec §7 "Setup fatal" row -- CapacityError, AuthError,
+        # UnknownAdapter, hosted-preflight KinoforgeError, provider create
+        # timeout. All originate inside deploy_session.__enter__ and would
+        # otherwise escape as raw tracebacks, breaking the "every CLI failure
+        # path produces a clean stderr line + non-zero exit" contract.
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
 
-    # Final per-entry summary table.
+    # Final per-entry summary table. Auto-size the run_id column to the
+    # widest entry (plus one space) so realistic run_ids like
+    # ``dawn-flight-attempt-3`` (21 chars) don't spill past a hard 20-char
+    # cap and break alignment. Status column stays fixed-width (max label
+    # = "interrupted" = 11 chars, so 12 is enough).
     print("\nsummary:")
+    rid_width = max((len(o.run_id) for o in result.outcomes), default=1) + 1
     for o in result.outcomes:
         status_label = o.status.upper()
         duration = f"{o.duration_s:.1f}s" if o.duration_s is not None else "—"
         detail = o.uri if o.uri else (o.error or "")
-        print(f"  {o.run_id:<20s} {status_label:<8s} {duration:<8s} {detail}")
+        print(f"  {o.run_id:<{rid_width}s} {status_label:<12s} {duration:<8s} {detail}")
     print(f"batch-id: {batch_id}")
     n_ok = sum(1 for o in result.outcomes if o.status == "ok")
     n_fail = len(result.outcomes) - n_ok

@@ -166,6 +166,56 @@ def test_zero_concurrent_exits_one(
     assert "positive" in err
 
 
+def test_unknown_engine_kind_exits_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A cfg pointing at an unregistered engine must exit 1 with a clean line.
+
+    Bug catch: setup-fatal exceptions from deploy_session.__enter__
+    that aren't in the batch-fatal trio (BudgetExceeded, CapabilityMismatch,
+    TeardownError) would otherwise escape as raw tracebacks, breaking
+    the "every CLI failure path produces a clean stderr line + non-zero
+    exit" contract that the rest of kinoforge CLI honours.
+    """
+    cfg_path = tmp_path / "bad-cfg.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "engine": {"kind": "nonexistent_engine", "precision": "fp16"},
+                "models": [
+                    {
+                        "ref": "https://example.com/x.safetensors",
+                        "kind": "base",
+                        "target": "checkpoints",
+                    }
+                ],
+                "compute": {"provider": "local", "image": ""},
+            }
+        )
+    )
+    manifest_path = tmp_path / "m.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump([{"prompt": "a", "mode": "t2v", "run_id": "x"}])
+    )
+    rc = main(
+        [
+            "--state-dir",
+            str(tmp_path / "state"),
+            "batch",
+            "-c",
+            str(cfg_path),
+            "--manifest",
+            str(manifest_path),
+            "--batch-id",
+            "b",
+        ]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "error:" in err.lower()
+    assert "nonexistent_engine" in err or "UnknownAdapter" in err
+
+
 def test_one_bad_entry_continues_others(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
