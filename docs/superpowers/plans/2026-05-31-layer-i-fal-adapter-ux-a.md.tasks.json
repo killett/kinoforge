@@ -85,7 +85,7 @@
     {
       "id": 13,
       "subject": "Task 13: Live opt-in test + manual smoke (USER-GATE — first real fal.ai response)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [12],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Produce kinoforge's first real public-provider artifact. Create tests/live/test_fal_live.py (subprocess-driven, MP4-magic assertion, gated by KINOFORGE_LIVE_TESTS=1 + FAL_KEY). Run manual smoke against fal.ai. Update README + PROGRESS Phase 19 with first-real-artifact details. Merge to main via --no-ff. See plan doc Task 13.\n\n```json:metadata\n{\"files\": [\"tests/live/__init__.py\", \"tests/live/test_fal_live.py\", \"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_fal_live.py -v\", \"acceptanceCriteria\": [\"Skips cleanly without env vars\", \"Live tests PASS with FAL_KEY\", \"Manual smoke produces MP4 with ftyp magic at offset 4\", \"Artifact + capability_key + git SHA recorded in PROGRESS\", \"README has fal.ai quickstart\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live-pytest\", \"test-live\"], [\"manual-smoke\", \"ftyp\", \"MP4-magic\"]], \"failurePolicy\": \"block-on-fail\", \"gateScope\": \"task-only\"}\n```"
     }
