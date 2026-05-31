@@ -5,7 +5,9 @@ This module owns:
   * load_manifest() — reads YAML, resolves prompt_file paths, auto-indexes
     run_ids, returns a fully validated BatchManifest.
   * BatchOutcome / BatchResult dataclasses.
-  * batch_generate() — the orchestration entry point (added in Task 3).
+  * batch_generate() — the orchestration entry point that wraps
+    deploy_session, fans entries out via ThreadPoolExecutor, and writes
+    _batch_summary.json on every exit path.
 
 Core-import-ban: this module imports ONLY from kinoforge.core.* + stdlib
 + pydantic + PyYAML.  No kinoforge.providers / engines / sources.  The
@@ -15,14 +17,36 @@ subprocess isolation.
 
 from __future__ import annotations
 
+import copy
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from time import monotonic
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from kinoforge.core.errors import ConfigError
+from kinoforge.core.errors import (
+    BudgetExceeded,
+    CapabilityMismatch,
+    ConfigError,
+    TeardownError,
+)
+from kinoforge.core.logging import get_logger
+from kinoforge.stores.base import ArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.config import Config
+    from kinoforge.core.interfaces import (
+        ComputeProvider,
+        CredentialProvider,
+        GenerationEngine,
+        ModelProfileProvider,
+    )
+
+_log = get_logger(__name__)
 
 
 class BatchEntry(BaseModel):
@@ -206,3 +230,264 @@ class BatchResult:
                 for o in self.outcomes
             ],
         }
+
+
+def batch_generate(
+    cfg: Config,
+    manifest: BatchManifest,
+    *,
+    store: ArtifactStore,
+    batch_id: str,
+    concurrent: int | None = None,
+    provider: ComputeProvider | None = None,
+    engine: GenerationEngine | None = None,
+    creds: CredentialProvider | None = None,
+    profile_provider: ModelProfileProvider | None = None,
+    state_dir: Path = Path(".kinoforge"),
+) -> BatchResult:
+    """Run every entry in *manifest* on one shared deployed instance.
+
+    Lifecycle:
+
+    1. Open ``deploy_session(cfg, ...)`` — sets up backend, profile,
+       pool, optional instance.  Discover runs once on cold cache;
+       verify runs once on warm cache.
+    2. For each entry, build a per-entry
+       :class:`~kinoforge.pipeline.generate_clip.GenerateClipStage` with
+       shallow-merged params/spec (a *fresh* dict per entry so engine
+       mutations cannot leak into ``cfg`` or sibling entries) and
+       submit ``stage.run`` to an outer ``ThreadPoolExecutor`` sized by
+       ``concurrent`` (falling back to
+       ``cfg.lifecycle().max_in_flight``).
+    3. Collect via :func:`concurrent.futures.as_completed`.  Per-entry
+       exceptions become ``BatchOutcome(status="fail", error=...)`` —
+       the batch keeps running.  Batch-fatal exceptions
+       (:class:`BudgetExceeded`, :class:`CapabilityMismatch`,
+       :class:`TeardownError`) cancel queued futures, mark in-flight
+       entries as ``"interrupted"`` / ``"aborted"``, and re-raise.
+    4. In a ``finally`` block, write ``_batch_summary.json`` under
+       ``<batch_id>/`` on the store so every exit path (success,
+       per-entry fail, batch-fatal) leaves a parseable record.
+
+    Args:
+        cfg: The loaded kinoforge configuration.
+        manifest: A fully validated :class:`BatchManifest`
+            (use :func:`load_manifest`).
+        store: Destination :class:`~kinoforge.stores.base.ArtifactStore`
+            for per-entry outputs + the summary JSON.
+        batch_id: Top-level namespace for this batch's artifacts.
+        concurrent: Outer-executor size override.  Defaults to
+            ``cfg.lifecycle().max_in_flight``.
+        provider: Optional pre-constructed
+            :class:`~kinoforge.core.interfaces.ComputeProvider` (test
+            injection).
+        engine: Optional pre-constructed
+            :class:`~kinoforge.core.interfaces.GenerationEngine` (test
+            injection).
+        creds: Optional credential provider, forwarded to the
+            provisioner via :func:`deploy_session`.
+        profile_provider: Optional
+            :class:`~kinoforge.core.interfaces.ModelProfileProvider`
+            (test injection).  Defaults to
+            :class:`~kinoforge.core.profiles.JsonProfileCache`.
+        state_dir: Operator state root (provision markers, weights,
+            locks).
+
+    Returns:
+        A :class:`BatchResult` with one
+        :class:`BatchOutcome` per entry in submission order.
+
+    Raises:
+        BudgetExceeded: A per-entry stage breached the budget mid-batch.
+            The summary JSON is written before this propagates.
+        CapabilityMismatch: A live backend drifted from its cached
+            profile mid-batch.  Summary written before re-raise.
+        TeardownError: A teardown attempt failed inside
+            :func:`deploy_session`.  Summary written before re-raise.
+
+    Notes:
+        Setup-time exceptions raised by ``deploy_session.__enter__``
+        (``AuthError``, ``CapacityError``, ``UnknownAdapter``,
+        ``CapabilityMismatch`` from the verify path) propagate before
+        any per-entry work runs.  No summary is written in that case
+        because no batch state exists yet — the failure is a pre-flight
+        config / capacity problem, not a partial batch.
+    """
+    # Late imports keep this module import-light + avoid the runtime
+    # import cycle through orchestrator → pipeline → core.batch.
+    from kinoforge.core.interfaces import GenerationRequest
+    from kinoforge.core.orchestrator import deploy_session
+    from kinoforge.pipeline.generate_clip import GenerateClipStage
+
+    cap = concurrent if concurrent is not None else cfg.lifecycle().max_in_flight
+
+    started_at = datetime.now().isoformat(timespec="seconds")
+    outcomes_by_idx: dict[int, BatchOutcome] = {}
+    summary: BatchResult | None = None
+
+    try:
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=provider,
+            engine=engine,
+            creds=creds,
+            profile_provider=profile_provider,
+            run_id=batch_id,
+            state_dir=state_dir,
+        ) as session:
+            accepted_kinds: set[str]
+            if hasattr(session.engine, "accepted_kinds"):
+                accepted_kinds = session.engine.accepted_kinds
+            else:
+                accepted_kinds = {"image"}
+
+            executor = ThreadPoolExecutor(
+                max_workers=cap,
+                thread_name_prefix=f"kinoforge-batch-{batch_id}",
+            )
+            future_to_idx: dict[Future[Any], int] = {}
+            start_times: dict[int, float] = {}
+
+            try:
+                for idx, entry in enumerate(manifest.entries):
+                    # Merge cfg.params with entry.params via a deep
+                    # copy of the cfg side so neither cfg.params nor any
+                    # sibling entry's stage shares a mutable reference
+                    # with this entry's base_params.  A shallow
+                    # ``dict(cfg.params)`` would keep nested-dict
+                    # identity, letting a deliberately-bad-citizen
+                    # engine that does ``job.params["nested"]["a"] = 99``
+                    # corrupt cfg.params in place.  Entry-side overrides
+                    # are deep-copied too so the same protection
+                    # applies to per-entry nested dicts.
+                    merged_params = {
+                        **copy.deepcopy(dict(cfg.params)),
+                        **copy.deepcopy(entry.params or {}),
+                    }
+                    merged_spec = {
+                        **copy.deepcopy(dict(cfg.spec)),
+                        **copy.deepcopy(entry.spec or {}),
+                    }
+                    request = GenerationRequest(
+                        prompt=entry.prompt or "",
+                        mode=entry.mode,
+                        assets=[],
+                    )
+                    entry_run_id = f"{batch_id}/{entry.run_id}"
+                    stage = GenerateClipStage(
+                        profile=session.profile,
+                        pool=session.pool,
+                        store=store,
+                        run_id=entry_run_id,
+                        accepted_kinds=accepted_kinds,
+                        base_params=merged_params,
+                        base_spec=merged_spec,
+                        engine=session.engine,
+                    )
+                    start_times[idx] = monotonic()
+                    fut = executor.submit(stage.run, request)
+                    future_to_idx[fut] = idx
+
+                try:
+                    for fut in as_completed(future_to_idx.keys()):
+                        idx = future_to_idx[fut]
+                        entry = manifest.entries[idx]
+                        duration = monotonic() - start_times[idx]
+                        try:
+                            artifact = fut.result()
+                        except (
+                            BudgetExceeded,
+                            CapabilityMismatch,
+                            TeardownError,
+                        ) as exc:
+                            outcomes_by_idx[idx] = BatchOutcome(
+                                run_id=entry.run_id or str(idx),
+                                status="interrupted",
+                                duration_s=duration,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
+                            # Cancel everything else; mark queued as
+                            # "aborted", in-flight as "interrupted".
+                            for other_fut, other_idx in future_to_idx.items():
+                                if other_idx in outcomes_by_idx:
+                                    continue
+                                other_entry = manifest.entries[other_idx]
+                                if other_fut.cancel():
+                                    outcomes_by_idx[other_idx] = BatchOutcome(
+                                        run_id=(other_entry.run_id or str(other_idx)),
+                                        status="aborted",
+                                    )
+                                else:
+                                    other_duration = (
+                                        monotonic() - start_times[other_idx]
+                                    )
+                                    outcomes_by_idx[other_idx] = BatchOutcome(
+                                        run_id=(other_entry.run_id or str(other_idx)),
+                                        status="interrupted",
+                                        duration_s=other_duration,
+                                    )
+                            raise
+                        except Exception as exc:  # noqa: BLE001 — per-entry catch
+                            outcomes_by_idx[idx] = BatchOutcome(
+                                run_id=entry.run_id or str(idx),
+                                status="fail",
+                                duration_s=duration,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
+                        else:
+                            outcomes_by_idx[idx] = BatchOutcome(
+                                run_id=entry.run_id or str(idx),
+                                status="ok",
+                                duration_s=duration,
+                                uri=artifact.uri,
+                            )
+                finally:
+                    executor.shutdown(wait=True, cancel_futures=True)
+            finally:
+                # Build the ordered outcome list inside the
+                # deploy_session block so it lands in the summary even
+                # if the with-statement raises on exit.
+                ordered = [
+                    outcomes_by_idx.get(
+                        i,
+                        BatchOutcome(
+                            run_id=manifest.entries[i].run_id or str(i),
+                            status="aborted",
+                        ),
+                    )
+                    for i in range(len(manifest.entries))
+                ]
+                finished_at = datetime.now().isoformat(timespec="seconds")
+                summary = BatchResult(
+                    batch_id=batch_id,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    outcomes=ordered,
+                )
+    finally:
+        # Persist the summary on EVERY exit path: clean batch,
+        # per-entry-fail batch, BudgetExceeded re-raise.  Failure to
+        # write is logged but never escalates — the in-memory
+        # BatchResult is still returned (or the original exception
+        # re-raised).
+        if summary is not None:
+            try:
+                store.put_json(batch_id, "_batch_summary.json", summary.to_dict())
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "failed to write _batch_summary.json for batch_id=%s",
+                    batch_id,
+                )
+
+    # If we reach this point the deploy_session exited cleanly (no
+    # batch-fatal re-raise) so the finally above must have built the
+    # summary.  A None here would indicate a programming error in the
+    # try/finally structure — surface it loudly instead of silently
+    # returning a fake placeholder.
+    if summary is None:  # pragma: no cover — defensive
+        raise RuntimeError(
+            "batch_generate: summary was not constructed before return; "
+            "this indicates a bug in the deploy_session finally block"
+        )
+    return summary
