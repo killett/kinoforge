@@ -14,14 +14,11 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import kinoforge.stores.gcs.lock as _gcs_lock  # noqa: PLC0415
 from kinoforge.core.interfaces import Artifact
+from kinoforge.core.locks import Lock
 from kinoforge.stores.base import ArtifactStore
-
-if TYPE_CHECKING:
-    from kinoforge.core.locks import Lock
 
 
 class GCSArtifactStore(ArtifactStore):
@@ -134,8 +131,10 @@ class GCSArtifactStore(ArtifactStore):
             ttl_s: Lease duration in seconds.
 
         Returns:
-            A fresh :class:`~kinoforge.stores.gcs.lock.GCSCloudLock` instance.
+            A fresh :class:`~kinoforge.stores.gcs.lock.GCSCloudLock`.
         """
+        import kinoforge.stores.gcs.lock as _gcs_lock  # noqa: PLC0415
+
         return _gcs_lock.GCSCloudLock(store=self, key=key, ttl_s=ttl_s)
 
 
