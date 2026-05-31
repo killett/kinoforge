@@ -276,6 +276,22 @@ The walker returns `""` for missing paths or non-string terminals; the
 engine then raises `FrameExtractionError` rather than fetching a bogus
 URL. Array indexing (e.g. `results[0].url`) is not supported.
 
+### Cross-engine prompt routing
+
+The user prompt supplied at the CLI (or via `GenerationRequest.prompt`)
+is placed on `Segment.prompt` by the orchestrator. `HostedAPIBackend`,
+`DiffusersBackend`, `ComfyUIBackend`, and `FalBackend` all route it
+into their request body via `kinoforge.core.prompt_routing.resolve_prompt`.
+
+- Hosted / Diffusers / Fal: top-level `body["prompt"]` (configurable
+  on hosted/diffusers via `engine.<name>.prompt_body_key`; set to
+  `null` to disable).
+- ComfyUI: into `node_overrides[node_id]["inputs"]["text"]` for each
+  entry in `spec["prompt_node_ids"]` (declare in spec alongside
+  `asset_node_ids`).
+
+An explicit `spec["prompt"]` always wins over the segment-supplied prompt.
+
 ### Engine asset wiring — non-native multi-segment continuity
 
 Non-native multi-segment runs (engines whose `ModelProfile` reports

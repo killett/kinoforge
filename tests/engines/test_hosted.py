@@ -628,13 +628,16 @@ def test_submit_writes_asset_uri_at_nested_dot_path() -> None:
 
 
 def test_submit_no_asset_paths_unchanged() -> None:
-    """Pre-Layer-F regression: with no asset_paths configured, the POST
-    body equals job.spec exactly — no phantom keys, no copies via the
-    asset-injection loop mutating shape.
+    """Pre-Layer-F regression: with no asset_paths configured AND prompt
+    routing disabled, the POST body equals job.spec exactly — no phantom
+    keys, no copies via the asset-injection loop mutating shape.
 
     Bug catch: a refactor that always wraps body in {"input": ...} or
     leaves residue of an empty-iteration dot-path setter would break
     every existing hosted template.
+
+    Note: ``prompt_body_key=None`` opts out of Layer J prompt routing so
+    this test isolates the asset-injection invariant.
     """
     from kinoforge.engines.hosted import HostedAPIBackend
 
@@ -649,6 +652,7 @@ def test_submit_no_asset_paths_unchanged() -> None:
         http_get=lambda u: {},
         endpoint="https://api.example.com/v1/predict",
         probe_profile=_DEFAULT_PROBE,
+        prompt_body_key=None,
     )
     job = GenerationJob(
         spec={"model": "vendor/m", "params": {}},
@@ -810,3 +814,197 @@ models:
     assert backend._asset_paths == {"init_image": "input.image_url"}
     # Engine mirror must also be populated for validate_spec.
     assert engine._asset_paths == {"init_image": "input.image_url"}
+
+
+# ---------------------------------------------------------------------------
+# Layer J Task 3: cross-engine prompt-routing tests
+# ---------------------------------------------------------------------------
+
+
+def test_submit_falls_back_to_segment_prompt() -> None:
+    """submit() routes segments[0].prompt into body["prompt"] when spec lacks it.
+
+    Bug catch: without the helper-driven fallback, an orchestrator-built job
+    (which carries the user prompt on Segment, not in spec) would POST a body
+    with no prompt to the hosted endpoint, which silently 422s or returns an
+    empty-prompt render.
+    """
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.hosted import HostedAPIBackend
+
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posts.append((url, body))
+        return {"job_id": "j1"}
+
+    backend = HostedAPIBackend(
+        http_post=fake_post,
+        http_get=lambda url: {"status": "done"},
+        endpoint="https://x.example/inf",
+        probe_profile=_DEFAULT_PROBE,
+        prompt_body_key="prompt",
+    )
+    job = GenerationJob(
+        spec={"model": "m", "params": {}},
+        segments=[Segment(prompt="a fox", params={}, assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0][1]["prompt"] == "a fox"
+
+
+def test_submit_spec_prompt_wins_over_segment_prompt_hosted() -> None:
+    """Explicit spec.prompt is preserved — over-eager fallback would clobber
+    a config-supplied wrapper prompt with the raw segment text."""
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.hosted import HostedAPIBackend
+
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posts.append((url, body))
+        return {"job_id": "j1"}
+
+    backend = HostedAPIBackend(
+        http_post=fake_post,
+        http_get=lambda url: {"status": "done"},
+        endpoint="https://x.example/inf",
+        probe_profile=_DEFAULT_PROBE,
+        prompt_body_key="prompt",
+    )
+    job = GenerationJob(
+        spec={"model": "m", "params": {}, "prompt": "explicit"},
+        segments=[Segment(prompt="from-seg", params={}, assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0][1]["prompt"] == "explicit"
+
+
+def test_submit_skips_routing_when_prompt_body_key_none() -> None:
+    """prompt_body_key=None opts out of routing — body must NOT gain a
+    "prompt" key from the segment.
+
+    Bug catch: a leaky fallback that inspects segments unconditionally
+    would add unwanted fields to a body shape the endpoint does not accept.
+    """
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.hosted import HostedAPIBackend
+
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posts.append((url, body))
+        return {"job_id": "j1"}
+
+    backend = HostedAPIBackend(
+        http_post=fake_post,
+        http_get=lambda url: {"status": "done"},
+        endpoint="https://x.example/inf",
+        probe_profile=_DEFAULT_PROBE,
+        prompt_body_key=None,
+    )
+    job = GenerationJob(
+        spec={"model": "m", "params": {}},
+        segments=[Segment(prompt="ignored", params={}, assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert "prompt" not in posts[0][1]
+
+
+def test_validate_spec_raises_when_routing_configured_and_no_prompt() -> None:
+    """Opt-in validation: prompt_body_key="prompt" with no prompt anywhere
+    must raise before the misconfigured POST reaches the network.
+
+    Bug catch: silent fallthrough would let the empty-body defect resurface
+    despite the cfg field signalling user intent to route a prompt.
+    """
+    import pytest
+
+    from kinoforge.core.errors import ValidationError
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.hosted import HostedAPIEngine
+
+    engine = HostedAPIEngine()
+    # Simulate ``backend()`` having mirrored the cfg routing key.
+    engine._prompt_body_key = "prompt"
+    job = GenerationJob(
+        spec={"model": "m", "params": {}},
+        segments=[Segment(prompt="", params={}, assets=[])],
+        params={},
+    )
+    with pytest.raises(ValidationError, match="prompt_body_key is configured"):
+        engine.validate_spec(job)
+
+
+def test_validate_spec_passes_when_routing_disabled_and_no_prompt() -> None:
+    """Legacy YAML without prompt_body_key (or prompt_body_key=None) must
+    not gain a new failure mode — validate_spec must still pass for jobs
+    that drive the prompt entirely via params.prompt.
+    """
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.hosted import HostedAPIEngine
+
+    engine = HostedAPIEngine()
+    engine._prompt_body_key = None  # opt-out
+    job = GenerationJob(
+        spec={"model": "m", "params": {"prompt": "nested"}},
+        segments=[Segment(prompt="", params={}, assets=[])],
+        params={},
+    )
+    engine.validate_spec(job)  # must NOT raise
+
+
+def test_yaml_prompt_body_key_routes_through_engine_backend() -> None:
+    """End-to-end: a YAML config with engine.hosted.prompt_body_key="input"
+    produces a backend whose submit writes into body["input"].
+
+    Bug catch: this closes the Layer-I cfg-strip defect class (commit
+    484e368) for the new field — pydantic must NOT silently drop
+    prompt_body_key on the path from YAML → Config → cfg dict →
+    engine.backend(cfg) → HostedAPIBackend.
+    """
+    import yaml as _yaml
+
+    from kinoforge.core.config import Config
+    from kinoforge.core.interfaces import GenerationJob, Segment
+    from kinoforge.engines.hosted import HostedAPIEngine
+
+    yaml_doc = """
+engine:
+  kind: hosted
+  precision: ""
+  hosted:
+    provider: p
+    endpoint: "https://x.example/y"
+    model: "m"
+    api_key_env: "X_KEY"
+    prompt_body_key: input
+models:
+  - {ref: "https://x.example/m.safetensors", kind: base, target: checkpoints}
+lifecycle:
+  budget: 1.0
+"""
+    cfg = Config.model_validate(_yaml.safe_load(yaml_doc))
+    cfg_dict = cfg.model_dump()
+
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posts.append((url, body))
+        return {"job_id": "j1"}
+
+    engine = HostedAPIEngine(
+        http_post=fake_post, http_get=lambda url: {"status": "done"}
+    )
+    backend = engine.backend(None, cfg_dict)
+    job = GenerationJob(
+        spec={"model": "m", "params": {}},
+        segments=[Segment(prompt="from-seg", params={}, assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posts[0][1]["input"] == "from-seg"
+    assert "prompt" not in posts[0][1]  # only the configured key, not the default

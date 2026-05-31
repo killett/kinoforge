@@ -142,6 +142,7 @@ class DiffusersBackend(GenerationBackend):
         probe_profile: ModelProfile,
         sleep: Callable[[float], None] = time.sleep,
         asset_paths: dict[str, str] | None = None,
+        prompt_body_key: str | None = "prompt",
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -158,6 +159,9 @@ class DiffusersBackend(GenerationBackend):
                 from this map are not injected.  URL passthrough only —
                 ``submit`` never fetches the asset bytes; the diffusers
                 server fetches the URL.
+            prompt_body_key: Top-level body key written from
+                ``resolve_prompt(job)`` when no explicit ``spec["prompt"]``
+                is provided. ``None`` / empty disables routing entirely.
         """
         self._http_post = http_post
         self._http_get = http_get
@@ -165,6 +169,7 @@ class DiffusersBackend(GenerationBackend):
         self._probe = probe_profile
         self._sleep = sleep
         self._asset_paths: dict[str, str] = dict(asset_paths or {})
+        self._prompt_body_key: str | None = prompt_body_key
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -203,7 +208,15 @@ class DiffusersBackend(GenerationBackend):
         Returns:
             The ``job_id`` string from the server response.
         """
+        from kinoforge.core.prompt_routing import (
+            resolve_prompt,  # local — avoid circular at module load
+        )
+
         body = dict(job.spec)
+        if self._prompt_body_key:
+            prompt = resolve_prompt(job)
+            if prompt is not None:
+                body.setdefault(self._prompt_body_key, prompt)
         for role, dot_path in self._asset_paths.items():
             asset = find_asset(job, role)
             if asset is None:
@@ -324,6 +337,10 @@ class DiffusersEngine(GenerationEngine):
         # from ``cfg["engine"]["diffusers"]["asset_paths"]`` and mirrored
         # onto the engine so ``validate_spec`` can check it.
         self._asset_paths: dict[str, str] = {}
+        # Prompt-routing config: top-level body key mirrored from
+        # ``cfg["engine"]["diffusers"]["prompt_body_key"]`` at backend()
+        # time. ``None`` disables routing.
+        self._prompt_body_key: str | None = "prompt"
 
     def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
         """Install pip deps and launch the headless diffusers inference server.
@@ -386,6 +403,13 @@ class DiffusersEngine(GenerationEngine):
         # Mirror onto the engine so ``validate_spec`` (called from outside
         # via the ABC) can consult the same map.
         self._asset_paths = asset_paths
+        prompt_body_key_raw = diffusers_cfg.get("prompt_body_key", "prompt")
+        prompt_body_key: str | None = (
+            prompt_body_key_raw
+            if isinstance(prompt_body_key_raw, str) and prompt_body_key_raw
+            else None
+        )
+        self._prompt_body_key = prompt_body_key
         return DiffusersBackend(
             http_post=self._http_post,
             http_get=self._http_get,
@@ -393,6 +417,7 @@ class DiffusersEngine(GenerationEngine):
             probe_profile=self._probe,
             sleep=self._sleep,
             asset_paths=asset_paths,
+            prompt_body_key=prompt_body_key,
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
@@ -448,6 +473,16 @@ class DiffusersEngine(GenerationEngine):
             raise ValidationError(
                 f"Diffusers job.spec is missing required keys: {sorted(missing)}"
             )
+        if self._prompt_body_key:
+            from kinoforge.core.prompt_routing import resolve_prompt
+
+            if resolve_prompt(job) is None:
+                raise ValidationError(
+                    "diffusers prompt_body_key is configured but no prompt found in "
+                    "job.spec or segments[0] — set spec.prompt, set "
+                    "segments[0].prompt, or disable routing with "
+                    "engine.diffusers.prompt_body_key: null"
+                )
         if not job.segments:
             return
         for asset in job.segments[0].assets:

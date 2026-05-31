@@ -131,6 +131,11 @@ class HostedEngineConfig(BaseModel):
             (e.g. ``"init_image"``) to a dot-path in the request body
             where the asset's URL is injected at submit time. Defaults
             to an empty mapping.
+        prompt_body_key: Top-level key in the request body where the
+            user prompt is written by ``HostedAPIBackend.submit`` when
+            the spec does not carry an explicit ``"prompt"``. Defaults
+            to ``"prompt"``; set to ``None`` (YAML ``null``) to disable
+            routing for endpoints that reject unknown top-level fields.
 
     Declaring ``url_path`` and ``asset_paths`` here is load-bearing:
     pydantic v2's default ``extra="ignore"`` silently drops any YAML
@@ -147,6 +152,7 @@ class HostedEngineConfig(BaseModel):
     health_url: str = ""
     url_path: str = ""
     asset_paths: dict[str, str] = Field(default_factory=dict)
+    prompt_body_key: str | None = "prompt"
 
     @field_validator("api_key_env")
     @classmethod
@@ -192,6 +198,11 @@ class DiffusersEngineConfig(BaseModel):
         server_cmd: Argv to launch the local inference server.
         asset_paths: Mapping from conditioning-asset role to a dot-path
             in the request body for URL injection at submit time.
+        prompt_body_key: Top-level key in the request body where the
+            user prompt is written by ``DiffusersBackend.submit`` when
+            the spec does not carry an explicit ``"prompt"``. Defaults
+            to ``"prompt"``; set to ``None`` (YAML ``null``) to disable
+            routing for endpoints that reject unknown top-level fields.
 
     See :class:`HostedEngineConfig` for the rationale behind declaring
     every YAML-consumed field: without this model, ``EngineConfig``
@@ -203,6 +214,7 @@ class DiffusersEngineConfig(BaseModel):
     pip: list[str] = Field(default_factory=list)
     server_cmd: list[str] = Field(default_factory=list)
     asset_paths: dict[str, str] = Field(default_factory=dict)
+    prompt_body_key: str | None = "prompt"
 
 
 class FalEngineConfig(BaseModel):
