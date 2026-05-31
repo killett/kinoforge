@@ -72,6 +72,10 @@ def ffmpeg_last_frame(
         PNG-encoded last frame as bytes.
 
     Raises:
-        FrameExtractionError: ffmpeg exited non-zero or *run* raised.
+        FrameExtractionError: When the default ``_default_run`` seam is used
+            and either ``ffmpeg`` is missing from PATH or ffmpeg exits
+            non-zero. Custom seams that raise other exception types
+            propagate unchanged — wrap or convert them in the seam if a
+            single failure type is needed.
     """
     return run(_FFMPEG_ARGV, video_bytes)

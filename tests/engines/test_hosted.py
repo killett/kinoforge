@@ -117,23 +117,20 @@ def _make_engine(
     creds: CredentialProvider | None = None,
     http_get: Any = _ok_http_get,
     http_post: Any = _ok_http_post,
-    http_get_bytes: Any = None,
-    ffmpeg_run: Any = None,
+    http_get_bytes: Any = lambda url: b"",
+    ffmpeg_run: Any = lambda argv, stdin: b"",
     probe_profile: ModelProfile = _DEFAULT_PROBE,
     declared_flags_map: dict[str, dict[str, bool]] | None = None,
 ) -> HostedAPIEngine:
-    kwargs: dict[str, Any] = {
-        "creds": creds or _DictCreds(_make_creds()),
-        "http_get": http_get,
-        "http_post": http_post,
-        "probe_profile": probe_profile,
-        "declared_flags_map": declared_flags_map,
-    }
-    if http_get_bytes is not None:
-        kwargs["http_get_bytes"] = http_get_bytes
-    if ffmpeg_run is not None:
-        kwargs["ffmpeg_run"] = ffmpeg_run
-    return HostedAPIEngine(**kwargs)
+    return HostedAPIEngine(
+        creds=creds or _DictCreds(_make_creds()),
+        http_get=http_get,
+        http_post=http_post,
+        http_get_bytes=http_get_bytes,
+        ffmpeg_run=ffmpeg_run,
+        probe_profile=probe_profile,
+        declared_flags_map=declared_flags_map,
+    )
 
 
 def _make_job(spec: dict[str, Any] | None = None) -> GenerationJob:
