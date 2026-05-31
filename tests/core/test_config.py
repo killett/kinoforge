@@ -9,7 +9,11 @@ HOSTED = """
 engine:
   kind: hosted
   precision: ""
-  hosted: {provider: fal, endpoint: "x", model: ltx-2}
+  hosted:
+    provider: fal
+    endpoint: "https://fal.run/x"
+    model: ltx-2
+    api_key_env: FAL_KEY
 lifecycle: {budget: 25.0}
 models:
   - {ref: "hf:org/m", kind: base, target: diffusion_models}
@@ -346,7 +350,9 @@ def test_hosted_cfg_asset_paths_defaults_empty() -> None:
     """
     from kinoforge.core.config import HostedEngineConfig
 
-    cfg = HostedEngineConfig(provider="fal", endpoint="x", model="m")
+    cfg = HostedEngineConfig(
+        provider="fal", endpoint="https://e", model="m", api_key_env="K"
+    )
     assert cfg.asset_paths == {}
 
 
@@ -359,7 +365,9 @@ def test_hosted_cfg_url_path_defaults_empty() -> None:
     """
     from kinoforge.core.config import HostedEngineConfig
 
-    cfg = HostedEngineConfig(provider="fal", endpoint="x", model="m")
+    cfg = HostedEngineConfig(
+        provider="fal", endpoint="https://e", model="m", api_key_env="K"
+    )
     assert cfg.url_path == ""
 
 
@@ -442,3 +450,59 @@ def test_diffusers_cfg_asset_paths_defaults_empty() -> None:
     assert cfg.pip == []
     assert cfg.server_cmd == []
     assert cfg.base_url == ""
+
+
+# ---------------------------------------------------------------------------
+# Layer I Task 4 — HostedEngineConfig load-time validators
+# Move two config errors from runtime to load: empty api_key_env (Bug 7)
+# and relative endpoint (Bug 2).
+# ---------------------------------------------------------------------------
+
+
+def test_hosted_validator_rejects_empty_api_key_env() -> None:
+    """HostedEngineConfig must reject empty api_key_env at load.
+
+    Bug catch: empty api_key_env propagates to runtime as AuthError("missing ")
+    with no context.  Catch it at config load instead.
+    """
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import HostedEngineConfig
+
+    with pytest.raises(ValidationError) as exc_info:
+        HostedEngineConfig(
+            provider="x", endpoint="https://e", model="m", api_key_env=""
+        )
+    assert "api_key_env" in str(exc_info.value)
+
+
+def test_hosted_validator_rejects_relative_endpoint() -> None:
+    """HostedEngineConfig must reject relative endpoint paths at load.
+
+    Bug catch: relative endpoint like '/fal-ai/x' crashes urllib mid-flight
+    with ValueError: unknown url type.  Catch it at config load instead.
+    """
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import HostedEngineConfig
+
+    with pytest.raises(ValidationError) as exc_info:
+        HostedEngineConfig(
+            provider="x", endpoint="/relative/path", model="m", api_key_env="K"
+        )
+    assert "endpoint" in str(exc_info.value)
+
+
+def test_hosted_validator_accepts_well_formed_config() -> None:
+    """A correctly-formed HostedEngineConfig constructs without error."""
+    from kinoforge.core.config import HostedEngineConfig
+
+    cfg = HostedEngineConfig(
+        provider="x",
+        endpoint="https://example.com/api",
+        model="m",
+        api_key_env="MY_KEY",
+        health_url="",
+    )
+    assert cfg.endpoint == "https://example.com/api"
+    assert cfg.api_key_env == "MY_KEY"

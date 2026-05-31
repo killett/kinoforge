@@ -148,6 +148,37 @@ class HostedEngineConfig(BaseModel):
     url_path: str = ""
     asset_paths: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("api_key_env")
+    @classmethod
+    def _check_api_key_env_non_empty(cls, v: str) -> str:
+        """Reject empty api_key_env at config load (Layer I Task 4 / Bug 7).
+
+        Without this, a missing/empty api_key_env propagates to runtime as
+        ``AuthError("missing ")`` with no context.  Catching it here turns
+        the failure into a load-time pydantic ValidationError naming the
+        offending field.
+        """
+        if not v:
+            raise ValueError(
+                "engine.hosted.api_key_env must be a non-empty string "
+                "(name of the env var carrying the API credential)"
+            )
+        return v
+
+    @field_validator("endpoint")
+    @classmethod
+    def _check_endpoint_absolute_url(cls, v: str) -> str:
+        """Reject relative endpoints at config load (Layer I Task 4 / Bug 2).
+
+        A relative path like ``/fal-ai/x`` would crash urllib mid-flight
+        with ``ValueError: unknown url type``; surface it at load instead.
+        """
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError(
+                f"engine.hosted.endpoint must be an absolute http(s):// URL, got {v!r}"
+            )
+        return v
+
 
 class DiffusersEngineConfig(BaseModel):
     """DiffusersEngine-specific parameters.

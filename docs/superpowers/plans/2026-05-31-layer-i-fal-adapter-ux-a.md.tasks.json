@@ -1,23 +1,23 @@
 {
   "planPath": "docs/superpowers/plans/2026-05-31-layer-i-fal-adapter-ux-a.md",
-  "lastUpdated": "2026-05-31T08:47:10Z",
+  "lastUpdated": "2026-05-31T12:00:00Z",
   "tasks": [
     {
       "id": 1,
       "subject": "Task 1: Provisioner cfg-dict regression — Diffusers + ComfyUI",
-      "status": "pending",
+      "status": "completed",
       "description": "Append regression tests test_diffusers_provision_receives_dict_cfg + test_comfyui_provision_receives_dict_cfg to tests/core/test_provisioner.py. Lock down full blast radius of provisioner cfg-dict bug (hot-fix e78cafc). See plan doc Task 1 for full code.\n\n```json:metadata\n{\"files\": [\"tests/core/test_provisioner.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_provisioner.py -v -k 'diffusers_provision_receives_dict or comfyui_provision_receives_dict'\", \"acceptanceCriteria\": [\"test_diffusers_provision_receives_dict_cfg passes\", \"test_comfyui_provision_receives_dict_cfg passes\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: declared_flags WARNING → DEBUG on fresh-discovery path",
-      "status": "pending",
+      "status": "completed",
       "description": "Downgrade declared_flags WARNING to DEBUG in JsonProfileCache.discover() (fresh-discovery, probe is source of truth). Keep WARNING in verify() where it signals real drift. See plan doc Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/profiles.py\", \"tests/core/test_profiles.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_profiles.py -v\", \"acceptanceCriteria\": [\"discover() empty declared_flags logs DEBUG\", \"verify() empty declared_flags logs WARNING\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: FakeEngine.declared_flags_map default for local-fake.yaml key",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "Populate FakeEngine.declared_flags_map with entry matching local-fake.yaml capability key. Local-fake smoke should produce no WARNING records. See plan doc Task 3.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/fake/__init__.py\", \"tests/engines/test_fake.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_fake.py -v -k declared_flags\", \"acceptanceCriteria\": [\"declared_flags returns populated dict for local-fake key\", \"Manual smoke produces no WARNING records\"]}\n```"
     },
