@@ -62,7 +62,7 @@ class _ListPool(BackendPool):
     def __init__(self, backend: GenerationBackend) -> None:
         self._backends: list[GenerationBackend] = [backend]
 
-    def add(self, backend: GenerationBackend) -> None:
+    def add(self, backend: GenerationBackend, *, max_in_flight: int = 1) -> None:  # noqa: D102
         self._backends.append(backend)
 
     def submit(self, job: GenerationJob) -> Future[Artifact]:
@@ -75,6 +75,9 @@ class _ListPool(BackendPool):
 
     def map(self, jobs: list[GenerationJob]) -> list[Artifact]:
         return [self.submit(j).result() for j in jobs]
+
+    def close(self) -> None:  # noqa: D102
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -212,3 +215,52 @@ def test_submit_no_backends_raises():
     job = _simple_job()
     with pytest.raises(RuntimeError, match="no registered backend"):
         pool.submit(job)
+
+
+# ---------------------------------------------------------------------------
+# Layer G: close() + context-manager parity
+# ---------------------------------------------------------------------------
+
+
+def test_sequential_pool_close_is_noop():
+    """SequentialPool.close() is safe to call on an empty pool (no exception)."""
+    pool = SequentialPool()
+    pool.close()  # no exception = passing the no-op contract
+
+
+def test_sequential_pool_close_is_idempotent():
+    """Calling close() twice is a no-op (no exception)."""
+    probe = _profile()
+    backend = FakeBackend(probe=probe)
+    pool = SequentialPool(backend)
+    pool.close()
+    pool.close()  # must not raise
+
+
+def test_sequential_pool_as_context_manager_calls_close():
+    """`with SequentialPool() as pool:` exits cleanly and pool is closed."""
+    probe = _profile()
+    backend = FakeBackend(probe=probe)
+    closed_called: list[bool] = []
+
+    class _SpyPool(SequentialPool):
+        def close(self) -> None:
+            closed_called.append(True)
+            super().close()
+
+    with _SpyPool(backend) as pool:
+        assert isinstance(pool, _SpyPool)
+        assert pool.submit(_simple_job("hi")).result() is not None
+    assert closed_called == [True]
+
+
+def test_sequential_pool_add_accepts_max_in_flight_kwarg():
+    """add(backend, max_in_flight=N) is accepted; SequentialPool ignores N."""
+    probe = _profile()
+    backend = FakeBackend(probe=probe)
+    pool = SequentialPool()
+    pool.add(backend, max_in_flight=4)  # must not raise
+    assert len(pool._backends) == 1
+    # Still uses _backends[0] regardless of cap; verify by submitting.
+    result = pool.submit(_simple_job("after-add")).result()
+    assert result is not None

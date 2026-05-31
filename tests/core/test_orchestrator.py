@@ -804,3 +804,41 @@ class TestSplitterWiring:
             cfg, request, store=store, provider=provider, engine=engine, run_id="r4"
         )
         assert artifact.uri  # store URI populated
+
+
+# ---------------------------------------------------------------------------
+# Layer G Task 5: orchestrator closes ConcurrentPool after generate()
+# ---------------------------------------------------------------------------
+
+
+def test_generate_closes_concurrent_pool_after_run(tmp_path: Path) -> None:
+    """orchestrator.generate() closes its ConcurrentPool on return.
+
+    Spies on ConcurrentPool by monkey-patching close() to record the call,
+    then verifies it was called exactly once after generate() returns.
+    """
+    from kinoforge.core import pool as pool_mod
+
+    close_calls: list[bool] = []
+    original_close = pool_mod.ConcurrentPool.close
+
+    def _spy_close(self: pool_mod.ConcurrentPool) -> None:
+        close_calls.append(True)
+        original_close(self)
+
+    pool_mod.ConcurrentPool.close = _spy_close  # type: ignore[method-assign]
+    try:
+        cfg = _compute_cfg()
+        engine = _make_engine()
+        provider = LocalProvider()
+        store = LocalArtifactStore(tmp_path)
+        request = GenerationRequest(prompt="a sunset", mode="t2v")
+
+        result = generate(cfg, request, store=store, provider=provider, engine=engine)
+        assert result is not None
+        assert close_calls == [True], (
+            f"orchestrator did not close the pool exactly once; "
+            f"close_calls={close_calls}"
+        )
+    finally:
+        pool_mod.ConcurrentPool.close = original_close  # type: ignore[method-assign]
