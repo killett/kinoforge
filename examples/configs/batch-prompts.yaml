@@ -1,0 +1,24 @@
+# Example batch manifest. Run with:
+#   kinoforge batch -c examples/configs/wan.yaml --manifest examples/configs/batch-prompts.yaml
+#
+# All three entries share one deploy. Each entry's outputs land under
+# .kinoforge/<batch_id>/<run_id>/. The default batch_id is
+# `batch-YYYYMMDD-HHMMSS` in local timezone; pass --batch-id ID to override.
+
+- prompt: "Waves crashing on basalt cliffs at dusk, long-exposure foam trails."
+  mode: t2v
+  run_id: waves
+
+- prompt_file: prompts/forest.txt        # resolved relative to this manifest's dir
+  mode: t2v
+  run_id: forest
+  params:
+    seed: 42                              # per-entry param overrides
+
+- prompt_file: prompts/dawn-flight.md
+  mode: i2v
+  run_id: dawn
+  assets:
+    - kind: image
+      role: init_image
+      ref: "file:///workspace/seed/dawn.png"
