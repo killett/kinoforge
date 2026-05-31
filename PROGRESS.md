@@ -148,12 +148,25 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer K merged to main at `13fc395`.** Spec & params routing shipped — hosted/diffusers/comfyui now drive end-to-end through the orchestrator with YAML-supplied `spec:` + `params:` blocks. PROGRESS:154 follow-up #1 closed.
+**Layer L complete on `build/layer-l`.** `kinoforge batch` ships shared-deploy fan-out across N entries with continue-on-error semantics + machine-readable `_batch_summary.json`. PROGRESS:155 follow-up #3 closed. Next layer is TBD — review the remaining follow-ups below or open a new candidate.
 
-**Pending follow-ups (Layer L candidate):**
+**Pending follow-ups:**
 - `GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).
 - `engine.hosted.model` ↔ `spec.model` duplication collapse (Layer K hosted YAML ambiguity).
-- `kinoforge batch` CLI subcommand: accept multiple `--prompt-file PATH` (or `--prompt TEXT`) with `--concurrent N`. Today producing N clips requires N parallel shell invocations, which is error-prone (e.g. `vars && cmd1 & cmd2` accidentally scopes vars to the backgrounded subshell). A batch subcommand owns the parallel-dispatch shape so users / LLMs never construct the shell pipeline by hand. Needs decisions on per-prompt cfg overrides, naming, shared vs per-call budget/ledger.
+- ~~`kinoforge batch` CLI subcommand~~ — **CLOSED** by Phase 22 (Layer L), see below.
+
+**Layer L Task 4 — streaming per-entry log lines (DEFERRED, ships in a later follow-up):**
+- Layer L spec §5 and the plan show streaming per-entry markers during the run
+  (`[batch-...] waves start`, `[batch-...] waves ok 14.2s ...`), but the CLI as
+  shipped at `c940da9` only prints the initial `manifest loaded` header and the
+  final per-entry summary table. The final table already shows everything users
+  need post-run, and none of the 6 batch-CLI tests assert mid-run output, so the
+  visible UAT contract is met — but the spec/plan and the implementation now
+  disagree on intra-run progress. Closing this gap requires a callback hook into
+  `batch_generate` (since `core/` cannot print directly without breaking the
+  core-import-ban invariant); deferring keeps Task 4 focused and lets a future
+  contributor add the seam + a streaming-output test in one self-contained
+  change. Owner: whoever picks up Layer L Task 5 or a follow-up polish phase.
 
 ## Post-MVP
 
@@ -296,3 +309,24 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 **Hosted YAML ambiguity (carried forward):** `engine.hosted.model` (cache identity, fed to `key_base(cfg)`) and `spec.model` (wire body) coincide today but are read by different callers. Documented in `examples/configs/hosted.yaml` comment block; collapsing them is a Layer-L+ candidate.
 
 **Test count:** 708 tests passed + 1 skipped (was 693 + 1 skipped before Layer K, +15 net).
+
+### Phase 22 — Layer L (`kinoforge batch` CLI)
+
+- [x] Task 1: deploy_session context manager extraction — commit `f971c4c` (+ polish `25b4dc7`)
+- [x] Task 2: core/batch.py manifest models + load_manifest — commit `def94dc` (+ polish `ac06873`)
+- [x] Task 3: batch_generate() core function — commit `f06fa3b` (+ polish `6122215`)
+- [x] Task 4: kinoforge batch CLI subcommand — commit `4e8a564` (+ polish `c940da9` + streaming-log deferral note `38d5394`)
+- [x] Task 5: examples + README + PROGRESS + full gate — commit `cc50ba8`
+
+**Key design decisions:**
+- Shared deploy across N entries (Q1=A): one `create_instance`, ConcurrentPool fans entries; `deploy_session` is the reusable seam.
+- YAML manifest with per-entry `prompt`/`prompt_file` (Q2=A): pydantic `extra="forbid"` + exactly-one-of validator; `prompt_file` paths resolve relative to the manifest's parent dir; auto-indexed `run_id` when omitted.
+- `batch_id` default `batch-YYYYMMDD-HHMMSS` in LOCAL timezone (Q3 clarification): override with `--batch-id`.
+- Continue-on-error per entry; batch-fatal on `BudgetExceeded` / `CapabilityMismatch` / `TeardownError` (Q4=A) → cancel queued + exit code 2.
+- `deploy_session` extraction (Q5=B refactor): both `generate()` and `batch_generate()` consume it; zero behavior change to `generate()` — all 708 pre-Layer-L tests pass unmodified.
+- `_batch_summary.json` written in a `finally` clause regardless of exit path; in-flight entries at fatal-abort time are recorded as `interrupted`.
+- Per-entry param/spec overrides are shallow-merged onto `cfg.params` / `cfg.spec` (entry wins per key) via a fresh `dict(...)` copy at stage construction — no mutation leaks to siblings or to `cfg`.
+
+**Streaming per-entry log lines (DEFERRED):** the CLI prints the initial `manifest loaded` header and the final per-entry summary table but no mid-run markers — see the "Layer L Task 4" note in the Single-next-action block above (committed at `38d5394`). Closing the gap requires a callback hook into `batch_generate` so `core/` does not print directly. Future contributor picks this up as a self-contained polish phase.
+
+**Test count:** 741 tests passed + 1 skipped before Task 5 → 743 tests passed + 1 skipped after Task 5 (+35 net across Layer L; pre-Layer-L baseline was 708 + 1).

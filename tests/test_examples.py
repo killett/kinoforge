@@ -266,3 +266,39 @@ def test_fal_and_local_fake_yaml_have_empty_spec() -> None:
     fake_cfg = load_config(EXAMPLES_DIR / "local-fake.yaml")
     assert fal_cfg.spec == {}
     assert fake_cfg.spec == {}
+
+
+# ---------------------------------------------------------------------------
+# Layer L — batch manifest example
+# ---------------------------------------------------------------------------
+
+from kinoforge.core.batch import load_manifest  # noqa: E402
+
+
+def test_batch_prompts_example_loads() -> None:
+    """examples/configs/batch-prompts.yaml must parse cleanly.
+
+    Bug catch: an example that rots silently (missing prompt file,
+    pydantic schema drift) breaks the documented quickstart.
+    """
+    path = EXAMPLES_DIR / "batch-prompts.yaml"
+    m = load_manifest(path)
+    assert len(m.entries) == 3
+    for entry in m.entries:
+        assert entry.prompt is not None and len(entry.prompt) > 0
+        assert entry.run_id is not None
+        assert entry.prompt_file is None  # collapsed to inline
+
+
+def test_batch_prompts_example_uses_valid_modes() -> None:
+    """Every example entry must declare a supported mode.
+
+    Bug catch: a typo'd mode (e.g. "t2vv") would silently fail at
+    request validation, not at load time.
+    """
+    path = EXAMPLES_DIR / "batch-prompts.yaml"
+    m = load_manifest(path)
+    for entry in m.entries:
+        assert entry.mode in {"t2v", "i2v", "flf2v"}, (
+            f"unexpected mode in example: {entry.mode!r} (run_id={entry.run_id})"
+        )
