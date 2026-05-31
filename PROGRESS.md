@@ -316,7 +316,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - [x] Task 2: core/batch.py manifest models + load_manifest — commit `def94dc` (+ polish `ac06873`)
 - [x] Task 3: batch_generate() core function — commit `f06fa3b` (+ polish `6122215`)
 - [x] Task 4: kinoforge batch CLI subcommand — commit `4e8a564` (+ polish `c940da9` + streaming-log deferral note `38d5394`)
-- [x] Task 5: examples + README + PROGRESS + full gate — commit `<this-commit>`
+- [x] Task 5: examples + README + PROGRESS + full gate — commit `cc50ba8`
 
 **Key design decisions:**
 - Shared deploy across N entries (Q1=A): one `create_instance`, ConcurrentPool fans entries; `deploy_session` is the reusable seam.
