@@ -207,7 +207,8 @@ with self._lock:
 Asymmetric caps `[1, 4]`, all idle: utilization 0/1 == 0/4 == 0.0 → `min`
 left-bias picks slot[0]. After it runs one job, utilizations are 1/1 = 1.0
 vs 0/4 = 0.0 → slot[1] picked for next 4 jobs. Distribution converges to the
-cap weights.
+cap weights. (CPython `min(iter, key=...)` returns the first occurrence of the
+minimum key — documented behaviour, not implementation accident.)
 
 ### `_run_one(slot, job) -> Artifact`
 
@@ -276,7 +277,7 @@ choice — no torn HTTP connections, no orphaned remote jobs.
 | Asymmetric caps `[1, 4]` | Distribution converges to cap weights via utilization metric. |
 | All slots saturated | New `submit()` queues inside the chosen executor; never blocks caller. |
 | `Future.cancel()` on in-flight job | Returns False; job runs to completion; result/exception silently discarded by `map`. |
-| Single-backend cap=1 | Byte-equivalent to SequentialPool. All existing tests pass unmodified. |
+| Single-backend cap=1 | Behaviourally equivalent to SequentialPool for end-to-end results and ordering. (Intermediate Future state differs: SequentialPool pre-resolves the Future before `submit()` returns; ConcurrentPool's Future is briefly pending until the executor worker picks it up. SequentialPool's existing `fut.done()` assertions stay green because they target `SequentialPool` directly, not via the ABC.) |
 
 ### What we explicitly do NOT do
 
@@ -354,11 +355,11 @@ class BlockingFakeBackend(GenerationBackend):
 | 12 | `map(jobs)` returns results in input order even when releases reverse-ordered. |
 | 13 | `map` fail-fast — middle job raises; `map` re-raises that specific exception. |
 | 14 | `map` fail-fast cancels queued — cap=1, 4 jobs, job[0] raises; futures[2:] are `cancelled()`. |
-| 15 | `map` fail-fast drains in-flight — 2 backends cap=1, both running; backend[0] raises; backend[1] reaches `release`; `map` raises backend[0]'s exception. |
+| 15 | `map` fail-fast drains in-flight — 2 backends cap=1, both running; backend[0]'s job is released first and raises; backend[1]'s job is then released and completes; `map` re-raises backend[0]'s exception (not backend[1]'s success, not silently). Test orders releases via the shared `BlockingFakeBackend` to make the sequence deterministic. |
 | 16 | `close()` waits for in-flight — start job, call `close()` on a thread, assert it blocks; release, assert close returns. |
 | 17 | `close()` is idempotent. |
 | 18 | Context manager calls `close()` even when the `with` block raises. |
-| 19 | Fuzz: 8 parallel submit/release cycles; final `in_flight` is 0; counter never negative or above cap. |
+| 19 | Stress test (deterministic, not random): 8 threads each submit + release a job through one backend cap=4; after `pool.close()`, every slot's `in_flight` is 0 and the per-slot counter never observed negative or above its cap. Assertions are on invariants, not on a specific schedule. |
 | 20 | Slot finally-release on backend exception — backend raises in `result()`; next submit to same backend succeeds. |
 
 **`tests/core/test_pool.py` (existing, +3 tests)**
