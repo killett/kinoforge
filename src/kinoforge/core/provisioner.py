@@ -133,5 +133,13 @@ def provision(
 
     # ------------------------------------------------------------------
     # Step 4 — delegate to the engine (LAST)
+    #
+    # engine.provision expects a plain dict (see GenerationEngine ABC).  The
+    # provisioner accepts any _ProvisionConfig-shaped struct; convert pydantic
+    # models via model_dump(), pass dicts through untouched.
     # ------------------------------------------------------------------
-    engine.provision(instance, cfg)  # type: ignore[arg-type]
+    if hasattr(cfg, "model_dump"):
+        cfg_for_engine = cfg.model_dump()
+    else:
+        cfg_for_engine = cfg
+    engine.provision(instance, cfg_for_engine)

@@ -363,6 +363,77 @@ def test_ac4_provision_is_last_without_downloads(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_pydantic_cfg_is_dumped_to_dict_before_engine_provision(
+    tmp_path: Path,
+) -> None:
+    """A pydantic-style cfg (exposes ``model_dump``) must be dumped to a plain
+    dict before being forwarded to ``engine.provision``.
+
+    Bug catch: engines call ``cfg.get("engine", {})`` and other ``dict`` methods
+    on the cfg they receive (per the ``GenerationEngine`` ABC contract).  Before
+    the fix, the provisioner forwarded the raw pydantic ``Config`` object,
+    causing ``AttributeError: 'Config' object has no attribute 'get'`` at the
+    first hosted/diffusers/comfyui ``provision`` call site in production.
+    """
+    scheme = "pydcfgfake"
+    source = _FakeSourceBase(scheme)
+    registry.register_source(source)  # type: ignore[arg-type]
+
+    received_cfgs: list[Any] = []
+
+    class _RecordingEngine(_SpyEngine):
+        def provision(self, instance: Instance | None, cfg: Any) -> None:  # noqa: D102
+            received_cfgs.append(cfg)
+            super().provision(instance, cfg)
+
+    class _PydanticLikeCfg:
+        """Stand-in for pydantic ``Config`` exposing both ``.models`` and
+        ``.model_dump()`` — mirrors the real Config object's surface area
+        without depending on pydantic in the test."""
+
+        def __init__(self, models: list[_ModelEntry], dump: dict[str, Any]) -> None:
+            self.models = models
+            self._dump = dump
+
+        def model_dump(self) -> dict[str, Any]:
+            return self._dump
+
+    dump_payload = {"engine": {"kind": "spy", "hosted": {"api_key_env": "FOO"}}}
+    cfg = _PydanticLikeCfg(
+        models=[_ModelEntry(ref=f"{scheme}:m", target="base")],
+        dump=dump_payload,
+    )
+    engine = _RecordingEngine([], requires_local_weights=False)
+
+    provision(
+        engine,  # type: ignore[arg-type]
+        cfg,  # type: ignore[arg-type]
+        _make_instance(),
+        creds=_NullCreds(),
+        download_dir=tmp_path,
+    )
+
+    assert len(received_cfgs) == 1, "engine.provision should have been called once"
+    forwarded = received_cfgs[0]
+    # Must be a plain dict (so cfg.get(...) works) and must equal the dump payload.
+    assert isinstance(forwarded, dict), (
+        f"expected dict, got {type(forwarded).__name__}: pydantic cfg leaked through"
+    )
+    assert forwarded == dump_payload
+    # Sanity: a plain dict cfg (no model_dump) should still pass through unchanged.
+    plain = _FakeCfg([_ModelEntry(ref=f"{scheme}:n", target="base")])
+    received_cfgs.clear()
+    provision(
+        engine,  # type: ignore[arg-type]
+        plain,  # type: ignore[arg-type]
+        _make_instance(),
+        creds=_NullCreds(),
+        download_dir=tmp_path,
+    )
+    # _FakeCfg has no model_dump → forwarded as-is.
+    assert received_cfgs[0] is plain
+
+
 def test_ac5_unknown_ref_raises_unknown_adapter(tmp_path: Path) -> None:
     """Provisioner does NOT catch UnknownAdapter — it propagates to the caller."""
     cfg = _FakeCfg([_ModelEntry(ref="totally-unknown-scheme:model", target="base")])
