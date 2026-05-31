@@ -242,7 +242,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - [x] Task 10: FalEngineConfig pydantic block — commits `96d45a8` + `2680b22`
 - [x] Task 11: FalEngine + FalBackend + wire — commits `7e3327a` + `0d324dc`
 - [x] Task 12: _adapters + fal.yaml + invariant + tooling — commit `9be6e67`
-- [x] Task 13: Live opt-in test + manual smoke — commit `<TBD-this-commit>`
+- [x] Task 13: Live opt-in test + manual smoke — commit `bf3841f`
 
 **First real artifact:** `/tmp/kinoforge-fal-smoke/smoke-i-1/n9TG4YoyIIkzR1rouhQCw_tmpykhkugmc.mp4` — 3,073,440 bytes, MP4 (`ftyp isom`), produced by `fal-ai/wan-t2v` via `examples/configs/fal.yaml` (capability_key `2820ed10e74fbea4bb4ab8e3d338f716db8d86383869ebf793bed423f507caaa`, git SHA `9be6e67` at smoke time).
 
