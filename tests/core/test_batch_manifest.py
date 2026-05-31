@@ -40,6 +40,44 @@ def test_load_manifest_round_trip_three_entries(tmp_path: Path) -> None:
     assert [e.prompt for e in m.entries] == ["a", "b", "c"]
 
 
+def test_load_manifest_auto_indexes_missing_run_ids(tmp_path: Path) -> None:
+    """An entry with no run_id must get its position index as a string.
+
+    Bug catch: a regression in the auto-index loop (off-by-one, int
+    instead of str, or skipping the first entry) ships a batch whose
+    store namespace silently collides with positional artifacts from
+    a prior run.
+    """
+    path = _write_yaml(
+        tmp_path / "m.yaml",
+        [
+            {"prompt": "a", "mode": "t2v"},
+            {"prompt": "b", "mode": "t2v"},
+            {"prompt": "c", "mode": "t2v"},
+        ],
+    )
+    m = load_manifest(path)
+    assert [e.run_id for e in m.entries] == ["0", "1", "2"]
+
+
+def test_malformed_yaml_raises_config_error(tmp_path: Path) -> None:
+    """Syntactically broken YAML must surface as ConfigError, not bare YAMLError.
+
+    Bug catch: a bare YAMLError reaches the CLI as a traceback rather
+    than a user-facing error message, breaking the consistent
+    "pre-flight error -> exit 1 with a clean stderr line" contract
+    that the rest of the loader honours (top-level-not-list,
+    missing prompt_file, schema rejection all use ConfigError or
+    pydantic.ValidationError).
+    """
+    path = tmp_path / "m.yaml"
+    path.write_text("malformed: [unclosed")  # missing closing bracket
+    with pytest.raises(ConfigError) as exc_info:
+        load_manifest(path)
+    assert "YAML parse error" in str(exc_info.value)
+    assert str(path) in str(exc_info.value)
+
+
 def test_entry_with_both_prompt_and_prompt_file_raises(tmp_path: Path) -> None:
     """An entry with both prompt and prompt_file is ambiguous — must reject.
 
