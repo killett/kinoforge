@@ -744,13 +744,24 @@ def test_provision_auth_error_message_when_key_name_empty() -> None:
     assert "engine.hosted.api_key_env is empty" in str(exc_info.value)
 
 
-@pytest.mark.xfail(reason="depends on Layer I Task 6 hosted.yaml fix", strict=True)
 def test_declared_flags_default_for_hosted_yaml_key() -> None:
-    """HostedAPIEngine must declare strategy flags for the shipped hosted.yaml key."""
+    """HostedAPIEngine constructed via the registry factory must declare strategy
+    flags for the shipped hosted.yaml key.
+
+    Bug catch: a regression that changed the registry lambda to
+    `lambda: HostedAPIEngine(declared_flags_map={})` would silently drop the
+    default for the shipped YAML; going through the registry closes that gap.
+    """
+    import importlib
+
+    from kinoforge.core import registry
     from kinoforge.core.config import load_config
 
+    # Ensure self-registration import side effect has run
+    importlib.import_module("kinoforge.engines.hosted")
+
     cfg = load_config("examples/configs/hosted.yaml")
-    engine = HostedAPIEngine()
+    engine = registry.get_engine("hosted")()
     flags = engine.declared_flags(cfg.capability_key())
     assert flags == {
         "supports_native_extension": False,

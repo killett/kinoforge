@@ -45,6 +45,19 @@ def test_example_config_loads(filename: str) -> None:
     load_config(path)  # must not raise
 
 
+def test_hosted_yaml_loads_under_new_validators() -> None:
+    """examples/configs/hosted.yaml must satisfy Layer I Task 4 validators."""
+    from kinoforge.core.config import load_config
+
+    cfg = load_config("examples/configs/hosted.yaml")
+    assert cfg.engine.kind == "hosted"
+    assert cfg.engine.hosted is not None
+    assert cfg.engine.hosted.endpoint.startswith("https://")
+    assert cfg.engine.hosted.api_key_env == "MY_SHIM_KEY"
+    assert cfg.engine.hosted.health_url == "https://your-shim.example.com/health"
+    assert cfg.engine.hosted.url_path == "video.url"
+
+
 # ---------------------------------------------------------------------------
 # AC2 — Config-only swap tests
 # ---------------------------------------------------------------------------

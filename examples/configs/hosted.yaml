@@ -1,18 +1,25 @@
-# kinoforge example: HostedAPIEngine (fal.ai)
+# kinoforge example: HostedAPIEngine (user-deployed shim)
 #
-# Demonstrates the hosted / zero-compute path:
-#   - No compute block — kinoforge does NOT provision GPU instances
-#   - HostedAPIEngine calls the provider's REST endpoint directly
-#   - models block is present but validation-only (weights already on the host)
-#   - Top-level lifecycle carries the budget guard (no instance to lifecycle-manage)
+# HostedAPIEngine speaks a SYNTHETIC server contract:
+#
+#   POST {endpoint}                  -> {"job_id": "..."}
+#   GET  {endpoint}/status/{job_id}  -> {"status": "done"|"running"|..., "<url_path>": "..."}
+#   GET  {health_url}                -> 200 OK
+#
+# No public provider (fal.ai, Replicate, HuggingFace) implements this contract.
+# Use HostedAPIEngine when you have deployed your OWN inference shim that wraps a
+# real backend with the contract above.  For real public providers, see the
+# per-provider engines (e.g. examples/configs/fal.yaml).
 
 engine:
   kind: hosted
   precision: ""
   hosted:
-    provider: fal
-    endpoint: "/fal-ai/wan/v2/t2v"
+    provider: my-shim
+    endpoint: "https://your-shim.example.com/inference"
     model: "wan-ai/Wan2.2-T2V-A14B"
+    api_key_env: "MY_SHIM_KEY"
+    health_url: "https://your-shim.example.com/health"
     url_path: video.url
 
 models:
