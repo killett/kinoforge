@@ -87,7 +87,7 @@ Patterns proven across MVP + Layers A–D. New layers should follow them by defa
 - Self-registration on import — zero-arg factories for engines/providers/stores; instances for sources (dispatch by `handles(ref)`).
 - Source dispatch by behaviour, not key equality — `source_for_ref(ref)` asks each registered source `handles(ref)`, returns first match.
 - Stage protocol + pool-swap — stages talk only to `BackendPool`/`ArtifactStore`/`ModelProfile`; `SequentialPool` is default, `ConcurrentPool` drops in via same ABC; future distributed variants (Ray, cross-process) follow the same pattern.
-- `ConcurrentPool` semaphore pattern — `_Slot(backend, executor, cap)` per backend; `submit` acquires semaphore before `executor.submit`, releases in Future callback; `map` submits all + `as_completed` drain with fail-fast cancel; `close` shuts down all executors via context-manager `__exit__`.
+- `ConcurrentPool` dispatch pattern — `_Slot(backend, executor, cap, in_flight)` per backend; `submit` picks least-loaded slot by `in_flight / cap` ratio under a per-pool lock (ties broken by registration order via `min`'s left-bias), then dispatches to that slot's `ThreadPoolExecutor`; `_run_one` releases the counter via `try/finally` so backend failures don't leak slots; `map` submits all eagerly, iterates futures in input order (preserves result ordering), on first exception cancels queued + drains in-flight + re-raises; `close` flips closed flag under lock then calls `executor.shutdown(wait=True)` per slot outside the lock for deterministic shutdown.
 - Strategy / validation / continuity / splitter helpers are pure functions — `decide`, `validate_request`, `inject_tail_frame`, `split()` all return new objects, never mutate input.
 - `dataclasses.replace` for every immutable update — no mutation paths; tests verify with `is`-identity on unchanged fields.
 - TDD red-first, every task — write failing test first, confirm FAIL, then implement; `test-design` skill (bug-catch comments, no implementation mirroring, no over-mocking).
@@ -203,10 +203,11 @@ Layer G (concurrent backend scheduler) complete. All 8 commits + docs shipped (5
 ### Phase 17 — concurrent backend scheduler (post-MVP Layer G, GitHub issue #3)
 - [x] Task 1: `BackendPool.close()` ABC method + context-manager (`__enter__`/`__exit__`) + `SequentialPool` no-op impl + 4 parity tests — commit `a344bc8`
 - [x] Task 1 cleanup: drop `func-returns-value` suppression in close-noop test — commit `f770a8b`
-- [x] Task 2: `ConcurrentPool` core dispatch: `_Slot` (backend + `ThreadPoolExecutor` + semaphore), `submit` (least-loaded pick, semaphore acquire/release), `close` shutdown — commit `a6f504a`
-- [x] Task 2 fix: release slot semaphore counter when `executor.submit` raises to prevent slot leak — commit `0725457`
-- [x] Task 3: `ConcurrentPool.map` with fail-fast cancellation: submits all futures, `as_completed` drain, cancels remaining on first exception, re-raises after drain — commit `a4d4421`
+- [x] Task 2: `ConcurrentPool` core dispatch: `_Slot` (backend + `ThreadPoolExecutor` + cap + lock-protected `in_flight` counter), `submit` (least-loaded-by-utilization pick under lock, executor dispatch outside lock), `close` shutdown — commit `a6f504a`
+- [x] Task 2 fix: release slot `in_flight` counter when `executor.submit` raises to prevent slot leak — commit `0725457`
+- [x] Task 3: `ConcurrentPool.map` with fail-fast cancellation: eager submits all futures, iterates in input order (preserves result ordering), cancels remaining queued futures on first exception, drains in-flight, re-raises first exception — commit `a4d4421`
 - [x] Task 4: `GenerateClipStage` branches on `should_chain` (i2v non-native → serial loop; t2v non-native → `pool.map` fan-out) — commit `7ba9974`
 - [x] Task 4 hardening: spy on `pool.map` in 1-job test for discriminating assertion — commit `24356cc`
 - [x] Task 5: `orchestrator.generate()` wraps stage inside `with ConcurrentPool() as pool: pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)`; `SequentialPool` import removed — commit `c90b046`
-- [x] Task 6: `LifecycleConfig.max_in_flight` field + wire through `lifecycle()` method; README Concurrency section; PROGRESS Phase 17 — commit `b7e57fc`
+- [x] Task 6: `LifecycleConfig.max_in_flight` field + wire through `lifecycle()` method; README Concurrency section; PROGRESS Phase 17 — commit `b7e57fc` (Phase 17 Task 6 SHA backfill at `eed9706`)
+- [x] Task 6 regression test: lock down YAML→`Lifecycle.max_in_flight` wiring so a future drop of the `lc.max_in_flight=` line in `Config.lifecycle()` fails fast instead of silently defaulting to cap=1 — commit `bab8d64`
