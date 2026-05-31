@@ -100,6 +100,20 @@ def test_lifecycle_defaults_applied():
     assert lc.job_timeout_s == 30 * 60
     assert lc.time_buffer_s == 30 * 60
     assert lc.max_lifetime_s == 5 * 3600
+    # Layer G: max_in_flight defaults to 1 (sequential behaviour).
+    assert lc.max_in_flight == 1
+
+
+def test_lifecycle_max_in_flight_honoured_from_yaml():
+    """YAML max_in_flight value must reach the runtime Lifecycle dataclass.
+
+    Bug this catches: LifecycleConfig declaring the field but lifecycle()
+    not propagating it — would silently default to 1 and break Layer G's
+    ConcurrentPool fan-out wiring in the orchestrator.
+    """
+    cfg = load_config(HOSTED.replace("budget: 25.0", "budget: 25.0, max_in_flight: 4"))
+    lc = cfg.lifecycle()
+    assert lc.max_in_flight == 4
 
 
 def test_hardware_requirements_defaults_applied():
