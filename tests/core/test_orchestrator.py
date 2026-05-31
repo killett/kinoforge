@@ -20,9 +20,10 @@ from unittest.mock import patch
 
 import pytest
 
-# Import providers/engines so they self-register
+# Import providers/engines/sources so they self-register
 import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
+import kinoforge.sources.http  # noqa: F401 — registers https:// source for provisioner
 from kinoforge.core.config import Config
 from kinoforge.core.errors import CapabilityMismatch
 from kinoforge.core.interfaces import (
@@ -52,7 +53,7 @@ engine:
   kind: fake
   precision: fp16
 models:
-  - ref: "fake://base"
+  - ref: "https://example.com/fake-base.safetensors"
     kind: base
     target: diffusion_models
 compute:
@@ -67,7 +68,7 @@ engine:
   kind: fake
   precision: fp16
 models:
-  - ref: "fake://base"
+  - ref: "https://example.com/fake-base.safetensors"
     kind: base
     target: diffusion_models
 """
