@@ -352,7 +352,12 @@ class GenerationEngine(ABC):
 
 
 class BackendPool(ABC):
-    """Dispatches jobs across one or more GenerationBackends."""
+    """Dispatches jobs across one or more GenerationBackends.
+
+    Implementations may call ``backend.submit`` / ``backend.result`` from
+    multiple threads concurrently; backends MUST be thread-safe (no shared
+    mutable state across calls).
+    """
 
     @abstractmethod
     def add(self, backend: GenerationBackend) -> None: ...  # noqa: D102
@@ -362,6 +367,15 @@ class BackendPool(ABC):
 
     @abstractmethod
     def map(self, jobs: list[GenerationJob]) -> list[Artifact]: ...  # noqa: D102
+
+    @abstractmethod
+    def close(self) -> None: ...  # noqa: D102
+
+    def __enter__(self) -> BackendPool:  # noqa: D105
+        return self
+
+    def __exit__(self, *_exc: object) -> None:  # noqa: D105
+        self.close()
 
 
 @runtime_checkable
