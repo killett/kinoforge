@@ -223,4 +223,4 @@ Layer H (cross-process discovery lock) complete. All 8 commits + docs shipped (5
 - [x] Task 6: `JsonProfileCache.resolve_or_discover` outer-lock wrap; cache-hit fast path preserved; `discover_ttl_s` kwarg — commit `e03d28a` (+ import cleanup `8c2d175`)
 - [x] Task 7: `Ledger.record`/`forget` outer-lock wrap; `mutate_ttl_s` kwarg; `entries()` stays lock-free — commit `c8372f6`
 - [x] Task 8: README "Multi-node coordination" section + PROGRESS Phase 18 — commit `351d691`
-- [x] Merge to main via `--no-ff` — merge commit `<MERGE_SHA>` (placeholder; backfill after merge — closes #7)
+- [x] Merge to main via `--no-ff` — merge commit `4672735` (closes #7)
