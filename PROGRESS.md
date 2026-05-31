@@ -148,8 +148,18 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-Layer H (cross-process discovery lock) complete. All 8 commits + docs shipped (555 → ~595 tests).
-**Next: choose from open GitHub issues #2 (audio sync), #4 (keyframe stage), #8 (HF bare-repo listing), #9 (aria2c fast-path).**
+**Layer I in progress on branch `build/layer-i`** — fal.ai sibling engine + UX A (orchestrator-driven engine.provision preflight) + hosted hardening (pydantic validators, declared_flags noise, AuthError clarity).
+
+- Design spec: `docs/superpowers/specs/2026-05-31-layer-i-fal-adapter-ux-a-design.md` (committed `0342300`)
+- Implementation plan: `docs/superpowers/plans/2026-05-31-layer-i-fal-adapter-ux-a.md` (committed `80a69f3`)
+- Native tasks snapshot: `docs/superpowers/plans/2026-05-31-layer-i-fal-adapter-ux-a.md.tasks.json` (13 tasks)
+
+**Already committed:**
+- `e78cafc` (on `main`, ancestor of `build/layer-i`) — hot-fix: provisioner cfg-dict (closes Bug 1; pre-Task-1 of Layer I)
+
+**Resume from:** Task 1 of the plan. Critical path: 1 → 4 → 5 → 6 → 8 → 9 → 10 → 11 → 12 → 13. Tasks 1, 2, 7 are parallelizable starting points. Use `superpowers-extended-cc:executing-plans` or `superpowers-extended-cc:subagent-driven-development` to drive execution; the brainstorming + writing-plans cycle is complete.
+
+**User-gate**: Task 13 (live opt-in test + manual fal.ai smoke) is tagged `userGate: true`. The post-task-complete-revalidate hook is NOT registered in `.claude/settings*.json` — close-time enforcement is manual.
 
 ## Post-MVP
 
