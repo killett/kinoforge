@@ -195,6 +195,25 @@ The walker returns `""` for missing paths or non-string terminals; the
 engine then raises `FrameExtractionError` rather than fetching a bogus
 URL. Array indexing (e.g. `results[0].url`) is not supported.
 
+### Known limitation — non-native multi-segment continuity is incomplete
+
+Non-native multi-segment runs (engines whose `ModelProfile` reports
+`supports_native_extension=False`, chained over N > 1 segments) currently
+extract and persist the tail frame of each segment as a PNG in the
+`ArtifactStore` under the run's namespace, and inject a
+`ConditioningAsset(role="init_image")` into the next job's
+`segments[0].assets`. **However, each engine's `submit()` body today reads
+only `job.spec` — it does not consult `job.segments[0].assets`.** The tail
+PNG is currently dead weight at render time, so segments will not be
+visually continuous. ffmpeg must be on `PATH` on whichever host runs the
+engine.
+
+Filling this gap (Layer F: engine asset-wiring) is the next planned layer.
+Until then, expect discontinuous output across segments on non-native
+engines. Native multi-segment engines (those declaring
+`supports_native_extension=True` in their `ModelProfile`) are unaffected —
+they receive all segments in a single job and handle continuity internally.
+
 ### New Splitter
 
 ```python
