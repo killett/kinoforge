@@ -211,7 +211,11 @@ class ConcurrentPool(BackendPool):
             if not self._slots:
                 raise RuntimeError("ConcurrentPool has no registered backend")
         slot = self._pick()
-        return slot.executor.submit(self._run_one, slot, job)
+        try:
+            return slot.executor.submit(self._run_one, slot, job)
+        except BaseException:
+            self._release(slot)
+            raise
 
     def close(self) -> None:
         """Shut down every per-backend executor, waiting for in-flight jobs.

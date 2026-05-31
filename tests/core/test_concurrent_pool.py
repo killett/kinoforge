@@ -417,3 +417,28 @@ def test_backend_exception_releases_slot_in_finally():
         assert backend.submit_log == ["blk-1", "blk-2"]
         backend.release("blk-2")
         fut2.result(timeout=2.0)
+
+
+# --- counter-leak fix: executor.submit raises before _run_one starts ------
+
+
+def test_submit_releases_slot_when_executor_raises():
+    """If slot.executor.submit raises, the in_flight counter must be released."""
+    backend = BlockingFakeBackend()
+    with ConcurrentPool() as pool:
+        pool.add(backend, max_in_flight=1)
+        slot = pool._slots[0]
+        # Force the next executor.submit call to raise.
+        original_submit = slot.executor.submit
+
+        def _boom(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("cannot schedule")
+
+        slot.executor.submit = _boom  # type: ignore[assignment]
+        try:
+            with pytest.raises(RuntimeError, match="cannot schedule"):
+                pool.submit(_job("doomed"))
+            # The slot counter MUST be back to 0.
+            assert slot.in_flight == 0
+        finally:
+            slot.executor.submit = original_submit  # type: ignore[method-assign]
