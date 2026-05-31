@@ -614,3 +614,56 @@ lifecycle:
 """
     with pytest.raises(ConfigError, match=r"compute.*fal"):
         load_config(yaml_text)
+
+
+def test_hosted_engine_config_prompt_body_key_default() -> None:
+    """Bug catch: an absent field must default to "prompt" so existing
+    hosted.yaml configs auto-route prompts after Layer J ships."""
+    from kinoforge.core.config import HostedEngineConfig
+
+    cfg = HostedEngineConfig(
+        provider="x",
+        endpoint="https://x.example/y",
+        model="m",
+        api_key_env="X_KEY",
+    )
+    assert cfg.prompt_body_key == "prompt"
+    dumped = cfg.model_dump()
+    assert dumped["prompt_body_key"] == "prompt"
+
+
+def test_hosted_engine_config_prompt_body_key_null_disables() -> None:
+    """Bug catch: pydantic must accept ``None`` (YAML ``null``) so users
+    can opt out of routing when their API does not use a top-level
+    ``"prompt"`` field — without this, ``cfg.model_dump()`` would emit
+    "prompt" and break their hosted endpoint."""
+    from kinoforge.core.config import HostedEngineConfig
+
+    cfg = HostedEngineConfig(
+        provider="x",
+        endpoint="https://x.example/y",
+        model="m",
+        api_key_env="X_KEY",
+        prompt_body_key=None,
+    )
+    assert cfg.prompt_body_key is None
+    assert cfg.model_dump()["prompt_body_key"] is None
+
+
+def test_diffusers_engine_config_prompt_body_key_default() -> None:
+    """Diffusers default mirrors hosted — orchestrator-driven Diffusers
+    runs auto-route the prompt with no YAML change."""
+    from kinoforge.core.config import DiffusersEngineConfig
+
+    cfg = DiffusersEngineConfig()
+    assert cfg.prompt_body_key == "prompt"
+    assert cfg.model_dump()["prompt_body_key"] == "prompt"
+
+
+def test_diffusers_engine_config_prompt_body_key_null_disables() -> None:
+    """Same opt-out for diffusers servers that reject unknown body keys."""
+    from kinoforge.core.config import DiffusersEngineConfig
+
+    cfg = DiffusersEngineConfig(prompt_body_key=None)
+    assert cfg.prompt_body_key is None
+    assert cfg.model_dump()["prompt_body_key"] is None
