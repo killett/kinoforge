@@ -9,8 +9,9 @@ This module owns:
     deploy_session, fans entries out via ThreadPoolExecutor, and writes
     _batch_summary.json on every exit path.
 
-Core-import-ban: this module imports ONLY from kinoforge.core.* + stdlib
-+ pydantic + PyYAML.  No kinoforge.providers / engines / sources.  The
+Core-import-ban: this module imports ONLY from kinoforge.core.* +
+kinoforge.pipeline.generate_clip + kinoforge.stores.base + stdlib +
+pydantic + PyYAML.  No kinoforge.providers / engines / sources.  The
 invariant test in tests/test_core_invariant.py enforces this via
 subprocess isolation.
 """
@@ -34,7 +35,10 @@ from kinoforge.core.errors import (
     ConfigError,
     TeardownError,
 )
+from kinoforge.core.interfaces import Artifact, ConditioningAsset, GenerationRequest
 from kinoforge.core.logging import get_logger
+from kinoforge.core.orchestrator import deploy_session
+from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.stores.base import ArtifactStore
 
 if TYPE_CHECKING:
@@ -45,6 +49,7 @@ if TYPE_CHECKING:
         GenerationEngine,
         ModelProfileProvider,
     )
+    from kinoforge.core.orchestrator import DeploySession
 
 _log = get_logger(__name__)
 
@@ -232,6 +237,186 @@ class BatchResult:
         }
 
 
+def _build_stage_for_entry(
+    cfg: Config,
+    entry: BatchEntry,
+    session: DeploySession,
+    accepted_kinds: set[str],
+    store: ArtifactStore,
+    batch_id: str,
+) -> tuple[GenerateClipStage, GenerationRequest]:
+    """Build a stage + request pair for one batch entry.
+
+    Deep-copies cfg.params / cfg.spec so neither cfg nor any sibling
+    entry's stage shares a mutable reference with this entry's
+    base_params / base_spec.  A shallow ``dict(cfg.params)`` would
+    keep nested-dict identity, letting a deliberately-bad-citizen
+    engine that does ``job.params["nested"]["a"] = 99`` corrupt
+    ``cfg.params`` in place.  Entry-side overrides are deep-copied too
+    so the same protection applies to per-entry nested dicts.
+
+    Args:
+        cfg: The loaded kinoforge configuration.
+        entry: The batch entry being scheduled.
+        session: The active deploy_session yielding profile / pool /
+            engine.
+        accepted_kinds: Asset kinds the underlying engine accepts.
+        store: Destination ArtifactStore for the entry's outputs.
+        batch_id: Top-level namespace for this batch's artifacts; used
+            to build the entry-scoped ``run_id``.
+
+    Returns:
+        A ``(stage, request)`` tuple ready for
+        ``executor.submit(stage.run, request)``.  The request carries
+        the entry's prompt, mode, and any declared
+        :class:`ConditioningAsset` objects built from ``entry.assets``.
+    """
+    merged_params = {
+        **copy.deepcopy(dict(cfg.params)),
+        **copy.deepcopy(entry.params or {}),
+    }
+    merged_spec = {
+        **copy.deepcopy(dict(cfg.spec)),
+        **copy.deepcopy(entry.spec or {}),
+    }
+    request = GenerationRequest(
+        prompt=entry.prompt or "",
+        mode=entry.mode,
+        assets=[ConditioningAsset(**a) for a in (entry.assets or [])],
+    )
+    entry_run_id = f"{batch_id}/{entry.run_id}"
+    stage = GenerateClipStage(
+        profile=session.profile,
+        pool=session.pool,
+        store=store,
+        run_id=entry_run_id,
+        accepted_kinds=accepted_kinds,
+        base_params=merged_params,
+        base_spec=merged_spec,
+        engine=session.engine,
+    )
+    return stage, request
+
+
+def _run_with_clock(
+    stage: GenerateClipStage,
+    request: GenerationRequest,
+    start_times: dict[int, float],
+    idx: int,
+) -> Artifact:
+    """Stamp the real stage-run start time, then run the stage.
+
+    Recording ``monotonic()`` before ``executor.submit`` would
+    conflate queue-wait time with the stage's real wall-clock cost —
+    a 5-entry batch with ``concurrent=1`` would report 5x inflated
+    durations for the last entries.  Stamping here, inside the worker
+    thread, gives ``BatchOutcome.duration_s`` the actual stage cost.
+
+    Args:
+        stage: The pre-built GenerateClipStage for this entry.
+        request: The GenerationRequest carrying prompt / mode / assets.
+        start_times: Shared dict keyed by entry index; this worker
+            writes its slot before doing real work.
+        idx: The entry's position in ``manifest.entries``.
+
+    Returns:
+        Whatever ``stage.run(request)`` returns (the persisted
+        :class:`~kinoforge.core.interfaces.Artifact`).
+    """
+    start_times[idx] = monotonic()
+    return stage.run(request)
+
+
+def _mark_remaining_after_fatal(
+    future_to_idx: dict[Future[Any], int],
+    outcomes_by_idx: dict[int, BatchOutcome],
+    manifest: BatchManifest,
+    start_times: dict[int, float],
+    batch_start: float,
+) -> None:
+    """Cancel queued futures and label them aborted/interrupted in-place.
+
+    Called after a batch-fatal exception is observed on one future;
+    drains the rest into ``outcomes_by_idx`` so the summary is
+    complete before the fatal re-raises.
+
+    Args:
+        future_to_idx: Map of submitted futures to entry index.
+        outcomes_by_idx: Per-entry outcomes being assembled.  This
+            function mutates it in place.
+        manifest: The original manifest, used to recover ``run_id`` for
+            any entry that didn't get a ``BatchOutcome`` yet.
+        start_times: Per-index actual stage-start monotonic stamps;
+            entries that never started fall back to ``batch_start``
+            so ``duration_s`` is 0 instead of negative or unbounded.
+        batch_start: The monotonic timestamp captured at batch entry
+            into the dispatch loop.
+    """
+    for other_fut, other_idx in future_to_idx.items():
+        if other_idx in outcomes_by_idx:
+            continue
+        other_entry = manifest.entries[other_idx]
+        if other_fut.cancel():
+            outcomes_by_idx[other_idx] = BatchOutcome(
+                run_id=other_entry.run_id or str(other_idx),
+                status="aborted",
+            )
+        else:
+            # An in-flight future cannot be cancelled; record how long
+            # it has been running.  Fall back to batch_start when the
+            # worker hadn't yet hit _run_with_clock — that means the
+            # future was scheduled but never woke up before the fatal
+            # took over, so duration is effectively 0.
+            other_duration = monotonic() - start_times.get(other_idx, batch_start)
+            outcomes_by_idx[other_idx] = BatchOutcome(
+                run_id=other_entry.run_id or str(other_idx),
+                status="interrupted",
+                duration_s=other_duration,
+            )
+
+
+def _finalize_summary(
+    manifest: BatchManifest,
+    outcomes_by_idx: dict[int, BatchOutcome],
+    batch_id: str,
+    started_at: str,
+) -> BatchResult:
+    """Pad missing outcomes as ``"aborted"``, timestamp, and assemble.
+
+    Any entry index missing from ``outcomes_by_idx`` (e.g. a future
+    that was cancelled before any worker observed it, or one we never
+    got to submit because deploy_session raised mid-loop) is recorded
+    as ``"aborted"`` with no duration.
+
+    Args:
+        manifest: The original manifest, used to recover ``run_id``.
+        outcomes_by_idx: Per-entry outcomes collected so far.
+        batch_id: The batch's top-level namespace id.
+        started_at: ISO timestamp captured before any per-entry work.
+
+    Returns:
+        A :class:`BatchResult` with outcomes in submission order and
+        a freshly captured ``finished_at`` ISO timestamp.
+    """
+    ordered = [
+        outcomes_by_idx.get(
+            i,
+            BatchOutcome(
+                run_id=manifest.entries[i].run_id or str(i),
+                status="aborted",
+            ),
+        )
+        for i in range(len(manifest.entries))
+    ]
+    finished_at = datetime.now().isoformat(timespec="seconds")
+    return BatchResult(
+        batch_id=batch_id,
+        started_at=started_at,
+        finished_at=finished_at,
+        outcomes=ordered,
+    )
+
+
 def batch_generate(
     cfg: Config,
     manifest: BatchManifest,
@@ -313,17 +498,25 @@ def batch_generate(
         because no batch state exists yet — the failure is a pre-flight
         config / capacity problem, not a partial batch.
     """
-    # Late imports keep this module import-light + avoid the runtime
-    # import cycle through orchestrator → pipeline → core.batch.
-    from kinoforge.core.interfaces import GenerationRequest
-    from kinoforge.core.orchestrator import deploy_session
-    from kinoforge.pipeline.generate_clip import GenerateClipStage
-
     cap = concurrent if concurrent is not None else cfg.lifecycle().max_in_flight
 
     started_at = datetime.now().isoformat(timespec="seconds")
     outcomes_by_idx: dict[int, BatchOutcome] = {}
-    summary: BatchResult | None = None
+    # Pre-seed the summary so the outer finally never has to reason
+    # about a None.  The inner finally re-assigns this with the real
+    # outcomes before deploy_session exits; the placeholder only
+    # survives if deploy_session.__enter__ raises (in which case we
+    # also skip writing _batch_summary.json — see the docstring's
+    # "Notes" section).
+    summary = BatchResult(
+        batch_id=batch_id,
+        started_at=started_at,
+        finished_at=started_at,
+        outcomes=[],
+    )
+    # Captured before any per-entry work so _mark_remaining_after_fatal
+    # can fall back to it for never-started futures.
+    batch_start = monotonic()
 
     try:
         with deploy_session(
@@ -351,49 +544,24 @@ def batch_generate(
 
             try:
                 for idx, entry in enumerate(manifest.entries):
-                    # Merge cfg.params with entry.params via a deep
-                    # copy of the cfg side so neither cfg.params nor any
-                    # sibling entry's stage shares a mutable reference
-                    # with this entry's base_params.  A shallow
-                    # ``dict(cfg.params)`` would keep nested-dict
-                    # identity, letting a deliberately-bad-citizen
-                    # engine that does ``job.params["nested"]["a"] = 99``
-                    # corrupt cfg.params in place.  Entry-side overrides
-                    # are deep-copied too so the same protection
-                    # applies to per-entry nested dicts.
-                    merged_params = {
-                        **copy.deepcopy(dict(cfg.params)),
-                        **copy.deepcopy(entry.params or {}),
-                    }
-                    merged_spec = {
-                        **copy.deepcopy(dict(cfg.spec)),
-                        **copy.deepcopy(entry.spec or {}),
-                    }
-                    request = GenerationRequest(
-                        prompt=entry.prompt or "",
-                        mode=entry.mode,
-                        assets=[],
+                    stage, request = _build_stage_for_entry(
+                        cfg,
+                        entry,
+                        session,
+                        accepted_kinds,
+                        store,
+                        batch_id,
                     )
-                    entry_run_id = f"{batch_id}/{entry.run_id}"
-                    stage = GenerateClipStage(
-                        profile=session.profile,
-                        pool=session.pool,
-                        store=store,
-                        run_id=entry_run_id,
-                        accepted_kinds=accepted_kinds,
-                        base_params=merged_params,
-                        base_spec=merged_spec,
-                        engine=session.engine,
+                    fut = executor.submit(
+                        _run_with_clock, stage, request, start_times, idx
                     )
-                    start_times[idx] = monotonic()
-                    fut = executor.submit(stage.run, request)
                     future_to_idx[fut] = idx
 
                 try:
                     for fut in as_completed(future_to_idx.keys()):
                         idx = future_to_idx[fut]
                         entry = manifest.entries[idx]
-                        duration = monotonic() - start_times[idx]
+                        duration = monotonic() - start_times.get(idx, batch_start)
                         try:
                             artifact = fut.result()
                         except (
@@ -409,24 +577,13 @@ def batch_generate(
                             )
                             # Cancel everything else; mark queued as
                             # "aborted", in-flight as "interrupted".
-                            for other_fut, other_idx in future_to_idx.items():
-                                if other_idx in outcomes_by_idx:
-                                    continue
-                                other_entry = manifest.entries[other_idx]
-                                if other_fut.cancel():
-                                    outcomes_by_idx[other_idx] = BatchOutcome(
-                                        run_id=(other_entry.run_id or str(other_idx)),
-                                        status="aborted",
-                                    )
-                                else:
-                                    other_duration = (
-                                        monotonic() - start_times[other_idx]
-                                    )
-                                    outcomes_by_idx[other_idx] = BatchOutcome(
-                                        run_id=(other_entry.run_id or str(other_idx)),
-                                        status="interrupted",
-                                        duration_s=other_duration,
-                                    )
+                            _mark_remaining_after_fatal(
+                                future_to_idx,
+                                outcomes_by_idx,
+                                manifest,
+                                start_times,
+                                batch_start,
+                            )
                             raise
                         except Exception as exc:  # noqa: BLE001 — per-entry catch
                             outcomes_by_idx[idx] = BatchOutcome(
@@ -448,22 +605,8 @@ def batch_generate(
                 # Build the ordered outcome list inside the
                 # deploy_session block so it lands in the summary even
                 # if the with-statement raises on exit.
-                ordered = [
-                    outcomes_by_idx.get(
-                        i,
-                        BatchOutcome(
-                            run_id=manifest.entries[i].run_id or str(i),
-                            status="aborted",
-                        ),
-                    )
-                    for i in range(len(manifest.entries))
-                ]
-                finished_at = datetime.now().isoformat(timespec="seconds")
-                summary = BatchResult(
-                    batch_id=batch_id,
-                    started_at=started_at,
-                    finished_at=finished_at,
-                    outcomes=ordered,
+                summary = _finalize_summary(
+                    manifest, outcomes_by_idx, batch_id, started_at
                 )
     finally:
         # Persist the summary on EVERY exit path: clean batch,
@@ -471,23 +614,12 @@ def batch_generate(
         # write is logged but never escalates — the in-memory
         # BatchResult is still returned (or the original exception
         # re-raised).
-        if summary is not None:
-            try:
-                store.put_json(batch_id, "_batch_summary.json", summary.to_dict())
-            except Exception:  # noqa: BLE001
-                _log.exception(
-                    "failed to write _batch_summary.json for batch_id=%s",
-                    batch_id,
-                )
+        try:
+            store.put_json(batch_id, "_batch_summary.json", summary.to_dict())
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "failed to write _batch_summary.json for batch_id=%s",
+                batch_id,
+            )
 
-    # If we reach this point the deploy_session exited cleanly (no
-    # batch-fatal re-raise) so the finally above must have built the
-    # summary.  A None here would indicate a programming error in the
-    # try/finally structure — surface it loudly instead of silently
-    # returning a fake placeholder.
-    if summary is None:  # pragma: no cover — defensive
-        raise RuntimeError(
-            "batch_generate: summary was not constructed before return; "
-            "this indicates a bug in the deploy_session finally block"
-        )
     return summary
