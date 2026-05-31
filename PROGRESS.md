@@ -211,4 +211,4 @@ Begin the chosen layer with the `superpowers-extended-cc:brainstorming` skill.
 - [x] Task 4: ComfyUI backend `http_get_bytes` + `http_post_file` seams + `asset_node_ids` + 8 tests — commit `40dfaec`
 - [x] Task 4 (review fix): random multipart boundary + filename escape + AssetFetchError wrapping + 8 tests — commit `e6826c6`
 - [x] Task 5: GenerateClipStage post-chain `validate_spec` + 3 tests — commit `22269ed`
-- [x] Task 6: README + PROGRESS + final gate + merge — commit `<this commit>`
+- [x] Task 6: README + PROGRESS + final gate + merge — commit `a271a03`
