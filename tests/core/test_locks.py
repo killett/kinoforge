@@ -149,3 +149,6 @@ def test_release_after_steal_is_silent() -> None:
     InMemoryLock(key="k", ttl_s=5.0, registry=registry, clock=clock).acquire()
     # Must NOT raise.
     holder.release(token)
+    # And the holder must consider itself unlocked so future __exit__/release
+    # calls don't keep referencing a stale token.
+    assert holder._held_token is None

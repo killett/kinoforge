@@ -199,6 +199,7 @@ class InMemoryLock:
         """
         existing = self._registry.get(self._key)
         if existing is None or existing.get("nonce") != token.nonce:
+            self._held_token = None
             return
         del self._registry[self._key]
         self._held_token = None
