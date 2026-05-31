@@ -62,7 +62,7 @@ class _ListPool(BackendPool):
     def __init__(self, backend: GenerationBackend) -> None:
         self._backends: list[GenerationBackend] = [backend]
 
-    def add(self, backend: GenerationBackend) -> None:
+    def add(self, backend: GenerationBackend, *, max_in_flight: int = 1) -> None:  # noqa: D102
         self._backends.append(backend)
 
     def submit(self, job: GenerationJob) -> Future[Artifact]:
