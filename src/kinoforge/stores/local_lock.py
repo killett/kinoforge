@@ -82,14 +82,22 @@ class FileLock:
         except BlockingIOError:
             os.close(fd)
             return None
-        token = LockToken(key=self._key)
-        payload = {
-            "nonce": token.nonce,
-            "holder_pid": os.getpid(),
-            "expires_at": self._clock.now() + self._ttl_s,
-        }
-        os.ftruncate(fd, 0)
-        os.write(fd, json.dumps(payload).encode("utf-8"))
+        token: LockToken
+        try:
+            token = LockToken(key=self._key)
+            payload = {
+                "nonce": token.nonce,
+                "holder_pid": os.getpid(),
+                "expires_at": self._clock.now() + self._ttl_s,
+            }
+            os.ftruncate(fd, 0)
+            os.write(fd, json.dumps(payload).encode("utf-8"))
+        except BaseException:
+            try:
+                self._flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+            raise
         self._fd = fd
         self._held_token = token
         return token

@@ -77,7 +77,37 @@ def test_lock_file_path_under_locks_directory(tmp_path: Path) -> None:
     payload = json.loads(sidecar.read_text())
     assert payload["nonce"] == token.nonce
     assert payload["holder_pid"] == os.getpid()
+    # expires_at = clock.now() (0.0) + ttl_s (10.0)
+    assert payload["expires_at"] == 10.0
     lock.release(token)
+
+
+def test_context_manager_acquires_and_releases(tmp_path: Path) -> None:
+    """`with FileLock(...) as token:` must acquire on enter and release on exit.
+
+    Fails if __enter__ forgets to return the token or __exit__ leaves the
+    sidecar behind.
+    """
+    sidecar = tmp_path / "_locks" / "k.lock"
+    spy = _AlwaysSucceedFlock()
+    with FileLock(
+        path=sidecar,
+        key="k",
+        ttl_s=5.0,
+        clock=FakeClock(start=0.0),
+        flock_fn=spy,
+        sleep=lambda _: None,
+    ) as token:
+        assert token.key == "k"
+        assert sidecar.exists()
+    # Sidecar must be gone after exit; lock state must be released.
+    assert not sidecar.exists()
+    # Spy must have observed an UN unlock call (matches LOCK_UN flag).
+    import fcntl as _fcntl
+
+    assert any(flags & _fcntl.LOCK_UN for _fd, flags in spy.calls), (
+        "release must call flock with LOCK_UN"
+    )
 
 
 def test_local_store_acquire_lock_returns_file_lock(tmp_path: Path) -> None:
@@ -174,7 +204,18 @@ def test_real_fcntl_blocks_cross_process(tmp_path: Path) -> None:
     )
     try:
         # Wait for child to print HELD so we know it has taken the lock.
-        line = proc.stdout.readline().strip() if proc.stdout else ""
+        # Use select with a 10s wall-clock budget so a crashed child fails
+        # the test fast instead of hanging the suite.
+        import select
+
+        assert proc.stdout is not None
+        ready, _, _ = select.select([proc.stdout], [], [], 10.0)
+        if not ready:
+            stderr = proc.stderr.read() if proc.stderr else ""
+            raise AssertionError(
+                f"child did not signal HELD within 10s: stderr={stderr!r}"
+            )
+        line = proc.stdout.readline().strip()
         assert line == "HELD", (
             f"child did not take lock: stderr={proc.stderr.read() if proc.stderr else ''}"
         )
@@ -185,4 +226,8 @@ def test_real_fcntl_blocks_cross_process(tmp_path: Path) -> None:
         assert token is None
     finally:
         proc.terminate()
-        proc.wait(timeout=5)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
