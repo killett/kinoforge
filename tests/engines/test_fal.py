@@ -421,3 +421,59 @@ def test_validate_spec_requires_prompt() -> None:
     job = GenerationJob(segments=[], params={}, spec={})
     with pytest.raises((KinoforgeError, ValidationError)):
         eng.validate_spec(job)
+
+
+def test_validate_spec_accepts_prompt_on_segment() -> None:
+    """validate_spec passes when prompt rides on segments[0] (orchestrator path).
+
+    Bug catch: the orchestrator never copies the user's GenerationRequest.prompt
+    into job.spec — it puts it on segments[0].prompt.  A validate_spec that
+    only inspects job.spec would reject every real orchestrator-built job.
+    """
+    from kinoforge.engines.fal import FalEngine
+
+    eng = FalEngine()
+    job = GenerationJob(
+        segments=[Segment(prompt="a cat sitting on a fence", params={}, assets=[])],
+        params={},
+        spec={"_audio_mode": "separate"},
+    )
+    eng.validate_spec(job)  # must not raise
+
+
+def test_submit_falls_back_to_segment_prompt() -> None:
+    """submit() injects segments[0].prompt into the POST body when spec lacks it.
+
+    Bug catch: without this fallback, the orchestrator-built job (which never
+    carries 'prompt' in spec) would POST a body containing only '_audio_mode'
+    to fal.ai, which silently completes with no actual generation work and
+    returns 422 on the result fetch.
+    """
+    backend = _make_backend()
+    job = GenerationJob(
+        segments=[Segment(prompt="seg-prompt", params={}, assets=[])],
+        params={},
+        spec={"_audio_mode": "separate"},
+    )
+    backend.submit(job)
+    _, body, _ = backend._spy_posts[0]
+    assert body["prompt"] == "seg-prompt"
+    assert body["_audio_mode"] == "separate"
+
+
+def test_submit_spec_prompt_wins_over_segment_prompt() -> None:
+    """An explicit prompt in spec is not overwritten by segments[0].prompt.
+
+    Bug catch: an over-eager fallback would clobber a config-supplied prompt
+    (e.g. one that wraps or augments the user's prompt) with the raw segment
+    prompt.
+    """
+    backend = _make_backend()
+    job = GenerationJob(
+        segments=[Segment(prompt="seg-prompt", params={}, assets=[])],
+        params={},
+        spec={"prompt": "explicit-prompt"},
+    )
+    backend.submit(job)
+    _, body, _ = backend._spy_posts[0]
+    assert body["prompt"] == "explicit-prompt"
