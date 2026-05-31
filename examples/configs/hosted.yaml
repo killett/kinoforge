@@ -21,6 +21,10 @@ engine:
     api_key_env: "MY_SHIM_KEY"
     health_url: "https://your-shim.example.com/health"
     url_path: video.url
+    # Optional: top-level body key where the user prompt is routed when
+    # spec.prompt is absent. Default "prompt"; set null for endpoints
+    # that reject unknown top-level fields.
+    # prompt_body_key: prompt
 
 models:
   - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
