@@ -465,3 +465,179 @@ def test_stage_chain_persists_tail_via_store(tmp_path: Path) -> None:
     # leave both tail PNGs identical. They MUST differ because each is derived
     # from a different prior segment's artifact filename.
     assert seg0_tail_bytes != seg1_tail_bytes
+
+
+# ---------------------------------------------------------------------------
+# Layer F: GenerateClipStage calls engine.validate_spec after inject_tail_frame
+# on each chained segment so misconfigured asset_node_ids / asset_paths surface
+# before the engine HTTP round-trip.
+# ---------------------------------------------------------------------------
+
+
+class _ValidatingEngine:
+    """Engine spy that records validate_spec calls and (optionally) raises.
+
+    Wraps a real FakeEngine for extract_last_frame deterministic bytes; the
+    stage only needs ``validate_spec`` and ``extract_last_frame`` from the
+    engine surface, so we duck-type the rest.
+
+    Args:
+        probe: ModelProfile to forward into the inner FakeEngine.
+        raise_on_validate_call: 1-based index of the validate_spec call that
+            should raise ValidationError; ``None`` disables raising.
+    """
+
+    def __init__(
+        self,
+        probe: ModelProfile,
+        *,
+        raise_on_validate_call: int | None = None,
+    ) -> None:
+        from kinoforge.engines.fake import FakeEngine
+
+        self._inner = FakeEngine(
+            probe_profile=probe,
+            declared_flags_map={},
+            required_spec_keys=set(),
+        )
+        self.validate_calls: list[GenerationJob] = []
+        self.raise_on_validate_call = raise_on_validate_call
+
+    def validate_spec(self, job: GenerationJob) -> None:
+        self.validate_calls.append(job)
+        if (
+            self.raise_on_validate_call is not None
+            and len(self.validate_calls) == self.raise_on_validate_call
+        ):
+            raise ValidationError("simulated misconfig")
+
+    def extract_last_frame(self, artifact: Artifact) -> bytes:
+        return self._inner.extract_last_frame(artifact)
+
+
+def test_stage_calls_validate_spec_on_each_chained_job(tmp_path: Path) -> None:
+    """3 segments → 2 chain hops → 2 post-chain validate_spec calls.
+
+    Bug catches:
+    - pre-Layer-F (no post-chain validate_spec) yields 0.
+    - a single trailing validate_spec after the loop yields 1.
+    - off-by-one calling validate_spec on the un-chained seg-0 yields 3.
+    """
+    profile = _profile(supports_native_extension=False)
+    backend = RecordingBackend(probe=profile)
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _ValidatingEngine(probe=profile)
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="vs-count",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,  # type: ignore[arg-type]
+    )
+
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
+    stage.run(
+        GenerationRequest(prompt="ignored", mode="i2v"),
+        segments_override=segments,
+    )
+
+    assert len(engine.validate_calls) == 2
+
+
+def test_stage_validates_chained_job_carries_injected_asset(tmp_path: Path) -> None:
+    """The job handed to engine.validate_spec on a chained iteration carries
+    the injected tail-frame in segments[0].assets.
+
+    Bug catches:
+    - validate_spec called BEFORE inject_tail_frame would see empty assets.
+    - injecting a stale prior-segment asset (e.g. results[0] every time)
+      would still pass this for 2-segment runs but is covered by the Layer E
+      chain test ordering assertions.
+    """
+    profile = _profile(supports_native_extension=False)
+    backend = RecordingBackend(probe=profile)
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _ValidatingEngine(probe=profile)
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="vs-asset",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,  # type: ignore[arg-type]
+    )
+
+    segments = [Segment(prompt="p-0"), Segment(prompt="p-1")]
+    stage.run(
+        GenerationRequest(prompt="ignored", mode="i2v"),
+        segments_override=segments,
+    )
+
+    # Exactly one validate call (one chain hop for 2 segments).
+    assert len(engine.validate_calls) == 1
+    chained_job = engine.validate_calls[0]
+    chained_assets = chained_job.segments[0].assets
+    assert len(chained_assets) == 1
+    asset = chained_assets[0]
+    assert asset.role == "init_image"
+    assert asset.kind == "image"
+    # The injected URI lives under the stage's run_id namespace.
+    assert "vs-asset" in asset.ref.uri
+    # Sanity: the same chained job (with asset) reached backend.submit afterwards.
+    submitted_chain_assets = backend.submitted_seg0_assets[1]
+    assert len(submitted_chain_assets) == 1
+    assert submitted_chain_assets[0].role == "init_image"
+
+
+def test_stage_aborts_when_validate_spec_raises_on_chained_segment(
+    tmp_path: Path,
+) -> None:
+    """validate_spec raising on the first chained segment aborts the stage
+    immediately: seg-0 was submitted (pre-chain), seg-1 raises before submit,
+    seg-2 is never reached.
+
+    Bug catches:
+    - swallowing ValidationError would have run all 3 submissions.
+    - validating BEFORE extract_last_frame / inject_tail_frame on seg-0 too
+      would have blocked submission 0 (assert == 1 would fail with 0).
+    - validating AFTER pool.submit on the chained iter would have allowed
+      submitted to reach 2 before raising.
+    """
+    profile = _profile(supports_native_extension=False)
+    backend = RecordingBackend(probe=profile)
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    # Raise on the FIRST validate_spec call (= first chained segment, seg 1).
+    engine = _ValidatingEngine(probe=profile, raise_on_validate_call=1)
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="vs-abort",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,  # type: ignore[arg-type]
+    )
+
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
+    with pytest.raises(ValidationError, match="simulated misconfig"):
+        stage.run(
+            GenerationRequest(prompt="ignored", mode="i2v"),
+            segments_override=segments,
+        )
+
+    # seg-0 was submitted (pre-chain), seg-1 raised before submit, seg-2 never reached.
+    assert len(backend.submitted_seg0_assets) == 1
+    # Only one validate_spec call (the one that raised).
+    assert len(engine.validate_calls) == 1

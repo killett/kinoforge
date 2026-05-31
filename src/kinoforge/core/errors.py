@@ -43,3 +43,11 @@ class UnknownAdapter(KinoforgeError):
 
 class FrameExtractionError(KinoforgeError):
     """Raised when a frame cannot be decoded from an Artifact's video bytes."""
+
+
+class AssetFetchError(KinoforgeError):
+    """Raised when fetching a conditioning asset's bytes fails.
+
+    Wraps unsupported URI scheme, HTTP transport error, missing file,
+    and ComfyUI ``/upload/image`` failure into a single typed error.
+    """

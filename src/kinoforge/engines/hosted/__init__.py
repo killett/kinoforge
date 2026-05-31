@@ -32,6 +32,7 @@ from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import frames, registry
+from kinoforge.core.assets import find_asset, set_by_dot_path
 from kinoforge.core.errors import (
     AuthError,
     FrameExtractionError,
@@ -196,6 +197,7 @@ class HostedAPIBackend(GenerationBackend):
         probe_profile: ModelProfile,
         sleep: Callable[[float], None] = time.sleep,
         url_path: str = "",
+        asset_paths: dict[str, str] | None = None,
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -208,6 +210,12 @@ class HostedAPIBackend(GenerationBackend):
             url_path: Dot-separated path into the polled response body that
                 locates the rendered video URL (e.g. ``"video.url"``).
                 Empty (default) leaves ``Artifact.url == ""``.
+            asset_paths: Optional mapping from role name to dot-path in
+                the request body where the matching asset's URI is
+                written (e.g. ``{"init_image": "input.image_url"}``).
+                Roles absent from this map are not injected.  URL
+                passthrough only — ``submit`` never fetches the asset
+                bytes; the hosted provider fetches the URL.
         """
         self._http_post = http_post
         self._http_get = http_get
@@ -215,6 +223,7 @@ class HostedAPIBackend(GenerationBackend):
         self._probe = probe_profile
         self._sleep = sleep
         self._url_path = url_path
+        self._asset_paths: dict[str, str] = dict(asset_paths or {})
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -233,15 +242,33 @@ class HostedAPIBackend(GenerationBackend):
         return self._probe
 
     def submit(self, job: GenerationJob) -> str:
-        """POST the job spec to the hosted endpoint and return the remote job ID.
+        """POST the job spec (with asset URIs injected) to the hosted endpoint.
+
+        For each role declared in ``self._asset_paths``, look up the
+        corresponding asset on ``job.segments[0]`` via
+        :func:`~kinoforge.core.assets.find_asset` and write
+        ``asset.ref.uri`` into a copy of the request body at the
+        configured dot-path via
+        :func:`~kinoforge.core.assets.set_by_dot_path`.  Roles absent
+        from ``segments[0].assets`` are silently skipped.  ``job.spec``
+        itself is never mutated.
+
+        URL passthrough only — no asset bytes are fetched here; the
+        hosted provider fetches the URI.
 
         Args:
-            job: The ``GenerationJob`` whose ``spec`` is sent as the request body.
+            job: The ``GenerationJob`` whose ``spec`` is the request body.
 
         Returns:
             The ``job_id`` (or task id) string from the API response.
         """
-        response = self._http_post(self._endpoint, dict(job.spec))
+        body = dict(job.spec)
+        for role, dot_path in self._asset_paths.items():
+            asset = find_asset(job, role)
+            if asset is None:
+                continue
+            set_by_dot_path(body, dot_path, asset.ref.uri)
+        response = self._http_post(self._endpoint, body)
         return str(response["job_id"])
 
     def result(self, job_id: str) -> Artifact:
@@ -351,6 +378,10 @@ class HostedAPIEngine(GenerationEngine):
         self._sleep = sleep
         self._probe = probe_profile
         self._declared_flags_map: dict[str, dict[str, bool]] = declared_flags_map or {}
+        # Asset-role -> request-body dot-path map, populated by ``backend``
+        # from ``cfg["engine"]["hosted"]["asset_paths"]`` and mirrored
+        # onto the engine so ``validate_spec`` can check it.
+        self._asset_paths: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Helper
@@ -448,6 +479,15 @@ class HostedAPIEngine(GenerationEngine):
         )
         endpoint: str = str(hosted_cfg.get("endpoint", ""))
         url_path: str = str(hosted_cfg.get("url_path", ""))
+        asset_paths_raw = hosted_cfg.get("asset_paths", {})
+        asset_paths: dict[str, str] = (
+            {str(k): str(v) for k, v in asset_paths_raw.items()}
+            if isinstance(asset_paths_raw, dict)
+            else {}
+        )
+        # Mirror onto the engine so ``validate_spec`` (called from outside
+        # via the ABC) can consult the same map.
+        self._asset_paths = asset_paths
         return HostedAPIBackend(
             http_post=self._http_post,
             http_get=self._http_get,
@@ -455,6 +495,7 @@ class HostedAPIEngine(GenerationEngine):
             probe_profile=self._probe,
             sleep=self._sleep,
             url_path=url_path,
+            asset_paths=asset_paths,
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
@@ -484,10 +525,16 @@ class HostedAPIEngine(GenerationEngine):
         return dict(self._declared_flags_map.get(key.derive(), {}))
 
     def validate_spec(self, job: GenerationJob) -> None:
-        """Raise :class:`~kinoforge.core.errors.ValidationError` when spec keys are missing.
+        """Raise :class:`~kinoforge.core.errors.ValidationError` for spec or asset gaps.
 
-        Both ``"model"`` (the hosted model ID) and ``"params"`` (the API
-        request body parameters) are required keys on a hosted job spec.
+        Required spec keys: ``"model"`` (the hosted model ID) and
+        ``"params"`` (the API request body parameters).  In addition,
+        for every asset in ``job.segments[0].assets``, the asset's role
+        must appear in ``self._asset_paths`` (populated from
+        ``cfg["engine"]["hosted"]["asset_paths"]`` at backend
+        construction).  Roles present without a configured injection
+        path are a hard error — silent skip would let the engine submit
+        a body missing the conditioning asset URI.
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` whose
@@ -495,7 +542,8 @@ class HostedAPIEngine(GenerationEngine):
 
         Raises:
             ValidationError: ``"model"`` or ``"params"`` is absent from
-                ``job.spec``.
+                ``job.spec``, or an asset role on ``segments[0]`` has no
+                entry in ``asset_paths``.
         """
         required = {"model", "params"}
         missing = required - set(job.spec.keys())
@@ -503,6 +551,15 @@ class HostedAPIEngine(GenerationEngine):
             raise ValidationError(
                 f"Hosted job.spec is missing required keys: {sorted(missing)}"
             )
+        if not job.segments:
+            return
+        for asset in job.segments[0].assets:
+            if asset.role not in self._asset_paths:
+                raise ValidationError(
+                    f"asset role {asset.role!r} present on segments[0] but "
+                    f"engine.hosted.asset_paths has no mapping; declare "
+                    f"asset_paths.{asset.role}: <dot.path> in YAML"
+                )
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Fetch the rendered video bytes via HTTP and decode the last frame.
