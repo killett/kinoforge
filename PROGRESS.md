@@ -148,14 +148,11 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer I merged to main at `0b2a8d7`.** First real public-provider artifact produced via `fal-ai/wan-t2v` (see Phase 19 entry). 663 offline tests + 2 opt-in live tests gated by `KINOFORGE_LIVE_TESTS=1 + FAL_KEY`.
+**Layer J merged to main at `<merge SHA>`.** Cross-engine prompt fallback shipped — hosted/diffusers/comfyui/fal all route the orchestrator's `Segment.prompt` via the shared `core/prompt_routing.resolve_prompt` helper. ~30 new tests, 4 atomic commits + retrofit + docs.
 
-**Pending follow-ups before next layer (non-blocking; surfaced by Layer I live smoke):**
-- Cross-engine prompt fallback: `hosted`/`diffusers`/`comfyui` share the same prompt-missing defect `FalBackend.submit` had — orchestrator places the user prompt on `Segment.prompt`, those backends build `body = dict(job.spec)` without consulting segments. Latent since written; will bite on first end-to-end orchestrator-driven live run.
-- `GenerateClipStage._artifact_bytes` HTTP seam normalization: currently hardcodes `urllib.request.urlopen` and is monkeypatched in tests; should be an injectable `download_bytes` constructor-arg matching `HostedAPIBackend.http_get_bytes`. Also needs Authorization-header support before hosted providers (RunwayML, Pika) go live.
-
-- Design spec: `docs/superpowers/specs/2026-05-31-layer-i-fal-adapter-ux-a-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-05-31-layer-i-fal-adapter-ux-a.md`
+**Pending follow-ups (Layer K candidate):**
+- `base_spec` routing from YAML cfg into the orchestrator (necessary to unblock orchestrator-driven hosted/diffusers/comfyui runs — see Phase 20 Known follow-up).
+- `GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).
 
 ## Post-MVP
 
@@ -258,3 +255,22 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - `GenerateClipStage._artifact_bytes` now resolves `uri` → local file read → `url` → HTTP download → synthetic-fallback (FakeEngine path).  Hosted/queue engines that return `Artifact(url="https://...mp4")` previously had their bytes silently replaced with debug-stub bytes.
 - CLI `provision` and `generate` accept `-c` as a short alias for `--config` so the documented quickstart works verbatim.
 - README "Real providers — fal.ai" quickstart added.
+
+### Phase 20 — Layer J (cross-engine prompt fallback)
+
+- [x] Task 1: `core/prompt_routing.py` + 8 helper tests — commit `ba078ec`
+- [x] Task 2: `prompt_body_key` on hosted + diffusers configs + 4 round-trip tests — commit `4c87e27`
+- [x] Task 3: HostedAPIBackend + Engine wire + 6 tests (5 routing + 1 E2E YAML) — commit `cc7b3dd`
+- [x] Task 4: DiffusersBackend + Engine wire + 6 tests — commit `e3e4244`
+- [x] Task 5: ComfyUIBackend + Engine wire (spec-level `prompt_node_ids`) + 6 tests — commit `acf93c2`
+- [x] Task 6: FalBackend retrofit (drop inline fallback, use helper) — commit `36cdc5c`
+- [x] Task 7: Examples + README + PROGRESS — commit `<SHA>` (backfilled after commit)
+
+**Key design decisions:**
+- Shared helper in `core/prompt_routing.py` (Q1=B): single `resolve_prompt(job)` consumed by all 4 engines.
+- Hosted/Diffusers default `prompt_body_key="prompt"` (Q4=A) with opt-out via `null`.
+- ComfyUI `prompt_node_ids` lives in `job.spec`, not cfg (Q6=A) — mirrors `asset_node_ids` symmetry.
+- Opt-in `validate_spec` raise (Q3=A): legacy configs untouched.
+- Fal retrofit (Q5=A): behavior preserved.
+
+**Known follow-up (necessary but out of scope):** `Orchestrator.generate` hardcodes `base_spec={}` (`src/kinoforge/core/orchestrator.py:605`). Routing YAML-supplied spec into the orchestrator (model/params for hosted, pipeline/scheduler for diffusers, graph/node_overrides for comfyui) is a separate Layer K candidate. Hosted/Diffusers/ComfyUI orchestrator-driven runs remain blocked on missing required spec keys until that work lands.

@@ -62,3 +62,17 @@ compute:
 #   kind: gcs
 #   bucket: my-org-kinoforge
 #   prefix: prod/runs
+
+# --- Optional: ComfyUI prompt routing (Layer J) ------------------------------
+# When the orchestrator drives the CLI prompt, set spec.prompt_node_ids in
+# your spec dict to declare which graph node receives the prompt text.
+# Currently routed into <node>.inputs.text (suitable for CLIPTextEncode and
+# most prompt-encoder nodes); non-standard encoders can override via
+# node_overrides directly.
+#
+# Example (placed in spec, not in cfg):
+#   spec:
+#     graph: { ... }
+#     node_overrides: { ... }
+#     prompt_node_ids:
+#       main: "6"   # node id of the positive-prompt CLIPTextEncode node
