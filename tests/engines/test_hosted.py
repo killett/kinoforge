@@ -22,7 +22,12 @@ from typing import Any
 import pytest
 
 from kinoforge.core import registry
-from kinoforge.core.errors import AuthError, KinoforgeError, ValidationError
+from kinoforge.core.errors import (
+    AuthError,
+    FrameExtractionError,
+    KinoforgeError,
+    ValidationError,
+)
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -112,6 +117,8 @@ def _make_engine(
     creds: CredentialProvider | None = None,
     http_get: Any = _ok_http_get,
     http_post: Any = _ok_http_post,
+    http_get_bytes: Any = lambda url: b"",
+    ffmpeg_run: Any = lambda argv, stdin: b"",
     probe_profile: ModelProfile = _DEFAULT_PROBE,
     declared_flags_map: dict[str, dict[str, bool]] | None = None,
 ) -> HostedAPIEngine:
@@ -119,6 +126,8 @@ def _make_engine(
         creds=creds or _DictCreds(_make_creds()),
         http_get=http_get,
         http_post=http_post,
+        http_get_bytes=http_get_bytes,
+        ffmpeg_run=ffmpeg_run,
         probe_profile=probe_profile,
         declared_flags_map=declared_flags_map,
     )
@@ -399,3 +408,170 @@ def test_backend_endpoints_returns_endpoint_url() -> None:
     backend = engine.backend(None, _BASE_CFG)
     endpoints = backend.endpoints()
     assert _ENDPOINT in endpoints.values()
+
+
+# ---------------------------------------------------------------------------
+# extract_last_frame + url_path dot-walker (Layer extract_last_frame)
+# ---------------------------------------------------------------------------
+
+
+def test_walk_dot_path_resolves_nested_string() -> None:
+    """video.url -> nested string lookup works.
+
+    Bug this catches: walker only handles top-level keys.
+    """
+    from kinoforge.engines.hosted import _walk_dot_path
+
+    assert _walk_dot_path({"video": {"url": "X"}}, "video.url") == "X"
+
+
+def test_walk_dot_path_returns_empty_on_missing_intermediate_key() -> None:
+    """Any missing step short-circuits to ''; no KeyError leaks out.
+
+    Bug this catches: walker raises on the first missing key, breaking
+    backends that point at providers returning sparse responses.
+    """
+    from kinoforge.engines.hosted import _walk_dot_path
+
+    assert _walk_dot_path({"video": {"url": "X"}}, "missing.url") == ""
+
+
+def test_walk_dot_path_returns_empty_on_non_string_terminal() -> None:
+    """If the walked path lands on a non-string (e.g. int, dict), return ''.
+
+    Bug this catches: walker str()-casts arbitrary values, producing
+    fake URLs like 'http://...' from random response payloads.
+    """
+    from kinoforge.engines.hosted import _walk_dot_path
+
+    assert _walk_dot_path({"v": {"url": 42}}, "v.url") == ""
+
+
+def test_walk_dot_path_returns_empty_on_empty_path() -> None:
+    """Empty path returns empty string — used when cfg omits url_path.
+
+    Bug this catches: walker iterates an empty path and lands on the
+    top-level data dict, returning '' or raising — the empty-path case
+    should be a clean early return.
+    """
+    from kinoforge.engines.hosted import _walk_dot_path
+
+    assert _walk_dot_path({}, "") == ""
+
+
+def test_result_uses_url_path_to_backfill_artifact_url() -> None:
+    """HostedAPIBackend.result() walks url_path and populates Artifact.url.
+
+    Bug this catches: backend ignores url_path or always returns ''.
+    """
+    from kinoforge.engines.hosted import HostedAPIBackend
+
+    payload = {
+        "status": "done",
+        "filename": "clip.mp4",
+        "video": {"url": "https://cdn.fal.run/clip.mp4"},
+    }
+    backend = HostedAPIBackend(
+        http_post=lambda url, body: {"job_id": "JOB"},
+        http_get=lambda url: payload,
+        endpoint="https://fal.run/fal-ai/ltx",
+        probe_profile=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+        url_path="video.url",
+    )
+
+    artifact = backend.result("JOB")
+
+    assert artifact.url == "https://cdn.fal.run/clip.mp4"
+
+
+def test_extract_last_frame_fetches_url_and_calls_ffmpeg() -> None:
+    """Same shape as the other two engines, with HostedAPIEngine.
+
+    Bug this catches: engine drops bytes or skips ffmpeg.
+    """
+    fetch_calls: list[str] = []
+    ffmpeg_calls: list[tuple[list[str], bytes]] = []
+
+    def fake_fetch(url: str) -> bytes:
+        fetch_calls.append(url)
+        return b"VIDEO"
+
+    def fake_ffmpeg(argv: list[str], stdin: bytes) -> bytes:
+        ffmpeg_calls.append((argv, stdin))
+        return b"PNG"
+
+    engine = _make_engine(http_get_bytes=fake_fetch, ffmpeg_run=fake_ffmpeg)
+    artifact = Artifact(
+        filename="clip.mp4",
+        url="https://cdn.fal.run/clip.mp4",
+        meta={"job_id": "X"},
+    )
+
+    out = engine.extract_last_frame(artifact)
+
+    assert out == b"PNG"
+    assert fetch_calls == ["https://cdn.fal.run/clip.mp4"]
+    assert ffmpeg_calls[0][1] == b"VIDEO"
+
+
+def test_extract_last_frame_raises_on_empty_url() -> None:
+    """Empty url raises FrameExtractionError mentioning HostedAPIEngine.
+
+    Bug this catches: copy-paste shared body leaves the wrong class name.
+    """
+    engine = _make_engine()
+    artifact = Artifact(filename="clip.mp4", url="", meta={})
+
+    with pytest.raises(FrameExtractionError, match="HostedAPIEngine"):
+        engine.extract_last_frame(artifact)
+
+
+def test_extract_last_frame_wraps_fetch_failure_as_frame_extraction_error() -> None:
+    """HTTP fetch errors surface as FrameExtractionError with the URL in the
+    message, not as raw urllib exceptions.
+
+    Bug this catches: callers expecting the spec-promised single exception
+    type (FrameExtractionError) get an unrelated network exception instead.
+    """
+
+    class _NetBlewUp(RuntimeError):
+        pass
+
+    def boom(url: str) -> bytes:
+        raise _NetBlewUp("connection refused")
+
+    engine = _make_engine(http_get_bytes=boom)
+    artifact = Artifact(
+        filename="clip.mp4",
+        url="https://cdn.fal.run/clip.mp4",
+        meta={},
+    )
+
+    with pytest.raises(FrameExtractionError, match="fetch from"):
+        engine.extract_last_frame(artifact)
+
+
+def test_walk_dot_path_consecutive_dots_returns_empty() -> None:
+    """Mis-configured paths like 'video..url' split to ['video', '', 'url'];
+    the empty-key step fails the dict/key guard and returns ''.
+
+    Bug this catches: walker doesn't handle malformed paths and either
+    crashes or silently descends through a synthetic empty key.
+    """
+    from kinoforge.engines.hosted import _walk_dot_path
+
+    assert _walk_dot_path({"video": {"url": "X"}}, "video..url") == ""
+
+
+def test_walk_dot_path_list_terminal_returns_empty() -> None:
+    """A list terminal (e.g. {'video': [...]} via 'video' path) is not a
+    string, so the walker returns ''. Realistic mis-config — some providers
+    return {'results': [{'url': '...'}]} which is array-indexed.
+
+    Bug this catches: walker str()-casts the list and produces fake URLs
+    like "[{'url': '...'}]" downstream.
+    """
+    from kinoforge.engines.hosted import _walk_dot_path
+
+    assert _walk_dot_path({"video": [{"url": "X"}]}, "video") == ""

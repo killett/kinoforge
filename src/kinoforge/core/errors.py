@@ -39,3 +39,7 @@ class TeardownError(KinoforgeError):
 
 class UnknownAdapter(KinoforgeError):
     """No registered provider/source/engine matches the requested name/scheme."""
+
+
+class FrameExtractionError(KinoforgeError):
+    """Raised when a frame cannot be decoded from an Artifact's video bytes."""
