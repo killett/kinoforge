@@ -113,10 +113,14 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - `SkyPilotProvider._get_sky()` lazy path wired but unexercised against real `sky` SDK.
 - `S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.
 
-**Per-engine follow-ups (no GitHub issue yet):**
-- `ComfyUIEngine`, `DiffusersEngine`, `HostedAPIEngine` inherit the `extract_last_frame` ABC default that raises — non-native multi-segment runs on these engines hit `NotImplementedError` at chain time. Each engine needs its own implementation (PIL? ffmpeg? hosted-API endpoint?).
-
 **Architectural follow-ups:**
+- **Layer F: engine `submit()` ignores seg-0 assets.** The non-native chain now
+  persists tail PNGs (via the stage's `store.put_bytes`) and injects a
+  `ConditioningAsset` into `next_job.segments[0]`, but each engine's `submit()`
+  body reads only `job.spec` — the tail asset is currently dead weight at
+  render time. Wiring per asset role into each engine's spec template is the
+  next layer: ComfyUI `LoadImage` node injection, Diffusers `init_image` param,
+  Hosted provider-specific URL field.
 - `cli._cmd_status` queries in-process provider state only, not the ledger.
 - `provisioner.provision` typed as `_ProvisionConfig` Protocol — `# type: ignore[arg-type]` at call site for mypy generic variance.
 - `GenerateClipStage` persists only final artifact (intermediates in-memory) — stitching, when shipped, must refactor persistence model or stitching read path.
@@ -149,23 +153,27 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer D (.env secrets loader) complete.** All acceptance criteria met:
-`pixi run pre-commit run --all-files` clean; `pixi run test` reports
-450 passed (440 prior + 8 dotenv unit tests + 2 CLI integration tests);
-mypy strict clean across 89 source files; `kinoforge --env-file PATH ...`
-flag works; default `./.env` auto-loads at CLI startup; shell values
-always win over `.env`. `.env` finally added to `.gitignore` (was missing).
-.env.example checked in with the 4 documented kinoforge credential
-variables (FAL_KEY, CIVITAI_TOKEN, HF_TOKEN, RUNPOD_API_KEY).
+**Layer E (per-engine `extract_last_frame`) complete.** All acceptance
+criteria met across ComfyUI, Diffusers, and Hosted; shared
+`core/frames.ffmpeg_last_frame` decoder via injectable subprocess seam;
+`GenerateClipStage` persists tail PNGs into the `run_id` namespace via
+`store.put_bytes`; `FrameExtractionError` wraps both ffmpeg path
+(missing-binary + non-zero exit) and HTTP fetch failures so callers
+have one exception type to catch. `pixi run test` reports 478 passed
+(450 prior + 28 new across `core/frames`, continuity rewrite, stage
+persistence, 3 engines, dot-walker, fetch-wrap coverage); mypy strict
++ ruff + pre-commit clean.
 
-**Next: pick from the layered roadmap.** Three plausible next layers:
+**Next: pick from the layered roadmap.** Two plausible next layers:
 
-1. **ComfyUI / Diffusers / Hosted `extract_last_frame` implementations**
-   (no GitHub issue yet; smaller per-engine follow-ups). Worth doing
-   before the first real-cloud user trips the post-Layer-B
-   `NotImplementedError` on a multi-segment non-native run. Requires
-   per-engine decisions on extraction mechanism (PIL? ffmpeg via
-   engine's own runtime? hosted-API endpoint?).
+1. **Layer F — engine asset-wiring (`submit()` consumes seg-0 assets).**
+   Closes the rest of the non-native multi-segment story: each engine
+   reads `job.segments[0].assets`, finds the `init_image` role, and
+   folds its `ref.uri` into the spec/graph the engine submits. Surface
+   is per-engine: ComfyUI `LoadImage` node injection, Diffusers
+   `init_image` param, Hosted provider-specific URL field. Until this
+   ships, tail PNGs persist but the next render does not actually
+   consume them.
 
 2. **Layer #4 — Concurrent backend scheduler (GitHub issue #3).**
    Drop-in `ConcurrentPool` behind the existing `BackendPool` ABC. Pure
@@ -208,3 +216,12 @@ Begin the chosen layer with the
 - [x] Task 2: dotenv_loader module + 8 unit tests — commit `0dc4714` (+ polish at `366ce5d`)
 - [x] Task 3: CLI --env-file flag + 2 integration tests — commit `727ee2f` (+ polish at `b9056cf`)
 - [x] Task 4: README Credentials section + PROGRESS Phase 14 entry — commit `d4be826`
+
+### Phase 15 — per-engine extract_last_frame (post-MVP Layer E)
+- [x] Task 1: `FrameExtractionError` + `core/frames.ffmpeg_last_frame` helper + injectable subprocess seam — commit `ba265bb` (+ missing-ffmpeg wrap + test strengthening at `ec04976`)
+- [x] Task 2: ABC contract change (`extract_last_frame -> bytes`) + `inject_tail_frame` simplification + FakeEngine bytes return — commit `b6fca7a` (+ docstring polish at `d150613`)
+- [x] Task 3: `GenerateClipStage` non-native rewiring (extract → put_bytes → wrap → inject) — commit `0c2c7a0` (+ filename-population + chain-test strengthening at `f41f3c4`)
+- [x] Task 4: ComfyUI `result()` /view URL backfill + `extract_last_frame` + 2 seams — commit `50a08bb` (+ filename URL-encoding at `e4151ff`)
+- [x] Task 5: Diffusers `result()` URL passthrough + `extract_last_frame` + 2 seams + server contract doc — commit `9df1dfd` (+ url-shadowing rename at `3d6ce7a`)
+- [x] Task 6: Hosted `url_path` cfg + dot-walker + `result()` backfill + `extract_last_frame` + 2 seams — commit `c10b111`
+- [x] Cross-engine fetch-error wrap (Task 4/5/6 retrofit) — commit `0d2d2c3`. All three engines now wrap `http_get_bytes` exceptions as `FrameExtractionError` per spec §4.3.
