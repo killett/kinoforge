@@ -73,34 +73,61 @@ class FakeS3Client:
     exceptions = _S3Exceptions()
 
     def __init__(self) -> None:
-        self._objects: dict[tuple[str, str], bytes] = {}
+        # value = (body_bytes, etag)
+        self._objects: dict[tuple[str, str], tuple[bytes, str]] = {}
+        self._etag_counter = 0
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes) -> dict[str, Any]:
-        self._objects[(Bucket, Key)] = Body
-        return {}
+    def _next_etag(self) -> str:
+        self._etag_counter += 1
+        return f'"fake-etag-{self._etag_counter}"'
+
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        IfNoneMatch: str | None = None,
+        IfMatch: str | None = None,
+    ) -> dict[str, Any]:
+        existing = self._objects.get((Bucket, Key))
+        if IfNoneMatch == "*" and existing is not None:
+            raise self.exceptions.ClientError("PreconditionFailed")
+        if IfMatch is not None and (existing is None or existing[1] != IfMatch):
+            raise self.exceptions.ClientError("PreconditionFailed")
+        etag = self._next_etag()
+        self._objects[(Bucket, Key)] = (Body, etag)
+        return {"ETag": etag}
 
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
         if (Bucket, Key) not in self._objects:
             raise self.exceptions.NoSuchKey()
-        return {"Body": _BytesBody(self._objects[(Bucket, Key)])}
+        body, etag = self._objects[(Bucket, Key)]
+        return {"Body": _BytesBody(body), "ETag": etag}
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
         if (Bucket, Key) not in self._objects:
             raise self.exceptions.ClientError("NoSuchKey")
-        return {}
+        _, etag = self._objects[(Bucket, Key)]
+        return {"ETag": etag}
 
-    def delete_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+    def delete_object(
+        self, *, Bucket: str, Key: str, IfMatch: str | None = None
+    ) -> dict[str, Any]:
+        existing = self._objects.get((Bucket, Key))
+        if IfMatch is not None and (existing is None or existing[1] != IfMatch):
+            raise self.exceptions.ClientError("PreconditionFailed")
         self._objects.pop((Bucket, Key), None)
         return {}
 
     def get_paginator(self, op: str) -> _S3Paginator:
         assert op == "list_objects_v2", f"unexpected paginator op: {op!r}"
-        return _S3Paginator(self._objects)
+        # Paginator only needs keys; pass through the key set.
+        return _S3Paginator({k: v[0] for k, v in self._objects.items()})
 
 
 # ---------------------------------------------------------------------------
-# GCS fakes (used by Task 2's tests; landed here in Task 1 to avoid two
-# conftest.py edits)
+# GCS fakes
 # ---------------------------------------------------------------------------
 
 
@@ -108,23 +135,51 @@ class _GCSNotFound(Exception):
     """Stand-in for google.api_core.exceptions.NotFound."""
 
 
+class _GCSPreconditionFailed(Exception):
+    """Stand-in for google.api_core.exceptions.PreconditionFailed."""
+
+
 class _FakeBlob:
     def __init__(self, bucket: _FakeBucket, name: str) -> None:
         self.bucket = bucket
         self.name = name
+        self._captured_generation: int | None = None
 
-    def upload_from_string(self, data: bytes) -> None:
+    @property
+    def generation(self) -> int | None:
+        return self.bucket._generations.get(self.name)
+
+    def upload_from_string(
+        self, data: bytes, if_generation_match: int | None = None
+    ) -> None:
+        existing_gen = self.bucket._generations.get(self.name)
+        if if_generation_match is not None:
+            if if_generation_match == 0:
+                if existing_gen is not None:
+                    raise _GCSPreconditionFailed()
+            else:
+                if existing_gen != if_generation_match:
+                    raise _GCSPreconditionFailed()
         self.bucket._blobs[self.name] = data
+        new_gen = (existing_gen or 0) + 1
+        self.bucket._generations[self.name] = new_gen
+        self._captured_generation = new_gen
 
     def download_as_bytes(self) -> bytes:
         if self.name not in self.bucket._blobs:
             raise _GCSNotFound()
+        # Capture current generation for release CAS.
+        self._captured_generation = self.bucket._generations.get(self.name)
         return self.bucket._blobs[self.name]
 
-    def delete(self) -> None:
+    def delete(self, if_generation_match: int | None = None) -> None:
         if self.name not in self.bucket._blobs:
             raise _GCSNotFound()
+        existing_gen = self.bucket._generations.get(self.name)
+        if if_generation_match is not None and existing_gen != if_generation_match:
+            raise _GCSPreconditionFailed()
         del self.bucket._blobs[self.name]
+        self.bucket._generations.pop(self.name, None)
 
     def exists(self) -> bool:
         return self.name in self.bucket._blobs
@@ -134,6 +189,7 @@ class _FakeBucket:
     def __init__(self, name: str) -> None:
         self.name = name
         self._blobs: dict[str, bytes] = {}
+        self._generations: dict[str, int] = {}
 
     def blob(self, key: str) -> _FakeBlob:
         return _FakeBlob(self, key)
@@ -148,6 +204,7 @@ class FakeGCSClient:
     """In-memory stand-in for google.cloud.storage.Client."""
 
     NotFound = _GCSNotFound
+    PreconditionFailed = _GCSPreconditionFailed
 
     def __init__(self) -> None:
         self._buckets: dict[str, _FakeBucket] = {}

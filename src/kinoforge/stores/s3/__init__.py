@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.locks import Lock
 
 
 class S3ArtifactStore(ArtifactStore):
@@ -119,6 +122,20 @@ class S3ArtifactStore(ArtifactStore):
                 raise FileNotFoundError(f"artifact not found: {uri!r}") from None
             raise
         self._client.delete_object(Bucket=bucket, Key=key)
+
+    def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
+        """Return an :class:`S3CloudLock` rooted under ``<prefix>/_locks/``.
+
+        Args:
+            key: Logical lock key (may contain forward slashes).
+            ttl_s: Lease duration in seconds.
+
+        Returns:
+            A fresh :class:`~kinoforge.stores.s3.lock.S3CloudLock`.
+        """
+        import kinoforge.stores.s3.lock as _s3_lock  # noqa: PLC0415
+
+        return _s3_lock.S3CloudLock(store=self, key=key, ttl_s=ttl_s)
 
 
 # ---------------------------------------------------------------------------

@@ -448,3 +448,85 @@ def test_budget_tracker_enforce_destroys_and_raises(
 
     # Instance must be destroyed BEFORE raise (destroy happens inside enforce)
     assert inst.id not in {i.id for i in provider.list_instances()}
+
+
+# ---------------------------------------------------------------------------
+# Cross-process Ledger mutation (Layer H)
+# ---------------------------------------------------------------------------
+
+
+def test_interleaved_record_across_two_ledger_instances(tmp_path: Path) -> None:
+    """Two Ledger instances over the same store must not lose entries.
+
+    Without the outer lock, ledger_a.record() reads [], adds entry_a;
+    ledger_b.record() reads [] (concurrent), adds entry_b; one write
+    overwrites the other and we end with [entry_x] instead of
+    [entry_a, entry_b].  This test asserts both entries survive and that
+    acquire_lock was called exactly twice (once per record).
+    """
+    from kinoforge.core.locks import InMemoryLock
+
+    registry: dict[str, dict[str, float | str]] = {}
+    clock = FakeClock(start=0.0)
+    lock_calls: list[str] = []
+
+    class _LockingStore(LocalArtifactStore):
+        def acquire_lock(self, key: str, *, ttl_s: float) -> InMemoryLock:  # noqa: D102
+            lock_calls.append(key)
+            return InMemoryLock(key=key, ttl_s=ttl_s, registry=registry, clock=clock)
+
+    store = _LockingStore(tmp_path)
+    ledger_a = Ledger(store, run_id="_lifecycle")
+    ledger_b = Ledger(store, run_id="_lifecycle")
+
+    inst_a = Instance(
+        id="inst-a",
+        provider="local",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={"job": "a"},
+        cost_rate_usd_per_hr=0.5,
+    )
+    inst_b = Instance(
+        id="inst-b",
+        provider="local",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={"job": "b"},
+        cost_rate_usd_per_hr=0.5,
+    )
+
+    ledger_a.record(inst_a)
+    ledger_b.record(inst_b)
+
+    assert lock_calls == ["ledger/_lifecycle", "ledger/_lifecycle"], (
+        f"expected 2 lock acquisitions; got {lock_calls}"
+    )
+
+    ids = {e["id"] for e in ledger_a.entries()}
+    assert ids == {"inst-a", "inst-b"}
+
+
+def test_entries_read_does_not_take_lock(tmp_path: Path) -> None:
+    """entries() is a snapshot read; spec §5.2 says no lock.
+
+    Locking reads would force every dashboard / status query into the
+    contention path.
+    """
+    from kinoforge.core.locks import InMemoryLock
+
+    lock_calls: list[str] = []
+
+    class _CountingStore(LocalArtifactStore):
+        def acquire_lock(self, key: str, *, ttl_s: float) -> InMemoryLock:  # noqa: D102
+            lock_calls.append(key)
+            return InMemoryLock(key=key, ttl_s=ttl_s, registry={})
+
+    store = _CountingStore(tmp_path)
+    ledger = Ledger(store, run_id="_lifecycle")
+
+    pre = len(lock_calls)
+    ledger.entries()
+    assert len(lock_calls) == pre, "entries() must not take a lock"

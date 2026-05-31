@@ -51,3 +51,11 @@ class AssetFetchError(KinoforgeError):
     Wraps unsupported URI scheme, HTTP transport error, missing file,
     and ComfyUI ``/upload/image`` failure into a single typed error.
     """
+
+
+class LockError(KinoforgeError):
+    """Base class for lock-acquisition failures."""
+
+
+class LockTimeout(LockError):
+    """Raised when ``acquire(blocking=True, timeout_s=X)`` elapses without obtaining the lock."""

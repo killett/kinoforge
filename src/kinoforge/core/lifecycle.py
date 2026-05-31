@@ -354,8 +354,9 @@ def warm_reuse_or_create(
 class Ledger:
     """Persistent record of every launched instance, backed by an ArtifactStore.
 
-    Single-process assumption: no cross-process concurrency.  Each mutating
-    operation does a read-modify-write within a single method call.
+    Mutating operations (``record`` / ``forget``) take an outer
+    cross-process lock from :meth:`ArtifactStore.acquire_lock` before the
+    read-modify-write block.  Reads (``entries``) stay lock-free.
 
     Args:
         store: The :class:`~kinoforge.stores.base.ArtifactStore` used for
@@ -372,15 +373,25 @@ class Ledger:
 
     _LEDGER_NAME: str = "ledger.json"
 
-    def __init__(self, store: ArtifactStore, run_id: str = "_lifecycle") -> None:
+    def __init__(
+        self,
+        store: ArtifactStore,
+        run_id: str = "_lifecycle",
+        *,
+        mutate_ttl_s: float = 30.0,
+    ) -> None:
         """Initialise the ledger.
 
         Args:
             store: Artifact store used for persistence.
             run_id: Namespace/run identifier used within the store.
+            mutate_ttl_s: Outer cross-process lease duration for record/forget
+                RMW operations.  Default 30s — covers a single read-modify-write
+                round-trip including JSON parse/serialize.
         """
         self._store = store
         self._run_id = run_id
+        self._mutate_ttl_s = mutate_ttl_s
         self._uri: str | None = None
 
     # ------------------------------------------------------------------
@@ -435,23 +446,27 @@ class Ledger:
         """Append an instance entry to the ledger.
 
         Reads the current ledger (or starts fresh if none exists), appends
-        the new entry, and writes back atomically within this call.
+        the new entry, and writes back atomically within this call under
+        an outer cross-process lock.
 
         Args:
             instance: The :class:`~kinoforge.core.interfaces.Instance` to
                 record.  Fields ``id``, ``provider``, ``tags``,
                 ``created_at``, and ``cost_rate_usd_per_hr`` are stored.
         """
-        entries = self._read_entries()
-        entry: dict = {  # type: ignore[type-arg]
-            "id": instance.id,
-            "provider": instance.provider,
-            "tags": dict(instance.tags),
-            "created_at": instance.created_at,
-            "cost_rate_usd_per_hr": instance.cost_rate_usd_per_hr,
-        }
-        entries.append(entry)
-        self._write_entries(entries)
+        with self._store.acquire_lock(
+            f"ledger/{self._run_id}", ttl_s=self._mutate_ttl_s
+        ):
+            entries = self._read_entries()
+            entry: dict = {  # type: ignore[type-arg]
+                "id": instance.id,
+                "provider": instance.provider,
+                "tags": dict(instance.tags),
+                "created_at": instance.created_at,
+                "cost_rate_usd_per_hr": instance.cost_rate_usd_per_hr,
+            }
+            entries.append(entry)
+            self._write_entries(entries)
 
     def entries(self) -> list[dict]:  # type: ignore[type-arg]
         """Return all recorded entries.
@@ -465,15 +480,19 @@ class Ledger:
     def forget(self, instance_id: str) -> None:
         """Remove the entry for ``instance_id`` from the ledger.
 
-        If ``instance_id`` is not present, this is a no-op.
+        If ``instance_id`` is not present, this is a no-op.  The operation
+        is performed under an outer cross-process lock.
 
         Args:
             instance_id: The instance whose entry should be removed.
         """
-        entries = self._read_entries()
-        updated = [e for e in entries if e.get("id") != instance_id]
-        if len(updated) != len(entries):
-            self._write_entries(updated)
+        with self._store.acquire_lock(
+            f"ledger/{self._run_id}", ttl_s=self._mutate_ttl_s
+        ):
+            entries = self._read_entries()
+            updated = [e for e in entries if e.get("id") != instance_id]
+            if len(updated) != len(entries):
+                self._write_entries(updated)
 
 
 # ---------------------------------------------------------------------------

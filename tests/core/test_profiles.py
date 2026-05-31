@@ -596,3 +596,117 @@ def test_resolve_works_across_jsonprofilecache_instances(tmp_path: Path) -> None
     recovered = cache_b.resolve(key)
 
     assert recovered == persisted
+
+
+# ---------------------------------------------------------------------------
+# _RecordingBackend — counts calls, shared across cross-process tests
+# ---------------------------------------------------------------------------
+
+
+class _RecordingBackend(GenerationBackend):
+    """Records how many times inspect_capabilities was called; returns probe."""
+
+    def __init__(self, probe: ModelProfile) -> None:
+        self._probe = probe
+        self.calls: int = 0
+
+    def inspect_capabilities(self) -> ModelProfile:  # noqa: D102
+        self.calls += 1
+        return self._probe
+
+    def capabilities(self) -> ModelProfile:  # noqa: D102
+        return self._probe
+
+    def submit(self, job: GenerationJob) -> str:  # noqa: D102
+        raise NotImplementedError
+
+    def result(self, job_id: str) -> Any:  # noqa: D102
+        raise NotImplementedError
+
+    def endpoints(self) -> dict[str, str]:  # noqa: D102
+        raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# Cross-process single-flight (Layer H)
+# ---------------------------------------------------------------------------
+
+
+def test_cross_process_single_flight_one_probe(tmp_path: Path) -> None:
+    """Two JsonProfileCache instances sharing a store + lock registry probe once.
+
+    Without the outer lock, both caches would see the miss, both would
+    call inspect_capabilities, and both would persist — last writer wins
+    but both incurred the cost.  This test asserts the outer lock
+    serializes the two instances and only one probe runs.
+    """
+    from kinoforge.core.clock import FakeClock
+    from kinoforge.core.locks import InMemoryLock
+    from kinoforge.core.profiles import JsonProfileCache
+    from kinoforge.stores.local import LocalArtifactStore
+
+    registry: dict[str, dict[str, Any]] = {}
+    clock = FakeClock(start=0.0)
+
+    class _LockingStore(LocalArtifactStore):
+        def acquire_lock(self, key: str, *, ttl_s: float) -> InMemoryLock:  # noqa: D102
+            return InMemoryLock(
+                key=key,
+                ttl_s=ttl_s,
+                registry=registry,
+                clock=clock,
+                sleep=lambda _: clock.advance(0.01),
+            )
+
+    store = _LockingStore(tmp_path)
+    cache_a = JsonProfileCache(store)
+    cache_b = JsonProfileCache(store)
+
+    probe = _make_probe()
+    backend_a = _RecordingBackend(probe=probe)
+    backend_b = _RecordingBackend(probe=probe)
+    engine = _FakeEngine()
+    key = _make_key()
+
+    # Serialised execution: cache_a discovers first, cache_b sees cache hit.
+    profile_a = cache_a.resolve_or_discover(key, engine, backend_a)
+    profile_b = cache_b.resolve_or_discover(key, engine, backend_b)
+
+    assert profile_a == profile_b
+    total_probes = backend_a.calls + backend_b.calls
+    assert total_probes == 1, f"expected 1 probe across both caches, got {total_probes}"
+
+
+def test_cache_hit_fast_path_skips_lock(tmp_path: Path) -> None:
+    """resolve() success must not call acquire_lock.
+
+    Spec §5.1 says cache hits take no lock.  Otherwise every cache hit
+    pays a CAS round-trip in production, defeating the whole point of
+    the cache.
+    """
+    from kinoforge.core.locks import InMemoryLock
+    from kinoforge.core.profiles import JsonProfileCache
+    from kinoforge.stores.local import LocalArtifactStore
+
+    lock_calls: list[str] = []
+
+    class _CountingStore(LocalArtifactStore):
+        def acquire_lock(self, key: str, *, ttl_s: float) -> InMemoryLock:  # noqa: D102
+            lock_calls.append(key)
+            return InMemoryLock(key=key, ttl_s=ttl_s, registry={})
+
+    store = _CountingStore(tmp_path)
+    cache = JsonProfileCache(store)
+    probe = _make_probe()
+    backend = _RecordingBackend(probe=probe)
+    engine = _FakeEngine()
+    key = _make_key()
+
+    cache.resolve_or_discover(key, engine, backend)
+    pre_count = len(lock_calls)
+
+    # Second call should be a cache hit and acquire NO lock.
+    cache.resolve_or_discover(key, engine, backend)
+    assert len(lock_calls) == pre_count, (
+        f"cache-hit fast path took {len(lock_calls) - pre_count} extra locks"
+    )
