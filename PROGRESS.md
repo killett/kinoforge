@@ -148,7 +148,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-Layer G (concurrent backend scheduler) complete. All 8 commits + docs shipped (524 → 554 tests).
+Layer G (concurrent backend scheduler) complete. All 8 commits + docs + regression test shipped (524 → 555 tests).
 **Next: choose from open GitHub issues #2 (audio sync), #4 (keyframe stage), #7 (cross-process discovery lock), #8 (HF bare-repo listing), #9 (aria2c fast-path).**
 
 ## Post-MVP
