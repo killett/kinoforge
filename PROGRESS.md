@@ -148,7 +148,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer J merged to main at `<merge SHA>`.** Cross-engine prompt fallback shipped — hosted/diffusers/comfyui/fal all route the orchestrator's `Segment.prompt` via the shared `core/prompt_routing.resolve_prompt` helper. ~30 new tests, 4 atomic commits + retrofit + docs.
+**Layer J merged to main at `35384f3`.** Cross-engine prompt fallback shipped — hosted/diffusers/comfyui/fal all route the orchestrator's `Segment.prompt` via the shared `core/prompt_routing.resolve_prompt` helper. +30 new tests (693 total), 6 atomic commits + retrofit + docs.
 
 **Pending follow-ups (Layer K candidate):**
 - `base_spec` routing from YAML cfg into the orchestrator (necessary to unblock orchestrator-driven hosted/diffusers/comfyui runs — see Phase 20 Known follow-up).
