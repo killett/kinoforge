@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -129,7 +129,10 @@ def load_manifest(path: Path) -> BatchManifest:
         ConfigError: Manifest isn't a YAML list, or a prompt_file is missing.
         pydantic.ValidationError: Schema / per-entry / manifest-level rules.
     """
-    raw = yaml.safe_load(path.read_text())
+    try:
+        raw = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"manifest YAML parse error: {path}: {exc}") from exc
     if not isinstance(raw, list):
         raise ConfigError("manifest top-level must be a YAML list of entries")
     manifest = BatchManifest(entries=raw)
@@ -165,7 +168,7 @@ class BatchOutcome:
     """
 
     run_id: str
-    status: str
+    status: Literal["ok", "fail", "aborted", "interrupted"]
     duration_s: float | None = None
     uri: str | None = None
     error: str | None = None
