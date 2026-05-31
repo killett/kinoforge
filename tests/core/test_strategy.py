@@ -289,3 +289,69 @@ def test_purity_non_native() -> None:
         assert job_a.segments[0].params == job_b.segments[0].params
         assert job_a.spec == job_b.spec
         assert job_a.params == job_b.params
+
+
+# ---------------------------------------------------------------------------
+# Layer K regression locks: merge semantics + strategy-authoritative _audio_mode
+# ---------------------------------------------------------------------------
+
+
+def test_decide_segment_params_merge_over_non_empty_base_params() -> None:
+    """Segment-wins merge holds when base_params is non-empty.
+
+    Bug catch: existing tests pass {} as base_params, so a regression
+    where _merged_segment was switched to base-wins would only break
+    when a real cfg.params is routed in (Layer K).
+    """
+    profile = ModelProfile(
+        name="fake",
+        max_frames=16,
+        fps=8,
+        supported_modes={"t2v"},
+        max_resolution=(512, 512),
+        supports_native_extension=False,
+        supports_joint_audio=False,
+    )
+    segments = [
+        Segment(prompt="a", assets=[], params={"steps": 50}),
+        Segment(prompt="b", assets=[], params={"fps": 30}),
+    ]
+    base_params = {"fps": 24, "steps": 30, "seed": 42}
+
+    jobs = decide(profile, segments, base_params, {})
+
+    # Non-native path: one job per segment.
+    assert len(jobs) == 2
+    assert jobs[0].segments[0].params == {"fps": 24, "steps": 50, "seed": 42}
+    assert jobs[1].segments[0].params == {"fps": 30, "steps": 30, "seed": 42}
+    # job.params is the unchanged base — but a defensive copy.
+    assert jobs[0].params == base_params
+    assert jobs[0].params is not base_params
+
+
+def test_decide_strategy_overrides_user_supplied_audio_mode() -> None:
+    """A YAML spec._audio_mode never beats strategy.decide's derivation.
+
+    Bug catch: a user routing spec: {_audio_mode: bogus} into the
+    orchestrator (Layer K) must not be able to override the engine's
+    audio strategy.
+    """
+    profile = ModelProfile(
+        name="fake",
+        max_frames=16,
+        fps=8,
+        supported_modes={"t2v"},
+        max_resolution=(512, 512),
+        supports_native_extension=True,
+        supports_joint_audio=False,
+    )
+    segments = [Segment(prompt="a", assets=[], params={})]
+    user_spec = {"_audio_mode": "user-set-wrong-value", "other": "x"}
+
+    jobs = decide(profile, segments, {}, user_spec)
+
+    assert len(jobs) == 1
+    assert jobs[0].spec["_audio_mode"] != "user-set-wrong-value"
+    # The actual derivation: supports_joint_audio=False -> "separate".
+    assert jobs[0].spec["_audio_mode"] == "separate"
+    assert jobs[0].spec["other"] == "x"
