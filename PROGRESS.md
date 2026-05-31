@@ -148,7 +148,11 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer I complete on branch `build/layer-i` — pending merge to main.** All 13 tasks landed; live fal.ai smoke produced kinoforge's first real public-provider artifact (see Phase 19 entry). Merge is gated on user approval; the controller will not auto-merge to main.
+**Layer I merged to main at `0b2a8d7`.** First real public-provider artifact produced via `fal-ai/wan-t2v` (see Phase 19 entry). 663 offline tests + 2 opt-in live tests gated by `KINOFORGE_LIVE_TESTS=1 + FAL_KEY`.
+
+**Pending follow-ups before next layer (non-blocking; surfaced by Layer I live smoke):**
+- Cross-engine prompt fallback: `hosted`/`diffusers`/`comfyui` share the same prompt-missing defect `FalBackend.submit` had — orchestrator places the user prompt on `Segment.prompt`, those backends build `body = dict(job.spec)` without consulting segments. Latent since written; will bite on first end-to-end orchestrator-driven live run.
+- `GenerateClipStage._artifact_bytes` HTTP seam normalization: currently hardcodes `urllib.request.urlopen` and is monkeypatched in tests; should be an injectable `download_bytes` constructor-arg matching `HostedAPIBackend.http_get_bytes`. Also needs Authorization-header support before hosted providers (RunwayML, Pika) go live.
 
 - Design spec: `docs/superpowers/specs/2026-05-31-layer-i-fal-adapter-ux-a-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-05-31-layer-i-fal-adapter-ux-a.md`
@@ -243,6 +247,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - [x] Task 11: FalEngine + FalBackend + wire — commits `7e3327a` + `0d324dc`
 - [x] Task 12: _adapters + fal.yaml + invariant + tooling — commit `9be6e67`
 - [x] Task 13: Live opt-in test + manual smoke — commit `bf3841f`
+- [x] Merge to main via `--no-ff` — merge commit `0b2a8d7`
 
 **First real artifact:** `/tmp/kinoforge-fal-smoke/smoke-i-1/n9TG4YoyIIkzR1rouhQCw_tmpykhkugmc.mp4` — 3,073,440 bytes, MP4 (`ftyp isom`), produced by `fal-ai/wan-t2v` via `examples/configs/fal.yaml` (capability_key `2820ed10e74fbea4bb4ab8e3d338f716db8d86383869ebf793bed423f507caaa`, git SHA `9be6e67` at smoke time).
 
