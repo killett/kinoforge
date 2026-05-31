@@ -632,3 +632,28 @@ def test_result_url_encodes_filename_with_special_chars() -> None:
         artifact.url
         == "http://localhost:8188/view?filename=clip%20frame%2601.mp4&type=output"
     )
+
+
+def test_extract_last_frame_wraps_fetch_failure_as_frame_extraction_error() -> None:
+    """HTTP fetch errors surface as FrameExtractionError with the URL in the
+    message, not as raw urllib exceptions.
+
+    Bug this catches: callers expecting the spec-promised single exception
+    type (FrameExtractionError) get an unrelated network exception instead.
+    """
+
+    class _NetBlewUp(RuntimeError):
+        pass
+
+    def boom(url: str) -> bytes:
+        raise _NetBlewUp("connection refused")
+
+    engine = _make_engine(http_get_bytes=boom)
+    artifact = Artifact(
+        filename="clip.mp4",
+        url="http://localhost:8188/view?filename=clip.mp4&type=output",
+        meta={},
+    )
+
+    with pytest.raises(FrameExtractionError, match="fetch from"):
+        engine.extract_last_frame(artifact)
