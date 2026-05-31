@@ -4,58 +4,58 @@
     {
       "id": 1,
       "subject": "Task 1: Lock Protocol + InMemoryLock + LockError/LockTimeout",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Land the lock primitive interface plus an in-memory implementation that all subsequent adapter tests rely on.\n\n**Files:** core/locks.py (new), core/errors.py (append), tests/core/test_locks.py (new).\n\n**Verify:** `pixi run test tests/core/test_locks.py -v` -> 10 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/locks.py\", \"src/kinoforge/core/errors.py\", \"tests/core/test_locks.py\"], \"verifyCommand\": \"pixi run test tests/core/test_locks.py -v\", \"acceptanceCriteria\": [\"Lock Protocol runtime-checkable\", \"InMemoryLock honors blocking/non-blocking semantics\", \"Expired lease stealable\", \"LockError/LockTimeout in errors.py\", \"_sanitize_key replaces / with __\"], \"tags\": [\"layer-h\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: ArtifactStore.acquire_lock abstract method + temporary stubs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Add abstract `acquire_lock` to ArtifactStore; NotImplementedError stubs on 3 concrete stores.\n\n**Verify:** `pixi run test tests/stores/test_acquire_lock_contract.py -v` -> 4 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/stores/base.py\", \"src/kinoforge/stores/local.py\", \"src/kinoforge/stores/s3/__init__.py\", \"src/kinoforge/stores/gcs/__init__.py\", \"tests/stores/test_acquire_lock_contract.py\"], \"verifyCommand\": \"pixi run test tests/stores/test_acquire_lock_contract.py -v\", \"acceptanceCriteria\": [\"acquire_lock @abstractmethod on ArtifactStore\", \"Partial subclass cannot instantiate\", \"ttl_s keyword-only\", \"NotImplementedError stubs on 3 stores\"], \"tags\": [\"layer-h\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: FileLock + LocalArtifactStore.acquire_lock",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** fcntl.flock-backed FileLock + LocalArtifactStore wiring; subprocess integration test.\n\n**Verify:** `pixi run test tests/stores/test_file_lock.py -v` -> 6 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/stores/local_lock.py\", \"src/kinoforge/stores/local.py\", \"tests/stores/test_file_lock.py\", \"tests/stores/test_acquire_lock_contract.py\"], \"verifyCommand\": \"pixi run test tests/stores/test_file_lock.py -v\", \"acceptanceCriteria\": [\"FileLock blocks across processes\", \"Sidecar JSON has nonce/holder_pid/expires_at\", \"All seams injectable\", \"LockTimeout after timeout_s elapsed\"], \"tags\": [\"layer-h\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: S3CloudLock + S3ArtifactStore.acquire_lock + FakeS3Client extensions",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** S3 conditional-PUT lock; extend FakeS3Client with ETag + IfNoneMatch/IfMatch.\n\n**Verify:** `pixi run test tests/stores/test_s3_lock.py -v` -> 7 passed; existing S3 tests still green.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/stores/s3/lock.py\", \"src/kinoforge/stores/s3/__init__.py\", \"tests/stores/conftest.py\", \"tests/stores/test_s3_lock.py\"], \"verifyCommand\": \"pixi run test tests/stores/test_s3_lock.py -v\", \"acceptanceCriteria\": [\"put_object uses IfNoneMatch='*'\", \"TTL expiry triggers steal-via-delete-then-CAS-put\", \"release uses IfMatch=<etag>\", \"release silent on stolen-after-TTL\", \"FakeS3Client preserves existing S3 store test green\"], \"tags\": [\"layer-h\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: GCSCloudLock + GCSArtifactStore.acquire_lock + FakeGCSClient extensions",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** GCS if_generation_match=0 lock; extend FakeGCSClient with generation tracking + PreconditionFailed.\n\n**Verify:** `pixi run test tests/stores/test_gcs_lock.py -v` -> 7 passed; existing GCS tests still green.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/stores/gcs/lock.py\", \"src/kinoforge/stores/gcs/__init__.py\", \"tests/stores/conftest.py\", \"tests/stores/test_gcs_lock.py\"], \"verifyCommand\": \"pixi run test tests/stores/test_gcs_lock.py -v\", \"acceptanceCriteria\": [\"upload_from_string uses if_generation_match=0\", \"TTL expiry triggers steal-via-delete-then-CAS-upload\", \"release uses if_generation_match=<gen>\", \"release silent on stolen-after-TTL\", \"FakeGCSClient preserves existing GCS store test green\"], \"tags\": [\"layer-h\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: JsonProfileCache outer-lock wrap + discover_ttl_s",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** Wrap resolve_or_discover with store.acquire_lock; factor existing threading body into _discover_single_flight.\n\n**Verify:** `pixi run test tests/core/test_profiles.py -v` -> previous + 2 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/profiles.py\", \"tests/core/test_profiles.py\"], \"verifyCommand\": \"pixi run test tests/core/test_profiles.py -v\", \"acceptanceCriteria\": [\"discover_ttl_s ctor kwarg\", \"Cache-hit fast path skips acquire_lock\", \"Cross-process single-flight: 1 probe across 2 instances\", \"Existing 4-thread test still green\"], \"tags\": [\"layer-h\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: Ledger record/forget outer-lock wrap + mutate_ttl_s",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** Wrap Ledger.record + Ledger.forget with store.acquire_lock; entries() stays lock-free.\n\n**Verify:** `pixi run test tests/core/test_lifecycle_sweeper.py -v` -> previous + 2 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lifecycle.py\", \"tests/core/test_lifecycle_sweeper.py\"], \"verifyCommand\": \"pixi run test tests/core/test_lifecycle_sweeper.py -v\", \"acceptanceCriteria\": [\"mutate_ttl_s ctor kwarg\", \"record acquires ledger lock\", \"forget acquires ledger lock\", \"entries() stays lock-free\", \"Two Ledger instances over shared registry both succeed\", \"Docstring updated\"], \"tags\": [\"layer-h\"]}\n```"
     },
     {
       "id": 8,
       "subject": "Task 8: README Multi-node section + PROGRESS Phase 18 + merge + close #7",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 5, 6, 7],
       "description": "**Goal:** README + PROGRESS docs; full gate; merge --no-ff; close GitHub #7.\n\n**Verify:** `pixi run test -v && gh issue view 7` -> all green + state: CLOSED.\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\", \"docs/superpowers/plans/2026-05-30-layer-h.md.tasks.json\"], \"verifyCommand\": \"pixi run test -v && gh issue view 7\", \"acceptanceCriteria\": [\"README Multi-node coordination section\", \"PROGRESS Phase 18 block with per-task SHAs\", \"L126 residual updated\", \"GitHub #7 row flipped to CLOSED\", \"Test count >= 590\", \"Merge --no-ff to main\", \"#7 closed\"], \"tags\": [\"layer-h\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-05-30"
+  "lastUpdated": "2026-05-31"
 }
