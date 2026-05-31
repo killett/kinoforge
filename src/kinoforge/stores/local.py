@@ -13,7 +13,9 @@ import json
 from pathlib import Path
 
 from kinoforge.core.interfaces import Artifact
+from kinoforge.core.locks import Lock, _sanitize_key
 from kinoforge.stores.base import ArtifactStore
+from kinoforge.stores.local_lock import FileLock
 
 
 class LocalArtifactStore(ArtifactStore):
@@ -161,6 +163,22 @@ class LocalArtifactStore(ArtifactStore):
         if not p.exists():
             raise FileNotFoundError(f"artifact not found: {uri!r}")
         p.unlink()
+
+    def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
+        """Return a :class:`FileLock` rooted under ``<root>/_locks/``.
+
+        Args:
+            key: Logical lock key (may contain forward slashes).
+            ttl_s: Lease duration in seconds (informational on local FS;
+                ``fcntl`` owns mutual exclusion).
+
+        Returns:
+            A fresh :class:`FileLock` whose sidecar lives at
+            ``<root>/_locks/<sanitized_key>.lock``.
+        """
+        sanitized = _sanitize_key(key)
+        path = self.root / "_locks" / f"{sanitized}.lock"
+        return FileLock(path=path, key=key, ttl_s=ttl_s)
 
 
 # ---------------------------------------------------------------------------

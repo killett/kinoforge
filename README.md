@@ -80,6 +80,33 @@ mode:
 
 `max_in_flight: 1` (the default) preserves the original sequential behaviour.
 
+### Multi-node coordination
+
+Multi-node deployments where several `kinoforge` workers point at one shared
+artifact store (S3 or GCS) are coordinated by a lease-based mutex returned
+from `ArtifactStore.acquire_lock(key, *, ttl_s)`. Local-disk stores use
+`fcntl.flock`; S3 uses conditional PUT (`If-None-Match: *`); GCS uses native
+`if_generation_match=0`.
+
+Two surfaces use the lock automatically:
+
+1. **Profile discovery** (`JsonProfileCache.resolve_or_discover`) — only one
+   worker probes the live model for a given `CapabilityKey`; followers read
+   the cached profile.
+2. **Ledger mutations** (`Ledger.record`, `Ledger.forget`) — read-modify-write
+   stays atomic across workers; entries cannot be lost to concurrent updates.
+
+Semantics are best-effort: a holder that dies mid-hold has its lease expire
+after `ttl_s`, at which point another acquirer can steal. There are no
+fencing tokens. Sized TTLs absorb modest clock skew.
+
+Tune via constructor kwargs (no YAML surface):
+
+```python
+JsonProfileCache(store, discover_ttl_s=600.0)
+Ledger(store, mutate_ttl_s=60.0)
+```
+
 ## Credentials
 
 Kinoforge reads its API credentials from environment variables. To avoid
