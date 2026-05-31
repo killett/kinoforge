@@ -579,6 +579,48 @@ def test_verify_without_engine_kwarg_does_not_raise(tmp_path: Path) -> None:
     cache.verify(profile, backend)
 
 
+def test_verify_engine_without_key_does_not_warn(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """verify(engine=..., key=None) must NOT emit the drift WARNING.
+
+    Bug catch: a previous implementation synthesised a placeholder
+    ``CapabilityKey`` from the profile name when ``key`` was omitted.  That
+    key never indexes into a real ``declared_flags_map`` (which is keyed on
+    engine + precision + LoRAs), so ``declared_flags()`` returned ``{}`` and
+    the "no longer declares" WARNING fired spuriously.  The tightened
+    precondition requires BOTH kwargs — when only ``engine`` is passed the
+    drift check is silently skipped.
+    """
+    import logging
+
+    from kinoforge.core.profiles import JsonProfileCache
+
+    profile = _make_probe(supports_native_extension=True)
+    backend = _CountingBackend(_make_probe(supports_native_extension=True))
+    # Engine has flags for the real key, but we will not pass `key` at all.
+    real_key = _make_key()
+    engine = _FakeEngine(
+        flags_by_derive={real_key.derive(): {"supports_native_extension": True}}
+    )
+
+    store = LocalArtifactStore(tmp_path)
+    cache = JsonProfileCache(store=store)
+
+    caplog.set_level(logging.WARNING, logger="kinoforge.profiles")
+    cache.verify(profile, backend, engine=engine)  # key intentionally omitted
+
+    spurious = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "no longer declares" in r.message
+    ]
+    assert not spurious, (
+        f"verify(engine=..., key=None) must skip the drift check silently "
+        f"(no synthesised placeholder key); got: {[r.message for r in spurious]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # AC 7 — verify(): matching probe passes; max_frames drift raises CapabilityMismatch;
 #         flag drift is ignored
