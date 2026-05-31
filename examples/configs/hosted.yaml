@@ -33,3 +33,25 @@ models:
 
 lifecycle:
   budget: 5.0
+
+# --- Layer K: per-job spec & params -----------------------------------------
+# spec: is the engine-interpreted wire payload.  HostedAPIBackend.submit reads
+# spec.model + spec.params and writes them into the POST body.
+#
+# NOTE: spec.model and engine.hosted.model serve different purposes and must
+# be kept in sync manually until a future layer collapses them:
+#   - engine.hosted.model -> HostedAPIEngine.key_base(cfg) -> CapabilityKey
+#     (cache identity + profile-discovery key)
+#   - spec.model          -> HostedAPIBackend.submit       -> wire request body
+# If you change one, change the other.
+spec:
+  model: "wan-ai/Wan2.2-T2V-A14B"
+  params:
+    guidance_scale: 5.0
+
+# params: are engine-neutral knobs every engine honors identically.  Flow into
+# GenerationJob.params and merge segment-wins via Segment.params.
+params:
+  fps: 24
+  num_frames: 81
+  steps: 30

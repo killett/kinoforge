@@ -178,6 +178,53 @@ via fal's queue API.
 To run the live test suite (`pixi run test-live`), set `KINOFORGE_LIVE_TESTS=1`
 alongside `FAL_KEY` in your environment.
 
+## Per-job spec & params
+
+Two top-level YAML blocks supply per-job payload to the engine:
+
+| block | flows into | who reads it | scope |
+|---|---|---|---|
+| `spec:` | `GenerationJob.spec` | `engine.validate_spec(job)` + `backend.submit(job)` | engine-interpreted (engine-specific shape) |
+| `params:` | `GenerationJob.params` | every engine + every `Segment.params` (segment-wins merge) | engine-neutral knobs (fps, num_frames, steps, seed, ...) |
+
+### Required `spec.*` keys per engine
+
+| engine | required `spec.*` keys | notes |
+|---|---|---|
+| `hosted` | `model`, `params` | `spec.model` is the wire body; keep in sync with `engine.hosted.model` (cache identity) until a future layer collapses them |
+| `diffusers` | `pipeline`, `scheduler` | |
+| `comfyui` | `graph`, `node_overrides` | optional: `asset_node_ids`, `prompt_node_ids` |
+| `fal` | — | prompt comes from `Segment.prompt` via Layer J's `resolve_prompt` |
+
+### Top-level `params:` vs nested `spec.params:` (gotcha)
+
+Hosted requires a `params` key **inside** `spec:` as a wire body field. This is
+structurally distinct from top-level `params:` (engine-neutral knobs that flow
+into `GenerationJob.params`). There is **no merging** between the two
+namespaces.
+
+```yaml
+params:                 # -> GenerationJob.params (engine-neutral, segment-wins)
+  fps: 24
+spec:
+  model: "wan-..."
+  params:               # -> GenerationJob.spec["params"] (hosted wire body)
+    guidance_scale: 5.0
+```
+
+Reader takeaway: if a key matters to every engine, put it under top-level
+`params:`. If it is engine-specific, put it under `spec:`.
+
+### On `validate_spec` failure
+
+When the orchestrator detects a `spec:` key missing for the configured engine,
+it raises `ValidationError` and tears down any provisioned compute before
+re-raising (mirroring the existing `CapabilityMismatch` branch). A typo in
+your config will not cost idle pod time.
+
+See `examples/configs/hosted.yaml`, `diffusers.yaml`, `wan.yaml`, and `fal.yaml`
+for working `spec:` + `params:` shapes per engine.
+
 ## Extending: add a provider/source/engine
 
 kinoforge's registry lets you add a new adapter in a single file without touching core. Each pattern follows the same three steps: subclass the ABC, implement the required methods, and call the register function once at module import.

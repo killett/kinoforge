@@ -303,7 +303,8 @@ class _CountingExtractEngine:
     """Wraps a FakeEngine; counts extract_last_frame calls for no-chain tests.
 
     The stage type-hints `engine: GenerationEngine`; we duck-type since the
-    only engine method the stage calls is extract_last_frame.
+    only engine methods the stage calls are validate_spec and
+    extract_last_frame.
     """
 
     def __init__(self, probe: ModelProfile) -> None:
@@ -315,6 +316,9 @@ class _CountingExtractEngine:
             required_spec_keys=set(),
         )
         self.extract_calls = 0
+
+    def validate_spec(self, job: GenerationJob) -> None:
+        """No-op: these tests focus on extract_last_frame call counting."""
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         self.extract_calls += 1
@@ -521,12 +525,17 @@ class _ValidatingEngine:
 
 
 def test_stage_calls_validate_spec_on_each_chained_job(tmp_path: Path) -> None:
-    """3 segments → 2 chain hops → 2 post-chain validate_spec calls.
+    """3 segments → upfront loop (3 raw) + 2 chain hops → 5 total validate_spec calls.
+
+    Layer K Task 2 adds an upfront validate_spec loop for every raw job before
+    any dispatch, so all three jobs are validated once before the chained serial
+    loop, and then the two chained jobs (i > 0) are validated again post
+    inject_tail_frame (covering the asset_node_ids / asset_paths invariant).
 
     Bug catches:
-    - pre-Layer-F (no post-chain validate_spec) yields 0.
-    - a single trailing validate_spec after the loop yields 1.
-    - off-by-one calling validate_spec on the un-chained seg-0 yields 3.
+    - pre-Layer-F (no post-chain validate_spec) yields 3 (upfront only).
+    - a single trailing validate_spec after the loop yields 4.
+    - missing upfront loop yields only 2.
     """
     profile = _profile(supports_native_extension=False)
     backend = RecordingBackend(probe=profile)
@@ -551,18 +560,21 @@ def test_stage_calls_validate_spec_on_each_chained_job(tmp_path: Path) -> None:
         segments_override=segments,
     )
 
-    assert len(engine.validate_calls) == 2
+    # 3 upfront (raw) + 2 post-inject (chained) = 5 total
+    assert len(engine.validate_calls) == 5
 
 
 def test_stage_validates_chained_job_carries_injected_asset(tmp_path: Path) -> None:
-    """The job handed to engine.validate_spec on a chained iteration carries
-    the injected tail-frame in segments[0].assets.
+    """The job handed to the post-inject validate_spec call carries the
+    tail-frame in segments[0].assets; the upfront calls see empty assets.
+
+    With the Layer K Task 2 upfront loop: 2 segments → 2 upfront calls (raw,
+    empty assets) + 1 post-inject call (chained, injected asset) = 3 total.
 
     Bug catches:
-    - validate_spec called BEFORE inject_tail_frame would see empty assets.
-    - injecting a stale prior-segment asset (e.g. results[0] every time)
-      would still pass this for 2-segment runs but is covered by the Layer E
-      chain test ordering assertions.
+    - missing post-inject validate_spec means 2 calls total (no asset-bearing call).
+    - injecting a stale prior-segment asset would still pass this for 2-segment
+      runs but is covered by the Layer E chain test ordering assertions.
     """
     profile = _profile(supports_native_extension=False)
     backend = RecordingBackend(probe=profile)
@@ -587,9 +599,13 @@ def test_stage_validates_chained_job_carries_injected_asset(tmp_path: Path) -> N
         segments_override=segments,
     )
 
-    # Exactly one validate call (one chain hop for 2 segments).
-    assert len(engine.validate_calls) == 1
-    chained_job = engine.validate_calls[0]
+    # 2 upfront (raw, empty assets) + 1 post-inject (chained, with asset) = 3 total.
+    assert len(engine.validate_calls) == 3
+    # The first two calls are the upfront loop: raw jobs, no assets.
+    for raw_call in engine.validate_calls[:2]:
+        assert raw_call.segments[0].assets == []
+    # The third call is the post-inject chained call: must carry the tail asset.
+    chained_job = engine.validate_calls[2]
     chained_assets = chained_job.segments[0].assets
     assert len(chained_assets) == 1
     asset = chained_assets[0]
@@ -606,14 +622,16 @@ def test_stage_validates_chained_job_carries_injected_asset(tmp_path: Path) -> N
 def test_stage_aborts_when_validate_spec_raises_on_chained_segment(
     tmp_path: Path,
 ) -> None:
-    """validate_spec raising on the first chained segment aborts the stage
-    immediately: seg-0 was submitted (pre-chain), seg-1 raises before submit,
-    seg-2 is never reached.
+    """validate_spec raising on the first chained (post-inject) call aborts the
+    stage: all 3 upfront validations passed, seg-0 was submitted, seg-1's
+    post-inject validate_spec raises before submit, seg-2 is never reached.
+
+    With the Layer K Task 2 upfront loop, 3 raw jobs are validated first (calls
+    1-3 succeed). Calls 4+ are the post-inject chained calls. Raising on call 4
+    (= first chained, seg-1 post-inject) allows seg-0 to submit first.
 
     Bug catches:
     - swallowing ValidationError would have run all 3 submissions.
-    - validating BEFORE extract_last_frame / inject_tail_frame on seg-0 too
-      would have blocked submission 0 (assert == 1 would fail with 0).
     - validating AFTER pool.submit on the chained iter would have allowed
       submitted to reach 2 before raising.
     """
@@ -621,8 +639,8 @@ def test_stage_aborts_when_validate_spec_raises_on_chained_segment(
     backend = RecordingBackend(probe=profile)
     pool = SequentialPool(backend)
     store = LocalArtifactStore(tmp_path)
-    # Raise on the FIRST validate_spec call (= first chained segment, seg 1).
-    engine = _ValidatingEngine(probe=profile, raise_on_validate_call=1)
+    # Raise on call 4 (= 3 upfront + first post-inject chained call for seg-1).
+    engine = _ValidatingEngine(probe=profile, raise_on_validate_call=4)
 
     stage = GenerateClipStage(
         profile=profile,
@@ -644,8 +662,8 @@ def test_stage_aborts_when_validate_spec_raises_on_chained_segment(
 
     # seg-0 was submitted (pre-chain), seg-1 raised before submit, seg-2 never reached.
     assert len(backend.submitted_seg0_assets) == 1
-    # Only one validate_spec call (the one that raised).
-    assert len(engine.validate_calls) == 1
+    # 3 upfront (pass) + 1 post-inject (raises) = 4 total validate_spec calls.
+    assert len(engine.validate_calls) == 4
 
 
 # ---------------------------------------------------------------------------
