@@ -155,6 +155,29 @@ them up via `os.environ`.
 
 `.env` is in `.gitignore`. Only commit `.env.example` (no values).
 
+## Real providers — fal.ai
+
+kinoforge ships with a fal.ai sibling engine (`FalEngine`) for video generation
+via fal's queue API.
+
+**Setup:**
+
+1. Put your fal.ai key in `.env` at the repo root:
+   ```
+   FAL_KEY=fal-XXXXXXXX
+   ```
+2. Pick a model — `examples/configs/fal.yaml` defaults to Wan2.2 T2V.
+3. Run:
+   ```bash
+   pixi run python -m kinoforge --env-file .env generate \
+     -c examples/configs/fal.yaml \
+     --prompt "a cat sitting on a fence" --mode t2v
+   ```
+4. Artifact lands under `.kinoforge/run/<run-id>/`.
+
+To run the live test suite (`pixi run test-live`), set `KINOFORGE_LIVE_TESTS=1`
+alongside `FAL_KEY` in your environment.
+
 ## Extending: add a provider/source/engine
 
 kinoforge's registry lets you add a new adapter in a single file without touching core. Each pattern follows the same three steps: subclass the ABC, implement the required methods, and call the register function once at module import.

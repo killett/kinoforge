@@ -137,12 +137,16 @@ class GenerateClipStage:
         return self.store.put_bytes(self.run_id, last.filename, payload)
 
     def _artifact_bytes(self, artifact: Artifact) -> bytes:
-        """Derive deterministic bytes from the engine's Artifact.
+        """Derive bytes from the engine's Artifact.
 
-        If the artifact carries a URI pointing to an existing file, read it.
-        Otherwise, derive deterministic bytes from filename and meta — this is
-        sufficient for the FakeEngine test path. Real engines will deliver a
-        populated URI and this method will read actual content.
+        Resolution order:
+
+        1. ``artifact.uri`` — a ``file://`` URI or local path written by a
+           local engine.  Read the file directly.
+        2. ``artifact.url`` — an http(s) URL returned by a hosted/queue engine
+           (e.g. fal.ai's signed media URL).  Download it.
+        3. Fallback: synthesize deterministic bytes from ``filename + meta``
+           so FakeEngine-driven unit tests keep working without HTTP.
 
         Args:
             artifact: The :class:`~kinoforge.core.interfaces.Artifact` returned
@@ -151,7 +155,31 @@ class GenerateClipStage:
         Returns:
             The bytes to persist in the store.
         """
-        # DEFERRED: real backends will write to a tempfile and set uri.
+        import urllib.parse
+        import urllib.request
+        from pathlib import Path
+
+        uri = (artifact.uri or "").strip()
+        if uri:
+            parsed = urllib.parse.urlparse(uri)
+            local_path: str | None = None
+            if parsed.scheme == "file":
+                local_path = urllib.request.url2pathname(parsed.path)
+            elif parsed.scheme == "" and uri:
+                local_path = uri
+            if local_path is not None:
+                candidate = Path(local_path)
+                if candidate.exists():
+                    return candidate.read_bytes()
+
+        url = (artifact.url or "").strip()
+        if url.startswith(("http://", "https://")):
+            with urllib.request.urlopen(url) as resp:  # noqa: S310
+                downloaded: bytes = resp.read()
+            return downloaded
+
+        # Synthetic fallback retained for FakeEngine-driven tests that
+        # exercise the pipeline without a real backend.
         return (
             artifact.filename.encode("utf-8")
             + b"|"

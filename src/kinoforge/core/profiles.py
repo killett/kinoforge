@@ -215,9 +215,11 @@ class JsonProfileCache(ModelProfileProvider):
         from ``engine.declared_flags(key)`` overrides ``supports_native_extension``
         and ``supports_joint_audio`` on the probed profile.
 
-        A ``WARNING`` is emitted when BOTH flag keys are absent from
-        ``declared_flags(key)`` — this indicates the engine has not declared
-        strategy capabilities for this key combination.
+        A ``DEBUG`` log message is emitted when BOTH flag keys are absent from
+        ``declared_flags(key)`` — on the discovery path the probe is the source
+        of truth, so missing declared flags is normal and not actionable.  The
+        analogous condition is escalated to ``WARNING`` inside :meth:`verify`
+        where it signals real drift against a previously cached profile.
 
         Args:
             key: The ``CapabilityKey`` identifying the model configuration.
@@ -230,13 +232,14 @@ class JsonProfileCache(ModelProfileProvider):
         probe = backend.inspect_capabilities()
         declared_flags = engine.declared_flags(key)
 
-        # Emit an under-use warning when neither strategy flag is declared.
+        # Quiet DEBUG breadcrumb — empty declared_flags is expected on first
+        # discovery for many engines and the probe is authoritative.
         flag_keys = ("supports_native_extension", "supports_joint_audio")
         if not any(f in declared_flags for f in flag_keys):
-            _log.warning(
+            _log.debug(
                 "engine declared no strategy flags for capability key %s "
                 "(supports_native_extension and supports_joint_audio both absent); "
-                "check declared_flags_map for this engine/key combination",
+                "this is normal on a fresh-discovery path",
                 key.derive(),
             )
 
@@ -261,7 +264,14 @@ class JsonProfileCache(ModelProfileProvider):
         self._persist(key, merged)
         return merged
 
-    def verify(self, profile: ModelProfile, backend: GenerationBackend) -> None:
+    def verify(
+        self,
+        profile: ModelProfile,
+        backend: GenerationBackend,
+        *,
+        engine: GenerationEngine | None = None,
+        key: CapabilityKey | None = None,
+    ) -> None:
         """Re-probe the backend and compare probeable fields against *profile*.
 
         Only ``max_frames``, ``fps``, ``max_resolution``, and
@@ -269,9 +279,24 @@ class JsonProfileCache(ModelProfileProvider):
         and ``supports_joint_audio``) are intentionally excluded because they
         are engine-declared rather than probed.
 
+        When *both* ``engine`` and ``key`` are provided, a ``WARNING`` is
+        emitted if the engine no longer declares either strategy flag for the
+        cached key — this surfaces the case where ``declared_flags_map``
+        regressed or the engine was downgraded between cache-write and
+        cache-read.  On the discovery path the analogous condition is logged
+        at ``DEBUG`` only (see :meth:`discover`).
+
         Args:
             profile: The cached profile to verify against.
             backend: A live backend whose ``inspect_capabilities`` is called.
+            engine: Optional engine to query for current ``declared_flags``.
+                Must be paired with *key* — passing one without the other is
+                accepted for backward compatibility but skips the drift
+                WARNING silently, because ``declared_flags`` is indexed by
+                ``CapabilityKey`` (which carries engine + precision + LoRAs)
+                and cannot be reconstructed from the profile alone.
+            key: ``CapabilityKey`` to query ``engine.declared_flags(key)`` with.
+                Must be paired with *engine*; see above.
 
         Raises:
             CapabilityMismatch: Any probeable field differs between *profile*
@@ -279,6 +304,25 @@ class JsonProfileCache(ModelProfileProvider):
                 and actual values.
         """
         probe = backend.inspect_capabilities()
+
+        # Strategy-flag drift check — only meaningful when the caller supplies
+        # BOTH the live engine and the key its declared_flags is indexed by.
+        # Passing only one is accepted (for ABC/legacy compatibility) but
+        # silently skips the check: synthesising a key from the profile name
+        # would produce a guaranteed lookup miss and a misleading WARNING.
+        if engine is not None and key is not None:
+            declared = engine.declared_flags(key)
+            if (
+                "supports_native_extension" not in declared
+                and "supports_joint_audio" not in declared
+            ):
+                _log.warning(
+                    "engine no longer declares strategy flags for cached key %s; "
+                    "either declared_flags_map regressed or the engine was "
+                    "downgraded",
+                    key.derive(),
+                )
+
         for field_name in _PROBEABLE_FIELDS:
             cached_val = getattr(profile, field_name)
             probed_val = getattr(probe, field_name)

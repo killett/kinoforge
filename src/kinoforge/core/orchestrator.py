@@ -16,10 +16,13 @@ Conventions
 from __future__ import annotations
 
 import dataclasses
+import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from kinoforge.core import registry
 from kinoforge.core.config import Config
+from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.errors import CapabilityMismatch, CapacityError
 from kinoforge.core.interfaces import (
     Artifact,
@@ -36,6 +39,13 @@ from kinoforge.core.interfaces import (
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
 from kinoforge.core.profiles import JsonProfileCache
+from kinoforge.core.provision_state import (
+    is_marker_current,
+    marker_path,
+    read_marker,
+    write_marker,
+)
+from kinoforge.core.provisioner import provision as provisioner_provision
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.stores.base import ArtifactStore
 
@@ -128,6 +138,78 @@ def _key_hash(key: CapabilityKey) -> str:
         A 12-character hex string suitable for human-readable output.
     """
     return key.derive()[:12]
+
+
+def _provision_compute_once(
+    *,
+    engine: GenerationEngine,
+    cfg: Config,
+    instance: Instance,
+    creds: CredentialProvider | None,
+    store: ArtifactStore,
+    state_dir: Path,
+    capability_key_hex: str,
+) -> None:
+    """Run ``provisioner.provision`` exactly once per ``(instance, capability_key)``.
+
+    Layer I UX A compute-path preflight.  Uses an artifact-store lock keyed on
+    the instance id to serialise concurrent ``generate()`` callers, and reads
+    a per-instance marker to skip the (potentially expensive) provision when
+    the same instance was already provisioned for the same capability key.
+
+    Stale-key rule: when the user edits cfg (e.g. precision / model set) the
+    derived capability_key changes and the marker becomes stale, forcing a
+    re-provision that overwrites the marker.
+
+    Args:
+        engine: The resolved ``GenerationEngine`` that owns the final
+            provision step.
+        cfg: The loaded kinoforge ``Config``.  Forwarded to
+            :func:`kinoforge.core.provisioner.provision`.
+        instance: The ready compute instance to provision against.
+        creds: Optional credential provider.  Defaults to
+            ``EnvCredentialProvider()`` when ``None``.
+        store: Artifact store providing ``acquire_lock`` for cross-process
+            mutual exclusion.
+        state_dir: Root state directory under which the marker is written
+            (``<state_dir>/instances/<instance.id>/.provisioned``) and into
+            whose ``weights/`` subdirectory downloads are placed.
+        capability_key_hex: Current ``cfg.capability_key().derive()`` hex.
+    """
+    effective_creds: CredentialProvider = (
+        creds if creds is not None else EnvCredentialProvider()
+    )
+    marker = marker_path(state_dir, instance.id)
+
+    with store.acquire_lock(f"provision:{instance.id}", ttl_s=300):
+        record = read_marker(marker)
+        if record is not None and is_marker_current(record, capability_key_hex):
+            _log.debug(
+                "provision marker current for instance %s key %s — skipping",
+                instance.id,
+                capability_key_hex[:12],
+            )
+            return
+        _log.info(
+            "running provisioner.provision for instance %s (engine=%s key=%s)",
+            instance.id,
+            engine.name,
+            capability_key_hex[:12],
+        )
+        provisioner_provision(
+            engine,
+            cfg,  # type: ignore[arg-type]
+            instance,
+            creds=effective_creds,
+            download_dir=state_dir / "weights",
+        )
+        write_marker(
+            marker,
+            instance.id,
+            capability_key_hex,
+            engine.name,
+            time.time(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +349,7 @@ def generate(
     creds: CredentialProvider | None = None,
     profile_provider: ModelProfileProvider | None = None,
     run_id: str = "run",
+    state_dir: Path = Path(".kinoforge"),
 ) -> Artifact:
     """Run the full generation pipeline for a single clip.
 
@@ -302,6 +385,10 @@ def generate(
         profile_provider: Optional ``ModelProfileProvider`` (test injection).
             Defaults to ``JsonProfileCache(store)``.
         run_id: Namespace for output artifacts in the store.
+        state_dir: Root directory for kinoforge state (provision markers,
+            weights, locks).  Defaults to ``Path(".kinoforge")`` for test
+            scaffolding that doesn't pass it; the CLI always forwards
+            ``--state-dir``.
 
     Returns:
         The persisted ``Artifact`` (with ``uri``) from the pipeline stage.
@@ -326,6 +413,17 @@ def generate(
     resolved_provider: ComputeProvider | None = None
     if resolved_engine.requires_compute:
         resolved_provider = _resolve_provider(cfg, provider)
+
+    # ------------------------------------------------------------------
+    # Step 2.5 — UX A hosted preflight (Layer I)
+    #
+    # For hosted engines (requires_compute=False), run engine.provision()
+    # before any backend work so cred-missing / health-failure errors fail
+    # fast with a clear message instead of crashing mid-pipeline inside
+    # backend.submit. Compute engines get their own preflight in Task 9.
+    # ------------------------------------------------------------------
+    if not resolved_engine.requires_compute:
+        resolved_engine.provision(None, cfg_dict)
 
     # ------------------------------------------------------------------
     # Step 3 — get (or default) profile provider
@@ -380,6 +478,17 @@ def generate(
             # Poll until ready.
             while instance.status != "ready":
                 instance = resolved_provider.get_instance(instance.id)
+            # Layer I Task 9 — UX A compute preflight: provision once per
+            # (instance, capability_key).  Serialised by store.acquire_lock.
+            _provision_compute_once(
+                engine=resolved_engine,
+                cfg=cfg,
+                instance=instance,
+                creds=creds,
+                store=store,
+                state_dir=state_dir,
+                capability_key_hex=key.derive(),
+            )
             backend = resolved_engine.backend(instance, cfg_dict)
         else:
             # Hosted path — no instance needed for discovery.
@@ -449,6 +558,16 @@ def generate(
             instance = resolved_provider.create_instance(spec)
             while instance.status != "ready":
                 instance = resolved_provider.get_instance(instance.id)
+            # Layer I Task 9 — UX A compute preflight (cache-hit branch).
+            _provision_compute_once(
+                engine=resolved_engine,
+                cfg=cfg,
+                instance=instance,
+                creds=creds,
+                store=store,
+                state_dir=state_dir,
+                capability_key_hex=key.derive(),
+            )
             backend = resolved_engine.backend(instance, cfg_dict)
         else:
             backend = resolved_engine.backend(None, cfg_dict)
@@ -462,7 +581,7 @@ def generate(
     # ------------------------------------------------------------------
     if not _just_discovered:
         try:
-            profile_provider.verify(profile, backend)
+            profile_provider.verify(profile, backend, engine=resolved_engine, key=key)
         except CapabilityMismatch:
             _log.warning(
                 "capability mismatch detected; tearing down instance before re-raising"

@@ -83,6 +83,11 @@ PYTHONPATH = "src"
 # On macOS, pixi-installed tools (pytest, ruff, mypy) can fail due to shebang path resolution issues. Using python -m <tool> bypasses this reliably.
 test = "python -m pytest"
 test-cov = "python -m pytest --cov"  # Later on, consider adding --cov-fail-under=80
+# Opt-in live tests that hit real provider APIs. Requires KINOFORGE_LIVE_TESTS=1
+# (set by the task itself) plus provider credentials (e.g. FAL_KEY).  The
+# tests/live/ directory is created in Layer I Task 13; until then this task
+# reports "no tests collected", which is the expected default.
+test-live = { cmd = "python -m pytest tests/live/ -v -m live", env = { KINOFORGE_LIVE_TESTS = "1" } }
 lint = "python -m ruff check ."
 format = "python -m ruff format ."
 typecheck = "python -m mypy ."

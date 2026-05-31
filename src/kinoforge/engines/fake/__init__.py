@@ -257,11 +257,29 @@ _DEFAULT_PROBE = ModelProfile(
     supports_joint_audio=False,
 )
 
+# Default declared_flags entry matching the shipped examples/configs/local-fake.yaml
+# capability key.  Without this entry, JsonProfileCache.discover logs a WARNING
+# (or, post Layer I Task 2, a DEBUG) every time a fresh cache is warmed against
+# the canonical offline config.  Populating the default makes the offline path
+# produce a clean log without any caller-side wiring.
+_LOCAL_FAKE_DEFAULT_KEY = CapabilityKey(
+    base_model="https://example.com/models/fake-base.safetensors",
+    engine="fake",
+    precision="fp16",
+).derive()
+
+_DEFAULT_DECLARED_FLAGS_MAP: dict[str, dict[str, Any]] = {
+    _LOCAL_FAKE_DEFAULT_KEY: {
+        "supports_native_extension": False,
+        "supports_joint_audio": False,
+    },
+}
+
 registry.register_engine(
     "fake",
     lambda: FakeEngine(
         probe_profile=_DEFAULT_PROBE,
-        declared_flags_map={},
+        declared_flags_map=dict(_DEFAULT_DECLARED_FLAGS_MAP),
         required_spec_keys=set(),
     ),
 )

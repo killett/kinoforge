@@ -377,7 +377,15 @@ class HostedAPIEngine(GenerationEngine):
         self._ffmpeg_run = ffmpeg_run
         self._sleep = sleep
         self._probe = probe_profile
-        self._declared_flags_map: dict[str, dict[str, bool]] = declared_flags_map or {}
+        # If the caller passes an explicit map (even {}), respect it.  When
+        # omitted, fall back to the shipped default so a fresh hosted run
+        # against examples/configs/hosted.yaml does not emit a verify-path
+        # WARNING.
+        self._declared_flags_map: dict[str, dict[str, bool]] = (
+            dict(_DEFAULT_DECLARED_FLAGS_MAP)
+            if declared_flags_map is None
+            else declared_flags_map
+        )
         # Asset-role -> request-body dot-path map, populated by ``backend``
         # from ``cfg["engine"]["hosted"]["asset_paths"]`` and mirrored
         # onto the engine so ``validate_spec`` can check it.
@@ -447,9 +455,13 @@ class HostedAPIEngine(GenerationEngine):
 
         # Step 1 — credential check.
         key_name: str = str(hosted_cfg.get("api_key_env", ""))
+        if not key_name:
+            raise AuthError(
+                "engine.hosted.api_key_env is empty — set the env var name in your config"
+            )
         cred = self._creds.get(key_name)
         if cred is None:
-            raise AuthError(f"missing {key_name}")
+            raise AuthError(f"engine.hosted.api_key_env={key_name!r} is not set in env")
 
         # Step 2 — health ping.
         health_url: str = str(hosted_cfg.get("health_url", ""))
@@ -595,7 +607,33 @@ class HostedAPIEngine(GenerationEngine):
 
 
 # ---------------------------------------------------------------------------
+# Default declared_flags entry matching the shipped examples/configs/hosted.yaml
+# capability key.  Without this entry, JsonProfileCache.discover would log a
+# DEBUG (post Layer I Task 2) on the fresh-cache warmup path, and the verify
+# path would emit a WARNING the first time a hosted run completes against the
+# canonical config.  Populating the default gives the hosted engine declared
+# parity with the YAML capability so the verify path stays quiet too.
+# ---------------------------------------------------------------------------
+
+_HOSTED_DEFAULT_KEY = CapabilityKey(
+    base_model="hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors",
+    engine="hosted",
+    precision="",
+).derive()
+
+_DEFAULT_DECLARED_FLAGS_MAP: dict[str, dict[str, bool]] = {
+    _HOSTED_DEFAULT_KEY: {
+        "supports_native_extension": False,
+        "supports_joint_audio": False,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Module-level self-registration
 # ---------------------------------------------------------------------------
 
-registry.register_engine("hosted", lambda: HostedAPIEngine())
+registry.register_engine(
+    "hosted",
+    lambda: HostedAPIEngine(declared_flags_map=dict(_DEFAULT_DECLARED_FLAGS_MAP)),
+)

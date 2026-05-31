@@ -721,6 +721,54 @@ def test_submit_does_not_fetch_asset_bytes() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_provision_auth_error_message_when_key_name_empty() -> None:
+    """When api_key_env is somehow empty at runtime (validator bypass), the
+    AuthError message must be self-explanatory, not 'missing '.
+
+    Defense-in-depth: pydantic validator (Layer I Task 4) catches this at load.
+    This test exercises the runtime fallback for direct-constructor calls.
+    """
+
+    class _NullCreds(CredentialProvider):
+        def get(self, key: str) -> str | None:
+            return None
+
+    engine = HostedAPIEngine(creds=_NullCreds())
+    cfg = {
+        "engine": {
+            "hosted": {"api_key_env": "", "endpoint": "https://e", "health_url": ""}
+        }
+    }
+    with pytest.raises(AuthError) as exc_info:
+        engine.provision(None, cfg)
+    assert "engine.hosted.api_key_env is empty" in str(exc_info.value)
+
+
+def test_declared_flags_default_for_hosted_yaml_key() -> None:
+    """HostedAPIEngine constructed via the registry factory must declare strategy
+    flags for the shipped hosted.yaml key.
+
+    Bug catch: a regression that changed the registry lambda to
+    `lambda: HostedAPIEngine(declared_flags_map={})` would silently drop the
+    default for the shipped YAML; going through the registry closes that gap.
+    """
+    import importlib
+
+    from kinoforge.core import registry
+    from kinoforge.core.config import load_config
+
+    # Ensure self-registration import side effect has run
+    importlib.import_module("kinoforge.engines.hosted")
+
+    cfg = load_config("examples/configs/hosted.yaml")
+    engine = registry.get_engine("hosted")()
+    flags = engine.declared_flags(cfg.capability_key())
+    assert flags == {
+        "supports_native_extension": False,
+        "supports_joint_audio": False,
+    }
+
+
 def test_yaml_round_trip_propagates_asset_paths_to_backend() -> None:
     """End-to-end YAML -> Config -> model_dump -> HostedAPIEngine.backend
     preserves asset_paths so the backend ends up with the configured mapping.

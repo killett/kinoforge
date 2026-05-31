@@ -140,3 +140,50 @@ def test_no_adapter_imports_in_core() -> None:
         raise AssertionError(
             f"Forbidden adapter import(s) found in kinoforge.core:\n  {detail}"
         )
+
+
+# ---------------------------------------------------------------------------
+# AC 4: engine packages confined to their own subdirectory
+# ---------------------------------------------------------------------------
+
+# Each engine adapter must remain confined to its own ``engines/<name>/``
+# subdirectory.  The sole permitted exception is ``src/kinoforge/_adapters.py``
+# — the adapter self-registration hub that imports every engine for its
+# side-effect registration call.
+_ENGINE_ALLOWLIST: set[str] = {"comfyui", "diffusers", "hosted", "fake", "fal"}
+
+_ADAPTER_HUB = SRC_ROOT / "_adapters.py"
+
+
+def test_engine_packages_confined_to_their_subdir() -> None:
+    """Each allowlisted engine must only be imported from its own subdir or the adapter hub."""
+    violations: list[str] = []
+
+    for engine_name in sorted(_ENGINE_ALLOWLIST):
+        engine_dir = SRC_ROOT / "engines" / engine_name
+        pattern = re.compile(
+            rf"^\s*(import|from)\s+kinoforge\.engines\.{re.escape(engine_name)}(\s|\.|$)"
+        )
+        for py_file in sorted(SRC_ROOT.rglob("*.py")):
+            # The adapter hub is permitted to import every engine.
+            if py_file == _ADAPTER_HUB:
+                continue
+            # The engine's own subdir is permitted to import itself.
+            try:
+                py_file.relative_to(engine_dir)
+                continue
+            except ValueError:
+                pass
+            for lineno, line in enumerate(py_file.read_text().splitlines(), start=1):
+                if pattern.match(line):
+                    violations.append(
+                        f"engines.{engine_name} imported outside its package "
+                        f"({engine_dir.relative_to(SRC_ROOT.parent.parent)}): "
+                        f"{py_file}:{lineno}: {line.strip()}"
+                    )
+
+    if violations:
+        detail = "\n  ".join(violations)
+        raise AssertionError(
+            f"Engine package(s) leaked outside their subdirectory:\n  {detail}"
+        )

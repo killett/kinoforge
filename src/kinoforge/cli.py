@@ -154,11 +154,11 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
 
     # provision
     p_provision = sub.add_parser("provision", help="provision an existing instance")
-    p_provision.add_argument("--config", required=True, metavar="PATH")
+    p_provision.add_argument("-c", "--config", required=True, metavar="PATH")
 
     # generate
     p_generate = sub.add_parser("generate", help="run a generation job")
-    p_generate.add_argument("--config", required=True, metavar="PATH")
+    p_generate.add_argument("-c", "--config", required=True, metavar="PATH")
     p_generate.add_argument("--prompt", required=True, metavar="TEXT")
     p_generate.add_argument("--mode", required=True, metavar="MODE")
     p_generate.add_argument("--run-id", default="run", metavar="ID")
@@ -317,7 +317,9 @@ def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
     run_id: str = args.run_id
 
     try:
-        artifact = generate(cfg, request, store=store, run_id=run_id)
+        artifact = generate(
+            cfg, request, store=store, run_id=run_id, state_dir=state_dir
+        )
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
         return 1

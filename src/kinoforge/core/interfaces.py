@@ -257,7 +257,14 @@ class ModelProfileProvider(ABC):
     ) -> ModelProfile: ...
 
     @abstractmethod
-    def verify(self, profile: ModelProfile, backend: GenerationBackend) -> None: ...  # noqa: D102
+    def verify(  # noqa: D102
+        self,
+        profile: ModelProfile,
+        backend: GenerationBackend,
+        *,
+        engine: GenerationEngine | None = None,
+        key: CapabilityKey | None = None,
+    ) -> None: ...
 
 
 class Splitter(ABC):
