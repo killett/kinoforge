@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import frames, registry
+from kinoforge.core.assets import find_asset, set_by_dot_path
 from kinoforge.core.errors import FrameExtractionError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
@@ -140,6 +141,7 @@ class DiffusersBackend(GenerationBackend):
         base_url: str,
         probe_profile: ModelProfile,
         sleep: Callable[[float], None] = time.sleep,
+        asset_paths: dict[str, str] | None = None,
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -150,12 +152,19 @@ class DiffusersBackend(GenerationBackend):
                 ``"http://127.0.0.1:8000"``.  No trailing slash.
             probe_profile: ``ModelProfile`` returned by ``inspect_capabilities``.
             sleep: Callable invoked between poll iterations in ``result``.
+            asset_paths: Optional mapping from role name to dot-path in the
+                request body where the matching asset's URI is written
+                (e.g. ``{"init_image": "init_image_url"}``).  Roles absent
+                from this map are not injected.  URL passthrough only —
+                ``submit`` never fetches the asset bytes; the diffusers
+                server fetches the URL.
         """
         self._http_post = http_post
         self._http_get = http_get
         self._base_url = base_url.rstrip("/")
         self._probe = probe_profile
         self._sleep = sleep
+        self._asset_paths: dict[str, str] = dict(asset_paths or {})
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -174,16 +183,34 @@ class DiffusersBackend(GenerationBackend):
         return self._probe
 
     def submit(self, job: GenerationJob) -> str:
-        """POST the job spec to ``/generate`` and return the job ID.
+        """POST the job spec (with asset URIs injected) to ``/generate``.
+
+        For each role declared in ``self._asset_paths``, look up the
+        corresponding asset on ``job.segments[0]`` via
+        :func:`~kinoforge.core.assets.find_asset` and write
+        ``asset.ref.uri`` into a copy of the request body at the
+        configured dot-path via
+        :func:`~kinoforge.core.assets.set_by_dot_path`.  Roles absent
+        from ``segments[0].assets`` are silently skipped.  ``job.spec``
+        itself is never mutated.
+
+        URL passthrough only — no asset bytes are fetched here; the
+        diffusers server fetches the URI.
 
         Args:
-            job: The ``GenerationJob`` whose ``spec`` is sent as the request body.
+            job: The ``GenerationJob`` whose ``spec`` is the request body.
 
         Returns:
             The ``job_id`` string from the server response.
         """
+        body = dict(job.spec)
+        for role, dot_path in self._asset_paths.items():
+            asset = find_asset(job, role)
+            if asset is None:
+                continue
+            set_by_dot_path(body, dot_path, asset.ref.uri)
         url = f"{self._base_url}/generate"
-        response = self._http_post(url, dict(job.spec))
+        response = self._http_post(url, body)
         return str(response["job_id"])
 
     def result(self, job_id: str) -> Artifact:
@@ -293,6 +320,10 @@ class DiffusersEngine(GenerationEngine):
         self._sleep = sleep
         self._probe = probe_profile
         self._declared_flags_map: dict[str, dict[str, bool]] = declared_flags_map or {}
+        # Asset-role -> request-body dot-path map, populated by ``backend``
+        # from ``cfg["engine"]["diffusers"]["asset_paths"]`` and mirrored
+        # onto the engine so ``validate_spec`` can check it.
+        self._asset_paths: dict[str, str] = {}
 
     def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
         """Install pip deps and launch the headless diffusers inference server.
@@ -346,12 +377,22 @@ class DiffusersEngine(GenerationEngine):
             engine_block.get("diffusers", {}) if isinstance(engine_block, dict) else {}
         )
         base_url: str = str(diffusers_cfg.get("base_url", _DEFAULT_BASE_URL))
+        asset_paths_raw = diffusers_cfg.get("asset_paths", {})
+        asset_paths: dict[str, str] = (
+            {str(k): str(v) for k, v in asset_paths_raw.items()}
+            if isinstance(asset_paths_raw, dict)
+            else {}
+        )
+        # Mirror onto the engine so ``validate_spec`` (called from outside
+        # via the ABC) can consult the same map.
+        self._asset_paths = asset_paths
         return DiffusersBackend(
             http_post=self._http_post,
             http_get=self._http_get,
             base_url=base_url,
             probe_profile=self._probe,
             sleep=self._sleep,
+            asset_paths=asset_paths,
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
@@ -381,11 +422,16 @@ class DiffusersEngine(GenerationEngine):
         return dict(self._declared_flags_map.get(key.derive(), {}))
 
     def validate_spec(self, job: GenerationJob) -> None:
-        """Raise :class:`~kinoforge.core.errors.ValidationError` when spec keys are missing.
+        """Raise :class:`~kinoforge.core.errors.ValidationError` for spec or asset gaps.
 
-        Both ``"pipeline"`` (the diffusers pipeline class name) and
-        ``"scheduler"`` (the scheduler name) are required keys on a
-        diffusers job spec.
+        Required spec keys: ``"pipeline"`` (the diffusers pipeline class
+        name) and ``"scheduler"`` (the scheduler name).  In addition, for
+        every asset in ``job.segments[0].assets``, the asset's role must
+        appear in ``self._asset_paths`` (populated from
+        ``cfg["engine"]["diffusers"]["asset_paths"]`` at backend
+        construction).  Roles present without a configured injection path
+        are a hard error — silent skip would let the engine submit a body
+        missing the conditioning asset.
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` whose
@@ -393,7 +439,8 @@ class DiffusersEngine(GenerationEngine):
 
         Raises:
             ValidationError: ``"pipeline"`` or ``"scheduler"`` is absent
-                from ``job.spec``.
+                from ``job.spec``, or an asset role on ``segments[0]`` has
+                no entry in ``asset_paths``.
         """
         required = {"pipeline", "scheduler"}
         missing = required - set(job.spec.keys())
@@ -401,6 +448,15 @@ class DiffusersEngine(GenerationEngine):
             raise ValidationError(
                 f"Diffusers job.spec is missing required keys: {sorted(missing)}"
             )
+        if not job.segments:
+            return
+        for asset in job.segments[0].assets:
+            if asset.role not in self._asset_paths:
+                raise ValidationError(
+                    f"asset role {asset.role!r} present on segments[0] but "
+                    f"engine.diffusers.asset_paths has no mapping; declare "
+                    f"asset_paths.{asset.role}: <dot.path> in YAML"
+                )
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Fetch the rendered video bytes via HTTP and decode the last frame.

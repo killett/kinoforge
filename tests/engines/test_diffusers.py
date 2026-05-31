@@ -15,12 +15,13 @@ from kinoforge.core.errors import FrameExtractionError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
+    ConditioningAsset,
     GenerationJob,
     Instance,
     ModelProfile,
     Segment,
 )
-from kinoforge.engines.diffusers import DiffusersEngine
+from kinoforge.engines.diffusers import DiffusersBackend, DiffusersEngine
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -590,3 +591,140 @@ def test_extract_last_frame_wraps_fetch_failure_as_frame_extraction_error() -> N
 
     with pytest.raises(FrameExtractionError, match="fetch from"):
         engine.extract_last_frame(artifact)
+
+
+# ---------------------------------------------------------------------------
+# Layer F — asset wiring (asset_paths) on DiffusersBackend + DiffusersEngine
+# ---------------------------------------------------------------------------
+
+
+def test_submit_writes_asset_uri_at_configured_dot_path() -> None:
+    """Backend.submit() writes the matching asset's URI at the configured
+    dot-path in the POST body.
+
+    Bug catch: if the engine wrote the URI at the wrong key (e.g. top-level
+    "uri" or inside spec verbatim), this assertion fails; and forwarding of
+    pre-existing spec keys must not regress.
+    """
+    posted: list[tuple[str, dict[str, Any]]] = []
+
+    def spy_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posted.append((url, dict(body)))
+        return {"job_id": "j-1"}
+
+    backend = DiffusersBackend(
+        http_post=spy_post,
+        http_get=lambda u: {},
+        base_url="http://localhost:8000",
+        probe_profile=_DEFAULT_PROBE,
+        asset_paths={"init_image": "init_image_url"},
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="seed.png", uri="https://store/seed.png"),
+    )
+    job = GenerationJob(
+        spec={"pipeline": "Stable", "scheduler": "DDIM"},
+        segments=[Segment(prompt="p", assets=[asset])],
+        params={},
+    )
+    backend.submit(job)
+    # Bug catch: wrong key (e.g. asset.ref.uri stuffed at top-level "uri").
+    assert posted[0][1]["init_image_url"] == "https://store/seed.png"
+    # Bug catch: spec keys must still be forwarded.
+    assert posted[0][1]["pipeline"] == "Stable"
+    assert posted[0][1]["scheduler"] == "DDIM"
+
+
+def test_submit_no_asset_paths_unchanged() -> None:
+    """Regression: pre-Layer-F templates (no asset_paths declared) submit a
+    body identical to job.spec.
+
+    Bug catch: a new injection branch must not leak spurious keys into the
+    POST body when no asset_paths mapping is configured.
+    """
+    posted: list[dict[str, Any]] = []
+
+    def spy_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posted.append(dict(body))
+        return {"job_id": "j-2"}
+
+    backend = DiffusersBackend(
+        http_post=spy_post,
+        http_get=lambda u: {},
+        base_url="http://localhost:8000",
+        probe_profile=_DEFAULT_PROBE,
+    )
+    job = GenerationJob(
+        spec={"pipeline": "Stable", "scheduler": "DDIM"},
+        segments=[Segment(prompt="p", assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    # Bug catch: the body must equal the input spec exactly when no
+    # asset_paths is configured.
+    assert posted[0] == {"pipeline": "Stable", "scheduler": "DDIM"}
+
+
+def test_validate_spec_rejects_asset_without_path_mapping() -> None:
+    """Engine.validate_spec() raises ValidationError when segments[0] carries
+    an asset whose role has no entry in asset_paths.
+
+    Bug catch: silent skip would let the engine submit a body lacking the
+    conditioning asset, and the user would never know.
+    """
+    # Engine constructed without an asset_paths mapping for init_image.
+    engine = _make_engine()  # asset_paths defaults to {} on the engine
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="x.png", uri="https://x"),
+    )
+    job = GenerationJob(
+        spec={"pipeline": "Stable", "scheduler": "DDIM"},
+        segments=[Segment(prompt="p", assets=[asset])],
+        params={},
+    )
+    with pytest.raises(ValidationError, match="init_image"):
+        engine.validate_spec(job)
+
+
+def test_submit_does_not_fetch_asset_bytes() -> None:
+    """Backend.submit() must pass through URLs only — never fetch bytes.
+
+    The Diffusers backend's contract for Layer F is URL passthrough; the
+    in-house diffusers server fetches the URL. The backend constructor takes
+    no http_get_bytes seam for asset upload at all; absence is the contract.
+
+    Bug catch: if a future refactor adds eager byte-fetching, the passthrough
+    contract breaks silently and bandwidth doubles.
+    """
+    fetched: list[str] = []
+
+    def watching_get(url: str) -> dict[str, Any]:
+        # http_get is for /status polling — recording it here lets us detect
+        # any accidental engine-side fetch of the asset URL.
+        fetched.append(url)
+        return {}
+
+    backend = DiffusersBackend(
+        http_post=lambda u, b: {"job_id": "x"},
+        http_get=watching_get,
+        base_url="http://localhost:8000",
+        probe_profile=_DEFAULT_PROBE,
+        asset_paths={"init_image": "init_image_url"},
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="s.png", uri="https://store/s.png"),
+    )
+    job = GenerationJob(
+        spec={"pipeline": "Stable", "scheduler": "DDIM"},
+        segments=[Segment(prompt="p", assets=[asset])],
+        params={},
+    )
+    backend.submit(job)
+    # Bug catch: submit() must not touch the asset URL via any HTTP seam.
+    assert "https://store/s.png" not in fetched
