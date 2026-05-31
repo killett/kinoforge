@@ -229,3 +229,40 @@ def test_ci_references_task(task: str) -> None:
     """CI workflow must invoke each pixi task."""
     content = CI_PATH.read_text(encoding="utf-8")
     assert task in content, f"CI workflow missing task: {task!r}"
+
+
+# ---------------------------------------------------------------------------
+# Layer K — spec: shape tests
+# ---------------------------------------------------------------------------
+
+
+def test_hosted_yaml_has_non_empty_spec() -> None:
+    """examples/configs/hosted.yaml ships a spec: block with required keys."""
+    cfg = load_config(EXAMPLES_DIR / "hosted.yaml")
+    assert "model" in cfg.spec
+    assert "params" in cfg.spec
+    # Sanity: documented duplication holds in the shipped example.
+    assert cfg.engine.hosted is not None
+    assert cfg.spec["model"] == cfg.engine.hosted.model
+
+
+def test_diffusers_yaml_has_non_empty_spec() -> None:
+    """examples/configs/diffusers.yaml ships pipeline+scheduler in spec:."""
+    cfg = load_config(EXAMPLES_DIR / "diffusers.yaml")
+    assert "pipeline" in cfg.spec
+    assert "scheduler" in cfg.spec
+
+
+def test_wan_yaml_has_non_empty_spec() -> None:
+    """examples/configs/wan.yaml ships graph+node_overrides in spec:."""
+    cfg = load_config(EXAMPLES_DIR / "wan.yaml")
+    assert "graph" in cfg.spec
+    assert "node_overrides" in cfg.spec
+
+
+def test_fal_and_local_fake_yaml_have_empty_spec() -> None:
+    """fal.yaml + local-fake.yaml keep cfg.spec = {} (no required spec keys)."""
+    fal_cfg = load_config(EXAMPLES_DIR / "fal.yaml")
+    fake_cfg = load_config(EXAMPLES_DIR / "local-fake.yaml")
+    assert fal_cfg.spec == {}
+    assert fake_cfg.spec == {}
