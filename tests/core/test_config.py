@@ -581,5 +581,36 @@ models:
 lifecycle:
   budget: 1.0
 """
-    with pytest.raises(ConfigError, match="fal"):
+    with pytest.raises(ConfigError, match=r"requires the engine\.fal block"):
+        load_config(yaml_text)
+
+
+def test_fal_kind_rejects_compute_block() -> None:
+    """engine.kind == 'fal' must reject a compute block (hosted-like).
+
+    Bug catch: a future refactor that drops the cross-field check in
+    Config._validate_cross_fields would let users wire a fal hosted-API
+    engine to a compute provider — accidentally provisioning a pod they
+    don't need. This test fires when the YAML carries both blocks.
+    """
+    yaml_text = """
+engine:
+  kind: fal
+  precision: ""
+  fal:
+    endpoint: "fal-ai/wan"
+    url_path: "video.url"
+compute:
+  provider: runpod
+  image: "img:tag"
+  lifecycle:
+    budget: 1.0
+models:
+  - ref: "hf:org/m"
+    kind: base
+    target: checkpoints
+lifecycle:
+  budget: 1.0
+"""
+    with pytest.raises(ConfigError, match=r"compute.*fal"):
         load_config(yaml_text)
