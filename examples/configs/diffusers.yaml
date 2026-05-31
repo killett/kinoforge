@@ -35,3 +35,15 @@ compute:
     time_buffer: 10m
     max_lifetime: 4h
     budget: 15.0
+
+# --- Layer K: per-job spec & params -----------------------------------------
+# DiffusersBackend.submit reads spec.pipeline + spec.scheduler to construct
+# the request body for the headless diffusers server.
+spec:
+  pipeline: "DiffusionPipeline"
+  scheduler: "DDIMScheduler"
+
+params:
+  fps: 24
+  num_frames: 81
+  steps: 30
