@@ -6,21 +6,23 @@ No real git, network, or ComfyUI traffic occurs.
 
 from __future__ import annotations
 
+import urllib.error
 from typing import Any
 
 import pytest
 
 from kinoforge.core import registry
-from kinoforge.core.errors import FrameExtractionError, ValidationError
+from kinoforge.core.errors import AssetFetchError, FrameExtractionError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
+    ConditioningAsset,
     GenerationJob,
     Instance,
     ModelProfile,
     Segment,
 )
-from kinoforge.engines.comfyui import ComfyUIEngine
+from kinoforge.engines.comfyui import ComfyUIBackend, ComfyUIEngine
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -657,3 +659,322 @@ def test_extract_last_frame_wraps_fetch_failure_as_frame_extraction_error() -> N
 
     with pytest.raises(FrameExtractionError, match="fetch from"):
         engine.extract_last_frame(artifact)
+
+
+# ---------------------------------------------------------------------------
+# Layer F: asset wiring via /upload/image + node_overrides patch
+# ---------------------------------------------------------------------------
+
+
+def test_submit_uploads_bytes_for_declared_asset_role(tmp_path: Any) -> None:
+    """submit() fetches asset bytes and POSTs them to /upload/image, then
+    patches the LoadImage node to point to the server-side filename.
+
+    Bug catch: wrong URL would 404 silently; wrong field name would be
+    rejected by ComfyUI server; failure to patch the node would leave the
+    graph pointing to "old.png".
+    """
+    asset_path = tmp_path / "seed.png"
+    asset_path.write_bytes(b"SEED_BYTES")
+    uploaded: list[dict[str, Any]] = []
+
+    def spy_post_file(
+        url: str, *, field_name: str, filename: str, content: bytes
+    ) -> str:
+        uploaded.append(
+            {
+                "url": url,
+                "field_name": field_name,
+                "filename": filename,
+                "content": content,
+            }
+        )
+        return "server_seed.png"
+
+    posted_prompts: list[dict[str, Any]] = []
+
+    def spy_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posted_prompts.append({"url": url, "body": body})
+        return {"prompt_id": "p-1"}
+
+    backend = ComfyUIBackend(
+        http_post=spy_post,
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"unused",  # file:// path skips it
+        http_post_file=spy_post_file,
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="seed.png", uri=asset_path.as_uri()),
+    )
+    spec = {
+        "graph": {"5": {"class_type": "LoadImage", "inputs": {"image": "old.png"}}},
+        "node_overrides": {},
+        "asset_node_ids": {"init_image": "5"},
+    }
+    job = GenerationJob(
+        spec=spec,
+        segments=[Segment(prompt="p", assets=[asset])],
+        params={},
+    )
+    backend.submit(job)
+
+    assert uploaded[0]["url"] == "http://comfy:8188/upload/image"
+    assert uploaded[0]["field_name"] == "image"
+    assert uploaded[0]["content"] == b"SEED_BYTES"
+    merged_graph = posted_prompts[0]["body"]["prompt"]
+    assert merged_graph["5"]["inputs"]["image"] == "server_seed.png"
+
+
+def test_submit_with_no_asset_node_ids_unchanged() -> None:
+    """Regression: pre-Layer-F spec submits without asset side-effects.
+
+    Bug catch: a Layer F refactor must not call the upload spy when no
+    asset_node_ids mapping is declared.
+    """
+    uploaded: list[Any] = []
+    posted: list[dict[str, Any]] = []
+
+    def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
+        posted.append({"u": u, "b": b})
+        return {"prompt_id": "x"}
+
+    def post_file_spy(u: str, **kw: Any) -> str:
+        uploaded.append(kw)
+        return "x.png"
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"",
+        http_post_file=post_file_spy,
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    spec = {"graph": {"1": {"class_type": "X", "inputs": {}}}, "node_overrides": {}}
+    job = GenerationJob(spec=spec, segments=[Segment(prompt="p", assets=[])], params={})
+    backend.submit(job)
+
+    assert uploaded == []
+    # Pre-Layer-F graph survives intact.
+    assert posted[0]["b"]["prompt"]["1"] == {"class_type": "X", "inputs": {}}
+
+
+def test_submit_skips_role_when_asset_absent() -> None:
+    """Spec declares asset_node_ids mapping, but segments[0].assets is empty
+    — submit must not upload.
+
+    Bug catch: silent upload of empty content would corrupt the ComfyUI
+    input directory; phantom node_overrides entry would clobber the graph
+    node's existing image input.
+    """
+    uploaded: list[Any] = []
+    posted: list[dict[str, Any]] = []
+
+    def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
+        posted.append(b)
+        return {"prompt_id": "x"}
+
+    def post_file_spy(u: str, **kw: Any) -> str:
+        uploaded.append(kw)
+        return "x.png"
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"",
+        http_post_file=post_file_spy,
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    spec = {
+        "graph": {"5": {"inputs": {"image": "kept.png"}}},
+        "node_overrides": {},
+        "asset_node_ids": {"init_image": "5"},
+    }
+    job = GenerationJob(spec=spec, segments=[Segment(prompt="p", assets=[])], params={})
+    backend.submit(job)
+
+    assert uploaded == []
+    assert posted[0]["prompt"]["5"]["inputs"]["image"] == "kept.png"
+
+
+def test_validate_spec_rejects_role_without_node_id_mapping() -> None:
+    """validate_spec raises ValidationError when an asset on segments[0]
+    has no matching entry in spec["asset_node_ids"].
+
+    Bug catch: missing mapping would silently slip through validation and
+    fail at the engine HTTP round-trip instead.
+    """
+    engine = _make_engine()
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="x.png", uri="https://x"),
+    )
+    spec: dict[str, Any] = {"graph": {}, "node_overrides": {}}  # asset_node_ids absent
+    job = GenerationJob(
+        spec=spec,
+        segments=[Segment(prompt="p", assets=[asset])],
+        params={},
+    )
+    with pytest.raises(ValidationError, match="init_image"):
+        engine.validate_spec(job)
+
+
+def test_submit_raises_AssetFetchError_on_upload_failure(tmp_path: Any) -> None:
+    """Upload-side URLError surfaces as AssetFetchError, not the raw urllib
+    exception.
+
+    Bug catch: callers expecting the typed kinoforge error get an
+    unrelated network exception instead.
+    """
+    asset_path = tmp_path / "seed.png"
+    asset_path.write_bytes(b"X")
+
+    def raising_post_file(url: str, **kw: Any) -> str:
+        raise urllib.error.URLError("upload 500")
+
+    backend = ComfyUIBackend(
+        http_post=lambda u, b: {"prompt_id": "x"},
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"",
+        http_post_file=raising_post_file,
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="seed.png", uri=asset_path.as_uri()),
+    )
+    spec = {
+        "graph": {"5": {}},
+        "node_overrides": {},
+        "asset_node_ids": {"init_image": "5"},
+    }
+    job = GenerationJob(
+        spec=spec, segments=[Segment(prompt="p", assets=[asset])], params={}
+    )
+    with pytest.raises(AssetFetchError, match="upload"):
+        backend.submit(job)
+
+
+def test_submit_raises_AssetFetchError_on_fetch_failure() -> None:
+    """Fetch-side URLError from http_get_bytes surfaces as AssetFetchError
+    via core/assets.asset_bytes wrapping.
+
+    Bug catch: the engine must NOT double-wrap, but must let the
+    AssetFetchError propagate up from asset_bytes.
+    """
+
+    def raising_get_bytes(url: str) -> bytes:
+        raise urllib.error.URLError("dns fail")
+
+    backend = ComfyUIBackend(
+        http_post=lambda u, b: {"prompt_id": "x"},
+        http_get=lambda u: {},
+        http_get_bytes=raising_get_bytes,
+        http_post_file=lambda u, **kw: "n",
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="x.png", uri="https://broken/x.png"),
+    )
+    spec = {
+        "graph": {"5": {}},
+        "node_overrides": {},
+        "asset_node_ids": {"init_image": "5"},
+    }
+    job = GenerationJob(
+        spec=spec, segments=[Segment(prompt="p", assets=[asset])], params={}
+    )
+    with pytest.raises(AssetFetchError, match="dns fail"):
+        backend.submit(job)
+
+
+def test_submit_file_uri_reads_local_bytes(tmp_path: Any) -> None:
+    """file:// asset URIs read via stdlib Path.read_bytes — http_get_bytes
+    must NOT be invoked.
+
+    Bug catch: routing file:// through http_get_bytes would upload the
+    spy's b"WRONG" placeholder instead of the real local bytes.
+    """
+    asset_path = tmp_path / "local.png"
+    asset_path.write_bytes(b"LOCAL_PNG")
+    upload_captured: list[bytes] = []
+
+    def post_file_spy(u: str, *, field_name: str, filename: str, content: bytes) -> str:
+        upload_captured.append(content)
+        return "n"
+
+    backend = ComfyUIBackend(
+        http_post=lambda u, b: {"prompt_id": "x"},
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"WRONG",  # must NOT be used for file://
+        http_post_file=post_file_spy,
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="local.png", uri=asset_path.as_uri()),
+    )
+    spec = {
+        "graph": {"5": {}},
+        "node_overrides": {},
+        "asset_node_ids": {"init_image": "5"},
+    }
+    job = GenerationJob(
+        spec=spec, segments=[Segment(prompt="p", assets=[asset])], params={}
+    )
+    backend.submit(job)
+
+    assert upload_captured == [b"LOCAL_PNG"]
+
+
+def test_submit_patches_node_with_uploaded_filename() -> None:
+    """node_overrides receives the new image filename even if the user
+    template did not pre-populate the LoadImage entry's ``inputs`` subdict.
+
+    Bug catch: KeyError on missing "inputs" subdict in the patch path.
+    """
+    posted: list[dict[str, Any]] = []
+
+    def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
+        posted.append(b)
+        return {"prompt_id": "x"}
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        http_get_bytes=lambda u: b"BYTES",
+        http_post_file=lambda u, **kw: "uploaded.png",
+        base_url="http://comfy:8188",
+        probe=_DEFAULT_PROBE,
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="seed.png", uri="https://x/seed.png"),
+    )
+    # graph has node 7 without an "inputs" subdict — engine must
+    # create it during patch.
+    spec = {
+        "graph": {"7": {"class_type": "LoadImage"}},
+        "node_overrides": {},
+        "asset_node_ids": {"init_image": "7"},
+    }
+    job = GenerationJob(
+        spec=spec, segments=[Segment(prompt="p", assets=[asset])], params={}
+    )
+    backend.submit(job)
+    merged = posted[0]["prompt"]
+    assert merged["7"]["inputs"]["image"] == "uploaded.png"
