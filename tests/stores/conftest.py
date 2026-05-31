@@ -52,7 +52,7 @@ class _BytesBody:
 class _S3Paginator:
     """Stand-in for the paginator returned by client.get_paginator('list_objects_v2')."""
 
-    def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
+    def __init__(self, objects: dict[tuple[str, str], tuple[bytes, str]]) -> None:
         self._objects = objects
 
     def paginate(self, *, Bucket: str, Prefix: str) -> Iterator[dict[str, Any]]:
@@ -73,28 +73,56 @@ class FakeS3Client:
     exceptions = _S3Exceptions()
 
     def __init__(self) -> None:
-        self._objects: dict[tuple[str, str], bytes] = {}
+        # value = (body_bytes, etag)
+        self._objects: dict[tuple[str, str], tuple[bytes, str]] = {}
+        self._etag_counter = 0
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes) -> dict[str, Any]:
-        self._objects[(Bucket, Key)] = Body
-        return {}
+    def _next_etag(self) -> str:
+        self._etag_counter += 1
+        return f'"fake-etag-{self._etag_counter}"'
+
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        IfNoneMatch: str | None = None,
+        IfMatch: str | None = None,
+    ) -> dict[str, Any]:
+        existing = self._objects.get((Bucket, Key))
+        if IfNoneMatch == "*" and existing is not None:
+            raise self.exceptions.ClientError("PreconditionFailed")
+        if IfMatch is not None and (existing is None or existing[1] != IfMatch):
+            raise self.exceptions.ClientError("PreconditionFailed")
+        etag = self._next_etag()
+        self._objects[(Bucket, Key)] = (Body, etag)
+        return {"ETag": etag}
 
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
         if (Bucket, Key) not in self._objects:
             raise self.exceptions.NoSuchKey()
-        return {"Body": _BytesBody(self._objects[(Bucket, Key)])}
+        body, etag = self._objects[(Bucket, Key)]
+        return {"Body": _BytesBody(body), "ETag": etag}
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
         if (Bucket, Key) not in self._objects:
             raise self.exceptions.ClientError("NoSuchKey")
-        return {}
+        _, etag = self._objects[(Bucket, Key)]
+        return {"ETag": etag}
 
-    def delete_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+    def delete_object(
+        self, *, Bucket: str, Key: str, IfMatch: str | None = None
+    ) -> dict[str, Any]:
+        existing = self._objects.get((Bucket, Key))
+        if IfMatch is not None and (existing is None or existing[1] != IfMatch):
+            raise self.exceptions.ClientError("PreconditionFailed")
         self._objects.pop((Bucket, Key), None)
         return {}
 
     def get_paginator(self, op: str) -> _S3Paginator:
         assert op == "list_objects_v2", f"unexpected paginator op: {op!r}"
+        # Paginator only needs keys; pass through body+etag tuples.
         return _S3Paginator(self._objects)
 
 
