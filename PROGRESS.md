@@ -114,13 +114,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - `S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.
 
 **Architectural follow-ups:**
-- **Layer F: engine `submit()` ignores seg-0 assets.** The non-native chain now
-  persists tail PNGs (via the stage's `store.put_bytes`) and injects a
-  `ConditioningAsset` into `next_job.segments[0]`, but each engine's `submit()`
-  body reads only `job.spec` — the tail asset is currently dead weight at
-  render time. Wiring per asset role into each engine's spec template is the
-  next layer: ComfyUI `LoadImage` node injection, Diffusers `init_image` param,
-  Hosted provider-specific URL field.
+- ~~**Layer F: engine `submit()` ignores seg-0 assets.**~~ Closed by Phase 16 (see below).
 - `cli._cmd_status` queries in-process provider state only, not the ledger.
 - `provisioner.provision` typed as `_ProvisionConfig` Protocol — `# type: ignore[arg-type]` at call site for mypy generic variance.
 - `GenerateClipStage` persists only final artifact (intermediates in-memory) — stitching, when shipped, must refactor persistence model or stitching read path.
@@ -153,11 +147,13 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer F (per-engine asset wiring) complete.** All 6 tasks shipped (478 → 515 tests).
+**Layer F (per-engine asset wiring) complete.** All 6 tasks + post-merge cfg fix shipped (478 → 524 tests).
 The non-native multi-segment chain now produces consumed tail-frames end-to-end:
 - ComfyUI: spec `asset_node_ids: {init_image: <node_id>}` triggers /upload/image + node patch
 - Diffusers: cfg `engine.diffusers.asset_paths: {init_image: <dot.path>}` writes URL into POST body
 - Hosted: cfg `engine.hosted.asset_paths: {init_image: <dot.path>}` writes URL into provider request
+
+Post-merge whole-branch review caught a pydantic cfg-strip defect that also affected Layer E `url_path` (silent drop during `Config.model_dump()` because the keys weren't declared on the pydantic models). Closed in commit `484e368` with typed cfg fields + 9 round-trip/E2E tests.
 
 **Next: Layer #4 — Concurrent backend scheduler (GitHub issue #3).**
 Drop-in `ConcurrentPool` behind the existing `BackendPool` ABC. Pure dispatch concern;
@@ -211,4 +207,5 @@ Begin the chosen layer with the `superpowers-extended-cc:brainstorming` skill.
 - [x] Task 4: ComfyUI backend `http_get_bytes` + `http_post_file` seams + `asset_node_ids` + 8 tests — commit `40dfaec`
 - [x] Task 4 (review fix): random multipart boundary + filename escape + AssetFetchError wrapping + 8 tests — commit `e6826c6`
 - [x] Task 5: GenerateClipStage post-chain `validate_spec` + 3 tests — commit `22269ed`
-- [x] Task 6: README + PROGRESS + final gate + merge — commit `a271a03`
+- [x] Task 6: README + PROGRESS + final gate + merge — commit `a271a03` (+ Phase 16 SHA backfill at `cb94413`; merge commit `3037bde`)
+- [x] Post-merge fix: pydantic cfg strip closed for Layer E `url_path` + Layer F `asset_paths`. `HostedEngineConfig` gains `url_path`/`asset_paths`/`api_key_env`/`health_url`; new `DiffusersEngineConfig` registered on `EngineConfig.diffusers`. 7 cfg round-trip tests + 2 YAML→engine.backend E2E tests close the silent-strip defect that bypassed both Layer F unit tests and Layer E tests — commit `484e368`. Final: 524 tests.
