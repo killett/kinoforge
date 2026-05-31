@@ -31,6 +31,7 @@ from kinoforge.core.errors import (
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
+    ConditioningAsset,
     CredentialProvider,
     GenerationJob,
     Instance,
@@ -575,3 +576,139 @@ def test_walk_dot_path_list_terminal_returns_empty() -> None:
     from kinoforge.engines.hosted import _walk_dot_path
 
     assert _walk_dot_path({"video": [{"url": "X"}]}, "video") == ""
+
+
+# ---------------------------------------------------------------------------
+# Layer F: asset_paths wiring (Task 3)
+# ---------------------------------------------------------------------------
+
+
+def test_submit_writes_asset_uri_at_nested_dot_path() -> None:
+    """submit() walks asset_paths and writes asset.ref.uri into the body
+    at the configured nested dot-path, creating intermediate dicts.
+
+    Bug catch: a non-nested setter would create a top-level
+    ``"input.image_url"`` string-key instead of nested
+    ``body["input"]["image_url"]``; original spec keys must be forwarded
+    intact alongside the injected URI.
+    """
+    from kinoforge.engines.hosted import HostedAPIBackend
+
+    posted: list[tuple[str, dict[str, Any]]] = []
+
+    def spy_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posted.append((url, dict(body)))
+        return {"job_id": "j-1"}
+
+    backend = HostedAPIBackend(
+        http_post=spy_post,
+        http_get=lambda u: {},
+        endpoint="https://api.example.com/v1/predict",
+        probe_profile=_DEFAULT_PROBE,
+        asset_paths={"init_image": "input.image_url"},
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="s.png", uri="https://store/s.png"),
+    )
+    job = GenerationJob(
+        spec={"model": "vendor/m", "params": {"steps": 30}},
+        segments=[Segment(prompt="p", assets=[asset])],
+        params={},
+    )
+    backend.submit(job)
+    body = posted[0][1]
+    # Bug catch: a non-nested setter would create top-level
+    # "input.image_url" string-key instead of nested dict.
+    assert body["input"]["image_url"] == "https://store/s.png"
+    # Bug catch: original spec keys must be forwarded intact.
+    assert body["model"] == "vendor/m"
+    assert body["params"] == {"steps": 30}
+
+
+def test_submit_no_asset_paths_unchanged() -> None:
+    """Pre-Layer-F regression: with no asset_paths configured, the POST
+    body equals job.spec exactly — no phantom keys, no copies via the
+    asset-injection loop mutating shape.
+
+    Bug catch: a refactor that always wraps body in {"input": ...} or
+    leaves residue of an empty-iteration dot-path setter would break
+    every existing hosted template.
+    """
+    from kinoforge.engines.hosted import HostedAPIBackend
+
+    posted: list[dict[str, Any]] = []
+
+    def spy_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        posted.append(dict(body))
+        return {"job_id": "j-2"}
+
+    backend = HostedAPIBackend(
+        http_post=spy_post,
+        http_get=lambda u: {},
+        endpoint="https://api.example.com/v1/predict",
+        probe_profile=_DEFAULT_PROBE,
+    )
+    job = GenerationJob(
+        spec={"model": "vendor/m", "params": {}},
+        segments=[Segment(prompt="p", assets=[])],
+        params={},
+    )
+    backend.submit(job)
+    assert posted[0] == {"model": "vendor/m", "params": {}}
+
+
+def test_validate_spec_rejects_asset_without_path_mapping() -> None:
+    """validate_spec raises ValidationError naming the offending role
+    when an asset on segments[0] has no asset_paths entry.
+
+    Bug catch: silent skip would let submit() POST a body missing the
+    conditioning asset URI; the server would generate from prompt only.
+    """
+    engine = HostedAPIEngine()
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="x.png", uri="https://x"),
+    )
+    job = GenerationJob(
+        spec={"model": "vendor/m", "params": {}},
+        segments=[Segment(prompt="p", assets=[asset])],
+        params={},
+    )
+    with pytest.raises(ValidationError, match="init_image"):
+        engine.validate_spec(job)
+
+
+def test_submit_does_not_fetch_asset_bytes() -> None:
+    """submit() must NOT fetch the asset bytes — URL passthrough only.
+
+    Bug catch: at Layer F the Backend constructor takes no
+    http_get_bytes seam; absence is the contract. The call must succeed
+    without any byte-fetch infrastructure (the provider fetches the
+    URI server-side).
+    """
+    from kinoforge.engines.hosted import HostedAPIBackend
+
+    backend = HostedAPIBackend(
+        http_post=lambda u, b: {"job_id": "x"},
+        http_get=lambda u: {},
+        endpoint="https://api.example.com/v1/predict",
+        probe_profile=_DEFAULT_PROBE,
+        asset_paths={"init_image": "input.image_url"},
+    )
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="s.png", uri="https://store/s.png"),
+    )
+    job = GenerationJob(
+        spec={"model": "vendor/m", "params": {}},
+        segments=[Segment(prompt="p", assets=[asset])],
+        params={},
+    )
+    # Backend constructor takes no http_get_bytes seam at Layer F;
+    # absence is the contract. The call must succeed without any
+    # byte-fetch infrastructure.
+    backend.submit(job)
