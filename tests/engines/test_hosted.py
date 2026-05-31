@@ -712,3 +712,53 @@ def test_submit_does_not_fetch_asset_bytes() -> None:
     # absence is the contract. The call must succeed without any
     # byte-fetch infrastructure.
     backend.submit(job)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: YAML -> Config.model_validate -> model_dump -> engine.backend
+# Catches the pydantic-strip defect where unknown YAML keys (asset_paths in
+# pre-fix code) silently drop during model_dump.
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_round_trip_propagates_asset_paths_to_backend() -> None:
+    """End-to-end YAML -> Config -> model_dump -> HostedAPIEngine.backend
+    preserves asset_paths so the backend ends up with the configured mapping.
+
+    Catches the pydantic-strip defect where unknown YAML keys (asset_paths in
+    pre-fix code) silently drop during model_dump — the Layer F unit tests
+    construct HostedAPIBackend directly with asset_paths kwarg and never
+    exercise this YAML round-trip.
+
+    Bug catch: a regression that removes asset_paths from HostedEngineConfig
+    (or otherwise lets pydantic strip it) leaves backend._asset_paths == {}
+    even when YAML declares the mapping, silently breaking every
+    image-to-video hosted job.
+    """
+    from kinoforge.core.config import Config
+
+    yaml_text = """
+engine:
+  kind: hosted
+  precision: ""
+  hosted:
+    provider: fal
+    endpoint: "https://fal.run/x"
+    model: "vendor/m"
+    asset_paths:
+      init_image: input.image_url
+lifecycle: {budget: 5.0}
+models:
+  - {ref: "hf:org/m", kind: base, target: diffusion_models}
+"""
+    import yaml
+
+    cfg = Config.model_validate(yaml.safe_load(yaml_text))
+
+    engine = _make_engine()
+    backend = engine.backend(None, cfg.model_dump())
+
+    # Bug catch: pre-fix code would assert {} here.
+    assert backend._asset_paths == {"init_image": "input.image_url"}
+    # Engine mirror must also be populated for validate_spec.
+    assert engine._asset_paths == {"init_image": "input.image_url"}
