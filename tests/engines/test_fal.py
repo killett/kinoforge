@@ -77,7 +77,7 @@ def test_provision_missing_cred_raises_auth_error() -> None:
     cfg = {"engine": {"fal": {"api_key_env": "FAL_KEY", "health_url": ""}}}
     with pytest.raises(AuthError) as exc:
         eng.provision(None, cfg)
-    assert "FAL_KEY" in str(exc.value)
+    assert "engine.fal.api_key_env=FAL_KEY" in str(exc.value)
 
 
 def test_provision_skips_health_when_empty() -> None:
@@ -245,7 +245,7 @@ def test_submit_posts_to_queue_base_endpoint_with_auth() -> None:
 
 
 def test_submit_injects_asset_urls_at_configured_paths() -> None:
-    """asset_paths declarations route asset.ref.url into the request body.
+    """asset_paths declarations route asset.ref.uri into the request body.
 
     Bug catch: ignoring asset_paths means the provider receives a body
     without the conditioning asset URL — silently producing t2v output
@@ -330,6 +330,35 @@ def test_result_raises_timeout_when_max_poll_exceeded() -> None:
     backend.submit(_make_job())
     with pytest.raises(TimeoutError):
         backend.result("r1")
+
+
+def test_result_cleans_up_jobs_map_on_success() -> None:
+    """After result() returns, the _jobs entry is removed (no memory leak).
+
+    Bug catch: a backend that never cleans up _jobs would accumulate one
+    dict-per-job over a long-running process — a slow leak that only shows
+    under sustained load.
+    """
+    backend = _make_backend()
+    backend.submit(_make_job())
+    assert "r1" in backend._jobs
+    backend.result("r1")
+    assert "r1" not in backend._jobs
+
+
+def test_result_cleans_up_jobs_map_on_failure() -> None:
+    """After result() raises on FAILED status, _jobs entry is still removed.
+
+    Bug catch: cleanup that only runs on the success return would leak the
+    _jobs entry on every failed/unknown/timed-out poll — exactly the cases
+    where retry-heavy workloads accumulate state fastest.
+    """
+    backend = _make_backend(status_responses=[{"status": "FAILED", "logs": []}])
+    backend.submit(_make_job())
+    assert "r1" in backend._jobs
+    with pytest.raises(KinoforgeError):
+        backend.result("r1")
+    assert "r1" not in backend._jobs
 
 
 def test_submit_uses_server_supplied_status_url_for_polling() -> None:
