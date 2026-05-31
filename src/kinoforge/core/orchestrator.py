@@ -17,13 +17,20 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from kinoforge.core import registry
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
-from kinoforge.core.errors import CapabilityMismatch, CapacityError, ValidationError
+from kinoforge.core.errors import (
+    CapabilityMismatch,
+    CapacityError,
+    ProfileNotCached,
+    ValidationError,
+)
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -34,6 +41,7 @@ from kinoforge.core.interfaces import (
     GenerationRequest,
     Instance,
     InstanceSpec,
+    ModelProfile,
     ModelProfileProvider,
 )
 from kinoforge.core.logging import get_logger
@@ -210,6 +218,313 @@ def _provision_compute_once(
             engine.name,
             time.time(),
         )
+
+
+def _provision_instance_and_build_backend(
+    *,
+    resolved_engine: GenerationEngine,
+    resolved_provider: ComputeProvider,
+    cfg: Config,
+    run_id: str,
+    key: CapabilityKey,
+    creds: CredentialProvider | None,
+    store: ArtifactStore,
+    state_dir: Path,
+    for_discovery: bool,
+) -> tuple[Instance, GenerationBackend]:
+    """Provision a compute instance and build a backend for it.
+
+    Shared by the cache-miss (discovery) and cache-hit (steady-state)
+    branches of deploy_session.
+
+    Args:
+        resolved_engine: The resolved generation engine.
+        resolved_provider: The resolved compute provider (must be non-None).
+        cfg: Loaded configuration.
+        run_id: Run-id tag for the instance.
+        key: Capability key (used for the kinoforge_key tag).
+        creds: Optional credential provider, forwarded to the provisioner.
+        store: Artifact store (forwarded to the provisioner for marker reads).
+        state_dir: Operator state root.
+        for_discovery: When True, the CapacityError message reads
+            'no offers available for discovery from provider ...' to
+            distinguish the cold-start failure from a steady-state one.
+
+    Returns:
+        ``(instance, backend)`` — instance polled to ``ready``, backend
+        constructed via ``engine.backend(instance, cfg_dict)``.
+
+    Raises:
+        CapacityError: ``find_offers`` returned an empty list.
+    """
+    hw_reqs = cfg.hardware_requirements()
+    offers = resolved_provider.find_offers(hw_reqs)
+    if not offers:
+        prefix = "for discovery " if for_discovery else ""
+        raise CapacityError(
+            f"no offers available {prefix}from provider "
+            f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
+        ) from None
+    lifecycle = cfg.lifecycle()
+    image = cfg.compute.image if cfg.compute is not None else ""
+    key_hash = _key_hash(key)
+    spec = InstanceSpec(
+        image=image,
+        offer=offers[0],
+        lifecycle=lifecycle,
+        tags={
+            "kinoforge_engine": resolved_engine.name,
+            "kinoforge_key": key_hash,
+        },
+        env={},
+        run_id=run_id,
+    )
+    instance = resolved_provider.create_instance(spec)
+    while instance.status != "ready":
+        instance = resolved_provider.get_instance(instance.id)
+    _provision_compute_once(
+        engine=resolved_engine,
+        cfg=cfg,
+        instance=instance,
+        creds=creds,
+        store=store,
+        state_dir=state_dir,
+        capability_key_hex=key.derive(),
+    )
+    cfg_dict = _cfg_dict(cfg)
+    backend = resolved_engine.backend(instance, cfg_dict)
+    return instance, backend
+
+
+# ---------------------------------------------------------------------------
+# deploy_session — shared compute setup yielded to generate() and batch_generate()
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DeploySession:
+    """Shared compute state yielded by :func:`deploy_session`.
+
+    Holds every reference a generate-style call needs: the live backend
+    that talks to the engine, the resolved :class:`ModelProfile`, an
+    open :class:`ConcurrentPool` already wired to the backend, the
+    compute :class:`Instance` (``None`` on hosted), and the resolved
+    engine + provider.
+
+    Lifetime is bounded by the ``with deploy_session(...) as s:`` block.
+    On clean exit the pool is closed but the instance is left alive for
+    warm reuse — destruction is the sweeper / budget tracker's job,
+    matching the behaviour of the pre-refactor :func:`generate`.
+
+    Attributes:
+        backend: The live backend wired through ``session.pool``.
+        profile: The resolved ``ModelProfile`` for ``cfg.capability_key()``.
+        pool: An open ``ConcurrentPool`` with ``backend`` registered at
+            ``cfg.lifecycle().max_in_flight`` concurrency.
+        instance: The provisioned compute ``Instance``, or ``None`` on a
+            hosted engine path.
+        engine: The resolved ``GenerationEngine`` (registry or injection).
+        provider: The resolved ``ComputeProvider`` (registry or
+            injection), or ``None`` on a hosted engine path.
+    """
+
+    backend: GenerationBackend
+    profile: ModelProfile
+    pool: ConcurrentPool
+    instance: Instance | None
+    engine: GenerationEngine
+    provider: ComputeProvider | None
+
+
+@contextmanager
+def deploy_session(
+    cfg: Config,
+    *,
+    store: ArtifactStore,
+    provider: ComputeProvider | None = None,
+    engine: GenerationEngine | None = None,
+    creds: CredentialProvider | None = None,
+    profile_provider: ModelProfileProvider | None = None,
+    run_id: str = "run",
+    state_dir: Path = Path(".kinoforge"),
+) -> Iterator[DeploySession]:
+    """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
+
+    This is the verbatim extraction of steps 1-4, 7, and 8 of the
+    pre-Layer-L :func:`generate` body.  ``generate`` and
+    ``batch_generate`` both consume the yielded session; per-request
+    work (validate, split, stage.run) lives at the call site so the
+    setup cost amortises across many entries.
+
+    On entry the function:
+
+    1. Derives ``cfg.capability_key()``.
+    2. Resolves the engine (and the provider when ``requires_compute``).
+    3. Runs the hosted preflight (``engine.provision(None, cfg_dict)``)
+       on the hosted path.
+    4. Defaults ``profile_provider`` to ``JsonProfileCache(store)``.
+    5. Tries ``profile_provider.resolve(key)`` — on
+       ``ProfileNotCached`` provisions an instance, builds the backend,
+       and calls ``discover``; on cache hit defers backend construction
+       to step 7.
+    6. (Cache-hit only) Step 7 — creates the instance (compute path) /
+       builds the backend (hosted path).
+    7. (Cache-hit only) Step 8 — calls ``profile_provider.verify``; on
+       ``CapabilityMismatch`` destroys the instance and re-raises.
+    8. Constructs a :class:`ConcurrentPool`, registers the backend at
+       ``cfg.lifecycle().max_in_flight``, and yields the assembled
+       :class:`DeploySession`.
+
+    On exit the function:
+
+    * Always closes the pool (in a ``finally`` block — propagates any
+      body exception unchanged).
+    * Does NOT call ``provider.destroy_instance`` — the instance is left
+      alive for warm reuse by the next session or for the
+      sweeper / budget tracker to reap.
+
+    Args:
+        cfg: The loaded kinoforge configuration.
+        store: ArtifactStore for the profile cache and any per-call
+            outputs.
+        provider: Optional pre-constructed ``ComputeProvider`` (test
+            injection).
+        engine: Optional pre-constructed ``GenerationEngine`` (test
+            injection).
+        creds: Optional credential provider, forwarded to the
+            provisioner.
+        profile_provider: Optional ``ModelProfileProvider`` (defaults to
+            ``JsonProfileCache(store)``).
+        run_id: Namespace tag forwarded to ``InstanceSpec.run_id``
+            (used in pod tags).
+        state_dir: Root for kinoforge state (provision markers, weights,
+            locks).
+
+    Yields:
+        A live :class:`DeploySession`.  ``session.pool`` is open with
+        one slot wrapping ``session.backend``.
+
+    Raises:
+        CapacityError: No compute offer satisfies hardware requirements.
+        CapabilityMismatch: Profile verify drift — instance is
+            destroyed before this propagates.
+    """
+    # ------------------------------------------------------------------
+    # Step 1 — derive capability key + serialised cfg dict
+    # ------------------------------------------------------------------
+    key = cfg.capability_key()
+    cfg_dict = _cfg_dict(cfg)
+
+    # ------------------------------------------------------------------
+    # Step 2 — resolve engine (and provider when compute is required)
+    # ------------------------------------------------------------------
+    resolved_engine = _resolve_engine(cfg, engine)
+    resolved_provider: ComputeProvider | None = None
+    if resolved_engine.requires_compute:
+        resolved_provider = _resolve_provider(cfg, provider)
+
+    # ------------------------------------------------------------------
+    # Step 2.5 — UX A hosted preflight (Layer I)
+    # ------------------------------------------------------------------
+    if not resolved_engine.requires_compute:
+        resolved_engine.provision(None, cfg_dict)
+
+    # ------------------------------------------------------------------
+    # Step 3 — default profile_provider when not injected
+    # ------------------------------------------------------------------
+    if profile_provider is None:
+        profile_provider = JsonProfileCache(store)
+
+    # ------------------------------------------------------------------
+    # Step 4 — resolve profile; discover on miss
+    # ------------------------------------------------------------------
+    backend: GenerationBackend | None = None
+    instance: Instance | None = None
+    _just_discovered: bool = False
+
+    try:
+        profile = profile_provider.resolve(key)
+        _log.debug("profile cache hit for key %s", key.derive()[:12])
+    except ProfileNotCached:
+        _log.debug(
+            "profile cache miss for key %s — running discover", key.derive()[:12]
+        )
+        if resolved_engine.requires_compute:
+            if resolved_provider is None:
+                raise CapacityError(
+                    "requires_compute is True but no provider was resolved"
+                ) from None
+            instance, backend = _provision_instance_and_build_backend(
+                resolved_engine=resolved_engine,
+                resolved_provider=resolved_provider,
+                cfg=cfg,
+                run_id=run_id,
+                key=key,
+                creds=creds,
+                store=store,
+                state_dir=state_dir,
+                for_discovery=True,
+            )
+        else:
+            backend = resolved_engine.backend(None, cfg_dict)
+
+        profile = profile_provider.discover(key, resolved_engine, backend)
+        _just_discovered = True
+
+    # ------------------------------------------------------------------
+    # Step 7 — ensure we have a backend (cache-hit branch)
+    # ------------------------------------------------------------------
+    if backend is None:
+        if resolved_engine.requires_compute:
+            if resolved_provider is None:
+                raise CapacityError(
+                    "requires_compute is True but no provider was resolved"
+                ) from None
+            instance, backend = _provision_instance_and_build_backend(
+                resolved_engine=resolved_engine,
+                resolved_provider=resolved_provider,
+                cfg=cfg,
+                run_id=run_id,
+                key=key,
+                creds=creds,
+                store=store,
+                state_dir=state_dir,
+                for_discovery=False,
+            )
+        else:
+            backend = resolved_engine.backend(None, cfg_dict)
+
+    # ------------------------------------------------------------------
+    # Step 8 — verify (skip when just-discovered).  Fail-hard teardown
+    # ------------------------------------------------------------------
+    if not _just_discovered:
+        try:
+            profile_provider.verify(profile, backend, engine=resolved_engine, key=key)
+        except CapabilityMismatch:
+            _log.warning(
+                "capability mismatch detected; tearing down instance before re-raising"
+            )
+            if instance is not None and resolved_provider is not None:
+                resolved_provider.destroy_instance(instance.id)
+            raise
+
+    # ------------------------------------------------------------------
+    # Step 8.5 — build the shared pool + yield
+    # ------------------------------------------------------------------
+    pool = ConcurrentPool()
+    pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)
+    session = DeploySession(
+        backend=backend,
+        profile=profile,
+        pool=pool,
+        instance=instance,
+        engine=resolved_engine,
+        provider=resolved_provider,
+    )
+    try:
+        yield session
+    finally:
+        pool.close()
 
 
 # ---------------------------------------------------------------------------
@@ -400,217 +715,64 @@ def generate(
         CapacityError: No compute offer satisfies ``cfg.hardware_requirements()``.
         ValidationError: The ``request`` fails mode/role/kind validation.
     """
-    # ------------------------------------------------------------------
-    # Step 1 — derive capability key
-    # ------------------------------------------------------------------
-    key = cfg.capability_key()
-    cfg_dict = _cfg_dict(cfg)
-
-    # ------------------------------------------------------------------
-    # Step 2 — resolve engine (and provider when compute is required)
-    # ------------------------------------------------------------------
-    resolved_engine = _resolve_engine(cfg, engine)
-    resolved_provider: ComputeProvider | None = None
-    if resolved_engine.requires_compute:
-        resolved_provider = _resolve_provider(cfg, provider)
-
-    # ------------------------------------------------------------------
-    # Step 2.5 — UX A hosted preflight (Layer I)
-    #
-    # For hosted engines (requires_compute=False), run engine.provision()
-    # before any backend work so cred-missing / health-failure errors fail
-    # fast with a clear message instead of crashing mid-pipeline inside
-    # backend.submit. Compute engines get their own preflight in Task 9.
-    # ------------------------------------------------------------------
-    if not resolved_engine.requires_compute:
-        resolved_engine.provision(None, cfg_dict)
-
-    # ------------------------------------------------------------------
-    # Step 3 — get (or default) profile provider
-    # ------------------------------------------------------------------
-    if profile_provider is None:
-        profile_provider = JsonProfileCache(store)
-
-    # ------------------------------------------------------------------
-    # Step 4 — resolve profile; discover on miss
-    # ------------------------------------------------------------------
-    from kinoforge.core.errors import ProfileNotCached
-
-    backend: GenerationBackend | None = None
-    instance: Instance | None = None
-    # Track whether we just ran discover so we can skip verify on fresh profiles.
-    _just_discovered: bool = False
-
-    try:
-        profile = profile_provider.resolve(key)
-        _log.debug("profile cache hit for key %s", key.derive()[:12])
-    except ProfileNotCached:
-        _log.debug(
-            "profile cache miss for key %s — running discover", key.derive()[:12]
-        )
-        if resolved_engine.requires_compute:
-            if resolved_provider is None:
-                raise CapacityError(
-                    "requires_compute is True but no provider was resolved"
-                ) from None
-            hw_reqs = cfg.hardware_requirements()
-            offers = resolved_provider.find_offers(hw_reqs)
-            if not offers:
-                raise CapacityError(
-                    f"no offers available for discovery from provider "
-                    f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
-                ) from None
-            lifecycle = cfg.lifecycle()
-            image = cfg.compute.image if cfg.compute is not None else ""
-            key_hash = _key_hash(key)
-            spec = InstanceSpec(
-                image=image,
-                offer=offers[0],
-                lifecycle=lifecycle,
-                tags={
-                    "kinoforge_engine": resolved_engine.name,
-                    "kinoforge_key": key_hash,
-                },
-                env={},
-                run_id=run_id,
-            )
-            instance = resolved_provider.create_instance(spec)
-            # Poll until ready.
-            while instance.status != "ready":
-                instance = resolved_provider.get_instance(instance.id)
-            # Layer I Task 9 — UX A compute preflight: provision once per
-            # (instance, capability_key).  Serialised by store.acquire_lock.
-            _provision_compute_once(
-                engine=resolved_engine,
-                cfg=cfg,
-                instance=instance,
-                creds=creds,
-                store=store,
-                state_dir=state_dir,
-                capability_key_hex=key.derive(),
-            )
-            backend = resolved_engine.backend(instance, cfg_dict)
+    # Steps 1-4, 7, 8 now live in deploy_session.__enter__.  This body
+    # owns only the per-request work: validate (5), split (6), stage.run
+    # (9).  ``dict(cfg.spec)`` / ``dict(cfg.params)`` still defensively
+    # copies the pydantic-owned dicts so stage-side mutation cannot leak
+    # back into ``cfg``.
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=provider,
+        engine=engine,
+        creds=creds,
+        profile_provider=profile_provider,
+        run_id=run_id,
+        state_dir=state_dir,
+    ) as session:
+        # ------------------------------------------------------------------
+        # Step 5 — validate the request against the profile
+        # ------------------------------------------------------------------
+        accepted_kinds: set[str]
+        if hasattr(session.engine, "accepted_kinds"):
+            accepted_kinds = session.engine.accepted_kinds
         else:
-            # Hosted path — no instance needed for discovery.
-            backend = resolved_engine.backend(None, cfg_dict)
+            accepted_kinds = {"image"}
 
-        profile = profile_provider.discover(key, resolved_engine, backend)
-        # Profile was just probed — skip verify on this call (it's trivially consistent).
-        _just_discovered = True
+        from kinoforge.core.validation import validate_request
 
-    # ------------------------------------------------------------------
-    # Step 5 — validate the request against the profile
-    # ------------------------------------------------------------------
-    accepted_kinds: set[str]
-    if hasattr(resolved_engine, "accepted_kinds"):
-        accepted_kinds = resolved_engine.accepted_kinds
-    else:
-        accepted_kinds = {"image"}
-
-    from kinoforge.core.validation import validate_request
-
-    validated = validate_request(profile, request, accepted_kinds=accepted_kinds)
-
-    # ------------------------------------------------------------------
-    # Step 6 — split the validated prompt into ordered segments
-    # ------------------------------------------------------------------
-    splitter = registry.get_splitter(cfg.splitter.kind)()
-    prompt_segments = splitter.split(validated.prompt, profile, {})
-
-    # Attach assets to segment 0 only. Continuity (#02) will fill segments
-    # 1..N-1 with previous-frame conditioning when implemented.
-    if prompt_segments and validated.assets:
-        prompt_segments[0] = dataclasses.replace(
-            prompt_segments[0], assets=list(validated.assets)
+        validated = validate_request(
+            session.profile, request, accepted_kinds=accepted_kinds
         )
 
-    # ------------------------------------------------------------------
-    # Step 7 — ensure we have a backend for generation
-    # ------------------------------------------------------------------
-    if backend is None:
-        # Profile was already cached; create backend now.
-        if resolved_engine.requires_compute:
-            if resolved_provider is None:
-                raise CapacityError(
-                    "requires_compute is True but no provider was resolved"
-                )
-            hw_reqs = cfg.hardware_requirements()
-            offers = resolved_provider.find_offers(hw_reqs)
-            if not offers:
-                raise CapacityError(
-                    f"no offers available from provider "
-                    f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
-                )
-            lifecycle = cfg.lifecycle()
-            image = cfg.compute.image if cfg.compute is not None else ""
-            key_hash = _key_hash(key)
-            spec = InstanceSpec(
-                image=image,
-                offer=offers[0],
-                lifecycle=lifecycle,
-                tags={
-                    "kinoforge_engine": resolved_engine.name,
-                    "kinoforge_key": key_hash,
-                },
-                env={},
-                run_id=run_id,
-            )
-            instance = resolved_provider.create_instance(spec)
-            while instance.status != "ready":
-                instance = resolved_provider.get_instance(instance.id)
-            # Layer I Task 9 — UX A compute preflight (cache-hit branch).
-            _provision_compute_once(
-                engine=resolved_engine,
-                cfg=cfg,
-                instance=instance,
-                creds=creds,
-                store=store,
-                state_dir=state_dir,
-                capability_key_hex=key.derive(),
-            )
-            backend = resolved_engine.backend(instance, cfg_dict)
-        else:
-            backend = resolved_engine.backend(None, cfg_dict)
+        # ------------------------------------------------------------------
+        # Step 6 — split the validated prompt into ordered segments
+        # ------------------------------------------------------------------
+        splitter = registry.get_splitter(cfg.splitter.kind)()
+        prompt_segments = splitter.split(validated.prompt, session.profile, {})
 
-    # ------------------------------------------------------------------
-    # Step 8 — verify: fail-hard teardown on CapabilityMismatch
-    #
-    # Skip verify when the profile was just discovered in this same call —
-    # the probe is trivially consistent with itself and calling inspect_capabilities
-    # twice in one generate() would be wasteful and confuses AC4 counters.
-    # ------------------------------------------------------------------
-    if not _just_discovered:
-        try:
-            profile_provider.verify(profile, backend, engine=resolved_engine, key=key)
-        except CapabilityMismatch:
-            _log.warning(
-                "capability mismatch detected; tearing down instance before re-raising"
+        # Attach assets to segment 0 only.  Continuity (#02) fills 1..N-1.
+        if prompt_segments and validated.assets:
+            prompt_segments[0] = dataclasses.replace(
+                prompt_segments[0], assets=list(validated.assets)
             )
-            if instance is not None and resolved_provider is not None:
-                resolved_provider.destroy_instance(instance.id)
-            raise
 
-    # ------------------------------------------------------------------
-    # Step 9 — run the pipeline stage
-    #
-    # ``dict(cfg.spec)`` / ``dict(cfg.params)`` defensively copies the
-    # pydantic-owned dicts so stage-side mutation cannot leak back into
-    # ``cfg``.  A ``ValidationError`` from ``engine.validate_spec`` (called
-    # inside ``stage.run`` for every job) is treated like
-    # ``CapabilityMismatch``: tear down compute before re-raising so a
-    # config typo cannot leave a billing pod alive.
-    # ------------------------------------------------------------------
-    with ConcurrentPool() as pool:
-        pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)
+        # ------------------------------------------------------------------
+        # Step 9 — run the pipeline stage
+        #
+        # ValidationError from engine.validate_spec is treated like
+        # CapabilityMismatch in deploy_session: tear down compute before
+        # re-raising so a config typo cannot leave a billing pod alive.
+        # ------------------------------------------------------------------
         stage = GenerateClipStage(
-            profile=profile,
-            pool=pool,
+            profile=session.profile,
+            pool=session.pool,
             store=store,
             run_id=run_id,
             accepted_kinds=accepted_kinds,
             base_params=dict(cfg.params),
             base_spec=dict(cfg.spec),
-            engine=resolved_engine,
+            engine=session.engine,
         )
         try:
             artifact = stage.run(request, segments_override=prompt_segments)
@@ -618,8 +780,8 @@ def generate(
             _log.warning(
                 "spec validation failed; tearing down instance before re-raising"
             )
-            if instance is not None and resolved_provider is not None:
-                resolved_provider.destroy_instance(instance.id)
+            if session.instance is not None and session.provider is not None:
+                session.provider.destroy_instance(session.instance.id)
             raise
         _log.info("generate completed — artifact uri=%r", artifact.uri)
         return artifact
