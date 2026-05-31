@@ -65,7 +65,7 @@ VALID_KIND_TARGETS: dict[str, set[str]] = {
     "vae": {"vae"},
 }
 
-KNOWN_ENGINES = {"comfyui", "diffusers", "hosted", "fake"}
+KNOWN_ENGINES = {"comfyui", "diffusers", "hosted", "fake", "fal"}
 
 # ---------------------------------------------------------------------------
 # Sub-models
@@ -205,6 +205,63 @@ class DiffusersEngineConfig(BaseModel):
     asset_paths: dict[str, str] = Field(default_factory=dict)
 
 
+class FalEngineConfig(BaseModel):
+    """fal.ai engine parameters (queue API).
+
+    Attributes:
+        endpoint: fal model path, e.g. ``"fal-ai/wan/v2.2/t2v"``. Prepended
+            by ``queue_base`` at submit time.
+        queue_base: Base URL of the fal queue API. Defaults to the public
+            ``https://queue.fal.run``; rarely overridden.
+        api_key_env: Env-var name carrying the FAL_KEY. Defaults to ``"FAL_KEY"``.
+        url_path: Dot-path walked over the response body by
+            :meth:`FalBackend.result` to extract the artifact URL.
+        asset_paths: Mapping from conditioning-asset role to a dot-path in
+            the request body where the asset's URL is injected at submit time.
+        health_url: Optional URL pinged by :meth:`FalEngine.provision`; empty
+            disables the health probe (fal has no documented health endpoint).
+    """
+
+    endpoint: str
+    queue_base: str = "https://queue.fal.run"
+    api_key_env: str = "FAL_KEY"
+    url_path: str
+    asset_paths: dict[str, str] = Field(default_factory=dict)
+    health_url: str = ""
+
+    @field_validator("endpoint")
+    @classmethod
+    def _check_endpoint_non_empty(cls, v: str) -> str:
+        if not v:
+            raise ValueError("engine.fal.endpoint must be a non-empty model path")
+        return v
+
+    @field_validator("url_path")
+    @classmethod
+    def _check_url_path_non_empty(cls, v: str) -> str:
+        if not v:
+            raise ValueError(
+                "engine.fal.url_path must be a non-empty dot-path (e.g. 'video.url')"
+            )
+        return v
+
+    @field_validator("queue_base")
+    @classmethod
+    def _check_queue_base_url(cls, v: str) -> str:
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError(
+                f"engine.fal.queue_base must be an absolute http(s):// URL, got {v!r}"
+            )
+        return v
+
+    @field_validator("api_key_env")
+    @classmethod
+    def _check_api_key_env_non_empty(cls, v: str) -> str:
+        if not v:
+            raise ValueError("engine.fal.api_key_env must be a non-empty env-var name")
+        return v
+
+
 class EngineConfig(BaseModel):
     """Top-level engine block.
 
@@ -215,6 +272,7 @@ class EngineConfig(BaseModel):
         hosted: Hosted API config, required when kind == "hosted".
         diffusers: Diffusers-specific config, optional even when
             kind == "diffusers" (all fields default to empty).
+        fal: fal.ai queue-API config, required when kind == "fal".
     """
 
     kind: str
@@ -222,6 +280,7 @@ class EngineConfig(BaseModel):
     comfyui: ComfyUIEngineConfig | None = None
     hosted: HostedEngineConfig | None = None
     diffusers: DiffusersEngineConfig | None = None
+    fal: FalEngineConfig | None = None
 
 
 class ModelEntry(BaseModel):
@@ -358,6 +417,13 @@ class Config(BaseModel):
         # Hosted engine must not have a compute block
         if self.engine.kind == "hosted" and self.compute is not None:
             raise ValueError("compute: must not be set when engine.kind == 'hosted'")
+
+        # engine.kind == "fal" requires the engine.fal block.
+        if self.engine.kind == "fal" and self.engine.fal is None:
+            raise ValueError("engine.kind == 'fal' requires the engine.fal block")
+        # engine.kind == "fal" must not have a compute block (hosted-like).
+        if self.engine.kind == "fal" and self.compute is not None:
+            raise ValueError("compute: must not be set when engine.kind == 'fal'")
 
         # Validate kind/target consistency for each model entry
         for entry in self.models:
