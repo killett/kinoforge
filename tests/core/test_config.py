@@ -506,3 +506,80 @@ def test_hosted_validator_accepts_well_formed_config() -> None:
     )
     assert cfg.endpoint == "https://example.com/api"
     assert cfg.api_key_env == "MY_KEY"
+
+
+def test_fal_engine_config_defaults() -> None:
+    """FalEngineConfig fills sensible defaults for queue_base, api_key_env, asset_paths."""
+    from kinoforge.core.config import FalEngineConfig
+
+    cfg = FalEngineConfig(endpoint="fal-ai/wan/v2.2/t2v", url_path="video.url")
+    assert cfg.queue_base == "https://queue.fal.run"
+    assert cfg.api_key_env == "FAL_KEY"
+    assert cfg.asset_paths == {}
+    assert cfg.health_url == ""
+
+
+def test_fal_engine_config_rejects_empty_endpoint() -> None:
+    """Empty endpoint must be rejected at load (would yield a bogus submit URL)."""
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import FalEngineConfig
+
+    with pytest.raises(ValidationError) as exc:
+        FalEngineConfig(endpoint="", url_path="video.url")
+    assert "endpoint" in str(exc.value)
+
+
+def test_fal_engine_config_rejects_empty_url_path() -> None:
+    """Empty url_path must be rejected — result() would have nothing to walk."""
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import FalEngineConfig
+
+    with pytest.raises(ValidationError) as exc:
+        FalEngineConfig(endpoint="fal-ai/wan", url_path="")
+    assert "url_path" in str(exc.value)
+
+
+def test_fal_engine_config_rejects_relative_queue_base() -> None:
+    """queue_base must be an absolute http(s):// URL — relative paths crash urllib."""
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import FalEngineConfig
+
+    with pytest.raises(ValidationError) as exc:
+        FalEngineConfig(endpoint="x", url_path="y", queue_base="not-a-url")
+    assert "queue_base" in str(exc.value)
+
+
+def test_fal_engine_config_rejects_empty_api_key_env() -> None:
+    """Empty api_key_env propagates as AuthError('missing ') with no context — reject here."""
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import FalEngineConfig
+
+    with pytest.raises(ValidationError) as exc:
+        FalEngineConfig(endpoint="x", url_path="y", api_key_env="")
+    assert "api_key_env" in str(exc.value)
+
+
+def test_fal_kind_without_fal_block_raises() -> None:
+    """engine.kind == 'fal' but no engine.fal block must fail at load.
+
+    Note: load_config wraps pydantic ValidationError as ConfigError (see
+    load_config in src/kinoforge/core/config.py), so this test matches the
+    existing pattern of asserting ConfigError rather than ValidationError.
+    """
+    yaml_text = """
+engine:
+  kind: fal
+  precision: ""
+models:
+  - ref: "hf:org/m"
+    kind: base
+    target: checkpoints
+lifecycle:
+  budget: 1.0
+"""
+    with pytest.raises(ConfigError, match="fal"):
+        load_config(yaml_text)
