@@ -34,7 +34,7 @@ from kinoforge.core.interfaces import (
     ModelProfileProvider,
 )
 from kinoforge.core.logging import get_logger
-from kinoforge.core.pool import SequentialPool
+from kinoforge.core.pool import ConcurrentPool
 from kinoforge.core.profiles import JsonProfileCache
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.stores.base import ArtifactStore
@@ -288,8 +288,9 @@ def generate(
        ``engine.backend(None, ...)``.
     7. ``profile_provider.verify(profile, backend)`` — on ``CapabilityMismatch``, tear
        down the compute instance (if one exists) then **re-raise**.  This is fail-hard.
-    8. Build a ``SequentialPool(backend)`` + ``GenerateClipStage``; call
-       ``stage.run(request)``; return the resulting ``Artifact``.
+    8. Build a ``ConcurrentPool(...).add(backend, max_in_flight=cfg.lifecycle().max_in_flight)``
+       + ``GenerateClipStage``; call ``stage.run(request)`` inside the ``with`` block;
+       return the resulting ``Artifact``.
 
     Args:
         cfg: The loaded kinoforge configuration.
@@ -473,17 +474,18 @@ def generate(
     # ------------------------------------------------------------------
     # Step 9 — run the pipeline stage
     # ------------------------------------------------------------------
-    pool = SequentialPool(backend)
-    stage = GenerateClipStage(
-        profile=profile,
-        pool=pool,
-        store=store,
-        run_id=run_id,
-        accepted_kinds=accepted_kinds,
-        base_params={},
-        base_spec={},
-        engine=resolved_engine,
-    )
-    artifact = stage.run(request, segments_override=prompt_segments)
-    _log.info("generate completed — artifact uri=%r", artifact.uri)
-    return artifact
+    with ConcurrentPool() as pool:
+        pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)
+        stage = GenerateClipStage(
+            profile=profile,
+            pool=pool,
+            store=store,
+            run_id=run_id,
+            accepted_kinds=accepted_kinds,
+            base_params={},
+            base_spec={},
+            engine=resolved_engine,
+        )
+        artifact = stage.run(request, segments_override=prompt_segments)
+        _log.info("generate completed — artifact uri=%r", artifact.uri)
+        return artifact
