@@ -1,0 +1,25 @@
+# kinoforge example: FalEngine (fal.ai queue API)
+#
+# Uses fal.ai's queue API for asynchronous video generation.
+# Set FAL_KEY in your .env file (or pass via --env-file).
+#
+# HostedAPIEngine is NOT used here — fal.ai's wire shape differs from
+# HostedAPIEngine's synthetic shim contract.  See examples/configs/hosted.yaml
+# for the shim path.
+
+engine:
+  kind: fal
+  precision: ""
+  fal:
+    endpoint: "fal-ai/wan/v2.2/t2v"
+    queue_base: "https://queue.fal.run"
+    api_key_env: "FAL_KEY"
+    url_path: video.url
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+    kind: base
+    target: checkpoints
+
+lifecycle:
+  budget: 5.0

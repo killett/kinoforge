@@ -58,6 +58,19 @@ def test_hosted_yaml_loads_under_new_validators() -> None:
     assert cfg.engine.hosted.url_path == "video.url"
 
 
+def test_fal_yaml_loads_under_new_validators() -> None:
+    """examples/configs/fal.yaml must satisfy Layer I Task 10 validators."""
+    from kinoforge.core.config import load_config
+
+    cfg = load_config("examples/configs/fal.yaml")
+    assert cfg.engine.kind == "fal"
+    assert cfg.engine.fal is not None
+    assert cfg.engine.fal.endpoint == "fal-ai/wan/v2.2/t2v"
+    assert cfg.engine.fal.queue_base == "https://queue.fal.run"
+    assert cfg.engine.fal.api_key_env == "FAL_KEY"
+    assert cfg.engine.fal.url_path == "video.url"
+
+
 # ---------------------------------------------------------------------------
 # AC2 — Config-only swap tests
 # ---------------------------------------------------------------------------
