@@ -528,3 +528,53 @@ def test_extract_last_frame_raises_on_empty_url() -> None:
 
     with pytest.raises(FrameExtractionError, match="HostedAPIEngine"):
         engine.extract_last_frame(artifact)
+
+
+def test_extract_last_frame_wraps_fetch_failure_as_frame_extraction_error() -> None:
+    """HTTP fetch errors surface as FrameExtractionError with the URL in the
+    message, not as raw urllib exceptions.
+
+    Bug this catches: callers expecting the spec-promised single exception
+    type (FrameExtractionError) get an unrelated network exception instead.
+    """
+
+    class _NetBlewUp(RuntimeError):
+        pass
+
+    def boom(url: str) -> bytes:
+        raise _NetBlewUp("connection refused")
+
+    engine = _make_engine(http_get_bytes=boom)
+    artifact = Artifact(
+        filename="clip.mp4",
+        url="https://cdn.fal.run/clip.mp4",
+        meta={},
+    )
+
+    with pytest.raises(FrameExtractionError, match="fetch from"):
+        engine.extract_last_frame(artifact)
+
+
+def test_walk_dot_path_consecutive_dots_returns_empty() -> None:
+    """Mis-configured paths like 'video..url' split to ['video', '', 'url'];
+    the empty-key step fails the dict/key guard and returns ''.
+
+    Bug this catches: walker doesn't handle malformed paths and either
+    crashes or silently descends through a synthetic empty key.
+    """
+    from kinoforge.engines.hosted import _walk_dot_path
+
+    assert _walk_dot_path({"video": {"url": "X"}}, "video..url") == ""
+
+
+def test_walk_dot_path_list_terminal_returns_empty() -> None:
+    """A list terminal (e.g. {'video': [...]} via 'video' path) is not a
+    string, so the walker returns ''. Realistic mis-config — some providers
+    return {'results': [{'url': '...'}]} which is array-indexed.
+
+    Bug this catches: walker str()-casts the list and produces fake URLs
+    like "[{'url': '...'}]" downstream.
+    """
+    from kinoforge.engines.hosted import _walk_dot_path
+
+    assert _walk_dot_path({"video": [{"url": "X"}]}, "video") == ""

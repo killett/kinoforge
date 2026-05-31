@@ -528,7 +528,12 @@ class HostedAPIEngine(GenerationEngine):
                 f"{type(self).__name__}: artifact.url is empty; "
                 "cannot fetch video bytes"
             )
-        video_bytes = self._http_get_bytes(artifact.url)
+        try:
+            video_bytes = self._http_get_bytes(artifact.url)
+        except Exception as exc:
+            raise FrameExtractionError(
+                f"{type(self).__name__}: fetch from {artifact.url!r} failed: {exc}"
+            ) from exc
         return frames.ffmpeg_last_frame(video_bytes, run=self._ffmpeg_run)
 
 
