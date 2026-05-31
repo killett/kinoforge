@@ -95,6 +95,16 @@ class GenerateClipStage:
 
         jobs = decide(self.profile, segments, self.base_params, self.base_spec)
 
+        # Validate every job's spec ONCE, before any dispatch.  Previously
+        # this only ran inside the chained branch (i > 0) and the fan-out
+        # branch skipped it entirely, so the first job and any t2v
+        # non-chained fan-out job dispatched without spec validation.
+        # Layer K Task 2 fix: every real job is validated up front so the
+        # orchestrator's try/except ValidationError wrapper can tear down
+        # compute before any backend.submit() wire I/O.
+        for job in jobs:
+            self.engine.validate_spec(job)
+
         # Continuity: for modes whose role contract accepts init_image (today
         # i2v only), thread each rendered tail-frame into the next segment's
         # init_image slot. Stitching across the N artifacts is DEFERRED to its

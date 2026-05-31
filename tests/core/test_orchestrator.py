@@ -25,7 +25,7 @@ import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.sources.http  # noqa: F401 — registers https:// source for provisioner
 from kinoforge.core.config import Config
-from kinoforge.core.errors import CapabilityMismatch
+from kinoforge.core.errors import CapabilityMismatch, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     ConditioningAsset,
@@ -1043,3 +1043,190 @@ class TestHostedPreflight:
             f"backend.submit() must not be called when preflight health probe "
             f"fails; got submit_call_count={engine._shared_backend.submit_call_count}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Layer K Task 2: cfg.spec/cfg.params routing + ValidationError teardown
+# ---------------------------------------------------------------------------
+
+
+def test_generate_routes_cfg_spec_into_job_spec(tmp_path: Path) -> None:
+    """cfg.spec values reach GenerationJob.spec via stage.base_spec.
+
+    Bug catch: hardcoded base_spec={} at orchestrator.py:605 means
+    orchestrator-driven hosted/diffusers/comfyui runs fail validate_spec
+    on every config typo for missing required spec keys.
+    """
+    cfg = _compute_cfg()
+    cfg.spec = {"k": "v", "params": {"guidance_scale": 5.0}}
+    cfg.params = {"fps": 24}
+
+    captured: dict[str, Any] = {}
+
+    class _SpySpecEngine(FakeEngine):
+        def validate_spec(self, job: GenerationJob) -> None:
+            captured["spec"] = dict(job.spec)
+            captured["params"] = dict(job.params)
+            super().validate_spec(job)
+
+    engine = _SpySpecEngine(
+        probe_profile=_probe_profile(),
+        declared_flags_map={},
+        required_spec_keys={"k"},
+    )
+
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="hello", mode="t2v")
+
+    with patch(
+        "kinoforge.core.registry.get_engine", side_effect=lambda _kind: lambda: engine
+    ):
+        generate(
+            cfg=cfg,
+            request=request,
+            store=store,
+            run_id="run-spec-routing",
+            state_dir=tmp_path,
+        )
+
+    assert captured["spec"]["k"] == "v"
+    assert captured["spec"]["params"] == {"guidance_scale": 5.0}
+    assert captured["params"] == {"fps": 24}
+
+
+def test_generate_does_not_alias_cfg_spec_into_job_spec(tmp_path: Path) -> None:
+    """A mutation of job.spec inside the engine does not bleed into cfg.spec.
+
+    Bug catch: pydantic returns the underlying dict by reference. Without
+    a defensive dict() copy at stage construction, an engine that does
+    `job.spec["seen"] = True` corrupts the user's cfg.
+    """
+    cfg = _compute_cfg()
+    cfg.spec = {"k": "v"}
+
+    class _MutatingEngine(FakeEngine):
+        def validate_spec(self, job: GenerationJob) -> None:
+            job.spec["mutated_by_engine"] = True
+            super().validate_spec(job)
+
+    engine = _MutatingEngine(
+        probe_profile=_probe_profile(),
+        declared_flags_map={},
+        required_spec_keys={"k"},
+    )
+
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="hi", mode="t2v")
+
+    with patch(
+        "kinoforge.core.registry.get_engine", side_effect=lambda _kind: lambda: engine
+    ):
+        generate(
+            cfg=cfg,
+            request=request,
+            store=store,
+            run_id="run-isolation",
+            state_dir=tmp_path,
+        )
+
+    assert "mutated_by_engine" not in cfg.spec
+
+
+def test_generate_tears_down_compute_on_validate_spec_failure(
+    tmp_path: Path,
+) -> None:
+    """ValidationError from engine.validate_spec → destroy_instance called once.
+
+    Bug catch: without the teardown wrapper, a typo in spec: that
+    triggers ValidationError leaves a RunPod pod billing until reap.
+    """
+    cfg = _compute_cfg()
+    cfg.spec = {}  # empty — fails the required_spec_keys gate
+
+    engine = FakeEngine(
+        probe_profile=_probe_profile(),
+        declared_flags_map={},
+        required_spec_keys={"required_key"},  # cfg.spec is missing this
+    )
+
+    destroy_calls: list[str] = []
+
+    class _TrackingProvider(LocalProvider):
+        def destroy_instance(self, instance_id: str) -> None:
+            destroy_calls.append(instance_id)
+            super().destroy_instance(instance_id)
+
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="hi", mode="t2v")
+    tracking_provider = _TrackingProvider()
+
+    with (
+        patch(
+            "kinoforge.core.registry.get_engine",
+            side_effect=lambda _kind: lambda: engine,
+        ),
+        patch(
+            "kinoforge.core.registry.get_provider",
+            side_effect=lambda _kind: lambda: tracking_provider,
+        ),
+        pytest.raises(ValidationError),
+    ):
+        generate(
+            cfg=cfg,
+            request=request,
+            store=store,
+            run_id="run-teardown",
+            state_dir=tmp_path,
+        )
+
+    assert len(destroy_calls) == 1, (
+        f"expected exactly one destroy_instance call, saw {destroy_calls!r}"
+    )
+
+
+def test_generate_validates_spec_with_real_request_prompt_not_probe(
+    tmp_path: Path,
+) -> None:
+    """validate_spec receives the real Segment.prompt, never an empty probe.
+
+    Bug catch: an earlier Layer K iteration validated via a probe job with
+    Segment(prompt=""). For real engines that consume Layer J's
+    resolve_prompt (hosted/diffusers/fal), an empty Segment.prompt makes
+    resolve_prompt return None and validate_spec raises even when the
+    user's request carried a perfectly good prompt.
+    """
+    cfg = _compute_cfg()
+    cfg.spec = {"k": "v"}
+
+    observed_prompts: list[str] = []
+
+    class _PromptObservingEngine(FakeEngine):
+        def validate_spec(self, job: GenerationJob) -> None:
+            if job.segments:
+                observed_prompts.append(job.segments[0].prompt)
+            super().validate_spec(job)
+
+    engine = _PromptObservingEngine(
+        probe_profile=_probe_profile(),
+        declared_flags_map={},
+        required_spec_keys={"k"},
+    )
+
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="cinematic shot of a forest", mode="t2v")
+
+    with patch(
+        "kinoforge.core.registry.get_engine", side_effect=lambda _kind: lambda: engine
+    ):
+        generate(
+            cfg=cfg,
+            request=request,
+            store=store,
+            run_id="run-real-prompt",
+            state_dir=tmp_path,
+        )
+
+    assert observed_prompts, "validate_spec was never called"
+    assert all(p == "cinematic shot of a forest" for p in observed_prompts), (
+        f"validate_spec saw stale/empty prompt: {observed_prompts!r}"
+    )

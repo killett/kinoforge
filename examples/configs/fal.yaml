@@ -23,3 +23,15 @@ models:
 
 lifecycle:
   budget: 5.0
+
+# --- Layer K: per-job spec & params (optional for fal.ai) -------------------
+# FalEngine.validate_spec does not require any spec keys (prompt comes from
+# Segment.prompt via Layer J's resolve_prompt helper).  Uncomment to add
+# engine-specific knobs to the queue submission body.
+#
+# spec:
+#   guidance_scale: 5.0
+#
+# params:
+#   fps: 24
+#   num_frames: 81

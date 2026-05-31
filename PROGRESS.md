@@ -148,11 +148,11 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer J merged to main at `35384f3`.** Cross-engine prompt fallback shipped — hosted/diffusers/comfyui/fal all route the orchestrator's `Segment.prompt` via the shared `core/prompt_routing.resolve_prompt` helper. +30 new tests (693 total), 6 atomic commits + retrofit + docs.
+**Layer K merged to main at `<sha>`.** Spec & params routing shipped — hosted/diffusers/comfyui now drive end-to-end through the orchestrator with YAML-supplied `spec:` + `params:` blocks. PROGRESS:154 follow-up #1 closed.
 
-**Pending follow-ups (Layer K candidate):**
-- `base_spec` routing from YAML cfg into the orchestrator (necessary to unblock orchestrator-driven hosted/diffusers/comfyui runs — see Phase 20 Known follow-up).
+**Pending follow-ups (Layer L candidate):**
 - `GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).
+- `engine.hosted.model` ↔ `spec.model` duplication collapse (Layer K hosted YAML ambiguity).
 
 ## Post-MVP
 
@@ -274,3 +274,24 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - Fal retrofit (Q5=A): behavior preserved.
 
 **Known follow-up (necessary but out of scope):** `Orchestrator.generate` hardcodes `base_spec={}` (`src/kinoforge/core/orchestrator.py:605`). Routing YAML-supplied spec into the orchestrator (model/params for hosted, pipeline/scheduler for diffusers, graph/node_overrides for comfyui) is a separate Layer K candidate. Hosted/Diffusers/ComfyUI orchestrator-driven runs remain blocked on missing required spec keys until that work lands.
+
+### Phase 21 — Layer K (spec & params routing)
+
+- [x] Task 1: Config.spec + Config.params pydantic fields + 4 round-trip tests — commit `638937e`
+- [x] Task 2: Orchestrator routes cfg.spec/cfg.params + validate_spec moved into stage + ValidationError teardown + 4 tests — commit `3606527`
+- [x] Task 3: Strategy precedence regression locks (segment-wins + _audio_mode authority) — commit `8b81eb2`
+- [x] Task 4: e2e YAML round-trip via Orchestrator — commit `2b5fa25`
+- [x] Task 5: hosted/diffusers/wan/fal example YAMLs + 4 extended example-load tests — commit `0d3c514`
+- [x] Task 6: README + PROGRESS + full suite gate — commit `<sha>`
+- [x] Merge to main via `--no-ff` — merge commit `<sha>`
+
+**Key design decisions:**
+- Permissive `dict[str, Any]` (Q3=A): Config stays engine-agnostic, preserves the core-import-ban invariant. `engine.validate_spec` is the sole gate.
+- Top-level YAML siblings (Q2=A): `spec:` and `params:` live alongside `engine:` / `models:` / `lifecycle:`, not nested per-engine.
+- Teardown on `ValidationError` (Q5=A): orchestrator mirrors the existing `CapabilityMismatch` branch; a config typo does not leak compute.
+- `dict(...)` copy at stage construction: defends against any future engine that mutates `job.spec`.
+- `validate_spec` moved into `GenerateClipStage.run` (after `decide`, before any dispatch): closes a pre-existing gap where `validate_spec` only ran for chained tail-frame jobs.
+
+**Hosted YAML ambiguity (carried forward):** `engine.hosted.model` (cache identity, fed to `key_base(cfg)`) and `spec.model` (wire body) coincide today but are read by different callers. Documented in `examples/configs/hosted.yaml` comment block; collapsing them is a Layer-L+ candidate.
+
+**Test count:** 708 tests passed + 1 skipped (was 693 + 1 skipped before Layer K, +15 net).

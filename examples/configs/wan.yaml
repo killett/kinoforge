@@ -43,6 +43,27 @@ compute:
     max_lifetime: 5h
     budget: 25.0
 
+# --- Layer K: per-job spec & params -----------------------------------------
+# ComfyUIBackend.submit deep-merges spec.node_overrides onto spec.graph, then
+# POSTs to /prompt.  asset_node_ids + prompt_node_ids (both optional) route
+# Segment.assets and Segment.prompt into the graph; see the Layer J comment
+# block below for prompt_node_ids details.
+spec:
+  graph:
+    # Replace with your real ComfyUI workflow JSON. The empty stub here keeps
+    # the example load test green; do not run generate() against it.
+    nodes: []
+  node_overrides: {}
+  # asset_node_ids:
+  #   init_image: "5"
+  # prompt_node_ids:
+  #   main: "6"
+
+params:
+  fps: 24
+  num_frames: 81
+  steps: 30
+
 # --- Optional: artifact-store selection (Phase 13 / Layer C) -----------------
 # Absent block → LocalArtifactStore(state_dir) where state_dir is --state-dir.
 #

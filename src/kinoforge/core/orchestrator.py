@@ -23,7 +23,7 @@ from pathlib import Path
 from kinoforge.core import registry
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
-from kinoforge.core.errors import CapabilityMismatch, CapacityError
+from kinoforge.core.errors import CapabilityMismatch, CapacityError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -592,6 +592,13 @@ def generate(
 
     # ------------------------------------------------------------------
     # Step 9 — run the pipeline stage
+    #
+    # ``dict(cfg.spec)`` / ``dict(cfg.params)`` defensively copies the
+    # pydantic-owned dicts so stage-side mutation cannot leak back into
+    # ``cfg``.  A ``ValidationError`` from ``engine.validate_spec`` (called
+    # inside ``stage.run`` for every job) is treated like
+    # ``CapabilityMismatch``: tear down compute before re-raising so a
+    # config typo cannot leave a billing pod alive.
     # ------------------------------------------------------------------
     with ConcurrentPool() as pool:
         pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)
@@ -601,10 +608,18 @@ def generate(
             store=store,
             run_id=run_id,
             accepted_kinds=accepted_kinds,
-            base_params={},
-            base_spec={},
+            base_params=dict(cfg.params),
+            base_spec=dict(cfg.spec),
             engine=resolved_engine,
         )
-        artifact = stage.run(request, segments_override=prompt_segments)
+        try:
+            artifact = stage.run(request, segments_override=prompt_segments)
+        except ValidationError:
+            _log.warning(
+                "spec validation failed; tearing down instance before re-raising"
+            )
+            if instance is not None and resolved_provider is not None:
+                resolved_provider.destroy_instance(instance.id)
+            raise
         _log.info("generate completed — artifact uri=%r", artifact.uri)
         return artifact
