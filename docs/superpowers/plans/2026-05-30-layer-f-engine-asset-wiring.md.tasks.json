@@ -4,44 +4,60 @@
     {
       "id": 9,
       "subject": "Task 1: Core helpers (AssetFetchError + assets.py)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add new error type and pure helpers used by all three engines. No engine touched.\n\n**Files:**\n- Modify: `src/kinoforge/core/errors.py:44`\n- Create: `src/kinoforge/core/assets.py`\n- Create: `tests/core/test_assets.py`\n\n**Acceptance Criteria:**\n- AssetFetchError subclasses KinoforgeError\n- find_asset returns match/None/raises on duplicate\n- asset_bytes dispatches http(s) vs file vs unsupported\n- set_by_dot_path writes at nested paths\n- 10 tests pass\n\n**Verify:** `pixi run pytest tests/core/test_assets.py -v && pixi run typecheck && pixi run lint`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/core/assets.py\", \"tests/core/test_assets.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_assets.py -v && pixi run typecheck && pixi run lint\", \"acceptanceCriteria\": [\"AssetFetchError subclasses KinoforgeError\", \"find_asset returns match/None/raises on duplicate\", \"asset_bytes dispatches http(s) vs file vs unsupported\", \"set_by_dot_path writes at nested paths\", \"10 tests pass\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 2: Diffusers asset wiring",
-      "status": "pending",
-      "blockedBy": [9],
-      "description": "**Goal:** Diffusers submit() reads segments[0].assets, finds role match, writes URI into request body at the configured dot-path. URL passthrough.\n\n**Files:**\n- Modify: src/kinoforge/engines/diffusers/__init__.py — Backend __init__ (135-158), submit (176-187), Engine __init__/backend (~327)/validate_spec (383-403)\n- Modify: tests/engines/test_diffusers.py — 4 new tests\n\n**Acceptance Criteria:** DiffusersBackend asset_paths kwarg; Engine.backend reads cfg.engine.diffusers.asset_paths; submit writes at dot-path; submit does not fetch bytes; validate_spec rejects unmapped role; all prior + 4 new pass.\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers.py -v && pixi run typecheck && pixi run lint`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/test_diffusers.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers.py -v && pixi run typecheck && pixi run lint\", \"acceptanceCriteria\": [\"DiffusersBackend.__init__ accepts asset_paths kwarg\", \"submit writes URI at dot-path\", \"submit does not fetch bytes\", \"validate_spec rejects undeclared role\", \"all prior tests + 4 new pass\"]}\n```"
+      "status": "completed",
+      "blockedBy": [
+        9
+      ],
+      "description": "**Goal:** Diffusers submit() reads segments[0].assets, finds role match, writes URI into request body at the configured dot-path. URL passthrough.\n\n**Files:**\n- Modify: src/kinoforge/engines/diffusers/__init__.py \u2014 Backend __init__ (135-158), submit (176-187), Engine __init__/backend (~327)/validate_spec (383-403)\n- Modify: tests/engines/test_diffusers.py \u2014 4 new tests\n\n**Acceptance Criteria:** DiffusersBackend asset_paths kwarg; Engine.backend reads cfg.engine.diffusers.asset_paths; submit writes at dot-path; submit does not fetch bytes; validate_spec rejects unmapped role; all prior + 4 new pass.\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers.py -v && pixi run typecheck && pixi run lint`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/test_diffusers.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers.py -v && pixi run typecheck && pixi run lint\", \"acceptanceCriteria\": [\"DiffusersBackend.__init__ accepts asset_paths kwarg\", \"submit writes URI at dot-path\", \"submit does not fetch bytes\", \"validate_spec rejects undeclared role\", \"all prior tests + 4 new pass\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 3: Hosted asset wiring",
-      "status": "pending",
-      "blockedBy": [9],
-      "description": "**Goal:** Hosted submit() reads cfg.engine.hosted.asset_paths, writes URI into POST body at configured dot-path. Supports nested dot-paths.\n\n**Files:**\n- Modify: src/kinoforge/engines/hosted/__init__.py — Backend __init__ (190-217), submit (235-245), Engine __init__/backend (430+)/validate_spec (486-505)\n- Modify: tests/engines/test_hosted.py — 4 new tests\n\n**Acceptance Criteria:** HostedAPIBackend asset_paths kwarg; Engine.backend reads cfg; submit writes at nested dot-path; submit does not fetch bytes; validate_spec rejects unmapped role; all prior + 4 new pass.\n\n**Verify:** `pixi run pytest tests/engines/test_hosted.py -v && pixi run typecheck && pixi run lint`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_hosted.py -v && pixi run typecheck && pixi run lint\", \"acceptanceCriteria\": [\"HostedAPIBackend.__init__ accepts asset_paths kwarg\", \"submit writes URI at nested dot-path\", \"submit does not fetch bytes\", \"validate_spec rejects undeclared role\", \"all prior tests + 4 new pass\"]}\n```"
+      "status": "completed",
+      "blockedBy": [
+        9
+      ],
+      "description": "**Goal:** Hosted submit() reads cfg.engine.hosted.asset_paths, writes URI into POST body at configured dot-path. Supports nested dot-paths.\n\n**Files:**\n- Modify: src/kinoforge/engines/hosted/__init__.py \u2014 Backend __init__ (190-217), submit (235-245), Engine __init__/backend (430+)/validate_spec (486-505)\n- Modify: tests/engines/test_hosted.py \u2014 4 new tests\n\n**Acceptance Criteria:** HostedAPIBackend asset_paths kwarg; Engine.backend reads cfg; submit writes at nested dot-path; submit does not fetch bytes; validate_spec rejects unmapped role; all prior + 4 new pass.\n\n**Verify:** `pixi run pytest tests/engines/test_hosted.py -v && pixi run typecheck && pixi run lint`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_hosted.py -v && pixi run typecheck && pixi run lint\", \"acceptanceCriteria\": [\"HostedAPIBackend.__init__ accepts asset_paths kwarg\", \"submit writes URI at nested dot-path\", \"submit does not fetch bytes\", \"validate_spec rejects undeclared role\", \"all prior tests + 4 new pass\"]}\n```"
     },
     {
       "id": 12,
       "subject": "Task 4: ComfyUI asset wiring",
-      "status": "pending",
-      "blockedBy": [9],
-      "description": "**Goal:** ComfyUI submit() fetches asset bytes, uploads via /upload/image, patches LoadImage node's inputs.image via node_overrides. New seams: http_get_bytes + http_post_file on Backend.\n\n**Files:**\n- Modify: src/kinoforge/engines/comfyui/__init__.py — _urllib_post_multipart module-level default; Backend __init__ (172-194); submit (213-238); Engine __init__ (319+)/backend (419-443)/validate_spec (471-490)\n- Modify: tests/engines/test_comfyui.py — 8 new tests\n\n**Acceptance Criteria:** Backend new seams; default _urllib_post_multipart parses {\"name\":...}; submit uploads + patches node_overrides; AssetFetchError wraps fetch + upload failures; validate_spec rejects unmapped role; pre-Layer-F regression-free; 8 tests pass.\n\n**Verify:** `pixi run pytest tests/engines/test_comfyui.py -v && pixi run typecheck && pixi run lint`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\", \"tests/engines/test_comfyui.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui.py -v && pixi run typecheck && pixi run lint\", \"acceptanceCriteria\": [\"ComfyUIBackend.__init__ gains http_get_bytes + http_post_file seams\", \"submit uploads bytes + patches node_overrides\", \"AssetFetchError wraps fetch and upload failures\", \"validate_spec rejects unmapped role\", \"all prior tests + 8 new pass\"]}\n```"
+      "status": "completed",
+      "blockedBy": [
+        9
+      ],
+      "description": "**Goal:** ComfyUI submit() fetches asset bytes, uploads via /upload/image, patches LoadImage node's inputs.image via node_overrides. New seams: http_get_bytes + http_post_file on Backend.\n\n**Files:**\n- Modify: src/kinoforge/engines/comfyui/__init__.py \u2014 _urllib_post_multipart module-level default; Backend __init__ (172-194); submit (213-238); Engine __init__ (319+)/backend (419-443)/validate_spec (471-490)\n- Modify: tests/engines/test_comfyui.py \u2014 8 new tests\n\n**Acceptance Criteria:** Backend new seams; default _urllib_post_multipart parses {\"name\":...}; submit uploads + patches node_overrides; AssetFetchError wraps fetch + upload failures; validate_spec rejects unmapped role; pre-Layer-F regression-free; 8 tests pass.\n\n**Verify:** `pixi run pytest tests/engines/test_comfyui.py -v && pixi run typecheck && pixi run lint`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\", \"tests/engines/test_comfyui.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui.py -v && pixi run typecheck && pixi run lint\", \"acceptanceCriteria\": [\"ComfyUIBackend.__init__ gains http_get_bytes + http_post_file seams\", \"submit uploads bytes + patches node_overrides\", \"AssetFetchError wraps fetch and upload failures\", \"validate_spec rejects unmapped role\", \"all prior tests + 8 new pass\"]}\n```"
     },
     {
       "id": 13,
       "subject": "Task 5: GenerateClipStage post-chain validate_spec",
-      "status": "pending",
-      "blockedBy": [10, 11, 12],
-      "description": "**Goal:** Stage calls engine.validate_spec(job) after inject_tail_frame so misconfigured asset_node_ids/asset_paths surface before the engine HTTP round-trip.\n\n**Files:**\n- Modify: src/kinoforge/pipeline/generate_clip.py — after line 118\n- Modify: tests/pipeline/test_generate_clip.py — 3 new tests\n\n**Acceptance Criteria:** validate_spec called once per post-chain job; existing chain test still passes; stage aborts on validate_spec raise (no segment-i+1 dispatch); spy engine confirms asset reaches submit on chained iterations.\n\n**Verify:** `pixi run pytest tests/pipeline/test_generate_clip.py -v && pixi run test`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"tests/pipeline/test_generate_clip.py\"], \"verifyCommand\": \"pixi run pytest tests/pipeline/test_generate_clip.py -v && pixi run test\", \"acceptanceCriteria\": [\"stage calls validate_spec once per post-chain job\", \"asset reaches engine.submit on chained iterations\", \"stage aborts on validate_spec raise\", \"all prior + 3 new pass\"]}\n```"
+      "status": "completed",
+      "blockedBy": [
+        10,
+        11,
+        12
+      ],
+      "description": "**Goal:** Stage calls engine.validate_spec(job) after inject_tail_frame so misconfigured asset_node_ids/asset_paths surface before the engine HTTP round-trip.\n\n**Files:**\n- Modify: src/kinoforge/pipeline/generate_clip.py \u2014 after line 118\n- Modify: tests/pipeline/test_generate_clip.py \u2014 3 new tests\n\n**Acceptance Criteria:** validate_spec called once per post-chain job; existing chain test still passes; stage aborts on validate_spec raise (no segment-i+1 dispatch); spy engine confirms asset reaches submit on chained iterations.\n\n**Verify:** `pixi run pytest tests/pipeline/test_generate_clip.py -v && pixi run test`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"tests/pipeline/test_generate_clip.py\"], \"verifyCommand\": \"pixi run pytest tests/pipeline/test_generate_clip.py -v && pixi run test\", \"acceptanceCriteria\": [\"stage calls validate_spec once per post-chain job\", \"asset reaches engine.submit on chained iterations\", \"stage aborts on validate_spec raise\", \"all prior + 3 new pass\"]}\n```"
     },
     {
       "id": 14,
       "subject": "Task 6: Docs + PROGRESS + final verification + merge",
       "status": "pending",
-      "blockedBy": [9, 10, 11, 12, 13],
-      "description": "**Goal:** Update README + PROGRESS, run full quality gate, merge via --no-ff.\n\n**Files:**\n- Modify: README.md — replace Layer F limitation callout; document asset_paths/asset_node_ids\n- Modify: PROGRESS.md — Phase 16 entry; Single next action update\n\n**Acceptance Criteria:** README Layer F section replaced; Diffusers/Hosted/ComfyUI examples added; PROGRESS Phase 16 entry mirroring Phase 14/15 style; Single next action updated; full gate clean; merge commit on main.\n\n**Verify:** `pixi run test && pixi run typecheck && pixi run lint && pixi run pre-commit run --all-files`\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test && pixi run typecheck && pixi run lint && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"README Layer F callout replaced with asset wiring section\", \"PROGRESS Phase 16 entry added\", \"Single next action updated\", \"full quality gate clean\", \"merge commit lands on main\"]}\n```"
+      "blockedBy": [
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "description": "**Goal:** Update README + PROGRESS, run full quality gate, merge via --no-ff.\n\n**Files:**\n- Modify: README.md \u2014 replace Layer F limitation callout; document asset_paths/asset_node_ids\n- Modify: PROGRESS.md \u2014 Phase 16 entry; Single next action update\n\n**Acceptance Criteria:** README Layer F section replaced; Diffusers/Hosted/ComfyUI examples added; PROGRESS Phase 16 entry mirroring Phase 14/15 style; Single next action updated; full gate clean; merge commit on main.\n\n**Verify:** `pixi run test && pixi run typecheck && pixi run lint && pixi run pre-commit run --all-files`\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test && pixi run typecheck && pixi run lint && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"README Layer F callout replaced with asset wiring section\", \"PROGRESS Phase 16 entry added\", \"Single next action updated\", \"full quality gate clean\", \"merge commit lands on main\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-05-30T00:00:00Z"
+  "lastUpdated": "2026-05-31T02:43:23.265027Z"
 }

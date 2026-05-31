@@ -12,16 +12,19 @@ from __future__ import annotations
 import copy
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import frames, registry
-from kinoforge.core.errors import FrameExtractionError, ValidationError
+from kinoforge.core.assets import asset_bytes, find_asset
+from kinoforge.core.errors import AssetFetchError, FrameExtractionError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -135,6 +138,104 @@ def _urllib_get_bytes(url: str) -> bytes:
         return bytes(resp.read())
 
 
+def _escape_quoted_string(s: str) -> str:
+    r"""Escape *s* for use inside an RFC 2183 quoted-string header value.
+
+    Doubles backslashes and quotes (``\`` -> ``\\``, ``"`` -> ``\"``)
+    so the value can be safely interpolated into a Content-Disposition
+    ``filename="..."`` parameter. Rejects values containing a CR or LF
+    so an attacker-controlled filename cannot inject extra headers into
+    the multipart envelope.
+
+    Args:
+        s: The raw string to escape.
+
+    Returns:
+        The escaped string ready for interpolation.
+
+    Raises:
+        ValueError: ``s`` contains a CR or LF character.
+    """
+    if "\r" in s or "\n" in s:
+        raise ValueError(f"filename contains newline: {s!r}")
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _urllib_post_multipart(
+    url: str,
+    *,
+    field_name: str,
+    filename: str,
+    content: bytes,
+) -> str:
+    """Default multipart POST helper for ``/upload/image``.
+
+    Sends a single-part multipart form with the given field name and
+    filename, content type ``application/octet-stream``. Reads the JSON
+    response and returns ``response["name"]`` per the ComfyUI server
+    contract.
+
+    The multipart boundary is generated per call via
+    :func:`secrets.token_hex` so asset bytes that happen to contain a
+    static prefix can never terminate the body prematurely. The
+    ``"----kinoforge-"`` prefix is retained so the boundary remains
+    recognisable in packet captures.
+
+    The supplied *filename* is escaped per RFC 2183 before being
+    interpolated into the Content-Disposition header; a filename
+    containing CR or LF raises :class:`ValueError` (header injection
+    guard).
+
+    Args:
+        url: Upload endpoint URL.
+        field_name: Form field name (ComfyUI expects ``"image"``).
+        filename: Filename hint passed in the Content-Disposition header.
+        content: Raw bytes to upload.
+
+    Returns:
+        The server-side filename string from the response JSON.
+
+    Raises:
+        ValueError: ``filename`` contains a CR or LF character.
+        AssetFetchError: The server returned a body that is not valid
+            JSON, or a body that lacks the required ``"name"`` field.
+        urllib.error.URLError: Transport failure (wrapped by the caller
+            as :class:`~kinoforge.core.errors.AssetFetchError`).
+        OSError: Lower-level socket failure (wrapped likewise).
+    """
+    safe_filename = _escape_quoted_string(filename)
+    boundary = f"----kinoforge-{secrets.token_hex(16)}"
+    body = (
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{field_name}"; '
+            f'filename="{safe_filename}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+        + content
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    req = urllib.request.Request(  # noqa: S310
+        url, data=body, headers=headers, method="POST"
+    )
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
+        raw = resp.read().decode("utf-8")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise AssetFetchError(
+            f"ComfyUI /upload/image returned invalid JSON: {e}"
+        ) from e
+    try:
+        name = payload["name"]
+    except (KeyError, TypeError) as e:
+        raise AssetFetchError(
+            f"ComfyUI /upload/image response missing 'name' field: {payload!r}"
+        ) from e
+    return str(name)
+
+
 # ---------------------------------------------------------------------------
 # Default probe profile
 # ---------------------------------------------------------------------------
@@ -177,6 +278,8 @@ class ComfyUIBackend(GenerationBackend):
         base_url: str,
         probe: ModelProfile,
         sleep: Callable[[float], None] = time.sleep,
+        http_get_bytes: Callable[[str], bytes] = _urllib_get_bytes,
+        http_post_file: Callable[..., str] = _urllib_post_multipart,
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -187,12 +290,23 @@ class ComfyUIBackend(GenerationBackend):
                 ``"http://localhost:8188"``.  No trailing slash.
             probe: ``ModelProfile`` returned by ``inspect_capabilities``.
             sleep: Callable invoked between poll iterations in ``result``.
+            http_get_bytes: Byte fetcher used by ``submit`` to resolve
+                ``http``/``https`` asset URIs (``file://`` is read by
+                :func:`kinoforge.core.assets.asset_bytes` via stdlib
+                :class:`pathlib.Path`).
+            http_post_file: Multipart POST callable
+                ``(url, *, field_name, filename, content) -> str``
+                returning the server-side filename. Defaults to the
+                stdlib urllib multipart helper
+                :func:`_urllib_post_multipart`.
         """
         self._http_post = http_post
         self._http_get = http_get
         self._base_url = base_url.rstrip("/")
         self._probe = probe
         self._sleep = sleep
+        self._http_get_bytes = http_get_bytes
+        self._http_post_file = http_post_file
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -218,15 +332,55 @@ class ComfyUIBackend(GenerationBackend):
         per-job parameter overrides take effect while unspecified nodes remain
         unchanged.
 
+        Layer F: for each role in ``job.spec.get("asset_node_ids", {})``,
+        find the matching asset on ``segments[0]`` via
+        :func:`~kinoforge.core.assets.find_asset`, resolve its URI to bytes
+        via :func:`~kinoforge.core.assets.asset_bytes`, upload via
+        ``self._http_post_file`` to ``/upload/image``, and patch
+        ``node_overrides[<node_id>]["inputs"]["image"]`` with the returned
+        server-side filename. The existing graph + override merge then runs
+        unchanged so pre-Layer-F templates keep working.
+
         Args:
             job: The ``GenerationJob`` whose ``spec`` contains ``"graph"``
-                and ``"node_overrides"``.
+                and ``"node_overrides"`` (and optionally ``"asset_node_ids"``).
 
         Returns:
             The ``prompt_id`` string from the ComfyUI server response.
+
+        Raises:
+            AssetFetchError: Asset URI fetch failed (raised from
+                :func:`~kinoforge.core.assets.asset_bytes`) or upload to
+                ``/upload/image`` failed.
         """
         graph: dict[str, Any] = copy.deepcopy(job.spec.get("graph", {}))
-        overrides: dict[str, Any] = job.spec.get("node_overrides", {})
+        overrides: dict[str, Any] = copy.deepcopy(job.spec.get("node_overrides", {}))
+        asset_node_ids: dict[str, str] = job.spec.get("asset_node_ids", {})
+
+        for role, node_id in asset_node_ids.items():
+            asset = find_asset(job, role)
+            if asset is None:
+                continue
+            payload = asset_bytes(
+                asset.ref.uri,
+                http_get_bytes=self._http_get_bytes,
+            )
+            upload_url = f"{self._base_url}/upload/image"
+            try:
+                uploaded_name = self._http_post_file(
+                    upload_url,
+                    field_name="image",
+                    filename=asset.ref.filename or f"{role}.png",
+                    content=payload,
+                )
+            except (urllib.error.URLError, OSError) as e:
+                raise AssetFetchError(
+                    f"ComfyUI /upload/image failed for role {role!r}: {e}"
+                ) from e
+            node_patch = overrides.setdefault(str(node_id), {})
+            inputs = node_patch.setdefault("inputs", {})
+            inputs["image"] = uploaded_name
+
         # Deep-merge overrides into the graph at the node level.
         for node_id, node_patch in overrides.items():
             if node_id in graph:
@@ -325,6 +479,7 @@ class ComfyUIEngine(GenerationEngine):
         http_post: Callable[[str, Any], dict[str, Any]] = _urllib_post_json,
         http_get: Callable[[str], dict[str, Any]] = _urllib_get_json,
         http_get_bytes: Callable[[str], bytes] = _urllib_get_bytes,
+        http_post_file: Callable[..., str] = _urllib_post_multipart,
         ffmpeg_run: Callable[[list[str], bytes], bytes] = frames._default_run,
         sleep: Callable[[float], None] = time.sleep,
         probe_profile: ModelProfile = _DEFAULT_PROBE,
@@ -341,7 +496,12 @@ class ComfyUIEngine(GenerationEngine):
             http_post: Callable ``(url, json_body) -> dict`` for HTTP POST.
             http_get: Callable ``(url) -> dict`` for HTTP GET.
             http_get_bytes: Callable ``(url) -> bytes`` for raw-byte HTTP GET
-                (used by extract_last_frame to fetch the rendered video).
+                (used by extract_last_frame to fetch the rendered video and
+                by Layer F asset wiring to resolve http(s) asset URIs).
+            http_post_file: Multipart POST callable
+                ``(url, *, field_name, filename, content) -> str`` used by
+                Layer F asset wiring to upload bytes to
+                ``/upload/image`` and obtain the server-side filename.
             ffmpeg_run: Subprocess seam ``(argv, stdin) -> stdout`` used by
                 extract_last_frame to decode the last frame via ffmpeg.
             sleep: Sleep callable used between polling iterations in
@@ -360,6 +520,7 @@ class ComfyUIEngine(GenerationEngine):
         self._http_post = http_post
         self._http_get = http_get
         self._http_get_bytes = http_get_bytes
+        self._http_post_file = http_post_file
         self._ffmpeg_run = ffmpeg_run
         self._sleep = sleep
         self._probe = probe_profile
@@ -440,6 +601,8 @@ class ComfyUIEngine(GenerationEngine):
             base_url=base_url,
             probe=self._probe,
             sleep=self._sleep,
+            http_get_bytes=self._http_get_bytes,
+            http_post_file=self._http_post_file,
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
@@ -469,10 +632,15 @@ class ComfyUIEngine(GenerationEngine):
         return dict(self._flags_table.get(key.derive(), {}))
 
     def validate_spec(self, job: GenerationJob) -> None:
-        """Raise :class:`~kinoforge.core.errors.ValidationError` when spec keys are missing.
+        """Raise :class:`~kinoforge.core.errors.ValidationError` on a malformed spec.
 
         Both ``"graph"`` and ``"node_overrides"`` are required keys on a
         ComfyUI job spec.
+
+        Layer F: in addition, for every asset on ``job.segments[0]`` the
+        asset's role must appear as a key in
+        ``job.spec.get("asset_node_ids", {})`` — the template author must
+        declare which graph node receives each conditioning asset.
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` whose
@@ -480,7 +648,8 @@ class ComfyUIEngine(GenerationEngine):
 
         Raises:
             ValidationError: ``"graph"`` or ``"node_overrides"`` is absent
-                from ``job.spec``.
+                from ``job.spec``, or an asset role on ``segments[0]`` has
+                no entry in ``spec["asset_node_ids"]``.
         """
         required = {"graph", "node_overrides"}
         missing = required - set(job.spec.keys())
@@ -488,6 +657,16 @@ class ComfyUIEngine(GenerationEngine):
             raise ValidationError(
                 f"ComfyUI job.spec is missing required keys: {sorted(missing)}"
             )
+        if not job.segments:
+            return
+        asset_node_ids: dict[str, str] = job.spec.get("asset_node_ids", {})
+        for asset in job.segments[0].assets:
+            if asset.role not in asset_node_ids:
+                raise ValidationError(
+                    f"asset role {asset.role!r} present on segments[0] but "
+                    f"spec.asset_node_ids has no mapping; add "
+                    f"asset_node_ids.{asset.role}: <node_id> to the spec"
+                )
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Fetch the rendered video bytes via HTTP and decode the last frame.

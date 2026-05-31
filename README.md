@@ -195,22 +195,78 @@ The walker returns `""` for missing paths or non-string terminals; the
 engine then raises `FrameExtractionError` rather than fetching a bogus
 URL. Array indexing (e.g. `results[0].url`) is not supported.
 
-### Known limitation — non-native multi-segment continuity is incomplete
+### Engine asset wiring — non-native multi-segment continuity
 
 Non-native multi-segment runs (engines whose `ModelProfile` reports
-`supports_native_extension=False`, chained over N > 1 segments) currently
-extract and persist the tail frame of each segment as a PNG in the
-`ArtifactStore` under the run's namespace, and inject a
-`ConditioningAsset(role="init_image")` into the next job's
-`segments[0].assets`. **However, each engine's `submit()` body today reads
-only `job.spec` — it does not consult `job.segments[0].assets`.** The tail
-PNG is currently dead weight at render time, so segments will not be
-visually continuous. ffmpeg must be on `PATH` on whichever host runs the
+`supports_native_extension=False`, chained over N > 1 segments) extract
+and persist the tail frame of each segment as a PNG in the `ArtifactStore`
+under the run's namespace, inject a `ConditioningAsset(role="init_image")`
+into the next job's `segments[0].assets`, and each engine's `submit()`
+folds that asset's URI into the request body or graph it sends to the
+backend. End-to-end the chain now produces visually continuous output on
+non-native engines. ffmpeg must be on `PATH` on whichever host runs the
 engine.
 
-Filling this gap (Layer F: engine asset-wiring) is the next planned layer.
-Until then, expect discontinuous output across segments on non-native
-engines. Native multi-segment engines (those declaring
+Each engine declares *how* to wire each role through a small config
+contract. Today only the `init_image` role is wired; other roles
+(`first_frame`, `last_frame`, `drive_audio`, `source_video`) are deferred
+— no engine declares support yet.
+
+**Diffusers** — `engine.diffusers.asset_paths` maps each supported role
+to a dot-separated path inside the POST `/generate` request body. At
+submit time the backend resolves the seg-0 asset of that role and writes
+its URI at the path (passthrough — the inference server is responsible
+for fetching the URI):
+
+```yaml
+engine:
+  kind: diffusers
+  diffusers:
+    base_url: http://127.0.0.1:8000
+    asset_paths:
+      init_image: init_image
+```
+
+**Hosted** — `engine.hosted.asset_paths` is the same pattern, addressing
+the provider-specific request body. The dot-path can be nested to reach
+into provider-specific shapes:
+
+```yaml
+engine:
+  kind: hosted
+  hosted:
+    model: fal-ai/some-i2v-model
+    url_path: video.url
+    asset_paths:
+      init_image: "input.image_url"
+```
+
+**ComfyUI** — `spec.asset_node_ids` maps each supported role to the
+`LoadImage` (or equivalent) node ID in the workflow graph. At submit
+time the backend fetches the asset bytes, uploads them to ComfyUI's
+`/upload/image` endpoint (with a hardened multipart body — random
+boundary, escaped filename, `AssetFetchError` wrapping for missing
+`name` / malformed JSON), and patches the named node's `inputs.image`
+field with the uploaded filename. Graph authors set this in the job
+spec:
+
+```yaml
+spec:
+  graph:
+    "12":
+      class_type: LoadImage
+      inputs:
+        image: placeholder.png
+  asset_node_ids:
+    init_image: "12"
+```
+
+Failures across all three engines surface as `AssetFetchError`
+(a `KinoforgeError` subclass, symmetric with `FrameExtractionError`):
+missing role, empty `ref.uri`, HTTP fetch failure, ComfyUI upload
+failure, malformed `/upload/image` response.
+
+Native multi-segment engines (those declaring
 `supports_native_extension=True` in their `ModelProfile`) are unaffected —
 they receive all segments in a single job and handle continuity internally.
 

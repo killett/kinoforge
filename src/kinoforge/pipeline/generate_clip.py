@@ -116,6 +116,12 @@ class GenerateClipStage:
                     ref=tail_artifact,
                 )
                 job = inject_tail_frame(job, tail_asset)
+                # Layer F: validate the now-asset-bearing job against the
+                # engine's spec contract (e.g. asset_node_ids / asset_paths)
+                # before the engine HTTP round-trip. The orchestrator's
+                # pre-dispatch validate_request saw seg-0's spec only; it
+                # didn't know about the tail-frame asset injected here.
+                self.engine.validate_spec(job)
             art = self.pool.submit(job).result()
             results.append(art)
         last = results[-1]
