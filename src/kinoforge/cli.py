@@ -187,6 +187,14 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_gc.add_argument("--run", default=None, metavar="RUN_ID")
     p_gc.add_argument("--older-than", default=None, metavar="DUR")
 
+    # batch
+    p_batch = sub.add_parser("batch", help="run a batch of generation jobs")
+    p_batch.add_argument("-c", "--config", required=True, metavar="PATH")
+    p_batch.add_argument("--manifest", required=True, metavar="PATH")
+    p_batch.add_argument("--batch-id", default=None, metavar="ID")
+    p_batch.add_argument("--concurrent", type=int, default=None, metavar="N")
+    p_batch.add_argument("--env-file", default=None, metavar="PATH")
+
     return parser
 
 
@@ -326,6 +334,114 @@ def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
 
     print(f"generated: uri={artifact.uri!r}")
     return 0
+
+
+def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
+    """Handle ``batch`` subcommand.
+
+    Args:
+        args: Parsed CLI arguments. Required: ``config``, ``manifest``.
+            Optional: ``batch_id``, ``concurrent``, ``env_file``.
+        state_dir: Path to the operator state directory.
+
+    Returns:
+        Exit code:
+          * ``0`` — every entry succeeded.
+          * ``1`` — one+ per-entry failure, setup error, batch-id
+            collision, or invalid ``--concurrent`` flag.
+          * ``2`` — batch-fatal exception mid-run
+            (``BudgetExceeded`` / ``CapabilityMismatch`` / ``TeardownError``).
+    """
+    from datetime import datetime
+
+    from pydantic import ValidationError as PydanticValidationError
+
+    from kinoforge.core.batch import batch_generate, load_manifest
+    from kinoforge.core.config import load_config
+    from kinoforge.core.errors import (
+        BudgetExceeded,
+        CapabilityMismatch,
+        ConfigError,
+        TeardownError,
+    )
+
+    if args.env_file is not None:
+        load_env_file(Path(args.env_file))
+
+    # Early flag validation -- fail before touching compute.
+    if args.concurrent is not None and args.concurrent < 1:
+        print(
+            f"error: --concurrent must be a positive integer (got {args.concurrent})",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        cfg = load_config(Path(args.config))
+    except (ConfigError, PydanticValidationError) as exc:
+        print(f"error: config: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        manifest = load_manifest(Path(args.manifest))
+    except (ConfigError, PydanticValidationError) as exc:
+        print(f"error: manifest: {exc}", file=sys.stderr)
+        return 1
+
+    store = _build_store(cfg, state_dir)
+
+    batch_id: str = (
+        args.batch_id
+        if args.batch_id is not None
+        else datetime.now().strftime("batch-%Y%m%d-%H%M%S")
+    )
+
+    # Collision check via the existing store API; pre-compute on purpose.
+    try:
+        existing = store.list(batch_id)
+    except Exception:  # noqa: BLE001 — list on empty namespace returns [].
+        existing = []
+    if existing:
+        print(
+            f"error: batch_id collision: {batch_id} already has artifacts "
+            f"(pass --batch-id to override)",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"[{batch_id}] manifest loaded: {len(manifest.entries)} entries, "
+        f"concurrency={args.concurrent or cfg.lifecycle().max_in_flight}"
+    )
+
+    try:
+        result = batch_generate(
+            cfg,
+            manifest,
+            store=store,
+            batch_id=batch_id,
+            concurrent=args.concurrent,
+            state_dir=state_dir,
+        )
+    except (BudgetExceeded, CapabilityMismatch, TeardownError) as exc:
+        print(
+            f"[{batch_id}] batch-fatal: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Final per-entry summary table.
+    print("\nsummary:")
+    for o in result.outcomes:
+        status_label = o.status.upper()
+        duration = f"{o.duration_s:.1f}s" if o.duration_s is not None else "—"
+        detail = o.uri if o.uri else (o.error or "")
+        print(f"  {o.run_id:<20s} {status_label:<8s} {duration:<8s} {detail}")
+    print(f"batch-id: {batch_id}")
+    n_ok = sum(1 for o in result.outcomes if o.status == "ok")
+    n_fail = len(result.outcomes) - n_ok
+    print(f"results:  {n_ok}/{len(result.outcomes)} ok, {n_fail} failed")
+    return 0 if n_fail == 0 else 1
 
 
 def _cmd_list(state_dir: Path) -> int:
@@ -555,6 +671,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_reap(state_dir)
     if args.cmd == "gc":
         return _cmd_gc(args, state_dir)
+    if args.cmd == "batch":
+        return _cmd_batch(args, state_dir)
 
     parser.print_help()
     return 0
