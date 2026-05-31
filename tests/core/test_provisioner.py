@@ -434,6 +434,115 @@ def test_pydantic_cfg_is_dumped_to_dict_before_engine_provision(
     assert received_cfgs[0] is plain
 
 
+def test_diffusers_provision_receives_dict_cfg(tmp_path: Path) -> None:
+    """Diffusers engine.provision must receive a dict (not a pydantic Config).
+
+    Bug catch: DiffusersEngine.provision calls cfg.get("engine", {}).get("diffusers", {})
+    on the cfg arg.  Before fix e78cafc, the provisioner passed the pydantic
+    Config object through; this test would have hit AttributeError at that line.
+    """
+    from kinoforge.engines.diffusers import DiffusersEngine
+
+    scheme = "diffcfgfake"
+    source = _FakeSourceBase(scheme)
+    registry.register_source(source)  # type: ignore[arg-type]
+
+    received_cfgs: list[Any] = []
+    real_engine = DiffusersEngine()
+
+    def _capture_provision(instance: Instance | None, cfg: Any) -> None:
+        received_cfgs.append(cfg)
+        # Defensive: exercise the same access pattern the real engine uses,
+        # so that a future regression to non-dict cfg also fails here.
+        _ = cfg.get("engine", {}).get("diffusers", {})
+
+    real_engine.provision = _capture_provision  # type: ignore[method-assign]
+
+    class _PydanticLikeCfg:
+        def __init__(self, models: list[_ModelEntry]) -> None:
+            self.models = models
+
+        def model_dump(self) -> dict[str, Any]:
+            return {
+                "engine": {
+                    "kind": "diffusers",
+                    "diffusers": {"pip": [], "server_cmd": []},
+                }
+            }
+
+    cfg = _PydanticLikeCfg([_ModelEntry(ref=f"{scheme}:m", target="checkpoints")])
+
+    def _noop_dl(artifacts: list[Artifact], dest: Path) -> list[Artifact]:
+        return artifacts
+
+    provision(
+        real_engine,
+        cfg,  # type: ignore[arg-type]
+        _make_instance(),
+        creds=_NullCreds(),
+        download_dir=tmp_path,
+        downloader=_noop_dl,
+    )
+
+    assert len(received_cfgs) == 1
+    assert isinstance(received_cfgs[0], dict), (
+        f"DiffusersEngine.provision must receive dict, got {type(received_cfgs[0]).__name__}"
+    )
+
+
+def test_comfyui_provision_receives_dict_cfg(tmp_path: Path) -> None:
+    """ComfyUI engine.provision must receive a dict (not a pydantic Config).
+
+    Bug catch: ComfyUIEngine.provision calls cfg.get("engine", {}).get("comfyui", {})
+    plus several other dict ops on cfg.  Before fix e78cafc, the provisioner
+    passed the pydantic Config object through, crashing in this method.
+    """
+    from kinoforge.engines.comfyui import ComfyUIEngine
+
+    scheme = "comfycfgfake"
+    source = _FakeSourceBase(scheme)
+    registry.register_source(source)  # type: ignore[arg-type]
+
+    received_cfgs: list[Any] = []
+    real_engine = ComfyUIEngine()
+
+    def _capture_provision(instance: Instance | None, cfg: Any) -> None:
+        received_cfgs.append(cfg)
+        _ = cfg.get("engine", {}).get("comfyui", {})
+        _ = cfg.get("models", [])
+
+    real_engine.provision = _capture_provision  # type: ignore[method-assign]
+
+    class _PydanticLikeCfg:
+        def __init__(self, models: list[_ModelEntry]) -> None:
+            self.models = models
+
+        def model_dump(self) -> dict[str, Any]:
+            return {
+                "engine": {"kind": "comfyui", "comfyui": {"version": "0.3.10"}},
+                "models": [],
+            }
+
+    cfg = _PydanticLikeCfg([_ModelEntry(ref=f"{scheme}:m", target="checkpoints")])
+
+    def _noop_dl(artifacts: list[Artifact], dest: Path) -> list[Artifact]:
+        return artifacts
+
+    provision(
+        real_engine,
+        cfg,  # type: ignore[arg-type]
+        _make_instance(),
+        creds=_NullCreds(),
+        download_dir=tmp_path,
+        downloader=_noop_dl,
+    )
+
+    assert len(received_cfgs) == 1
+    assert isinstance(received_cfgs[0], dict), (
+        f"ComfyUIEngine.provision must receive dict, got {type(received_cfgs[0]).__name__}"
+    )
+
+
 def test_ac5_unknown_ref_raises_unknown_adapter(tmp_path: Path) -> None:
     """Provisioner does NOT catch UnknownAdapter — it propagates to the caller."""
     cfg = _FakeCfg([_ModelEntry(ref="totally-unknown-scheme:model", target="base")])
