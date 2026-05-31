@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from kinoforge.core.interfaces import Artifact
+from kinoforge.core.locks import Lock, _sanitize_key
 from kinoforge.stores.base import ArtifactStore
-
-if TYPE_CHECKING:
-    from kinoforge.core.locks import Lock
+from kinoforge.stores.local_lock import FileLock
 
 
 class LocalArtifactStore(ArtifactStore):
@@ -167,8 +165,20 @@ class LocalArtifactStore(ArtifactStore):
         p.unlink()
 
     def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
-        """Temporary stub; real implementation lands in Layer H Task 3."""
-        raise NotImplementedError("LocalArtifactStore.acquire_lock — Layer H Task 3")
+        """Return a :class:`FileLock` rooted under ``<root>/_locks/``.
+
+        Args:
+            key: Logical lock key (may contain forward slashes).
+            ttl_s: Lease duration in seconds (informational on local FS;
+                ``fcntl`` owns mutual exclusion).
+
+        Returns:
+            A fresh :class:`FileLock` whose sidecar lives at
+            ``<root>/_locks/<sanitized_key>.lock``.
+        """
+        sanitized = _sanitize_key(key)
+        path = self.root / "_locks" / f"{sanitized}.lock"
+        return FileLock(path=path, key=key, ttl_s=ttl_s)
 
 
 # ---------------------------------------------------------------------------

@@ -62,15 +62,13 @@ def test_partial_store_cannot_be_instantiated() -> None:
         _PartialStore()  # type: ignore[abstract]
 
 
-def test_local_store_stub_raises_not_implemented(tmp_path: Path) -> None:
-    """Local store stub must raise NotImplementedError mentioning Task 3.
+def test_local_store_acquire_lock_returns_file_lock(tmp_path: Path) -> None:
+    """Local store acquire_lock must return a real FileLock after Task 3."""
+    from kinoforge.stores.local_lock import FileLock
 
-    The Task-number reference is the load-bearing part: it tells future
-    readers (and Task 3's reviewer) which task replaces the stub.
-    """
     store = LocalArtifactStore(tmp_path)
-    with pytest.raises(NotImplementedError, match="Layer H Task 3"):
-        store.acquire_lock("k", ttl_s=10.0)
+    lock = store.acquire_lock("k", ttl_s=5.0)
+    assert isinstance(lock, FileLock)
 
 
 def test_s3_store_stub_raises_not_implemented() -> None:
