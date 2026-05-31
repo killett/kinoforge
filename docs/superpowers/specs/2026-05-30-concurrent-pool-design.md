@@ -6,9 +6,10 @@ the existing `BackendPool` ABC. Dispatch one or more jobs across one or more
 registered `GenerationBackend` replicas with bounded per-backend concurrency
 and explicit shutdown. Tweak `GenerateClipStage` so the t2v non-chained
 fallback (the one shape with real intra-request parallelism) actually exploits
-the pool. Swap the CLI's `SequentialPool` for `ConcurrentPool` with
-`max_in_flight` sourced from `LifecycleConfig` — defaults preserve byte-equal
-behaviour.
+the pool. Swap the orchestrator's `SequentialPool` (constructed inside
+`orchestrator.generate()` at `core/orchestrator.py:476`) for `ConcurrentPool`
+with `max_in_flight` sourced from `LifecycleConfig` — defaults preserve
+behavioural equivalence.
 **GitHub issue:** #3
 
 ## 1. Problem
@@ -166,20 +167,34 @@ else:
         results.append(art)
 ```
 
-### Modified: `src/kinoforge/cli.py`
+### Modified: `src/kinoforge/core/orchestrator.py`
 
-Single-line swap at the existing `SequentialPool(backend)` site, wrapped in
-`with` for deterministic shutdown:
+Single-line swap at the existing `SequentialPool(backend)` site
+(`core/orchestrator.py:476`), wrapped in `with` for deterministic shutdown:
 
 ```python
 with ConcurrentPool() as pool:
     pool.add(backend, max_in_flight=cfg.lifecycle.max_in_flight)
-    # existing stage construction + .run call unchanged
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id=run_id,
+        accepted_kinds=accepted_kinds,
+        base_params={},
+        base_spec={},
+        engine=resolved_engine,
+    )
+    artifact = stage.run(request, segments_override=prompt_segments)
+    _log.info("generate completed — artifact uri=%r", artifact.uri)
+    return artifact
 ```
 
-Default `LifecycleConfig.max_in_flight = 1` → `ConcurrentPool` behaves
-byte-equivalent to today's `SequentialPool` (one job at a time, sequential
-ordering). Higher caps are opt-in via yaml.
+The orchestrator already holds the `cfg` (resolved earlier in the function)
+and the resolved `Lifecycle` derived from it. Default
+`LifecycleConfig.max_in_flight = 1` → `ConcurrentPool` behaves equivalent to
+today's `SequentialPool` (one job at a time, sequential ordering). Higher
+caps are opt-in via yaml.
 
 ## 5. Dispatch flow
 
@@ -380,10 +395,12 @@ class BlockingFakeBackend(GenerationBackend):
 - 1-job native branch: `len(jobs) == 1` skips `map`, uses
   `pool.submit(j).result()`.
 
-**`tests/test_cli.py` (existing, +1 test)**
+**`tests/core/test_orchestrator.py` (existing, +1 test)**
 
-- CLI deploy → generate flow exits the `with ConcurrentPool` block;
-  `executor.shutdown(wait=True)` invoked (asserted via spy).
+- `orchestrator.generate(...)` exits the `with ConcurrentPool` block;
+  `executor.shutdown(wait=True)` invoked (asserted via spy on a fake
+  executor or via observing the pool's `_closed` flag through a public
+  inspector). No real threads needed in the orchestrator test.
 
 ### Backwards compatibility gate
 
@@ -403,8 +420,10 @@ must show zero regressions across Linux + macOS CI matrix.
   `SequentialPool.add` `max_in_flight` kwarg, new `ConcurrentPool` class.
 - `src/kinoforge/pipeline/generate_clip.py` — branch on `should_chain` and
   `len(jobs) > 1` → `pool.map(jobs)`.
-- `src/kinoforge/cli.py` — swap `SequentialPool(backend)` for
-  `with ConcurrentPool() as pool: pool.add(...)`.
+- `src/kinoforge/core/orchestrator.py` — swap `SequentialPool(backend)` at
+  line 476 for `with ConcurrentPool() as pool: pool.add(backend, max_in_flight=cfg.lifecycle.max_in_flight)`;
+  move the existing stage construction + `.run` + log + `return` inside the
+  `with` block.
 
 **New (1 file):**
 - `tests/core/test_concurrent_pool.py` — ~20 ACs above.
@@ -415,7 +434,7 @@ must show zero regressions across Linux + macOS CI matrix.
   gains `close`.
 - `tests/pipeline/test_generate_clip.py` — branch coverage for
   chained/unchained/1-job under `ConcurrentPool`.
-- `tests/test_cli.py` — shutdown spy.
+- `tests/core/test_orchestrator.py` — shutdown spy on `orchestrator.generate(...)`.
 
 **Docs (2 files):**
 - `README.md` — new "Concurrency" section documenting `max_in_flight` cfg.
