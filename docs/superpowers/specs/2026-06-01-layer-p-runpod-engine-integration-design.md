@@ -217,7 +217,7 @@ engine = ComfyUIEngine(http_post=comfy_seam.http_post, http_get=comfy_seam.http_
 
 **Redaction policy:** same regex `r"(?i)(token|key|secret|password)"` → `<REDACTED>` (Layer N's scrub function reused). Applied over both `_meta.request_body` and `response`.
 
-**Tests** (2 new in extended conftest test or new `tests/providers/test_recording_seam.py`):
+**Tests** (2 new in `tests/providers/test_runpod_conftest.py`, the existing Layer N home for `_RecordingHTTPSeam` unit tests):
 - ComfyUI `POST /prompt` writes `prompt_submit.json` with request body in `_meta`.
 - ComfyUI `GET /history/{id}` polled 3 times → last write wins in `history_done.json`.
 
