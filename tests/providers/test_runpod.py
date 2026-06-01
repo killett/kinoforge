@@ -596,12 +596,13 @@ def test_self_registration() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_default_seams_inject_authorization_header() -> None:
-    """Layer N regression — default seams must inject Authorization: Bearer.
+def test_default_seams_inject_api_key_query_param() -> None:
+    """Layer N regression — default seams append ?api_key=<key>, NOT Bearer.
 
-    Bug it catches: production code did not authenticate against real RunPod;
-    every GraphQL request returned 403.  Live smoke caught this on the first
-    real run.
+    Bug it catches: previous fix used Authorization: Bearer header but
+    RunPod's legacy GraphQL endpoint returns 403 to Bearer auth.  The
+    actual auth scheme is the api_key query parameter.  Verified against
+    the real endpoint during Layer N live smoke.
     """
     import urllib.request as _urlreq
 
@@ -635,12 +636,30 @@ def test_default_seams_inject_authorization_header() -> None:
     real_urlopen = _urlreq.urlopen
     _urlreq.urlopen = _fake_urlopen  # type: ignore[assignment]
     try:
-        authed_get("https://api.example.com/graphql?query={x}")
+        authed_get("https://api.example.com/graphql?query=%7Bx%7D")
+        url_with_existing_query = captured["url"]
+        authed_get("https://api.example.com/graphql")
+        url_no_query = captured["url"]
     finally:
         _urlreq.urlopen = real_urlopen
 
-    auth = captured["headers"].get("Authorization", "")
-    assert auth == "Bearer sk-fake-key", f"got Authorization header: {auth!r}"
+    assert "api_key=sk-fake-key" in url_with_existing_query, (
+        f"api_key not appended to URL with existing query: {url_with_existing_query!r}"
+    )
+    assert url_with_existing_query.count("?") == 1, (
+        f"second ? introduced instead of &: {url_with_existing_query!r}"
+    )
+    assert "&api_key=sk-fake-key" in url_with_existing_query, (
+        "api_key must be appended with & when URL already has a ? query"
+    )
+    assert "?api_key=sk-fake-key" in url_no_query, (
+        f"api_key not appended to URL without existing query: {url_no_query!r}"
+    )
+
+    # No Bearer header — that scheme returns 403 against real RunPod.
+    assert "Authorization" not in captured["headers"], (
+        f"Authorization header leaked: {captured['headers']!r}"
+    )
 
 
 def test_default_seams_without_key_skip_auth() -> None:
