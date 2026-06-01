@@ -553,9 +553,9 @@ class _RecordingHTTPSeam:
 
         self._out.mkdir(parents=True, exist_ok=True)
         for filename, url, request_body, response in self._records:
-            # Redact both the request body and the response.
+            # Redact both the request body and the response via the layered pipeline.
             redacted_body: dict[str, Any] | None = (
-                _redact(request_body) if request_body is not None else None
+                _redact_all(request_body) if request_body is not None else None
             )
             # Build the _meta.request_query for backward-compat with Layer N
             # fixtures that carry the raw GraphQL query string.
@@ -569,14 +569,19 @@ class _RecordingHTTPSeam:
                 "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "git_sha": git_sha,
                 "operation": filename.removesuffix(".json"),
-                "request_query": _redact_query_string(raw_query)[:200],
+                "request_query": _redact_string(_redact_query_string(raw_query))[:200],
             }
             if redacted_body is not None:
                 meta["request_body"] = redacted_body
             payload = {
                 "_meta": meta,
-                "response": _redact(response),
+                "response": _redact_all(response),
             }
+            # Runtime backstop: refuse to write any fixture whose post-redaction
+            # payload still matches a credential pattern.
+            hits = _audit_for_leaks(payload)
+            if hits:
+                raise CredentialLeakError(hits, filename)
             (self._out / filename).write_text(
                 json.dumps(payload, indent=2, sort_keys=False) + "\n",
             )

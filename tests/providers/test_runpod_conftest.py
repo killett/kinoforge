@@ -434,3 +434,39 @@ def test_credential_leak_error_str_format() -> None:
     assert "/response/env/0/value" in text
     assert "rpa_AB12cdEF34GhIj" in text
     assert "hf_token" in text
+
+
+# ---------------------------------------------------------------------------
+# flush() backstop — _audit_for_leaks gates write_text
+# (Layer P Task 7 bug-fix #1 Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_flush_raises_credential_leak_error_when_redactor_gapped(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When _redact_all is bypassed but a leak is present, _audit_for_leaks catches it."""
+    import tests.providers.conftest_runpod as conf
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"text": "Authorization: Bearer abcdef1234567890"}
+
+    def fake_get(url: str) -> dict[str, Any]:
+        return {}
+
+    # Simulate a redactor gap: identity passthrough.
+    monkeypatch.setattr(conf, "_redact_all", lambda x: x)
+
+    seam = conf._RecordingHTTPSeam(fake_post, fake_get, out_dir=tmp_path)
+    seam.http_post(
+        "https://api.runpod.io/graphql",
+        {"query": "mutation { podFindAndDeployOnDemand(input: $i) { id } }"},
+    )
+
+    with pytest.raises(conf.CredentialLeakError) as exc_info:
+        seam.flush()
+
+    assert exc_info.value.filename == "create_pod.json"
+    assert any(h.pattern_name == "bearer_auth" for h in exc_info.value.hits)
+    # No fixture should have been written.
+    assert not (tmp_path / "create_pod.json").exists()
