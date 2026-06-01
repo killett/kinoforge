@@ -16,6 +16,7 @@ silently in CI.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -95,6 +96,9 @@ def test_runpod_live_e2e_wan_i2v_smoke(tmp_path: Path) -> None:
     assert Path(_CONFIG).exists()
     assert Path(_INIT_FRAME).exists()
 
+    if os.getenv("KINOFORGE_SAVE_FIXTURES") == "1":
+        _capture_fixtures_during_smoke(Path("tests/providers/fixtures/runpod"))
+
     pod_id: str | None = None
     deploy_started: float = time.monotonic()
 
@@ -163,6 +167,23 @@ def test_runpod_live_e2e_wan_i2v_smoke(tmp_path: Path) -> None:
         )
         assert gen_duration < 900, f"generate too slow: {gen_duration:.1f}s"
 
+        import hashlib
+
+        smoke_meta = {
+            "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "git_sha": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], text=True
+            ).strip(),
+            "artifact_path": str(mp4),
+            "artifact_size_bytes": size,
+            "artifact_sha256": hashlib.sha256(mp4.read_bytes()).hexdigest(),
+            "duration_seconds": round(gen_duration, 1),
+        }
+        last_smoke_path = Path("tests/providers/fixtures/runpod/last_smoke.json")
+        last_smoke_path.write_text(
+            json.dumps(smoke_meta, indent=2, sort_keys=False) + "\n",
+        )
+
     finally:
         # 6. Destroy — last line of defence before billing leak.
         if pod_id:
@@ -196,19 +217,34 @@ def test_runpod_live_e2e_wan_i2v_smoke(tmp_path: Path) -> None:
 
 
 def _capture_fixtures_during_smoke(out_dir: Path) -> Any:
-    """Hook into the orchestrator's HTTP seam to record real responses.
+    """Install a recording HTTP seam under the runpod factory.
 
-    Called only when ``KINOFORGE_SAVE_FIXTURES=1`` is set.  Wired up in
-    Task 4 — currently a stub that raises NotImplementedError so the
-    skeleton is importable.
+    When ``KINOFORGE_SAVE_FIXTURES=1``, called from the live smoke before
+    deploy(): re-registers the ``"runpod"`` provider with a factory that
+    wraps real http_post/http_get callables in :class:`_RecordingHTTPSeam`.
+    The seam's :meth:`flush` is invoked in a teardown finalizer.
 
     Args:
         out_dir: Directory into which captured fixture JSON files are written.
 
     Returns:
-        Never returns (raises NotImplementedError until Task 4).
-
-    Raises:
-        NotImplementedError: Always — wired up in Task 4.
+        The :class:`_RecordingHTTPSeam` instance wired into the provider.
     """
-    raise NotImplementedError("wired up in Task 4 alongside fixture capture")
+    import atexit
+
+    from kinoforge.core import registry
+    from kinoforge.providers.runpod import (
+        RunPodProvider,
+        _urllib_get_json,
+        _urllib_post_json,
+    )
+    from tests.providers.conftest_runpod import _RecordingHTTPSeam
+
+    seam = _RecordingHTTPSeam(_urllib_post_json, _urllib_get_json, out_dir)
+
+    def _factory() -> RunPodProvider:
+        return RunPodProvider(http_post=seam.http_post, http_get=seam.http_get)
+
+    registry.register_provider("runpod", _factory)
+    atexit.register(seam.flush)
+    return seam
