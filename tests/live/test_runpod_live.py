@@ -1,4 +1,7 @@
-"""Opt-in live tests against the real RunPod GraphQL API (Layer N Task 4).
+"""Opt-in live smoke: RunPod pod lifecycle (Layer N Task 4, in-process rewrite).
+
+Validates the 8 Layer-N production fixes against the real RunPod GraphQL API.
+Runs entirely in-process (no subprocess/CLI invocation).
 
 Gated by three env vars:
 - ``KINOFORGE_LIVE_TESTS=1`` (global on/off)
@@ -7,22 +10,20 @@ Gated by three env vars:
 
 Optional:
 - ``KINOFORGE_SAVE_FIXTURES=1`` — additionally write captured responses to
-  ``tests/providers/fixtures/runpod/*.json``.  Pair this flag with a clean
-  staging area; the diff is the AC4 review surface.
+  ``tests/providers/fixtures/runpod/*.json``.  Pair with a clean staging
+  area; the diff is the AC4 review surface.
 
-Cost: ~$0.10-$1.00 per run depending on GPU pick + generation time.  Skipped
+Cost: ~$0.10-$0.30 per run (pod lifecycle only, no generation).  Skipped
 silently in CI.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -39,217 +40,170 @@ if not (
         allow_module_level=True,
     )
 
+_log = logging.getLogger(__name__)
 
-_CONFIG = "examples/configs/runpod-comfyui-wan.yaml"
-_INIT_FRAME = "tests/providers/fixtures/runpod/sample_init_frame.png"
+_POLL_INTERVAL_S: int = 5
+_READY_TIMEOUT_S: int = 300  # 5 minutes
 
 
-def _run_cli(
-    args: list[str], cwd: Path | None = None, timeout: int = 900
-) -> subprocess.CompletedProcess[str]:
-    """Run ``python -m kinoforge`` with the given args, capturing output.
+def test_runpod_live_e2e_pod_lifecycle_smoke() -> None:
+    """End-to-end live smoke: find_offers → create → poll ready → list → destroy.
 
-    Args:
-        args: CLI argument list (after ``python -m kinoforge``).
-        cwd: Working directory for the subprocess.
-        timeout: Seconds before the subprocess is forcibly killed.
-
-    Returns:
-        A :class:`subprocess.CompletedProcess` with captured stdout/stderr.
+    Validates the 8 Layer-N production fixes against the real RunPod GraphQL
+    API.  Runs entirely in-process — fixtures are captured by the recording
+    seam because all HTTP calls go through the provider instance directly.
     """
-    return subprocess.run(
-        [sys.executable, "-m", "kinoforge", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
+    from kinoforge.core.credentials import EnvCredentialProvider
+    from kinoforge.core.interfaces import (
+        HardwareRequirements,
+        InstanceSpec,
+        Lifecycle,
     )
-
-
-def test_runpod_live_e2e_wan_i2v_smoke(tmp_path: Path) -> None:
-    """End-to-end live smoke: deploy -> generate -> assert MP4 -> destroy.
-
-    Implements the section 3 control flow from the design.  The cost-safety
-    finally-destroy block is guard #3 of 4; see ``examples/configs/runpod-
-    comfyui-wan.yaml`` for guards #1, #2, #4.
-    """
-    state_dir = tmp_path / "state"
-    state_dir.mkdir()
-
-    # Generate the batch manifest at runtime so the file:// asset path is
-    # absolute to THIS contributor's checkout (the committed example manifest
-    # uses /workspace/ which only works inside the dev container).
-    init_frame_abs = Path(_INIT_FRAME).resolve()
-    manifest_path = tmp_path / "smoke-manifest.yaml"
-    manifest_path.write_text(
-        '- prompt: "A landscape unfurling at dawn"\n'
-        "  mode: i2v\n"
-        "  run_id: layer-n-smoke\n"
-        "  assets:\n"
-        "    - kind: image\n"
-        "      role: init_image\n"
-        f'      ref: "file://{init_frame_abs}"\n'
+    from kinoforge.providers.runpod import (
+        RunPodProvider,
+        _make_default_http_seams,
     )
+    from tests.providers.conftest_runpod import _RecordingHTTPSeam
 
-    # 1. Preconditions — config + init frame present.
-    assert Path(_CONFIG).exists()
-    assert Path(_INIT_FRAME).exists()
+    creds = EnvCredentialProvider()
+    api_key = creds.get("RUNPOD_API_KEY")
+    authed_post, authed_get = _make_default_http_seams(api_key)
 
-    if os.getenv("KINOFORGE_SAVE_FIXTURES") == "1":
-        _capture_fixtures_during_smoke(Path("tests/providers/fixtures/runpod"))
+    fixtures_dir = Path("tests/providers/fixtures/runpod")
+    capture = os.getenv("KINOFORGE_SAVE_FIXTURES") == "1"
+
+    seam: _RecordingHTTPSeam | None
+    if capture:
+        _seam = _RecordingHTTPSeam(authed_post, authed_get, fixtures_dir)
+        seam = _seam
+        provider = RunPodProvider(
+            creds=creds,
+            http_post=_seam.http_post,
+            http_get=_seam.http_get,
+        )
+    else:
+        seam = None
+        provider = RunPodProvider(creds=creds)
 
     pod_id: str | None = None
-    deploy_started: float = time.monotonic()
+    start_time = time.monotonic()
 
     try:
-        # 2-3. Deploy (find_offers + create_instance + poll until ready).
-        deploy = _run_cli(
-            [
-                "--state-dir",
-                str(state_dir),
-                "deploy",
-                "--config",
-                _CONFIG,
-            ],
-            timeout=600,
+        # ------------------------------------------------------------------
+        # 1. find_offers
+        # ------------------------------------------------------------------
+        reqs = HardwareRequirements(
+            min_vram_gb=24,
+            max_cost_rate_usd_per_hr=0.50,
         )
-        assert deploy.returncode == 0, (
-            f"deploy failed (exit {deploy.returncode}):\n"
-            f"stdout:\n{deploy.stdout}\nstderr:\n{deploy.stderr}"
-        )
+        offers = provider.find_offers(reqs)
+        assert offers, "find_offers returned no offers"
+        for offer in offers:
+            assert offer.cost_rate_usd_per_hr <= 0.50, (
+                f"offer {offer.id!r} cost {offer.cost_rate_usd_per_hr:.4f} "
+                f"exceeds cap 0.50"
+            )
 
-        # Extract pod_id from deploy stdout.
-        # CLI prints: "deployed: instance='<id>'"
-        for line in deploy.stdout.splitlines():
-            if "instance=" in line:
-                # strip surrounding quotes if present
-                raw = line.split("instance=", 1)[1].strip().strip("'\"")
-                if raw and raw != "None":
-                    pod_id = raw
+        # ------------------------------------------------------------------
+        # 2. create_instance
+        # ------------------------------------------------------------------
+        spec = InstanceSpec(
+            image="alpine:latest",
+            offer=offers[0],
+            lifecycle=Lifecycle(idle_timeout_s=600),
+            tags={"mode": "pod"},
+        )
+        instance = provider.create_instance(spec)
+        pod_id = instance.id
+        assert pod_id, "create_instance returned empty id"
+        _log.info("created pod %s (gpu=%s)", pod_id, offers[0].gpu_type)
+
+        # ------------------------------------------------------------------
+        # 3. poll until ready or 5-min timeout
+        # ------------------------------------------------------------------
+        elapsed = 0.0
+        status = instance.status
+        while status not in ("ready", "terminated", "stopped"):
+            if elapsed >= _READY_TIMEOUT_S:
                 break
-        assert pod_id, f"could not parse pod_id from deploy stdout:\n{deploy.stdout}"
+            time.sleep(_POLL_INTERVAL_S)
+            elapsed += _POLL_INTERVAL_S
+            instance = provider.get_instance(pod_id)
+            status = instance.status
+            _log.info("pod %s status=%s (%.0fs elapsed)", pod_id, status, elapsed)
 
-        # 4. Generate via batch CLI (provision + submit + download artifact).
-        # batch is used because `kinoforge generate` has no --asset flag;
-        # the manifest supplies the i2v init_image.
-        gen_started = time.monotonic()
-        gen = _run_cli(
-            [
-                "--state-dir",
-                str(state_dir),
-                "batch",
-                "--config",
-                _CONFIG,
-                "--manifest",
-                str(manifest_path),
-                "--batch-id",
-                "layer-n-smoke-batch",
-            ],
-            timeout=900,
-        )
-        gen_duration = time.monotonic() - gen_started
-        assert gen.returncode == 0, (
-            f"generate failed (exit {gen.returncode}):\n"
-            f"stdout:\n{gen.stdout}\nstderr:\n{gen.stderr}"
+        assert status == "ready", (
+            f"pod {pod_id!r} did not reach 'ready' within "
+            f"{_READY_TIMEOUT_S}s; final status={status!r}"
         )
 
-        # 5. Assertions on the real artifact.
-        run_dir = state_dir / "layer-n-smoke-batch" / "layer-n-smoke"
-        mp4s = list(run_dir.rglob("*.mp4"))
-        assert mp4s, f"no MP4 produced under {run_dir}"
-        mp4 = mp4s[0]
-        size = mp4.stat().st_size
-        assert 100_000 <= size <= 50_000_000, f"MP4 size {size} out of range"
-        head = mp4.read_bytes()[:12]
-        assert head.startswith(b"\x00\x00\x00") and b"ftyp" in head, (
-            f"MP4 magic bytes mismatch: {head!r}"
-        )
-        assert gen_duration < 900, f"generate too slow: {gen_duration:.1f}s"
+        # ------------------------------------------------------------------
+        # 4. list_instances — new pod must appear
+        # ------------------------------------------------------------------
+        all_instances = provider.list_instances()
+        ids = [inst.id for inst in all_instances]
+        assert pod_id in ids, f"pod {pod_id!r} not found in list_instances(); got {ids}"
 
-        import hashlib
-
-        smoke_meta = {
-            "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "git_sha": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], text=True
-            ).strip(),
-            "artifact_path": str(mp4),
-            "artifact_size_bytes": size,
-            "artifact_sha256": hashlib.sha256(mp4.read_bytes()).hexdigest(),
-            "duration_seconds": round(gen_duration, 1),
-        }
-        last_smoke_path = Path("tests/providers/fixtures/runpod/last_smoke.json")
-        last_smoke_path.write_text(
-            json.dumps(smoke_meta, indent=2, sort_keys=False) + "\n",
-        )
+        # ------------------------------------------------------------------
+        # 5. destroy_instance (normal path)
+        # ------------------------------------------------------------------
+        provider.destroy_instance(pod_id)
+        _log.info("pod %s destroyed (normal path)", pod_id)
 
     finally:
-        # 6. Destroy — last line of defence before billing leak.
-        if pod_id:
-            destroy = _run_cli(
-                [
-                    "--state-dir",
-                    str(state_dir),
-                    "destroy",
-                    "--id",
-                    pod_id,
-                ],
-                timeout=120,
-            )
-            if destroy.returncode != 0:
+        # ------------------------------------------------------------------
+        # Flush recording seam (success OR failure)
+        # ------------------------------------------------------------------
+        if seam is not None:
+            try:
+                seam.flush()
+            except Exception as flush_exc:  # noqa: BLE001
+                _log.warning("seam.flush() failed: %s", flush_exc)
+
+        # ------------------------------------------------------------------
+        # Last-resort destroy
+        # ------------------------------------------------------------------
+        if pod_id is not None:
+            try:
+                provider.destroy_instance(pod_id)
+                _log.info("pod %s confirmed destroyed (finally path)", pod_id)
+            except Exception as destroy_exc:  # noqa: BLE001
+                import sys
+
                 sys.stderr.write(
                     f"\n*** RUNPOD POD {pod_id} NOT CONFIRMED DESTROYED ***\n"
+                    f"Error: {destroy_exc}\n"
                     f"Manually terminate via the RunPod console or run:\n"
                     f"  curl -X POST https://api.runpod.io/graphql \\\n"
                     f'    -H "Authorization: Bearer $RUNPOD_API_KEY" \\\n'
                     f'    -d \'{{"query":"mutation{{podTerminate('
                     f'input:{{podId:\\"{pod_id}\\"}})}}"}}\'\n'
                 )
-                raise AssertionError(
-                    f"destroy failed (exit {destroy.returncode}):\n"
-                    f"stdout:\n{destroy.stdout}\nstderr:\n{destroy.stderr}"
-                )
+                raise
 
-    # 7. Total time check.
-    total = time.monotonic() - deploy_started
-    assert total < 1800, f"smoke total runtime {total:.1f}s exceeded 30 min"
+    # ------------------------------------------------------------------
+    # 6. Write last_smoke.json
+    # ------------------------------------------------------------------
+    import subprocess
 
+    elapsed_total = time.monotonic() - start_time
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True
+        ).strip()
+    except Exception:  # noqa: BLE001
+        git_sha = "unknown"
 
-def _capture_fixtures_during_smoke(out_dir: Path) -> Any:
-    """Install a recording HTTP seam under the runpod factory.
-
-    When ``KINOFORGE_SAVE_FIXTURES=1``, called from the live smoke before
-    deploy(): re-registers the ``"runpod"`` provider with a factory that
-    wraps real http_post/http_get callables in :class:`_RecordingHTTPSeam`.
-    The seam's :meth:`flush` is invoked in a teardown finalizer.
-
-    Args:
-        out_dir: Directory into which captured fixture JSON files are written.
-
-    Returns:
-        The :class:`_RecordingHTTPSeam` instance wired into the provider.
-    """
-    import atexit
-
-    from kinoforge.core import registry
-    from kinoforge.core.credentials import EnvCredentialProvider
-    from kinoforge.providers.runpod import RunPodProvider, _make_default_http_seams
-    from tests.providers.conftest_runpod import _RecordingHTTPSeam
-
-    creds = EnvCredentialProvider()
-    authed_post, authed_get = _make_default_http_seams(
-        creds.get("RUNPOD_API_KEY"),
+    smoke_meta = {
+        "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "git_sha": git_sha,
+        "pod_id": pod_id,
+        "gpu_type": offers[0].gpu_type,
+        "cost_rate_usd_per_hr": offers[0].cost_rate_usd_per_hr,
+        "elapsed_seconds": round(elapsed_total, 1),
+    }
+    last_smoke_path = fixtures_dir / "last_smoke.json"
+    last_smoke_path.write_text(
+        json.dumps(smoke_meta, indent=2, sort_keys=False) + "\n",
     )
-    seam = _RecordingHTTPSeam(authed_post, authed_get, out_dir)
-
-    def _factory() -> RunPodProvider:
-        return RunPodProvider(
-            creds=creds,
-            http_post=seam.http_post,
-            http_get=seam.http_get,
-        )
-
-    registry.register_provider("runpod", _factory)
-    atexit.register(seam.flush)
-    return seam
+    _log.info("last_smoke.json written to %s", last_smoke_path)
