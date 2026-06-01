@@ -442,6 +442,37 @@ def test_credential_leak_error_str_format() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# _safe_log wrapper (Layer P Task 7 bug-fix #1 Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_log_redacts_string_args_before_format_substitution(
+    caplog: Any,
+) -> None:
+    """A credential passed as a printf-style arg never reaches the log record."""
+    import logging as _logging
+
+    import tests.providers.conftest_runpod as conf
+
+    logger = _logging.getLogger("kinoforge_test_safe_log")
+    with caplog.at_level(_logging.WARNING, logger=logger.name):
+        conf._safe_log(
+            logger,
+            _logging.WARNING,
+            "container started, key=%s, count=%d",
+            "rpa_REAL12345",
+            42,
+        )
+
+    matches = [rec for rec in caplog.records if rec.name == logger.name]
+    assert len(matches) == 1
+    msg = matches[0].getMessage()
+    assert "rpa_REAL12345" not in msg
+    assert "<REDACTED>" in msg
+    assert "count=42" in msg
+
+
 def test_flush_raises_credential_leak_error_when_redactor_gapped(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
