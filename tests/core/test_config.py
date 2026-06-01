@@ -993,7 +993,8 @@ def test_spec_graph_file_both_set_raises(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as excinfo:
         load_config(yaml_path)
     msg = str(excinfo.value)
-    assert "graph_file" in msg and "graph" in msg
+    assert "'graph_file'" in msg
+    assert "'graph'" in msg
 
 
 def test_spec_graph_file_not_found_raises_with_path(tmp_path: Path) -> None:
@@ -1089,6 +1090,34 @@ def test_spec_graph_file_invalid_json_raises_with_path_and_parse_error(
     # JSON parse errors typically mention "Expecting" or "delimiter" or "char";
     # the exact wording depends on stdlib json — assert SOMETHING from the
     # underlying JSONDecodeError is surfaced, not just our wrapper text.
-    assert any(
-        token in msg.lower() for token in ("expecting", "char", "delimiter", "value")
-    ), f"expected JSON parse error tokens in message, got: {msg!r}"
+    assert any(token in msg.lower() for token in ("expecting", "char", "delimiter")), (
+        f"expected stdlib JSONDecodeError tokens in message, got: {msg!r}"
+    )
+
+
+def test_spec_graph_file_relative_path_with_raw_string_yaml_raises(
+    tmp_path: Path,
+) -> None:
+    """Raw-string YAML + relative graph_file path → ConfigError (cwd-resolve is footgun)."""
+    raw_yaml = textwrap.dedent(
+        """
+        engine: {kind: fake, precision: fp16}
+        models:
+          - {ref: hf:o/r:w, kind: base, target: checkpoints}
+        compute:
+          provider: local
+          image: scratch
+          requirements: {min_vram_gb: 0}
+          lifecycle: {idle_timeout: 10m, budget: 1.0}
+        spec:
+          graph_file: nope.json
+        """
+    ).strip()
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(raw_yaml)
+    assert "graph_file" in str(excinfo.value)
+    assert (
+        "absolute" in str(excinfo.value).lower()
+        or "file-based" in str(excinfo.value).lower()
+    )
