@@ -3,12 +3,12 @@
 All I/O is injected via spy callables; no real HTTP or RunPod account needed.
 
 Coverage:
-  AC1: find_offers — http_get + filter_offers delegation
+  AC1: find_offers — http_post + filter_offers delegation
   AC2: create_instance (pod mode) — body shape, cred injection, self-terminator embedding
   AC3: create_instance (serverless mode) — different endpoint, caps fields, status=ready
   AC4: endpoints — pod proxy URL pattern, serverless run URL
   AC5: destroy_instance — http_post + polling + idempotent on 404
-  AC6: list_instances — http_get list → Instance list
+  AC6: list_instances — http_post list → Instance list
   AC7: cred safety — RUNPOD_API_KEY never in pod body or returned Instance.tags
   AC8: self-term script content — max_lifetime, effective_deadline, heartbeat substrings
   AC9: self-registration — registry.get_provider("runpod")() returns RunPodProvider
@@ -73,6 +73,25 @@ class HttpPostSpy:
     def __call__(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((url, body))
         return self._response
+
+
+class MultiResponseHttpPostSpy:
+    """Returns a different response for each successive POST call.
+
+    Useful for methods that POST multiple times (e.g. destroy_instance
+    issues the terminate mutation then polls with repeated POSTs).
+    When the response list is exhausted, returns ``{}``.
+    """
+
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        self._responses = list(responses)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def __call__(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((url, body))
+        if not self._responses:
+            return {}
+        return self._responses.pop(0)
 
 
 class HttpGetSpy:
@@ -180,14 +199,14 @@ def serverless_spec() -> InstanceSpec:
 
 
 def test_find_offers_fetches_gpu_list_and_filters() -> None:
-    """AC1: find_offers calls http_get once and returns filtered Offer list."""
-    http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
-    provider = RunPodProvider(http_get=http_get)
+    """AC1: find_offers calls http_post once and returns filtered Offer list."""
+    http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
+    provider = RunPodProvider(http_post=http_post)
 
     reqs = HardwareRequirements(min_vram_gb=48, max_cost_rate_usd_per_hr=2.20)
     offers = provider.find_offers(reqs)
 
-    assert len(http_get.calls) == 1, "expected exactly one GET call"
+    assert len(http_post.calls) == 1, "expected exactly one POST call"
     # Only A100 (80 GB) meets min_vram_gb=48
     assert len(offers) == 1
     assert offers[0].gpu_type == "NVIDIA A100 80GB PCIe"
@@ -196,8 +215,8 @@ def test_find_offers_fetches_gpu_list_and_filters() -> None:
 
 def test_find_offers_returns_all_when_no_filter_needed() -> None:
     """AC1b: both offers returned when requirements are loose."""
-    http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
+    provider = RunPodProvider(http_post=http_post)
 
     reqs = HardwareRequirements(min_vram_gb=1, max_cost_rate_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
@@ -215,29 +234,27 @@ def test_find_offers_tolerates_null_lowest_price() -> None:
     Cost falls back to 0.0 for these entries; they get filtered out by
     ``max_cost_rate_usd_per_hr`` downstream if a budget is set.
     """
-    http_get = HttpGetSpy(
-        [
-            {
-                "data": {
-                    "gpuTypes": [
-                        {
-                            "id": "NVIDIA H100 PCIe",
-                            "displayName": "H100",
-                            "memoryInGb": 80,
-                            "lowestPrice": None,  # out-of-stock
-                        },
-                        {
-                            "id": "NVIDIA A100 80GB PCIe",
-                            "displayName": "A100",
-                            "memoryInGb": 80,
-                            "lowestPrice": {"uninterruptablePrice": 1.89},
-                        },
-                    ]
-                }
+    http_post = HttpPostSpy(
+        response={
+            "data": {
+                "gpuTypes": [
+                    {
+                        "id": "NVIDIA H100 PCIe",
+                        "displayName": "H100",
+                        "memoryInGb": 80,
+                        "lowestPrice": None,  # out-of-stock
+                    },
+                    {
+                        "id": "NVIDIA A100 80GB PCIe",
+                        "displayName": "A100",
+                        "memoryInGb": 80,
+                        "lowestPrice": {"uninterruptablePrice": 1.89},
+                    },
+                ]
             }
-        ]
+        }
     )
-    provider = RunPodProvider(http_get=http_get)
+    provider = RunPodProvider(http_post=http_post)
 
     offers = provider.find_offers(HardwareRequirements(min_vram_gb=1))
 
@@ -247,58 +264,59 @@ def test_find_offers_tolerates_null_lowest_price() -> None:
     assert by_id["NVIDIA A100 80GB PCIe"].cost_rate_usd_per_hr == 1.89
 
 
-def test_find_offers_url_encodes_query_string() -> None:
-    """Layer N regression — find_offers MUST URL-encode the GraphQL query.
+def test_find_offers_post_body_contains_query() -> None:
+    """Layer N (updated) — find_offers sends the GraphQL query in the POST body.
 
-    Python 3.13's urllib raises ``http.client.InvalidURL`` if a URL contains
-    control characters (including spaces).  Layer N's first live-smoke run
-    hit this on the real RunPod API because the production code previously
-    concatenated the raw query string directly.  Lock the fix down.
+    After switching all GraphQL requests from GET to POST, the query must
+    appear in the POST body dict, not as a URL query parameter.
     """
-    http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
+    provider = RunPodProvider(http_post=http_post)
 
     provider.find_offers(HardwareRequirements())
 
-    sent_url = http_get.calls[0]
-    assert " " not in sent_url, f"raw space in URL: {sent_url!r}"
-    assert "%20" in sent_url or "+" in sent_url, (
-        f"GraphQL query string not URL-encoded: {sent_url!r}"
+    assert len(http_post.calls) == 1
+    _url, body = http_post.calls[0]
+    assert "query" in body, "POST body must contain a 'query' key"
+    assert "gpuTypes" in body["query"], (
+        f"POST body query must reference gpuTypes; got: {body['query']!r}"
     )
 
 
-def test_get_list_destroy_all_url_encode_their_queries() -> None:
-    """Layer N regression — every GET site URL-encodes its GraphQL query.
+def test_get_list_destroy_all_send_query_in_post_body() -> None:
+    """Layer N (updated) — list_instances, get_instance, and destroy_instance
+    poll all send their GraphQL queries in the POST body, not as URL parameters.
 
-    Covers ``list_instances``, ``get_instance``, and the ``destroy_instance``
-    poll loop.  Each call site previously hit the same control-character bug
-    that ``find_offers`` did.
+    Replaces the retired URL-encoding tests now that every call site uses POST.
     """
-    http_get = HttpGetSpy(
-        [
+    # destroy_instance: 1 terminate POST + up to 1 poll POST (returns gone immediately)
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            # list_instances
             {"data": {"myself": {"pods": []}}},
+            # get_instance
             {"data": {"pod": {"id": "abc", "desiredStatus": "RUNNING"}}},
+            # destroy_instance — terminate mutation
+            {"data": {}},
+            # destroy_instance — first poll → already gone
             {"data": {"pod": None}},
         ]
     )
-    http_post = HttpPostSpy(response={"data": {}})
-    provider = RunPodProvider(
-        creds=_make_creds(), http_post=http_post, http_get=http_get
-    )
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
 
     provider.list_instances()
     provider.get_instance("abc")
     provider.destroy_instance("abc")
 
-    assert len(http_get.calls) >= 3, "expected at least 3 GET calls"
-    for url in http_get.calls:
-        assert " " not in url, f"raw space in URL: {url!r}"
+    assert len(http_post.calls) >= 4, "expected at least 4 POST calls"
+    for _url, body in http_post.calls:
+        assert "query" in body, f"POST body missing 'query' key: {body!r}"
 
 
 def test_find_offers_returns_offer_objects() -> None:
     """AC1c: returned items are Offer dataclass instances."""
-    http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
+    provider = RunPodProvider(http_post=http_post)
 
     reqs = HardwareRequirements(min_vram_gb=1, max_cost_rate_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
@@ -479,38 +497,52 @@ def test_serverless_endpoints_run_url() -> None:
 
 
 def test_destroy_polls_until_gone() -> None:
-    """AC5a: destroy calls terminate then polls until 404 (empty)."""
+    """AC5a: destroy POSTs terminate then polls via POST until 404 (empty)."""
     sleep = SleepSpy()
-    http_post = HttpPostSpy(response={})
-    # First GET → still present; second GET → 404/empty
-    http_get = HttpGetSpy([{"data": {"pod": {"id": "pod-abc123"}}}, {}])
+    # First call: terminate mutation → {}
+    # Second call: first poll → still present
+    # Third call: second poll → gone
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            {},  # terminate
+            {"data": {"pod": {"id": "pod-abc123"}}},  # poll 1 — still present
+            {},  # poll 2 — empty/gone
+        ]
+    )
 
-    provider = RunPodProvider(http_post=http_post, http_get=http_get, sleep=sleep)
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
     provider.destroy_instance("pod-abc123")
 
-    assert len(http_post.calls) == 1, "expected one terminate call"
-    assert len(http_get.calls) == 2, "expected two poll calls"
+    # 1 terminate + 2 poll calls = 3 total
+    assert len(http_post.calls) == 3, (
+        f"expected 3 POST calls (1 terminate + 2 polls), got {len(http_post.calls)}"
+    )
 
 
 def test_destroy_idempotent_on_immediate_404() -> None:
     """AC5b: destroy is idempotent when instance is already gone (first poll empty)."""
     sleep = SleepSpy()
-    http_post = HttpPostSpy(response={})
-    http_get = HttpGetSpy([{}])  # already gone
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            {},  # terminate
+            {},  # first poll → empty/gone immediately
+        ]
+    )
 
-    provider = RunPodProvider(http_post=http_post, http_get=http_get, sleep=sleep)
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
     provider.destroy_instance("pod-abc123")  # must not raise
 
 
 def test_destroy_raises_teardown_error_after_max_polls() -> None:
     """AC5c: TeardownError raised when instance never disappears within poll cap."""
     sleep = SleepSpy()
-    http_post = HttpPostSpy(response={})
-    # Always return 'still present'
     present_resp: dict[str, Any] = {"data": {"pod": {"id": "pod-abc123"}}}
-    http_get = HttpGetSpy([present_resp] * 15)  # more than the cap
+    # 1 terminate + enough "still present" poll responses to exceed the cap
+    http_post = MultiResponseHttpPostSpy(
+        responses=[{}] + [present_resp] * 15  # 1 terminate + 15 polls (cap is 10)
+    )
 
-    provider = RunPodProvider(http_post=http_post, http_get=http_get, sleep=sleep)
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
 
     with pytest.raises(TeardownError):
         provider.destroy_instance("pod-abc123")
@@ -522,7 +554,7 @@ def test_destroy_raises_teardown_error_after_max_polls() -> None:
 
 
 def test_list_instances_returns_instances() -> None:
-    """AC6: list_instances maps http_get response to Instance list."""
+    """AC6: list_instances maps http_post response to Instance list."""
     list_response: dict[str, Any] = {
         "data": {
             "myself": {
@@ -533,8 +565,8 @@ def test_list_instances_returns_instances() -> None:
             }
         }
     }
-    http_get = HttpGetSpy([list_response])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=list_response)
+    provider = RunPodProvider(http_post=http_post)
 
     instances = provider.list_instances()
 
@@ -549,8 +581,8 @@ def test_list_instances_returns_instances() -> None:
 def test_list_instances_empty_when_no_pods() -> None:
     """AC6b: list_instances returns [] when pods list is empty."""
     list_response: dict[str, Any] = {"data": {"myself": {"pods": []}}}
-    http_get = HttpGetSpy([list_response])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=list_response)
+    provider = RunPodProvider(http_post=http_post)
 
     assert provider.list_instances() == []
 
