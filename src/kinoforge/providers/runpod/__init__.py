@@ -488,16 +488,26 @@ class RunPodProvider(ComputeProvider):
                     "dockerArgs": "",
                     "ports": ",".join(spec.ports) if spec.ports else "",
                     "volumeMountPath": spec.volume_mount or "/workspace",
-                    "env": env,
+                    "env": [{"key": k, "value": v} for k, v in env.items()],
                 }
             },
         }
 
         resp = self._http_post(self._base_url, body)
+        if "errors" in resp:
+            error_msgs = [str(e.get("message", e)) for e in resp.get("errors", [])]
+            raise ValueError(
+                "RunPod create-pod mutation returned errors:\n"
+                + "\n".join(f"  - {m}" for m in error_msgs)
+            )
         pod_data: dict[str, Any] = resp.get("data", {}).get(
             "podFindAndDeployOnDemand", {}
         )
         pod_id: str = str(pod_data.get("id", ""))
+        if not pod_id:
+            raise ValueError(
+                f"RunPod create-pod returned no pod id; full response: {resp!r}"
+            )
 
         return Instance(
             id=pod_id,
@@ -536,8 +546,18 @@ class RunPodProvider(ComputeProvider):
         }
 
         resp = self._http_post(self._base_url, body)
+        if "errors" in resp:
+            error_msgs = [str(e.get("message", e)) for e in resp.get("errors", [])]
+            raise ValueError(
+                "RunPod create-serverless mutation returned errors:\n"
+                + "\n".join(f"  - {m}" for m in error_msgs)
+            )
         endpoint_data: dict[str, Any] = resp.get("data", {}).get("saveTemplate", {})
         endpoint_id: str = str(endpoint_data.get("id", ""))
+        if not endpoint_id:
+            raise ValueError(
+                f"RunPod create-serverless returned no endpoint id; full response: {resp!r}"
+            )
 
         return Instance(
             id=endpoint_id,

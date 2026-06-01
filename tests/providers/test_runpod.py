@@ -769,16 +769,111 @@ def test_default_factory_uses_env_credentials() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Layer N regression: env array shape + error / empty-id guards
+# ---------------------------------------------------------------------------
+
+
+def test_create_pod_transforms_env_dict_to_key_value_array() -> None:
+    """Layer N regression — env block must be ``[{key, value}, ...]``, not dict.
+
+    RunPod's GraphQL EnvironmentVariableInput requires an array of
+    {key, value} pairs; passing a plain dict yields BAD_USER_INPUT.
+    """
+    http_post = HttpPostSpy(response=_POD_CREATE_RESPONSE)
+    creds = FakeCreds({"RUNPOD_API_KEY": "k", "RUNPOD_TERMINATE_KEY": "t"})
+    provider = RunPodProvider(creds=creds, http_post=http_post)
+
+    spec = InstanceSpec(
+        image="runpod/pytorch:2.1",
+        lifecycle=Lifecycle(
+            idle_timeout_s=1800,
+            job_timeout_s=900,
+            time_buffer_s=300,
+            max_lifetime_s=7200,
+        ),
+        tags={"mode": "pod"},
+    )
+    provider.create_instance(spec)
+
+    _url, body = http_post.calls[0]
+    env_field = body["variables"]["input"]["env"]
+    assert isinstance(env_field, list), (
+        f"env must be a list of {{key, value}} pairs, got: {type(env_field).__name__}"
+    )
+    for entry in env_field:
+        assert isinstance(entry, dict)
+        assert set(entry.keys()) == {"key", "value"}, (
+            f"each env entry must have exactly {{key, value}}: {entry!r}"
+        )
+
+
+def test_create_pod_raises_on_graphql_errors_block() -> None:
+    """Layer N regression — create-pod must raise when mutation returns errors.
+
+    Bug it catches: silently returned ``Instance(id="")`` if the mutation
+    failed, leaving the orchestrator with no way to track a possibly-real
+    pod and risking cost leak.
+    """
+    http_post = HttpPostSpy(
+        response={
+            "errors": [
+                {"message": "Field key required"},
+                {"message": "Field value required"},
+            ]
+        }
+    )
+    creds = FakeCreds({"RUNPOD_API_KEY": "k", "RUNPOD_TERMINATE_KEY": "t"})
+    provider = RunPodProvider(creds=creds, http_post=http_post)
+
+    spec = InstanceSpec(
+        image="x",
+        lifecycle=Lifecycle(),
+        tags={"mode": "pod"},
+    )
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="RunPod create-pod mutation returned errors"):
+        provider.create_instance(spec)
+
+
+def test_create_pod_raises_on_empty_pod_id() -> None:
+    """Layer N regression — create-pod must raise when response carries no id."""
+    http_post = HttpPostSpy(
+        response={"data": {"podFindAndDeployOnDemand": {"id": "", "desiredStatus": ""}}}
+    )
+    creds = FakeCreds({"RUNPOD_API_KEY": "k", "RUNPOD_TERMINATE_KEY": "t"})
+    provider = RunPodProvider(creds=creds, http_post=http_post)
+
+    spec = InstanceSpec(
+        image="x",
+        lifecycle=Lifecycle(),
+        tags={"mode": "pod"},
+    )
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="no pod id"):
+        provider.create_instance(spec)
+
+
+# ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
 
 
 def _extract_env(body: dict[str, Any]) -> dict[str, str]:
-    """Walk nested dicts/lists to find the first 'env' dict."""
+    """Walk nested dicts/lists to find the first 'env' value.
+
+    Handles both the old dict form ``{"KEY": "val"}`` and the new RunPod
+    GraphQL array form ``[{"key": "KEY", "value": "val"}, ...]``, converting
+    the latter to a plain dict so callers remain shape-agnostic.
+    """
     if "env" in body:
         val = body["env"]
         if isinstance(val, dict):
             return val
+        if isinstance(val, list):
+            # RunPod EnvironmentVariableInput array: [{key, value}, ...]
+            return {entry["key"]: entry["value"] for entry in val if "key" in entry}
     for v in body.values():
         if isinstance(v, dict):
             result = _extract_env(v)
