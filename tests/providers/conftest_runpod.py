@@ -6,9 +6,14 @@ Provides three primitives used by the offline RunPod suite + live smoke:
   replay-style offline tests.
 - :class:`_RecordingHTTPSeam` — wrap real http_post / http_get callables, log
   every request, redact secrets, and dispatch responses to a fixed fixture
-  filename via a query-fragment table.
+  filename via a pluggable dispatch callable.
 - :func:`_redact` — recursively scrub any key whose name (whole-word, case
   insensitive) matches the protected vocab ``token / key / secret / password``.
+
+Module-level dispatcher constants:
+
+- :data:`_RUNPOD_DISPATCH` — GraphQL-query-based dispatcher (Layer N behaviour).
+- :data:`_COMFY_DISPATCH` — URL-pattern-based dispatcher for ComfyUI traffic.
 """
 
 from __future__ import annotations
@@ -120,16 +125,129 @@ def _load_fixture(name: str) -> dict[str, Any]:
     return dict(data["response"])
 
 
+# ---------------------------------------------------------------------------
+# Dispatch callable type alias
+# ---------------------------------------------------------------------------
+
+DispatchFn = Callable[[str, "dict[str, Any] | None"], str]
+"""Dispatch signature: (url, request_body_or_None) -> fixture_filename.
+
+The wrapper passes the URL and (for POSTs) the request body to the
+dispatcher, which returns a fixture filename.  Returning a name starting
+with ``unknown_`` causes the wrapper to log a WARNING and still write the
+capture.
+"""
+
+
+# ---------------------------------------------------------------------------
+# RunPod dispatcher (GraphQL-query-based, Layer N behaviour)
+# ---------------------------------------------------------------------------
+
+
+def _runpod_dispatch(url: str, body: dict[str, Any] | None) -> str:
+    """RunPod dispatcher — keys off GraphQL query content in POST body.
+
+    Replicates the existing Layer N dispatch table verbatim.  The URL is
+    ignored; RunPod posts everything to the same endpoint.
+
+    Args:
+        url: The request URL (ignored for RunPod).
+        body: The POST body dict, or ``None`` for GET requests.
+
+    Returns:
+        A fixture filename such as ``create_pod.json`` or
+        ``unknown_<sha8>.json``.
+    """
+    query = ""
+    if body and isinstance(body.get("query"), str):
+        query = body["query"]
+    # For GET requests the URL may embed the query after ``?query=``; use it
+    # as the fallback so existing GET dispatch still works.
+    if not query and url and "?query=" in url:
+        query = url.split("?query=", 1)[1]
+    if "gpuTypes {" in query:
+        return "gpu_types.json"
+    if "myself { pods" in query:
+        return "list_pods.json"
+    if "pod(input:" in query:
+        return "get_pod.json"
+    if "podFindAndDeployOnDemand" in query:
+        return "create_pod.json"
+    if "podTerminate" in query:
+        return "terminate_pod.json"
+    sha = hashlib.sha256(query.encode()).hexdigest()[:8]
+    _log.warning(
+        "RecordingHTTPSeam: unrecognized GraphQL query, writing to "
+        "unknown_%s.json (query fragment: %s)",
+        sha,
+        query[:80],
+    )
+    return f"unknown_{sha}.json"
+
+
+_RUNPOD_DISPATCH: DispatchFn = _runpod_dispatch
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI dispatcher (URL-pattern-based)
+# ---------------------------------------------------------------------------
+
+_COMFY_PROMPT_RE: re.Pattern[str] = re.compile(r"/prompt(\?.*)?$")
+_COMFY_HISTORY_RE: re.Pattern[str] = re.compile(r"/history/[^/?]+(\?.*)?$")
+_COMFY_VIEW_RE: re.Pattern[str] = re.compile(r"/view(\?|$)")
+
+
+def _comfy_dispatch(url: str, body: dict[str, Any] | None) -> str:
+    """ComfyUI dispatcher — keys off URL path.
+
+    Args:
+        url: The request URL.
+        body: The POST body dict, or ``None`` for GET requests.
+
+    Returns:
+        A fixture filename such as ``prompt_submit.json`` or
+        ``unknown_<sha8>.json``.
+    """
+    if _COMFY_PROMPT_RE.search(url):
+        return "prompt_submit.json"
+    if _COMFY_HISTORY_RE.search(url):
+        return "history_done.json"
+    if _COMFY_VIEW_RE.search(url):
+        return "view.json"
+    sha = hashlib.sha256(url.encode()).hexdigest()[:8]
+    _log.warning(
+        "RecordingHTTPSeam: unrecognized ComfyUI URL, writing to "
+        "unknown_%s.json (url: %s)",
+        sha,
+        url[:120],
+    )
+    return f"unknown_{sha}.json"
+
+
+_COMFY_DISPATCH: DispatchFn = _comfy_dispatch
+
+
+# ---------------------------------------------------------------------------
+# Recording seam
+# ---------------------------------------------------------------------------
+
+
 class _RecordingHTTPSeam:
     """Wrap real http_post / http_get callables for the live smoke.
 
-    Each call is captured (request + redacted response).  At :meth:`flush`,
-    one JSON file per logical operation is written to ``out_dir``.
+    Each call is captured (request + redacted response + redacted request
+    body).  At :meth:`flush`, one JSON file per logical operation is written
+    to ``out_dir``; when multiple calls resolve to the same filename the last
+    write wins.
 
     Args:
         http_post: Real POST callable to wrap.
         http_get: Real GET callable to wrap.
         out_dir: Output directory for written fixtures.
+        dispatch: Callable ``(url, body_or_None) -> filename`` that maps each
+            request to its fixture filename.  Use :data:`_RUNPOD_DISPATCH` for
+            GraphQL-based RunPod traffic or :data:`_COMFY_DISPATCH` for
+            URL-pattern-based ComfyUI traffic.
     """
 
     def __init__(
@@ -137,26 +255,28 @@ class _RecordingHTTPSeam:
         http_post: Callable[[str, dict[str, Any]], dict[str, Any]],
         http_get: Callable[[str], dict[str, Any]],
         out_dir: Path,
+        *,
+        dispatch: DispatchFn = _RUNPOD_DISPATCH,
     ) -> None:
         self._post = http_post
         self._get = http_get
         self._out = out_dir
-        self._records: list[tuple[str, str, dict[str, Any]]] = []
+        self._dispatch_fn = dispatch
+        # Each record: (filename, url, request_body_or_None, response)
+        self._records: list[tuple[str, str, dict[str, Any] | None, dict[str, Any]]] = []
 
     def http_post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         """POST wrapper — records the response under its operation name."""
         response = self._post(url, body)
-        query = str(body.get("query", ""))
-        filename = self._dispatch(query)
-        self._records.append((filename, query, response))
+        filename = self._dispatch_fn(url, body)
+        self._records.append((filename, url, body, response))
         return response
 
     def http_get(self, url: str) -> dict[str, Any]:
         """GET wrapper — records the response under its operation name."""
         response = self._get(url)
-        query = url.split("?query=", 1)[1] if "?query=" in url else url
-        filename = self._dispatch(query)
-        self._records.append((filename, query, response))
+        filename = self._dispatch_fn(url, None)
+        self._records.append((filename, url, None, response))
         return response
 
     def flush(self) -> None:
@@ -173,30 +293,31 @@ class _RecordingHTTPSeam:
             git_sha = "UNKNOWN"
 
         self._out.mkdir(parents=True, exist_ok=True)
-        for filename, query, response in self._records:
+        for filename, url, request_body, response in self._records:
+            # Redact both the request body and the response.
+            redacted_body: dict[str, Any] | None = (
+                _redact(request_body) if request_body is not None else None
+            )
+            # Build the _meta.request_query for backward-compat with Layer N
+            # fixtures that carry the raw GraphQL query string.
+            if request_body and isinstance(request_body.get("query"), str):
+                raw_query = request_body["query"]
+            elif "?query=" in url:
+                raw_query = url.split("?query=", 1)[1]
+            else:
+                raw_query = url
+            meta: dict[str, Any] = {
+                "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "git_sha": git_sha,
+                "operation": filename.removesuffix(".json"),
+                "request_query": _redact_query_string(raw_query)[:200],
+            }
+            if redacted_body is not None:
+                meta["request_body"] = redacted_body
             payload = {
-                "_meta": {
-                    "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    "git_sha": git_sha,
-                    "operation": filename.removesuffix(".json"),
-                    "request_query": _redact_query_string(query)[:200],
-                },
+                "_meta": meta,
                 "response": _redact(response),
             }
             (self._out / filename).write_text(
                 json.dumps(payload, indent=2, sort_keys=False) + "\n",
             )
-
-    def _dispatch(self, query: str) -> str:
-        """Map a GraphQL query string to its fixture filename."""
-        for fragment, filename in _OPERATION_TABLE:
-            if fragment in query:
-                return filename
-        sha8 = hashlib.sha256(query.encode("utf-8")).hexdigest()[:8]
-        _log.warning(
-            "RecordingHTTPSeam: unrecognized GraphQL query, writing to "
-            "unknown_%s.json (query fragment: %s)",
-            sha8,
-            query[:80],
-        )
-        return f"unknown_{sha8}.json"
