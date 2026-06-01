@@ -11,9 +11,11 @@ import pytest
 
 from tests.providers.conftest_runpod import (
     _COMFY_DISPATCH,
+    _is_credential_name,
     _load_fixture,
     _RecordingHTTPSeam,
     _redact,
+    _redact_kv_shape,
 )
 
 
@@ -221,3 +223,67 @@ def test_recording_seam_comfyui_history_last_poll_wins(tmp_path: Path) -> None:
 
     captured = json.loads((tmp_path / "history_done.json").read_text())
     assert captured["response"]["p-123"]["status"]["completed"] is True
+
+
+# ---------------------------------------------------------------------------
+# Pass 1 — _redact_kv_shape + _is_credential_name (Layer P Task 7 bug-fix #1)
+# ---------------------------------------------------------------------------
+
+
+def test_redact_kv_shape_runpod_env_leak_regression() -> None:
+    """PROGRESS:213 canonical RED: RunPod env array leaks the value side."""
+    body = {
+        "variables": {
+            "input": {
+                "env": [
+                    {"key": "RUNPOD_API_KEY", "value": "rpa_REAL12345"},
+                    {"key": "HF_TOKEN", "value": "hf_REAL12345"},
+                    {"key": "PYTHONUNBUFFERED", "value": "1"},
+                ]
+            }
+        }
+    }
+    out = _redact_kv_shape(body)
+    env = out["variables"]["input"]["env"]
+    assert env[0]["key"] == "RUNPOD_API_KEY"
+    assert env[0]["value"] == "<REDACTED>"
+    assert env[1]["key"] == "HF_TOKEN"
+    assert env[1]["value"] == "<REDACTED>"
+    assert env[2]["key"] == "PYTHONUNBUFFERED"
+    assert env[2]["value"] == "1"
+
+
+def test_redact_kv_shape_allows_extra_keys_in_item() -> None:
+    body = {"env": [{"key": "API_KEY", "value": "secret", "comment": "main key"}]}
+    out = _redact_kv_shape(body)
+    assert out["env"][0]["value"] == "<REDACTED>"
+    assert out["env"][0]["comment"] == "main key"
+
+
+def test_redact_kv_shape_passes_non_credential_names() -> None:
+    body = {"env": [{"key": "IMAGE_NAME", "value": "alpine:latest"}]}
+    out = _redact_kv_shape(body)
+    assert out["env"][0]["value"] == "alpine:latest"
+
+
+def test_redact_kv_shape_requires_list_parent() -> None:
+    body = {"key": "RUNPOD_API_KEY", "value": "rpa_REAL12345"}
+    out = _redact_kv_shape(body)
+    assert out == body
+
+
+def test_is_credential_name_matches_protected_vocab() -> None:
+    """AC #5 + #6: whole-word + suffix vocab; non-credential names pass through."""
+    # AC #5 — must be True.
+    assert _is_credential_name("RUNPOD_API_KEY")
+    assert _is_credential_name("HF_TOKEN")
+    assert _is_credential_name("FAL_KEY")
+    assert _is_credential_name("AWS_SECRET_ACCESS_KEY")
+    assert _is_credential_name("DB_PASSWORD")
+    assert _is_credential_name("SSH_PASSPHRASE")
+    # AC #6 — must be False.
+    assert not _is_credential_name("PYTHONUNBUFFERED")
+    assert not _is_credential_name("IMAGE_NAME")
+    assert not _is_credential_name("GPU_COUNT")
+    assert not _is_credential_name("keypoints")
+    assert not _is_credential_name("checkpoints")
