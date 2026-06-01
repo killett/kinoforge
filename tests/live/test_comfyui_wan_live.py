@@ -197,28 +197,55 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
                         f"offer {offer.id!r} cost {offer.cost_rate_usd_per_hr:.4f} "
                         f"exceeds cap {reqs.max_cost_rate_usd_per_hr:.4f}"
                     )
-            chosen = offers[0]
             _log.info(
-                "[phase=find_offers] picked %s @ $%.4f/hr",
-                chosen.gpu_type,
-                chosen.cost_rate_usd_per_hr,
+                "[phase=find_offers] %d viable offers; trying in cost order",
+                len(offers),
             )
 
             # --- [phase=create_instance] ------------------------------
+            # RunPod intermittently returns "This machine does not have
+            # the resources to deploy your pod" when the chosen GPU type
+            # has no current capacity. Iterate offers in their already-
+            # sorted-by-gpu_preference order until one succeeds.
             _log.info("[phase=create_instance]")
-            ispec = InstanceSpec(
-                image=cfg.compute.image,
-                offer=chosen,
-                lifecycle=Lifecycle(
-                    idle_timeout_s=float(cfg.lifecycle().idle_timeout_s)
-                ),
-                tags={
-                    "mode": "pod",
-                    _TAG_KEY: _TAG_VALUE,
-                    "kinoforge.git_sha": _git_sha(),
-                },
-            )
-            instance = provider.create_instance(ispec)
+            chosen = None
+            instance = None
+            for candidate in offers:
+                ispec = InstanceSpec(
+                    image=cfg.compute.image,
+                    offer=candidate,
+                    lifecycle=Lifecycle(
+                        idle_timeout_s=float(cfg.lifecycle().idle_timeout_s)
+                    ),
+                    tags={
+                        "mode": "pod",
+                        _TAG_KEY: _TAG_VALUE,
+                        "kinoforge.git_sha": _git_sha(),
+                    },
+                )
+                try:
+                    instance = provider.create_instance(ispec)
+                    chosen = candidate
+                    _log.info(
+                        "[phase=create_instance] %s @ $%.4f/hr -> %s",
+                        candidate.gpu_type,
+                        candidate.cost_rate_usd_per_hr,
+                        instance.id,
+                    )
+                    break
+                except ValueError as exc:
+                    if "resources to deploy" in str(exc):
+                        _log.warning(
+                            "[phase=create_instance] %s unavailable, trying next",
+                            candidate.gpu_type,
+                        )
+                        continue
+                    raise
+            if instance is None or chosen is None:
+                pytest.fail(
+                    f"all {len(offers)} offers exhausted; RunPod returned "
+                    "'no resources' for every one. Try again later."
+                )
             pod_id = instance.id
             assert pod_id, "create_instance returned empty id"
 
