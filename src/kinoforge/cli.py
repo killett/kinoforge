@@ -25,16 +25,25 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import kinoforge._adapters  # noqa: F401 — triggers all self-registrations
+from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.dotenv_loader import load_env_file
 from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import GenerationRequest
 from kinoforge.core.lifecycle import Ledger, destroy_confirmed, reap
+from kinoforge.core.orchestrator import generate
+from kinoforge.outputs.base import OutputSink
+from kinoforge.outputs.local import LocalOutputSink
 from kinoforge.stores.base import ArtifactStore
 from kinoforge.stores.local import LocalArtifactStore
+
+# CLI clock seam — overridable in tests via monkeypatch.  Used to derive
+# the default --run-id and any other invocation-time stamps.
+_cli_clock: Clock = RealClock()
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -89,6 +98,33 @@ def _build_store(cfg: Config, state_dir: Path) -> ArtifactStore:
             raise ValueError("store.kind='gcs' requires store.bucket")
         return GCSArtifactStore(bucket=sc.bucket, prefix=sc.prefix)
     raise UnknownAdapter(f"unknown store kind: {sc.kind!r}")
+
+
+def _build_sink(cfg: Config, args: argparse.Namespace) -> OutputSink | None:
+    """Return the configured OutputSink, or None when publishing is disabled.
+
+    Precedence:
+      1. ``--no-output-dir`` flag → ``None``.
+      2. ``--output-dir PATH`` flag → ``LocalOutputSink(PATH)``.
+      3. ``cfg.output.enabled is False`` → ``None``.
+      4. Else → ``LocalOutputSink(cfg.output.dir)``.
+
+    Args:
+        cfg: Loaded kinoforge configuration.
+        args: Parsed CLI arguments.
+
+    Returns:
+        A ``LocalOutputSink`` rooted at the resolved directory, or
+        ``None`` when the operator opted out.
+    """
+    if getattr(args, "no_output_dir", False):
+        return None
+    explicit = getattr(args, "output_dir", None)
+    if explicit is not None:
+        return LocalOutputSink(dir=Path(explicit), clock=_cli_clock)
+    if not cfg.output.enabled:
+        return None
+    return LocalOutputSink(dir=cfg.output.dir, clock=_cli_clock)
 
 
 def _print_instance_overview(state_dir: Path) -> None:
@@ -161,7 +197,19 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_generate.add_argument("-c", "--config", required=True, metavar="PATH")
     p_generate.add_argument("--prompt", required=True, metavar="TEXT")
     p_generate.add_argument("--mode", required=True, metavar="MODE")
-    p_generate.add_argument("--run-id", default="run", metavar="ID")
+    p_generate.add_argument("--run-id", default=None, metavar="ID")
+    p_generate_output = p_generate.add_mutually_exclusive_group()
+    p_generate_output.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help="user-facing output directory (overrides cfg.output.dir)",
+    )
+    p_generate_output.add_argument(
+        "--no-output-dir",
+        action="store_true",
+        help="disable user-facing publish; clips remain only in the store",
+    )
 
     # list
     sub.add_parser("list", help="list running instances from ledger")
@@ -194,6 +242,18 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_batch.add_argument("--batch-id", default=None, metavar="ID")
     p_batch.add_argument("--concurrent", type=int, default=None, metavar="N")
     p_batch.add_argument("--env-file", default=None, metavar="PATH")
+    p_batch_output = p_batch.add_mutually_exclusive_group()
+    p_batch_output.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="PATH",
+        help="user-facing output directory (overrides cfg.output.dir)",
+    )
+    p_batch_output.add_argument(
+        "--no-output-dir",
+        action="store_true",
+        help="disable user-facing publish; clips remain only in the store",
+    )
 
     return parser
 
@@ -317,16 +377,21 @@ def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
         Exit code (0 on success, non-zero on error).
     """
     from kinoforge.core.config import load_config
-    from kinoforge.core.orchestrator import generate
 
     cfg = load_config(Path(args.config))
     store = _build_store(cfg, state_dir)
+    sink = _build_sink(cfg, args)
     request = GenerationRequest(prompt=args.prompt, mode=args.mode)
-    run_id: str = args.run_id
+
+    if args.run_id is not None:
+        run_id: str = args.run_id
+    else:
+        ts = datetime.fromtimestamp(_cli_clock.now()).strftime("%Y%m%d-%H%M%S")
+        run_id = f"run-{ts}"
 
     try:
         artifact = generate(
-            cfg, request, store=store, run_id=run_id, state_dir=state_dir
+            cfg, request, store=store, sink=sink, run_id=run_id, state_dir=state_dir
         )
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
@@ -392,6 +457,7 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
         return 1
 
     store = _build_store(cfg, state_dir)
+    sink = _build_sink(cfg, args)
 
     batch_id: str = (
         args.batch_id
@@ -423,6 +489,7 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
             cfg,
             manifest,
             store=store,
+            sink=sink,
             batch_id=batch_id,
             concurrent=args.concurrent,
             state_dir=state_dir,

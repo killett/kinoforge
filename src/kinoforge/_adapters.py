@@ -25,6 +25,9 @@ import kinoforge.engines.diffusers  # noqa: F401
 import kinoforge.engines.fake  # noqa: F401
 import kinoforge.engines.fal  # noqa: F401
 import kinoforge.engines.hosted  # noqa: F401
+
+# Output sinks
+import kinoforge.outputs.local  # noqa: F401  side-effect: register "local" OutputSink
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.providers.runpod  # noqa: F401
 import kinoforge.providers.skypilot  # noqa: F401
