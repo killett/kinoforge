@@ -52,9 +52,6 @@ _log = logging.getLogger(__name__)
 
 _TAG_KEY = "kinoforge.layer"
 _TAG_VALUE = "layer-p-smoke"
-_READY_TIMEOUT_S = 600
-_GEN_TIMEOUT_S = 900
-_POLL_INTERVAL_S = 10
 
 _MP4_FTYP_PREFIXES: tuple[bytes, ...] = (
     b"ftypisom",
@@ -227,8 +224,14 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
         )
 
         if instance is None:
-            # Cold path: orchestrator created an (untagged-by-it, but tagged-by-our-kwarg)
-            # pod we have no handle to. Tag-discover it for the destroy block.
+            # Cold path: orchestrator created the pod and merged our tags=
+            # onto its baseline {kinoforge_engine, kinoforge_key} tags, but
+            # the new Instance was never surfaced back to us. Tag-discover
+            # it via _TAG_KEY so the destroy block has a pod_id to act on.
+            # Race-safe in practice: reuse_check ran 1 step earlier over the
+            # same provider; any tagged pod would have entered the warm
+            # branch. The only window is a prior run that died mid-create
+            # and left a ready tagged pod that reuse_check missed.
             instance = provider.find_instance_by_tag(_TAG_KEY, _TAG_VALUE)
             if instance is not None:
                 pod_id = instance.id
