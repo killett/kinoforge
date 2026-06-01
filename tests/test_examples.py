@@ -239,13 +239,25 @@ def test_ci_references_task(task: str) -> None:
 def test_hosted_yaml_has_non_empty_spec() -> None:
     """examples/configs/hosted.yaml ships a spec: block with required keys.
 
-    Layer M: the equality assertion against engine.hosted.model is removed
-    (the field no longer exists on HostedEngineConfig). The example YAML
-    and full rewrite of this test land in Task 3.
+    Layer M: the lock-equality assertion against engine.hosted.model is
+    deleted (the field no longer exists).  Replaced with a positive
+    assertion on the single remaining source of truth.
     """
     cfg = load_config(EXAMPLES_DIR / "hosted.yaml")
     assert "model" in cfg.spec
     assert "params" in cfg.spec
+    assert isinstance(cfg.spec["model"], str) and cfg.spec["model"]
+
+
+def test_layer_m_hosted_yaml_no_engine_hosted_model() -> None:
+    """examples/configs/hosted.yaml carries spec.model only — never engine.hosted.model.
+
+    Bug catch: a future edit re-introduces the duplicated field and the
+    documented migration silently regresses.
+    """
+    cfg = load_config(EXAMPLES_DIR / "hosted.yaml")
+    hosted_dump = cfg.engine.hosted.model_dump() if cfg.engine.hosted else {}
+    assert "model" not in hosted_dump
 
 
 def test_diffusers_yaml_has_non_empty_spec() -> None:
