@@ -184,6 +184,68 @@ def _redact_kv_shape(obj: Any) -> Any:
     return obj
 
 
+# Layer P Task 7 bug-fix #1 — Pass 3 (value-side credential-pattern sweep).
+# Each entry is ``(pattern_name, compiled_regex)``.  The ``pattern_name`` is the
+# canonical snake_case identifier used by Task 4 audit primitives and Task 5
+# backstop tests; do not rename without coordinating those callers.
+_CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("rpa_token", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b")),
+    ("hf_token", re.compile(r"\bhf_[A-Za-z0-9_\-]{8,}\b")),
+    ("fal_key", re.compile(r"\bfal_key_[A-Za-z0-9_\-]{8,}\b")),
+    ("bearer_auth", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{8,}")),
+    ("sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b")),
+    ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    (
+        "pem_private_key",
+        re.compile(
+            r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?-----END [A-Z ]{0,40}PRIVATE KEY-----"
+        ),
+    ),
+]
+
+
+def _redact_string(s: str) -> str:
+    """Apply every entry in :data:`_CREDENTIAL_PATTERNS` to *s* in declaration order.
+
+    Each match is replaced with ``<REDACTED>``.  Multiple distinct patterns can
+    fire within the same string (e.g. ``Bearer rpa_xxx`` triggers both
+    ``bearer_auth`` and ``rpa_token`` — the first match wins for any given
+    substring; later patterns operate on the partially-redacted output).
+
+    Args:
+        s: An arbitrary string value to scrub.
+
+    Returns:
+        ``s`` with every credential-shaped substring replaced by
+        ``<REDACTED>``.  Non-matching strings pass through unchanged.
+    """
+    out = s
+    for _name, pattern in _CREDENTIAL_PATTERNS:
+        out = pattern.sub("<REDACTED>", out)
+    return out
+
+
+def _redact_credential_patterns(obj: Any) -> Any:
+    """Pass 3 — recursive value-side credential-pattern sweep.
+
+    Walks every nested container.  For each string value, applies
+    :func:`_redact_string`.  Non-string scalars pass through unchanged.
+
+    Args:
+        obj: Any JSON-serialisable Python value (dict, list, str, int, etc).
+
+    Returns:
+        A redacted copy of ``obj``.  Original is not mutated.
+    """
+    if isinstance(obj, str):
+        return _redact_string(obj)
+    if isinstance(obj, dict):
+        return {k: _redact_credential_patterns(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_credential_patterns(v) for v in obj]
+    return obj
+
+
 def _load_fixture(name: str) -> dict[str, Any]:
     """Load the ``response`` payload of a committed real-API capture.
 
