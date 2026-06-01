@@ -634,19 +634,37 @@ def deploy(
 
     instance = resolved_provider.create_instance(spec)
 
-    # Poll until ready (LocalProvider returns ready immediately; cloud providers
-    # may require polling — this handles both).
-    while instance.status != "ready":
-        instance = resolved_provider.get_instance(instance.id)
+    try:
+        # Poll until ready (LocalProvider returns ready immediately; cloud providers
+        # may require polling — this handles both).
+        while instance.status != "ready":
+            instance = resolved_provider.get_instance(instance.id)
 
-    endpoints = resolved_provider.endpoints(instance)
-    _log.info(
-        "deployed instance %r via %r (status=%s)",
-        instance.id,
-        getattr(resolved_provider, "name", repr(resolved_provider)),
-        instance.status,
-    )
-    return DeployResult(instance=instance, endpoints=endpoints)
+        endpoints = resolved_provider.endpoints(instance)
+        _log.info(
+            "deployed instance %r via %r (status=%s)",
+            instance.id,
+            getattr(resolved_provider, "name", repr(resolved_provider)),
+            instance.status,
+        )
+        return DeployResult(instance=instance, endpoints=endpoints)
+    except BaseException as exc:
+        # Pod is paid-for and not tracked — destroy it before re-raising.
+        _log.error(
+            "deploy failed after create_instance(%r); attempting destroy: %s",
+            instance.id,
+            exc,
+        )
+        try:
+            resolved_provider.destroy_instance(instance.id)
+        except Exception as destroy_exc:
+            _log.error(
+                "destroy_instance(%r) failed during deploy-error cleanup: %s",
+                instance.id,
+                destroy_exc,
+            )
+            # Re-raise the ORIGINAL error; surface destroy failure via the log only.
+        raise
 
 
 # ---------------------------------------------------------------------------

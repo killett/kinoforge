@@ -3,12 +3,12 @@
 All I/O is injected via spy callables; no real HTTP or RunPod account needed.
 
 Coverage:
-  AC1: find_offers — http_get + filter_offers delegation
+  AC1: find_offers — http_post + filter_offers delegation
   AC2: create_instance (pod mode) — body shape, cred injection, self-terminator embedding
   AC3: create_instance (serverless mode) — different endpoint, caps fields, status=ready
   AC4: endpoints — pod proxy URL pattern, serverless run URL
   AC5: destroy_instance — http_post + polling + idempotent on 404
-  AC6: list_instances — http_get list → Instance list
+  AC6: list_instances — http_post list → Instance list
   AC7: cred safety — RUNPOD_API_KEY never in pod body or returned Instance.tags
   AC8: self-term script content — max_lifetime, effective_deadline, heartbeat substrings
   AC9: self-registration — registry.get_provider("runpod")() returns RunPodProvider
@@ -32,6 +32,7 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.providers.runpod import RunPodProvider
 from kinoforge.providers.runpod.selfterm import RENDER
+from tests.providers.conftest_runpod import _load_fixture
 
 # ---------------------------------------------------------------------------
 # Helpers / fakes
@@ -75,6 +76,25 @@ class HttpPostSpy:
         return self._response
 
 
+class MultiResponseHttpPostSpy:
+    """Returns a different response for each successive POST call.
+
+    Useful for methods that POST multiple times (e.g. destroy_instance
+    issues the terminate mutation then polls with repeated POSTs).
+    When the response list is exhausted, returns ``{}``.
+    """
+
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        self._responses = list(responses)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def __call__(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((url, body))
+        if not self._responses:
+            return {}
+        return self._responses.pop(0)
+
+
 class HttpGetSpy:
     """Returns a different response for each successive call."""
 
@@ -103,39 +123,12 @@ class SleepSpy:
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_GPU_LIST_RESPONSE: dict[str, Any] = {
-    "data": {
-        "gpuTypes": [
-            {
-                "id": "NVIDIA RTX A4000",
-                "displayName": "RTX A4000",
-                "memoryInGb": 16,
-                "secureCloud": True,
-                "communityCloud": True,
-                "lowestPrice": {"minimumBidPrice": 0.24, "uninterruptablePrice": 0.32},
-            },
-            {
-                "id": "NVIDIA A100 80GB PCIe",
-                "displayName": "A100 80GB",
-                "memoryInGb": 80,
-                "secureCloud": True,
-                "communityCloud": True,
-                "lowestPrice": {"minimumBidPrice": 1.45, "uninterruptablePrice": 1.89},
-            },
-        ]
-    }
-}
+# Real-API captures loaded at import time.  Layer N Task 4 committed these.
+_GPU_LIST_RESPONSE: dict[str, Any] = _load_fixture("gpu_types.json")
+_POD_CREATE_RESPONSE: dict[str, Any] = _load_fixture("create_pod.json")
 
-_POD_CREATE_RESPONSE: dict[str, Any] = {
-    "data": {
-        "podFindAndDeployOnDemand": {
-            "id": "pod-abc123",
-            "desiredStatus": "RUNNING",
-            "imageName": "runpod/pytorch:2.1",
-        }
-    }
-}
-
+# No live-smoke capture for serverless mode (Layer O candidate).
+# Hand-crafted dict kept intentionally as the one allowed exception.
 _SERVERLESS_CREATE_RESPONSE: dict[str, Any] = {
     "data": {
         "saveTemplate": {
@@ -180,35 +173,136 @@ def serverless_spec() -> InstanceSpec:
 
 
 def test_find_offers_fetches_gpu_list_and_filters() -> None:
-    """AC1: find_offers calls http_get once and returns filtered Offer list."""
-    http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
-    provider = RunPodProvider(http_get=http_get)
+    """AC1: find_offers calls http_post once and returns filtered Offer list."""
+    http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
+    provider = RunPodProvider(http_post=http_post)
 
     reqs = HardwareRequirements(min_vram_gb=48, max_cost_rate_usd_per_hr=2.20)
     offers = provider.find_offers(reqs)
 
-    assert len(http_get.calls) == 1, "expected exactly one GET call"
-    # Only A100 (80 GB) meets min_vram_gb=48
-    assert len(offers) == 1
+    assert len(http_post.calls) == 1, "expected exactly one POST call"
+    # Real fixture: 46 GPU types, 7 have vram>=48 GB and uninterruptablePrice<=2.20
+    assert len(offers) == 7
+    # A100 80GB PCIe is the first non-null-priced 80GB entry in the fixture
     assert offers[0].gpu_type == "NVIDIA A100 80GB PCIe"
     assert offers[0].vram_gb == 80
 
 
 def test_find_offers_returns_all_when_no_filter_needed() -> None:
     """AC1b: both offers returned when requirements are loose."""
-    http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
+    provider = RunPodProvider(http_post=http_post)
 
     reqs = HardwareRequirements(min_vram_gb=1, max_cost_rate_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
 
-    assert len(offers) == 2
+    # Real fixture: 25 of 46 GPU types have a non-null uninterruptablePrice ≤ $10/hr
+    assert len(offers) == 25
+
+
+def test_find_offers_skips_null_priced_entries() -> None:
+    """Layer N regression — gpuTypes with null prices are filtered out.
+
+    Real RunPod returns ``lowestPrice: null`` (or both nested fields null)
+    for GPU types with no currently-available capacity.  ``find_offers``
+    drops these silently — a $0 offer would always win ``max_cost_rate``
+    filtering and the caller would hit "no instances available" at create.
+    """
+    http_post = HttpPostSpy(
+        response={
+            "data": {
+                "gpuTypes": [
+                    {
+                        "id": "NVIDIA H100 PCIe",
+                        "displayName": "H100",
+                        "memoryInGb": 80,
+                        "lowestPrice": None,  # no capacity
+                    },
+                    {
+                        "id": "NVIDIA RTX A5000",
+                        "displayName": "RTX A5000",
+                        "memoryInGb": 24,
+                        "lowestPrice": {
+                            "minimumBidPrice": None,
+                            "uninterruptablePrice": None,
+                        },  # capacity check returned both null
+                    },
+                    {
+                        "id": "NVIDIA A100 80GB PCIe",
+                        "displayName": "A100",
+                        "memoryInGb": 80,
+                        "lowestPrice": {
+                            "minimumBidPrice": 1.45,
+                            "uninterruptablePrice": 1.89,
+                        },
+                    },
+                ]
+            }
+        }
+    )
+    provider = RunPodProvider(http_post=http_post)
+
+    offers = provider.find_offers(HardwareRequirements(min_vram_gb=1))
+
+    by_id = {o.gpu_type: o for o in offers}
+    assert "NVIDIA H100 PCIe" not in by_id, "null-price offer leaked through"
+    assert "NVIDIA RTX A5000" not in by_id, "both-null-price offer leaked through"
+    assert by_id["NVIDIA A100 80GB PCIe"].cost_rate_usd_per_hr == 1.89
+
+
+def test_find_offers_post_body_contains_query() -> None:
+    """Layer N (updated) — find_offers sends the GraphQL query in the POST body.
+
+    After switching all GraphQL requests from GET to POST, the query must
+    appear in the POST body dict, not as a URL query parameter.
+    """
+    http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
+    provider = RunPodProvider(http_post=http_post)
+
+    provider.find_offers(HardwareRequirements())
+
+    assert len(http_post.calls) == 1
+    _url, body = http_post.calls[0]
+    assert "query" in body, "POST body must contain a 'query' key"
+    assert "gpuTypes" in body["query"], (
+        f"POST body query must reference gpuTypes; got: {body['query']!r}"
+    )
+
+
+def test_get_list_destroy_all_send_query_in_post_body() -> None:
+    """Layer N (updated) — list_instances, get_instance, and destroy_instance
+    poll all send their GraphQL queries in the POST body, not as URL parameters.
+
+    Replaces the retired URL-encoding tests now that every call site uses POST.
+    """
+    # destroy_instance: 1 terminate POST + up to 1 poll POST (returns gone immediately)
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            # list_instances
+            {"data": {"myself": {"pods": []}}},
+            # get_instance
+            {"data": {"pod": {"id": "abc", "desiredStatus": "RUNNING"}}},
+            # destroy_instance — terminate mutation
+            {"data": {}},
+            # destroy_instance — first poll → already gone
+            {"data": {"pod": None}},
+        ]
+    )
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+
+    provider.list_instances()
+    provider.get_instance("abc")
+    provider.destroy_instance("abc")
+
+    assert len(http_post.calls) >= 4, "expected at least 4 POST calls"
+    for _url, body in http_post.calls:
+        assert "query" in body, f"POST body missing 'query' key: {body!r}"
 
 
 def test_find_offers_returns_offer_objects() -> None:
     """AC1c: returned items are Offer dataclass instances."""
-    http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
+    provider = RunPodProvider(http_post=http_post)
 
     reqs = HardwareRequirements(min_vram_gb=1, max_cost_rate_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
@@ -295,7 +389,7 @@ def test_create_pod_returns_instance_starting(pod_spec: InstanceSpec) -> None:
 
     assert inst.provider == "runpod"
     assert inst.status == "starting"
-    assert inst.id == "pod-abc123"
+    assert inst.id == "ia66l3rlto5x66"  # real id from create_pod.json fixture
 
 
 # ---------------------------------------------------------------------------
@@ -389,38 +483,52 @@ def test_serverless_endpoints_run_url() -> None:
 
 
 def test_destroy_polls_until_gone() -> None:
-    """AC5a: destroy calls terminate then polls until 404 (empty)."""
+    """AC5a: destroy POSTs terminate then polls via POST until 404 (empty)."""
     sleep = SleepSpy()
-    http_post = HttpPostSpy(response={})
-    # First GET → still present; second GET → 404/empty
-    http_get = HttpGetSpy([{"data": {"pod": {"id": "pod-abc123"}}}, {}])
+    # First call: terminate mutation → {}
+    # Second call: first poll → still present
+    # Third call: second poll → gone
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            {},  # terminate
+            {"data": {"pod": {"id": "pod-abc123"}}},  # poll 1 — still present
+            {},  # poll 2 — empty/gone
+        ]
+    )
 
-    provider = RunPodProvider(http_post=http_post, http_get=http_get, sleep=sleep)
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
     provider.destroy_instance("pod-abc123")
 
-    assert len(http_post.calls) == 1, "expected one terminate call"
-    assert len(http_get.calls) == 2, "expected two poll calls"
+    # 1 terminate + 2 poll calls = 3 total
+    assert len(http_post.calls) == 3, (
+        f"expected 3 POST calls (1 terminate + 2 polls), got {len(http_post.calls)}"
+    )
 
 
 def test_destroy_idempotent_on_immediate_404() -> None:
     """AC5b: destroy is idempotent when instance is already gone (first poll empty)."""
     sleep = SleepSpy()
-    http_post = HttpPostSpy(response={})
-    http_get = HttpGetSpy([{}])  # already gone
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            {},  # terminate
+            {},  # first poll → empty/gone immediately
+        ]
+    )
 
-    provider = RunPodProvider(http_post=http_post, http_get=http_get, sleep=sleep)
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
     provider.destroy_instance("pod-abc123")  # must not raise
 
 
 def test_destroy_raises_teardown_error_after_max_polls() -> None:
     """AC5c: TeardownError raised when instance never disappears within poll cap."""
     sleep = SleepSpy()
-    http_post = HttpPostSpy(response={})
-    # Always return 'still present'
     present_resp: dict[str, Any] = {"data": {"pod": {"id": "pod-abc123"}}}
-    http_get = HttpGetSpy([present_resp] * 15)  # more than the cap
+    # 1 terminate + enough "still present" poll responses to exceed the cap
+    http_post = MultiResponseHttpPostSpy(
+        responses=[{}] + [present_resp] * 15  # 1 terminate + 15 polls (cap is 10)
+    )
 
-    provider = RunPodProvider(http_post=http_post, http_get=http_get, sleep=sleep)
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
 
     with pytest.raises(TeardownError):
         provider.destroy_instance("pod-abc123")
@@ -432,7 +540,7 @@ def test_destroy_raises_teardown_error_after_max_polls() -> None:
 
 
 def test_list_instances_returns_instances() -> None:
-    """AC6: list_instances maps http_get response to Instance list."""
+    """AC6: list_instances maps http_post response to Instance list."""
     list_response: dict[str, Any] = {
         "data": {
             "myself": {
@@ -443,8 +551,8 @@ def test_list_instances_returns_instances() -> None:
             }
         }
     }
-    http_get = HttpGetSpy([list_response])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=list_response)
+    provider = RunPodProvider(http_post=http_post)
 
     instances = provider.list_instances()
 
@@ -459,8 +567,8 @@ def test_list_instances_returns_instances() -> None:
 def test_list_instances_empty_when_no_pods() -> None:
     """AC6b: list_instances returns [] when pods list is empty."""
     list_response: dict[str, Any] = {"data": {"myself": {"pods": []}}}
-    http_get = HttpGetSpy([list_response])
-    provider = RunPodProvider(http_get=http_get)
+    http_post = HttpPostSpy(response=list_response)
+    provider = RunPodProvider(http_post=http_post)
 
     assert provider.list_instances() == []
 
@@ -543,12 +651,325 @@ def test_self_registration() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Layer N regression: Authorization header injection
+# ---------------------------------------------------------------------------
+
+
+def test_default_seams_inject_api_key_query_param() -> None:
+    """Layer N regression — default seams append ?api_key=<key>, NOT Bearer.
+
+    Bug it catches: previous fix used Authorization: Bearer header but
+    RunPod's legacy GraphQL endpoint returns 403 to Bearer auth.  The
+    actual auth scheme is the api_key query parameter.  Verified against
+    the real endpoint during Layer N live smoke.
+    """
+    import urllib.request as _urlreq
+
+    from kinoforge.providers.runpod import _make_default_http_seams
+
+    authed_post, authed_get = _make_default_http_seams("sk-fake-key")
+
+    captured: dict[str, Any] = {}
+
+    def _fake_urlopen(req: Any) -> Any:  # noqa: ANN401
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.headers)
+
+        class _Resp:
+            def __enter__(self_inner: object) -> object:
+                return self_inner
+
+            def __exit__(
+                self_inner: object,
+                exc_type: object,
+                exc: object,
+                tb: object,
+            ) -> None:
+                return None
+
+            def read(self_inner: object) -> bytes:
+                return b'{"data": {}}'
+
+        return _Resp()
+
+    real_urlopen = _urlreq.urlopen
+    _urlreq.urlopen = _fake_urlopen  # type: ignore[assignment]
+    try:
+        authed_get("https://api.example.com/graphql?query=%7Bx%7D")
+        url_with_existing_query = captured["url"]
+        authed_get("https://api.example.com/graphql")
+        url_no_query = captured["url"]
+    finally:
+        _urlreq.urlopen = real_urlopen
+
+    assert "api_key=sk-fake-key" in url_with_existing_query, (
+        f"api_key not appended to URL with existing query: {url_with_existing_query!r}"
+    )
+    assert url_with_existing_query.count("?") == 1, (
+        f"second ? introduced instead of &: {url_with_existing_query!r}"
+    )
+    assert "&api_key=sk-fake-key" in url_with_existing_query, (
+        "api_key must be appended with & when URL already has a ? query"
+    )
+    assert "?api_key=sk-fake-key" in url_no_query, (
+        f"api_key not appended to URL without existing query: {url_no_query!r}"
+    )
+
+    # No Bearer header — that scheme returns 403 against real RunPod.
+    assert "Authorization" not in captured["headers"], (
+        f"Authorization header leaked: {captured['headers']!r}"
+    )
+
+    # Content-Type: application/json bypasses RunPod GraphQL's CSRF block on
+    # GETs — without it the server returns HTTP 400 with "potential
+    # Cross-Site Request Forgery".  Verified empirically on the real
+    # endpoint during Layer N live smoke.
+    assert captured["headers"].get("Content-type") == "application/json", (
+        f"Content-Type missing or wrong: {captured['headers']!r}"
+    )
+
+    # User-Agent must NOT be Python-urllib/* — RunPod's edge layer blocks
+    # that prefix with HTTP 403.  Any non-default UA passes.  Verified
+    # empirically during Layer N live smoke.
+    ua = captured["headers"].get("User-agent", "")
+    assert ua and not ua.lower().startswith("python-urllib"), (
+        f"User-Agent must override Python-urllib default: {ua!r}"
+    )
+
+
+def test_default_seams_without_key_skip_auth() -> None:
+    """When no api_key is supplied, the default seams are bare urllib funcs."""
+    from kinoforge.providers.runpod import (
+        _make_default_http_seams,
+        _urllib_get_json,
+        _urllib_post_json,
+    )
+
+    post, get = _make_default_http_seams(None)
+    assert post is _urllib_post_json
+    assert get is _urllib_get_json
+
+    post2, get2 = _make_default_http_seams("")
+    assert post2 is _urllib_post_json
+    assert get2 is _urllib_get_json
+
+
+def test_provider_init_resolves_default_seams_from_creds() -> None:
+    """RunPodProvider(creds=...) uses authed defaults when no seams passed."""
+    from kinoforge.providers.runpod import RunPodProvider, _urllib_get_json
+
+    class _Creds(CredentialProvider):
+        def get(self, key: str) -> str | None:
+            """Return a fake API key for RUNPOD_API_KEY."""
+            return "sk-test-key" if key == "RUNPOD_API_KEY" else None
+
+    p = RunPodProvider(creds=_Creds())
+    # Default seam was replaced with an authed closure — not the bare urllib fn
+    assert p._http_get is not _urllib_get_json
+
+
+def test_default_factory_uses_env_credentials() -> None:
+    """The "runpod" provider factory wires EnvCredentialProvider in."""
+    import os
+
+    from kinoforge.core import registry
+
+    os.environ["RUNPOD_API_KEY"] = "sk-env-test-key"
+    try:
+        factory = registry.get_provider("runpod")
+        provider = factory()
+        assert isinstance(provider, RunPodProvider)
+        assert provider._creds is not None, "factory dropped creds"
+        assert provider._creds.get("RUNPOD_API_KEY") == "sk-env-test-key"
+    finally:
+        os.environ.pop("RUNPOD_API_KEY", None)
+
+
+# ---------------------------------------------------------------------------
+# Layer N regression: env array shape + error / empty-id guards
+# ---------------------------------------------------------------------------
+
+
+def test_create_pod_transforms_env_dict_to_key_value_array() -> None:
+    """Layer N regression — env block must be ``[{key, value}, ...]``, not dict.
+
+    RunPod's GraphQL EnvironmentVariableInput requires an array of
+    {key, value} pairs; passing a plain dict yields BAD_USER_INPUT.
+    """
+    http_post = HttpPostSpy(response=_POD_CREATE_RESPONSE)
+    creds = FakeCreds({"RUNPOD_API_KEY": "k", "RUNPOD_TERMINATE_KEY": "t"})
+    provider = RunPodProvider(creds=creds, http_post=http_post)
+
+    spec = InstanceSpec(
+        image="runpod/pytorch:2.1",
+        lifecycle=Lifecycle(
+            idle_timeout_s=1800,
+            job_timeout_s=900,
+            time_buffer_s=300,
+            max_lifetime_s=7200,
+        ),
+        tags={"mode": "pod"},
+    )
+    provider.create_instance(spec)
+
+    _url, body = http_post.calls[0]
+    env_field = body["variables"]["input"]["env"]
+    assert isinstance(env_field, list), (
+        f"env must be a list of {{key, value}} pairs, got: {type(env_field).__name__}"
+    )
+    for entry in env_field:
+        assert isinstance(entry, dict)
+        assert set(entry.keys()) == {"key", "value"}, (
+            f"each env entry must have exactly {{key, value}}: {entry!r}"
+        )
+
+
+def test_create_pod_raises_on_graphql_errors_block() -> None:
+    """Layer N regression — create-pod must raise when mutation returns errors.
+
+    Bug it catches: silently returned ``Instance(id="")`` if the mutation
+    failed, leaving the orchestrator with no way to track a possibly-real
+    pod and risking cost leak.
+    """
+    http_post = HttpPostSpy(
+        response={
+            "errors": [
+                {"message": "Field key required"},
+                {"message": "Field value required"},
+            ]
+        }
+    )
+    creds = FakeCreds({"RUNPOD_API_KEY": "k", "RUNPOD_TERMINATE_KEY": "t"})
+    provider = RunPodProvider(creds=creds, http_post=http_post)
+
+    spec = InstanceSpec(
+        image="x",
+        lifecycle=Lifecycle(),
+        tags={"mode": "pod"},
+    )
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="RunPod create-pod mutation returned errors"):
+        provider.create_instance(spec)
+
+
+def test_create_pod_raises_on_empty_pod_id() -> None:
+    """Layer N regression — create-pod must raise when response carries no id."""
+    http_post = HttpPostSpy(
+        response={"data": {"podFindAndDeployOnDemand": {"id": "", "desiredStatus": ""}}}
+    )
+    creds = FakeCreds({"RUNPOD_API_KEY": "k", "RUNPOD_TERMINATE_KEY": "t"})
+    provider = RunPodProvider(creds=creds, http_post=http_post)
+
+    spec = InstanceSpec(
+        image="x",
+        lifecycle=Lifecycle(),
+        tags={"mode": "pod"},
+    )
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="no pod id"):
+        provider.create_instance(spec)
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Layer N: real-shape lockdown
+# ---------------------------------------------------------------------------
+
+
+def test_find_offers_real_shape_required_keys() -> None:
+    """Layer N lockdown — every gpuTypes entry has fields production reads.
+
+    Catches: a future RunPod schema rename (e.g. memoryInGb → vramGb) that
+    breaks ``find_offers`` silently if the fixture is regenerated and the
+    production code is not updated.  Asserts only that the top-level
+    fields exist; the nested ``lowestPrice`` may legitimately be null.
+    """
+    fixture = _load_fixture("gpu_types.json")
+    gpus = fixture["data"]["gpuTypes"]
+    assert gpus, "gpu_types fixture has no entries"
+    for gpu in gpus:
+        assert "id" in gpu, f"missing id in {gpu}"
+        assert "memoryInGb" in gpu, f"missing memoryInGb in {gpu}"
+        assert "lowestPrice" in gpu, f"missing lowestPrice in {gpu}"
+
+
+def test_pod_status_mapping_covers_real_statuses() -> None:
+    """Layer N lockdown — _runpod_status_to_kinoforge covers real statuses.
+
+    Catches: RunPod adds a new desiredStatus (e.g. PAUSED) and the
+    production code's fallback maps it to "starting", silently
+    miscategorising real instance state.
+
+    Note: the smoke ran fast enough that ``list_pods.json`` captured an
+    empty pods list and ``get_pod.json`` captured an in-flight RUNNING
+    state.  If either fixture has no observable statuses, the test
+    skips with a clear message — the assertion only fires when there's
+    real data to lock down.
+    """
+    from kinoforge.providers.runpod import _runpod_status_to_kinoforge
+
+    observed: set[str] = set()
+    for fixture_name in ("list_pods.json", "get_pod.json"):
+        fixture = _load_fixture(fixture_name)
+        data = fixture.get("data", {})
+        if "myself" in data and data["myself"]:
+            for pod in data["myself"].get("pods", []):
+                status = pod.get("desiredStatus")
+                if status:
+                    observed.add(status)
+        if "pod" in data and data["pod"]:
+            status = data["pod"].get("desiredStatus")
+            if status:
+                observed.add(status)
+
+    if not observed:
+        pytest.skip(
+            "no desiredStatus values observed in committed fixtures; "
+            "regen with KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 "
+            "to lock the mapping down",
+        )
+
+    known_runpod_statuses = {"RUNNING", "EXITED", "DEAD"}
+    valid_kinoforge_statuses = {"ready", "stopped", "terminated"}
+
+    for status in observed:
+        assert status.upper() in known_runpod_statuses, (
+            f"unknown RunPod status {status!r} — "
+            f"_runpod_status_to_kinoforge needs an explicit entry"
+        )
+        kf = _runpod_status_to_kinoforge(status)
+        assert kf in valid_kinoforge_statuses, (
+            f"status {status!r} maps to fallback {kf!r}; "
+            f"add explicit mapping in _runpod_status_to_kinoforge"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
 def _extract_env(body: dict[str, Any]) -> dict[str, str]:
-    """Walk nested dicts/lists to find the first 'env' dict."""
+    """Walk nested dicts/lists to find the first 'env' value.
+
+    Handles both the old dict form ``{"KEY": "val"}`` and the new RunPod
+    GraphQL array form ``[{"key": "KEY", "value": "val"}, ...]``, converting
+    the latter to a plain dict so callers remain shape-agnostic.
+    """
     if "env" in body:
         val = body["env"]
         if isinstance(val, dict):
             return val
+        if isinstance(val, list):
+            # RunPod EnvironmentVariableInput array: [{key, value}, ...]
+            return {entry["key"]: entry["value"] for entry in val if "key" in entry}
     for v in body.values():
         if isinstance(v, dict):
             result = _extract_env(v)

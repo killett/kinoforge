@@ -110,7 +110,7 @@ Patterns proven across MVP + Layers A–D. New layers should follow them by defa
 Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future layer.
 
 **Real-cloud verification gaps (offline-tested only):**
-- `RunPodProvider.find_offers` REST shape is a stub — GPU-types JSON shape needs real-key validation.
+- ~~`RunPodProvider.find_offers` REST shape is a stub~~ — **CLOSED** by Phase 24 (Layer N). Real-cloud verified end-to-end; 10 production bugs fixed.
 - `SkyPilotProvider._get_sky()` lazy path wired but unexercised against real `sky` SDK.
 - `S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.
 
@@ -148,7 +148,13 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer M complete on `build/layer-m`.** Hosted-YAML collapse + Authorization-header passthrough shipped. `spec.model` is now the single source of truth for hosted model identity; `GenerateClipStage` passes `Artifact.headers` through an injectable `http_get_bytes` seam. PROGRESS:155 follow-ups #1 + #2 closed. Next layer candidate: **Layer N** — cloud-fidelity hardening (RunPod `find_offers` shape validation, SkyPilot SDK smoke test, S3/GCS medium-fidelity tests per spec §9 carry-forwards).
+**Layer N complete on `build/layer-n`** (merge commit `<MERGE-SHA>`). RunPod
+cloud-fidelity shipped. Closes PROGRESS:114 carry-forward #1; 10 production
+bugs caught + fixed; first real RunPod artifact (pod `ia66l3rlto5x66` on
+NVIDIA A40, cost ≈ $0.001). Next layer candidate: **Layer O** — engine
+integration on RunPod (ComfyUI + Wan i2v producing a real MP4 artifact) +
+remaining cloud-fidelity (SkyPilot SDK smoke [carry-forward #2] + S3/GCS
+medium-fidelity tests [carry-forward #3]).
 
 **Pending follow-ups:**
 - ~~`GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).~~ — **CLOSED** by Phase 23 (Layer M).
@@ -350,3 +356,59 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - Out of scope (Layer N candidate): real-cloud verification gaps (RunPod find_offers shape, SkyPilot SDK smoke, S3/GCS medium-fidelity tests).
 
 **Test count:** 743 passed + 1 skipped pre-Layer-M → ~755 passed + 1 skipped post-Layer-M (+12 net new; +2 retrofits on AC1/AC6).
+
+### Phase 24 — Layer N (RunPod cloud-fidelity hardening)
+
+Verification-only layer that closes PROGRESS:113 carry-forward #1 (`RunPodProvider`
+real-cloud shape). What was planned as a fixture-capture pass against the
+existing offline tests became, on the first live run, the discovery that the
+production code had NEVER successfully talked to a real RunPod API — the
+offline tests passed against fictional shape because fake `http_get`/`http_post`
+seams bypass URL validation, headers, and CSRF. Ten distinct bugs were caught
+and fixed on this branch, every one with a regression test against the captured
+shape. Layer N's net contribution is therefore far larger than the spec
+projected: the provider works against real RunPod for the first time.
+
+- [x] Task 1: Recording HTTP seam + `_load_fixture` + redaction — commits `0dace7a`, `85e7877`, `561e63d`
+- [x] Task 2: Placeholder fixture commits + offline-load smoke — commit `059c6ab`
+- [x] Task 3: Live smoke YAML + skeleton test + sample init frame — commits `e7ddc20`, `915ab1c`, `66446fc`
+- [x] Task 4: USER-GATE live smoke + real fixture capture — commits `8d71eed`, `ff97bb8` + 8 bug-fix commits between
+- [x] Task 5: Refactor `test_runpod.py` to load fixtures — commit `198faf4`
+- [x] Task 6: Real-shape required-keys + status-mapping lockdown — commit `8be0930`
+- [x] Task 7: README + PROGRESS + final gate + merge — commit `a594346`
+- [x] Merge to main via `--no-ff` — merge commit `<MERGE-SHA>` (closes PROGRESS:114 carry-forward #1)
+
+**First real artifact (RunPod):** pod `ia66l3rlto5x66` on NVIDIA A40 @ $0.35/hr,
+ready at T+5s, destroyed at T+10s. Captured fixtures committed at
+`tests/providers/fixtures/runpod/*.json` (5 GraphQL responses) +
+`last_smoke.json` (artifact metadata). Smoke captured 2026-05-31T20:53:21-0700
+at git SHA `7a85d62`. Total cost ≈ $0.001.
+
+**Live-smoke bug catches integrated (10 production fixes):**
+
+1. `83605b8` — URL-encode GraphQL queries; Python 3.13's urllib rejects raw spaces (`InvalidURL`)
+2. `7edb10f`+`5c085d7` — Auth header (`Bearer` 403) → query param (`?api_key=` 200)
+3. `f026133` — `Content-Type: application/json` required on GETs to bypass RunPod's CSRF block (HTTP 400)
+4. `d22f25b` — User-Agent override; RunPod's edge layer blocks the `Python-urllib/*` default (HTTP 403)
+5. `45b4a91` — Tolerate `lowestPrice=null` in `find_offers` (was `AttributeError`)
+6. `9f63e6b` (part) — GraphQL `env` is an array of `{key, value}` pairs, not a plain dict
+7. `9f63e6b` (part) — Detect mutation `errors` block + raise on empty pod id; previously returned `Instance(id="")` leaking paid pods
+8. `b694c0b` — Switch ALL GraphQL ops to POST (RunPod GET broken for parameterised queries) + orchestrator `destroy_instance` wraps post-create block (would otherwise leak on any error after create_instance returns)
+9. `7a85d62` (part) — Recording seam carries `git_sha` in `_meta` so fixture provenance survives reviewer scrutiny
+10. `7a85d62` (part) — `lowestPrice` resolver requires `(input: { gpuCount: 1 })` to return prices; `find_offers` now drops null-priced (unavailable) entries instead of surfacing them as $0 offers
+
+**Key design decisions / deviations from spec:**
+
+- **Smoke pivoted to bare pod lifecycle** (find_offers → create alpine pod → poll ready → destroy) instead of ComfyUI + Wan i2v. The spec called for an MP4 artifact; that was deferred because the original architecture (kinoforge CLI subprocess + in-pytest recording seam) cannot capture fixtures across the process boundary. The bare lifecycle exercises the same 10 production-code paths at $0.001/run vs ~$2/run for engine integration. Engine smoke is a Layer O candidate.
+- **Spec convention deviation:** `KINOFORGE_LIVE_RUNPOD` (spec §3) → `KINOFORGE_LIVE_TESTS=1` + per-provider creds (existing fal-live convention).
+- **`RUNPOD_TERMINATE_KEY` reuses `RUNPOD_API_KEY`** via `${...}` interpolation in `.env` because RunPod's scoped-key UX has no terminate-only tier. Privilege separation is lost but selfterm fallback still works.
+
+**Test count:** ~756 pre-Layer-N → 778 post-Layer-N (+22 net; mostly +regression tests on the 10 bug catches, +2 lockdown tests in Task 6).
+
+**Out of scope (Layer O candidates):**
+
+- Engine-integration live smoke (ComfyUI/Diffusers/Hosted deployed on a real RunPod pod producing a real MP4)
+- Serverless mode read-paths + live smoke (Q3 from Layer N brainstorm was pod-only)
+- SkyPilot SDK smoke (PROGRESS:113 carry-forward #2)
+- S3/GCS medium-fidelity tests (PROGRESS:113 carry-forward #3)
+- Streaming per-entry log lines in `kinoforge batch` (PROGRESS:158 deferred from Layer L Task 4)

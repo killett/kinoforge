@@ -99,6 +99,71 @@ def _urllib_get_json(url: str) -> dict[str, Any]:
         return dict(json.loads(resp.read().decode("utf-8")))
 
 
+def _make_default_http_seams(
+    api_key: str | None,
+) -> tuple[
+    Callable[[str, dict[str, Any]], dict[str, Any]],
+    Callable[[str], dict[str, Any]],
+]:
+    """Return urllib http_post / http_get callables with api_key appended.
+
+    RunPod's legacy GraphQL endpoint authenticates via the ``api_key`` query
+    parameter, NOT an ``Authorization`` header.  Bearer-token auth returns
+    HTTP 403 against ``https://api.runpod.io/graphql``.  This helper appends
+    ``?api_key=<key>`` (or ``&api_key=<key>`` if the URL already has a query
+    string) to every request URL before dispatching to ``urllib``.
+
+    When ``api_key`` is empty or ``None``, returns the bare unauthenticated
+    callables — callers that have no credentials still get something callable
+    and the real API will respond with 401/403 on its own.
+
+    Args:
+        api_key: The RUNPOD_API_KEY string, or None if no credential is set.
+
+    Returns:
+        ``(http_post, http_get)`` tuple matching the existing seam contract.
+    """
+    if not api_key:
+        return _urllib_post_json, _urllib_get_json
+
+    from urllib.parse import quote
+
+    encoded_key = quote(api_key, safe="")
+
+    # RunPod's edge layer rejects requests whose User-Agent matches
+    # ``Python-urllib/*`` (the stdlib default) with HTTP 403.  Any non-default
+    # UA — including a kinoforge-identifying one — passes the filter.
+    _UA = "kinoforge/0.1 (+https://github.com/dr-twinklebrane/kinoforge)"
+
+    def _append_api_key(url: str) -> str:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}api_key={encoded_key}"
+
+    def authed_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(  # noqa: S310
+            _append_api_key(url),
+            data=data,
+            headers={"Content-Type": "application/json", "User-Agent": _UA},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            return dict(json.loads(resp.read().decode("utf-8")))
+
+    def authed_get(url: str) -> dict[str, Any]:
+        # Content-Type bypasses RunPod GraphQL's CSRF protection — without
+        # it, GETs return HTTP 400 "potential Cross-Site Request Forgery".
+        # User-Agent bypasses the Python-urllib block (HTTP 403).
+        req = urllib.request.Request(  # noqa: S310
+            _append_api_key(url),
+            headers={"Content-Type": "application/json", "User-Agent": _UA},
+        )
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            return dict(json.loads(resp.read().decode("utf-8")))
+
+    return authed_post, authed_get
+
+
 # ---------------------------------------------------------------------------
 # RunPodProvider
 # ---------------------------------------------------------------------------
@@ -111,14 +176,18 @@ class RunPodProvider(ComputeProvider):
 
     Args:
         creds: Credential provider.  Must supply ``RUNPOD_API_KEY`` (used for
-            orchestration) and ``RUNPOD_TERMINATE_KEY`` (injected into pod env
-            for least-privilege self-termination).  ``None`` is safe when
-            only :meth:`find_offers`, :meth:`list_instances`, or
-            :meth:`endpoints` are called.
+            orchestration and to authenticate all default HTTP calls) and
+            ``RUNPOD_TERMINATE_KEY`` (injected into pod env for least-privilege
+            self-termination).  ``None`` is safe when only
+            :meth:`find_offers`, :meth:`list_instances`, or :meth:`endpoints`
+            are called (though the real RunPod API will return 401/403 without
+            a valid key).
         http_post: Callable ``(url, body) -> dict`` for POST requests.
-            Defaults to a real ``urllib`` implementation.
+            Defaults to an authenticated ``urllib`` implementation that appends
+            ``?api_key=<RUNPOD_API_KEY>`` to every request URL.
         http_get: Callable ``(url) -> dict`` for GET requests.
-            Defaults to a real ``urllib`` implementation.
+            Defaults to an authenticated ``urllib`` implementation that appends
+            ``?api_key=<RUNPOD_API_KEY>`` to every request URL.
         sleep: Callable invoked between destroy-poll iterations.
             Defaults to :func:`time.sleep`.
         base_url: RunPod GraphQL base URL.
@@ -136,23 +205,30 @@ class RunPodProvider(ComputeProvider):
         self,
         creds: CredentialProvider | None = None,
         *,
-        http_post: Callable[[str, dict[str, Any]], dict[str, Any]] = _urllib_post_json,
-        http_get: Callable[[str], dict[str, Any]] = _urllib_get_json,
+        http_post: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+        http_get: Callable[[str], dict[str, Any]] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         base_url: str = _DEFAULT_BASE_URL,
     ) -> None:
         """Initialise the provider with injectable seams.
 
         Args:
-            creds: Credential provider for ``RUNPOD_TERMINATE_KEY`` injection.
-            http_post: Injectable POST transport.
-            http_get: Injectable GET transport.
+            creds: Credential provider for ``RUNPOD_API_KEY`` (HTTP auth) and
+                ``RUNPOD_TERMINATE_KEY`` (pod env injection).
+            http_post: Injectable POST transport.  When ``None``, resolves to
+                an authenticated closure that appends ``?api_key=<RUNPOD_API_KEY>``
+                to every request URL (or the bare urllib callable when no key
+                is available).
+            http_get: Injectable GET transport.  Same auth behaviour as
+                ``http_post``.
             sleep: Injectable sleep used between destroy polls.
             base_url: RunPod GraphQL endpoint URL.
         """
         self._creds = creds
-        self._http_post = http_post
-        self._http_get = http_get
+        api_key = creds.get("RUNPOD_API_KEY") if creds is not None else None
+        default_post, default_get = _make_default_http_seams(api_key)
+        self._http_post = http_post if http_post is not None else default_post
+        self._http_get = http_get if http_get is not None else default_get
         self._sleep = sleep
         self._base_url = base_url.rstrip("/")
 
@@ -174,16 +250,26 @@ class RunPodProvider(ComputeProvider):
             Filtered and sorted list of :class:`~kinoforge.core.interfaces.Offer`
             objects.
         """
-        response = self._http_get(self._base_url + "?query=" + _GPU_TYPES_QUERY)
+        response = self._http_post(self._base_url, {"query": _GPU_TYPES_QUERY})
         gpu_types: list[dict[str, Any]] = response.get("data", {}).get("gpuTypes", [])
         raw_offers: list[Offer] = []
         for gpu in gpu_types:
             gpu_id: str = str(gpu.get("id", ""))
             vram_gb: int = int(gpu.get("memoryInGb", 0))
-            pricing: dict[str, Any] = gpu.get("lowestPrice", {})
-            cost: float = float(
-                pricing.get("uninterruptablePrice", pricing.get("minimumBidPrice", 0.0))
-            )
+            # RunPod's lowestPrice resolver returns null for both fields when
+            # a GPU type has no currently-available instances.  Skip those —
+            # otherwise we would happily return them as $0 offers and the
+            # caller would attempt a create that fails with "no instances
+            # available".
+            pricing: dict[str, Any] | None = gpu.get("lowestPrice")
+            if not pricing:
+                continue
+            uninterruptable = pricing.get("uninterruptablePrice")
+            min_bid = pricing.get("minimumBidPrice")
+            price = uninterruptable if uninterruptable is not None else min_bid
+            if price is None:
+                continue
+            cost: float = float(price)
             raw_offers.append(
                 Offer(
                     id=gpu_id,
@@ -236,7 +322,7 @@ class RunPodProvider(ComputeProvider):
         Raises:
             KeyError: No pod found for ``instance_id``.
         """
-        resp = self._http_get(self._base_url + "?query=" + _get_pod_query(instance_id))
+        resp = self._http_post(self._base_url, {"query": _get_pod_query(instance_id)})
         pod: dict[str, Any] = resp.get("data", {}).get("pod", {})
         if not pod:
             raise KeyError(f"no RunPod pod found: {instance_id!r}")
@@ -248,7 +334,7 @@ class RunPodProvider(ComputeProvider):
         Returns:
             A (possibly empty) list of :class:`~kinoforge.core.interfaces.Instance`.
         """
-        resp = self._http_get(self._base_url + "?query=" + _LIST_PODS_QUERY)
+        resp = self._http_post(self._base_url, {"query": _LIST_PODS_QUERY})
         pods: list[dict[str, Any]] = (
             resp.get("data", {}).get("myself", {}).get("pods", [])
         )
@@ -286,8 +372,8 @@ class RunPodProvider(ComputeProvider):
         )
         # Poll until gone or cap exceeded
         for _ in range(_MAX_DESTROY_POLLS):
-            resp = self._http_get(
-                self._base_url + "?query=" + _get_pod_query(instance_id)
+            resp = self._http_post(
+                self._base_url, {"query": _get_pod_query(instance_id)}
             )
             pod = resp.get("data", {}).get("pod")
             if not pod:
@@ -386,16 +472,26 @@ class RunPodProvider(ComputeProvider):
                     "dockerArgs": "",
                     "ports": ",".join(spec.ports) if spec.ports else "",
                     "volumeMountPath": spec.volume_mount or "/workspace",
-                    "env": env,
+                    "env": [{"key": k, "value": v} for k, v in env.items()],
                 }
             },
         }
 
         resp = self._http_post(self._base_url, body)
+        if "errors" in resp:
+            error_msgs = [str(e.get("message", e)) for e in resp.get("errors", [])]
+            raise ValueError(
+                "RunPod create-pod mutation returned errors:\n"
+                + "\n".join(f"  - {m}" for m in error_msgs)
+            )
         pod_data: dict[str, Any] = resp.get("data", {}).get(
             "podFindAndDeployOnDemand", {}
         )
         pod_id: str = str(pod_data.get("id", ""))
+        if not pod_id:
+            raise ValueError(
+                f"RunPod create-pod returned no pod id; full response: {resp!r}"
+            )
 
         return Instance(
             id=pod_id,
@@ -434,8 +530,18 @@ class RunPodProvider(ComputeProvider):
         }
 
         resp = self._http_post(self._base_url, body)
+        if "errors" in resp:
+            error_msgs = [str(e.get("message", e)) for e in resp.get("errors", [])]
+            raise ValueError(
+                "RunPod create-serverless mutation returned errors:\n"
+                + "\n".join(f"  - {m}" for m in error_msgs)
+            )
         endpoint_data: dict[str, Any] = resp.get("data", {}).get("saveTemplate", {})
         endpoint_id: str = str(endpoint_data.get("id", ""))
+        if not endpoint_id:
+            raise ValueError(
+                f"RunPod create-serverless returned no endpoint id; full response: {resp!r}"
+            )
 
         return Instance(
             id=endpoint_id,
@@ -451,9 +557,15 @@ class RunPodProvider(ComputeProvider):
 # GraphQL query / mutation strings
 # ---------------------------------------------------------------------------
 
+# RunPod's `lowestPrice` resolver returns null for ALL fields without an
+# input argument.  Passing `(input: { gpuCount: 1 })` causes the resolver
+# to return real prices for currently-available GPU types and null for
+# unavailable ones — `find_offers` filters out null-priced offers so the
+# caller never tries to create a pod on a GPU that has no live capacity.
 _GPU_TYPES_QUERY: str = (
     "{ gpuTypes { id displayName memoryInGb secureCloud communityCloud "
-    "lowestPrice { minimumBidPrice uninterruptablePrice } } }"
+    "lowestPrice(input: { gpuCount: 1 }) "
+    "{ minimumBidPrice uninterruptablePrice } } }"
 )
 
 _LIST_PODS_QUERY: str = "{ myself { pods { id desiredStatus imageName } } }"
@@ -552,4 +664,17 @@ def _pod_to_instance(pod: dict[str, Any]) -> Instance:
 # Self-registration
 # ---------------------------------------------------------------------------
 
-registry.register_provider("runpod", lambda: RunPodProvider())
+
+def _default_factory() -> RunPodProvider:
+    """Default factory: build a RunPodProvider with env-backed credentials.
+
+    Reads ``RUNPOD_API_KEY`` (and ``RUNPOD_TERMINATE_KEY``) from the process
+    environment so the orchestrator's resolved provider authenticates against
+    the real RunPod API.
+    """
+    from kinoforge.core.credentials import EnvCredentialProvider
+
+    return RunPodProvider(creds=EnvCredentialProvider())
+
+
+registry.register_provider("runpod", _default_factory)
