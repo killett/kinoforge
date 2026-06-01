@@ -105,10 +105,16 @@ def _make_default_http_seams(
     Callable[[str, dict[str, Any]], dict[str, Any]],
     Callable[[str], dict[str, Any]],
 ]:
-    """Return urllib http_post / http_get callables with Authorization injected.
+    """Return urllib http_post / http_get callables with api_key appended.
+
+    RunPod's legacy GraphQL endpoint authenticates via the ``api_key`` query
+    parameter, NOT an ``Authorization`` header.  Bearer-token auth returns
+    HTTP 403 against ``https://api.runpod.io/graphql``.  This helper appends
+    ``?api_key=<key>`` (or ``&api_key=<key>`` if the URL already has a query
+    string) to every request URL before dispatching to ``urllib``.
 
     When ``api_key`` is empty or ``None``, returns the bare unauthenticated
-    callables — callers that have no credentials still get something callable,
+    callables — callers that have no credentials still get something callable
     and the real API will respond with 401/403 on its own.
 
     Args:
@@ -120,17 +126,20 @@ def _make_default_http_seams(
     if not api_key:
         return _urllib_post_json, _urllib_get_json
 
-    auth_header = f"Bearer {api_key}"
+    from urllib.parse import quote
+
+    encoded_key = quote(api_key, safe="")
+
+    def _append_api_key(url: str) -> str:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}api_key={encoded_key}"
 
     def authed_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(  # noqa: S310
-            url,
+            _append_api_key(url),
             data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": auth_header,
-            },
+            headers={"Content-Type": "application/json"},
             method="POST",
         )
         with urllib.request.urlopen(req) as resp:  # noqa: S310
@@ -138,7 +147,7 @@ def _make_default_http_seams(
 
     def authed_get(url: str) -> dict[str, Any]:
         req = urllib.request.Request(  # noqa: S310
-            url, headers={"Authorization": auth_header}
+            _append_api_key(url)
         )
         with urllib.request.urlopen(req) as resp:  # noqa: S310
             return dict(json.loads(resp.read().decode("utf-8")))
@@ -184,11 +193,11 @@ class RunPodProvider(ComputeProvider):
             are called (though the real RunPod API will return 401/403 without
             a valid key).
         http_post: Callable ``(url, body) -> dict`` for POST requests.
-            Defaults to an authenticated ``urllib`` implementation that injects
-            ``Authorization: Bearer <RUNPOD_API_KEY>`` on every request.
+            Defaults to an authenticated ``urllib`` implementation that appends
+            ``?api_key=<RUNPOD_API_KEY>`` to every request URL.
         http_get: Callable ``(url) -> dict`` for GET requests.
-            Defaults to an authenticated ``urllib`` implementation that injects
-            ``Authorization: Bearer <RUNPOD_API_KEY>`` on every request.
+            Defaults to an authenticated ``urllib`` implementation that appends
+            ``?api_key=<RUNPOD_API_KEY>`` to every request URL.
         sleep: Callable invoked between destroy-poll iterations.
             Defaults to :func:`time.sleep`.
         base_url: RunPod GraphQL base URL.
@@ -217,9 +226,9 @@ class RunPodProvider(ComputeProvider):
             creds: Credential provider for ``RUNPOD_API_KEY`` (HTTP auth) and
                 ``RUNPOD_TERMINATE_KEY`` (pod env injection).
             http_post: Injectable POST transport.  When ``None``, resolves to
-                an authenticated closure that injects ``Authorization: Bearer
-                <RUNPOD_API_KEY>`` on every request (or the bare urllib
-                callable when no key is available).
+                an authenticated closure that appends ``?api_key=<RUNPOD_API_KEY>``
+                to every request URL (or the bare urllib callable when no key
+                is available).
             http_get: Injectable GET transport.  Same auth behaviour as
                 ``http_post``.
             sleep: Injectable sleep used between destroy polls.
