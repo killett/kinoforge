@@ -56,11 +56,13 @@ _BASE_CFG: dict[str, Any] = {
         "hosted": {
             "provider": "fal",
             "endpoint": _ENDPOINT,
-            "model": _MODEL,
             "api_key_env": _API_KEY_ENV,
             "health_url": _HEALTH_URL,
         }
-    }
+    },
+    "spec": {
+        "model": _MODEL,
+    },
 }
 
 _DEFAULT_PROBE = ModelProfile(
@@ -167,19 +169,54 @@ def test_ac1_key_base_from_cfg() -> None:
 
 
 def test_ac6_key_base_exact_value() -> None:
-    """key_base(cfg) with model='ltx-2' returns exactly 'ltx-2'."""
+    """key_base(cfg) with spec.model='ltx-2' returns exactly 'ltx-2'."""
     cfg: dict[str, Any] = {
         "engine": {
             "hosted": {
-                "model": "ltx-2",
+                "provider": "fal",
+                "endpoint": "https://e",
                 "api_key_env": "K",
-                "endpoint": "x",
                 "health_url": "y",
             }
-        }
+        },
+        "spec": {
+            "model": "ltx-2",
+        },
     }
     engine = _make_engine()
     assert engine.key_base(cfg) == "ltx-2"
+
+
+def test_layer_m_key_base_raises_when_spec_model_missing() -> None:
+    """key_base(cfg) raises ConfigError when cfg['spec']['model'] is absent.
+
+    Bug catch: silently returning '' here lets every hosted config share
+    a single empty-string CapabilityKey base, poisoning the ModelProfile
+    cache across distinct hosted models.
+    """
+    import pytest
+
+    from kinoforge.core.errors import ConfigError
+
+    cfg_no_spec: dict[str, Any] = {
+        "engine": {
+            "hosted": {
+                "provider": "fal",
+                "endpoint": "https://e",
+                "api_key_env": "K",
+                "health_url": "y",
+            }
+        },
+    }
+    engine = _make_engine()
+    with pytest.raises(ConfigError) as exc_info:
+        engine.key_base(cfg_no_spec)
+    assert "spec.model" in str(exc_info.value)
+
+    cfg_empty_spec: dict[str, Any] = {**cfg_no_spec, "spec": {"model": ""}}
+    with pytest.raises(ConfigError) as exc_info:
+        engine.key_base(cfg_empty_spec)
+    assert "spec.model" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -796,12 +833,14 @@ engine:
   hosted:
     provider: fal
     endpoint: "https://fal.run/x"
-    model: "vendor/m"
+    api_key_env: "FAL_KEY"
     asset_paths:
       init_image: input.image_url
 lifecycle: {budget: 5.0}
 models:
   - {ref: "hf:org/m", kind: base, target: diffusion_models}
+spec:
+  model: "vendor/m"
 """
     import yaml
 
@@ -979,13 +1018,14 @@ engine:
   hosted:
     provider: p
     endpoint: "https://x.example/y"
-    model: "m"
     api_key_env: "X_KEY"
     prompt_body_key: input
 models:
   - {ref: "https://x.example/m.safetensors", kind: base, target: checkpoints}
 lifecycle:
   budget: 1.0
+spec:
+  model: "m"
 """
     cfg = Config.model_validate(_yaml.safe_load(yaml_doc))
     cfg_dict = cfg.model_dump()

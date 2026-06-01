@@ -35,6 +35,7 @@ from kinoforge.core import frames, registry
 from kinoforge.core.assets import find_asset, set_by_dot_path
 from kinoforge.core.errors import (
     AuthError,
+    ConfigError,
     FrameExtractionError,
     KinoforgeError,
     ValidationError,
@@ -415,18 +416,33 @@ class HostedAPIEngine(GenerationEngine):
     def key_base(self, cfg: dict[str, Any]) -> str:
         """Return the hosted model ID from *cfg*, used as the CapabilityKey base.
 
+        Reads ``cfg["spec"]["model"]`` (Layer M: previously read from
+        ``cfg["engine"]["hosted"]["model"]`` which has been removed).
+        Raises :class:`~kinoforge.core.errors.ConfigError` when the value
+        is absent or empty so that a typo or migration miss surfaces at
+        cache-identity derivation rather than silently collapsing
+        distinct hosted models to a single empty-string CapabilityKey.
+
         Args:
-            cfg: Runtime configuration dict containing
-                ``cfg["engine"]["hosted"]["model"]``.
+            cfg: Runtime configuration dict containing ``cfg["spec"]["model"]``.
 
         Returns:
             The model ID string, e.g. ``"ltx-2"``.
+
+        Raises:
+            ConfigError: ``cfg["spec"]["model"]`` is absent or empty.
         """
-        engine_block = cfg.get("engine", {})
-        hosted_cfg: dict[str, Any] = (
-            engine_block.get("hosted", {}) if isinstance(engine_block, dict) else {}
+        spec_block = cfg.get("spec", {})
+        model_id = (
+            str(spec_block.get("model", "")) if isinstance(spec_block, dict) else ""
         )
-        return str(hosted_cfg.get("model", ""))
+        if not model_id:
+            raise ConfigError(
+                "hosted engine requires spec.model at the top level of the "
+                "YAML config (Layer M moved the value out of "
+                "engine.hosted.model)"
+            )
+        return model_id
 
     # ------------------------------------------------------------------
     # GenerationEngine interface
