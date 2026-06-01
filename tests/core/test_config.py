@@ -1,5 +1,7 @@
 """Tests for the pydantic config loader."""
 
+import json
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -924,3 +926,99 @@ spec:
     cfg = load_config(cfg_path)
     dumped = cfg.model_dump()
     assert dumped["spec"]["model"] == "wan-ai/Wan2.2-T2V-A14B"
+
+
+# ---- Layer P: spec.graph_file loader convention ---------------------------
+
+
+def test_spec_graph_file_relative_resolves_against_yaml_parent_dir(
+    tmp_path: Path,
+) -> None:
+    """spec.graph_file with a relative path resolves against the YAML's parent dir."""
+    graph_payload = {"nodes": {"1": {"class_type": "LoadImage"}}}
+    (tmp_path / "graph.json").write_text(json.dumps(graph_payload))
+
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        textwrap.dedent(
+            """
+            engine:
+              kind: fake
+              precision: fp16
+            models:
+              - ref: hf:org/repo:weights.safetensors
+                kind: base
+                target: checkpoints
+            compute:
+              provider: local
+              image: scratch
+              requirements: {min_vram_gb: 0}
+              lifecycle: {idle_timeout: 10m, budget: 1.0}
+            spec:
+              graph_file: graph.json
+            """
+        ).strip()
+    )
+
+    cfg = load_config(yaml_path)
+
+    assert cfg.spec["graph"] == graph_payload
+    assert "graph_file" not in cfg.spec
+
+
+def test_spec_graph_file_both_set_raises(tmp_path: Path) -> None:
+    """Both spec.graph_file and spec.graph set → ConfigError naming both keys."""
+    (tmp_path / "graph.json").write_text("{}")
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        textwrap.dedent(
+            """
+            engine:
+              kind: fake
+              precision: fp16
+            models:
+              - {ref: hf:o/r:w, kind: base, target: checkpoints}
+            compute:
+              provider: local
+              image: scratch
+              requirements: {min_vram_gb: 0}
+              lifecycle: {idle_timeout: 10m, budget: 1.0}
+            spec:
+              graph_file: graph.json
+              graph: {nodes: {}}
+            """
+        ).strip()
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(yaml_path)
+    msg = str(excinfo.value)
+    assert "graph_file" in msg and "graph" in msg
+
+
+def test_spec_graph_file_not_found_raises_with_path(tmp_path: Path) -> None:
+    """Missing graph_file → ConfigError mentioning the resolved file path."""
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        textwrap.dedent(
+            """
+            engine:
+              kind: fake
+              precision: fp16
+            models:
+              - {ref: hf:o/r:w, kind: base, target: checkpoints}
+            compute:
+              provider: local
+              image: scratch
+              requirements: {min_vram_gb: 0}
+              lifecycle: {idle_timeout: 10m, budget: 1.0}
+            spec:
+              graph_file: nope.json
+            """
+        ).strip()
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(yaml_path)
+    msg = str(excinfo.value)
+    assert "nope.json" in msg
