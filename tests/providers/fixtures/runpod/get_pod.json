@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "captured_at": "PLACEHOLDER",
+    "git_sha": "PLACEHOLDER",
+    "operation": "get_pod",
+    "request_query": "{ pod(input: { podId: \"abc123\" }) { id desiredStatus imageName } }"
+  },
+  "response": {
+    "data": {
+      "pod": {
+        "id": "abc123",
+        "desiredStatus": "RUNNING",
+        "imageName": "runpod/pytorch:2.4.0"
+      }
+    }
+  }
+}
