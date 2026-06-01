@@ -1,9 +1,21 @@
 """Tests for the pydantic config loader."""
 
+from pathlib import Path
+
 import pytest
 
-from kinoforge.core.config import load_config, parse_duration
+from kinoforge.core.config import OutputConfig, load_config, parse_duration
 from kinoforge.core.errors import ConfigError
+
+MINIMAL_FAKE_ENGINE_YAML = """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+"""
 
 HOSTED = """
 engine:
@@ -838,16 +850,6 @@ spec:
 # Layer O Task 3 — OutputConfig pydantic block + Config.output field
 # ---------------------------------------------------------------------------
 
-MINIMAL_FAKE_ENGINE_YAML = """\
-engine:
-  kind: fake
-  precision: fp16
-models:
-  - ref: "https://example.com/fake.safetensors"
-    kind: base
-    target: checkpoints
-"""
-
 
 class TestOutputConfig:
     """Round-trip tests for the OutputConfig pydantic block and Config.output field."""
@@ -859,10 +861,6 @@ class TestOutputConfig:
         OutputConfig defaults wrong — any missing-output-block YAML would
         AttributeError or produce None instead of a usable OutputConfig.
         """
-        from pathlib import Path
-
-        from kinoforge.core.config import OutputConfig, load_config
-
         cfg = load_config(MINIMAL_FAKE_ENGINE_YAML)
         assert isinstance(cfg.output, OutputConfig)
         assert cfg.output.kind == "local"
@@ -876,10 +874,6 @@ class TestOutputConfig:
         drops unknown keys at the top level — the explicit block would silently
         vanish and the CLI would fall back to the default dir instead of /tmp/foo.
         """
-        from pathlib import Path
-
-        from kinoforge.core.config import load_config
-
         yaml_text = MINIMAL_FAKE_ENGINE_YAML + (
             "\noutput:\n  kind: local\n  dir: /tmp/foo\n  enabled: true\n"
         )
@@ -895,8 +889,6 @@ class TestOutputConfig:
         True even when the user writes enabled: false — the CLI would then always
         publish even when the user intended to disable output.
         """
-        from kinoforge.core.config import load_config
-
         yaml_text = MINIMAL_FAKE_ENGINE_YAML + "\noutput:\n  enabled: false\n"
         cfg = load_config(yaml_text)
         assert cfg.output.enabled is False
