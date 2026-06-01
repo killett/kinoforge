@@ -1,0 +1,7 @@
+{
+  "_kinoforge_note": "PLACEHOLDER — replaced by Layer P Task 7 live capture.",
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {"image": "input.png"}
+  }
+}

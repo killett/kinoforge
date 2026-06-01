@@ -63,7 +63,7 @@ def parse_duration(s: str) -> float:
 VALID_KIND_TARGETS: dict[str, set[str]] = {
     "base": {"diffusion_models", "checkpoints", "unet"},
     "lora": {"loras"},
-    "vae": {"vae"},
+    "vae": {"vae", "clip"},
 }
 
 KNOWN_ENGINES = {"comfyui", "diffusers", "hosted", "fake", "fal"}
@@ -111,9 +111,15 @@ class ComfyUIEngineConfig(BaseModel):
 
     Attributes:
         version: ComfyUI version string.
+        custom_nodes: List of custom-node entries, each carrying a ``"git"``
+            URL and an optional ``"ref"`` SHA pin.  Passed verbatim to
+            :func:`~kinoforge.engines.comfyui.nodes.clone_and_install`.
+            Defaults to an empty list so existing configs without this block
+            remain valid.
     """
 
     version: str
+    custom_nodes: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HostedEngineConfig(BaseModel):

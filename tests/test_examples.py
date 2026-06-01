@@ -365,6 +365,44 @@ def test_runpod_comfyui_wan_manifest_yaml_loads() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Layer P Task 6 — runpod-comfyui-wan YAML scaffold with graph_file resolution
+# ---------------------------------------------------------------------------
+
+
+def test_runpod_comfyui_wan_yaml_loads_with_graph_file_resolution() -> None:
+    """runpod-comfyui-wan.yaml loads cleanly; Task 1 graph_file resolver inlines JSON."""
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(Path("examples/configs/runpod-comfyui-wan.yaml"))
+
+    assert cfg.engine.kind == "comfyui"
+    assert cfg.compute is not None
+    assert cfg.compute.provider == "runpod"
+    # Task 1 graph_file -> graph resolution
+    assert isinstance(cfg.spec.get("graph"), dict)
+    assert "graph_file" not in cfg.spec
+    # graph dict matches the companion JSON file (proves Task 1 end-to-end)
+    graph_path = Path("examples/configs/runpod-comfyui-wan.graph.json")
+    import json
+
+    expected_graph = json.loads(graph_path.read_text(encoding="utf-8"))
+    assert cfg.spec["graph"] == expected_graph
+    # Models scaffolding: UNet (base), VAE, text encoder (vae/clip)
+    assert len(cfg.models) == 3
+    kinds = [m.kind for m in cfg.models]
+    assert kinds.count("base") == 1
+    assert kinds.count("vae") == 2
+    # custom_nodes SHA-pin scaffolding (Task 7 will resolve PINME -> real SHA)
+    comfyui_block = cfg.engine.comfyui
+    if comfyui_block is not None:
+        nodes = comfyui_block.custom_nodes
+        assert len(nodes) >= 2
+        for node in nodes:
+            assert "git" in node
+            assert node.get("ref") == "PINME"
+
+
+# ---------------------------------------------------------------------------
 # Layer O Task 8 — commented output: block round-trip tests
 # ---------------------------------------------------------------------------
 
