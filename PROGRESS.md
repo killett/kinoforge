@@ -163,11 +163,30 @@ Sub-spec + plan + 3 atomic commits + comment-refresh + tasks.json sync:
 - `d3a3d9d` — `docs(test/live): refresh stale comment` (post-review polish)
 Test count 836 → 846 (+9 net offline). typecheck/lint/pre-commit all-files clean. Spec+code reviewers both APPROVED on every task.
 
+**Layer P Task 7 item #2 (warm-pod reuse `instance=` + `tags=` kwargs) — ✅ CLOSED 2026-06-01 at HEAD `77ff4cd`.**
+Sub-spec + sub-plan + 3 atomic plan tasks + 2 review-fix passes:
+- Sub-spec: `docs/superpowers/specs/2026-06-01-layer-p-task7-item2-warm-reuse-design.md` (`e5a367a` + amendment `eb5caff` adding Q6 `tags=` passthrough)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-p-task7-item2-warm-reuse.md` (+ `.tasks.json`) (`a2ac3d1`)
+- `cb877de` — `feat(core/orchestrator): instance= + tags= kwargs for warm-pod reuse` (+8 tests; signature additions on `deploy_session`/`deploy`/`generate`; `_provision_instance_and_build_backend` tags param; cache-miss + cache-hit branches; `CapabilityMismatch` + `ValidationError` teardown guards)
+- `e090cbb` — `refactor(core/orchestrator): tighten test discrimination + helper docstrings` (T1 review fix; +2 tests: cache-hit branch + empty-dict; `JsonProfileCache.warm` public test seam; `_caller_supplied_instance` symmetry rename in `generate`)
+- `9ac506a` — `feat(core/batch): instance= + tags= kwarg parity for batch_generate` (+2 tests; pure kwarg threading)
+- `71cc54f` — `refactor(test/live): warm-reuse via orchestrator instance + tags kwargs` (smoke drops 91-line `if not warm:` block; cold-path pod-handle recovery via `find_instance_by_tag`)
+- `77ff4cd` — `refactor(test/live): drop orphaned timeout constants + reword cold-path recovery comment` (T3 review fix)
+
+Test count 846 → 858 (+12 net offline). typecheck/lint/pre-commit all-files clean. Spec+code reviewers APPROVED on every task; final whole-branch review APPROVED.
+
+**Key design decisions (item #2):**
+- `instance: Instance | None = None` + `tags: dict[str, str] | None = None` on all 3 entry points (`deploy_session`, `generate`, `batch_generate`); `deploy()` also gains `tags=` for future CLI parity.
+- When `instance=` supplied: orchestrator skips internal `create_instance`, calls `engine.provision(instance, cfg_dict)` (Layer I marker idempotent), builds backend via `engine.backend(instance, cfg_dict)`. Both cache-miss and cache-hit branches guarded.
+- Teardown skip: `CapabilityMismatch` (deploy_session) + `ValidationError` (generate) re-raise WITHOUT `destroy_instance` when caller-supplied instance. Caller owns lifecycle.
+- `tags=` merges over orchestrator built-ins `{kinoforge_engine, kinoforge_key}` (caller wins on collision); ignored when `instance=` supplied.
+- Smoke cold path: orchestrator stamps `_TAG_KEY=_TAG_VALUE` onto pod, then smoke recovers handle via `find_instance_by_tag` post-`generate` (race-safe in practice; reuse_check ran 1 step earlier). Enables iteration-N warm-reuse loop end-to-end.
+
 **Resume protocol:**
 1. `git checkout build/layer-p`
 2. Read the plan + spec.
-3. Read `tests/live/test_comfyui_wan_live.py` for current smoke shape (last edit: `d3a3d9d` — typed CapacityError catch + comment refresh).
-4. Pick up at Task 7 item #2 (warm-reuse `instance=` kwarg). See "Pending Task 7 work" below for the next decisions.
+3. Read `tests/live/test_comfyui_wan_live.py` for current smoke shape (last edit: `77ff4cd` — kwargs wired, cold-path recovery in place, orphan constants removed).
+4. Pick up at Task 7 item #3 (workflow API-JSON conversion via warm pod). See "Pending Task 7 work" below for the next decisions.
 
 **Branch state (commits on `build/layer-p` ahead of main):**
 | SHA | Task | Subject |
@@ -189,18 +208,24 @@ Test count 836 → 846 (+9 net offline). typecheck/lint/pre-commit all-files cle
 | `4a7bfe5` | T7-item1 | refactor(test/live): swap ValueError sniff to typed CapacityError |
 | `d3a3d9d` | T7-item1 | docs(test/live): refresh stale comment |
 | `e286f24` | T7-item1 | chore(plan): sync tasks.json — all complete |
+| `dfb6216` | T7-item1 | docs(progress): item #1 closure snapshot |
+| `e5a367a` | T7-item2 | docs(spec): warm-pod reuse design |
+| `eb5caff` | T7-item2 | docs(spec): amendment — tags= kwarg passthrough |
+| `a2ac3d1` | T7-item2 | docs(plan): warm-pod reuse implementation plan |
+| `cb877de` | T7-item2 | feat(core/orchestrator): instance= + tags= kwargs for warm-pod reuse |
+| `e090cbb` | T7-item2 | refactor(core/orchestrator): tighten test discrimination + helper docstrings |
+| `9ac506a` | T7-item2 | feat(core/batch): instance= + tags= kwarg parity for batch_generate |
+| `71cc54f` | T7-item2 | refactor(test/live): warm-reuse via orchestrator instance + tags kwargs |
+| `77ff4cd` | T7-item2 | refactor(test/live): drop orphaned timeout constants + reword comment |
 
-**Test counts:** offline suite 823 pre-Layer-P → 836 post-Task-6 → 846 post-Task-7-item-1 (+9 net offline tests: 4 provider CapacityError + 5 orchestrator offer-retry). Live test in `tests/live/test_comfyui_wan_live.py` skipped without creds.
+**Test counts:** offline suite 823 pre-Layer-P → 836 post-Task-6 → 846 post-Task-7-item-1 → 858 post-Task-7-item-2 (+12 net offline tests: 8 orchestrator + 2 batch + 1 cache-hit branch + 1 empty-dict regression). Live test in `tests/live/test_comfyui_wan_live.py` skipped without creds.
 
 **Cost burn so far:** ~$0.013 (one 2s failed create_pod + one 2-min A40 that was promptly destroyed). Budget cap remaining: $1.99.
 
 **Pending Task 7 work (in priority order):**
 
 1. ~~**Production bug: `orchestrator.deploy` picks `offers[0]` without capacity retry**~~ **CLOSED** by Task 7 item #1 sub-plan (commits `00abf8d` + `d236f60` + `4a7bfe5`). `_create_with_offer_retry` helper wired into both `deploy()` and `_provision_instance_and_build_backend`. Provider raises typed `CapacityError`. Smoke catches typed exc. 9 net new regression tests.
-2. **Architectural mismatch: smoke calls `provider.create_instance` AND `orchestrator.generate` creates ANOTHER instance.** `deploy_session` has no `instance=` kwarg to short-circuit create. Two options:
-   - (a) Add `instance=None` kwarg to `deploy_session` + bubble to `generate`; when provided, skip the internal create. Production change. Enables warm-pod reuse via `find_instance_by_tag` + KEEP_POD ergonomic.
-   - (b) Drop manual create from smoke; let orchestrator handle everything; KEEP_POD just gates finally-destroy; warm reuse deferred. Simpler but loses the KEEP_POD cost-saving point.
-   - Recommend (a) — Layer P's whole iteration economics depend on warm reuse.
+2. ~~**Architectural mismatch: smoke calls `provider.create_instance` AND `orchestrator.generate` creates ANOTHER instance.**~~ **CLOSED** by Task 7 item #2 sub-plan (commits `cb877de` + `e090cbb` + `9ac506a` + `71cc54f` + `77ff4cd`). Option (a) shipped: `deploy_session` / `generate` / `batch_generate` gain `instance: Instance | None = None` + `tags: dict[str, str] | None = None` kwargs. Smoke's manual `if not warm:` block deleted; warm + cold paths both flow through `orchestrator.generate(instance=..., tags=...)`. Cold-path pod handle recovered post-`generate` via `find_instance_by_tag`. Q6 amendment added `tags=` passthrough so cold-path-created pods carry `_TAG_KEY` for the next iteration's warm-discovery. 12 net new offline regression tests.
 3. **Workflow format conversion**: `examples/configs/runpod-comfyui-wan.graph.json` is a placeholder. Kijai's `wanvideo_2_1_14B_I2V_example_03.json` (downloaded to `/tmp/wan21_i2v_workflow.json`) is in ComfyUI **desktop** format (26 nodes with `nodes`/`links` arrays); ComfyUI `/prompt` needs **API** format (`{id: {class_type, inputs}}`). Two paths:
    - (a) Hand-author conversion script (~200 LOC; needs node-schema awareness — hard to do without `/object_info`).
    - (b) Spin up a warm pod, load workflow via ComfyUI UI on the proxy URL, save as API JSON, commit. Costs ~$0.05 for the round trip.
