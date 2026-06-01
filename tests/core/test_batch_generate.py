@@ -47,7 +47,13 @@ from kinoforge.stores.local import LocalArtifactStore
 from tests.core._fakes import _BatchSpyEngine, _ProfileCacheCallCounter
 
 # Reuse compute-cfg helper from existing orchestrator tests.
-from tests.core.test_orchestrator import _compute_cfg, _probe_profile
+from tests.core.test_orchestrator import (
+    _compute_cfg,
+    _CountingFakeEngine,
+    _InstanceSupplyProvider,
+    _make_premade_instance,
+    _probe_profile,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -657,4 +663,87 @@ def test_batch_generate_threads_sink_with_batch_id_namespace(tmp_path: Path) -> 
     assert namespaces == {"batch-20260531-X"}, (
         f"every publish call must carry namespace='batch-20260531-X'; "
         f"saw namespaces={namespaces!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layer P Task 7 item #2: instance= + tags= kwarg parity with generate()
+# ---------------------------------------------------------------------------
+
+
+def test_batch_generate_with_supplied_instance_skips_create(tmp_path: Path) -> None:
+    """instance= supplied → batch_generate does NOT call provider.create_instance.
+
+    Bug catch: forgetting to thread instance= into the inner
+    deploy_session call would silently re-create a parallel pod once
+    per batch even though the caller supplied a warm one — the entire
+    warm-reuse loop collapses for batches. We assert the capacity hook
+    is never touched AND that every entry still completes ok against
+    the caller-supplied Instance, proving the kwarg is wired all the
+    way through to the per-entry pipeline.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    manifest = _three_entry_manifest()
+
+    result = batch_generate(
+        cfg,
+        manifest,
+        store=store,
+        batch_id="batch-itest-7b2",
+        provider=spy,
+        engine=engine,
+        state_dir=tmp_path / "_state",
+        instance=premade,
+    )
+
+    assert spy.create_calls == []
+    assert spy.find_offers_calls == 0
+    # provision() runs once at deploy_session entry, on the supplied pod.
+    assert engine.provision_calls == [premade]
+    assert len(result.outcomes) == len(manifest.entries)
+    assert all(o.status == "ok" for o in result.outcomes), [
+        (o.run_id, o.status, o.error) for o in result.outcomes
+    ]
+
+
+def test_batch_generate_threads_tags_kwarg_to_deploy_session() -> None:
+    """tags= kwarg threads into the inner deploy_session call verbatim.
+
+    Bug catch: if batch_generate accepts tags= but drops it before
+    calling deploy_session, the cold-path InstanceSpec.tags merge
+    silently loses caller tags — operators discover the gap only when
+    finding pods by tag fails in production. We pin the wiring by
+    patching deploy_session and asserting the kwarg arrives unchanged.
+    """
+    cfg = _compute_cfg()
+    manifest = _three_entry_manifest()
+    caller_tags = {"kinoforge.layer": "layer-p-batch-smoke", "mode": "pod"}
+
+    with patch("kinoforge.core.batch.deploy_session") as mock_ds:
+        # Make the context manager raise immediately on __enter__ so we
+        # short-circuit before any per-entry work runs. We only care
+        # that the kwargs reach deploy_session.
+        mock_ds.return_value.__enter__.side_effect = RuntimeError("stop-here")
+
+        with pytest.raises(RuntimeError, match="stop-here"):
+            batch_generate(
+                cfg,
+                manifest,
+                store=LocalArtifactStore(Path("/tmp/unused-7b2")),
+                batch_id="batch-tags-7b2",
+                tags=caller_tags,
+            )
+
+    assert mock_ds.call_count == 1
+    kwargs = mock_ds.call_args.kwargs
+    assert kwargs.get("tags") == caller_tags, (
+        f"tags= kwarg must propagate unchanged to deploy_session; "
+        f"got kwargs.tags={kwargs.get('tags')!r}"
+    )
+    assert kwargs.get("instance") is None, (
+        "instance= kwarg should default to None when not supplied"
     )
