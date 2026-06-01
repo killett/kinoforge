@@ -224,15 +224,13 @@ def test_find_offers_returns_all_when_no_filter_needed() -> None:
     assert len(offers) == 2
 
 
-def test_find_offers_tolerates_null_lowest_price() -> None:
-    """Layer N regression — gpuTypes entries with lowestPrice=null don't crash.
+def test_find_offers_skips_null_priced_entries() -> None:
+    """Layer N regression — gpuTypes with null prices are filtered out.
 
-    Real RunPod returns ``lowestPrice: null`` for out-of-stock / unavailable
-    GPUs.  ``gpu.get("lowestPrice", {})`` returns ``None`` when the key is
-    present with a null value (vs missing), so the previous code crashed
-    with ``AttributeError: 'NoneType' object has no attribute 'get'``.
-    Cost falls back to 0.0 for these entries; they get filtered out by
-    ``max_cost_rate_usd_per_hr`` downstream if a budget is set.
+    Real RunPod returns ``lowestPrice: null`` (or both nested fields null)
+    for GPU types with no currently-available capacity.  ``find_offers``
+    drops these silently — a $0 offer would always win ``max_cost_rate``
+    filtering and the caller would hit "no instances available" at create.
     """
     http_post = HttpPostSpy(
         response={
@@ -242,13 +240,25 @@ def test_find_offers_tolerates_null_lowest_price() -> None:
                         "id": "NVIDIA H100 PCIe",
                         "displayName": "H100",
                         "memoryInGb": 80,
-                        "lowestPrice": None,  # out-of-stock
+                        "lowestPrice": None,  # no capacity
+                    },
+                    {
+                        "id": "NVIDIA RTX A5000",
+                        "displayName": "RTX A5000",
+                        "memoryInGb": 24,
+                        "lowestPrice": {
+                            "minimumBidPrice": None,
+                            "uninterruptablePrice": None,
+                        },  # capacity check returned both null
                     },
                     {
                         "id": "NVIDIA A100 80GB PCIe",
                         "displayName": "A100",
                         "memoryInGb": 80,
-                        "lowestPrice": {"uninterruptablePrice": 1.89},
+                        "lowestPrice": {
+                            "minimumBidPrice": 1.45,
+                            "uninterruptablePrice": 1.89,
+                        },
                     },
                 ]
             }
@@ -258,9 +268,9 @@ def test_find_offers_tolerates_null_lowest_price() -> None:
 
     offers = provider.find_offers(HardwareRequirements(min_vram_gb=1))
 
-    # Both GPUs survive (no cost filter set); the null-price one has cost=0.
     by_id = {o.gpu_type: o for o in offers}
-    assert by_id["NVIDIA H100 PCIe"].cost_rate_usd_per_hr == 0.0
+    assert "NVIDIA H100 PCIe" not in by_id, "null-price offer leaked through"
+    assert "NVIDIA RTX A5000" not in by_id, "both-null-price offer leaked through"
     assert by_id["NVIDIA A100 80GB PCIe"].cost_rate_usd_per_hr == 1.89
 
 

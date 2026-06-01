@@ -256,15 +256,20 @@ class RunPodProvider(ComputeProvider):
         for gpu in gpu_types:
             gpu_id: str = str(gpu.get("id", ""))
             vram_gb: int = int(gpu.get("memoryInGb", 0))
-            # Real RunPod returns lowestPrice=null for out-of-stock / unavailable
-            # GPUs; ``gpu.get(..., {})`` returns None when the key is present
-            # but its value is null, so a safer ``or {}`` is required.
-            pricing: dict[str, Any] = gpu.get("lowestPrice") or {}
-            cost: float = float(
-                pricing.get("uninterruptablePrice")
-                or pricing.get("minimumBidPrice")
-                or 0.0
-            )
+            # RunPod's lowestPrice resolver returns null for both fields when
+            # a GPU type has no currently-available instances.  Skip those —
+            # otherwise we would happily return them as $0 offers and the
+            # caller would attempt a create that fails with "no instances
+            # available".
+            pricing: dict[str, Any] | None = gpu.get("lowestPrice")
+            if not pricing:
+                continue
+            uninterruptable = pricing.get("uninterruptablePrice")
+            min_bid = pricing.get("minimumBidPrice")
+            price = uninterruptable if uninterruptable is not None else min_bid
+            if price is None:
+                continue
+            cost: float = float(price)
             raw_offers.append(
                 Offer(
                     id=gpu_id,
@@ -552,9 +557,15 @@ class RunPodProvider(ComputeProvider):
 # GraphQL query / mutation strings
 # ---------------------------------------------------------------------------
 
+# RunPod's `lowestPrice` resolver returns null for ALL fields without an
+# input argument.  Passing `(input: { gpuCount: 1 })` causes the resolver
+# to return real prices for currently-available GPU types and null for
+# unavailable ones — `find_offers` filters out null-priced offers so the
+# caller never tries to create a pod on a GPU that has no live capacity.
 _GPU_TYPES_QUERY: str = (
     "{ gpuTypes { id displayName memoryInGb secureCloud communityCloud "
-    "lowestPrice { minimumBidPrice uninterruptablePrice } } }"
+    "lowestPrice(input: { gpuCount: 1 }) "
+    "{ minimumBidPrice uninterruptablePrice } } }"
 )
 
 _LIST_PODS_QUERY: str = "{ myself { pods { id desiredStatus imageName } } }"
