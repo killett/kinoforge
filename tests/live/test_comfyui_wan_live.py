@@ -204,10 +204,11 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
             )
 
             # --- [phase=create_instance] ------------------------------
-            # RunPod intermittently returns "This machine does not have
-            # the resources to deploy your pod" when the chosen GPU type
-            # has no current capacity. Iterate offers in their already-
-            # sorted-by-gpu_preference order until one succeeds.
+            # RunPod intermittently has no current host capacity for the
+            # chosen GPU type; RunPodProvider surfaces that as a typed
+            # CapacityError (raised on the "resources to deploy" mutation
+            # response). Iterate offers in their already-sorted-by-
+            # gpu_preference order until one succeeds.
             _log.info("[phase=create_instance]")
             chosen = None
             instance = None
