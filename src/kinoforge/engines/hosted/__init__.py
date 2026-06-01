@@ -202,6 +202,7 @@ class HostedAPIBackend(GenerationBackend):
         url_path: str = "",
         asset_paths: dict[str, str] | None = None,
         prompt_body_key: str | None = "prompt",
+        auth_token: str | None = None,
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -223,6 +224,11 @@ class HostedAPIBackend(GenerationBackend):
             prompt_body_key: Top-level body key written from
                 ``resolve_prompt(job)`` when no explicit ``spec["prompt"]``
                 is provided. ``None`` / empty disables routing entirely.
+            auth_token: Optional bearer token populated onto the returned
+                ``Artifact.headers`` by :meth:`result` as
+                ``Authorization: Bearer <token>``. An empty/``None`` value
+                causes ``result`` to leave headers empty — appropriate for
+                shims that serve unauthenticated artifact URLs.
         """
         self._http_post = http_post
         self._http_get = http_get
@@ -232,6 +238,7 @@ class HostedAPIBackend(GenerationBackend):
         self._url_path = url_path
         self._asset_paths: dict[str, str] = dict(asset_paths or {})
         self._prompt_body_key: str | None = prompt_body_key
+        self._auth_token: str = auth_token or ""
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -311,8 +318,16 @@ class HostedAPIBackend(GenerationBackend):
             if data.get("status") == "done":
                 filename = str(data.get("filename", ""))
                 artifact_url = _walk_dot_path(data, self._url_path)
+                headers: dict[str, str] = (
+                    {"Authorization": f"Bearer {self._auth_token}"}
+                    if self._auth_token
+                    else {}
+                )
                 return Artifact(
-                    filename=filename, url=artifact_url, meta={"job_id": job_id}
+                    filename=filename,
+                    url=artifact_url,
+                    meta={"job_id": job_id},
+                    headers=headers,
                 )
             self._sleep(1.0)
         raise TimeoutError(
@@ -542,6 +557,15 @@ class HostedAPIEngine(GenerationEngine):
             else None
         )
         self._prompt_body_key = prompt_body_key
+
+        # Layer M: re-resolve the API token at backend-construction time so the
+        # token's lifecycle matches the backend's; HostedAPIBackend.result
+        # populates Artifact.headers with `Authorization: Bearer <token>` when
+        # the token is non-empty. Empty/None token preserves the pre-Layer-M
+        # no-headers behavior for shims that serve unauthenticated artifact URLs.
+        key_name: str = str(hosted_cfg.get("api_key_env", ""))
+        auth_token: str | None = self._creds.get(key_name) if key_name else None
+
         return HostedAPIBackend(
             http_post=self._http_post,
             http_get=self._http_get,
@@ -551,6 +575,7 @@ class HostedAPIEngine(GenerationEngine):
             url_path=url_path,
             asset_paths=asset_paths,
             prompt_body_key=prompt_body_key,
+            auth_token=auth_token,
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
