@@ -17,6 +17,7 @@ namespace into each per-entry GenerateClipStage.
 
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -590,6 +591,9 @@ def test_batch_generate_default_sink_is_none(tmp_path: Path) -> None:
     Bug catch: adding sink=None as a default kwarg must not alter the
     existing batch behaviour — no publish calls are made and every entry
     still completes with status="ok".
+
+    Also locks the sink parameter default to None so a future regression
+    that flipped the default to a real sink would fail here.
     """
     cfg = _compute_cfg()
     store = LocalArtifactStore(tmp_path)
@@ -609,6 +613,12 @@ def test_batch_generate_default_sink_is_none(tmp_path: Path) -> None:
     assert isinstance(result, BatchResult)
     assert len(result.outcomes) == 3, result.outcomes
     assert all(o.status == "ok" for o in result.outcomes), result.outcomes
+
+    # Lock down: sink parameter defaults to None.
+    # A future regression that flipped the default to a real sink would fail here.
+    sig = inspect.signature(batch_generate)
+    sink_param = sig.parameters["sink"]
+    assert sink_param.default is None
 
 
 def test_batch_generate_threads_sink_with_batch_id_namespace(tmp_path: Path) -> None:
