@@ -31,7 +31,7 @@ from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import registry
-from kinoforge.core.errors import TeardownError
+from kinoforge.core.errors import CapacityError, TeardownError
 from kinoforge.core.interfaces import (
     ComputeProvider,
     CredentialProvider,
@@ -501,10 +501,16 @@ class RunPodProvider(ComputeProvider):
         resp = self._http_post(self._base_url, body)
         if "errors" in resp:
             error_msgs = [str(e.get("message", e)) for e in resp.get("errors", [])]
-            raise ValueError(
-                "RunPod create-pod mutation returned errors:\n"
-                + "\n".join(f"  - {m}" for m in error_msgs)
+            assembled = "RunPod create-pod mutation returned errors:\n" + "\n".join(
+                f"  - {m}" for m in error_msgs
             )
+            value_error = ValueError(assembled)
+            joined_lower = "\n".join(error_msgs).lower()
+            if "resources to deploy" in joined_lower:
+                raise CapacityError(
+                    f"RunPod has no current capacity for {gpu_type_id!r}: {assembled}"
+                ) from value_error
+            raise value_error
         pod_data: dict[str, Any] = resp.get("data", {}).get(
             "podFindAndDeployOnDemand", {}
         )
