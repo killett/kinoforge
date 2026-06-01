@@ -112,7 +112,29 @@ def test_recording_seam_dispatches_to_named_files(tmp_path: Path, caplog: Any) -
         create["response"]["data"]["podFindAndDeployOnDemand"]["apiKey"] == "<REDACTED>"
     )
     assert create["_meta"]["operation"] == "create_pod"
-    assert (tmp_path / "gpu_types.json").exists()
+    gpu = json.loads((tmp_path / "gpu_types.json").read_text())
+    assert gpu["_meta"]["operation"] == "gpu_types"
+    assert gpu["response"]["data"]["gpuTypes"][0]["id"] == "g1"
     unknowns = list(tmp_path.glob("unknown_*.json"))
     assert len(unknowns) == 1
     assert any("unrecognized" in rec.message.lower() for rec in caplog.records)
+
+
+def test_recording_seam_redacts_credentials_in_query_string(tmp_path: Path) -> None:
+    """A GET URL with ?api_key=… must not leak the secret into _meta.request_query."""
+
+    def fake_get(url: str) -> dict[str, Any]:
+        return {"data": {"gpuTypes": []}}
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {}
+
+    seam = _RecordingHTTPSeam(fake_post, fake_get, out_dir=tmp_path)
+    seam.http_get(
+        "https://api.runpod.io/graphql?query={ gpuTypes { id } }&api_key=sk-leaky-leak"
+    )
+    seam.flush()
+
+    payload = json.loads((tmp_path / "gpu_types.json").read_text())
+    assert "sk-leaky-leak" not in payload["_meta"]["request_query"]
+    assert "<REDACTED>" in payload["_meta"]["request_query"]

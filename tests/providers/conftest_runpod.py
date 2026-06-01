@@ -24,15 +24,21 @@ from typing import Any
 
 _FIXTURE_DIR: Path = Path(__file__).parent / "fixtures" / "runpod"
 
-_REDACT_KEY_RE: re.Pattern[str] = re.compile(
-    r"(?i)(?:^|_|-)(token|key|secret|password)(?:$|_|-)|^(token|key|secret|password)s?$",
-)
-
 # Splits a camelCase / snake_case / kebab-case identifier into lower-cased
 # segments so that "apiKey" → ["api", "key"] and "checkpoint" → ["checkpoint"].
 _WORD_SPLIT_RE: re.Pattern[str] = re.compile(
     r"[_\-]|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])"
 )
+
+_REDACT_QUERY_PARAM_RE: re.Pattern[str] = re.compile(
+    r"(?i)([?&](?:[a-z_-]*(?:token|key|secret|password)[a-z_-]*)=)([^&\s]+)",
+)
+
+
+def _redact_query_string(s: str) -> str:
+    """Scrub `?token=…` / `&api_key=…` style credentials from a query string."""
+    return _REDACT_QUERY_PARAM_RE.sub(r"\1<REDACTED>", s)
+
 
 _OPERATION_TABLE: list[tuple[str, str]] = [
     ("gpuTypes {", "gpu_types.json"),
@@ -161,7 +167,7 @@ class _RecordingHTTPSeam:
                 "_meta": {
                     "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "operation": filename.removesuffix(".json"),
-                    "request_query": query[:200],
+                    "request_query": _redact_query_string(query)[:200],
                 },
                 "response": _redact(response),
             }
