@@ -982,3 +982,60 @@ def _extract_env(body: dict[str, Any]) -> dict[str, str]:
                     if result is not None:
                         return result
     return {}
+
+
+# ---------------------------------------------------------------------------
+# AC10: find_instance_by_tag
+# ---------------------------------------------------------------------------
+
+
+def test_find_instance_by_tag_returns_matching_ready_pod() -> None:
+    """Ready instance with matching tag → returned."""
+    provider = RunPodProvider(http_post=HttpPostSpy())
+    matching = Instance(
+        id="pod-abc",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        tags={"kinoforge.layer": "layer-p-smoke", "mode": "pod"},
+    )
+    provider.list_instances = lambda: [matching]  # type: ignore[method-assign]
+
+    result = provider.find_instance_by_tag("kinoforge.layer", "layer-p-smoke")
+
+    assert result is not None
+    assert result.id == "pod-abc"
+
+
+def test_find_instance_by_tag_skips_non_ready() -> None:
+    """Matching tag but status != 'ready' → None."""
+    provider = RunPodProvider(http_post=HttpPostSpy())
+    starting = Instance(
+        id="pod-xyz",
+        provider="runpod",
+        status="starting",
+        created_at=0.0,
+        tags={"kinoforge.layer": "layer-p-smoke"},
+    )
+    provider.list_instances = lambda: [starting]  # type: ignore[method-assign]
+
+    result = provider.find_instance_by_tag("kinoforge.layer", "layer-p-smoke")
+
+    assert result is None
+
+
+def test_find_instance_by_tag_no_match_returns_none() -> None:
+    """No instance carries the requested tag → None."""
+    provider = RunPodProvider(http_post=HttpPostSpy())
+    other = Instance(
+        id="pod-other",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        tags={"kinoforge.layer": "different-layer"},
+    )
+    provider.list_instances = lambda: [other]  # type: ignore[method-assign]
+
+    result = provider.find_instance_by_tag("kinoforge.layer", "layer-p-smoke")
+
+    assert result is None

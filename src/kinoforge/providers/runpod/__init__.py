@@ -340,6 +340,27 @@ class RunPodProvider(ComputeProvider):
         )
         return [_pod_to_instance(p) for p in pods]
 
+    def find_instance_by_tag(self, key: str, value: str) -> Instance | None:
+        """Return the first 'ready' instance whose tags[key] == value, else None.
+
+        Used by long-running test loops (Layer P live smoke) to discover and
+        reuse warm pods across iterations, avoiding repeated cold-start costs.
+        Production code paths do not call this.
+
+        Args:
+            key: Tag dict key to match (e.g. ``"kinoforge.layer"``).
+            value: Required value at that key (e.g. ``"layer-p-smoke"``).
+
+        Returns:
+            The first ``Instance`` from :meth:`list_instances` with
+            ``status == "ready"`` and ``tags.get(key) == value``, or ``None``
+            if no such instance exists.
+        """
+        for inst in self.list_instances():
+            if inst.status == "ready" and inst.tags.get(key) == value:
+                return inst
+        return None
+
     def stop_instance(self, instance_id: str) -> None:
         """Stop a running RunPod pod (pause billing).
 
