@@ -32,6 +32,7 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.providers.runpod import RunPodProvider
 from kinoforge.providers.runpod.selfterm import RENDER
+from tests.providers.conftest_runpod import _load_fixture
 
 # ---------------------------------------------------------------------------
 # Helpers / fakes
@@ -122,39 +123,12 @@ class SleepSpy:
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_GPU_LIST_RESPONSE: dict[str, Any] = {
-    "data": {
-        "gpuTypes": [
-            {
-                "id": "NVIDIA RTX A4000",
-                "displayName": "RTX A4000",
-                "memoryInGb": 16,
-                "secureCloud": True,
-                "communityCloud": True,
-                "lowestPrice": {"minimumBidPrice": 0.24, "uninterruptablePrice": 0.32},
-            },
-            {
-                "id": "NVIDIA A100 80GB PCIe",
-                "displayName": "A100 80GB",
-                "memoryInGb": 80,
-                "secureCloud": True,
-                "communityCloud": True,
-                "lowestPrice": {"minimumBidPrice": 1.45, "uninterruptablePrice": 1.89},
-            },
-        ]
-    }
-}
+# Real-API captures loaded at import time.  Layer N Task 4 committed these.
+_GPU_LIST_RESPONSE: dict[str, Any] = _load_fixture("gpu_types.json")
+_POD_CREATE_RESPONSE: dict[str, Any] = _load_fixture("create_pod.json")
 
-_POD_CREATE_RESPONSE: dict[str, Any] = {
-    "data": {
-        "podFindAndDeployOnDemand": {
-            "id": "pod-abc123",
-            "desiredStatus": "RUNNING",
-            "imageName": "runpod/pytorch:2.1",
-        }
-    }
-}
-
+# No live-smoke capture for serverless mode (Layer O candidate).
+# Hand-crafted dict kept intentionally as the one allowed exception.
 _SERVERLESS_CREATE_RESPONSE: dict[str, Any] = {
     "data": {
         "saveTemplate": {
@@ -207,8 +181,9 @@ def test_find_offers_fetches_gpu_list_and_filters() -> None:
     offers = provider.find_offers(reqs)
 
     assert len(http_post.calls) == 1, "expected exactly one POST call"
-    # Only A100 (80 GB) meets min_vram_gb=48
-    assert len(offers) == 1
+    # Real fixture: 46 GPU types, 7 have vram>=48 GB and uninterruptablePrice<=2.20
+    assert len(offers) == 7
+    # A100 80GB PCIe is the first non-null-priced 80GB entry in the fixture
     assert offers[0].gpu_type == "NVIDIA A100 80GB PCIe"
     assert offers[0].vram_gb == 80
 
@@ -221,7 +196,8 @@ def test_find_offers_returns_all_when_no_filter_needed() -> None:
     reqs = HardwareRequirements(min_vram_gb=1, max_cost_rate_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
 
-    assert len(offers) == 2
+    # Real fixture: 25 of 46 GPU types have a non-null uninterruptablePrice ≤ $10/hr
+    assert len(offers) == 25
 
 
 def test_find_offers_skips_null_priced_entries() -> None:
@@ -413,7 +389,7 @@ def test_create_pod_returns_instance_starting(pod_spec: InstanceSpec) -> None:
 
     assert inst.provider == "runpod"
     assert inst.status == "starting"
-    assert inst.id == "pod-abc123"
+    assert inst.id == "ia66l3rlto5x66"  # real id from create_pod.json fixture
 
 
 # ---------------------------------------------------------------------------
