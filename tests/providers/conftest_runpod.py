@@ -358,6 +358,30 @@ class CredentialLeakError(Exception):
         return self._format()
 
 
+def _safe_log(
+    logger: logging.Logger,
+    level: int,
+    msg: str,
+    *args: Any,
+) -> None:
+    """Emit a log record after running every string arg through :func:`_redact_string`.
+
+    Non-string args pass through unchanged.  Use in place of
+    ``logger.warning(msg, arg1, arg2)`` whenever a credential could appear in
+    any of the substitution args.
+
+    Args:
+        logger: Standard :class:`logging.Logger` instance.
+        level: Log level (e.g. ``logging.WARNING``).
+        msg: Printf-style format string.  NOT redacted itself — format
+            strings are author-controlled.
+        *args: Substitution args.  Each str is redacted via
+            :func:`_redact_string`; other types are forwarded as-is.
+    """
+    safe_args = tuple(_redact_string(a) if isinstance(a, str) else a for a in args)
+    logger.log(level, msg, *safe_args)
+
+
 def _load_fixture(name: str) -> dict[str, Any]:
     """Load the ``response`` payload of a committed real-API capture.
 
@@ -435,7 +459,9 @@ def _runpod_dispatch(url: str, body: dict[str, Any] | None) -> str:
     if "podTerminate" in query:
         return "terminate_pod.json"
     sha = hashlib.sha256(query.encode()).hexdigest()[:8]
-    _log.warning(
+    _safe_log(
+        _log,
+        logging.WARNING,
         "RecordingHTTPSeam: unrecognized GraphQL query, writing to "
         "unknown_%s.json (query fragment: %s)",
         sha,
@@ -474,7 +500,9 @@ def _comfy_dispatch(url: str, body: dict[str, Any] | None) -> str:
     if _COMFY_VIEW_RE.search(url):
         return "view.json"
     sha = hashlib.sha256(url.encode()).hexdigest()[:8]
-    _log.warning(
+    _safe_log(
+        _log,
+        logging.WARNING,
         "RecordingHTTPSeam: unrecognized ComfyUI URL, writing to "
         "unknown_%s.json (url: %s)",
         sha,
