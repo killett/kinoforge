@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from kinoforge.core.continuity import inject_tail_frame
 from kinoforge.core.interfaces import (
@@ -27,6 +28,7 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.core.strategy import decide
 from kinoforge.core.validation import validate_request
+from kinoforge.outputs.base import OutputSink
 from kinoforge.stores.base import ArtifactStore
 
 
@@ -77,6 +79,15 @@ class GenerateClipStage:
             which builds a :class:`urllib.request.Request` with the artifact's
             headers and reads via ``urlopen``.  Override in tests to avoid real
             network I/O while still exercising the full pipeline path.
+        sink: Optional user-facing publish target.  When ``None`` (the
+            default) the stage behaves identically to pre-Layer-O —
+            ``store.put_bytes`` is the only persistence side effect.
+            When non-None, the stage calls ``sink.publish(payload,
+            prompt=segments[-1].prompt, extension=ext,
+            namespace=self.namespace)`` after ``store.put_bytes`` returns.
+        namespace: Optional sub-directory grouping for the sink, used by
+            ``batch_generate`` to namespace per-batch publishes under
+            ``<output_dir>/<batch_id>/``.
     """
 
     profile: ModelProfile
@@ -88,6 +99,8 @@ class GenerateClipStage:
     base_spec: dict  # type: ignore[type-arg]
     engine: GenerationEngine
     http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None
+    sink: OutputSink | None = None
+    namespace: str | None = None
 
     def run(
         self,
@@ -174,7 +187,24 @@ class GenerateClipStage:
 
         # Persist the bytes derived from the engine's Artifact.
         payload = self._artifact_bytes(last)
-        return self.store.put_bytes(self.run_id, last.filename, payload)
+        stored = self.store.put_bytes(self.run_id, last.filename, payload)
+
+        # Layer O — also publish to the user-facing sink if one is wired.
+        # Read prompt from the LAST segment so chained continuity (i2v)
+        # uses the final segment's prompt when it eventually grows past
+        # the seg-0-only case; today single-segment is the only path
+        # that publishes anything meaningful, so this is also correct
+        # for it.
+        if self.sink is not None:
+            ext = Path(last.filename).suffix or ".bin"
+            self.sink.publish(
+                payload,
+                prompt=segments[-1].prompt,
+                extension=ext,
+                namespace=self.namespace,
+            )
+
+        return stored
 
     def _artifact_bytes(self, artifact: Artifact) -> bytes:
         """Derive bytes from the engine's Artifact.

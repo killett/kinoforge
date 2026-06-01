@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -1162,3 +1163,155 @@ def test_layer_m_e2e_hosted_auth_artifact_persisted(tmp_path: Path) -> None:
     assert persisted.uri  # non-empty store URI
     stored_bytes = stage.store.get_bytes(persisted.uri)
     assert stored_bytes == b"AUTHED-DOWNLOADED-BYTES"
+
+
+# ---------------------------------------------------------------------------
+# Layer O Task 4 — GenerateClipStage sink + namespace integration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _SpyOutputSink:
+    """Dataclass spy that records every publish() call for assertion."""
+
+    calls: list[dict[str, object]] = field(default_factory=list)
+
+    def publish(
+        self,
+        data: bytes,
+        *,
+        prompt: str,
+        extension: str,
+        namespace: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "data": data,
+                "prompt": prompt,
+                "extension": extension,
+                "namespace": namespace,
+            }
+        )
+        return "/spy/published"
+
+
+def test_sink_none_no_publish_call(tmp_path: Path) -> None:
+    """AC-1: sink=None (default) — store.put_bytes is the only side-effect.
+
+    The stage should behave bit-for-bit identically to pre-Layer-O: no
+    sink.publish call, return value is the Artifact from store.put_bytes.
+    """
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(tmp_path, profile=profile, backend=backend)
+    # No sink argument — stage constructed without it.
+    assert stage.sink is None
+
+    request = GenerationRequest(prompt="a red sunset", mode="t2v")
+    result = stage.run(request)
+
+    # Returns a valid stored Artifact (uri exists).
+    assert result.uri != ""
+    assert Path(result.uri).exists()
+
+
+def test_sink_present_publishes_once_with_correct_args(tmp_path: Path) -> None:
+    """AC-2: sink present → publish called exactly once with expected kwargs.
+
+    prompt=request.prompt, extension = Path(artifact.filename).suffix,
+    namespace=None (no namespace arg passed).
+    """
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    spy = _SpyOutputSink()
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _fake_engine_for_tests(profile)
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="sink-ac2",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,
+        sink=spy,
+    )
+
+    request = GenerationRequest(prompt="a red sunset", mode="t2v")
+    stage.run(request)
+
+    assert len(spy.calls) == 1
+    call = spy.calls[0]
+    assert call["prompt"] == "a red sunset"
+    # FakeBackend produces filename with an extension; suffix must match.
+    assert call["extension"] != ""
+    assert call["namespace"] is None
+
+
+def test_sink_namespace_propagated(tmp_path: Path) -> None:
+    """AC-3: namespace='batch-X' propagates to sink.publish(namespace='batch-X')."""
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    spy = _SpyOutputSink()
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _fake_engine_for_tests(profile)
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="sink-ac3",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,
+        sink=spy,
+        namespace="batch-X",
+    )
+
+    request = GenerationRequest(prompt="namespace test", mode="t2v")
+    stage.run(request)
+
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["namespace"] == "batch-X"
+
+
+def test_sink_multi_segment_publishes_only_last(tmp_path: Path) -> None:
+    """AC-4: multi-segment non-native run publishes only the final artifact.
+
+    The stage already persists only results[-1]; the sink must mirror that:
+    one publish call even for 3 segments.
+    """
+    profile = _profile(supports_native_extension=False)
+    backend = FakeBackend(probe=profile)
+    spy = _SpyOutputSink()
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _fake_engine_for_tests(profile)
+
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="sink-ac4",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,
+        sink=spy,
+    )
+
+    segments = [Segment(prompt="seg-final") for _ in range(3)]
+    stage.run(
+        GenerationRequest(prompt="ignored", mode="t2v"),
+        segments_override=segments,
+    )
+
+    # Only 1 publish call regardless of segment count.
+    assert len(spy.calls) == 1
+    # The prompt comes from segments[-1].prompt.
+    assert spy.calls[0]["prompt"] == "seg-final"
