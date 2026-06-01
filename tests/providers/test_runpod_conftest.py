@@ -15,6 +15,7 @@ from tests.providers.conftest_runpod import (
     _load_fixture,
     _RecordingHTTPSeam,
     _redact,
+    _redact_all,
     _redact_credential_patterns,
     _redact_kv_shape,
     _redact_string,
@@ -340,3 +341,42 @@ def test_credential_pattern_matcher_recurses_into_nested_structure() -> None:
     payload = {"a": {"b": ["c", {"d": "rpa_REAL_TOKEN_12345"}]}}
     out = _redact_credential_patterns(payload)
     assert out["a"]["b"][1]["d"] == "<REDACTED>"
+
+
+# ---------------------------------------------------------------------------
+# Composition — _redact_all (Layer P Task 7 bug-fix #1 Task 3)
+# ---------------------------------------------------------------------------
+
+
+def test_redact_all_composition_handles_runpod_env_shape() -> None:
+    body = {"env": [{"key": "RUNPOD_API_KEY", "value": "rpa_REAL12345"}]}
+    out = _redact_all(body)
+    assert out["env"][0]["value"] == "<REDACTED>"
+
+
+def test_redact_all_composition_is_idempotent() -> None:
+    body = {
+        "data": {
+            "token": "raw-secret",
+            "env": [{"key": "HF_TOKEN", "value": "hf_REAL12345"}],
+            "log": "container started with key=rpa_REAL12345 bearer=Bearer abcdefghij",
+        }
+    }
+    once = _redact_all(body)
+    twice = _redact_all(once)
+    assert once == twice
+
+
+def test_redact_all_preserves_existing_key_name_walker_behavior() -> None:
+    body = {
+        "data": {
+            "Token": "bearer-x",
+            "pod": {"password": "pw", "imageName": "foo:bar"},
+        },
+        "Secret_Tail": "y",
+    }
+    out = _redact_all(body)
+    assert out["data"]["Token"] == "<REDACTED>"
+    assert out["data"]["pod"]["password"] == "<REDACTED>"
+    assert out["data"]["pod"]["imageName"] == "foo:bar"
+    assert out["Secret_Tail"] == "<REDACTED>"
