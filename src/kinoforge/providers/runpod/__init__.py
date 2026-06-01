@@ -146,8 +146,11 @@ def _make_default_http_seams(
             return dict(json.loads(resp.read().decode("utf-8")))
 
     def authed_get(url: str) -> dict[str, Any]:
+        # Content-Type bypasses RunPod GraphQL's CSRF protection — without
+        # it, GETs return HTTP 400 "potential Cross-Site Request Forgery".
         req = urllib.request.Request(  # noqa: S310
-            _append_api_key(url)
+            _append_api_key(url),
+            headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req) as resp:  # noqa: S310
             return dict(json.loads(resp.read().decode("utf-8")))
