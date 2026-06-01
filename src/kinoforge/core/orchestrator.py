@@ -281,6 +281,7 @@ def _provision_instance_and_build_backend(
     store: ArtifactStore,
     state_dir: Path,
     for_discovery: bool,
+    tags: dict[str, str] | None = None,
 ) -> tuple[Instance, GenerationBackend]:
     """Provision a compute instance and build a backend for it.
 
@@ -299,6 +300,9 @@ def _provision_instance_and_build_backend(
         for_discovery: When True, the CapacityError message reads
             'no offers available for discovery from provider ...' to
             distinguish the cold-start failure from a steady-state one.
+        tags: Optional caller-supplied tags merged onto the orchestrator's
+            built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
+            key collision.
 
     Returns:
         ``(instance, backend)`` — instance polled to ``ready``, backend
@@ -320,14 +324,17 @@ def _provision_instance_and_build_backend(
     key_hash = _key_hash(key)
 
     def _build_spec(offer: Offer) -> InstanceSpec:
+        merged_tags: dict[str, str] = {
+            "kinoforge_engine": resolved_engine.name,
+            "kinoforge_key": key_hash,
+        }
+        if tags:
+            merged_tags.update(tags)
         return InstanceSpec(
             image=image,
             offer=offer,
             lifecycle=lifecycle,
-            tags={
-                "kinoforge_engine": resolved_engine.name,
-                "kinoforge_key": key_hash,
-            },
+            tags=merged_tags,
             env={},
             run_id=run_id,
         )
@@ -402,6 +409,8 @@ def deploy_session(
     profile_provider: ModelProfileProvider | None = None,
     run_id: str = "run",
     state_dir: Path = Path(".kinoforge"),
+    instance: Instance | None = None,
+    tags: dict[str, str] | None = None,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -454,6 +463,18 @@ def deploy_session(
             (used in pod tags).
         state_dir: Root for kinoforge state (provision markers, weights,
             locks).
+        instance: Optional pre-created ``Instance`` to reuse. When
+            supplied, the orchestrator skips ``find_offers`` +
+            ``create_instance`` and uses the caller's instance directly.
+            ``engine.provision`` still runs (idempotent via Layer I
+            marker). Caller owns the lifecycle — teardown is suppressed
+            on ``CapabilityMismatch`` so the warm pod survives drift
+            re-raises.
+        tags: Optional caller-supplied tags merged onto the orchestrator's
+            built-in ``{kinoforge_engine, kinoforge_key}`` when the
+            orchestrator creates the pod on the cold path. Caller wins on
+            key collision. Ignored when ``instance=`` is supplied (caller
+            already owns the instance's tags).
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -469,6 +490,7 @@ def deploy_session(
     # ------------------------------------------------------------------
     key = cfg.capability_key()
     cfg_dict = _cfg_dict(cfg)
+    _caller_supplied_instance = instance is not None
 
     # ------------------------------------------------------------------
     # Step 2 — resolve engine (and provider when compute is required)
@@ -494,7 +516,6 @@ def deploy_session(
     # Step 4 — resolve profile; discover on miss
     # ------------------------------------------------------------------
     backend: GenerationBackend | None = None
-    instance: Instance | None = None
     _just_discovered: bool = False
 
     try:
@@ -509,17 +530,23 @@ def deploy_session(
                 raise CapacityError(
                     "requires_compute is True but no provider was resolved"
                 ) from None
-            instance, backend = _provision_instance_and_build_backend(
-                resolved_engine=resolved_engine,
-                resolved_provider=resolved_provider,
-                cfg=cfg,
-                run_id=run_id,
-                key=key,
-                creds=creds,
-                store=store,
-                state_dir=state_dir,
-                for_discovery=True,
-            )
+            if _caller_supplied_instance:
+                # Caller pre-created the pod; marker-idempotent provision.
+                resolved_engine.provision(instance, cfg_dict)
+                backend = resolved_engine.backend(instance, cfg_dict)
+            else:
+                instance, backend = _provision_instance_and_build_backend(
+                    resolved_engine=resolved_engine,
+                    resolved_provider=resolved_provider,
+                    cfg=cfg,
+                    run_id=run_id,
+                    key=key,
+                    creds=creds,
+                    store=store,
+                    state_dir=state_dir,
+                    for_discovery=True,
+                    tags=tags,
+                )
         else:
             backend = resolved_engine.backend(None, cfg_dict)
 
@@ -535,17 +562,22 @@ def deploy_session(
                 raise CapacityError(
                     "requires_compute is True but no provider was resolved"
                 ) from None
-            instance, backend = _provision_instance_and_build_backend(
-                resolved_engine=resolved_engine,
-                resolved_provider=resolved_provider,
-                cfg=cfg,
-                run_id=run_id,
-                key=key,
-                creds=creds,
-                store=store,
-                state_dir=state_dir,
-                for_discovery=False,
-            )
+            if _caller_supplied_instance:
+                resolved_engine.provision(instance, cfg_dict)
+                backend = resolved_engine.backend(instance, cfg_dict)
+            else:
+                instance, backend = _provision_instance_and_build_backend(
+                    resolved_engine=resolved_engine,
+                    resolved_provider=resolved_provider,
+                    cfg=cfg,
+                    run_id=run_id,
+                    key=key,
+                    creds=creds,
+                    store=store,
+                    state_dir=state_dir,
+                    for_discovery=False,
+                    tags=tags,
+                )
         else:
             backend = resolved_engine.backend(None, cfg_dict)
 
@@ -559,7 +591,11 @@ def deploy_session(
             _log.warning(
                 "capability mismatch detected; tearing down instance before re-raising"
             )
-            if instance is not None and resolved_provider is not None:
+            if (
+                instance is not None
+                and resolved_provider is not None
+                and not _caller_supplied_instance
+            ):
                 resolved_provider.destroy_instance(instance.id)
             raise
 
@@ -594,6 +630,7 @@ def deploy(
     provider: ComputeProvider | None = None,
     engine: GenerationEngine | None = None,
     creds: CredentialProvider | None = None,
+    tags: dict[str, str] | None = None,
 ) -> DeployResult:
     """Provision compute (or confirm hosted endpoint) for a kinoforge config.
 
@@ -621,6 +658,9 @@ def deploy(
         engine: Optional pre-constructed ``GenerationEngine`` (test injection).
             When ``None``, resolved from the registry using ``cfg.engine.kind``.
         creds: Optional credential provider.  Defaults to ``EnvCredentialProvider()``.
+        tags: Optional caller-supplied tags merged onto the orchestrator's
+            built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
+            key collision.
 
     Returns:
         A ``DeployResult`` describing the outcome.
@@ -677,14 +717,17 @@ def deploy(
     image = cfg.compute.image if cfg.compute is not None else ""
 
     def _build_spec(offer: Offer) -> InstanceSpec:
+        merged_tags: dict[str, str] = {
+            "kinoforge_engine": resolved_engine.name,
+            "kinoforge_key": key_hash,
+        }
+        if tags:
+            merged_tags.update(tags)
         return InstanceSpec(
             image=image,
             offer=offer,
             lifecycle=lifecycle,
-            tags={
-                "kinoforge_engine": resolved_engine.name,
-                "kinoforge_key": key_hash,
-            },
+            tags=merged_tags,
             env={},
             run_id="",
         )
@@ -743,6 +786,8 @@ def generate(
     run_id: str = "run",
     state_dir: Path = Path(".kinoforge"),
     sink: OutputSink | None = None,
+    instance: Instance | None = None,
+    tags: dict[str, str] | None = None,
 ) -> Artifact:
     """Run the full generation pipeline for a single clip.
 
@@ -785,6 +830,13 @@ def generate(
         sink: Optional user-facing output sink.  When provided, the stage
             calls ``sink.publish(...)`` after persisting to the store.
             ``None`` (default) preserves pre-Layer-O behavior.
+        instance: Optional pre-created ``Instance`` to reuse. Threaded
+            through to ``deploy_session`` — when supplied, ``create_instance``
+            is skipped and the ``ValidationError`` teardown is suppressed
+            so the caller-owned warm pod survives spec-validation failures.
+        tags: Optional caller-supplied tags merged onto the orchestrator's
+            built-in ``{kinoforge_engine, kinoforge_key}`` on the cold path
+            (no ``instance=``). Ignored when ``instance=`` is supplied.
 
     Returns:
         The persisted ``Artifact`` (with ``uri``) from the pipeline stage.
@@ -810,6 +862,8 @@ def generate(
         profile_provider=profile_provider,
         run_id=run_id,
         state_dir=state_dir,
+        instance=instance,
+        tags=tags,
     ) as session:
         # ------------------------------------------------------------------
         # Step 5 — validate the request against the profile
@@ -862,7 +916,12 @@ def generate(
             _log.warning(
                 "spec validation failed; tearing down instance before re-raising"
             )
-            if session.instance is not None and session.provider is not None:
+            if (
+                session.instance is not None
+                and session.provider is not None
+                and instance
+                is None  # caller did NOT supply → orchestrator owns lifecycle
+            ):
                 session.provider.destroy_instance(session.instance.id)
             raise
         _log.info("generate completed — artifact uri=%r", artifact.uri)
