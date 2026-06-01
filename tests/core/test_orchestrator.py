@@ -1184,6 +1184,63 @@ def test_generate_tears_down_compute_on_validate_spec_failure(
     )
 
 
+# ---------------------------------------------------------------------------
+# Layer N regression: deploy() destroys pod on any post-create error
+# ---------------------------------------------------------------------------
+
+
+def test_deploy_destroys_pod_when_get_instance_raises() -> None:
+    """Layer N regression — deploy() MUST destroy the pod if any error fires
+    after create_instance returns.  Otherwise a paid-for pod is orphaned.
+
+    Constructs a minimal fake provider that creates an instance with
+    status="starting" and raises on the very next get_instance call.
+    Asserts that destroy_instance is called with the same pod ID before
+    the exception propagates.
+    """
+    from kinoforge.core.orchestrator import deploy
+
+    _FAKE_POD_ID = "layer-n-orphan-pod"
+
+    class _GetInstanceRaisingProvider(LocalProvider):
+        """Creates a pod then raises KeyError on the first get_instance call.
+
+        destroy_instance is tracked so the test can assert cleanup happened.
+        """
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.destroy_calls: list[str] = []
+
+        def create_instance(self, spec: InstanceSpec) -> Instance:
+            return Instance(
+                id=_FAKE_POD_ID,
+                provider="local",
+                status="starting",  # not "ready" — forces a get_instance poll
+                created_at=0.0,
+                tags={},
+            )
+
+        def get_instance(self, instance_id: str) -> Instance:
+            raise KeyError(f"simulated RunPod null response for {instance_id!r}")
+
+        def destroy_instance(self, instance_id: str) -> None:
+            self.destroy_calls.append(instance_id)
+            # Don't call super() — the fake pod isn't tracked in LocalProvider.
+
+    cfg = _compute_cfg()
+    engine = _make_engine()
+    spy_provider = _GetInstanceRaisingProvider()
+
+    with pytest.raises(KeyError, match="simulated RunPod null response"):
+        deploy(cfg, provider=spy_provider, engine=engine)
+
+    assert spy_provider.destroy_calls == [_FAKE_POD_ID], (
+        f"deploy() must call destroy_instance({_FAKE_POD_ID!r}) when get_instance raises; "
+        f"got: {spy_provider.destroy_calls!r}"
+    )
+
+
 def test_generate_validates_spec_with_real_request_prompt_not_probe(
     tmp_path: Path,
 ) -> None:
