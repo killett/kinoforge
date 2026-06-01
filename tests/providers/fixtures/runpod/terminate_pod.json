@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "captured_at": "PLACEHOLDER",
+    "git_sha": "PLACEHOLDER",
+    "operation": "terminate_pod",
+    "request_query": "mutation { podTerminate(input: { podId: \"abc123\" }) }"
+  },
+  "response": {
+    "data": {
+      "podTerminate": null
+    }
+  }
+}

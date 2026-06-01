@@ -138,3 +138,16 @@ def test_recording_seam_redacts_credentials_in_query_string(tmp_path: Path) -> N
     payload = json.loads((tmp_path / "gpu_types.json").read_text())
     assert "sk-leaky-leak" not in payload["_meta"]["request_query"]
     assert "<REDACTED>" in payload["_meta"]["request_query"]
+
+
+def test_starter_fixtures_load() -> None:
+    """Every named starter fixture loads cleanly and is non-empty."""
+    for name in (
+        "gpu_types.json",
+        "list_pods.json",
+        "get_pod.json",
+        "create_pod.json",
+        "terminate_pod.json",
+    ):
+        payload = _load_fixture(name)
+        assert payload, f"{name} loaded empty"

@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "captured_at": "PLACEHOLDER",
+    "git_sha": "PLACEHOLDER",
+    "operation": "list_pods",
+    "request_query": "{ myself { pods { id desiredStatus imageName } } }"
+  },
+  "response": {
+    "data": {
+      "myself": {
+        "pods": [
+          {
+            "id": "abc123",
+            "desiredStatus": "RUNNING",
+            "imageName": "runpod/pytorch:2.4.0"
+          }
+        ]
+      }
+    }
+  }
+}

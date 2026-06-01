@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "captured_at": "PLACEHOLDER",
+    "git_sha": "PLACEHOLDER",
+    "operation": "create_pod",
+    "request_query": "mutation($input: PodFindAndDeployOnDemandInput!) { podFindAndDeployOnDemand(input: $input) { id desiredStatus imageName } }"
+  },
+  "response": {
+    "data": {
+      "podFindAndDeployOnDemand": {
+        "id": "abc123",
+        "desiredStatus": "STARTING",
+        "imageName": "runpod/pytorch:2.4.0"
+      }
+    }
+  }
+}

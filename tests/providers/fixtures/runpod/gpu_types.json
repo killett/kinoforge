@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "captured_at": "PLACEHOLDER",
+    "git_sha": "PLACEHOLDER",
+    "operation": "gpu_types",
+    "request_query": "{ gpuTypes { id displayName memoryInGb secureCloud communityCloud lowestPrice { minimumBidPrice uninterruptablePrice } } }"
+  },
+  "response": {
+    "data": {
+      "gpuTypes": [
+        {
+          "id": "NVIDIA GeForce RTX 3090",
+          "displayName": "RTX 3090",
+          "memoryInGb": 24,
+          "secureCloud": true,
+          "communityCloud": true,
+          "lowestPrice": {
+            "minimumBidPrice": 0.18,
+            "uninterruptablePrice": 0.30
+          }
+        },
+        {
+          "id": "NVIDIA RTX A5000",
+          "displayName": "RTX A5000",
+          "memoryInGb": 24,
+          "secureCloud": true,
+          "communityCloud": true,
+          "lowestPrice": {
+            "minimumBidPrice": 0.22,
+            "uninterruptablePrice": 0.36
+          }
+        }
+      ]
+    }
+  }
+}
