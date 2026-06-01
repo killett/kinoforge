@@ -153,13 +153,23 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - Plan: `docs/superpowers/plans/2026-06-01-layer-p-runpod-engine-integration.md` (+ `.tasks.json`, native tasks #9–#18)
 - Tasks 1–6 ✅ complete (offline scaffolding). Task 7 in progress (live shake-out).
 
+**Layer P Task 7 item #1 (orchestrator offer-retry) — ✅ CLOSED 2026-06-01 at HEAD `e286f24`.**
+Sub-spec + plan + 3 atomic commits + comment-refresh + tasks.json sync:
+- Sub-spec: `docs/superpowers/specs/2026-06-01-layer-p-task7-item1-offer-retry-design.md` (`20786e8`)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-p-task7-item1-offer-retry.md` (+ `.tasks.json`) (`7a804ef`, final sync `e286f24`)
+- `00abf8d` — `feat(providers/runpod): typed CapacityError on no-resources mutation` (+4 tests)
+- `d236f60` — `feat(core/orchestrator): offer-retry across deploy + deploy_session` (+5 tests; `_create_with_offer_retry` helper + 2 call-site rewires at `deploy()` and `_provision_instance_and_build_backend`)
+- `4a7bfe5` — `refactor(test/live): swap ValueError sniff to typed CapacityError` (smoke catch retypes)
+- `d3a3d9d` — `docs(test/live): refresh stale comment` (post-review polish)
+Test count 836 → 846 (+9 net offline). typecheck/lint/pre-commit all-files clean. Spec+code reviewers both APPROVED on every task.
+
 **Resume protocol:**
 1. `git checkout build/layer-p`
 2. Read the plan + spec.
-3. Read `tests/live/test_comfyui_wan_live.py` for current smoke shape (last edit: `4a673d7` — offer-retry loop added).
-4. Pick up at Task 7 step 3 (iterate). See "Pending Task 7 work" below for the exact next decisions.
+3. Read `tests/live/test_comfyui_wan_live.py` for current smoke shape (last edit: `d3a3d9d` — typed CapacityError catch + comment refresh).
+4. Pick up at Task 7 item #2 (warm-reuse `instance=` kwarg). See "Pending Task 7 work" below for the next decisions.
 
-**Branch state (10 commits on `build/layer-p` ahead of main):**
+**Branch state (commits on `build/layer-p` ahead of main):**
 | SHA | Task | Subject |
 |---|---|---|
 | `62861c4` | T1 | feat(config): spec.graph_file loader convention |
@@ -172,14 +182,21 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | `9ad8ad9` | T6 | test(examples): Layer P RunPod+ComfyUI+Wan YAML scaffold |
 | `d91a7c0` | T7 | fix(config): proper text_encoder/clip_vision model kinds + Wan 2.1 fp8 model set |
 | `4a673d7` | T7 | test(live): iterate offers in create_instance loop (live-smoke bug #1) |
+| `20786e8` | T7-item1 | docs(spec): orchestrator offer-retry design (sub-spec) |
+| `7a804ef` | T7-item1 | docs(plan): offer-retry implementation plan |
+| `00abf8d` | T7-item1 | feat(providers/runpod): typed CapacityError on no-resources mutation |
+| `d236f60` | T7-item1 | feat(core/orchestrator): offer-retry across deploy + deploy_session |
+| `4a7bfe5` | T7-item1 | refactor(test/live): swap ValueError sniff to typed CapacityError |
+| `d3a3d9d` | T7-item1 | docs(test/live): refresh stale comment |
+| `e286f24` | T7-item1 | chore(plan): sync tasks.json — all complete |
 
-**Test counts:** offline suite 823 pre-Layer-P → ~836 post-Task-6 (+13 net so far). Live test in `tests/live/test_comfyui_wan_live.py` skipped without creds.
+**Test counts:** offline suite 823 pre-Layer-P → 836 post-Task-6 → 846 post-Task-7-item-1 (+9 net offline tests: 4 provider CapacityError + 5 orchestrator offer-retry). Live test in `tests/live/test_comfyui_wan_live.py` skipped without creds.
 
 **Cost burn so far:** ~$0.013 (one 2s failed create_pod + one 2-min A40 that was promptly destroyed). Budget cap remaining: $1.99.
 
 **Pending Task 7 work (in priority order):**
 
-1. **Production bug: `orchestrator.deploy` picks `offers[0]` without capacity retry** (`src/kinoforge/core/orchestrator.py:626`). Fails the same way the smoke did before `4a673d7`. Fix: same offer-retry loop in deploy. Add offline regression test in `tests/core/test_orchestrator.py`.
+1. ~~**Production bug: `orchestrator.deploy` picks `offers[0]` without capacity retry**~~ **CLOSED** by Task 7 item #1 sub-plan (commits `00abf8d` + `d236f60` + `4a7bfe5`). `_create_with_offer_retry` helper wired into both `deploy()` and `_provision_instance_and_build_backend`. Provider raises typed `CapacityError`. Smoke catches typed exc. 9 net new regression tests.
 2. **Architectural mismatch: smoke calls `provider.create_instance` AND `orchestrator.generate` creates ANOTHER instance.** `deploy_session` has no `instance=` kwarg to short-circuit create. Two options:
    - (a) Add `instance=None` kwarg to `deploy_session` + bubble to `generate`; when provided, skip the internal create. Production change. Enables warm-pod reuse via `find_instance_by_tag` + KEEP_POD ergonomic.
    - (b) Drop manual create from smoke; let orchestrator handle everything; KEEP_POD just gates finally-destroy; warm reuse deferred. Simpler but loses the KEEP_POD cost-saving point.
