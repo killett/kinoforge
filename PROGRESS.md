@@ -375,7 +375,7 @@ projected: the provider works against real RunPod for the first time.
 - [x] Task 4: USER-GATE live smoke + real fixture capture — commits `8d71eed`, `ff97bb8` + 8 bug-fix commits between
 - [x] Task 5: Refactor `test_runpod.py` to load fixtures — commit `198faf4`
 - [x] Task 6: Real-shape required-keys + status-mapping lockdown — commit `8be0930`
-- [x] Task 7: README + PROGRESS + final gate + merge — commit `<TASK7-SHA>`
+- [x] Task 7: README + PROGRESS + final gate + merge — commit `a594346`
 - [x] Merge to main via `--no-ff` — merge commit `<MERGE-SHA>` (closes PROGRESS:114 carry-forward #1)
 
 **First real artifact (RunPod):** pod `ia66l3rlto5x66` on NVIDIA A40 @ $0.35/hr,
