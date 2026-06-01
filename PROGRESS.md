@@ -429,7 +429,7 @@ runs.
 - [x] Task 6: `batch.batch_generate()` sink + batch_id namespace + 2 tests — commit `3e66a72`
 - [x] Task 7: CLI `--output-dir`/`--no-output-dir` mutex group + `_build_sink` + `--run-id` uniquification + 5 tests — commit `0f135de`
 - [x] Task 8: `.gitignore` `output/` + commented `output:` block on every example YAML + 6 round-trip tests — commit `503b3a8`
-- [ ] Task 9: README "Output directory" section + this PROGRESS entry + invariant verification — commit _PENDING_
+- [x] Task 9: README "Output directory" section + this PROGRESS entry + invariant verification — commit `646adf7`
 - [ ] Task 10: Full gate + `--no-ff` merge to main — commit _PENDING_
 
 **Key design decisions:**
