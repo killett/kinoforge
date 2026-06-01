@@ -205,6 +205,48 @@ def test_find_offers_returns_all_when_no_filter_needed() -> None:
     assert len(offers) == 2
 
 
+def test_find_offers_tolerates_null_lowest_price() -> None:
+    """Layer N regression — gpuTypes entries with lowestPrice=null don't crash.
+
+    Real RunPod returns ``lowestPrice: null`` for out-of-stock / unavailable
+    GPUs.  ``gpu.get("lowestPrice", {})`` returns ``None`` when the key is
+    present with a null value (vs missing), so the previous code crashed
+    with ``AttributeError: 'NoneType' object has no attribute 'get'``.
+    Cost falls back to 0.0 for these entries; they get filtered out by
+    ``max_cost_rate_usd_per_hr`` downstream if a budget is set.
+    """
+    http_get = HttpGetSpy(
+        [
+            {
+                "data": {
+                    "gpuTypes": [
+                        {
+                            "id": "NVIDIA H100 PCIe",
+                            "displayName": "H100",
+                            "memoryInGb": 80,
+                            "lowestPrice": None,  # out-of-stock
+                        },
+                        {
+                            "id": "NVIDIA A100 80GB PCIe",
+                            "displayName": "A100",
+                            "memoryInGb": 80,
+                            "lowestPrice": {"uninterruptablePrice": 1.89},
+                        },
+                    ]
+                }
+            }
+        ]
+    )
+    provider = RunPodProvider(http_get=http_get)
+
+    offers = provider.find_offers(HardwareRequirements(min_vram_gb=1))
+
+    # Both GPUs survive (no cost filter set); the null-price one has cost=0.
+    by_id = {o.gpu_type: o for o in offers}
+    assert by_id["NVIDIA H100 PCIe"].cost_rate_usd_per_hr == 0.0
+    assert by_id["NVIDIA A100 80GB PCIe"].cost_rate_usd_per_hr == 1.89
+
+
 def test_find_offers_url_encodes_query_string() -> None:
     """Layer N regression — find_offers MUST URL-encode the GraphQL query.
 
