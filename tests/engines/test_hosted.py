@@ -56,11 +56,13 @@ _BASE_CFG: dict[str, Any] = {
         "hosted": {
             "provider": "fal",
             "endpoint": _ENDPOINT,
-            "model": _MODEL,
             "api_key_env": _API_KEY_ENV,
             "health_url": _HEALTH_URL,
         }
-    }
+    },
+    "spec": {
+        "model": _MODEL,
+    },
 }
 
 _DEFAULT_PROBE = ModelProfile(
@@ -156,7 +158,7 @@ def test_ac1_requires_local_weights_false() -> None:
 
 
 def test_ac1_key_base_from_cfg() -> None:
-    """key_base(cfg) returns the model string from the hosted config block."""
+    """key_base(cfg) returns cfg['spec']['model']."""
     engine = _make_engine()
     assert engine.key_base(_BASE_CFG) == _MODEL
 
@@ -167,19 +169,54 @@ def test_ac1_key_base_from_cfg() -> None:
 
 
 def test_ac6_key_base_exact_value() -> None:
-    """key_base(cfg) with model='ltx-2' returns exactly 'ltx-2'."""
+    """key_base(cfg) with spec.model='ltx-2' returns exactly 'ltx-2'."""
     cfg: dict[str, Any] = {
         "engine": {
             "hosted": {
-                "model": "ltx-2",
+                "provider": "fal",
+                "endpoint": "https://e",
                 "api_key_env": "K",
-                "endpoint": "x",
                 "health_url": "y",
             }
-        }
+        },
+        "spec": {
+            "model": "ltx-2",
+        },
     }
     engine = _make_engine()
     assert engine.key_base(cfg) == "ltx-2"
+
+
+def test_layer_m_key_base_raises_when_spec_model_missing() -> None:
+    """key_base(cfg) raises ConfigError when cfg['spec']['model'] is absent.
+
+    Bug catch: silently returning '' here lets every hosted config share
+    a single empty-string CapabilityKey base, poisoning the ModelProfile
+    cache across distinct hosted models.
+    """
+    import pytest
+
+    from kinoforge.core.errors import ConfigError
+
+    cfg_no_spec: dict[str, Any] = {
+        "engine": {
+            "hosted": {
+                "provider": "fal",
+                "endpoint": "https://e",
+                "api_key_env": "K",
+                "health_url": "y",
+            }
+        },
+    }
+    engine = _make_engine()
+    with pytest.raises(ConfigError) as exc_info:
+        engine.key_base(cfg_no_spec)
+    assert "spec.model" in str(exc_info.value)
+
+    cfg_empty_spec: dict[str, Any] = {**cfg_no_spec, "spec": {"model": ""}}
+    with pytest.raises(ConfigError) as exc_info:
+        engine.key_base(cfg_empty_spec)
+    assert "spec.model" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -796,12 +833,14 @@ engine:
   hosted:
     provider: fal
     endpoint: "https://fal.run/x"
-    model: "vendor/m"
+    api_key_env: "FAL_KEY"
     asset_paths:
       init_image: input.image_url
 lifecycle: {budget: 5.0}
 models:
   - {ref: "hf:org/m", kind: base, target: diffusion_models}
+spec:
+  model: "vendor/m"
 """
     import yaml
 
@@ -979,13 +1018,14 @@ engine:
   hosted:
     provider: p
     endpoint: "https://x.example/y"
-    model: "m"
     api_key_env: "X_KEY"
     prompt_body_key: input
 models:
   - {ref: "https://x.example/m.safetensors", kind: base, target: checkpoints}
 lifecycle:
   budget: 1.0
+spec:
+  model: "m"
 """
     cfg = Config.model_validate(_yaml.safe_load(yaml_doc))
     cfg_dict = cfg.model_dump()
@@ -1008,3 +1048,55 @@ lifecycle:
     backend.submit(job)
     assert posts[0][1]["input"] == "from-seg"
     assert "prompt" not in posts[0][1]  # only the configured key, not the default
+
+
+# ---------------------------------------------------------------------------
+# Layer M Task 5 — HostedAPIBackend.result populates Authorization header
+# ---------------------------------------------------------------------------
+
+
+def test_layer_m_result_artifact_carries_bearer_when_token_set() -> None:
+    """HostedAPIBackend.result constructs Artifact with Authorization: Bearer.
+
+    Bug catch: the token reaches submit() (via _http_post) but is never
+    surfaced to the downstream artifact-fetch path; engines like
+    RunwayML/Pika that gate media URLs behind Authorization would silently
+    fail with 401 when the pipeline downloads the artifact bytes.
+    """
+    engine = _make_engine()
+    engine.provision(None, _BASE_CFG)
+    backend = engine.backend(None, _BASE_CFG)
+    # Drive submit + result against the spy HTTP layer.
+    job = _make_job()
+    job_id = backend.submit(job)
+    # _result_http_get returns {"status": "done", "filename": "output.mp4"}
+    # for non-health URLs.
+    backend._http_get = _result_http_get
+    artifact = backend.result(job_id)
+    assert artifact.headers["Authorization"] == "Bearer secret-key"
+
+
+def test_layer_m_result_artifact_no_header_when_token_empty() -> None:
+    """Empty token → Artifact.headers is empty dict (no 'Authorization' key).
+
+    Bug catch: a naive ``Authorization: Bearer {token}`` string when token
+    is empty yields the literal ``"Bearer "`` header, which silently 401s
+    downstream and is hard to diagnose.
+    """
+    # Engine with a credential provider returning empty string for the token.
+    engine = HostedAPIEngine(
+        creds=_DictCreds({_API_KEY_ENV: ""}),
+        http_get=_ok_http_get,
+        http_post=_ok_http_post,
+        http_get_bytes=lambda url: b"",
+        ffmpeg_run=lambda argv, stdin: b"",
+        probe_profile=_DEFAULT_PROBE,
+    )
+    # provision still raises AuthError for empty cred (existing AC3); skip
+    # provision and construct the backend directly to exercise the empty-token
+    # branch on result().
+    backend = engine.backend(None, _BASE_CFG)
+    backend._http_get = _result_http_get
+    artifact = backend.result("fake-job-123")
+    assert "Authorization" not in artifact.headers
+    assert artifact.headers == {}

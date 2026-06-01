@@ -18,9 +18,11 @@ Cfg shape under ``cfg["engine"]["hosted"]``:
       hosted:
         provider: fal                           # e.g. "fal"
         endpoint: https://fal.run/fal-ai/ltx-video
-        model: ltx-2                            # hosted model id
         api_key_env: FAL_KEY                    # env-var name for the credential
         health_url: https://fal.run/health      # pinged by provision()
+
+    spec:
+      model: ltx-2                              # hosted model id (cache identity + wire body)
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from kinoforge.core import frames, registry
 from kinoforge.core.assets import find_asset, set_by_dot_path
 from kinoforge.core.errors import (
     AuthError,
+    ConfigError,
     FrameExtractionError,
     KinoforgeError,
     ValidationError,
@@ -199,6 +202,7 @@ class HostedAPIBackend(GenerationBackend):
         url_path: str = "",
         asset_paths: dict[str, str] | None = None,
         prompt_body_key: str | None = "prompt",
+        auth_token: str | None = None,
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -220,6 +224,11 @@ class HostedAPIBackend(GenerationBackend):
             prompt_body_key: Top-level body key written from
                 ``resolve_prompt(job)`` when no explicit ``spec["prompt"]``
                 is provided. ``None`` / empty disables routing entirely.
+            auth_token: Optional bearer token populated onto the returned
+                ``Artifact.headers`` by :meth:`result` as
+                ``Authorization: Bearer <token>``. An empty/``None`` value
+                causes ``result`` to leave headers empty — appropriate for
+                shims that serve unauthenticated artifact URLs.
         """
         self._http_post = http_post
         self._http_get = http_get
@@ -229,6 +238,7 @@ class HostedAPIBackend(GenerationBackend):
         self._url_path = url_path
         self._asset_paths: dict[str, str] = dict(asset_paths or {})
         self._prompt_body_key: str | None = prompt_body_key
+        self._auth_token: str = auth_token or ""
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -296,7 +306,14 @@ class HostedAPIBackend(GenerationBackend):
 
         Returns:
             An ``Artifact`` whose ``filename`` comes from the API response
-            and whose ``meta`` contains ``{"job_id": job_id}``.
+            and whose ``meta`` contains ``{"job_id": job_id}``. When the
+            backend was constructed with a non-empty ``auth_token``,
+            ``Artifact.headers`` carries
+            ``{"Authorization": f"Bearer {auth_token}"}`` so that downstream
+            artifact-bytes fetches can authenticate. An empty token leaves
+            ``headers`` as an empty dict (no ``Authorization`` key),
+            preserving today's behavior for shims that serve unauthenticated
+            artifact URLs.
 
         Raises:
             TimeoutError: The hosted API did not return ``status == "done"``
@@ -308,8 +325,16 @@ class HostedAPIBackend(GenerationBackend):
             if data.get("status") == "done":
                 filename = str(data.get("filename", ""))
                 artifact_url = _walk_dot_path(data, self._url_path)
+                headers: dict[str, str] = (
+                    {"Authorization": f"Bearer {self._auth_token}"}
+                    if self._auth_token
+                    else {}
+                )
                 return Artifact(
-                    filename=filename, url=artifact_url, meta={"job_id": job_id}
+                    filename=filename,
+                    url=artifact_url,
+                    meta={"job_id": job_id},
+                    headers=headers,
                 )
             self._sleep(1.0)
         raise TimeoutError(
@@ -415,18 +440,33 @@ class HostedAPIEngine(GenerationEngine):
     def key_base(self, cfg: dict[str, Any]) -> str:
         """Return the hosted model ID from *cfg*, used as the CapabilityKey base.
 
+        Reads ``cfg["spec"]["model"]`` (Layer M: previously read from
+        ``cfg["engine"]["hosted"]["model"]`` which has been removed).
+        Raises :class:`~kinoforge.core.errors.ConfigError` when the value
+        is absent or empty so that a typo or migration miss surfaces at
+        cache-identity derivation rather than silently collapsing
+        distinct hosted models to a single empty-string CapabilityKey.
+
         Args:
-            cfg: Runtime configuration dict containing
-                ``cfg["engine"]["hosted"]["model"]``.
+            cfg: Runtime configuration dict containing ``cfg["spec"]["model"]``.
 
         Returns:
             The model ID string, e.g. ``"ltx-2"``.
+
+        Raises:
+            ConfigError: ``cfg["spec"]["model"]`` is absent or empty.
         """
-        engine_block = cfg.get("engine", {})
-        hosted_cfg: dict[str, Any] = (
-            engine_block.get("hosted", {}) if isinstance(engine_block, dict) else {}
+        spec_block = cfg.get("spec", {})
+        model_id = (
+            str(spec_block.get("model", "")) if isinstance(spec_block, dict) else ""
         )
-        return str(hosted_cfg.get("model", ""))
+        if not model_id:
+            raise ConfigError(
+                "hosted engine requires spec.model at the top level of the "
+                "YAML config (Layer M moved the value out of "
+                "engine.hosted.model)"
+            )
+        return model_id
 
     # ------------------------------------------------------------------
     # GenerationEngine interface
@@ -524,6 +564,15 @@ class HostedAPIEngine(GenerationEngine):
             else None
         )
         self._prompt_body_key = prompt_body_key
+
+        # Layer M: re-resolve the API token at backend-construction time so the
+        # token's lifecycle matches the backend's; HostedAPIBackend.result
+        # populates Artifact.headers with `Authorization: Bearer <token>` when
+        # the token is non-empty. Empty/None token preserves the pre-Layer-M
+        # no-headers behavior for shims that serve unauthenticated artifact URLs.
+        key_name: str = str(hosted_cfg.get("api_key_env", ""))
+        auth_token: str | None = self._creds.get(key_name) if key_name else None
+
         return HostedAPIBackend(
             http_post=self._http_post,
             http_get=self._http_get,
@@ -533,6 +582,7 @@ class HostedAPIEngine(GenerationEngine):
             url_path=url_path,
             asset_paths=asset_paths,
             prompt_body_key=prompt_body_key,
+            auth_token=auth_token,
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:

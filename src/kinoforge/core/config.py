@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from kinoforge.core.errors import ConfigError
 from kinoforge.core.interfaces import CapabilityKey
@@ -121,7 +121,6 @@ class HostedEngineConfig(BaseModel):
     Attributes:
         provider: Hosted provider name (e.g. "fal").
         endpoint: API endpoint path.
-        model: Model identifier on the provider.
         api_key_env: Env-var name carrying the API credential.
         health_url: URL pinged by provision() to verify reachability.
         url_path: Dot-path walked over the provider response by
@@ -137,22 +136,50 @@ class HostedEngineConfig(BaseModel):
             to ``"prompt"``; set to ``None`` (YAML ``null``) to disable
             routing for endpoints that reject unknown top-level fields.
 
+    Migration (Layer M): the previously-required ``model`` field has been
+    removed. Hosted model identity now lives at top-level ``spec.model``
+    and is read both by ``HostedAPIBackend.submit`` (wire body) and by
+    ``HostedAPIEngine.key_base(cfg)`` (cache identity). YAML that still
+    carries ``engine.hosted.model`` raises a load-time ``ValidationError``
+    with a guiding message via the ``model_validator`` below.
+
     Declaring ``url_path`` and ``asset_paths`` here is load-bearing:
     pydantic v2's default ``extra="ignore"`` silently drops any YAML
     key not present on the model. The orchestrator calls
     ``cfg.model_dump()`` before passing the dict to ``engine.backend()``,
     so an undeclared field never reaches the engine — see the
-    fix(config) commit history for the original defect.
+    fix(config) commit history for the original defect. Layer M
+    tightens this further with ``extra="forbid"`` so future stale
+    keys surface at load instead of being silently dropped.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     provider: str
     endpoint: str
-    model: str
     api_key_env: str = ""
     health_url: str = ""
     url_path: str = ""
     asset_paths: dict[str, str] = Field(default_factory=dict)
     prompt_body_key: str | None = "prompt"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_stale_model_field(cls, data: object) -> object:
+        """Raise with migration guidance when the stale ``model`` key is present.
+
+        Layer M dropped ``HostedEngineConfig.model`` in favour of top-level
+        ``spec.model`` as the single source of truth for hosted model
+        identity. Without this validator the stale key would be caught
+        by ``extra="forbid"`` but with a generic ``extra_forbidden``
+        message that does not tell the user where to move the value.
+        """
+        if isinstance(data, dict) and "model" in data:
+            raise ValueError(
+                "engine.hosted.model is no longer supported; "
+                "move the value to top-level spec.model"
+            )
+        return data
 
     @field_validator("api_key_env")
     @classmethod

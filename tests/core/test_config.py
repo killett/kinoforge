@@ -12,11 +12,12 @@ engine:
   hosted:
     provider: fal
     endpoint: "https://fal.run/x"
-    model: ltx-2
     api_key_env: FAL_KEY
 lifecycle: {budget: 25.0}
 models:
   - {ref: "hf:org/m", kind: base, target: diffusion_models}
+spec:
+  model: ltx-2
 """
 
 WAN = """
@@ -294,12 +295,14 @@ engine:
   hosted:
     provider: fal
     endpoint: "https://fal.run/x"
-    model: "vendor/m"
+    api_key_env: FAL_KEY
     asset_paths:
       init_image: input.image_url
 lifecycle: {budget: 5.0}
 models:
   - {ref: "hf:org/m", kind: base, target: diffusion_models}
+spec:
+  model: "vendor/m"
 """
     import yaml
 
@@ -328,11 +331,13 @@ engine:
   hosted:
     provider: fal
     endpoint: "https://fal.run/x"
-    model: "vendor/m"
+    api_key_env: FAL_KEY
     url_path: video.url
 lifecycle: {budget: 5.0}
 models:
   - {ref: "hf:org/m", kind: base, target: diffusion_models}
+spec:
+  model: "vendor/m"
 """
     import yaml
 
@@ -350,9 +355,7 @@ def test_hosted_cfg_asset_paths_defaults_empty() -> None:
     """
     from kinoforge.core.config import HostedEngineConfig
 
-    cfg = HostedEngineConfig(
-        provider="fal", endpoint="https://e", model="m", api_key_env="K"
-    )
+    cfg = HostedEngineConfig(provider="fal", endpoint="https://e", api_key_env="K")
     assert cfg.asset_paths == {}
 
 
@@ -365,9 +368,7 @@ def test_hosted_cfg_url_path_defaults_empty() -> None:
     """
     from kinoforge.core.config import HostedEngineConfig
 
-    cfg = HostedEngineConfig(
-        provider="fal", endpoint="https://e", model="m", api_key_env="K"
-    )
+    cfg = HostedEngineConfig(provider="fal", endpoint="https://e", api_key_env="K")
     assert cfg.url_path == ""
 
 
@@ -470,9 +471,7 @@ def test_hosted_validator_rejects_empty_api_key_env() -> None:
     from kinoforge.core.config import HostedEngineConfig
 
     with pytest.raises(ValidationError) as exc_info:
-        HostedEngineConfig(
-            provider="x", endpoint="https://e", model="m", api_key_env=""
-        )
+        HostedEngineConfig(provider="x", endpoint="https://e", api_key_env="")
     assert "api_key_env" in str(exc_info.value)
 
 
@@ -487,9 +486,7 @@ def test_hosted_validator_rejects_relative_endpoint() -> None:
     from kinoforge.core.config import HostedEngineConfig
 
     with pytest.raises(ValidationError) as exc_info:
-        HostedEngineConfig(
-            provider="x", endpoint="/relative/path", model="m", api_key_env="K"
-        )
+        HostedEngineConfig(provider="x", endpoint="/relative/path", api_key_env="K")
     assert "endpoint" in str(exc_info.value)
 
 
@@ -500,7 +497,6 @@ def test_hosted_validator_accepts_well_formed_config() -> None:
     cfg = HostedEngineConfig(
         provider="x",
         endpoint="https://example.com/api",
-        model="m",
         api_key_env="MY_KEY",
         health_url="",
     )
@@ -624,7 +620,6 @@ def test_hosted_engine_config_prompt_body_key_default() -> None:
     cfg = HostedEngineConfig(
         provider="x",
         endpoint="https://x.example/y",
-        model="m",
         api_key_env="X_KEY",
     )
     assert cfg.prompt_body_key == "prompt"
@@ -642,7 +637,6 @@ def test_hosted_engine_config_prompt_body_key_null_disables() -> None:
     cfg = HostedEngineConfig(
         provider="x",
         endpoint="https://x.example/y",
-        model="m",
         api_key_env="X_KEY",
         prompt_body_key=None,
     )
@@ -762,3 +756,111 @@ params:
         "scheduler": "DDIMScheduler",
     }
     assert dumped["params"] == {"seed": 42}
+
+
+# ---------------------------------------------------------------------------
+# Layer M Task 1 — hosted-YAML collapse: spec.model is the single source
+# ---------------------------------------------------------------------------
+
+
+def test_layer_m_stale_engine_hosted_model_raises_with_guidance(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """YAML with stale ``engine.hosted.model`` raises a guiding migration error.
+
+    Bug catch: silently dropping the stale field would leave the user with a
+    cache-identity hash derived from ``""`` (empty ``spec.model``), poisoning
+    the ModelProfile cache across hosted configs that share an env.
+
+    Note: load_config wraps pydantic ValidationError in ConfigError, so we
+    catch ConfigError; the str() of the exception preserves the full pydantic
+    message including our migration guidance.
+    """
+    from kinoforge.core.config import load_config
+    from kinoforge.core.errors import ConfigError
+
+    yaml_text = """
+engine:
+  kind: hosted
+  precision: ""
+  hosted:
+    provider: my-shim
+    endpoint: "https://shim.example.com/inference"
+    model: "wan-ai/Wan2.2-T2V-A14B"
+    api_key_env: "MY_SHIM_KEY"
+    health_url: "https://shim.example.com/health"
+models:
+  - {ref: "hf:org/m:weights.safetensors", kind: base, target: checkpoints}
+lifecycle:
+  budget: 5.0
+spec:
+  model: "wan-ai/Wan2.2-T2V-A14B"
+"""
+    cfg_path = tmp_path / "stale.yaml"
+    cfg_path.write_text(yaml_text, encoding="utf-8")
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(cfg_path)
+    msg = str(exc_info.value)
+    assert "engine.hosted.model" in msg
+    assert "spec.model" in msg
+
+
+def test_layer_m_clean_config_with_only_spec_model_loads(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """YAML with only top-level ``spec.model`` (no ``engine.hosted.model``) loads.
+
+    Bug catch: deleting the pydantic field accidentally requires the value
+    elsewhere on the model (e.g. a stray ``Required`` annotation).
+    """
+    from kinoforge.core.config import load_config
+
+    yaml_text = """
+engine:
+  kind: hosted
+  precision: ""
+  hosted:
+    provider: my-shim
+    endpoint: "https://shim.example.com/inference"
+    api_key_env: "MY_SHIM_KEY"
+    health_url: "https://shim.example.com/health"
+models:
+  - {ref: "hf:org/m:weights.safetensors", kind: base, target: checkpoints}
+lifecycle:
+  budget: 5.0
+spec:
+  model: "wan-ai/Wan2.2-T2V-A14B"
+"""
+    cfg_path = tmp_path / "clean.yaml"
+    cfg_path.write_text(yaml_text, encoding="utf-8")
+    cfg = load_config(cfg_path)
+    assert cfg.engine.kind == "hosted"
+    assert cfg.spec["model"] == "wan-ai/Wan2.2-T2V-A14B"
+
+
+def test_layer_m_model_dump_roundtrips_spec_model(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """``cfg.model_dump()["spec"]["model"]`` equals the value written in YAML.
+
+    Bug catch: a future pydantic field rename or default elision silently
+    drops the value during ``model_dump()`` (which is what the orchestrator
+    feeds to ``engine.key_base()``).
+    """
+    from kinoforge.core.config import load_config
+
+    yaml_text = """
+engine:
+  kind: hosted
+  precision: ""
+  hosted:
+    provider: my-shim
+    endpoint: "https://shim.example.com/inference"
+    api_key_env: "MY_SHIM_KEY"
+    health_url: "https://shim.example.com/health"
+models:
+  - {ref: "hf:org/m:weights.safetensors", kind: base, target: checkpoints}
+lifecycle:
+  budget: 5.0
+spec:
+  model: "wan-ai/Wan2.2-T2V-A14B"
+"""
+    cfg_path = tmp_path / "roundtrip.yaml"
+    cfg_path.write_text(yaml_text, encoding="utf-8")
+    cfg = load_config(cfg_path)
+    dumped = cfg.model_dump()
+    assert dumped["spec"]["model"] == "wan-ai/Wan2.2-T2V-A14B"

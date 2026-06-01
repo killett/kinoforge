@@ -148,11 +148,11 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer L complete on `build/layer-l`.** `kinoforge batch` ships shared-deploy fan-out across N entries with continue-on-error semantics + machine-readable `_batch_summary.json`. PROGRESS:155 follow-up #3 closed. Next layer is TBD — review the remaining follow-ups below or open a new candidate.
+**Layer M complete on `build/layer-m`.** Hosted-YAML collapse + Authorization-header passthrough shipped. `spec.model` is now the single source of truth for hosted model identity; `GenerateClipStage` passes `Artifact.headers` through an injectable `http_get_bytes` seam. PROGRESS:155 follow-ups #1 + #2 closed. Next layer candidate: **Layer N** — cloud-fidelity hardening (RunPod `find_offers` shape validation, SkyPilot SDK smoke test, S3/GCS medium-fidelity tests per spec §9 carry-forwards).
 
 **Pending follow-ups:**
-- `GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).
-- `engine.hosted.model` ↔ `spec.model` duplication collapse (Layer K hosted YAML ambiguity).
+- ~~`GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).~~ — **CLOSED** by Phase 23 (Layer M).
+- ~~`engine.hosted.model` ↔ `spec.model` duplication collapse (Layer K hosted YAML ambiguity).~~ — **CLOSED** by Phase 23 (Layer M).
 - ~~`kinoforge batch` CLI subcommand~~ — **CLOSED** by Phase 22 (Layer L), see below.
 
 **Layer L Task 4 — streaming per-entry log lines (DEFERRED, ships in a later follow-up):**
@@ -331,3 +331,22 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 **Streaming per-entry log lines (DEFERRED):** the CLI prints the initial `manifest loaded` header and the final per-entry summary table but no mid-run markers — see the "Layer L Task 4" note in the Single-next-action block above (committed at `38d5394`). Closing the gap requires a callback hook into `batch_generate` so `core/` does not print directly. Future contributor picks this up as a self-contained polish phase.
 
 **Test count:** 741 tests passed + 1 skipped before Task 5 → 743 tests passed + 1 skipped after Task 5 (+35 net across Layer L; pre-Layer-L baseline was 708 + 1).
+
+### Phase 23 — Layer M (hosted-YAML collapse + Authorization-header passthrough)
+
+- [x] Task 1: HostedEngineConfig.model dropped + model_validator migration + tests — commit `e63cf61` (+ fix `c50b701`)
+- [x] Task 2: HostedAPIEngine.key_base reads cfg["spec"]["model"] + retrofit _BASE_CFG + new tests — commit `d4d583f` (+ fix `5f4f11b`)
+- [x] Task 3: examples/configs/hosted.yaml cleaned + test_hosted_yaml smell-lock rewritten — commit `5ab4493` (+ plan-sync `986a64a`)
+- [x] Task 4: GenerateClipStage gains http_get_bytes seam; _artifact_bytes threads Artifact.headers — commit `c482a05` (+ fix `9b3df5e`)
+- [x] Task 5: HostedAPIBackend.result populates Authorization: Bearer header — commit `67e3236` (+ docstring `9ef0efe`)
+- [x] Task 6: E2E test + README + PROGRESS + full gate — commit `3ea5cfa`
+- [ ] Merge to main via `--no-ff` — merge commit `<MERGESHA>` (closes PROGRESS:155 follow-ups #1 + #2)
+
+**Key design decisions:**
+- spec.model is the single source of truth for hosted model identity (Q2=A): cache identity and wire body cannot meaningfully diverge for hosted engines.
+- Hard-cut migration with a guiding `model_validator` (Q4=A): matches the `kinoforge gc --config` precedent; deprecation cycles would drag the smell through one more layer for zero functional gain.
+- Authorization passthrough via `Artifact.headers` + injectable `http_get_bytes` seam (Q3=A): mirrors the PROGRESS:87 "injected I/O seam" pattern; no new ABC.
+- HostedAPIEngine retrofitted as the in-tree consumer of the seam (Q5=A): exercises the auth path end-to-end without waiting for a future RunwayML/Pika adapter.
+- Out of scope (Layer N candidate): real-cloud verification gaps (RunPod find_offers shape, SkyPilot SDK smoke, S3/GCS medium-fidelity tests).
+
+**Test count:** 743 passed + 1 skipped pre-Layer-M → ~755 passed + 1 skipped post-Layer-M (+12 net new; +2 retrofits on AC1/AC6).

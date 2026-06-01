@@ -76,6 +76,40 @@ with code 2. The summary JSON is written before the exit in every case.
 **Cleanup.** `kinoforge gc --run <batch_id> -c <config>` walks the entire
 batch namespace at once.
 
+## Breaking changes
+
+### Layer M — `engine.hosted.model` removed; use top-level `spec.model`
+
+Hosted configs that previously declared the model identifier under
+`engine.hosted.model` must move the value to top-level `spec.model`. The
+two locations carried the same string in every shipped config, with a
+"keep these in sync" comment block as the only safeguard. Layer M
+collapses them: `spec.model` is now the single source of truth, read both
+by `HostedAPIBackend.submit` (wire body) and by
+`HostedAPIEngine.key_base` (cache identity).
+
+Migration:
+
+```diff
+ engine:
+   kind: hosted
+   hosted:
+     provider: my-shim
+     endpoint: "https://shim/inference"
+-    model: "wan-ai/Wan2.2-T2V-A14B"
+     api_key_env: "MY_SHIM_KEY"
+     health_url: "https://shim/health"
+     url_path: video.url
+
+ spec:
+   model: "wan-ai/Wan2.2-T2V-A14B"
+```
+
+Failure mode: configs still carrying `engine.hosted.model` raise a
+load-time `ValidationError` with the message
+`"engine.hosted.model is no longer supported; move the value to
+top-level spec.model"`.
+
 ## Configuration
 
 Each kinoforge run is described by a single YAML file with three top-level blocks:
@@ -239,7 +273,7 @@ Two top-level YAML blocks supply per-job payload to the engine:
 
 | engine | required `spec.*` keys | notes |
 |---|---|---|
-| `hosted` | `model`, `params` | `spec.model` is the wire body; keep in sync with `engine.hosted.model` (cache identity) until a future layer collapses them |
+| `hosted` | `model`, `params` | `spec.model` is the single source of truth for model identity (Layer M: `engine.hosted.model` removed) |
 | `diffusers` | `pipeline`, `scheduler` | |
 | `comfyui` | `graph`, `node_overrides` | optional: `asset_node_ids`, `prompt_node_ids` |
 | `fal` | — | prompt comes from `Segment.prompt` via Layer J's `resolve_prompt` |
@@ -427,10 +461,11 @@ into provider-specific shapes:
 engine:
   kind: hosted
   hosted:
-    model: fal-ai/some-i2v-model
     url_path: video.url
     asset_paths:
       init_image: "input.image_url"
+spec:
+  model: "fal-ai/some-i2v-model"
 ```
 
 **ComfyUI** — `spec.asset_node_ids` maps each supported role to the
