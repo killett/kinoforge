@@ -63,7 +63,9 @@ def parse_duration(s: str) -> float:
 VALID_KIND_TARGETS: dict[str, set[str]] = {
     "base": {"diffusion_models", "checkpoints", "unet"},
     "lora": {"loras"},
-    "vae": {"vae", "clip"},
+    "vae": {"vae"},
+    "text_encoder": {"text_encoders", "clip"},
+    "clip_vision": {"clip_vision"},
 }
 
 KNOWN_ENGINES = {"comfyui", "diffusers", "hosted", "fake", "fal"}
@@ -334,13 +336,13 @@ class ModelEntry(BaseModel):
 
     Attributes:
         ref: Vendor-neutral model reference (e.g. "hf:org/m").
-        kind: One of "base", "lora", "vae".
+        kind: One of "base", "lora", "vae", "text_encoder", "clip_vision".
         target: Download target directory name.
         sha256: Optional content hash for integrity verification.
     """
 
     ref: str
-    kind: Literal["base", "lora", "vae"]
+    kind: Literal["base", "lora", "vae", "text_encoder", "clip_vision"]
     target: str
     sha256: str | None = None
 

@@ -387,19 +387,23 @@ def test_runpod_comfyui_wan_yaml_loads_with_graph_file_resolution() -> None:
 
     expected_graph = json.loads(graph_path.read_text(encoding="utf-8"))
     assert cfg.spec["graph"] == expected_graph
-    # Models scaffolding: UNet (base), VAE, text encoder (vae/clip)
+    # Models: UNet (base), VAE, text encoder
     assert len(cfg.models) == 3
     kinds = [m.kind for m in cfg.models]
     assert kinds.count("base") == 1
-    assert kinds.count("vae") == 2
-    # custom_nodes SHA-pin scaffolding (Task 7 will resolve PINME -> real SHA)
+    assert kinds.count("vae") == 1
+    assert kinds.count("text_encoder") == 1
+    # custom_nodes SHA-pinned to real commits (resolved offline pre-live-run)
     comfyui_block = cfg.engine.comfyui
     if comfyui_block is not None:
         nodes = comfyui_block.custom_nodes
         assert len(nodes) >= 2
         for node in nodes:
             assert "git" in node
-            assert node.get("ref") == "PINME"
+            ref = node.get("ref")
+            assert isinstance(ref, str) and len(ref) == 40, (
+                f"expected 40-char git SHA, got {ref!r}"
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,14 @@
-# Layer P live smoke — ComfyUI + Wan 2.2 i2v on RunPod.
+# Layer P live smoke — ComfyUI + Wan 2.1 i2v 14B 480P fp8 on RunPod.
+#
+# Wan 2.1 (not 2.2): 2.2 i2v is a 2-UNet MoE architecture (~125 GB total)
+# which exceeds the 80 GB pod disk budget. Wan 2.1 i2v fp8 fits in ~25 GB
+# (single UNet 17 GB + VAE 0.25 GB + T5 text encoder 6.7 GB) and exercises
+# the same engine/provider/generation paths.
 #
 # Usage:
 #   export RUNPOD_API_KEY=...
 #   export RUNPOD_TERMINATE_KEY=...
-#   export HF_TOKEN=...                     # Wan 2.2 weights are gated
+#   export HF_TOKEN=...                     # Wan weights are gated
 #   export KINOFORGE_LIVE_TESTS=1
 #   export KINOFORGE_SAVE_FIXTURES=1        # first green run only
 #   export KINOFORGE_LIVE_KEEP_POD=1        # dev iteration — reuses warm pod
@@ -16,12 +21,6 @@
 #   - budget: 2.00                    (BudgetTracker tears down mid-run)
 #   - idle_timeout: 10m + selfterm    (pod self-destructs after 10 min idle)
 #   - finally: in test always destroys (unless KEEP_POD=1)
-#
-# Placeholders pinned by Layer P Task 7 (live shake-out):
-#   - engine.comfyui.custom_nodes[*].ref  (commit SHAs)
-#   - models[*].ref                       (real Wan 2.2 file names)
-#   - spec.graph_file                     (real exported workflow JSON)
-#   - spec.asset_node_ids / prompt_node_ids (real node IDs from exported graph)
 
 engine:
   kind: comfyui
@@ -30,20 +29,20 @@ engine:
     version: "0.3.10"
     custom_nodes:
       - git: "https://github.com/kijai/ComfyUI-WanVideoWrapper"
-        ref: "PINME"
+        ref: "088128b224242e110d3906c6750e9a3a348a659b"
       - git: "https://github.com/kijai/ComfyUI-KJNodes"
-        ref: "PINME"
+        ref: "369c8aee9ad4641823d0ffd7035076bcd297b6f2"
 
 models:
-  - ref: "hf:Wan-AI/Wan2.2-I2V-A14B:wan2.2_14b_i2v_unet.safetensors"
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors"
     kind: base
-    target: checkpoints
-  - ref: "hf:Wan-AI/Wan2.2-I2V-A14B:wan2.2_14b_i2v_vae.safetensors"
+    target: diffusion_models
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1_VAE_bf16.safetensors"
     kind: vae
     target: vae
-  - ref: "hf:Wan-AI/Wan2.2-I2V-A14B:wan2.2_14b_i2v_text_encoder.safetensors"
-    kind: vae
-    target: clip
+  - ref: "hf:Kijai/WanVideo_comfy:umt5-xxl-enc-fp8_e4m3fn.safetensors"
+    kind: text_encoder
+    target: text_encoders
 
 compute:
   provider: runpod
@@ -68,9 +67,9 @@ compute:
 spec:
   graph_file: runpod-comfyui-wan.graph.json
   asset_node_ids:
-    init_image: "12"           # Task 7 rewrites to match exported graph
+    init_image: "12"           # rewritten when exported workflow lands
   prompt_node_ids:
-    - "8"                      # Task 7 rewrites
+    - "8"
   node_overrides: {}
 
 params:
