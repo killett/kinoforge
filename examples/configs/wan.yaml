@@ -97,3 +97,12 @@ params:
 #     node_overrides: { ... }
 #     prompt_node_ids:
 #       main: "6"   # node id of the positive-prompt CLIPTextEncode node
+
+# Layer O — user-facing output directory.  Uncomment to override defaults.
+# Final clips are published to <dir>/<batch_id>?/{YYYYMMDD-HHMMSS}_{prompt-slug}{ext}.
+# Internal artifacts (profile cache, ledger, weights) stay under --state-dir
+# regardless of this block.
+# output:
+#   kind: local        # only "local" ships in v1
+#   dir: output        # relative-to-cwd or absolute
+#   enabled: true      # set false to skip publishing for this config
