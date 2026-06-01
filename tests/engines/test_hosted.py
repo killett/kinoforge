@@ -158,7 +158,7 @@ def test_ac1_requires_local_weights_false() -> None:
 
 
 def test_ac1_key_base_from_cfg() -> None:
-    """key_base(cfg) returns the model string from the hosted config block."""
+    """key_base(cfg) returns cfg['spec']['model']."""
     engine = _make_engine()
     assert engine.key_base(_BASE_CFG) == _MODEL
 

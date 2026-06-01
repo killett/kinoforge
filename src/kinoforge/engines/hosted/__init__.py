@@ -18,9 +18,11 @@ Cfg shape under ``cfg["engine"]["hosted"]``:
       hosted:
         provider: fal                           # e.g. "fal"
         endpoint: https://fal.run/fal-ai/ltx-video
-        model: ltx-2                            # hosted model id
         api_key_env: FAL_KEY                    # env-var name for the credential
         health_url: https://fal.run/health      # pinged by provision()
+
+    spec:
+      model: ltx-2                              # hosted model id (cache identity + wire body)
 """
 
 from __future__ import annotations
