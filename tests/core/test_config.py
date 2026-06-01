@@ -774,8 +774,6 @@ def test_layer_m_stale_engine_hosted_model_raises_with_guidance(tmp_path) -> Non
     catch ConfigError; the str() of the exception preserves the full pydantic
     message including our migration guidance.
     """
-    import pytest
-
     from kinoforge.core.config import load_config
     from kinoforge.core.errors import ConfigError
 
