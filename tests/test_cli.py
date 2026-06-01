@@ -506,3 +506,226 @@ def test_cli_env_file_missing_propagates_FileNotFoundError(
 
     with pytest.raises(FileNotFoundError, match=str(missing)):
         _call(["--env-file", str(missing), "list"], tmp_path / "state")
+
+
+# ---------------------------------------------------------------------------
+# Layer O Task 7 — --output-dir / --no-output-dir / --run-id uniquification
+# ---------------------------------------------------------------------------
+
+
+def test_cli_output_dir_flag_overrides_yaml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1: --output-dir /tmp/foo builds LocalOutputSink(dir=resolved /tmp/foo).
+
+    Verifies the CLI passes sink=LocalOutputSink(dir=...) into generate().
+    """
+    from kinoforge.outputs.local import LocalOutputSink
+
+    cfg_path = _write_cfg(tmp_path)
+    state_dir = tmp_path / "state"
+    out_dir = tmp_path / "my-output"
+
+    captured: dict[str, object] = {}
+
+    def fake_generate(cfg: object, request: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        import types
+
+        return types.SimpleNamespace(uri="fake://result")
+
+    monkeypatch.setattr("kinoforge.cli.generate", fake_generate)
+
+    code = _call(
+        [
+            "generate",
+            "--config",
+            str(cfg_path),
+            "--prompt",
+            "hello",
+            "--mode",
+            "t2v",
+            "--output-dir",
+            str(out_dir),
+        ],
+        state_dir,
+    )
+
+    assert code == 0
+    sink = captured.get("sink")
+    assert isinstance(sink, LocalOutputSink), f"expected LocalOutputSink; got {sink!r}"
+    assert sink.dir == out_dir.resolve()
+
+
+def test_cli_no_output_dir_disables_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC2: --no-output-dir produces sink=None."""
+    cfg_path = _write_cfg(tmp_path)
+    state_dir = tmp_path / "state"
+
+    captured: dict[str, object] = {}
+
+    def fake_generate(cfg: object, request: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        import types
+
+        return types.SimpleNamespace(uri="fake://result")
+
+    monkeypatch.setattr("kinoforge.cli.generate", fake_generate)
+
+    code = _call(
+        [
+            "generate",
+            "--config",
+            str(cfg_path),
+            "--prompt",
+            "hello",
+            "--mode",
+            "t2v",
+            "--no-output-dir",
+        ],
+        state_dir,
+    )
+
+    assert code == 0
+    assert captured.get("sink") is None, (
+        f"expected sink=None; got {captured.get('sink')!r}"
+    )
+
+
+def test_cli_default_output_dir_is_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC3: no flag, fresh tmp cwd -> sink rooted at cwd/output."""
+    from kinoforge.outputs.local import LocalOutputSink
+
+    monkeypatch.chdir(tmp_path)
+    cfg_path = _write_cfg(tmp_path)
+    state_dir = tmp_path / "state"
+
+    captured: dict[str, object] = {}
+
+    def fake_generate(cfg: object, request: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        import types
+
+        return types.SimpleNamespace(uri="fake://result")
+
+    monkeypatch.setattr("kinoforge.cli.generate", fake_generate)
+
+    code = _call(
+        [
+            "generate",
+            "--config",
+            str(cfg_path),
+            "--prompt",
+            "hello",
+            "--mode",
+            "t2v",
+        ],
+        state_dir,
+    )
+
+    assert code == 0
+    sink = captured.get("sink")
+    assert isinstance(sink, LocalOutputSink), f"expected LocalOutputSink; got {sink!r}"
+    assert sink.dir == (tmp_path / "output").resolve()
+
+
+def test_cli_output_dir_and_no_output_dir_are_mutually_exclusive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC4: passing both --output-dir and --no-output-dir causes argparse error."""
+    from kinoforge.cli import main
+
+    cfg_path = _write_cfg(tmp_path)
+    state_dir = tmp_path / "state"
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "--state-dir",
+                str(state_dir),
+                "generate",
+                "--config",
+                str(cfg_path),
+                "--prompt",
+                "hello",
+                "--mode",
+                "t2v",
+                "--output-dir",
+                str(tmp_path / "foo"),
+                "--no-output-dir",
+            ]
+        )
+
+    assert exc_info.value.code != 0
+    err = capsys.readouterr().err
+    # argparse should mention the conflicting flags
+    assert "--output-dir" in err and "--no-output-dir" in err
+
+
+def test_cli_default_run_id_uniquifies_per_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC5: successive invocations without --run-id produce distinct run-YYYYMMDD-HHMMSS ids."""
+    import re
+
+    from kinoforge.core.clock import FakeClock
+
+    cfg_path = _write_cfg(tmp_path)
+    state_dir = tmp_path / "state"
+
+    fake_clock = FakeClock(start=1_000_000.0)  # 1970-01-12 13:46:40 UTC
+    monkeypatch.setattr("kinoforge.cli._cli_clock", fake_clock)
+
+    captured_run_ids: list[str] = []
+
+    def fake_generate(cfg: object, request: object, **kwargs: object) -> object:
+        captured_run_ids.append(str(kwargs.get("run_id", "")))
+        import types
+
+        return types.SimpleNamespace(uri="fake://result")
+
+    monkeypatch.setattr("kinoforge.cli.generate", fake_generate)
+
+    # First invocation at t=1_000_000
+    _call(
+        [
+            "generate",
+            "--config",
+            str(cfg_path),
+            "--prompt",
+            "hello",
+            "--mode",
+            "t2v",
+        ],
+        state_dir,
+    )
+
+    # Advance clock so timestamps differ
+    fake_clock.advance(2.0)
+
+    # Second invocation at t=1_000_002
+    _call(
+        [
+            "generate",
+            "--config",
+            str(cfg_path),
+            "--prompt",
+            "hello",
+            "--mode",
+            "t2v",
+        ],
+        state_dir,
+    )
+
+    assert len(captured_run_ids) == 2, f"expected 2 run_ids; got {captured_run_ids}"
+    rid1, rid2 = captured_run_ids
+    assert rid1 != rid2, f"run_ids should differ; both were {rid1!r}"
+
+    # Each must match run-YYYYMMDD-HHMMSS
+    pattern = re.compile(r"^run-\d{8}-\d{6}$")
+    assert pattern.match(rid1), f"run_id {rid1!r} does not match run-YYYYMMDD-HHMMSS"
+    assert pattern.match(rid2), f"run_id {rid2!r} does not match run-YYYYMMDD-HHMMSS"

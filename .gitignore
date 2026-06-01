@@ -26,3 +26,6 @@ htmlcov/
 
 # Secrets — never commit .env
 .env
+
+# Layer O — user-facing output directory (configurable per-run via --output-dir)
+output/
