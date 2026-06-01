@@ -212,7 +212,9 @@ Routes 1 + 2 are most likely paths. They get their own brainstorm + sub-spec whe
 
 **Bug-catch #1 — security finding (NOT yet fixed, must address before next live capture):** `_RecordingHTTPSeam` redacts the `key` field of GraphQL env-var entries but does NOT redact the `value` field. The second leaked-pod smoke wrote `tests/providers/fixtures/runpod/create_pod.json` with `request_body.variables.input.env[0].value` containing the live `RUNPOD_API_KEY` in plaintext. Detected during pre-commit review; fixture diff reverted via `git checkout HEAD --` BEFORE any commit landed; key never reached git history. Root cause: `_RecordingHTTPSeam._redact_request` (or equivalent) needs to recursively redact any string value matching credential patterns (`rpa_*`, `Bearer *`, `hf_*`, etc.), not just stop at named keys. This is a real blocker for resuming live work — a future smoke at HEAD would re-leak. Fix is a small change in `tests/providers/conftest_runpod.py` redaction helpers + a regression test. Lands as its own commit when work resumes.
 
-**Layer P Task 7 bug-fix #1 (`_RecordingHTTPSeam` redaction hardening) — ✅ CLOSED 2026-06-01 at HEAD `f09909e` (pre-T8 gate-clean snapshot; T8 lands this paragraph).**
+Test count (item #3 partial-close, pre-bug-fix #1) 858 → 862 (+4 net offline RED tests; +1 smoke-wiring-only LOC change). typecheck/lint/pre-commit all-files clean.
+
+**Layer P Task 7 bug-fix #1 (`_RecordingHTTPSeam` redaction hardening) — ✅ CLOSED 2026-06-01 at HEAD `f09909e` (pre-T8 gate-clean snapshot; T8 lands this section).**
 
 Sub-spec + sub-plan + 7 task commits closed PROGRESS:213. `_redact` (key-name walker)
 preserved verbatim; layered around it are `_redact_kv_shape` (GraphQL env-array shape detector)
@@ -223,7 +225,7 @@ fail-closed, no fixture lands on disk. New `tests/providers/test_fixtures_audit.
 committed `tests/**/*.json` and asserts cleanliness as a permanent lockdown.
 
 - Sub-spec: `docs/superpowers/specs/2026-06-01-layer-p-task7-bugfix1-recording-seam-redaction-design.md` (`edc8b3e`)
-- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-p-task7-bugfix1-recording-seam-redaction.md` (+ `.tasks.json`)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-p-task7-bugfix1-recording-seam-redaction.md` (+ `.tasks.json`) (`66590ca`)
 - T1 `1ce8160` — `_redact_kv_shape` + credential-name vocab + 4 tests
 - T2 `f3c9dc9` — `_redact_credential_patterns` + `_redact_string` + 14 tests (parametrised)
 - T3 `9648d72` — `_redact_all` composition + 3 idempotence/regression tests
@@ -241,8 +243,6 @@ graph + YAML wiring (item #3, blocked on remote provisioning).
 
 **Hard prerequisite for resuming any live capture on `build/layer-p`** — without this fix the
 next smoke attempt would re-leak `RUNPOD_API_KEY` via the GraphQL `env[*].value` field.
-
-Test count 858 → 862 (+4 net offline RED tests; +1 smoke-wiring-only LOC change). typecheck/lint/pre-commit all-files clean.
 
 **Cost burn (item #3 attempt):** $0.25 across 2 leaked pods. Both auto-detected + destroyed via `list_instances()` audit immediately after smoke failure. Net Layer P spend: $0.013 (prior) + $0.25 = $0.263 / $1.99 cap. 87% budget remaining.
 
