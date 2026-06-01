@@ -4,41 +4,41 @@
     {
       "id": 8,
       "subject": "Task 1: Recording HTTP seam + _load_fixture + secret redaction",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Build tests/providers/conftest_runpod.py with _load_fixture, _RecordingHTTPSeam, _redact + redaction unit test (AC2).\n\n**Files:** Create tests/providers/conftest_runpod.py, tests/providers/test_runpod_conftest.py, tests/providers/fixtures/runpod/.gitkeep\n\n**Verify:** pixi run pytest tests/providers/test_runpod_conftest.py -v\n\n```json:metadata\n{\"files\": [\"tests/providers/conftest_runpod.py\", \"tests/providers/test_runpod_conftest.py\", \"tests/providers/fixtures/runpod/.gitkeep\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_conftest.py -v\", \"acceptanceCriteria\": [\"_redact whole-word matches case-insensitive\", \"_redact passes through partial-word collisions\", \"_load_fixture returns response block as dict\", \"_load_fixture raises FileNotFoundError with capture hint\", \"_RecordingHTTPSeam dispatches to 5 named fixtures via query-fragment table\", \"Unknown queries write to unknown_<sha8>.json + log WARNING\", \"mypy + ruff + pre-commit clean\"]}\n```"
     },
     {
       "id": 9,
       "subject": "Task 2: Placeholder fixture commits + offline-load smoke",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8],
       "description": "**Goal:** Commit 5 placeholder fixtures derived from existing inline dicts; replaced by Task 4 live capture. Add test_starter_fixtures_load smoke.\n\n**Files:** Create 5 fixture JSONs; modify tests/providers/test_runpod_conftest.py\n\n**Verify:** pixi run pytest tests/providers/test_runpod_conftest.py::test_starter_fixtures_load -v\n\n```json:metadata\n{\"files\": [\"tests/providers/fixtures/runpod/gpu_types.json\", \"tests/providers/fixtures/runpod/list_pods.json\", \"tests/providers/fixtures/runpod/get_pod.json\", \"tests/providers/fixtures/runpod/create_pod.json\", \"tests/providers/fixtures/runpod/terminate_pod.json\", \"tests/providers/test_runpod_conftest.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_conftest.py::test_starter_fixtures_load -v\", \"acceptanceCriteria\": [\"All 5 fixtures exist with _meta + response top-level\", \"Each _meta has PLACEHOLDER captured_at + git_sha\", \"_load_fixture returns non-empty for all 5\", \"mypy + ruff + pre-commit clean\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 3: Live smoke YAML + skeleton test file + sample init frame",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** Build examples/configs/runpod-comfyui-wan.yaml + tests/live/test_runpod_live.py skeleton + 32 KB synthetic PNG init frame. Extend tests/test_examples.py.\n\n**Verify:** pixi run pytest tests/live/test_runpod_live.py tests/test_examples.py -v && pixi run test\n\n```json:metadata\n{\"files\": [\"examples/configs/runpod-comfyui-wan.yaml\", \"tests/live/test_runpod_live.py\", \"tests/providers/fixtures/runpod/sample_init_frame.png\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_runpod_live.py tests/test_examples.py -v && pixi run test\", \"acceptanceCriteria\": [\"YAML loads with expected cost-cap values\", \"Live test importable; SKIPPED without env vars\", \"test_runpod_live_e2e_wan_i2v_smoke defined per spec §3 control flow\", \"sample_init_frame.png 1 KB to 64 KB valid PNG\", \"tests/test_examples.py adds 1 load test\", \"Full offline suite green\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 4: USER-GATE — run live smoke against real RunPod + capture fixtures",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Live smoke against real RunPod: exits 0, captures real fixtures, produces real MP4, destroys pod, secret-scan clean. Any production-code bug surfaced becomes in-scope fix per AC9.\n\n**Verify:** KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 pixi run pytest tests/live/test_runpod_live.py::test_runpod_live_e2e_wan_i2v_smoke -v -s\n\n```json:metadata\n{\"files\": [\"tests/providers/fixtures/runpod/gpu_types.json\", \"tests/providers/fixtures/runpod/list_pods.json\", \"tests/providers/fixtures/runpod/get_pod.json\", \"tests/providers/fixtures/runpod/create_pod.json\", \"tests/providers/fixtures/runpod/terminate_pod.json\", \"tests/providers/fixtures/runpod/last_smoke.json\", \"tests/live/test_runpod_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 pixi run pytest tests/live/test_runpod_live.py::test_runpod_live_e2e_wan_i2v_smoke -v -s\", \"acceptanceCriteria\": [\"Live smoke exits 0 with real RUNPOD_API_KEY + RUNPOD_TERMINATE_KEY\", \"All 5 fixtures show non-PLACEHOLDER captured_at + git_sha + real-shape response\", \"last_smoke.json records artifact path, size, sha256, git SHA, timestamp\", \"MP4 between 100 KB and 50 MB with valid ftyp magic bytes\", \"Pod confirmed destroyed via RunPod console\", \"Secret scan returns zero hits\", \"Any production-code bug surfaced is fixed in separate commit and documented in PROGRESS Phase 24\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live-run\", \"pytest-exit-0\", \"real-runpod\"], [\"fixtures-captured\", \"non-placeholder\", \"real-shape\"], [\"pod-destroyed\", \"console-verified\", \"no-dangling\"]]}\n```"
     },
     {
       "id": 12,
       "subject": "Task 5: Refactor offline tests/providers/test_runpod.py to use real fixtures",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11],
       "description": "**Goal:** Replace inline GraphQL response dicts in test_runpod.py with _load_fixture(name). Update assertions to match real values. Production bugs → separate fix(runpod): commits.\n\n**Verify:** pixi run pytest tests/providers/test_runpod.py -v && rg 'lowestPrice|memoryInGb|desiredStatus' tests/providers/test_runpod.py\n\n```json:metadata\n{\"files\": [\"tests/providers/test_runpod.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod.py -v && rg 'lowestPrice|memoryInGb|desiredStatus' tests/providers/test_runpod.py\", \"acceptanceCriteria\": [\"rg search returns zero hits inside test bodies\", \"All 24 tests pass (production bugs fixed in separate fix(runpod): commits)\", \"No new tests added (Task 6 owns additions)\", \"mypy + ruff + pre-commit clean\"]}\n```"
     },
     {
       "id": 13,
       "subject": "Task 6: Real-shape required-keys + status-mapping lockdown tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11],
       "description": "**Goal:** Add test_find_offers_real_shape_required_keys + test_pod_status_mapping_covers_real_statuses (AC4).\n\n**Verify:** pixi run pytest tests/providers/test_runpod.py --collect-only -q | tail -3\n\n```json:metadata\n{\"files\": [\"tests/providers/test_runpod.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod.py -v && pixi run pytest tests/providers/test_runpod.py --collect-only -q | tail -3\", \"acceptanceCriteria\": [\"test_find_offers_real_shape_required_keys passes against captured gpu_types.json\", \"test_pod_status_mapping_covers_real_statuses passes against captured list_pods + get_pod\", \"Total test_runpod.py count = 26 (was 24)\", \"mypy + ruff + pre-commit clean\"]}\n```"
     },
@@ -50,5 +50,5 @@
       "description": "**Goal:** README 'Real providers — RunPod' section; PROGRESS Phase 24 entry; close carry-forward #1; update 'Single next action'; full gate; --no-ff merge.\n\n**Verify:** pixi run test && pixi run pre-commit run --all-files && rg 'Real providers — RunPod' README.md && rg 'Phase 24' PROGRESS.md\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test && pixi run pre-commit run --all-files && rg 'Real providers — RunPod' README.md && rg 'Phase 24' PROGRESS.md\", \"acceptanceCriteria\": [\"README 'Real providers — RunPod' section with env-var gate, capture flag, 4 cost guards, copy-pasteable command\", \"PROGRESS.md Phase 24 entry with per-task SHAs\", \"Real-cloud verification gaps RunPod bullet shows CLOSED (Layer N)\", \"Single next action reflects Layer N shipped + Layer O candidates\", \"pixi run test green offline-only; test count updated\", \"pixi run lint + typecheck + pre-commit all green\", \"Merge --no-ff with body referencing per-task commits + carry-forward closure\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-05-31T00:00:00-07:00"
+  "lastUpdated": "2026-05-31T12:00:00-07:00"
 }
