@@ -65,6 +65,7 @@ and exhibits unchanged behavior.
 | Q3 | Kwarg propagation scope | `deploy_session` + `generate` + `batch_generate`. Full parity. | Smoke calls `generate()` (not `deploy_session` directly); batch is the obvious sibling and warm-reuse value is identical there. |
 | Q4 | Freshness validation when `instance=` supplied | Trust caller as-is. No `get_instance` refresh. | Caller's tag-discovery already filtered by `status=="ready"`. Avoids one GraphQL round-trip per session. Downstream HTTP failures surface dead pods loudly. |
 | Q5 | `ValidationError` teardown in `generate()` when `instance=` supplied | Skip `destroy_instance`; re-raise. | Symmetric with Q2. Same ownership rule for both teardown paths. |
+| Q6 | Cold-path tag preservation when `instance=None` | Add `tags: dict[str, str] | None = None` kwarg on `deploy_session` + `generate` + `batch_generate`; merge into orchestrator-built `InstanceSpec.tags` (caller tags win on collision). | Without it, `find_instance_by_tag` cannot rediscover an orchestrator-created pod on the next iteration; warm-reuse iteration loop breaks on cold-start. ~15 LOC. |
 
 ## Architecture
 
@@ -281,6 +282,61 @@ own exceptions into `BatchOutcome` — so no additional skip-destroy
 guard is needed in batch. Only `CapabilityMismatch` mid-batch tears down,
 and that path is owned by `deploy_session`'s step 8, already guarded.
 
+### Cold-path tag passthrough — `tags=` kwarg
+
+Add `tags: dict[str, str] | None = None` to all three entry points
+(`deploy_session`, `generate`, `batch_generate`). Inside
+`_provision_instance_and_build_backend` and `deploy()`'s `_build_spec`
+closure, merge supplied `tags` over the orchestrator's defaults
+(`kinoforge_engine`, `kinoforge_key`) so caller tags win on collision but
+the engine/key tags remain unless explicitly overridden.
+
+Threading:
+
+```python
+def deploy_session(
+    ...,
+    tags: dict[str, str] | None = None,        # NEW
+) -> Iterator[DeploySession]: ...
+
+def generate(
+    ...,
+    tags: dict[str, str] | None = None,        # NEW
+) -> Artifact:
+    with deploy_session(..., tags=tags) as session: ...
+
+def batch_generate(
+    ...,
+    tags: dict[str, str] | None = None,        # NEW
+) -> BatchResult:
+    with deploy_session(..., tags=tags) as session: ...
+```
+
+`_provision_instance_and_build_backend` gains a `tags: dict[str, str] | None`
+parameter; its internal `_build_spec` merges:
+
+```python
+def _build_spec(offer: Offer) -> InstanceSpec:
+    merged_tags: dict[str, str] = {
+        "kinoforge_engine": resolved_engine.name,
+        "kinoforge_key": key_hash,
+    }
+    if tags:
+        merged_tags.update(tags)
+    return InstanceSpec(
+        image=image,
+        offer=offer,
+        lifecycle=lifecycle,
+        tags=merged_tags,
+        env={},
+        run_id=run_id,
+    )
+```
+
+When `instance=` is supplied, `tags=` is ignored (caller's instance
+already carries its own tags). Same merge logic added to `deploy()`'s
+`_build_spec`.
+
 ### No ABC changes
 
 `ComputeProvider`, `GenerationEngine`, `BackendPool`, `ModelProfileProvider`
@@ -323,8 +379,15 @@ artifact = orchestrator.generate(
     request,
     store=store,
     provider=provider,
-    engine_factory=lambda *_: engine,
+    engine=engine,
+    creds=creds,
+    state_dir=state_dir,
     instance=existing,                # warm reuse, None on cold start
+    tags={
+        "mode": "pod",
+        _TAG_KEY: _TAG_VALUE,         # warm-rediscovery on next iteration
+        "kinoforge.git_sha": _git_sha(),
+    },                                # ignored when instance is not None
 )
 ```
 
@@ -332,6 +395,10 @@ The manual `find_offers` + create loop + poll_ready loop all disappear —
 they live in `_provision_instance_and_build_backend` and run only on the
 cold-start path (`existing is None`). Phases 3–5 in the skeleton collapse
 into `phase=generate`. KEEP_POD destroy-skip in `finally` unchanged.
+
+The `tags=` kwarg replaces the manual `provider.create_instance(InstanceSpec(tags=...))`
+block — same operator-controlled tag dict, just now threaded through the
+orchestrator so cold-path discovery works on iteration #2.
 
 ## Test plan
 
@@ -388,6 +455,22 @@ call. Tests inspect `provider.create_calls` and
   both entries land in `BatchResult` with `status="ok"`. Bug catch:
   batch_generate forgets the new kwarg.
 
+### Orchestrator `tags=` passthrough (`tests/core/test_orchestrator.py`, +2)
+
+- **`test_deploy_session_threads_tags_into_instance_spec`**
+  — empty profile cache, `instance=None`, `tags={"k": "v"}`. Spy on
+  `provider.create_instance` records the `InstanceSpec` it received;
+  asserts `spec.tags["k"] == "v"` AND `spec.tags["kinoforge_engine"]`
+  + `spec.tags["kinoforge_key"]` both still present (caller tags merged,
+  not replaced). Bug catch: `merged_tags = tags or {}` instead of
+  `merged_tags.update(tags)` would wipe the engine/key tags.
+
+- **`test_deploy_session_tags_ignored_when_instance_supplied`**
+  — `instance=preMade`, `tags={"k": "v"}`. Asserts caller's pre-made
+  instance is yielded unmodified (its tags unchanged); `provider.create_instance`
+  not called. Bug catch: tags-kwarg path accidentally mutates the
+  supplied instance's tags.
+
 ### Live smoke (`tests/live/test_comfyui_wan_live.py`)
 
 No new tests; the skeleton already covers the green path. Retrofit only:
@@ -420,7 +503,14 @@ the cold path keeps them logged inside `_provision_instance_and_build_backend`.
    loop AND the explicit `provider.create_instance` call; warm path
    passes `instance=existing` to `orchestrator.generate`; cold path
    passes `instance=None`.
-10. Full offline gate green: `pixi run pytest` (~846 → ~853 after +7 net
+10. `deploy_session(tags={...})` merges caller tags onto orchestrator-built
+    `InstanceSpec.tags` (caller wins on collision); engine/key tags remain.
+11. `deploy_session(tags={...}, instance=preMade)` leaves the supplied
+    instance's tags untouched (the `tags=` kwarg is ignored when the
+    caller owns the instance).
+12. `generate(tags={...})` and `batch_generate(tags={...})` thread the
+    kwarg through to `deploy_session`.
+13. Full offline gate green: `pixi run pytest` (~846 → ~855 after +9 net
     new tests). `pixi run typecheck`, `pixi run lint`, `pixi run pre-commit
     run --all-files` clean.
 
@@ -428,25 +518,27 @@ the cold path keeps them logged inside `_provision_instance_and_build_backend`.
 
 Three atomic commits on `build/layer-p`:
 
-1. **`feat(core/orchestrator): instance= kwarg for warm-pod reuse`**
+1. **`feat(core/orchestrator): instance= + tags= kwargs for warm-pod reuse`**
    — `deploy_session` + `generate` kwarg threading, skip-create on warm
-   path, skip-destroy in both teardown branches, +6 regression tests.
-2. **`feat(core/batch): instance= kwarg parity for batch_generate`**
-   — single-line kwarg thread, +1 regression test.
-3. **`refactor(test/live): warm-reuse via orchestrator instance kwarg`**
+   path, skip-destroy in both teardown branches, tags-merge on cold path,
+   +8 regression tests.
+2. **`feat(core/batch): instance= + tags= kwarg parity for batch_generate`**
+   — kwarg thread, +1 regression test.
+3. **`refactor(test/live): warm-reuse via orchestrator instance + tags kwargs`**
    — smoke drops manual offer-iteration loop + explicit `create_instance`;
-   warm branch passes `instance=existing` to `orchestrator.generate`.
+   unconditionally passes `instance=existing` + `tags={...}` to
+   `orchestrator.generate`.
 
 ## File-by-file scope
 
 | File | Action | LOC |
 |---|---|---|
-| `src/kinoforge/core/orchestrator.py` | Modify (`deploy_session` + `generate` kwarg + branches) | ~50 |
-| `src/kinoforge/core/batch.py` | Modify (`batch_generate` kwarg thread) | ~3 |
-| `tests/core/test_orchestrator.py` | Modify (+6 tests + provider spy helper) | ~160 |
+| `src/kinoforge/core/orchestrator.py` | Modify (`deploy_session` + `generate` + `instance=` + `tags=` kwargs + branches) | ~70 |
+| `src/kinoforge/core/batch.py` | Modify (`batch_generate` `instance=` + `tags=` thread) | ~5 |
+| `tests/core/test_orchestrator.py` | Modify (+8 tests + provider spy helper) | ~200 |
 | `tests/core/test_batch.py` | Modify (+1 test) | ~30 |
-| `tests/live/test_comfyui_wan_live.py` | Modify (drop manual loop, add kwarg) | ~25 net delete |
-| **Total** | 5 files, 0 new | **~220** |
+| `tests/live/test_comfyui_wan_live.py` | Modify (drop manual loop, add `instance=` + `tags=`) | ~30 net delete |
+| **Total** | 5 files, 0 new | **~270** |
 
 ## Out of scope (recorded follow-ups)
 
