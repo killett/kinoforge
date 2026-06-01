@@ -22,7 +22,7 @@ layered redaction passes before any fixture lands on disk or any logger emission
    | `hf_token` | `hf_xxxxxxxx...` | HuggingFace token |
    | `fal_key` | `fal_key_xxxxxxxx...` | fal.ai key |
    | `bearer_auth` | `Bearer eyJ...` | HTTP Authorization header |
-   | `sk_token` | `sk-proj-...` / `sk-ant-api03-...` | OpenAI / Anthropic-old (guarded: ≥20 url-safe chars) |
+   | `sk_token` | `sk-proj-...` / `sk-ant-api03-...` | OpenAI / Anthropic Console (guarded: ≥20 url-safe chars) |
    | `aws_access_key` | `AKIA....` / `ASIA....` | AWS access key ID |
    | `pem_private_key` | `-----BEGIN ... PRIVATE KEY-----...` | PEM blocks (e.g. GCS service accounts) |
 
@@ -55,9 +55,9 @@ test in `tests/providers/test_fixtures_audit.py` confirm cleanliness across the 
 
 ### Env vars used by live smokes
 
-All four MUST live in `.env` (gitignored). See `.env.example` for the canonical list:
+All five MUST live in `.env` (gitignored). See `.env.example` for the canonical list:
 
-- `RUNPOD_API_KEY` / `RUNPOD_TERMINATE_KEY` — RunPod provider
+- `RUNPOD_API_KEY` / `RUNPOD_TERMINATE_KEY` — RunPod provider (paired; terminate key reuses the main key via `${RUNPOD_API_KEY}` interpolation)
 - `HF_TOKEN` — HuggingFace weight downloads
 - `FAL_KEY` — fal.ai hosted engine
 - `CIVITAI_TOKEN` — CivitAI gated/private models
