@@ -82,6 +82,7 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
     # Lazy imports — keep module import cheap when test is skipped at collection.
     from kinoforge.core.config import load_config
     from kinoforge.core.credentials import EnvCredentialProvider
+    from kinoforge.core.errors import CapacityError
     from kinoforge.core.interfaces import (
         Artifact,
         ConditioningAsset,
@@ -233,14 +234,12 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
                         instance.id,
                     )
                     break
-                except ValueError as exc:
-                    if "resources to deploy" in str(exc):
-                        _log.warning(
-                            "[phase=create_instance] %s unavailable, trying next",
-                            candidate.gpu_type,
-                        )
-                        continue
-                    raise
+                except CapacityError:
+                    _log.warning(
+                        "[phase=create_instance] %s unavailable, trying next",
+                        candidate.gpu_type,
+                    )
+                    continue
             if instance is None or chosen is None:
                 pytest.fail(
                     f"all {len(offers)} offers exhausted; RunPod returned "
