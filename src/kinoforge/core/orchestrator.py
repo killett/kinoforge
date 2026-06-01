@@ -469,7 +469,9 @@ def deploy_session(
             ``engine.provision`` still runs (idempotent via Layer I
             marker). Caller owns the lifecycle — teardown is suppressed
             on ``CapabilityMismatch`` so the warm pod survives drift
-            re-raises.
+            re-raises. Caller must pre-poll the instance to
+            ``status == 'ready'``; ``deploy_session`` does not re-poll a
+            supplied instance.
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}`` when the
             orchestrator creates the pod on the cold path. Caller wins on
@@ -834,6 +836,8 @@ def generate(
             through to ``deploy_session`` — when supplied, ``create_instance``
             is skipped and the ``ValidationError`` teardown is suppressed
             so the caller-owned warm pod survives spec-validation failures.
+            Caller must pre-poll the instance to ``status == 'ready'``;
+            ``generate`` does not re-poll a supplied instance.
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}`` on the cold path
             (no ``instance=``). Ignored when ``instance=`` is supplied.
@@ -853,6 +857,7 @@ def generate(
     # (9).  ``dict(cfg.spec)`` / ``dict(cfg.params)`` still defensively
     # copies the pydantic-owned dicts so stage-side mutation cannot leak
     # back into ``cfg``.
+    _caller_supplied_instance = instance is not None
     with deploy_session(
         cfg,
         store=store,
@@ -919,8 +924,7 @@ def generate(
             if (
                 session.instance is not None
                 and session.provider is not None
-                and instance
-                is None  # caller did NOT supply → orchestrator owns lifecycle
+                and not _caller_supplied_instance  # only destroy when orchestrator owns the instance
             ):
                 session.provider.destroy_instance(session.instance.id)
             raise
