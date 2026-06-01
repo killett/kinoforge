@@ -16,12 +16,13 @@ Coverage:
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from typing import Any
 
 import pytest
 
-from kinoforge.core.errors import TeardownError
+from kinoforge.core.errors import CapacityError, TeardownError
 from kinoforge.core.interfaces import (
     CredentialProvider,
     HardwareRequirements,
@@ -390,6 +391,109 @@ def test_create_pod_returns_instance_starting(pod_spec: InstanceSpec) -> None:
     assert inst.provider == "runpod"
     assert inst.status == "starting"
     assert inst.id == "ia66l3rlto5x66"  # real id from create_pod.json fixture
+
+
+# ---------------------------------------------------------------------------
+# Layer P Task 7 item #1: typed CapacityError on no-resources mutation
+# ---------------------------------------------------------------------------
+
+
+_CAPACITY_OFFER = Offer(
+    id="rtx-4090",
+    gpu_type="NVIDIA GeForce RTX 4090",
+    vram_gb=24,
+    cuda="12.0",
+    cost_rate_usd_per_hr=0.69,
+    mode="pod",
+)
+
+
+def _spec_with_offer(pod_spec: InstanceSpec) -> InstanceSpec:
+    """pod_spec fixture has no offer; attach _CAPACITY_OFFER for these tests."""
+    return dataclasses.replace(pod_spec, offer=_CAPACITY_OFFER)
+
+
+def test_create_instance_raises_capacity_error_on_no_resources(
+    pod_spec: InstanceSpec,
+) -> None:
+    """RunPod mutation error containing 'resources to deploy' -> typed CapacityError.
+
+    Bug catch: if provider re-raises ValueError instead of CapacityError,
+    orchestrator-side retry catches nothing and the original PROGRESS:182
+    failure shape returns.
+    """
+    err_msg = "This machine does not have the resources to deploy your pod"
+    http_post = HttpPostSpy(response={"errors": [{"message": err_msg}]})
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+    spec = _spec_with_offer(pod_spec)
+
+    with pytest.raises(CapacityError) as exc_info:
+        provider.create_instance(spec)
+
+    # AC5: message names the offer's gpu_type so operators can debug
+    assert _CAPACITY_OFFER.gpu_type in str(exc_info.value)
+
+
+def test_create_instance_capacity_error_case_insensitive(
+    pod_spec: InstanceSpec,
+) -> None:
+    """AC2: substring match is case-insensitive.
+
+    Bug catch: a future RunPod copy edit (e.g., 'RESOURCES TO DEPLOY')
+    silently turns into a ValueError if the match is case-sensitive,
+    re-introducing PROGRESS:182.
+    """
+    err_msg = "MACHINE DOES NOT HAVE THE RESOURCES TO DEPLOY YOUR POD"
+    http_post = HttpPostSpy(response={"errors": [{"message": err_msg}]})
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+    spec = _spec_with_offer(pod_spec)
+
+    with pytest.raises(CapacityError):
+        provider.create_instance(spec)
+
+
+def test_create_instance_capacity_error_chains_underlying_value_error(
+    pod_spec: InstanceSpec,
+) -> None:
+    """CapacityError.__cause__ preserves original RunPod ValueError.
+
+    Bug catch: dropping `from value_error` (or `from None`) loses the
+    raw RunPod message across the orchestrator boundary, blinding
+    operators to the actual capacity reason.
+    """
+    raw_msg = "This machine does not have the resources to deploy your pod"
+    http_post = HttpPostSpy(response={"errors": [{"message": raw_msg}]})
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+    spec = _spec_with_offer(pod_spec)
+
+    with pytest.raises(CapacityError) as exc_info:
+        provider.create_instance(spec)
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, ValueError)
+    assert raw_msg in str(cause)
+
+
+def test_create_instance_non_capacity_error_still_raises_value_error(
+    pod_spec: InstanceSpec,
+) -> None:
+    """Auth / template / malformed-body errors keep raising ValueError.
+
+    Bug catch: an over-eager match (e.g., regex on the whole errors
+    block, or unconditional CapacityError on any mutation error) would
+    silently turn auth failures into retry-eligible capacity errors,
+    causing the orchestrator to retry across every offer for a problem
+    that fails identically on each.
+    """
+    http_post = HttpPostSpy(response={"errors": [{"message": "template not found"}]})
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+    spec = _spec_with_offer(pod_spec)
+
+    with pytest.raises(ValueError) as exc_info:
+        provider.create_instance(spec)
+
+    # Explicit: must NOT be CapacityError or any subclass
+    assert not isinstance(exc_info.value, CapacityError)
 
 
 # ---------------------------------------------------------------------------
