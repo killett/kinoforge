@@ -2,8 +2,6 @@
 
 This module provides the orchestrator-level cost-safety layer for compute instances.
 All time is sourced through the injected ``Clock`` so tests can step time deterministically.
-
-Task 18 additions: Ledger, destroy_confirmed, reap, BudgetTracker.
 """
 
 from __future__ import annotations
