@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "captured_at": "PLACEHOLDER",
-    "git_sha": "PLACEHOLDER",
+    "captured_at": "2026-05-31T20:53:21-0700",
+    "git_sha": "7a85d620ff091380e358564faac0db07d5a0af8d",
     "operation": "list_pods",
     "request_query": "{ myself { pods { id desiredStatus imageName } } }"
   },
@@ -10,9 +10,9 @@
       "myself": {
         "pods": [
           {
-            "id": "abc123",
+            "id": "ia66l3rlto5x66",
             "desiredStatus": "RUNNING",
-            "imageName": "runpod/pytorch:2.4.0"
+            "imageName": "alpine:latest"
           }
         ]
       }

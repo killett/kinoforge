@@ -1,16 +1,16 @@
 {
   "_meta": {
-    "captured_at": "PLACEHOLDER",
-    "git_sha": "PLACEHOLDER",
+    "captured_at": "2026-05-31T20:53:21-0700",
+    "git_sha": "7a85d620ff091380e358564faac0db07d5a0af8d",
     "operation": "create_pod",
     "request_query": "mutation($input: PodFindAndDeployOnDemandInput!) { podFindAndDeployOnDemand(input: $input) { id desiredStatus imageName } }"
   },
   "response": {
     "data": {
       "podFindAndDeployOnDemand": {
-        "id": "abc123",
-        "desiredStatus": "STARTING",
-        "imageName": "runpod/pytorch:2.4.0"
+        "id": "ia66l3rlto5x66",
+        "desiredStatus": "RUNNING",
+        "imageName": "alpine:latest"
       }
     }
   }
