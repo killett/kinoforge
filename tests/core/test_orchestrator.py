@@ -25,7 +25,12 @@ import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.sources.http  # noqa: F401 — registers https:// source for provisioner
 from kinoforge.core.config import Config
-from kinoforge.core.errors import CapabilityMismatch, CapacityError, ValidationError
+from kinoforge.core.errors import (
+    CapabilityMismatch,
+    CapacityError,
+    ProfileNotCached,
+    ValidationError,
+)
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -1653,9 +1658,7 @@ class _CountingProfileProvider(ModelProfileProvider):
 
     def resolve(self, key: CapabilityKey) -> ModelProfile:
         if self._cached is None:
-            from kinoforge.core.errors import ProfileNotCached as _PNC
-
-            raise _PNC(f"no profile for {key.derive()!r}")
+            raise ProfileNotCached(f"no profile for {key.derive()!r}")
         return self._cached
 
     def discover(
@@ -1745,12 +1748,13 @@ def _seed_profile_cache(store: LocalArtifactStore, cfg: Config) -> None:
     """Populate JsonProfileCache for ``cfg.capability_key()`` with a probe.
 
     Forces deploy_session onto the cache-hit branch (so verify() runs)
-    without needing a full real generate() warmup.
+    without needing a full real generate() warmup. Uses the public
+    ``JsonProfileCache.warm`` test seam — no private-API reach.
     """
     from kinoforge.core.profiles import JsonProfileCache
 
     cache = JsonProfileCache(store)
-    cache._persist(cfg.capability_key(), _probe_profile())
+    cache.warm(cfg.capability_key(), _probe_profile())
 
 
 def test_deploy_session_with_supplied_instance_skips_create_and_find_offers(
@@ -1966,6 +1970,60 @@ def test_deploy_session_threads_tags_into_instance_spec(
     assert created_spec.tags["mode"] == "pod"
     assert "kinoforge_engine" in created_spec.tags
     assert "kinoforge_key" in created_spec.tags
+
+
+def test_deploy_session_threads_tags_into_instance_spec_on_cache_hit(
+    tmp_path: Path,
+) -> None:
+    """tags={"k":"v"} + warm cache → built InstanceSpec.tags merged on cache-hit branch.
+
+    Bug catch: threading tags= only through the cache-miss branch leaves
+    the steady-state warm-reuse path (cache hit, fresh pod) silently
+    dropping the caller's discovery tag, breaking find_instance_by_tag
+    for every iteration after the first.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    _seed_profile_cache(store, cfg)
+
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=spy,
+        engine=engine,
+        tags={"kinoforge.layer": "layer-p-smoke", "mode": "pod"},
+    ):
+        pass
+
+    assert len(spy.create_calls) == 1
+    created_spec = spy.create_calls[0]
+    assert created_spec.tags["kinoforge.layer"] == "layer-p-smoke"
+    assert created_spec.tags["mode"] == "pod"
+    assert "kinoforge_engine" in created_spec.tags
+    assert "kinoforge_key" in created_spec.tags
+
+
+def test_deploy_session_tags_empty_dict_is_noop(tmp_path: Path) -> None:
+    """tags={} (empty dict, not None) → InstanceSpec.tags carries built-ins only.
+
+    Bug catch: a truthy check (``if tags:``) regressed to an identity check
+    (``if tags is not None:``) would still call ``dict.update({})`` — a
+    no-op today, but a different bug surface if the merge logic grows.
+    Pins the truthy semantics.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+
+    with deploy_session(cfg, store=store, provider=spy, engine=engine, tags={}):
+        pass
+
+    assert len(spy.create_calls) == 1
+    created_spec = spy.create_calls[0]
+    assert set(created_spec.tags.keys()) == {"kinoforge_engine", "kinoforge_key"}
 
 
 def test_deploy_session_tags_ignored_when_instance_supplied(

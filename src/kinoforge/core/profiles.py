@@ -176,6 +176,23 @@ class JsonProfileCache(ModelProfileProvider):
         self._store.put_json(self._run_id, name, _profile_to_dict(profile))
 
     # ------------------------------------------------------------------
+    # Public test seam
+    # ------------------------------------------------------------------
+
+    def warm(self, key: CapabilityKey, profile: ModelProfile) -> None:
+        """Pre-seed the cache with *profile* under *key* — bypasses discover().
+
+        Intended for tests and warm-pod reuse harnesses that need to force
+        the cache-hit branch of :func:`deploy_session` without running a
+        real probe. Equivalent to a successful :meth:`discover` outcome.
+
+        Args:
+            key: The ``CapabilityKey`` to seed.
+            profile: The ``ModelProfile`` to persist.
+        """
+        self._persist(key, profile)
+
+    # ------------------------------------------------------------------
     # ModelProfileProvider implementation
     # ------------------------------------------------------------------
 
