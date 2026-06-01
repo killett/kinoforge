@@ -99,6 +99,25 @@ def _urllib_get_json(url: str) -> dict[str, Any]:
         return dict(json.loads(resp.read().decode("utf-8")))
 
 
+def _build_get_url(base_url: str, query: str) -> str:
+    """Build a GraphQL GET URL with the query string URL-encoded.
+
+    Python 3.13's urllib rejects URLs containing control characters
+    (spaces, newlines, etc); raw GraphQL queries include spaces and
+    must be percent-encoded.
+
+    Args:
+        base_url: The API base URL.
+        query: The raw GraphQL query string.
+
+    Returns:
+        Full URL with the query percent-encoded in the ``query`` parameter.
+    """
+    from urllib.parse import quote
+
+    return f"{base_url}?query={quote(query, safe='')}"
+
+
 # ---------------------------------------------------------------------------
 # RunPodProvider
 # ---------------------------------------------------------------------------
@@ -174,7 +193,7 @@ class RunPodProvider(ComputeProvider):
             Filtered and sorted list of :class:`~kinoforge.core.interfaces.Offer`
             objects.
         """
-        response = self._http_get(self._base_url + "?query=" + _GPU_TYPES_QUERY)
+        response = self._http_get(_build_get_url(self._base_url, _GPU_TYPES_QUERY))
         gpu_types: list[dict[str, Any]] = response.get("data", {}).get("gpuTypes", [])
         raw_offers: list[Offer] = []
         for gpu in gpu_types:
@@ -236,7 +255,9 @@ class RunPodProvider(ComputeProvider):
         Raises:
             KeyError: No pod found for ``instance_id``.
         """
-        resp = self._http_get(self._base_url + "?query=" + _get_pod_query(instance_id))
+        resp = self._http_get(
+            _build_get_url(self._base_url, _get_pod_query(instance_id))
+        )
         pod: dict[str, Any] = resp.get("data", {}).get("pod", {})
         if not pod:
             raise KeyError(f"no RunPod pod found: {instance_id!r}")
@@ -248,7 +269,7 @@ class RunPodProvider(ComputeProvider):
         Returns:
             A (possibly empty) list of :class:`~kinoforge.core.interfaces.Instance`.
         """
-        resp = self._http_get(self._base_url + "?query=" + _LIST_PODS_QUERY)
+        resp = self._http_get(_build_get_url(self._base_url, _LIST_PODS_QUERY))
         pods: list[dict[str, Any]] = (
             resp.get("data", {}).get("myself", {}).get("pods", [])
         )
@@ -287,7 +308,7 @@ class RunPodProvider(ComputeProvider):
         # Poll until gone or cap exceeded
         for _ in range(_MAX_DESTROY_POLLS):
             resp = self._http_get(
-                self._base_url + "?query=" + _get_pod_query(instance_id)
+                _build_get_url(self._base_url, _get_pod_query(instance_id))
             )
             pod = resp.get("data", {}).get("pod")
             if not pod:

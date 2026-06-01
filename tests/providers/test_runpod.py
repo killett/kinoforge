@@ -205,6 +205,54 @@ def test_find_offers_returns_all_when_no_filter_needed() -> None:
     assert len(offers) == 2
 
 
+def test_find_offers_url_encodes_query_string() -> None:
+    """Layer N regression — find_offers MUST URL-encode the GraphQL query.
+
+    Python 3.13's urllib raises ``http.client.InvalidURL`` if a URL contains
+    control characters (including spaces).  Layer N's first live-smoke run
+    hit this on the real RunPod API because the production code previously
+    concatenated the raw query string directly.  Lock the fix down.
+    """
+    http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
+    provider = RunPodProvider(http_get=http_get)
+
+    provider.find_offers(HardwareRequirements())
+
+    sent_url = http_get.calls[0]
+    assert " " not in sent_url, f"raw space in URL: {sent_url!r}"
+    assert "%20" in sent_url or "+" in sent_url, (
+        f"GraphQL query string not URL-encoded: {sent_url!r}"
+    )
+
+
+def test_get_list_destroy_all_url_encode_their_queries() -> None:
+    """Layer N regression — every GET site URL-encodes its GraphQL query.
+
+    Covers ``list_instances``, ``get_instance``, and the ``destroy_instance``
+    poll loop.  Each call site previously hit the same control-character bug
+    that ``find_offers`` did.
+    """
+    http_get = HttpGetSpy(
+        [
+            {"data": {"myself": {"pods": []}}},
+            {"data": {"pod": {"id": "abc", "desiredStatus": "RUNNING"}}},
+            {"data": {"pod": None}},
+        ]
+    )
+    http_post = HttpPostSpy(response={"data": {}})
+    provider = RunPodProvider(
+        creds=_make_creds(), http_post=http_post, http_get=http_get
+    )
+
+    provider.list_instances()
+    provider.get_instance("abc")
+    provider.destroy_instance("abc")
+
+    assert len(http_get.calls) >= 3, "expected at least 3 GET calls"
+    for url in http_get.calls:
+        assert " " not in url, f"raw space in URL: {url!r}"
+
+
 def test_find_offers_returns_offer_objects() -> None:
     """AC1c: returned items are Offer dataclass instances."""
     http_get = HttpGetSpy([_GPU_LIST_RESPONSE])
