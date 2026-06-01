@@ -1114,3 +1114,51 @@ def test_layer_m_default_seam_passes_headers_to_urllib_request(
         k.lower() == "authorization" and v == "Bearer default-seam-token"
         for k, v in headers.items()
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer M Task 6 — E2E integration: hosted-style engine → seam → store
+# ---------------------------------------------------------------------------
+
+
+def test_layer_m_e2e_hosted_auth_artifact_persisted(tmp_path: Path) -> None:
+    """E2E: hosted-style engine returns auth'd Artifact → spy seam → store.
+
+    Bug catch: spy passthrough works in unit tests but the orchestrator-
+    constructed stage forgets to wire the seam; production downloads
+    silently use the default seam where any monkeypatch-based test is
+    blind.
+    """
+    captured: dict[str, object] = {}
+
+    def spy_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
+        captured["url"] = url
+        captured["headers"] = headers
+        return b"AUTHED-DOWNLOADED-BYTES"
+
+    profile = _profile()
+    bearer = {"Authorization": "Bearer e2e-tok"}
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path,
+        profile=profile,
+        backend=backend,
+        run_id="e2e-layer-m",
+        http_get_bytes=spy_http_get_bytes,
+        result_override=lambda job_id: Artifact(
+            filename="e2e.mp4",
+            url="https://hosted.example.com/media/e2e.mp4",
+            headers=bearer,
+        ),
+    )
+    request = GenerationRequest(mode="t2v", prompt="hello", assets=[])
+    persisted = stage.run(request)
+
+    # Spy was called with the exact bearer header.
+    assert captured["url"] == "https://hosted.example.com/media/e2e.mp4"
+    assert captured["headers"] == bearer
+
+    # Persisted artifact carries the bytes returned by the spy.
+    assert persisted.uri  # non-empty store URI
+    stored_bytes = stage.store.get_bytes(persisted.uri)
+    assert stored_bytes == b"AUTHED-DOWNLOADED-BYTES"
