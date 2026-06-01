@@ -260,6 +260,50 @@ via fal's queue API.
 To run the live test suite (`pixi run test-live`), set `KINOFORGE_LIVE_TESTS=1`
 alongside `FAL_KEY` in your environment.
 
+### Real providers — RunPod
+
+kinoforge ships an opt-in live smoke against the real RunPod GraphQL API
+that validates the provider's pod lifecycle end-to-end. It is skipped by
+default and never runs in CI.
+
+```bash
+export RUNPOD_API_KEY=...
+export RUNPOD_TERMINATE_KEY=$RUNPOD_API_KEY    # see .env.example
+
+KINOFORGE_LIVE_TESTS=1 \
+pixi run pytest tests/live/test_runpod_live.py -v
+```
+
+To refresh the committed GraphQL response fixtures (e.g. after a RunPod
+schema upgrade), add the capture flag:
+
+```bash
+KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 \
+pixi run pytest tests/live/test_runpod_live.py -v
+```
+
+The smoke is intentionally minimal: it calls `find_offers`, creates a
+real pod on the cheapest viable GPU, polls until ready, lists, then
+destroys. No engine, no model download, no generation. Cost per run
+is ≈$0.001 (single-digit pennies × seconds at ~$0.35/hr).
+
+Cost guards (triple-locked):
+1. Smoke YAML pins `max_cost_rate_usd_per_hr=0.50` — `filter_offers` excludes anything more expensive
+2. `finally:` block always calls `destroy_instance`
+3. Selfterm script + `idle_timeout_s=600` provides a 10-minute fallback if the test process is killed mid-run
+
+Engine-integration smoke (ComfyUI + Wan i2v producing a real MP4) is
+deferred to a future Layer O — the YAML and manifest at
+`examples/configs/runpod-comfyui-wan*.yaml` are committed as forward
+scaffolding for that work.
+
+**Note on RUNPOD_TERMINATE_KEY:** the selfterm.py design predates RunPod's
+scoped-key feature; RunPod's current scoped-key UX is two-level (GraphQL
+read or read+write, OR per-endpoint serverless) with no native
+terminate-only scope. Until that ships, reusing the main key via
+`${RUNPOD_API_KEY}` interpolation is the documented pattern; the
+selfterm fallback still works, only the privilege separation is lost.
+
 ## Per-job spec & params
 
 Two top-level YAML blocks supply per-job payload to the engine:
