@@ -148,7 +148,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer N complete on `build/layer-n`** (merge commit `<MERGE-SHA>`). RunPod
+**Layer N complete on `build/layer-n`** (merge commit `454e514`). RunPod
 cloud-fidelity shipped. Closes PROGRESS:114 carry-forward #1; 10 production
 bugs caught + fixed; first real RunPod artifact (pod `ia66l3rlto5x66` on
 NVIDIA A40, cost ≈ $0.001). Next layer candidate: **Layer O** — engine
@@ -376,7 +376,7 @@ projected: the provider works against real RunPod for the first time.
 - [x] Task 5: Refactor `test_runpod.py` to load fixtures — commit `198faf4`
 - [x] Task 6: Real-shape required-keys + status-mapping lockdown — commit `8be0930`
 - [x] Task 7: README + PROGRESS + final gate + merge — commit `a594346`
-- [x] Merge to main via `--no-ff` — merge commit `<MERGE-SHA>` (closes PROGRESS:114 carry-forward #1)
+- [x] Merge to main via `--no-ff` — merge commit `454e514` (closes PROGRESS:114 carry-forward #1)
 
 **First real artifact (RunPod):** pod `ia66l3rlto5x66` on NVIDIA A40 @ $0.35/hr,
 ready at T+5s, destroyed at T+10s. Captured fixtures committed at
