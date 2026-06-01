@@ -316,3 +316,24 @@ def test_batch_prompts_example_uses_valid_modes() -> None:
         assert entry.mode in {"t2v", "i2v", "flf2v"}, (
             f"unexpected mode in example: {entry.mode!r} (run_id={entry.run_id})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Layer N — RunPod live-smoke config
+# ---------------------------------------------------------------------------
+
+
+def test_runpod_comfyui_wan_yaml_loads() -> None:
+    """examples/configs/runpod-comfyui-wan.yaml loads and reports Layer N cost caps."""
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(Path("examples/configs/runpod-comfyui-wan.yaml"))
+    assert cfg.engine.kind == "comfyui"
+    assert cfg.compute is not None
+    assert cfg.compute.provider == "runpod"
+    assert cfg.compute.mode == "pod"
+    assert cfg.compute.requirements.min_vram_gb == 24
+    assert cfg.compute.requirements.max_cost_rate_usd_per_hr == 0.50
+    assert cfg.compute.lifecycle is not None
+    assert cfg.compute.lifecycle.budget == 2.0
+    assert cfg.compute.lifecycle.idle_timeout == 600.0  # 10m parsed via parse_duration
