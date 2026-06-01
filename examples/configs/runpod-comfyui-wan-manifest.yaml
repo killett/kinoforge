@@ -1,0 +1,13 @@
+# kinoforge batch manifest for Layer N live smoke (one i2v entry).
+#
+# Used by tests/live/test_runpod_live.py. The single-entry manifest is the
+# minimum surface that exercises the asset-routing path end-to-end through
+# the batch CLI shipped in Layer L (Phase 22).
+
+- prompt: "A landscape unfurling at dawn"
+  mode: i2v
+  run_id: layer-n-smoke
+  assets:
+    - kind: image
+      role: init_image
+      ref: "file:///workspace/tests/providers/fixtures/runpod/sample_init_frame.png"
