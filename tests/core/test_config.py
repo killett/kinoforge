@@ -1022,3 +1022,73 @@ def test_spec_graph_file_not_found_raises_with_path(tmp_path: Path) -> None:
         load_config(yaml_path)
     msg = str(excinfo.value)
     assert "nope.json" in msg
+
+
+def test_spec_graph_file_absolute_path_used_verbatim(tmp_path: Path) -> None:
+    """Absolute graph_file path used verbatim (not joined against YAML parent)."""
+    graph_payload = {"nodes": {"42": {"class_type": "WanSampler"}}}
+    abs_graph = tmp_path / "abs-graph.json"
+    abs_graph.write_text(json.dumps(graph_payload))
+
+    # YAML in a DIFFERENT directory; absolute path must still resolve.
+    yaml_dir = tmp_path / "elsewhere"
+    yaml_dir.mkdir()
+    yaml_path = yaml_dir / "cfg.yaml"
+    yaml_path.write_text(
+        textwrap.dedent(
+            f"""
+            engine: {{kind: fake, precision: fp16}}
+            models:
+              - {{ref: hf:o/r:w, kind: base, target: checkpoints}}
+            compute:
+              provider: local
+              image: scratch
+              requirements: {{min_vram_gb: 0}}
+              lifecycle: {{idle_timeout: 10m, budget: 1.0}}
+            spec:
+              graph_file: {abs_graph}
+            """
+        ).strip()
+    )
+
+    cfg = load_config(yaml_path)
+
+    assert cfg.spec["graph"] == graph_payload
+    assert "graph_file" not in cfg.spec
+
+
+def test_spec_graph_file_invalid_json_raises_with_path_and_parse_error(
+    tmp_path: Path,
+) -> None:
+    """Malformed JSON in graph_file → error with file path + JSON parse error."""
+    bad_graph = tmp_path / "bad.json"
+    bad_graph.write_text("{this is not valid json")
+
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        textwrap.dedent(
+            """
+            engine: {kind: fake}
+            models:
+              - {ref: hf:o/r:w, kind: base, target: checkpoints}
+            compute:
+              provider: local
+              image: scratch
+              requirements: {min_vram_gb: 0}
+              lifecycle: {idle_timeout: 10m}
+            spec:
+              graph_file: bad.json
+            """
+        ).strip()
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(yaml_path)
+    msg = str(excinfo.value)
+    assert "bad.json" in msg
+    # JSON parse errors typically mention "Expecting" or "delimiter" or "char";
+    # the exact wording depends on stdlib json — assert SOMETHING from the
+    # underlying JSONDecodeError is surfaced, not just our wrapper text.
+    assert any(
+        token in msg.lower() for token in ("expecting", "char", "delimiter", "value")
+    ), f"expected JSON parse error tokens in message, got: {msg!r}"
