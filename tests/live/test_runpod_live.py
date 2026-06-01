@@ -63,7 +63,7 @@ def test_runpod_live_e2e_pod_lifecycle_smoke() -> None:
         RunPodProvider,
         _make_default_http_seams,
     )
-    from tests.providers.conftest_runpod import _RecordingHTTPSeam
+    from tests.providers.conftest_runpod import _RUNPOD_DISPATCH, _RecordingHTTPSeam
 
     creds = EnvCredentialProvider()
     api_key = creds.get("RUNPOD_API_KEY")
@@ -74,7 +74,9 @@ def test_runpod_live_e2e_pod_lifecycle_smoke() -> None:
 
     seam: _RecordingHTTPSeam | None
     if capture:
-        _seam = _RecordingHTTPSeam(authed_post, authed_get, fixtures_dir)
+        _seam = _RecordingHTTPSeam(
+            authed_post, authed_get, fixtures_dir, dispatch=_RUNPOD_DISPATCH
+        )
         seam = _seam
         provider = RunPodProvider(
             creds=creds,

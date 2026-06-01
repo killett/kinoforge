@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from tests.providers.conftest_runpod import (
+    _COMFY_DISPATCH,
     _load_fixture,
     _RecordingHTTPSeam,
     _redact,
@@ -161,3 +162,62 @@ def test_starter_fixtures_load() -> None:
         )
         for key in ("captured_at", "git_sha", "request_query"):
             assert key in meta, f"{name}: missing _meta.{key}"
+
+
+def test_recording_seam_comfyui_prompt_dispatch(tmp_path: Path) -> None:
+    """POST /prompt with comfyui dispatch → writes prompt_submit.json with body in _meta."""
+
+    def fake_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"prompt_id": "p-123", "number": 1, "node_errors": {}}
+
+    seam = _RecordingHTTPSeam(
+        fake_post,
+        lambda url: {},
+        tmp_path,
+        dispatch=_COMFY_DISPATCH,
+    )
+
+    response = seam.http_post(
+        "http://10.0.0.1:8188/prompt",
+        {"prompt": {"1": {"class_type": "LoadImage"}}, "client_id": "kf"},
+    )
+    seam.flush()
+
+    assert response["prompt_id"] == "p-123"
+    fixture_path = tmp_path / "prompt_submit.json"
+    assert fixture_path.exists()
+    captured = json.loads(fixture_path.read_text())
+    assert captured["response"]["prompt_id"] == "p-123"
+    assert "prompt" in captured["_meta"]["request_body"]
+
+
+def test_recording_seam_comfyui_history_last_poll_wins(tmp_path: Path) -> None:
+    """3 polls of /history/{id} → last response wins in history_done.json."""
+    poll_data: list[dict[str, Any]] = [
+        {"p-123": {"status": {"completed": False}, "outputs": {}}},
+        {"p-123": {"status": {"completed": False}, "outputs": {}}},
+        {
+            "p-123": {
+                "status": {"completed": True},
+                "outputs": {"9": {"images": [{"filename": "out.png"}]}},
+            }
+        },
+    ]
+    polls = iter(poll_data)
+
+    def fake_get(url: str) -> dict[str, Any]:
+        return next(polls)
+
+    seam = _RecordingHTTPSeam(
+        lambda u, b: {},
+        fake_get,
+        tmp_path,
+        dispatch=_COMFY_DISPATCH,
+    )
+
+    for _ in range(3):
+        seam.http_get("http://10.0.0.1:8188/history/p-123")
+    seam.flush()
+
+    captured = json.loads((tmp_path / "history_done.json").read_text())
+    assert captured["response"]["p-123"]["status"]["completed"] is True
