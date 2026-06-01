@@ -237,6 +237,14 @@ them up via `os.environ`.
 
 `.env` is in `.gitignore`. Only commit `.env.example` (no values).
 
+### Credential safety in tests
+
+Secrets enter kinoforge tests via `.env` only — never via test code, fixtures, example YAML, or
+commit messages. The `_RecordingHTTPSeam` in `tests/providers/conftest_runpod.py` runs a layered
+redaction pipeline over every captured payload and refuses (via `CredentialLeakError`) to write a
+fixture that still contains a credential pattern. See [`AGENTS.md`](AGENTS.md) for the contributor
+guide, the pattern table, and the procedure for adding a new credential format.
+
 ## Real providers — fal.ai
 
 kinoforge ships with a fal.ai sibling engine (`FalEngine`) for video generation
