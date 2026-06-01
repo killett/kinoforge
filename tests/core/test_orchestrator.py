@@ -28,6 +28,7 @@ from kinoforge.core.config import Config
 from kinoforge.core.errors import CapabilityMismatch, CapacityError, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
+    CapabilityKey,
     ConditioningAsset,
     GenerationJob,
     GenerationRequest,
@@ -35,10 +36,11 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     ModelProfile,
+    ModelProfileProvider,
     Offer,
     Segment,
 )
-from kinoforge.core.orchestrator import DeployResult, deploy, generate
+from kinoforge.core.orchestrator import DeployResult, deploy, deploy_session, generate
 from kinoforge.engines.fake import FakeBackend, FakeEngine
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.providers.local import LocalProvider
@@ -1577,3 +1579,424 @@ def test_generate_threads_sink_into_stage(tmp_path: Path) -> None:
         f"spy.publish() must be called at least once when sink=spy; "
         f"got spy.calls={spy.calls!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer P Task 7 item #2: instance= + tags= kwarg tests
+# ---------------------------------------------------------------------------
+
+
+class _InstanceSupplyProvider(LocalProvider):
+    """LocalProvider spy that records create_instance + destroy_instance + find_offers.
+
+    Used to assert the orchestrator does NOT touch capacity/lifecycle APIs
+    when the caller supplies a pre-created Instance via ``instance=``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_calls: list[InstanceSpec] = []
+        self.destroy_calls: list[str] = []
+        self.find_offers_calls: int = 0
+
+    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+        self.find_offers_calls += 1
+        return super().find_offers(reqs)
+
+    def create_instance(self, spec: InstanceSpec) -> Instance:
+        self.create_calls.append(spec)
+        return super().create_instance(spec)
+
+    def destroy_instance(self, instance_id: str) -> None:
+        self.destroy_calls.append(instance_id)
+        super().destroy_instance(instance_id)
+
+
+class _CountingFakeEngine(FakeEngine):
+    """FakeEngine spy that records every provision() + backend() call.
+
+    Asserts the warm-pod path still hits ``engine.provision`` (idempotent
+    via Layer I marker) and ``engine.backend`` on the caller-supplied
+    Instance.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            probe_profile=_probe_profile(),
+            declared_flags_map={},
+            required_spec_keys=set(),
+        )
+        self.provision_calls: list[Instance | None] = []
+        self.backend_calls: list[Instance | None] = []
+
+    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+        self.provision_calls.append(instance)
+        super().provision(instance, cfg)
+
+    def backend(self, instance: Instance | None, cfg: dict[str, object]) -> FakeBackend:
+        self.backend_calls.append(instance)
+        return super().backend(instance, cfg)
+
+
+class _CountingProfileProvider(ModelProfileProvider):
+    """ModelProfileProvider stub that counts discover() and verify() calls.
+
+    Begins empty — resolve() always raises ProfileNotCached on the first
+    request, forcing the discover() path. After discover(), subsequent
+    resolve() calls hit the in-memory cache.
+    """
+
+    def __init__(self) -> None:
+        self.discover_calls: int = 0
+        self.verify_calls: int = 0
+        self._cached: ModelProfile | None = None
+
+    def resolve(self, key: CapabilityKey) -> ModelProfile:
+        if self._cached is None:
+            from kinoforge.core.errors import ProfileNotCached as _PNC
+
+            raise _PNC(f"no profile for {key.derive()!r}")
+        return self._cached
+
+    def discover(
+        self,
+        key: CapabilityKey,
+        engine: Any,
+        backend: Any,
+    ) -> ModelProfile:
+        self.discover_calls += 1
+        probe = backend.inspect_capabilities()
+        self._cached = probe
+        return probe
+
+    def verify(
+        self,
+        profile: ModelProfile,
+        backend: Any,
+        *,
+        engine: Any = None,
+        key: Any = None,
+    ) -> None:
+        self.verify_calls += 1
+
+
+class _MismatchingProfileProvider(ModelProfileProvider):
+    """ModelProfileProvider stub whose verify() always raises CapabilityMismatch.
+
+    Used to drive the CapabilityMismatch teardown branch in deploy_session
+    on a cache-hit path (so verify runs).
+    """
+
+    def __init__(self, cached: ModelProfile) -> None:
+        self._cached = cached
+
+    def resolve(self, key: CapabilityKey) -> ModelProfile:
+        return self._cached
+
+    def discover(
+        self,
+        key: CapabilityKey,
+        engine: Any,
+        backend: Any,
+    ) -> ModelProfile:
+        return self._cached
+
+    def verify(
+        self,
+        profile: ModelProfile,
+        backend: Any,
+        *,
+        engine: Any = None,
+        key: Any = None,
+    ) -> None:
+        raise CapabilityMismatch("synthetic drift")
+
+
+class _RaisingValidateSpecFakeEngine(_CountingFakeEngine):
+    """FakeEngine whose validate_spec always raises ValidationError.
+
+    Drives the post-deploy_session ValidationError teardown branch inside
+    generate(). Inherits _CountingFakeEngine so we still see provision()
+    + backend() on the caller-supplied instance.
+    """
+
+    def validate_spec(self, job: GenerationJob) -> None:
+        raise ValidationError("synthetic spec failure")
+
+
+def _make_premade_instance() -> Instance:
+    """Build a fully-ready Instance dataclass for instance= kwarg tests.
+
+    Tags include caller-meaningful values so tests can assert they survive
+    untouched when ``tags=`` kwarg is ignored.
+    """
+    return Instance(
+        id="pod-premade-7b2",
+        provider="local",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={"kinoforge.layer": "layer-p-smoke", "mode": "pod"},
+        cost_rate_usd_per_hr=0.0,
+    )
+
+
+def _seed_profile_cache(store: LocalArtifactStore, cfg: Config) -> None:
+    """Populate JsonProfileCache for ``cfg.capability_key()`` with a probe.
+
+    Forces deploy_session onto the cache-hit branch (so verify() runs)
+    without needing a full real generate() warmup.
+    """
+    from kinoforge.core.profiles import JsonProfileCache
+
+    cache = JsonProfileCache(store)
+    cache._persist(cfg.capability_key(), _probe_profile())
+
+
+def test_deploy_session_with_supplied_instance_skips_create_and_find_offers(
+    tmp_path: Path,
+) -> None:
+    """instance= supplied + warm cache → no find_offers + no create_instance.
+
+    Bug catch: a missing instance= short-circuit in the cache-hit branch
+    silently re-creates a parallel pod even though the caller already
+    paid for one — the warm-reuse loop never converges. Asserts both
+    capacity hooks (find_offers, create_instance) AND the engine wiring
+    (provision, backend) still bind to the caller's Instance.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    _seed_profile_cache(store, cfg)
+
+    with deploy_session(
+        cfg, store=store, provider=spy, engine=engine, instance=premade
+    ) as session:
+        assert session.instance is premade
+        assert session.backend is not None
+
+    assert spy.find_offers_calls == 0
+    assert spy.create_calls == []
+    assert engine.provision_calls == [premade]
+    assert engine.backend_calls == [premade]
+
+
+def test_deploy_session_with_supplied_instance_runs_discover_on_cache_miss(
+    tmp_path: Path,
+) -> None:
+    """instance= + empty cache → engine.provision + discover both run; no create.
+
+    Bug catch: a too-eager short-circuit that also skips discover() would
+    leave the profile cache permanently empty across warm-reuse iterations
+    and force every call back through capability discovery — defeating
+    the perf benefit of warm reuse.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    profile_provider = _CountingProfileProvider()
+    premade = _make_premade_instance()
+
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=spy,
+        engine=engine,
+        profile_provider=profile_provider,
+        instance=premade,
+    ) as session:
+        assert session.instance is premade
+
+    assert spy.find_offers_calls == 0
+    assert spy.create_calls == []
+    assert engine.provision_calls == [premade]
+    assert profile_provider.discover_calls == 1
+    # verify is skipped on the just-discovered path
+    assert profile_provider.verify_calls == 0
+
+
+def test_deploy_session_supplied_instance_calls_engine_provision(
+    tmp_path: Path,
+) -> None:
+    """Discriminating: even on cache-hit, engine.provision must run for re-attached pod.
+
+    Bug catch: a short-circuit that also skips provision() defeats Layer
+    I's idempotent provisioning marker — the second warm-reuse iteration
+    can hit a pod whose weights were never re-confirmed after a process
+    restart, with no observable signal.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    _seed_profile_cache(store, cfg)
+
+    with deploy_session(
+        cfg, store=store, provider=spy, engine=engine, instance=premade
+    ):
+        pass
+
+    assert engine.provision_calls == [premade]
+
+
+def test_deploy_session_supplied_instance_skips_destroy_on_capability_mismatch(
+    tmp_path: Path,
+) -> None:
+    """CapabilityMismatch + instance= → destroy NOT called; mismatch propagates.
+
+    Bug catch: forgetting the _caller_supplied_instance guard inside the
+    CapabilityMismatch teardown destroys a pod the orchestrator does NOT
+    own, killing the operator's warm-reuse loop on the first drift
+    signal. Caller owns the lifecycle; orchestrator only re-raises.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    profile_provider = _MismatchingProfileProvider(cached=_probe_profile())
+    premade = _make_premade_instance()
+    _seed_profile_cache(store, cfg)
+
+    with pytest.raises(CapabilityMismatch):
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=spy,
+            engine=engine,
+            profile_provider=profile_provider,
+            instance=premade,
+        ):
+            pass
+
+    assert spy.destroy_calls == []
+
+
+def test_generate_with_supplied_instance_skips_destroy_on_validation_error(
+    tmp_path: Path,
+) -> None:
+    """ValidationError in generate + instance= → destroy NOT called.
+
+    Bug catch: the existing teardown wrapper in generate() destroys
+    session.instance on ValidationError. Without the caller-supplied
+    guard, a config typo by the smoke kills the operator's warm pod
+    every iteration.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _RaisingValidateSpecFakeEngine()
+    premade = _make_premade_instance()
+    request = GenerationRequest(prompt="hi", mode="t2v")
+
+    with pytest.raises(ValidationError):
+        generate(
+            cfg,
+            request,
+            store=store,
+            provider=spy,
+            engine=engine,
+            instance=premade,
+        )
+
+    assert spy.destroy_calls == []
+
+
+def test_generate_threads_instance_kwarg_to_deploy_session(
+    tmp_path: Path,
+) -> None:
+    """Discriminating: generate(instance=) → downstream provider.create_instance NOT called.
+
+    Bug catch: forgetting to thread instance= through the generate()->
+    deploy_session() handoff leaves the kwarg as a silent no-op; the
+    orchestrator still creates a fresh pod every call and the warm-reuse
+    smoke iteration loop never converges.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    request = GenerationRequest(prompt="hi", mode="t2v")
+
+    artifact = generate(
+        cfg,
+        request,
+        store=store,
+        provider=spy,
+        engine=engine,
+        instance=premade,
+    )
+
+    assert spy.create_calls == []
+    assert isinstance(artifact, Artifact)
+
+
+def test_deploy_session_threads_tags_into_instance_spec(
+    tmp_path: Path,
+) -> None:
+    """tags={"k":"v"} (no instance=) → orchestrator-built InstanceSpec.tags merged.
+
+    Bug catch: dropping the caller's tags= on the floor breaks the
+    smoke's pod-discovery contract (find_instance_by_tag relies on
+    the caller-set `kinoforge.layer` tag to re-attach across iterations).
+    Built-in tags (kinoforge_engine, kinoforge_key) must coexist; we
+    assert both survive.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=spy,
+        engine=engine,
+        tags={"kinoforge.layer": "layer-p-smoke", "mode": "pod"},
+    ):
+        pass
+
+    assert len(spy.create_calls) == 1
+    created_spec = spy.create_calls[0]
+    assert created_spec.tags["kinoforge.layer"] == "layer-p-smoke"
+    assert created_spec.tags["mode"] == "pod"
+    assert "kinoforge_engine" in created_spec.tags
+    assert "kinoforge_key" in created_spec.tags
+
+
+def test_deploy_session_tags_ignored_when_instance_supplied(
+    tmp_path: Path,
+) -> None:
+    """tags= + instance= → caller's instance tags untouched; tags= kwarg ignored.
+
+    Bug catch: silently mutating caller.instance.tags after it has been
+    handed in violates the "caller owns the lifecycle" contract for
+    warm-pod reuse. The supplied tags= kwarg is for the cold-path
+    only — the merge has no defined meaning when the orchestrator never
+    builds an InstanceSpec.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    original_tags = dict(premade.tags)
+    _seed_profile_cache(store, cfg)
+
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=spy,
+        engine=engine,
+        instance=premade,
+        tags={"override": "should-be-ignored"},
+    ) as session:
+        assert session.instance is premade
+        assert dict(session.instance.tags) == original_tags
+        assert "override" not in session.instance.tags
+
+    assert spy.create_calls == []
