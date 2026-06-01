@@ -669,6 +669,14 @@ def test_default_seams_inject_api_key_query_param() -> None:
         f"Content-Type missing or wrong: {captured['headers']!r}"
     )
 
+    # User-Agent must NOT be Python-urllib/* — RunPod's edge layer blocks
+    # that prefix with HTTP 403.  Any non-default UA passes.  Verified
+    # empirically during Layer N live smoke.
+    ua = captured["headers"].get("User-agent", "")
+    assert ua and not ua.lower().startswith("python-urllib"), (
+        f"User-Agent must override Python-urllib default: {ua!r}"
+    )
+
 
 def test_default_seams_without_key_skip_auth() -> None:
     """When no api_key is supplied, the default seams are bare urllib funcs."""
