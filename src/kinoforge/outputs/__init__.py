@@ -63,5 +63,5 @@ def get_sink(name: str) -> Callable[[], OutputSink]:
     """
     try:
         return _SINKS[name]
-    except KeyError as exc:
-        raise UnknownAdapter(f"unknown output sink kind: {name!r}") from exc
+    except KeyError:
+        raise UnknownAdapter(f"unknown output sink kind: {name!r}") from None
