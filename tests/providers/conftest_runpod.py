@@ -59,6 +59,46 @@ _log = logging.getLogger(__name__)
 _PROTECTED_WORDS: frozenset[str] = frozenset({"token", "key", "secret", "password"})
 
 
+# Layer P Task 7 bug-fix #1 — Pass 1 (shape detector) vocab.
+# RunPod's GraphQL env shape stores credentials as ``[{"key": NAME, "value":
+# VAL}, ...]`` where NAME is the env-var identifier (e.g. ``RUNPOD_API_KEY``).
+# ``_is_credential_name`` recognises NAMEs that look like credentials so the
+# sibling ``value`` can be redacted.  This vocab is intentionally uppercase
+# and suffix/whole-word oriented because env var names are conventionally
+# uppercase snake_case (whereas ``_PROTECTED_WORDS`` above targets arbitrary
+# dict key names in any casing).
+_PROTECTED_NAME_SUFFIXES: frozenset[str] = frozenset(
+    {"_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PASSPHRASE"}
+)
+_PROTECTED_NAME_WHOLES: frozenset[str] = frozenset(
+    {"KEY", "TOKEN", "SECRET", "PASSWORD", "PASSPHRASE"}
+)
+
+
+def _is_credential_name(name: str) -> bool:
+    """Return True if *name* looks like a credential env var.
+
+    Match policy: uppercase the input, then return True when it equals one of
+    the bare whole-word forms (``KEY``, ``TOKEN``, ``SECRET``, ``PASSWORD``,
+    ``PASSPHRASE``) OR ends with one of the suffix forms (``_KEY``,
+    ``_TOKEN``, ``_SECRET``, ``_PASSWORD``, ``_PASSPHRASE``).
+
+    Args:
+        name: The env-var name to test (e.g. ``"RUNPOD_API_KEY"``).
+
+    Returns:
+        True for credential-shaped names like ``RUNPOD_API_KEY``, ``HF_TOKEN``,
+        ``FAL_KEY``, ``DB_PASSWORD``, ``SSH_PASSPHRASE``.  False for
+        non-credential names like ``IMAGE_NAME``, ``GPU_COUNT``,
+        ``PYTHONUNBUFFERED``, or unrelated tokens like ``keypoints`` /
+        ``checkpoints``.
+    """
+    upper = name.upper()
+    if upper in _PROTECTED_NAME_WHOLES:
+        return True
+    return any(upper.endswith(suffix) for suffix in _PROTECTED_NAME_SUFFIXES)
+
+
 def _is_protected_key(name: str) -> bool:
     """Return True if any camelCase/snake_case/kebab-case segment of *name* is a protected word.
 
@@ -96,6 +136,51 @@ def _redact(obj: Any) -> Any:
         return out
     if isinstance(obj, list):
         return [_redact(v) for v in obj]
+    return obj
+
+
+def _redact_kv_shape(obj: Any) -> Any:
+    """Recursively redact GraphQL ``[{"key": NAME, "value": VAL}, ...]`` env shapes.
+
+    Pass 1 of the layered redactor (Layer P Task 7 bug-fix #1).  Walks every
+    list; for each item that is a dict with both ``key`` AND ``value`` keys,
+    checks whether the ``key`` field's STRING VALUE matches
+    :func:`_is_credential_name`.  When it does, replaces the sibling ``value``
+    field with ``<REDACTED>`` and recurses into the remaining sibling fields
+    (e.g. ``comment``) so non-value siblings are preserved structurally but
+    still scrubbed downstream.  Recurses into all other containers normally.
+
+    Critically requires a LIST parent: a top-level ``{"key": ..., "value":
+    ...}`` dict is NOT touched, because that shape isn't the GraphQL env
+    array we're targeting.
+
+    Args:
+        obj: Any JSON-serialisable Python value.
+
+    Returns:
+        A redacted copy of ``obj``.  Original is not mutated.
+    """
+    if isinstance(obj, list):
+        out_list: list[Any] = []
+        for item in obj:
+            if (
+                isinstance(item, dict)
+                and "key" in item
+                and "value" in item
+                and isinstance(item["key"], str)
+                and _is_credential_name(item["key"])
+            ):
+                redacted_item: dict[str, Any] = dict(item)
+                redacted_item["value"] = "<REDACTED>"
+                for k, v in item.items():
+                    if k != "value":
+                        redacted_item[k] = _redact_kv_shape(v)
+                out_list.append(redacted_item)
+            else:
+                out_list.append(_redact_kv_shape(item))
+        return out_list
+    if isinstance(obj, dict):
+        return {k: _redact_kv_shape(v) for k, v in obj.items()}
     return obj
 
 
