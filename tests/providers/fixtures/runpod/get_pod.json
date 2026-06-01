@@ -1,17 +1,13 @@
 {
   "_meta": {
-    "captured_at": "PLACEHOLDER",
-    "git_sha": "PLACEHOLDER",
+    "captured_at": "2026-05-31T20:53:21-0700",
+    "git_sha": "7a85d620ff091380e358564faac0db07d5a0af8d",
     "operation": "get_pod",
-    "request_query": "{ pod(input: { podId: \"abc123\" }) { id desiredStatus imageName } }"
+    "request_query": "{ pod(input: { podId: \"ia66l3rlto5x66\" }) { id desiredStatus imageName } }"
   },
   "response": {
     "data": {
-      "pod": {
-        "id": "abc123",
-        "desiredStatus": "RUNNING",
-        "imageName": "runpod/pytorch:2.4.0"
-      }
+      "pod": null
     }
   }
 }

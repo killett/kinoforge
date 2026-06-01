@@ -1,9 +1,9 @@
 {
   "_meta": {
-    "captured_at": "PLACEHOLDER",
-    "git_sha": "PLACEHOLDER",
+    "captured_at": "2026-05-31T20:53:21-0700",
+    "git_sha": "7a85d620ff091380e358564faac0db07d5a0af8d",
     "operation": "terminate_pod",
-    "request_query": "mutation { podTerminate(input: { podId: \"abc123\" }) }"
+    "request_query": "mutation { podTerminate(input: { podId: \"ia66l3rlto5x66\" }) }"
   },
   "response": {
     "data": {

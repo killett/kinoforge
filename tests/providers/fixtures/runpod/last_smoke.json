@@ -1,0 +1,8 @@
+{
+  "captured_at": "2026-05-31T20:53:22-0700",
+  "git_sha": "7a85d620ff091380e358564faac0db07d5a0af8d",
+  "pod_id": "ia66l3rlto5x66",
+  "gpu_type": "NVIDIA A40",
+  "cost_rate_usd_per_hr": 0.35,
+  "elapsed_seconds": 10.1
+}
