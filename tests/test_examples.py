@@ -362,3 +362,35 @@ def test_runpod_comfyui_wan_manifest_yaml_loads() -> None:
     assert asset["role"] == "init_image"
     assert asset["kind"] == "image"
     assert asset["ref"].startswith("file://")
+
+
+# ---------------------------------------------------------------------------
+# Layer O Task 8 — commented output: block round-trip tests
+# ---------------------------------------------------------------------------
+
+
+class TestOutputBlockExamples:
+    """Each example YAML still round-trips with the new commented output: block (Layer O)."""
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "wan.yaml",
+            "diffusers.yaml",
+            "fal.yaml",
+            "hosted.yaml",
+            "local-fake.yaml",
+            "runpod-comfyui-wan.yaml",
+        ],
+    )
+    def test_example_loads_with_default_output_block(self, filename: str) -> None:
+        """The commented output block must not break YAML parsing; the
+        loaded Config should have output at its defaults.  Catches a
+        regression where someone uncomments only one line of the block
+        and breaks the indentation invariant.
+        """
+        path = Path("examples/configs") / filename
+        cfg = load_config(path)
+        assert cfg.output.kind == "local"
+        assert cfg.output.dir == Path("output")
+        assert cfg.output.enabled is True
