@@ -878,6 +878,84 @@ def test_create_pod_raises_on_empty_pod_id() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Layer N: real-shape lockdown
+# ---------------------------------------------------------------------------
+
+
+def test_find_offers_real_shape_required_keys() -> None:
+    """Layer N lockdown — every gpuTypes entry has fields production reads.
+
+    Catches: a future RunPod schema rename (e.g. memoryInGb → vramGb) that
+    breaks ``find_offers`` silently if the fixture is regenerated and the
+    production code is not updated.  Asserts only that the top-level
+    fields exist; the nested ``lowestPrice`` may legitimately be null.
+    """
+    fixture = _load_fixture("gpu_types.json")
+    gpus = fixture["data"]["gpuTypes"]
+    assert gpus, "gpu_types fixture has no entries"
+    for gpu in gpus:
+        assert "id" in gpu, f"missing id in {gpu}"
+        assert "memoryInGb" in gpu, f"missing memoryInGb in {gpu}"
+        assert "lowestPrice" in gpu, f"missing lowestPrice in {gpu}"
+
+
+def test_pod_status_mapping_covers_real_statuses() -> None:
+    """Layer N lockdown — _runpod_status_to_kinoforge covers real statuses.
+
+    Catches: RunPod adds a new desiredStatus (e.g. PAUSED) and the
+    production code's fallback maps it to "starting", silently
+    miscategorising real instance state.
+
+    Note: the smoke ran fast enough that ``list_pods.json`` captured an
+    empty pods list and ``get_pod.json`` captured an in-flight RUNNING
+    state.  If either fixture has no observable statuses, the test
+    skips with a clear message — the assertion only fires when there's
+    real data to lock down.
+    """
+    from kinoforge.providers.runpod import _runpod_status_to_kinoforge
+
+    observed: set[str] = set()
+    for fixture_name in ("list_pods.json", "get_pod.json"):
+        fixture = _load_fixture(fixture_name)
+        data = fixture.get("data", {})
+        if "myself" in data and data["myself"]:
+            for pod in data["myself"].get("pods", []):
+                status = pod.get("desiredStatus")
+                if status:
+                    observed.add(status)
+        if "pod" in data and data["pod"]:
+            status = data["pod"].get("desiredStatus")
+            if status:
+                observed.add(status)
+
+    if not observed:
+        pytest.skip(
+            "no desiredStatus values observed in committed fixtures; "
+            "regen with KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 "
+            "to lock the mapping down",
+        )
+
+    known_runpod_statuses = {"RUNNING", "EXITED", "DEAD"}
+    valid_kinoforge_statuses = {"ready", "stopped", "terminated"}
+
+    for status in observed:
+        assert status.upper() in known_runpod_statuses, (
+            f"unknown RunPod status {status!r} — "
+            f"_runpod_status_to_kinoforge needs an explicit entry"
+        )
+        kf = _runpod_status_to_kinoforge(status)
+        assert kf in valid_kinoforge_statuses, (
+            f"status {status!r} maps to fallback {kf!r}; "
+            f"add explicit mapping in _runpod_status_to_kinoforge"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
 def _extract_env(body: dict[str, Any]) -> dict[str, str]:
     """Walk nested dicts/lists to find the first 'env' value.
 
