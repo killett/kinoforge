@@ -148,13 +148,13 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer N complete on `build/layer-n`** (merge commit `454e514`). RunPod
-cloud-fidelity shipped. Closes PROGRESS:114 carry-forward #1; 10 production
-bugs caught + fixed; first real RunPod artifact (pod `ia66l3rlto5x66` on
-NVIDIA A40, cost ≈ $0.001). Next layer candidate: **Layer O** — engine
-integration on RunPod (ComfyUI + Wan i2v producing a real MP4 artifact) +
-remaining cloud-fidelity (SkyPilot SDK smoke [carry-forward #2] + S3/GCS
-medium-fidelity tests [carry-forward #3]).
+**Layer O nearly complete on `build/layer-o`** (Tasks 1-9 landed at commits
+`3f621e9` → Task 9 commit). RunPod-pivoted Layer O = user-facing output
+directory. Final task (Task 10) is the full gate + `--no-ff` merge to `main`
+once Task 9's docs commit settles. Once merged, next layer candidate:
+**Layer P** — engine integration on RunPod (ComfyUI + Wan i2v producing a
+real MP4 artifact, originally slotted as Layer O before the output-dir
+operator pain became more pressing).
 
 **Pending follow-ups:**
 - ~~`GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).~~ — **CLOSED** by Phase 23 (Layer M).
@@ -412,3 +412,42 @@ at git SHA `7a85d62`. Total cost ≈ $0.001.
 - SkyPilot SDK smoke (PROGRESS:113 carry-forward #2)
 - S3/GCS medium-fidelity tests (PROGRESS:113 carry-forward #3)
 - Streaming per-entry log lines in `kinoforge batch` (PROGRESS:158 deferred from Layer L Task 4)
+
+### Phase 25 — Layer O (user-facing output directory)
+
+UX-only layer that closes the operator findability + persistence gap
+identified during the Layer-N retro: final clips were buried under
+`.kinoforge/<run_id>/<engine-derived-name>` with names that mean nothing
+at a glance, and the default `--run-id="run"` silently overwrote prior
+runs.
+
+- [x] Task 1: `outputs/base.py` (Protocol + slugify + format_filename) + `outputs/__init__.py` (registry) + 12 slugify tests — commit `3f621e9`
+- [x] Task 2: `outputs/local.py` (LocalOutputSink with atomic write + collision suffix + self-register) + 10 tests — commit `a58df43`
+- [x] Task 3: `OutputConfig` pydantic block + `Config.output` field + 3 round-trip tests — commit `3af17d8`
+- [x] Task 4: `GenerateClipStage` sink + namespace integration + 4 stage tests — commit `9d22694`
+- [x] Task 5: `orchestrator.generate()` sink threading + 2 tests — commit `e845443`
+- [x] Task 6: `batch.batch_generate()` sink + batch_id namespace + 2 tests — commit `3e66a72`
+- [x] Task 7: CLI `--output-dir`/`--no-output-dir` mutex group + `_build_sink` + `--run-id` uniquification + 5 tests — commit `0f135de`
+- [x] Task 8: `.gitignore` `output/` + commented `output:` block on every example YAML + 6 round-trip tests — commit `503b3a8`
+- [ ] Task 9: README "Output directory" section + this PROGRESS entry + invariant verification — commit _PENDING_
+- [ ] Task 10: Full gate + `--no-ff` merge to main — commit _PENDING_
+
+**Key design decisions:**
+- Publish step layered on top of ArtifactStore (Q2=A): zero behavior change to existing call sites; store/ledger/uri_for/gc untouched.
+- ASCII-conservative slug (Q3=A): emoji/CJK/accents dropped, not transliterated; cross-platform safe, shell-friendly.
+- Flat single + batch-nested layout (Q4=A): single-clip runs land directly in `output/`; batch runs nest under `output/<batch_id>/`.
+- `--run-id` default uniquification folded into Layer O: one-line CLI change closes the silent-overwrite foot-gun on the internal store side too.
+- Bytes-only v1: hardlink optimization (`ArtifactStore.local_path_for`) deferred; sub-GB mp4 disk doubling is negligible.
+
+**Breaking changes:**
+- `kinoforge generate` default `--run-id` flipped from `"run"` to `f"run-{ts}"`. Scripts that grep `.kinoforge/run/` no longer find clips; pass `--run-id run` to restore prior behavior. Second breaking change after the Layer C `kinoforge gc --config PATH` precedent.
+
+**Test count:** ~778 pre-Layer-O → ~823 post-Layer-O (+45 net: 12 slugify + 11 local incl. hash-exhausted regression + 3 cfg + 4 stage + 2 orch + 3 batch + 6 CLI + 6 examples). Numbers will be backfilled with the actual delta in Task 10.
+
+**Out of scope (Layer P+ candidates):**
+- Hardlink / zero-copy via `ArtifactStore.local_path_for`.
+- Cloud-native sinks (S3 mirror, webhook POST).
+- Filename template customization.
+- Migration of existing `.kinoforge/<run_id>/*.mp4` into `output/`.
+- `Artifact.published_path` field for CLI status / batch summary.
+- Engine integration on real RunPod (original Layer-O candidate; now reslotted as Layer P).
