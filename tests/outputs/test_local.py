@@ -132,43 +132,76 @@ def test_local_sink_self_registers_on_import() -> None:
     """Importing kinoforge.outputs.local registers under "local" so the
     CLI's _build_sink can resolve it via the registry without a direct
     import.  Catches a regression where the side-effect registration is
-    removed and the registry returns UnknownAdapter at CLI startup.
+    removed (registry returns UnknownAdapter) or registers the wrong
+    factory (returns something other than a LocalOutputSink).
     """
     import kinoforge.outputs.local  # noqa: F401  side-effect import
 
     factory = get_sink("local")
-    # Factory requires arguments; we just assert it's the class itself or
-    # a partial whose result is a LocalOutputSink at the right type.
-    assert callable(factory)
+    instance = factory()
+    assert isinstance(instance, LocalOutputSink)
 
 
-def test_publish_uses_atomic_replace(tmp_path: Path) -> None:
+def test_publish_uses_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The sink writes to <final>.tmp first then os.replace's it into
     place, so a crash mid-write never leaves a partial file at the final
     name.  Catches a regression where the sink writes directly to the
     final path and a crash mid-write leaves a corrupt file the operator
     later mistakes for a finished clip.
     """
-    # Wrap Path.write_bytes to fail AFTER the .tmp file has been written
-    # but BEFORE os.replace runs — assert the final path doesn't exist.
-    sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
-
-    real_replace = __import__("os").replace
 
     def boom(src: str, dst: str) -> None:
         raise OSError("simulated crash")
 
-    import os as _os
+    monkeypatch.setattr("os.replace", boom)
 
-    _os.replace = boom  # type: ignore[assignment]
-    try:
-        with pytest.raises(OutputPublishError):
-            sink.publish(b"x", prompt="A", extension=".mp4")
-    finally:
-        _os.replace = real_replace
+    sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
+    with pytest.raises(OutputPublishError):
+        sink.publish(b"x", prompt="A", extension=".mp4")
 
     final = tmp_path / f"{_FIXED_TS_STRING}_A.mp4"
     assert not final.exists()
+    # After the rename failure the sink must also clean up the .tmp file so
+    # operators never mistake a partial write for a finished clip.
+    assert not (tmp_path / f"{_FIXED_TS_STRING}_A.mp4.tmp").exists()
+
+
+def test_publish_collision_hash_exhausted_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When all _2.._99 slots AND every hash-suffix retry are occupied,
+    _resolve_collision raises OutputPublishError rather than silently
+    overwriting a pre-existing file.  Catches a regression where the
+    Protocol's "must never silently destroy" contract is violated when the
+    hash retry budget is exhausted.
+
+    Methodology: monkeypatch time.monotonic_ns to a constant so every
+    hash attempt produces the same 6-char suffix; pre-create the _2.._99
+    collision files and the resulting hash-named file to force the full
+    exhaustion path.
+    """
+    import hashlib
+
+    monkeypatch.setattr("time.monotonic_ns", lambda: 0)
+
+    sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
+    slug = "X"
+    ts = _FIXED_TS_STRING
+    ext = ".mp4"
+
+    # Pre-populate the primary and all numeric collision slots.
+    (tmp_path / f"{ts}_{slug}{ext}").write_bytes(b"orig")
+    for n in range(2, 100):
+        (tmp_path / f"{ts}_{slug}_{n}{ext}").write_bytes(b"prior")
+
+    # Compute the pinned hash suffix and pre-create it too.
+    hash_suffix = hashlib.sha256(b"0").hexdigest()[:6]
+    (tmp_path / f"{ts}_{slug}_{hash_suffix}{ext}").write_bytes(b"hash-collision")
+
+    with pytest.raises(OutputPublishError, match="non-colliding output path"):
+        sink.publish(b"new", prompt=slug, extension=ext)
 
 
 def test_clock_now_converted_to_local_tz_naive_datetime(tmp_path: Path) -> None:
