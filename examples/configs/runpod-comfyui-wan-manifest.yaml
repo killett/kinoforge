@@ -1,3 +1,9 @@
+# NOTE: Layer N's live smoke (tests/live/test_runpod_live.py) does NOT use
+# this file. It's committed as forward scaffolding for a future
+# Layer O engine-integration smoke. Layer N's smoke validates the
+# RunPod provider's GraphQL lifecycle (find_offers → create → ready →
+# destroy) end-to-end without any engine, weights, or generation.
+#
 # kinoforge batch manifest for Layer N live smoke (one i2v entry).
 #
 # This file is illustrative. The committed `file://` path below is
