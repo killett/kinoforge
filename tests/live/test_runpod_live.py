@@ -233,17 +233,22 @@ def _capture_fixtures_during_smoke(out_dir: Path) -> Any:
     import atexit
 
     from kinoforge.core import registry
-    from kinoforge.providers.runpod import (
-        RunPodProvider,
-        _urllib_get_json,
-        _urllib_post_json,
-    )
+    from kinoforge.core.credentials import EnvCredentialProvider
+    from kinoforge.providers.runpod import RunPodProvider, _make_default_http_seams
     from tests.providers.conftest_runpod import _RecordingHTTPSeam
 
-    seam = _RecordingHTTPSeam(_urllib_post_json, _urllib_get_json, out_dir)
+    creds = EnvCredentialProvider()
+    authed_post, authed_get = _make_default_http_seams(
+        creds.get("RUNPOD_API_KEY"),
+    )
+    seam = _RecordingHTTPSeam(authed_post, authed_get, out_dir)
 
     def _factory() -> RunPodProvider:
-        return RunPodProvider(http_post=seam.http_post, http_get=seam.http_get)
+        return RunPodProvider(
+            creds=creds,
+            http_post=seam.http_post,
+            http_get=seam.http_get,
+        )
 
     registry.register_provider("runpod", _factory)
     atexit.register(seam.flush)

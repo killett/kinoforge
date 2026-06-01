@@ -591,6 +591,111 @@ def test_self_registration() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Layer N regression: Authorization header injection
+# ---------------------------------------------------------------------------
+
+
+def test_default_seams_inject_authorization_header() -> None:
+    """Layer N regression — default seams must inject Authorization: Bearer.
+
+    Bug it catches: production code did not authenticate against real RunPod;
+    every GraphQL request returned 403.  Live smoke caught this on the first
+    real run.
+    """
+    import urllib.request as _urlreq
+
+    from kinoforge.providers.runpod import _make_default_http_seams
+
+    authed_post, authed_get = _make_default_http_seams("sk-fake-key")
+
+    captured: dict[str, Any] = {}
+
+    def _fake_urlopen(req: Any) -> Any:  # noqa: ANN401
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.headers)
+
+        class _Resp:
+            def __enter__(self_inner: object) -> object:
+                return self_inner
+
+            def __exit__(
+                self_inner: object,
+                exc_type: object,
+                exc: object,
+                tb: object,
+            ) -> None:
+                return None
+
+            def read(self_inner: object) -> bytes:
+                return b'{"data": {}}'
+
+        return _Resp()
+
+    real_urlopen = _urlreq.urlopen
+    _urlreq.urlopen = _fake_urlopen  # type: ignore[assignment]
+    try:
+        authed_get("https://api.example.com/graphql?query={x}")
+    finally:
+        _urlreq.urlopen = real_urlopen
+
+    auth = captured["headers"].get("Authorization", "")
+    assert auth == "Bearer sk-fake-key", f"got Authorization header: {auth!r}"
+
+
+def test_default_seams_without_key_skip_auth() -> None:
+    """When no api_key is supplied, the default seams are bare urllib funcs."""
+    from kinoforge.providers.runpod import (
+        _make_default_http_seams,
+        _urllib_get_json,
+        _urllib_post_json,
+    )
+
+    post, get = _make_default_http_seams(None)
+    assert post is _urllib_post_json
+    assert get is _urllib_get_json
+
+    post2, get2 = _make_default_http_seams("")
+    assert post2 is _urllib_post_json
+    assert get2 is _urllib_get_json
+
+
+def test_provider_init_resolves_default_seams_from_creds() -> None:
+    """RunPodProvider(creds=...) uses authed defaults when no seams passed."""
+    from kinoforge.providers.runpod import RunPodProvider, _urllib_get_json
+
+    class _Creds(CredentialProvider):
+        def get(self, key: str) -> str | None:
+            """Return a fake API key for RUNPOD_API_KEY."""
+            return "sk-test-key" if key == "RUNPOD_API_KEY" else None
+
+    p = RunPodProvider(creds=_Creds())
+    # Default seam was replaced with an authed closure — not the bare urllib fn
+    assert p._http_get is not _urllib_get_json
+
+
+def test_default_factory_uses_env_credentials() -> None:
+    """The "runpod" provider factory wires EnvCredentialProvider in."""
+    import os
+
+    from kinoforge.core import registry
+
+    os.environ["RUNPOD_API_KEY"] = "sk-env-test-key"
+    try:
+        factory = registry.get_provider("runpod")
+        provider = factory()
+        assert isinstance(provider, RunPodProvider)
+        assert provider._creds is not None, "factory dropped creds"
+        assert provider._creds.get("RUNPOD_API_KEY") == "sk-env-test-key"
+    finally:
+        os.environ.pop("RUNPOD_API_KEY", None)
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
 def _extract_env(body: dict[str, Any]) -> dict[str, str]:
     """Walk nested dicts/lists to find the first 'env' dict."""
     if "env" in body:
