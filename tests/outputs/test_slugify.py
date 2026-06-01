@@ -105,14 +105,25 @@ def test_output_publish_error_subclasses_runtime_error() -> None:
     assert str(e) == "disk full"
 
 
+class _FakeSink:
+    def publish(
+        self,
+        data: bytes,
+        *,
+        prompt: str,
+        extension: str,
+        namespace: str | None = None,
+    ) -> str:
+        return "/fake"
+
+
 def test_register_and_get_sink_roundtrip() -> None:
     """Registering a sink factory makes it retrievable by name; unknown
     names raise UnknownAdapter (matches Splitter/Store registry behavior).
     Catches a regression where the registry silently swallows lookup
     misses and returns None.
     """
-    sentinel = object()
-    register_sink("__test_sink", lambda: sentinel)  # type: ignore[arg-type,return-value]
-    assert get_sink("__test_sink")() is sentinel
+    register_sink("__test_sink", _FakeSink)
+    assert isinstance(get_sink("__test_sink")(), _FakeSink)
     with pytest.raises(UnknownAdapter):
         get_sink("__does_not_exist")

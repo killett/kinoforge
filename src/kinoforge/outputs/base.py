@@ -82,7 +82,9 @@ class OutputSink(Protocol):
 
 # Characters allowed verbatim in the slug.  Everything else gets replaced
 # with a dash before the collapse + trim passes.
-_ALLOWED_CHARS = re.compile(r"[A-Za-z0-9._-]")
+_ALLOWED_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+)
 _DASH_RUN = re.compile(r"-+")
 
 
@@ -109,7 +111,7 @@ def slugify(prompt: str, max_chars: int = 20) -> str:
         A filesystem-safe slug, guaranteed non-empty and ASCII-only.
     """
     ascii_only = unicodedata.normalize("NFC", prompt).encode("ascii", "ignore").decode()
-    replaced = "".join(c if _ALLOWED_CHARS.match(c) else "-" for c in ascii_only)
+    replaced = "".join(c if c in _ALLOWED_CHARS else "-" for c in ascii_only)
     collapsed = _DASH_RUN.sub("-", replaced)
     trimmed = collapsed.strip("-.")
     truncated = trimmed[:max_chars]
