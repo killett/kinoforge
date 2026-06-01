@@ -148,10 +148,8 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer O nearly complete on `build/layer-o`** (Tasks 1-9 landed at commits
-`3f621e9` → Task 9 commit). RunPod-pivoted Layer O = user-facing output
-directory. Final task (Task 10) is the full gate + `--no-ff` merge to `main`
-once Task 9's docs commit settles. Once merged, next layer candidate:
+**Layer O merged to `main`** — merge commit `7788f93` (branch `build/layer-o`,
+Tasks 1–10 all complete). Next layer candidate:
 **Layer P** — engine integration on RunPod (ComfyUI + Wan i2v producing a
 real MP4 artifact, originally slotted as Layer O before the output-dir
 operator pain became more pressing).
@@ -430,7 +428,7 @@ runs.
 - [x] Task 7: CLI `--output-dir`/`--no-output-dir` mutex group + `_build_sink` + `--run-id` uniquification + 5 tests — commit `0f135de`
 - [x] Task 8: `.gitignore` `output/` + commented `output:` block on every example YAML + 6 round-trip tests — commit `503b3a8`
 - [x] Task 9: README "Output directory" section + this PROGRESS entry + invariant verification — commit `646adf7`
-- [ ] Task 10: Full gate + `--no-ff` merge to main — commit _PENDING_
+- [x] Task 10: Full gate + `--no-ff` merge to main — merge commit `7788f93`
 
 **Key design decisions:**
 - Publish step layered on top of ArtifactStore (Q2=A): zero behavior change to existing call sites; store/ledger/uri_for/gc untouched.
@@ -442,7 +440,7 @@ runs.
 **Breaking changes:**
 - `kinoforge generate` default `--run-id` flipped from `"run"` to `f"run-{ts}"`. Scripts that grep `.kinoforge/run/` no longer find clips; pass `--run-id run` to restore prior behavior. Second breaking change after the Layer C `kinoforge gc --config PATH` precedent.
 
-**Test count:** ~778 pre-Layer-O → ~823 post-Layer-O (+45 net: 12 slugify + 11 local incl. hash-exhausted regression + 3 cfg + 4 stage + 2 orch + 3 batch + 6 CLI + 6 examples). Numbers will be backfilled with the actual delta in Task 10.
+**Test count:** 778 pre-Layer-O → 823 post-Layer-O (+45 net: 12 slugify + 11 local incl. hash-exhausted regression + 3 cfg + 4 stage + 2 orch + 3 batch + 6 CLI + 6 examples).
 
 **Out of scope (Layer P+ candidates):**
 - Hardlink / zero-copy via `ArtifactStore.local_path_for`.
