@@ -834,6 +834,74 @@ spec:
     assert cfg.spec["model"] == "wan-ai/Wan2.2-T2V-A14B"
 
 
+# ---------------------------------------------------------------------------
+# Layer O Task 3 — OutputConfig pydantic block + Config.output field
+# ---------------------------------------------------------------------------
+
+MINIMAL_FAKE_ENGINE_YAML = """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+"""
+
+
+class TestOutputConfig:
+    """Round-trip tests for the OutputConfig pydantic block and Config.output field."""
+
+    def test_absent_output_block_defaults(self) -> None:
+        """Config with no output: block defaults to kind='local', dir=Path('output'), enabled=True.
+
+        Bug this catches: default_factory not wired on Config.output, or
+        OutputConfig defaults wrong — any missing-output-block YAML would
+        AttributeError or produce None instead of a usable OutputConfig.
+        """
+        from pathlib import Path
+
+        from kinoforge.core.config import OutputConfig, load_config
+
+        cfg = load_config(MINIMAL_FAKE_ENGINE_YAML)
+        assert isinstance(cfg.output, OutputConfig)
+        assert cfg.output.kind == "local"
+        assert cfg.output.dir == Path("output")
+        assert cfg.output.enabled is True
+
+    def test_explicit_output_block_round_trips(self) -> None:
+        """An explicit output: block with kind, dir, and enabled round-trips through load_config.
+
+        Bug this catches: OutputConfig field missing from Config, or pydantic
+        drops unknown keys at the top level — the explicit block would silently
+        vanish and the CLI would fall back to the default dir instead of /tmp/foo.
+        """
+        from pathlib import Path
+
+        from kinoforge.core.config import load_config
+
+        yaml_text = MINIMAL_FAKE_ENGINE_YAML + (
+            "\noutput:\n  kind: local\n  dir: /tmp/foo\n  enabled: true\n"
+        )
+        cfg = load_config(yaml_text)
+        assert cfg.output.kind == "local"
+        assert cfg.output.dir == Path("/tmp/foo")
+        assert cfg.output.enabled is True
+
+    def test_output_enabled_false_round_trips(self) -> None:
+        """output: {enabled: false} round-trips and cfg.output.enabled is False.
+
+        Bug this catches: bool coercion or missing field causes enabled to stay
+        True even when the user writes enabled: false — the CLI would then always
+        publish even when the user intended to disable output.
+        """
+        from kinoforge.core.config import load_config
+
+        yaml_text = MINIMAL_FAKE_ENGINE_YAML + "\noutput:\n  enabled: false\n"
+        cfg = load_config(yaml_text)
+        assert cfg.output.enabled is False
+
+
 def test_layer_m_model_dump_roundtrips_spec_model(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """``cfg.model_dump()["spec"]["model"]`` equals the value written in YAML.
 

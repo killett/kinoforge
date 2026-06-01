@@ -421,6 +421,28 @@ class StoreConfig(BaseModel):
         return self
 
 
+class OutputConfig(BaseModel):
+    """Optional user-facing output-dir block.
+
+    Absent block defaults to ``kind="local"``, ``dir=Path("output")``,
+    ``enabled=True`` — the CLI then constructs a ``LocalOutputSink``
+    rooted at ``cwd / "output"`` (Layer O design §5).
+
+    Attributes:
+        kind: Registry key of the output sink.  Only ``"local"`` ships
+            in v1; cloud-native sinks (S3 mirror, webhook POST) are a
+            future layer.
+        dir: Local-sink destination directory.  Relative paths are
+            resolved against cwd at sink construction.
+        enabled: When ``False``, the CLI builds ``sink=None`` and the
+            stage skips the publish call (today's behavior).
+    """
+
+    kind: Literal["local"] = "local"
+    dir: Path = Path("output")
+    enabled: bool = True
+
+
 class Config(BaseModel):
     """Top-level kinoforge configuration.
 
@@ -432,6 +454,8 @@ class Config(BaseModel):
             Loaded from the YAML ``lifecycle:`` key via an alias.
         splitter: Splitter selection block (defaults to heuristic).
         store: Artifact store selector block (defaults to kind='local').
+        output: User-facing output sink block (defaults to kind='local',
+            dir='output', enabled=True).
         spec: Engine-agnostic pipeline spec forwarded verbatim to the
             generation job; arbitrary nested structure, defaults to ``{}``.
         params: Engine-agnostic generation parameters forwarded verbatim to
@@ -444,6 +468,7 @@ class Config(BaseModel):
     lifecycle_cfg: LifecycleConfig | None = Field(default=None, alias="lifecycle")
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     store: StoreConfig = Field(default_factory=StoreConfig)
+    output: OutputConfig = Field(default_factory=OutputConfig)
     spec: dict[str, Any] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
 
