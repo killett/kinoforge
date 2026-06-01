@@ -130,6 +130,11 @@ def _make_default_http_seams(
 
     encoded_key = quote(api_key, safe="")
 
+    # RunPod's edge layer rejects requests whose User-Agent matches
+    # ``Python-urllib/*`` (the stdlib default) with HTTP 403.  Any non-default
+    # UA — including a kinoforge-identifying one — passes the filter.
+    _UA = "kinoforge/0.1 (+https://github.com/dr-twinklebrane/kinoforge)"
+
     def _append_api_key(url: str) -> str:
         sep = "&" if "?" in url else "?"
         return f"{url}{sep}api_key={encoded_key}"
@@ -139,7 +144,7 @@ def _make_default_http_seams(
         req = urllib.request.Request(  # noqa: S310
             _append_api_key(url),
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "User-Agent": _UA},
             method="POST",
         )
         with urllib.request.urlopen(req) as resp:  # noqa: S310
@@ -148,9 +153,10 @@ def _make_default_http_seams(
     def authed_get(url: str) -> dict[str, Any]:
         # Content-Type bypasses RunPod GraphQL's CSRF protection — without
         # it, GETs return HTTP 400 "potential Cross-Site Request Forgery".
+        # User-Agent bypasses the Python-urllib block (HTTP 403).
         req = urllib.request.Request(  # noqa: S310
             _append_api_key(url),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "User-Agent": _UA},
         )
         with urllib.request.urlopen(req) as resp:  # noqa: S310
             return dict(json.loads(resp.read().decode("utf-8")))
