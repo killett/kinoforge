@@ -15,7 +15,9 @@ from tests.providers.conftest_runpod import (
     _load_fixture,
     _RecordingHTTPSeam,
     _redact,
+    _redact_credential_patterns,
     _redact_kv_shape,
+    _redact_string,
 )
 
 
@@ -287,3 +289,54 @@ def test_is_credential_name_matches_protected_vocab() -> None:
     assert not _is_credential_name("GPU_COUNT")
     assert not _is_credential_name("keypoints")
     assert not _is_credential_name("checkpoints")
+
+
+# ---------------------------------------------------------------------------
+# Pass 3 — _redact_credential_patterns + _redact_string (Layer P Task 7 bug-fix #1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "needle"),
+    [
+        ("rpa_token", "rpa_AB12cdEF34GhIj"),
+        ("hf_token", "hf_AbCdEf12345678"),
+        ("fal_key", "fal_key_xY7zPQ9ABCDEFGH"),
+        ("bearer_auth", "Bearer eyJhbGciOiJIUzI1NiJ9.foo"),
+        ("sk_openai", "sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+        ("sk_anthropic", "sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+        ("aws_akia", "AKIAIOSFODNN7EXAMPLE"),
+        ("aws_asia", "ASIAIOSFODNN7EXAMPLE"),
+        (
+            "pem_private_key",
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIE\nXXXX\n-----END RSA PRIVATE KEY-----",
+        ),
+    ],
+)
+def test_credential_pattern_matcher_catches_each_format(
+    label: str, needle: str
+) -> None:
+    prose = f"prefix [{needle}] suffix"
+    out = _redact_string(prose)
+    assert needle not in out, f"{label}: needle {needle!r} survived in {out!r}"
+    assert "<REDACTED>" in out
+
+
+@pytest.mark.parametrize(
+    "haystack",
+    [
+        "please ask-me about checkpoints, no sk-x here",
+        "this is sk-only-4chars",
+        "sk-",
+        "sk-aaa",
+    ],
+)
+def test_sk_guard_against_false_positives(haystack: str) -> None:
+    out = _redact_string(haystack)
+    assert out == haystack, f"false positive: {haystack!r} → {out!r}"
+
+
+def test_credential_pattern_matcher_recurses_into_nested_structure() -> None:
+    payload = {"a": {"b": ["c", {"d": "rpa_REAL_TOKEN_12345"}]}}
+    out = _redact_credential_patterns(payload)
+    assert out["a"]["b"][1]["d"] == "<REDACTED>"
