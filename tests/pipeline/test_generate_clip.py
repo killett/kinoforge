@@ -1220,6 +1220,9 @@ def test_sink_present_publishes_once_with_correct_args(tmp_path: Path) -> None:
 
     prompt=request.prompt, extension = Path(artifact.filename).suffix,
     namespace=None (no namespace arg passed).
+
+    Catches a regression where Path(last.filename).suffix returns empty and
+    falls through to '.bin'.
     """
     profile = _profile()
     backend = FakeBackend(probe=profile)
@@ -1246,8 +1249,8 @@ def test_sink_present_publishes_once_with_correct_args(tmp_path: Path) -> None:
     assert len(spy.calls) == 1
     call = spy.calls[0]
     assert call["prompt"] == "a red sunset"
-    # FakeBackend produces filename with an extension; suffix must match.
-    assert call["extension"] != ""
+    # FakeBackend produces clip-<hex12>.mp4 — suffix must be exactly ".mp4".
+    assert call["extension"] == ".mp4"
     assert call["namespace"] is None
 
 
@@ -1285,6 +1288,9 @@ def test_sink_multi_segment_publishes_only_last(tmp_path: Path) -> None:
 
     The stage already persists only results[-1]; the sink must mirror that:
     one publish call even for 3 segments.
+
+    Catches a regression where the stage publishes seg-0's prompt instead of
+    the final segment's prompt.
     """
     profile = _profile(supports_native_extension=False)
     backend = FakeBackend(probe=profile)
@@ -1305,13 +1311,13 @@ def test_sink_multi_segment_publishes_only_last(tmp_path: Path) -> None:
         sink=spy,
     )
 
-    segments = [Segment(prompt="seg-final") for _ in range(3)]
+    segments_override = [Segment(prompt=f"seg-{i}") for i in range(3)]
     stage.run(
         GenerationRequest(prompt="ignored", mode="t2v"),
-        segments_override=segments,
+        segments_override=segments_override,
     )
 
     # Only 1 publish call regardless of segment count.
     assert len(spy.calls) == 1
-    # The prompt comes from segments[-1].prompt.
-    assert spy.calls[0]["prompt"] == "seg-final"
+    # The prompt comes from segments[-1].prompt, not segments[0].prompt.
+    assert spy.calls[0]["prompt"] == "seg-2"
