@@ -161,11 +161,23 @@ class _RecordingHTTPSeam:
 
     def flush(self) -> None:
         """Write one JSON file per recorded operation to ``out_dir``."""
+        import subprocess
+
+        try:
+            git_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            git_sha = "UNKNOWN"
+
         self._out.mkdir(parents=True, exist_ok=True)
         for filename, query, response in self._records:
             payload = {
                 "_meta": {
                     "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    "git_sha": git_sha,
                     "operation": filename.removesuffix(".json"),
                     "request_query": _redact_query_string(query)[:200],
                 },
