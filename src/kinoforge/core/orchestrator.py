@@ -54,6 +54,7 @@ from kinoforge.core.provision_state import (
     write_marker,
 )
 from kinoforge.core.provisioner import provision as provisioner_provision
+from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.stores.base import ArtifactStore
 
@@ -683,6 +684,7 @@ def generate(
     profile_provider: ModelProfileProvider | None = None,
     run_id: str = "run",
     state_dir: Path = Path(".kinoforge"),
+    sink: OutputSink | None = None,
 ) -> Artifact:
     """Run the full generation pipeline for a single clip.
 
@@ -722,6 +724,9 @@ def generate(
             weights, locks).  Defaults to ``Path(".kinoforge")`` for test
             scaffolding that doesn't pass it; the CLI always forwards
             ``--state-dir``.
+        sink: Optional user-facing output sink.  When provided, the stage
+            calls ``sink.publish(...)`` after persisting to the store.
+            ``None`` (default) preserves pre-Layer-O behavior.
 
     Returns:
         The persisted ``Artifact`` (with ``uri``) from the pipeline stage.
@@ -791,6 +796,7 @@ def generate(
             base_params=dict(cfg.params),
             base_spec=dict(cfg.spec),
             engine=session.engine,
+            sink=sink,
         )
         try:
             artifact = stage.run(request, segments_override=prompt_segments)

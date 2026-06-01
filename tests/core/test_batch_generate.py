@@ -1,4 +1,4 @@
-"""Tests for kinoforge.core.batch.batch_generate (Layer L Task 3).
+"""Tests for kinoforge.core.batch.batch_generate (Layer L Task 3 + Layer O Task 6).
 
 batch_generate wraps deploy_session, fans entries out via a
 ThreadPoolExecutor, collects via as_completed, swallows per-entry
@@ -10,11 +10,16 @@ The spy classes used here (``_BatchSpyEngine``, ``_BatchSpyBackend``,
 ``_ProfileCacheCallCounter``) live in :mod:`tests.core._fakes` so that
 the upcoming Task 4 CLI tests can reuse them without copy-paste.  See
 the docstring in ``_fakes.py`` for the rationale.
+
+Layer O Task 6 tests verify that batch_generate threads sink + batch_id
+namespace into each per-entry GenerateClipStage.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -522,3 +527,134 @@ def test_entry_assets_flow_into_generation_request(tmp_path: Path) -> None:
     assert asset.role == "init_image"
     assert asset.ref.uri == "file:///tmp/seed.png"
     assert asset.ref.filename == "seed.png"
+
+
+# ---------------------------------------------------------------------------
+# Layer O Task 6 helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _PublishCall:
+    """One recorded call to _SpyOutputSink.publish."""
+
+    data_len: int
+    prompt: str
+    extension: str
+    namespace: str | None
+
+
+@dataclass
+class _SpyOutputSink:
+    """Minimal OutputSink spy that records every publish() call."""
+
+    calls: list[_PublishCall] = field(default_factory=list)
+
+    def publish(
+        self,
+        data: bytes,
+        *,
+        prompt: str,
+        extension: str,
+        namespace: str | None = None,
+    ) -> str:
+        """Record the call and return a synthetic path string.
+
+        Args:
+            data: Raw clip bytes.
+            prompt: User-facing prompt.
+            extension: File suffix including the dot.
+            namespace: Optional sub-directory grouping.
+
+        Returns:
+            A synthetic path string (not used by the caller in these tests).
+        """
+        self.calls.append(
+            _PublishCall(
+                data_len=len(data),
+                prompt=prompt,
+                extension=extension,
+                namespace=namespace,
+            )
+        )
+        return f"/fake/{namespace}/{prompt}{extension}"
+
+
+# ---------------------------------------------------------------------------
+# Layer O Task 6 tests
+# ---------------------------------------------------------------------------
+
+
+def test_batch_generate_default_sink_is_none(tmp_path: Path) -> None:
+    """batch_generate without sink kwarg produces one ok outcome per entry.
+
+    Bug catch: adding sink=None as a default kwarg must not alter the
+    existing batch behaviour — no publish calls are made and every entry
+    still completes with status="ok".
+
+    Also locks the sink parameter default to None so a future regression
+    that flipped the default to a real sink would fail here.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_spy_engine()
+    provider = LocalProvider()
+
+    result: BatchResult = batch_generate(
+        cfg,
+        _three_entry_manifest(),
+        store=store,
+        batch_id="batch-default-sink",
+        engine=engine,
+        provider=provider,
+        state_dir=tmp_path / "_state",
+    )
+
+    assert isinstance(result, BatchResult)
+    assert len(result.outcomes) == 3, result.outcomes
+    assert all(o.status == "ok" for o in result.outcomes), result.outcomes
+
+    # Lock down: sink parameter defaults to None.
+    # A future regression that flipped the default to a real sink would fail here.
+    sig = inspect.signature(batch_generate)
+    sink_param = sig.parameters["sink"]
+    assert sink_param.default is None
+
+
+def test_batch_generate_threads_sink_with_batch_id_namespace(tmp_path: Path) -> None:
+    """sink=spy + batch_id propagate namespace="batch-X" to every publish call.
+
+    Bug catch: if _build_stage_for_entry doesn't forward sink and
+    namespace, per-entry clips are silently unpublished even though the
+    caller passed a sink.  We pin the contract by asserting one publish
+    call per manifest entry and that every call carries the batch_id as
+    namespace.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_spy_engine()
+    provider = LocalProvider()
+    spy = _SpyOutputSink()
+
+    manifest = _three_entry_manifest()
+
+    batch_generate(
+        cfg,
+        manifest,
+        store=store,
+        batch_id="batch-20260531-X",
+        engine=engine,
+        provider=provider,
+        state_dir=tmp_path / "_state",
+        sink=spy,
+    )
+
+    assert len(spy.calls) == len(manifest.entries), (
+        f"expected one publish call per entry ({len(manifest.entries)}); "
+        f"got {len(spy.calls)}"
+    )
+    namespaces = {c.namespace for c in spy.calls}
+    assert namespaces == {"batch-20260531-X"}, (
+        f"every publish call must carry namespace='batch-20260531-X'; "
+        f"saw namespaces={namespaces!r}"
+    )

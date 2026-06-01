@@ -38,6 +38,7 @@ from kinoforge.core.errors import (
 from kinoforge.core.interfaces import Artifact, ConditioningAsset, GenerationRequest
 from kinoforge.core.logging import get_logger
 from kinoforge.core.orchestrator import deploy_session
+from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.stores.base import ArtifactStore
 
@@ -244,6 +245,7 @@ def _build_stage_for_entry(
     accepted_kinds: set[str],
     store: ArtifactStore,
     batch_id: str,
+    sink: OutputSink | None = None,
 ) -> tuple[GenerateClipStage, GenerationRequest]:
     """Build a stage + request pair for one batch entry.
 
@@ -263,7 +265,11 @@ def _build_stage_for_entry(
         accepted_kinds: Asset kinds the underlying engine accepts.
         store: Destination ArtifactStore for the entry's outputs.
         batch_id: Top-level namespace for this batch's artifacts; used
-            to build the entry-scoped ``run_id``.
+            to build the entry-scoped ``run_id`` and as the
+            ``namespace`` forwarded to the stage's sink.
+        sink: Optional user-facing publish target forwarded to each
+            per-entry :class:`~kinoforge.pipeline.generate_clip.GenerateClipStage`.
+            When ``None`` (the default), no publish side-effect occurs.
 
     Returns:
         A ``(stage, request)`` tuple ready for
@@ -294,6 +300,8 @@ def _build_stage_for_entry(
         base_params=merged_params,
         base_spec=merged_spec,
         engine=session.engine,
+        sink=sink,
+        namespace=batch_id,
     )
     return stage, request
 
@@ -429,6 +437,7 @@ def batch_generate(
     creds: CredentialProvider | None = None,
     profile_provider: ModelProfileProvider | None = None,
     state_dir: Path = Path(".kinoforge"),
+    sink: OutputSink | None = None,
 ) -> BatchResult:
     """Run every entry in *manifest* on one shared deployed instance.
 
@@ -477,6 +486,14 @@ def batch_generate(
             :class:`~kinoforge.core.profiles.JsonProfileCache`.
         state_dir: Operator state root (provision markers, weights,
             locks).
+        sink: Optional user-facing publish target.  When non-None,
+            every per-entry
+            :class:`~kinoforge.pipeline.generate_clip.GenerateClipStage`
+            receives ``sink=sink, namespace=batch_id`` so all finished
+            clips from this batch land under
+            ``<output_dir>/<batch_id>/``.  When ``None`` (the default),
+            no publish side-effect occurs and pre-Layer-O batch
+            behaviour is preserved.
 
     Returns:
         A :class:`BatchResult` with one
@@ -551,6 +568,7 @@ def batch_generate(
                         accepted_kinds,
                         store,
                         batch_id,
+                        sink=sink,
                     )
                     fut = executor.submit(
                         _run_with_clock, stage, request, start_times, idx

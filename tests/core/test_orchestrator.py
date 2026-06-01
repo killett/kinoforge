@@ -1287,3 +1287,91 @@ def test_generate_validates_spec_with_real_request_prompt_not_probe(
     assert all(p == "cinematic shot of a forest" for p in observed_prompts), (
         f"validate_spec saw stale/empty prompt: {observed_prompts!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer O Task 5: generate() sink kwarg threading
+# ---------------------------------------------------------------------------
+
+
+class _SpyOutputSink:
+    """Minimal OutputSink spy that records every publish() call.
+
+    Implements the OutputSink Protocol without inheriting from any
+    concrete class, to keep the test self-contained (option (a) per spec).
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def publish(
+        self,
+        data: bytes,
+        *,
+        prompt: str,
+        extension: str,
+        namespace: str | None = None,
+    ) -> str:
+        """Record the call and return a fake URI."""
+        self.calls.append(
+            {
+                "data_len": len(data),
+                "prompt": prompt,
+                "extension": extension,
+                "namespace": namespace,
+            }
+        )
+        return f"spy://{prompt[:20]}{extension}"
+
+
+def test_generate_default_sink_is_none(tmp_path: Path) -> None:
+    """AC1 regression lock: generate() with no sink kwarg still works end-to-end.
+
+    Verifies that the None default keeps every existing call site working
+    bit-for-bit after the sink kwarg is added.
+    """
+    cfg = _compute_cfg()
+    engine = _make_engine()
+    provider = LocalProvider()
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="a calm sea at dusk", mode="t2v")
+
+    artifact = generate(
+        cfg,
+        request,
+        store=store,
+        provider=provider,
+        engine=engine,
+    )
+
+    assert isinstance(artifact, Artifact)
+    assert artifact.uri != "", "Artifact must have a non-empty uri when sink=None"
+    data = store.get_bytes(artifact.uri)
+    assert len(data) > 0, "Store must contain bytes when sink=None"
+
+
+def test_generate_threads_sink_into_stage(tmp_path: Path) -> None:
+    """AC2: generate(sink=spy) threads the sink into GenerateClipStage and
+    the spy receives at least one publish() call during the run.
+    """
+    cfg = _compute_cfg()
+    engine = _make_engine()
+    provider = LocalProvider()
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="a stormy ocean wave", mode="t2v")
+    spy = _SpyOutputSink()
+
+    artifact = generate(
+        cfg,
+        request,
+        store=store,
+        provider=provider,
+        engine=engine,
+        sink=spy,
+    )
+
+    assert isinstance(artifact, Artifact)
+    assert len(spy.calls) >= 1, (
+        f"spy.publish() must be called at least once when sink=spy; "
+        f"got spy.calls={spy.calls!r}"
+    )
