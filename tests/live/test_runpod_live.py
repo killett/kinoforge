@@ -40,6 +40,7 @@ if not (
 
 
 _CONFIG = "examples/configs/runpod-comfyui-wan.yaml"
+_MANIFEST = "examples/configs/runpod-comfyui-wan-manifest.yaml"
 _INIT_FRAME = "tests/providers/fixtures/runpod/sample_init_frame.png"
 _MP4_MAGIC = b"\x00\x00\x00 ftypisom"
 
@@ -112,21 +113,21 @@ def test_runpod_live_e2e_wan_i2v_smoke(tmp_path: Path) -> None:
                 break
         assert pod_id, f"could not parse pod_id from deploy stdout:\n{deploy.stdout}"
 
-        # 4. Generate (provision + submit + download artifact).
+        # 4. Generate via batch CLI (provision + submit + download artifact).
+        # batch is used because `kinoforge generate` has no --asset flag;
+        # the manifest supplies the i2v init_image.
         gen_started = time.monotonic()
         gen = _run_cli(
             [
                 "--state-dir",
                 str(state_dir),
-                "generate",
+                "batch",
                 "--config",
                 _CONFIG,
-                "--prompt",
-                "A landscape unfurling at dawn",
-                "--mode",
-                "i2v",
-                "--run-id",
-                "layer-n-smoke",
+                "--manifest",
+                _MANIFEST,
+                "--batch-id",
+                "layer-n-smoke-batch",
             ],
             timeout=900,
         )
@@ -137,7 +138,7 @@ def test_runpod_live_e2e_wan_i2v_smoke(tmp_path: Path) -> None:
         )
 
         # 5. Assertions on the real artifact.
-        run_dir = state_dir / "layer-n-smoke"
+        run_dir = state_dir / "layer-n-smoke-batch" / "layer-n-smoke"
         mp4s = list(run_dir.rglob("*.mp4"))
         assert mp4s, f"no MP4 produced under {run_dir}"
         mp4 = mp4s[0]
