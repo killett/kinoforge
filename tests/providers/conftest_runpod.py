@@ -246,6 +246,26 @@ def _redact_credential_patterns(obj: Any) -> Any:
     return obj
 
 
+def _redact_all(obj: Any) -> Any:
+    """Run all three redaction passes in order.
+
+    Pipeline: shape detector → key-name walker → value-pattern matcher.
+
+    Order chosen so the shape detector replaces structurally-leaky values
+    BEFORE the key-name walker scrubs the harmless ``key`` field name, and
+    the pattern matcher runs last as a catch-all backstop for any credential
+    string the first two passes did not recognise.
+
+    Args:
+        obj: Any JSON-serialisable Python value.
+
+    Returns:
+        A fully-redacted copy of ``obj``.  Idempotent — applying the function
+        a second time produces the same result.
+    """
+    return _redact_credential_patterns(_redact(_redact_kv_shape(obj)))
+
+
 def _load_fixture(name: str) -> dict[str, Any]:
     """Load the ``response`` payload of a committed real-API capture.
 
