@@ -25,7 +25,7 @@ import re
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 _FIXTURE_DIR: Path = Path(__file__).parent / "fixtures" / "runpod"
 
@@ -264,6 +264,98 @@ def _redact_all(obj: Any) -> Any:
         a second time produces the same result.
     """
     return _redact_credential_patterns(_redact(_redact_kv_shape(obj)))
+
+
+class LeakHit(NamedTuple):
+    """A single credential-pattern hit produced by :func:`_audit_for_leaks`.
+
+    Attributes:
+        pattern_name: The canonical name from :data:`_CREDENTIAL_PATTERNS`
+            (e.g. ``"rpa_token"``, ``"bearer_auth"``).
+        json_pointer: RFC 6901 pointer to the offending location.
+        match_snippet: First 32 chars of the matched substring.  Enough for
+            shape diagnosis without re-emitting the full secret.
+    """
+
+    pattern_name: str
+    json_pointer: str
+    match_snippet: str
+
+
+def _escape_pointer_segment(segment: str) -> str:
+    """RFC 6901 pointer-segment escape: ``~`` → ``~0``, ``/`` → ``~1``."""
+    return segment.replace("~", "~0").replace("/", "~1")
+
+
+def _audit_for_leaks(obj: Any, _pointer: str = "") -> list[LeakHit]:
+    """Walk *obj* and return every credential-pattern match.
+
+    Recursive.  Visits every string value; runs every entry in
+    :data:`_CREDENTIAL_PATTERNS` against it; collects every match as a
+    :class:`LeakHit`.  Empty list means the payload is clean.
+
+    Args:
+        obj: Any JSON-serialisable Python value.
+        _pointer: Internal — the RFC 6901 pointer accumulated during recursion.
+            Callers should not supply this.
+
+    Returns:
+        A list of every :class:`LeakHit` discovered, in traversal order.
+    """
+    hits: list[LeakHit] = []
+    if isinstance(obj, str):
+        for name, pattern in _CREDENTIAL_PATTERNS:
+            for match in pattern.finditer(obj):
+                hits.append(
+                    LeakHit(
+                        pattern_name=name,
+                        json_pointer=_pointer or "/",
+                        match_snippet=match.group(0)[:32],
+                    )
+                )
+        return hits
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            sub = f"{_pointer}/{_escape_pointer_segment(str(key))}"
+            hits.extend(_audit_for_leaks(value, sub))
+        return hits
+    if isinstance(obj, list):
+        for idx, item in enumerate(obj):
+            hits.extend(_audit_for_leaks(item, f"{_pointer}/{idx}"))
+        return hits
+    return hits
+
+
+class CredentialLeakError(Exception):
+    """Raised by :meth:`_RecordingHTTPSeam.flush` when post-redaction payload still leaks.
+
+    Carries the offending fixture filename and the full hit list so the
+    contributor can identify which redactor pass needs a new pattern or
+    shape entry.
+
+    Attributes:
+        hits: Every :class:`LeakHit` returned by :func:`_audit_for_leaks`.
+        filename: The fixture filename that would have leaked.
+    """
+
+    def __init__(self, hits: list[LeakHit], filename: str) -> None:
+        self.hits = hits
+        self.filename = filename
+        super().__init__(self._format())
+
+    def _format(self) -> str:
+        lines = [f"refusing to write {self.filename}"]
+        for hit in self.hits:
+            lines.append(
+                f"  - {hit.pattern_name} at {hit.json_pointer}: {hit.match_snippet!r}"
+            )
+        lines.append(
+            "Update _CREDENTIAL_PATTERNS or _redact_kv_shape vocab to cover this shape."
+        )
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        return self._format()
 
 
 def _load_fixture(name: str) -> dict[str, Any]:

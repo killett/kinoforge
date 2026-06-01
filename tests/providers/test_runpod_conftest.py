@@ -11,6 +11,9 @@ import pytest
 
 from tests.providers.conftest_runpod import (
     _COMFY_DISPATCH,
+    CredentialLeakError,
+    LeakHit,
+    _audit_for_leaks,
     _is_credential_name,
     _load_fixture,
     _RecordingHTTPSeam,
@@ -380,3 +383,54 @@ def test_redact_all_preserves_existing_key_name_walker_behavior() -> None:
     assert out["data"]["pod"]["password"] == "<REDACTED>"
     assert out["data"]["pod"]["imageName"] == "foo:bar"
     assert out["Secret_Tail"] == "<REDACTED>"
+
+
+# ---------------------------------------------------------------------------
+# Audit primitives — LeakHit + _audit_for_leaks + CredentialLeakError
+# (Layer P Task 7 bug-fix #1 Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_audit_for_leaks_returns_empty_for_clean_payload() -> None:
+    payload = {"data": {"gpuTypes": [{"id": "g1", "memoryInGb": 24}]}}
+    assert _audit_for_leaks(payload) == []
+
+
+def test_audit_for_leaks_reports_pattern_name_and_pointer() -> None:
+    payload = {"data": {"deep": {"k": "rpa_REAL_TOKEN_12345"}}}
+    hits = _audit_for_leaks(payload)
+    assert len(hits) == 1
+    hit = hits[0]
+    assert hit.pattern_name == "rpa_token"
+    assert hit.json_pointer == "/data/deep/k"
+    assert hit.match_snippet.startswith("rpa_")
+    assert len(hit.match_snippet) <= 32
+
+
+def test_audit_for_leaks_handles_list_indices_in_pointer() -> None:
+    payload = {"env": [{"key": "X", "value": "hf_REAL_TOKEN_1234567"}]}
+    hits = _audit_for_leaks(payload)
+    assert len(hits) == 1
+    assert hits[0].json_pointer == "/env/0/value"
+    assert hits[0].pattern_name == "hf_token"
+
+
+def test_credential_leak_error_is_exception_subclass() -> None:
+    err = CredentialLeakError([], "x.json")
+    assert isinstance(err, Exception)
+    assert not isinstance(err, AssertionError)
+
+
+def test_credential_leak_error_str_format() -> None:
+    hits = [
+        LeakHit("rpa_token", "/response/env/0/value", "rpa_AB12cdEF34GhIj"),
+        LeakHit("hf_token", "/response/env/3/value", "hf_xY7zPQ9ABCDEFGH"),
+    ]
+    err = CredentialLeakError(hits, "create_pod.json")
+    text = str(err)
+    assert "refusing to write" in text
+    assert "create_pod.json" in text
+    assert "rpa_token" in text
+    assert "/response/env/0/value" in text
+    assert "rpa_AB12cdEF34GhIj" in text
+    assert "hf_token" in text
