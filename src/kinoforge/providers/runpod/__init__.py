@@ -99,6 +99,53 @@ def _urllib_get_json(url: str) -> dict[str, Any]:
         return dict(json.loads(resp.read().decode("utf-8")))
 
 
+def _make_default_http_seams(
+    api_key: str | None,
+) -> tuple[
+    Callable[[str, dict[str, Any]], dict[str, Any]],
+    Callable[[str], dict[str, Any]],
+]:
+    """Return urllib http_post / http_get callables with Authorization injected.
+
+    When ``api_key`` is empty or ``None``, returns the bare unauthenticated
+    callables — callers that have no credentials still get something callable,
+    and the real API will respond with 401/403 on its own.
+
+    Args:
+        api_key: The RUNPOD_API_KEY string, or None if no credential is set.
+
+    Returns:
+        ``(http_post, http_get)`` tuple matching the existing seam contract.
+    """
+    if not api_key:
+        return _urllib_post_json, _urllib_get_json
+
+    auth_header = f"Bearer {api_key}"
+
+    def authed_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(  # noqa: S310
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": auth_header,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            return dict(json.loads(resp.read().decode("utf-8")))
+
+    def authed_get(url: str) -> dict[str, Any]:
+        req = urllib.request.Request(  # noqa: S310
+            url, headers={"Authorization": auth_header}
+        )
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            return dict(json.loads(resp.read().decode("utf-8")))
+
+    return authed_post, authed_get
+
+
 def _build_get_url(base_url: str, query: str) -> str:
     """Build a GraphQL GET URL with the query string URL-encoded.
 
@@ -130,14 +177,18 @@ class RunPodProvider(ComputeProvider):
 
     Args:
         creds: Credential provider.  Must supply ``RUNPOD_API_KEY`` (used for
-            orchestration) and ``RUNPOD_TERMINATE_KEY`` (injected into pod env
-            for least-privilege self-termination).  ``None`` is safe when
-            only :meth:`find_offers`, :meth:`list_instances`, or
-            :meth:`endpoints` are called.
+            orchestration and to authenticate all default HTTP calls) and
+            ``RUNPOD_TERMINATE_KEY`` (injected into pod env for least-privilege
+            self-termination).  ``None`` is safe when only
+            :meth:`find_offers`, :meth:`list_instances`, or :meth:`endpoints`
+            are called (though the real RunPod API will return 401/403 without
+            a valid key).
         http_post: Callable ``(url, body) -> dict`` for POST requests.
-            Defaults to a real ``urllib`` implementation.
+            Defaults to an authenticated ``urllib`` implementation that injects
+            ``Authorization: Bearer <RUNPOD_API_KEY>`` on every request.
         http_get: Callable ``(url) -> dict`` for GET requests.
-            Defaults to a real ``urllib`` implementation.
+            Defaults to an authenticated ``urllib`` implementation that injects
+            ``Authorization: Bearer <RUNPOD_API_KEY>`` on every request.
         sleep: Callable invoked between destroy-poll iterations.
             Defaults to :func:`time.sleep`.
         base_url: RunPod GraphQL base URL.
@@ -155,23 +206,30 @@ class RunPodProvider(ComputeProvider):
         self,
         creds: CredentialProvider | None = None,
         *,
-        http_post: Callable[[str, dict[str, Any]], dict[str, Any]] = _urllib_post_json,
-        http_get: Callable[[str], dict[str, Any]] = _urllib_get_json,
+        http_post: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+        http_get: Callable[[str], dict[str, Any]] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         base_url: str = _DEFAULT_BASE_URL,
     ) -> None:
         """Initialise the provider with injectable seams.
 
         Args:
-            creds: Credential provider for ``RUNPOD_TERMINATE_KEY`` injection.
-            http_post: Injectable POST transport.
-            http_get: Injectable GET transport.
+            creds: Credential provider for ``RUNPOD_API_KEY`` (HTTP auth) and
+                ``RUNPOD_TERMINATE_KEY`` (pod env injection).
+            http_post: Injectable POST transport.  When ``None``, resolves to
+                an authenticated closure that injects ``Authorization: Bearer
+                <RUNPOD_API_KEY>`` on every request (or the bare urllib
+                callable when no key is available).
+            http_get: Injectable GET transport.  Same auth behaviour as
+                ``http_post``.
             sleep: Injectable sleep used between destroy polls.
             base_url: RunPod GraphQL endpoint URL.
         """
         self._creds = creds
-        self._http_post = http_post
-        self._http_get = http_get
+        api_key = creds.get("RUNPOD_API_KEY") if creds is not None else None
+        default_post, default_get = _make_default_http_seams(api_key)
+        self._http_post = http_post if http_post is not None else default_post
+        self._http_get = http_get if http_get is not None else default_get
         self._sleep = sleep
         self._base_url = base_url.rstrip("/")
 
@@ -573,4 +631,17 @@ def _pod_to_instance(pod: dict[str, Any]) -> Instance:
 # Self-registration
 # ---------------------------------------------------------------------------
 
-registry.register_provider("runpod", lambda: RunPodProvider())
+
+def _default_factory() -> RunPodProvider:
+    """Default factory: build a RunPodProvider with env-backed credentials.
+
+    Reads ``RUNPOD_API_KEY`` (and ``RUNPOD_TERMINATE_KEY``) from the process
+    environment so the orchestrator's resolved provider authenticates against
+    the real RunPod API.
+    """
+    from kinoforge.core.credentials import EnvCredentialProvider
+
+    return RunPodProvider(creds=EnvCredentialProvider())
+
+
+registry.register_provider("runpod", _default_factory)
