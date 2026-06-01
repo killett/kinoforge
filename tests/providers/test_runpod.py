@@ -661,6 +661,14 @@ def test_default_seams_inject_api_key_query_param() -> None:
         f"Authorization header leaked: {captured['headers']!r}"
     )
 
+    # Content-Type: application/json bypasses RunPod GraphQL's CSRF block on
+    # GETs — without it the server returns HTTP 400 with "potential
+    # Cross-Site Request Forgery".  Verified empirically on the real
+    # endpoint during Layer N live smoke.
+    assert captured["headers"].get("Content-type") == "application/json", (
+        f"Content-Type missing or wrong: {captured['headers']!r}"
+    )
+
 
 def test_default_seams_without_key_skip_auth() -> None:
     """When no api_key is supplied, the default seams are bare urllib funcs."""
