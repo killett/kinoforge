@@ -148,11 +148,58 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer O merged to `main`** — merge commit `7788f93` (branch `build/layer-o`,
-Tasks 1–10 all complete). Next layer candidate:
-**Layer P** — engine integration on RunPod (ComfyUI + Wan i2v producing a
-real MP4 artifact, originally slotted as Layer O before the output-dir
-operator pain became more pressing).
+**Layer P in progress on `build/layer-p`** (off `main@7788f93`).
+- Spec: `docs/superpowers/specs/2026-06-01-layer-p-runpod-engine-integration-design.md` (committed `3c163b1` + self-review fix `84e96a4`)
+- Plan: `docs/superpowers/plans/2026-06-01-layer-p-runpod-engine-integration.md` (+ `.tasks.json`, native tasks #9–#18)
+- Tasks 1–6 ✅ complete (offline scaffolding). Task 7 in progress (live shake-out).
+
+**Resume protocol:**
+1. `git checkout build/layer-p`
+2. Read the plan + spec.
+3. Read `tests/live/test_comfyui_wan_live.py` for current smoke shape (last edit: `4a673d7` — offer-retry loop added).
+4. Pick up at Task 7 step 3 (iterate). See "Pending Task 7 work" below for the exact next decisions.
+
+**Branch state (10 commits on `build/layer-p` ahead of main):**
+| SHA | Task | Subject |
+|---|---|---|
+| `62861c4` | T1 | feat(config): spec.graph_file loader convention |
+| `8f0fdd1` | T1 | test(config): close AC2 + AC5 gaps |
+| `099ac7f` | T1 | fix(config): code-quality fixes |
+| `959ebcc` | T2 | feat(engines/comfyui): custom-node ref field for git SHA pinning |
+| `fefe413` | T3 | feat(providers/runpod): find_instance_by_tag helper |
+| `060f197` | T4 | refactor(tests): _RecordingHTTPSeam dispatch callable + ComfyUI dispatcher |
+| `c2553c0` | T5 | test(live): ComfyUI + Wan i2v RunPod live smoke skeleton |
+| `9ad8ad9` | T6 | test(examples): Layer P RunPod+ComfyUI+Wan YAML scaffold |
+| `d91a7c0` | T7 | fix(config): proper text_encoder/clip_vision model kinds + Wan 2.1 fp8 model set |
+| `4a673d7` | T7 | test(live): iterate offers in create_instance loop (live-smoke bug #1) |
+
+**Test counts:** offline suite 823 pre-Layer-P → ~836 post-Task-6 (+13 net so far). Live test in `tests/live/test_comfyui_wan_live.py` skipped without creds.
+
+**Cost burn so far:** ~$0.013 (one 2s failed create_pod + one 2-min A40 that was promptly destroyed). Budget cap remaining: $1.99.
+
+**Pending Task 7 work (in priority order):**
+
+1. **Production bug: `orchestrator.deploy` picks `offers[0]` without capacity retry** (`src/kinoforge/core/orchestrator.py:626`). Fails the same way the smoke did before `4a673d7`. Fix: same offer-retry loop in deploy. Add offline regression test in `tests/core/test_orchestrator.py`.
+2. **Architectural mismatch: smoke calls `provider.create_instance` AND `orchestrator.generate` creates ANOTHER instance.** `deploy_session` has no `instance=` kwarg to short-circuit create. Two options:
+   - (a) Add `instance=None` kwarg to `deploy_session` + bubble to `generate`; when provided, skip the internal create. Production change. Enables warm-pod reuse via `find_instance_by_tag` + KEEP_POD ergonomic.
+   - (b) Drop manual create from smoke; let orchestrator handle everything; KEEP_POD just gates finally-destroy; warm reuse deferred. Simpler but loses the KEEP_POD cost-saving point.
+   - Recommend (a) — Layer P's whole iteration economics depend on warm reuse.
+3. **Workflow format conversion**: `examples/configs/runpod-comfyui-wan.graph.json` is a placeholder. Kijai's `wanvideo_2_1_14B_I2V_example_03.json` (downloaded to `/tmp/wan21_i2v_workflow.json`) is in ComfyUI **desktop** format (26 nodes with `nodes`/`links` arrays); ComfyUI `/prompt` needs **API** format (`{id: {class_type, inputs}}`). Two paths:
+   - (a) Hand-author conversion script (~200 LOC; needs node-schema awareness — hard to do without `/object_info`).
+   - (b) Spin up a warm pod, load workflow via ComfyUI UI on the proxy URL, save as API JSON, commit. Costs ~$0.05 for the round trip.
+   - Recommend (b).
+4. **Remaining unknowns to surface via live iteration:**
+   - Custom-node `requirements.txt` install path on RunPod's `runpod/pytorch:*` image.
+   - Whether `umt5-xxl-enc-fp8_e4m3fn.safetensors` routes correctly to `models/text_encoders/` (kinoforge falls back to `models/<target>/` per `TARGET_TO_SUBDIR` default — likely OK).
+   - Whether `provision_state.py` marker registers under a warm-tag-discovery pod.
+   - ComfyUI `/upload/image` multipart shape against the real server.
+   - ComfyUI `/history/{id}` output dict shape for Wan video output (Layer F asset wiring assumes `outputs.<node_id>.{gifs,videos,images}`).
+5. **Remaining post-Task-7 work (Tasks 8–10):**
+   - T8: refactor 23 `tests/engines/test_comfyui.py` tests to load from captured fixtures (Layer N pattern).
+   - T9: add 3 ComfyUI shape-lockdown tests.
+   - T10: README + PROGRESS Phase 26 entry + `--no-ff` merge to main.
+
+**Realistic projection:** $1–3 more spend, 1–3 hours of iteration to first green MP4 + post-capture refactor.
 
 **Pending follow-ups:**
 - ~~`GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).~~ — **CLOSED** by Phase 23 (Layer M).
