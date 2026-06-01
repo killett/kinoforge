@@ -25,6 +25,7 @@ from kinoforge.outputs.base import OutputPublishError, format_filename, slugify
 _log = get_logger(__name__)
 
 _MAX_COLLISION_SUFFIX = 99
+_MAX_HASH_RETRIES = 16
 
 
 class LocalOutputSink:
@@ -125,11 +126,23 @@ class LocalOutputSink:
             if not candidate.exists():
                 return candidate
 
-        # 99 exhausted — fall back to a 6-char sha256 hash of monotonic_ns()
-        # so two simultaneous fallbacks in the same nanosecond still
-        # diverge (vanishingly unlikely; still belt+suspenders).
-        hash_suffix = hashlib.sha256(str(time.monotonic_ns()).encode()).hexdigest()[:6]
-        return target_dir / f"{ts}_{slug}_{hash_suffix}{ext}"
+        # 99 exhausted — fall back to up-to-_MAX_HASH_RETRIES attempts at a
+        # 6-char sha256 hash of monotonic_ns().  Each retry advances the
+        # nanosecond clock so the hash changes; failure to find a free slot
+        # after _MAX_HASH_RETRIES is a genuine pathological state (extreme
+        # collision rate or filesystem corruption) and we raise so the
+        # Protocol's "must never silently overwrite" contract holds.
+        for _ in range(_MAX_HASH_RETRIES):
+            hash_suffix = hashlib.sha256(str(time.monotonic_ns()).encode()).hexdigest()[
+                :6
+            ]
+            candidate = target_dir / f"{ts}_{slug}_{hash_suffix}{ext}"
+            if not candidate.exists():
+                return candidate
+        raise OutputPublishError(
+            f"could not find a non-colliding output path in {target_dir} "
+            f"after {_MAX_COLLISION_SUFFIX - 1} numeric and {_MAX_HASH_RETRIES} hash attempts"
+        )
 
 
 def _factory() -> LocalOutputSink:
