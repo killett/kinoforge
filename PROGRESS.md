@@ -339,7 +339,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - [x] Task 3: examples/configs/hosted.yaml cleaned + test_hosted_yaml smell-lock rewritten — commit `5ab4493` (+ plan-sync `986a64a`)
 - [x] Task 4: GenerateClipStage gains http_get_bytes seam; _artifact_bytes threads Artifact.headers — commit `c482a05` (+ fix `9b3df5e`)
 - [x] Task 5: HostedAPIBackend.result populates Authorization: Bearer header — commit `67e3236` (+ docstring `9ef0efe`)
-- [x] Task 6: E2E test + README + PROGRESS + full gate — commit `<SHA6>`
+- [x] Task 6: E2E test + README + PROGRESS + full gate — commit `3ea5cfa`
 - [ ] Merge to main via `--no-ff` — merge commit `<MERGESHA>` (closes PROGRESS:155 follow-ups #1 + #2)
 
 **Key design decisions:**
