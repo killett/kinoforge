@@ -640,8 +640,12 @@ def _resolve_spec_graph_file(data: dict[str, Any], yaml_path: Path) -> None:
     Args:
         data: The raw YAML dict (mutated in place — only ``data["spec"]`` is
             touched).
-        yaml_path: Absolute path to the YAML file; used to resolve relative
-            ``graph_file`` paths against its parent directory.
+        yaml_path: Path to the YAML file; used to resolve relative
+            ``graph_file`` paths against its parent directory.  Need not be
+            absolute, but must point to the correct parent.  When loading from
+            a raw YAML string (no file backing), the sentinel value
+            ``Path.cwd() / "<string>"`` is passed; in that case relative
+            ``graph_file`` paths are rejected with a :exc:`ConfigError`.
 
     Raises:
         ConfigError: If both ``graph_file`` and ``graph`` are set, if the
@@ -660,6 +664,17 @@ def _resolve_spec_graph_file(data: dict[str, Any], yaml_path: Path) -> None:
 
     graph_file_str: str = spec["graph_file"]
     graph_file_path = Path(graph_file_str)
+
+    # If we came from a raw YAML string (no file backing), the sentinel
+    # yaml_path has name "<string>" and parent=cwd.  Relative graph_file paths
+    # would silently resolve against cwd — confusing.  Force absolute paths in
+    # this mode.
+    if yaml_path.name == "<string>" and not graph_file_path.is_absolute():
+        raise ConfigError(
+            "spec.graph_file requires a file-based config when using a relative "
+            "path; pass an absolute path or load from a YAML file"
+        )
+
     if not graph_file_path.is_absolute():
         graph_file_path = yaml_path.parent / graph_file_path
 
