@@ -275,9 +275,14 @@ class RunPodProvider(ComputeProvider):
         for gpu in gpu_types:
             gpu_id: str = str(gpu.get("id", ""))
             vram_gb: int = int(gpu.get("memoryInGb", 0))
-            pricing: dict[str, Any] = gpu.get("lowestPrice", {})
+            # Real RunPod returns lowestPrice=null for out-of-stock / unavailable
+            # GPUs; ``gpu.get(..., {})`` returns None when the key is present
+            # but its value is null, so a safer ``or {}`` is required.
+            pricing: dict[str, Any] = gpu.get("lowestPrice") or {}
             cost: float = float(
-                pricing.get("uninterruptablePrice", pricing.get("minimumBidPrice", 0.0))
+                pricing.get("uninterruptablePrice")
+                or pricing.get("minimumBidPrice")
+                or 0.0
             )
             raw_offers.append(
                 Offer(
