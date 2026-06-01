@@ -141,7 +141,9 @@ def test_recording_seam_redacts_credentials_in_query_string(tmp_path: Path) -> N
 
 
 def test_starter_fixtures_load() -> None:
-    """Every named starter fixture loads cleanly and is non-empty."""
+    """Every named starter fixture loads cleanly and carries a valid _meta block."""
+    from tests.providers.conftest_runpod import _FIXTURE_DIR
+
     for name in (
         "gpu_types.json",
         "list_pods.json",
@@ -151,3 +153,11 @@ def test_starter_fixtures_load() -> None:
     ):
         payload = _load_fixture(name)
         assert payload, f"{name} loaded empty"
+        with (_FIXTURE_DIR / name).open() as f:
+            raw = json.load(f)
+        meta = raw["_meta"]
+        assert meta["operation"] == name.removesuffix(".json"), (
+            f"{name}: _meta.operation drifted from filename"
+        )
+        for key in ("captured_at", "git_sha", "request_query"):
+            assert key in meta, f"{name}: missing _meta.{key}"
