@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -57,11 +58,15 @@ def _make_stage(
     backend: FakeBackend,
     run_id: str = "run-001",
     engine: object | None = None,
+    http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None,
+    result_override: Callable[[str], Artifact] | None = None,
 ) -> GenerateClipStage:
     pool = SequentialPool(backend)
     store = LocalArtifactStore(tmp_path)
     if engine is None:
         engine = _fake_engine_for_tests(profile)
+    if result_override is not None:
+        backend.result = result_override  # type: ignore[assignment]
     return GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -71,6 +76,7 @@ def _make_stage(
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        http_get_bytes=http_get_bytes,
     )
 
 
@@ -938,16 +944,13 @@ def test_artifact_bytes_synthetic_fallback_when_no_uri_or_url(
 # ---------------------------------------------------------------------------
 
 
-def test_layer_m_seam_receives_artifact_headers(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_layer_m_seam_receives_artifact_headers(tmp_path: Path) -> None:
     """Spy seam receives the exact Artifact.headers dict.
 
     Bug catch: pipeline filters, strips, or wraps the headers before
     handing them to the downloader, silently dropping Authorization
     for engines that depend on it.
     """
-    from kinoforge.engines.fake import FakeEngine
-    from kinoforge.pipeline.generate_clip import GenerateClipStage
-
     captured: dict[str, object] = {}
 
     def spy_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
@@ -955,38 +958,20 @@ def test_layer_m_seam_receives_artifact_headers(tmp_path) -> None:  # type: igno
         captured["headers"] = headers
         return b"downloaded-bytes"
 
-    profile = ModelProfile(
-        name="fake",
-        max_frames=81,
-        fps=24,
-        supported_modes={"t2v"},
-        max_resolution=(1280, 720),
-        supports_native_extension=False,
-        supports_joint_audio=False,
-    )
-    engine = FakeEngine(
-        probe_profile=profile, declared_flags_map={}, required_spec_keys=set()
-    )
-    backend = engine.backend(None, {})
-    # Override backend.result to return an Artifact carrying headers.
+    profile = _profile()
     expected_headers = {"Authorization": "Bearer test-token-9001"}
-    backend.result = lambda job_id: Artifact(  # type: ignore[method-assign]
-        filename="clip.mp4",
-        url="https://example.com/media/clip.mp4",
-        headers=expected_headers,
-    )
-
-    store = LocalArtifactStore(tmp_path)
-    stage = GenerateClipStage(
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path,
         profile=profile,
-        pool=SequentialPool(backend),
-        store=store,
+        backend=backend,
         run_id="run-headers",
-        accepted_kinds={"image"},
-        base_params={},
-        base_spec={},
-        engine=engine,
         http_get_bytes=spy_http_get_bytes,
+        result_override=lambda job_id: Artifact(
+            filename="clip.mp4",
+            url="https://example.com/media/clip.mp4",
+            headers=expected_headers,
+        ),
     )
 
     request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
@@ -996,50 +981,30 @@ def test_layer_m_seam_receives_artifact_headers(tmp_path) -> None:  # type: igno
     assert captured["headers"] == expected_headers
 
 
-def test_layer_m_seam_receives_empty_dict_not_none(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_layer_m_seam_receives_empty_dict_not_none(tmp_path: Path) -> None:
     """No populated Artifact.headers → spy receives {}, not None.
 
     Bug catch: shape drift from ``dict`` to ``Optional[dict]`` would
     break consumers that always call ``headers.items()``.
     """
-    from kinoforge.engines.fake import FakeEngine
-    from kinoforge.pipeline.generate_clip import GenerateClipStage
-
     captured: dict[str, object] = {}
 
     def spy_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
         captured["headers"] = headers
         return b"downloaded"
 
-    profile = ModelProfile(
-        name="fake",
-        max_frames=81,
-        fps=24,
-        supported_modes={"t2v"},
-        max_resolution=(1280, 720),
-        supports_native_extension=False,
-        supports_joint_audio=False,
-    )
-    engine = FakeEngine(
-        probe_profile=profile, declared_flags_map={}, required_spec_keys=set()
-    )
-    backend = engine.backend(None, {})
-    backend.result = lambda job_id: Artifact(  # type: ignore[method-assign]
-        filename="clip.mp4",
-        url="https://example.com/media/clip.mp4",
-    )
-
-    store = LocalArtifactStore(tmp_path)
-    stage = GenerateClipStage(
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path,
         profile=profile,
-        pool=SequentialPool(backend),
-        store=store,
+        backend=backend,
         run_id="run-empty",
-        accepted_kinds={"image"},
-        base_params={},
-        base_spec={},
-        engine=engine,
         http_get_bytes=spy_http_get_bytes,
+        result_override=lambda job_id: Artifact(
+            filename="clip.mp4",
+            url="https://example.com/media/clip.mp4",
+        ),
     )
 
     request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
@@ -1049,15 +1014,12 @@ def test_layer_m_seam_receives_empty_dict_not_none(tmp_path) -> None:  # type: i
     assert captured["headers"] is not None
 
 
-def test_layer_m_file_uri_bypasses_seam(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_layer_m_file_uri_bypasses_seam(tmp_path: Path) -> None:
     """Artifact(uri='file://...') bypasses the seam entirely.
 
     Bug catch: a refactor that always routes through the seam would
     HTTP-fetch local files, regressing LocalArtifactStore + FakeEngine.
     """
-    from kinoforge.engines.fake import FakeEngine
-    from kinoforge.pipeline.generate_clip import GenerateClipStage
-
     seam_called = {"count": 0}
 
     def spy_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
@@ -1068,35 +1030,18 @@ def test_layer_m_file_uri_bypasses_seam(tmp_path) -> None:  # type: ignore[no-un
     local_clip = tmp_path / "local.mp4"
     local_clip.write_bytes(b"local-bytes")
 
-    profile = ModelProfile(
-        name="fake",
-        max_frames=81,
-        fps=24,
-        supported_modes={"t2v"},
-        max_resolution=(1280, 720),
-        supports_native_extension=False,
-        supports_joint_audio=False,
-    )
-    engine = FakeEngine(
-        probe_profile=profile, declared_flags_map={}, required_spec_keys=set()
-    )
-    backend = engine.backend(None, {})
-    backend.result = lambda job_id: Artifact(  # type: ignore[method-assign]
-        filename="local.mp4",
-        uri=local_clip.as_uri(),
-    )
-
-    store = LocalArtifactStore(tmp_path / "store")
-    stage = GenerateClipStage(
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path / "store",
         profile=profile,
-        pool=SequentialPool(backend),
-        store=store,
+        backend=backend,
         run_id="run-local",
-        accepted_kinds={"image"},
-        base_params={},
-        base_spec={},
-        engine=engine,
         http_get_bytes=spy_http_get_bytes,
+        result_override=lambda job_id: Artifact(
+            filename="local.mp4",
+            uri=local_clip.as_uri(),
+        ),
     )
 
     request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
@@ -1120,9 +1065,6 @@ def test_layer_m_default_seam_passes_headers_to_urllib_request(
     """
     import urllib.request
 
-    from kinoforge.engines.fake import FakeEngine
-    from kinoforge.pipeline.generate_clip import GenerateClipStage
-
     captured: dict[str, object] = {}
 
     class _FakeResp:
@@ -1145,36 +1087,19 @@ def test_layer_m_default_seam_passes_headers_to_urllib_request(
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
-    profile = ModelProfile(
-        name="fake",
-        max_frames=81,
-        fps=24,
-        supported_modes={"t2v"},
-        max_resolution=(1280, 720),
-        supports_native_extension=False,
-        supports_joint_audio=False,
-    )
-    engine = FakeEngine(
-        probe_profile=profile, declared_flags_map={}, required_spec_keys=set()
-    )
-    backend = engine.backend(None, {})
-    backend.result = lambda job_id: Artifact(  # type: ignore[method-assign]
-        filename="clip.mp4",
-        url="https://example.com/media/clip.mp4",
-        headers={"Authorization": "Bearer default-seam-token"},
-    )
-
-    store = LocalArtifactStore(tmp_path)
-    stage = GenerateClipStage(
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path,
         profile=profile,
-        pool=SequentialPool(backend),
-        store=store,
+        backend=backend,
         run_id="run-default-seam",
-        accepted_kinds={"image"},
-        base_params={},
-        base_spec={},
-        engine=engine,
         # No http_get_bytes override — exercises the module-level default.
+        result_override=lambda job_id: Artifact(
+            filename="clip.mp4",
+            url="https://example.com/media/clip.mp4",
+            headers={"Authorization": "Bearer default-seam-token"},
+        ),
     )
 
     request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
