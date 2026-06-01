@@ -82,14 +82,10 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
     # Lazy imports — keep module import cheap when test is skipped at collection.
     from kinoforge.core.config import load_config
     from kinoforge.core.credentials import EnvCredentialProvider
-    from kinoforge.core.errors import CapacityError
     from kinoforge.core.interfaces import (
         Artifact,
         ConditioningAsset,
         GenerationRequest,
-        HardwareRequirements,
-        InstanceSpec,
-        Lifecycle,
     )
     from kinoforge.core.orchestrator import generate
     from kinoforge.engines.comfyui import (
@@ -164,7 +160,6 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
 
     pod_id: str | None = None
     instance: Any = None
-    warm = False
     start_time = time.monotonic()
     artifact_path: Path | None = None
     size: int = 0
@@ -174,98 +169,19 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
         _log.info("[phase=reuse_check]")
         existing = provider.find_instance_by_tag(_TAG_KEY, _TAG_VALUE)
         if existing is not None:
-            warm = True
             pod_id = existing.id
             instance = existing
             _log.info("[phase=reuse_check] warm pod found: %s", pod_id)
         else:
             _log.info("[phase=reuse_check] no warm pod; will create")
 
-        if not warm:
-            # --- [phase=find_offers] ----------------------------------
-            _log.info("[phase=find_offers]")
-            assert cfg.compute is not None, "cfg.compute is required for RunPod"
-            # cfg.hardware_requirements() maps RequirementsConfig → HardwareRequirements
-            # with all defaults already applied — no manual field extraction needed.
-            reqs: HardwareRequirements = cfg.hardware_requirements()
-            offers = provider.find_offers(reqs)
-            assert offers, "find_offers returned no offers"
-            for offer in offers:
-                if reqs.max_cost_rate_usd_per_hr is not None:
-                    assert (
-                        offer.cost_rate_usd_per_hr <= reqs.max_cost_rate_usd_per_hr
-                    ), (
-                        f"offer {offer.id!r} cost {offer.cost_rate_usd_per_hr:.4f} "
-                        f"exceeds cap {reqs.max_cost_rate_usd_per_hr:.4f}"
-                    )
-            _log.info(
-                "[phase=find_offers] %d viable offers; trying in cost order",
-                len(offers),
-            )
-
-            # --- [phase=create_instance] ------------------------------
-            # RunPod intermittently has no current host capacity for the
-            # chosen GPU type; RunPodProvider surfaces that as a typed
-            # CapacityError (raised on the "resources to deploy" mutation
-            # response). Iterate offers in their already-sorted-by-
-            # gpu_preference order until one succeeds.
-            _log.info("[phase=create_instance]")
-            chosen = None
-            instance = None
-            for candidate in offers:
-                ispec = InstanceSpec(
-                    image=cfg.compute.image,
-                    offer=candidate,
-                    lifecycle=Lifecycle(
-                        idle_timeout_s=float(cfg.lifecycle().idle_timeout_s)
-                    ),
-                    tags={
-                        "mode": "pod",
-                        _TAG_KEY: _TAG_VALUE,
-                        "kinoforge.git_sha": _git_sha(),
-                    },
-                )
-                try:
-                    instance = provider.create_instance(ispec)
-                    chosen = candidate
-                    _log.info(
-                        "[phase=create_instance] %s @ $%.4f/hr -> %s",
-                        candidate.gpu_type,
-                        candidate.cost_rate_usd_per_hr,
-                        instance.id,
-                    )
-                    break
-                except CapacityError:
-                    _log.warning(
-                        "[phase=create_instance] %s unavailable, trying next",
-                        candidate.gpu_type,
-                    )
-                    continue
-            if instance is None or chosen is None:
-                pytest.fail(
-                    f"all {len(offers)} offers exhausted; RunPod returned "
-                    "'no resources' for every one. Try again later."
-                )
-            pod_id = instance.id
-            assert pod_id, "create_instance returned empty id"
-
-            # --- [phase=poll_ready] -----------------------------------
-            _log.info("[phase=poll_ready]")
-            elapsed = 0.0
-            while instance.status != "ready":
-                if elapsed >= _READY_TIMEOUT_S:
-                    pytest.fail(
-                        f"pod {pod_id} did not reach 'ready' within "
-                        f"{_READY_TIMEOUT_S}s; final status={instance.status!r}"
-                    )
-                time.sleep(_POLL_INTERVAL_S)
-                elapsed += _POLL_INTERVAL_S
-                instance = provider.get_instance(pod_id)
-                _log.info(
-                    "[phase=poll_ready] status=%s elapsed=%.0fs",
-                    instance.status,
-                    elapsed,
-                )
+        # Cold/warm both flow through orchestrator.generate(): warm path
+        # passes the discovered instance; cold path passes instance=None
+        # and the orchestrator's _provision_instance_and_build_backend
+        # handles find_offers + create_instance (with item #1 offer-retry)
+        # + poll_ready. tags= ensures the cold-path pod carries
+        # _TAG_KEY=_TAG_VALUE so the NEXT iteration's
+        # find_instance_by_tag(...) rediscovers it.
 
         # --- [phase=provision] ----------------------------------------
         # orchestrator.generate() handles provision via the Layer I
@@ -302,7 +218,28 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
             engine=engine,
             creds=creds,
             state_dir=state_dir,
+            instance=instance,  # None on cold start; discovered pod when warm
+            tags={  # preserved across orchestrator-managed creates
+                "mode": "pod",
+                _TAG_KEY: _TAG_VALUE,
+                "kinoforge.git_sha": _git_sha(),
+            },
         )
+
+        if instance is None:
+            # Cold path: orchestrator created an (untagged-by-it, but tagged-by-our-kwarg)
+            # pod we have no handle to. Tag-discover it for the destroy block.
+            instance = provider.find_instance_by_tag(_TAG_KEY, _TAG_VALUE)
+            if instance is not None:
+                pod_id = instance.id
+                _log.info(
+                    "[phase=generate] cold-path pod recovered via tag: %s", pod_id
+                )
+            else:
+                _log.warning(
+                    "[phase=generate] cold-path pod not found by tag — destroy "
+                    "block will no-op; selfterm + idle_timeout_s will clean up"
+                )
 
         artifact_path = Path(artifact.uri)
         assert artifact_path.exists(), f"artifact not on disk: {artifact_path}"
