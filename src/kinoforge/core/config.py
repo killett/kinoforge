@@ -9,6 +9,7 @@ Loads a YAML config into a validated model that:
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any, Literal, Self
@@ -621,6 +622,63 @@ class Config(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# spec.graph_file loader helper
+# ---------------------------------------------------------------------------
+
+
+def _resolve_spec_graph_file(data: dict[str, Any], yaml_path: Path) -> None:
+    """Inline ``spec.graph_file`` into ``spec.graph`` in-place.
+
+    When ``data["spec"]`` contains a ``"graph_file"`` key, reads the referenced
+    JSON file (resolving relative paths against ``yaml_path.parent``), parses it,
+    and stores the result as ``data["spec"]["graph"]``, then removes the
+    ``"graph_file"`` key.
+
+    This is a no-op when neither ``"graph_file"`` nor ``"graph"`` is present in
+    ``spec``, and when only ``"graph"`` is present.
+
+    Args:
+        data: The raw YAML dict (mutated in place — only ``data["spec"]`` is
+            touched).
+        yaml_path: Absolute path to the YAML file; used to resolve relative
+            ``graph_file`` paths against its parent directory.
+
+    Raises:
+        ConfigError: If both ``graph_file`` and ``graph`` are set, if the
+            referenced file does not exist, or if the file contains invalid JSON.
+    """
+    spec = data.get("spec")
+    if not isinstance(spec, dict):
+        return
+    if "graph_file" not in spec:
+        return
+
+    if "graph" in spec:
+        raise ConfigError(
+            "spec: cannot set both 'graph_file' and 'graph'; use one or the other"
+        )
+
+    graph_file_str: str = spec["graph_file"]
+    graph_file_path = Path(graph_file_str)
+    if not graph_file_path.is_absolute():
+        graph_file_path = yaml_path.parent / graph_file_path
+
+    if not graph_file_path.exists():
+        raise ConfigError(f"spec.graph_file: file not found: {graph_file_path}")
+
+    try:
+        raw_json = graph_file_path.read_text(encoding="utf-8")
+        graph_data = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(
+            f"spec.graph_file: invalid JSON in {graph_file_path}: {exc}"
+        ) from exc
+
+    spec["graph"] = graph_data
+    del spec["graph_file"]
+
+
+# ---------------------------------------------------------------------------
 # Public loader
 # ---------------------------------------------------------------------------
 
@@ -644,13 +702,18 @@ def load_config(text_or_path: str | Path) -> Config:
     """
     import pydantic
 
-    # Determine whether this is raw YAML text or a file path
+    # Determine whether this is raw YAML text or a file path; track the resolved
+    # path for spec.graph_file relative-path resolution.
+    yaml_path: Path
     if isinstance(text_or_path, Path):
+        yaml_path = text_or_path.resolve()
         text = text_or_path.read_text(encoding="utf-8")
     elif "\n" in str(text_or_path) or not Path(str(text_or_path)).exists():
         text = str(text_or_path)
+        yaml_path = Path.cwd() / "<string>"
     else:
-        text = Path(str(text_or_path)).read_text(encoding="utf-8")
+        yaml_path = Path(str(text_or_path)).resolve()
+        text = yaml_path.read_text(encoding="utf-8")
 
     try:
         raw = yaml.safe_load(text)
@@ -659,6 +722,9 @@ def load_config(text_or_path: str | Path) -> Config:
 
     if not isinstance(raw, dict):
         raise ConfigError("config must be a YAML mapping at the top level")
+
+    # Inline spec.graph_file before schema validation so the model sees spec.graph.
+    _resolve_spec_graph_file(raw, yaml_path)
 
     try:
         return Config.model_validate(raw)
