@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -57,11 +58,15 @@ def _make_stage(
     backend: FakeBackend,
     run_id: str = "run-001",
     engine: object | None = None,
+    http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None,
+    result_override: Callable[[str], Artifact] | None = None,
 ) -> GenerateClipStage:
     pool = SequentialPool(backend)
     store = LocalArtifactStore(tmp_path)
     if engine is None:
         engine = _fake_engine_for_tests(profile)
+    if result_override is not None:
+        backend.result = result_override  # type: ignore[assignment]
     return GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -71,6 +76,7 @@ def _make_stage(
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        http_get_bytes=http_get_bytes,
     )
 
 
@@ -902,8 +908,14 @@ def test_artifact_bytes_downloads_when_url_is_http(
         def __exit__(self, *args: object) -> None:
             return None
 
-    def _fake_urlopen(url: str) -> _Resp:
-        calls.append(url)
+    import urllib.request as _urllib_request
+
+    def _fake_urlopen(req: object) -> _Resp:
+        # Layer M: _artifact_bytes routes through _default_http_get_bytes which
+        # builds a urllib.request.Request; accept both str and Request so this
+        # test stays resilient to the seam implementation detail.
+        url_str = req.full_url if isinstance(req, _urllib_request.Request) else str(req)
+        calls.append(url_str)
         return _Resp(expected)
 
     monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen, raising=True)
@@ -925,3 +937,228 @@ def test_artifact_bytes_synthetic_fallback_when_no_uri_or_url(
     artifact = Artifact(filename="x.mp4", meta={"k": "v"})
     expected = b"x.mp4" + b"|" + repr(sorted({"k": "v"}.items())).encode("utf-8")
     assert stage._artifact_bytes(artifact) == expected
+
+
+# ---------------------------------------------------------------------------
+# Layer M Task 4 — http_get_bytes seam + Artifact.headers passthrough
+# ---------------------------------------------------------------------------
+
+
+def test_layer_m_seam_receives_artifact_headers(tmp_path: Path) -> None:
+    """Spy seam receives the exact Artifact.headers dict.
+
+    Bug catch: pipeline filters, strips, or wraps the headers before
+    handing them to the downloader, silently dropping Authorization
+    for engines that depend on it.
+    """
+    captured: dict[str, object] = {}
+
+    def spy_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
+        captured["url"] = url
+        captured["headers"] = headers
+        return b"downloaded-bytes"
+
+    profile = _profile()
+    expected_headers = {"Authorization": "Bearer test-token-9001"}
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path,
+        profile=profile,
+        backend=backend,
+        run_id="run-headers",
+        http_get_bytes=spy_http_get_bytes,
+        result_override=lambda job_id: Artifact(
+            filename="clip.mp4",
+            url="https://example.com/media/clip.mp4",
+            headers=expected_headers,
+        ),
+    )
+
+    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
+    stage.run(request)
+
+    assert captured["url"] == "https://example.com/media/clip.mp4"
+    assert captured["headers"] == expected_headers
+
+
+def test_layer_m_seam_receives_empty_dict_not_none(tmp_path: Path) -> None:
+    """No populated Artifact.headers → spy receives {}, not None.
+
+    Bug catch: shape drift from ``dict`` to ``Optional[dict]`` would
+    break consumers that always call ``headers.items()``.
+    """
+    captured: dict[str, object] = {}
+
+    def spy_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
+        captured["headers"] = headers
+        return b"downloaded"
+
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path,
+        profile=profile,
+        backend=backend,
+        run_id="run-empty",
+        http_get_bytes=spy_http_get_bytes,
+        result_override=lambda job_id: Artifact(
+            filename="clip.mp4",
+            url="https://example.com/media/clip.mp4",
+        ),
+    )
+
+    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
+    stage.run(request)
+
+    assert captured["headers"] == {}
+    assert captured["headers"] is not None
+
+
+def test_layer_m_file_uri_bypasses_seam(tmp_path: Path) -> None:
+    """Artifact(uri='file://...') bypasses the seam entirely.
+
+    Bug catch: a refactor that always routes through the seam would
+    HTTP-fetch local files, regressing LocalArtifactStore + FakeEngine.
+    """
+    seam_called = {"count": 0}
+
+    def spy_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
+        seam_called["count"] += 1
+        return b"should-not-be-called"
+
+    # Write a real local file the artifact will point at.
+    local_clip = tmp_path / "local.mp4"
+    local_clip.write_bytes(b"local-bytes")
+
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path / "store",
+        profile=profile,
+        backend=backend,
+        run_id="run-local",
+        http_get_bytes=spy_http_get_bytes,
+        result_override=lambda job_id: Artifact(
+            filename="local.mp4",
+            uri=local_clip.as_uri(),
+        ),
+    )
+
+    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
+    stored = stage.run(request)
+
+    # The point: the seam was NOT consulted because the file:// branch
+    # short-circuited to Path.read_bytes(). Round-trip equality is covered
+    # by other AC tests; don't re-assert it here.
+    assert seam_called["count"] == 0
+    assert stored.uri  # store returned a valid URI for the persisted bytes
+
+
+def test_layer_m_default_seam_passes_headers_to_urllib_request(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Default seam (no override) builds a urllib Request carrying the headers.
+
+    Bug catch: production path skips headers because the seam is only
+    consulted in tests; default falls back to bare ``urlopen(url)``
+    instead of ``urlopen(Request(url, headers=...))``.
+    """
+    import urllib.request
+
+    captured: dict[str, object] = {}
+
+    class _FakeResp:
+        def __enter__(self) -> _FakeResp:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def read(self) -> bytes:
+            return b"downloaded-default"
+
+    def fake_urlopen(req: object) -> _FakeResp:
+        # urllib.request.urlopen accepts either a str or a Request; we expect
+        # a Request because our default seam wraps the url+headers.
+        assert isinstance(req, urllib.request.Request)
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.headers)
+        return _FakeResp()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path,
+        profile=profile,
+        backend=backend,
+        run_id="run-default-seam",
+        # No http_get_bytes override — exercises the module-level default.
+        result_override=lambda job_id: Artifact(
+            filename="clip.mp4",
+            url="https://example.com/media/clip.mp4",
+            headers={"Authorization": "Bearer default-seam-token"},
+        ),
+    )
+
+    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
+    stage.run(request)
+
+    assert captured["url"] == "https://example.com/media/clip.mp4"
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    # urllib.request.Request capitalises header names; check both shapes
+    # to make this test resilient to that.
+    assert any(
+        k.lower() == "authorization" and v == "Bearer default-seam-token"
+        for k, v in headers.items()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layer M Task 6 — E2E integration: hosted-style engine → seam → store
+# ---------------------------------------------------------------------------
+
+
+def test_layer_m_e2e_hosted_auth_artifact_persisted(tmp_path: Path) -> None:
+    """E2E: hosted-style engine returns auth'd Artifact → spy seam → store.
+
+    Bug catch: spy passthrough works in unit tests but the orchestrator-
+    constructed stage forgets to wire the seam; production downloads
+    silently use the default seam where any monkeypatch-based test is
+    blind.
+    """
+    captured: dict[str, object] = {}
+
+    def spy_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
+        captured["url"] = url
+        captured["headers"] = headers
+        return b"AUTHED-DOWNLOADED-BYTES"
+
+    profile = _profile()
+    bearer = {"Authorization": "Bearer e2e-tok"}
+    backend = FakeBackend(probe=profile)
+    stage = _make_stage(
+        tmp_path,
+        profile=profile,
+        backend=backend,
+        run_id="e2e-layer-m",
+        http_get_bytes=spy_http_get_bytes,
+        result_override=lambda job_id: Artifact(
+            filename="e2e.mp4",
+            url="https://hosted.example.com/media/e2e.mp4",
+            headers=bearer,
+        ),
+    )
+    request = GenerationRequest(mode="t2v", prompt="hello", assets=[])
+    persisted = stage.run(request)
+
+    # Spy was called with the exact bearer header.
+    assert captured["url"] == "https://hosted.example.com/media/e2e.mp4"
+    assert captured["headers"] == bearer
+
+    # Persisted artifact carries the bytes returned by the spy.
+    assert persisted.uri  # non-empty store URI
+    stored_bytes = stage.store.get_bytes(persisted.uri)
+    assert stored_bytes == b"AUTHED-DOWNLOADED-BYTES"

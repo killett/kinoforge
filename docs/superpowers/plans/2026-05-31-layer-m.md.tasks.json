@@ -4,43 +4,43 @@
     {
       "id": 9,
       "subject": "Layer M Task 1: Drop HostedEngineConfig.model + migration model_validator",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Remove the duplicated `model` field from `HostedEngineConfig` and replace it with a load-time migration error that points users at `spec.model`. Pydantic `extra=\"forbid\"` added as backstop. All existing `HostedEngineConfig(model=\"m\", ...)` test constructions updated to drop the `model=` kwarg.\n\n**Files:**\n- Modify: `src/kinoforge/core/config.py` — HostedEngineConfig class (lines 118–186)\n- Test: `tests/core/test_config.py` — 8 existing constructions edited; 3 new tests appended\n\n**Acceptance Criteria:**\n- HostedEngineConfig.model removed\n- model_config = ConfigDict(extra=\"forbid\")\n- model_validator(mode=\"before\") raises migration ValueError\n- 8 existing test sites retrofitted\n- 3 new tests pass\n- pre-commit clean\n\n**Verify:** `pixi run pytest tests/core/test_config.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -v\", \"acceptanceCriteria\": [\"HostedEngineConfig.model field removed\", \"model_config = ConfigDict(extra=forbid) declared\", \"model_validator(mode=before) raises with migration message\", \"8 existing HostedEngineConfig(model=...) test sites retrofitted\", \"Test 1: stale-field YAML raises ValidationError with both field names in message\", \"Test 2: clean YAML loads\", \"Test 3: model_dump roundtrip preserves spec.model\", \"pre-commit clean\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Layer M Task 2: Rewire HostedAPIEngine.key_base to cfg.spec.model; retrofit _BASE_CFG",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** key_base(cfg) reads cfg[\"spec\"][\"model\"] and raises ConfigError on empty. Retrofit _BASE_CFG + AC1/AC6 + add ConfigError test.\n\n**Files:**\n- Modify: `src/kinoforge/engines/hosted/__init__.py` — key_base (415–429); add ConfigError import\n- Test: `tests/engines/test_hosted.py` — rewrite _BASE_CFG + AC1/AC6; append test 5\n\n**Acceptance Criteria:**\n- key_base reads cfg.spec.model\n- ConfigError raised on empty/missing\n- _BASE_CFG restructured\n- AC1, AC6, new test 5 pass\n- pre-existing tests pass\n\n**Verify:** `pixi run pytest tests/engines/test_hosted.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_hosted.py -v\", \"acceptanceCriteria\": [\"key_base reads cfg.spec.model\", \"ConfigError raised on missing/empty spec.model\", \"_BASE_CFG restructured with spec block\", \"AC1 and AC6 pass against new contract\", \"New test_layer_m_key_base_raises_when_spec_model_missing passes\", \"pre-existing hosted tests pass\", \"pre-commit clean\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Layer M Task 3: Update examples/configs/hosted.yaml + rewrite test_hosted_yaml_has_non_empty_spec",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**Goal:** Delete engine.hosted.model line + sync comment block from example YAML. Rewrite the equality-lock test.\n\n**Files:**\n- Modify: `examples/configs/hosted.yaml` — delete line 20 + lines 41–46\n- Test: `tests/test_examples.py` — rewrite test 239–246; append new lock test\n\n**Acceptance Criteria:**\n- hosted.yaml has exactly one `model:` (under spec:)\n- comment block deleted\n- equality-lock test rewritten\n- new lock test passes\n- load_config(hosted.yaml) succeeds\n\n**Verify:** `pixi run pytest tests/test_examples.py -v`\n\n```json:metadata\n{\"files\": [\"examples/configs/hosted.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v\", \"acceptanceCriteria\": [\"hosted.yaml has exactly one model: occurrence (under spec:)\", \"Lines 41-46 comment block deleted\", \"test_hosted_yaml_has_non_empty_spec rewritten without equality lock\", \"test_layer_m_hosted_yaml_no_engine_hosted_model passes\", \"load_config(hosted.yaml) succeeds\", \"pre-commit clean\"]}\n```"
     },
     {
       "id": 12,
       "subject": "Layer M Task 4: Inject http_get_bytes seam into GenerateClipStage; thread Artifact.headers",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add injectable http_get_bytes seam + module-level _default_http_get_bytes helper; rewire _artifact_bytes http(s) branch.\n\n**Files:**\n- Modify: `src/kinoforge/pipeline/generate_clip.py` — helper + dataclass field + rewire\n- Test: `tests/pipeline/test_generate_clip.py` — append 4 tests (7–10)\n\n**Acceptance Criteria:**\n- _default_http_get_bytes(url, headers) exists at module level\n- http_get_bytes optional dataclass field added\n- _artifact_bytes routes via seam with dict(artifact.headers)\n- 4 new tests pass\n- pre-existing tests pass\n\n**Verify:** `pixi run pytest tests/pipeline/test_generate_clip.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"tests/pipeline/test_generate_clip.py\"], \"verifyCommand\": \"pixi run pytest tests/pipeline/test_generate_clip.py -v\", \"acceptanceCriteria\": [\"_default_http_get_bytes helper exists at module level\", \"GenerateClipStage.http_get_bytes optional field added\", \"_artifact_bytes routes via the seam with artifact.headers\", \"Test 7 (spy receives exact headers) passes\", \"Test 8 (empty headers → empty dict, not None) passes\", \"Test 9 (file:// bypasses seam) passes\", \"Test 10 (default seam Request has Authorization) passes\", \"pre-existing tests pass\", \"pre-commit clean\"]}\n```"
     },
     {
       "id": 13,
       "subject": "Layer M Task 5: HostedAPIBackend.result populates Authorization: Bearer header",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**Goal:** Thread API token via HostedAPIEngine.backend()→HostedAPIBackend; populate Artifact.headers with Authorization: Bearer when token non-empty.\n\n**Files:**\n- Modify: `src/kinoforge/engines/hosted/__init__.py` — backend __init__/result/engine.backend\n- Test: `tests/engines/test_hosted.py` — append tests 11 + 12\n\n**Acceptance Criteria:**\n- HostedAPIBackend.__init__ accepts auth_token\n- self._auth_token stored as str\n- engine.backend resolves cred + passes through\n- result() populates Authorization Bearer when token non-empty\n- empty token → headers={}\n- 2 new tests pass\n\n**Verify:** `pixi run pytest tests/engines/test_hosted.py -v && pixi run pytest tests/ -x`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_hosted.py -v\", \"acceptanceCriteria\": [\"HostedAPIBackend.__init__ accepts auth_token kwarg\", \"self._auth_token stored as str (empty when None)\", \"HostedAPIEngine.backend resolves cred and passes through\", \"result() populates Authorization: Bearer when token non-empty\", \"result() empty headers dict when token empty\", \"Test 11 (bearer populated end-to-end) passes\", \"Test 12 (empty token → empty headers) passes\", \"pre-existing tests pass\", \"pre-commit clean\"]}\n```"
     },
     {
       "id": 14,
       "subject": "Layer M Task 6: E2E integration test + README + PROGRESS Phase 23 + close branch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [12, 13],
       "description": "**Goal:** E2E integration test composing Tasks 4+5. README breaking-change subsection. PROGRESS Phase 23 entry. Close PROGRESS:155 follow-ups #1 + #2. Branch ready for --no-ff merge.\n\n**Files:**\n- Test: `tests/pipeline/test_generate_clip.py` — append integration test 13\n- Modify: `README.md` — Breaking changes Layer M subsection\n- Modify: `PROGRESS.md` — Phase 23 entry + Single-next-action + follow-ups closed\n\n**Acceptance Criteria:**\n- Integration test 13 passes (E2E hosted-auth → seam → store)\n- README Breaking changes Layer M subsection with YAML diff\n- PROGRESS Phase 23 entry follows existing format\n- Single-next-action points at Layer N candidate\n- Follow-ups #1 + #2 marked CLOSED\n- pre-commit clean across all files\n- Full suite ~755 + 1 skipped\n\n**Verify:** `pixi run pytest tests/ -v && pixi run pre-commit run --all-files && git log --oneline main..HEAD`\n\n```json:metadata\n{\"files\": [\"tests/pipeline/test_generate_clip.py\", \"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run pytest tests/ -v && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"Integration test 13 passes (E2E hosted-auth→seam→store)\", \"README Breaking changes — Layer M subsection added\", \"PROGRESS Phase 23 entry follows existing format\", \"Single-next-action updated to Layer N candidate\", \"PROGRESS:155 follow-ups #1 + #2 marked CLOSED\", \"pre-commit clean across all files\", \"Full suite green (~755 passed + 1 skipped)\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-05-31"
+  "lastUpdated": "2026-05-31T15:00:00-04:00"
 }

@@ -17,7 +17,6 @@ engine:
   hosted:
     provider: my-shim
     endpoint: "https://your-shim.example.com/inference"
-    model: "wan-ai/Wan2.2-T2V-A14B"
     api_key_env: "MY_SHIM_KEY"
     health_url: "https://your-shim.example.com/health"
     url_path: video.url
@@ -38,12 +37,9 @@ lifecycle:
 # spec: is the engine-interpreted wire payload.  HostedAPIBackend.submit reads
 # spec.model + spec.params and writes them into the POST body.
 #
-# NOTE: spec.model and engine.hosted.model serve different purposes and must
-# be kept in sync manually until a future layer collapses them:
-#   - engine.hosted.model -> HostedAPIEngine.key_base(cfg) -> CapabilityKey
-#     (cache identity + profile-discovery key)
-#   - spec.model          -> HostedAPIBackend.submit       -> wire request body
-# If you change one, change the other.
+# Layer M: spec.model is now the SINGLE source of truth for hosted model
+# identity, read both by HostedAPIBackend.submit (wire body) and by
+# HostedAPIEngine.key_base(cfg) (cache identity).
 spec:
   model: "wan-ai/Wan2.2-T2V-A14B"
   params:

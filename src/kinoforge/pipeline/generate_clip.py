@@ -11,6 +11,7 @@ extension vs fallback) directly without a real splitter.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from kinoforge.core.continuity import inject_tail_frame
@@ -27,6 +28,29 @@ from kinoforge.core.interfaces import (
 from kinoforge.core.strategy import decide
 from kinoforge.core.validation import validate_request
 from kinoforge.stores.base import ArtifactStore
+
+
+def _default_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
+    """GET *url* with optional *headers* and return the raw bytes.
+
+    Builds a :class:`urllib.request.Request` so that any populated
+    headers (e.g. ``Authorization: Bearer …``) are sent on the wire.
+    An empty *headers* dict yields a bare GET — preserving the
+    pre-Layer-M behavior for engines that don't populate headers.
+
+    Args:
+        url: The http(s) URL to fetch.
+        headers: Request headers to attach (e.g. ``{"Authorization": "Bearer …"}``).
+            Pass an empty dict for no additional headers.
+
+    Returns:
+        The raw response bytes.
+    """
+    import urllib.request
+
+    req = urllib.request.Request(url, headers=headers)  # noqa: S310
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
+        return bytes(resp.read())
 
 
 @dataclass
@@ -48,6 +72,11 @@ class GenerateClipStage:
         base_params: Engine-neutral params for every produced job.
         base_spec: Engine-interpreted spec template merged into every job.
         engine: The GenerationEngine providing extract_last_frame for continuity chaining.
+        http_get_bytes: Optional injectable seam for http(s) artifact downloads.
+            When ``None`` (the default), :func:`_default_http_get_bytes` is used,
+            which builds a :class:`urllib.request.Request` with the artifact's
+            headers and reads via ``urlopen``.  Override in tests to avoid real
+            network I/O while still exercising the full pipeline path.
     """
 
     profile: ModelProfile
@@ -58,6 +87,7 @@ class GenerateClipStage:
     base_params: dict  # type: ignore[type-arg]
     base_spec: dict  # type: ignore[type-arg]
     engine: GenerationEngine
+    http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None
 
     def run(
         self,
@@ -184,9 +214,8 @@ class GenerateClipStage:
 
         url = (artifact.url or "").strip()
         if url.startswith(("http://", "https://")):
-            with urllib.request.urlopen(url) as resp:  # noqa: S310
-                downloaded: bytes = resp.read()
-            return downloaded
+            fetch = self.http_get_bytes or _default_http_get_bytes
+            return fetch(url, dict(artifact.headers))
 
         # Synthetic fallback retained for FakeEngine-driven tests that
         # exercise the pipeline without a real backend.
