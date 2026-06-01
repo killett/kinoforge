@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +43,7 @@ from kinoforge.core.interfaces import (
     InstanceSpec,
     ModelProfile,
     ModelProfileProvider,
+    Offer,
 )
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
@@ -221,6 +222,54 @@ def _provision_compute_once(
         )
 
 
+def _create_with_offer_retry(
+    provider: ComputeProvider,
+    build_spec: Callable[[Offer], InstanceSpec],
+    offers: list[Offer],
+) -> tuple[Instance, Offer]:
+    """Iterate offers until create_instance succeeds.
+
+    The first offer is tried first (the list is already sorted by
+    filter_offers' gpu_preference). On CapacityError, continue to the
+    next offer. Any other exception propagates immediately — non-
+    capacity errors fail every offer identically.
+
+    Args:
+        provider: The resolved compute provider.
+        build_spec: Closure that builds an InstanceSpec for one offer.
+            Called once per offer attempted.
+        offers: Non-empty list of offers in attempt order.
+
+    Returns:
+        ``(instance, offer)`` — the first offer for which create_instance
+        succeeded, paired with the live instance.
+
+    Raises:
+        CapacityError: Every offer raised CapacityError. The last
+            per-offer CapacityError is chained as ``__cause__``.
+    """
+    last_capacity_exc: CapacityError | None = None
+    for offer in offers:
+        spec = build_spec(offer)
+        try:
+            instance = provider.create_instance(spec)
+            return instance, offer
+        except CapacityError as exc:
+            last_capacity_exc = exc
+            _log.warning(
+                "[offer-retry] %s @ $%.4f/hr unavailable: %s",
+                offer.gpu_type,
+                offer.cost_rate_usd_per_hr,
+                exc,
+            )
+            continue
+    raise CapacityError(
+        f"all {len(offers)} offers exhausted; provider "
+        f"{getattr(provider, 'name', repr(provider))!r} "
+        f"has no current capacity"
+    ) from last_capacity_exc
+
+
 def _provision_instance_and_build_backend(
     *,
     resolved_engine: GenerationEngine,
@@ -269,18 +318,23 @@ def _provision_instance_and_build_backend(
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     key_hash = _key_hash(key)
-    spec = InstanceSpec(
-        image=image,
-        offer=offers[0],
-        lifecycle=lifecycle,
-        tags={
-            "kinoforge_engine": resolved_engine.name,
-            "kinoforge_key": key_hash,
-        },
-        env={},
-        run_id=run_id,
+
+    def _build_spec(offer: Offer) -> InstanceSpec:
+        return InstanceSpec(
+            image=image,
+            offer=offer,
+            lifecycle=lifecycle,
+            tags={
+                "kinoforge_engine": resolved_engine.name,
+                "kinoforge_key": key_hash,
+            },
+            env={},
+            run_id=run_id,
+        )
+
+    instance, _chosen_offer = _create_with_offer_retry(
+        resolved_provider, _build_spec, offers
     )
-    instance = resolved_provider.create_instance(spec)
     while instance.status != "ready":
         instance = resolved_provider.get_instance(instance.id)
     _provision_compute_once(
@@ -621,19 +675,23 @@ def deploy(
 
     # Live run: create the instance.
     image = cfg.compute.image if cfg.compute is not None else ""
-    spec = InstanceSpec(
-        image=image,
-        offer=offers[0],
-        lifecycle=lifecycle,
-        tags={
-            "kinoforge_engine": resolved_engine.name,
-            "kinoforge_key": key_hash,
-        },
-        env={},
-        run_id="",
-    )
 
-    instance = resolved_provider.create_instance(spec)
+    def _build_spec(offer: Offer) -> InstanceSpec:
+        return InstanceSpec(
+            image=image,
+            offer=offer,
+            lifecycle=lifecycle,
+            tags={
+                "kinoforge_engine": resolved_engine.name,
+                "kinoforge_key": key_hash,
+            },
+            env={},
+            run_id="",
+        )
+
+    instance, _chosen_offer = _create_with_offer_retry(
+        resolved_provider, _build_spec, offers
+    )
 
     try:
         # Poll until ready (LocalProvider returns ready immediately; cloud providers
