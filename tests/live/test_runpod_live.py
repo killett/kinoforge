@@ -40,9 +40,7 @@ if not (
 
 
 _CONFIG = "examples/configs/runpod-comfyui-wan.yaml"
-_MANIFEST = "examples/configs/runpod-comfyui-wan-manifest.yaml"
 _INIT_FRAME = "tests/providers/fixtures/runpod/sample_init_frame.png"
-_MP4_MAGIC = b"\x00\x00\x00 ftypisom"
 
 
 def _run_cli(
@@ -77,6 +75,21 @@ def test_runpod_live_e2e_wan_i2v_smoke(tmp_path: Path) -> None:
     """
     state_dir = tmp_path / "state"
     state_dir.mkdir()
+
+    # Generate the batch manifest at runtime so the file:// asset path is
+    # absolute to THIS contributor's checkout (the committed example manifest
+    # uses /workspace/ which only works inside the dev container).
+    init_frame_abs = Path(_INIT_FRAME).resolve()
+    manifest_path = tmp_path / "smoke-manifest.yaml"
+    manifest_path.write_text(
+        '- prompt: "A landscape unfurling at dawn"\n'
+        "  mode: i2v\n"
+        "  run_id: layer-n-smoke\n"
+        "  assets:\n"
+        "    - kind: image\n"
+        "      role: init_image\n"
+        f'      ref: "file://{init_frame_abs}"\n'
+    )
 
     # 1. Preconditions — config + init frame present.
     assert Path(_CONFIG).exists()
@@ -125,7 +138,7 @@ def test_runpod_live_e2e_wan_i2v_smoke(tmp_path: Path) -> None:
                 "--config",
                 _CONFIG,
                 "--manifest",
-                _MANIFEST,
+                str(manifest_path),
                 "--batch-id",
                 "layer-n-smoke-batch",
             ],

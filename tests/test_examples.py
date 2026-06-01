@@ -329,7 +329,10 @@ def test_runpod_comfyui_wan_yaml_loads() -> None:
 
     cfg = load_config(Path("examples/configs/runpod-comfyui-wan.yaml"))
     assert cfg.engine.kind == "comfyui"
-    assert cfg.compute is not None
+    assert cfg.compute is not None, (
+        "runpod-comfyui-wan.yaml must populate the compute block; "
+        "got None which means the YAML schema dropped it silently"
+    )
     assert cfg.compute.provider == "runpod"
     assert cfg.compute.mode == "pod"
     assert cfg.compute.requirements.min_vram_gb == 24
