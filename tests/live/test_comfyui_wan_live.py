@@ -77,6 +77,9 @@ def _git_sha() -> str:
 def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
     """End-to-end live smoke: deploy ComfyUI on RunPod, generate Wan 2.2 i2v MP4."""
     # Lazy imports — keep module import cheap when test is skipped at collection.
+    # _adapters is imported first so every concrete source/engine/provider/store
+    # self-registers before the orchestrator tries to resolve refs (HF, etc).
+    import kinoforge._adapters  # noqa: F401
     from kinoforge.core.config import load_config
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.interfaces import (
