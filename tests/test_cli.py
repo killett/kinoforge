@@ -663,7 +663,7 @@ def test_cli_output_dir_and_no_output_dir_are_mutually_exclusive(
     assert exc_info.value.code != 0
     err = capsys.readouterr().err
     # argparse should mention the conflicting flags
-    assert "--output-dir" in err or "--no-output-dir" in err
+    assert "--output-dir" in err and "--no-output-dir" in err
 
 
 def test_cli_default_run_id_uniquifies_per_invocation(
