@@ -306,7 +306,14 @@ class HostedAPIBackend(GenerationBackend):
 
         Returns:
             An ``Artifact`` whose ``filename`` comes from the API response
-            and whose ``meta`` contains ``{"job_id": job_id}``.
+            and whose ``meta`` contains ``{"job_id": job_id}``. When the
+            backend was constructed with a non-empty ``auth_token``,
+            ``Artifact.headers`` carries
+            ``{"Authorization": f"Bearer {auth_token}"}`` so that downstream
+            artifact-bytes fetches can authenticate. An empty token leaves
+            ``headers`` as an empty dict (no ``Authorization`` key),
+            preserving today's behavior for shims that serve unauthenticated
+            artifact URLs.
 
         Raises:
             TimeoutError: The hosted API did not return ``status == "done"``
