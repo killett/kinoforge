@@ -51,6 +51,7 @@ from kinoforge.core.interfaces import (
     GenerationJob,
     Instance,
     ModelProfile,
+    RenderedProvision,
 )
 
 # ---------------------------------------------------------------------------
@@ -657,6 +658,20 @@ class HostedAPIEngine(GenerationEngine):
                     f"engine.hosted.asset_paths has no mapping; declare "
                     f"asset_paths.{asset.role}: <dot.path> in YAML"
                 )
+
+    def render_provision(self, cfg: dict[str, Any]) -> RenderedProvision:
+        """Hosted engines have ``requires_compute=False`` — refuse remote provisioning.
+
+        Args:
+            cfg: Unused.
+
+        Raises:
+            NotImplementedError: Hosted engines are always remote-already; no boot.
+        """
+        del cfg
+        raise NotImplementedError(
+            "HostedAPIEngine does not support remote provisioning"
+        )
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Fetch the rendered video bytes via HTTP and decode the last frame.
