@@ -253,6 +253,12 @@ class SkyPilotProvider(ComputeProvider):
         Maps ``spec.lifecycle.idle_timeout_s`` to SkyPilot's ``autostop``
         parameter (in whole minutes).
 
+        When ``spec.provision_script`` is set, it is mapped verbatim to
+        ``Task.setup``.  When ``spec.run_cmd`` is set, it is shell-quoted via
+        ``shlex.quote`` and joined to ``Task.run``.  Empty values for either
+        field are treated as 'not set' and the corresponding key is omitted
+        from ``task_config`` (pre-Layer-Q caller parity).
+
         Args:
             spec: Instance specification.
 
@@ -268,10 +274,18 @@ class SkyPilotProvider(ComputeProvider):
             "env": dict(spec.env),
             "tags": dict(spec.tags),
         }
-        # NEW — Layer Q
-        if spec.provision_script is not None:
+        # Layer Q dual-exec hazard: render_provision conventionally ends the script
+        # with `exec <run_cmd>` (designed for RunPod's single dockerArgs slot). On
+        # SkyPilot, Task.setup must TERMINATE so Task.run can start — but `exec`
+        # replaces the setup shell with the long-running process, so setup never
+        # returns. The orchestrator (Task 7) is responsible for not setting BOTH
+        # provision_script AND run_cmd on a SkyPilot spec: it should either route
+        # the script-with-exec entirely through Task.setup with run_cmd=None, or
+        # strip the trailing exec from the script when also setting run_cmd. This
+        # provider trusts the orchestrator and maps both fields verbatim.
+        if spec.provision_script:
             task_config["setup"] = spec.provision_script
-        if spec.run_cmd is not None:
+        if spec.run_cmd:
             task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
         result: dict[str, Any] = sky.launch(task_config, autostop=autostop_minutes)
         cluster_name: str = str(

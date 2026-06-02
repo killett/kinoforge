@@ -48,6 +48,7 @@ def test_create_instance_with_provision_script_maps_to_setup() -> None:
     p.create_instance(spec)
     task_config = sky.launches[0][0]
     assert task_config["setup"] == "set -e\necho hi\n"
+    assert "run" not in task_config
 
 
 def test_create_instance_with_run_cmd_maps_shell_quoted_to_run() -> None:
@@ -73,3 +74,34 @@ def test_create_instance_with_args_containing_spaces_shell_quotes_them() -> None
     task_config = sky.launches[0][0]
     # shlex.quote wraps the arg with single quotes when it contains shell meta-chars
     assert task_config["run"] == "python -c 'print('\"'\"'hello world'\"'\"')'"
+
+
+def test_create_instance_with_empty_run_cmd_omits_run_key() -> None:
+    """Empty run_cmd is treated as 'not set' — no `run` key emitted."""
+    sky = _FakeSky()
+    p = SkyPilotProvider(sky_client=sky)
+    spec = InstanceSpec(image="img:latest", run_cmd=[])
+    p.create_instance(spec)
+    task_config = sky.launches[0][0]
+    assert "run" not in task_config
+
+
+def test_create_instance_with_empty_provision_script_omits_setup_key() -> None:
+    """Empty provision_script is treated as 'not set' — no `setup` key emitted."""
+    sky = _FakeSky()
+    p = SkyPilotProvider(sky_client=sky)
+    spec = InstanceSpec(image="img:latest", provision_script="")
+    p.create_instance(spec)
+    task_config = sky.launches[0][0]
+    assert "setup" not in task_config
+
+
+def test_create_instance_with_only_run_cmd_omits_setup_key() -> None:
+    """Setting run_cmd alone produces only the `run` key — no spurious `setup`."""
+    sky = _FakeSky()
+    p = SkyPilotProvider(sky_client=sky)
+    spec = InstanceSpec(image="img:latest", run_cmd=["python", "main.py"])
+    p.create_instance(spec)
+    task_config = sky.launches[0][0]
+    assert "setup" not in task_config
+    assert task_config["run"] == "python main.py"
