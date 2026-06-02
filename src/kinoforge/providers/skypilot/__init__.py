@@ -35,6 +35,7 @@ Self-registers under ``"skypilot"`` when this module is imported.
 
 from __future__ import annotations
 
+import shlex
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -267,6 +268,11 @@ class SkyPilotProvider(ComputeProvider):
             "env": dict(spec.env),
             "tags": dict(spec.tags),
         }
+        # NEW — Layer Q
+        if spec.provision_script is not None:
+            task_config["setup"] = spec.provision_script
+        if spec.run_cmd is not None:
+            task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
         result: dict[str, Any] = sky.launch(task_config, autostop=autostop_minutes)
         cluster_name: str = str(
             result.get("cluster_name", spec.run_id or "skypilot-cluster")
