@@ -189,6 +189,30 @@ JsonProfileCache(store, discover_ttl_s=600.0)
 Ledger(store, mutate_ttl_s=60.0)
 ```
 
+### Remote provisioning
+
+Engines that talk to a remote pod (ComfyUI, Diffusers on RunPod / SkyPilot)
+bootstrap via `engine.render_provision(cfg)`. The engine emits a self-
+contained bash script that clones its repo, installs dependencies, downloads
+weights, and launches the inference HTTP server. The orchestrator validates
+declared credential env vars, attaches the rendered payload to
+`InstanceSpec`, and the provider injects it via its native boot-script
+mechanism (RunPod base64-encoded env var + `dockerArgs`; SkyPilot
+`Task.setup` / `Task.run`).
+
+After the pod boots, `engine.provision(instance, cfg)` polls an engine-
+specific ready endpoint (ComfyUI: `/system_stats`; Diffusers: `/health`)
+until HTTP-200, the pod status flips terminal, or
+`cfg.lifecycle.boot_timeout` (default 900s) elapses. Failures raise
+`ProvisionFailed` (terminal status) or `ProvisionTimeout` (deadline).
+
+No SSH required. Local users see zero behavioural change — engines branch
+on `instance.provider == "local"` and run the existing local bootstrap.
+
+Credentials referenced by the script (e.g. `$HF_TOKEN`) are lifted from
+the configured `CredentialProvider` onto `spec.env` by the orchestrator.
+The script string never carries plaintext token values.
+
 ## Credentials
 
 Kinoforge reads its API credentials from environment variables. To avoid
@@ -236,6 +260,14 @@ them up via `os.environ`.
 ### Never commit `.env`
 
 `.env` is in `.gitignore`. Only commit `.env.example` (no values).
+
+### Credential safety in tests
+
+Secrets enter kinoforge tests via `.env` only — never via test code, fixtures, example YAML, or
+commit messages. The `_RecordingHTTPSeam` in `tests/providers/conftest_runpod.py` runs a layered
+redaction pipeline over every captured payload and refuses (via `CredentialLeakError`) to write a
+fixture that still contains a credential pattern. See [`AGENTS.md`](AGENTS.md) for the contributor
+guide, the pattern table, and the procedure for adding a new credential format.
 
 ## Real providers — fal.ai
 

@@ -9,6 +9,7 @@ Loads a YAML config into a validated model that:
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any, Literal, Self
@@ -63,6 +64,8 @@ VALID_KIND_TARGETS: dict[str, set[str]] = {
     "base": {"diffusion_models", "checkpoints", "unet"},
     "lora": {"loras"},
     "vae": {"vae"},
+    "text_encoder": {"text_encoders", "clip"},
+    "clip_vision": {"clip_vision"},
 }
 
 KNOWN_ENGINES = {"comfyui", "diffusers", "hosted", "fake", "fal"}
@@ -80,6 +83,7 @@ class LifecycleConfig(BaseModel):
         job_timeout: Duration string or seconds; default 30m.
         time_buffer: Duration string or seconds; default 30m.
         max_lifetime: Duration string or seconds; default 5h.
+        boot_timeout: Duration string or seconds; default 15m (900 s).
         budget: Monthly/run budget in USD (required — no default).
         max_in_flight: Maximum concurrent jobs sent to a single backend.
             Default 1 (sequential, equivalent to old SequentialPool behaviour).
@@ -93,9 +97,15 @@ class LifecycleConfig(BaseModel):
     max_lifetime: float = 5 * 3600.0
     budget: float
     max_in_flight: int = 1
+    boot_timeout: float = 900.0
 
     @field_validator(
-        "idle_timeout", "job_timeout", "time_buffer", "max_lifetime", mode="before"
+        "idle_timeout",
+        "job_timeout",
+        "time_buffer",
+        "max_lifetime",
+        "boot_timeout",
+        mode="before",
     )
     @classmethod
     def _parse_duration_field(cls, v: str | float | int) -> float | str | int:
@@ -110,9 +120,15 @@ class ComfyUIEngineConfig(BaseModel):
 
     Attributes:
         version: ComfyUI version string.
+        custom_nodes: List of custom-node entries, each carrying a ``"git"``
+            URL and an optional ``"ref"`` SHA pin.  Passed verbatim to
+            :func:`~kinoforge.engines.comfyui.nodes.clone_and_install`.
+            Defaults to an empty list so existing configs without this block
+            remain valid.
     """
 
     version: str
+    custom_nodes: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HostedEngineConfig(BaseModel):
@@ -327,13 +343,13 @@ class ModelEntry(BaseModel):
 
     Attributes:
         ref: Vendor-neutral model reference (e.g. "hf:org/m").
-        kind: One of "base", "lora", "vae".
+        kind: One of "base", "lora", "vae", "text_encoder", "clip_vision".
         target: Download target directory name.
         sha256: Optional content hash for integrity verification.
     """
 
     ref: str
-    kind: Literal["base", "lora", "vae"]
+    kind: Literal["base", "lora", "vae", "text_encoder", "clip_vision"]
     target: str
     sha256: str | None = None
 
@@ -578,7 +594,7 @@ class Config(BaseModel):
 
         Prefers compute.lifecycle when present (non-hosted path);
         falls back to top-level lifecycle (hosted path).
-        Defaults are: idle_timeout=2h, job_timeout=30m, time_buffer=30m, max_lifetime=5h.
+        Defaults are: idle_timeout=2h, job_timeout=30m, time_buffer=30m, max_lifetime=5h, boot_timeout=15m.
 
         Returns:
             An interfaces.Lifecycle populated with seconds values.
@@ -595,6 +611,7 @@ class Config(BaseModel):
             max_lifetime_s=lc.max_lifetime,
             budget_usd=lc.budget,
             max_in_flight=lc.max_in_flight,
+            boot_timeout_s=lc.boot_timeout,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
@@ -621,6 +638,78 @@ class Config(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# spec.graph_file loader helper
+# ---------------------------------------------------------------------------
+
+
+def _resolve_spec_graph_file(data: dict[str, Any], yaml_path: Path) -> None:
+    """Inline ``spec.graph_file`` into ``spec.graph`` in-place.
+
+    When ``data["spec"]`` contains a ``"graph_file"`` key, reads the referenced
+    JSON file (resolving relative paths against ``yaml_path.parent``), parses it,
+    and stores the result as ``data["spec"]["graph"]``, then removes the
+    ``"graph_file"`` key.
+
+    This is a no-op when neither ``"graph_file"`` nor ``"graph"`` is present in
+    ``spec``, and when only ``"graph"`` is present.
+
+    Args:
+        data: The raw YAML dict (mutated in place — only ``data["spec"]`` is
+            touched).
+        yaml_path: Path to the YAML file; used to resolve relative
+            ``graph_file`` paths against its parent directory.  Need not be
+            absolute, but must point to the correct parent.  When loading from
+            a raw YAML string (no file backing), the sentinel value
+            ``Path.cwd() / "<string>"`` is passed; in that case relative
+            ``graph_file`` paths are rejected with a :exc:`ConfigError`.
+
+    Raises:
+        ConfigError: If both ``graph_file`` and ``graph`` are set, if the
+            referenced file does not exist, or if the file contains invalid JSON.
+    """
+    spec = data.get("spec")
+    if not isinstance(spec, dict):
+        return
+    if "graph_file" not in spec:
+        return
+
+    if "graph" in spec:
+        raise ConfigError(
+            "spec: cannot set both 'graph_file' and 'graph'; use one or the other"
+        )
+
+    graph_file_str: str = spec["graph_file"]
+    graph_file_path = Path(graph_file_str)
+
+    # If we came from a raw YAML string (no file backing), the sentinel
+    # yaml_path has name "<string>" and parent=cwd.  Relative graph_file paths
+    # would silently resolve against cwd — confusing.  Force absolute paths in
+    # this mode.
+    if yaml_path.name == "<string>" and not graph_file_path.is_absolute():
+        raise ConfigError(
+            "spec.graph_file requires a file-based config when using a relative "
+            "path; pass an absolute path or load from a YAML file"
+        )
+
+    if not graph_file_path.is_absolute():
+        graph_file_path = yaml_path.parent / graph_file_path
+
+    if not graph_file_path.exists():
+        raise ConfigError(f"spec.graph_file: file not found: {graph_file_path}")
+
+    try:
+        raw_json = graph_file_path.read_text(encoding="utf-8")
+        graph_data = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(
+            f"spec.graph_file: invalid JSON in {graph_file_path}: {exc}"
+        ) from exc
+
+    spec["graph"] = graph_data
+    del spec["graph_file"]
+
+
+# ---------------------------------------------------------------------------
 # Public loader
 # ---------------------------------------------------------------------------
 
@@ -644,13 +733,18 @@ def load_config(text_or_path: str | Path) -> Config:
     """
     import pydantic
 
-    # Determine whether this is raw YAML text or a file path
+    # Determine whether this is raw YAML text or a file path; track the resolved
+    # path for spec.graph_file relative-path resolution.
+    yaml_path: Path
     if isinstance(text_or_path, Path):
+        yaml_path = text_or_path.resolve()
         text = text_or_path.read_text(encoding="utf-8")
     elif "\n" in str(text_or_path) or not Path(str(text_or_path)).exists():
         text = str(text_or_path)
+        yaml_path = Path.cwd() / "<string>"
     else:
-        text = Path(str(text_or_path)).read_text(encoding="utf-8")
+        yaml_path = Path(str(text_or_path)).resolve()
+        text = yaml_path.read_text(encoding="utf-8")
 
     try:
         raw = yaml.safe_load(text)
@@ -659,6 +753,9 @@ def load_config(text_or_path: str | Path) -> Config:
 
     if not isinstance(raw, dict):
         raise ConfigError("config must be a YAML mapping at the top level")
+
+    # Inline spec.graph_file before schema validation so the model sees spec.graph.
+    _resolve_spec_graph_file(raw, yaml_path)
 
     try:
         return Config.model_validate(raw)

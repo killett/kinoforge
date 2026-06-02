@@ -10,6 +10,7 @@ the ``"diffusers"`` key so that ``registry.get_engine("diffusers")()`` works.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 import urllib.request
@@ -18,7 +19,12 @@ from typing import Any
 
 from kinoforge.core import frames, registry
 from kinoforge.core.assets import find_asset, set_by_dot_path
-from kinoforge.core.errors import FrameExtractionError, ValidationError
+from kinoforge.core.errors import (
+    FrameExtractionError,
+    ProvisionFailed,
+    ProvisionTimeout,
+    ValidationError,
+)
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -27,6 +33,7 @@ from kinoforge.core.interfaces import (
     GenerationJob,
     Instance,
     ModelProfile,
+    RenderedProvision,
 )
 
 # ---------------------------------------------------------------------------
@@ -38,6 +45,48 @@ _MAX_POLL = 60
 
 #: Default server base URL.
 _DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+
+#: Default container image for remote provisioning.
+_DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+
+#: Seconds between readiness polls in :meth:`DiffusersEngine.wait_for_ready`.
+_READY_POLL_INTERVAL_S: float = 5.0
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_port_from_base_url(base_url: str) -> str:
+    """Return the port in ``http(s)://host:PORT/...``, default ``'8000'``.
+
+    Args:
+        base_url: A URL string such as ``"http://localhost:8000"``
+            or ``"https://host:9999/path"``.
+
+    Returns:
+        The port as a string, or ``"8000"`` when absent or empty.
+    """
+    if not base_url:
+        return "8000"
+    m = re.search(r":(\d+)", base_url)
+    return m.group(1) if m else "8000"
+
+
+def _default_get_instance(_: str) -> Instance:
+    """Stub seam — orchestrator must inject provider.get_instance for remote provision.
+
+    Args:
+        _: Instance ID (unused).
+
+    Raises:
+        NotImplementedError: Always — seam not wired.
+    """
+    raise NotImplementedError(
+        "DiffusersEngine.get_instance seam not wired — "
+        "orchestrator must inject provider.get_instance"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +355,8 @@ class DiffusersEngine(GenerationEngine):
         sleep: Callable[[float], None] = time.sleep,
         probe_profile: ModelProfile = _DEFAULT_PROBE,
         declared_flags_map: dict[str, dict[str, bool]] | None = None,
+        # NEW — Layer Q: remote-provisioning seam
+        get_instance: Callable[[str], Instance] | None = None,
     ) -> None:
         """Initialise the engine with all I/O seams as injectable callables.
 
@@ -324,6 +375,10 @@ class DiffusersEngine(GenerationEngine):
             declared_flags_map: Optional mapping from
                 :meth:`~kinoforge.core.interfaces.CapabilityKey.derive` hex
                 strings to ``dict[str, bool]`` strategy-flag dicts.
+            get_instance: Callable ``(instance_id) -> Instance`` for status
+                checks during :meth:`wait_for_ready`. Injected by the
+                orchestrator at runtime; defaults to a stub that raises
+                ``NotImplementedError``.
         """
         self._run_cmd = run_cmd
         self._http_post = http_post
@@ -333,6 +388,9 @@ class DiffusersEngine(GenerationEngine):
         self._sleep = sleep
         self._probe = probe_profile
         self._declared_flags_map: dict[str, dict[str, bool]] = declared_flags_map or {}
+        self._get_instance: Callable[[str], Instance] = (
+            get_instance if get_instance is not None else _default_get_instance
+        )
         # Asset-role -> request-body dot-path map, populated by ``backend``
         # from ``cfg["engine"]["diffusers"]["asset_paths"]`` and mirrored
         # onto the engine so ``validate_spec`` can check it.
@@ -343,34 +401,154 @@ class DiffusersEngine(GenerationEngine):
         self._prompt_body_key: str | None = "prompt"
 
     def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
-        """Install pip deps and launch the headless diffusers inference server.
+        """Install pip deps and launch the headless diffusers inference server (local), or wait for a remote pod to be ready.
 
-        Provision steps (in order):
+        For local instances (``instance is None`` or
+        ``instance.provider == "local"``), provision steps are:
 
         1. If ``cfg["engine"]["diffusers"]["pip"]`` is non-empty, run
            ``pip install`` with the declared package list.
         2. Launch the server with ``cfg["engine"]["diffusers"]["server_cmd"]``.
 
+        For remote instances, the bootstrap script has already run via the
+        provider's boot path; this method simply waits for the engine's
+        HTTP ready-check to succeed.
+
         Args:
-            instance: The compute instance (unused; present for interface
-                compliance).
+            instance: The compute instance; ``None`` implies local.
             cfg: Runtime configuration dict.
         """
-        del instance  # not used; server runs on the local machine
+        if instance is None or instance.provider == "local":
+            # Local body — unchanged.
+            engine_block = cfg.get("engine", {})
+            diffusers_cfg: dict[str, Any] = (
+                engine_block.get("diffusers", {})
+                if isinstance(engine_block, dict)
+                else {}
+            )
+            pip_deps: list[str] = list(diffusers_cfg.get("pip", []))
+            server_cmd: list[str] = list(diffusers_cfg.get("server_cmd", []))
+
+            # Step 1 — install pip dependencies.
+            if pip_deps:
+                self._run_cmd(["pip", "install"] + pip_deps, None)
+
+            # Step 2 — launch the headless inference server.
+            if server_cmd:
+                self._run_cmd(server_cmd, None)
+            return
+
+        # Remote branch: script already ran via provider boot path; just wait.
+        lifecycle_block = cfg.get("lifecycle", {})
+        boot_timeout_s = float(
+            lifecycle_block.get("boot_timeout_s", 900.0)
+            if isinstance(lifecycle_block, dict)
+            else 900.0
+        )
+        self.wait_for_ready(
+            instance,
+            http_get=self._http_get,
+            sleep=self._sleep,
+            get_instance=self._get_instance,
+            timeout_s=boot_timeout_s,
+        )
+
+    def render_provision(self, cfg: dict[str, Any]) -> RenderedProvision:
+        """Render a first-boot bootstrap script for a remote Diffusers pod.
+
+        The script is minimal: pip-install declared deps then ``exec``
+        the server command so it becomes PID 1.  Credentials are not
+        needed in the script itself — diffusers uses the HuggingFace
+        Hub's own token cache (``HUGGINGFACE_HUB_TOKEN``) which the
+        orchestrator can lift separately.
+
+        Args:
+            cfg: Runtime configuration dict.
+
+        Returns:
+            A :class:`RenderedProvision` ready for orchestrator wiring.
+        """
         engine_block = cfg.get("engine", {})
         diffusers_cfg: dict[str, Any] = (
             engine_block.get("diffusers", {}) if isinstance(engine_block, dict) else {}
         )
         pip_deps: list[str] = list(diffusers_cfg.get("pip", []))
         server_cmd: list[str] = list(diffusers_cfg.get("server_cmd", []))
+        base_url: str = str(diffusers_cfg.get("base_url", ""))
+        image: str = str(diffusers_cfg.get("image", _DEFAULT_RUNPOD_IMAGE))
 
-        # Step 1 — install pip dependencies.
+        lines: list[str] = ["set -euo pipefail"]
         if pip_deps:
-            self._run_cmd(["pip", "install"] + pip_deps, None)
-
-        # Step 2 — launch the headless inference server.
+            lines.append("pip install -q " + " ".join(pip_deps))
         if server_cmd:
-            self._run_cmd(server_cmd, None)
+            lines.append("exec " + " ".join(server_cmd))
+
+        port = _extract_port_from_base_url(base_url)
+        return RenderedProvision(
+            script="\n".join(lines),
+            run_cmd=server_cmd,
+            image=image,
+            ports=[port],
+            env_required=[],
+        )
+
+    def wait_for_ready(
+        self,
+        instance: Instance,
+        *,
+        http_get: Callable[[str], dict[str, Any]],
+        sleep: Callable[[float], None],
+        get_instance: Callable[[str], Instance],
+        timeout_s: float,
+    ) -> None:
+        """Poll ``GET <base_url>/health`` until 200, terminal status, or timeout.
+
+        Mirror of :meth:`ComfyUIEngine.wait_for_ready` with the
+        Diffusers-specific ready URL (``/health`` on port ``8000``).
+
+        Args:
+            instance: The just-created compute instance.
+            http_get: HTTP GET seam — raises on error, returns dict on success.
+            sleep: Sleep seam used between polls.
+            get_instance: Provider lookup for status checks between polls.
+            timeout_s: Maximum total wait.
+
+        Raises:
+            ProvisionFailed: Pod entered terminal status before ready.
+            ProvisionTimeout: ``timeout_s`` elapsed without a successful ready check.
+        """
+        if not instance.endpoints:
+            raise ProvisionFailed(
+                f"pod {instance.id!r} has no endpoints — cannot construct ready URL"
+            )
+        port_key = (
+            "8000"
+            if "8000" in instance.endpoints
+            else next(iter(instance.endpoints), "8000")
+        )
+        base = instance.endpoints.get(port_key, "")
+        ready_url = f"{base.rstrip('/')}/health"
+
+        start = time.monotonic()
+        while True:
+            now = time.monotonic()
+            if now - start >= timeout_s:
+                raise ProvisionTimeout(
+                    f"engine ready check timed out after {timeout_s:.0f}s "
+                    f"for pod {instance.id!r}"
+                )
+            try:
+                http_get(ready_url)
+                return
+            except Exception:  # noqa: BLE001, S110
+                pass
+            current = get_instance(instance.id)
+            if current.status in ("terminated", "stopped"):
+                raise ProvisionFailed(
+                    f"pod {instance.id!r} entered terminal status "
+                    f"{current.status!r} before ready"
+                )
+            sleep(_READY_POLL_INTERVAL_S)
 
     def backend(
         self, instance: Instance | None, cfg: dict[str, Any]

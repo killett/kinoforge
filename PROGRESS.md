@@ -148,11 +148,218 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer O merged to `main`** — merge commit `7788f93` (branch `build/layer-o`,
-Tasks 1–10 all complete). Next layer candidate:
-**Layer P** — engine integration on RunPod (ComfyUI + Wan i2v producing a
-real MP4 artifact, originally slotted as Layer O before the output-dir
-operator pain became more pressing).
+**Layer P in progress on `build/layer-p`** (off `main@7788f93`).
+- Spec: `docs/superpowers/specs/2026-06-01-layer-p-runpod-engine-integration-design.md` (committed `3c163b1` + self-review fix `84e96a4`)
+- Plan: `docs/superpowers/plans/2026-06-01-layer-p-runpod-engine-integration.md` (+ `.tasks.json`, native tasks #9–#18)
+- Tasks 1–6 ✅ complete (offline scaffolding). Task 7 in progress (live shake-out).
+
+**Layer P Task 7 item #1 (orchestrator offer-retry) — ✅ CLOSED 2026-06-01 at HEAD `e286f24`.**
+Sub-spec + plan + 3 atomic commits + comment-refresh + tasks.json sync:
+- Sub-spec: `docs/superpowers/specs/2026-06-01-layer-p-task7-item1-offer-retry-design.md` (`20786e8`)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-p-task7-item1-offer-retry.md` (+ `.tasks.json`) (`7a804ef`, final sync `e286f24`)
+- `00abf8d` — `feat(providers/runpod): typed CapacityError on no-resources mutation` (+4 tests)
+- `d236f60` — `feat(core/orchestrator): offer-retry across deploy + deploy_session` (+5 tests; `_create_with_offer_retry` helper + 2 call-site rewires at `deploy()` and `_provision_instance_and_build_backend`)
+- `4a7bfe5` — `refactor(test/live): swap ValueError sniff to typed CapacityError` (smoke catch retypes)
+- `d3a3d9d` — `docs(test/live): refresh stale comment` (post-review polish)
+Test count 836 → 846 (+9 net offline). typecheck/lint/pre-commit all-files clean. Spec+code reviewers both APPROVED on every task.
+
+**Layer P Task 7 item #2 (warm-pod reuse `instance=` + `tags=` kwargs) — ✅ CLOSED 2026-06-01 at HEAD `77ff4cd`.**
+Sub-spec + sub-plan + 3 atomic plan tasks + 2 review-fix passes:
+- Sub-spec: `docs/superpowers/specs/2026-06-01-layer-p-task7-item2-warm-reuse-design.md` (`e5a367a` + amendment `eb5caff` adding Q6 `tags=` passthrough)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-p-task7-item2-warm-reuse.md` (+ `.tasks.json`) (`a2ac3d1`)
+- `cb877de` — `feat(core/orchestrator): instance= + tags= kwargs for warm-pod reuse` (+8 tests; signature additions on `deploy_session`/`deploy`/`generate`; `_provision_instance_and_build_backend` tags param; cache-miss + cache-hit branches; `CapabilityMismatch` + `ValidationError` teardown guards)
+- `e090cbb` — `refactor(core/orchestrator): tighten test discrimination + helper docstrings` (T1 review fix; +2 tests: cache-hit branch + empty-dict; `JsonProfileCache.warm` public test seam; `_caller_supplied_instance` symmetry rename in `generate`)
+- `9ac506a` — `feat(core/batch): instance= + tags= kwarg parity for batch_generate` (+2 tests; pure kwarg threading)
+- `71cc54f` — `refactor(test/live): warm-reuse via orchestrator instance + tags kwargs` (smoke drops 91-line `if not warm:` block; cold-path pod-handle recovery via `find_instance_by_tag`)
+- `77ff4cd` — `refactor(test/live): drop orphaned timeout constants + reword cold-path recovery comment` (T3 review fix)
+
+Test count 846 → 858 (+12 net offline). typecheck/lint/pre-commit all-files clean. Spec+code reviewers APPROVED on every task; final whole-branch review APPROVED.
+
+**Key design decisions (item #2):**
+- `instance: Instance | None = None` + `tags: dict[str, str] | None = None` on all 3 entry points (`deploy_session`, `generate`, `batch_generate`); `deploy()` also gains `tags=` for future CLI parity.
+- When `instance=` supplied: orchestrator skips internal `create_instance`, calls `engine.provision(instance, cfg_dict)` (Layer I marker idempotent), builds backend via `engine.backend(instance, cfg_dict)`. Both cache-miss and cache-hit branches guarded.
+- Teardown skip: `CapabilityMismatch` (deploy_session) + `ValidationError` (generate) re-raise WITHOUT `destroy_instance` when caller-supplied instance. Caller owns lifecycle.
+- `tags=` merges over orchestrator built-ins `{kinoforge_engine, kinoforge_key}` (caller wins on collision); ignored when `instance=` supplied.
+- Smoke cold path: orchestrator stamps `_TAG_KEY=_TAG_VALUE` onto pod, then smoke recovers handle via `find_instance_by_tag` post-`generate` (race-safe in practice; reuse_check ran 1 step earlier). Enables iteration-N warm-reuse loop end-to-end.
+
+**Layer P Task 7 item #3 (workflow API JSON + first green MP4) — ⛔ PARTIAL-CLOSE 2026-06-01 at HEAD `5b17a41`. Sub-plan BLOCKED on architectural prereq.**
+
+Sub-spec + sub-plan written and committed. Plan Task 1 (offline lockdown scaffold, RED) landed cleanly. Live work (Plan Tasks 2–5) attempted; aborted on discovery that the ComfyUI engine's `provision()` is local-only and the remote-pod execution path was never built. Tasks 6–7 not started. Sub-plan native tasks #10–#14 marked deleted; future remote-provision work needs a new sub-spec.
+
+- Sub-spec: `docs/superpowers/specs/2026-06-01-layer-p-task7-item3-workflow-api-json-design.md` (`e2f25df`)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-p-task7-item3-workflow-api-json.md` (+ `.tasks.json`) (`4476dfb`)
+- `9d2a9bf` — `test(examples): lockdown scaffold for runpod-comfyui-wan graph (RED)` (Plan Task 1 — 4 lockdown tests + `tests/examples/__init__.py`, both reviewers APPROVED)
+- `5b17a41` — `test(live): import kinoforge._adapters first to self-register sources` (bug-catch #0 — smoke's lazy-imports block never triggered HF source self-registration; smoke crashed with `UnknownAdapter: no model source handles ref: 'hf:Kijai/...'` before provision)
+
+**The blocker (`src/kinoforge/engines/comfyui/__init__.py:545`):** `ComfyUIEngine.provision(instance, cfg)` body starts with `del instance  # not used; comfyui runs on the local machine`. It clones git repos, runs `pip install`, and launches `python main.py` on the LOCAL machine — never on the remote RunPod pod. The pod is just allocated compute sitting idle while provisioning happens in the test process. There is no SSH layer, no remote-exec seam, no docker entrypoint customization. Items #1 and #2 never exercised this code path because both shipped before any successful live provision had been attempted.
+
+Implications for Layer P:
+- Layer P's "first green MP4 on real cloud compute" target as designed cannot complete. Remote provisioning is a hard prerequisite.
+- Cost-safety guards still work (BudgetTracker, selfterm, idle_timeout) — both leaked pods (`bn9z4ie6gmwxqk`, `ppsn8tmo5lodji`) were detected + destroyed within minutes by manual audit. Total burn $0.25.
+- The lockdown scaffold (Plan Task 1) is valid on its own — it locks down the eventual `runpod-comfyui-wan.graph.json` shape regardless of when remote provisioning lands. 4 tests are intentionally RED until a future sub-plan lands the real graph + YAML wiring.
+
+**Routes to unblock (deferred, new sub-spec required for each):**
+1. Pre-baked docker image with ComfyUI + kijai nodes + Wan weights baked in. RunPod's idiomatic path; image build is a separate workstream. Provision becomes "wait for ComfyUI to start".
+2. RunPod startup script: extend `RunPodProvider.create_instance` with `start_script` kwarg; cloud-init runs git clone + pip install + ComfyUI launch on pod boot. Smallest in-tree code change.
+3. SSH remote-exec on `ComfyUIEngine`: add paramiko/fabric dep, rewrite `provision` + `backend` to route commands via SSH using the pod's exposed SSH endpoint. Largest scope; most flexible.
+4. Wholly remote runtime: SSH/exec into pod + run kinoforge CLI on the pod. Furthest from current architecture.
+
+Routes 1 + 2 are most likely paths. They get their own brainstorm + sub-spec when work resumes.
+
+**Plan Task 1 lockdown details:** `tests/examples/test_runpod_comfyui_wan_graph.py` (4 tests, RED) + `tests/examples/__init__.py`. Pre-existing list-vs-dict bug in `runpod-comfyui-wan.yaml` `prompt_node_ids` field is locked down — will surface as a real test failure once any future plan touches the YAML. Tests transition RED → GREEN when (a) the real 26-node API-format graph lands, (b) YAML wiring updates `asset_node_ids`/`prompt_node_ids` to real node IDs, (c) `prompt_node_ids` flips from list to dict.
+
+**Bug-catch #0 (smoke wiring fix `5b17a41`):** Permanent fix; not contingent on remote-provision. Future live smokes will not hit this. Kept on `build/layer-p`.
+
+**Bug-catch #1 — security finding (NOT yet fixed, must address before next live capture):** `_RecordingHTTPSeam` redacts the `key` field of GraphQL env-var entries but does NOT redact the `value` field. The second leaked-pod smoke wrote `tests/providers/fixtures/runpod/create_pod.json` with `request_body.variables.input.env[0].value` containing the live `RUNPOD_API_KEY` in plaintext. Detected during pre-commit review; fixture diff reverted via `git checkout HEAD --` BEFORE any commit landed; key never reached git history. Root cause: `_RecordingHTTPSeam._redact_request` (or equivalent) needs to recursively redact any string value matching credential patterns (`rpa_*`, `Bearer *`, `hf_*`, etc.), not just stop at named keys. This is a real blocker for resuming live work — a future smoke at HEAD would re-leak. Fix is a small change in `tests/providers/conftest_runpod.py` redaction helpers + a regression test. Lands as its own commit when work resumes.
+
+Test count (item #3 partial-close, pre-bug-fix #1) 858 → 862 (+4 net offline RED tests; +1 smoke-wiring-only LOC change). typecheck/lint/pre-commit all-files clean.
+
+**Layer P Task 7 bug-fix #1 (`_RecordingHTTPSeam` redaction hardening) — ✅ CLOSED 2026-06-01 at HEAD `f09909e` (pre-T8 gate-clean snapshot; T8 lands this section).**
+
+Sub-spec + sub-plan + 7 task commits closed PROGRESS:213. `_redact` (key-name walker)
+preserved verbatim; layered around it are `_redact_kv_shape` (GraphQL env-array shape detector)
+and `_redact_credential_patterns` (value-side regex sweep covering rpa_, hf_, fal_key_, Bearer,
+sk- guarded, AWS AKIA/ASIA, PEM blocks). `_RecordingHTTPSeam.flush()` runs `_audit_for_leaks` as
+a runtime backstop and raises typed `CredentialLeakError` if anything still matches —
+fail-closed, no fixture lands on disk. New `tests/providers/test_fixtures_audit.py` walks every
+committed `tests/**/*.json` and asserts cleanliness as a permanent lockdown.
+
+- Sub-spec: `docs/superpowers/specs/2026-06-01-layer-p-task7-bugfix1-recording-seam-redaction-design.md` (`edc8b3e`)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-p-task7-bugfix1-recording-seam-redaction.md` (+ `.tasks.json`) (`66590ca`)
+- T1 `1ce8160` — `_redact_kv_shape` + credential-name vocab + 4 tests
+- T2 `f3c9dc9` — `_redact_credential_patterns` + `_redact_string` + 14 tests (parametrised)
+- T3 `9648d72` — `_redact_all` composition + 3 idempotence/regression tests
+- T4 `713d424` — `LeakHit` + `_audit_for_leaks` + `CredentialLeakError` + 5 tests
+- T5 `33e3454` — `flush()` backstop rewire + 1 test
+- T6 `151aebe` — `_safe_log` wrapper + dispatcher rewires + 1 test
+- T7 `f09909e` — `tests/providers/test_fixtures_audit.py` cross-tree lockdown
+- T8 (this commit) — AGENTS.md + .env.example header + README section + this closure block
+
+Test count 862 → 888 offline (actual final figure; +26 net new tests across T1–T7; estimate was ~891). typecheck/lint/pre-commit
+all-files clean. The 4 pre-existing failures in `tests/examples/test_runpod_comfyui_wan_graph.py`
+(intentional RED scaffold from `9d2a9bf`, see PROGRESS:191) are NOT regressions from this
+sub-plan — they transition GREEN only when a future sub-plan lands the real workflow API JSON
+graph + YAML wiring (item #3, blocked on remote provisioning).
+
+**Hard prerequisite for resuming any live capture on `build/layer-p`** — without this fix the
+next smoke attempt would re-leak `RUNPOD_API_KEY` via the GraphQL `env[*].value` field.
+
+**Cost burn (item #3 attempt):** $0.25 across 2 leaked pods. Both auto-detected + destroyed via `list_instances()` audit immediately after smoke failure. Net Layer P spend: $0.013 (prior) + $0.25 = $0.263 / $1.99 cap. 87% budget remaining.
+
+**Layer Q — cross-engine cross-provider remote provisioning — ✅ CLOSED 2026-06-01 at HEAD `64f0814`.**
+
+Sub-spec + sub-plan + 8 task commits + per-task polish commits unblock Layer P Task 7 item #3 and ship the canonical cross-engine cross-provider bootstrap surface.
+
+- Sub-spec: `docs/superpowers/specs/2026-06-01-layer-q-remote-provisioning-design.md` (`edbe5a6`)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-q-remote-provisioning.md` (+ `.tasks.json`) (`ba3210d`)
+- T1 feat `c161bfd` + polish `c0f6fa7` — foundations (RenderedProvision + spec fields + boot_timeout + errors)
+- T2 feat `c4524dc` + polish `037f03b` — GenerationEngine ABC (render_provision + wait_for_ready)
+- T3 feat `19db21e` + polish `427a0bf` — ComfyUI render_provision + wait_for_ready + provision branch
+- T4 feat `b9f170d` + spec-fix `c47794b` + polish `5fe1b29` — Diffusers parity
+- T5 feat `f5a4995` + polish `1465997` — RunPod _create_pod base64 + dockerArgs encoding
+- T6 feat `3d613b6` + polish `fdf1441` — SkyPilot setup/run mapping + LocalProvider regression
+- T7 feat `63a749a` + polish `09e2e7c` — Orchestrator wiring (render → validate → spec.replace → wait_for_ready) + ABC seam + SkyPilot dual-exec resolution
+- T8 (this commit) — README + PROGRESS Layer Q closure block
+
+Test count 888 → 972 offline (+84 net new). typecheck/lint/pre-commit
+all-files clean. The 4 pre-existing failures in
+`tests/examples/test_runpod_comfyui_wan_graph.py` (intentional RED scaffold
+from `9d2a9bf`, see PROGRESS:191) are NOT regressions — they transition GREEN
+only when Layer P Task 7 item #3 resumes against Layer Q's HEAD.
+
+**Key design decisions:**
+
+- Approach B (engine renders + provider injects). No SSH dep; no paramiko.
+- Full bootstrap — script owns engine clone + custom-node clone + weight download.
+  Stock RunPod / SkyPilot images work without custom kinoforge images.
+- Engine owns `wait_for_ready` because engine knows its own readiness criterion
+  (ComfyUI: `/system_stats`; Diffusers: `/health`).
+- Credentials referenced via `$VAR` in the rendered script; never substituted as
+  literal values. Orchestrator validates `env_required` + lifts onto `spec.env`.
+- `engine.provision()` branches on `instance is None or instance.provider == "local"`;
+  local users see zero behavioural change.
+- Provider seam injection promoted from direct `_get_instance` attribute write to a
+  public ABC method `GenerationEngine.attach_get_instance(fn)` — orchestrator calls
+  the method instead of `# type: ignore[attr-defined]` on a private attribute.
+- SkyPilot dual-exec hazard resolved provider-side: `_strip_trailing_exec()` helper
+  removes the script's trailing `exec <run_cmd>` line before mapping to `Task.setup`
+  so setup can terminate normally; `run_cmd` flows into `Task.run` separately.
+- `cfg.lifecycle.boot_timeout` (pydantic) → `cfg.lifecycle().boot_timeout_s` (resolved
+  Lifecycle dataclass); orchestrator lifts the resolved Lifecycle onto
+  `cfg_dict["lifecycle"]` (via `dataclasses.asdict(cfg.lifecycle())`) so engines read
+  canonical `_s`-suffix interface keys (`boot_timeout_s`, not `boot_timeout`).
+  `cfg.model_dump()` does NOT produce a top-level `"lifecycle"` key (it emits
+  `"lifecycle_cfg"` + nested `"boot_timeout"` under `compute.lifecycle`) — the lift
+  is the single authoritative source for the engine-facing lifecycle dict.
+
+**Unblocks:** Layer P Task 7 item #3 (workflow API JSON + first green MP4) and
+item #4 (live unknowns surfacing). The item #3 sub-plan re-opens against Layer Q's
+HEAD; its blocker status updates accordingly.
+
+**Out of scope (deferred follow-ups):**
+- Ad-hoc remote shell (Approach A): `paramiko` / `sky exec` for arbitrary
+  post-provision commands.
+- kinoforge-published base images + `skip_engine_clone` toggle.
+- Pod boot-log tailing for debugging.
+
+**Resume protocol:**
+1. `git checkout build/layer-p`
+2. Read the plan + spec.
+3. Read `tests/live/test_comfyui_wan_live.py` for current smoke shape (last edit: `5b17a41` — kwargs wired, cold-path recovery in place, orphan constants removed, `_adapters` self-registration import at top of lazy block).
+4. Pick up at the NEW priority-0 item ("Architectural prereq: remote ComfyUI provisioning"). Item #3 itself is BLOCKED until one of the routes is shipped. See "Pending Task 7 work" below.
+
+**Branch state (commits on `build/layer-p` ahead of main):**
+| SHA | Task | Subject |
+|---|---|---|
+| `62861c4` | T1 | feat(config): spec.graph_file loader convention |
+| `8f0fdd1` | T1 | test(config): close AC2 + AC5 gaps |
+| `099ac7f` | T1 | fix(config): code-quality fixes |
+| `959ebcc` | T2 | feat(engines/comfyui): custom-node ref field for git SHA pinning |
+| `fefe413` | T3 | feat(providers/runpod): find_instance_by_tag helper |
+| `060f197` | T4 | refactor(tests): _RecordingHTTPSeam dispatch callable + ComfyUI dispatcher |
+| `c2553c0` | T5 | test(live): ComfyUI + Wan i2v RunPod live smoke skeleton |
+| `9ad8ad9` | T6 | test(examples): Layer P RunPod+ComfyUI+Wan YAML scaffold |
+| `d91a7c0` | T7 | fix(config): proper text_encoder/clip_vision model kinds + Wan 2.1 fp8 model set |
+| `4a673d7` | T7 | test(live): iterate offers in create_instance loop (live-smoke bug #1) |
+| `20786e8` | T7-item1 | docs(spec): orchestrator offer-retry design (sub-spec) |
+| `7a804ef` | T7-item1 | docs(plan): offer-retry implementation plan |
+| `00abf8d` | T7-item1 | feat(providers/runpod): typed CapacityError on no-resources mutation |
+| `d236f60` | T7-item1 | feat(core/orchestrator): offer-retry across deploy + deploy_session |
+| `4a7bfe5` | T7-item1 | refactor(test/live): swap ValueError sniff to typed CapacityError |
+| `d3a3d9d` | T7-item1 | docs(test/live): refresh stale comment |
+| `e286f24` | T7-item1 | chore(plan): sync tasks.json — all complete |
+| `dfb6216` | T7-item1 | docs(progress): item #1 closure snapshot |
+| `e5a367a` | T7-item2 | docs(spec): warm-pod reuse design |
+| `eb5caff` | T7-item2 | docs(spec): amendment — tags= kwarg passthrough |
+| `a2ac3d1` | T7-item2 | docs(plan): warm-pod reuse implementation plan |
+| `cb877de` | T7-item2 | feat(core/orchestrator): instance= + tags= kwargs for warm-pod reuse |
+| `e090cbb` | T7-item2 | refactor(core/orchestrator): tighten test discrimination + helper docstrings |
+| `9ac506a` | T7-item2 | feat(core/batch): instance= + tags= kwarg parity for batch_generate |
+| `71cc54f` | T7-item2 | refactor(test/live): warm-reuse via orchestrator instance + tags kwargs |
+| `77ff4cd` | T7-item2 | refactor(test/live): drop orphaned timeout constants + reword comment |
+| `5ef1451` | T7-item2 | docs(progress): Layer P Task 7 item #2 — closure snapshot |
+| `e2f25df` | T7-item3 | docs(spec): Layer P Task 7 item #3 — real workflow API JSON design |
+| `4476dfb` | T7-item3 | docs(plan): Layer P Task 7 item #3 — workflow API JSON implementation plan |
+| `9d2a9bf` | T7-item3 | test(examples): lockdown scaffold for runpod-comfyui-wan graph (RED) |
+| `5b17a41` | T7-item3 | test(live): import kinoforge._adapters first to self-register sources (bug-catch #0) |
+
+**Test counts:** offline suite 823 pre-Layer-P → 836 post-Task-6 → 846 post-Task-7-item-1 → 858 post-Task-7-item-2 → 862 post-Task-7-item-3-partial-close (+4 net offline RED tests in the lockdown scaffold; they transition RED → GREEN when a future sub-plan lands the real graph + YAML wiring). Live test in `tests/live/test_comfyui_wan_live.py` skipped without creds; will need remote-provision route shipped before it can pass.
+
+**Cost burn so far:** $0.013 (Layer P prior) + $0.25 (item #3 attempt: two leaked pods, both auto-detected + destroyed within minutes) = $0.263 / $1.99 cap. 87% budget remaining.
+
+**Pending Task 7 work (in priority order):**
+
+0. ⛔ **NEW BLOCKER — Architectural prereq: remote ComfyUI provisioning.** `ComfyUIEngine.provision()` (`src/kinoforge/engines/comfyui/__init__.py:545`) is local-only (`del instance  # not used; comfyui runs on the local machine`). Items #1 and #2 never exercised this path because both shipped before any live provision attempt. Item #3 hit it on first try and pods leaked twice ($0.25 burned, auto-cleaned). Must be unblocked before item #3 can resume. Four routes (need their own brainstorm + sub-spec): pre-baked docker image, RunPod startup script, SSH remote-exec on the engine, or full pod-side runtime. Routes 1 + 2 are most likely.
+1. ~~**Production bug: `orchestrator.deploy` picks `offers[0]` without capacity retry**~~ **CLOSED** by Task 7 item #1 sub-plan (commits `00abf8d` + `d236f60` + `4a7bfe5`). `_create_with_offer_retry` helper wired into both `deploy()` and `_provision_instance_and_build_backend`. Provider raises typed `CapacityError`. Smoke catches typed exc. 9 net new regression tests.
+2. ~~**Architectural mismatch: smoke calls `provider.create_instance` AND `orchestrator.generate` creates ANOTHER instance.**~~ **CLOSED** by Task 7 item #2 sub-plan (commits `cb877de` + `e090cbb` + `9ac506a` + `71cc54f` + `77ff4cd`). Option (a) shipped: `deploy_session` / `generate` / `batch_generate` gain `instance: Instance | None = None` + `tags: dict[str, str] | None = None` kwargs. Smoke's manual `if not warm:` block deleted; warm + cold paths both flow through `orchestrator.generate(instance=..., tags=...)`. Cold-path pod handle recovered post-`generate` via `find_instance_by_tag`. Q6 amendment added `tags=` passthrough so cold-path-created pods carry `_TAG_KEY` for the next iteration's warm-discovery. 12 net new offline regression tests.
+3. ⛔ **Workflow format conversion**: BLOCKED on item 0. Sub-spec + sub-plan + Plan Task 1 lockdown scaffold landed cleanly (commits `e2f25df` + `4476dfb` + `9d2a9bf` + smoke wiring fix `5b17a41`); Plan Tasks 2–7 cannot run until remote provisioning works. The 4 RED lockdown tests will transition GREEN once a future sub-plan lands the real graph + YAML wiring on a working remote-ComfyUI stack.
+4. ⛔ **Remaining unknowns to surface via live iteration:** BLOCKED on item 0. The unknowns (multipart shape, requirements.txt install path, /history outputs key, marker registration under warm-tag-discovery, text_encoder routing) need a working live run to surface. See item #3 sub-spec §5.2 for the full bug-catch surface; resume work picks them up once remote-provision lands.
+5. **Remaining post-Task-7 work (Tasks 8–10):**
+   - T8: refactor 23 `tests/engines/test_comfyui.py` tests to load from captured fixtures (Layer N pattern). BLOCKED on items 0 + 3 (no captured fixtures yet).
+   - T9: add 3 ComfyUI shape-lockdown tests. BLOCKED on item 0.
+   - T10: README + PROGRESS Phase 26 entry + `--no-ff` merge to main. Final.
+
+**Realistic projection:** Item 0 unblock = own brainstorm + sub-spec + sub-plan + execute cycle (likely days, not hours). Items #3 + #4 resume only after that lands. Then $1–3 more spend, 1–3 hours iteration to first green MP4 + post-capture refactor. Cumulative timeline doubled vs. original Layer P projection.
 
 **Pending follow-ups:**
 - ~~`GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).~~ — **CLOSED** by Phase 23 (Layer M).

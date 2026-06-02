@@ -49,6 +49,9 @@ def clone_and_install(
             repo_name = repo_name[:-4]
         dest = os.path.join(custom_nodes_dir, repo_name)
         run_cmd(["git", "clone", url, dest], None)
+        ref: str | None = entry.get("ref")
+        if ref:
+            run_cmd(["git", "checkout", ref], dest)
         req_path = os.path.join(dest, "requirements.txt")
         if file_exists(req_path):
             run_cmd(["pip", "install", "-r", req_path], dest)

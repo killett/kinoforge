@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,9 +26,12 @@ from kinoforge.core import registry
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.errors import (
+    AuthError,
     CapabilityMismatch,
     CapacityError,
     ProfileNotCached,
+    ProvisionFailed,
+    ProvisionTimeout,
     ValidationError,
 )
 from kinoforge.core.interfaces import (
@@ -43,6 +46,7 @@ from kinoforge.core.interfaces import (
     InstanceSpec,
     ModelProfile,
     ModelProfileProvider,
+    Offer,
 )
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
@@ -158,6 +162,7 @@ def _provision_compute_once(
     store: ArtifactStore,
     state_dir: Path,
     capability_key_hex: str,
+    cfg_dict_override: dict[str, object] | None = None,
 ) -> None:
     """Run ``provisioner.provision`` exactly once per ``(instance, capability_key)``.
 
@@ -184,6 +189,11 @@ def _provision_compute_once(
             (``<state_dir>/instances/<instance.id>/.provisioned``) and into
             whose ``weights/`` subdirectory downloads are placed.
         capability_key_hex: Current ``cfg.capability_key().derive()`` hex.
+        cfg_dict_override: When provided, this dict is used as the cfg
+            argument passed to ``engine.provision`` (via provisioner) instead
+            of ``cfg.model_dump()``.  Callers that enrich ``cfg_dict`` (e.g.
+            with a top-level ``"lifecycle"`` key) should pass it here so
+            engines receive the augmented form.
     """
     effective_creds: CredentialProvider = (
         creds if creds is not None else EnvCredentialProvider()
@@ -205,9 +215,29 @@ def _provision_compute_once(
             engine.name,
             capability_key_hex[:12],
         )
+        # When the caller has enriched cfg_dict (e.g. added a top-level
+        # "lifecycle" key from the resolved Lifecycle dataclass), wrap the
+        # pydantic Config so that its model_dump() returns the enriched form.
+        # The provisioner reads cfg.models (from pydantic) for source
+        # resolution + downloads, then calls cfg.model_dump() to build the
+        # dict passed to engine.provision. Wrapping lets us intercept only
+        # model_dump() without altering the rest of the Config interface.
+        if cfg_dict_override is not None:
+
+            class _EnrichedCfgWrapper:
+                """Thin shim: delegates .models to pydantic cfg; overrides model_dump."""
+
+                models = cfg.models
+
+                def model_dump(self) -> dict[str, object]:  # noqa: D102
+                    return cfg_dict_override  # type: ignore[return-value]
+
+            effective_cfg: object = _EnrichedCfgWrapper()
+        else:
+            effective_cfg = cfg
         provisioner_provision(
             engine,
-            cfg,  # type: ignore[arg-type]
+            effective_cfg,  # type: ignore[arg-type]
             instance,
             creds=effective_creds,
             download_dir=state_dir / "weights",
@@ -221,6 +251,54 @@ def _provision_compute_once(
         )
 
 
+def _create_with_offer_retry(
+    provider: ComputeProvider,
+    build_spec: Callable[[Offer], InstanceSpec],
+    offers: list[Offer],
+) -> tuple[Instance, Offer]:
+    """Iterate offers until create_instance succeeds.
+
+    The first offer is tried first (the list is already sorted by
+    filter_offers' gpu_preference). On CapacityError, continue to the
+    next offer. Any other exception propagates immediately — non-
+    capacity errors fail every offer identically.
+
+    Args:
+        provider: The resolved compute provider.
+        build_spec: Closure that builds an InstanceSpec for one offer.
+            Called once per offer attempted.
+        offers: Non-empty list of offers in attempt order.
+
+    Returns:
+        ``(instance, offer)`` — the first offer for which create_instance
+        succeeded, paired with the live instance.
+
+    Raises:
+        CapacityError: Every offer raised CapacityError. The last
+            per-offer CapacityError is chained as ``__cause__``.
+    """
+    last_capacity_exc: CapacityError | None = None
+    for offer in offers:
+        spec = build_spec(offer)
+        try:
+            instance = provider.create_instance(spec)
+            return instance, offer
+        except CapacityError as exc:
+            last_capacity_exc = exc
+            _log.warning(
+                "[offer-retry] %s @ $%.4f/hr unavailable: %s",
+                offer.gpu_type,
+                offer.cost_rate_usd_per_hr,
+                exc,
+            )
+            continue
+    raise CapacityError(
+        f"all {len(offers)} offers exhausted; provider "
+        f"{getattr(provider, 'name', repr(provider))!r} "
+        f"has no current capacity"
+    ) from last_capacity_exc
+
+
 def _provision_instance_and_build_backend(
     *,
     resolved_engine: GenerationEngine,
@@ -232,6 +310,7 @@ def _provision_instance_and_build_backend(
     store: ArtifactStore,
     state_dir: Path,
     for_discovery: bool,
+    tags: dict[str, str] | None = None,
 ) -> tuple[Instance, GenerationBackend]:
     """Provision a compute instance and build a backend for it.
 
@@ -250,6 +329,9 @@ def _provision_instance_and_build_backend(
         for_discovery: When True, the CapacityError message reads
             'no offers available for discovery from provider ...' to
             distinguish the cold-start failure from a steady-state one.
+        tags: Optional caller-supplied tags merged onto the orchestrator's
+            built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
+            key collision.
 
     Returns:
         ``(instance, backend)`` — instance polled to ``ready``, backend
@@ -257,6 +339,12 @@ def _provision_instance_and_build_backend(
 
     Raises:
         CapacityError: ``find_offers`` returned an empty list.
+        AuthError: A var in ``rendered.env_required`` is absent from *creds*.
+            Raised before ``create_instance`` is called.
+        ProvisionFailed: Engine boot script crashed; instance already destroyed.
+        ProvisionTimeout: Ready check timed out; instance already destroyed.
+        CapabilityMismatch: Engine rejected its own capability key; instance destroyed.
+        ValidationError: Spec validation failed; instance destroyed.
     """
     hw_reqs = cfg.hardware_requirements()
     offers = resolved_provider.find_offers(hw_reqs)
@@ -269,30 +357,69 @@ def _provision_instance_and_build_backend(
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     key_hash = _key_hash(key)
-    spec = InstanceSpec(
-        image=image,
-        offer=offers[0],
-        lifecycle=lifecycle,
-        tags={
+    cfg_dict = _cfg_dict(cfg)
+
+    # Lift the resolved Lifecycle dataclass onto cfg_dict["lifecycle"] so that
+    # engine.provision() can read canonical _s-suffixed interface keys
+    # (boot_timeout_s, idle_timeout_s, etc.) regardless of pydantic schema
+    # shape. cfg.model_dump() produces "lifecycle_cfg" at the top level and
+    # "boot_timeout" (no _s) under compute.lifecycle — neither satisfies the
+    # engine's lookup. This lift is the single authoritative source for the
+    # engine-facing lifecycle dict.
+    cfg_dict["lifecycle"] = dataclasses.asdict(lifecycle)
+
+    # NEW — Layer Q: render provision payload + validate creds before create_instance
+    rendered = resolved_engine.render_provision(cfg_dict)
+    rendered_env: dict[str, str] = {}
+    for var in rendered.env_required:
+        value = creds.get(var) if creds is not None else None
+        if value is None:
+            raise AuthError(f"missing required env var: {var}")
+        rendered_env[var] = value
+
+    def _build_spec(offer: Offer) -> InstanceSpec:
+        merged_tags: dict[str, str] = {
             "kinoforge_engine": resolved_engine.name,
             "kinoforge_key": key_hash,
-        },
-        env={},
-        run_id=run_id,
+        }
+        if tags:
+            merged_tags.update(tags)
+        return InstanceSpec(
+            image=rendered.image or image,
+            offer=offer,
+            ports=tuple(rendered.ports),
+            lifecycle=lifecycle,
+            tags=merged_tags,
+            env=dict(rendered_env),
+            run_id=run_id,
+            provision_script=rendered.script,
+            run_cmd=rendered.run_cmd,
+        )
+
+    instance, _chosen_offer = _create_with_offer_retry(
+        resolved_provider, _build_spec, offers
     )
-    instance = resolved_provider.create_instance(spec)
     while instance.status != "ready":
         instance = resolved_provider.get_instance(instance.id)
-    _provision_compute_once(
-        engine=resolved_engine,
-        cfg=cfg,
-        instance=instance,
-        creds=creds,
-        store=store,
-        state_dir=state_dir,
-        capability_key_hex=key.derive(),
-    )
-    cfg_dict = _cfg_dict(cfg)
+
+    # NEW — Layer Q: wire provider.get_instance onto engine before engine.provision
+    resolved_engine.attach_get_instance(resolved_provider.get_instance)
+
+    try:
+        _provision_compute_once(
+            engine=resolved_engine,
+            cfg=cfg,
+            instance=instance,
+            creds=creds,
+            store=store,
+            state_dir=state_dir,
+            capability_key_hex=key.derive(),
+            cfg_dict_override=cfg_dict,
+        )
+    except (ProvisionFailed, ProvisionTimeout, CapabilityMismatch, ValidationError):
+        resolved_provider.destroy_instance(instance.id)
+        raise
+
     backend = resolved_engine.backend(instance, cfg_dict)
     return instance, backend
 
@@ -348,6 +475,8 @@ def deploy_session(
     profile_provider: ModelProfileProvider | None = None,
     run_id: str = "run",
     state_dir: Path = Path(".kinoforge"),
+    instance: Instance | None = None,
+    tags: dict[str, str] | None = None,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -400,6 +529,20 @@ def deploy_session(
             (used in pod tags).
         state_dir: Root for kinoforge state (provision markers, weights,
             locks).
+        instance: Optional pre-created ``Instance`` to reuse. When
+            supplied, the orchestrator skips ``find_offers`` +
+            ``create_instance`` and uses the caller's instance directly.
+            ``engine.provision`` still runs (idempotent via Layer I
+            marker). Caller owns the lifecycle — teardown is suppressed
+            on ``CapabilityMismatch`` so the warm pod survives drift
+            re-raises. Caller must pre-poll the instance to
+            ``status == 'ready'``; ``deploy_session`` does not re-poll a
+            supplied instance.
+        tags: Optional caller-supplied tags merged onto the orchestrator's
+            built-in ``{kinoforge_engine, kinoforge_key}`` when the
+            orchestrator creates the pod on the cold path. Caller wins on
+            key collision. Ignored when ``instance=`` is supplied (caller
+            already owns the instance's tags).
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -415,6 +558,14 @@ def deploy_session(
     # ------------------------------------------------------------------
     key = cfg.capability_key()
     cfg_dict = _cfg_dict(cfg)
+    # Lift the resolved Lifecycle dataclass so engine.provision() sees the
+    # canonical _s-suffixed interface keys (boot_timeout_s etc.) regardless
+    # of pydantic schema shape (model_dump emits "lifecycle_cfg" + nested
+    # "boot_timeout" without the _s suffix).  Only lift when compute is
+    # present — hosted engines don't have a lifecycle block.
+    if cfg.compute is not None:
+        cfg_dict["lifecycle"] = dataclasses.asdict(cfg.lifecycle())
+    _caller_supplied_instance = instance is not None
 
     # ------------------------------------------------------------------
     # Step 2 — resolve engine (and provider when compute is required)
@@ -440,7 +591,6 @@ def deploy_session(
     # Step 4 — resolve profile; discover on miss
     # ------------------------------------------------------------------
     backend: GenerationBackend | None = None
-    instance: Instance | None = None
     _just_discovered: bool = False
 
     try:
@@ -455,17 +605,23 @@ def deploy_session(
                 raise CapacityError(
                     "requires_compute is True but no provider was resolved"
                 ) from None
-            instance, backend = _provision_instance_and_build_backend(
-                resolved_engine=resolved_engine,
-                resolved_provider=resolved_provider,
-                cfg=cfg,
-                run_id=run_id,
-                key=key,
-                creds=creds,
-                store=store,
-                state_dir=state_dir,
-                for_discovery=True,
-            )
+            if _caller_supplied_instance:
+                # Caller pre-created the pod; marker-idempotent provision.
+                resolved_engine.provision(instance, cfg_dict)
+                backend = resolved_engine.backend(instance, cfg_dict)
+            else:
+                instance, backend = _provision_instance_and_build_backend(
+                    resolved_engine=resolved_engine,
+                    resolved_provider=resolved_provider,
+                    cfg=cfg,
+                    run_id=run_id,
+                    key=key,
+                    creds=creds,
+                    store=store,
+                    state_dir=state_dir,
+                    for_discovery=True,
+                    tags=tags,
+                )
         else:
             backend = resolved_engine.backend(None, cfg_dict)
 
@@ -481,17 +637,22 @@ def deploy_session(
                 raise CapacityError(
                     "requires_compute is True but no provider was resolved"
                 ) from None
-            instance, backend = _provision_instance_and_build_backend(
-                resolved_engine=resolved_engine,
-                resolved_provider=resolved_provider,
-                cfg=cfg,
-                run_id=run_id,
-                key=key,
-                creds=creds,
-                store=store,
-                state_dir=state_dir,
-                for_discovery=False,
-            )
+            if _caller_supplied_instance:
+                resolved_engine.provision(instance, cfg_dict)
+                backend = resolved_engine.backend(instance, cfg_dict)
+            else:
+                instance, backend = _provision_instance_and_build_backend(
+                    resolved_engine=resolved_engine,
+                    resolved_provider=resolved_provider,
+                    cfg=cfg,
+                    run_id=run_id,
+                    key=key,
+                    creds=creds,
+                    store=store,
+                    state_dir=state_dir,
+                    for_discovery=False,
+                    tags=tags,
+                )
         else:
             backend = resolved_engine.backend(None, cfg_dict)
 
@@ -505,7 +666,11 @@ def deploy_session(
             _log.warning(
                 "capability mismatch detected; tearing down instance before re-raising"
             )
-            if instance is not None and resolved_provider is not None:
+            if (
+                instance is not None
+                and resolved_provider is not None
+                and not _caller_supplied_instance
+            ):
                 resolved_provider.destroy_instance(instance.id)
             raise
 
@@ -540,6 +705,7 @@ def deploy(
     provider: ComputeProvider | None = None,
     engine: GenerationEngine | None = None,
     creds: CredentialProvider | None = None,
+    tags: dict[str, str] | None = None,
 ) -> DeployResult:
     """Provision compute (or confirm hosted endpoint) for a kinoforge config.
 
@@ -567,6 +733,9 @@ def deploy(
         engine: Optional pre-constructed ``GenerationEngine`` (test injection).
             When ``None``, resolved from the registry using ``cfg.engine.kind``.
         creds: Optional credential provider.  Defaults to ``EnvCredentialProvider()``.
+        tags: Optional caller-supplied tags merged onto the orchestrator's
+            built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
+            key collision.
 
     Returns:
         A ``DeployResult`` describing the outcome.
@@ -621,19 +790,26 @@ def deploy(
 
     # Live run: create the instance.
     image = cfg.compute.image if cfg.compute is not None else ""
-    spec = InstanceSpec(
-        image=image,
-        offer=offers[0],
-        lifecycle=lifecycle,
-        tags={
+
+    def _build_spec(offer: Offer) -> InstanceSpec:
+        merged_tags: dict[str, str] = {
             "kinoforge_engine": resolved_engine.name,
             "kinoforge_key": key_hash,
-        },
-        env={},
-        run_id="",
-    )
+        }
+        if tags:
+            merged_tags.update(tags)
+        return InstanceSpec(
+            image=image,
+            offer=offer,
+            lifecycle=lifecycle,
+            tags=merged_tags,
+            env={},
+            run_id="",
+        )
 
-    instance = resolved_provider.create_instance(spec)
+    instance, _chosen_offer = _create_with_offer_retry(
+        resolved_provider, _build_spec, offers
+    )
 
     try:
         # Poll until ready (LocalProvider returns ready immediately; cloud providers
@@ -685,6 +861,8 @@ def generate(
     run_id: str = "run",
     state_dir: Path = Path(".kinoforge"),
     sink: OutputSink | None = None,
+    instance: Instance | None = None,
+    tags: dict[str, str] | None = None,
 ) -> Artifact:
     """Run the full generation pipeline for a single clip.
 
@@ -727,6 +905,15 @@ def generate(
         sink: Optional user-facing output sink.  When provided, the stage
             calls ``sink.publish(...)`` after persisting to the store.
             ``None`` (default) preserves pre-Layer-O behavior.
+        instance: Optional pre-created ``Instance`` to reuse. Threaded
+            through to ``deploy_session`` — when supplied, ``create_instance``
+            is skipped and the ``ValidationError`` teardown is suppressed
+            so the caller-owned warm pod survives spec-validation failures.
+            Caller must pre-poll the instance to ``status == 'ready'``;
+            ``generate`` does not re-poll a supplied instance.
+        tags: Optional caller-supplied tags merged onto the orchestrator's
+            built-in ``{kinoforge_engine, kinoforge_key}`` on the cold path
+            (no ``instance=``). Ignored when ``instance=`` is supplied.
 
     Returns:
         The persisted ``Artifact`` (with ``uri``) from the pipeline stage.
@@ -743,6 +930,7 @@ def generate(
     # (9).  ``dict(cfg.spec)`` / ``dict(cfg.params)`` still defensively
     # copies the pydantic-owned dicts so stage-side mutation cannot leak
     # back into ``cfg``.
+    _caller_supplied_instance = instance is not None
     with deploy_session(
         cfg,
         store=store,
@@ -752,6 +940,8 @@ def generate(
         profile_provider=profile_provider,
         run_id=run_id,
         state_dir=state_dir,
+        instance=instance,
+        tags=tags,
     ) as session:
         # ------------------------------------------------------------------
         # Step 5 — validate the request against the profile
@@ -804,7 +994,11 @@ def generate(
             _log.warning(
                 "spec validation failed; tearing down instance before re-raising"
             )
-            if session.instance is not None and session.provider is not None:
+            if (
+                session.instance is not None
+                and session.provider is not None
+                and not _caller_supplied_instance  # only destroy when orchestrator owns the instance
+            ):
                 session.provider.destroy_instance(session.instance.id)
             raise
         _log.info("generate completed — artifact uri=%r", artifact.uri)
