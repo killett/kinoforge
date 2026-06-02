@@ -148,10 +148,15 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
-**Layer P in progress on `build/layer-p`** (off `main@7788f93`).
-- Spec: `docs/superpowers/specs/2026-06-01-layer-p-runpod-engine-integration-design.md` (committed `3c163b1` + self-review fix `84e96a4`)
-- Plan: `docs/superpowers/plans/2026-06-01-layer-p-runpod-engine-integration.md` (+ `.tasks.json`, native tasks #9–#18)
-- Tasks 1–6 ✅ complete (offline scaffolding). Task 7 in progress (live shake-out).
+**Layer P + Q both merged to `main` at `c63cbea`.** Item #3 of Layer P Task 7
+(workflow API JSON + first green MP4) remains the next live work; Layer Q
+closed its architectural blocker (`ComfyUIEngine.provision` was local-only).
+The blocks below are the live history through Task 7 + bug-fix #1 + Layer Q
+closure — kept for SHA reference and bug-catch detail.
+
+- Layer P spec: `docs/superpowers/specs/2026-06-01-layer-p-runpod-engine-integration-design.md` (committed `3c163b1` + self-review fix `84e96a4`)
+- Layer P plan: `docs/superpowers/plans/2026-06-01-layer-p-runpod-engine-integration.md` (+ `.tasks.json`, native tasks #9–#18)
+- Layer P Tasks 1–6 ✅ complete (offline scaffolding). Task 7 partial: items #1 and #2 closed; item #3 BLOCKED at time of writing, **unblocked by Layer Q merge** — resume work uses Layer Q's `render_provision` / `wait_for_ready` surface.
 
 **Layer P Task 7 item #1 (orchestrator offer-retry) — ✅ CLOSED 2026-06-01 at HEAD `e286f24`.**
 Sub-spec + plan + 3 atomic commits + comment-refresh + tasks.json sync:
@@ -302,82 +307,64 @@ HEAD; its blocker status updates accordingly.
 - kinoforge-published base images + `skip_engine_clone` toggle.
 - Pod boot-log tailing for debugging.
 
-**Resume protocol:**
-1. `git checkout build/layer-p`
-2. Read the plan + spec.
-3. Read `tests/live/test_comfyui_wan_live.py` for current smoke shape (last edit: `5b17a41` — kwargs wired, cold-path recovery in place, orphan constants removed, `_adapters` self-registration import at top of lazy block).
-4. Pick up at the NEW priority-0 item ("Architectural prereq: remote ComfyUI provisioning"). Item #3 itself is BLOCKED until one of the routes is shipped. See "Pending Task 7 work" below.
+**Resume protocol (post Layer P + Q merge):**
+1. From `main` at `c63cbea` (working tree clean). Branch off main before any
+   item #3 work — the previous `build/layer-p` branch is deleted post-merge.
+2. Read the Layer Q spec
+   (`docs/superpowers/specs/2026-06-01-layer-q-remote-provisioning-design.md`)
+   for the `render_provision` / `wait_for_ready` ABC contract item #3 must
+   target.
+3. Read the previous item #3 sub-spec
+   (`docs/superpowers/specs/2026-06-01-layer-p-task7-item3-workflow-api-json-design.md`)
+   — it predates Layer Q and assumes local provisioning; decide whether to
+   amend in place or write a fresh sub-spec against Layer Q HEAD before any
+   live spend.
+4. Read `tests/live/test_comfyui_wan_live.py` for current smoke shape (last
+   edit `5b17a41` — kwargs wired, cold-path recovery, orphan constants
+   removed, `_adapters` self-registration import at top of lazy block).
+5. Read the 4 RED lockdown tests in
+   `tests/examples/test_runpod_comfyui_wan_graph.py` (`9d2a9bf`) — they
+   transition GREEN when item #3 lands the real graph + YAML wiring on a
+   working remote-ComfyUI stack.
 
-**Branch state (commits on `build/layer-p` ahead of main):**
-| SHA | Task | Subject |
-|---|---|---|
-| `62861c4` | T1 | feat(config): spec.graph_file loader convention |
-| `8f0fdd1` | T1 | test(config): close AC2 + AC5 gaps |
-| `099ac7f` | T1 | fix(config): code-quality fixes |
-| `959ebcc` | T2 | feat(engines/comfyui): custom-node ref field for git SHA pinning |
-| `fefe413` | T3 | feat(providers/runpod): find_instance_by_tag helper |
-| `060f197` | T4 | refactor(tests): _RecordingHTTPSeam dispatch callable + ComfyUI dispatcher |
-| `c2553c0` | T5 | test(live): ComfyUI + Wan i2v RunPod live smoke skeleton |
-| `9ad8ad9` | T6 | test(examples): Layer P RunPod+ComfyUI+Wan YAML scaffold |
-| `d91a7c0` | T7 | fix(config): proper text_encoder/clip_vision model kinds + Wan 2.1 fp8 model set |
-| `4a673d7` | T7 | test(live): iterate offers in create_instance loop (live-smoke bug #1) |
-| `20786e8` | T7-item1 | docs(spec): orchestrator offer-retry design (sub-spec) |
-| `7a804ef` | T7-item1 | docs(plan): offer-retry implementation plan |
-| `00abf8d` | T7-item1 | feat(providers/runpod): typed CapacityError on no-resources mutation |
-| `d236f60` | T7-item1 | feat(core/orchestrator): offer-retry across deploy + deploy_session |
-| `4a7bfe5` | T7-item1 | refactor(test/live): swap ValueError sniff to typed CapacityError |
-| `d3a3d9d` | T7-item1 | docs(test/live): refresh stale comment |
-| `e286f24` | T7-item1 | chore(plan): sync tasks.json — all complete |
-| `dfb6216` | T7-item1 | docs(progress): item #1 closure snapshot |
-| `e5a367a` | T7-item2 | docs(spec): warm-pod reuse design |
-| `eb5caff` | T7-item2 | docs(spec): amendment — tags= kwarg passthrough |
-| `a2ac3d1` | T7-item2 | docs(plan): warm-pod reuse implementation plan |
-| `cb877de` | T7-item2 | feat(core/orchestrator): instance= + tags= kwargs for warm-pod reuse |
-| `e090cbb` | T7-item2 | refactor(core/orchestrator): tighten test discrimination + helper docstrings |
-| `9ac506a` | T7-item2 | feat(core/batch): instance= + tags= kwarg parity for batch_generate |
-| `71cc54f` | T7-item2 | refactor(test/live): warm-reuse via orchestrator instance + tags kwargs |
-| `77ff4cd` | T7-item2 | refactor(test/live): drop orphaned timeout constants + reword comment |
-| `5ef1451` | T7-item2 | docs(progress): Layer P Task 7 item #2 — closure snapshot |
-| `e2f25df` | T7-item3 | docs(spec): Layer P Task 7 item #3 — real workflow API JSON design |
-| `4476dfb` | T7-item3 | docs(plan): Layer P Task 7 item #3 — workflow API JSON implementation plan |
-| `9d2a9bf` | T7-item3 | test(examples): lockdown scaffold for runpod-comfyui-wan graph (RED) |
-| `5b17a41` | T7-item3 | test(live): import kinoforge._adapters first to self-register sources (bug-catch #0) |
+**Layer P + Q merged commits:** all on `main` via merge commit `c63cbea`.
+The previous 30-row `build/layer-p` branch-state table is dropped; SHAs are
+referenced inline in each sub-task closure block above.
 
-**Test counts:** offline suite 823 pre-Layer-P → 836 post-Task-6 → 846 post-Task-7-item-1 → 858 post-Task-7-item-2 → 862 post-Task-7-item-3-partial-close (+4 net offline RED tests in the lockdown scaffold; they transition RED → GREEN when a future sub-plan lands the real graph + YAML wiring). Live test in `tests/live/test_comfyui_wan_live.py` skipped without creds; will need remote-provision route shipped before it can pass.
+**Test counts:** offline suite 823 pre-Layer-P → 836 post-Layer-P-Task-6 →
+846 post-Task-7-item-1 → 858 post-Task-7-item-2 → 862 post-Task-7-item-3-partial
+→ 888 post-bug-fix-#1 → 972 post-Layer-Q. The 4 RED lockdown tests in
+`tests/examples/test_runpod_comfyui_wan_graph.py` are NOT regressions; they
+transition GREEN when item #3 ships the real graph + YAML wiring on a working
+remote-ComfyUI stack. Live test in `tests/live/test_comfyui_wan_live.py`
+skipped without creds; needs item #3 retry against Layer Q surface before it
+can pass.
 
-**Cost burn so far:** $0.013 (Layer P prior) + $0.25 (item #3 attempt: two leaked pods, both auto-detected + destroyed within minutes) = $0.263 / $1.99 cap. 87% budget remaining.
+**Cost burn so far:** $0.013 (Layer P prior) + $0.25 (item #3 attempt: two
+leaked pods, both auto-detected + destroyed within minutes) = $0.263 / $1.99
+cap. 87% budget remaining for item #3 resume.
 
-**Pending Task 7 work (in priority order):**
+**Pending Task 7 work (post-Layer-Q, in priority order):**
 
-0. ⛔ **NEW BLOCKER — Architectural prereq: remote ComfyUI provisioning.** `ComfyUIEngine.provision()` (`src/kinoforge/engines/comfyui/__init__.py:545`) is local-only (`del instance  # not used; comfyui runs on the local machine`). Items #1 and #2 never exercised this path because both shipped before any live provision attempt. Item #3 hit it on first try and pods leaked twice ($0.25 burned, auto-cleaned). Must be unblocked before item #3 can resume. Four routes (need their own brainstorm + sub-spec): pre-baked docker image, RunPod startup script, SSH remote-exec on the engine, or full pod-side runtime. Routes 1 + 2 are most likely.
-1. ~~**Production bug: `orchestrator.deploy` picks `offers[0]` without capacity retry**~~ **CLOSED** by Task 7 item #1 sub-plan (commits `00abf8d` + `d236f60` + `4a7bfe5`). `_create_with_offer_retry` helper wired into both `deploy()` and `_provision_instance_and_build_backend`. Provider raises typed `CapacityError`. Smoke catches typed exc. 9 net new regression tests.
-2. ~~**Architectural mismatch: smoke calls `provider.create_instance` AND `orchestrator.generate` creates ANOTHER instance.**~~ **CLOSED** by Task 7 item #2 sub-plan (commits `cb877de` + `e090cbb` + `9ac506a` + `71cc54f` + `77ff4cd`). Option (a) shipped: `deploy_session` / `generate` / `batch_generate` gain `instance: Instance | None = None` + `tags: dict[str, str] | None = None` kwargs. Smoke's manual `if not warm:` block deleted; warm + cold paths both flow through `orchestrator.generate(instance=..., tags=...)`. Cold-path pod handle recovered post-`generate` via `find_instance_by_tag`. Q6 amendment added `tags=` passthrough so cold-path-created pods carry `_TAG_KEY` for the next iteration's warm-discovery. 12 net new offline regression tests.
-3. ⛔ **Workflow format conversion**: BLOCKED on item 0. Sub-spec + sub-plan + Plan Task 1 lockdown scaffold landed cleanly (commits `e2f25df` + `4476dfb` + `9d2a9bf` + smoke wiring fix `5b17a41`); Plan Tasks 2–7 cannot run until remote provisioning works. The 4 RED lockdown tests will transition GREEN once a future sub-plan lands the real graph + YAML wiring on a working remote-ComfyUI stack.
-4. ⛔ **Remaining unknowns to surface via live iteration:** BLOCKED on item 0. The unknowns (multipart shape, requirements.txt install path, /history outputs key, marker registration under warm-tag-discovery, text_encoder routing) need a working live run to surface. See item #3 sub-spec §5.2 for the full bug-catch surface; resume work picks them up once remote-provision lands.
-5. **Remaining post-Task-7 work (Tasks 8–10):**
-   - T8: refactor 23 `tests/engines/test_comfyui.py` tests to load from captured fixtures (Layer N pattern). BLOCKED on items 0 + 3 (no captured fixtures yet).
-   - T9: add 3 ComfyUI shape-lockdown tests. BLOCKED on item 0.
-   - T10: README + PROGRESS Phase 26 entry + `--no-ff` merge to main. Final.
+1. ~~Architectural prereq: remote ComfyUI provisioning~~ **CLOSED** by Layer Q (`64f0814`). `ComfyUIEngine.provision()` no longer local-only; branches on `instance is None or instance.provider == "local"` and otherwise renders + lifts a bootstrap script via `render_provision`.
+2. ~~`orchestrator.deploy` picks `offers[0]` without capacity retry~~ **CLOSED** by Task 7 item #1.
+3. ~~Smoke calls `provider.create_instance` AND `orchestrator.generate` creates ANOTHER instance~~ **CLOSED** by Task 7 item #2.
+4. **Workflow API JSON conversion + first green MP4 (item #3 resume).** Sub-spec amendment-vs-rewrite decision pending; brainstorm before any live spend. Plan Task 1 RED scaffold + smoke wiring fix already on `main` (`9d2a9bf` + `5b17a41`); Plan Tasks 2–7 unwritten.
+5. **Live unknowns to surface via iteration (item #4).** Multipart shape, requirements.txt install path, /history outputs key, marker registration under warm-tag discovery, text_encoder routing. Needs a successful item-#3 run first.
+6. **Layer P Tasks 8–10:**
+   - T8: refactor 23 `tests/engines/test_comfyui.py` tests to load from captured fixtures (Layer N pattern). Blocked on item #3 captures.
+   - T9: 3 ComfyUI shape-lockdown tests. Blocked on item #3.
+   - T10: README + PROGRESS Phase 26 entry + `--no-ff` merge.
 
-**Realistic projection:** Item 0 unblock = own brainstorm + sub-spec + sub-plan + execute cycle (likely days, not hours). Items #3 + #4 resume only after that lands. Then $1–3 more spend, 1–3 hours iteration to first green MP4 + post-capture refactor. Cumulative timeline doubled vs. original Layer P projection.
+**Realistic projection:** item #3 resume now ~$1–3 live spend + 1–3 hrs to
+first green MP4 + post-capture refactor (T8/T9/T10). $1.72 of the $1.99 layer
+cap remaining.
 
-**Pending follow-ups:**
-- ~~`GenerateClipStage._artifact_bytes` HTTP seam normalization (Phase 19 follow-up; needs Authorization-header support for RunwayML/Pika).~~ — **CLOSED** by Phase 23 (Layer M).
-- ~~`engine.hosted.model` ↔ `spec.model` duplication collapse (Layer K hosted YAML ambiguity).~~ — **CLOSED** by Phase 23 (Layer M).
-- ~~`kinoforge batch` CLI subcommand~~ — **CLOSED** by Phase 22 (Layer L), see below.
-
-**Layer L Task 4 — streaming per-entry log lines (DEFERRED, ships in a later follow-up):**
-- Layer L spec §5 and the plan show streaming per-entry markers during the run
-  (`[batch-...] waves start`, `[batch-...] waves ok 14.2s ...`), but the CLI as
-  shipped at `c940da9` only prints the initial `manifest loaded` header and the
-  final per-entry summary table. The final table already shows everything users
-  need post-run, and none of the 6 batch-CLI tests assert mid-run output, so the
-  visible UAT contract is met — but the spec/plan and the implementation now
-  disagree on intra-run progress. Closing this gap requires a callback hook into
-  `batch_generate` (since `core/` cannot print directly without breaking the
-  core-import-ban invariant); deferring keeps Task 4 focused and lets a future
-  contributor add the seam + a streaming-output test in one self-contained
-  change. Owner: whoever picks up Layer L Task 5 or a follow-up polish phase.
+**Pending non-item-#3 follow-ups:**
+- PROGRESS:113 carry-forward #2 — SkyPilot SDK live verification (Layer Q ships offline-tested wiring only).
+- PROGRESS:113 carry-forward #3 — S3/GCS real-cloud verification.
+- PROGRESS:619 — streaming per-entry log lines in `kinoforge batch` (deferred from Layer L Task 4; needs a callback hook into `batch_generate` so `core/` does not print directly).
+- GitHub #2 (audio sync), #4 (keyframe stage), #8 (HF bare-repo listing), #9 (aria2c fast-path).
 
 ## Post-MVP
 
