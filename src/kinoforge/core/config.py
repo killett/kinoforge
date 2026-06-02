@@ -96,6 +96,8 @@ class LifecycleConfig(BaseModel):
     max_lifetime: float = 5 * 3600.0
     budget: float
     max_in_flight: int = 1
+    # NEW — Layer Q
+    boot_timeout: float = 900.0
 
     @field_validator(
         "idle_timeout", "job_timeout", "time_buffer", "max_lifetime", mode="before"
@@ -604,6 +606,8 @@ class Config(BaseModel):
             max_lifetime_s=lc.max_lifetime,
             budget_usd=lc.budget,
             max_in_flight=lc.max_in_flight,
+            # NEW — Layer Q
+            boot_timeout_s=lc.boot_timeout,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
