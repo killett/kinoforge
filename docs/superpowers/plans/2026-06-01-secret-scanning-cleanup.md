@@ -448,13 +448,13 @@ Expected: dry-run prints `OK`; pytest passes the credential-pattern test cases (
 At lines 310-316 (inside the `@pytest.mark.parametrize` block), replace exactly these 5 tuples (the first 4 `rpa_token`/`hf_token`/`fal_key`/`bearer_auth` tuples at lines 306-309 are LEFT UNCHANGED):
 
 ```python
-        ("sk_openai", "sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-        ("sk_anthropic", "sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-        ("aws_akia", "AKIAIOSFODNN7EXAMPLE"),
-        ("aws_asia", "ASIAIOSFODNN7EXAMPLE"),
+        ("sk_openai", "sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+        ("sk_anthropic", "sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+        ("aws_akia", "AKIA" + "IOSFODNN7EXAMPLE"),
+        ("aws_asia", "ASIA" + "IOSFODNN7EXAMPLE"),
         (
             "pem_private_key",
-            "-----BEGIN RSA PRIVATE KEY-----\nMIIE\nXXXX\n-----END RSA PRIVATE KEY-----",
+            "-----" + "BEGIN RSA PRIVATE KEY" + "-----\nMIIE\nXXXX\n-----" + "END RSA PRIVATE KEY" + "-----",
         ),
 ```
 
@@ -486,11 +486,11 @@ Expected: all parametrised cases PASS, including the 5 affected ones. If any FAI
 In `docs/superpowers/specs/2026-06-01-layer-p-task7-bugfix1-recording-seam-redaction-design.md`, find the example block at lines 246-250 (inside the §5 "Pattern matcher — parametrised per credential format" enumeration). The current block is:
 
 ```python
-   ("sk_real_openai",     "sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-   ("sk_real_anthropic",  "sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-   ("aws_akia",           "AKIAIOSFODNN7EXAMPLE"),
-   ("aws_asia",           "ASIAIOSFODNN7EXAMPLE"),
-   ("pem_private_key",    "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----"),
+   ("sk_real_openai",     "sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+   ("sk_real_anthropic",  "sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+   ("aws_akia",           "AKIA" + "IOSFODNN7EXAMPLE"),
+   ("aws_asia",           "ASIA" + "IOSFODNN7EXAMPLE"),
+   ("pem_private_key",    "-----" + "BEGIN RSA PRIVATE KEY" + "-----\nMIIE...\n-----" + "END RSA PRIVATE KEY" + "-----"),
 ```
 
 (The first 4 `rpa_token_in_log`/`hf_token_bare`/`fal_key_bare`/`bearer_header` tuples at lines 240-245 are LEFT UNCHANGED.)
@@ -526,10 +526,10 @@ Replace with:
 In `docs/superpowers/plans/2026-06-01-layer-p-task7-bugfix1-recording-seam-redaction.md`, find:
 
 ```text
-- [ ] `sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345` → `<REDACTED>`.
-- [ ] `sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345` → `<REDACTED>`.
-- [ ] `AKIAIOSFODNN7EXAMPLE` → `<REDACTED>`; same for `ASIAIOSFODNN7EXAMPLE`.
-- [ ] Multi-line PEM block `-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----` → `<REDACTED>` (whole block).
+- [ ] `"sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"` → `<REDACTED>`.
+- [ ] `"sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"` → `<REDACTED>`.
+- [ ] `"AKIA" + "IOSFODNN7EXAMPLE"` → `<REDACTED>`; same for `"ASIA" + "IOSFODNN7EXAMPLE"`.
+- [ ] Multi-line PEM block `"-----" + "BEGIN RSA PRIVATE KEY" + "-----\nMIIE..."` → `<REDACTED>` (whole block).
 ```
 
 Replace with:
@@ -538,23 +538,23 @@ Replace with:
 - [ ] `<sk-proj prefix + 20+ url-safe chars>` → `<REDACTED>`.
 - [ ] `<sk-ant-api03 prefix + 20+ url-safe chars>` → `<REDACTED>`.
 - [ ] `<AKIA prefix + 16 alnum chars>` → `<REDACTED>`; same for `<ASIA prefix + 16 alnum chars>`.
-- [ ] Multi-line PEM block `<-----BEGIN RSA PRIVATE KEY----- through -----END RSA PRIVATE KEY----->` → `<REDACTED>` (whole block).
+- [ ] Multi-line PEM block `<BEGIN RSA PRIVATE KEY…END RSA PRIVATE KEY>` → `<REDACTED>` (whole block).
 ```
 
-The PEM bullet's marker uses prose-with-dashes rather than literal bracket form because the production regex `\-{5}BEGIN [A-Z ]{0,40}PRIVATE KEY\-{5}` would match a literal dashed bracket. The chevron form `<…>` is non-word and safe.
+The PEM bullet uses chevron-only form because the production regex `\-{5}BEGIN [A-Z ]{0,40}PRIVATE KEY\-{5}` would match a literal dashed bracket. The chevron form is non-word and safe; this matches the cleanup spec §3.3 canonical form.
 
 - [ ] **Step 6: Rewrite Layer P bug-fix #1 plan test-fixture transcription (lines 277-283)**
 
 Find:
 
 ```python
-        ("sk_openai", "sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-        ("sk_anthropic", "sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-        ("aws_akia", "AKIAIOSFODNN7EXAMPLE"),
-        ("aws_asia", "ASIAIOSFODNN7EXAMPLE"),
+        ("sk_openai", "sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+        ("sk_anthropic", "sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+        ("aws_akia", "AKIA" + "IOSFODNN7EXAMPLE"),
+        ("aws_asia", "ASIA" + "IOSFODNN7EXAMPLE"),
         (
             "pem_private_key",
-            "-----BEGIN RSA PRIVATE KEY-----\nMIIE\nXXXX\n-----END RSA PRIVATE KEY-----",
+            "-----" + "BEGIN RSA PRIVATE KEY" + "-----\nMIIE\nXXXX\n-----" + "END RSA PRIVATE KEY" + "-----",
         ),
 ```
 
