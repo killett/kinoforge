@@ -31,7 +31,7 @@ the rewrite intent clear; readers wanting the exact original literal can
 GitHub Secret Scanning fired on commits from the Layer P Task 7 bug-fix #1
 sub-plan (the redaction-hardening work itself). The alert names an
 `<ASIA prefix + 16 alnum chars>` string as a "publicly leaked AWS Temporary
-Access Key" and flags three files on `main`:
+Access Key" and flags three externally-flagged files on `main` (the table below also lists this spec itself as a fourth in-scope file, added by the §"Spec amendment 2026-06-01" pivot — its Before blocks tripped the audit recursively until T1 rewrote them):
 
 | File | Lines | Strings flagged |
 |---|---|---|
@@ -67,7 +67,7 @@ regex *patterns* live in `tests/providers/conftest_runpod.py:191` as `re.Pattern
 literals (e.g., `r"\bAKIA[A-Z0-9]{16}\b"`); scanners do not fire on regex source
 because the literal substring `AKIA[A-Z0-9]{16}` is not a key shape.
 
-The three flagged files are exactly the spec, plan, and test that document or
+The three externally-flagged files are exactly the spec, plan, and test that document or
 exercise the redaction work. They quote literal credential-shaped strings as
 inputs to the system under test (or as documentation of what the system
 masks). That coupling is the root cause: the more thoroughly we document what
@@ -78,16 +78,17 @@ flag.
 
 ### 2.1. In scope
 
-1. **Forward-fix the three flagged files** so the source text no longer
+1. **Forward-fix the three externally-flagged files** (T2) so the source text no longer
    contains credential-prefix literals, while preserving the runtime values
    the tests depend on.
-2. **Add a permanent fail-closed lockdown audit** (`tests/test_source_audit.py`)
+2. **Forward-fix the cleanup spec itself** (T1) so it stops self-tripping the audit it specifies — see §"Spec amendment 2026-06-01" above.
+3. **Add a permanent fail-closed lockdown audit** (`tests/test_source_audit.py`)
    that walks documentation, tests, and repo-root markdown / env files and
    raises if any of them gain a literal credential-shaped string. The audit
    uses its own scanner-grade `_PATTERNS` list (see §3.4.2 and the Spec
    Amendment above), not the production `_CREDENTIAL_PATTERNS` — see §3.4.2
    for the rationale.
-3. **Document the post-merge UI step**: dismiss the GitHub Secret Scanning
+4. **Document the post-merge UI step**: dismiss the GitHub Secret Scanning
    alert as "Used in tests" / "False positive" once the fix is on `main`.
 
 ### 2.2. Out of scope
@@ -125,6 +126,7 @@ itself trip the audit — readers wanting the verbatim literals can
 `git show 49475a5:tests/providers/test_runpod_conftest.py`):
 
 ```python
+# lines 310–316 of test_runpod_conftest.py — tuples inside the @pytest.mark.parametrize call:
 ("sk_openai",       "sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
 ("sk_anthropic",    "sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
 ("aws_akia",        "AKIA" + "IOSFODNN7EXAMPLE"),
@@ -146,6 +148,7 @@ pattern under test, not a single specimen).
 Today's spec block (escaped as concat for spec-scan safety):
 
 ```python
+# lines 246–250 of the Layer P bug-fix #1 spec — tuples in the §5 "Pattern matcher" enumeration:
 ("sk_real_openai",     "sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
 ("sk_real_anthropic",  "sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
 ("aws_akia",           "AKIA" + "IOSFODNN7EXAMPLE"),
@@ -189,6 +192,7 @@ Three locations get the same shape-replacement pass as §3.2:
 Today's plan-doc AC checklist (escaped as concat for spec-scan safety):
 
 ```python
+# AC checklist bullets at lines 247–250 of the Layer P bug-fix #1 plan:
 - [ ] "sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345" → <REDACTED>.
 - [ ] "sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345" → <REDACTED>.
 - [ ] "AKIA" + "IOSFODNN7EXAMPLE" → <REDACTED>; same for "ASIA" + "IOSFODNN7EXAMPLE".
