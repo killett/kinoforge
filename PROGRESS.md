@@ -246,6 +246,57 @@ next smoke attempt would re-leak `RUNPOD_API_KEY` via the GraphQL `env[*].value`
 
 **Cost burn (item #3 attempt):** $0.25 across 2 leaked pods. Both auto-detected + destroyed via `list_instances()` audit immediately after smoke failure. Net Layer P spend: $0.013 (prior) + $0.25 = $0.263 / $1.99 cap. 87% budget remaining.
 
+**Layer Q — cross-engine cross-provider remote provisioning — ✅ CLOSED 2026-06-01 at HEAD `<T8-SHA>`.**
+
+Sub-spec + sub-plan + 8 task commits + per-task polish commits unblock Layer P Task 7 item #3 and ship the canonical cross-engine cross-provider bootstrap surface.
+
+- Sub-spec: `docs/superpowers/specs/2026-06-01-layer-q-remote-provisioning-design.md` (`edbe5a6`)
+- Sub-plan: `docs/superpowers/plans/2026-06-01-layer-q-remote-provisioning.md` (+ `.tasks.json`) (`ba3210d`)
+- T1 feat `c161bfd` + polish `c0f6fa7` — foundations (RenderedProvision + spec fields + boot_timeout + errors)
+- T2 feat `c4524dc` + polish `037f03b` — GenerationEngine ABC (render_provision + wait_for_ready)
+- T3 feat `19db21e` + polish `427a0bf` — ComfyUI render_provision + wait_for_ready + provision branch
+- T4 feat `b9f170d` + spec-fix `c47794b` + polish `5fe1b29` — Diffusers parity
+- T5 feat `f5a4995` + polish `1465997` — RunPod _create_pod base64 + dockerArgs encoding
+- T6 feat `3d613b6` + polish `fdf1441` — SkyPilot setup/run mapping + LocalProvider regression
+- T7 feat `63a749a` + polish `09e2e7c` — Orchestrator wiring (render → validate → spec.replace → wait_for_ready) + ABC seam + SkyPilot dual-exec resolution
+- T8 (this commit) — README + PROGRESS Layer Q closure block
+
+Test count 888 → 972 offline (+84 net new). typecheck/lint/pre-commit
+all-files clean. The 4 pre-existing failures in
+`tests/examples/test_runpod_comfyui_wan_graph.py` (intentional RED scaffold
+from `9d2a9bf`, see PROGRESS:191) are NOT regressions — they transition GREEN
+only when Layer P Task 7 item #3 resumes against Layer Q's HEAD.
+
+**Key design decisions:**
+
+- Approach B (engine renders + provider injects). No SSH dep; no paramiko.
+- Full bootstrap — script owns engine clone + custom-node clone + weight download.
+  Stock RunPod / SkyPilot images work without custom kinoforge images.
+- Engine owns `wait_for_ready` because engine knows its own readiness criterion
+  (ComfyUI: `/system_stats`; Diffusers: `/health`).
+- Credentials referenced via `$VAR` in the rendered script; never substituted as
+  literal values. Orchestrator validates `env_required` + lifts onto `spec.env`.
+- `engine.provision()` branches on `instance is None or instance.provider == "local"`;
+  local users see zero behavioural change.
+- Provider seam injection promoted from direct `_get_instance` attribute write to a
+  public ABC method `GenerationEngine.attach_get_instance(fn)` — orchestrator calls
+  the method instead of `# type: ignore[attr-defined]` on a private attribute.
+- SkyPilot dual-exec hazard resolved provider-side: `_strip_trailing_exec()` helper
+  removes the script's trailing `exec <run_cmd>` line before mapping to `Task.setup`
+  so setup can terminate normally; `run_cmd` flows into `Task.run` separately.
+- `cfg.lifecycle.boot_timeout` (no `_s` suffix — pydantic model_dump key); engine
+  reads `cfg["lifecycle"]["boot_timeout"]` from the dict.
+
+**Unblocks:** Layer P Task 7 item #3 (workflow API JSON + first green MP4) and
+item #4 (live unknowns surfacing). The item #3 sub-plan re-opens against Layer Q's
+HEAD; its blocker status updates accordingly.
+
+**Out of scope (deferred follow-ups):**
+- Ad-hoc remote shell (Approach A): `paramiko` / `sky exec` for arbitrary
+  post-provision commands.
+- kinoforge-published base images + `skip_engine_clone` toggle.
+- Pod boot-log tailing for debugging.
+
 **Resume protocol:**
 1. `git checkout build/layer-p`
 2. Read the plan + spec.
