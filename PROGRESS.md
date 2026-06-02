@@ -148,6 +148,34 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #9 | aria2c fast-path | Open |
 
 ## Single next action
+**Phase 27 — CI green recovery — ✅ CLOSED LOCALLY 2026-06-02 at HEAD `2737a2a` (merge `b101104`).**
+Awaiting `git push origin main && git push origin --delete chore/ci-green-recovery` from outside the
+container. Once pushed, final gate is the CI run on `main` for `b101104` going green; expected suite
+shape is `979 passed, 4 xfailed, 3 skipped`. Feature-branch CI run `26852220643` already completed
+green on both ubuntu-latest + macos-latest.
+
+Two-file change:
+- `tests/examples/test_runpod_comfyui_wan_graph.py` — module-level
+  `pytest.mark.xfail(strict=False, reason=…)` on the 4 RED lockdown tests committed in `9d2a9bf`.
+  Marker removal routed to Layer P Task 7 item #3's closure block per spec §6.
+- `.github/workflows/ci.yml` — `actions/checkout@v4 → @v6` and
+  `prefix-dev/setup-pixi@v0.8.1 → @v0.9.6` to clear Node 20 deprecation warning before
+  2026-06-16 forced-Node-24 default cutoff. T1 changelog gate confirmed v0.9.0 = Node 24 runtime
+  bump; v0.9.6 = additive `persist-credentials` input + deps; `cache:` and `pixi-version:` semantics
+  unchanged.
+
+Commits on `main` (7 ahead of `face9c5`):
+- `80dcad4` docs(spec): CI green recovery spec
+- `e07151a` docs(plan): CI green recovery plan + .tasks.json
+- `0d58330` chore(plan): tasks.json T1/T2/T3 closure
+- `d2ca956` test(examples): xfail RED scaffold (via merge)
+- `c15acd2` ci: bump checkout + setup-pixi pins (via merge)
+- `b101104` Merge `chore/ci-green-recovery` (--no-ff)
+- `2737a2a` chore(plan): tasks.json T4 closure
+
+Spec: `docs/superpowers/specs/2026-06-01-ci-green-recovery-design.md`
+Plan: `docs/superpowers/plans/2026-06-01-ci-green-recovery.md`
+
 **Layer P + Q both merged to `main` at `c63cbea`.** Item #3 of Layer P Task 7
 (workflow API JSON + first green MP4) remains the next live work; Layer Q
 closed its architectural blocker (`ComfyUIEngine.provision` was local-only).
