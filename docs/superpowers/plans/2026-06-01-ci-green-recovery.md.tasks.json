@@ -1,0 +1,36 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-01-ci-green-recovery.md",
+  "tasks": [
+    {
+      "id": 3,
+      "planId": "T1",
+      "subject": "T1: Verify setup-pixi v0.9.x changelog",
+      "status": "pending",
+      "description": "**Goal:** Pre-flight gate before touching the workflow. Confirm no breaking change in setup-pixi v0.8.1 → v0.9.6 invalidates the current `with: { pixi-version: latest, cache: true }` block.\n\n**Files:**\n- Read-only (web): https://github.com/prefix-dev/setup-pixi/releases (tags v0.9.0 through v0.9.6)\n\n**Acceptance Criteria:**\n- [ ] Release notes for v0.9.0 through v0.9.6 reviewed.\n- [ ] `cache: true` semantics confirmed unchanged.\n- [ ] `pixi-version: latest` still supported.\n- [ ] Findings recorded as a single line ready to paste into T3's commit body. If a breaking change is found, STOP and amend the spec §3.3 with a workaround before proceeding.\n\n**Verify:** Manual. Output is the implementer's plain-text findings appended to T3's commit body.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"gh release list --repo prefix-dev/setup-pixi --limit 10\", \"acceptanceCriteria\": [\"v0.9.0..v0.9.6 release notes reviewed\", \"cache: true semantics unchanged\", \"pixi-version: latest still supported\", \"findings recorded for T3 commit body\"]}\n```"
+    },
+    {
+      "id": 2,
+      "planId": "T2",
+      "subject": "T2: Add module-level xfail marker to RED scaffold",
+      "status": "pending",
+      "description": "**Goal:** Convert 4 known-RED lockdown tests in `tests/examples/test_runpod_comfyui_wan_graph.py` from `failed` to `xfailed` so the full suite exits 0. Preserves regression-lockdown intent (xfail still executes the body). Marker removal handled later as part of Layer P Task 7 item #3 closure.\n\n**Files:**\n- Modify: `tests/examples/test_runpod_comfyui_wan_graph.py`\n\n**Acceptance Criteria:**\n- [ ] `import pytest` added in the correct ruff import-group (third-party, after stdlib `pathlib`, before first-party `kinoforge.*`).\n- [ ] Module-level `pytestmark = pytest.mark.xfail(strict=False, reason=…)` declared once, after the `YAML_PATH = …` constant, before the first `def test_…`.\n- [ ] `reason=` cites Layer P Task 7 item #3 + PROGRESS reference + spec path `docs/superpowers/specs/2026-06-01-layer-p-task7-item3-workflow-api-json-design.md`.\n- [ ] File-level `pixi run test -q tests/examples/test_runpod_comfyui_wan_graph.py` reports `4 xfailed`. Exit 0.\n- [ ] Full suite `pixi run test -q` reports `979 passed, 4 xfailed, 3 skipped`. Exit 0.\n- [ ] `pixi run lint`, `pixi run typecheck`, `pixi run pre-commit run --files <file>` clean.\n- [ ] Single commit landed on `chore/ci-green-recovery` branch.\n\n**Verify:**\n\n```bash\npixi run test -q tests/examples/test_runpod_comfyui_wan_graph.py 2>&1 | tail -3\npixi run test -q 2>&1 | tail -3\n```\n\n**Steps:** See plan T2 in `docs/superpowers/plans/2026-06-01-ci-green-recovery.md` for full marker code, ruff rationale, and commit message template.\n\n```json:metadata\n{\"files\": [\"tests/examples/test_runpod_comfyui_wan_graph.py\"], \"verifyCommand\": \"pixi run test -q tests/examples/test_runpod_comfyui_wan_graph.py 2>&1 | tail -3\", \"acceptanceCriteria\": [\"import pytest added in correct ruff group\", \"module-level pytestmark = pytest.mark.xfail(strict=False, reason=...) declared\", \"reason cites item #3 + PROGRESS + spec path\", \"file-level pytest reports 4 xfailed exit 0\", \"full suite reports 979 passed 4 xfailed 3 skipped exit 0\", \"lint typecheck pre-commit clean\", \"single commit landed\"]}\n```"
+    },
+    {
+      "id": 1,
+      "planId": "T3",
+      "subject": "T3: Bump CI action pins to Node-24 line",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** Silence the Node 20 deprecation warning by moving `actions/checkout` and `prefix-dev/setup-pixi` onto Node-24-era versions, before the 2026-06-16 forced-Node-24 default cutoff.\n\n**Files:**\n- Modify: `.github/workflows/ci.yml`\n\n**Acceptance Criteria:**\n- [ ] `uses: actions/checkout@v4` → `uses: actions/checkout@v6`.\n- [ ] `uses: prefix-dev/setup-pixi@v0.8.1` → `uses: prefix-dev/setup-pixi@v0.9.6`.\n- [ ] No other CI step changed.\n- [ ] T1's changelog findings included in the commit body.\n- [ ] `pixi run pre-commit run --files .github/workflows/ci.yml` clean.\n- [ ] Single commit landed on `chore/ci-green-recovery` branch.\n\n**Verify:**\n\n```bash\ngrep -nE 'uses: (actions/checkout|prefix-dev/setup-pixi)' .github/workflows/ci.yml\npixi run pre-commit run --files .github/workflows/ci.yml 2>&1 | tail -5\n```\n\n**Steps:** See plan T3 in `docs/superpowers/plans/2026-06-01-ci-green-recovery.md` — exact Edit old/new strings + commit message template.\n\n```json:metadata\n{\"files\": [\".github/workflows/ci.yml\"], \"verifyCommand\": \"grep -nE 'uses: (actions/checkout|prefix-dev/setup-pixi)' .github/workflows/ci.yml\", \"acceptanceCriteria\": [\"checkout@v4 bumped to @v6\", \"setup-pixi@v0.8.1 bumped to @v0.9.6\", \"no other CI step changed\", \"T1 changelog findings in commit body\", \"pre-commit clean on file\", \"single commit landed\"]}\n```"
+    },
+    {
+      "id": 4,
+      "planId": "T4",
+      "subject": "T4: Push feature branch + observe green CI + merge",
+      "status": "pending",
+      "blockedBy": [1, 2],
+      "description": "**Goal:** Final integration. Push the two-commit feature branch, watch both `Test (ubuntu-latest)` + `Test (macos-latest)` jobs go green, confirm Node 20 warning is gone, then merge `chore/ci-green-recovery` into `main` with `--no-ff` and confirm CI on `main` is green.\n\n**Files:**\n- No edits. Branch + push + observation + merge only.\n\n**Acceptance Criteria:**\n- [ ] Feature branch `chore/ci-green-recovery` exists with exactly the T2 + T3 commits (`git log --oneline main..HEAD`).\n- [ ] Branch pushed via `git push -u origin chore/ci-green-recovery`.\n- [ ] Feature-branch CI: both `Test (ubuntu-latest)` AND `Test (macos-latest)` jobs report `conclusion: success`.\n- [ ] No `Node.js 20 actions are deprecated` string in the workflow log.\n- [ ] Merge into `main` via `gh pr merge --merge --no-ff --delete-branch` (or local `git merge --no-ff`).\n- [ ] CI on `main` for the merge commit is GREEN.\n- [ ] Optional: short closure block appended to `PROGRESS.md` recording the merge SHA + final suite count.\n\n**Verify:**\n\n```bash\ngh run list --branch chore/ci-green-recovery --limit 1\ngh run view --log <run-id> | grep -i \"Node.js 20\" || echo \"PASS: no Node 20 warning\"\ngh run view <run-id> --json conclusion -q .conclusion   # expect: success\n# After merge:\ngh run list --branch main --limit 1\n```\n\n**Steps:** See plan T4 in `docs/superpowers/plans/2026-06-01-ci-green-recovery.md` for full `gh pr create` / `git merge --no-ff` commands + PR body template + PROGRESS.md closure-block guidance.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"gh run list --branch chore/ci-green-recovery --limit 1\", \"acceptanceCriteria\": [\"feature branch contains T2 + T3 commits\", \"branch pushed\", \"both ubuntu and macos jobs report success\", \"no Node 20 warning in log\", \"merged into main via --no-ff\", \"CI on main for merge commit is green\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-01T00:00:00-07:00"
+}
