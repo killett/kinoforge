@@ -411,6 +411,25 @@ class GenerationEngine(ABC):
             f"{type(self).__name__} does not support remote provisioning"
         )
 
+    def attach_get_instance(
+        self,
+        get_instance: Callable[[str], Instance],
+    ) -> None:
+        """Wire the provider's ``get_instance`` lookup onto this engine.
+
+        The orchestrator calls this immediately after ``provider.create_instance``
+        and before ``engine.provision`` so that :meth:`wait_for_ready` can poll
+        the provider for status updates between HTTP-ready checks.
+
+        Default impl sets ``self._get_instance``; engines that don't need the
+        seam (e.g. HostedAPIEngine, FakeEngine) can keep the default — the
+        write is harmless when ``wait_for_ready`` is never called.
+
+        Args:
+            get_instance: Provider seam — ``(instance_id) -> Instance``.
+        """
+        self._get_instance = get_instance  # noqa: SLF001
+
     def wait_for_ready(
         self,
         instance: Instance,

@@ -313,6 +313,12 @@ def _provision_instance_and_build_backend(
 
     Raises:
         CapacityError: ``find_offers`` returned an empty list.
+        AuthError: A var in ``rendered.env_required`` is absent from *creds*.
+            Raised before ``create_instance`` is called.
+        ProvisionFailed: Engine boot script crashed; instance already destroyed.
+        ProvisionTimeout: Ready check timed out; instance already destroyed.
+        CapabilityMismatch: Engine rejected its own capability key; instance destroyed.
+        ValidationError: Spec validation failed; instance destroyed.
     """
     hw_reqs = cfg.hardware_requirements()
     offers = resolved_provider.find_offers(hw_reqs)
@@ -362,7 +368,7 @@ def _provision_instance_and_build_backend(
         instance = resolved_provider.get_instance(instance.id)
 
     # NEW — Layer Q: wire provider.get_instance onto engine before engine.provision
-    resolved_engine._get_instance = resolved_provider.get_instance  # type: ignore[attr-defined]
+    resolved_engine.attach_get_instance(resolved_provider.get_instance)
 
     try:
         _provision_compute_once(

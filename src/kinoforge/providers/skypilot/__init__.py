@@ -107,6 +107,33 @@ class _SkyClientProtocol(Protocol):
 # Status conversion
 # ---------------------------------------------------------------------------
 
+
+def _strip_trailing_exec(script: str) -> str:
+    """Strip a final line of the form `[<prefix> && ]exec <args>` from *script*.
+
+    ``RenderedProvision.script`` (Layer Q) ends with an ``exec <run_cmd>`` line
+    so the run process becomes PID 1 on RunPod's single-dockerArgs path. On
+    SkyPilot, ``Task.setup`` must terminate so ``Task.run`` can start — the
+    trailing ``exec`` would prevent that. This helper removes the last line if
+    it contains an ``exec`` invocation; otherwise the script is returned
+    unchanged.
+
+    Args:
+        script: The rendered provision script.
+
+    Returns:
+        Script with the trailing ``exec`` line removed (or unchanged if no
+        ``exec`` is found on the last non-empty line).
+    """
+    lines = script.rstrip("\n").split("\n")
+    if not lines:
+        return script
+    last = lines[-1]
+    if " exec " in last or last.startswith("exec ") or " && exec " in last:
+        return "\n".join(lines[:-1])
+    return script
+
+
 _SKY_STATUS_MAP: dict[str, str] = {
     "UP": "ready",
     "INIT": "starting",
@@ -274,17 +301,16 @@ class SkyPilotProvider(ComputeProvider):
             "env": dict(spec.env),
             "tags": dict(spec.tags),
         }
-        # Layer Q dual-exec hazard: render_provision conventionally ends the script
-        # with `exec <run_cmd>` (designed for RunPod's single dockerArgs slot). On
-        # SkyPilot, Task.setup must TERMINATE so Task.run can start — but `exec`
-        # replaces the setup shell with the long-running process, so setup never
-        # returns. The orchestrator (Task 7) is responsible for not setting BOTH
-        # provision_script AND run_cmd on a SkyPilot spec: it should either route
-        # the script-with-exec entirely through Task.setup with run_cmd=None, or
-        # strip the trailing exec from the script when also setting run_cmd. This
-        # provider trusts the orchestrator and maps both fields verbatim.
+        # Layer Q: provision_script ends with `exec <run_cmd>` (RunPod convention),
+        # but SkyPilot needs Task.setup to terminate so Task.run can start. The
+        # trailing exec line is stripped via _strip_trailing_exec below; run_cmd
+        # becomes Task.run independently.
+        #
+        # Layer Q dual-exec hazard resolution: the script's trailing `exec <run_cmd>`
+        # line is stripped before it becomes Task.setup so setup can terminate
+        # normally; spec.run_cmd carries the long-running process into Task.run.
         if spec.provision_script:
-            task_config["setup"] = spec.provision_script
+            task_config["setup"] = _strip_trailing_exec(spec.provision_script)
         if spec.run_cmd:
             task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
         result: dict[str, Any] = sky.launch(task_config, autostop=autostop_minutes)
