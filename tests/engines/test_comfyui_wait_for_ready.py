@@ -87,6 +87,25 @@ def test_wait_for_ready_raises_provision_failed_on_terminal_status() -> None:
     assert "terminated" in str(exc_info.value)
 
 
+def test_wait_for_ready_raises_provision_failed_on_empty_endpoints() -> None:
+    """No endpoints means we cannot build the ready URL — fast-fail with clear message."""
+    inst = Instance(
+        id="pod-empty",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+    )
+    with pytest.raises(ProvisionFailed, match="no endpoints"):
+        ComfyUIEngine(probe_profile=None).wait_for_ready(  # type: ignore[arg-type]
+            inst,
+            http_get=lambda _: {},
+            sleep=lambda _: None,
+            get_instance=lambda _: inst,
+            timeout_s=60.0,
+        )
+
+
 def test_wait_for_ready_raises_provision_timeout_after_deadline() -> None:
     """Endpoint never comes up → deadline crossed → ProvisionTimeout."""
     inst = _instance("starting")

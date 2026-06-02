@@ -166,3 +166,36 @@ def test_render_provision_port_defaults_to_8188_when_absent() -> None:
     cfg["engine"]["comfyui"]["launch_args"] = ["--listen", "0.0.0.0"]
     rp = _make_engine().render_provision(cfg)
     assert rp.ports == ["8188"]
+
+
+def test_render_provision_civitai_model_stubs_resolved_url_and_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CivitAI path: source.resolve hits stubbed fetch, returns artifact with Bearer $CIVITAI_TOKEN."""
+    import kinoforge.sources.civitai as civitai_mod
+    from kinoforge.core.interfaces import Artifact
+
+    # Stub the CivitAI source's resolve to skip live HTTP.
+    def _fake_resolve(self, ref, creds):  # noqa: ANN001
+        return [
+            Artifact(
+                filename="civitai_model.safetensors",
+                url="https://civitai.com/api/download/models/123",
+                headers={"Authorization": "Bearer $CIVITAI_TOKEN"},
+            )
+        ]
+
+    monkeypatch.setattr(civitai_mod.CivitAISource, "resolve", _fake_resolve)
+    import kinoforge.sources.civitai  # noqa: F401
+
+    cfg = _minimal_cfg()
+    cfg["models"] = [
+        {
+            "src": "civitai:123",
+            "target": "checkpoints",
+        }
+    ]
+    rp = _make_engine().render_provision(cfg)
+    assert "CIVITAI_TOKEN" in rp.env_required
+    assert '-H "Authorization: Bearer $CIVITAI_TOKEN"' in rp.script
+    assert "models/checkpoints/civitai_model.safetensors" in rp.script
