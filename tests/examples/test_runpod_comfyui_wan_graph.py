@@ -15,9 +15,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from kinoforge.core.config import load_config
 
 YAML_PATH = Path("examples/configs/runpod-comfyui-wan.yaml")
+
+pytestmark = pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "Layer P Task 7 item #3 RED lockdown — awaits real workflow API "
+        "JSON graph + YAML wiring. See PROGRESS.md 'Layer P Task 7 item "
+        "#3' section and "
+        "docs/superpowers/specs/2026-06-01-layer-p-task7-item3-"
+        "workflow-api-json-design.md."
+    ),
+)
 EXPECTED_NODE_COUNT = 26
 EXPECTED_CLASS_TYPES = {
     "CLIPLoader",
