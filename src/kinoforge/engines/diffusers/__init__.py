@@ -518,6 +518,10 @@ class DiffusersEngine(GenerationEngine):
             ProvisionFailed: Pod entered terminal status before ready.
             ProvisionTimeout: ``timeout_s`` elapsed without a successful ready check.
         """
+        if not instance.endpoints:
+            raise ProvisionFailed(
+                f"pod {instance.id!r} has no endpoints — cannot construct ready URL"
+            )
         port_key = next(iter(instance.endpoints), "8000")
         base = instance.endpoints.get(port_key, "")
         ready_url = f"{base.rstrip('/')}/health"
