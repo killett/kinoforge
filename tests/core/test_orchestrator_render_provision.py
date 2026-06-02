@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -242,18 +241,13 @@ def test_orchestrator_destroys_on_provision_timeout(
 def test_orchestrator_wires_get_instance_onto_engine_before_provision(
     fake_engine: MagicMock, fake_provider: MagicMock, tmp_path: Path
 ) -> None:
-    """engine._get_instance is set to provider.get_instance before engine.provision runs."""
+    """attach_get_instance is called with provider.get_instance before engine.provision runs."""
     creds = MagicMock()
     creds.get = MagicMock(return_value="hf_REAL")
     cfg = _make_cfg()
     store = MagicMock()
     key = MagicMock()
     key.derive.return_value = "deadbeef"
-
-    def _provision_check(instance: Any, cfg_dict: Any) -> None:
-        assert fake_engine._get_instance is fake_provider.get_instance
-
-    fake_engine.provision.side_effect = _provision_check
 
     _provision_instance_and_build_backend(
         resolved_engine=fake_engine,
@@ -266,3 +260,4 @@ def test_orchestrator_wires_get_instance_onto_engine_before_provision(
         state_dir=tmp_path,
         for_discovery=False,
     )
+    fake_engine.attach_get_instance.assert_called_with(fake_provider.get_instance)

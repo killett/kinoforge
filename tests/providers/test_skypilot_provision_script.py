@@ -105,3 +105,34 @@ def test_create_instance_with_only_run_cmd_omits_setup_key() -> None:
     task_config = sky.launches[0][0]
     assert "setup" not in task_config
     assert task_config["run"] == "python main.py"
+
+
+def test_create_instance_strips_trailing_exec_from_setup_script() -> None:
+    """provision_script ending in `exec <cmd>` has that line removed in Task.setup."""
+    sky = _FakeSky()
+    p = SkyPilotProvider(sky_client=sky)
+    script = (
+        "set -euo pipefail\n"
+        "cd /workspace\n"
+        "git clone --depth 1 https://example/x.git\n"
+        "cd /workspace/ComfyUI && exec python main.py --port 8188\n"
+    )
+    spec = InstanceSpec(
+        image="img:latest",
+        provision_script=script,
+        run_cmd=["python", "main.py", "--port", "8188"],
+    )
+    p.create_instance(spec)
+    task_config = sky.launches[0][0]
+    assert "exec " not in task_config["setup"], task_config["setup"]
+    assert "python main.py" in task_config["run"]
+
+
+def test_create_instance_preserves_script_without_trailing_exec() -> None:
+    """provision_script without a trailing exec line is passed through unchanged."""
+    sky = _FakeSky()
+    p = SkyPilotProvider(sky_client=sky)
+    script = "set -euo pipefail\necho preparing\n"
+    spec = InstanceSpec(image="img:latest", provision_script=script)
+    p.create_instance(spec)
+    assert sky.launches[0][0]["setup"] == script
