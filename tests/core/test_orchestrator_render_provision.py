@@ -15,6 +15,7 @@ from kinoforge.core.errors import (
 from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
+    Lifecycle,
     Offer,
     RenderedProvision,
 )
@@ -68,11 +69,12 @@ def fake_provider() -> MagicMock:
 def _make_cfg() -> MagicMock:
     """Build a MagicMock cfg that _cfg_dict(cfg) can handle."""
     cfg = MagicMock()
-    cfg.lifecycle.return_value = MagicMock(idle_timeout_s=3600.0, boot_timeout_s=900.0)
+    # Return a real Lifecycle dataclass so dataclasses.asdict() works in the orchestrator
+    # lifecycle-lift path.
+    cfg.lifecycle.return_value = Lifecycle(boot_timeout_s=900.0)
     cfg.hardware_requirements.return_value = MagicMock()
     cfg.compute = MagicMock(image="should-be-overridden")
     cfg.model_dump.return_value = {
-        "lifecycle": {"boot_timeout_s": 900.0, "idle_timeout_s": 3600.0},
         "engine": {},
         "models": [],
     }

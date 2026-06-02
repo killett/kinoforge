@@ -441,7 +441,7 @@ class DiffusersEngine(GenerationEngine):
         # Remote branch: script already ran via provider boot path; just wait.
         lifecycle_block = cfg.get("lifecycle", {})
         boot_timeout_s = float(
-            lifecycle_block.get("boot_timeout", 900.0)
+            lifecycle_block.get("boot_timeout_s", 900.0)
             if isinstance(lifecycle_block, dict)
             else 900.0
         )

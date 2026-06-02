@@ -162,6 +162,7 @@ def _provision_compute_once(
     store: ArtifactStore,
     state_dir: Path,
     capability_key_hex: str,
+    cfg_dict_override: dict[str, object] | None = None,
 ) -> None:
     """Run ``provisioner.provision`` exactly once per ``(instance, capability_key)``.
 
@@ -188,6 +189,11 @@ def _provision_compute_once(
             (``<state_dir>/instances/<instance.id>/.provisioned``) and into
             whose ``weights/`` subdirectory downloads are placed.
         capability_key_hex: Current ``cfg.capability_key().derive()`` hex.
+        cfg_dict_override: When provided, this dict is used as the cfg
+            argument passed to ``engine.provision`` (via provisioner) instead
+            of ``cfg.model_dump()``.  Callers that enrich ``cfg_dict`` (e.g.
+            with a top-level ``"lifecycle"`` key) should pass it here so
+            engines receive the augmented form.
     """
     effective_creds: CredentialProvider = (
         creds if creds is not None else EnvCredentialProvider()
@@ -209,9 +215,29 @@ def _provision_compute_once(
             engine.name,
             capability_key_hex[:12],
         )
+        # When the caller has enriched cfg_dict (e.g. added a top-level
+        # "lifecycle" key from the resolved Lifecycle dataclass), wrap the
+        # pydantic Config so that its model_dump() returns the enriched form.
+        # The provisioner reads cfg.models (from pydantic) for source
+        # resolution + downloads, then calls cfg.model_dump() to build the
+        # dict passed to engine.provision. Wrapping lets us intercept only
+        # model_dump() without altering the rest of the Config interface.
+        if cfg_dict_override is not None:
+
+            class _EnrichedCfgWrapper:
+                """Thin shim: delegates .models to pydantic cfg; overrides model_dump."""
+
+                models = cfg.models
+
+                def model_dump(self) -> dict[str, object]:  # noqa: D102
+                    return cfg_dict_override  # type: ignore[return-value]
+
+            effective_cfg: object = _EnrichedCfgWrapper()
+        else:
+            effective_cfg = cfg
         provisioner_provision(
             engine,
-            cfg,  # type: ignore[arg-type]
+            effective_cfg,  # type: ignore[arg-type]
             instance,
             creds=effective_creds,
             download_dir=state_dir / "weights",
@@ -333,6 +359,15 @@ def _provision_instance_and_build_backend(
     key_hash = _key_hash(key)
     cfg_dict = _cfg_dict(cfg)
 
+    # Lift the resolved Lifecycle dataclass onto cfg_dict["lifecycle"] so that
+    # engine.provision() can read canonical _s-suffixed interface keys
+    # (boot_timeout_s, idle_timeout_s, etc.) regardless of pydantic schema
+    # shape. cfg.model_dump() produces "lifecycle_cfg" at the top level and
+    # "boot_timeout" (no _s) under compute.lifecycle — neither satisfies the
+    # engine's lookup. This lift is the single authoritative source for the
+    # engine-facing lifecycle dict.
+    cfg_dict["lifecycle"] = dataclasses.asdict(lifecycle)
+
     # NEW — Layer Q: render provision payload + validate creds before create_instance
     rendered = resolved_engine.render_provision(cfg_dict)
     rendered_env: dict[str, str] = {}
@@ -379,6 +414,7 @@ def _provision_instance_and_build_backend(
             store=store,
             state_dir=state_dir,
             capability_key_hex=key.derive(),
+            cfg_dict_override=cfg_dict,
         )
     except (ProvisionFailed, ProvisionTimeout, CapabilityMismatch, ValidationError):
         resolved_provider.destroy_instance(instance.id)
@@ -522,6 +558,13 @@ def deploy_session(
     # ------------------------------------------------------------------
     key = cfg.capability_key()
     cfg_dict = _cfg_dict(cfg)
+    # Lift the resolved Lifecycle dataclass so engine.provision() sees the
+    # canonical _s-suffixed interface keys (boot_timeout_s etc.) regardless
+    # of pydantic schema shape (model_dump emits "lifecycle_cfg" + nested
+    # "boot_timeout" without the _s suffix).  Only lift when compute is
+    # present — hosted engines don't have a lifecycle block.
+    if cfg.compute is not None:
+        cfg_dict["lifecycle"] = dataclasses.asdict(cfg.lifecycle())
     _caller_supplied_instance = instance is not None
 
     # ------------------------------------------------------------------
