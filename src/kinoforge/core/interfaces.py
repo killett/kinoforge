@@ -58,6 +58,37 @@ class Lifecycle:
     budget_usd: float = 0.0
     max_workers: int = 1
     max_in_flight: int = 1
+    # NEW — Layer Q
+    boot_timeout_s: float = 900.0
+
+
+@dataclass(frozen=True)
+class RenderedProvision:
+    """Engine-emitted bootstrap payload for a remote pod / VM.
+
+    Attributes:
+        script: Self-contained bash script. Must be idempotent on warm pods.
+            Reference credentials only via ``$VAR``; never embed literal
+            credential values. The orchestrator lifts ``env_required``
+            entries onto ``spec.env`` before pod creation.
+        run_cmd: Long-running command launched after the script completes.
+            Convention: the script ends with ``exec <run_cmd>`` so the run
+            cmd becomes the container's PID 1.
+        image: Container image to boot. Defaults to a stock provider image
+            (see engine impl).
+        ports: Ports the engine listens on. Provider exposes via its native
+            mechanism (RunPod proxy, Sky port forward).
+        env_required: Names of credential env vars the script references.
+            Orchestrator validates each is reachable via the configured
+            ``CredentialProvider`` before ``provider.create_instance``;
+            lifts onto ``spec.env``.
+    """
+
+    script: str
+    run_cmd: list[str]
+    image: str
+    ports: list[str]
+    env_required: list[str]
 
 
 @dataclass
@@ -73,6 +104,9 @@ class InstanceSpec:
     env: dict[str, str] = field(default_factory=dict)
     tags: dict[str, str] = field(default_factory=dict)
     run_id: str = ""
+    # NEW — Layer Q
+    provision_script: str | None = None
+    run_cmd: list[str] | None = None
 
 
 @dataclass
