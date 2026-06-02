@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -24,15 +25,23 @@ from typing import Any
 
 from kinoforge.core import frames, registry
 from kinoforge.core.assets import asset_bytes, find_asset
-from kinoforge.core.errors import AssetFetchError, FrameExtractionError, ValidationError
+from kinoforge.core.errors import (
+    AssetFetchError,
+    FrameExtractionError,
+    ProvisionFailed,
+    ProvisionTimeout,
+    ValidationError,
+)
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
+    CredentialProvider,
     GenerationBackend,
     GenerationEngine,
     GenerationJob,
     Instance,
     ModelProfile,
+    RenderedProvision,
 )
 from kinoforge.engines.comfyui.nodes import clone_and_install
 
@@ -54,6 +63,84 @@ _MAX_POLL = 60
 
 #: Default ComfyUI installation root (resolved at runtime, NOT at import time).
 _DEFAULT_COMFYUI_ROOT = "ComfyUI"
+
+#: Stock container image used when cfg does not specify one.
+_DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+
+#: Seconds to sleep between ready-check polls in :func:`ComfyUIEngine.wait_for_ready`.
+_READY_POLL_INTERVAL_S: float = 5.0
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for render_provision / wait_for_ready
+# ---------------------------------------------------------------------------
+
+
+def _extract_env_var(header_value: str) -> str | None:
+    """Parse ``'Bearer $VAR'`` / ``'Bearer ${VAR}'`` and return the VAR name.
+
+    Args:
+        header_value: The value of an Authorization header, e.g.
+            ``"Bearer $HF_TOKEN"`` or ``"Bearer ${CIVITAI_TOKEN}"``.
+
+    Returns:
+        The bare variable name (e.g. ``"HF_TOKEN"``), or ``None`` when the
+        value doesn't match the expected pattern.
+    """
+    match = re.match(r"Bearer\s+\$\{?([A-Z_][A-Z0-9_]*)\}?", header_value)
+    return match.group(1) if match else None
+
+
+def _extract_port(launch_args: list[str]) -> str:
+    """Return the value following ``'--port'`` in *launch_args*, default ``'8188'``.
+
+    Args:
+        launch_args: The ComfyUI launch argument list.
+
+    Returns:
+        Port string (e.g. ``"8188"``).
+    """
+    for i, arg in enumerate(launch_args[:-1]):
+        if arg == "--port":
+            return launch_args[i + 1]
+    return "8188"
+
+
+class _NullCredProvider(CredentialProvider):
+    """Stub CredentialProvider used at render time; never returns real creds.
+
+    ``render_provision`` calls ``source.resolve(ref, creds)`` to compute URLs +
+    auth-header shapes (e.g. ``"Bearer $HF_TOKEN"``). The actual credential
+    value is lifted onto ``spec.env`` by the orchestrator, NOT into the script.
+    Returning ``"$KEY"`` here causes the source to produce the Authorization
+    header with the literal env-var reference, which bash expands at runtime.
+    """
+
+    def get(self, key: str) -> str | None:
+        """Return the literal env-var reference ``'$KEY'`` for any key.
+
+        Args:
+            key: Credential key (e.g. ``"HF_TOKEN"``).
+
+        Returns:
+            A string like ``"$HF_TOKEN"`` that bash will expand at runtime.
+        """
+        return f"${key}"
+
+
+def _default_get_instance(_: str) -> Instance:
+    """Stub seam — orchestrator must inject provider.get_instance for remote provision.
+
+    Args:
+        _: Instance ID (unused by the stub).
+
+    Raises:
+        NotImplementedError: Always — this seam must be wired by the orchestrator.
+    """
+    raise NotImplementedError(
+        "ComfyUIEngine.get_instance seam not wired — "
+        "orchestrator must inject provider.get_instance"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +587,8 @@ class ComfyUIEngine(GenerationEngine):
         probe_profile: ModelProfile = _DEFAULT_PROBE,
         flags_table: dict[str, dict[str, bool]] | None = None,
         comfyui_root: str = _DEFAULT_COMFYUI_ROOT,
+        # NEW — Layer Q: injected by orchestrator for remote provision
+        get_instance: Callable[[str], Instance] | None = None,
     ) -> None:
         """Initialise the engine with all I/O seams as injectable callables.
 
@@ -528,6 +617,10 @@ class ComfyUIEngine(GenerationEngine):
                 strings to ``dict[str, bool]`` strategy-flag dicts.
             comfyui_root: Absolute or relative path to the ComfyUI installation
                 directory.  Defaults to ``"ComfyUI"`` (relative to cwd).
+            get_instance: Callable ``(instance_id) -> Instance`` injected by the
+                orchestrator for remote provision status checks. When ``None``,
+                defaults to :func:`_default_get_instance` which raises
+                ``NotImplementedError`` to ensure the orchestrator wires it.
         """
         self._run_cmd = run_cmd
         self._file_exists = file_exists
@@ -541,11 +634,15 @@ class ComfyUIEngine(GenerationEngine):
         self._probe = probe_profile
         self._flags_table: dict[str, dict[str, bool]] = flags_table or {}
         self._comfyui_root = comfyui_root
+        self._get_instance: Callable[[str], Instance] = (
+            get_instance if get_instance is not None else _default_get_instance
+        )
 
     def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
-        """Clone nodes, install requirements, route models, launch ComfyUI.
+        """Clone nodes, install requirements, route models, launch ComfyUI (local).
 
-        Provision steps (in order):
+        For local instances (``instance is None`` or
+        ``instance.provider == "local"``), runs the original local code path:
 
         1. Clone each ``cfg["engine"]["comfyui"]["custom_nodes"][i]["git"]``
            and install its ``requirements.txt`` when present.
@@ -553,44 +650,214 @@ class ComfyUIEngine(GenerationEngine):
            ComfyUI model subdirectory.
         3. Launch ComfyUI with ``cfg["engine"]["comfyui"]["launch_args"]``.
 
+        For remote instances (any other provider), the boot script was already
+        executed via the provider's boot path; this method simply polls
+        :meth:`wait_for_ready` until ComfyUI reports ready.
+
         Args:
-            instance: The compute instance (unused; present for interface
-                compliance).
+            instance: The compute instance. ``None`` or ``provider == "local"``
+                triggers the local code path; any other provider triggers the
+                remote polling path.
             cfg: Runtime configuration dict.
         """
-        del instance  # not used; comfyui runs on the local machine
-        engine_block = cfg.get("engine", {})
+        if instance is None or instance.provider == "local":
+            # ---- local path (unchanged from pre-Layer-Q) ----
+            engine_block = cfg.get("engine", {})
+            comfyui_cfg: dict[str, Any] = (
+                engine_block.get("comfyui", {})
+                if isinstance(engine_block, dict)
+                else {}
+            )
+            custom_nodes: list[dict[str, Any]] = comfyui_cfg.get("custom_nodes", [])
+            launch_args: list[str] = comfyui_cfg.get("launch_args", [])
+            models_raw = cfg.get("models", [])
+            models: list[dict[str, Any]] = (
+                list(models_raw) if isinstance(models_raw, list) else []
+            )
+
+            # Step 1 — clone nodes and install requirements.
+            clone_and_install(
+                node_entries=custom_nodes,
+                comfyui_root=self._comfyui_root,
+                run_cmd=self._run_cmd,
+                file_exists=self._file_exists,
+            )
+
+            # Step 2 — route model files.
+            for entry in models:
+                src: str = entry["src"]
+                target: str = entry["target"]
+                subdir = TARGET_TO_SUBDIR.get(target, f"models/{target}")
+                dst_dir = os.path.join(self._comfyui_root, subdir)
+                self._route_file(src, dst_dir)
+
+            # Step 3 — launch ComfyUI.
+            self._run_cmd(
+                ["python", "main.py"] + list(launch_args),
+                self._comfyui_root,
+            )
+            return
+
+        # ---- remote path: script ran via provider boot; just wait for ready ----
+        lifecycle_block = cfg.get("lifecycle", {})
+        boot_timeout_s = float(
+            lifecycle_block.get("boot_timeout_s", 900.0)
+            if isinstance(lifecycle_block, dict)
+            else 900.0
+        )
+        self.wait_for_ready(
+            instance,
+            http_get=self._http_get,
+            sleep=self._sleep,
+            get_instance=self._get_instance,
+            timeout_s=boot_timeout_s,
+        )
+
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
+        """Render a self-contained first-boot bootstrap script for a remote pod.
+
+        The rendered script is idempotent on warm pods: each clone/download is
+        guarded by ``[ ! -d ... ]`` / ``[ ! -f ... ]``. Credentials are
+        referenced via ``$VAR`` and lifted onto ``spec.env`` by the
+        orchestrator; the script string never contains plaintext token values.
+
+        Args:
+            cfg: Runtime configuration dict, same shape as ``provision``.
+
+        Returns:
+            A :class:`RenderedProvision` ready for orchestrator wiring.
+        """
+        cfg_dict: dict[str, Any] = {k: v for k, v in cfg.items()}
+        engine_block = cfg_dict.get("engine", {})
         comfyui_cfg: dict[str, Any] = (
             engine_block.get("comfyui", {}) if isinstance(engine_block, dict) else {}
         )
-        custom_nodes: list[dict[str, Any]] = comfyui_cfg.get("custom_nodes", [])
-        launch_args: list[str] = comfyui_cfg.get("launch_args", [])
-        models_raw = cfg.get("models", [])
-        models: list[dict[str, Any]] = (
-            list(models_raw) if isinstance(models_raw, list) else []
-        )
+        repo: str = comfyui_cfg.get("repo", "https://github.com/comfyanonymous/ComfyUI")
+        branch: str = comfyui_cfg.get("branch", "master")
+        custom_nodes: list[dict[str, Any]] = list(comfyui_cfg.get("custom_nodes", []))
+        launch_args_raw: list[str] = list(comfyui_cfg.get("launch_args", []))
+        if not launch_args_raw:
+            launch_args_raw = ["--listen", "0.0.0.0", "--port", "8188"]  # noqa: S104
 
-        # Step 1 — clone nodes and install requirements.
-        clone_and_install(
-            node_entries=custom_nodes,
-            comfyui_root=self._comfyui_root,
-            run_cmd=self._run_cmd,
-            file_exists=self._file_exists,
-        )
+        image: str = comfyui_cfg.get("image", _DEFAULT_RUNPOD_IMAGE)
+        models_raw: list[dict[str, Any]] = list(cfg_dict.get("models", []))
 
-        # Step 2 — route model files.
-        for entry in models:
-            src: str = entry["src"]
+        lines: list[str] = [
+            "set -euo pipefail",
+            "cd /workspace",
+            f"[ ! -d ComfyUI ] && git clone --depth 1 --branch {branch} {repo} ComfyUI",
+            "cd ComfyUI && pip install -q -r requirements.txt",
+        ]
+
+        for node in custom_nodes:
+            node_url: str = node["git"]
+            node_name: str = node_url.rstrip("/").split("/")[-1]
+            if node_name.endswith(".git"):
+                node_name = node_name[: -len(".git")]
+            ref: str | None = node.get("ref")
+            if ref:
+                lines.append(
+                    f"[ ! -d custom_nodes/{node_name} ] && "
+                    f"git clone {node_url} custom_nodes/{node_name} && "
+                    f"cd custom_nodes/{node_name} && git checkout {ref} && cd ../.."
+                )
+            else:
+                lines.append(
+                    f"[ ! -d custom_nodes/{node_name} ] && "
+                    f"git clone --depth 1 {node_url} custom_nodes/{node_name}"
+                )
+            lines.append(
+                f"[ -f custom_nodes/{node_name}/requirements.txt ] && "
+                f"pip install -q -r custom_nodes/{node_name}/requirements.txt || true"
+            )
+
+        env_required: list[str] = []
+        for entry in models_raw:
+            src_ref: str = entry["src"]
             target: str = entry["target"]
             subdir = TARGET_TO_SUBDIR.get(target, f"models/{target}")
-            dst_dir = os.path.join(self._comfyui_root, subdir)
-            self._route_file(src, dst_dir)
+            source = registry.source_for_ref(src_ref)
+            artifacts = source.resolve(src_ref, _NullCredProvider())
+            artifact = artifacts[0]
+            filename: str = entry.get("filename") or artifact.filename
+            auth_header = ""
+            for hk, hv in (artifact.headers or {}).items():
+                if hk.lower() == "authorization":
+                    env_var = _extract_env_var(hv)
+                    if env_var:
+                        env_required.append(env_var)
+                        auth_header = f' -H "Authorization: Bearer ${env_var}"'
+            lines.append(f"mkdir -p {subdir}")
+            lines.append(
+                f"[ ! -f {subdir}/{filename} ] && "
+                f"curl -L --fail{auth_header} '{artifact.url}' -o {subdir}/{filename}"
+            )
 
-        # Step 3 — launch ComfyUI.
-        self._run_cmd(
-            ["python", "main.py"] + list(launch_args),
-            self._comfyui_root,
+        port: str = _extract_port(launch_args_raw)
+        run_cmd: list[str] = ["python", "main.py"] + launch_args_raw
+        lines.append(f"cd /workspace/ComfyUI && exec {' '.join(run_cmd)}")
+
+        return RenderedProvision(
+            script="\n".join(lines),
+            run_cmd=run_cmd,
+            image=image,
+            ports=[port],
+            env_required=sorted(set(env_required)),
         )
+
+    def wait_for_ready(
+        self,
+        instance: Instance,
+        *,
+        http_get: Callable[[str], dict[str, Any]],
+        sleep: Callable[[float], None],
+        get_instance: Callable[[str], Instance],
+        timeout_s: float,
+    ) -> None:
+        """Poll ``GET <comfyui>/system_stats`` until 200, status terminal, or timeout.
+
+        Port-key heuristic: prefer ``"8188"`` key in ``instance.endpoints``,
+        fall back to the first key present.
+
+        Args:
+            instance: The just-created compute instance.
+            http_get: HTTP GET seam — raises on error, returns dict on success.
+            sleep: Sleep seam used between polls.
+            get_instance: Provider lookup for status checks between polls.
+            timeout_s: Maximum total wait.
+
+        Raises:
+            ProvisionFailed: Pod entered terminal status before ready.
+            ProvisionTimeout: ``timeout_s`` elapsed without a successful ready check.
+        """
+        port_key = (
+            "8188"
+            if "8188" in instance.endpoints
+            else next(iter(instance.endpoints), "8188")
+        )
+        base = instance.endpoints.get(port_key, "")
+        ready_url = f"{base.rstrip('/')}/system_stats"
+
+        start = time.monotonic()
+        while True:
+            now = time.monotonic()
+            if now - start >= timeout_s:
+                raise ProvisionTimeout(
+                    f"engine ready check timed out after {timeout_s:.0f}s "
+                    f"for pod {instance.id!r}"
+                )
+            try:
+                http_get(ready_url)
+                return
+            except Exception:  # noqa: BLE001, S110
+                pass
+            current = get_instance(instance.id)
+            if current.status in ("terminated", "stopped"):
+                raise ProvisionFailed(
+                    f"pod {instance.id!r} entered terminal status "
+                    f"{current.status!r} before ready"
+                )
+            sleep(_READY_POLL_INTERVAL_S)
 
     def backend(self, instance: Instance | None, cfg: dict[str, Any]) -> ComfyUIBackend:
         """Return a :class:`ComfyUIBackend` wired to this engine's injected callables.
