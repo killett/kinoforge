@@ -83,6 +83,7 @@ class LifecycleConfig(BaseModel):
         job_timeout: Duration string or seconds; default 30m.
         time_buffer: Duration string or seconds; default 30m.
         max_lifetime: Duration string or seconds; default 5h.
+        boot_timeout: Duration string or seconds; default 15m (900 s).
         budget: Monthly/run budget in USD (required — no default).
         max_in_flight: Maximum concurrent jobs sent to a single backend.
             Default 1 (sequential, equivalent to old SequentialPool behaviour).
@@ -96,11 +97,15 @@ class LifecycleConfig(BaseModel):
     max_lifetime: float = 5 * 3600.0
     budget: float
     max_in_flight: int = 1
-    # NEW — Layer Q
     boot_timeout: float = 900.0
 
     @field_validator(
-        "idle_timeout", "job_timeout", "time_buffer", "max_lifetime", mode="before"
+        "idle_timeout",
+        "job_timeout",
+        "time_buffer",
+        "max_lifetime",
+        "boot_timeout",
+        mode="before",
     )
     @classmethod
     def _parse_duration_field(cls, v: str | float | int) -> float | str | int:
@@ -589,7 +594,7 @@ class Config(BaseModel):
 
         Prefers compute.lifecycle when present (non-hosted path);
         falls back to top-level lifecycle (hosted path).
-        Defaults are: idle_timeout=2h, job_timeout=30m, time_buffer=30m, max_lifetime=5h.
+        Defaults are: idle_timeout=2h, job_timeout=30m, time_buffer=30m, max_lifetime=5h, boot_timeout=15m.
 
         Returns:
             An interfaces.Lifecycle populated with seconds values.
@@ -606,7 +611,6 @@ class Config(BaseModel):
             max_lifetime_s=lc.max_lifetime,
             budget_usd=lc.budget,
             max_in_flight=lc.max_in_flight,
-            # NEW — Layer Q
             boot_timeout_s=lc.boot_timeout,
         )
 

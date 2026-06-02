@@ -58,7 +58,6 @@ class Lifecycle:
     budget_usd: float = 0.0
     max_workers: int = 1
     max_in_flight: int = 1
-    # NEW — Layer Q
     boot_timeout_s: float = 900.0
 
 
@@ -104,7 +103,6 @@ class InstanceSpec:
     env: dict[str, str] = field(default_factory=dict)
     tags: dict[str, str] = field(default_factory=dict)
     run_id: str = ""
-    # NEW — Layer Q
     provision_script: str | None = None
     run_cmd: list[str] | None = None
 
