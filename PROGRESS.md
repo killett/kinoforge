@@ -284,8 +284,13 @@ only when Layer P Task 7 item #3 resumes against Layer Q's HEAD.
 - SkyPilot dual-exec hazard resolved provider-side: `_strip_trailing_exec()` helper
   removes the script's trailing `exec <run_cmd>` line before mapping to `Task.setup`
   so setup can terminate normally; `run_cmd` flows into `Task.run` separately.
-- `cfg.lifecycle.boot_timeout` (no `_s` suffix — pydantic model_dump key); engine
-  reads `cfg["lifecycle"]["boot_timeout"]` from the dict.
+- `cfg.lifecycle.boot_timeout` (pydantic) → `cfg.lifecycle().boot_timeout_s` (resolved
+  Lifecycle dataclass); orchestrator lifts the resolved Lifecycle onto
+  `cfg_dict["lifecycle"]` (via `dataclasses.asdict(cfg.lifecycle())`) so engines read
+  canonical `_s`-suffix interface keys (`boot_timeout_s`, not `boot_timeout`).
+  `cfg.model_dump()` does NOT produce a top-level `"lifecycle"` key (it emits
+  `"lifecycle_cfg"` + nested `"boot_timeout"` under `compute.lifecycle`) — the lift
+  is the single authoritative source for the engine-facing lifecycle dict.
 
 **Unblocks:** Layer P Task 7 item #3 (workflow API JSON + first green MP4) and
 item #4 (live unknowns surfacing). The item #3 sub-plan re-opens against Layer Q's

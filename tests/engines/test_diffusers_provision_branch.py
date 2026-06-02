@@ -58,7 +58,8 @@ def test_provision_with_remote_provider_calls_wait_for_ready_not_local_body() ->
         get_instance=lambda _: inst,
         probe_profile=None,  # type: ignore[arg-type]
     )
-    engine.provision(inst, {"lifecycle": {"boot_timeout": 30.0}})
+    # Orchestrator lifts resolved Lifecycle onto cfg_dict["lifecycle"] with _s-suffixed keys.
+    engine.provision(inst, {"lifecycle": {"boot_timeout_s": 30.0}})
     assert run_cmd_calls == []
     assert http_get_calls == ["https://pod-d-8000.proxy.runpod.net/health"]
 
@@ -83,10 +84,12 @@ def test_provision_remote_default_boot_timeout_when_cfg_absent() -> None:
     assert seen_timeout == [900.0]
 
 
-def test_provision_remote_reads_boot_timeout_via_pydantic_dump_key() -> None:
-    """Production cfg_dict comes from Config.model_dump() with key 'boot_timeout' (no _s).
+def test_provision_remote_reads_boot_timeout_s_via_orchestrator_dict() -> None:
+    """Engine reads boot_timeout_s (_s suffix) matching the orchestrator-lifted Lifecycle dict.
 
-    Locks down that the engine reads the SAME key the orchestrator emits.
+    The orchestrator lifts dataclasses.asdict(cfg.lifecycle()) onto cfg_dict["lifecycle"]
+    before passing to engine.provision. The Lifecycle dataclass field is boot_timeout_s
+    (with _s), so engines must read that key — NOT the pydantic "boot_timeout" field name.
     """
     seen_timeout: list[float] = []
 
@@ -102,6 +105,6 @@ def test_provision_remote_reads_boot_timeout_via_pydantic_dump_key() -> None:
         created_at=0.0,
         endpoints={"8000": "https://pod-d-8000"},
     )
-    # Pydantic model_dump produces "boot_timeout" without the _s suffix.
-    engine.provision(inst, {"lifecycle": {"boot_timeout": 600.0}})
+    # Orchestrator dict uses _s-suffixed keys from the resolved Lifecycle dataclass.
+    engine.provision(inst, {"lifecycle": {"boot_timeout_s": 600.0}})
     assert seen_timeout == [600.0]

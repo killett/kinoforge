@@ -136,3 +136,27 @@ def test_create_instance_preserves_script_without_trailing_exec() -> None:
     spec = InstanceSpec(image="img:latest", provision_script=script)
     p.create_instance(spec)
     assert sky.launches[0][0]["setup"] == script
+
+
+def test_create_instance_strips_diffusers_bare_exec_line() -> None:
+    """Diffusers script ends with `exec python -m diffusers_server` (bare exec, no &&).
+
+    Regression for the dual-exec hazard — _strip_trailing_exec must handle both
+    ComfyUI's `cd ... && exec ...` shape AND Diffusers' bare `exec ...` shape.
+    """
+    sky = _FakeSky()
+    p = SkyPilotProvider(sky_client=sky)
+    script = (
+        "set -euo pipefail\n"
+        "pip install -q diffusers transformers\n"
+        "exec python -m diffusers_server\n"
+    )
+    spec = InstanceSpec(
+        image="img:latest",
+        provision_script=script,
+        run_cmd=["python", "-m", "diffusers_server"],
+    )
+    p.create_instance(spec)
+    task_config = sky.launches[0][0]
+    assert "exec " not in task_config["setup"], task_config["setup"]
+    assert task_config["run"] == "python -m diffusers_server"

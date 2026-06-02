@@ -29,6 +29,8 @@ from kinoforge.core.errors import (
     CapabilityMismatch,
     CapacityError,
     ProfileNotCached,
+    ProvisionFailed,
+    ProvisionTimeout,
     ValidationError,
 )
 from kinoforge.core.interfaces import (
@@ -2056,5 +2058,93 @@ def test_deploy_session_tags_ignored_when_instance_supplied(
         assert session.instance is premade
         assert dict(session.instance.tags) == original_tags
         assert "override" not in session.instance.tags
+
+
+# ---------------------------------------------------------------------------
+# AC #13 item #2 — caller-supplied instance NOT destroyed on provision errors
+# ---------------------------------------------------------------------------
+
+
+class _ProvisionFailedFakeEngine(_CountingFakeEngine):
+    """FakeEngine whose provision() always raises ProvisionFailed.
+
+    Used to drive the ProvisionFailed teardown branch inside deploy_session
+    on the caller-supplied-instance path.
+    """
+
+    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+        raise ProvisionFailed("synthetic boot crash")
+
+
+class _ProvisionTimeoutFakeEngine(_CountingFakeEngine):
+    """FakeEngine whose provision() always raises ProvisionTimeout.
+
+    Used to drive the ProvisionTimeout teardown branch inside deploy_session
+    on the caller-supplied-instance path.
+    """
+
+    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+        raise ProvisionTimeout("synthetic boot timeout")
+
+
+def test_deploy_session_with_caller_supplied_instance_skips_destroy_on_provision_failed(
+    tmp_path: Path,
+) -> None:
+    """Layer P Task 7 item #2 contract: caller-supplied instance is NOT destroyed on ProvisionFailed.
+
+    Bug catch: an overzealous teardown that ignores _caller_supplied_instance would
+    destroy the operator's warm pod when a provision error occurs — the operator owns
+    the lifecycle, so only re-raise is correct; destroy_instance must NOT be called.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _ProvisionFailedFakeEngine()
+    premade = _make_premade_instance()
+
+    with pytest.raises(ProvisionFailed):
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=spy,
+            engine=engine,
+            instance=premade,
+        ):
+            pass
+
+    assert spy.destroy_calls == [], (
+        f"destroy_instance must NOT be called on caller-supplied instance; "
+        f"got {spy.destroy_calls!r}"
+    )
+
+
+def test_deploy_session_with_caller_supplied_instance_skips_destroy_on_provision_timeout(
+    tmp_path: Path,
+) -> None:
+    """Layer P Task 7 item #2 contract: caller-supplied instance is NOT destroyed on ProvisionTimeout.
+
+    Symmetric to the ProvisionFailed case. The operator owns the pod lifecycle —
+    the orchestrator must propagate the exception without calling destroy_instance.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _ProvisionTimeoutFakeEngine()
+    premade = _make_premade_instance()
+
+    with pytest.raises(ProvisionTimeout):
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=spy,
+            engine=engine,
+            instance=premade,
+        ):
+            pass
+
+    assert spy.destroy_calls == [], (
+        f"destroy_instance must NOT be called on caller-supplied instance; "
+        f"got {spy.destroy_calls!r}"
+    )
 
     assert spy.create_calls == []
