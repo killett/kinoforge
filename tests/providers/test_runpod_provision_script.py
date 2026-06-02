@@ -115,6 +115,31 @@ def test_create_pod_strips_runpod_api_key_from_env() -> None:
     assert env_map["HF_TOKEN"] == "hf_xxxxxxxxxxxxxx"
 
 
+def test_create_pod_with_script_but_no_run_cmd_still_encodes_script() -> None:
+    """run_cmd is irrelevant to the provider — only spec.provision_script gates encoding.
+
+    The engine bakes `exec <run_cmd>` into the rendered script; the provider does not
+    look at spec.run_cmd at all.
+    """
+    captured, post = _capture_post()
+    p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
+    spec = InstanceSpec(
+        image="runpod/pytorch:latest",
+        offer=_offer(),
+        provision_script="set -euo pipefail\necho ok",
+        run_cmd=None,  # explicitly None — provider must still encode + assemble docker_args
+    )
+    p.create_instance(spec)
+    body = captured[0][1]
+    env_list = body["variables"]["input"]["env"]
+    env_map = {item["key"]: item["value"] for item in env_list}
+    assert "KINOFORGE_PROVISION_SCRIPT" in env_map
+    assert body["variables"]["input"]["dockerArgs"] == (
+        'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh '
+        '&& chmod +x /tmp/p.sh && bash /tmp/p.sh"'
+    )
+
+
 def test_create_pod_base64_envelope_does_not_match_credential_leak_patterns() -> None:
     """Base64-encoded script containing $HF_TOKEN literal does NOT look like a cred."""
     from tests.providers.conftest_runpod import _audit_for_leaks

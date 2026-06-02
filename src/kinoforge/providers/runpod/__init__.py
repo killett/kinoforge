@@ -451,6 +451,13 @@ class RunPodProvider(ComputeProvider):
     def _create_pod(self, spec: InstanceSpec) -> Instance:
         """Create a RunPod on-demand pod and return an Instance.
 
+        When ``spec.provision_script`` is set, it is base64-encoded into the
+        ``KINOFORGE_PROVISION_SCRIPT`` env var and ``dockerArgs`` is set to the
+        literal ``bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh
+        && chmod +x /tmp/p.sh && bash /tmp/p.sh"`` so the pod decodes + runs the
+        script at boot. When ``spec.provision_script`` is None, ``dockerArgs == ""``
+        (pre-Layer-Q default).
+
         Args:
             spec: Instance specification.
 
@@ -477,7 +484,6 @@ class RunPodProvider(ComputeProvider):
         # Safety: NEVER put the main API key in the pod env
         env.pop("RUNPOD_API_KEY", None)
 
-        # NEW — Layer Q: provision_script + run_cmd injection
         if spec.provision_script is not None:
             encoded = base64.b64encode(spec.provision_script.encode("utf-8")).decode(
                 "ascii"
