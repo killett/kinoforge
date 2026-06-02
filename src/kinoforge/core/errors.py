@@ -59,3 +59,11 @@ class LockError(KinoforgeError):
 
 class LockTimeout(LockError):
     """Raised when ``acquire(blocking=True, timeout_s=X)`` elapses without obtaining the lock."""
+
+
+class ProvisionFailed(KinoforgeError):
+    """Pod boot script crashed — provider reported terminal status before ready."""
+
+
+class ProvisionTimeout(KinoforgeError):
+    """Ready check never returned success within ``boot_timeout_s``."""

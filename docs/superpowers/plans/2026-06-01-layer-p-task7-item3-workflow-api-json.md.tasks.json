@@ -1,0 +1,66 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-01-layer-p-task7-item3-workflow-api-json.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Plan Task 1: Lockdown test scaffold + prompt_node_ids type regression (RED)",
+      "status": "completed",
+      "description": "**Goal:** Land four lockdown tests + one type-regression test as RED. They go GREEN at end of Plan Task 4 when real graph + YAML edits land. Fully offline.\n\n**Files:**\n- Create: `tests/examples/test_runpod_comfyui_wan_graph.py`\n\n**Acceptance Criteria:**\n- 4 tests exist with the exact names listed in plan \u00a7Task 1\n- pixi run pytest reports 4 FAILED\n- pre-commit clean\n\n**Verify:** `pixi run pytest tests/examples/test_runpod_comfyui_wan_graph.py -v` \u2192 4 failed.\n\n```json:metadata\n{\"files\": [\"tests/examples/test_runpod_comfyui_wan_graph.py\"], \"verifyCommand\": \"pixi run pytest tests/examples/test_runpod_comfyui_wan_graph.py -v\", \"acceptanceCriteria\": [\"4 tests exist\", \"4 FAIL against placeholder graph\", \"pre-commit clean\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Plan Task 2: Capture /object_info from warm pod (LIVE \u2014 user gate)",
+      "status": "deleted",
+      "blockedBy": [
+        1
+      ],
+      "description": "**Goal:** Boot warm RunPod pod via existing live smoke, capture ComfyUI /object_info response, commit as test fixture. Keep pod warm \u2014 Tasks 3/4/5 reuse it.\n\n**USER-ORDERED GATE \u2014 NON-SKIPPABLE.** Sub-spec \u00a78.3 checkpoint #1 (before pod boot). Spends real money. Confirm creds + budget first.\n\n**Files:**\n- Create: `tests/engines/fixtures/comfyui/object_info_wan21.json`\n- Modify: `.pre-commit-config.yaml` (large-files exclude)\n\n**Acceptance Criteria:**\n- Pod boots, ComfyUI :8188 reachable via proxy\n- Fixture exists, parses, \u2265 100 KB\n- Contains WanVideoSampler / WanVideoModelLoader / LoadImage etc.\n- Pod STAYS RUNNING (no destroy) for downstream tasks\n\n**Verify:** `test -f ... && jq -e 'has(\"WanVideoSampler\")' ...`\n\n```json:metadata\n{\"files\": [\"tests/engines/fixtures/comfyui/object_info_wan21.json\", \".pre-commit-config.yaml\"], \"verifyCommand\": \"test -f tests/engines/fixtures/comfyui/object_info_wan21.json && jq -e 'has(\\\"WanVideoSampler\\\")' tests/engines/fixtures/comfyui/object_info_wan21.json\", \"acceptanceCriteria\": [\"pod up\", \"fixture committed\", \"WanVideoSampler entry present\", \"fixture \u2265 100 KB\", \"pod stays running\", \"pre-commit large-files exclude added\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"step-1\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Plan Task 3: Hand-author API-format graph + parse-validate (LIVE \u2014 user gate)",
+      "status": "deleted",
+      "blockedBy": [
+        2
+      ],
+      "description": "**Goal:** Translate kijai desktop workflow into ComfyUI API format using captured /object_info schema. POST /prompt until 200. Commit final passing graph only.\n\n**USER-ORDERED GATE \u2014 NON-SKIPPABLE.** Sub-spec \u00a78.3 checkpoint #2 (after first /prompt 200). Pause after Step 5 + confirm parse-clean.\n\n**Files:**\n- Create: `examples/configs/runpod-comfyui-wan.graph.json` (replaces 166-byte placeholder)\n\n**Acceptance Criteria:**\n- JSON dict, exactly 26 entries\n- Semantic string IDs per locked mapping (sub-spec \u00a77.4)\n- Every entry has class_type + inputs\n- Every class_type in /object_info fixture\n- POST /prompt \u2192 200 with non-empty prompt_id\n- Queue cancelled, no render performed\n\n**Verify:** `jq -e 'length == 26 ...'` + recorded /prompt 200 response.\n\n```json:metadata\n{\"files\": [\"examples/configs/runpod-comfyui-wan.graph.json\"], \"verifyCommand\": \"jq -e 'length == 26 and ([.[] | has(\\\"class_type\\\") and has(\\\"inputs\\\")] | all)' examples/configs/runpod-comfyui-wan.graph.json\", \"acceptanceCriteria\": [\"26 entries\", \"semantic string IDs\", \"class_type + inputs on every entry\", \"every class_type in /object_info fixture\", \"POST /prompt \u2192 200\", \"queue cancelled, no render\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"step-5\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Plan Task 4: YAML wiring \u2192 real node IDs + Layer J dict type",
+      "status": "deleted",
+      "blockedBy": [
+        3
+      ],
+      "description": "**Goal:** Update example YAML so asset_node_ids.init_image: load_image, prompt_node_ids.positive: text_encode_pos (dict, not list). Task 1 lockdown tests transition RED \u2192 GREEN.\n\n**Files:**\n- Modify: `examples/configs/runpod-comfyui-wan.yaml`\n\n**Acceptance Criteria:**\n- asset_node_ids.init_image = load_image\n- prompt_node_ids is dict with positive: text_encode_pos\n- node_overrides is {}\n- Task 1 lockdown tests RED \u2192 GREEN (4 pass)\n- Full offline suite stays green\n\n**Verify:** `pixi run pytest tests/examples/test_runpod_comfyui_wan_graph.py -v` \u2192 4 passed.\n\n```json:metadata\n{\"files\": [\"examples/configs/runpod-comfyui-wan.yaml\"], \"verifyCommand\": \"pixi run pytest tests/examples/test_runpod_comfyui_wan_graph.py -v\", \"acceptanceCriteria\": [\"asset_node_ids.init_image=load_image\", \"prompt_node_ids is dict with positive key\", \"node_overrides empty dict\", \"Task 1 lockdown tests RED \u2192 GREEN\", \"full offline suite green\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Plan Task 5: Live full execution \u2192 green MP4 + bug-catch commits (LIVE \u2014 user gate)",
+      "status": "deleted",
+      "blockedBy": [
+        4
+      ],
+      "description": "**Goal:** Run kinoforge generate against warm pod with new graph + YAML. Drive ComfyUI through full Wan 2.1 i2v render. Capture non-empty MP4 with valid ftyp magic. Capture HTTP fixtures. Patch any production bugs (each = own commit + offline regression test).\n\n**USER-ORDERED GATE \u2014 NON-SKIPPABLE.** Sub-spec \u00a78.3 checkpoint #3 (after green MP4). Bug-catch budget: 5 distinct classes. Abort sub-plan if exceeded.\n\n**Files (may modify, zero or more):**\n- src/kinoforge/engines/comfyui/__init__.py, nodes.py\n- src/kinoforge/core/provision_state.py\n- src/kinoforge/sources/huggingface/__init__.py or TARGET_TO_SUBDIR\n- tests/engines/test_comfyui.py + fixtures/comfyui/*\n\n**Acceptance Criteria:**\n- Non-empty MP4 produced\n- First 12 bytes contain ftypisom/iso5/iso6/mp42\n- MP4 \u2265 100 KB\n- Every code patch has offline regression test (Layer N pattern)\n- Bug-catch budget \u2264 5 distinct classes\n- Pod destroyed at end\n- Total cost burn (Tasks 2\u20135) \u2264 $1.50\n\n**Verify:** Sub-spec AC5+AC6 from \u00a710. MP4 magic-byte check + cost-burn read.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/engines/comfyui/nodes.py\", \"src/kinoforge/core/provision_state.py\", \"tests/engines/test_comfyui.py\", \"tests/engines/fixtures/comfyui/\"], \"verifyCommand\": \"pixi run pytest tests/live/test_comfyui_wan_live.py -v -s\", \"acceptanceCriteria\": [\"non-empty MP4\", \"ftyp magic valid\", \"MP4 \u2265 100 KB\", \"every code patch has regression test\", \"bug-catch budget \u22645 not exceeded\", \"pod destroyed\", \"total cost \u2264 $1.50\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"step-4\", \"requireEvidenceTokens\": [[\"smoke-fail\", \"before-patch\", \"node_errors\"], [\"smoke-green\", \"after-patch\", \"ftypisom\", \"ftypiso5\", \"ftypiso6\", \"ftypmp42\"]]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Plan Task 6: /object_info fixture lockdown test",
+      "status": "deleted",
+      "blockedBy": [
+        5
+      ],
+      "description": "**Goal:** Add one offline test that loads /object_info fixture + asserts every class_type in committed graph also exists in fixture. Locks fixture as schema-reference-of-record.\n\n**Files:**\n- Modify: `tests/engines/test_comfyui.py`\n\n**Acceptance Criteria:**\n- New test test_object_info_fixture_covers_graph_class_types\n- Test passes\n- Full offline suite grows by 1 vs end-of-Task-4 baseline\n\n**Verify:** `pixi run pytest tests/engines/test_comfyui.py::test_object_info_fixture_covers_graph_class_types -v` \u2192 1 passed.\n\n```json:metadata\n{\"files\": [\"tests/engines/test_comfyui.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui.py::test_object_info_fixture_covers_graph_class_types -v\", \"acceptanceCriteria\": [\"test exists\", \"test passes\", \"no regressions in full offline suite\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Plan Task 7: PROGRESS.md closure row",
+      "status": "deleted",
+      "blockedBy": [
+        6
+      ],
+      "description": "**Goal:** Add item #3 closure block to PROGRESS.md (mirror item #1/#2 shape); mark item #3 + item #4 CLOSED in Pending Task 7 work list; update Branch state SHA table, test counts, cost burn.\n\n**Files:**\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:**\n- Closure block added with sub-spec/sub-plan paths, atomic commits, MP4 evidence, cost burn, bug-catch list, test count delta, key design decisions\n- item #3 + item #4 marked CLOSED in Pending list\n- Branch state SHA table updated\n- Test counts + cost burn lines updated\n\n**Verify:** `rg -n 'item #3.*CLOSED' PROGRESS.md` \u2192 at least 2 hits.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'item #3.*CLOSED' PROGRESS.md\", \"acceptanceCriteria\": [\"closure block added\", \"item #3 + item #4 marked CLOSED in Pending list\", \"Branch state SHA table updated\", \"test counts line updated\", \"cost burn updated\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-01T13:27:50.024045-07:00"
+}

@@ -25,9 +25,17 @@ import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.sources.http  # noqa: F401 — registers https:// source for provisioner
 from kinoforge.core.config import Config
-from kinoforge.core.errors import CapabilityMismatch, ValidationError
+from kinoforge.core.errors import (
+    CapabilityMismatch,
+    CapacityError,
+    ProfileNotCached,
+    ProvisionFailed,
+    ProvisionTimeout,
+    ValidationError,
+)
 from kinoforge.core.interfaces import (
     Artifact,
+    CapabilityKey,
     ConditioningAsset,
     GenerationJob,
     GenerationRequest,
@@ -35,10 +43,11 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     ModelProfile,
+    ModelProfileProvider,
     Offer,
     Segment,
 )
-from kinoforge.core.orchestrator import DeployResult, deploy, generate
+from kinoforge.core.orchestrator import DeployResult, deploy, deploy_session, generate
 from kinoforge.engines.fake import FakeBackend, FakeEngine
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.providers.local import LocalProvider
@@ -1185,6 +1194,208 @@ def test_generate_tears_down_compute_on_validate_spec_failure(
 
 
 # ---------------------------------------------------------------------------
+# Layer P Task 7 item #2: orchestrator offer-retry across CapacityError
+# ---------------------------------------------------------------------------
+
+
+class _OfferRetryProvider(LocalProvider):
+    """Fake provider scripted per-call to test offer-retry mechanics.
+
+    Configured with a list of offers from find_offers() and a parallel
+    list of outcomes:
+        "capacity" -> raise CapacityError(...) on create_instance
+        "value"    -> raise ValueError("non-capacity") on create_instance
+        "ok"       -> return a real Instance with id derived from the offer
+
+    Records every (offer, outcome) pair so tests can assert iteration
+    order and call count.
+    """
+
+    def __init__(self, offers: list[Offer], outcomes: list[str]) -> None:
+        super().__init__()
+        if len(offers) != len(outcomes):
+            raise AssertionError("offers and outcomes must be same length")
+        self._scripted_offers = offers
+        self._outcomes = outcomes
+        self._index = 0
+        self.calls: list[Offer] = []
+        # Track CapacityError exceptions so identity-check can verify __cause__
+        self.last_capacity_excs: list[CapacityError] = []
+
+    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+        return list(self._scripted_offers)
+
+    def create_instance(self, spec: InstanceSpec) -> Instance:
+        idx = self._index
+        self._index += 1
+        assert spec.offer is not None
+        self.calls.append(spec.offer)
+        outcome = self._outcomes[idx]
+        if outcome == "capacity":
+            exc = CapacityError(
+                f"RunPod has no current capacity for {spec.offer.gpu_type!r}"
+            )
+            self.last_capacity_excs.append(exc)
+            raise exc
+        if outcome == "value":
+            raise ValueError("non-capacity error from provider")
+        if outcome == "ok":
+            return Instance(
+                id=f"pod-{spec.offer.id}",
+                provider="local",
+                status="ready",  # skip the get_instance poll
+                created_at=0.0,
+                tags=dict(spec.tags),
+            )
+        raise AssertionError(f"unknown outcome {outcome!r}")
+
+
+def _three_offers() -> list[Offer]:
+    """Three distinct offers ordered by gpu_preference (already sorted)."""
+    return [
+        Offer(
+            id=f"offer-{i}",
+            gpu_type=f"GPU_{i}",
+            vram_gb=24,
+            cuda="12.0",
+            cost_rate_usd_per_hr=0.10 * (i + 1),
+            mode="pod",
+        )
+        for i in range(3)
+    ]
+
+
+def test_deploy_retries_next_offer_on_capacity_error() -> None:
+    """deploy() walks past the first CapacityError and uses offer[1].
+
+    Bug catch: if _create_with_offer_retry isn't wired into deploy(),
+    deploy crashes on the first CapacityError exactly as PROGRESS:182
+    describes. The chosen-instance id assertion locks the off-by-one
+    case where the helper returns offers[0]'s spec but advances past it.
+    """
+    offers = _three_offers()
+    provider = _OfferRetryProvider(offers, ["capacity", "ok", "ok"])
+    cfg = _compute_cfg()
+    engine = _make_engine()
+
+    result = deploy(cfg, provider=provider, engine=engine)
+
+    assert result.instance is not None
+    assert result.instance.id == "pod-offer-1"
+    assert [o.id for o in provider.calls] == ["offer-0", "offer-1"]
+
+
+def test_deploy_iterates_offers_in_input_order() -> None:
+    """deploy() walks offers in exact find_offers-returned order.
+
+    Bug catch: a future change that uses set() / reversed() / random
+    iteration silently breaks the cost-aware sort done by filter_offers.
+    Cheapest available offer would no longer be tried first.
+    """
+    offers = _three_offers()
+    # offer[3] would succeed if it existed; here we exhaust 2 then succeed
+    # to keep the assertion focused on iteration order only
+    provider = _OfferRetryProvider(offers, ["capacity", "capacity", "ok"])
+    cfg = _compute_cfg()
+    engine = _make_engine()
+
+    deploy(cfg, provider=provider, engine=engine)
+
+    assert [o.id for o in provider.calls] == ["offer-0", "offer-1", "offer-2"]
+
+
+def test_deploy_raises_capacity_error_when_all_offers_exhausted() -> None:
+    """Every offer raises CapacityError → final exc is CapacityError with chain.
+
+    Bug catch: raising ValueError, KinoforgeError, or a fresh
+    CapacityError without __cause__ blinds the operator to the last
+    real RunPod message. Identity check on __cause__ catches misuse
+    of `raise X from None` (or no `from` at all, which falls through to
+    the in-handler implicit chaining and wraps the wrong exception).
+    """
+    offers = _three_offers()
+    provider = _OfferRetryProvider(offers, ["capacity", "capacity", "capacity"])
+    cfg = _compute_cfg()
+    engine = _make_engine()
+
+    with pytest.raises(CapacityError) as exc_info:
+        deploy(cfg, provider=provider, engine=engine)
+
+    assert "3 offers exhausted" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, CapacityError)
+    # Identity: the chained cause IS the last per-offer exception
+    assert exc_info.value.__cause__ is provider.last_capacity_excs[-1]
+
+
+def test_deploy_does_not_retry_on_non_capacity_error() -> None:
+    """Non-CapacityError exceptions propagate after exactly 1 create call.
+
+    Bug catch: a too-broad `except Exception:` in the retry helper
+    would silently retry auth / config errors across every offer,
+    burning time and obscuring the real failure.
+    """
+    offers = _three_offers()
+    provider = _OfferRetryProvider(offers, ["value", "ok", "ok"])
+    cfg = _compute_cfg()
+    engine = _make_engine()
+
+    with pytest.raises(ValueError, match="non-capacity"):
+        deploy(cfg, provider=provider, engine=engine)
+
+    assert len(provider.calls) == 1, (
+        f"non-CapacityError must propagate immediately; "
+        f"got {len(provider.calls)} create_instance calls"
+    )
+
+
+def test_provision_instance_helper_retries_next_offer_on_capacity_error(
+    tmp_path: Path,
+) -> None:
+    """The deploy_session compute helper retries identically to deploy().
+
+    Tests `_provision_instance_and_build_backend` directly because it
+    is the actual site of the second `offers[0]` (PROGRESS:182 only
+    flagged deploy()'s site at line 626; this one at line 283 was
+    silently sharing the same bug). Tested at the helper level rather
+    than through `with deploy_session(...)` to avoid pulling in
+    provisioner / profile-cache machinery unrelated to offer-retry.
+
+    Bug catch: forgetting to rewire _provision_instance_and_build_backend
+    leaves generate() and batch_generate() broken on the same capacity
+    blip — a silent regression with no observable difference in deploy()
+    tests.
+    """
+    from kinoforge.core.orchestrator import _provision_instance_and_build_backend
+
+    offers = _three_offers()
+    provider = _OfferRetryProvider(offers, ["capacity", "ok", "ok"])
+    cfg = _compute_cfg()
+    engine = _make_engine()
+    store = LocalArtifactStore(tmp_path)
+
+    # Patch the in-helper provisioner to a no-op so the test focuses on
+    # the offer-retry mechanism rather than weights / profile cache I/O.
+    with patch(
+        "kinoforge.core.orchestrator._provision_compute_once",
+        return_value=None,
+    ):
+        instance, _backend = _provision_instance_and_build_backend(
+            resolved_engine=engine,
+            resolved_provider=provider,
+            cfg=cfg,
+            run_id="t",
+            key=cfg.capability_key(),
+            creds=None,
+            store=store,
+            state_dir=tmp_path,
+            for_discovery=False,
+        )
+
+    assert instance.id == "pod-offer-1"
+    assert [o.id for o in provider.calls] == ["offer-0", "offer-1"]
+
+
+# ---------------------------------------------------------------------------
 # Layer N regression: deploy() destroys pod on any post-create error
 # ---------------------------------------------------------------------------
 
@@ -1375,3 +1586,565 @@ def test_generate_threads_sink_into_stage(tmp_path: Path) -> None:
         f"spy.publish() must be called at least once when sink=spy; "
         f"got spy.calls={spy.calls!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer P Task 7 item #2: instance= + tags= kwarg tests
+# ---------------------------------------------------------------------------
+
+
+class _InstanceSupplyProvider(LocalProvider):
+    """LocalProvider spy that records create_instance + destroy_instance + find_offers.
+
+    Used to assert the orchestrator does NOT touch capacity/lifecycle APIs
+    when the caller supplies a pre-created Instance via ``instance=``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_calls: list[InstanceSpec] = []
+        self.destroy_calls: list[str] = []
+        self.find_offers_calls: int = 0
+
+    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
+        self.find_offers_calls += 1
+        return super().find_offers(reqs)
+
+    def create_instance(self, spec: InstanceSpec) -> Instance:
+        self.create_calls.append(spec)
+        return super().create_instance(spec)
+
+    def destroy_instance(self, instance_id: str) -> None:
+        self.destroy_calls.append(instance_id)
+        super().destroy_instance(instance_id)
+
+
+class _CountingFakeEngine(FakeEngine):
+    """FakeEngine spy that records every provision() + backend() call.
+
+    Asserts the warm-pod path still hits ``engine.provision`` (idempotent
+    via Layer I marker) and ``engine.backend`` on the caller-supplied
+    Instance.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            probe_profile=_probe_profile(),
+            declared_flags_map={},
+            required_spec_keys=set(),
+        )
+        self.provision_calls: list[Instance | None] = []
+        self.backend_calls: list[Instance | None] = []
+
+    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+        self.provision_calls.append(instance)
+        super().provision(instance, cfg)
+
+    def backend(self, instance: Instance | None, cfg: dict[str, object]) -> FakeBackend:
+        self.backend_calls.append(instance)
+        return super().backend(instance, cfg)
+
+
+class _CountingProfileProvider(ModelProfileProvider):
+    """ModelProfileProvider stub that counts discover() and verify() calls.
+
+    Begins empty — resolve() always raises ProfileNotCached on the first
+    request, forcing the discover() path. After discover(), subsequent
+    resolve() calls hit the in-memory cache.
+    """
+
+    def __init__(self) -> None:
+        self.discover_calls: int = 0
+        self.verify_calls: int = 0
+        self._cached: ModelProfile | None = None
+
+    def resolve(self, key: CapabilityKey) -> ModelProfile:
+        if self._cached is None:
+            raise ProfileNotCached(f"no profile for {key.derive()!r}")
+        return self._cached
+
+    def discover(
+        self,
+        key: CapabilityKey,
+        engine: Any,
+        backend: Any,
+    ) -> ModelProfile:
+        self.discover_calls += 1
+        probe = backend.inspect_capabilities()
+        self._cached = probe
+        return probe
+
+    def verify(
+        self,
+        profile: ModelProfile,
+        backend: Any,
+        *,
+        engine: Any = None,
+        key: Any = None,
+    ) -> None:
+        self.verify_calls += 1
+
+
+class _MismatchingProfileProvider(ModelProfileProvider):
+    """ModelProfileProvider stub whose verify() always raises CapabilityMismatch.
+
+    Used to drive the CapabilityMismatch teardown branch in deploy_session
+    on a cache-hit path (so verify runs).
+    """
+
+    def __init__(self, cached: ModelProfile) -> None:
+        self._cached = cached
+
+    def resolve(self, key: CapabilityKey) -> ModelProfile:
+        return self._cached
+
+    def discover(
+        self,
+        key: CapabilityKey,
+        engine: Any,
+        backend: Any,
+    ) -> ModelProfile:
+        return self._cached
+
+    def verify(
+        self,
+        profile: ModelProfile,
+        backend: Any,
+        *,
+        engine: Any = None,
+        key: Any = None,
+    ) -> None:
+        raise CapabilityMismatch("synthetic drift")
+
+
+class _RaisingValidateSpecFakeEngine(_CountingFakeEngine):
+    """FakeEngine whose validate_spec always raises ValidationError.
+
+    Drives the post-deploy_session ValidationError teardown branch inside
+    generate(). Inherits _CountingFakeEngine so we still see provision()
+    + backend() on the caller-supplied instance.
+    """
+
+    def validate_spec(self, job: GenerationJob) -> None:
+        raise ValidationError("synthetic spec failure")
+
+
+def _make_premade_instance() -> Instance:
+    """Build a fully-ready Instance dataclass for instance= kwarg tests.
+
+    Tags include caller-meaningful values so tests can assert they survive
+    untouched when ``tags=`` kwarg is ignored.
+    """
+    return Instance(
+        id="pod-premade-7b2",
+        provider="local",
+        status="ready",
+        created_at=0.0,
+        endpoints={},
+        tags={"kinoforge.layer": "layer-p-smoke", "mode": "pod"},
+        cost_rate_usd_per_hr=0.0,
+    )
+
+
+def _seed_profile_cache(store: LocalArtifactStore, cfg: Config) -> None:
+    """Populate JsonProfileCache for ``cfg.capability_key()`` with a probe.
+
+    Forces deploy_session onto the cache-hit branch (so verify() runs)
+    without needing a full real generate() warmup. Uses the public
+    ``JsonProfileCache.warm`` test seam — no private-API reach.
+    """
+    from kinoforge.core.profiles import JsonProfileCache
+
+    cache = JsonProfileCache(store)
+    cache.warm(cfg.capability_key(), _probe_profile())
+
+
+def test_deploy_session_with_supplied_instance_skips_create_and_find_offers(
+    tmp_path: Path,
+) -> None:
+    """instance= supplied + warm cache → no find_offers + no create_instance.
+
+    Bug catch: a missing instance= short-circuit in the cache-hit branch
+    silently re-creates a parallel pod even though the caller already
+    paid for one — the warm-reuse loop never converges. Asserts both
+    capacity hooks (find_offers, create_instance) AND the engine wiring
+    (provision, backend) still bind to the caller's Instance.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    _seed_profile_cache(store, cfg)
+
+    with deploy_session(
+        cfg, store=store, provider=spy, engine=engine, instance=premade
+    ) as session:
+        assert session.instance is premade
+        assert session.backend is not None
+
+    assert spy.find_offers_calls == 0
+    assert spy.create_calls == []
+    assert engine.provision_calls == [premade]
+    assert engine.backend_calls == [premade]
+
+
+def test_deploy_session_with_supplied_instance_runs_discover_on_cache_miss(
+    tmp_path: Path,
+) -> None:
+    """instance= + empty cache → engine.provision + discover both run; no create.
+
+    Bug catch: a too-eager short-circuit that also skips discover() would
+    leave the profile cache permanently empty across warm-reuse iterations
+    and force every call back through capability discovery — defeating
+    the perf benefit of warm reuse.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    profile_provider = _CountingProfileProvider()
+    premade = _make_premade_instance()
+
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=spy,
+        engine=engine,
+        profile_provider=profile_provider,
+        instance=premade,
+    ) as session:
+        assert session.instance is premade
+
+    assert spy.find_offers_calls == 0
+    assert spy.create_calls == []
+    assert engine.provision_calls == [premade]
+    assert profile_provider.discover_calls == 1
+    # verify is skipped on the just-discovered path
+    assert profile_provider.verify_calls == 0
+
+
+def test_deploy_session_supplied_instance_calls_engine_provision(
+    tmp_path: Path,
+) -> None:
+    """Discriminating: even on cache-hit, engine.provision must run for re-attached pod.
+
+    Bug catch: a short-circuit that also skips provision() defeats Layer
+    I's idempotent provisioning marker — the second warm-reuse iteration
+    can hit a pod whose weights were never re-confirmed after a process
+    restart, with no observable signal.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    _seed_profile_cache(store, cfg)
+
+    with deploy_session(
+        cfg, store=store, provider=spy, engine=engine, instance=premade
+    ):
+        pass
+
+    assert engine.provision_calls == [premade]
+
+
+def test_deploy_session_supplied_instance_skips_destroy_on_capability_mismatch(
+    tmp_path: Path,
+) -> None:
+    """CapabilityMismatch + instance= → destroy NOT called; mismatch propagates.
+
+    Bug catch: forgetting the _caller_supplied_instance guard inside the
+    CapabilityMismatch teardown destroys a pod the orchestrator does NOT
+    own, killing the operator's warm-reuse loop on the first drift
+    signal. Caller owns the lifecycle; orchestrator only re-raises.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    profile_provider = _MismatchingProfileProvider(cached=_probe_profile())
+    premade = _make_premade_instance()
+    _seed_profile_cache(store, cfg)
+
+    with pytest.raises(CapabilityMismatch):
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=spy,
+            engine=engine,
+            profile_provider=profile_provider,
+            instance=premade,
+        ):
+            pass
+
+    assert spy.destroy_calls == []
+
+
+def test_generate_with_supplied_instance_skips_destroy_on_validation_error(
+    tmp_path: Path,
+) -> None:
+    """ValidationError in generate + instance= → destroy NOT called.
+
+    Bug catch: the existing teardown wrapper in generate() destroys
+    session.instance on ValidationError. Without the caller-supplied
+    guard, a config typo by the smoke kills the operator's warm pod
+    every iteration.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _RaisingValidateSpecFakeEngine()
+    premade = _make_premade_instance()
+    request = GenerationRequest(prompt="hi", mode="t2v")
+
+    with pytest.raises(ValidationError):
+        generate(
+            cfg,
+            request,
+            store=store,
+            provider=spy,
+            engine=engine,
+            instance=premade,
+        )
+
+    assert spy.destroy_calls == []
+
+
+def test_generate_threads_instance_kwarg_to_deploy_session(
+    tmp_path: Path,
+) -> None:
+    """Discriminating: generate(instance=) → downstream provider.create_instance NOT called.
+
+    Bug catch: forgetting to thread instance= through the generate()->
+    deploy_session() handoff leaves the kwarg as a silent no-op; the
+    orchestrator still creates a fresh pod every call and the warm-reuse
+    smoke iteration loop never converges.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    request = GenerationRequest(prompt="hi", mode="t2v")
+
+    artifact = generate(
+        cfg,
+        request,
+        store=store,
+        provider=spy,
+        engine=engine,
+        instance=premade,
+    )
+
+    assert spy.create_calls == []
+    assert isinstance(artifact, Artifact)
+
+
+def test_deploy_session_threads_tags_into_instance_spec(
+    tmp_path: Path,
+) -> None:
+    """tags={"k":"v"} (no instance=) → orchestrator-built InstanceSpec.tags merged.
+
+    Bug catch: dropping the caller's tags= on the floor breaks the
+    smoke's pod-discovery contract (find_instance_by_tag relies on
+    the caller-set `kinoforge.layer` tag to re-attach across iterations).
+    Built-in tags (kinoforge_engine, kinoforge_key) must coexist; we
+    assert both survive.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=spy,
+        engine=engine,
+        tags={"kinoforge.layer": "layer-p-smoke", "mode": "pod"},
+    ):
+        pass
+
+    assert len(spy.create_calls) == 1
+    created_spec = spy.create_calls[0]
+    assert created_spec.tags["kinoforge.layer"] == "layer-p-smoke"
+    assert created_spec.tags["mode"] == "pod"
+    assert "kinoforge_engine" in created_spec.tags
+    assert "kinoforge_key" in created_spec.tags
+
+
+def test_deploy_session_threads_tags_into_instance_spec_on_cache_hit(
+    tmp_path: Path,
+) -> None:
+    """tags={"k":"v"} + warm cache → built InstanceSpec.tags merged on cache-hit branch.
+
+    Bug catch: threading tags= only through the cache-miss branch leaves
+    the steady-state warm-reuse path (cache hit, fresh pod) silently
+    dropping the caller's discovery tag, breaking find_instance_by_tag
+    for every iteration after the first.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    _seed_profile_cache(store, cfg)
+
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=spy,
+        engine=engine,
+        tags={"kinoforge.layer": "layer-p-smoke", "mode": "pod"},
+    ):
+        pass
+
+    assert len(spy.create_calls) == 1
+    created_spec = spy.create_calls[0]
+    assert created_spec.tags["kinoforge.layer"] == "layer-p-smoke"
+    assert created_spec.tags["mode"] == "pod"
+    assert "kinoforge_engine" in created_spec.tags
+    assert "kinoforge_key" in created_spec.tags
+
+
+def test_deploy_session_tags_empty_dict_is_noop(tmp_path: Path) -> None:
+    """tags={} (empty dict, not None) → InstanceSpec.tags carries built-ins only.
+
+    Bug catch: a truthy check (``if tags:``) regressed to an identity check
+    (``if tags is not None:``) would still call ``dict.update({})`` — a
+    no-op today, but a different bug surface if the merge logic grows.
+    Pins the truthy semantics.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+
+    with deploy_session(cfg, store=store, provider=spy, engine=engine, tags={}):
+        pass
+
+    assert len(spy.create_calls) == 1
+    created_spec = spy.create_calls[0]
+    assert set(created_spec.tags.keys()) == {"kinoforge_engine", "kinoforge_key"}
+
+
+def test_deploy_session_tags_ignored_when_instance_supplied(
+    tmp_path: Path,
+) -> None:
+    """tags= + instance= → caller's instance tags untouched; tags= kwarg ignored.
+
+    Bug catch: silently mutating caller.instance.tags after it has been
+    handed in violates the "caller owns the lifecycle" contract for
+    warm-pod reuse. The supplied tags= kwarg is for the cold-path
+    only — the merge has no defined meaning when the orchestrator never
+    builds an InstanceSpec.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+    premade = _make_premade_instance()
+    original_tags = dict(premade.tags)
+    _seed_profile_cache(store, cfg)
+
+    with deploy_session(
+        cfg,
+        store=store,
+        provider=spy,
+        engine=engine,
+        instance=premade,
+        tags={"override": "should-be-ignored"},
+    ) as session:
+        assert session.instance is premade
+        assert dict(session.instance.tags) == original_tags
+        assert "override" not in session.instance.tags
+
+
+# ---------------------------------------------------------------------------
+# AC #13 item #2 — caller-supplied instance NOT destroyed on provision errors
+# ---------------------------------------------------------------------------
+
+
+class _ProvisionFailedFakeEngine(_CountingFakeEngine):
+    """FakeEngine whose provision() always raises ProvisionFailed.
+
+    Used to drive the ProvisionFailed teardown branch inside deploy_session
+    on the caller-supplied-instance path.
+    """
+
+    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+        raise ProvisionFailed("synthetic boot crash")
+
+
+class _ProvisionTimeoutFakeEngine(_CountingFakeEngine):
+    """FakeEngine whose provision() always raises ProvisionTimeout.
+
+    Used to drive the ProvisionTimeout teardown branch inside deploy_session
+    on the caller-supplied-instance path.
+    """
+
+    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+        raise ProvisionTimeout("synthetic boot timeout")
+
+
+def test_deploy_session_with_caller_supplied_instance_skips_destroy_on_provision_failed(
+    tmp_path: Path,
+) -> None:
+    """Layer P Task 7 item #2 contract: caller-supplied instance is NOT destroyed on ProvisionFailed.
+
+    Bug catch: an overzealous teardown that ignores _caller_supplied_instance would
+    destroy the operator's warm pod when a provision error occurs — the operator owns
+    the lifecycle, so only re-raise is correct; destroy_instance must NOT be called.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _ProvisionFailedFakeEngine()
+    premade = _make_premade_instance()
+
+    with pytest.raises(ProvisionFailed):
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=spy,
+            engine=engine,
+            instance=premade,
+        ):
+            pass
+
+    assert spy.destroy_calls == [], (
+        f"destroy_instance must NOT be called on caller-supplied instance; "
+        f"got {spy.destroy_calls!r}"
+    )
+
+
+def test_deploy_session_with_caller_supplied_instance_skips_destroy_on_provision_timeout(
+    tmp_path: Path,
+) -> None:
+    """Layer P Task 7 item #2 contract: caller-supplied instance is NOT destroyed on ProvisionTimeout.
+
+    Symmetric to the ProvisionFailed case. The operator owns the pod lifecycle —
+    the orchestrator must propagate the exception without calling destroy_instance.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _ProvisionTimeoutFakeEngine()
+    premade = _make_premade_instance()
+
+    with pytest.raises(ProvisionTimeout):
+        with deploy_session(
+            cfg,
+            store=store,
+            provider=spy,
+            engine=engine,
+            instance=premade,
+        ):
+            pass
+
+    assert spy.destroy_calls == [], (
+        f"destroy_instance must NOT be called on caller-supplied instance; "
+        f"got {spy.destroy_calls!r}"
+    )
+
+    assert spy.create_calls == []

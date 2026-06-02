@@ -6,9 +6,14 @@ Provides three primitives used by the offline RunPod suite + live smoke:
   replay-style offline tests.
 - :class:`_RecordingHTTPSeam` — wrap real http_post / http_get callables, log
   every request, redact secrets, and dispatch responses to a fixed fixture
-  filename via a query-fragment table.
+  filename via a pluggable dispatch callable.
 - :func:`_redact` — recursively scrub any key whose name (whole-word, case
   insensitive) matches the protected vocab ``token / key / secret / password``.
+
+Module-level dispatcher constants:
+
+- :data:`_RUNPOD_DISPATCH` — GraphQL-query-based dispatcher (Layer N behaviour).
+- :data:`_COMFY_DISPATCH` — URL-pattern-based dispatcher for ComfyUI traffic.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ import re
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 _FIXTURE_DIR: Path = Path(__file__).parent / "fixtures" / "runpod"
 
@@ -52,6 +57,46 @@ _log = logging.getLogger(__name__)
 
 
 _PROTECTED_WORDS: frozenset[str] = frozenset({"token", "key", "secret", "password"})
+
+
+# Layer P Task 7 bug-fix #1 — Pass 1 (shape detector) vocab.
+# RunPod's GraphQL env shape stores credentials as ``[{"key": NAME, "value":
+# VAL}, ...]`` where NAME is the env-var identifier (e.g. ``RUNPOD_API_KEY``).
+# ``_is_credential_name`` recognises NAMEs that look like credentials so the
+# sibling ``value`` can be redacted.  This vocab is intentionally uppercase
+# and suffix/whole-word oriented because env var names are conventionally
+# uppercase snake_case (whereas ``_PROTECTED_WORDS`` above targets arbitrary
+# dict key names in any casing).
+_PROTECTED_NAME_SUFFIXES: frozenset[str] = frozenset(
+    {"_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PASSPHRASE"}
+)
+_PROTECTED_NAME_WHOLES: frozenset[str] = frozenset(
+    {"KEY", "TOKEN", "SECRET", "PASSWORD", "PASSPHRASE"}
+)
+
+
+def _is_credential_name(name: str) -> bool:
+    """Return True if *name* looks like a credential env var.
+
+    Match policy: uppercase the input, then return True when it equals one of
+    the bare whole-word forms (``KEY``, ``TOKEN``, ``SECRET``, ``PASSWORD``,
+    ``PASSPHRASE``) OR ends with one of the suffix forms (``_KEY``,
+    ``_TOKEN``, ``_SECRET``, ``_PASSWORD``, ``_PASSPHRASE``).
+
+    Args:
+        name: The env-var name to test (e.g. ``"RUNPOD_API_KEY"``).
+
+    Returns:
+        True for credential-shaped names like ``RUNPOD_API_KEY``, ``HF_TOKEN``,
+        ``FAL_KEY``, ``DB_PASSWORD``, ``SSH_PASSPHRASE``.  False for
+        non-credential names like ``IMAGE_NAME``, ``GPU_COUNT``,
+        ``PYTHONUNBUFFERED``, or unrelated tokens like ``keypoints`` /
+        ``checkpoints``.
+    """
+    upper = name.upper()
+    if upper in _PROTECTED_NAME_WHOLES:
+        return True
+    return any(upper.endswith(suffix) for suffix in _PROTECTED_NAME_SUFFIXES)
 
 
 def _is_protected_key(name: str) -> bool:
@@ -94,6 +139,249 @@ def _redact(obj: Any) -> Any:
     return obj
 
 
+def _redact_kv_shape(obj: Any) -> Any:
+    """Recursively redact GraphQL ``[{"key": NAME, "value": VAL}, ...]`` env shapes.
+
+    Pass 1 of the layered redactor (Layer P Task 7 bug-fix #1).  Walks every
+    list; for each item that is a dict with both ``key`` AND ``value`` keys,
+    checks whether the ``key`` field's STRING VALUE matches
+    :func:`_is_credential_name`.  When it does, replaces the sibling ``value``
+    field with ``<REDACTED>`` and recurses into the remaining sibling fields
+    (e.g. ``comment``) so non-value siblings are preserved structurally but
+    still scrubbed downstream.  Recurses into all other containers normally.
+
+    Critically requires a LIST parent: a top-level ``{"key": ..., "value":
+    ...}`` dict is NOT touched, because that shape isn't the GraphQL env
+    array we're targeting.
+
+    Args:
+        obj: Any JSON-serialisable Python value.
+
+    Returns:
+        A redacted copy of ``obj``.  Original is not mutated.
+    """
+    if isinstance(obj, list):
+        out_list: list[Any] = []
+        for item in obj:
+            if (
+                isinstance(item, dict)
+                and "key" in item
+                and "value" in item
+                and isinstance(item["key"], str)
+                and _is_credential_name(item["key"])
+            ):
+                redacted_item: dict[str, Any] = dict(item)
+                redacted_item["value"] = "<REDACTED>"
+                for k, v in item.items():
+                    if k != "value":
+                        redacted_item[k] = _redact_kv_shape(v)
+                out_list.append(redacted_item)
+            else:
+                out_list.append(_redact_kv_shape(item))
+        return out_list
+    if isinstance(obj, dict):
+        return {k: _redact_kv_shape(v) for k, v in obj.items()}
+    return obj
+
+
+# Layer P Task 7 bug-fix #1 — Pass 3 (value-side credential-pattern sweep).
+# Each entry is ``(pattern_name, compiled_regex)``.  The ``pattern_name`` is the
+# canonical snake_case identifier used by Task 4 audit primitives and Task 5
+# backstop tests; do not rename without coordinating those callers.
+_CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("rpa_token", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b")),
+    ("hf_token", re.compile(r"\bhf_[A-Za-z0-9_\-]{8,}\b")),
+    ("fal_key", re.compile(r"\bfal_key_[A-Za-z0-9_\-]{8,}\b")),
+    ("bearer_auth", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{8,}")),
+    ("sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b")),
+    ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    (
+        "pem_private_key",
+        re.compile(
+            r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?-----END [A-Z ]{0,40}PRIVATE KEY-----"
+        ),
+    ),
+]
+
+
+def _redact_string(s: str) -> str:
+    """Apply every entry in :data:`_CREDENTIAL_PATTERNS` to *s* in declaration order.
+
+    Each match is replaced with ``<REDACTED>``.  Multiple distinct patterns can
+    fire within the same string (e.g. ``Bearer rpa_xxx`` triggers both
+    ``bearer_auth`` and ``rpa_token`` — the first match wins for any given
+    substring; later patterns operate on the partially-redacted output).
+
+    Args:
+        s: An arbitrary string value to scrub.
+
+    Returns:
+        ``s`` with every credential-shaped substring replaced by
+        ``<REDACTED>``.  Non-matching strings pass through unchanged.
+    """
+    out = s
+    for _name, pattern in _CREDENTIAL_PATTERNS:
+        out = pattern.sub("<REDACTED>", out)
+    return out
+
+
+def _redact_credential_patterns(obj: Any) -> Any:
+    """Pass 3 — recursive value-side credential-pattern sweep.
+
+    Walks every nested container.  For each string value, applies
+    :func:`_redact_string`.  Non-string scalars pass through unchanged.
+
+    Args:
+        obj: Any JSON-serialisable Python value (dict, list, str, int, etc).
+
+    Returns:
+        A redacted copy of ``obj``.  Original is not mutated.
+    """
+    if isinstance(obj, str):
+        return _redact_string(obj)
+    if isinstance(obj, dict):
+        return {k: _redact_credential_patterns(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_credential_patterns(v) for v in obj]
+    return obj
+
+
+def _redact_all(obj: Any) -> Any:
+    """Run all three redaction passes in order.
+
+    Pipeline: shape detector → key-name walker → value-pattern matcher.
+
+    Order chosen so the shape detector replaces structurally-leaky values
+    BEFORE the key-name walker scrubs the harmless ``key`` field name, and
+    the pattern matcher runs last as a catch-all backstop for any credential
+    string the first two passes did not recognise.
+
+    Args:
+        obj: Any JSON-serialisable Python value.
+
+    Returns:
+        A fully-redacted copy of ``obj``.  Idempotent — applying the function
+        a second time produces the same result.
+    """
+    return _redact_credential_patterns(_redact(_redact_kv_shape(obj)))
+
+
+class LeakHit(NamedTuple):
+    """A single credential-pattern hit produced by :func:`_audit_for_leaks`.
+
+    Attributes:
+        pattern_name: The canonical name from :data:`_CREDENTIAL_PATTERNS`
+            (e.g. ``"rpa_token"``, ``"bearer_auth"``).
+        json_pointer: RFC 6901 pointer to the offending location.
+        match_snippet: First 32 chars of the matched substring.  Enough for
+            shape diagnosis without re-emitting the full secret.
+    """
+
+    pattern_name: str
+    json_pointer: str
+    match_snippet: str
+
+
+def _escape_pointer_segment(segment: str) -> str:
+    """RFC 6901 pointer-segment escape: ``~`` → ``~0``, ``/`` → ``~1``."""
+    return segment.replace("~", "~0").replace("/", "~1")
+
+
+def _audit_for_leaks(obj: Any, _pointer: str = "") -> list[LeakHit]:
+    """Walk *obj* and return every credential-pattern match.
+
+    Recursive.  Visits every string value; runs every entry in
+    :data:`_CREDENTIAL_PATTERNS` against it; collects every match as a
+    :class:`LeakHit`.  Empty list means the payload is clean.
+
+    Args:
+        obj: Any JSON-serialisable Python value.
+        _pointer: Internal — the RFC 6901 pointer accumulated during recursion.
+            Callers should not supply this.
+
+    Returns:
+        A list of every :class:`LeakHit` discovered, in traversal order.
+    """
+    hits: list[LeakHit] = []
+    if isinstance(obj, str):
+        for name, pattern in _CREDENTIAL_PATTERNS:
+            for match in pattern.finditer(obj):
+                hits.append(
+                    LeakHit(
+                        pattern_name=name,
+                        json_pointer=_pointer or "/",
+                        match_snippet=match.group(0)[:32],
+                    )
+                )
+        return hits
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            sub = f"{_pointer}/{_escape_pointer_segment(str(key))}"
+            hits.extend(_audit_for_leaks(value, sub))
+        return hits
+    if isinstance(obj, list):
+        for idx, item in enumerate(obj):
+            hits.extend(_audit_for_leaks(item, f"{_pointer}/{idx}"))
+        return hits
+    return hits
+
+
+class CredentialLeakError(Exception):
+    """Raised by :meth:`_RecordingHTTPSeam.flush` when post-redaction payload still leaks.
+
+    Carries the offending fixture filename and the full hit list so the
+    contributor can identify which redactor pass needs a new pattern or
+    shape entry.
+
+    Attributes:
+        hits: Every :class:`LeakHit` returned by :func:`_audit_for_leaks`.
+        filename: The fixture filename that would have leaked.
+    """
+
+    def __init__(self, hits: list[LeakHit], filename: str) -> None:
+        self.hits = hits
+        self.filename = filename
+        super().__init__(self._format())
+
+    def _format(self) -> str:
+        lines = [f"refusing to write {self.filename}"]
+        for hit in self.hits:
+            lines.append(
+                f"  - {hit.pattern_name} at {hit.json_pointer}: {hit.match_snippet!r}"
+            )
+        lines.append(
+            "Update _CREDENTIAL_PATTERNS or _redact_kv_shape vocab to cover this shape."
+        )
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        return self._format()
+
+
+def _safe_log(
+    logger: logging.Logger,
+    level: int,
+    msg: str,
+    *args: Any,
+) -> None:
+    """Emit a log record after running every string arg through :func:`_redact_string`.
+
+    Non-string args pass through unchanged.  Use in place of
+    ``logger.warning(msg, arg1, arg2)`` whenever a credential could appear in
+    any of the substitution args.
+
+    Args:
+        logger: Standard :class:`logging.Logger` instance.
+        level: Log level (e.g. ``logging.WARNING``).
+        msg: Printf-style format string.  NOT redacted itself — format
+            strings are author-controlled.
+        *args: Substitution args.  Each str is redacted via
+            :func:`_redact_string`; other types are forwarded as-is.
+    """
+    safe_args = tuple(_redact_string(a) if isinstance(a, str) else a for a in args)
+    logger.log(level, msg, *safe_args)
+
+
 def _load_fixture(name: str) -> dict[str, Any]:
     """Load the ``response`` payload of a committed real-API capture.
 
@@ -120,16 +408,133 @@ def _load_fixture(name: str) -> dict[str, Any]:
     return dict(data["response"])
 
 
+# ---------------------------------------------------------------------------
+# Dispatch callable type alias
+# ---------------------------------------------------------------------------
+
+DispatchFn = Callable[[str, "dict[str, Any] | None"], str]
+"""Dispatch signature: (url, request_body_or_None) -> fixture_filename.
+
+The wrapper passes the URL and (for POSTs) the request body to the
+dispatcher, which returns a fixture filename.  Returning a name starting
+with ``unknown_`` causes the wrapper to log a WARNING and still write the
+capture.
+"""
+
+
+# ---------------------------------------------------------------------------
+# RunPod dispatcher (GraphQL-query-based, Layer N behaviour)
+# ---------------------------------------------------------------------------
+
+
+def _runpod_dispatch(url: str, body: dict[str, Any] | None) -> str:
+    """RunPod dispatcher — keys off GraphQL query content in POST body.
+
+    Replicates the existing Layer N dispatch table verbatim.  The URL is
+    ignored; RunPod posts everything to the same endpoint.
+
+    Args:
+        url: The request URL (ignored for RunPod).
+        body: The POST body dict, or ``None`` for GET requests.
+
+    Returns:
+        A fixture filename such as ``create_pod.json`` or
+        ``unknown_<sha8>.json``.
+    """
+    query = ""
+    if body and isinstance(body.get("query"), str):
+        query = body["query"]
+    # For GET requests the URL may embed the query after ``?query=``; use it
+    # as the fallback so existing GET dispatch still works.
+    if not query and url and "?query=" in url:
+        query = url.split("?query=", 1)[1]
+    if "gpuTypes {" in query:
+        return "gpu_types.json"
+    if "myself { pods" in query:
+        return "list_pods.json"
+    if "pod(input:" in query:
+        return "get_pod.json"
+    if "podFindAndDeployOnDemand" in query:
+        return "create_pod.json"
+    if "podTerminate" in query:
+        return "terminate_pod.json"
+    sha = hashlib.sha256(query.encode()).hexdigest()[:8]
+    _safe_log(
+        _log,
+        logging.WARNING,
+        "RecordingHTTPSeam: unrecognized GraphQL query, writing to "
+        "unknown_%s.json (query fragment: %s)",
+        sha,
+        query[:80],
+    )
+    return f"unknown_{sha}.json"
+
+
+_RUNPOD_DISPATCH: DispatchFn = _runpod_dispatch
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI dispatcher (URL-pattern-based)
+# ---------------------------------------------------------------------------
+
+_COMFY_PROMPT_RE: re.Pattern[str] = re.compile(r"/prompt(\?.*)?$")
+_COMFY_HISTORY_RE: re.Pattern[str] = re.compile(r"/history/[^/?]+(\?.*)?$")
+_COMFY_VIEW_RE: re.Pattern[str] = re.compile(r"/view(\?|$)")
+
+
+def _comfy_dispatch(url: str, body: dict[str, Any] | None) -> str:
+    """ComfyUI dispatcher — keys off URL path.
+
+    Args:
+        url: The request URL.
+        body: The POST body dict, or ``None`` for GET requests.
+
+    Returns:
+        A fixture filename such as ``prompt_submit.json`` or
+        ``unknown_<sha8>.json``.
+    """
+    if _COMFY_PROMPT_RE.search(url):
+        return "prompt_submit.json"
+    if _COMFY_HISTORY_RE.search(url):
+        return "history_done.json"
+    if _COMFY_VIEW_RE.search(url):
+        return "view.json"
+    sha = hashlib.sha256(url.encode()).hexdigest()[:8]
+    _safe_log(
+        _log,
+        logging.WARNING,
+        "RecordingHTTPSeam: unrecognized ComfyUI URL, writing to "
+        "unknown_%s.json (url: %s)",
+        sha,
+        url[:120],
+    )
+    return f"unknown_{sha}.json"
+
+
+_COMFY_DISPATCH: DispatchFn = _comfy_dispatch
+
+
+# ---------------------------------------------------------------------------
+# Recording seam
+# ---------------------------------------------------------------------------
+
+
 class _RecordingHTTPSeam:
     """Wrap real http_post / http_get callables for the live smoke.
 
-    Each call is captured (request + redacted response).  At :meth:`flush`,
-    one JSON file per logical operation is written to ``out_dir``.
+    Each call is captured (request + redacted response + redacted request
+    body).  At :meth:`flush`, one JSON file per logical operation is written
+    to ``out_dir``; when multiple calls resolve to the same filename the last
+    write wins.
 
     Args:
         http_post: Real POST callable to wrap.
         http_get: Real GET callable to wrap.
         out_dir: Output directory for written fixtures.
+        dispatch: Callable ``(url, body_or_None) -> filename`` that maps each
+            request to its fixture filename.  Use :data:`_RUNPOD_DISPATCH` for
+            GraphQL-based RunPod traffic or :data:`_COMFY_DISPATCH` for
+            URL-pattern-based ComfyUI traffic.
     """
 
     def __init__(
@@ -137,26 +542,28 @@ class _RecordingHTTPSeam:
         http_post: Callable[[str, dict[str, Any]], dict[str, Any]],
         http_get: Callable[[str], dict[str, Any]],
         out_dir: Path,
+        *,
+        dispatch: DispatchFn = _RUNPOD_DISPATCH,
     ) -> None:
         self._post = http_post
         self._get = http_get
         self._out = out_dir
-        self._records: list[tuple[str, str, dict[str, Any]]] = []
+        self._dispatch_fn = dispatch
+        # Each record: (filename, url, request_body_or_None, response)
+        self._records: list[tuple[str, str, dict[str, Any] | None, dict[str, Any]]] = []
 
     def http_post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
         """POST wrapper — records the response under its operation name."""
         response = self._post(url, body)
-        query = str(body.get("query", ""))
-        filename = self._dispatch(query)
-        self._records.append((filename, query, response))
+        filename = self._dispatch_fn(url, body)
+        self._records.append((filename, url, body, response))
         return response
 
     def http_get(self, url: str) -> dict[str, Any]:
         """GET wrapper — records the response under its operation name."""
         response = self._get(url)
-        query = url.split("?query=", 1)[1] if "?query=" in url else url
-        filename = self._dispatch(query)
-        self._records.append((filename, query, response))
+        filename = self._dispatch_fn(url, None)
+        self._records.append((filename, url, None, response))
         return response
 
     def flush(self) -> None:
@@ -173,30 +580,36 @@ class _RecordingHTTPSeam:
             git_sha = "UNKNOWN"
 
         self._out.mkdir(parents=True, exist_ok=True)
-        for filename, query, response in self._records:
-            payload = {
-                "_meta": {
-                    "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    "git_sha": git_sha,
-                    "operation": filename.removesuffix(".json"),
-                    "request_query": _redact_query_string(query)[:200],
-                },
-                "response": _redact(response),
+        for filename, url, request_body, response in self._records:
+            # Redact both the request body and the response via the layered pipeline.
+            redacted_body: dict[str, Any] | None = (
+                _redact_all(request_body) if request_body is not None else None
+            )
+            # Build the _meta.request_query for backward-compat with Layer N
+            # fixtures that carry the raw GraphQL query string.
+            if request_body and isinstance(request_body.get("query"), str):
+                raw_query = request_body["query"]
+            elif "?query=" in url:
+                raw_query = url.split("?query=", 1)[1]
+            else:
+                raw_query = url
+            meta: dict[str, Any] = {
+                "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "git_sha": git_sha,
+                "operation": filename.removesuffix(".json"),
+                "request_query": _redact_string(_redact_query_string(raw_query))[:200],
             }
+            if redacted_body is not None:
+                meta["request_body"] = redacted_body
+            payload = {
+                "_meta": meta,
+                "response": _redact_all(response),
+            }
+            # Runtime backstop: refuse to write any fixture whose post-redaction
+            # payload still matches a credential pattern.
+            hits = _audit_for_leaks(payload)
+            if hits:
+                raise CredentialLeakError(hits, filename)
             (self._out / filename).write_text(
                 json.dumps(payload, indent=2, sort_keys=False) + "\n",
             )
-
-    def _dispatch(self, query: str) -> str:
-        """Map a GraphQL query string to its fixture filename."""
-        for fragment, filename in _OPERATION_TABLE:
-            if fragment in query:
-                return filename
-        sha8 = hashlib.sha256(query.encode("utf-8")).hexdigest()[:8]
-        _log.warning(
-            "RecordingHTTPSeam: unrecognized GraphQL query, writing to "
-            "unknown_%s.json (query fragment: %s)",
-            sha8,
-            query[:80],
-        )
-        return f"unknown_{sha8}.json"

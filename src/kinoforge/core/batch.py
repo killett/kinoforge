@@ -35,7 +35,12 @@ from kinoforge.core.errors import (
     ConfigError,
     TeardownError,
 )
-from kinoforge.core.interfaces import Artifact, ConditioningAsset, GenerationRequest
+from kinoforge.core.interfaces import (
+    Artifact,
+    ConditioningAsset,
+    GenerationRequest,
+    Instance,
+)
 from kinoforge.core.logging import get_logger
 from kinoforge.core.orchestrator import deploy_session
 from kinoforge.outputs.base import OutputSink
@@ -438,6 +443,8 @@ def batch_generate(
     profile_provider: ModelProfileProvider | None = None,
     state_dir: Path = Path(".kinoforge"),
     sink: OutputSink | None = None,
+    instance: Instance | None = None,
+    tags: dict[str, str] | None = None,
 ) -> BatchResult:
     """Run every entry in *manifest* on one shared deployed instance.
 
@@ -494,6 +501,22 @@ def batch_generate(
             ``<output_dir>/<batch_id>/``.  When ``None`` (the default),
             no publish side-effect occurs and pre-Layer-O batch
             behaviour is preserved.
+        instance: Optional caller-supplied pre-created
+            :class:`~kinoforge.core.interfaces.Instance`.  When non-None,
+            the inner :func:`deploy_session` skips
+            ``provider.create_instance`` and binds the engine to the
+            supplied pod for every entry in this batch (warm-pod reuse,
+            Layer P Task 7 item #2).  Caller must pre-poll the instance
+            to ``status == 'ready'``.  Teardown of the supplied pod
+            remains the caller's responsibility — ``deploy_session``
+            does not destroy a caller-owned instance.
+        tags: Optional dict of caller tags merged onto the
+            orchestrator-built :class:`InstanceSpec.tags` on the cold
+            path (when ``instance=None``).  Built-ins
+            (``kinoforge_engine``, ``kinoforge_key``) always win on key
+            collision so cache-key derivation stays deterministic.
+            Ignored when ``instance=`` is supplied — the caller already
+            owns that pod's tags.
 
     Returns:
         A :class:`BatchResult` with one
@@ -545,6 +568,8 @@ def batch_generate(
             profile_provider=profile_provider,
             run_id=batch_id,
             state_dir=state_dir,
+            instance=instance,
+            tags=tags,
         ) as session:
             accepted_kinds: set[str]
             if hasattr(session.engine, "accepted_kinds"):

@@ -4,38 +4,38 @@
     {
       "id": 9,
       "subject": "Layer P Task 1: spec.graph_file loader convention",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** YAML's `spec.graph_file: <path>` inlines a JSON file's contents into `cfg.spec.graph` at config load. Engine-agnostic. Mutually exclusive with `spec.graph`.\n\n**Files:**\n- Modify: src/kinoforge/core/config.py\n- Modify: tests/core/test_config.py\n\n**Verify:** pixi run pytest tests/core/test_config.py -v -k graph_file\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -v -k graph_file\", \"acceptanceCriteria\": [\"spec.graph_file inlines JSON into cfg.spec[graph]\", \"absolute path used verbatim\", \"both set raises ValidationError\", \"missing file raises with path in message\", \"invalid JSON raises with parse error\", \"relative path resolves against YAML parent dir\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Layer P Task 2: ComfyUI custom-node SHA pinning",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Extend ComfyUI engine's provision to honor a `ref` field in each `custom_nodes` entry (commit SHA). When present, `git checkout <ref>` runs after the clone. Absent → clone-HEAD (back-compat).\n\n**Files:**\n- Modify: src/kinoforge/engines/comfyui/__init__.py\n- Modify: tests/engines/test_comfyui.py\n\n**Verify:** pixi run pytest tests/engines/test_comfyui.py -v -k \"ref or sha or checkout\"\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\", \"tests/engines/test_comfyui.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui.py -v -k 'ref or sha or checkout'\", \"acceptanceCriteria\": [\"ref set runs git checkout after clone\", \"no ref skips checkout (back-compat)\", \"call order clone -> checkout -> requirements\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Layer P Task 3: RunPodProvider.find_instance_by_tag helper",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add tag-discovery helper on RunPodProvider that scans list_instances() for a ready pod matching tags[key] == value. Used by live smoke for warm-pod reuse.\n\n**Files:**\n- Modify: src/kinoforge/providers/runpod/__init__.py\n- Modify: tests/providers/test_runpod.py\n\n**Verify:** pixi run pytest tests/providers/test_runpod.py -v -k find_instance_by_tag\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod.py -v -k find_instance_by_tag\", \"acceptanceCriteria\": [\"ready+match -> returned\", \"starting+match -> None\", \"no match -> None\"]}\n```"
     },
     {
       "id": 12,
       "subject": "Layer P Task 4: _RecordingHTTPSeam ComfyUI dispatch extension",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Refactor Layer N's _RecordingHTTPSeam to accept a dispatch callable so the same wrapper supports both GraphQL-query-based RunPod dispatcher and URL-pattern-based ComfyUI dispatcher.\n\n**Files:**\n- Modify: tests/providers/conftest_runpod.py\n- Modify: tests/providers/test_runpod_conftest.py\n- Modify: tests/live/test_runpod_live.py\n\n**Verify:** pixi run pytest tests/providers/test_runpod_conftest.py tests/providers/test_runpod.py -v\n\n```json:metadata\n{\"files\": [\"tests/providers/conftest_runpod.py\", \"tests/providers/test_runpod_conftest.py\", \"tests/live/test_runpod_live.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_conftest.py tests/providers/test_runpod.py -v\", \"acceptanceCriteria\": [\"dispatch=_RUNPOD_DISPATCH preserves Layer N\", \"dispatch=_COMFY_DISPATCH dispatches by URL\", \"prompt_submit.json carries request body in _meta\", \"history last-poll wins\", \"redaction applies to _meta.request_body too\", \"unknown URL writes unknown_<sha>.json\"]}\n```"
     },
     {
       "id": 13,
       "subject": "Layer P Task 5: Live test skeleton tests/live/test_comfyui_wan_live.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11, 12],
       "description": "**Goal:** Create live smoke skeleton — single function test_runpod_comfyui_wan_live_e2e_smoke, in-process, phase-marker structured, KEEP_POD-aware, tag-reuse-aware. Module-gated by env vars; skips silently in CI. NO live run yet.\n\n**Files:**\n- Create: tests/live/test_comfyui_wan_live.py\n\n**Verify:** pixi run pytest tests/live/test_comfyui_wan_live.py --collect-only -v\n\n```json:metadata\n{\"files\": [\"tests/live/test_comfyui_wan_live.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_comfyui_wan_live.py --collect-only -v\", \"acceptanceCriteria\": [\"ruff+mypy clean\", \"collect reports skipped without env vars\", \"module gated on 4 env vars\", \"10 phase markers\", \"KEEP_POD path skips destroy\", \"tag-reuse path skips create+poll\", \"generate asserts size+magic+capability_key+output sink\"]}\n```"
     },
     {
       "id": 14,
       "subject": "Layer P Task 6: Example YAML + graph JSON scaffold",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** Fill runpod-comfyui-wan.yaml with spec.graph_file + custom_nodes SHA-pin placeholders + multi-entry models list. Create placeholder graph JSON. Both are scaffolding — Task 7 replaces with real values.\n\n**Files:**\n- Modify: examples/configs/runpod-comfyui-wan.yaml\n- Create: examples/configs/runpod-comfyui-wan.graph.json\n- Possibly Modify: tests/test_examples.py\n\n**Verify:** pixi run pytest tests/test_examples.py -v -k runpod_comfyui_wan\n\n```json:metadata\n{\"files\": [\"examples/configs/runpod-comfyui-wan.yaml\", \"examples/configs/runpod-comfyui-wan.graph.json\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v -k runpod_comfyui_wan\", \"acceptanceCriteria\": [\"YAML loads via Config.load\", \"cfg.spec[graph] is dict matching JSON\", \"custom_nodes has 2+ entries with ref:PINME\", \"models has 3 placeholder entries\", \"header comment documents Task 7 will pin\"]}\n```"
     },
@@ -68,5 +68,5 @@
       "description": "**Goal:** Document Layer P. Full offline gate. Merge to main via --no-ff.\n\n**Files:**\n- Modify: README.md\n- Modify: PROGRESS.md\n- Merge: build/layer-p -> main\n\n**Verify:** pixi run test && pixi run typecheck && pixi run lint\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test && pixi run typecheck && pixi run lint\", \"acceptanceCriteria\": [\"README has engine integration sub-section\", \"PROGRESS Phase 26 entry with per-task SHAs + bug catches + spend\", \"Single next action updated\", \"Layer-O carry-forward #1 marked CLOSED\", \"offline gate green\", \"merged via --no-ff with substantive body\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-01"
+  "lastUpdated": "2026-06-01T-Task1-complete"
 }

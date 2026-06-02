@@ -24,6 +24,7 @@ Self-registers under ``"runpod"`` when this module is imported.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import urllib.request
@@ -31,7 +32,7 @@ from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import registry
-from kinoforge.core.errors import TeardownError
+from kinoforge.core.errors import CapacityError, TeardownError
 from kinoforge.core.interfaces import (
     ComputeProvider,
     CredentialProvider,
@@ -340,6 +341,27 @@ class RunPodProvider(ComputeProvider):
         )
         return [_pod_to_instance(p) for p in pods]
 
+    def find_instance_by_tag(self, key: str, value: str) -> Instance | None:
+        """Return the first 'ready' instance whose tags[key] == value, else None.
+
+        Used by long-running test loops (Layer P live smoke) to discover and
+        reuse warm pods across iterations, avoiding repeated cold-start costs.
+        Production code paths do not call this.
+
+        Args:
+            key: Tag dict key to match (e.g. ``"kinoforge.layer"``).
+            value: Required value at that key (e.g. ``"layer-p-smoke"``).
+
+        Returns:
+            The first ``Instance`` from :meth:`list_instances` with
+            ``status == "ready"`` and ``tags.get(key) == value``, or ``None``
+            if no such instance exists.
+        """
+        for inst in self.list_instances():
+            if inst.status == "ready" and inst.tags.get(key) == value:
+                return inst
+        return None
+
     def stop_instance(self, instance_id: str) -> None:
         """Stop a running RunPod pod (pause billing).
 
@@ -429,6 +451,13 @@ class RunPodProvider(ComputeProvider):
     def _create_pod(self, spec: InstanceSpec) -> Instance:
         """Create a RunPod on-demand pod and return an Instance.
 
+        When ``spec.provision_script`` is set, it is base64-encoded into the
+        ``KINOFORGE_PROVISION_SCRIPT`` env var and ``dockerArgs`` is set to the
+        literal ``bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh
+        && chmod +x /tmp/p.sh && bash /tmp/p.sh"`` so the pod decodes + runs the
+        script at boot. When ``spec.provision_script`` is None, ``dockerArgs == ""``
+        (pre-Layer-Q default).
+
         Args:
             spec: Instance specification.
 
@@ -455,6 +484,18 @@ class RunPodProvider(ComputeProvider):
         # Safety: NEVER put the main API key in the pod env
         env.pop("RUNPOD_API_KEY", None)
 
+        if spec.provision_script is not None:
+            encoded = base64.b64encode(spec.provision_script.encode("utf-8")).decode(
+                "ascii"
+            )
+            env["KINOFORGE_PROVISION_SCRIPT"] = encoded
+            docker_args = (
+                'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh '
+                '&& chmod +x /tmp/p.sh && bash /tmp/p.sh"'
+            )
+        else:
+            docker_args = ""
+
         gpu_type_id = spec.offer.gpu_type if spec.offer else ""
         body: dict[str, Any] = {
             "query": _CREATE_POD_MUTATION,
@@ -469,7 +510,7 @@ class RunPodProvider(ComputeProvider):
                     "gpuTypeId": gpu_type_id,
                     "name": spec.run_id or "kinoforge-pod",
                     "imageName": spec.image,
-                    "dockerArgs": "",
+                    "dockerArgs": docker_args,
                     "ports": ",".join(spec.ports) if spec.ports else "",
                     "volumeMountPath": spec.volume_mount or "/workspace",
                     "env": [{"key": k, "value": v} for k, v in env.items()],
@@ -480,10 +521,16 @@ class RunPodProvider(ComputeProvider):
         resp = self._http_post(self._base_url, body)
         if "errors" in resp:
             error_msgs = [str(e.get("message", e)) for e in resp.get("errors", [])]
-            raise ValueError(
-                "RunPod create-pod mutation returned errors:\n"
-                + "\n".join(f"  - {m}" for m in error_msgs)
+            assembled = "RunPod create-pod mutation returned errors:\n" + "\n".join(
+                f"  - {m}" for m in error_msgs
             )
+            value_error = ValueError(assembled)
+            joined_lower = "\n".join(error_msgs).lower()
+            if "resources to deploy" in joined_lower:
+                raise CapacityError(
+                    f"RunPod has no current capacity for {gpu_type_id!r}: {assembled}"
+                ) from value_error
+            raise value_error
         pod_data: dict[str, Any] = resp.get("data", {}).get(
             "podFindAndDeployOnDemand", {}
         )

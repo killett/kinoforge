@@ -35,6 +35,7 @@ Self-registers under ``"skypilot"`` when this module is imported.
 
 from __future__ import annotations
 
+import shlex
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -105,6 +106,33 @@ class _SkyClientProtocol(Protocol):
 # ---------------------------------------------------------------------------
 # Status conversion
 # ---------------------------------------------------------------------------
+
+
+def _strip_trailing_exec(script: str) -> str:
+    """Strip a final line of the form `[<prefix> && ]exec <args>` from *script*.
+
+    ``RenderedProvision.script`` (Layer Q) ends with an ``exec <run_cmd>`` line
+    so the run process becomes PID 1 on RunPod's single-dockerArgs path. On
+    SkyPilot, ``Task.setup`` must terminate so ``Task.run`` can start — the
+    trailing ``exec`` would prevent that. This helper removes the last line if
+    it contains an ``exec`` invocation; otherwise the script is returned
+    unchanged.
+
+    Args:
+        script: The rendered provision script.
+
+    Returns:
+        Script with the trailing ``exec`` line removed (or unchanged if no
+        ``exec`` is found on the last non-empty line).
+    """
+    lines = script.rstrip("\n").split("\n")
+    if not lines:
+        return script
+    last = lines[-1]
+    if " exec " in last or last.startswith("exec ") or " && exec " in last:
+        return "\n".join(lines[:-1])
+    return script
+
 
 _SKY_STATUS_MAP: dict[str, str] = {
     "UP": "ready",
@@ -252,6 +280,12 @@ class SkyPilotProvider(ComputeProvider):
         Maps ``spec.lifecycle.idle_timeout_s`` to SkyPilot's ``autostop``
         parameter (in whole minutes).
 
+        When ``spec.provision_script`` is set, it is mapped verbatim to
+        ``Task.setup``.  When ``spec.run_cmd`` is set, it is shell-quoted via
+        ``shlex.quote`` and joined to ``Task.run``.  Empty values for either
+        field are treated as 'not set' and the corresponding key is omitted
+        from ``task_config`` (pre-Layer-Q caller parity).
+
         Args:
             spec: Instance specification.
 
@@ -267,6 +301,18 @@ class SkyPilotProvider(ComputeProvider):
             "env": dict(spec.env),
             "tags": dict(spec.tags),
         }
+        # Layer Q: provision_script ends with `exec <run_cmd>` (RunPod convention),
+        # but SkyPilot needs Task.setup to terminate so Task.run can start. The
+        # trailing exec line is stripped via _strip_trailing_exec below; run_cmd
+        # becomes Task.run independently.
+        #
+        # Layer Q dual-exec hazard resolution: the script's trailing `exec <run_cmd>`
+        # line is stripped before it becomes Task.setup so setup can terminate
+        # normally; spec.run_cmd carries the long-running process into Task.run.
+        if spec.provision_script:
+            task_config["setup"] = _strip_trailing_exec(spec.provision_script)
+        if spec.run_cmd:
+            task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
         result: dict[str, Any] = sky.launch(task_config, autostop=autostop_minutes)
         cluster_name: str = str(
             result.get("cluster_name", spec.run_id or "skypilot-cluster")

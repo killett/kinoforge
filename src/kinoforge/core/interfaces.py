@@ -9,9 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import Protocol, Self, runtime_checkable
+from typing import Any, Protocol, Self, runtime_checkable
 
 # --- compute axis -----------------------------------------------------------
 
@@ -58,6 +59,36 @@ class Lifecycle:
     budget_usd: float = 0.0
     max_workers: int = 1
     max_in_flight: int = 1
+    boot_timeout_s: float = 900.0
+
+
+@dataclass(frozen=True)
+class RenderedProvision:
+    """Engine-emitted bootstrap payload for a remote pod / VM.
+
+    Attributes:
+        script: Self-contained bash script. Must be idempotent on warm pods.
+            Reference credentials only via ``$VAR``; never embed literal
+            credential values. The orchestrator lifts ``env_required``
+            entries onto ``spec.env`` before pod creation.
+        run_cmd: Long-running command launched after the script completes.
+            Convention: the script ends with ``exec <run_cmd>`` so the run
+            cmd becomes the container's PID 1.
+        image: Container image to boot. Defaults to a stock provider image
+            (see engine impl).
+        ports: Ports the engine listens on. Provider exposes via its native
+            mechanism (RunPod proxy, Sky port forward).
+        env_required: Names of credential env vars the script references.
+            Orchestrator validates each is reachable via the configured
+            ``CredentialProvider`` before ``provider.create_instance``;
+            lifts onto ``spec.env``.
+    """
+
+    script: str
+    run_cmd: list[str]
+    image: str
+    ports: list[str]
+    env_required: list[str]
 
 
 @dataclass
@@ -73,6 +104,8 @@ class InstanceSpec:
     env: dict[str, str] = field(default_factory=dict)
     tags: dict[str, str] = field(default_factory=dict)
     run_id: str = ""
+    provision_script: str | None = None
+    run_cmd: list[str] | None = None
 
 
 @dataclass
@@ -355,6 +388,77 @@ class GenerationEngine(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support tail-frame extraction"
+        )
+
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
+        """Emit the first-boot bootstrap payload for this engine.
+
+        Engines that support remote provisioning (ComfyUI, Diffusers) override
+        this. Engines with ``requires_compute=False`` (Hosted) raise
+        ``NotImplementedError``. The orchestrator only calls this for engines
+        with remote-capable providers.
+
+        Args:
+            cfg: Runtime configuration dict (same shape passed to ``provision``).
+
+        Returns:
+            A :class:`RenderedProvision` ready to attach to :class:`InstanceSpec`.
+
+        Raises:
+            NotImplementedError: Engine does not support remote provisioning.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support remote provisioning"
+        )
+
+    def attach_get_instance(
+        self,
+        get_instance: Callable[[str], Instance],
+    ) -> None:
+        """Wire the provider's ``get_instance`` lookup onto this engine.
+
+        The orchestrator calls this immediately after ``provider.create_instance``
+        and before ``engine.provision`` so that :meth:`wait_for_ready` can poll
+        the provider for status updates between HTTP-ready checks.
+
+        Default impl sets ``self._get_instance``; engines that don't need the
+        seam (e.g. HostedAPIEngine, FakeEngine) can keep the default — the
+        write is harmless when ``wait_for_ready`` is never called.
+
+        Args:
+            get_instance: Provider seam — ``(instance_id) -> Instance``.
+        """
+        self._get_instance = get_instance  # noqa: SLF001
+
+    def wait_for_ready(
+        self,
+        instance: Instance,
+        *,
+        http_get: Callable[[str], dict[str, Any]],
+        sleep: Callable[[float], None],
+        get_instance: Callable[[str], Instance],
+        timeout_s: float,
+    ) -> None:
+        """Poll until the engine reports ready, status flips terminal, or timeout.
+
+        Concrete engines (ComfyUI: GET /system_stats; Diffusers: GET /health)
+        override this. Default raises ``NotImplementedError`` so an engine
+        missing the override fails loudly rather than silently never-readying.
+
+        Args:
+            instance: The just-created compute instance.
+            http_get: Injectable HTTP GET seam.
+            sleep: Injectable sleep used between polls.
+            get_instance: Injectable provider lookup for status checks.
+            timeout_s: Maximum total wait before raising ``ProvisionTimeout``.
+
+        Raises:
+            NotImplementedError: Subclass did not override.
+            ProvisionFailed: Pod boot script crashed (status flipped terminal).
+            ProvisionTimeout: Ready check never returned success within ``timeout_s``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support wait_for_ready"
         )
 
 

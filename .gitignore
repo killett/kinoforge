@@ -29,3 +29,6 @@ htmlcov/
 
 # Layer O — user-facing output directory (configurable per-run via --output-dir)
 output/
+
+# Superpowers brainstorming session state (PIDs, logs, transient HTML)
+.superpowers/

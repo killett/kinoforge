@@ -1484,3 +1484,64 @@ def test_validate_spec_passes_when_prompt_node_ids_absent() -> None:
         params={},
     )
     engine.validate_spec(job)  # must NOT raise
+
+
+# ---------------------------------------------------------------------------
+# Layer P Task 2: custom-node SHA pinning via optional "ref" field
+# ---------------------------------------------------------------------------
+
+
+def test_comfyui_provision_checkout_sha_when_ref_set() -> None:
+    """custom_nodes entry with ref set → provision runs git checkout <ref> after clone."""
+    commands: list[list[str]] = []
+
+    def fake_run_cmd(cmd: list[str], cwd: str | None = None) -> None:
+        commands.append(list(cmd))
+
+    engine = _make_engine(
+        run_cmd=fake_run_cmd,
+        file_exists=lambda p: False,  # no requirements.txt
+    )
+    cfg = _make_cfg(
+        custom_nodes=[
+            {
+                "git": "https://github.com/kijai/ComfyUI-WanVideoWrapper",
+                "ref": "abc1234",
+            }
+        ],
+    )
+
+    engine.provision(_INSTANCE, cfg)
+
+    # Locate the checkout call; assert it ran with the right SHA.
+    checkout_calls = [c for c in commands if c[:2] == ["git", "checkout"]]
+    assert len(checkout_calls) == 1
+    assert checkout_calls[0] == ["git", "checkout", "abc1234"]
+
+    # Assert call order: clone before checkout.
+    clone_idx = next(i for i, c in enumerate(commands) if c[:2] == ["git", "clone"])
+    checkout_idx = commands.index(checkout_calls[0])
+    assert clone_idx < checkout_idx
+
+
+def test_comfyui_provision_skips_checkout_when_ref_absent() -> None:
+    """custom_nodes entry without ref → no git checkout call (back-compat)."""
+    commands: list[list[str]] = []
+
+    def fake_run_cmd(cmd: list[str], cwd: str | None = None) -> None:
+        commands.append(list(cmd))
+
+    engine = _make_engine(
+        run_cmd=fake_run_cmd,
+        file_exists=lambda p: False,
+    )
+    cfg = _make_cfg(
+        custom_nodes=[
+            {"git": "https://github.com/example/SomeNode"},
+        ],
+    )
+
+    engine.provision(_INSTANCE, cfg)
+
+    checkout_calls = [c for c in commands if c[:2] == ["git", "checkout"]]
+    assert checkout_calls == []
