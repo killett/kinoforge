@@ -695,13 +695,14 @@ post-Layer-Q; the actual collected count at `c63cbea` was 980 — the prior
 number was stale by 8 (likely a hand-count miss across the Layer P / Layer Q
 co-merge). The +3 net delta matches the plan §Post-Plan projection.
 
-**Manual follow-up (NOT YET DONE):** the existing GitHub Secret-Scanning UI
-alerts at https://github.com/killett/kinoforge/security/secret-scanning need
-manual dismissal ("Used in tests" / "False positive"). The Phase 26 audit
-prevents *new* literal credentials landing on `main`, but does not
-retroactively close the alerts GitHub already raised against the historic
-SHAs that introduced the literals. Closure of those alerts is the only
-remaining secret-scanning item.
+**Manual follow-up — RESOLVED 2026-06-01:** the existing GitHub
+Secret-Scanning UI alerts at
+https://github.com/killett/kinoforge/security/secret-scanning have been
+manually dismissed ("Used in tests" / "False positive") by the project
+owner. Phase 26 work fully closed: the audit prevents *new* literal
+credentials landing on `main`, and the historic alerts GitHub raised
+against the literal-bearing SHAs are now resolved in the UI. Phase 26
+commits (through `965a060`) have been pushed to `origin/main`.
 
 **Out of scope:**
 - Rewriting git history to expunge the historic literal-bearing SHAs.
