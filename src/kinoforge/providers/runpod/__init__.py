@@ -24,6 +24,7 @@ Self-registers under ``"runpod"`` when this module is imported.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import urllib.request
@@ -476,6 +477,19 @@ class RunPodProvider(ComputeProvider):
         # Safety: NEVER put the main API key in the pod env
         env.pop("RUNPOD_API_KEY", None)
 
+        # NEW — Layer Q: provision_script + run_cmd injection
+        if spec.provision_script is not None:
+            encoded = base64.b64encode(spec.provision_script.encode("utf-8")).decode(
+                "ascii"
+            )
+            env["KINOFORGE_PROVISION_SCRIPT"] = encoded
+            docker_args = (
+                'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh '
+                '&& chmod +x /tmp/p.sh && bash /tmp/p.sh"'
+            )
+        else:
+            docker_args = ""
+
         gpu_type_id = spec.offer.gpu_type if spec.offer else ""
         body: dict[str, Any] = {
             "query": _CREATE_POD_MUTATION,
@@ -490,7 +504,7 @@ class RunPodProvider(ComputeProvider):
                     "gpuTypeId": gpu_type_id,
                     "name": spec.run_id or "kinoforge-pod",
                     "imageName": spec.image,
-                    "dockerArgs": "",
+                    "dockerArgs": docker_args,
                     "ports": ",".join(spec.ports) if spec.ports else "",
                     "volumeMountPath": spec.volume_mount or "/workspace",
                     "env": [{"key": k, "value": v} for k, v in env.items()],
