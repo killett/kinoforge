@@ -643,3 +643,71 @@ runs.
 - Migration of existing `.kinoforge/<run_id>/*.mp4` into `output/`.
 - `Artifact.published_path` field for CLI status / batch summary.
 - Engine integration on real RunPod (original Layer-O candidate; now reslotted as Layer P).
+
+### Phase 26 — Secret-Scanning Cleanup (post-Layer-Q housekeeping)
+
+Housekeeping pass that closes the GitHub Secret-Scanning UI alerts raised
+after the Layer P bug-fix #1 commits landed literal credential-prefix
+strings (`sk-proj-…`, `sk-ant-api03-…`, `AKIA…EXAMPLE`, `ASIA…EXAMPLE`,
+multi-line PEM blocks) into source-controlled spec / plan / test files.
+The fix is byte-identical at runtime (concat-only re-spelling) so production
+code paths are untouched; the layer's lasting contribution is the permanent
+fail-closed audit that prevents the same class of leak landing again.
+
+- Spec: `docs/superpowers/specs/2026-06-01-secret-scanning-cleanup-design.md`
+  — initial `49475a5`, scanner-grade amendment `9e18be7`, consistency nits
+  `146d94e`, T1 review fixes `0ab7fe1`
+- Plan: `docs/superpowers/plans/2026-06-01-secret-scanning-cleanup.md`
+  (+ `.tasks.json`) — initial `badbcad`, Before-blocks alignment `e9add1d`
+- [x] Task 1: Amend cleanup spec for scanner-grade pattern set +
+  concat-escaped examples (so the spec passes its own audit) — sync commit
+  `e11ec55`; substantive spec edits in the spec commits above
+- [x] Task 2: Forward-fix the 3 Layer P bug-fix #1 files — source scrub
+  `a692a4a` (test fixture concat-only rewrite + spec/plan shape descriptions)
+  + sync `1326917`
+- [x] Task 3: `tests/test_source_audit.py` — fail-closed lockdown walking
+  `docs/superpowers/**/*.md`, `tests/**/*.py`, repo-root `README.md`,
+  `AGENTS.md`, `PROGRESS.md`, `CLAUDE.md`, `.env.example`; 3 audit functions
+  (`test_audit_walker_fires_on_known_credential`, plus negative and full-tree
+  passes) — `778d473` + sync `3540bc3`
+- Landed directly on `main` (no merge commit — Phase 26 is a housekeeping
+  pass, not a feature layer).
+
+**Key design decisions:**
+- Scanner-grade subset for the audit (`sk_token`, `aws_access_key`,
+  `pem_private_key`, `hf_token` tightened to `\bhf_[A-Za-z0-9]{32,}\b`), not
+  the production `_CREDENTIAL_PATTERNS` from
+  `tests/providers/conftest_runpod.py`. Production set tolerates noisier
+  matches inside the recording-seam backstop; the source-tree audit needs
+  zero false positives over committed prose.
+- Concat-only re-spelling, byte-identical at runtime: every fixture tuple
+  rewritten as `"sk-" + "proj-" + "…"` so `pytest` assertions still hold
+  unchanged.
+- Before / After example blocks in spec + plan re-described as prose ("shape
+  with ellipsis") so the cleanup spec itself passes the audit it specifies.
+- T3 owns its own pattern list (does NOT import from `conftest_runpod.py`):
+  scanner-grade vs. production divergence is intentional and the audit
+  must keep working if the production set ever changes.
+
+**Test count:** 980 pre-Phase-26 (HEAD at Layer Q merge `c63cbea`) → 983
+post-Phase-26 (+3 net new audit tests). PROGRESS:336 had recorded 972
+post-Layer-Q; the actual collected count at `c63cbea` was 980 — the prior
+number was stale by 8 (likely a hand-count miss across the Layer P / Layer Q
+co-merge). The +3 net delta matches the plan §Post-Plan projection.
+
+**Manual follow-up (NOT YET DONE):** the existing GitHub Secret-Scanning UI
+alerts at https://github.com/killett/kinoforge/security/secret-scanning need
+manual dismissal ("Used in tests" / "False positive"). The Phase 26 audit
+prevents *new* literal credentials landing on `main`, but does not
+retroactively close the alerts GitHub already raised against the historic
+SHAs that introduced the literals. Closure of those alerts is the only
+remaining secret-scanning item.
+
+**Out of scope:**
+- Rewriting git history to expunge the historic literal-bearing SHAs.
+  Rejected: PROGRESS + spec + plan still reference those SHAs for audit
+  trail; rewrite would break every cross-reference for zero security gain
+  (GitHub's secret-scanning state is per-alert, not per-blob, once dismissed).
+- Pre-commit hook running the audit. Rejected: `pixi run test` already
+  includes the audit and runs in CI + via pre-commit's `pytest` hook; a
+  duplicate scanner would just slow commits.
