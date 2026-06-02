@@ -26,9 +26,12 @@ from kinoforge.core import registry
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.errors import (
+    AuthError,
     CapabilityMismatch,
     CapacityError,
     ProfileNotCached,
+    ProvisionFailed,
+    ProvisionTimeout,
     ValidationError,
 )
 from kinoforge.core.interfaces import (
@@ -322,6 +325,16 @@ def _provision_instance_and_build_backend(
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     key_hash = _key_hash(key)
+    cfg_dict = _cfg_dict(cfg)
+
+    # NEW — Layer Q: render provision payload + validate creds before create_instance
+    rendered = resolved_engine.render_provision(cfg_dict)
+    rendered_env: dict[str, str] = {}
+    for var in rendered.env_required:
+        value = creds.get(var) if creds is not None else None
+        if value is None:
+            raise AuthError(f"missing required env var: {var}")
+        rendered_env[var] = value
 
     def _build_spec(offer: Offer) -> InstanceSpec:
         merged_tags: dict[str, str] = {
@@ -331,12 +344,15 @@ def _provision_instance_and_build_backend(
         if tags:
             merged_tags.update(tags)
         return InstanceSpec(
-            image=image,
+            image=rendered.image or image,
             offer=offer,
+            ports=tuple(rendered.ports),
             lifecycle=lifecycle,
             tags=merged_tags,
-            env={},
+            env=dict(rendered_env),
             run_id=run_id,
+            provision_script=rendered.script,
+            run_cmd=rendered.run_cmd,
         )
 
     instance, _chosen_offer = _create_with_offer_retry(
@@ -344,16 +360,24 @@ def _provision_instance_and_build_backend(
     )
     while instance.status != "ready":
         instance = resolved_provider.get_instance(instance.id)
-    _provision_compute_once(
-        engine=resolved_engine,
-        cfg=cfg,
-        instance=instance,
-        creds=creds,
-        store=store,
-        state_dir=state_dir,
-        capability_key_hex=key.derive(),
-    )
-    cfg_dict = _cfg_dict(cfg)
+
+    # NEW — Layer Q: wire provider.get_instance onto engine before engine.provision
+    resolved_engine._get_instance = resolved_provider.get_instance  # type: ignore[attr-defined]
+
+    try:
+        _provision_compute_once(
+            engine=resolved_engine,
+            cfg=cfg,
+            instance=instance,
+            creds=creds,
+            store=store,
+            state_dir=state_dir,
+            capability_key_hex=key.derive(),
+        )
+    except (ProvisionFailed, ProvisionTimeout, CapabilityMismatch, ValidationError):
+        resolved_provider.destroy_instance(instance.id)
+        raise
+
     backend = resolved_engine.backend(instance, cfg_dict)
     return instance, backend
 
