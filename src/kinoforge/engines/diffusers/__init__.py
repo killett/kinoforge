@@ -10,6 +10,7 @@ the ``"diffusers"`` key so that ``registry.get_engine("diffusers")()`` works.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 import urllib.request
@@ -67,8 +68,6 @@ def _extract_port_from_base_url(base_url: str) -> str:
     Returns:
         The port as a string, or ``"8000"`` when absent or empty.
     """
-    import re
-
     if not base_url:
         return "8000"
     m = re.search(r":(\d+)", base_url)
@@ -390,7 +389,7 @@ class DiffusersEngine(GenerationEngine):
         self._probe = probe_profile
         self._declared_flags_map: dict[str, dict[str, bool]] = declared_flags_map or {}
         self._get_instance: Callable[[str], Instance] = (
-            get_instance or _default_get_instance
+            get_instance if get_instance is not None else _default_get_instance
         )
         # Asset-role -> request-body dot-path map, populated by ``backend``
         # from ``cfg["engine"]["diffusers"]["asset_paths"]`` and mirrored
@@ -522,7 +521,11 @@ class DiffusersEngine(GenerationEngine):
             raise ProvisionFailed(
                 f"pod {instance.id!r} has no endpoints — cannot construct ready URL"
             )
-        port_key = next(iter(instance.endpoints), "8000")
+        port_key = (
+            "8000"
+            if "8000" in instance.endpoints
+            else next(iter(instance.endpoints), "8000")
+        )
         base = instance.endpoints.get(port_key, "")
         ready_url = f"{base.rstrip('/')}/health"
 
