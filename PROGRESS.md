@@ -246,7 +246,7 @@ next smoke attempt would re-leak `RUNPOD_API_KEY` via the GraphQL `env[*].value`
 
 **Cost burn (item #3 attempt):** $0.25 across 2 leaked pods. Both auto-detected + destroyed via `list_instances()` audit immediately after smoke failure. Net Layer P spend: $0.013 (prior) + $0.25 = $0.263 / $1.99 cap. 87% budget remaining.
 
-**Layer Q — cross-engine cross-provider remote provisioning — ✅ CLOSED 2026-06-01 at HEAD `<T8-SHA>`.**
+**Layer Q — cross-engine cross-provider remote provisioning — ✅ CLOSED 2026-06-01 at HEAD `64f0814`.**
 
 Sub-spec + sub-plan + 8 task commits + per-task polish commits unblock Layer P Task 7 item #3 and ship the canonical cross-engine cross-provider bootstrap surface.
 
