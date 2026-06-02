@@ -23,7 +23,10 @@ def test_provision_with_none_instance_runs_local_body() -> None:
         None,
         {"engine": {"comfyui": {"custom_nodes": [], "launch_args": []}}, "models": []},
     )
-    assert len(calls) > 0  # launch step always runs in local body
+    assert calls, "expected at least one run_cmd invocation (local launch)"
+    assert calls[-1][0][:2] == ["python", "main.py"], (
+        f"last call should be ComfyUI launch, got {calls[-1][0]!r}"
+    )
 
 
 def test_provision_with_local_provider_runs_local_body() -> None:
@@ -42,7 +45,10 @@ def test_provision_with_local_provider_runs_local_body() -> None:
         inst,
         {"engine": {"comfyui": {"custom_nodes": [], "launch_args": []}}, "models": []},
     )
-    assert len(calls) > 0
+    assert calls, "expected at least one run_cmd invocation (local launch)"
+    assert calls[-1][0][:2] == ["python", "main.py"], (
+        f"last call should be ComfyUI launch, got {calls[-1][0]!r}"
+    )
 
 
 def test_provision_with_remote_provider_calls_wait_for_ready_not_local_body() -> None:
@@ -71,14 +77,14 @@ def test_provision_with_remote_provider_calls_wait_for_ready_not_local_body() ->
         probe_profile=None,  # type: ignore[arg-type]
         get_instance=lambda _: inst,
     )
-    cfg = {"lifecycle": {"boot_timeout_s": 30.0}}
+    cfg = {"lifecycle": {"boot_timeout": 30.0}}
     engine.provision(inst, cfg)
     assert run_cmd_calls == []  # remote branch: no subprocess
     assert http_get_calls == ["https://pod-x-8188.proxy.runpod.net/system_stats"]
 
 
 def test_provision_remote_uses_boot_timeout_from_cfg_lifecycle() -> None:
-    """cfg.lifecycle.boot_timeout_s flows through to wait_for_ready's timeout_s."""
+    """cfg.lifecycle.boot_timeout flows through to wait_for_ready's timeout_s."""
     seen_timeout: list[float] = []
 
     class _SpyEngine(ComfyUIEngine):
@@ -93,7 +99,7 @@ def test_provision_remote_uses_boot_timeout_from_cfg_lifecycle() -> None:
         created_at=0.0,
         endpoints={"8188": "https://x"},
     )
-    engine.provision(inst, {"lifecycle": {"boot_timeout_s": 1234.0}})
+    engine.provision(inst, {"lifecycle": {"boot_timeout": 1234.0}})
     assert seen_timeout == [1234.0]
 
 
@@ -115,3 +121,28 @@ def test_provision_remote_default_boot_timeout_when_cfg_absent() -> None:
     )
     engine.provision(inst, {})
     assert seen_timeout == [900.0]
+
+
+def test_provision_remote_reads_boot_timeout_via_pydantic_dump_key() -> None:
+    """Production cfg_dict comes from Config.model_dump() with key 'boot_timeout' (no _s).
+
+    Locks down that the engine reads the SAME key the orchestrator emits, not the
+    dataclass-side _s-suffix name.
+    """
+    seen_timeout: list[float] = []
+
+    class _SpyEngine(ComfyUIEngine):
+        def wait_for_ready(self, instance, *, http_get, sleep, get_instance, timeout_s):  # noqa: ANN001
+            seen_timeout.append(timeout_s)
+
+    engine = _SpyEngine(probe_profile=None)  # type: ignore[arg-type]
+    inst = Instance(
+        id="pod-x",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8188": "https://x"},
+    )
+    # Pydantic model_dump produces "boot_timeout" without the _s suffix.
+    engine.provision(inst, {"lifecycle": {"boot_timeout": 600.0}})
+    assert seen_timeout == [600.0]

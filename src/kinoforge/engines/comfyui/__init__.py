@@ -701,7 +701,7 @@ class ComfyUIEngine(GenerationEngine):
         # ---- remote path: script ran via provider boot; just wait for ready ----
         lifecycle_block = cfg.get("lifecycle", {})
         boot_timeout_s = float(
-            lifecycle_block.get("boot_timeout_s", 900.0)
+            lifecycle_block.get("boot_timeout", 900.0)
             if isinstance(lifecycle_block, dict)
             else 900.0
         )
@@ -720,6 +720,12 @@ class ComfyUIEngine(GenerationEngine):
         guarded by ``[ ! -d ... ]`` / ``[ ! -f ... ]``. Credentials are
         referenced via ``$VAR`` and lifted onto ``spec.env`` by the
         orchestrator; the script string never contains plaintext token values.
+
+        Note:
+            Sources that require live HTTP for ``resolve()`` (e.g. ``CivitAISource``)
+            WILL hit the network at render time. Pass real credentials via the
+            configured CredentialProvider before calling. Pure-rendering sources
+            (``HuggingFaceSource``) work offline.
 
         Args:
             cfg: Runtime configuration dict, same shape as ``provision``.
@@ -830,6 +836,10 @@ class ComfyUIEngine(GenerationEngine):
             ProvisionFailed: Pod entered terminal status before ready.
             ProvisionTimeout: ``timeout_s`` elapsed without a successful ready check.
         """
+        if not instance.endpoints:
+            raise ProvisionFailed(
+                f"pod {instance.id!r} has no endpoints — cannot construct ready URL"
+            )
         port_key = (
             "8188"
             if "8188" in instance.endpoints
