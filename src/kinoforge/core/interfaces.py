@@ -439,7 +439,7 @@ class GenerationEngine(ABC):
             ProvisionTimeout: Ready check never returned success within ``timeout_s``.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} does not implement wait_for_ready"
+            f"{type(self).__name__} does not support wait_for_ready"
         )
 
 

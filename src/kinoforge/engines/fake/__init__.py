@@ -244,7 +244,7 @@ class FakeEngine(GenerationEngine):
                 f"job.spec is missing required keys: {sorted(missing)}"
             )
 
-    def render_provision(self, cfg: dict[str, Any]) -> RenderedProvision:
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
         """Return a deterministic stub RenderedProvision for tests.
 
         Args:

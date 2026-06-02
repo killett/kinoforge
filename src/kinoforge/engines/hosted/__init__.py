@@ -659,7 +659,7 @@ class HostedAPIEngine(GenerationEngine):
                     f"asset_paths.{asset.role}: <dot.path> in YAML"
                 )
 
-    def render_provision(self, cfg: dict[str, Any]) -> RenderedProvision:
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
         """Hosted engines have ``requires_compute=False`` — refuse remote provisioning.
 
         Args:
