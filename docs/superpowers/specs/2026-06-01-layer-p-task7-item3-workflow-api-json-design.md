@@ -1,5 +1,19 @@
 # Layer P — Task 7 item #3 — Real workflow API JSON for Wan 2.1 i2v
 
+> **Amendment 2026-06-02 — re-opened against Layer Q HEAD (merge `c63cbea`).**
+> Layer Q closed the original architectural blocker — `ComfyUIEngine.provision()`
+> was local-only and never provisioned the remote pod. `render_provision()` +
+> `wait_for_ready()` ABC methods on `GenerationEngine` now drive remote cold-boot
+> via orchestrator wiring. Item #3's deliverables (real graph file, YAML wiring,
+> lockdown tests GREEN, first green MP4) are unchanged in shape; the path to
+> them now flows through Layer Q's surface. The body of this spec below is the
+> ORIGINAL plan written before Layer Q landed — read it with the lens of §1.5
+> ("Layer Q delta + amendment scope") and §14 ("Concrete deltas"), which
+> override conflicting details (in particular: §7.3 `/object_info` capture is
+> replaced by §14.B's kijai pinned-pull; §10 ACs are revised per §14.A;
+> §8.3 USER-GATEs are replaced by env-gate-only per §14.G). Sections not
+> mentioned in §14 stand.
+
 Sub-spec for the third sub-plan inside Layer P Task 7. Closes the open
 items in `PROGRESS.md` lines 229–238: workflow-format conversion (item #3)
 PLUS the four "remaining unknowns to surface via live iteration" listed
@@ -32,6 +46,69 @@ compute. Concretely:
 - Prove the stack by running the live smoke against the new graph,
   capturing a non-empty MP4 with valid `ftyp` magic, and recording
   evidence in `PROGRESS.md`.
+
+## 1.5 — Layer Q delta + amendment scope (2026-06-02)
+
+### What Layer Q closed
+- **Architectural blocker:** `ComfyUIEngine.provision()` was local-only and
+  never provisioned the remote pod. It now branches on `instance is None or
+  instance.provider == "local"`; the remote branch delegates to
+  `wait_for_ready`.
+- **ABC surface:** `GenerationEngine.render_provision(cfg) -> RenderedProvision`
+  and `GenerationEngine.wait_for_ready(instance, *, http_get, sleep,
+  get_instance, timeout_s) -> None` are public ABC. ComfyUIEngine
+  implementations live in `src/kinoforge/engines/comfyui/__init__.py:716`
+  (`render_provision`) and `:814` (`wait_for_ready`).
+- **Orchestrator wiring:** `_provision_instance_and_build_backend` drives
+  `render → validate env_required → lift onto spec.env → create_instance →
+  engine.provision → wait_for_ready`. The `_get_instance` seam is injected via
+  `engine.attach_get_instance(provider.get_instance)`.
+- **`InstanceSpec` fields added:** `provision_script: str | None`,
+  `run_cmd: list[str] | None`.
+- **`LifecycleConfig` field added:** `boot_timeout_s: int = 900`.
+- **RunPod consumption:** `_create_pod` base64-encodes `spec.provision_script`
+  into the GraphQL mutation's `dockerArgs` block; reads `spec.image`,
+  `spec.ports`, `spec.env` directly.
+
+### What item #3 still owns
+1. The real 26-node Wan-i2v API-format graph file (Layer Q ships no workflow
+   JSON).
+2. YAML wiring: `prompt_node_ids` list→dict (closes pre-existing bug); real
+   node IDs in `asset_node_ids` / `prompt_node_ids`; raised
+   `lifecycle.boot_timeout_s` for Wan's cold-boot profile; `spec.graph_file`
+   pointer.
+3. First green MP4 from a real RunPod pod.
+4. The 4 RED lockdown tests in `tests/examples/test_runpod_comfyui_wan_graph.py`
+   currently `xfail(strict=False)` per Phase 27 — strip marker, expect GREEN.
+5. Bug-catches from the first real cold-boot (up to 5 classes absorbed per
+   AC6).
+
+### What §1.5 overrides in the original body
+- §2 Q2 ("Hand-author + REST-validate against warm pod") → replaced by §14.B
+  (pin + pull from kijai upstream, hermetic + offline).
+- §2 Q3 ("`/object_info`-grounded then `/prompt` parse-only") → no longer
+  needed; kijai's published example is the ground truth at a pinned SHA.
+- §2 Q5 ("`/object_info` dump committed under `tests/engines/fixtures/comfyui/`")
+  → replaced by AC12 (kijai SHA cross-reference invariant); no fixture capture
+  required from a live pod.
+- §4 Architecture diagram → Phase B's `/object_info` capture step is removed;
+  Phase A grows the kijai-pull task; Phase B becomes a single live render
+  with no intermediate capture steps.
+- §7 Step 1's "smoke fails at the generate step (placeholder graph)" → no
+  longer applies; the real graph + YAML edits land in Phase A before any pod
+  boots, so the smoke is run against a real graph from its first invocation.
+- §7 Step 3 (capture `/object_info`) → DELETED; not needed under kijai-pull.
+- §7 Step 4 (hand-author graph) → DELETED; replaced by §14.B.
+- §7 Step 5 (parse-only `/prompt` validate) → DELETED; not needed (kijai's
+  pinned example is parse-valid by construction at its SHA against the same
+  pinned `custom_nodes` ref).
+- §7 Step 6 (YAML wiring) → moved earlier per §14.C; lands in Phase A, not
+  Phase B.
+- §8.3 USER-GATEs (3 interactive checkpoints) → replaced by env-gate-only per
+  §14.G (Q6 in 2026-06-02 brainstorm).
+- §10 ACs → revised per §14.A (AC3 + AC11 replaced; AC12 + AC13 added).
+- §11 Risks "Schema drift mid-session (kijai PR mid-iteration)" → replaced by
+  AC12's SHA cross-reference invariant + pinned ref in YAML.
 
 ## 2. Scope decisions (locked in brainstorm)
 
@@ -494,3 +571,209 @@ requirements.txt path, /history shape, marker registration) are
 absorbed via the bug-catch budget; they are not "open questions" in
 the spec-time sense — they are expected encounters with documented
 response paths in §8.
+
+## 14 — Concrete deltas (2026-06-02 amendment)
+
+Locked design output from the 2026-06-02 brainstorm. Six clarifying questions
+answered in §14.0; per-section deltas in §14.A through §14.G; out-of-scope
+additions in §14.H. The body of §1 through §13 above is the ORIGINAL plan; this
+section overrides where they conflict (with explicit pointers in §1.5).
+
+### 14.0 — Brainstorm Q&A
+
+| Q | Decision | Reason |
+|---|---|---|
+| Q1 | Light amendment in place | Layer Q surface is final and stable; original ACs (shape) survive intact; SHA history preserved |
+| Q2 | Pin + pull from kijai upstream | Hermetic; no live spend for graph capture; SHA-pinned alongside `custom_nodes` ref already in YAML |
+| Q3 | `prompt_node_ids` exposes `positive` only | Minimal surface; negative is graph-baked default; non-breaking expansion later |
+| Q4 | Bump `boot_timeout_s` in example YAML only (1800 s) | Wan cold-boot's ~30 GB profile is workflow-specific; Layer Q's 900 s default unchanged |
+| Q5 | Keep AC6 ($1.50 cap) + absorb item #4 unknowns | 5 bug-catch classes in same sub-plan; bugs surface during the same live run that produces the MP4 |
+| Q6 | Env-gate only (no interactive USER-GATE) | Setting `KINOFORGE_LIVE_TESTS=1` + creds IS authorization; matches Layer N convention |
+
+### 14.A — AC revisions (replaces §10 of original body where conflicting)
+
+**Stay verbatim (8 ACs):** AC1, AC2 (extended — also asserts
+`lifecycle.boot_timeout_s: 1800` and `spec.graph_file` pointer), AC4 (xfail
+stripped; the 4 original RED-scaffold tests PASS — AC12 and AC13 add 2 further
+tests in the same file but those count under AC12 / AC13, not AC4),
+AC5, AC6, AC7, AC8, AC9, AC10.
+
+**Replaced:**
+
+- **AC3 (was: `/object_info` dump committed).** **NEW:**
+  `examples/graphs/runpod-comfyui-wan.graph.json` committed with a `_meta`
+  header carrying `source_repo`, `source_sha`, `source_path`,
+  `captured_at_local`, `format`, `converter`. The
+  `examples/configs/runpod-comfyui-wan.yaml` `custom_nodes` ref for the kijai
+  entry must match `_meta.source_sha`.
+- **AC11 (was: ≥ 863 tests).** **NEW:** Final count must satisfy: pre-existing
+  pass count strictly increases by `2 + N_regression_tests` (the 2 new offline
+  tests for AC12 + AC13 plus one per bug-catch); the 4 xfailed tests in
+  `tests/examples/test_runpod_comfyui_wan_graph.py` transition to plain pass;
+  no new xfail or skip introduced. Baseline at the start of resume is the
+  count on `main` after `09643d4` lands on origin (979 passed + 4 xfailed +
+  3 skipped per Phase 27 closure).
+
+**Added:**
+
+- **AC12 — kijai SHA cross-reference invariant.** Offline test reads
+  `_meta.source_sha` from the graph JSON; reads
+  `engine.comfyui.custom_nodes[<kijai>].ref` from the YAML; asserts string
+  equality. Failure surfaces SHA drift between captured graph and pinned ref.
+- **AC13 — `env_required` surfaced from YAML.** Offline test loads the YAML
+  via `Config`, calls `ComfyUIEngine().render_provision(cfg.model_dump())`,
+  asserts `rendered.env_required == ["HF_TOKEN"]` (exact list). Locks the
+  YAML's cred-declaration shape against silent drops.
+
+### 14.B — Capture path (replaces §7.3 and §7.4 of original body)
+
+Hermetic offline pull. No live spend for graph capture.
+
+1. **Pin & survey.** Pick the latest tagged release of
+   `kijai/ComfyUI-WanVideoWrapper`; resolve its tag to a commit SHA and pin
+   that SHA. If the repo has no tags at sub-plan-T1 time, pin the current
+   HEAD SHA of `main` and record the choice in the T1 commit message. Survey
+   `example_workflows/` at that SHA.
+2. **Choose Wan-i2v example.** Filter for filenames containing `_api` (API
+   format) and closest to the YAML's `Wan2.X-I2V` model family.
+3. **If kijai's example IS API format:** commit verbatim under
+   `examples/graphs/runpod-comfyui-wan.graph.json` with the `_meta` header
+   per AC3.
+4. **If kijai ships UI format only:** add one-shot offline converter
+   `tools/comfyui_ui_to_api.py`. Reads UI JSON (`nodes[*].widgets_values` +
+   `links`) and emits API JSON (`{<id>: {class_type, inputs}}`). Resolves
+   widget→input names by reading kijai's node `INPUT_TYPES` from the pinned
+   source tree (offline file walk, no Python import). Output committed under
+   `examples/graphs/`; converter committed under `tools/`. The converter
+   itself is intentionally scoped to "passes against the one chosen kijai
+   workflow"; generalisation is a future layer.
+
+**Provenance header (lands in JSON; ComfyUI ignores top-level keys whose names
+are not stringified integers):**
+
+```json
+{
+  "_meta": {
+    "source_repo": "https://github.com/kijai/ComfyUI-WanVideoWrapper",
+    "source_sha": "<pinned-sha>",
+    "source_path": "example_workflows/<picked-file>",
+    "captured_at_local": "2026-06-02T<HH:MM>-<tz>",
+    "format": "api",
+    "converter": "verbatim | tools/comfyui_ui_to_api.py@<git-sha>"
+  },
+  "1": { "class_type": "...", "inputs": {} }
+}
+```
+
+Lockdown tests do `graph.pop("_meta", None)` before walking nodes (avoids
+miscounting and class-types-set leakage).
+
+### 14.C — YAML delta (replaces §7.6 of original body where conflicting)
+
+Five edits to `examples/configs/runpod-comfyui-wan.yaml`:
+
+1. `engine.comfyui.custom_nodes[<kijai>].ref` bumped to match `_meta.source_sha`
+   in the graph JSON (drives AC12).
+2. `compute.lifecycle.boot_timeout_s: 1800` added (sibling of `idle_timeout`,
+   `job_timeout`, `max_lifetime`, `budget`). YAML comment: *"Wan diffusion
+   (~30 GB) + VAE + text encoder cold-boot empirically 5–15 min; 1800 s
+   leaves headroom."*
+3. `spec.graph_file: examples/graphs/runpod-comfyui-wan.graph.json`.
+4. `spec.asset_node_ids.init_image` placeholder `"12"` → real LoadImage-class
+   (or kijai equivalent — `LoadImageFromBase64`, etc.) node ID from the pulled
+   JSON.
+5. `spec.prompt_node_ids` flips from list `["8"]` to dict
+   `{positive: <text-encode-pos-node-id>}` (closes the pre-existing list-vs-dict
+   bug; per Q3, positive only).
+
+`compute.requirements` is audited during sub-plan T2 — touch only if mismatch
+surfaces against the pulled graph / pinned `custom_nodes` (gated under AC7).
+
+### 14.D — Lockdown test transition (replaces §6.1 / §9.1 of original body)
+
+`tests/examples/test_runpod_comfyui_wan_graph.py`:
+
+1. Module-level `pytest.mark.xfail(strict=False, reason="Layer P Task 7
+   item #3 RED lockdown…")` block dropped. The 4 existing tests
+   (`test_graph_shape_api_format`, `test_graph_class_types_within_expected_set`,
+   `test_asset_node_ids_reference_existing_nodes`,
+   `test_prompt_node_ids_is_dict_and_references_existing_nodes`) must PASS.
+2. Shared loader fixture (or per-test) does `graph.pop("_meta", None)` before
+   walking nodes.
+3. `EXPECTED_CLASS_TYPES` whitelist extended ONLY if the pulled graph contains
+   classes not currently listed. Each addition is justified in the commit
+   message; a class outside the expected family prompts investigation, not
+   blind widening.
+4. Two new tests added in the same file:
+   - `test_kijai_sha_pin_cross_reference` (locks AC12).
+   - `test_yaml_env_required_locked_to_hf_token` (locks AC13).
+
+### 14.E — Live smoke flow (replaces §7.1 / §7.2 / §7.5 / §7.7 of original body)
+
+Layer Q surface; no manual `/object_info` capture, no parse-only validation
+loop, no warm-pod-only assumption. `tests/live/test_comfyui_wan_live.py`
+already calls `generate(instance=None)` which exercises this path.
+
+```
+generate(instance=None)
+  → orchestrator._provision_instance_and_build_backend
+    → engine.render_provision(cfg) → RenderedProvision
+    → validate rendered.env_required against CredentialProvider (HF_TOKEN)
+    → spec.env = {HF_TOKEN: <value>, ...}
+    → spec.provision_script = rendered.script (base64'd by RunPod provider)
+    → spec.image / spec.ports / spec.run_cmd from RenderedProvision
+    → provider.create_instance(spec) → Instance
+    → engine.provision(instance, cfg) → wait_for_ready(timeout=1800s) → ready
+  → backend.submit → /prompt → poll /history → Artifact(url=…/view?…)
+  → orchestrator GenerateClipStage._artifact_bytes → http_get_bytes → MP4 bytes
+  → sink → output/<run_id>/<filename>.mp4
+```
+
+### 14.F — Bug-catch protocol (clarifies §7.7 and §8.2 of original body)
+
+Per AC6 cap + AC7 regression coverage:
+
+1. Pod stays warm (`KINOFORGE_LIVE_KEEP_POD=1`) for iteration.
+2. Bug categorised against the 5 absorbed classes (multipart shape,
+   requirements install path, /history outputs key, marker registration under
+   warm-tag, text_encoder routing). New classes outside that set abort the
+   sub-plan; do not silently expand scope.
+3. Forward-fix lands as a commit with offline regression test against captured
+   fixture (Layer N pattern: `_RecordingHTTPSeam` writes fixture; offline test
+   loads it).
+4. Live spend accumulates against the $1.50 AC6 cap; halt if reached pre-MP4
+   and ship what's landed.
+
+### 14.G — Authorization (replaces §8.3 of original body)
+
+Env-gate only. The 3 interactive USER-GATE checkpoints in original §8.3 are
+removed. `KINOFORGE_LIVE_TESTS=1` + `RUNPOD_API_KEY` + `RUNPOD_TERMINATE_KEY` +
+`HF_TOKEN` together constitute authorization. Setting the env vars IS consent.
+
+### 14.H — Out of scope additions (supplements §3 of original body)
+
+- **Layer P T8** (refactor 23 `tests/engines/test_comfyui.py` tests onto
+  captured fixtures) — item #3's smoke captures unblock T8, but T8 runs as a
+  separate plan after item #3 ships.
+- **Layer P T9** (3 ComfyUI shape-lockdown tests) — same dependency.
+- **Layer P T10** (README + PROGRESS Phase 26-equivalent entry + `--no-ff`
+  Layer P merge) — Layer P stays open until T8/T9/T10 ship; item #3 closure
+  block is APPENDED to the existing Layer P trail.
+- **`tools/comfyui_ui_to_api.py` as a general-purpose converter** (if it ships
+  at all per §14.B step 4). Scope is "passes against the one chosen kijai
+  workflow"; generalisation across arbitrary workflows is a future layer.
+- **Negative-prompt role** in `prompt_node_ids`.
+- **Generalising `boot_timeout_s`** to other workflows / engines.
+- **Pixel/quality assertions on the produced MP4** (AC5 stops at ftyp magic +
+  non-zero bytes).
+- **Audio track on the MP4** (GitHub #2).
+- **Serverless RunPod mode** (carried forward from Layer N).
+- **SkyPilot SDK live smoke** (PROGRESS:113 carry-forward #2).
+- **S3/GCS real-cloud verification** (PROGRESS:113 carry-forward #3).
+- **Streaming per-entry log lines in `kinoforge batch`** (PROGRESS:158 /
+  Layer L deferral).
+
+### 14.I — Closure handoff
+
+When item #3 closes, the `# Single next action` block in `PROGRESS.md` shifts
+forward to Layer P T8.
