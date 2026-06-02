@@ -601,9 +601,9 @@ AC5, AC6, AC7, AC8, AC9, AC10.
 **Replaced:**
 
 - **AC3 (was: `/object_info` dump committed).** **NEW:**
-  `examples/graphs/runpod-comfyui-wan.graph.json` committed with a `_meta`
-  header carrying `source_repo`, `source_sha`, `source_path`,
-  `captured_at_local`, `format`, `converter`. The
+  `examples/configs/runpod-comfyui-wan.graph.json` (existing placeholder path)
+  replaced with real graph + `_meta` header carrying `source_repo`,
+  `source_sha`, `source_path`, `captured_at_local`, `format`, `converter`. The
   `examples/configs/runpod-comfyui-wan.yaml` `custom_nodes` ref for the kijai
   entry must match `_meta.source_sha`.
 - **AC11 (was: ≥ 863 tests).** **NEW:** Final count must satisfy: pre-existing
@@ -637,19 +637,25 @@ Hermetic offline pull. No live spend for graph capture.
 2. **Choose Wan-i2v example.** Filter for filenames containing `_api` (API
    format) and closest to the YAML's `Wan2.X-I2V` model family.
 3. **If kijai's example IS API format:** commit verbatim under
-   `examples/graphs/runpod-comfyui-wan.graph.json` with the `_meta` header
-   per AC3.
+   `examples/configs/runpod-comfyui-wan.graph.json` (existing path; current
+   convention puts the graph file next to the YAML so the YAML's relative
+   `graph_file:` field needs no change) with the `_meta` header per AC3.
 4. **If kijai ships UI format only:** add one-shot offline converter
    `tools/comfyui_ui_to_api.py`. Reads UI JSON (`nodes[*].widgets_values` +
    `links`) and emits API JSON (`{<id>: {class_type, inputs}}`). Resolves
    widget→input names by reading kijai's node `INPUT_TYPES` from the pinned
-   source tree (offline file walk, no Python import). Output committed under
-   `examples/graphs/`; converter committed under `tools/`. The converter
-   itself is intentionally scoped to "passes against the one chosen kijai
-   workflow"; generalisation is a future layer.
+   source tree (offline file walk, no Python import). Output committed at
+   `examples/configs/runpod-comfyui-wan.graph.json`; converter committed
+   under `tools/`. The converter itself is intentionally scoped to "passes
+   against the one chosen kijai workflow"; generalisation is a future layer.
 
-**Provenance header (lands in JSON; ComfyUI ignores top-level keys whose names
-are not stringified integers):**
+**Provenance header (lands in JSON; ComfyUI's `/prompt` endpoint validates
+each top-level key as a node ID, so the `_meta` key is stripped at config-load
+time by `core/config._resolve_spec_graph_file` — single source of truth.
+Runtime `ComfyUIBackend.submit` and offline lockdown tests both consume a
+`_meta`-free `cfg.spec["graph"]`. AC12's SHA-cross-reference test reads the
+raw JSON file directly via `json.loads(Path(...).read_text())` since it needs
+to inspect `_meta`):**
 
 ```json
 {
@@ -678,7 +684,10 @@ Five edits to `examples/configs/runpod-comfyui-wan.yaml`:
    `job_timeout`, `max_lifetime`, `budget`). YAML comment: *"Wan diffusion
    (~30 GB) + VAE + text encoder cold-boot empirically 5–15 min; 1800 s
    leaves headroom."*
-3. `spec.graph_file: examples/graphs/runpod-comfyui-wan.graph.json`.
+3. `spec.graph_file` value unchanged (`runpod-comfyui-wan.graph.json` —
+   resolves relative to YAML parent dir per `core/config._resolve_spec_graph_file`,
+   so the existing field already points correctly at the graph file in the
+   same directory).
 4. `spec.asset_node_ids.init_image` placeholder `"12"` → real LoadImage-class
    (or kijai equivalent — `LoadImageFromBase64`, etc.) node ID from the pulled
    JSON.
@@ -698,8 +707,10 @@ surfaces against the pulled graph / pinned `custom_nodes` (gated under AC7).
    (`test_graph_shape_api_format`, `test_graph_class_types_within_expected_set`,
    `test_asset_node_ids_reference_existing_nodes`,
    `test_prompt_node_ids_is_dict_and_references_existing_nodes`) must PASS.
-2. Shared loader fixture (or per-test) does `graph.pop("_meta", None)` before
-   walking nodes.
+2. No `graph.pop("_meta", None)` needed in tests — `_meta` is stripped at
+   config-load time by `core/config._resolve_spec_graph_file` (single source
+   of truth). Tests that consume `cfg.spec["graph"]` via `load_config`
+   already see a `_meta`-free dict.
 3. `EXPECTED_CLASS_TYPES` whitelist extended ONLY if the pulled graph contains
    classes not currently listed. Each addition is justified in the commit
    message; a class outside the expected family prompts investigation, not
