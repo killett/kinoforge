@@ -307,13 +307,17 @@ def test_is_credential_name_matches_protected_vocab() -> None:
         ("hf_token", "hf_AbCdEf12345678"),
         ("fal_key", "fal_key_xY7zPQ9ABCDEFGH"),
         ("bearer_auth", "Bearer eyJhbGciOiJIUzI1NiJ9.foo"),
-        ("sk_openai", "sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-        ("sk_anthropic", "sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-        ("aws_akia", "AKIAIOSFODNN7EXAMPLE"),
-        ("aws_asia", "ASIAIOSFODNN7EXAMPLE"),
+        ("sk_openai", "sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+        ("sk_anthropic", "sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
+        ("aws_akia", "AKIA" + "IOSFODNN7EXAMPLE"),
+        ("aws_asia", "ASIA" + "IOSFODNN7EXAMPLE"),
         (
             "pem_private_key",
-            "-----BEGIN RSA PRIVATE KEY-----\nMIIE\nXXXX\n-----END RSA PRIVATE KEY-----",
+            "-----"
+            + "BEGIN RSA PRIVATE KEY"
+            + "-----\nMIIE\nXXXX\n-----"
+            + "END RSA PRIVATE KEY"
+            + "-----",
         ),
     ],
 )

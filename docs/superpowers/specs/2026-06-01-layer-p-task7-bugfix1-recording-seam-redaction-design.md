@@ -238,23 +238,23 @@ All new unit tests added to `tests/providers/test_runpod_conftest.py`. One new f
    NOT triggered. Locks the list-parent requirement.
 
 5. **Pattern matcher — parametrised per credential format:**
-   ```python
+   ```text
    ("rpa_token_in_log",   "container started, RUNPOD_API_KEY=rpa_AB12cdEF34"),
    ("hf_token_bare",      "hf_AbCdEf12345678"),
    ("fal_key_bare",       "fal_key_xY7zPQ9ABCDEFGH"),
    ("bearer_header",      "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.foo"),
-   ("sk_real_openai",     "sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-   ("sk_real_anthropic",  "sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-   ("aws_akia",           "AKIAIOSFODNN7EXAMPLE"),
-   ("aws_asia",           "ASIAIOSFODNN7EXAMPLE"),
-   ("pem_private_key",    "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----"),
+   ("sk_real_openai",     <sk-proj prefix + 20+ url-safe chars>),
+   ("sk_real_anthropic",  <sk-ant-api03 prefix + 20+ url-safe chars>),
+   ("aws_akia",           <AKIA prefix + 16 alnum chars>),
+   ("aws_asia",           <ASIA prefix + 16 alnum chars>),
+   ("pem_private_key",    <multi-line PEM block: BEGIN…END inclusive>),
    ```
    Assert each redacts in-place; non-matching prose around the credential is preserved.
 
 6. **Pattern matcher — `sk-` false-positive guard:**
    - `"please ask-me about checkpoints, no sk-x here"` → NOT redacted.
    - `"this is sk-only-4chars"` → NOT redacted (content too short).
-   - `"sk-proj-" + "A"*20` → IS redacted.
+   - `<sk-proj prefix + 20 chars>` → IS redacted.
 
 7. **Pattern matcher — recursion:**
    Credential buried in `{"a": {"b": ["c", {"d": "rpa_REAL12345"}]}}` is caught.

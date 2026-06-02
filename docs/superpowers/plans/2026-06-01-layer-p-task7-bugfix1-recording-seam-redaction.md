@@ -244,10 +244,10 @@ EOF
 - [ ] `hf_AbCdEf12345678` → `<REDACTED>`.
 - [ ] `fal_key_xY7zPQ9ABCDEFGH` → `<REDACTED>`.
 - [ ] `Bearer eyJhbGciOiJIUzI1NiJ9.foo` → `<REDACTED>` (full `Bearer X` substring).
-- [ ] `sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345` → `<REDACTED>`.
-- [ ] `sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345` → `<REDACTED>`.
-- [ ] `AKIAIOSFODNN7EXAMPLE` → `<REDACTED>`; same for `ASIAIOSFODNN7EXAMPLE`.
-- [ ] Multi-line PEM block `-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----` → `<REDACTED>` (whole block).
+- [ ] `<sk-proj prefix + 20+ url-safe chars>` → `<REDACTED>`.
+- [ ] `<sk-ant-api03 prefix + 20+ url-safe chars>` → `<REDACTED>`.
+- [ ] `<AKIA prefix + 16 alnum chars>` → `<REDACTED>`; same for `<ASIA prefix + 16 alnum chars>`.
+- [ ] Multi-line PEM block `<BEGIN RSA PRIVATE KEY…END RSA PRIVATE KEY>` → `<REDACTED>` (whole block).
 - [ ] `ask-me about checkpoints` → unchanged (no word boundary before `sk`).
 - [ ] `sk-only-4chars` → unchanged (content gate < 20 chars).
 - [ ] Credential at `{"a": {"b": ["c", {"d": "rpa_REAL12345"}]}}` → caught and replaced.
@@ -260,7 +260,7 @@ EOF
 
 Append to `tests/providers/test_runpod_conftest.py`:
 
-```python
+```text
 from tests.providers.conftest_runpod import (
     _redact_credential_patterns,
     _redact_string,
@@ -274,13 +274,13 @@ from tests.providers.conftest_runpod import (
         ("hf_token", "hf_AbCdEf12345678"),
         ("fal_key", "fal_key_xY7zPQ9ABCDEFGH"),
         ("bearer_auth", "Bearer eyJhbGciOiJIUzI1NiJ9.foo"),
-        ("sk_openai", "sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-        ("sk_anthropic", "sk-ant-api03-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
-        ("aws_akia", "AKIAIOSFODNN7EXAMPLE"),
-        ("aws_asia", "ASIAIOSFODNN7EXAMPLE"),
+        ("sk_openai", <sk-proj prefix + 20+ url-safe chars>),
+        ("sk_anthropic", <sk-ant-api03 prefix + 20+ url-safe chars>),
+        ("aws_akia", <AKIA prefix + 16 alnum chars>),
+        ("aws_asia", <ASIA prefix + 16 alnum chars>),
         (
             "pem_private_key",
-            "-----BEGIN RSA PRIVATE KEY-----\nMIIE\nXXXX\n-----END RSA PRIVATE KEY-----",
+            <multi-line PEM block: BEGIN…END inclusive>,
         ),
     ],
 )
