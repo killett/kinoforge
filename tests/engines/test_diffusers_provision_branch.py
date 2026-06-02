@@ -61,3 +61,47 @@ def test_provision_with_remote_provider_calls_wait_for_ready_not_local_body() ->
     engine.provision(inst, {"lifecycle": {"boot_timeout": 30.0}})
     assert run_cmd_calls == []
     assert http_get_calls == ["https://pod-d-8000.proxy.runpod.net/health"]
+
+
+def test_provision_remote_default_boot_timeout_when_cfg_absent() -> None:
+    """No cfg.lifecycle → default 900.0."""
+    seen_timeout: list[float] = []
+
+    class _SpyEngine(DiffusersEngine):
+        def wait_for_ready(self, instance, *, http_get, sleep, get_instance, timeout_s):  # noqa: ANN001
+            seen_timeout.append(timeout_s)
+
+    engine = _SpyEngine(probe_profile=None)  # type: ignore[arg-type]
+    inst = Instance(
+        id="pod-d",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8000": "https://pod-d-8000"},
+    )
+    engine.provision(inst, {})
+    assert seen_timeout == [900.0]
+
+
+def test_provision_remote_reads_boot_timeout_via_pydantic_dump_key() -> None:
+    """Production cfg_dict comes from Config.model_dump() with key 'boot_timeout' (no _s).
+
+    Locks down that the engine reads the SAME key the orchestrator emits.
+    """
+    seen_timeout: list[float] = []
+
+    class _SpyEngine(DiffusersEngine):
+        def wait_for_ready(self, instance, *, http_get, sleep, get_instance, timeout_s):  # noqa: ANN001
+            seen_timeout.append(timeout_s)
+
+    engine = _SpyEngine(probe_profile=None)  # type: ignore[arg-type]
+    inst = Instance(
+        id="pod-d",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8000": "https://pod-d-8000"},
+    )
+    # Pydantic model_dump produces "boot_timeout" without the _s suffix.
+    engine.provision(inst, {"lifecycle": {"boot_timeout": 600.0}})
+    assert seen_timeout == [600.0]
