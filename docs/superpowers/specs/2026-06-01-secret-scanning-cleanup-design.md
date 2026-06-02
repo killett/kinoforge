@@ -84,9 +84,9 @@ flag.
 2. **Add a permanent fail-closed lockdown audit** (`tests/test_source_audit.py`)
    that walks documentation, tests, and repo-root markdown / env files and
    raises if any of them gain a literal credential-shaped string. The audit
-   reuses the production `_CREDENTIAL_PATTERNS` from
-   `tests/providers/conftest_runpod.py:191`, so any future credential type added
-   to the redactor is automatically picked up by the lockdown.
+   uses its own scanner-grade `_PATTERNS` list (see §3.4.2 and the Spec
+   Amendment above), not the production `_CREDENTIAL_PATTERNS` — see §3.4.2
+   for the rationale.
 3. **Document the post-merge UI step**: dismiss the GitHub Secret Scanning
    alert as "Used in tests" / "False positive" once the fix is on `main`.
 
@@ -331,8 +331,8 @@ feeds those tuples to the redactor reproduces today's behavior.
 
 - `test_no_committed_source_contains_a_credential` — the main audit walk.
   GREEN after §3.1, §3.2, §3.3 land. Red against current `main`.
-- `test_credential_patterns_cover_canonical_seven` — self-test asserting the
-  pattern list has at least the 7 expected entries by name.
+- `test_credential_patterns_cover_expected` — self-test asserting the
+  pattern list has at least the 4 expected scanner-grade entries by name.
 - `test_audit_walker_fires_on_known_credential` — reverse-test using
   `tmp_path` to confirm the walker catches at least one synthetic hit.
 
