@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import registry
@@ -30,6 +31,7 @@ from kinoforge.core.interfaces import (
     GenerationJob,
     Instance,
     ModelProfile,
+    RenderedProvision,
 )
 
 
@@ -146,22 +148,36 @@ class FakeEngine(GenerationEngine):
     def __init__(
         self,
         *,
-        probe_profile: ModelProfile,
-        declared_flags_map: dict[str, dict[str, Any]],
-        required_spec_keys: set[str],
+        probe_profile: ModelProfile | None = None,
+        declared_flags_map: dict[str, dict[str, Any]] | None = None,
+        required_spec_keys: set[str] | None = None,
     ) -> None:
         """Initialise the fake engine with injected strategy and probe data.
 
+        All parameters have module-level defaults and can be omitted for
+        simple test construction (``FakeEngine()``).
+
         Args:
             probe_profile: Passed unchanged to every ``FakeBackend`` instance.
+                Defaults to ``_DEFAULT_PROBE`` when ``None``.
             declared_flags_map: Keyed by ``CapabilityKey.derive()``; returned
-                verbatim by ``declared_flags``.
+                verbatim by ``declared_flags``.  Defaults to
+                ``_DEFAULT_DECLARED_FLAGS_MAP`` when ``None``.
             required_spec_keys: ``validate_spec`` raises ``ValidationError``
                 when any key in this set is absent from ``job.spec``.
+                Defaults to ``set()`` when ``None``.
         """
-        self._probe = probe_profile
-        self._declared_flags_map = declared_flags_map
-        self._required_spec_keys = required_spec_keys
+        # Defaults are applied lazily (after module-level constants are defined)
+        # to avoid a forward-reference problem at class definition time.
+        self._probe = probe_profile if probe_profile is not None else _DEFAULT_PROBE
+        self._declared_flags_map = (
+            declared_flags_map
+            if declared_flags_map is not None
+            else dict(_DEFAULT_DECLARED_FLAGS_MAP)
+        )
+        self._required_spec_keys = (
+            required_spec_keys if required_spec_keys is not None else set()
+        )
 
     def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
         """No-op — the fake engine requires no downloads or setup.
@@ -227,6 +243,36 @@ class FakeEngine(GenerationEngine):
             raise ValidationError(
                 f"job.spec is missing required keys: {sorted(missing)}"
             )
+
+    def render_provision(self, cfg: dict[str, Any]) -> RenderedProvision:
+        """Return a deterministic stub RenderedProvision for tests.
+
+        Args:
+            cfg: Unused.
+
+        Returns:
+            A fixed RenderedProvision; tests assert on the values directly.
+        """
+        del cfg
+        return RenderedProvision(
+            script="echo fake",
+            run_cmd=["sleep", "infinity"],
+            image="fake:latest",
+            ports=["8000"],
+            env_required=[],
+        )
+
+    def wait_for_ready(
+        self,
+        instance: Instance,
+        *,
+        http_get: Callable[[str], dict[str, Any]],
+        sleep: Callable[[float], None],
+        get_instance: Callable[[str], Instance],
+        timeout_s: float,
+    ) -> None:
+        """No-op for the fake engine — used for orchestrator-wiring tests."""
+        del instance, http_get, sleep, get_instance, timeout_s
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Return deterministic bytes derived from the artifact's filename.

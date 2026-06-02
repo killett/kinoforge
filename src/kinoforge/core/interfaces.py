@@ -9,9 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import Protocol, Self, runtime_checkable
+from typing import Any, Protocol, Self, runtime_checkable
 
 # --- compute axis -----------------------------------------------------------
 
@@ -387,6 +388,58 @@ class GenerationEngine(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support tail-frame extraction"
+        )
+
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
+        """Emit the first-boot bootstrap payload for this engine.
+
+        Engines that support remote provisioning (ComfyUI, Diffusers) override
+        this. Engines with ``requires_compute=False`` (Hosted) raise
+        ``NotImplementedError``. The orchestrator only calls this for engines
+        with remote-capable providers.
+
+        Args:
+            cfg: Runtime configuration dict (same shape passed to ``provision``).
+
+        Returns:
+            A :class:`RenderedProvision` ready to attach to :class:`InstanceSpec`.
+
+        Raises:
+            NotImplementedError: Engine does not support remote provisioning.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support remote provisioning"
+        )
+
+    def wait_for_ready(
+        self,
+        instance: Instance,
+        *,
+        http_get: Callable[[str], dict[str, Any]],
+        sleep: Callable[[float], None],
+        get_instance: Callable[[str], Instance],
+        timeout_s: float,
+    ) -> None:
+        """Poll until the engine reports ready, status flips terminal, or timeout.
+
+        Concrete engines (ComfyUI: GET /system_stats; Diffusers: GET /health)
+        override this. Default raises ``NotImplementedError`` so an engine
+        missing the override fails loudly rather than silently never-readying.
+
+        Args:
+            instance: The just-created compute instance.
+            http_get: Injectable HTTP GET seam.
+            sleep: Injectable sleep used between polls.
+            get_instance: Injectable provider lookup for status checks.
+            timeout_s: Maximum total wait before raising ``ProvisionTimeout``.
+
+        Raises:
+            NotImplementedError: Subclass did not override.
+            ProvisionFailed: Pod boot script crashed (status flipped terminal).
+            ProvisionTimeout: Ready check never returned success within ``timeout_s``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement wait_for_ready"
         )
 
 
