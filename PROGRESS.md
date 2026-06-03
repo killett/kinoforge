@@ -195,6 +195,19 @@ Parent Layer P Task 7 item #3 — sub-plan T1 "Pull kijai upstream + commit real
 - `tests/tools/fixtures/kijai_wanvideo_2_1_14B_i2v.expected_api.json` (converter golden)
 - `tools/comfyui_ui_to_api.py` (CLI for regenerating the golden if needed)
 
+### Post-T7 selfterm verification (commits `2ec3d9f`, `b9a7dfb`)
+Selfterm watchdog end-to-end verified via `pixi run probe-watchdog`:
+- `2ec3d9f` — `selfterm.RENDER`'s terminate URL was hitting the serverless endpoint (`POST /v2/{pod_id}/stop`); pod survived past `effective_deadline`. Switched to `DELETE https://rest.runpod.io/v1/pods/{pod_id}` (same one `destroy_instance`/preflight sweep use). Added `User-Agent: kinoforge-selfterm/0.1` so it survives RunPod's edge-layer `Python-urllib/*` block. Lockdown test pins the URL pattern + DELETE method.
+- `b9a7dfb` — Probe-watchdog itself was picking AMD MI300X (cheapest match for `min_vram_gb=8` + `max_usd_per_hr=0.50`), but the pinned `runpod/pytorch` CUDA image fails to start on AMD; container allocated but bash bootstrap never runs. Filter offers to NVIDIA-only.
+
+Verified live (probe `bsvl6l4uc` 2026-06-03): pod GONE at `~55 s` (effective_deadline 50 s + one 15 s sleep iteration), no fallback DELETE needed. Selfterm watchdog is the independent pod-side safety net the original spec called for.
+
+### Final session state (post-2ec3d9f, b9a7dfb)
+- Test count **1020** passed, 3 skipped, 4 xfailed (+11 net new across the sub-plan).
+- `pixi run pre-commit run --all-files` clean.
+- Zero pods leaked at session close.
+- Total live spend `~$2.70` of `$15` budget; remaining `~$12.30`.
+
 ---
 
 **Phase 27 — CI green recovery — ✅ CLOSED LOCALLY 2026-06-02 at HEAD `2737a2a` (merge `b101104`).**
