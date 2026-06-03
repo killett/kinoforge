@@ -3,12 +3,15 @@ repos:
     hooks:  # On macOS, pixi-installed tools (pytest, ruff, mypy) can fail due to shebang path resolution issues. Using python -m <tool> bypasses this reliably.
       - id: ruff
         name: ruff
-        entry: pixi run python -m ruff check --fix
+        # --force-exclude makes ruff honor pyproject.toml's extend-exclude even when
+        # pre-commit passes file paths explicitly (e.g. tools/_vendored/ third-party code).
+        entry: pixi run python -m ruff check --force-exclude --fix
         language: system
         types: [python]
       - id: ruff-format
         name: ruff-format
-        entry: pixi run python -m ruff format
+        # --force-exclude — see ruff hook note above.
+        entry: pixi run python -m ruff format --force-exclude
         language: system
         types: [python]
       - id: mypy

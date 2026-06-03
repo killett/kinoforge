@@ -7,6 +7,10 @@ license-files = ["LICENSE"]
 authors = [{ name = "Emmy Killett" }]
 dependencies = []
 
+[tool.ruff]
+# Vendored third-party code is kept verbatim and is not subject to our lint/format rules.
+extend-exclude = ["tools/_vendored"]
+
 [tool.ruff.lint]
 select = [
     "F",      # Pyflakes — unused imports, undefined names, etc.
@@ -42,6 +46,8 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 mypy_path = "src"
+# Vendored third-party code is kept verbatim and is not subject to our type-check rules.
+exclude = ["tools/_vendored/"]
 
 # Uncomment when using rasterio or netCDF4:
 # [[tool.mypy.overrides]]
