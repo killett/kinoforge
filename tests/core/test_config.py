@@ -141,7 +141,7 @@ def test_hardware_requirements_defaults_applied():
     # Bug this catches: dropping defaults when user only set gpu_preference.
     assert reqs.min_vram_gb == 48
     assert reqs.min_cuda == "12.8"
-    assert reqs.max_cost_rate_usd_per_hr == 2.20
+    assert reqs.max_usd_per_hr == 2.20
     assert reqs.disk_gb == 100
     assert reqs.gpu_preference == ("RTX 4090",)
 

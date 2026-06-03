@@ -254,9 +254,7 @@ def test_ac3_find_offers_returns_all_when_no_filter_applied() -> None:
     fake = _FakeSky(gpu_list_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
-    reqs = HardwareRequirements(
-        min_vram_gb=0, min_cuda="11.0", max_cost_rate_usd_per_hr=9.99
-    )
+    reqs = HardwareRequirements(min_vram_gb=0, min_cuda="11.0", max_usd_per_hr=9.99)
     offers = provider.find_offers(reqs)
     assert len(offers) == 2
 

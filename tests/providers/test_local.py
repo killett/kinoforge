@@ -31,7 +31,7 @@ def test_find_offers_returns_default_compliant_offer(provider: LocalProvider) ->
     assert len(offers) >= 1
     for o in offers:
         assert o.vram_gb >= reqs.min_vram_gb
-        assert o.cost_rate_usd_per_hr <= reqs.max_cost_rate_usd_per_hr
+        assert o.cost_rate_usd_per_hr <= reqs.max_usd_per_hr
 
 
 def test_find_offers_uses_filter(provider: LocalProvider) -> None:

@@ -96,7 +96,7 @@ def test_runpod_live_e2e_pod_lifecycle_smoke() -> None:
         # ------------------------------------------------------------------
         reqs = HardwareRequirements(
             min_vram_gb=24,
-            max_cost_rate_usd_per_hr=0.50,
+            max_usd_per_hr=0.50,
         )
         offers = provider.find_offers(reqs)
         assert offers, "find_offers returned no offers"

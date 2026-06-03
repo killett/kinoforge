@@ -320,7 +320,7 @@ destroys. No engine, no model download, no generation. Cost per run
 is ≈$0.001 (single-digit pennies × seconds at ~$0.35/hr).
 
 Cost guards (triple-locked):
-1. Smoke YAML pins `max_cost_rate_usd_per_hr=0.50` — `filter_offers` excludes anything more expensive
+1. Smoke YAML pins `max_usd_per_hr=0.50` — `filter_offers` excludes anything more expensive
 2. `finally:` block always calls `destroy_instance`
 3. Selfterm script + `idle_timeout_s=600` provides a 10-minute fallback if the test process is killed mid-run
 

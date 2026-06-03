@@ -31,7 +31,7 @@ compute:
   requirements:
     min_vram_gb: 80
     min_cuda: "12.4"
-    max_cost_rate_usd_per_hr: 3.50
+    max_usd_per_hr: 3.50
     gpu_preference:
       - "A100 80GB"
       - "H100 80GB"

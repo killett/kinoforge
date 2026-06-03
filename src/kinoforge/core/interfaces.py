@@ -24,14 +24,14 @@ class HardwareRequirements:
     Attributes:
         min_vram_gb: Minimum GPU VRAM in GB; offers below this are excluded.
         min_cuda: Minimum CUDA version string (semantic compare, e.g. "12.8").
-        max_cost_rate_usd_per_hr: Ceiling for pod-mode offers; serverless ignores.
+        max_usd_per_hr: Ceiling for pod-mode offers; serverless ignores.
         gpu_preference: Ordered preference list among surviving offers.
         disk_gb: Minimum container/instance disk in GB.
     """
 
     min_vram_gb: int = 48
     min_cuda: str = "12.8"
-    max_cost_rate_usd_per_hr: float = 2.20
+    max_usd_per_hr: float = 2.20
     gpu_preference: tuple[str, ...] = ()
     disk_gb: int = 100
 
