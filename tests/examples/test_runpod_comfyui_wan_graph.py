@@ -20,11 +20,14 @@ see PROGRESS sub-plan ``comfyui_ui_to_api`` T6 closure block.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from kinoforge.core.config import load_config
 
 YAML_PATH = Path("examples/configs/runpod-comfyui-wan.yaml")
+GRAPH_PATH = Path("examples/configs/runpod-comfyui-wan.graph.json")
+KIJAI_REPO_HINT = "kijai/ComfyUI-WanVideoWrapper"
 
 EXPECTED_NODE_COUNT = 15
 EXPECTED_CLASS_TYPES = {
@@ -104,3 +107,39 @@ def test_prompt_node_ids_is_dict_and_references_existing_nodes() -> None:
             f"prompt role {role!r} -> node {node_id!r} not in graph "
             f"(graph keys: {sorted(graph.keys())})"
         )
+
+
+def test_kijai_sha_pin_cross_reference() -> None:
+    """The kijai custom_nodes ref in the YAML must match _meta.source_sha in the graph file.
+
+    Both are pinned at the same SHA to lock the workflow JSON to the
+    custom_nodes implementation that produced it. Drift between them is
+    silent at runtime (the graph still POSTs cleanly) but the workflow
+    is only guaranteed to render correctly against the kijai nodes at
+    the SHA the workflow was captured against — caught here.
+    """
+    raw_graph = json.loads(GRAPH_PATH.read_text())
+    meta = raw_graph.get("_meta")
+    assert meta is not None, (
+        f"{GRAPH_PATH} missing _meta header (set by T1 of item #3 resume)"
+    )
+    graph_sha = meta.get("source_sha")
+    assert isinstance(graph_sha, str) and len(graph_sha) == 40, (
+        f"_meta.source_sha must be 40-char SHA, got {graph_sha!r}"
+    )
+
+    cfg = load_config(YAML_PATH)
+    assert cfg.engine.comfyui is not None, "engine.comfyui block missing from YAML"
+    custom_nodes = cfg.engine.comfyui.custom_nodes
+    kijai_entries = [cn for cn in custom_nodes if KIJAI_REPO_HINT in cn.get("git", "")]
+    assert len(kijai_entries) == 1, (
+        f"expected exactly one kijai entry in custom_nodes, got "
+        f"{[cn.get('git') for cn in custom_nodes]}"
+    )
+    yaml_sha = kijai_entries[0].get("ref")
+
+    assert graph_sha == yaml_sha, (
+        f"kijai SHA drift between graph _meta ({graph_sha!r}) and YAML "
+        f"custom_nodes[kijai].ref ({yaml_sha!r}); rerun graph capture or "
+        f"bump YAML"
+    )
