@@ -21,6 +21,15 @@ a design or plan exists (see Durability rules).
   action. Update and commit it after each task.
 - **Persist the brainstorm as it forms.** During brainstorming, append each validated design
   section to the design doc and commit it — never leave the agreed design only in the conversation.
+- **Commit RED scaffolds before any live spend.** Any tool, script, or fixture an agent generates
+  whose purpose is to drive live cloud, paid API, or network spend MUST be committed (RED is fine —
+  failing tests, xfail markers, or scaffold-only impl) BEFORE the spend is invoked. Reason: a
+  mid-spend crash that loses the uncommitted scaffold forces the next session to redo the work
+  before retrying the spend, and tempts a `git checkout .` cleanup that wipes 100+ LOC. Rule applies
+  to subagents too — controller must verify the scaffold is committed (atomic, even just the
+  scaffold + a failing test) before dispatching the live-spend subagent.
+- **Run `pixi run preflight` before any live spend.** Checks env vars set, zero active RunPod pods,
+  clean working tree. Exit 0 == safe to spend. See `tools/preflight.py` for the contract.
 
 ## Process & testing
 - **Superpowers owns the workflow:** brainstorm → plan → execute, with red/green TDD and two-stage
