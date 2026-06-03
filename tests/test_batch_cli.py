@@ -17,7 +17,14 @@ from kinoforge.cli import main
 
 
 def _write_local_fake_cfg(tmp_path: Path) -> Path:
-    """Write a minimal local + FakeEngine config and return its path."""
+    """Write a minimal local + FakeEngine config and return its path.
+
+    The ``output:`` block is pinned to ``tmp_path / "output"`` so that
+    sink publishes from FakeEngine-driven batch runs don't leak 24-byte
+    placeholder MP4s into the real repo's ``output/`` (default behaviour
+    of ``OutputConfig`` is to write relative to cwd, which is the repo
+    root under pytest).
+    """
     cfg = {
         "engine": {"kind": "fake", "precision": "fp16"},
         "models": [
@@ -28,6 +35,11 @@ def _write_local_fake_cfg(tmp_path: Path) -> Path:
             }
         ],
         "compute": {"provider": "local", "image": ""},
+        "output": {
+            "kind": "local",
+            "dir": str(tmp_path / "output"),
+            "enabled": True,
+        },
     }
     path = tmp_path / "cfg.yaml"
     path.write_text(yaml.safe_dump(cfg))
