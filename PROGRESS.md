@@ -169,7 +169,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 **Budget remaining: ~$12.30 of $15.** Burn so far ~$2.70 (T4 captures + diagnostic pods + probe-watchdog verification).
 
-**Side-task still pending (separate from sub-plan):** **Phase 27 — CI green recovery** still awaits `git push origin main && git push origin --delete chore/ci-green-recovery` from outside the container (see block below at line ~213). Sub-plan work is local-only; nothing pushed.
+**Side-task ✅ CLOSED 2026-06-03:** **Phase 27 — CI green recovery** push landed from outside the container. `git push origin main` succeeded (origin/main now at `666970b`); `git push origin --delete chore/ci-green-recovery` returned `remote ref does not exist` — branch was already absent on remote. Final gate now: CI run on `main` for HEAD `666970b` going green; suite shape now ~`1020 passed, 3 skipped, 4 xfailed` (vs original `b101104` projection of `979 passed, 4 xfailed, 3 skipped` — Layer Q + sub-plan + selfterm fixes land 41 net-new passing tests since the Phase 27 freeze).
 
 ---
 
@@ -234,11 +234,14 @@ Verified live (probe `bsvl6l4uc` 2026-06-03): pod GONE at `~55 s` (effective_dea
 
 ---
 
-**Phase 27 — CI green recovery — ✅ CLOSED LOCALLY 2026-06-02 at HEAD `2737a2a` (merge `b101104`).**
-Awaiting `git push origin main && git push origin --delete chore/ci-green-recovery` from outside the
-container. Once pushed, final gate is the CI run on `main` for `b101104` going green; expected suite
-shape is `979 passed, 4 xfailed, 3 skipped`. Feature-branch CI run `26852220643` already completed
-green on both ubuntu-latest + macos-latest.
+**Phase 27 — CI green recovery — ✅ FULLY CLOSED 2026-06-03 (push landed; origin/main = `666970b`).**
+Originally closed locally 2026-06-02 at HEAD `2737a2a` (merge `b101104`); push gate cleared from
+outside the container 2026-06-03. `git push origin --delete chore/ci-green-recovery` returned
+`remote ref does not exist` — feature branch never reached remote (or was already pruned). Final
+gate now: CI run on `main` for HEAD `666970b` going green; expected suite shape ~`1020 passed,
+3 skipped, 4 xfailed` until item #3 lands (which flips the 4 xfailed → passed). Feature-branch CI
+run `26852220643` already completed green on both ubuntu-latest + macos-latest at the original
+`b101104` closure.
 
 Two-file change:
 - `tests/examples/test_runpod_comfyui_wan_graph.py` — module-level
