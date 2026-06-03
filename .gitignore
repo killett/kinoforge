@@ -32,3 +32,6 @@ output/
 
 # Superpowers brainstorming session state (PIDs, logs, transient HTML)
 .superpowers/
+
+# Live-smoke per-run record (git_sha, timings, artifact sha256) — local only
+tests/engines/fixtures/comfyui/last_smoke.json
