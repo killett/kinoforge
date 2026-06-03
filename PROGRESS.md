@@ -151,18 +151,82 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** 🎬 **First green MP4 landed 2026-06-03T15:02 PDT** at HEAD `b05fcb3`. Layer P Task 7 item #3 fully closed (T6 GREEN, T7 = this block). 3 409 310-byte ftypisom MP4 at `output/20260603-150218_A-cat-slowly-turning.mp4`, also persisted to `.kinoforge/artifacts/run/WanVideoWrapper_I2V_00001.mp4`. 8 bug-catches absorbed across the §14.F 5-class set + 3 test-side alignment fixes. All Layer P architectural work done; PROGRESS's open follow-ups (Layer P T8/T9/T10) now ready to start in fresh sessions.
+**Where we are:** 🎬 **Two green MP4s rendered, quality investigation paused on a TEST-FIXTURE issue (not a kinoforge bug).** HEAD `25d0552`. Layer P Task 7 item #3 fully closed at HEAD `b05fcb3`; two follow-up commits fixed prompt routing (the first MP4 rendered kijai's baked-in default prompt at undersampled-noise quality) and a leaked-output test-hygiene bug. A second live run with `steps=20 cfg=6 + prompt_input_field=positive_prompt` produced a clean cat-turning-its-head MP4 — but the first 2-3 seconds show a strong diagonal seam artifact whose root cause turned out to be the init-frame test fixture itself being a black-and-white diagonal gradient placeholder, not a real photo. Wan is correctly honoring the supplied init frame at t=0 and gradually morphing it into the prompted cat over the first ~32-48 frames as image-conditioning fades.
 
 **Read in this order:**
-1. The "Layer P Task 7 item #3 — T6 GREEN MP4 closure (2026-06-03)" block below — full evidence package + bug-catch trail
-2. The "Layer P Task 7 item #3 resume — T0–T4 closure + T5 abort" block (immediately under that) — prior offline wave context
-3. `git log --oneline -30` — last 30 commits (16 from the T6 wave on top of the 9 T0–T4 commits + Phase 27 close)
+1. The "Frame inspection of the T6 quality re-render" block below — what the artifact is + root cause
+2. The "T6 quality re-render (post-T7)" block — the post-closure follow-up commits (prompt routing + sampler steps + batch_cli sink leak)
+3. The "Layer P Task 7 item #3 — T6 GREEN MP4 closure (2026-06-03)" block — original GREEN MP4 evidence + 8-bug-catch trail
+4. The "Layer P Task 7 item #3 resume — T0–T4 closure + T5 abort" block — prior offline wave context
+5. `git log --oneline -32` — last 32 commits
 
-**First unchecked task in fresh session:** Layer P T8 (refactor 23 `tests/engines/test_comfyui.py` tests onto captured fixtures) per spec §14.H — `tests/engines/fixtures/comfyui/history_done.json` + `prompt_submit.json` are now committed and ready to be consumed.
+**First unchecked task in fresh session:** replace `tests/providers/fixtures/runpod/sample_init_frame.png` with an actual representative image (a small CC0 cat photo or a neutral grey/white 256×256 PNG) so the i2v init-frame test asset matches the smoke test's prompt. The current PNG is a 256×256 8-bit grayscale diagonal-gradient placeholder shipped during early Layer P infra work; it's the literal "diagonal line" the user observed. Once that's done, Layer P T8/T9/T10 follow-ups (refactor offline ComfyUI tests onto captured fixtures + README + main-branch merge) are unblocked.
 
-**Budget remaining: ~$11.45 of $15.** T6 wave live spend: **~$0.55** (15 pod attempts averaging ~$0.04 each — the 4m 56s GREEN run was $0.022). Within the $1.50 AC6 cap with $0.95 to spare.
+**Budget remaining: ~$11.36 of $15.** Total live spend across the item #3 wave: **~$0.64** (T6 + diagnostic + capture + quality re-render). Within the $1.50 AC6 cap.
 
 **Side-task ✅ CLOSED 2026-06-03:** **Phase 27 — CI green recovery** push landed from outside the container. `git push origin main` succeeded (origin/main now at `666970b`); `git push origin --delete chore/ci-green-recovery` returned `remote ref does not exist` — branch was already absent on remote. Final gate now: CI run on `main` for HEAD `666970b` going green; suite shape now `1028 passed, 3 skipped` (vs original `b101104` projection of `979 passed, 4 xfailed, 3 skipped` — Layer Q + sub-plan + selfterm + item #3 T0–T4 land 49 net-new passing tests since the Phase 27 freeze; the 4 xfailed are now plain passes).
+
+---
+
+**Frame inspection of the T6 quality re-render — 2026-06-03 at HEAD `25d0552`.**
+
+**Symptom (reported by Dr. Twinklebrane):** Second MP4 (`output/20260603-153126_A-cat-slowly-turning.mp4`, 955 281 bytes, ftypisom) shows the cat correctly for roughly the last half of the clip but has a strong diagonal seam artifact across the first 2-3 seconds: bottom-left to top-right line; top-left side white/grey; bottom-right side has part of the cat's face. Last few seconds are clean.
+
+**Tooling:** `pixi add ffmpeg` (conda-forge, commit `25d0552`). Provides `ffmpeg` + `ffprobe` on the env's `PATH`. Frame-extraction recipe used for the investigation:
+
+```bash
+pixi run ffprobe -v error -select_streams v -show_entries stream=codec_name,width,height,r_frame_rate,nb_frames,duration -of default=noprint_wrappers=1 <mp4>
+pixi run ffmpeg -y -i <mp4> -vf fps=2 /tmp/frames/frame_%03d.png
+for t in 0.0 0.3 0.6 1.0 1.5 2.0 2.5 3.0 4.0 5.0; do
+  pixi run ffmpeg -y -ss $t -i <mp4> -frames:v 1 /tmp/frames/at_${t}s.png
+done
+```
+
+**Video properties:** h264, 624×624, 16 fps, 81 frames, 5.0625 s duration. Matches `cfg.params` (`num_frames: 81`, `fps: 16`) + `node 68` resize (`width: 624, height: 624, divisible_by: 16`).
+
+**Frame timeline:**
+- **t = 0.0 s** — Pure 624×624 diagonal gradient. Top-left to bottom-right axis: bottom-left corner black, top-right corner black, diagonal seam from bottom-left to top-right where the white peaks. **No cat at all.** The frame is essentially the source init image upscaled to 624×624 (see Root Cause below).
+- **t = 0.3 s ~ 0.6 s** — Cat starts emerging in the bottom-right triangle only. Top-left triangle remains a grey gradient. Sharp diagonal seam between the two halves.
+- **t = 1.0 s ~ 3.0 s** — Both halves now contain a cat, but they're slightly different cats / slightly different facing angles. The seam runs through the middle of the face. By 3 s the two halves are visibly misaligned at the eyes / whiskers.
+- **t = 4.0 s ~ 5.0 s** — Single clean cat (striking white Persian-style cat, orange eyes, looking forward against a black background). No seam.
+
+**Root cause:** `tests/providers/fixtures/runpod/sample_init_frame.png` IS a 256×256 8-bit grayscale **black-and-white diagonal gradient placeholder**, not a real photograph. `pixi run ffprobe` confirmed dimensions + colour mode; opening the file shows the exact diagonal pattern the user describes in the early frames of the MP4.
+
+The kijai workflow's flow is `LoadImage (58) → ImageResizeKJv2 (68) → WanVideoImageToVideoEncode (63).start_image → WanVideoSampler (27)`. The sampler honours `start_image` at the latent level with `noise_aug_strength: 0.03` + `start_latent_strength: 1.0` (per the kijai widget defaults). At t=0 the model is overwhelmingly weighted toward the supplied init pixel structure; over the temporal context window it gradually transfers control to the text-encode conditioning (`positive_prompt: "A cat slowly turning..."`). By the end of the clip the prompt has fully taken over.
+
+So Wan is doing exactly what it's told. The diagonal artifact is **literally the init frame** rendering through the noise-aug warmup. Not a kinoforge plumbing bug, not a Wan model bug, not a graph wiring bug.
+
+**Provenance of the bad fixture:** `tests/providers/fixtures/runpod/sample_init_frame.png` was committed during early Layer P infrastructure work as a tiny placeholder so the RunPod fixture set had _some_ binary blob to upload through the `/upload/image` test path. Nobody flagged it because all prior CI tests use the FakeEngine which doesn't care about the pixel content. The Wan smoke is the first end-to-end pipeline that actually puts those bytes in front of a real diffusion model.
+
+**Fix is data-side, not code-side:** Replace the fixture PNG with either:
+1. A small CC0 cat photo from a public-domain source (Wikimedia, Unsplash CC0, the user's own image). Keeps the smoke test's narrative consistent — the prompt says "cat", the init frame shows a cat, the output is a cat turning its head.
+2. A neutral grey 256×256 (or 624×624 pre-resized) PNG. Less narrative match but completely innocuous — gives Wan zero pixel-content bias so the prompt + noise_aug drive the entire generation.
+
+Recommendation: option 1 with a small CC0 cat photo committed at `tests/providers/fixtures/runpod/sample_init_frame.png` (overwrite). Bonus: the fixture audit lockdown in `tests/providers/test_fixtures_audit.py` continues to pass because the file is still ≤ 500 KB and contains no secrets.
+
+**Other gripe-grade observations from the frame sweep (not blocking):**
+- The output dimensions are 624×624 because `ImageResizeKJv2` (node 68) has `width: 624, height: 624` widget defaults from kijai's example. The YAML's `params: width: 480, height: 480` was never threaded onto node 68 because the YAML's `node_overrides: {}` is empty and there's no automatic params-to-widget mapping. The MP4 isn't 480p; it's 624×624. Architectural follow-up: orchestrator could auto-merge `cfg.params` into the matching graph-node widgets, OR YAML should set explicit `node_overrides` for shape-controlling nodes. Documenting only.
+- 81 frames at 16 fps = 5.0625 s. Matches Wan 2.1's standard temporal window. Good.
+
+**Open questions (deferred — for the user's decision before the next live spend):**
+- Which init-fixture option (CC0 cat vs neutral grey)?
+- Should the test also verify a per-frame quality check (e.g., compare last frame against an expected hash) or stay at the ftyp-magic + size bar? AC5 in spec §14.A stops at ftyp + size > 0; per-frame quality is explicitly out of scope per §14.H, so this stays a follow-up.
+
+**Commits since the previous closure block:**
+
+| Commit | Subject | Purpose |
+|---|---|---|
+| `d455f93` | `fix(engines,examples): prompt routes to positive_prompt + sampler steps 4->20 cfg 1->6` | The first MP4 (3.4 MB) rendered kijai's baked-in default prompt because `ComfyUIBackend.submit` hardcoded `text` as the prompt-input field; kijai's `WanVideoTextEncode` uses `positive_prompt`. Plus the kijai sampler defaults were `steps=4 cfg=1` which require the lightx2v cfg-step distillation LoRA that we'd dropped — without the LoRA those values produce undersampled noise. New defaults: `steps=20 cfg=6 shift=7 scheduler=unipc` (non-distilled Wan 2.1 baseline). |
+| `c2d28e2` | `fix(tests/batch_cli): pin output.dir to tmp_path so sink publishes don't leak` | Independent test-hygiene fix: `tests/test_batch_cli.py::_write_local_fake_cfg` was building a config with no `output:` block, so `OutputConfig`'s default `Path("output")` resolved against the pytest cwd = repo root. Every batch CLI test was leaving 24-byte FakeEngine stubs in real `output/b/` (or `output/`) namespaced by batch_id. Helper now sets `output.dir = tmp_path / "output"`. `output/b/` removed and confirmed not regenerated. |
+| `25d0552` | `chore: add ffmpeg dependency for video frame inspection` | `pixi add ffmpeg` (conda-forge). Provides `ffmpeg` + `ffprobe` for diagnosing MP4 output. Used above to extract the t=0…5s frames that pinpointed the init-fixture issue. |
+
+**T6 quality re-render — pod state:**
+- Pod: `80r4gfatjil00z` (NVIDIA RTX 3090 @ $0.27/hr).
+- Wall-clock: 19 min 45 s (vs 4 min 56 s on the original t6 GREEN — 20 steps takes ~4× as long as 4 steps).
+- Cost: ~$0.089. Total item #3 wave live spend: ~$0.55 + $0.089 = **~$0.64**.
+- Destroyed cleanly at smoke close + verified via REST `GET /v1/pods` returning zero rows.
+
+**Test suite state:** 1032 passed, 3 skipped, 0 xfailed at `25d0552`. `pixi run pre-commit run --all-files` clean. Working tree clean.
 
 ---
 
