@@ -21,6 +21,15 @@ import types
 from pathlib import Path
 from typing import Any
 
+# When invoked as ``python tools/comfyui_ui_to_api.py``, sys.path[0] is
+# ``/<repo>/tools``, so ``from tools._vendored.seth_workflow_converter ...``
+# fails. Insert the repo root BEFORE any ``tools.*`` import so the
+# package resolves. No-op when invoked via ``python -m tools.…`` or
+# when the repo root is already on sys.path (pytest, pixi run).
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 
 def install_fake_nodes_module(object_info_path: Path) -> types.ModuleType:
     """Inject a fake ``nodes`` module into sys.modules from a captured /object_info.
