@@ -92,6 +92,10 @@ test-live = { cmd = "python -m pytest tests/live/ -v -m live", env = { KINOFORGE
 # git working tree before any tool that costs money is invoked. Operator-facing
 # — exit 0 == safe to spend; non-zero == fix the surfaced gap. See tools/preflight.py.
 preflight = "python tools/preflight.py"
+# Live-verify the in-pod selfterm watchdog. Boots a minimal pod with
+# max_lifetime=60s + a sleep bootstrap, polls until self-destroy or wall
+# cap. Cost ~$0.005-0.01 per run. Run once per release; not part of CI.
+probe-watchdog = "python tools/probe_pod_watchdog.py"
 lint = "python -m ruff check ."
 format = "python -m ruff format ."
 typecheck = "python -m mypy ."
