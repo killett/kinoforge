@@ -143,3 +143,23 @@ def test_kijai_sha_pin_cross_reference() -> None:
         f"custom_nodes[kijai].ref ({yaml_sha!r}); rerun graph capture or "
         f"bump YAML"
     )
+
+
+def test_yaml_env_required_locked_to_hf_token() -> None:
+    """The example YAML must declare exactly HF_TOKEN as env_required.
+
+    All three model entries pull from ``hf:Kijai/WanVideo_comfy:*`` refs;
+    HuggingFaceSource attaches ``Authorization: Bearer $HF_TOKEN`` headers,
+    which ``render_provision`` collects + dedupes into ``env_required``. Any
+    future YAML edit that drops an HF-gated model OR adds a non-HF
+    cred-bearing model would silently change this list; catch it here.
+    """
+    import kinoforge._adapters  # noqa: F401 — register HF/RunPod/ComfyUI adapters by side effect
+    from kinoforge.engines.comfyui import ComfyUIEngine
+
+    cfg = load_config(YAML_PATH)
+    engine = ComfyUIEngine()
+    rendered = engine.render_provision(cfg.model_dump())
+    assert rendered.env_required == ["HF_TOKEN"], (
+        f"YAML env_required drift: expected ['HF_TOKEN'], got {rendered.env_required!r}"
+    )

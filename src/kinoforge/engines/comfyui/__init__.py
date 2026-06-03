@@ -810,7 +810,16 @@ class ComfyUIEngine(GenerationEngine):
 
         env_required: list[str] = []
         for entry in models_raw:
-            src_ref: str = entry["src"]
+            # Accept canonical pydantic-dump key "ref" (Config.models[i].ref)
+            # or legacy hand-crafted "src" key still used by some existing
+            # render_provision unit tests. Real YAML flows through
+            # cfg.model_dump() and only emits "ref"; the legacy fallback keeps
+            # the older fixtures green without forcing a sweep.
+            src_ref: str = entry.get("ref", entry.get("src", ""))
+            if not src_ref:
+                raise KeyError(
+                    f"model entry missing 'ref' (or legacy 'src') key: {entry!r}"
+                )
             target: str = entry["target"]
             subdir = TARGET_TO_SUBDIR.get(target, f"models/{target}")
             source = registry.source_for_ref(src_ref)
