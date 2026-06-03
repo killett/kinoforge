@@ -914,10 +914,21 @@ class ComfyUIEngine(GenerationEngine):
             A :class:`ComfyUIBackend` ready to accept jobs.
         """
         del cfg
-        if instance is not None and "comfyui" in instance.endpoints:
-            base_url = instance.endpoints["comfyui"]
-        else:
-            base_url = "http://localhost:8188"
+        base_url = "http://localhost:8188"
+        if instance is not None and instance.endpoints:
+            # Prefer a logical "comfyui" alias if present, then fall back to
+            # the canonical port "8188" key populated by RunPodProvider's
+            # eager-endpoints code (and by other providers using the
+            # port-numbered convention), then to whatever first endpoint
+            # exists. Without this fallback, post-wait_for_ready callers
+            # (capture_object_info, GenerateClipStage) would target
+            # http://localhost:8188 on the controller — connection refused.
+            for key in ("comfyui", "8188"):
+                if key in instance.endpoints:
+                    base_url = instance.endpoints[key]
+                    break
+            else:
+                base_url = next(iter(instance.endpoints.values()), base_url)
         return ComfyUIBackend(
             http_post=self._http_post,
             http_get=self._http_get,
