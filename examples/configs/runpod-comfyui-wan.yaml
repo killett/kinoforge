@@ -62,15 +62,24 @@ compute:
     job_timeout: 15m
     time_buffer: 5m
     max_lifetime: 40m
+    # Wan diffusion (~30 GB) + VAE + text encoder cold-boot empirically
+    # 5-15 min; 30m (1800 s -> Lifecycle.boot_timeout_s) leaves headroom
+    # over Layer Q's 900 s LifecycleConfig default.
     boot_timeout: 30m
     budget: 2.0
 
 spec:
   graph_file: runpod-comfyui-wan.graph.json
   asset_node_ids:
-    init_image: "12"           # rewritten when exported workflow lands
+    # Node 58 = LoadImage in the kijai Wan i2v example_03 workflow;
+    # supplies the i2v start frame consumed by node 68 (ImageResizeKJv2)
+    # then node 63 (WanVideoImageToVideoEncode).
+    init_image: "58"
   prompt_node_ids:
-    - "8"
+    # Node 16 = WanVideoTextEncode; feeds node 27 (WanVideoSampler.text_embeds).
+    # The kijai i2v example_03 ships a single text-encode node — negative
+    # prompt is graph-baked (see spec §14.0 Q3).
+    positive: "16"
   node_overrides: {}
 
 params:
