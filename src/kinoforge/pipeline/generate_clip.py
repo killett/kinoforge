@@ -31,14 +31,21 @@ from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.stores.base import ArtifactStore
 
+_DEFAULT_USER_AGENT = "kinoforge/0.1"
+
 
 def _default_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
     """GET *url* with optional *headers* and return the raw bytes.
 
     Builds a :class:`urllib.request.Request` so that any populated
     headers (e.g. ``Authorization: Bearer …``) are sent on the wire.
-    An empty *headers* dict yields a bare GET — preserving the
-    pre-Layer-M behavior for engines that don't populate headers.
+    Inserts a default ``User-Agent: kinoforge/0.1`` if the caller did
+    not supply one — RunPod's edge proxy rejects requests carrying the
+    stdlib default ``Python-urllib/<ver>`` UA with HTTP 403 (same fix
+    family as commit 8058dc2 for ComfyUI's helpers and fcaa213 for the
+    multipart upload path). Live verification 2026-06-03 (pod
+    i3h8ythan3pc4p): /view?filename=... returned 403 without a UA and
+    delivered the MP4 bytes with this default in place.
 
     Args:
         url: The http(s) URL to fetch.
@@ -50,7 +57,11 @@ def _default_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
     """
     import urllib.request
 
-    req = urllib.request.Request(url, headers=headers)  # noqa: S310
+    merged = dict(headers)
+    has_ua = any(k.lower() == "user-agent" for k in merged)
+    if not has_ua:
+        merged["User-Agent"] = _DEFAULT_USER_AGENT
+    req = urllib.request.Request(url, headers=merged)  # noqa: S310
     with urllib.request.urlopen(req) as resp:  # noqa: S310
         return bytes(resp.read())
 
