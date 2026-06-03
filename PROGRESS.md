@@ -151,25 +151,63 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Sub-plan `comfyui_ui_to_api` converter ✅ CLOSED at HEAD `f04dd9f`. Parent **Layer P Task 7 item #3** is now unblocked; resume there.
+**Where we are:** Layer P Task 7 item #3 resume sub-plan T0–T4 (offline lockdown wave) ✅ CLOSED at HEAD `46996b8`. Sub-plan **T5 (live MP4) ABORTED per spec §14.F** before any live spend — `/object_info` widget-value gap (sub-plan converter T6 closure block, PROGRESS:213) is a 6th distinct bug class outside the 5 absorbed under AC6. Next session starts the diagnostic sub-plan: re-capture `/object_info` against a debugged kijai install on the pod so widget values land in the API JSON.
 
 **Read in this order:**
-1. `docs/superpowers/specs/2026-06-01-layer-p-task7-item3-workflow-api-json-design.md` — parent spec (amended Jun 2 vs Layer Q HEAD; §1.5 + §14 are the live decisions)
-2. `docs/superpowers/plans/2026-06-02-layer-p-task7-item3-resume.md` — parent resume plan (7 tasks T0–T6)
-3. `docs/superpowers/plans/2026-06-02-layer-p-task7-item3-resume.md.tasks.json` — parent task statuses (all T0–T6 still `pending`)
-4. `git log --oneline -25` — last 16 commits all from this overnight session
+1. `docs/superpowers/plans/2026-06-02-layer-p-task7-item3-resume.md.tasks.json` — current statuses (T1–T5 + T7 + bonus 2 commits completed; T6 deleted with abort rationale; T7 closes via this block)
+2. The closure block immediately below (`Layer P Task 7 item #3 — T0–T4 closure + T5 abort`) — full diff + abort rationale
+3. `docs/superpowers/specs/2026-06-01-layer-p-task7-item3-workflow-api-json-design.md` §14.F — the 5-class cap + abort protocol
+4. `git log --oneline -25` — last 25 commits
 
-**First unchecked task: parent T0** — "Pull kijai upstream + commit real graph + `_meta` strip in `core/config`". Consume these 4 sub-plan-T6 artifacts:
-- `tests/fixtures/comfyui/object_info/3f7108bde103.json` — `/object_info` schema dump (998 classes, pack-stack `3f7108bde103`)
-- `tests/tools/fixtures/kijai_wanvideo_2_1_14B_i2v.ui.json` — kijai UI snapshot at SHA `088128b22`
-- `tests/tools/fixtures/kijai_wanvideo_2_1_14B_i2v.expected_api.json` — converter golden (15 API nodes)
-- `tools/comfyui_ui_to_api.py` — converter CLI (regenerate golden whenever needed)
+**First unchecked task: write a new diagnostic sub-spec + sub-plan.** Scope: instrument the kijai pip-install + import on the production RunPod image (`runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`) to find why ~8 `WanVideo*` classes (`WanVideoTextEncode`, `WanVideoSampler`, `WanVideoDecode`, `WanVideoBlockSwap`, `WanVideoLoraSelect`, `WanVideoVAELoader`, `WanVideoSetBlockSwap`, `LoadWanVideoT5TextEncoder`) fail to register in `/object_info`. Cheap path: pod-side `python -c "import nodes; from custom_nodes.ComfyUI_WanVideoWrapper.nodes import *"` with stderr capture, then re-run `tools/capture_object_info.py`. Expected cost: ≤$0.20 per attempt. Once `/object_info` carries all 15+ kijai classes, regenerate the API JSON via `tools/comfyui_ui_to_api.py` and the existing lockdown tests still pass (different node count + class set, whitelist may grow). Then re-attempt this sub-plan T6 live smoke from scratch with the fixed graph.
 
-**⚠️ Known blocker for parent T5 (live MP4) — NOT a blocker for T0–T4:** The captured `/object_info` has only 7 of the ~15 WanVideo* node classes the kijai workflow references (`WanVideoTextEncode`, `WanVideoDecode`, `WanVideoBlockSwap`, `WanVideoSampler`, etc. missing). Seth's converter emits those nodes' connections only — no widget values. The golden + T0–T4 work is unblocked (lockdown-test value intact), but parent T5's live submit will fail because the API JSON lacks prompts/numeric inputs. Diagnose the missing classes (likely a kijai pip-deps gap or import-time error in `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`) BEFORE parent T5; needs its own diagnostic sub-plan unless parent T0–T4 surface the cause.
+**Budget remaining: ~$12.30 of $15.** Item #3 resume sub-plan spent **$0.00** live (offline-only wave + abort-before-spend).
 
-**Budget remaining: ~$12.30 of $15.** Burn so far ~$2.70 (T4 captures + diagnostic pods + probe-watchdog verification).
+**Side-task ✅ CLOSED 2026-06-03:** **Phase 27 — CI green recovery** push landed from outside the container. `git push origin main` succeeded (origin/main now at `666970b`); `git push origin --delete chore/ci-green-recovery` returned `remote ref does not exist` — branch was already absent on remote. Final gate now: CI run on `main` for HEAD `666970b` going green; suite shape now `1028 passed, 3 skipped` (vs original `b101104` projection of `979 passed, 4 xfailed, 3 skipped` — Layer Q + sub-plan + selfterm + item #3 T0–T4 land 49 net-new passing tests since the Phase 27 freeze; the 4 xfailed are now plain passes).
 
-**Side-task ✅ CLOSED 2026-06-03:** **Phase 27 — CI green recovery** push landed from outside the container. `git push origin main` succeeded (origin/main now at `666970b`); `git push origin --delete chore/ci-green-recovery` returned `remote ref does not exist` — branch was already absent on remote. Final gate now: CI run on `main` for HEAD `666970b` going green; suite shape now ~`1020 passed, 3 skipped, 4 xfailed` (vs original `b101104` projection of `979 passed, 4 xfailed, 3 skipped` — Layer Q + sub-plan + selfterm fixes land 41 net-new passing tests since the Phase 27 freeze).
+---
+
+**Layer P Task 7 item #3 resume — T0–T4 closure + T5 abort 2026-06-03 at HEAD `46996b8`.**
+
+Sub-spec: `docs/superpowers/specs/2026-06-01-layer-p-task7-item3-workflow-api-json-design.md` (amended 2026-06-02 at `23b1501`; §1.5 + §14 live).
+Sub-plan: `docs/superpowers/plans/2026-06-02-layer-p-task7-item3-resume.md`.
+
+| T | Subject | Commit |
+|---|---|---|
+| T1 | Real kijai-derived Wan i2v API graph (15 nodes) + config `_meta` strip + 2 RED-then-GREEN tests | `e4fc334` |
+| T3 | Wire YAML to real node IDs (`init_image: "58"`, `prompt_node_ids.positive: "16"`) + Wan cold-boot comment | `9498f8f` |
+| T2 | Drop `pytest.mark.xfail` block + `EXPECTED_NODE_COUNT` 26→15 (matches converter golden, not UI source) | `0d0badd` |
+| T4 | AC12 `test_kijai_sha_pin_cross_reference` lockdown | `fd80f57` |
+| T5 (test) | AC13 `test_yaml_env_required_locked_to_hf_token` + surfaced `entry["src"]` ↔ `entry["ref"]` Layer Q regression fix in `engines/comfyui/__init__.py:813` | `155c77c` |
+| follow-up | Drop `_meta` from `tests/test_examples.py::test_runpod_comfyui_wan_yaml_loads_with_graph_file_resolution` expected_graph compare (item #3 T1 follow-up) | `46996b8` |
+| Phase 27 close | Push-gate close PROGRESS doc edit | `fe3a1f2` |
+
+T6 (sub-plan id 5; "Live cold-boot via Layer Q + first green MP4") — **ABORTED per spec §14.F before any live spend.** Rationale:
+
+- Sub-plan converter T6 closure block (PROGRESS:213, this file) explicitly flagged: captured `/object_info` carries only **7** `WanVideo*` class schemas, but the kijai i2v workflow references **~15**. Seth's converter intentionally drops widget values for classes absent from `/object_info`, emitting connection edges only.
+- Offline inspection of the just-committed `examples/configs/runpod-comfyui-wan.graph.json` (T1) confirms 8 of the 15 nodes lack required scalar widgets: `WanVideoTextEncode` has no `positive_prompt`/`negative_prompt`; `WanVideoSampler` has no `steps`/`cfg`/`seed`/`scheduler`; `LoadWanVideoT5TextEncoder` + `WanVideoVAELoader` have empty `inputs`; `WanVideoLoraSelect`, `WanVideoBlockSwap`, `WanVideoModelLoader` flag-fields are stubbed with non-scalar placeholders.
+- ComfyUI's `/prompt` endpoint validates every node's required inputs at submit time and rejects on missing scalars. Cold-boot + bootstrap + `/prompt` rejection ≈ \$0.20–\$0.50 of wasted pod time per attempt with **zero new information** beyond what's already documented in sub-plan T6.
+- "API JSON has no widget values because the upstream `/object_info` capture is incomplete" is NOT one of the 5 absorbed bug classes in §14.F (multipart shape / requirements install path / `/history` outputs key / marker registration under warm-tag / text_encoder routing). Per §14.F: "New classes outside that set abort the sub-plan; do not silently expand scope."
+
+**Test count delta:** baseline `1019 passed, 3 skipped, 4 xfailed` (pre-resume HEAD `f04dd9f`) → **`1028 passed, 3 skipped, 0 xfailed`** at `46996b8`. Net +9 (4 xfailed transition → pass via T2, +2 new in `tests/core/test_config_graph_meta.py` via T1, +1 each from T4 + T5 + `test_runpod_comfyui_wan_yaml_loads_with_graph_file_resolution` already-counted fix). `pixi run pre-commit run --all-files` clean.
+
+**Bug-catches absorbed in this wave (\$0 each — all offline):**
+1. Layer Q `render_provision` consumed `entry["src"]` but the canonical `cfg.model_dump()` shape emits `entry["ref"]` per `ModelEntry` pydantic schema. Fixed in `155c77c` via `entry.get("ref", entry.get("src", ""))` — accepts both shapes; raises `KeyError` with explicit message when neither present. AC13 lockdown surfaces it; the same lockdown prevents future regression.
+2. `tests/test_examples.py::test_runpod_comfyui_wan_yaml_loads_with_graph_file_resolution` compared `cfg.spec["graph"]` (post-`_meta`-strip) against the raw on-disk JSON (with `_meta`). Fixed in `46996b8` via `expected_graph.pop("_meta", None)` before equality.
+
+**Key design decisions:**
+- **Node count is 15, not 26.** Spec AC1 / lockdown test originally asserted 26 (the UI source node count). The kijai upstream at `088128b22…` is UI format only at all 45 `example_workflows/*.json` paths; verbatim API examples do not exist. We use the existing converter (`tools/comfyui_ui_to_api.py@4cf215a`) which intentionally drops non-runtime UI nodes (`Note` + control-flow placeholders) → 15 runtime nodes per PROGRESS:200 + :210 documentation. Lockdown count updated 26→15 with commit rationale.
+- **`_meta` strip is single source of truth at `core/config._resolve_spec_graph_file`.** Runtime ComfyUI `/prompt` endpoint validates every top-level key as a node ID; AC12's cross-reference test reads the raw JSON via `json.loads(Path(...).read_text())` to inspect `_meta`. Two consumers, one strip point. `_meta` carries `source_repo`, `source_sha`, `source_path`, `captured_at_local`, `format`, `converter`.
+- **Sequential T3→T2 rather than plan's T2→T3.** T2's xfail drop verification requires ALL 4 lockdown tests green; T3's YAML wiring is what makes 2 of those 4 pass. Running T3 first lets T2 commit ship the xfail drop + node-count flip in one clean commit per plan §T2 step 3 ("If sequential: temporarily leave the xfail marker in place, run T3, then come back to T2 for the marker drop").
+- **kijai ref bump was a no-op for this wave.** YAML already pinned `088128b224242e110d3906c6750e9a3a348a659b` from the prior sub-plan; matches the `_meta.source_sha` baked into T1's committed graph. Edit 3a in §14.C accepts no change.
+- **`boot_timeout` YAML key, not `boot_timeout_s`.** Plan §14.C edit 3b specified `compute.lifecycle.boot_timeout_s: 1800`; the actual YAML schema in `core/config.LifecycleConfig` uses `boot_timeout: <duration>` (duration string parsed to seconds, exposed by the dataclass as `boot_timeout_s`). Existing YAML had `boot_timeout: 30m` from sub-plan commit `94e0d2c` — already resolves to `lifecycle().boot_timeout_s == 1800`. T3 added an explanatory comment without changing the field name.
+
+**Unblocks (next session):**
+- Diagnostic sub-plan to fix the upstream `/object_info` capture: pod-side `python -c "from custom_nodes.ComfyUI_WanVideoWrapper.nodes import *"` with stderr capture during the kijai bootstrap; identify the missing-dep or import-time error preventing the 8 `WanVideo*` classes from registering. Once `/object_info` carries the full kijai class set, regenerate `examples/configs/runpod-comfyui-wan.graph.json` via `tools/comfyui_ui_to_api.py` and re-attempt this sub-plan's T6 from a clean baseline.
+- The 4 RED lockdown tests are now plain pass; AC12 + AC13 lockdowns prevent silent SHA / cred drift.
+- Layer Q's `render_provision` end-to-end correctness against canonical pydantic dumps now has a regression test.
+
+**Cost:** $0.00 live spend during this wave. Budget remains ~$12.30 of $15.
 
 ---
 
