@@ -1,0 +1,56 @@
+{
+  "LoadImage": {
+    "input": {
+      "required": {
+        "image": [
+          ["a.png", "b.png"],
+          {"image_upload": true}
+        ]
+      }
+    },
+    "input_order": {"required": ["image"]},
+    "output": ["IMAGE", "MASK"],
+    "output_name": ["IMAGE", "MASK"],
+    "function": "load_image",
+    "category": "image",
+    "output_node": false,
+    "display_name": "Load Image"
+  },
+  "CLIPTextEncode": {
+    "input": {
+      "required": {
+        "text": ["STRING", {"multiline": true, "default": ""}],
+        "clip": ["CLIP", {}]
+      }
+    },
+    "input_order": {"required": ["text", "clip"]},
+    "output": ["CONDITIONING"],
+    "output_name": ["CONDITIONING"],
+    "function": "encode",
+    "category": "conditioning",
+    "output_node": false,
+    "display_name": "CLIP Text Encode (Prompt)"
+  },
+  "Note": {
+    "input": {},
+    "input_order": {},
+    "output": [],
+    "function": "note",
+    "category": "utils"
+  },
+  "SaveImage": {
+    "input": {
+      "required": {
+        "images": ["IMAGE", {}],
+        "filename_prefix": ["STRING", {"default": "ComfyUI"}]
+      }
+    },
+    "input_order": {"required": ["images", "filename_prefix"]},
+    "output": [],
+    "output_name": [],
+    "function": "save_images",
+    "category": "image",
+    "output_node": true,
+    "display_name": "Save Image"
+  }
+}
