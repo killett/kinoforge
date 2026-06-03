@@ -232,6 +232,18 @@ class RunPodProvider(ComputeProvider):
         self._http_get = http_get if http_get is not None else default_get
         self._sleep = sleep
         self._base_url = base_url.rstrip("/")
+        # Process-local registry of pods we created in this process: pod_id
+        # -> Instance. RunPod's GraphQL pod schema does not surface
+        # user-defined tags on list/get responses (only id, desiredStatus,
+        # imageName), so _pod_to_instance produces tag-less Instances. The
+        # only place a pod's full tag set survives is the in-memory Instance
+        # returned by _create_pod / _create_serverless. Without this
+        # registry, find_instance_by_tag misses every pod we just created
+        # — silently no-op'ing the test destroy block and orphaning pods
+        # until selfterm reaps them. Populated by create_instance,
+        # consulted first by find_instance_by_tag, pruned by
+        # destroy_instance once a teardown is confirmed.
+        self._created_instances: dict[str, Instance] = {}
 
     # ------------------------------------------------------------------
     # ComputeProvider interface
@@ -306,8 +318,11 @@ class RunPodProvider(ComputeProvider):
         """
         mode = spec.tags.get("mode", "pod")
         if mode == "serverless":
-            return self._create_serverless(spec)
-        return self._create_pod(spec)
+            instance = self._create_serverless(spec)
+        else:
+            instance = self._create_pod(spec)
+        self._created_instances[instance.id] = instance
+        return instance
 
     def get_instance(self, instance_id: str) -> Instance:
         """Return an :class:`~kinoforge.core.interfaces.Instance` by ID.
@@ -345,18 +360,36 @@ class RunPodProvider(ComputeProvider):
         """Return the first 'ready' instance whose tags[key] == value, else None.
 
         Used by long-running test loops (Layer P live smoke) to discover and
-        reuse warm pods across iterations, avoiding repeated cold-start costs.
-        Production code paths do not call this.
+        reuse warm pods across iterations, avoiding repeated cold-start costs,
+        AND by the smoke test's destroy block to recover the pod_id of a pod
+        the orchestrator created inside :meth:`create_instance` whose Instance
+        was never surfaced back to the test.
+
+        Search order:
+        1. Process-local create registry (``self._created_instances``) — the
+           only source where user-defined tags (e.g. ``kinoforge.layer``)
+           survive, since RunPod's pod schema does not expose tags on
+           list/get responses.
+        2. Remote :meth:`list_instances` — falls back here for tags that
+           ``_pod_to_instance`` actually populates (currently only ``mode``).
+           Cross-process warm-reuse via user tags is not supported on this
+           path; selfterm and ``cli reap`` are the supported cleanup levers.
 
         Args:
             key: Tag dict key to match (e.g. ``"kinoforge.layer"``).
             value: Required value at that key (e.g. ``"layer-p-smoke"``).
 
         Returns:
-            The first ``Instance`` from :meth:`list_instances` with
-            ``status == "ready"`` and ``tags.get(key) == value``, or ``None``
-            if no such instance exists.
+            The first ``Instance`` with ``tags.get(key) == value`` (registry
+            entries match regardless of ``status`` since the test layer
+            transitions through ``starting → ready`` while still owning the
+            pod); for the ``list_instances`` fallback path, ``status ==
+            "ready"`` is still required.  ``None`` if no such instance
+            exists.
         """
+        for inst in self._created_instances.values():
+            if inst.tags.get(key) == value:
+                return inst
         for inst in self.list_instances():
             if inst.status == "ready" and inst.tags.get(key) == value:
                 return inst
@@ -399,6 +432,7 @@ class RunPodProvider(ComputeProvider):
             )
             pod = resp.get("data", {}).get("pod")
             if not pod:
+                self._created_instances.pop(instance_id, None)
                 return  # confirmed gone
             self._sleep(_DESTROY_POLL_INTERVAL)
         raise TeardownError(

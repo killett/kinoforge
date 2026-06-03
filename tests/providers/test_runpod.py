@@ -1305,3 +1305,43 @@ def test_find_instance_by_tag_no_match_returns_none() -> None:
     result = provider.find_instance_by_tag("kinoforge.layer", "layer-p-smoke")
 
     assert result is None
+
+
+def test_find_instance_by_tag_recovers_just_created_pod(
+    pod_spec: InstanceSpec,
+) -> None:
+    """Cold-path destroy gap (2026-06-03): create a tagged pod, then look it
+    up by that tag — must find the pod via the in-process create registry.
+
+    RunPod's pod schema does not surface user tags on list/get responses, so
+    ``_pod_to_instance`` only sets ``tags={"mode": "pod"}``. Without a
+    process-local create registry, ``find_instance_by_tag`` after a
+    ``create_instance`` call always returns ``None``, leaving the live
+    smoke test's destroy block as a no-op and orphaning the pod until
+    selfterm reaps it on idle. The bug catch this guards against: a
+    regression to the no-registry behaviour silently re-orphans pods.
+    """
+    spec_with_layer_tag = dataclasses.replace(
+        pod_spec,
+        tags={
+            **pod_spec.tags,
+            "kinoforge.layer": "layer-p-smoke",
+            "kinoforge.git_sha": "deadbeef",
+        },
+    )
+    list_pods_response = _load_fixture("list_pods.json")
+    http_post = MultiResponseHttpPostSpy(
+        responses=[_POD_CREATE_RESPONSE, list_pods_response]
+    )
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+
+    created = provider.create_instance(spec_with_layer_tag)
+    found = provider.find_instance_by_tag("kinoforge.layer", "layer-p-smoke")
+
+    assert found is not None, (
+        "post-create find_instance_by_tag must recover the pod we just "
+        "created via the in-process registry"
+    )
+    assert found.id == created.id
+    assert found.tags.get("kinoforge.layer") == "layer-p-smoke"
+    assert found.tags.get("kinoforge.git_sha") == "deadbeef"
