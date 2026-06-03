@@ -164,6 +164,13 @@ _UA = "kinoforge-comfyui/0.1"
 def _urllib_post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
     """POST *body* as JSON to *url* and return the decoded response.
 
+    On 4xx/5xx the response body — which carries ComfyUI's structured
+    validation errors for ``/prompt`` (e.g. node_errors lists missing
+    inputs or type mismatches) — is read and re-raised as the
+    ``HTTPError``'s message tail. Without this, ``urlopen`` discards
+    the body and the caller sees only "HTTP Error 400: Bad Request"
+    with no diagnostic content.
+
     Args:
         url: Endpoint URL.
         body: JSON-serialisable request body.
@@ -178,8 +185,18 @@ def _urllib_post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
         headers={"Content-Type": "application/json", "User-Agent": _UA},
         method="POST",
     )
-    with urllib.request.urlopen(req) as resp:  # noqa: S310
-        return dict(json.loads(resp.read().decode("utf-8")))
+    try:
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            return dict(json.loads(resp.read().decode("utf-8")))
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="replace")[:4000]
+        raise urllib.error.HTTPError(
+            exc.url,
+            exc.code,
+            f"{exc.reason} -- body: {err_body}",
+            exc.headers,
+            None,
+        ) from exc
 
 
 def _urllib_get_json(url: str) -> dict[str, Any]:
