@@ -149,6 +149,30 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ## Single next action
 
+### RESUME — START HERE
+
+**Where we are:** Sub-plan `comfyui_ui_to_api` converter ✅ CLOSED at HEAD `f04dd9f`. Parent **Layer P Task 7 item #3** is now unblocked; resume there.
+
+**Read in this order:**
+1. `docs/superpowers/specs/2026-06-01-layer-p-task7-item3-workflow-api-json-design.md` — parent spec (amended Jun 2 vs Layer Q HEAD; §1.5 + §14 are the live decisions)
+2. `docs/superpowers/plans/2026-06-02-layer-p-task7-item3-resume.md` — parent resume plan (7 tasks T0–T6)
+3. `docs/superpowers/plans/2026-06-02-layer-p-task7-item3-resume.md.tasks.json` — parent task statuses (all T0–T6 still `pending`)
+4. `git log --oneline -25` — last 16 commits all from this overnight session
+
+**First unchecked task: parent T0** — "Pull kijai upstream + commit real graph + `_meta` strip in `core/config`". Consume these 4 sub-plan-T6 artifacts:
+- `tests/fixtures/comfyui/object_info/3f7108bde103.json` — `/object_info` schema dump (998 classes, pack-stack `3f7108bde103`)
+- `tests/tools/fixtures/kijai_wanvideo_2_1_14B_i2v.ui.json` — kijai UI snapshot at SHA `088128b22`
+- `tests/tools/fixtures/kijai_wanvideo_2_1_14B_i2v.expected_api.json` — converter golden (15 API nodes)
+- `tools/comfyui_ui_to_api.py` — converter CLI (regenerate golden whenever needed)
+
+**⚠️ Known blocker for parent T5 (live MP4) — NOT a blocker for T0–T4:** The captured `/object_info` has only 7 of the ~15 WanVideo* node classes the kijai workflow references (`WanVideoTextEncode`, `WanVideoDecode`, `WanVideoBlockSwap`, `WanVideoSampler`, etc. missing). Seth's converter emits those nodes' connections only — no widget values. The golden + T0–T4 work is unblocked (lockdown-test value intact), but parent T5's live submit will fail because the API JSON lacks prompts/numeric inputs. Diagnose the missing classes (likely a kijai pip-deps gap or import-time error in `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`) BEFORE parent T5; needs its own diagnostic sub-plan unless parent T0–T4 surface the cause.
+
+**Budget remaining: ~$12.30 of $15.** Burn so far ~$2.70 (T4 captures + diagnostic pods + probe-watchdog verification).
+
+**Side-task still pending (separate from sub-plan):** **Phase 27 — CI green recovery** still awaits `git push origin main && git push origin --delete chore/ci-green-recovery` from outside the container (see block below at line ~213). Sub-plan work is local-only; nothing pushed.
+
+---
+
 **Sub-plan: `comfyui_ui_to_api` converter — ✅ CLOSED LOCALLY 2026-06-03 at HEAD `9d3b9d2`.**
 
 All 7 sub-plan tasks committed.
