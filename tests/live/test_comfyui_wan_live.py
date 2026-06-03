@@ -158,6 +158,14 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
             http_get=comfy_get,
         )
 
+    # Layer Q render_provision moves weight downloads to the POD via the
+    # rendered curl bootstrap; the provisioner's local download phase
+    # would otherwise pull ~21 GB to this container before generate()
+    # even gets to wait_for_ready. Flag should be conditionally False on
+    # remote-pod engines (Layer Q follow-up); set explicitly here to
+    # mirror tools/capture_object_info.py:213.
+    engine.requires_local_weights = False
+
     pod_id: str | None = None
     instance: Any = None
     start_time = time.monotonic()
