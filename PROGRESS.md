@@ -151,20 +151,63 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** 🎬 **Two green MP4s rendered, quality investigation paused on a TEST-FIXTURE issue (not a kinoforge bug).** HEAD `25d0552`. Layer P Task 7 item #3 fully closed at HEAD `b05fcb3`; two follow-up commits fixed prompt routing (the first MP4 rendered kijai's baked-in default prompt at undersampled-noise quality) and a leaked-output test-hygiene bug. A second live run with `steps=20 cfg=6 + prompt_input_field=positive_prompt` produced a clean cat-turning-its-head MP4 — but the first 2-3 seconds show a strong diagonal seam artifact whose root cause turned out to be the init-frame test fixture itself being a black-and-white diagonal gradient placeholder, not a real photo. Wan is correctly honoring the supplied init frame at t=0 and gradually morphing it into the prompted cat over the first ~32-48 frames as image-conditioning fades.
+**Where we are:** 🎬 **Diagonal-seam root cause CLOSED. Third green MP4 rendered clean across all 81 frames.** HEAD `3bfaf6f`. Cat-fixture closure landed in two commits: `056abe4` replaced the placeholder gradient at `tests/providers/fixtures/runpod/sample_init_frame.png` with the last frame of the prior re-render (clean 256×256 Persian-cat photo, 85.8 KB) and updated the live-test prompt to `"a cat turns into a woman"`; `3bfaf6f` added `tests/engines/fixtures/comfyui/last_smoke.json` to `.gitignore` so the per-run record file no longer trips the preflight working-tree check on subsequent spends. Live smoke against the new fixture rendered `output/20260603-162844_a-cat-turns-into-a-w.mp4` (716 686 bytes, ftypisom) in 11m 45s wall-clock for ~$0.053. Frame sweep at t=0/2/5s shows a clean stable cat — **no diagonal seam at any timepoint**. Init-fixture hypothesis fully validated.
 
 **Read in this order:**
-1. The "Frame inspection of the T6 quality re-render" block below — what the artifact is + root cause
-2. The "T6 quality re-render (post-T7)" block — the post-closure follow-up commits (prompt routing + sampler steps + batch_cli sink leak)
-3. The "Layer P Task 7 item #3 — T6 GREEN MP4 closure (2026-06-03)" block — original GREEN MP4 evidence + 8-bug-catch trail
-4. The "Layer P Task 7 item #3 resume — T0–T4 closure + T5 abort" block — prior offline wave context
-5. `git log --oneline -32` — last 32 commits
+1. The "Cat-fixture closure + clean re-render" block below — fixture replacement evidence + morph result
+2. The "Frame inspection of the T6 quality re-render" block — what the original artifact was + root cause
+3. The "T6 quality re-render (post-T7)" block — the post-closure follow-up commits (prompt routing + sampler steps + batch_cli sink leak)
+4. The "Layer P Task 7 item #3 — T6 GREEN MP4 closure (2026-06-03)" block — original GREEN MP4 evidence + 8-bug-catch trail
+5. The "Layer P Task 7 item #3 resume — T0–T4 closure + T5 abort" block — prior offline wave context
+6. `git log --oneline -32` — last 32 commits
 
-**First unchecked task in fresh session:** replace `tests/providers/fixtures/runpod/sample_init_frame.png` with an actual representative image (a small CC0 cat photo or a neutral grey/white 256×256 PNG) so the i2v init-frame test asset matches the smoke test's prompt. The current PNG is a 256×256 8-bit grayscale diagonal-gradient placeholder shipped during early Layer P infra work; it's the literal "diagonal line" the user observed. Once that's done, Layer P T8/T9/T10 follow-ups (refactor offline ComfyUI tests onto captured fixtures + README + main-branch merge) are unblocked.
+**First unchecked task in fresh session:** decide on Wan i2v subject-morph strategy if the "cat → woman" semantic transform is actually desired. The new fixture rendered a stable cat across the full 5.0625s window — image conditioning (`start_latent_strength=1.0`, `noise_aug_strength=0.03`) dominates the prompt at this temporal length. Options: (a) drop strength to ~0.5–0.7 and retry, (b) lengthen temporal window (more frames), (c) switch to t2v for full subject swap, or (d) accept that i2v is the wrong tool for full-subject transformation and reframe the test prompt to something the model *can* honour against the cat anchor (pose change, lighting shift, camera move). Then Layer P T8/T9/T10 follow-ups (refactor offline ComfyUI tests onto captured fixtures + README + main-branch merge) are unblocked.
 
-**Budget remaining: ~$11.36 of $15.** Total live spend across the item #3 wave: **~$0.64** (T6 + diagnostic + capture + quality re-render). Within the $1.50 AC6 cap.
+**Two open follow-ups (not blocking):**
+- **Cold-path destroy block tag-lookup misses pod.** Live test logged `cold-path pod not found by tag — destroy block will no-op; selfterm + idle_timeout_s will clean up` at line 287. Pod was created via cold path (no warm-tag); destroy block searches by `kinoforge.layer=layer-p-smoke` tag; pod-side tag write may be racing the read or RunPod proxy may not have propagated the tag at destroy time. Result: pod stayed alive at $0.69/hr until manual REST DELETE during preflight failure. Selfterm would have caught it at 25min idle but we don't want to rely on it. File as bug.
+- **Wan i2v subject morph is image-conditioning-dominated.** See the strategy options in "First unchecked task" above. Document choice before next spend.
+
+**Budget remaining: ~$11.31 of $15.** Total live spend across the item #3 wave: **~$0.69** (T6 + diagnostic + capture + quality re-render + cat-fixture re-render). Within the $1.50 AC6 cap.
 
 **Side-task ✅ CLOSED 2026-06-03:** **Phase 27 — CI green recovery** push landed from outside the container. `git push origin main` succeeded (origin/main now at `666970b`); `git push origin --delete chore/ci-green-recovery` returned `remote ref does not exist` — branch was already absent on remote. Final gate now: CI run on `main` for HEAD `666970b` going green; suite shape now `1028 passed, 3 skipped` (vs original `b101104` projection of `979 passed, 4 xfailed, 3 skipped` — Layer Q + sub-plan + selfterm + item #3 T0–T4 land 49 net-new passing tests since the Phase 27 freeze; the 4 xfailed are now plain passes).
+
+---
+
+**Cat-fixture closure + clean re-render — 2026-06-03 at HEAD `3bfaf6f`.**
+
+**Fix applied:** `tests/providers/fixtures/runpod/sample_init_frame.png` overwritten with the last frame of `output/20260603-153126_A-cat-slowly-turning.mp4` (white Persian cat against black background, orange eyes). Extracted via `pixi run ffmpeg -y -sseof -0.07 -i <mp4> -frames:v 1 -vf "scale=256:256:flags=lanczos" <out>`; result is a 256×256 RGB PNG, 85.8 KB (was 1.2 KB grayscale gradient placeholder). Prompt updated `tests/live/test_comfyui_wan_live.py:244` from `"A cat slowly turning its head, cinematic, soft natural light"` to `"a cat turns into a woman"` — to exercise i2v subject morph against the cat anchor instead of the prior pose-change prompt that no longer matched the new fixture's narrative.
+
+**Live re-render outcome:**
+- MP4 path: `output/20260603-162844_a-cat-turns-into-a-w.mp4`
+- Artifact store: `.kinoforge/artifacts/run/WanVideoWrapper_I2V_00001.mp4`
+- Size: **716 686 bytes** (0.68 MB)
+- ftyp brand: `ftypisom` ✓ (matches `_MP4_FTYP_PREFIXES` AC5)
+- artifact_sha256: `7c71f15bf308bb3fdf0ddad45c0f91565039cb06e52d2c06f832876e0182f5c1`
+- Video: h264, 624×624, 16 fps, 81 frames, 5.0625s duration (same as prior re-render — same workflow_profile cache hit)
+- Pod: `fbbzqrnub3w2ep` (cold start; warm-tag lookup missed at create time)
+- Wall-clock: **11m 45s** (vs 19m 45s on prior re-render — capability cache hit on key `a771bb678238…` short-circuited discover+verify; provision was still the dominant cost)
+- Live cost: **~$0.053** at $0.27/hr
+- Git SHA at capture: `056abe4`
+- Capability key: `a771bb678238aba6cd650c7af96924cceb248980bc3ce9c43ba861e08ba1d84b` (same as t6 GREEN; warm cache hit)
+
+**Frame sweep (proof seam is gone):**
+
+| Timestamp | Observation |
+|---|---|
+| t = 0.0 s | Persian cat centred, orange eyes, slightly more angular than fixture (Wan adds noise even at noise_aug_strength=0.03 + start_latent_strength=1.0) |
+| t = 1.0 s | Cat with mild fur-detail variation; black background uniform |
+| t = 2.0 s | Cat full-frame, sharp whiskers, ears slightly tilted forward; **no diagonal seam, no gradient, no two-half artifact** |
+| t = 3.0 s | Stable cat; eyes track slightly |
+| t = 4.0 s | Cat consistent; subtle fur breathing |
+| t = 5.0 s | Cat full-frame; clean output |
+
+**Subject-morph result:** The prompt `"a cat turns into a woman"` did NOT produce a cat→woman transformation. Output is a stable cat across all 81 frames with mild micro-motion (fur, eye tracking). Wan 2.1 i2v at `start_latent_strength=1.0` + `noise_aug_strength=0.03` clamps the latent so hard that the text encoder's `positive_prompt` can drive *style* and *micro-motion* but not subject identity within a 5.0625s window. This is a Wan-model behaviour, not a kinoforge plumbing bug — prompt routing is verified (otherwise output would default to kijai's baked prompt). To get full subject transformation, drop `start_latent_strength` to 0.5-0.7 in graph node 63's `WanVideoImageToVideoEncode`, lengthen `num_frames` past Wan's temporal context window, or switch to t2v mode (no image anchor at all).
+
+**Pod-cleanup follow-up:** Preflight after the test FAILED on `active fbbzqrnub3w2ep (run) $0.69/hr — destroy`. The live test's destroy block at line 287 logged `cold-path pod not found by tag — destroy block will no-op; selfterm + idle_timeout_s will clean up` and exited normally — but the pod was still alive. Manually destroyed via `curl -X DELETE rest.runpod.io/v1/pods/fbbzqrnub3w2ep -H "Authorization: Bearer $RUNPOD_API_KEY"` → HTTP 204. Subsequent preflight confirmed 0 active pods. File the tag-lookup race as a bug — same trigger pattern as the prior PROGRESS:265 "Env not propagated to pytest subprocess" entry (cold-path / freshly-created pod state, no warm-tag indexing yet).
+
+**Tree-cleanup follow-up:** Live test unconditionally wrote `tests/engines/fixtures/comfyui/last_smoke.json` (per-run record: git_sha, elapsed_seconds, artifact_sha256, pod_id). Previously untracked → preflight working-tree-clean check failed. Added to `.gitignore` (commit `3bfaf6f`).
+
+**Test suite state:** 1032 passed, 3 skipped, 0 xfailed at `3bfaf6f`. `pixi run pre-commit run --all-files` clean. Working tree clean. Preflight PASS.
 
 ---
 
