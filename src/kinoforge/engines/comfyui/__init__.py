@@ -59,7 +59,14 @@ TARGET_TO_SUBDIR: dict[str, str] = {
 }
 
 #: Maximum poll iterations in :meth:`ComfyUIBackend.result`.
-_MAX_POLL = 60
+#: Wan i2v at 81 frames + 20 steps + VAE decode on an RTX 3090 takes
+#: ~3-5 minutes wall-clock (verified live attempt 10, pod bnclovbdaym3ld).
+#: The previous default of 60 × 1s = 60s timed out long before the first
+#: video frame was even decoded. 600 × _POLL_INTERVAL_S=3 = 30 min cap.
+_MAX_POLL = 600
+
+#: Seconds to sleep between :meth:`ComfyUIBackend.result` poll iterations.
+_POLL_INTERVAL_S: float = 3.0
 
 #: Default ComfyUI installation root (resolved at runtime, NOT at import time).
 _DEFAULT_COMFYUI_ROOT = "ComfyUI"
@@ -570,9 +577,10 @@ class ComfyUIBackend(GenerationBackend):
                     url=view_url,
                     meta={"prompt_id": job_id},
                 )
-            self._sleep(1.0)
+            self._sleep(_POLL_INTERVAL_S)
         raise TimeoutError(
-            f"ComfyUI did not complete prompt {job_id!r} within {_MAX_POLL} polls"
+            f"ComfyUI did not complete prompt {job_id!r} within {_MAX_POLL} polls "
+            f"× {_POLL_INTERVAL_S}s = {_MAX_POLL * _POLL_INTERVAL_S:.0f}s"
         )
 
     def endpoints(self) -> dict[str, str]:
