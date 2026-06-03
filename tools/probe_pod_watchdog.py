@@ -66,10 +66,10 @@ def _build_probe_bootstrap() -> str:
     """Return the bash bootstrap used by the probe pod.
 
     Mirrors the selfterm launch lines that ``ComfyUIEngine.render_provision``
-    + ``DiffusersEngine.render_provision`` prepend in production; replaces
-    the engine-specific clone/install/exec tail with a long ``sleep`` so
-    the pod stays alive until selfterm kills it (or the wall-clock cap
-    triggers our fallback destroy).
+    + ``DiffusersEngine.render_provision`` prepend in production; ALSO
+    serves /workspace via python3 -m http.server on port 9000 so the
+    controller can fetch /tmp/selfterm.log via the proxy URL to diagnose
+    selfterm runtime behaviour.
     """
     return (
         "set -euo pipefail\n"
@@ -78,7 +78,13 @@ def _build_probe_bootstrap() -> str:
         ".write(os.environ['KINOFORGE_SELFTERM_SCRIPT'])\" && "
         "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
         "fi\n"
-        "exec sleep 600\n"
+        # Copy selfterm log periodically to /workspace so it's served by
+        # the diagnostic http.server below. A symlink would be tidier
+        # but Python's http.server refuses to serve files outside the
+        # served directory by default.
+        "(while true; do cp /tmp/selfterm.log /workspace/selfterm.log "
+        "2>/dev/null || true; sleep 5; done) &\n"
+        "cd /workspace && exec python3 -m http.server 9000\n"
     )
 
 
@@ -235,9 +241,16 @@ def main() -> int:
     provider._creds = creds  # type: ignore[attr-defined]
 
     reqs = HardwareRequirements(min_vram_gb=8, max_usd_per_hr=0.50)
-    offers = provider.find_offers(reqs)
+    all_offers = provider.find_offers(reqs)
+    # Filter to NVIDIA-only — the runpod/pytorch CUDA image fails to start
+    # on AMD GPUs (MI300X etc.); container is allocated but the bash
+    # bootstrap never runs, the proxy URL returns 404 for the full probe
+    # window, selfterm never gets a chance. Verified live 2026-06-03.
+    offers = [o for o in all_offers if "AMD" not in o.gpu_type.upper()]
     if not offers:
-        safe_print("probe_pod_watchdog: no offers under $0.50/hr with ≥8 GB VRAM")
+        safe_print(
+            "probe_pod_watchdog: no NVIDIA offers under $0.50/hr with ≥8 GB VRAM"
+        )
         return 1
     offer = offers[0]
     print(
@@ -254,7 +267,7 @@ def main() -> int:
     spec = InstanceSpec(
         image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
         offer=offer,
-        ports=("8188",),
+        ports=("9000",),
         volume_gb=10,
         volume_mount="/workspace",
         lifecycle=Lifecycle(
