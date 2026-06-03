@@ -399,8 +399,16 @@ def _provision_instance_and_build_backend(
     instance, _chosen_offer = _create_with_offer_retry(
         resolved_provider, _build_spec, offers
     )
+    # Status-only polling: preserve endpoints + tags from create_instance.
+    # provider.get_instance(id) re-queries the API but the GraphQL `pod` query
+    # only returns id/desiredStatus/imageName — endpoints + ports tag are
+    # stripped. Without the replace, instance.endpoints goes from
+    # populated-by-_create_pod to empty-by-_pod_to_instance, and the
+    # downstream wait_for_ready raises ProvisionFailed immediately.
     while instance.status != "ready":
-        instance = resolved_provider.get_instance(instance.id)
+        time.sleep(2.0)
+        refreshed = resolved_provider.get_instance(instance.id)
+        instance = dataclasses.replace(instance, status=refreshed.status)
 
     # NEW — Layer Q: wire provider.get_instance onto engine before engine.provision
     resolved_engine.attach_get_instance(resolved_provider.get_instance)
