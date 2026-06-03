@@ -187,24 +187,22 @@ def main() -> int:
 
     from kinoforge.core.interfaces import RenderedProvision
 
-    def _render_provision_with_ref_to_src(
+    def _render_provision_for_capture(
         cfg_dict: dict[str, object],
     ) -> RenderedProvision:
-        models = cfg_dict.get("models") or []
-        if isinstance(models, list):
-            patched: list[dict[str, object]] = []
-            for entry in models:
-                if isinstance(entry, dict) and "src" not in entry and "ref" in entry:
-                    new_entry = dict(entry)
-                    new_entry["src"] = new_entry["ref"]
-                    patched.append(new_entry)
-                else:
-                    patched.append(entry if isinstance(entry, dict) else {})
-            cfg_dict = dict(cfg_dict)
-            cfg_dict["models"] = patched
+        # Skip model downloads entirely: /object_info returns the schema
+        # for every registered ComfyUI node class — schemas are populated
+        # at custom-node module import time, not weight-load time. The
+        # 24 GB Wan weight curl in the production bootstrap adds ~15 min
+        # of pod time + ~$0.07 per capture for zero schema benefit.
+        # Live verification 2026-06-02: ComfyUI + kijai nodes launch
+        # cleanly in ~70 s with models=[] (instrumented diagnostic
+        # bbkpr6vwy).
+        cfg_dict = dict(cfg_dict)
+        cfg_dict["models"] = []
         return _orig_render_provision(cfg_dict)
 
-    engine.render_provision = _render_provision_with_ref_to_src  # type: ignore[assignment,method-assign]
+    engine.render_provision = _render_provision_for_capture  # type: ignore[assignment,method-assign]
 
     # Per-run state under a fresh tempdir — no contamination of
     # .kinoforge/, no marker reuse across captures, no concurrent-run
