@@ -477,7 +477,17 @@ class DiffusersEngine(GenerationEngine):
         base_url: str = str(diffusers_cfg.get("base_url", ""))
         image: str = str(diffusers_cfg.get("image", _DEFAULT_RUNPOD_IMAGE))
 
-        lines: list[str] = ["set -euo pipefail"]
+        lines: list[str] = [
+            "set -euo pipefail",
+            # Selfterm watchdog — launch BEFORE pip-install so the dead-man
+            # window + max-lifetime cap fire even when pip hangs. Mirrors
+            # the ComfyUI engine's selfterm-launch pattern.
+            'if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]; then '
+            "python3 -c \"import os; open('/tmp/selfterm.py','w')"
+            ".write(os.environ['KINOFORGE_SELFTERM_SCRIPT'])\" && "
+            "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
+            "fi",
+        ]
         if pip_deps:
             lines.append("pip install -q " + " ".join(pip_deps))
         if server_cmd:

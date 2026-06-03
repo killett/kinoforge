@@ -199,3 +199,46 @@ def test_render_provision_civitai_model_stubs_resolved_url_and_token(
     assert "CIVITAI_TOKEN" in rp.env_required
     assert '-H "Authorization: Bearer $CIVITAI_TOKEN"' in rp.script
     assert "models/checkpoints/civitai_model.safetensors" in rp.script
+
+
+def test_render_provision_launches_selfterm_watchdog_before_clone() -> None:
+    """Bug it catches: render_provision injects KINOFORGE_SELFTERM_SCRIPT into
+    the env (via RunPodProvider.create_instance) but never starts the watchdog
+    inside the pod. Without the launch, all three pod-side cost guards
+    (max-lifetime, dead-man heartbeat, job_timeout) sit in env as dead config
+    and a leaked pod billed ~3h after a controller crash before manual REST
+    DELETE intervention. Lockdown pins the write-to-tmp + nohup launch lines
+    AND requires them to appear before the first git clone, since the clone
+    can hang and is exactly the phase where the watchdog must already be
+    alive.
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    script = rp.script
+    # Required substrings — write-to-tmp + detached background launch.
+    assert "open('/tmp/selfterm.py','w')" in script
+    assert "os.environ['KINOFORGE_SELFTERM_SCRIPT']" in script
+    assert "nohup python3 /tmp/selfterm.py" in script
+    # Ordering: selfterm-launch line MUST precede first ComfyUI git clone.
+    selfterm_idx = script.index("nohup python3 /tmp/selfterm.py")
+    clone_idx = script.index("git clone --depth 1 --branch")
+    assert selfterm_idx < clone_idx, (
+        "selfterm watchdog must launch before git clone — clone phase can hang"
+    )
+
+
+def test_render_provision_selfterm_launch_is_optional_when_env_unset() -> None:
+    """Bug it catches: a launch line that fails-hard (set -e + missing env var
+    after 'set -euo pipefail') when KINOFORGE_SELFTERM_SCRIPT isn't injected
+    (e.g. LocalProvider runs, or a non-selfterm provider). The launch line
+    must guard with `if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]; then ... fi`
+    so the bootstrap stays portable.
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    script = rp.script
+    assert 'if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]; then' in script
+    # Guard wraps the launch — both the python3 -c writer and the nohup
+    # launch must be inside the if-fi block.
+    if_start = script.index('if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}"')
+    fi_end = script.index("fi", if_start)
+    launch_pos = script.index("nohup python3 /tmp/selfterm.py")
+    assert if_start < launch_pos < fi_end

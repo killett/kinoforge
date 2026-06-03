@@ -84,3 +84,33 @@ def test_render_provision_port_defaults_to_8000_when_base_url_missing() -> None:
 def test_render_provision_env_required_is_empty() -> None:
     rp = _make_engine().render_provision(_minimal_cfg())
     assert rp.env_required == []
+
+
+def test_render_provision_launches_selfterm_watchdog_before_pip_install() -> None:
+    """Bug it catches: Diffusers bootstrap (pip install + exec server) drops
+    selfterm launch and gives leaked pods a 3h+ tail just like the ComfyUI
+    pre-fix path. Lockdown pins the same write-to-tmp + nohup pattern and
+    requires it to appear before any pip install line — pip can hang on slow
+    mirrors and is exactly where the watchdog must already be alive.
+    """
+    cfg = _minimal_cfg()
+    cfg["engine"]["diffusers"]["pip"] = ["torch", "diffusers"]
+    rp = _make_engine().render_provision(cfg)
+    script = rp.script
+    assert "open('/tmp/selfterm.py','w')" in script
+    assert "nohup python3 /tmp/selfterm.py" in script
+    selfterm_idx = script.index("nohup python3 /tmp/selfterm.py")
+    pip_idx = script.index("pip install -q torch")
+    assert selfterm_idx < pip_idx, (
+        "selfterm watchdog must launch before pip install — pip can hang"
+    )
+
+
+def test_render_provision_selfterm_launch_is_guarded_for_missing_env_var() -> None:
+    """Bug it catches: launch line that fails-hard when
+    KINOFORGE_SELFTERM_SCRIPT isn't set (LocalProvider, non-selfterm providers).
+    Parity with ComfyUI's same guard.
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    script = rp.script
+    assert 'if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]; then' in script
