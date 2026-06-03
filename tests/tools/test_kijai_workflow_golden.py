@@ -35,7 +35,7 @@ _OBJECT_INFO_PATH = (
     / "fixtures"
     / "comfyui"
     / "object_info"
-    / "3f7108bde103.json"
+    / "f96322b59043.json"
 )
 
 
@@ -53,10 +53,19 @@ def test_kijai_workflow_converts_to_expected_api_json() -> None:
           test — the diff would show every node's widget-value mapping
           changing, not just an isolated field.
 
-    The golden was generated from the converter at HEAD a2aef96 (T5
-    commit of the /object_info fixture). Any planned shim or vendored-
-    converter update MUST regenerate the golden in the same commit so
-    the diff is auditable.
+    The golden was originally generated at converter HEAD a2aef96 (T5
+    commit of the first /object_info fixture, pack-stack 3f7108bde103).
+    Regenerated 2026-06-03 against /object_info f96322b59043, which
+    carries the full kijai NODE_CLASS_MAPPINGS + VideoHelperSuite — the
+    earlier fixture had silently dropped 11 of the kijai WanVideo*
+    classes due to a transient pip-dep/ComfyUI version skew at capture
+    time, since resolved upstream. New golden's widget values for
+    WanVideoTextEncode (positive_prompt/negative_prompt),
+    WanVideoSampler (steps/cfg/seed/scheduler), etc. now reflect the
+    runnable workflow shape.
+
+    Any planned shim or vendored-converter update MUST regenerate the
+    golden in the same commit so the diff is auditable.
     """
     # Defer import: install_fake_nodes_module must run BEFORE the
     # vendored converter import so the fake `nodes` module is in
