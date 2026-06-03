@@ -61,9 +61,21 @@ def test_kijai_workflow_converts_to_expected_api_json() -> None:
     # Defer import: install_fake_nodes_module must run BEFORE the
     # vendored converter import so the fake `nodes` module is in
     # sys.modules at converter-import time.
+    #
+    # State-leak guard: tests/tools/test_comfyui_ui_to_api.py also
+    # calls install_fake_nodes_module with a *different* fixture. The
+    # vendored converter does `import nodes` at module top — Python
+    # caches the binding, so the second install_fake_nodes_module call
+    # swaps sys.modules['nodes'] but the converter still references the
+    # first fake. Evict the vendored module from sys.modules before
+    # re-importing so its top-level `import nodes` re-resolves against
+    # our just-installed fake.
+    import sys
+
     from tools.comfyui_ui_to_api import install_fake_nodes_module
 
     install_fake_nodes_module(_OBJECT_INFO_PATH)
+    sys.modules.pop("tools._vendored.seth_workflow_converter", None)
 
     from tools._vendored.seth_workflow_converter import WorkflowConverter
 
