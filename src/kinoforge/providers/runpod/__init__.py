@@ -511,7 +511,22 @@ class RunPodProvider(ComputeProvider):
                     "name": spec.run_id or "kinoforge-pod",
                     "imageName": spec.image,
                     "dockerArgs": docker_args,
-                    "ports": ",".join(spec.ports) if spec.ports else "",
+                    # RunPod's HTTP reverse proxy
+                    # (https://{pod_id}-{port}.proxy.runpod.net) only exposes
+                    # ports whose declaration carries an explicit protocol
+                    # suffix. Bare ports like "8188" allocate the port but the
+                    # proxy returns 404 for every request — wait_for_ready
+                    # polls the URL forever, never sees a 200. Diagnostic
+                    # 2026-06-02: comparing `ports: "8188"` vs
+                    # `ports: "8188/http"` showed the former 404s, the latter
+                    # serves correctly. Default to /http for any port without
+                    # an explicit suffix so callers who don't know to add it
+                    # still work. SSH or TCP-only callers pass "22/tcp" etc.
+                    "ports": ",".join(
+                        p if "/" in p else f"{p}/http" for p in spec.ports
+                    )
+                    if spec.ports
+                    else "",
                     "volumeMountPath": spec.volume_mount or "/workspace",
                     "env": [{"key": k, "value": v} for k, v in env.items()],
                 }
