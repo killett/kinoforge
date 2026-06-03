@@ -313,12 +313,21 @@ def main() -> int:
             "nohup python main.py --listen 0.0.0.0 --port 8188 "
             "> /workspace/diag/step5_comfy.log 2>&1 &\n"
             'log "STEP 5: ComfyUI launched pid=$!"\n'
-            "sleep 30\n"
-            "log 'STEP 6: probing local /system_stats'\n"
-            "curl -sv http://127.0.0.1:8188/system_stats "
-            "> /workspace/diag/step6_curl.log 2>&1; "
-            'log "STEP 6: curl exit=$?"\n'
-            "log 'STEP 7: keep diag server alive'\n"
+            "log 'STEP 6: probing local /system_stats every 15s for 15 min'\n"
+            "for i in $(seq 1 60); do "
+            "if curl -sf http://127.0.0.1:8188/system_stats "
+            "> /workspace/diag/step6_curl.log 2>&1; then "
+            'log "STEP 6: ComfyUI READY at iter=$i (~$((i*15))s)"; '
+            "break; "
+            "fi; "
+            "if [ $i -eq 60 ]; then "
+            'log "STEP 6: ComfyUI did NOT bind in 900s"; '
+            "fi; "
+            "sleep 15; "
+            "done\n"
+            "log 'STEP 7: copy ComfyUI log to /workspace/diag for visibility'\n"
+            "tail -200 /workspace/diag/step5_comfy.log > /workspace/diag/comfy_tail.log 2>&1\n"
+            "log 'STEP 8: keep diag server alive'\n"
             "exec sleep 1500\n"
         )
         from kinoforge.core.interfaces import RenderedProvision as _RP
