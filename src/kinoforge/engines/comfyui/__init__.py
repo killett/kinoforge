@@ -750,6 +750,17 @@ class ComfyUIEngine(GenerationEngine):
 
         lines: list[str] = [
             "set -euo pipefail",
+            # Selfterm watchdog — launch BEFORE bootstrap so the dead-man
+            # window + max-lifetime cap fire even when the long clone / pip /
+            # curl phase hangs. KINOFORGE_SELFTERM_SCRIPT is injected by
+            # RunPodProvider.create_instance as plain Python source; this
+            # writes it to /tmp/selfterm.py and detaches via nohup so it
+            # survives the final `exec python main.py`.
+            'if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]; then '
+            "python3 -c \"import os; open('/tmp/selfterm.py','w')"
+            ".write(os.environ['KINOFORGE_SELFTERM_SCRIPT'])\" && "
+            "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
+            "fi",
             "cd /workspace",
             f"[ ! -d ComfyUI ] && git clone --depth 1 --branch {branch} {repo} ComfyUI",
             "cd ComfyUI && pip install -q -r requirements.txt",
