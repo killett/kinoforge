@@ -705,6 +705,13 @@ def _resolve_spec_graph_file(data: dict[str, Any], yaml_path: Path) -> None:
             f"spec.graph_file: invalid JSON in {graph_file_path}: {exc}"
         ) from exc
 
+    # Strip the optional top-level _meta provenance header before runtime.
+    # ComfyUI's /prompt endpoint validates every top-level key as a node ID
+    # and rejects unrecognised keys; on-disk JSON retains _meta for AC12's
+    # SHA cross-reference test that reads the raw file directly.
+    if isinstance(graph_data, dict):
+        graph_data.pop("_meta", None)
+
     spec["graph"] = graph_data
     del spec["graph_file"]
 
