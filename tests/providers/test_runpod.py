@@ -393,6 +393,72 @@ def test_create_pod_returns_instance_starting(pod_spec: InstanceSpec) -> None:
     assert inst.id == "ia66l3rlto5x66"  # real id from create_pod.json fixture
 
 
+def test_create_pod_appends_http_protocol_suffix_to_bare_ports() -> None:
+    """Bug it catches: sending `ports: "8188"` (no protocol) to RunPod's
+    create-pod GraphQL allocates the port but RunPod's HTTP reverse
+    proxy at https://{pod_id}-{port}.proxy.runpod.net returns 404 for
+    every request — wait_for_ready then polls /system_stats forever
+    without ever seeing a 200, eventually times out at boot_timeout_s.
+
+    Observed live 2026-06-02 across T4 attempts 4-6 + diagnostic
+    pods wp84fjph9uyuhl / 5sxk83ynwcsxw6: identical bash bootstrap,
+    identical image, ports="8188" → proxy 404 forever. Same bootstrap
+    with ports="8188/http" via phonehome diagnostic at HEAD 45cf5ab →
+    proxy serves http.server response within 1 min.
+
+    Fix appends "/http" to any port lacking an explicit protocol suffix.
+    Callers needing TCP (e.g. SSH on port 22) pass "22/tcp" explicitly.
+    """
+    layer_q_spec = InstanceSpec(
+        image="runpod/pytorch:2.1",
+        ports=("8188",),  # bare port — caller doesn't know about protocol
+        lifecycle=Lifecycle(
+            idle_timeout_s=1800,
+            job_timeout_s=900,
+            time_buffer_s=300,
+            max_lifetime_s=7200,
+        ),
+        tags={"mode": "pod"},
+    )
+    http_post = HttpPostSpy(response=_POD_CREATE_RESPONSE)
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+
+    provider.create_instance(layer_q_spec)
+
+    # Exactly one create-pod POST call.
+    assert len(http_post.calls) == 1
+    body = http_post.calls[0][1]
+    sent_ports = body["variables"]["input"]["ports"]
+    assert sent_ports == "8188/http", (
+        f"expected RunPod-proxy-compatible 'PORT/http' format, got {sent_ports!r}"
+    )
+
+
+def test_create_pod_preserves_explicit_protocol_suffix_on_ports() -> None:
+    """Bug it catches: an over-eager normalizer that strips an
+    operator-supplied protocol (e.g. "22/tcp" → "22/http"). SSH ports
+    + future raw-TCP callers must round-trip their explicit protocol.
+    """
+    spec_with_explicit = InstanceSpec(
+        image="runpod/pytorch:2.1",
+        ports=("22/tcp", "8188/http"),  # mix of explicit protocols
+        lifecycle=Lifecycle(
+            idle_timeout_s=1800,
+            job_timeout_s=900,
+            time_buffer_s=300,
+            max_lifetime_s=7200,
+        ),
+        tags={"mode": "pod"},
+    )
+    http_post = HttpPostSpy(response=_POD_CREATE_RESPONSE)
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+
+    provider.create_instance(spec_with_explicit)
+
+    sent_ports = http_post.calls[0][1]["variables"]["input"]["ports"]
+    assert sent_ports == "22/tcp,8188/http"
+
+
 def test_create_pod_populates_endpoints_eagerly_from_spec_ports() -> None:
     """Bug it catches: ``_create_pod`` returns an Instance with empty
     ``endpoints`` even though RunPod's proxy URL pattern is
