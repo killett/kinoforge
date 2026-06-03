@@ -152,6 +152,17 @@ def main() -> int:
     parser.add_argument("--max-minutes", type=int, default=5)
     parser.add_argument("--env-file", type=Path, default=Path(_REPO_ROOT) / ".env")
     parser.add_argument("--poll-interval-s", type=int, default=30)
+    parser.add_argument(
+        "--minimal-phonehome",
+        action="store_true",
+        help=(
+            "Replace production bootstrap with a tiny phone-home script that "
+            "writes step markers to /workspace/progress.log then serves "
+            "/workspace via python3 -m http.server on port 8188. "
+            "Controller polls the proxy URL for the log. Used to test whether "
+            "dockerArgs actually executes the bash script at all."
+        ),
+    )
     args = parser.parse_args()
 
     from kinoforge.core.dotenv_loader import load_env_file
@@ -209,6 +220,30 @@ def main() -> int:
     cfg_dict["lifecycle"] = _dc.asdict(cfg.lifecycle())
     rendered = engine.render_provision(cfg_dict)
 
+    if args.minimal_phonehome:
+        phonehome = (
+            "set -euo pipefail\n"
+            'echo "[step 1] bootstrap started: $(date -u)" > /workspace/progress.log\n'
+            'echo "[step 2] uname=$(uname -a)" >> /workspace/progress.log\n'
+            'echo "[step 3] pwd=$(pwd)" >> /workspace/progress.log\n'
+            'echo "[step 4] which python3=$(which python3 || echo NONE)" >> /workspace/progress.log\n'
+            'echo "[step 5] which bash=$(which bash || echo NONE)" >> /workspace/progress.log\n'
+            'echo "[step 6] env-vars present: SELFTERM=${KINOFORGE_SELFTERM_SCRIPT:+yes} '
+            'HF=${HF_TOKEN:+yes} POD_ID=${RUNPOD_POD_ID:-NONE}" >> /workspace/progress.log\n'
+            'echo "[step 7] starting http.server on 8188" >> /workspace/progress.log\n'
+            "cd /workspace\n"
+            "exec python3 -m http.server 8188\n"
+        )
+        from kinoforge.core.interfaces import RenderedProvision as _RP
+
+        rendered = _RP(
+            script=phonehome,
+            run_cmd=["python3", "-m", "http.server", "8188"],
+            image=rendered.image,
+            ports=["8188"],
+            env_required=[],
+        )
+
     print("--- rendered bootstrap (first 60 lines) ---")
     for ln in rendered.script.splitlines()[:60]:
         print(f"  | {ln}")
@@ -221,10 +256,9 @@ def main() -> int:
     if not offers:
         safe_print("diagnose_pod_boot: no offers")
         return 1
-    offer = offers[0]
-    print(f"selected offer: {offer.gpu_type} @ ${offer.cost_rate_usd_per_hr}/hr")
 
-    # Build env from rendered.env_required via creds
+    # Build env from rendered.env_required via creds. After phonehome
+    # override above, env_required is empty so this loop is a no-op.
     creds = EnvCredentialProvider()
     env: dict[str, str] = {}
     for var in rendered.env_required:
@@ -235,23 +269,47 @@ def main() -> int:
         env[var] = val
 
     lifecycle = cfg.lifecycle()
-    spec = InstanceSpec(
-        image=rendered.image,
-        offer=offer,
-        ports=tuple(rendered.ports),
-        volume_gb=cfg.compute.requirements.disk_gb or 50,
-        volume_mount="/workspace",
-        lifecycle=lifecycle,
-        env=env,
-        tags={"mode": "pod", "kinoforge_purpose": "diagnostic"},
-        run_id="kinoforge-diagnose",
-        provision_script=rendered.script,
-        run_cmd=rendered.run_cmd,
+
+    from kinoforge.core.errors import CapacityError
+
+    instance = None
+    chosen_offer = None
+    for offer in offers:
+        spec = InstanceSpec(
+            image=rendered.image,
+            offer=offer,
+            ports=tuple(rendered.ports),
+            volume_gb=cfg.compute.requirements.disk_gb or 50,
+            volume_mount="/workspace",
+            lifecycle=lifecycle,
+            env=env,
+            tags={"mode": "pod", "kinoforge_purpose": "diagnostic"},
+            run_id="kinoforge-diagnose",
+            provision_script=rendered.script,
+            run_cmd=rendered.run_cmd,
+        )
+        try:
+            print(f"\ntrying offer {offer.gpu_type} @ ${offer.cost_rate_usd_per_hr}/hr")
+            instance = provider.create_instance(spec)
+            chosen_offer = offer
+            break
+        except CapacityError as exc:
+            print(f"  no capacity: {exc}")
+            continue
+        except ValueError as exc:
+            # Generic RunPod errors ('Something went wrong', etc.) — log and skip.
+            short = str(exc).splitlines()[0][:200]
+            print(f"  rejected: {short}")
+            continue
+    if instance is None or chosen_offer is None:
+        safe_print("diagnose_pod_boot: every offer rejected with CapacityError")
+        return 1
+    print(
+        f"\ncreated pod {instance.id} on {chosen_offer.gpu_type} "
+        f"@ ${chosen_offer.cost_rate_usd_per_hr}/hr — endpoints={instance.endpoints}"
     )
 
-    instance = provider.create_instance(spec)
-    print(f"\ncreated pod {instance.id} — endpoints={instance.endpoints}")
-
+    proxy_url = f"https://{instance.id}-8188.proxy.runpod.net/progress.log"
     deadline = time.monotonic() + args.max_minutes * 60
     elapsed = 0
     try:
@@ -260,6 +318,21 @@ def main() -> int:
             elapsed += args.poll_interval_s
             pod = _print_pod_snapshot(api_key, instance.id, elapsed)
             _print_pod_logs(api_key, instance.id)
+            if args.minimal_phonehome:
+                try:
+                    req = urllib.request.Request(  # noqa: S310
+                        proxy_url,
+                        headers={"User-Agent": _UA},
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+                        progress = resp.read().decode("utf-8", errors="replace")
+                    print(f"  GET {proxy_url} -> 200")
+                    for ln in progress.splitlines():
+                        print(f"    | {ln}")
+                except urllib.error.HTTPError as exc:
+                    print(f"  GET progress.log -> {exc.code}")
+                except (urllib.error.URLError, OSError) as exc:
+                    print(f"  GET progress.log -> network err: {exc}")
             status = pod.get("desiredStatus") if pod else None
             if status in ("EXITED", "TERMINATED", "FAILED"):
                 print(f"\npod entered terminal status {status!r} — stopping early")
