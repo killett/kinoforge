@@ -33,7 +33,6 @@ if _REPO_ROOT not in sys.path:
 
 
 _REQUIRED_ENV = (
-    "KINOFORGE_LIVE_TESTS",
     "RUNPOD_API_KEY",
     "RUNPOD_TERMINATE_KEY",
     "HF_TOKEN",

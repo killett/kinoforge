@@ -1,17 +1,17 @@
 """Unit tests for :mod:`tools.preflight`.
 
 Preflight is the gate that must pass BEFORE any live-spend tool
-(``capture_object_info.py``, ``tests/live/``) is run. It checks four
+(``capture_object_info.py``, ``tests/live/``) is run. It checks three
 invariants:
 
-1. Required env vars are set (``KINOFORGE_LIVE_TESTS=1``,
-   ``RUNPOD_API_KEY``, ``RUNPOD_TERMINATE_KEY``, ``HF_TOKEN``).
+1. Required creds are set (``RUNPOD_API_KEY``,
+   ``RUNPOD_TERMINATE_KEY``, ``HF_TOKEN``). Auto-loaded from ``.env``
+   by ``main()``; tests inject via ``env_getter``.
 2. Git working tree is clean — uncommitted scaffolds would be lost if
    a live-spend tool crashes mid-run.
 3. Zero active RunPod pods — any active pod is either still billing
    from a previous session or someone else's resource that preflight
    would otherwise destroy.
-4. Required tooling on PATH — currently a no-op slot; reserved.
 
 All four checks must run even if an earlier one fails; the operator
 should see the full state, not just the first problem.
@@ -24,7 +24,6 @@ import pytest
 
 def _good_env() -> dict[str, str]:
     return {
-        "KINOFORGE_LIVE_TESTS": "1",
         "RUNPOD_API_KEY": "rpa_DEADBEEFCAFEBABE12345678",
         "RUNPOD_TERMINATE_KEY": "rpa_TERMKEY1234567890ABCDEF",
         "HF_TOKEN": "hf_FAKEXXXXXXXXXXXXXXXXXXXXXXXX",
@@ -124,7 +123,7 @@ def test_all_failures_reported_even_when_first_check_fails() -> None:
     from tools.preflight import run_preflight
 
     env = _good_env()
-    del env["KINOFORGE_LIVE_TESTS"]
+    del env["HF_TOKEN"]
 
     code, lines = run_preflight(
         env_getter=env.get,
@@ -134,7 +133,7 @@ def test_all_failures_reported_even_when_first_check_fails() -> None:
 
     assert code != 0
     joined = "\n".join(lines)
-    assert "KINOFORGE_LIVE_TESTS" in joined
+    assert "HF_TOKEN" in joined
     assert "pod_x" in joined
     assert "README.md" in joined
 

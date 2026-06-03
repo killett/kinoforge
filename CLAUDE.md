@@ -28,8 +28,11 @@ a design or plan exists (see Durability rules).
   before retrying the spend, and tempts a `git checkout .` cleanup that wipes 100+ LOC. Rule applies
   to subagents too — controller must verify the scaffold is committed (atomic, even just the
   scaffold + a failing test) before dispatching the live-spend subagent.
-- **Run `pixi run preflight` before any live spend.** Checks env vars set, zero active RunPod pods,
-  clean working tree. Exit 0 == safe to spend. See `tools/preflight.py` for the contract.
+- **Run `pixi run preflight` before any live spend.** Checks RUNPOD/HF creds present (auto-loaded
+  from `.env`), zero active RunPod pods, clean working tree. Exit 0 == safe to spend. See
+  `tools/preflight.py` for the contract. There is NO operator-side env-switch — Claude runs inside
+  a container and the user does not (and should not) need to `docker exec` to flip a flag. Live
+  spend is authorised by user statement in conversation, not by env-var ceremony.
 
 ## Process & testing
 - **Superpowers owns the workflow:** brainstorm → plan → execute, with red/green TDD and two-stage
