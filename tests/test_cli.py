@@ -532,7 +532,7 @@ def test_cli_output_dir_flag_overrides_yaml(
         captured.update(kwargs)
         import types
 
-        return types.SimpleNamespace(uri="fake://result")
+        return types.SimpleNamespace(uri="fake://result"), None
 
     monkeypatch.setattr("kinoforge.cli.generate", fake_generate)
 
@@ -570,7 +570,7 @@ def test_cli_no_output_dir_disables_sink(
         captured.update(kwargs)
         import types
 
-        return types.SimpleNamespace(uri="fake://result")
+        return types.SimpleNamespace(uri="fake://result"), None
 
     monkeypatch.setattr("kinoforge.cli.generate", fake_generate)
 
@@ -610,7 +610,7 @@ def test_cli_default_output_dir_is_output(
         captured.update(kwargs)
         import types
 
-        return types.SimpleNamespace(uri="fake://result")
+        return types.SimpleNamespace(uri="fake://result"), None
 
     monkeypatch.setattr("kinoforge.cli.generate", fake_generate)
 
@@ -686,7 +686,7 @@ def test_cli_default_run_id_uniquifies_per_invocation(
         captured_run_ids.append(str(kwargs.get("run_id", "")))
         import types
 
-        return types.SimpleNamespace(uri="fake://result")
+        return types.SimpleNamespace(uri="fake://result"), None
 
     monkeypatch.setattr("kinoforge.cli.generate", fake_generate)
 

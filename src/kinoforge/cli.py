@@ -390,7 +390,7 @@ def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
         run_id = f"run-{ts}"
 
     try:
-        artifact = generate(
+        artifact, _ = generate(
             cfg, request, store=store, sink=sink, run_id=run_id, state_dir=state_dir
         )
     except UnknownAdapter as exc:

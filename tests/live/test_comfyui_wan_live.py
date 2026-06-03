@@ -250,7 +250,7 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
         store = LocalArtifactStore(root=state_dir / "artifacts")
         sink = LocalOutputSink(dir=cfg.output.dir)
 
-        artifact = generate(
+        artifact, owned_instance = generate(
             cfg,
             request,
             store=store,
@@ -268,26 +268,19 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
             profile_provider=profile_cache,
         )
 
-        if instance is None:
-            # Cold path: orchestrator created the pod and merged our tags=
-            # onto its baseline {kinoforge_engine, kinoforge_key} tags, but
-            # the new Instance was never surfaced back to us. Tag-discover
-            # it via _TAG_KEY so the destroy block has a pod_id to act on.
-            # Race-safe in practice: reuse_check ran 1 step earlier over the
-            # same provider; any tagged pod would have entered the warm
-            # branch. The only window is a prior run that died mid-create
-            # and left a ready tagged pod that reuse_check missed.
-            instance = provider.find_instance_by_tag(_TAG_KEY, _TAG_VALUE)
-            if instance is not None:
-                pod_id = instance.id
-                _log.info(
-                    "[phase=generate] cold-path pod recovered via tag: %s", pod_id
-                )
-            else:
-                _log.warning(
-                    "[phase=generate] cold-path pod not found by tag — destroy "
-                    "block will no-op; selfterm + idle_timeout_s will clean up"
-                )
+        # Cold path: orchestrator created the pod inside generate() and now
+        # surfaces it back via the return tuple's second element so destroy
+        # has a pod_id to act on without resorting to provider tag-discovery
+        # (which used to silently miss because RunPod's GraphQL pod schema
+        # does not round-trip user tags).
+        # Warm path: owned_instance is None because the caller supplied
+        # instance=; pod_id stays bound to the warm pod's id from
+        # [phase=reuse_check].
+        if instance is None and owned_instance is not None:
+            pod_id = owned_instance.id
+            _log.info(
+                "[phase=generate] cold-path pod surfaced by generate(): %s", pod_id
+            )
 
         artifact_path = Path(artifact.uri)
         assert artifact_path.exists(), f"artifact not on disk: {artifact_path}"
