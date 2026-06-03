@@ -48,6 +48,13 @@ models:
   - ref: "hf:Kijai/WanVideo_comfy:umt5-xxl-enc-fp8_e4m3fn.safetensors"
     kind: text_encoder
     target: text_encoders
+  # CLIPVision required by the kijai i2v workflow's WanVideoClipVisionEncode
+  # (node 65); sourced from Comfy-Org's repackaged Wan 2.1 distribution.
+  # Live attempt 7 (pod my89gwzlvb3gtx) /prompt 400 surfaced this dependency
+  # via node_errors['59'].
+  - ref: "hf:Comfy-Org/Wan_2.1_ComfyUI_repackaged:split_files/clip_vision/clip_vision_h.safetensors"
+    kind: clip_vision
+    target: clip_vision
 
 compute:
   provider: runpod

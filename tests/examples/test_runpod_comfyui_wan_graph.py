@@ -13,9 +13,14 @@ it to ``{positive: "16"}``).
 Source-of-truth graph is the API JSON emitted from kijai's
 ``wanvideo_2_1_14B_I2V_example_03.json`` UI workflow at pinned SHA
 ``088128b224242e110d3906c6750e9a3a348a659b`` by ``tools/comfyui_ui_to_api.py``.
-Node count is 15 (Seth's converter drops non-runtime UI nodes such as
-``Note`` and control-flow placeholders from the 26-node UI source) —
-see PROGRESS sub-plan ``comfyui_ui_to_api`` T6 closure block.
+Node count is 14: Seth's converter drops non-runtime UI nodes such
+as ``Note`` and control-flow placeholders from the 26-node UI source
+(yielding 15), and the parent item #3 T6 wave additionally drops
+node 69 (``WanVideoLoraSelect``) — the LoRA was a speed optimizer
+whose widget mapping had drifted and whose underlying weight wasn't
+in our model download list — see PROGRESS sub-plan
+``comfyui_ui_to_api`` T6 closure block + the parent T6 bug-catch
+trail for the graph regeneration details.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ YAML_PATH = Path("examples/configs/runpod-comfyui-wan.yaml")
 GRAPH_PATH = Path("examples/configs/runpod-comfyui-wan.graph.json")
 KIJAI_REPO_HINT = "kijai/ComfyUI-WanVideoWrapper"
 
-EXPECTED_NODE_COUNT = 15
+EXPECTED_NODE_COUNT = 14
 EXPECTED_CLASS_TYPES = {
     "CLIPLoader",
     "CLIPTextEncode",
@@ -56,7 +61,7 @@ EXPECTED_CLASS_TYPES = {
 
 
 def test_graph_shape_api_format() -> None:
-    """Graph is a dict-of-dict; every value has class_type + inputs; node count == 15."""
+    """Graph is a dict-of-dict; every value has class_type + inputs; node count == 14."""
     cfg = load_config(YAML_PATH)
     graph = cfg.spec["graph"]
     assert isinstance(graph, dict), f"graph must be dict, got {type(graph)}"
