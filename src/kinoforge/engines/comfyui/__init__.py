@@ -1108,6 +1108,14 @@ def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> None:
 def _first_filename(outputs: dict[str, Any]) -> str:
     """Extract the first ``filename`` from a ComfyUI outputs dict.
 
+    ComfyUI node-output naming varies by node type. ``VHS_VideoCombine``
+    (the kijai Wan workflow's output sink) emits ``gifs`` even when the
+    file is an .mp4 — the key name is legacy. Image-only nodes use
+    ``images``; some custom nodes use ``files`` or ``videos``. Walk
+    these keys in priority order. Verified live 2026-06-03 (pod
+    rb6pi9cozjvf1g): the kijai i2v workflow's node 30 history entry
+    has ``{"gifs": [{"filename": "WanVideoWrapper_I2V_00001.mp4", ...}]}``.
+
     Args:
         outputs: The ``outputs`` dict from a ComfyUI history response.
 
@@ -1117,10 +1125,12 @@ def _first_filename(outputs: dict[str, Any]) -> str:
     Raises:
         KeyError: No filename found in the outputs structure.
     """
+    _OUTPUT_KEYS = ("files", "videos", "gifs", "images")
     for node_data in outputs.values():
-        files = node_data.get("files", [])
-        if files:
-            return str(files[0]["filename"])
+        for key in _OUTPUT_KEYS:
+            files = node_data.get(key, [])
+            if files:
+                return str(files[0]["filename"])
     raise KeyError("No filename found in ComfyUI outputs")
 
 
