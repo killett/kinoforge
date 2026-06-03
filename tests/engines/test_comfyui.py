@@ -1585,3 +1585,77 @@ def test_comfyui_provision_skips_checkout_when_ref_absent() -> None:
 
     checkout_calls = [c for c in commands if c[:2] == ["git", "checkout"]]
     assert checkout_calls == []
+
+
+# ---------------------------------------------------------------------------
+# T6 bug-catch #5: _first_filename walks gifs/videos/images alongside files
+# ---------------------------------------------------------------------------
+
+
+def test_first_filename_extracts_from_vhs_videocombine_gifs_key() -> None:
+    """``_first_filename`` finds the MP4 filename when the output node uses ``gifs``.
+
+    Bug catch: ``VHS_VideoCombine`` (the kijai Wan i2v workflow's output
+    sink) emits the produced MP4 under the ``gifs`` key — a legacy
+    naming carry-over from animated-gif support. The pre-T6 implementation
+    only looked at ``files``, so ``_first_filename`` raised KeyError
+    even when the workflow had successfully rendered the video on the
+    pod. Live verification 2026-06-03 (pod rb6pi9cozjvf1g): fixture
+    history_done.json captured a real run whose node-30 output is
+    ``{"gifs": [{"filename": "WanVideoWrapper_I2V_00001.mp4", ...}]}``.
+    """
+    from kinoforge.engines.comfyui import _first_filename
+
+    outputs = {
+        "30": {
+            "gifs": [
+                {
+                    "filename": "WanVideoWrapper_I2V_00001.mp4",
+                    "subfolder": "",
+                    "type": "output",
+                    "format": "video/h264-mp4",
+                }
+            ]
+        }
+    }
+    assert _first_filename(outputs) == "WanVideoWrapper_I2V_00001.mp4"
+
+
+def test_first_filename_prefers_files_over_videos_over_gifs_over_images() -> None:
+    """``_first_filename`` honours the (files, videos, gifs, images) priority order.
+
+    Bug catch: if a node emits BOTH ``gifs`` and ``files`` (custom node
+    combinations), the canonical ``files`` key wins so existing
+    workflows that already use ``files`` continue to behave the same
+    way after this T6 patch.
+    """
+    from kinoforge.engines.comfyui import _first_filename
+
+    outputs = {
+        "1": {
+            "gifs": [{"filename": "gifs.mp4"}],
+            "files": [{"filename": "files.mp4"}],
+        }
+    }
+    assert _first_filename(outputs) == "files.mp4"
+
+
+def test_first_filename_against_captured_vhs_fixture() -> None:
+    """Replay ``tests/engines/fixtures/comfyui/history_done.json`` (Layer N pattern).
+
+    Bug catch: the captured /history response shape drifts from what
+    the engine knows how to decode. Locks the exact node-30 / gifs
+    structure that the kijai i2v workflow emits.
+    """
+    import json
+    from pathlib import Path
+
+    from kinoforge.engines.comfyui import _first_filename
+
+    fixture = json.loads(
+        Path("tests/engines/fixtures/comfyui/history_done.json").read_text()
+    )
+    response = fixture["response"]
+    (prompt_id,) = response.keys()
+    outputs = response[prompt_id]["outputs"]
+    assert _first_filename(outputs) == "WanVideoWrapper_I2V_00001.mp4"
