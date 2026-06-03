@@ -308,6 +308,29 @@ def main() -> int:
             "ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper/requirements.txt "
             "> /workspace/diag/step4_wan_pip.log 2>&1; "
             'log "STEP 4: exit=$?"; else log "STEP 4: no reqs.txt"; fi\n'
+            "log 'STEP 4b: write kijai class probe script'\n"
+            "cat > /tmp/kijai_probe.py <<'PYEOF'\n"
+            "import importlib.util\n"
+            "import sys\n"
+            "import traceback\n"
+            "sys.path.insert(0, '/workspace/ComfyUI')\n"
+            "sys.path.insert(0, '/workspace/ComfyUI/custom_nodes')\n"
+            "INIT_PATH = ('/workspace/ComfyUI/custom_nodes/'\n"
+            "             'ComfyUI-WanVideoWrapper/__init__.py')\n"
+            "try:\n"
+            "    spec = importlib.util.spec_from_file_location('kijai_wan', INIT_PATH)\n"
+            "    m = importlib.util.module_from_spec(spec)\n"
+            "    spec.loader.exec_module(m)\n"
+            "    mapping = getattr(m, 'NODE_CLASS_MAPPINGS', {})\n"
+            "    print(f'KIJAI_INIT_OK classes={len(mapping)}')\n"
+            "    for k in sorted(mapping):\n"
+            "        print(f'  CLASS: {k}')\n"
+            "except Exception as e:\n"
+            "    print(f'KIJAI_INIT_ERROR: {type(e).__name__}: {str(e)[:800]}')\n"
+            "    traceback.print_exc()\n"
+            "PYEOF\n"
+            "python3 /tmp/kijai_probe.py > /workspace/diag/step4b_kijai_probe.log 2>&1; "
+            'log "STEP 4b: kijai_probe exit=$?"\n'
             "log 'STEP 5: launch ComfyUI in background'\n"
             "cd /workspace/ComfyUI && "
             "nohup python main.py --listen 0.0.0.0 --port 8188 "
@@ -425,6 +448,18 @@ def main() -> int:
                 probe_targets = [("/", proxy_root), ("/progress.log", proxy_url)]
                 if args.instrument_production:
                     probe_targets.append(("8188/system_stats", comfy_proxy_url))
+                    base = f"https://{instance.id}-{diag_port}.proxy.runpod.net"
+                    probe_targets.extend(
+                        [
+                            ("/step4_wan_pip.log", f"{base}/step4_wan_pip.log"),
+                            (
+                                "/step4b_kijai_probe.log",
+                                f"{base}/step4b_kijai_probe.log",
+                            ),
+                            ("/step5_comfy.log", f"{base}/step5_comfy.log"),
+                            ("/comfy_tail.log", f"{base}/comfy_tail.log"),
+                        ]
+                    )
                 for label, url in probe_targets:
                     try:
                         req = urllib.request.Request(  # noqa: S310
