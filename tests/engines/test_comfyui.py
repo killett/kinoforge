@@ -1099,6 +1099,46 @@ def test_urllib_post_multipart_survives_boundary_prefix_in_content() -> None:
     assert body.count(closing) == 1
 
 
+def test_urllib_post_multipart_sets_kinoforge_user_agent() -> None:
+    """``_urllib_post_multipart`` sets a kinoforge-* User-Agent on the request.
+
+    Bug catch: RunPod's edge proxy rejects requests carrying the stdlib
+    default ``Python-urllib/<ver>`` UA with HTTP 403 (verified live
+    2026-06-03 against pod ``qiw1joekrijjay`` — same edge-layer
+    rejection class as commit ``8058dc2`` for ``_urllib_post_json`` and
+    ``_urllib_get_json``). Without an explicit kinoforge UA, the
+    ``/upload/image`` POST never reaches ComfyUI on the pod.
+    """
+    from unittest.mock import patch
+
+    from kinoforge.engines.comfyui import _urllib_post_multipart
+
+    captured: list[Any] = []
+
+    def fake_urlopen(req: Any) -> _FakeUrlopenResponse:
+        captured.append(req)
+        return _FakeUrlopenResponse(b'{"name": "ok"}')
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        _urllib_post_multipart(
+            "http://comfy/upload/image",
+            field_name="image",
+            filename="x.png",
+            content=b"X",
+        )
+
+    assert len(captured) == 1
+    ua = captured[0].headers.get("User-agent")
+    assert ua is not None, (
+        "_urllib_post_multipart must set a User-Agent header; "
+        "stdlib default Python-urllib/* is rejected by RunPod proxy"
+    )
+    assert ua.startswith("kinoforge-"), (
+        f"User-Agent {ua!r} must start with 'kinoforge-' to survive "
+        "edge-layer UA filtering"
+    )
+
+
 def test_urllib_post_multipart_escapes_quotes_in_filename() -> None:
     """A filename containing ``"`` or ``\\`` is escaped before being
     interpolated into the Content-Disposition header (RFC 2183).

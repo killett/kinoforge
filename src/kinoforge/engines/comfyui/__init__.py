@@ -322,7 +322,15 @@ def _urllib_post_multipart(
         + content
         + f"\r\n--{boundary}--\r\n".encode()
     )
-    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        # RunPod's edge proxy rejects requests with the stdlib default
+        # Python-urllib/<ver> UA with HTTP 403 (see commit 8058dc2 for
+        # the same fix on _urllib_post_json / _urllib_get_json). Live
+        # smoke verified 2026-06-03 (pod qiw1joekrijjay): /upload/image
+        # returns 403 without this header, 200 with it.
+        "User-Agent": _UA,
+    }
     req = urllib.request.Request(  # noqa: S310
         url, data=body, headers=headers, method="POST"
     )
