@@ -55,6 +55,36 @@ if _REPO_ROOT not in sys.path:
 from tools._redact import safe_print  # noqa: E402  sys.path edit above
 
 
+def _bypass_local_weights_download(engine: object) -> None:
+    """Disable the engine's local weight pre-download for capture runs.
+
+    ``ComfyUIEngine.requires_local_weights`` is a class attribute set to
+    ``True`` — provisioner.provision then unconditionally downloads every
+    declared model artifact onto the controller filesystem BEFORE
+    delegating to ``engine.provision()``. For Wan 2.1 i2v that is ~24 GB
+    of weights through a ~15 GB-RAM container, which OOM's the host
+    (observed twice this session: 3h leaked pod after first OS crash;
+    6 GB RSS climb during second attempt before manual SIGKILL).
+
+    The Layer Q ``render_provision`` bootstrap already emits ``curl``
+    commands to fetch the same weights on the pod itself. The local copy
+    is pure waste for any pod-backed run. Setting the per-instance
+    attribute shadows the class default; the rest of the orchestrator
+    path is unchanged.
+
+    Note:
+        This is the surgical capture-script fix. The architectural fix
+        belongs in ``provisioner.provision`` (branch on
+        ``instance.provider != 'local'`` to skip local download
+        regardless of the engine flag). Tracked as Fix 2 / Layer R.
+
+    Args:
+        engine: The just-instantiated ``GenerationEngine`` whose local
+            weight download should be skipped for this capture run.
+    """
+    engine.requires_local_weights = False  # type: ignore[attr-defined]
+
+
 def _require_env(keys: tuple[str, ...]) -> None:
     """Exit with code 1 (no provisioning) if any *keys* is unset in env.
 
@@ -143,6 +173,7 @@ def main() -> int:
     from kinoforge.core import registry
 
     engine = registry.get_engine(cfg.engine.kind)()
+    _bypass_local_weights_download(engine)
     provider = registry.get_provider(cfg.compute.provider)()
     creds = EnvCredentialProvider()
 
