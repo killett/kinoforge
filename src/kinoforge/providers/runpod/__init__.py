@@ -540,12 +540,34 @@ class RunPodProvider(ComputeProvider):
                 f"RunPod create-pod returned no pod id; full response: {resp!r}"
             )
 
+        # Populate endpoints eagerly: RunPod assigns proxy URLs synchronously
+        # on pod creation via the deterministic pattern
+        # https://{pod_id}-{port}.proxy.runpod.net. The URLs return 5xx until
+        # the in-pod listener binds, but the URLs themselves are stable from
+        # creation time — wait_for_ready can poll them immediately.
+        #
+        # Resolved-ports lookup: prefer ``spec.ports`` (the Layer Q +
+        # orchestrator path: render_provision.ports → InstanceSpec.ports);
+        # fall back to ``spec.tags["ports"]`` (legacy callers + the existing
+        # ``provider.endpoints()`` method's source-of-truth) so both paths
+        # populate the same Instance.endpoints dict.
+        resolved_ports: list[str] = list(spec.ports)
+        if not resolved_ports:
+            raw_tag_ports = spec.tags.get("ports", "")
+            resolved_ports = [p.strip() for p in raw_tag_ports.split(",") if p.strip()]
+        instance_endpoints: dict[str, str] = {
+            p: _PROXY_URL_PATTERN.format(pod_id=pod_id, port=p) for p in resolved_ports
+        }
+        instance_tags: dict[str, str] = {k: v for k, v in spec.tags.items()}
+        if resolved_ports and "ports" not in instance_tags:
+            instance_tags["ports"] = ",".join(resolved_ports)
         return Instance(
             id=pod_id,
             provider=self.name,
             status="starting",
             created_at=time.time(),
-            tags={k: v for k, v in spec.tags.items()},
+            endpoints=instance_endpoints,
+            tags=instance_tags,
             cost_rate_usd_per_hr=(
                 spec.offer.cost_rate_usd_per_hr if spec.offer else 0.0
             ),
