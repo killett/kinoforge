@@ -360,14 +360,14 @@ class RequirementsConfig(BaseModel):
     Attributes:
         min_vram_gb: Minimum GPU VRAM in GB.
         min_cuda: Minimum CUDA version string.
-        max_cost_rate_usd_per_hr: Ceiling on cost rate.
+        max_usd_per_hr: Ceiling on cost rate.
         gpu_preference: Ordered list of preferred GPU types.
         disk_gb: Minimum disk in GB.
     """
 
     min_vram_gb: int = 48
     min_cuda: str = "12.8"
-    max_cost_rate_usd_per_hr: float = 2.20
+    max_usd_per_hr: float = 2.20
     gpu_preference: list[str] = []
     disk_gb: int = 100
 
@@ -618,7 +618,7 @@ class Config(BaseModel):
         """Return HardwareRequirements with defaults applied.
 
         Pulls from compute.requirements when present; returns all-defaults otherwise.
-        Defaults: min_vram_gb=48, min_cuda="12.8", max_cost_rate_usd_per_hr=2.20,
+        Defaults: min_vram_gb=48, min_cuda="12.8", max_usd_per_hr=2.20,
         disk_gb=100, gpu_preference=().
 
         Returns:
@@ -631,7 +631,7 @@ class Config(BaseModel):
         return InterfaceHardwareRequirements(
             min_vram_gb=r.min_vram_gb,
             min_cuda=r.min_cuda,
-            max_cost_rate_usd_per_hr=r.max_cost_rate_usd_per_hr,
+            max_usd_per_hr=r.max_usd_per_hr,
             gpu_preference=tuple(r.gpu_preference),
             disk_gb=r.disk_gb,
         )

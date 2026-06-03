@@ -221,7 +221,7 @@ class HardwareRequirements:
        Defaults are baked in but every field is config-overridable."""
     min_vram_gb: int = 48                  # default 48 GB; rejects undersized cards
     min_cuda: str = "12.8"                  # minimum CUDA driver version (e.g. "12.8")
-    max_cost_rate_usd_per_hr: float = 2.20  # ceiling for POD-MODE offers only; ignored for serverless (per-second billing — use `budget` instead)
+    max_usd_per_hr: float = 2.20  # ceiling for POD-MODE offers only; ignored for serverless (per-second billing — use `budget` instead)
     gpu_preference: list[str] = []          # ordered preference list (e.g. ["RTX 4090", "RTX 5090"]); when set, providers should try in order among the offers that already pass the filters above
     disk_gb: int = 100                      # minimum container/instance disk
 
@@ -230,7 +230,7 @@ class ComputeProvider(ABC):
        Instances must be created with cost guardrails and a self-termination mechanism; see the
        Cost-safety section. `destroy_instance` must CONFIRM termination, never fire-and-forget."""
     name: str
-    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]: ...   # MUST exclude any offer failing min_vram_gb, min_cuda, or (for pod mode) max_cost_rate_usd_per_hr; preserve gpu_preference order in the returned list
+    def find_offers(self, reqs: HardwareRequirements) -> list[Offer]: ...   # MUST exclude any offer failing min_vram_gb, min_cuda, or (for pod mode) max_usd_per_hr; preserve gpu_preference order in the returned list
     def create_instance(self, spec: InstanceSpec) -> Instance: ...   # spec carries guardrails: idle_timeout, job_timeout, max_lifetime, budget; provider installs the in-pod dead-man's switch + local job_timeout enforcement + max_lifetime drain at startup
     def get_instance(self, instance_id: str) -> Instance: ...
     def list_instances(self) -> list[Instance]: ...   # must list ALL of this account's instances, so an external sweeper can find orphans
@@ -573,7 +573,7 @@ compute:                     # OMIT entirely for a hosted engine (requires_compu
     gpu_preference: ["RTX 4090", "RTX 5090"]
     min_vram_gb: 48              # default 48
     min_cuda: "12.8"             # default "12.8"
-    max_cost_rate_usd_per_hr: 2.20   # default 2.20; pod-mode only (ignored for serverless — use `lifecycle.budget` instead)
+    max_usd_per_hr: 2.20   # default 2.20; pod-mode only (ignored for serverless — use `lifecycle.budget` instead)
     disk_gb: 100
   ports: ["8188/http", "22/tcp"]
   volume: { size_gb: 100, mount: /workspace }
@@ -748,7 +748,7 @@ Treat each item below as a behavioral acceptance criterion — write it as a fai
   teardown (destroy pod / stop serverless worker) is invoked — no silent continuation.
 - **`find_offers` filters correctly**: given a synthetic offer list (a fake provider in tests), it
   excludes offers below `min_vram_gb` or below `min_cuda`; excludes pod-mode offers above
-  `max_cost_rate_usd_per_hr` but does NOT exclude serverless offers on that field; and preserves
+  `max_usd_per_hr` but does NOT exclude serverless offers on that field; and preserves
   `gpu_preference` order among the offers that survive. Defaults (`48 GB / "12.8" / 2.20`) take
   effect when unspecified.
 - **Mode + role-authoritative input validation (#4/#5)**: a `GenerationRequest` carries an EXPLICIT

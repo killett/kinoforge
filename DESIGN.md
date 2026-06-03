@@ -166,7 +166,7 @@ key IDENTITY; `models[].target` drives FILE PLACEMENT.
 **Validation rejects:** `idle_timeout >= max_lifetime`; `job_timeout > max_lifetime`; inconsistent
 `kind`/`target` pairings; `compute:` present when `engine.kind == hosted`; unknown engine/provider/
 scheme names (clear error). **Defaults:** `min_vram_gb=48`, `min_cuda="12.8"`,
-`max_cost_rate_usd_per_hr=2.20`, `disk_gb=100`, `idle_timeout=2h`, `job_timeout=30m`,
+`max_usd_per_hr=2.20`, `disk_gb=100`, `idle_timeout=2h`, `job_timeout=30m`,
 `time_buffer=30m`, `max_lifetime=5h`; `budget` required. Durations parse `2h`/`30m`/`90s`.
 
 ## 7. Testing (offline — hard constraint)

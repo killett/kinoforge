@@ -17,7 +17,7 @@
 #   pixi run pytest tests/live/test_comfyui_wan_live.py -v -s
 #
 # Cost guards (quadruple-locked):
-#   - max_cost_rate_usd_per_hr: 0.50  (filters expensive GPUs upstream)
+#   - max_usd_per_hr: 0.50  (filters expensive GPUs upstream)
 #   - budget: 2.00                    (BudgetTracker tears down mid-run)
 #   - idle_timeout: 10m + selfterm    (pod self-destructs after 10 min idle)
 #   - finally: in test always destroys (unless KEEP_POD=1)
@@ -51,7 +51,7 @@ compute:
   requirements:
     min_vram_gb: 24
     min_cuda: "12.4"
-    max_cost_rate_usd_per_hr: 0.50
+    max_usd_per_hr: 0.50
     gpu_preference:
       - "NVIDIA GeForce RTX 4090"
       - "NVIDIA RTX A5000"

@@ -23,18 +23,14 @@ def test_excludes_undersized_vram_and_old_cuda():
         _o("b", "RTX 4090", 48, "12.1", 1.0),  # cuda too old
         _o("c", "RTX 4090", 48, "12.8", 1.0),  # OK
     ]
-    reqs = HardwareRequirements(
-        min_vram_gb=48, min_cuda="12.8", max_cost_rate_usd_per_hr=2.20
-    )
+    reqs = HardwareRequirements(min_vram_gb=48, min_cuda="12.8", max_usd_per_hr=2.20)
     assert [o.id for o in filter_offers(offers, reqs)] == ["c"]
 
 
 def test_cuda_compare_is_semantic_not_string():
     # Bug this catches: string-comparing "12.10" vs "12.8" treats 12.10 as OLDER.
     offers = [_o("modern", "X", 48, "12.10", 1.0)]
-    reqs = HardwareRequirements(
-        min_vram_gb=48, min_cuda="12.8", max_cost_rate_usd_per_hr=2.20
-    )
+    reqs = HardwareRequirements(min_vram_gb=48, min_cuda="12.8", max_usd_per_hr=2.20)
     assert [o.id for o in filter_offers(offers, reqs)] == ["modern"]
 
 
@@ -43,7 +39,7 @@ def test_cost_filter_excludes_pod_only_not_serverless():
         _o("pod_expensive", "X", 48, "12.8", 3.0, mode="pod"),
         _o("sl_expensive", "X", 48, "12.8", 3.0, mode="serverless"),
     ]
-    reqs = HardwareRequirements(max_cost_rate_usd_per_hr=2.20)
+    reqs = HardwareRequirements(max_usd_per_hr=2.20)
     ids = [o.id for o in filter_offers(offers, reqs)]
     # Bug this catches: applying max_cost_rate uniformly would also exclude per-second
     # serverless offers, which the spec says use `budget` instead.

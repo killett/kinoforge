@@ -178,7 +178,7 @@ def test_find_offers_fetches_gpu_list_and_filters() -> None:
     http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
     provider = RunPodProvider(http_post=http_post)
 
-    reqs = HardwareRequirements(min_vram_gb=48, max_cost_rate_usd_per_hr=2.20)
+    reqs = HardwareRequirements(min_vram_gb=48, max_usd_per_hr=2.20)
     offers = provider.find_offers(reqs)
 
     assert len(http_post.calls) == 1, "expected exactly one POST call"
@@ -194,7 +194,7 @@ def test_find_offers_returns_all_when_no_filter_needed() -> None:
     http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
     provider = RunPodProvider(http_post=http_post)
 
-    reqs = HardwareRequirements(min_vram_gb=1, max_cost_rate_usd_per_hr=10.0)
+    reqs = HardwareRequirements(min_vram_gb=1, max_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
 
     # Real fixture: 25 of 46 GPU types have a non-null uninterruptablePrice ≤ $10/hr
@@ -305,7 +305,7 @@ def test_find_offers_returns_offer_objects() -> None:
     http_post = HttpPostSpy(response=_GPU_LIST_RESPONSE)
     provider = RunPodProvider(http_post=http_post)
 
-    reqs = HardwareRequirements(min_vram_gb=1, max_cost_rate_usd_per_hr=10.0)
+    reqs = HardwareRequirements(min_vram_gb=1, max_usd_per_hr=10.0)
     offers = provider.find_offers(reqs)
 
     for o in offers:

@@ -35,7 +35,7 @@ def filter_offers(offers: list[Offer], reqs: HardwareRequirements) -> list[Offer
             continue
         if _cuda_tuple(o.cuda) < _cuda_tuple(reqs.min_cuda):
             continue
-        if o.mode == "pod" and o.cost_rate_usd_per_hr > reqs.max_cost_rate_usd_per_hr:
+        if o.mode == "pod" and o.cost_rate_usd_per_hr > reqs.max_usd_per_hr:
             continue
         kept.append(o)
 
