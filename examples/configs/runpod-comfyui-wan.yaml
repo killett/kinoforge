@@ -32,6 +32,11 @@ engine:
         ref: "088128b224242e110d3906c6750e9a3a348a659b"
       - git: "https://github.com/kijai/ComfyUI-KJNodes"
         ref: "369c8aee9ad4641823d0ffd7035076bcd297b6f2"
+      # VHS_VideoCombine — required by the kijai i2v workflow's output node
+      # (graph node 30). Diagnose run 2026-06-03 (pod 0wxzr9iowrgmpw) confirmed
+      # this is a separate custom_nodes pack, not bundled with kijai or ComfyUI.
+      - git: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+        ref: "4ee72c065db22c9d96c2427954dc69e7b908444b"
 
 models:
   - ref: "hf:Kijai/WanVideo_comfy:Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors"
