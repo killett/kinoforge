@@ -166,6 +166,35 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
     # mirror tools/capture_object_info.py:213.
     engine.requires_local_weights = False
 
+    # Pre-warm the ModelProfile cache with an i2v-capable profile.
+    # ComfyUIBackend._DEFAULT_PROBE hardcodes supported_modes={"t2v"};
+    # without warm() the discover() path would build a t2v-only profile
+    # and reject our i2v GenerationRequest at validate_request (step 5
+    # of generate()) — after the pod is already provisioned. The
+    # workflow-specific i2v capability is declared by the kijai graph
+    # at examples/configs/runpod-comfyui-wan.graph.json (15 nodes
+    # including WanVideoImageToVideoEncode). Architectural follow-up:
+    # drive supported_modes from spec.mode in YAML rather than relying
+    # on a hardcoded engine-level default.
+    from kinoforge.core.interfaces import ModelProfile
+    from kinoforge.core.profiles import JsonProfileCache
+
+    profile_cache = JsonProfileCache(
+        LocalArtifactStore(root=Path(".kinoforge") / "artifacts")
+    )
+    profile_cache.warm(
+        cfg.capability_key(),
+        ModelProfile(
+            name="comfyui",
+            max_frames=81,
+            fps=16,
+            supported_modes={"i2v"},
+            max_resolution=(1280, 720),
+            supports_native_extension=False,
+            supports_joint_audio=False,
+        ),
+    )
+
     pod_id: str | None = None
     instance: Any = None
     start_time = time.monotonic()
@@ -232,6 +261,7 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
                 _TAG_KEY: _TAG_VALUE,
                 "kinoforge.git_sha": _git_sha(),
             },
+            profile_provider=profile_cache,
         )
 
         if instance is None:
