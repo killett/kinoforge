@@ -408,6 +408,7 @@ def main() -> int:
     diag_port = "9000" if args.instrument_production else "8188"
     proxy_root = f"https://{instance.id}-{diag_port}.proxy.runpod.net/"
     proxy_url = f"https://{instance.id}-{diag_port}.proxy.runpod.net/progress.log"
+    comfy_proxy_url = f"https://{instance.id}-8188.proxy.runpod.net/system_stats"
     deadline = time.monotonic() + args.max_minutes * 60
     elapsed = 0
     try:
@@ -419,7 +420,12 @@ def main() -> int:
             if args.minimal_phonehome or args.instrument_production:
                 # First poll root: distinguishes "bash never ran" (root 404)
                 # from "bash ran but no progress.log" (root 200, log 404).
-                for label, url in (("/", proxy_root), ("/progress.log", proxy_url)):
+                # Also probe ComfyUI's proxy URL directly so we see if it
+                # routes correctly once ComfyUI binds.
+                probe_targets = [("/", proxy_root), ("/progress.log", proxy_url)]
+                if args.instrument_production:
+                    probe_targets.append(("8188/system_stats", comfy_proxy_url))
+                for label, url in probe_targets:
                     try:
                         req = urllib.request.Request(  # noqa: S310
                             url,

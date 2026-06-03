@@ -158,6 +158,9 @@ def _subprocess_run(argv: list[str], cwd: str | None = None) -> None:
     subprocess.run(argv, cwd=cwd, check=True)  # noqa: S603
 
 
+_UA = "kinoforge-comfyui/0.1"
+
+
 def _urllib_post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
     """POST *body* as JSON to *url* and return the decoded response.
 
@@ -170,7 +173,10 @@ def _urllib_post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
     """
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "User-Agent": _UA},
+        method="POST",
     )
     with urllib.request.urlopen(req) as resp:  # noqa: S310
         return dict(json.loads(resp.read().decode("utf-8")))
@@ -179,13 +185,23 @@ def _urllib_post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
 def _urllib_get_json(url: str) -> dict[str, Any]:
     """GET *url* and return the decoded JSON response.
 
+    Sets ``User-Agent: kinoforge-comfyui/0.1`` so requests survive
+    edge-layer filtering. RunPod's proxy rejects the stdlib default
+    ``Python-urllib/3.x`` with HTTP 403 — that masquerades as a benign
+    "ComfyUI not ready yet" inside ``wait_for_ready``'s broad except,
+    causing the ready check to spin until ``boot_timeout_s``. Live
+    verification 2026-06-03 (diagnostic bfqt00tfd): same URL returns
+    200 with the kinoforge UA and the proxy URL returns 1041 bytes of
+    /system_stats JSON.
+
     Args:
         url: Endpoint URL.
 
     Returns:
         Decoded JSON response as a Python dict.
     """
-    with urllib.request.urlopen(url) as resp:  # noqa: S310
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})  # noqa: S310
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
         return dict(json.loads(resp.read().decode("utf-8")))
 
 
@@ -215,13 +231,17 @@ def _shutil_move(src: str, dst_dir: str) -> None:
 def _urllib_get_bytes(url: str) -> bytes:
     """GET *url* and return the raw response body as bytes.
 
+    Sets the same UA as :func:`_urllib_get_json` so byte-fetches (e.g.
+    artifact URLs proxied via RunPod) survive edge-layer filtering.
+
     Args:
         url: Endpoint URL.
 
     Returns:
         Response body as bytes.
     """
-    with urllib.request.urlopen(url) as resp:  # noqa: S310
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})  # noqa: S310
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
         return bytes(resp.read())
 
 
