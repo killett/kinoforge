@@ -10,9 +10,8 @@ Auto-loads ``.env`` at startup via
 :func:`kinoforge.core.dotenv_loader.load_env_file` so RunPod + HF creds
 populate ``os.environ`` without manual exporting.
 
-Env-gate (all four must be set, setting them IS authorisation):
+Required creds (auto-loaded from ``.env``):
 
-* ``KINOFORGE_LIVE_TESTS=1``
 * ``RUNPOD_API_KEY``
 * ``RUNPOD_TERMINATE_KEY``
 * ``HF_TOKEN``
@@ -111,7 +110,6 @@ def main() -> int:
 
     _require_env(
         (
-            "KINOFORGE_LIVE_TESTS",
             "RUNPOD_API_KEY",
             "RUNPOD_TERMINATE_KEY",
             "HF_TOKEN",
