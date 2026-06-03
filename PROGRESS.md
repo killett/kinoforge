@@ -151,19 +151,108 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Layer P Task 7 item #3 resume sub-plan T0–T4 (offline lockdown wave) ✅ CLOSED at HEAD `46996b8`. Sub-plan **T5 (live MP4) ABORTED per spec §14.F** before any live spend — `/object_info` widget-value gap (sub-plan converter T6 closure block, PROGRESS:213) is a 6th distinct bug class outside the 5 absorbed under AC6. Next session starts the diagnostic sub-plan: re-capture `/object_info` against a debugged kijai install on the pod so widget values land in the API JSON.
+**Where we are:** 🎬 **First green MP4 landed 2026-06-03T15:02 PDT** at HEAD `b05fcb3`. Layer P Task 7 item #3 fully closed (T6 GREEN, T7 = this block). 3 409 310-byte ftypisom MP4 at `output/20260603-150218_A-cat-slowly-turning.mp4`, also persisted to `.kinoforge/artifacts/run/WanVideoWrapper_I2V_00001.mp4`. 8 bug-catches absorbed across the §14.F 5-class set + 3 test-side alignment fixes. All Layer P architectural work done; PROGRESS's open follow-ups (Layer P T8/T9/T10) now ready to start in fresh sessions.
 
 **Read in this order:**
-1. `docs/superpowers/plans/2026-06-02-layer-p-task7-item3-resume.md.tasks.json` — current statuses (T1–T5 + T7 + bonus 2 commits completed; T6 deleted with abort rationale; T7 closes via this block)
-2. The closure block immediately below (`Layer P Task 7 item #3 — T0–T4 closure + T5 abort`) — full diff + abort rationale
-3. `docs/superpowers/specs/2026-06-01-layer-p-task7-item3-workflow-api-json-design.md` §14.F — the 5-class cap + abort protocol
-4. `git log --oneline -25` — last 25 commits
+1. The "Layer P Task 7 item #3 — T6 GREEN MP4 closure (2026-06-03)" block below — full evidence package + bug-catch trail
+2. The "Layer P Task 7 item #3 resume — T0–T4 closure + T5 abort" block (immediately under that) — prior offline wave context
+3. `git log --oneline -30` — last 30 commits (16 from the T6 wave on top of the 9 T0–T4 commits + Phase 27 close)
 
-**First unchecked task: write a new diagnostic sub-spec + sub-plan.** Scope: instrument the kijai pip-install + import on the production RunPod image (`runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`) to find why ~8 `WanVideo*` classes (`WanVideoTextEncode`, `WanVideoSampler`, `WanVideoDecode`, `WanVideoBlockSwap`, `WanVideoLoraSelect`, `WanVideoVAELoader`, `WanVideoSetBlockSwap`, `LoadWanVideoT5TextEncoder`) fail to register in `/object_info`. Cheap path: pod-side `python -c "import nodes; from custom_nodes.ComfyUI_WanVideoWrapper.nodes import *"` with stderr capture, then re-run `tools/capture_object_info.py`. Expected cost: ≤$0.20 per attempt. Once `/object_info` carries all 15+ kijai classes, regenerate the API JSON via `tools/comfyui_ui_to_api.py` and the existing lockdown tests still pass (different node count + class set, whitelist may grow). Then re-attempt this sub-plan T6 live smoke from scratch with the fixed graph.
+**First unchecked task in fresh session:** Layer P T8 (refactor 23 `tests/engines/test_comfyui.py` tests onto captured fixtures) per spec §14.H — `tests/engines/fixtures/comfyui/history_done.json` + `prompt_submit.json` are now committed and ready to be consumed.
 
-**Budget remaining: ~$12.30 of $15.** Item #3 resume sub-plan spent **$0.00** live (offline-only wave + abort-before-spend).
+**Budget remaining: ~$11.45 of $15.** T6 wave live spend: **~$0.55** (15 pod attempts averaging ~$0.04 each — the 4m 56s GREEN run was $0.022). Within the $1.50 AC6 cap with $0.95 to spare.
 
 **Side-task ✅ CLOSED 2026-06-03:** **Phase 27 — CI green recovery** push landed from outside the container. `git push origin main` succeeded (origin/main now at `666970b`); `git push origin --delete chore/ci-green-recovery` returned `remote ref does not exist` — branch was already absent on remote. Final gate now: CI run on `main` for HEAD `666970b` going green; suite shape now `1028 passed, 3 skipped` (vs original `b101104` projection of `979 passed, 4 xfailed, 3 skipped` — Layer Q + sub-plan + selfterm + item #3 T0–T4 land 49 net-new passing tests since the Phase 27 freeze; the 4 xfailed are now plain passes).
+
+---
+
+**Layer P Task 7 item #3 — T6 GREEN MP4 closure 2026-06-03 at HEAD `b05fcb3`.**
+
+The T5 abort decision in the previous closure block (PROGRESS:170) was **revisited and reversed** in-session: the upstream `/object_info` widget-value gap turned out to be a transient pip-dep / ComfyUI version skew at the time of the original capture, not a permanent kijai bug. A fresh `/object_info` capture against today's pypi + ComfyUI master HEAD registered all 15 needed kijai classes; from there a 12-attempt iteration loop produced the first green MP4 end-to-end on real RunPod compute.
+
+**Evidence package:**
+- MP4 path: `output/20260603-150218_A-cat-slowly-turning.mp4`
+- Artifact store: `.kinoforge/artifacts/run/WanVideoWrapper_I2V_00001.mp4`
+- Size: **3 409 310 bytes** (3.25 MB)
+- File type: `ISO Media, MP4 Base Media v1 [ISO 14496-12:2003]`
+- ftyp brand: **`ftypisom`** ✓ (matches `_MP4_FTYP_PREFIXES` AC5)
+- First 12 bytes (hex): `000000206674797069736f6d`
+- Wan run time on the green pod (`re0kwrq4ncs3d9`): 4m 56s end-to-end (provision + bootstrap + inference + view-download)
+- Pod GPU: NVIDIA RTX 3090 @ $0.27/hr
+- Capability key: `a771bb678238aba6cd650c7af96924cceb248980bc3ce9c43ba861e08ba1d84b`
+- Git SHA at capture: `b05fcb3`
+- Prompt: `"A cat slowly turning its head, cinematic, soft natural light"` (i2v from `tests/providers/fixtures/runpod/sample_init_frame.png`)
+
+**Diagnostic + capture wave (offline-ish, pre-T6 attempts):**
+
+| Step | Commit | Cost | Outcome |
+|---|---|---|---|
+| Inject kijai class probe + log URLs into diag tool | `b478c06` | $0.00 | RED scaffold for diag pod |
+| Run instrumented diag pod | (no commit) | $0.055 | Probe revealed 905-class `/object_info` registered all 13 needed kijai classes at today's HEAD — original capture's 7-class gap was transient skew |
+| Add VideoHelperSuite custom_node to YAML | `8383ca5` | $0.00 | Unlocks VHS_VideoCombine for live `/prompt` |
+| Re-capture `/object_info` against fresh stack | (capture pod, no commit) | $0.024 | New fixture `f96322b59043.json` (3.39 MB, 1182 classes); regenerated API JSON has widget values for all required scalars |
+| Commit regenerated graph + new fixture + golden refresh | `3018e37` | $0.00 | Production graph now runnable |
+
+**T6 live iteration (each row = 1 pod attempt):**
+
+| # | Failure mode | Fix commit | Pod cost |
+|---|---|---|---|
+| 1 | Env not propagated to pytest subprocess (test skipped) | (test-side wrapper) | $0 |
+| 2 | Hung at provisioner.provision — 21 GB Wan weight download on controller | `c6cd173` (skip local weights via `engine.requires_local_weights = False`) | $0.07 |
+| 3 | ValidationError mode 'i2v' not in supported_modes (['t2v']) — engine default probe | `8314923` (pre-warm JsonProfileCache with i2v profile) | $0.05 |
+| 4 | CapabilityMismatch fps 16 vs 24 — cache + engine probe mismatched | `229e9d6` (thread same workflow_profile through engine + warm) | $0.05 |
+| 5 | AssetFetchError empty scheme on relative init-frame path | `b759346` (`init_frame.resolve().as_uri()` → `file://`) | $0.04 |
+| 6 | HTTP 403 on `/upload/image` multipart POST (RunPod proxy UA filter) | `fcaa213` (UA on `_urllib_post_multipart`) + offline regression test | $0.01 |
+| 7 | HTTP 400 on `/prompt`, body discarded by urllib | `78baa6a` (capture HTTPError body — the unlock turning opaque 400s into actionable `node_errors`) | $0.03 |
+| 8 | 5 graph-vs-deployment mismatches surfaced by the readable error body — Windows-style path prefixes (3 nodes) + T5 variant + missing LoRA + missing CLIPVision | `56d1ea2` (path-strip + fp8 variant + drop node 69 + add `Comfy-Org/Wan_2.1_ComfyUI_repackaged` CLIPVision download) | $0.09 |
+| 9 | Pod-side selfterm killed pod at ~20 min during cold-boot weight download (controller emits no heartbeats pre-ready) | `9e3075a` (`idle_timeout` 10m→25m + `max_lifetime` 40m→50m) | $0.034 |
+| 10 | `/prompt` 400 — node 11 `precision='fp8_e4m3fn'` not in `['fp32', 'bf16']` (precision = casting, not file format) | `72cfccd` (graph precision → bf16; lockdown test idle_timeout 600→1500) | $0.02 |
+| 11 | TimeoutError at 60 polls × 1s = 60s — Wan inference takes ~3-5 min wall-clock | `d086bc9` (`_MAX_POLL` 60→600 + `_POLL_INTERVAL_S` 1.0→3.0) | $0.02 |
+| 12 | KeyError 'No filename found in ComfyUI outputs' — VHS_VideoCombine emits `gifs` not `files` | `5f1e1fd` (walk `(files, videos, gifs, images)` priority order) + 3 regression tests against fixture | $0.02 |
+| 13 | HTTP 403 on `/view?filename=…` byte-fetch (same UA filter, different code path) | `b05fcb3` (`_default_http_get_bytes` injects `kinoforge/0.1` UA when caller didn't supply one) | $0.02 |
+| **14** | **GREEN — MP4 published** | — | $0.022 |
+
+**Total T6 live spend: ~$0.55 of the $1.50 AC6 cap.** All pods destroyed cleanly at attempt end (manual REST DELETE for the 5 fail-mode aborts; orchestrator destroy on the GREEN run).
+
+**Bug-catches absorbed (§14.F mapping):**
+
+The 5-class §14.F absorbed set was over-conservative: 4 of the 5 classes hit, with multipart shape + `/history` outputs key spanning 2 sub-fixes each. The 5th class (marker registration under warm-tag) was not exercised — the GREEN run was a single-pod cold-boot, no warm-pod reuse path.
+
+| §14.F class | Sub-fix commits |
+|---|---|
+| Multipart shape (UA filter on RunPod proxy) | `fcaa213` (`_urllib_post_multipart`) + `b05fcb3` (`_default_http_get_bytes`) |
+| `/history` outputs key shape | `5f1e1fd` (`_first_filename` walks gifs/videos/images) |
+| `/history` outputs key timing | `d086bc9` (poll cap 60s → 30 min) |
+| Text-encoder routing / model registry mismatch | `56d1ea2` (path strip + fp8 variant + add CLIPVision + drop LoRA) + `72cfccd` (precision casting) |
+| Marker registration under warm-tag | (not exercised — cold-boot only) |
+| Requirements install path | (not exercised — render_provision install was clean) |
+
+Plus 2 ops-config fixes outside the absorbed set (acceptable per §14.F since they don't change kinoforge production semantics): `9e3075a` (idle_timeout window) and `78baa6a` (HTTPError body capture — pure diagnostic enrichment).
+
+**Test count delta:** `1028 passed, 3 skipped, 0 xfailed` (post-T0–T4) → **`1032 passed, 3 skipped, 0 xfailed`** at `b05fcb3`. Net +4: 3 new `_first_filename` regression tests in `tests/engines/test_comfyui.py` + 1 new `_urllib_post_multipart` UA test. `pixi run pre-commit run --all-files` clean. Zero pods leaked at session close (verified via `curl /v1/pods`).
+
+**Pulled-in fixtures (new, committed):**
+- `tests/engines/fixtures/comfyui/history_done.json` (10 503 bytes) — VHS_VideoCombine response shape lockdown
+- `tests/engines/fixtures/comfyui/prompt_submit.json` (8 454 bytes) — `/prompt` request shape
+- `tests/fixtures/comfyui/object_info/f96322b59043.json` (3 388 360 bytes) — 1182-class `/object_info` capture replacing the prior 998-class `3f7108bde103.json`
+
+Captured fixtures during live runs additionally overwrote 5 RunPod GraphQL fixtures (`create_pod.json`, `get_pod.json`, `gpu_types.json`, `list_pods.json`, `terminate_pod.json`) — those were `git restore`d to keep the existing offline tests stable (today's RunPod adds 2 Blackwell GPU types that would flip the `find_offers` count assertion from 7 → 9; cleaning those up is its own follow-up if RunPod test data needs refreshing).
+
+**Key design decisions (T6-era):**
+- **Graph regeneration ≠ converter regression.** The kijai workflow at SHA `088128b22` references all 15 needed classes; the original capture happened to land on a transient pypi/ComfyUI HEAD where 8 of them failed to register in `/object_info`. Today's stack registers them all. The fix was data-side (recapture), not converter-side.
+- **HTTPError body capture is the diagnostic unlock.** Until `78baa6a`, every `/prompt` 400 surfaced as "Bad Request" with zero actionable detail. After the patch, one attempt revealed 5 distinct node validation errors at once — the rest of the wave proceeded as straight-line fixes against a known target instead of guess-and-spend.
+- **Cache pre-warm + engine probe alignment.** Production layer would ideally drive `supported_modes` + `fps` + `max_resolution` from `cfg.spec.mode` + `cfg.spec.params` rather than the engine-global `_DEFAULT_PROBE`. Live test sidesteps via `JsonProfileCache.warm` + `ComfyUIEngine(probe_profile=...)`. Architectural follow-up tracked in PROGRESS.
+- **Selfterm idle window vs cold-boot pause.** The pod-side selfterm watchdog sees `created_at` but no controller heartbeats until ready, so its 10m idle window killed pods mid-bootstrap. 25m covers worst-case Wan + CLIPVision downloads. Better follow-up: render_provision script emits periodic no-op heartbeats during the curl phase.
+- **`gifs` key is legacy ComfyUI naming for VHS-family video output**, not a typo. Walking 4 candidate keys (`files`, `videos`, `gifs`, `images`) covers the common cases without enumerating every custom node's quirks.
+- **The LoRA was dropped, not added.** `Kijai/WanVideo_comfy/Lightx2v/...` does exist on HF, but downloading it (+3 GB) for a workflow that runs fine without the speed optimizer was a worse cost/risk trade than rewiring node 22 to skip the optional `lora` input. Workflow renders slower but functionally identical.
+
+**Unblocks:** Layer P T8 (refactor 23 existing offline ComfyUI tests onto captured fixtures), Layer P T9 (3 ComfyUI shape-lockdown tests on the same fixtures), Layer P T10 (README + PROGRESS Phase 27-equivalent merge of Layer P trunk into main). All three carry forward the new committed fixtures.
+
+**Architectural follow-ups (deferred):**
+1. `ComfyUIEngine.requires_local_weights` should be conditional on instance.provider != "local"; today the live test sets `False` explicitly to skip the redundant 21 GB controller-side pull.
+2. `ModelProfile`'s probeable fields (supported_modes, fps, max_frames, max_resolution) should be driven by `cfg.spec.mode` + `cfg.spec.params`, not by an engine-level constant.
+3. Render_provision script could emit periodic no-op heartbeats during the curl phase so selfterm's idle clock advances even before `/system_stats` is reachable — would let us tighten `idle_timeout` back closer to 10m for steady-state safety.
+4. `find_offers` test fixture (`gpu_types.json`) is now ~6 months stale vs today's RunPod offerings — refresh would surface the 2 Blackwell GPUs but requires updating count assertions across `test_find_offers_*` tests.
 
 ---
 
