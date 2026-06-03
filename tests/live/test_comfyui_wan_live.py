@@ -241,7 +241,7 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
             ref=Artifact(filename=init_frame.name, uri=init_frame.resolve().as_uri()),
         )
         request = GenerationRequest(
-            prompt="A cat slowly turning its head, cinematic, soft natural light",
+            prompt="a cat turns into a woman",
             mode="i2v",
             assets=[init_asset],
         )
