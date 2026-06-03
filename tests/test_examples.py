@@ -381,11 +381,16 @@ def test_runpod_comfyui_wan_yaml_loads_with_graph_file_resolution() -> None:
     # Task 1 graph_file -> graph resolution
     assert isinstance(cfg.spec.get("graph"), dict)
     assert "graph_file" not in cfg.spec
-    # graph dict matches the companion JSON file (proves Task 1 end-to-end)
+    # graph dict matches the companion JSON file (proves Task 1 end-to-end).
+    # The on-disk JSON carries a top-level _meta provenance header (item #3 T1)
+    # for AC12's SHA cross-reference test; _resolve_spec_graph_file strips it
+    # at load time, so cfg.spec["graph"] is _meta-free. Compare against the
+    # post-strip expected dict.
     graph_path = Path("examples/configs/runpod-comfyui-wan.graph.json")
     import json
 
     expected_graph = json.loads(graph_path.read_text(encoding="utf-8"))
+    expected_graph.pop("_meta", None)
     assert cfg.spec["graph"] == expected_graph
     # Models: UNet (base), VAE, text encoder
     assert len(cfg.models) == 3
