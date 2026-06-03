@@ -61,7 +61,8 @@ compute:
     idle_timeout: 10m
     job_timeout: 15m
     time_buffer: 5m
-    max_lifetime: 30m
+    max_lifetime: 40m
+    boot_timeout: 30m
     budget: 2.0
 
 spec:
