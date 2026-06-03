@@ -85,6 +85,79 @@ def _bypass_local_weights_download(engine: object) -> None:
     engine.requires_local_weights = False  # type: ignore[attr-defined]
 
 
+def _sweep_pods_by_tag(tag_key: str, tag_value: str) -> int:
+    """Destroy every RunPod pod whose tags include ``{tag_key: tag_value}``.
+
+    Fallback for orphaned pods when the orchestrator raises out of
+    ``_provision_instance_and_build_backend`` before the caller's
+    ``try/finally`` over ``provider.destroy_instance(instance.id)`` is
+    entered. Catches every shape of mid-flight crash: KeyboardInterrupt,
+    network errors during wait_for_ready, controller OS death.
+
+    Sweeps via RunPod REST + Bearer auth using ``RUNPOD_API_KEY`` from
+    env. Returns the number of destroyed pods (0 == no leak).
+
+    Args:
+        tag_key: The tag key to match (e.g. ``"kinoforge_purpose"``).
+        tag_value: The tag value to match (e.g. ``"object_info_capture"``).
+
+    Returns:
+        Count of pods destroyed by this sweep.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    api_key = os.environ.get("RUNPOD_API_KEY", "")
+    if not api_key:
+        return 0
+    list_req = urllib.request.Request(  # noqa: S310
+        "https://rest.runpod.io/v1/pods",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "kinoforge-capture/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(list_req, timeout=30) as resp:  # noqa: S310
+            pods = json.loads(resp.read())
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+        return 0
+    if not isinstance(pods, list):
+        return 0
+    destroyed = 0
+    for pod in pods:
+        if not isinstance(pod, dict):
+            continue
+        # RunPod REST returns env (incl tags) — for the kinoforge_purpose
+        # tag specifically check both `tags` (kinoforge-side) and the
+        # generic env block (RunPod tags map to env on create_pod).
+        tags = pod.get("tags") or {}
+        env = pod.get("env") or {}
+        match = (isinstance(tags, dict) and tags.get(tag_key) == tag_value) or (
+            isinstance(env, dict) and env.get(tag_key) == tag_value
+        )
+        if not match:
+            continue
+        pid = pod.get("id")
+        if not isinstance(pid, str):
+            continue
+        del_req = urllib.request.Request(  # noqa: S310
+            f"https://rest.runpod.io/v1/pods/{pid}",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "kinoforge-capture/1.0",
+            },
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(del_req, timeout=30) as _resp:  # noqa: S310
+                destroyed += 1
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+            pass
+    return destroyed
+
+
 def _require_env(keys: tuple[str, ...]) -> None:
     """Exit with code 1 (no provisioning) if any *keys* is unset in env.
 
@@ -211,18 +284,37 @@ def main() -> int:
     store = LocalArtifactStore(state_dir / "store")
     key = cfg.capability_key()
 
-    instance, backend = _provision_instance_and_build_backend(
-        resolved_engine=engine,
-        resolved_provider=provider,
-        cfg=cfg,
-        run_id="capture",
-        key=key,
-        creds=creds,
-        store=store,
-        state_dir=state_dir,
-        for_discovery=True,
-        tags={"kinoforge_purpose": "object_info_capture"},
-    )
+    _SWEEP_TAG_KEY = "kinoforge_purpose"
+    _SWEEP_TAG_VAL = "object_info_capture"
+
+    try:
+        instance, backend = _provision_instance_and_build_backend(
+            resolved_engine=engine,
+            resolved_provider=provider,
+            cfg=cfg,
+            run_id="capture",
+            key=key,
+            creds=creds,
+            store=store,
+            state_dir=state_dir,
+            for_discovery=True,
+            tags={_SWEEP_TAG_KEY: _SWEEP_TAG_VAL},
+        )
+    except BaseException:  # noqa: BLE001 — fallback sweep for ANY mid-flight exception
+        # _provision_instance_and_build_backend may create the pod via
+        # _create_with_offer_retry BEFORE wait_for_ready completes; if
+        # wait_for_ready raises (or is interrupted by SIGINT) the
+        # orchestrator's narrow except for ProvisionTimeout / ProvisionFailed
+        # destroys via instance.id, but KeyboardInterrupt + other shapes
+        # propagate AROUND that handler. By the time control returns here,
+        # caller doesn't have instance.id. Sweep by tag instead.
+        n = _sweep_pods_by_tag(_SWEEP_TAG_KEY, _SWEEP_TAG_VAL)
+        if n:
+            safe_print(
+                f"capture_object_info: sweep destroyed {n} orphaned pod(s) "
+                f"tagged {_SWEEP_TAG_KEY}={_SWEEP_TAG_VAL}"
+            )
+        raise
 
     try:
         pod_base_url = backend._base_url  # type: ignore[attr-defined]
