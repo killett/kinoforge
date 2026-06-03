@@ -163,6 +163,18 @@ def main() -> int:
             "dockerArgs actually executes the bash script at all."
         ),
     )
+    parser.add_argument(
+        "--image-override",
+        type=str,
+        default=None,
+        help="Override the image (used to test whether the YAML image's ENTRYPOINT eats dockerArgs).",
+    )
+    parser.add_argument(
+        "--ports-protocol",
+        type=str,
+        default=None,
+        help="Append /<protocol> to each declared port (e.g. 'http' -> '8188/http').",
+    )
     args = parser.parse_args()
 
     from kinoforge.core.dotenv_loader import load_env_file
@@ -236,11 +248,12 @@ def main() -> int:
         )
         from kinoforge.core.interfaces import RenderedProvision as _RP
 
+        port_str = "8188" + (f"/{args.ports_protocol}" if args.ports_protocol else "")
         rendered = _RP(
             script=phonehome,
             run_cmd=["python3", "-m", "http.server", "8188"],
-            image=rendered.image,
-            ports=["8188"],
+            image=args.image_override or rendered.image,
+            ports=[port_str],
             env_required=[],
         )
 
@@ -309,6 +322,7 @@ def main() -> int:
         f"@ ${chosen_offer.cost_rate_usd_per_hr}/hr — endpoints={instance.endpoints}"
     )
 
+    proxy_root = f"https://{instance.id}-8188.proxy.runpod.net/"
     proxy_url = f"https://{instance.id}-8188.proxy.runpod.net/progress.log"
     deadline = time.monotonic() + args.max_minutes * 60
     elapsed = 0
@@ -319,20 +333,26 @@ def main() -> int:
             pod = _print_pod_snapshot(api_key, instance.id, elapsed)
             _print_pod_logs(api_key, instance.id)
             if args.minimal_phonehome:
-                try:
-                    req = urllib.request.Request(  # noqa: S310
-                        proxy_url,
-                        headers={"User-Agent": _UA},
-                    )
-                    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
-                        progress = resp.read().decode("utf-8", errors="replace")
-                    print(f"  GET {proxy_url} -> 200")
-                    for ln in progress.splitlines():
-                        print(f"    | {ln}")
-                except urllib.error.HTTPError as exc:
-                    print(f"  GET progress.log -> {exc.code}")
-                except (urllib.error.URLError, OSError) as exc:
-                    print(f"  GET progress.log -> network err: {exc}")
+                # First poll root: distinguishes "bash never ran" (root 404)
+                # from "bash ran but no progress.log" (root 200, log 404).
+                for label, url in (("/", proxy_root), ("/progress.log", proxy_url)):
+                    try:
+                        req = urllib.request.Request(  # noqa: S310
+                            url,
+                            headers={"User-Agent": _UA},
+                        )
+                        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+                            body = resp.read().decode("utf-8", errors="replace")
+                        print(f"  GET {label} -> 200 ({len(body)} bytes)")
+                        for ln in body.splitlines()[:20]:
+                            print(f"    | {ln[:200]}")
+                    except urllib.error.HTTPError as exc:
+                        # Read body for the 404/5xx so we see if proxy or
+                        # http.server returned it.
+                        ebody = exc.read().decode("utf-8", errors="replace")[:200]
+                        print(f"  GET {label} -> {exc.code}  body={ebody!r}")
+                    except (urllib.error.URLError, OSError) as exc:
+                        print(f"  GET {label} -> network err: {exc}")
             status = pod.get("desiredStatus") if pod else None
             if status in ("EXITED", "TERMINATED", "FAILED"):
                 print(f"\npod entered terminal status {status!r} — stopping early")
