@@ -235,7 +235,10 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
         init_asset = ConditioningAsset(
             kind="image",
             role="init_image",
-            ref=Artifact(filename=init_frame.name, uri=str(init_frame)),
+            # asset_bytes() dispatches by URI scheme (http/https/file);
+            # bare paths raise AssetFetchError("unsupported scheme ''").
+            # Use as_uri() to produce a canonical file:///abs/path URI.
+            ref=Artifact(filename=init_frame.name, uri=init_frame.resolve().as_uri()),
         )
         request = GenerationRequest(
             prompt="A cat slowly turning its head, cinematic, soft natural light",
