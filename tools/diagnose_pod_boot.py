@@ -1,0 +1,281 @@
+r"""Diagnostic: boot a RunPod pod with prod bootstrap; poll runtime + logs.
+
+T4 attempts 5 and 6 (HEAD 94e0d2c) both timed out in
+``wait_for_ready`` polling ``/system_stats`` despite a 30 min budget.
+The pod's actual state — bootstrap stdout, port exposure, container
+status — is invisible from the controller process. This tool fills that
+gap by polling RunPod's REST API directly:
+
+* ``GET /v1/pods/{id}`` — full pod metadata + ``runtime`` subobject
+* ``GET /v1/pods/{id}/logs`` — container stdout/stderr (if the endpoint
+  exists; falls back to a notice if 404)
+* every 30 s for up to ``--max-minutes`` minutes
+* always destroys the pod in a ``finally`` block
+
+Cost: ``--max-minutes`` × ``costPerHr`` of the cheapest offer. Default
+5 min × $0.27/hr ≈ $0.022 per diagnostic run.
+
+Usage::
+
+    pixi run python tools/diagnose_pod_boot.py \\
+        --workflow-yaml examples/configs/runpod-comfyui-wan.yaml \\
+        [--max-minutes 5]
+
+The bootstrap is rendered from the same ``ComfyUIEngine.render_provision``
+production path so the diagnostic is faithful to the T4 failure mode.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from tools._redact import redact_string, safe_print  # noqa: E402
+
+_UA = "kinoforge-diagnose/1.0"
+
+
+def _rest_call(
+    url: str,
+    api_key: str,
+    *,
+    method: str = "GET",
+) -> tuple[int, str]:
+    """Call RunPod REST API; return (status, body_text)."""
+    req = urllib.request.Request(  # noqa: S310
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": _UA,
+        },
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")
+
+
+def _redact_pod_record(pod: dict[str, Any]) -> dict[str, Any]:
+    """Return *pod* with env stripped + string fields scrubbed."""
+    out: dict[str, Any] = {}
+    for k, v in pod.items():
+        if k == "env":
+            out[k] = f"<{len(v) if isinstance(v, dict) else '?'} keys redacted>"
+        elif isinstance(v, str):
+            out[k] = redact_string(v)
+        else:
+            out[k] = v
+    return out
+
+
+def _print_pod_snapshot(api_key: str, pod_id: str, elapsed_s: int) -> dict[str, Any]:
+    """Fetch + print current pod state. Returns the parsed pod dict."""
+    code, body = _rest_call(f"https://rest.runpod.io/v1/pods/{pod_id}", api_key)
+    print(f"\n--- t={elapsed_s}s: GET /v1/pods/{pod_id} -> {code} ---")
+    if code != 200:
+        print(redact_string(body[:600]))
+        return {}
+    pod = json.loads(body)
+    if not isinstance(pod, dict):
+        print(f"  unexpected response shape: {type(pod).__name__}")
+        return {}
+    safe_fields = (
+        "id",
+        "name",
+        "desiredStatus",
+        "lastStatusChange",
+        "createdAt",
+        "costPerHr",
+        "imageName",
+        "containerDiskInGb",
+        "machineId",
+    )
+    print("  state:")
+    for f in safe_fields:
+        if f in pod:
+            print(f"    {f}={pod[f]!r}")
+    runtime = pod.get("runtime") or {}
+    if runtime:
+        print(f"  runtime: {json.dumps(runtime, sort_keys=True)[:400]}")
+    else:
+        print("  runtime: <not yet populated>")
+    ports = pod.get("portMappings") or pod.get("ports") or runtime.get("ports")
+    if ports is not None:
+        print(f"  ports: {ports!r}")
+    return pod
+
+
+def _print_pod_logs(api_key: str, pod_id: str) -> None:
+    """Try the REST logs endpoint; print last 40 lines."""
+    code, body = _rest_call(f"https://rest.runpod.io/v1/pods/{pod_id}/logs", api_key)
+    print(f"  GET /v1/pods/{pod_id}/logs -> {code}")
+    if code == 404:
+        print("    (no logs endpoint — RunPod REST may not support this)")
+        return
+    if code != 200:
+        print(f"    {redact_string(body[:300])}")
+        return
+    # Try JSON first, fall back to raw text
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict) and "logs" in parsed:
+            log_text = str(parsed["logs"])
+        else:
+            log_text = body
+    except json.JSONDecodeError:
+        log_text = body
+    lines = log_text.splitlines()
+    tail = lines[-40:] if len(lines) > 40 else lines
+    print(f"  logs (last {len(tail)} of {len(lines)} lines):")
+    for ln in tail:
+        print(f"    | {redact_string(ln)[:200]}")
+
+
+def main() -> int:
+    """CLI entrypoint. See module docstring."""
+    parser = argparse.ArgumentParser(prog="diagnose_pod_boot")
+    parser.add_argument("--workflow-yaml", required=True, type=Path)
+    parser.add_argument("--max-minutes", type=int, default=5)
+    parser.add_argument("--env-file", type=Path, default=Path(_REPO_ROOT) / ".env")
+    parser.add_argument("--poll-interval-s", type=int, default=30)
+    args = parser.parse_args()
+
+    from kinoforge.core.dotenv_loader import load_env_file
+
+    if args.env_file.exists():
+        load_env_file(args.env_file)
+
+    for k in ("RUNPOD_API_KEY", "RUNPOD_TERMINATE_KEY", "HF_TOKEN"):
+        if not os.environ.get(k):
+            safe_print(f"diagnose_pod_boot: missing env var: {k}")
+            return 1
+    api_key = os.environ["RUNPOD_API_KEY"]
+
+    import kinoforge._adapters  # noqa: F401  registers engines/providers/sources
+    from kinoforge.core import registry
+    from kinoforge.core.config import load_config
+    from kinoforge.core.credentials import EnvCredentialProvider
+    from kinoforge.core.interfaces import InstanceSpec
+
+    cfg = load_config(args.workflow_yaml)
+    if cfg.engine.comfyui is None or cfg.compute is None:
+        safe_print("diagnose_pod_boot: workflow YAML lacks comfyui / compute block")
+        return 1
+
+    engine = registry.get_engine(cfg.engine.kind)()
+    engine.requires_local_weights = False
+    provider = registry.get_provider(cfg.compute.provider)()
+    provider._creds = EnvCredentialProvider()  # type: ignore[attr-defined]
+
+    # Mirror capture_object_info's ref->src shim so render_provision can
+    # resolve model entries against today's schema.
+    from kinoforge.core.interfaces import RenderedProvision
+
+    _orig_render = engine.render_provision
+
+    def _shim(cfg_dict: dict[str, object]) -> RenderedProvision:
+        models = cfg_dict.get("models") or []
+        if isinstance(models, list):
+            patched = [
+                (
+                    {**e, "src": e["ref"]}
+                    if isinstance(e, dict) and "src" not in e and "ref" in e
+                    else e
+                )
+                for e in models
+            ]
+            cfg_dict = {**cfg_dict, "models": patched}
+        return _orig_render(cfg_dict)
+
+    engine.render_provision = _shim  # type: ignore[assignment,method-assign]
+
+    cfg_dict = cfg.model_dump()
+    import dataclasses as _dc
+
+    cfg_dict["lifecycle"] = _dc.asdict(cfg.lifecycle())
+    rendered = engine.render_provision(cfg_dict)
+
+    print("--- rendered bootstrap (first 60 lines) ---")
+    for ln in rendered.script.splitlines()[:60]:
+        print(f"  | {ln}")
+    print(
+        f"--- rendered.ports={rendered.ports}  env_required={rendered.env_required} ---"
+    )
+
+    reqs = cfg.hardware_requirements()
+    offers = provider.find_offers(reqs)
+    if not offers:
+        safe_print("diagnose_pod_boot: no offers")
+        return 1
+    offer = offers[0]
+    print(f"selected offer: {offer.gpu_type} @ ${offer.cost_rate_usd_per_hr}/hr")
+
+    # Build env from rendered.env_required via creds
+    creds = EnvCredentialProvider()
+    env: dict[str, str] = {}
+    for var in rendered.env_required:
+        val = creds.get(var)
+        if val is None:
+            safe_print(f"diagnose_pod_boot: missing cred {var}")
+            return 1
+        env[var] = val
+
+    lifecycle = cfg.lifecycle()
+    spec = InstanceSpec(
+        image=rendered.image,
+        offer=offer,
+        ports=tuple(rendered.ports),
+        volume_gb=cfg.compute.requirements.disk_gb or 50,
+        volume_mount="/workspace",
+        lifecycle=lifecycle,
+        env=env,
+        tags={"mode": "pod", "kinoforge_purpose": "diagnostic"},
+        run_id="kinoforge-diagnose",
+        provision_script=rendered.script,
+        run_cmd=rendered.run_cmd,
+    )
+
+    instance = provider.create_instance(spec)
+    print(f"\ncreated pod {instance.id} — endpoints={instance.endpoints}")
+
+    deadline = time.monotonic() + args.max_minutes * 60
+    elapsed = 0
+    try:
+        while time.monotonic() < deadline:
+            time.sleep(args.poll_interval_s)
+            elapsed += args.poll_interval_s
+            pod = _print_pod_snapshot(api_key, instance.id, elapsed)
+            _print_pod_logs(api_key, instance.id)
+            status = pod.get("desiredStatus") if pod else None
+            if status in ("EXITED", "TERMINATED", "FAILED"):
+                print(f"\npod entered terminal status {status!r} — stopping early")
+                break
+        return 0
+    finally:
+        print(f"\n--- DESTROY pod {instance.id} ---")
+        code, body = _rest_call(
+            f"https://rest.runpod.io/v1/pods/{instance.id}",
+            api_key,
+            method="DELETE",
+        )
+        print(f"  DELETE -> {code}")
+        if code not in (200, 204):
+            print(f"  {redact_string(body[:300])}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
