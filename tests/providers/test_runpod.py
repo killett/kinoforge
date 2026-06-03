@@ -393,6 +393,72 @@ def test_create_pod_returns_instance_starting(pod_spec: InstanceSpec) -> None:
     assert inst.id == "ia66l3rlto5x66"  # real id from create_pod.json fixture
 
 
+def test_create_pod_populates_endpoints_eagerly_from_spec_ports() -> None:
+    """Bug it catches: ``_create_pod`` returns an Instance with empty
+    ``endpoints`` even though RunPod's proxy URL pattern is
+    deterministic from pod_id + port. ``wait_for_ready`` then raises
+    ``ProvisionFailed("pod has no endpoints — cannot construct ready URL")``
+    on the very first poll, before the pod has any chance to boot.
+    Observed live: T4 third attempt against runpod-comfyui-wan.yaml at
+    HEAD 4bbc94b — pod ``i2k0dixescr5eu`` created, immediately killed by
+    this check, finally-clause destroyed pod, $0.02 wasted.
+
+    Fix populates ``Instance.endpoints`` with the proxy pattern for each
+    port in ``spec.ports`` (the Layer Q render_provision path). URLs
+    return 5xx until the in-pod listener binds, but the URL strings
+    themselves are stable from creation; wait_for_ready can poll them
+    immediately.
+    """
+    layer_q_spec = InstanceSpec(
+        image="runpod/pytorch:2.1",
+        ports=("8188",),  # Layer Q path: render_provision.ports → spec.ports
+        lifecycle=Lifecycle(
+            idle_timeout_s=1800,
+            job_timeout_s=900,
+            time_buffer_s=300,
+            max_lifetime_s=7200,
+        ),
+        tags={"mode": "pod"},  # no legacy "ports" string in tags
+    )
+    http_post = HttpPostSpy(response=_POD_CREATE_RESPONSE)
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+
+    inst = provider.create_instance(layer_q_spec)
+
+    assert "8188" in inst.endpoints
+    assert inst.endpoints["8188"] == f"https://{inst.id}-8188.proxy.runpod.net"
+    # tags["ports"] mirrors spec.ports so a later
+    # provider.endpoints(instance) call reconstructs the same dict (e.g.
+    # after process restart that lost in-memory Instance.endpoints).
+    assert inst.tags.get("ports") == "8188"
+
+
+def test_create_pod_populates_endpoints_from_legacy_tag_when_spec_ports_empty(
+    pod_spec: InstanceSpec,
+) -> None:
+    """Bug it catches: the eager-endpoints fix only reads ``spec.ports``
+    and ignores legacy callers that put port lists in ``tags["ports"]``
+    instead. The existing ``provider.endpoints()`` method does parse the
+    tag, so silently disagreeing on the source-of-truth would split the
+    URL view (Instance.endpoints empty, provider.endpoints(inst)
+    populated). Lockdown: both paths must yield the same dict.
+    """
+    # pod_spec fixture uses ``tags={"mode": "pod", "ports": "8188,22"}``
+    # with ``ports=()`` — the legacy shape.
+    http_post = HttpPostSpy(response=_POD_CREATE_RESPONSE)
+    provider = RunPodProvider(creds=_make_creds(), http_post=http_post)
+
+    inst = provider.create_instance(pod_spec)
+
+    assert set(inst.endpoints.keys()) == {"8188", "22"}
+    assert inst.endpoints["8188"] == f"https://{inst.id}-8188.proxy.runpod.net"
+    assert inst.endpoints["22"] == f"https://{inst.id}-22.proxy.runpod.net"
+    # provider.endpoints() method MUST return the same dict as
+    # the eagerly-populated Instance.endpoints — otherwise the eager
+    # population is contradicting the method's source-of-truth.
+    assert provider.endpoints(inst) == inst.endpoints
+
+
 # ---------------------------------------------------------------------------
 # Layer P Task 7 item #1: typed CapacityError on no-resources mutation
 # ---------------------------------------------------------------------------
