@@ -5,33 +5,28 @@ valid AND that the example YAML's asset_node_ids / prompt_node_ids dicts
 reference node IDs that actually exist in the graph. Run offline — no pod.
 
 The test_prompt_node_ids_is_dict_and_references_existing_nodes case also
-locks down the pre-existing list-vs-dict type bug in the YAML
-(prompt_node_ids was ``["8"]`` — a list — but Layer J's
-``engines.comfyui`` calls ``.items()`` on the value and would crash at
-runtime).
+locks the pre-existing list-vs-dict type bug in the YAML (prompt_node_ids
+was ``["8"]`` — a list — but Layer J's ``engines.comfyui`` calls
+``.items()`` on the value and would crash at runtime; T3 of item #3 flipped
+it to ``{positive: "16"}``).
+
+Source-of-truth graph is the API JSON emitted from kijai's
+``wanvideo_2_1_14B_I2V_example_03.json`` UI workflow at pinned SHA
+``088128b224242e110d3906c6750e9a3a348a659b`` by ``tools/comfyui_ui_to_api.py``.
+Node count is 15 (Seth's converter drops non-runtime UI nodes such as
+``Note`` and control-flow placeholders from the 26-node UI source) —
+see PROGRESS sub-plan ``comfyui_ui_to_api`` T6 closure block.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from kinoforge.core.config import load_config
 
 YAML_PATH = Path("examples/configs/runpod-comfyui-wan.yaml")
 
-pytestmark = pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Layer P Task 7 item #3 RED lockdown — awaits real workflow API "
-        "JSON graph + YAML wiring. See PROGRESS.md 'Layer P Task 7 item "
-        "#3' section and "
-        "docs/superpowers/specs/2026-06-01-layer-p-task7-item3-"
-        "workflow-api-json-design.md."
-    ),
-)
-EXPECTED_NODE_COUNT = 26
+EXPECTED_NODE_COUNT = 15
 EXPECTED_CLASS_TYPES = {
     "CLIPLoader",
     "CLIPTextEncode",
@@ -58,7 +53,7 @@ EXPECTED_CLASS_TYPES = {
 
 
 def test_graph_shape_api_format() -> None:
-    """Graph is a dict-of-dict; every value has class_type + inputs; node count == 26."""
+    """Graph is a dict-of-dict; every value has class_type + inputs; node count == 15."""
     cfg = load_config(YAML_PATH)
     graph = cfg.spec["graph"]
     assert isinstance(graph, dict), f"graph must be dict, got {type(graph)}"
