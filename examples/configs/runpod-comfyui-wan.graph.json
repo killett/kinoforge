@@ -1,7 +1,245 @@
 {
-  "_kinoforge_note": "PLACEHOLDER — replaced by Layer P Task 7 live capture.",
-  "1": {
+  "_meta": {
+    "source_repo": "https://github.com/kijai/ComfyUI-WanVideoWrapper",
+    "source_sha": "088128b224242e110d3906c6750e9a3a348a659b",
+    "source_path": "example_workflows/wanvideo_2_1_14B_I2V_example_03.json",
+    "captured_at_local": "2026-06-03T10:08-07:00",
+    "format": "api",
+    "converter": "tools/comfyui_ui_to_api.py@4cf215a"
+  },
+  "59": {
+    "inputs": {
+      "clip_name": "clip_vision_h.safetensors"
+    },
+    "class_type": "CLIPVisionLoader",
+    "_meta": {
+      "title": "Load CLIP Vision"
+    }
+  },
+  "16": {
+    "inputs": {
+      "t5": [
+        "11",
+        0
+      ],
+      "model_to_offload": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "WanVideoTextEncode",
+    "_meta": {
+      "title": "WanVideoTextEncode"
+    }
+  },
+  "30": {
+    "inputs": {
+      "frame_rate": 16,
+      "loop_count": 0,
+      "filename_prefix": "WanVideoWrapper_I2V",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "28",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "VHS_VideoCombine"
+    }
+  },
+  "28": {
+    "inputs": {
+      "vae": [
+        "38",
+        0
+      ],
+      "samples": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "WanVideoDecode",
+    "_meta": {
+      "title": "WanVideoDecode"
+    }
+  },
+  "65": {
+    "inputs": {
+      "clip_vision": [
+        "59",
+        0
+      ],
+      "image_1": [
+        "68",
+        0
+      ]
+    },
+    "class_type": "WanVideoClipVisionEncode",
+    "_meta": {
+      "title": "WanVideoClipVisionEncode"
+    }
+  },
+  "58": {
+    "inputs": {
+      "image": "oldman_upscaled.png"
+    },
     "class_type": "LoadImage",
-    "inputs": {"image": "input.png"}
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "68": {
+    "inputs": {
+      "width": 624,
+      "height": 624,
+      "upscale_method": "lanczos",
+      "keep_proportion": "crop",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 16,
+      "device": "cpu",
+      "image": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Resize Image v2"
+    }
+  },
+  "63": {
+    "inputs": {
+      "end_image": 81,
+      "control_embeds": 0.030000000000000006,
+      "temporal_mask": 1,
+      "extra_latents": 1,
+      "add_cond_latents": true,
+      "vae": [
+        "38",
+        0
+      ],
+      "clip_embeds": [
+        "65",
+        0
+      ],
+      "start_image": [
+        "68",
+        0
+      ],
+      "width": [
+        "68",
+        1
+      ],
+      "height": [
+        "68",
+        2
+      ]
+    },
+    "class_type": "WanVideoImageToVideoEncode",
+    "_meta": {
+      "title": "WanVideoImageToVideoEncode"
+    }
+  },
+  "11": {
+    "inputs": {},
+    "class_type": "LoadWanVideoT5TextEncoder",
+    "_meta": {
+      "title": "LoadWanVideoT5TextEncoder"
+    }
+  },
+  "38": {
+    "inputs": {},
+    "class_type": "WanVideoVAELoader",
+    "_meta": {
+      "title": "WanVideoVAELoader"
+    }
+  },
+  "69": {
+    "inputs": {},
+    "class_type": "WanVideoLoraSelect",
+    "_meta": {
+      "title": "WanVideoLoraSelect"
+    }
+  },
+  "27": {
+    "inputs": {
+      "samples": 4,
+      "feta_args": 1,
+      "context_options": 5,
+      "cache_args": 1057359483639287,
+      "flowedit_args": true,
+      "slg_args": "dpm++_sde",
+      "loop_args": 0,
+      "experimental_args": 1,
+      "sigmas": "",
+      "unianimate_poses": "comfy",
+      "fantasytalking_embeds": 0,
+      "uni3c_embeds": -1,
+      "multitalk_embeds": false,
+      "model": [
+        "70",
+        0
+      ],
+      "image_embeds": [
+        "63",
+        0
+      ],
+      "text_embeds": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "WanVideoSampler",
+    "_meta": {
+      "title": "WanVideoSampler"
+    }
+  },
+  "22": {
+    "inputs": {
+      "compile_args": "WanVideo\\Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors",
+      "block_swap_args": "fp16",
+      "vram_management_args": "fp8_e4m3fn",
+      "vace_model": "offload_device",
+      "fantasytalking_model": "sdpa",
+      "lora": [
+        "69",
+        0
+      ]
+    },
+    "class_type": "WanVideoModelLoader",
+    "_meta": {
+      "title": "WanVideoModelLoader"
+    }
+  },
+  "39": {
+    "inputs": {},
+    "class_type": "WanVideoBlockSwap",
+    "_meta": {
+      "title": "WanVideoBlockSwap"
+    }
+  },
+  "70": {
+    "inputs": {
+      "model": [
+        "22",
+        0
+      ],
+      "block_swap_args": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "WanVideoSetBlockSwap",
+    "_meta": {
+      "title": "WanVideoSetBlockSwap"
+    }
   }
 }
