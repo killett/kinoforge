@@ -175,6 +175,16 @@ def main() -> int:
         default=None,
         help="Append /<protocol> to each declared port (e.g. 'http' -> '8188/http').",
     )
+    parser.add_argument(
+        "--instrument-production",
+        action="store_true",
+        help=(
+            "Run the production Wan bootstrap step-by-step, wrapping each "
+            "command with timestamped progress markers + a diagnostic "
+            "http.server on port 9000 serving /workspace/diag/. Lets us "
+            "watch which step hangs/fails via the proxy URL."
+        ),
+    )
     args = parser.parse_args()
 
     from kinoforge.core.dotenv_loader import load_env_file
@@ -257,6 +267,70 @@ def main() -> int:
             env_required=[],
         )
 
+    if args.instrument_production:
+        instrumented = (
+            "set -uo pipefail\n"
+            'if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]; then '
+            "python3 -c \"import os; open('/tmp/selfterm.py','w')"
+            ".write(os.environ['KINOFORGE_SELFTERM_SCRIPT'])\" && "
+            "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
+            "fi\n"
+            "mkdir -p /workspace/diag\n"
+            'log() { echo "T+$(date +%s) $(date -u +%H:%M:%S): $*" '
+            ">> /workspace/diag/progress.log; }\n"
+            "log 'STEP 0: bootstrap started'\n"
+            "cd /workspace/diag && "
+            "nohup python3 -m http.server 9000 > /tmp/diag-server.log 2>&1 &\n"
+            "sleep 2\n"
+            "log 'STEP 0: diag http.server should be up on 9000'\n"
+            "cd /workspace\n"
+            "log 'STEP 1: git clone ComfyUI'\n"
+            "if [ ! -d ComfyUI ]; then "
+            "git clone --depth 1 --branch master "
+            "https://github.com/comfyanonymous/ComfyUI ComfyUI "
+            "> /workspace/diag/step1_clone.log 2>&1; "
+            'log "STEP 1: exit=$?"; '
+            "else log 'STEP 1: skipped'; fi\n"
+            "log 'STEP 2: pip install ComfyUI reqs'\n"
+            "cd /workspace/ComfyUI && pip install -q -r requirements.txt "
+            "> /workspace/diag/step2_pip.log 2>&1; "
+            'log "STEP 2: exit=$?"\n'
+            "cd /workspace\n"
+            "log 'STEP 3: clone WanVideoWrapper'\n"
+            "if [ ! -d ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper ]; then "
+            "git clone https://github.com/kijai/ComfyUI-WanVideoWrapper "
+            "ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper "
+            "> /workspace/diag/step3_wan_clone.log 2>&1; "
+            'log "STEP 3: exit=$?"; fi\n'
+            "log 'STEP 4: WanVideoWrapper pip reqs'\n"
+            "if [ -f ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper/requirements.txt ]; then "
+            "pip install -q -r "
+            "ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper/requirements.txt "
+            "> /workspace/diag/step4_wan_pip.log 2>&1; "
+            'log "STEP 4: exit=$?"; else log "STEP 4: no reqs.txt"; fi\n'
+            "log 'STEP 5: launch ComfyUI in background'\n"
+            "cd /workspace/ComfyUI && "
+            "nohup python main.py --listen 0.0.0.0 --port 8188 "
+            "> /workspace/diag/step5_comfy.log 2>&1 &\n"
+            'log "STEP 5: ComfyUI launched pid=$!"\n'
+            "sleep 30\n"
+            "log 'STEP 6: probing local /system_stats'\n"
+            "curl -sv http://127.0.0.1:8188/system_stats "
+            "> /workspace/diag/step6_curl.log 2>&1; "
+            'log "STEP 6: curl exit=$?"\n'
+            "log 'STEP 7: keep diag server alive'\n"
+            "exec sleep 1500\n"
+        )
+        from kinoforge.core.interfaces import RenderedProvision as _RP
+
+        rendered = _RP(
+            script=instrumented,
+            run_cmd=["bash", "-c", "exec sleep 1500"],
+            image=args.image_override or rendered.image,
+            ports=["8188/http", "9000/http"],
+            env_required=rendered.env_required,
+        )
+
     print("--- rendered bootstrap (first 60 lines) ---")
     for ln in rendered.script.splitlines()[:60]:
         print(f"  | {ln}")
@@ -322,8 +396,9 @@ def main() -> int:
         f"@ ${chosen_offer.cost_rate_usd_per_hr}/hr — endpoints={instance.endpoints}"
     )
 
-    proxy_root = f"https://{instance.id}-8188.proxy.runpod.net/"
-    proxy_url = f"https://{instance.id}-8188.proxy.runpod.net/progress.log"
+    diag_port = "9000" if args.instrument_production else "8188"
+    proxy_root = f"https://{instance.id}-{diag_port}.proxy.runpod.net/"
+    proxy_url = f"https://{instance.id}-{diag_port}.proxy.runpod.net/progress.log"
     deadline = time.monotonic() + args.max_minutes * 60
     elapsed = 0
     try:
@@ -332,7 +407,7 @@ def main() -> int:
             elapsed += args.poll_interval_s
             pod = _print_pod_snapshot(api_key, instance.id, elapsed)
             _print_pod_logs(api_key, instance.id)
-            if args.minimal_phonehome:
+            if args.minimal_phonehome or args.instrument_production:
                 # First poll root: distinguishes "bash never ran" (root 404)
                 # from "bash ran but no progress.log" (root 200, log 404).
                 for label, url in (("/", proxy_root), ("/progress.log", proxy_url)):
