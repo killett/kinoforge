@@ -70,10 +70,19 @@ compute:
       - "NVIDIA GeForce RTX 3090"
     disk_gb: 80
   lifecycle:
-    idle_timeout: 10m
+    # idle_timeout governs the pod-side selfterm watchdog's dead-man
+    # window. During cold-boot weight downloads (~21 GB Wan + 2.5 GB
+    # clip_vision_h via curl in render_provision) the controller emits
+    # no heartbeats because the pod isn't ready yet; selfterm only
+    # sees the original created_at. 10m would kill the pod mid-download
+    # (verified live attempt 8 — pod 98f0qlyf8h1210 died at ~20 min
+    # with "no RunPod pod found" surfacing from wait_for_ready's
+    # get_instance). 25m covers worst-case bootstrap + a safety margin
+    # below max_lifetime.
+    idle_timeout: 25m
     job_timeout: 15m
     time_buffer: 5m
-    max_lifetime: 40m
+    max_lifetime: 50m
     # Wan diffusion (~30 GB) + VAE + text encoder cold-boot empirically
     # 5-15 min; 30m (1800 s -> Lifecycle.boot_timeout_s) leaves headroom
     # over Layer Q's 900 s LifecycleConfig default.
