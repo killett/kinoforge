@@ -867,6 +867,36 @@ def test_selfterm_render_embeds_values() -> None:
     assert "8888" in script
 
 
+def test_selfterm_terminate_url_uses_rest_v1_pods_delete() -> None:
+    """Bug it catches: ``_terminate()`` calling the wrong RunPod endpoint.
+
+    Live verification 2026-06-03 (probe b9qo9toi3) showed the prior URL
+    ``POST https://api.runpod.io/v2/{pod_id}/stop`` is the SERVERLESS
+    endpoint — calling it against a pod ID returns 4xx silently
+    (selfterm's broad except swallows the error) and the pod survives
+    past ``effective_deadline``. The pod-side endpoint is
+    ``DELETE https://rest.runpod.io/v1/pods/{pod_id}`` (same one
+    ``RunPodProvider.destroy_instance`` + ``tools/preflight.py``
+    sweep use).
+
+    Lockdown for the rendered script string: must contain the correct
+    REST URL pattern + DELETE method, must NOT contain the broken
+    ``/v2/.../stop`` URL.
+    """
+    script = RENDER(
+        idle_timeout=1800,
+        max_lifetime=7200,
+        job_timeout=900,
+        time_buffer=300,
+    )
+    assert "https://rest.runpod.io/v1/pods/" in script
+    assert 'method="DELETE"' in script
+    # Negative lockdown: the broken endpoint must NOT reappear via a
+    # future revert or upstream copy-paste.
+    assert "/v2/" not in script
+    assert "/stop" not in script
+
+
 # ---------------------------------------------------------------------------
 # AC9: self-registration
 # ---------------------------------------------------------------------------

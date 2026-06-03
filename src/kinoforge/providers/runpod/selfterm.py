@@ -80,17 +80,19 @@ def heartbeat() -> None:
 
 
 def _terminate() -> None:
-    """Terminate this pod via the RunPod terminate endpoint."""
-    url = f"https://api.runpod.io/v2/{_POD_ID}/stop"
-    data = json.dumps({}).encode("utf-8")
+    """Best-effort DELETE to the RunPod REST pods endpoint.
+
+    Any HTTP error or transport failure is silently swallowed; the
+    watchdog will retry on the next poll iteration.
+    """
+    url = f"https://rest.runpod.io/v1/pods/{_POD_ID}"
     req = urllib.request.Request(
         url,
-        data=data,
         headers={
-            "Content-Type": "application/json",
             "Authorization": f"Bearer {_TERMINATE_KEY}",
+            "User-Agent": "kinoforge-selfterm/0.1",
         },
-        method="POST",
+        method="DELETE",
     )
     try:
         with urllib.request.urlopen(req) as resp:  # noqa: S310
