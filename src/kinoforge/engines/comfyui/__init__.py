@@ -523,17 +523,28 @@ class ComfyUIBackend(GenerationBackend):
         # Layer J: route the user prompt into the configured text-encoder
         # nodes. Reads ``spec["prompt_node_ids"]`` — mirrors
         # ``asset_node_ids`` — and writes via ``setdefault`` so an explicit
-        # ``node_overrides[node_id]["inputs"]["text"]`` from spec wins.
+        # ``node_overrides[node_id]["inputs"][<field>]`` from spec wins.
+        #
+        # ``spec["prompt_input_field"]`` selects the per-node input key
+        # the prompt lands on. Default ``"text"`` matches ComfyUI's stock
+        # ``CLIPTextEncode``; the kijai Wan workflow's
+        # ``WanVideoTextEncode`` uses ``"positive_prompt"``. Live
+        # verification 2026-06-03 (HEAD 36820f1): first green MP4
+        # rendered the kijai-baked-in default prompt ("an old man
+        # stroking his beard thoughtfully") because the user's prompt
+        # landed on a non-existent ``text`` field while
+        # ``positive_prompt`` retained kijai's hard-coded value.
         prompt_node_ids: dict[str, str] = job.spec.get("prompt_node_ids", {})
         if prompt_node_ids:
             from kinoforge.core.prompt_routing import resolve_prompt
 
             prompt = resolve_prompt(job)
+            prompt_input_field: str = job.spec.get("prompt_input_field", "text")
             if prompt is not None:
                 for _role, node_id in prompt_node_ids.items():
                     node_patch = overrides.setdefault(str(node_id), {})
                     inputs = node_patch.setdefault("inputs", {})
-                    inputs.setdefault("text", prompt)
+                    inputs.setdefault(prompt_input_field, prompt)
 
         # Deep-merge overrides into the graph at the node level.
         for node_id, node_patch in overrides.items():
