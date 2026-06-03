@@ -339,7 +339,7 @@ def test_runpod_comfyui_wan_yaml_loads() -> None:
     assert cfg.compute.requirements.max_usd_per_hr == 0.50
     assert cfg.compute.lifecycle is not None
     assert cfg.compute.lifecycle.budget == 2.0
-    assert cfg.compute.lifecycle.idle_timeout == 600.0  # 10m parsed via parse_duration
+    assert cfg.compute.lifecycle.idle_timeout == 1500.0  # 25m parsed via parse_duration
 
 
 def test_runpod_comfyui_wan_manifest_yaml_loads() -> None:
