@@ -98,7 +98,7 @@ def test_yaml_spec_params_round_trip_into_job_via_orchestrator(
     with patch(
         "kinoforge.core.registry.get_engine", side_effect=lambda _kind: lambda: engine
     ):
-        artifact = generate(
+        artifact, _ = generate(
             cfg=cfg,
             request=request,
             store=store,

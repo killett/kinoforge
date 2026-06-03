@@ -871,7 +871,7 @@ def generate(
     sink: OutputSink | None = None,
     instance: Instance | None = None,
     tags: dict[str, str] | None = None,
-) -> Artifact:
+) -> tuple[Artifact, Instance | None]:
     """Run the full generation pipeline for a single clip.
 
     **Guaranteed ordering (explicit, in this order):**
@@ -924,7 +924,15 @@ def generate(
             (no ``instance=``). Ignored when ``instance=`` is supplied.
 
     Returns:
-        The persisted ``Artifact`` (with ``uri``) from the pipeline stage.
+        A ``(Artifact, Instance | None)`` tuple. The ``Artifact`` is the
+        persisted output (with ``uri``) from the pipeline stage. The second
+        element is the compute ``Instance`` the orchestrator used or created
+        during this call — ``None`` for hosted engines
+        (``requires_compute=False``) or when the caller supplied a warm
+        instance via ``instance=``; otherwise the live pod the orchestrator
+        owns for the duration of the call. Returning the instance lets
+        callers run post-generate teardown by pod id (e.g. live tests)
+        without resorting to provider-specific tag-discovery scans.
 
     Raises:
         CapabilityMismatch: The live backend's capabilities differ from the
@@ -1010,4 +1018,12 @@ def generate(
                 session.provider.destroy_instance(session.instance.id)
             raise
         _log.info("generate completed — artifact uri=%r", artifact.uri)
-        return artifact
+        # Surface the compute instance the orchestrator owned (or None for
+        # hosted / caller-supplied paths) so callers can run targeted
+        # teardown by pod id without relying on provider tag-discovery.
+        owned_instance: Instance | None
+        if _caller_supplied_instance:
+            owned_instance = None
+        else:
+            owned_instance = session.instance
+        return artifact, owned_instance

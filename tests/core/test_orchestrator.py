@@ -341,7 +341,7 @@ class TestGenerateEndToEnd:
         store = LocalArtifactStore(tmp_path)
         request = GenerationRequest(prompt="a sunset", mode="t2v")
 
-        artifact = generate(
+        artifact, _ = generate(
             cfg,
             request,
             store=store,
@@ -363,7 +363,7 @@ class TestGenerateEndToEnd:
         store = LocalArtifactStore(tmp_path)
         request = GenerationRequest(prompt="a sunset", mode="t2v")
 
-        artifact = generate(
+        artifact, _ = generate(
             cfg,
             request,
             store=store,
@@ -375,6 +375,43 @@ class TestGenerateEndToEnd:
         # FakeBackend derives name from sha256 of prompts; file should contain
         # the filename as prefix (per GenerateClipStage._artifact_bytes)
         assert b"clip-" in data
+
+    def test_generate_returns_artifact_and_instance_tuple(self, tmp_path: Path) -> None:
+        """generate() returns (Artifact, Instance | None) so callers can run
+        post-generate teardown without resorting to provider-specific tag
+        scans.
+
+        Bug catch: a regression to a single-Artifact return forces every
+        downstream destroy block back onto tag-discovery (broken on RunPod
+        because user tags don't round-trip through GraphQL list/get), which
+        silently orphans live pods until selfterm reaps them.
+        """
+        cfg = _compute_cfg()
+        engine = _make_engine()
+        provider = LocalProvider()
+        store = LocalArtifactStore(tmp_path)
+        request = GenerationRequest(prompt="a sunset", mode="t2v")
+
+        result = generate(
+            cfg,
+            request,
+            store=store,
+            provider=provider,
+            engine=engine,
+        )
+
+        assert isinstance(result, tuple), (
+            f"generate() must return a 2-tuple, got {type(result).__name__}"
+        )
+        assert len(result) == 2, (
+            f"generate() must return a 2-tuple, got {len(result)} elements"
+        )
+        artifact, instance = result
+        assert isinstance(artifact, Artifact)
+        assert artifact.uri != ""
+        # Compute path → orchestrator created an Instance via the provider.
+        assert isinstance(instance, Instance)
+        assert instance.provider == "local"
 
 
 # ---------------------------------------------------------------------------
@@ -810,7 +847,7 @@ class TestSplitterWiring:
         engine = _make_engine()
         provider = LocalProvider()
 
-        artifact = generate(
+        artifact, _ = generate(
             cfg, request, store=store, provider=provider, engine=engine, run_id="r4"
         )
         assert artifact.uri  # store URI populated
@@ -844,8 +881,10 @@ def test_generate_closes_concurrent_pool_after_run(tmp_path: Path) -> None:
         store = LocalArtifactStore(tmp_path)
         request = GenerationRequest(prompt="a sunset", mode="t2v")
 
-        result = generate(cfg, request, store=store, provider=provider, engine=engine)
-        assert result is not None
+        artifact, _ = generate(
+            cfg, request, store=store, provider=provider, engine=engine
+        )
+        assert artifact is not None
         assert close_calls == [True], (
             f"orchestrator did not close the pool exactly once; "
             f"close_calls={close_calls}"
@@ -1547,7 +1586,7 @@ def test_generate_default_sink_is_none(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     request = GenerationRequest(prompt="a calm sea at dusk", mode="t2v")
 
-    artifact = generate(
+    artifact, _ = generate(
         cfg,
         request,
         store=store,
@@ -1572,7 +1611,7 @@ def test_generate_threads_sink_into_stage(tmp_path: Path) -> None:
     request = GenerationRequest(prompt="a stormy ocean wave", mode="t2v")
     spy = _SpyOutputSink()
 
-    artifact = generate(
+    artifact, _ = generate(
         cfg,
         request,
         store=store,
@@ -1928,7 +1967,7 @@ def test_generate_threads_instance_kwarg_to_deploy_session(
     premade = _make_premade_instance()
     request = GenerationRequest(prompt="hi", mode="t2v")
 
-    artifact = generate(
+    artifact, owned_instance = generate(
         cfg,
         request,
         store=store,
@@ -1939,6 +1978,9 @@ def test_generate_threads_instance_kwarg_to_deploy_session(
 
     assert spy.create_calls == []
     assert isinstance(artifact, Artifact)
+    # Caller supplied the instance, so the orchestrator does not surface
+    # ownership of it back through the return tuple.
+    assert owned_instance is None
 
 
 def test_deploy_session_threads_tags_into_instance_spec(
