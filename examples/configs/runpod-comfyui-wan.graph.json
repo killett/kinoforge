@@ -3,7 +3,7 @@
     "source_repo": "https://github.com/kijai/ComfyUI-WanVideoWrapper",
     "source_sha": "088128b224242e110d3906c6750e9a3a348a659b",
     "source_path": "example_workflows/wanvideo_2_1_14B_I2V_example_03.json",
-    "captured_at_local": "2026-06-03T14:38-07:00",
+    "captured_at_local": "2026-06-03T15:11-07:00",
     "format": "api",
     "converter": "tools/comfyui_ui_to_api.py@4cf215a (regenerated against /object_info f96322b59043) + manual path-strip/LoRA-drop/T5-fp8 fixups"
   },
@@ -61,12 +61,12 @@
   },
   "27": {
     "inputs": {
-      "steps": 4,
-      "cfg": 1,
-      "shift": 5,
+      "steps": 20,
+      "cfg": 6.0,
+      "shift": 7.0,
       "seed": 1057359483639287,
       "force_offload": true,
-      "scheduler": "dpm++_sde",
+      "scheduler": "unipc",
       "riflex_freq_index": 0,
       "denoise_strength": 1,
       "batched_cfg": "",

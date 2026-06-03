@@ -101,6 +101,12 @@ spec:
     # The kijai i2v example_03 ships a single text-encode node — negative
     # prompt is graph-baked (see spec §14.0 Q3).
     positive: "16"
+  # WanVideoTextEncode reads "positive_prompt" / "negative_prompt"; ComfyUI's
+  # stock CLIPTextEncode reads "text". Without this override the user prompt
+  # silently lands on a non-existent "text" widget and the graph renders the
+  # kijai-baked-in default ("an old man is stroking his beard thoughtfully").
+  # Live-verified 2026-06-03.
+  prompt_input_field: positive_prompt
   node_overrides: {}
 
 params:
