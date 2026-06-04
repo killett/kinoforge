@@ -1,0 +1,69 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-03-skypilot-real-cloud.md",
+  "tasks": [
+    {
+      "id": 0,
+      "nativeTaskId": 17,
+      "subject": "Task 1: live-skypilot pixi feature env + test-live-skypilot task",
+      "status": "pending",
+      "description": "**Goal:** Add a pixi feature env carrying `skypilot[gcp]` and a wrapper task so the smoke can be invoked without touching the default env.\n\n**Files:**\n- Modify: `pixi.toml` (~12 LOC added)\n\n**Acceptance Criteria:**\n- [ ] `pixi info -e live-skypilot` lists `skypilot` in the env's PyPI deps\n- [ ] `pixi run -e live-skypilot python -c \"import sky; print(sky.__version__)\"` exits 0\n- [ ] `pixi run test` (default env) does NOT install skypilot\n- [ ] `pixi run -e live-skypilot test-live-skypilot --collect-only` collects the (skipped) live test\n\n**Verify:** `pixi info -e live-skypilot | rg skypilot && pixi run -e live-skypilot python -c \"import sky\"` → 0\n\n```json:metadata\n{\"files\": [\"pixi.toml\", \"pixi.lock\"], \"verifyCommand\": \"pixi info -e live-skypilot | rg skypilot && pixi run -e live-skypilot python -c \\\"import sky\\\"\", \"acceptanceCriteria\": [\"pixi info -e live-skypilot lists skypilot\", \"live env imports sky cleanly\", \"default env does not install sky\", \"test-live-skypilot task collects the live test\"]}\n```"
+    },
+    {
+      "id": 1,
+      "nativeTaskId": 18,
+      "subject": "Task 2: _RecordingProxy + _to_jsonable + Ring-2 unit tests",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Implement the test-local recording proxy and serializer with full unit-test coverage (no skypilot needed).\n\n**Files:**\n- Create: `tests/live/_skypilot_recorder.py` (~80 LOC)\n- Create: `tests/providers/test_skypilot_recording_proxy.py` (~120 LOC, 8 tests)\n\n**Acceptance Criteria:** proxy delegation, dataclass via asdict, enum via .value, Path via str, datetime via isoformat, volatile-key recursive strip, file written with sort_keys+indent, two runs byte-identical.\n\n**Verify:** `pixi run test tests/providers/test_skypilot_recording_proxy.py -v` → 8 passed\n\n```json:metadata\n{\"files\": [\"tests/live/_skypilot_recorder.py\", \"tests/providers/test_skypilot_recording_proxy.py\"], \"verifyCommand\": \"pixi run test tests/providers/test_skypilot_recording_proxy.py -v\", \"acceptanceCriteria\": [\"proxy delegates calls\", \"dataclass via asdict\", \"enum via .value\", \"Path via str\", \"datetime via isoformat\", \"volatile keys stripped recursively\", \"fixture written with sort_keys+indent\", \"two runs byte-identical\"]}\n```"
+    },
+    {
+      "id": 2,
+      "nativeTaskId": 19,
+      "subject": "Task 3: examples/configs/skypilot.yaml operator example",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Ship runnable example YAML for SkyPilot+GCS; verify it parses via `Config.load()`.\n\n**Files:**\n- Create: `examples/configs/skypilot.yaml` (~80 LOC)\n- Modify: `tests/test_examples.py`\n\n**Acceptance Criteria:** yaml parses; `compute.provider == skypilot`, `compute.region == us-central1`, `lifecycle.idle_timeout_s == 60`.\n\n**Verify:** `pixi run test tests/test_examples.py -v -k skypilot` → 1+ passed\n\n```json:metadata\n{\"files\": [\"examples/configs/skypilot.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run test tests/test_examples.py -v -k skypilot\", \"acceptanceCriteria\": [\"yaml parses via load_config\", \"compute.provider == skypilot\", \"compute.region == us-central1\", \"lifecycle.idle_timeout_s == 60\", \"layout mirrors wan.yaml\"]}\n```"
+    },
+    {
+      "id": 3,
+      "nativeTaskId": 20,
+      "subject": "Task 4: preflight extension — _check_no_active_sky_clusters",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Add `_check_no_active_sky_clusters()` to `tools/preflight.py` so `pixi run preflight` fails fast on leftover SkyPilot clusters.\n\n**Files:**\n- Modify: `tools/preflight.py` (~25 LOC)\n- Modify: `tests/test_preflight.py`\n\n**Acceptance Criteria:** skipped cleanly when skypilot absent; passes when status empty; fails with names when UP cluster found; existing checks unchanged.\n\n**Verify:** `pixi run test tests/test_preflight.py -v -k sky` → 3 new tests pass\n\n```json:metadata\n{\"files\": [\"tools/preflight.py\", \"tests/test_preflight.py\"], \"verifyCommand\": \"pixi run test tests/test_preflight.py -v -k sky\", \"acceptanceCriteria\": [\"skip cleanly when skypilot missing\", \"pass when status empty\", \"fail with names when UP cluster found\", \"existing checks unaffected\"]}\n```"
+    },
+    {
+      "id": 4,
+      "nativeTaskId": 21,
+      "subject": "Task 5: RED live-smoke scaffold — tests/live/test_skypilot_live.py",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** Commit full live-smoke scaffold (test function, helpers, gates, 4-tier teardown) BEFORE any live spend (CLAUDE.md mandate).\n\n**Files:**\n- Create: `tests/live/test_skypilot_live.py` (~220 LOC)\n\n**Acceptance Criteria:** default env reports skipped (no live execution); module imports cleanly under live env; skip message lists every missing precondition; `_teardown` has 4 independent tiers.\n\n**Verify:** `pixi run test tests/live/test_skypilot_live.py -v` → skipped\n\n```json:metadata\n{\"files\": [\"tests/live/test_skypilot_live.py\"], \"verifyCommand\": \"pixi run test tests/live/test_skypilot_live.py -v\", \"acceptanceCriteria\": [\"default env: skipped with reasons list\", \"live env collect-only works\", \"imports clean under live env\", \"_teardown has 4 tiers\", \"RED scaffold committed BEFORE T6 spends money\"]}\n```"
+    },
+    {
+      "id": 5,
+      "nativeTaskId": 22,
+      "subject": "Task 6: First live invocation — produce fixtures",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Execute the smoke against real GCP. Only money-spending task (~$0.05).\n\n**Files (via test run):** 4 fixtures in `tests/providers/fixtures/skypilot/` — uncommitted until T7.\n\n**Acceptance Criteria:** preflight exit 0 before invocation; clean tree before invocation; smoke exit 0 in < 10 min; 4 fixtures valid JSON; zero VM survivors within 2 min.\n\n**Verify:** `gcloud compute instances list --format=json | python -c 'import json,sys; assert json.load(sys.stdin)==[]'`\n\n```json:metadata\n{\"files\": [\"tests/providers/fixtures/skypilot/gpu_list.json\", \"tests/providers/fixtures/skypilot/launch.json\", \"tests/providers/fixtures/skypilot/status.json\", \"tests/providers/fixtures/skypilot/down.json\"], \"verifyCommand\": \"pixi run -e live-skypilot test-live-skypilot -v\", \"acceptanceCriteria\": [\"preflight exit 0 before invocation\", \"clean tree before invocation\", \"smoke exit 0 in < 10 min\", \"4 fixtures written + non-empty + valid JSON\", \"zero GCP VMs surviving within 2 min\"]}\n```"
+    },
+    {
+      "id": 6,
+      "nativeTaskId": 23,
+      "subject": "Task 7: Stability re-run + commit fixtures",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** Confirm fixtures byte-identical across two runs (proves volatile-stripping works), commit in own commit for PR-diff isolation.\n\n**Files:** 4 fixtures + commit them in own commit.\n\n**Acceptance Criteria:** second run exit 0; fixtures byte-identical to T6 run (`diff -r` empty); fixtures committed in own commit. Shape disagreements (if any) become sub-tasks.\n\n**Verify:** `diff -r /tmp/skypilot-fixtures-t6/ tests/providers/fixtures/skypilot/`\n\n```json:metadata\n{\"files\": [\"tests/providers/fixtures/skypilot/gpu_list.json\", \"tests/providers/fixtures/skypilot/launch.json\", \"tests/providers/fixtures/skypilot/status.json\", \"tests/providers/fixtures/skypilot/down.json\"], \"verifyCommand\": \"diff -r /tmp/skypilot-fixtures-t6/ tests/providers/fixtures/skypilot/\", \"acceptanceCriteria\": [\"second run exit 0\", \"fixtures byte-identical (diff -r empty)\", \"fixtures committed in own commit\", \"shape disagreements (if any) become sub-tasks with regression tests\"]}\n```"
+    },
+    {
+      "id": 7,
+      "nativeTaskId": 24,
+      "subject": "Task 8: PROGRESS.md Phase 31 entry + strike PROGRESS:114 #2",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Document the layer in PROGRESS.md mirroring Phase 30's shape; close PROGRESS:114 carry-forward #2; add new CPU-only known-limitation.\n\n**Files:**\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:** Phase 31 entry exists (per-task SHAs, key decisions, live-smoke confirmation block, test count delta); PROGRESS:114 #2 struck-through + marked CLOSED; new CPU-only known-limitation added; RESUME block refreshed.\n\n**Verify:** `rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md\", \"acceptanceCriteria\": [\"Phase 31 entry exists with all required sub-sections\", \"PROGRESS:114 #2 struck-through + marked CLOSED\", \"new CPU-only known-limitation added\", \"RESUME block refreshed\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-03T23:45:00"
+}
