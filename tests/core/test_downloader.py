@@ -257,7 +257,12 @@ def test_download_all_concurrent(http_server, tmp_path):
         for name, data in payloads.items()
     ]
 
-    results = download_all(artifacts, tmp_path, max_workers=4)
+    results = download_all(
+        artifacts,
+        tmp_path,
+        max_workers=4,
+        which_aria2=_DISABLED_ARIA,
+    )
 
     assert len(results) == len(artifacts), "should return one result per input"
     for i, (name, data) in enumerate(payloads.items()):
@@ -587,3 +592,67 @@ def test_aria2c_failure_unlinks_part_before_fallback(http_server, tmp_path):
     assert range_requests == [], (
         "fallback sent a Range header — poisoned .part was not unlinked"
     )
+
+
+# ---------------------------------------------------------------------------
+# T4 A7: download_all forwards the seams to every download_one call
+# ---------------------------------------------------------------------------
+
+
+def test_download_all_uses_aria2c_per_artifact(http_server, tmp_path):
+    """T4 A7: download_all forwards which_aria2 + run_aria2 so every
+    artifact takes the aria2c path; stdlib fetch is never called.
+
+    Bug this catches: download_all forgets to forward the seams kwargs
+    and the parallel-files path silently degrades to stdlib transport.
+    """
+    names = [f"file_{i:02d}.bin" for i in range(3)]
+    payloads = {name: os.urandom(4096) for name in names}
+    for name, data in payloads.items():
+        http_server.serve_bytes(name, data)
+
+    artifacts = [
+        Artifact(
+            filename=name,
+            url=f"{http_server.base_url}/{name}",
+            sha256=_sha256(data),
+        )
+        for name, data in payloads.items()
+    ]
+
+    aria_calls: list[tuple[str, Path, dict[str, str]]] = []
+
+    def fan_aria(url: str, part_path: Path, headers: dict[str, str]) -> None:
+        # Pick the payload by URL suffix — matches what aria2c-on-real-CDN
+        # would do.
+        for name, data in payloads.items():
+            if url.endswith(name):
+                aria_calls.append((url, part_path, dict(headers)))
+                part_path.write_bytes(data)
+                return
+        raise AssertionError(f"unexpected URL in aria2c stub: {url!r}")
+
+    stdlib_calls: list[tuple[str, dict[str, str]]] = []
+
+    def stdlib_spy(
+        url: str, headers: dict[str, str]
+    ) -> tuple[int, bytes, dict[str, str]]:
+        stdlib_calls.append((url, dict(headers)))
+        raise AssertionError("stdlib fetch must not be called in A7")
+
+    results = download_all(
+        artifacts,
+        tmp_path,
+        max_workers=4,
+        fetch=stdlib_spy,
+        which_aria2=lambda: "/usr/bin/aria2c",
+        run_aria2=fan_aria,
+    )
+
+    assert len(results) == 3
+    assert len(aria_calls) == 3, f"expected 3 aria2c calls, got {len(aria_calls)}"
+    assert stdlib_calls == [], "stdlib fetch was called despite aria2c success"
+    for i, (name, data) in enumerate(payloads.items()):
+        dest_file = tmp_path / name
+        assert dest_file.read_bytes() == data
+        assert results[i].uri == str(dest_file)

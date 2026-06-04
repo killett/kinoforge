@@ -304,38 +304,54 @@ def download_all(
     *,
     max_workers: int = 4,
     fetch: FetchCallable = _urllib_fetch,
+    which_aria2: WhichCallable = _shutil_which_aria2,
+    run_aria2: RunAriaCallable = _subprocess_run_aria2,
 ) -> list[Artifact]:
     """Download multiple artifacts concurrently.
 
-    Uses :class:`concurrent.futures.ThreadPoolExecutor` with *max_workers*
-    threads.  Results are returned in the same order as *artifacts*.
+    File-level concurrency is provided by a
+    :class:`concurrent.futures.ThreadPoolExecutor` with *max_workers*
+    threads.  Per-file connection-level concurrency is the
+    responsibility of the chosen transport (aria2c uses
+    :data:`_ARIA2_BASE_ARGS` ``-x16 -s16``; the stdlib transport uses
+    one connection per file).
 
     Args:
         artifacts: List of artifacts to download.
         dest: Common destination directory.
         max_workers: Maximum number of concurrent download threads.
-        fetch: Injectable HTTP callable forwarded to each
+        fetch: Injectable stdlib HTTP callable forwarded to each
+            :func:`download_one` call.
+        which_aria2: Detector callable forwarded to each
+            :func:`download_one` call.
+        run_aria2: Subprocess invoker forwarded to each
             :func:`download_one` call.
 
     Returns:
-        List of updated :class:`~kinoforge.core.interfaces.Artifact` instances
-        (one per input, in input order) with ``uri`` set to the absolute
-        on-disk path.
+        List of updated :class:`~kinoforge.core.interfaces.Artifact`
+        instances (one per input, in input order) with ``uri`` set to
+        the absolute on-disk path.
 
     Raises:
-        KinoforgeError: Propagated from any failing :func:`download_one` call.
+        KinoforgeError: Propagated from any failing
+            :func:`download_one` call.
     """
     results: list[Artifact] = [cast(Artifact, None)] * len(artifacts)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_to_idx = {
-            pool.submit(download_one, artifact, dest, fetch=fetch): idx
+            pool.submit(
+                download_one,
+                artifact,
+                dest,
+                fetch=fetch,
+                which_aria2=which_aria2,
+                run_aria2=run_aria2,
+            ): idx
             for idx, artifact in enumerate(artifacts)
         }
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
-            results[idx] = (
-                future.result()
-            )  # re-raises on exception; all slots filled on success.
+            results[idx] = future.result()
 
     return results
