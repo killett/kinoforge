@@ -35,3 +35,7 @@ output/
 
 # Live-smoke per-run record (git_sha, timings, artifact sha256) — local only
 tests/engines/fixtures/comfyui/last_smoke.json
+
+# Stray ops binaries downloaded into the workspace (runpodctl, etc.)
+runpodctl
+runpodctl.tar.gz
