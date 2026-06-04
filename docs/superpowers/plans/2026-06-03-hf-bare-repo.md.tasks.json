@@ -4,33 +4,38 @@
     {
       "id": 1,
       "subject": "Task 1: Downloader parent-directory hygiene fix",
-      "status": "pending",
+      "status": "completed",
+      "sha": "355611accb38b4f7bb34a9298373afe5caecafab",
       "description": "**Goal:** Insert a one-line `target_path.parent.mkdir(parents=True, exist_ok=True)` in `download_one` so artifacts whose `filename` contains `/` write correctly.\n\n**Files:**\n- Modify: src/kinoforge/core/downloader.py:232-233\n- Test: tests/core/test_downloader.py (1 new test)\n\n**Acceptance Criteria:** subpath filename succeeds; existing leaf-filename tests stay green; mkdir idempotent.\n\n**Verify:** pixi run test tests/core/test_downloader.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/downloader.py\", \"tests/core/test_downloader.py\"], \"verifyCommand\": \"pixi run test tests/core/test_downloader.py -v\", \"acceptanceCriteria\": [\"download_one with subpath filename succeeds\", \"existing leaf-filename tests stay green\", \"mkdir is idempotent (exist_ok=True)\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Parser + Link header helper + FetchCallable type",
-      "status": "pending",
+      "status": "completed",
+      "sha": "d53a668f856a61bb7fc83b19446937459547c154",
       "description": "**Goal:** Land pure helpers: `_parse_hf_ref`, `_next_cursor_from_link`, `FetchCallable`. No behaviour change to `resolve()` yet.\n\n**Files:**\n- Modify: src/kinoforge/sources/huggingface/__init__.py\n- Test: tests/sources/test_huggingface.py\n\n**Acceptance Criteria:** parser handles all 4 grammar shapes; Link-cursor helper extracts rel=next cursor; FetchCallable exported; existing 11 tests stay green.\n\n**Verify:** pixi run test tests/sources/test_huggingface.py -v → 17 pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/sources/huggingface/__init__.py\", \"tests/sources/test_huggingface.py\"], \"verifyCommand\": \"pixi run test tests/sources/test_huggingface.py -v\", \"acceptanceCriteria\": [\"_parse_hf_ref handles all 4 grammar shapes\", \"_next_cursor_from_link extracts the rel=next cursor\", \"FetchCallable type alias is exported\", \"existing 11 tests stay green\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: Refactor single-file branch to use parser + support @rev",
-      "status": "pending",
+      "status": "completed",
+      "sha": "482058b7d02a92b55909c2a7c64f7ad390c1a7df",
       "blockedBy": [2],
       "description": "**Goal:** Rewire `resolve()` through `_parse_hf_ref`; new `_single_file_artifact` interpolates revision into URL. Bare-repo branch still raises ValidationError (Task 4 replaces).\n\n**Files:**\n- Modify: src/kinoforge/sources/huggingface/__init__.py\n- Test: tests/sources/test_huggingface.py\n\n**Acceptance Criteria:** @v1.0 interpolates into URL; default main preserved; bare-repo still raises; existing single-file ACs stay green.\n\n**Verify:** pixi run test tests/sources/test_huggingface.py -v → 19 pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/sources/huggingface/__init__.py\", \"tests/sources/test_huggingface.py\"], \"verifyCommand\": \"pixi run test tests/sources/test_huggingface.py -v\", \"acceptanceCriteria\": [\"@v1.0 interpolates into resolve URL\", \"default revision remains main\", \"bare-repo still ValidationErrors (deferred to Task 4)\", \"all single-file ACs stay green\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Tree branch — bare-repo listing",
-      "status": "pending",
+      "status": "completed",
+      "sha": "5580f09a622f18381d28efd734803827c38cbeec",
       "blockedBy": [1, 3],
       "description": "**Goal:** Replace bare-repo raise with `_list_tree_artifacts` → fetches recursive tree, paginates, emits one Artifact per file with LFS-oid sha256 + subdir-preserving filename + size + Auth header.\n\n**Files:**\n- Modify: src/kinoforge/sources/huggingface/__init__.py\n- Test: tests/sources/test_huggingface.py\n\n**Acceptance Criteria:** filter type==file; subdirs preserved; lfs.oid lowercased onto sha256; non-LFS sha256=None; size populated; Auth header attached; pagination accumulates + terminates; recursive=true URL; cursor URL-encoded; empty→[]; AuthError propagates; revision threaded; bare-ref no longer raises.\n\n**Verify:** pixi run test tests/sources/test_huggingface.py tests/sources/ -v → 32 pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/sources/huggingface/__init__.py\", \"tests/sources/test_huggingface.py\"], \"verifyCommand\": \"pixi run test tests/sources/test_huggingface.py -v\", \"acceptanceCriteria\": [\"one Artifact per type=='file' entry; directory filtered\", \"subdirs preserved in filename\", \"lfs.oid lowercased onto sha256\", \"non-LFS entry sha256=None\", \"size populated\", \"Authorization header attached when HF_TOKEN set\", \"pagination accumulates all pages\", \"recursive=true on first URL\", \"cursor URL-encoded on subsequent pages\", \"empty file list returns []\", \"AuthError propagated\", \"revision threaded into both tree URL and artifact URL\", \"bare ref no longer raises ValidationError\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: Provisioner generic multi-artifact guard",
-      "status": "pending",
+      "status": "completed",
+      "sha": "1a9276e32913d4864915dbc45c87dbd85ed44ee1",
       "blockedBy": [4],
       "description": "**Goal:** Source-agnostic check in provisioner.provision: if `len(artifacts) > 1 and entry.sha256 is not None` → ValidationError. Closes latent CivitAI bug as side effect.\n\n**Files:**\n- Modify: src/kinoforge/core/provisioner.py\n- Test: tests/core/test_provisioner.py\n\n**Acceptance Criteria:** multi-artifact + sha256 raises with ref + count in msg; multi-artifact + sha256=None passes through; single-artifact + sha256 still merges; error msg includes migration suggestions.\n\n**Verify:** pixi run test tests/core/test_provisioner.py tests/core/ tests/sources/ -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/provisioner.py\", \"tests/core/test_provisioner.py\"], \"verifyCommand\": \"pixi run test tests/core/test_provisioner.py -v\", \"acceptanceCriteria\": [\"multi-artifact + sha256 set raises ValidationError with count and ref in message\", \"multi-artifact + sha256=None merges and forwards normally\", \"single-artifact + sha256 set still merges as before\", \"error message includes the migration suggestions\"]}\n```"
     },
@@ -42,5 +47,5 @@
       "description": "**Goal:** Live smoke (KINOFORGE_LIVE_HF=1) + example YAML bare-repo alternative + README grammar table + PROGRESS Phase 30 entry. Closes #8.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Live smoke must be manually exercised once with KINOFORGE_LIVE_HF=1 by Dr. Twinklebrane outside the agent flow; capture artifact summary and paste into PROGRESS Phase 30 'Live-smoke confirmation' before close.\n\n**Files:**\n- Create: tests/sources/test_huggingface_live.py\n- Modify: examples/configs/runpod-comfyui-wan.yaml\n- Modify: README.md\n- Modify: PROGRESS.md\n\n**Acceptance Criteria:** live smoke skipped unless KINOFORGE_LIVE_HF=1; example YAML round-trip clean + bare-repo comment present; README has 4-row grammar table; PROGRESS Phase 30 entry with per-task SHAs; pixi run test ~1062±2; pre-commit all-files clean; GH #8 row → CLOSED; manual run PASS with summary pasted into PROGRESS.\n\n**Verify:** pixi run test -v && pixi run pre-commit run --all-files; manual KINOFORGE_LIVE_HF=1 run reported to controller\n\n```json:metadata\n{\"files\": [\"tests/sources/test_huggingface_live.py\", \"examples/configs/runpod-comfyui-wan.yaml\", \"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test -v && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"live smoke skipped unless KINOFORGE_LIVE_HF=1\", \"example YAML round-trip loads cleanly with bare-repo comment\", \"README has new grammar table\", \"PROGRESS Phase 30 entry present with per-task SHAs\", \"GH #8 marked CLOSED\", \"test count ~1062 ± 2\", \"pre-commit all-files clean\", \"manual KINOFORGE_LIVE_HF=1 run PASS with summary pasted into PROGRESS\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"KINOFORGE_LIVE_HF=1\", \"live smoke PASS\"], [\"pixi run test -v\", \"1062 collected\"]]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-03T00:00:00-07:00"
+  "lastUpdated": "2026-06-03T00:00:01-07:00"
 }
