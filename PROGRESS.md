@@ -151,7 +151,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Layer P CLOSED. Tagged `layer-p-closed` at HEAD `68a5f78`. Phase 28 entry above. Test suite at `1036 passed, 3 skipped`. Working tree clean.
+**Where we are:** Layer P CLOSED. Tagged `layer-p-closed` at HEAD `477a88a`. Phase 28 entry above. Test suite at `1036 passed, 3 skipped`. Working tree clean.
 
 **Read in this order:**
 1. The Phase 28 entry directly above (per-task SHAs + bug-catch trail + design decisions).
@@ -516,7 +516,7 @@ Layer P (RunPod engine integration: ComfyUI + Wan i2v) closes here. Phases 24–
 **Per-task SHAs:**
 - T8 (conftest helper + 34-test rewrite + review follow-up): `04c9fe6`, `cdee15b`
 - T9 (2 shape-lockdown tests + review follow-up): `c152deb`, `3fba6f5`
-- T10 (this commit — README + PROGRESS + tag): `68a5f78`
+- T10 (README + PROGRESS + tag): `477a88a`
 
 **Test count:** `1034 → 1036` passing (+2: T9 lockdowns). `tests/engines/test_comfyui.py` collected count `57 → 59`.
 
