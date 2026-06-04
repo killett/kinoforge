@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import importlib
+import urllib.parse
+from typing import Any
 
 import pytest
 
 import kinoforge.sources.huggingface  # noqa: F401  — registers the source on import
 from kinoforge.core import registry
 from kinoforge.core.credentials import EnvCredentialProvider
-from kinoforge.core.errors import ValidationError
+from kinoforge.core.errors import AuthError
 from kinoforge.sources.huggingface import (
     FetchCallable,
     HuggingFaceSource,
@@ -131,18 +133,23 @@ def test_resolve_artifact_has_no_auth_header_when_token_absent(
 
 
 # ---------------------------------------------------------------------------
-# AC4 — bare repo ref raises ValidationError
+# AC4 — bare repo ref resolves via tree API (Phase 30 T4 — was raise)
 # ---------------------------------------------------------------------------
 
 
-def test_bare_repo_raises_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve() raises ValidationError when no file path is provided."""
+def test_bare_repo_resolves_via_tree_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare repo refs enumerate the tree, no longer raise ValidationError.
+
+    Bug this catches: regression to the Task 3 deferred-raise behaviour.
+    """
     creds = _make_creds(monkeypatch, None)
-    src = HuggingFaceSource()
-    # Bug this catches: treating a bare repo as a valid resolvable ref, e.g.
-    # by constructing a URL for the repo root instead of raising.
-    with pytest.raises(ValidationError, match="specify a file path"):
-        src.resolve("hf:org/model", creds)
+    entries = [
+        {"type": "file", "path": "weights.safetensors", "size": 1, "oid": "b"},
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert len(artifacts) == 1
+    assert artifacts[0].filename == "weights.safetensors"
 
 
 # ---------------------------------------------------------------------------
@@ -265,3 +272,247 @@ def test_resolve_single_file_default_revision_main(
     src = HuggingFaceSource()
     artifacts = src.resolve("hf:org/repo:path/file.bin", creds)
     assert artifacts[0].url.endswith("/resolve/main/path/file.bin")
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 — Tree branch helpers + stub fetch
+# ---------------------------------------------------------------------------
+
+
+def _make_stub_fetch(
+    pages: list[tuple[list[dict[str, Any]], str | None]],
+    log: list[tuple[str, dict[str, str]]] | None = None,
+) -> FetchCallable:
+    """Return a stub FetchCallable that pops a page per call.
+
+    Args:
+        pages: Pre-canned ``(entries, next_cursor)`` tuples, popped in order.
+        log: Optional mutable list that accumulates ``(url, headers)``
+            tuples in call order.
+
+    Returns:
+        A callable matching the :data:`FetchCallable` signature.
+    """
+    pages_iter = iter(pages)
+
+    def _stub(
+        url: str, headers: dict[str, str]
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        if log is not None:
+            log.append((url, dict(headers)))
+        return next(pages_iter)
+
+    return _stub
+
+
+def test_tree_branch_one_page_emits_one_artifact_per_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: emitting directory entries as Artifacts, or dropping files."""
+    creds = _make_creds(monkeypatch, None)
+    entries: list[dict[str, Any]] = [
+        {"type": "file", "path": "config.json", "size": 12, "oid": "blob1"},
+        {"type": "directory", "path": "unet", "oid": "blob2"},
+        {
+            "type": "file",
+            "path": "unet/model.safetensors",
+            "size": 999,
+            "oid": "blob3",
+            "lfs": {
+                "oid": "ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890",
+                "size": 999,
+                "pointerSize": 134,
+            },
+        },
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert len(artifacts) == 2
+    assert {a.filename for a in artifacts} == {
+        "config.json",
+        "unet/model.safetensors",
+    }
+
+
+def test_tree_branch_filename_preserves_subdirs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: rsplit('/')[-1] would flatten 'unet/foo.safetensors' to 'foo.safetensors'."""
+    creds = _make_creds(monkeypatch, None)
+    entries = [
+        {
+            "type": "file",
+            "path": "unet/foo.safetensors",
+            "size": 1,
+            "oid": "b",
+        },
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert artifacts[0].filename == "unet/foo.safetensors"
+
+
+def test_tree_branch_lfs_oid_lowercased_onto_sha256(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: forwarding LFS oid verbatim; downloader's sha256_file output is lowercase."""
+    creds = _make_creds(monkeypatch, None)
+    entries: list[dict[str, Any]] = [
+        {
+            "type": "file",
+            "path": "weights.safetensors",
+            "size": 1,
+            "oid": "blob",
+            "lfs": {"oid": "ABC123DEF", "size": 1, "pointerSize": 134},
+        },
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert artifacts[0].sha256 == "abc123def"
+
+
+def test_tree_branch_non_lfs_entry_sha256_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: KeyError on small files lacking 'lfs', or defaulting to git-blob oid."""
+    creds = _make_creds(monkeypatch, None)
+    entries = [
+        {"type": "file", "path": "config.json", "size": 12, "oid": "blob"},
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert artifacts[0].sha256 is None
+
+
+def test_tree_branch_size_populated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bug: dropping size, breaking downloader skip-path size heuristics."""
+    creds = _make_creds(monkeypatch, None)
+    entries = [
+        {"type": "file", "path": "a.bin", "size": 4242, "oid": "blob"},
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert artifacts[0].size == 4242
+
+
+def test_tree_branch_authorization_header_attached_when_token_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: skipping the auth header on tree artifacts."""
+    creds = _make_creds(monkeypatch, "hf-secret")
+    entries = [
+        {"type": "file", "path": "a.bin", "size": 1, "oid": "blob"},
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert artifacts[0].headers.get("Authorization") == "Bearer hf-secret"
+
+
+def test_tree_branch_no_authorization_header_when_token_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: emitting an empty 'Bearer ' Authorization header."""
+    creds = _make_creds(monkeypatch, None)
+    entries = [
+        {"type": "file", "path": "a.bin", "size": 1, "oid": "blob"},
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert "Authorization" not in artifacts[0].headers
+
+
+def test_tree_branch_pagination_accumulates_all_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: returning only page 1, dropping pages 2..N silently."""
+    creds = _make_creds(monkeypatch, None)
+    page1 = [{"type": "file", "path": "a.bin", "size": 1, "oid": "1"}]
+    page2 = [{"type": "file", "path": "b.bin", "size": 1, "oid": "2"}]
+    page3 = [{"type": "file", "path": "c.bin", "size": 1, "oid": "3"}]
+    src = HuggingFaceSource(
+        fetch=_make_stub_fetch([(page1, "TOK1"), (page2, "TOK2"), (page3, None)])
+    )
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert [a.filename for a in artifacts] == ["a.bin", "b.bin", "c.bin"]
+
+
+def test_tree_branch_pagination_terminates_when_cursor_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: infinite loop when next_cursor stays None on the first page."""
+    creds = _make_creds(monkeypatch, None)
+    entries = [{"type": "file", "path": "a.bin", "size": 1, "oid": "1"}]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)]))
+    artifacts = src.resolve("hf:org/repo", creds)
+    assert len(artifacts) == 1
+
+
+def test_tree_branch_first_url_uses_recursive_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: omitting recursive=true would only list the repo root."""
+    creds = _make_creds(monkeypatch, None)
+    log: list[tuple[str, dict[str, str]]] = []
+    src = HuggingFaceSource(fetch=_make_stub_fetch([([], None)], log=log))
+    src.resolve("hf:org/repo", creds)
+    assert log[0][0] == (
+        "https://huggingface.co/api/models/org/repo/tree/main?recursive=true"
+    )
+
+
+def test_tree_branch_paginated_url_appends_url_encoded_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: forwarding the cursor without URL-encoding (tokens contain '+', '/', '=')."""
+    creds = _make_creds(monkeypatch, None)
+    log: list[tuple[str, dict[str, str]]] = []
+    cursor_raw = "a/b+c="
+    src = HuggingFaceSource(
+        fetch=_make_stub_fetch([([], cursor_raw), ([], None)], log=log)
+    )
+    src.resolve("hf:org/repo", creds)
+    assert "&cursor=" in log[1][0]
+    encoded = urllib.parse.quote(cursor_raw)
+    assert log[1][0].endswith(f"&cursor={encoded}")
+
+
+def test_tree_branch_empty_file_list_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: raising on empty repo instead of returning []."""
+    creds = _make_creds(monkeypatch, None)
+    src = HuggingFaceSource(fetch=_make_stub_fetch([([], None)]))
+    assert src.resolve("hf:org/repo", creds) == []
+
+
+def test_tree_branch_propagates_auth_error_from_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: swallowing AuthError instead of re-raising."""
+    creds = _make_creds(monkeypatch, "bad-token")
+
+    def _raise_auth(
+        url: str, headers: dict[str, str]
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        raise AuthError("HuggingFace 401 Unauthorized for ...")
+
+    src = HuggingFaceSource(fetch=_raise_auth)
+    with pytest.raises(AuthError, match="401"):
+        src.resolve("hf:org/repo", creds)
+
+
+def test_tree_branch_revision_threaded_into_url_and_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: tree URL using 'main' and Artifact URL also using 'main' when ref pins @<rev>."""
+    creds = _make_creds(monkeypatch, None)
+    log: list[tuple[str, dict[str, str]]] = []
+    entries = [
+        {"type": "file", "path": "a.bin", "size": 1, "oid": "blob"},
+    ]
+    src = HuggingFaceSource(fetch=_make_stub_fetch([(entries, None)], log=log))
+    artifacts = src.resolve("hf:org/repo@v1.0", creds)
+    assert log[0][0] == (
+        "https://huggingface.co/api/models/org/repo/tree/v1.0?recursive=true"
+    )
+    assert artifacts[0].url == "https://huggingface.co/org/repo/resolve/v1.0/a.bin"

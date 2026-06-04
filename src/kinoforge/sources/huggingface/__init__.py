@@ -29,7 +29,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from kinoforge.core import registry
-from kinoforge.core.errors import AuthError, KinoforgeError, ValidationError
+from kinoforge.core.errors import AuthError, KinoforgeError
 from kinoforge.core.interfaces import Artifact, CredentialProvider, ModelSource
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ class HuggingFaceSource(ModelSource):
 
     Single-file refs return exactly one Artifact whose URL is the canonical
     HuggingFace resolve URL for that file at the parsed revision.  Bare
-    refs are routed through the tree-listing branch added in Task 4.
+    refs are routed through the tree-listing branch.
 
     Attributes:
         scheme: Registry scheme key — ``"hf"``.
@@ -178,8 +178,9 @@ class HuggingFaceSource(ModelSource):
     def resolve(self, ref: str, creds: CredentialProvider) -> list[Artifact]:
         """Resolve *ref* to a list of Artifacts.
 
-        Single-file refs return a single-element list; bare-repo refs raise
-        ``ValidationError`` until Task 4 lands the tree branch.
+        Single-file refs return a single-element list; bare-repo refs
+        enumerate the repo tree via the HuggingFace tree API and emit one
+        Artifact per file entry.
 
         Args:
             ref: The HuggingFace reference string.
@@ -189,21 +190,17 @@ class HuggingFaceSource(ModelSource):
             List of :class:`~kinoforge.core.interfaces.Artifact` objects.
 
         Raises:
-            ValidationError: *ref* is a bare repo ref (no file path).
+            AuthError: HuggingFace returned HTTP 401 (re-raised from transport).
+            KinoforgeError: Any other non-2xx HTTP response from the tree API.
         """
         repo, revision, path = _parse_hf_ref(ref)
         token: str | None = creds.get("HF_TOKEN")
         headers: dict[str, str] = {"Authorization": f"Bearer {token}"} if token else {}
 
-        if path is None:
-            # DEFERRED to Task 4: directory listing via HF tree API.
-            raise ValidationError(
-                f"No file path in HuggingFace ref {ref!r} — "
-                "specify a file path (hf:repo:path/to/file). "
-                "Directory listing is not yet supported."
-            )
+        if path is not None:
+            return [self._single_file_artifact(repo, revision, path, headers)]
 
-        return [self._single_file_artifact(repo, revision, path, headers)]
+        return self._list_tree_artifacts(repo, revision, headers)
 
     def _single_file_artifact(
         self,
@@ -227,6 +224,80 @@ class HuggingFaceSource(ModelSource):
         filename = path.rsplit("/", 1)[-1]
         url = f"{_HF_BASE}/{repo}/resolve/{revision}/{path}"
         return Artifact(url=url, filename=filename, headers=dict(headers))
+
+    def _list_tree_artifacts(
+        self,
+        repo: str,
+        revision: str,
+        headers: dict[str, str],
+    ) -> list[Artifact]:
+        """Enumerate the repo tree and emit one Artifact per file entry.
+
+        Directory entries are filtered out.  ``Artifact.filename`` preserves
+        the entry's relative path verbatim (subdirs included).
+        ``Artifact.sha256`` is populated from ``lfs.oid`` (lowercased) when
+        present; non-LFS files get ``sha256=None``.  ``Artifact.size``
+        is taken from the entry's top-level ``size`` field.
+
+        Args:
+            repo: ``<org>/<name>`` HuggingFace repo identifier.
+            revision: Branch, tag, or commit SHA.
+            headers: HTTP headers (``Authorization`` when ``HF_TOKEN`` set);
+                attached verbatim to each emitted Artifact.
+
+        Returns:
+            One Artifact per ``type=="file"`` entry in the tree; ``[]`` when
+            the repo has no file entries.
+        """
+        entries = self._fetch_tree(repo, revision, headers)
+        artifacts: list[Artifact] = []
+        for entry in entries:
+            if entry.get("type") != "file":
+                continue
+            path: str = entry["path"]
+            url = f"{_HF_BASE}/{repo}/resolve/{revision}/{path}"
+            lfs: dict[str, Any] = entry.get("lfs") or {}
+            raw_oid = lfs.get("oid") or ""
+            sha256: str | None = raw_oid.lower() or None
+            size: int | None = entry.get("size")
+            artifacts.append(
+                Artifact(
+                    url=url,
+                    filename=path,
+                    size=size,
+                    sha256=sha256,
+                    headers=dict(headers),
+                )
+            )
+        return artifacts
+
+    def _fetch_tree(
+        self,
+        repo: str,
+        revision: str,
+        headers: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Page through the HF tree API, returning all entries flattened.
+
+        Args:
+            repo: ``<org>/<name>`` HuggingFace repo identifier.
+            revision: Branch, tag, or commit SHA.
+            headers: HTTP headers (``Authorization`` when ``HF_TOKEN`` set).
+
+        Returns:
+            Concatenated list of all entries across all pages, in API order.
+        """
+        entries: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            url = f"{_HF_BASE}/api/models/{repo}/tree/{revision}?recursive=true"
+            if cursor is not None:
+                url += f"&cursor={urllib.parse.quote(cursor)}"
+            page, next_cursor = self._fetch(url, headers)
+            entries.extend(page)
+            if next_cursor is None:
+                return entries
+            cursor = next_cursor
 
 
 # Self-register on import so a single ``import kinoforge.sources.huggingface``
