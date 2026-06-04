@@ -190,3 +190,33 @@ def test_to_jsonable_handles_pydantic_basemodel() -> None:
         "cluster_name_on_cloud": "<volatile>",
         "status": "UP",
     }
+
+
+def test_proxy_passes_through_class_attributes(tmp_path: Path) -> None:
+    """Class attributes pass through unchanged so classmethods can be called.
+
+    Bug catch: modern SkyPilot's ``sky.Task`` is a class used via
+    ``sky.Task.from_yaml_config(...)``. The proxy must not wrap it as
+    a method record-target, or the classmethod lookup fails with
+    ``AttributeError: 'function' object has no attribute 'from_yaml_config'``.
+    """
+
+    class _SampleClass:
+        @classmethod
+        def from_config(cls, payload: dict[str, Any]) -> dict[str, Any]:
+            return {"built": True, **payload}
+
+    class _RealSky:
+        TaskLike = _SampleClass  # class attribute on the wrapped object
+
+    real = _RealSky()
+    proxy = _RecordingProxy(real, tmp_path)
+
+    # The class object should come through unchanged, not as a wrapper.
+    assert proxy.TaskLike is _SampleClass
+    # Classmethod resolution must work.
+    built = proxy.TaskLike.from_config({"x": 1})
+    assert built == {"built": True, "x": 1}
+    # No fixture should have been written (no recording for the
+    # class-attribute access).
+    assert list(tmp_path.iterdir()) == []
