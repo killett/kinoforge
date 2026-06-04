@@ -21,6 +21,7 @@ import pytest
 from kinoforge.core.downloader import RunAriaCallable, download_all, download_one
 from kinoforge.core.errors import KinoforgeError
 from kinoforge.core.interfaces import Artifact
+from tests.conftest import HttpServerInfo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -643,3 +644,32 @@ def test_download_all_uses_aria2c_per_artifact(http_server, tmp_path):
         dest_file = tmp_path / name
         assert dest_file.read_bytes() == data
         assert results[i].uri == str(dest_file)
+
+
+def test_download_one_creates_parent_dirs_for_subpath_filename(
+    http_server: HttpServerInfo, tmp_path: Path
+) -> None:
+    """Artifact.filename with `/` triggers parent-dir mkdir before write.
+
+    Bug this catches: writing to dest/sub/foo.bin without first mkdir-ing
+    dest/sub fails with FileNotFoundError. The bare-repo listing feature
+    emits subpath filenames; this AC locks the downloader behaviour.
+
+    Forces the stdlib branch (``which_aria2=_DISABLED_ARIA``) because the
+    aria2c fast-path creates missing parent dirs natively, masking the
+    bug. Without the parent.mkdir in ``download_one``, the stdlib branch
+    raises ``FileNotFoundError`` on ``part_path.open("wb")``.
+    """
+    payload = b"hello-subdir"
+    http_server.serve_bytes("foo.bin", payload)
+    art = Artifact(
+        filename="sub/foo.bin",
+        url=f"{http_server.base_url}/foo.bin",
+    )
+
+    result = download_one(art, tmp_path, which_aria2=_DISABLED_ARIA)
+
+    target = tmp_path / "sub" / "foo.bin"
+    assert target.is_file()
+    assert target.read_bytes() == payload
+    assert result.uri == str(target)
