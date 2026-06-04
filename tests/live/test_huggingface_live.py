@@ -1,6 +1,10 @@
 """Opt-in live smoke test against the real HuggingFace tree API.
 
-Skipped by default. Set ``KINOFORGE_LIVE_HF=1`` to run.
+Gate:
+- ``KINOFORGE_LIVE_TESTS=1`` — required (project-standard live-test gate).
+
+Skipped by default. The HF tree read API is unauthenticated for public
+repos, so no per-provider credential is required for this smoke.
 
 Hits a tiny public canary repo so the test exercises:
 - the real Link-header pagination loop,
@@ -20,13 +24,13 @@ import pytest
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.sources.huggingface import HuggingFaceSource
 
-_LIVE_GATE = "KINOFORGE_LIVE_HF"
-
-
-pytestmark = pytest.mark.skipif(
-    os.environ.get(_LIVE_GATE) != "1",
-    reason=f"{_LIVE_GATE}=1 not set; live HF smoke skipped",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("KINOFORGE_LIVE_TESTS") != "1",
+        reason="live tests require KINOFORGE_LIVE_TESTS=1",
+    ),
+]
 
 
 # Canary candidates — pick a repo that:

@@ -151,7 +151,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 30 CLOSED (GH #8). Phase 30 entry below in the Post-MVP block. Test suite at 1071 passed, 5 skipped (3 existing + 2 live-gated HF smoke). Working tree clean after T6 commit. Live-smoke confirmation block in the Phase 30 entry is marked PENDING for Dr. Twinklebrane's manual `KINOFORGE_LIVE_HF=1` run.
+**Where we are:** Phase 30 CLOSED (GH #8). Phase 30 entry below in the Post-MVP block. Test suite at 1071 passed, 5 skipped (3 existing + 2 live-gated HF smoke). Working tree clean after T6 commit. Live-smoke confirmation block in the Phase 30 entry is marked PENDING for Dr. Twinklebrane's manual `KINOFORGE_LIVE_TESTS=1` run.
 
 **Read in this order:**
 1. The Phase 30 entry below (per-task SHAs + design decisions + LIVE SMOKE PENDING placeholder).
@@ -629,12 +629,15 @@ directory trees.
 - Error mapping mirrors CivitAI (401 → `AuthError`, other → `KinoforgeError`).
 - Provisioner check is source-agnostic (Q7 architecture pick): any
   source returning >1 artifact with `entry.sha256` set fails loud.
+- Live-smoke gate uses the project-standard `KINOFORGE_LIVE_TESTS=1`
+  (not a bespoke `KINOFORGE_LIVE_HF=1`) and lives under `tests/live/`,
+  mirroring the Phase 24 Layer N precedent for convention conformance.
 
 **Live-smoke confirmation (Phase 30 T6 gate):**
 
 <!-- LIVE SMOKE PENDING: Dr. Twinklebrane to run
 
-    KINOFORGE_LIVE_HF=1 pixi run test tests/sources/test_huggingface_live.py -v
+    KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_huggingface_live.py -v
 
 and paste the test summary + 3-5 representative artifact filenames here. -->
 
@@ -647,7 +650,7 @@ migration message. See spec §10.
 **Test count:** 1044 (post-Phase-29) → ~1071 (post-Phase-30 T1–T5,
 pre-live-smoke).  Delta: +27 net new across the 5 source-modifying
 tasks (T1 +1, T2 +8, T3 +2, T4 +14 incl. bare-ref rewrite, T5 +2).
-T6 adds +2 more (live smoke) when `KINOFORGE_LIVE_HF=1` is set;
+T6 adds +2 more (live smoke) when `KINOFORGE_LIVE_TESTS=1` is set;
 default-skip count goes from 3 to 5.
 
 **Out of scope (carry-forward):**
