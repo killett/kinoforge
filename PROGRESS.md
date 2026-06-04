@@ -558,7 +558,7 @@ failure preserves the existing single-connection path as a safety net.
 - T2 (download_one transport branch + 4 ACs + review nits): `efa4c68`, `2ce4d21`
 - T3 (silent fallback + WARNING log + 2 ACs): `2ef53fa`
 - T4 (download_all forwarding + A7): `a0ec352`
-- T5 (README + PROGRESS + SHA backfill): `7254a82`, `<T5b-SHA>`
+- T5 (README + PROGRESS + SHA backfill): `7254a82`, `29a2a8d`
 
 **Key design decisions:**
 - Auto-detect by `shutil.which("aria2c")` per call (Q1=A): zero ceremony;
