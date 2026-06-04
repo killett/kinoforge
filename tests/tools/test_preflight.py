@@ -243,3 +243,32 @@ def test_check_no_active_sky_clusters_fails_when_cluster_up(
     err = capsys.readouterr().err
     assert "leftover-cluster" in err
     assert "another" in err
+
+
+def test_check_no_active_sky_clusters_resolves_request_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Modern SkyPilot returns a ``RequestId`` from ``status()``; the check
+    must resolve via ``sky.get(request_id)`` to get the list of clusters.
+
+    Bug catch: a refactor that drops the ``isinstance(clusters, list)``
+    branch would silently iterate the ``RequestId`` object (or raise
+    ``TypeError``), breaking preflight against any modern SkyPilot SDK.
+    """
+    import sys
+    import types
+
+    fake_sky = types.ModuleType("sky")
+    sentinel_request_id = object()  # opaque RequestId stand-in
+    fake_sky.status = lambda **kw: sentinel_request_id  # type: ignore[attr-defined]
+    fake_sky.get = lambda req: [  # type: ignore[attr-defined]
+        {"name": "modern-cluster", "status": "ClusterStatus.UP"},
+    ]
+    monkeypatch.setitem(sys.modules, "sky", fake_sky)
+
+    from tools.preflight import _check_no_active_sky_clusters
+
+    # Should resolve the RequestId via sky.get(), see the cluster, and
+    # collapse "ClusterStatus.UP" to "UP" via rsplit before checking
+    # membership in {"UP", "INIT"}.
+    assert _check_no_active_sky_clusters() is False
