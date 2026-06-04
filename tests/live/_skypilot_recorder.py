@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -82,13 +81,26 @@ class _RecordingProxy:
             real: The object whose method calls should be recorded.
             fixture_dir: Directory in which to write ``<name>.json`` files.
                 Created if it does not exist.
+
+        Returns:
+            None.
         """
         self._real = real
         self._fixture_dir = fixture_dir
         fixture_dir.mkdir(parents=True, exist_ok=True)
 
-    def __getattr__(self, name: str) -> Callable[..., Any]:
-        """Return a wrapper around ``self._real.<name>``."""
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
+        """Return a wrapper around ``self._real.<name>`` for callables; pass through for everything else.
+
+        Args:
+            name: Attribute name being resolved on the proxy.
+
+        Returns:
+            A wrapper callable that records each invocation's return value to
+            ``<fixture_dir>/<name>.json`` then returns the underlying result.
+            For non-callable attributes, the raw attribute value is returned
+            unchanged (no recording).
+        """
         target = getattr(self._real, name)
         if not callable(target):
             return target

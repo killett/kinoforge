@@ -133,3 +133,28 @@ def test_two_successive_calls_produce_byte_identical_files(tmp_path: Path) -> No
     second = (tmp_path / "launch.json").read_bytes()
 
     assert first == second
+
+
+def test_proxy_passes_through_non_callable_attributes(tmp_path: Path) -> None:
+    """Non-callable attributes on the wrapped object pass through unchanged
+    and do NOT generate a fixture file."""
+    real = _DummySky()
+    real.version = "0.12.3"  # type: ignore[attr-defined]
+    proxy = _RecordingProxy(real, tmp_path)
+
+    assert proxy.version == "0.12.3"
+    # The presence/absence of fixture files is the load-bearing observable —
+    # the non-callable branch must not write anything.
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_to_jsonable_converts_tuple_to_list() -> None:
+    """`tuple` input is normalized to `list` so JSON output is consistent
+    regardless of whether the SDK returned a tuple or a list."""
+    assert _to_jsonable((1, 2, "x")) == [1, 2, "x"]
+    # Nested + mixed with volatile-key dicts inside the tuple
+    nested = ({"head_ip": "10.0.0.1", "name": "a"}, {"name": "b"})
+    assert _to_jsonable(nested) == [
+        {"head_ip": "<volatile>", "name": "a"},
+        {"name": "b"},
+    ]
