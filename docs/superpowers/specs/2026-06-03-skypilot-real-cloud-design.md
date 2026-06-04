@@ -23,7 +23,7 @@
 
 - `tests/live/test_skypilot_live.py` (new, ~210 LOC) — the smoke + recording proxy
 - `tests/providers/test_skypilot_recording_proxy.py` (new, ~80 LOC) — unit tests for the proxy and `_to_jsonable` helper, runnable without skypilot installed
-- `tests/providers/fixtures/skypilot/*.json` (new dir, 5 files) — captured SDK return shapes from the first successful live run
+- `tests/providers/fixtures/skypilot/*.json` (new dir, 4 files: `gpu_list.json`, `launch.json`, `status.json`, `down.json`) — captured SDK return shapes from the first successful live run
 - `examples/configs/skypilot.yaml` (new, ~80 LOC) — operator-facing config mirroring `wan.yaml` shape
 - `pixi.toml` (modified) — add `[feature.live-skypilot.pypi-dependencies]` + `[environments]` entry + `test-live-skypilot` task
 - `tools/preflight.py` (modified, ~25 LOC) — extend pod-count check to also scan active SkyPilot clusters via lazy-imported `sky.status()`
@@ -156,10 +156,10 @@ tests/live/test_skypilot_live.py
 
 provider.find_offers(HW_REQS_CPU)
     │
-    ├─► proxy.list_accelerators({})  ──►  sky.list_accelerators(…)
+    ├─► proxy.gpu_list({})  ──►  sky.gpu_list(…)
     │       │                                  │
     │       │◄─────────── dict result ─────────┘
-    │       └─► serialize → fixtures/skypilot/list_accelerators.json
+    │       └─► serialize → fixtures/skypilot/gpu_list.json
     │
     └─► returns list[Offer]
 
@@ -251,7 +251,7 @@ Pytest captures these per `--capture=no -v` so a failing run produces an actiona
 1. `pixi run -e live-skypilot test-live-skypilot -v` exits 0 against real GCP using the `kinoforge-runner` SA.
 2. Test completes in < 10 min wall-clock; actual estimate 5-7 min.
 3. Total spend per run ≤ $0.05 (smallest GCP CPU SKU × ~0.5 hr).
-4. All 5 fixture files written under `tests/providers/fixtures/skypilot/` with `<volatile>`-stripped, `sort_keys=True` stable JSON.
+4. All 4 fixture files written under `tests/providers/fixtures/skypilot/` with `<volatile>`-stripped, `sort_keys=True` stable JSON.
 5. Two successive runs produce **byte-identical** fixtures (no run-to-run noise after volatile stripping).
 6. `gcloud compute instances list --project=$(gcloud config get-value project)` returns empty within 2 min of test exit (cleanup verified). The active GCP project is whatever the operator has set via `gcloud config set project`; the smoke does not hard-code a project ID.
 7. `pixi run -e live-skypilot preflight` exits 0 before and after the smoke (no leaked cluster state).
@@ -315,7 +315,7 @@ Then: `pixi run -e live-skypilot test-live-skypilot -v`.
 
 After the first live run produces fixtures:
 
-1. Stage all 5 fixtures (`git add tests/providers/fixtures/skypilot/*.json`).
+1. Stage all 4 fixtures (`git add tests/providers/fixtures/skypilot/*.json`).
 2. Re-run the smoke to confirm fixtures are stable (no run-to-run diff after volatile stripping).
 3. Commit the fixtures in their own commit so the PR diff isolates the captured-shape review surface.
 4. Eyeball each fixture for unexpected SDK shape. Anything surprising becomes a `SkyPilotProvider` fix task in this layer.
