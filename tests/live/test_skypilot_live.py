@@ -38,7 +38,7 @@ if os.getenv("KINOFORGE_LIVE_TESTS") != "1":
 if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
     _REASONS.append("GOOGLE_APPLICATION_CREDENTIALS must be set")
 try:
-    import sky  # type: ignore[import-not-found]  # noqa: F401
+    import sky  # type: ignore[import-not-found, unused-ignore]  # noqa: F401
 except ImportError:
     _REASONS.append(
         "skypilot[gcp] not installed in the active env "

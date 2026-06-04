@@ -85,6 +85,29 @@ def _git_dirty_default() -> str:
     return proc.stdout
 
 
+def _record_field(record: Any, field: str) -> str:  # noqa: ANN401
+    """Read ``field`` off a SkyPilot cluster record.
+
+    Modern ``sky.status()`` returns typed pydantic-model records
+    (``StatusResponse``, accessed via attributes); test fakes and legacy
+    versions return plain dicts (accessed via ``.get()``). This helper
+    handles both so the preflight scanner can stay shape-agnostic.
+
+    Args:
+        record: A cluster record from ``sky.status()`` — either a dict
+            (test fake / legacy) or a ``StatusResponse`` (modern SDK).
+        field: The field name to read (e.g. ``"name"``, ``"status"``).
+
+    Returns:
+        The field value coerced to ``str``; empty string if absent.
+    """
+    if isinstance(record, dict):
+        value = record.get(field, "")
+    else:
+        value = getattr(record, field, "")
+    return str(value)
+
+
 def _check_no_active_sky_clusters() -> bool:
     """Verify no SkyPilot clusters are currently ``UP`` or ``INIT``.
 
@@ -100,7 +123,7 @@ def _check_no_active_sky_clusters() -> bool:
         operator can ``sky down <name>`` each one before retrying.
     """
     try:
-        import sky  # type: ignore[import-not-found]
+        import sky  # type: ignore[import-not-found, unused-ignore]
     except ImportError:
         _log.info("skypilot not installed; skipping SkyPilot cluster check")
         return True
@@ -113,17 +136,21 @@ def _check_no_active_sky_clusters() -> bool:
     # string (``"UP"``) from older versions and test fakes, or a
     # ``ClusterStatus`` enum (str-able as ``"ClusterStatus.UP"``) from
     # modern SkyPilot. ``rsplit(".", 1)[-1]`` collapses both shapes to
-    # the bare name.
+    # the bare name. Field access is via :func:`_record_field`, which
+    # accepts both dicts (fakes) and typed records (real SDK).
     clusters = sky.status()
+    resolved_clusters: list[Any]
     if not isinstance(clusters, list):
-        clusters = sky.get(clusters)
+        resolved_clusters = sky.get(clusters)
+    else:
+        resolved_clusters = clusters
     active = [
         c
-        for c in clusters
-        if str(c.get("status", "")).rsplit(".", 1)[-1] in {"UP", "INIT"}
+        for c in resolved_clusters
+        if _record_field(c, "status").rsplit(".", 1)[-1] in {"UP", "INIT"}
     ]
     if active:
-        names = ", ".join(c.get("name", "<unknown>") for c in active)
+        names = ", ".join(_record_field(c, "name") or "<unknown>" for c in active)
         print(
             f"FAIL: active SkyPilot clusters present: {names}\n"
             f"      run `sky down <name>` for each before invoking the live smoke",
