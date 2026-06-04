@@ -24,8 +24,9 @@ htmlcov/
 # Local-only working scratch (issue drafts, handoff notes, etc.)
 .tracking-issues/
 
-# Secrets — never commit .env
+# Secrets — never commit .env or GCP service-account keys
 .env
+.gcp/
 
 # Layer O — user-facing output directory (configurable per-run via --output-dir)
 output/
@@ -39,3 +40,4 @@ tests/engines/fixtures/comfyui/last_smoke.json
 # Stray ops binaries downloaded into the workspace (runpodctl, etc.)
 runpodctl
 runpodctl.tar.gz
+.gc-url.txt
