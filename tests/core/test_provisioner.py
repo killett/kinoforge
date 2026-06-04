@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from kinoforge.core import registry
-from kinoforge.core.errors import UnknownAdapter
+from kinoforge.core.errors import UnknownAdapter, ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -557,3 +557,109 @@ def test_ac5_unknown_ref_raises_unknown_adapter(tmp_path: Path) -> None:
             creds=_NullCreds(),
             download_dir=tmp_path,
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 T5 — generic multi-artifact entry.sha256 guard
+# ---------------------------------------------------------------------------
+
+
+class _FakeMultiSource(_FakeSourceBase):
+    """A test source that returns N artifacts per ref.
+
+    Used to drive the multi-artifact branch of provisioner's Step 1 merge
+    loop, simulating bare-repo refs (HF Phase 30) and multi-file CivitAI
+    model versions.
+    """
+
+    def __init__(self, scheme: str, artifacts: list[Artifact]) -> None:
+        super().__init__(scheme)
+        self._artifacts = artifacts
+
+    def resolve(self, ref: str, creds: CredentialProvider) -> list[Artifact]:  # noqa: D102
+        self.resolve_calls.append(ref)
+        return list(self._artifacts)
+
+
+def test_phase30_t5_multi_artifact_with_entry_sha256_raises(tmp_path: Path) -> None:
+    """Bug: silently stamping one hash onto N files via the merge loop.
+
+    Catches the latent CivitAI bug closed by Phase 30: a multi-file resolve
+    with entry.sha256 set was previously assigning the same hash to every
+    artifact, masking N-1 silent verification failures or overwrites.
+    """
+    scheme = "phase30t5"
+    source = _FakeMultiSource(
+        scheme,
+        artifacts=[
+            Artifact(url="http://x/a", filename="a.bin"),
+            Artifact(url="http://x/b", filename="b.bin"),
+        ],
+    )
+    registry.register_source(source)  # type: ignore[arg-type]
+
+    ref = f"{scheme}:multi"
+    cfg = _FakeCfg(
+        [_ModelEntry(ref=ref, target="t", sha256="abc")],
+    )
+    engine = _SpyEngine([], requires_local_weights=False)
+
+    with pytest.raises(ValidationError) as exc_info:
+        provision(
+            engine,  # type: ignore[arg-type]
+            cfg,  # type: ignore[arg-type]
+            None,
+            creds=_NullCreds(),
+            download_dir=tmp_path,
+        )
+
+    msg = str(exc_info.value)
+    # Message must include the ref string AND the artifact count.
+    assert ref in msg, f"ref {ref!r} not in error message: {msg!r}"
+    assert "2 artifacts" in msg, f"'2 artifacts' not in error message: {msg!r}"
+    # Message must include the suggestion to use a pinned revision or per-file refs.
+    assert "@<commit-sha>" in msg or "per-file" in msg, (
+        f"remediation suggestion missing from error message: {msg!r}"
+    )
+
+
+def test_phase30_t5_multi_artifact_without_entry_sha256_passes(tmp_path: Path) -> None:
+    """Bug: over-broad guard catching legitimate bare-repo provisions.
+
+    The guard only fires when entry.sha256 is set. With sha256=None,
+    multi-artifact resolves must merge as today and forward source-provided
+    sha256 verbatim to the downloader.
+    """
+    scheme = "phase30t5pass"
+    source = _FakeMultiSource(
+        scheme,
+        artifacts=[
+            Artifact(url="http://x/a", filename="a.bin", sha256="src-a"),
+            Artifact(url="http://x/b", filename="b.bin", sha256="src-b"),
+        ],
+    )
+    registry.register_source(source)  # type: ignore[arg-type]
+
+    downloaded: list[list[Artifact]] = []
+
+    def _downloader(arts: list[Artifact], dest: Path) -> list[Artifact]:
+        downloaded.append(list(arts))
+        return arts
+
+    cfg = _FakeCfg(
+        [_ModelEntry(ref=f"{scheme}:multi", target="t", sha256=None)],
+    )
+    engine = _SpyEngine([], requires_local_weights=True)
+
+    provision(
+        engine,  # type: ignore[arg-type]
+        cfg,  # type: ignore[arg-type]
+        None,
+        creds=_NullCreds(),
+        download_dir=tmp_path,
+        downloader=_downloader,
+    )
+    assert len(downloaded) == 1
+    assert len(downloaded[0]) == 2
+    # Source-provided sha256 preserved verbatim — guard did not interfere.
+    assert {a.sha256 for a in downloaded[0]} == {"src-a", "src-b"}
