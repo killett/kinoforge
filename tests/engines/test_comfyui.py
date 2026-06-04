@@ -23,6 +23,7 @@ from kinoforge.core.interfaces import (
     Segment,
 )
 from kinoforge.engines.comfyui import ComfyUIBackend, ComfyUIEngine
+from tests.engines.conftest import _load_comfy_fixture
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -297,7 +298,7 @@ class TestBackendSubmit:
 
         def post_spy(url: str, body: Any) -> dict[str, Any]:
             post_calls.append((url, body))
-            return {"prompt_id": "p-123"}
+            return _load_comfy_fixture("prompt_submit.json")
 
         engine = _make_engine(http_post=post_spy)
         backend = engine.backend(_INSTANCE, _make_cfg())
@@ -310,7 +311,8 @@ class TestBackendSubmit:
         )
         prompt_id = backend.submit(job)
 
-        assert prompt_id == "p-123"
+        expected_id = _load_comfy_fixture("prompt_submit.json")["prompt_id"]
+        assert prompt_id == expected_id
         assert len(post_calls) == 1
         url, body = post_calls[0]
         assert "/prompt" in url
@@ -321,7 +323,7 @@ class TestBackendSubmit:
 
         def post_spy(url: str, body: Any) -> dict[str, Any]:
             posted_bodies.append(body)
-            return {"prompt_id": "p-456"}
+            return _load_comfy_fixture("prompt_submit.json")
 
         engine = _make_engine(http_post=post_spy)
         backend = engine.backend(_INSTANCE, _make_cfg())
@@ -360,47 +362,51 @@ class TestBackendResult:
     def test_result_polls_until_completed(self) -> None:
         """result returns Artifact after polling through running → completed."""
         call_count = 0
+        _DONE_FIXTURE = _load_comfy_fixture("history_done.json")
+        _PROMPT_ID = next(iter(_DONE_FIXTURE))
+
+        _RUNNING = {_PROMPT_ID: {"status": {"completed": False}, "outputs": {}}}
+        _DONE = _DONE_FIXTURE
+
+        responses = [_RUNNING, _DONE]
 
         def get_spy(url: str) -> dict[str, Any]:
             nonlocal call_count
+            result = responses[call_count]
             call_count += 1
-            if call_count == 1:
-                return {"p-123": {"status": "running"}}
-            return {
-                "p-123": {
-                    "status": "completed",
-                    "outputs": {"node_9": {"files": [{"filename": "clip.mp4"}]}},
-                }
-            }
+            return result
 
         engine = _make_engine(http_get=get_spy, sleep=lambda s: None)
         backend = engine.backend(_INSTANCE, _make_cfg())
-        artifact = backend.result("p-123")
+        artifact = backend.result(_PROMPT_ID)
 
         assert isinstance(artifact, Artifact)
-        assert artifact.filename == "clip.mp4"
-        assert artifact.meta["prompt_id"] == "p-123"
+        node_id = next(iter(_DONE_FIXTURE[_PROMPT_ID]["outputs"]))
+        node_outputs = _DONE_FIXTURE[_PROMPT_ID]["outputs"][node_id]
+        key = next(
+            k for k in ("files", "videos", "gifs", "images") if k in node_outputs
+        )
+        expected_filename = node_outputs[key][0]["filename"]
+        assert artifact.filename == expected_filename
+        assert artifact.meta["prompt_id"] == _PROMPT_ID
         assert call_count == 2
 
     def test_result_url_contains_history_and_prompt_id(self) -> None:
         """http_get is called with a URL containing /history/<prompt_id>."""
         urls: list[str] = []
+        _DONE_FIXTURE = _load_comfy_fixture("history_done.json")
+        _PROMPT_ID = next(iter(_DONE_FIXTURE))
 
         def get_spy(url: str) -> dict[str, Any]:
             urls.append(url)
-            return {
-                "p-abc": {
-                    "status": "completed",
-                    "outputs": {"node_1": {"files": [{"filename": "out.mp4"}]}},
-                }
-            }
+            return _DONE_FIXTURE
 
         engine = _make_engine(http_get=get_spy, sleep=lambda s: None)
         backend = engine.backend(_INSTANCE, _make_cfg())
-        backend.result("p-abc")
+        backend.result(_PROMPT_ID)
 
         assert len(urls) >= 1
-        assert "/history/p-abc" in urls[0]
+        assert f"/history/{_PROMPT_ID}" in urls[0]
 
 
 # ---------------------------------------------------------------------------
@@ -518,29 +524,31 @@ def test_result_populates_url_with_view_query() -> None:
     Bug this catches: URL not set, or wrong query shape, leaving
     extract_last_frame unable to fetch the rendered bytes.
     """
+    import urllib.parse
+
     from kinoforge.engines.comfyui import ComfyUIBackend
 
-    history_payload = {
-        "PROMPT_ID": {
-            "outputs": {
-                "9": {"files": [{"filename": "clip.mp4"}]},
-            }
-        }
-    }
+    _done = _load_comfy_fixture("history_done.json")
+    _prompt_id = next(iter(_done))
+    _node_id = next(iter(_done[_prompt_id]["outputs"]))
+    _node_out = _done[_prompt_id]["outputs"][_node_id]
+    _key = next(k for k in ("files", "videos", "gifs", "images") if k in _node_out)
+    _expected_filename = _node_out[_key][0]["filename"]
 
     backend = ComfyUIBackend(
-        http_post=lambda url, body: {"prompt_id": "PROMPT_ID"},
-        http_get=lambda url: history_payload,
+        http_post=lambda url, body: _load_comfy_fixture("prompt_submit.json"),
+        http_get=lambda url: _done,
         base_url="http://localhost:8188",
         probe=_DEFAULT_PROBE,
         sleep=lambda s: None,
     )
 
-    artifact = backend.result("PROMPT_ID")
+    artifact = backend.result(_prompt_id)
 
-    assert artifact.filename == "clip.mp4"
-    assert artifact.url == "http://localhost:8188/view?filename=clip.mp4&type=output"
-    assert artifact.meta == {"prompt_id": "PROMPT_ID"}
+    _encoded = urllib.parse.quote(_expected_filename, safe="")
+    assert artifact.filename == _expected_filename
+    assert artifact.url == f"http://localhost:8188/view?filename={_encoded}&type=output"
+    assert artifact.meta["prompt_id"] == _prompt_id
 
 
 def test_extract_last_frame_fetches_url_and_calls_ffmpeg() -> None:
@@ -608,24 +616,28 @@ def test_result_url_encodes_filename_with_special_chars() -> None:
     bytes are interpolated raw, producing malformed URLs that urlopen
     rejects or that silently fetch the wrong resource.
     """
+    import copy
+
     from kinoforge.engines.comfyui import ComfyUIBackend
 
-    payload = {
-        "PID": {
-            "outputs": {
-                "9": {"files": [{"filename": "clip frame&01.mp4"}]},
-            }
-        }
-    }
+    _base = _load_comfy_fixture("history_done.json")
+    _prompt_id = next(iter(_base))
+    # Build a variant of the fixture with a special-char filename under the same key.
+    payload = copy.deepcopy(_base)
+    _node_id = next(iter(payload[_prompt_id]["outputs"]))
+    _node_out = payload[_prompt_id]["outputs"][_node_id]
+    _key = next(k for k in ("files", "videos", "gifs", "images") if k in _node_out)
+    _node_out[_key][0]["filename"] = "clip frame&01.mp4"
+
     backend = ComfyUIBackend(
-        http_post=lambda url, body: {"prompt_id": "PID"},
+        http_post=lambda url, body: _load_comfy_fixture("prompt_submit.json"),
         http_get=lambda url: payload,
         base_url="http://localhost:8188",
         probe=_DEFAULT_PROBE,
         sleep=lambda s: None,
     )
 
-    artifact = backend.result("PID")
+    artifact = backend.result(_prompt_id)
 
     # Filename preserved as-is on the Artifact.
     assert artifact.filename == "clip frame&01.mp4"
@@ -695,7 +707,7 @@ def test_submit_uploads_bytes_for_declared_asset_role(tmp_path: Any) -> None:
 
     def spy_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
         posted_prompts.append({"url": url, "body": body})
-        return {"prompt_id": "p-1"}
+        return _load_comfy_fixture("prompt_submit.json")
 
     backend = ComfyUIBackend(
         http_post=spy_post,
@@ -740,7 +752,7 @@ def test_submit_with_no_asset_node_ids_unchanged() -> None:
 
     def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
         posted.append({"u": u, "b": b})
-        return {"prompt_id": "x"}
+        return _load_comfy_fixture("prompt_submit.json")
 
     def post_file_spy(u: str, **kw: Any) -> str:
         uploaded.append(kw)
@@ -776,7 +788,7 @@ def test_submit_skips_role_when_asset_absent() -> None:
 
     def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
         posted.append(b)
-        return {"prompt_id": "x"}
+        return _load_comfy_fixture("prompt_submit.json")
 
     def post_file_spy(u: str, **kw: Any) -> str:
         uploaded.append(kw)
@@ -839,7 +851,7 @@ def test_submit_raises_AssetFetchError_on_upload_failure(tmp_path: Any) -> None:
         raise urllib.error.URLError("upload 500")
 
     backend = ComfyUIBackend(
-        http_post=lambda u, b: {"prompt_id": "x"},
+        http_post=lambda u, b: _load_comfy_fixture("prompt_submit.json"),
         http_get=lambda u: {},
         http_get_bytes=lambda u: b"",
         http_post_file=raising_post_file,
@@ -875,7 +887,7 @@ def test_submit_raises_AssetFetchError_on_fetch_failure() -> None:
         raise urllib.error.URLError("dns fail")
 
     backend = ComfyUIBackend(
-        http_post=lambda u, b: {"prompt_id": "x"},
+        http_post=lambda u, b: _load_comfy_fixture("prompt_submit.json"),
         http_get=lambda u: {},
         http_get_bytes=raising_get_bytes,
         http_post_file=lambda u, **kw: "n",
@@ -915,7 +927,7 @@ def test_submit_file_uri_reads_local_bytes(tmp_path: Any) -> None:
         return "n"
 
     backend = ComfyUIBackend(
-        http_post=lambda u, b: {"prompt_id": "x"},
+        http_post=lambda u, b: _load_comfy_fixture("prompt_submit.json"),
         http_get=lambda u: {},
         http_get_bytes=lambda u: b"WRONG",  # must NOT be used for file://
         http_post_file=post_file_spy,
@@ -950,7 +962,7 @@ def test_submit_patches_node_with_uploaded_filename() -> None:
 
     def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
         posted.append(b)
-        return {"prompt_id": "x"}
+        return _load_comfy_fixture("prompt_submit.json")
 
     backend = ComfyUIBackend(
         http_post=post_spy,
@@ -1342,7 +1354,7 @@ def test_submit_routes_prompt_into_node_overrides_text() -> None:
 
     def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
         posts.append({"u": u, "b": b})
-        return {"prompt_id": "p1"}
+        return _load_comfy_fixture("prompt_submit.json")
 
     backend = ComfyUIBackend(
         http_post=post_spy,
@@ -1380,7 +1392,7 @@ def test_submit_skips_when_prompt_node_ids_absent() -> None:
 
     def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
         posts.append({"u": u, "b": b})
-        return {"prompt_id": "p1"}
+        return _load_comfy_fixture("prompt_submit.json")
 
     backend = ComfyUIBackend(
         http_post=post_spy,
@@ -1417,7 +1429,7 @@ def test_submit_spec_prompt_wins_over_segment_comfyui() -> None:
 
     def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
         posts.append({"u": u, "b": b})
-        return {"prompt_id": "p1"}
+        return _load_comfy_fixture("prompt_submit.json")
 
     backend = ComfyUIBackend(
         http_post=post_spy,
@@ -1456,7 +1468,7 @@ def test_submit_does_not_overwrite_explicit_node_override_text() -> None:
 
     def post_spy(u: str, b: dict[str, Any]) -> dict[str, Any]:
         posts.append({"u": u, "b": b})
-        return {"prompt_id": "p1"}
+        return _load_comfy_fixture("prompt_submit.json")
 
     backend = ComfyUIBackend(
         http_post=post_spy,
