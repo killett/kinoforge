@@ -39,6 +39,13 @@ engine:
         ref: "4ee72c065db22c9d96c2427954dc69e7b908444b"
 
 models:
+  # Alternative one-line bare-repo form (Phase 30 — GH #8):
+  #   - ref: "hf:Kijai/WanVideo_comfy"
+  #     target: wan
+  # Pulls every file in the repo via the HF tree API; LFS-tracked
+  # checkpoints get per-file SHA256 integrity automatically. The
+  # per-file form below is retained for tighter control over which
+  # files land on disk.
   - ref: "hf:Kijai/WanVideo_comfy:Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors"
     kind: base
     target: diffusion_models
