@@ -11,6 +11,7 @@ PR reviewers diff those files — the diff IS the review surface.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 from datetime import datetime
 from enum import Enum
@@ -100,7 +101,7 @@ class _RecordingProxy:
         fixture_dir.mkdir(parents=True, exist_ok=True)
 
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401
-        """Return a wrapper around ``self._real.<name>`` for callables; pass through for everything else.
+        """Return a wrapper around ``self._real.<name>`` for ordinary callables; pass through for classes and non-callables.
 
         Args:
             name: Attribute name being resolved on the proxy.
@@ -108,11 +109,13 @@ class _RecordingProxy:
         Returns:
             A wrapper callable that records each invocation's return value to
             ``<fixture_dir>/<name>.json`` then returns the underlying result.
-            For non-callable attributes, the raw attribute value is returned
-            unchanged (no recording).
+            For classes (e.g. ``sky.Task``) and non-callable attributes, the
+            raw attribute value is returned unchanged (no recording). Classes
+            must pass through so classmethod lookup (``sky.Task.from_yaml_config``)
+            continues to work — wrapping them as a function would break it.
         """
         target = getattr(self._real, name)
-        if not callable(target):
+        if inspect.isclass(target) or not callable(target):
             return target
 
         def _wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
