@@ -1680,9 +1680,9 @@ def test_comfyui_prompt_submit_shape() -> None:
     around prompt_id fail loudly here, not silently in production.
     """
     response = _load_comfy_fixture("prompt_submit.json")
-    assert "prompt_id" in response
-    assert isinstance(response["prompt_id"], str)
-    assert response["prompt_id"]  # non-empty
+    assert "prompt_id" in response, "missing 'prompt_id' key"
+    assert isinstance(response["prompt_id"], str), "prompt_id is not a string"
+    assert response["prompt_id"], "prompt_id is empty"
 
 
 def test_comfyui_real_shape_required_keys() -> None:
@@ -1697,9 +1697,11 @@ def test_comfyui_real_shape_required_keys() -> None:
         "history_done.json should be keyed by exactly one prompt_id"
     )
     prompt_id, body = next(iter(response.items()))
-    assert isinstance(prompt_id, str) and prompt_id
+    assert isinstance(prompt_id, str) and prompt_id, (
+        "prompt_id must be non-empty string"
+    )
     assert "status" in body, "missing 'status' field"
     assert body["status"].get("completed") is True, "status.completed != True"
     assert "outputs" in body, "missing 'outputs' field"
-    assert isinstance(body["outputs"], dict)
+    assert isinstance(body["outputs"], dict), "outputs is not a dict"
     assert body["outputs"], "outputs dict empty"
