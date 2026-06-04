@@ -6,7 +6,9 @@ No real git, network, or ComfyUI traffic occurs.
 
 from __future__ import annotations
 
+import copy
 import urllib.error
+import urllib.parse
 from typing import Any
 
 import pytest
@@ -365,7 +367,7 @@ class TestBackendResult:
         _DONE_FIXTURE = _load_comfy_fixture("history_done.json")
         _PROMPT_ID = next(iter(_DONE_FIXTURE))
 
-        _RUNNING = {_PROMPT_ID: {"status": {"completed": False}, "outputs": {}}}
+        _RUNNING: dict[str, Any] = {_PROMPT_ID: {"outputs": {}}}
         _DONE = _DONE_FIXTURE
 
         responses = [_RUNNING, _DONE]
@@ -524,7 +526,6 @@ def test_result_populates_url_with_view_query() -> None:
     Bug this catches: URL not set, or wrong query shape, leaving
     extract_last_frame unable to fetch the rendered bytes.
     """
-    import urllib.parse
 
     from kinoforge.engines.comfyui import ComfyUIBackend
 
@@ -616,7 +617,6 @@ def test_result_url_encodes_filename_with_special_chars() -> None:
     bytes are interpolated raw, producing malformed URLs that urlopen
     rejects or that silently fetch the wrong resource.
     """
-    import copy
 
     from kinoforge.engines.comfyui import ComfyUIBackend
 
