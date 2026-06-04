@@ -10,7 +10,12 @@ import kinoforge.sources.huggingface  # noqa: F401  — registers the source on 
 from kinoforge.core import registry
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.errors import ValidationError
-from kinoforge.sources.huggingface import HuggingFaceSource
+from kinoforge.sources.huggingface import (
+    FetchCallable,
+    HuggingFaceSource,
+    _next_cursor_from_link,
+    _parse_hf_ref,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -175,3 +180,62 @@ def test_self_registers_on_import() -> None:
 def test_scheme_attribute_is_hf() -> None:
     """scheme class attribute is 'hf'."""
     assert HuggingFaceSource.scheme == "hf"
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 — parser
+# ---------------------------------------------------------------------------
+
+
+def test_parse_bare_ref_no_revision() -> None:
+    """Bug: defaulting revision to empty or None instead of 'main'."""
+    assert _parse_hf_ref("hf:org/repo") == ("org/repo", "main", None)
+
+
+def test_parse_bare_ref_with_revision() -> None:
+    """Bug: splitting on '@' before ':' would misparse 'hf:org/repo@v1.0'."""
+    assert _parse_hf_ref("hf:org/repo@v1.0") == ("org/repo", "v1.0", None)
+
+
+def test_parse_single_file_no_revision() -> None:
+    """Bug: dropping the multi-segment path when splitting."""
+    assert _parse_hf_ref("hf:org/repo:a/b.bin") == ("org/repo", "main", "a/b.bin")
+
+
+def test_parse_single_file_with_revision() -> None:
+    """Bug: parsing order — must split on ':' first, then '@' on the head."""
+    assert _parse_hf_ref("hf:org/repo@abc:a/b.bin") == ("org/repo", "abc", "a/b.bin")
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 — Link header cursor extraction
+# ---------------------------------------------------------------------------
+
+
+def test_next_cursor_empty_link_header_returns_none() -> None:
+    """Bug: KeyError or AttributeError on empty Link header."""
+    assert _next_cursor_from_link("") is None
+
+
+def test_next_cursor_no_next_rel_returns_none() -> None:
+    """Bug: matching any rel-value rather than rel='next' specifically."""
+    link = '<https://x/y?cursor=tok>; rel="prev"'
+    assert _next_cursor_from_link(link) is None
+
+
+def test_next_cursor_extracts_cursor_query_param() -> None:
+    """Bug: regexing for `cursor=` in the raw Link string and missing URL-encoding."""
+    link = '<https://x/y?cursor=eyJfaWQiOiJ0b2sifQ%3D%3D&recursive=true>; rel="next"'
+    cursor = _next_cursor_from_link(link)
+    # parse_qs URL-decodes the value, so the trailing == is restored.
+    assert cursor == "eyJfaWQiOiJ0b2sifQ=="
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 — FetchCallable type is exported
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_callable_type_importable() -> None:
+    """Bug: FetchCallable not exported from the module."""
+    assert FetchCallable is not None
