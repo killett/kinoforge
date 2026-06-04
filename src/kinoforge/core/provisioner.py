@@ -22,6 +22,7 @@ from typing import Protocol, runtime_checkable
 
 from kinoforge.core import registry
 from kinoforge.core.downloader import download_all
+from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
     CredentialProvider,
@@ -111,6 +112,18 @@ def provision(
     for entry in cfg.models:
         source = registry.source_for_ref(entry.ref)
         artifacts = source.resolve(entry.ref, creds)
+        # Guard: an entry-level sha256 cannot describe a multi-file resolve.
+        # Stamping one hash onto N artifacts would mask N-1 silent integrity
+        # failures.  This protects both HF bare-repo refs and CivitAI
+        # multi-file model versions from the same operator footgun.
+        if len(artifacts) > 1 and entry.sha256 is not None:
+            raise ValidationError(
+                f"sha256 cannot be set on ref {entry.ref!r} — "
+                f"it resolves to {len(artifacts)} artifacts. "
+                f"Use a pinned revision (e.g. @<commit-sha>) for "
+                f"tree-level integrity, or split the entry into "
+                f"per-file refs."
+            )
         for art in artifacts:
             merged_art = replace(
                 art,
