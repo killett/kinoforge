@@ -50,7 +50,9 @@
       "id": 5,
       "nativeTaskId": 22,
       "subject": "Task 6: First live invocation — produce fixtures",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "44101f2 (pre-flight + T5.5 hygiene at f1a684e); $0 spend",
+      "outcome": "Smoke failed at sky.gpu_list (does not exist in modern SkyPilot). Captured 2 fixtures (status.json + down.json — both contain RequestId UUIDs). T7 decomposed into 7a-7f sub-tasks.",
       "blockedBy": [4],
       "description": "**Goal:** Execute the smoke against real GCP. Only money-spending task (~$0.05).\n\n**Files (via test run):** 4 fixtures in `tests/providers/fixtures/skypilot/` — uncommitted until T7.\n\n**Acceptance Criteria:** preflight exit 0 before invocation; clean tree before invocation; smoke exit 0 in < 10 min; 4 fixtures valid JSON; zero VM survivors within 2 min.\n\n**Verify:** `gcloud compute instances list --format=json | python -c 'import json,sys; assert json.load(sys.stdin)==[]'`\n\n```json:metadata\n{\"files\": [\"tests/providers/fixtures/skypilot/gpu_list.json\", \"tests/providers/fixtures/skypilot/launch.json\", \"tests/providers/fixtures/skypilot/status.json\", \"tests/providers/fixtures/skypilot/down.json\"], \"verifyCommand\": \"pixi run -e live-skypilot test-live-skypilot -v\", \"acceptanceCriteria\": [\"preflight exit 0 before invocation\", \"clean tree before invocation\", \"smoke exit 0 in < 10 min\", \"4 fixtures written + non-empty + valid JSON\", \"zero GCP VMs surviving within 2 min\"]}\n```"
     },
@@ -71,5 +73,10 @@
       "description": "**Goal:** Document the layer in PROGRESS.md mirroring Phase 30's shape; close PROGRESS:114 carry-forward #2; add new CPU-only known-limitation.\n\n**Files:**\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:** Phase 31 entry exists (per-task SHAs, key decisions, live-smoke confirmation block, test count delta); PROGRESS:114 #2 struck-through + marked CLOSED; new CPU-only known-limitation added; RESUME block refreshed.\n\n**Verify:** `rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md\", \"acceptanceCriteria\": [\"Phase 31 entry exists with all required sub-sections\", \"PROGRESS:114 #2 struck-through + marked CLOSED\", \"new CPU-only known-limitation added\", \"RESUME block refreshed\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-04T00:30:00"
+  "lastUpdated": "2026-06-04T01:30:00",
+  "t7Sublog": {
+    "t7a-commit": "b9fd9ee",
+    "t7a-finding-deferred-1": "create_instance still passes dict to sky.launch; modern sky.launch wants sky.Task. Live invocation will TypeError. T7b addresses.",
+    "t7a-finding-deferred-2": "find_offers calls list_accelerators() with default gpus_only=True, returns nothing for CPU-only smokes. T7b synthesises CPU offer."
+  }
 }
