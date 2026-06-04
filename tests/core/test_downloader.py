@@ -271,6 +271,9 @@ def test_aria2c_seams_importable():
     # Trivial use to silence unused-import warnings and prove the names bind.
     assert callable(_shutil_which_aria2)
     assert callable(_subprocess_run_aria2)
-    # Type aliases are not callables at runtime in 3.10+ — just bound.
-    assert WhichCallable is not None
-    assert RunAriaCallable is not None
+    # Type aliases must resolve to collections.abc.Callable at runtime so a
+    # regression that reassigns one to, say, `int` is caught.
+    import collections.abc
+
+    assert WhichCallable.__origin__ is collections.abc.Callable  # type: ignore[attr-defined]
+    assert RunAriaCallable.__origin__ is collections.abc.Callable  # type: ignore[attr-defined]

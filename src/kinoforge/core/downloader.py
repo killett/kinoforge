@@ -139,7 +139,7 @@ def _subprocess_run_aria2(
     """Spawn ``aria2c`` to download *url* into *part_path*.
 
     Behaviour:
-    - Uses :data:`_ARIA2_BASE_ARGS` plus ``-d``/`-o`` for the output path
+    - Uses :data:`_ARIA2_BASE_ARGS` plus ``-d``/``-o`` for the output path
       and one ``--header`` flag per header.
     - Wall-clock timeout is 3600s (one hour); larger files at typical
       saturated bandwidth (200+ Mbps) complete inside this window.
