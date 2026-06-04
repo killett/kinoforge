@@ -144,23 +144,23 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #5 | S3 / GCS artifact stores | CLOSED (Layer C) |
 | #6 | `ArtifactStore.uri_for(run_id, name)` ABC | CLOSED (Layer A) |
 | #7 | Cross-process discovery lock | CLOSED (Layer H) |
-| #8 | HuggingFaceSource bare-repo listing | Open |
+| #8 | HuggingFaceSource bare-repo listing | CLOSED (Phase 30) |
 | #9 | aria2c fast-path | CLOSED (Phase 29) |
 
 ## Single next action
 
 ### RESUME — START HERE
 
-**Where we are:** Layer P CLOSED. Tagged `layer-p-closed` at HEAD `477a88a`. Phase 28 entry above. Test suite at `1036 passed, 3 skipped`. Working tree clean.
+**Where we are:** Phase 30 CLOSED (GH #8). Phase 30 entry below in the Post-MVP block. Test suite at ~1071 passed, 4 skipped (3 existing + 1 live-gated HF smoke). Working tree clean after T6 commit. Live-smoke confirmation block in the Phase 30 entry is marked PENDING for Dr. Twinklebrane's manual `KINOFORGE_LIVE_HF=1` run.
 
 **Read in this order:**
-1. The Phase 28 entry directly above (per-task SHAs + bug-catch trail + design decisions).
-2. `docs/superpowers/specs/2026-06-03-layer-p-closeout-design.md` for the brainstorming-locked decisions.
+1. The Phase 30 entry below (per-task SHAs + design decisions + LIVE SMOKE PENDING placeholder).
+2. `docs/superpowers/specs/2026-06-03-hf-bare-repo-design.md` for the brainstorming-locked decisions.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Standing recommendation: GitHub issue #9 — aria2c fast-path on the downloader. Small, contained, immediate payoff on every future Wan live run (current stdlib threadpool is the bottleneck on multi-GB model fetches). Alternatives: GitHub issue #8 (HF bare-repo listing), issue #4 (keyframe stage), real-cloud verification of SkyPilot or S3/GCS stores, or the orchestrator-status-reads-from-ledger architectural follow-up.
+**First unchecked task in fresh session:** pick next layer. Candidates: GH #4 keyframe stage; CLI `_cmd_status` ledger reads; batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of SkyPilot or S3/GCS stores.
 
-**Budget remaining: ~$11.26 of $15.** Layer P arc total live spend across all sub-plans: ~$0.74.
+**Budget remaining: ~$11.26 of $15.** Phase 30 was offline-only (live HF tree read API is unauthenticated for public repos — $0 live spend).
 
 ## Post-MVP
 
@@ -595,3 +595,65 @@ new (A1-A7 + the T1 symbol-lock test).
   + aria2c sub-files; deferred until a follow-up task touches the file.
 
 Closes GH #9.
+
+### Phase 30 — HF bare-repo listing (GH #8)
+
+Single-file extension to `src/kinoforge/sources/huggingface/__init__.py`
+that widens `HuggingFaceSource.resolve()` to enumerate a whole repo via
+the HF tree API on a bare `hf:<repo>` ref. Plus a generic
+`provisioner.provision()` guard that rejects `entry.sha256` on any
+multi-artifact resolve (closes a latent silent-broken case in
+`CivitAISource` as a side effect). Plus a one-line `downloader` mkdir
+hygiene fix that lets subpath-bearing artifact filenames land in fresh
+directory trees.
+
+- Spec: `docs/superpowers/specs/2026-06-03-hf-bare-repo-design.md`
+- Plan: `docs/superpowers/plans/2026-06-03-hf-bare-repo.md`
+- T1 (downloader mkdir-parents + 1 AC): `355611a`
+- T2 (parser + Link cursor + FetchCallable + 8 ACs): `d53a668`
+- T3 (@rev in single-file branch + 2 ACs): `482058b`
+- T4 (tree branch + 13 ACs + bare-ref rewrite, closes deferred T3 AC4): `5580f09`
+- T5 (provisioner generic guard + 2 ACs): `1a9276e`
+- T6 (README + examples + PROGRESS + live smoke): `<backfill after commit>`
+
+**Key design decisions:**
+- Mirror CivitAI minimalism (Q1=A): bare `hf:<repo>` returns every file;
+  no `include`/`exclude` filter knobs.
+- `@<rev>` suffix for revision pinning (Q2=A): default `main`, optional.
+- LFS-oid auto-populated onto `Artifact.sha256`; reject `entry.sha256`
+  on multi-artifact resolves via a generic provisioner guard (Q3=A).
+- Preserve repo subdirs in `Artifact.filename`; one-line
+  `target_path.parent.mkdir(parents=True, exist_ok=True)` in the
+  downloader (Q4=A).
+- `?recursive=true` + cursor-loop pagination (Q5=A).
+- Error mapping mirrors CivitAI (401 → `AuthError`, other → `KinoforgeError`).
+- Provisioner check is source-agnostic (Q7 architecture pick): any
+  source returning >1 artifact with `entry.sha256` set fails loud.
+
+**Live-smoke confirmation (Phase 30 T6 gate):**
+
+<!-- LIVE SMOKE PENDING: Dr. Twinklebrane to run
+
+    KINOFORGE_LIVE_HF=1 pixi run test tests/sources/test_huggingface_live.py -v
+
+and paste the test summary + 3-5 representative artifact filenames here. -->
+
+**Side-effect — latent CivitAI bug closed:** the generic provisioner
+guard turns formerly-silent N-1 verification failures on multi-file
+`civitai:<modelId>` refs (where the operator had set `sha256:` on the
+YAML entry) into a startup-time `ValidationError` with a clear
+migration message. See spec §10.
+
+**Test count:** 1044 (post-Phase-29) → ~1071 (post-Phase-30 T1–T5,
+pre-live-smoke).  Delta: +27 net new across the 5 source-modifying
+tasks (T1 +1, T2 +8, T3 +2, T4 +14 incl. bare-ref rewrite, T5 +2).
+T6 adds +2 more (live smoke) when `KINOFORGE_LIVE_HF=1` is set;
+default-skip count stays at 4.
+
+**Out of scope (carry-forward):**
+- `include` / `exclude` filtering on `ModelEntry`.
+- `GatedModelError` for 403 nuance.
+- Custom HF mirror (`HF_ENDPOINT` env var support).
+- Live smoke for gated/private repos.
+
+Closes GH #8.

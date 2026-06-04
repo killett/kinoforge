@@ -213,6 +213,24 @@ Credentials referenced by the script (e.g. `$HF_TOKEN`) are lifted from
 the configured `CredentialProvider` onto `spec.env` by the orchestrator.
 The script string never carries plaintext token values.
 
+### HuggingFace ref grammar
+
+Four ref shapes are recognised:
+
+| Ref | Meaning |
+|---|---|
+| `hf:<repo>` | Bare repo at `main` — every file enumerated via the HF tree API. |
+| `hf:<repo>@<rev>` | Bare repo at a pinned branch / tag / commit SHA. |
+| `hf:<repo>:<path>` | Single file at `main`. |
+| `hf:<repo>@<rev>:<path>` | Single file at a pinned revision. |
+
+Bare-repo resolves auto-populate per-file SHA256 from LFS metadata when
+present (every weights file ships LFS-tracked, so integrity verification
+runs without the operator setting `sha256:` per entry). Setting
+`sha256:` on a bare-repo entry raises `ValidationError` at config-load
+time — use a pinned `@<commit-sha>` for tree-level reproducibility, or
+split into per-file refs for per-file pinning.
+
 ## Credentials
 
 Kinoforge reads its API credentials from environment variables. To avoid
