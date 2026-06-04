@@ -243,11 +243,12 @@ def download_one(
     # ------------------------------------------------------------------
     # Transport branch
     # ------------------------------------------------------------------
-    aria_path = which_aria2()
-    if aria_path is not None:
+    _aria_bin = which_aria2()
+    if _aria_bin is not None:
         # Pre-delete any pre-existing .part so aria2c starts fresh.
         # Resume / Range stays a stdlib-branch responsibility.
         part_path.unlink(missing_ok=True)
+        # headers: passthrough deferred to a future layer (spec Q6).
         run_aria2(artifact.url, part_path, {})
     else:
         # Stdlib branch (unchanged from pre-Phase-29).

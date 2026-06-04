@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from kinoforge.core.downloader import download_all, download_one
+from kinoforge.core.downloader import RunAriaCallable, download_all, download_one
 from kinoforge.core.errors import KinoforgeError
 from kinoforge.core.interfaces import Artifact
 
@@ -38,9 +38,13 @@ SAMPLE_DATA = b"Hello, kinoforge downloader!\n" * 1000  # ~29 KiB
 # aria2c test helpers (T2-T4)
 # ---------------------------------------------------------------------------
 
-from kinoforge.core.downloader import RunAriaCallable  # noqa: E402
 
-_DISABLED_ARIA: Callable[[], str | None] = lambda: None  # noqa: E731
+def _disabled_aria() -> str | None:
+    """Return None to force the stdlib transport branch in tests."""
+    return None
+
+
+_DISABLED_ARIA: Callable[[], str | None] = _disabled_aria
 
 
 def _make_aria_stub(bytes_to_write: bytes) -> RunAriaCallable:
