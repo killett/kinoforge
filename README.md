@@ -336,6 +336,46 @@ terminate-only scope. Until that ships, reusing the main key via
 `${RUNPOD_API_KEY}` interpolation is the documented pattern; the
 selfterm fallback still works, only the privilege separation is lost.
 
+#### Engine integration (ComfyUI + Wan i2v)
+
+End-to-end RunPod → ComfyUI → Wan 2.1 i2v generation. Drives a real RunPod pod that boots ComfyUI with the kijai WanVideoWrapper graph and produces an MP4.
+
+**Required env vars:**
+- `RUNPOD_API_KEY` — RunPod REST API key (least-privilege; see "Credential safety in tests")
+- `HF_TOKEN` — Hugging Face token (for on-pod model downloads)
+
+**Optional env vars:**
+- `KEEP_POD=1` — skip pod destroy on success so you can iterate without paying for cold boots (manual reap below)
+
+**Quickstart:**
+
+```bash
+pixi run kinoforge generate \
+  --config examples/configs/wan.yaml \
+  --prompt "a cat turns into a woman" \
+  --init-image tests/providers/fixtures/runpod/sample_init_frame.png
+```
+
+**Dev loop with KEEP_POD:**
+
+```bash
+KEEP_POD=1 pixi run kinoforge generate --config examples/configs/wan.yaml --prompt "..." --init-image ...
+# iterate: tweak prompt / graph / params, re-run with the same KEEP_POD=1
+# pod stays warm and auto-reaps after idle_timeout (configured at 2h in examples/configs/wan.yaml)
+# manual reap:
+pixi run kinoforge destroy <pod_id>
+```
+
+**Cost shape:**
+- Pod: NVIDIA RTX 3090 @ ~$0.27/hr (varies by region/availability)
+- Cold boot (first run; downloads model weights): ~12–20 min wall-clock, ~$0.05–0.09
+- Warm reuse: ~5 min, ~$0.025
+- Always run `pixi run preflight` before live spend (checks zero active pods, clean tree, creds present)
+
+**Configuration files:**
+- `examples/configs/wan.yaml` — Wan 2.1 i2v engine config (lifecycle, params, model entries)
+- `examples/configs/wan_kijai_i2v.json` — kijai WanVideoWrapper API-format graph
+
 ## Per-job spec & params
 
 Two top-level YAML blocks supply per-job payload to the engine:
