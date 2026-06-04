@@ -648,7 +648,7 @@ migration message. See spec §10.
 pre-live-smoke).  Delta: +27 net new across the 5 source-modifying
 tasks (T1 +1, T2 +8, T3 +2, T4 +14 incl. bare-ref rewrite, T5 +2).
 T6 adds +2 more (live smoke) when `KINOFORGE_LIVE_HF=1` is set;
-default-skip count stays at 4.
+default-skip count goes from 3 to 5.
 
 **Out of scope (carry-forward):**
 - `include` / `exclude` filtering on `ModelEntry`.
