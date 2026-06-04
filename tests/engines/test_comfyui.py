@@ -1671,3 +1671,35 @@ def test_first_filename_against_captured_vhs_fixture() -> None:
     (prompt_id,) = response.keys()
     outputs = response[prompt_id]["outputs"]
     assert _first_filename(outputs) == "WanVideoWrapper_I2V_00001.mp4"
+
+
+def test_comfyui_prompt_submit_shape() -> None:
+    """Captured POST /prompt response has a non-empty string prompt_id key.
+
+    Shape-lockdown: future ComfyUI server-side renames or type changes
+    around prompt_id fail loudly here, not silently in production.
+    """
+    response = _load_comfy_fixture("prompt_submit.json")
+    assert "prompt_id" in response
+    assert isinstance(response["prompt_id"], str)
+    assert response["prompt_id"]  # non-empty
+
+
+def test_comfyui_real_shape_required_keys() -> None:
+    """Captured terminal GET /history/{id} response: status.completed=True + non-empty outputs.
+
+    Shape-lockdown: future ComfyUI server-side restructure of the
+    history response surfaces as a clear AssertionError on the
+    affected field, not as a downstream KeyError in production code.
+    """
+    response = _load_comfy_fixture("history_done.json")
+    assert len(response) == 1, (
+        "history_done.json should be keyed by exactly one prompt_id"
+    )
+    prompt_id, body = next(iter(response.items()))
+    assert isinstance(prompt_id, str) and prompt_id
+    assert "status" in body, "missing 'status' field"
+    assert body["status"].get("completed") is True, "status.completed != True"
+    assert "outputs" in body, "missing 'outputs' field"
+    assert isinstance(body["outputs"], dict)
+    assert body["outputs"], "outputs dict empty"
