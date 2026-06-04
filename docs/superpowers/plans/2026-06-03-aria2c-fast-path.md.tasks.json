@@ -1,0 +1,47 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-03-aria2c-fast-path.md",
+  "tasks": [
+    {
+      "id": 8,
+      "subject": "Task 1: Add aria2c seams to downloader.py (no behavior change)",
+      "status": "pending",
+      "description": "**Goal:** Introduce the two new type aliases, the `_ARIA2_BASE_ARGS` constant, the `_shutil_which_aria2` and `_subprocess_run_aria2` default seams, and the module logger. `download_one` and `download_all` signatures are untouched in this task — this is a pure additive task that locks the public symbols.\n\n**Files:**\n- Modify: `src/kinoforge/core/downloader.py`\n- Modify: `tests/core/test_downloader.py` (one new test that imports the new symbols)\n\n**Acceptance Criteria:**\n- import of WhichCallable + RunAriaCallable + _shutil_which_aria2 + _subprocess_run_aria2 succeeds\n- _shutil_which_aria2 returns None or path string per shutil.which\n- _subprocess_run_aria2 raises KinoforgeError on bad URL\n- DEFERRED comment block at lines 10-13 removed\n- suite size 1036 -> 1037\n\n**Verify:** `pixi run pytest tests/core/test_downloader.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/downloader.py\", \"tests/core/test_downloader.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_downloader.py -v\", \"acceptanceCriteria\": [\"import of WhichCallable + RunAriaCallable + _shutil_which_aria2 + _subprocess_run_aria2 succeeds\", \"_shutil_which_aria2 returns None or path string per shutil.which\", \"_subprocess_run_aria2 raises KinoforgeError on bad URL\", \"DEFERRED comment block at lines 10-13 removed\", \"suite size 1036 -> 1037\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 2: Wire aria2c success path into download_one",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** Add `which_aria2` and `run_aria2` kwargs to `download_one`; insert the transport branch between the skip-path and the verify-path. In this task, an aria2c subprocess failure propagates as `KinoforgeError` — the silent stdlib fallback is added in T3.\n\n**Files:**\n- Modify: `src/kinoforge/core/downloader.py`\n- Modify: `tests/core/test_downloader.py`\n\n**Acceptance Criteria:**\n- A1 aria2c used when detected, no stdlib fetch\n- A2 aria2c skipped when which returns None\n- A5 sha256 mismatch raises, part deleted, target absent\n- A6 sha None branch + idempotent skip on second call\n- 8 existing download_one ACs pass with which_aria2=_DISABLED_ARIA\n\n**Verify:** `pixi run pytest tests/core/test_downloader.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/downloader.py\", \"tests/core/test_downloader.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_downloader.py -v\", \"acceptanceCriteria\": [\"A1 aria2c used when detected, no stdlib fetch\", \"A2 aria2c skipped when which returns None\", \"A5 sha256 mismatch raises, part deleted, target absent\", \"A6 sha None branch + idempotent skip on second call\", \"8 existing download_one ACs pass with which_aria2=_DISABLED_ARIA\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 3: Silent stdlib fallback on aria2c failure",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Wrap the aria2c call in `try/except KinoforgeError`; on failure log a `WARNING`, unlink the `.part`, and fall through to the stdlib branch with `Range` semantics intact.\n\n**Files:**\n- Modify: `src/kinoforge/core/downloader.py`\n- Modify: `tests/core/test_downloader.py`\n\n**Acceptance Criteria:**\n- A3 aria2c failure logs WARNING containing aria2c+fallback and stdlib produces file\n- A4 poisoned part is unlinked before fallback; no Range header on retry; correct bytes\n\n**Verify:** `pixi run pytest tests/core/test_downloader.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/downloader.py\", \"tests/core/test_downloader.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_downloader.py -v\", \"acceptanceCriteria\": [\"A3 aria2c failure logs WARNING containing aria2c+fallback and stdlib produces file\", \"A4 poisoned part is unlinked before fallback; no Range header on retry; correct bytes\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 4: Forward seams through download_all + A7",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Add `which_aria2` and `run_aria2` kwargs to `download_all` with the same defaults, forward them to every `pool.submit(download_one, …)` call, retrofit the existing `download_all` test, and add A7.\n\n**Files:**\n- Modify: `src/kinoforge/core/downloader.py`\n- Modify: `tests/core/test_downloader.py`\n\n**Acceptance Criteria:**\n- A7 download_all forwards seams; run_aria2 called once per artifact; stdlib fetch never called\n- existing test_download_all_concurrent passes with which_aria2=_DISABLED_ARIA\n\n**Verify:** `pixi run pytest tests/core/test_downloader.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/downloader.py\", \"tests/core/test_downloader.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_downloader.py -v\", \"acceptanceCriteria\": [\"A7 download_all forwards seams; run_aria2 called once per artifact; stdlib fetch never called\", \"existing test_download_all_concurrent passes with which_aria2=_DISABLED_ARIA\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 5: README + PROGRESS docs (Phase 29)",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "**Goal:** Add a 'Faster downloads (aria2c)' sub-section to README.md and a 'Phase 29 — aria2c fast-path' entry to PROGRESS.md per the established convention.\n\n**Files:**\n- Modify: `README.md`\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:**\n- README sub-section names aria2c + install commands + silent fallback\n- PROGRESS Phase 29 entry with all 5 task SHAs backfilled\n- GitHub issues table row #9 flipped to CLOSED (Phase 29)\n- source-audit + examples gates pass\n\n**Verify:** `pixi run pytest tests/test_source_audit.py tests/test_examples.py -v`\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run pytest tests/test_source_audit.py tests/test_examples.py -v\", \"acceptanceCriteria\": [\"README sub-section names aria2c + install commands + silent fallback\", \"PROGRESS Phase 29 entry with all 5 task SHAs backfilled\", \"GitHub issues table row #9 flipped to CLOSED (Phase 29)\", \"source-audit + examples gates pass\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 6: Whole-suite gate + push to origin/main",
+      "status": "pending",
+      "blockedBy": [12],
+      "description": "**Goal:** Run the full test suite, confirm 1044 passing, then push the Phase 29 commits to `origin/main` per the established direct-to-main pattern.\n\n**Files:** None (gate + push only).\n\n**Acceptance Criteria:**\n- pixi run test exits 0 with 1044 passed\n- pixi run pre-commit run --all-files passes\n- git push origin main succeeds\n- working tree clean post-push\n\n**Verify:** `pixi run test`\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run test\", \"acceptanceCriteria\": [\"pixi run test exits 0 with 1044 passed\", \"pixi run pre-commit run --all-files passes\", \"git push origin main succeeds\", \"working tree clean post-push\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-03T19:07:38-0700"
+}
