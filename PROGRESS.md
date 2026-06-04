@@ -151,10 +151,10 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 30 CLOSED (GH #8). Phase 30 entry below in the Post-MVP block. Test suite at 1071 passed, 5 skipped (3 existing + 2 live-gated HF smoke). Working tree clean after T6 commit. Live-smoke confirmation block in the Phase 30 entry is marked PENDING for Dr. Twinklebrane's manual `KINOFORGE_LIVE_TESTS=1` run.
+**Where we are:** Phase 30 fully CLOSED (GH #8). HEAD `d752919`. Test suite at 1071 passed, 5 skipped (3 existing + 2 live-gated HF smoke). Working tree clean. Live smoke ran clean against real HF tree API (`hf-internal-testing/tiny-random-CLIPModel`, 13 files, 5 LFS sha256 populated incl. `onnx/model.onnx` proving subdir preservation); confirmation block populated.
 
 **Read in this order:**
-1. The Phase 30 entry below (per-task SHAs + design decisions + LIVE SMOKE PENDING placeholder).
+1. The Phase 30 entry below (per-task SHAs + design decisions + live-smoke confirmation table).
 2. `docs/superpowers/specs/2026-06-03-hf-bare-repo-design.md` for the brainstorming-locked decisions.
 3. `git log --oneline -10` for the most-recent commits.
 
