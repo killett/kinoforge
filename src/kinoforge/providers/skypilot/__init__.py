@@ -28,6 +28,9 @@ with a test double.  The interface expected of ``sky_client`` is:
 .. code-block:: python
 
     class SkyClientProtocol(Protocol):
+        class Task:
+            @staticmethod
+            def from_yaml_config(config: dict[str, Any]) -> Any: ...
         def list_accelerators(self, **kwargs: Any) -> dict[str, list[Any]]: ...
         def launch(self, task: Any, **kwargs: Any) -> Any: ...
         def status(self, **kwargs: Any) -> list[Any]: ...
@@ -426,28 +429,54 @@ class SkyPilotProvider(ComputeProvider):
     # ------------------------------------------------------------------
 
     def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
-        """Return SkyPilot GPU offers matching ``reqs``.
+        """Return SkyPilot offers matching ``reqs``.
 
-        Calls :func:`sky.list_accelerators` (the modern replacement for the
-        removed ``sky.gpu_list``) to obtain available accelerators, converts
-        each entry to an :class:`~kinoforge.core.interfaces.Offer`, then
-        delegates filtering and sorting to
+        For CPU-class workloads (``reqs.min_vram_gb == 0``) the returned
+        offer is a synthetic ``sky-cpu-auto`` entry — SkyPilot picks the
+        actual SKU from ``cpus``/``memory`` constraints set on the
+        :class:`sky.Task` at launch time, not from a discrete catalog.
+        Calling :func:`sky.list_accelerators` with its default
+        ``gpus_only=True`` returns no candidates for CPU workloads, which
+        would otherwise break ``find_offers`` for the CPU smoke and any
+        downstream caller passing ``min_vram_gb=0``.
+
+        For GPU workloads (``reqs.min_vram_gb > 0``) calls
+        :func:`sky.list_accelerators` (the modern replacement for the
+        removed ``sky.gpu_list``) to obtain available accelerators,
+        converts each entry to an :class:`~kinoforge.core.interfaces.Offer`,
+        then delegates filtering and sorting to
         :func:`~kinoforge.core.offers.filter_offers`.
 
-        The return shape is ``dict[str, list[InstanceTypeInfo]]``: each key
-        is an accelerator name (e.g. ``"A100"``) and each value is a list of
-        candidate :class:`InstanceTypeInfo` records (one per region/instance
-        type / cloud). Test fakes may return either this mapping shape or a
-        flat ``list`` of dict records — both are handled.
+        The accelerator return shape is ``dict[str, list[InstanceTypeInfo]]``:
+        each key is an accelerator name (e.g. ``"A100"``) and each value is a
+        list of candidate :class:`InstanceTypeInfo` records (one per
+        region/instance type / cloud). Test fakes may return either this
+        mapping shape or a flat ``list`` of dict records — both are handled.
 
         Args:
             reqs: Hardware requirements to filter against.
 
         Returns:
             Filtered and sorted list of :class:`~kinoforge.core.interfaces.Offer`
-            objects.
+            objects. For ``reqs.min_vram_gb == 0`` the list always contains a
+            single synthetic CPU offer.
         """
         sky = self._sky()
+        if reqs.min_vram_gb == 0:
+            # CPU short-circuit: ``list_accelerators(gpus_only=True)`` returns
+            # an empty dict for CPU smokes, so synthesise a single offer that
+            # signals downstream ``create_instance`` to set CPU resource
+            # constraints on the Task (see create_instance below).
+            return [
+                Offer(
+                    id="sky-cpu-auto",
+                    gpu_type="",
+                    vram_gb=0,
+                    cuda="0.0",
+                    cost_rate_usd_per_hr=0.05,
+                    mode="pod",
+                )
+            ]
         raw = sky.list_accelerators()
         resolved = _resolve(sky, raw)
 
@@ -490,14 +519,28 @@ class SkyPilotProvider(ComputeProvider):
     def create_instance(self, spec: InstanceSpec) -> Instance:
         """Launch a SkyPilot cluster from ``spec``.
 
-        Maps ``spec.lifecycle.idle_timeout_s`` to SkyPilot's ``autostop``
-        parameter (in whole minutes).
+        Maps ``spec.lifecycle.idle_timeout_s`` to SkyPilot's
+        ``idle_minutes_to_autostop`` parameter (whole minutes, int).
 
-        When ``spec.provision_script`` is set, it is mapped verbatim to
-        ``Task.setup``.  When ``spec.run_cmd`` is set, it is shell-quoted via
-        ``shlex.quote`` and joined to ``Task.run``.  Empty values for either
-        field are treated as 'not set' and the corresponding key is omitted
-        from ``task_config`` (pre-Layer-Q caller parity).
+        Builds a YAML-shaped task config (``name`` / ``envs`` / ``resources``
+        / ``setup`` / ``run``) and converts it to a :class:`sky.Task` via
+        :meth:`sky.Task.from_yaml_config`. Modern :func:`sky.launch` accepts
+        only :class:`sky.Task` / :class:`sky.Dag` — passing a raw dict raises
+        ``TypeError``.
+
+        Resource selection:
+          * If ``spec.offer`` is the synthetic CPU offer
+            (``offer.gpu_type == ""`` and ``offer.vram_gb == 0``) the task
+            requests ``cpus="1+", memory="2+"`` so SkyPilot picks the
+            cheapest CPU SKU.
+          * Otherwise, if ``spec.offer.gpu_type`` is non-empty, the task
+            requests ``accelerators="<gpu_type>:1"``.
+
+        When ``spec.provision_script`` is set, it is mapped to ``setup``
+        (after :func:`_strip_trailing_exec` removes RunPod's trailing
+        ``exec`` line so the setup phase can terminate). When ``spec.run_cmd``
+        is set, it is shell-quoted via :func:`shlex.quote` and joined into
+        ``run``. Empty values for either field omit the key.
 
         Args:
             spec: Instance specification.
@@ -507,36 +550,50 @@ class SkyPilotProvider(ComputeProvider):
             ``status="starting"`` and ``provider="skypilot"``.
         """
         sky = self._sky()
-        autostop_minutes: float = spec.lifecycle.idle_timeout_s / 60.0
+        autostop_minutes: int = int(spec.lifecycle.idle_timeout_s / 60.0)
+
+        resources: dict[str, Any] = {}
+        if spec.image:
+            resources["image_id"] = spec.image
+        # Resource selection: CPU synthetic offer triggers ``cpus``/``memory``
+        # so SkyPilot picks the cheapest CPU SKU; a GPU offer triggers
+        # ``accelerators=<gpu_type>:1``.
+        if spec.offer is not None and not spec.offer.gpu_type:
+            resources["cpus"] = "1+"
+            resources["memory"] = "2+"
+        elif spec.offer is not None and spec.offer.gpu_type:
+            resources["accelerators"] = f"{spec.offer.gpu_type}:1"
+
         task_config: dict[str, Any] = {
-            "image": spec.image,
-            "run_id": spec.run_id,
-            "env": dict(spec.env),
-            "tags": dict(spec.tags),
+            "name": spec.run_id or "kinoforge-skypilot",
+            "envs": dict(spec.env),
         }
-        # Layer Q: provision_script ends with `exec <run_cmd>` (RunPod convention),
-        # but SkyPilot needs Task.setup to terminate so Task.run can start. The
-        # trailing exec line is stripped via _strip_trailing_exec below; run_cmd
-        # becomes Task.run independently.
-        #
-        # Layer Q dual-exec hazard resolution: the script's trailing `exec <run_cmd>`
-        # line is stripped before it becomes Task.setup so setup can terminate
-        # normally; spec.run_cmd carries the long-running process into Task.run.
+        if resources:
+            task_config["resources"] = resources
+        # Layer Q dual-exec hazard resolution: the script's trailing
+        # ``exec <run_cmd>`` line is stripped before it becomes Task.setup so
+        # setup can terminate normally; spec.run_cmd carries the long-running
+        # process into Task.run.
         if spec.provision_script:
             task_config["setup"] = _strip_trailing_exec(spec.provision_script)
         if spec.run_cmd:
             task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
-        raw = sky.launch(task_config, autostop=autostop_minutes)
-        result = _resolve(sky, raw)
-        # Modern ``sky.launch`` resolves to ``Tuple[Optional[int], Optional[ResourceHandle]]``
-        # — there is no ``cluster_name`` field; we fall back to ``spec.run_id``.
-        # Offline fakes typically return ``{"cluster_name": ...}``.
-        if isinstance(result, dict):
-            cluster_name: str = str(
-                result.get("cluster_name", spec.run_id or "skypilot-cluster")
-            )
-        else:
-            cluster_name = spec.run_id or "skypilot-cluster"
+
+        # Modern sky.launch requires a sky.Task — passing the dict directly
+        # raises ``TypeError: launch() got an unexpected ... type``. Build the
+        # Task via from_yaml_config, whose schema matches the dict shape above.
+        task = sky.Task.from_yaml_config(task_config)
+        cluster_name: str = spec.run_id or "skypilot-cluster"
+        raw = sky.launch(
+            task,
+            cluster_name=cluster_name,
+            idle_minutes_to_autostop=autostop_minutes,
+        )
+        # Resolve a possible RequestId — the launch payload itself is not used
+        # because the cluster name we passed *is* the canonical id and the
+        # payload is ``(Optional[job_id], Optional[ResourceHandle])`` on the
+        # modern API.
+        _resolve(sky, raw)
         return Instance(
             id=cluster_name,
             provider=self.name,
