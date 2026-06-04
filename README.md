@@ -269,6 +269,25 @@ redaction pipeline over every captured payload and refuses (via `CredentialLeakE
 fixture that still contains a credential pattern. See [`AGENTS.md`](AGENTS.md) for the contributor
 guide, the pattern table, and the procedure for adding a new credential format.
 
+### Faster downloads (aria2c)
+
+kinoforge auto-detects `aria2c` on `PATH` and uses it as a transparent
+multi-connection fast-path for every model fetch. With aria2c installed
+on a typical residential link, the Wan 2.1 weight set (~9 GiB total)
+downloads in roughly one-tenth the wall-clock time it takes via the
+stdlib transport.
+
+Install:
+- Debian / Ubuntu: `sudo apt install aria2`
+- macOS (Homebrew): `brew install aria2`
+- Windows (Chocolatey): `choco install aria2`
+
+No configuration is required. If aria2c is absent, or if the subprocess
+fails for any reason (CDN rate-limit, transient network error,
+unexpected flag deprecation in a future aria2c release), the failure is
+logged at `WARNING` level and the stdlib single-connection path is used
+as a fallback — operators always get the file.
+
 ## Real providers — fal.ai
 
 kinoforge ships with a fal.ai sibling engine (`FalEngine`) for video generation

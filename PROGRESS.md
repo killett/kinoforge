@@ -145,7 +145,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #6 | `ArtifactStore.uri_for(run_id, name)` ABC | CLOSED (Layer A) |
 | #7 | Cross-process discovery lock | CLOSED (Layer H) |
 | #8 | HuggingFaceSource bare-repo listing | Open |
-| #9 | aria2c fast-path | Open |
+| #9 | aria2c fast-path | CLOSED (Phase 29) |
 
 ## Single next action
 
@@ -544,3 +544,54 @@ Layer P (RunPod engine integration: ComfyUI + Wan i2v) closes here. Phases 24–
 - `SkyPilotProvider._get_sky()` lazy path still unexercised against real `sky` SDK.
 - `S3ArtifactStore` + `GCSArtifactStore` never hit real cloud.
 - (Other follow-ups per the "Known limitations & follow-ups" section above.)
+
+### Phase 29 — aria2c fast-path (GitHub issue #9)
+
+Single-file change to `src/kinoforge/core/downloader.py` that auto-detects
+the `aria2c` system binary and uses it as a transparent multi-connection
+fast-path on every model fetch.  Silent stdlib fallback on subprocess
+failure preserves the existing single-connection path as a safety net.
+
+- Spec: `docs/superpowers/specs/2026-06-03-aria2c-fast-path-design.md`
+- Plan: `docs/superpowers/plans/2026-06-03-aria2c-fast-path.md`
+- T1 (seams + types + helpers + logger + drop DEFERRED + review nits): `2b45734`, `5df72a7`
+- T2 (download_one transport branch + 4 ACs + review nits): `efa4c68`, `2ce4d21`
+- T3 (silent fallback + WARNING log + 2 ACs): `2ef53fa`
+- T4 (download_all forwarding + A7): `a0ec352`
+- T5 (README + PROGRESS): `201eef2`
+
+**Key design decisions:**
+- Auto-detect by `shutil.which("aria2c")` per call (Q1=A): zero ceremony;
+  tests inject `which_aria2=lambda: None` to force the stdlib path.
+- Silent fallback to stdlib on aria2c failure with `WARNING` log (Q2=A):
+  operators always get the file; lost wall-clock is the only cost.
+- Injectable `run_aria2` + `which_aria2` callables (Q3=A): mirrors the
+  existing `fetch` seam pattern; no monkey-patching of `shutil` or
+  `subprocess` in tests.
+- Hard-coded knobs `-x 16 -s 16 -k 1M --max-tries=3 --retry-wait=2`
+  (Q5=A): battle-tested HF / CivitAI defaults; tuning is YAGNI.
+- Keep post-download `sha256_file()` verify; do NOT use aria2c's
+  `--checksum=` flag (Q7=A): single checksum code path for both
+  transports.
+- `--header=` passthrough mechanism shipped, population deferred (Q6=A):
+  `Artifact` has no `headers` field yet, so the aria2c branch passes
+  `headers={}`.  The seam contract is final; populating it is a one-line
+  follow-up when (and if) `Artifact.headers` is added.
+- Bug catch during T3: log message wording changed from "falling back to
+  stdlib" to "fallback to stdlib" — the substring `"fallback"` does not
+  appear in `"falling back"`, so the A3 case-insensitive assertion
+  drove the wording.
+
+**Test count:** 1036 (post-Layer-P) → 1044 (post-Phase-29).  Delta: +8 net
+new (A1-A7 + the T1 symbol-lock test).
+
+**Out of scope (carry-forward):**
+- Real-binary smoke test (`KINOFORGE_LIVE_ARIA2=1`).
+- `Artifact.headers` field for HF-gated weights via
+  `Authorization: Bearer hf_…`.
+- aria2c knobs via env-var / YAML config.
+- aria2c's `--checksum=` flag as a verify short-circuit.
+- Splitting `tests/core/test_downloader.py` (now 658 lines) into stdlib
+  + aria2c sub-files; deferred until a follow-up task touches the file.
+
+Closes GH #9.
