@@ -4,6 +4,22 @@ The ``sky`` module is imported *lazily* inside :func:`_get_sky` and is NEVER
 imported at module load time.  This keeps the provider importable in environments
 where SkyPilot is not installed (e.g. CI, RunPod-only deployments).
 
+Modern SkyPilot async API
+-------------------------
+Modern SkyPilot's top-level callables (:func:`sky.status`, :func:`sky.launch`,
+:func:`sky.down`, sometimes :func:`sky.list_accelerators`) return a
+``RequestId`` (a :class:`str` subclass) that the caller must resolve via
+:func:`sky.stream_and_get` (or :func:`sky.get`) to obtain the typed payload.
+The :func:`_resolve` helper in this module does that resolution; it is a
+no-op when the call already returned a non-string payload (test fakes
+return lists/dicts directly).
+
+Read-path records are typed objects: :class:`sky.schemas.api.responses.StatusResponse`
+exposes attributes (``.name``, ``.status``, ``.handle``); accelerator
+records are :class:`sky.catalog.common.InstanceTypeInfo` NamedTuples;
+test fakes inject dicts. The :func:`_record_field` adapter reads a field
+from either shape uniformly.
+
 Injectable client seam
 -----------------------
 Pass ``sky_client=<fake>`` to the constructor to replace every ``sky.*`` call
@@ -12,10 +28,11 @@ with a test double.  The interface expected of ``sky_client`` is:
 .. code-block:: python
 
     class SkyClientProtocol(Protocol):
-        def gpu_list(self) -> list[dict]: ...
-        def launch(self, task_config: Any, **kwargs: Any) -> dict: ...
-        def status(self) -> list[dict]: ...
-        def down(self, cluster_id: str) -> None: ...
+        def list_accelerators(self, **kwargs: Any) -> dict[str, list[Any]]: ...
+        def launch(self, task: Any, **kwargs: Any) -> Any: ...
+        def status(self, **kwargs: Any) -> list[Any]: ...
+        def down(self, cluster_id: str) -> Any: ...
+        def stream_and_get(self, request_id: str) -> Any: ...  # only if RequestId returned
 
 When ``sky_client is None`` the real path is taken: every method calls
 :func:`_get_sky` on-demand to obtain the real ``sky`` module.
@@ -84,23 +101,172 @@ def _get_sky() -> Any:  # noqa: ANN401
 
 @runtime_checkable
 class _SkyClientProtocol(Protocol):
-    """Structural interface expected of the injected ``sky_client``."""
+    """Structural interface expected of the injected ``sky_client``.
 
-    def gpu_list(self) -> list[dict[str, Any]]:
-        """Return a list of available GPU dicts."""
+    Modern real SkyPilot returns :class:`RequestId` (a :class:`str` subclass)
+    from :func:`sky.status`, :func:`sky.launch`, and :func:`sky.down`; the
+    caller must resolve via :func:`sky.stream_and_get`. Test fakes typically
+    return the payload directly (a list / dict). :func:`_resolve` handles
+    both shapes — it is a no-op when fed a non-string.
+    """
+
+    def list_accelerators(
+        self,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Any:  # noqa: ANN401
+        """Return a mapping of accelerator name → instance-type-info records.
+
+        Real return is ``dict[str, list[InstanceTypeInfo]]``; offline fakes
+        may return a flat ``list[dict]``. Both are flattened by
+        :meth:`SkyPilotProvider.find_offers`.
+        """
         ...
 
-    def launch(self, task_config: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
-        """Launch a SkyPilot cluster and return a result dict."""
+    def launch(
+        self,
+        task: Any,  # noqa: ANN401
+        /,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Any:  # noqa: ANN401
+        """Launch a SkyPilot cluster; may return a ``RequestId`` or direct payload."""
         ...
 
-    def status(self) -> list[dict[str, Any]]:
-        """Return a list of cluster status dicts."""
+    def status(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        """Return cluster status; may be a ``RequestId`` or a direct list."""
         ...
 
-    def down(self, cluster_id: str) -> None:
-        """Tear down the named cluster."""
+    def down(self, cluster_id: str, /) -> Any:  # noqa: ANN401
+        """Tear down the named cluster; may return a ``RequestId``."""
         ...
+
+
+# ---------------------------------------------------------------------------
+# Dual-shape helpers (typed-record / dict-fake adapter + RequestId resolver)
+# ---------------------------------------------------------------------------
+
+
+def _record_field(record: Any, field: str, default: str = "") -> str:  # noqa: ANN401
+    """Read ``field`` from a SkyPilot cluster / accelerator record.
+
+    Modern :func:`sky.status` returns typed records (attribute access on
+    :class:`StatusResponse`); :func:`sky.list_accelerators` returns
+    :class:`InstanceTypeInfo` NamedTuples (attribute access). Test fakes
+    return dicts (``.get()`` access). This helper handles both shapes.
+
+    Args:
+        record: Either a typed SDK record or a dict (e.g. a test fake).
+        field: Field name to read.
+        default: Fallback when the field is absent.
+
+    Returns:
+        The field value coerced to :class:`str`; ``default`` if absent or
+        explicitly ``None``.
+    """
+    if isinstance(record, dict):
+        value = record.get(field, default)
+    else:
+        value = getattr(record, field, default)
+    return str(value) if value is not None else default
+
+
+def _resolve(sky_module: Any, result: Any) -> Any:  # noqa: ANN401
+    """Resolve a SkyPilot ``RequestId`` to its payload, or return as-is.
+
+    Modern SkyPilot returns :class:`RequestId` (a :class:`str` subclass)
+    from top-level calls; :func:`sky.stream_and_get` blocks and returns
+    the typed payload. Test fakes and legacy versions return the payload
+    directly — :func:`isinstance(result, str)` branches between them
+    (``RequestId`` is a ``str`` subclass; lists/dicts/typed records are
+    not strings).
+
+    Args:
+        sky_module: The injected ``sky_client`` or imported ``sky`` module
+            (must expose ``stream_and_get`` when a string result is observed).
+        result: Direct return of a ``sky.*`` call.
+
+    Returns:
+        The resolved payload. If ``result`` is not a string, ``result`` is
+        returned unchanged.
+    """
+    if isinstance(result, str):
+        return sky_module.stream_and_get(result)
+    return result
+
+
+def _coerce_float_field(record: Any, field: str) -> float:  # noqa: ANN401
+    """Read ``field`` from ``record`` and coerce to ``float`` (0.0 on failure).
+
+    Args:
+        record: A typed SDK record or a dict.
+        field: Field name to read.
+
+    Returns:
+        The field value as a :class:`float`; ``0.0`` if the field is absent,
+        ``None``, or unparseable.
+    """
+    raw = _record_field(record, field, default="")
+    if not raw:
+        return 0.0
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _coerce_vram_gb(record: Any) -> int:  # noqa: ANN401
+    """Extract VRAM in GB from either offline-fake or real-SDK records.
+
+    Offline fakes expose ``vram_gb`` as an int directly. Modern
+    :class:`InstanceTypeInfo` exposes ``device_memory`` as a free-form
+    string like ``"80GB"`` or ``"24 GiB"`` (per-device VRAM); the leading
+    integer is extracted. Returns ``0`` when no usable value is found.
+
+    Args:
+        record: A typed SDK record or a dict.
+
+    Returns:
+        VRAM in whole gibibytes / gigabytes. ``0`` when absent or
+        unparseable.
+    """
+    # Offline-fake path: plain int field.
+    raw_int = _record_field(record, "vram_gb", default="")
+    if raw_int:
+        try:
+            return int(float(raw_int))
+        except (TypeError, ValueError):
+            pass
+    # Real-SDK path: free-form ``device_memory`` string.
+    raw_dm = _record_field(record, "device_memory", default="")
+    if raw_dm:
+        # Pull the leading numeric prefix (handles ``"80GB"``, ``"24 GiB"``).
+        digits = ""
+        for ch in raw_dm.strip():
+            if ch.isdigit() or ch == ".":
+                digits += ch
+            else:
+                break
+        if digits:
+            try:
+                return int(float(digits))
+            except (TypeError, ValueError):
+                pass
+    return 0
+
+
+def _collapse_status(raw: str) -> str:
+    """Collapse a SkyPilot enum-string status to its bare member name.
+
+    ``str(ClusterStatus.UP)`` yields ``'ClusterStatus.UP'``; the bare
+    ``'UP'`` is what :func:`_sky_status_to_kinoforge` looks up. Plain
+    strings (e.g. ``'UP'`` from test fakes) pass through unchanged.
+
+    Args:
+        raw: Raw status string, either ``'<Enum>.MEMBER'`` or just ``'MEMBER'``.
+
+    Returns:
+        The bare member name (everything after the last ``.``).
+    """
+    return raw.rsplit(".", 1)[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +303,9 @@ def _strip_trailing_exec(script: str) -> str:
 _SKY_STATUS_MAP: dict[str, str] = {
     "UP": "ready",
     "INIT": "starting",
+    "PENDING": "starting",
     "STOPPED": "stopped",
+    "AUTOSTOPPING": "stopped",
     "TERMINATED": "terminated",
     "TERMINATING": "stopped",
 }
@@ -146,26 +314,38 @@ _SKY_STATUS_MAP: dict[str, str] = {
 def _sky_status_to_kinoforge(sky_status: str) -> str:
     """Map a SkyPilot cluster status string to a kinoforge status string.
 
+    Accepts both bare member names (e.g. ``"UP"`` from test fakes) and
+    enum-string forms (e.g. ``"ClusterStatus.UP"`` from real
+    :class:`ClusterStatus`). The latter is collapsed via
+    :func:`_collapse_status` before lookup.
+
     Args:
-        sky_status: A SkyPilot status value (e.g. ``"UP"``, ``"INIT"``).
+        sky_status: A SkyPilot status value (e.g. ``"UP"``, ``"INIT"``,
+            ``"ClusterStatus.UP"``).
 
     Returns:
         One of ``"starting"``, ``"ready"``, ``"stopped"``, ``"terminated"``.
+        Unknown values default to ``"starting"``.
     """
-    return _SKY_STATUS_MAP.get(sky_status.upper(), "starting")
+    return _SKY_STATUS_MAP.get(_collapse_status(sky_status).upper(), "starting")
 
 
-def _cluster_dict_to_instance(cluster: dict[str, Any]) -> Instance:
-    """Convert a SkyPilot status-dict entry to a kinoforge Instance.
+def _cluster_record_to_instance(cluster: Any) -> Instance:  # noqa: ANN401
+    """Convert a SkyPilot cluster record (typed or dict) to a kinoforge Instance.
+
+    Reads ``name`` and ``status`` via :func:`_record_field`, which handles
+    both modern :class:`StatusResponse` (attribute access) and legacy /
+    fake dict records (``.get()`` access).
 
     Args:
-        cluster: A dict with at least ``name`` and ``status`` keys.
+        cluster: A SkyPilot cluster record — either a typed
+            :class:`StatusResponse`-like object or a ``dict[str, Any]``.
 
     Returns:
         An :class:`~kinoforge.core.interfaces.Instance`.
     """
-    cluster_name: str = str(cluster.get("name", ""))
-    sky_status: str = str(cluster.get("status", ""))
+    cluster_name: str = _record_field(cluster, "name")
+    sky_status: str = _record_field(cluster, "status")
     return Instance(
         id=cluster_name,
         provider="skypilot",
@@ -206,7 +386,7 @@ class SkyPilotProvider(ComputeProvider):
 
     def __init__(
         self,
-        sky_client: _SkyClientProtocol | None = None,
+        sky_client: Any | None = None,  # noqa: ANN401
         *,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -214,7 +394,13 @@ class SkyPilotProvider(ComputeProvider):
 
         Args:
             sky_client: Injectable sky SDK client; when ``None`` the real
-                ``sky`` module is used (lazily imported on demand).
+                ``sky`` module is used (lazily imported on demand). Typed
+                as :data:`~typing.Any` because the actual ``sky`` module
+                exposes far more attributes than :class:`_SkyClientProtocol`
+                documents, and test fakes (which return raw payloads
+                rather than ``RequestId`` strings) intentionally diverge
+                from the modern signature; :class:`_SkyClientProtocol`
+                documents the *minimum* surface the provider relies on.
             sleep: Injectable sleep used between destroy-poll iterations.
         """
         self._sky_client = sky_client
@@ -242,10 +428,17 @@ class SkyPilotProvider(ComputeProvider):
     def find_offers(self, reqs: HardwareRequirements) -> list[Offer]:
         """Return SkyPilot GPU offers matching ``reqs``.
 
-        Calls ``sky_client.gpu_list()`` to obtain available GPU types, converts
+        Calls :func:`sky.list_accelerators` (the modern replacement for the
+        removed ``sky.gpu_list``) to obtain available accelerators, converts
         each entry to an :class:`~kinoforge.core.interfaces.Offer`, then
         delegates filtering and sorting to
         :func:`~kinoforge.core.offers.filter_offers`.
+
+        The return shape is ``dict[str, list[InstanceTypeInfo]]``: each key
+        is an accelerator name (e.g. ``"A100"``) and each value is a list of
+        candidate :class:`InstanceTypeInfo` records (one per region/instance
+        type / cloud). Test fakes may return either this mapping shape or a
+        flat ``list`` of dict records — both are handled.
 
         Args:
             reqs: Hardware requirements to filter against.
@@ -255,13 +448,33 @@ class SkyPilotProvider(ComputeProvider):
             objects.
         """
         sky = self._sky()
-        gpu_entries: list[dict[str, Any]] = sky.gpu_list()
+        raw = sky.list_accelerators()
+        resolved = _resolve(sky, raw)
+
+        # Normalise to an iterable of records. Modern shape is a dict-of-list;
+        # flat-list shape is accepted for test-fake convenience.
+        records: list[Any] = []
+        if isinstance(resolved, dict):
+            for _accel_name, info_list in resolved.items():
+                records.extend(info_list)
+        else:
+            records.extend(resolved)
+
         raw_offers: list[Offer] = []
-        for gpu in gpu_entries:
-            gpu_name: str = str(gpu.get("name", ""))
-            vram_gb: int = int(gpu.get("vram_gb", 0))
-            cuda: str = str(gpu.get("cuda", "12.0"))
-            cost: float = float(gpu.get("cost_rate_usd_per_hr", 0.0))
+        for info in records:
+            # Prefer the modern ``accelerator_name`` field; fall back to legacy
+            # ``name`` (used by offline fakes).
+            gpu_name: str = _record_field(info, "accelerator_name") or _record_field(
+                info, "name"
+            )
+            # ``device_memory`` (modern) is a free-form string like ``"80GB"``;
+            # offline fakes provide ``vram_gb`` directly. Try the int field first,
+            # then a light string parse of device_memory.
+            vram_gb: int = _coerce_vram_gb(info)
+            cuda: str = _record_field(info, "cuda", default="12.0")
+            cost: float = _coerce_float_field(info, "price") or _coerce_float_field(
+                info, "cost_rate_usd_per_hr"
+            )
             raw_offers.append(
                 Offer(
                     id=gpu_name,
@@ -313,10 +526,17 @@ class SkyPilotProvider(ComputeProvider):
             task_config["setup"] = _strip_trailing_exec(spec.provision_script)
         if spec.run_cmd:
             task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
-        result: dict[str, Any] = sky.launch(task_config, autostop=autostop_minutes)
-        cluster_name: str = str(
-            result.get("cluster_name", spec.run_id or "skypilot-cluster")
-        )
+        raw = sky.launch(task_config, autostop=autostop_minutes)
+        result = _resolve(sky, raw)
+        # Modern ``sky.launch`` resolves to ``Tuple[Optional[int], Optional[ResourceHandle]]``
+        # — there is no ``cluster_name`` field; we fall back to ``spec.run_id``.
+        # Offline fakes typically return ``{"cluster_name": ...}``.
+        if isinstance(result, dict):
+            cluster_name: str = str(
+                result.get("cluster_name", spec.run_id or "skypilot-cluster")
+            )
+        else:
+            cluster_name = spec.run_id or "skypilot-cluster"
         return Instance(
             id=cluster_name,
             provider=self.name,
@@ -341,10 +561,10 @@ class SkyPilotProvider(ComputeProvider):
             KeyError: No cluster named ``instance_id`` is found in the status list.
         """
         sky = self._sky()
-        clusters: list[dict[str, Any]] = sky.status()
+        clusters = _resolve(sky, sky.status())
         for cluster in clusters:
-            if cluster.get("name") == instance_id:
-                return _cluster_dict_to_instance(cluster)
+            if _record_field(cluster, "name") == instance_id:
+                return _cluster_record_to_instance(cluster)
         raise KeyError(f"no SkyPilot cluster found: {instance_id!r}")
 
     def list_instances(self) -> list[Instance]:
@@ -357,8 +577,8 @@ class SkyPilotProvider(ComputeProvider):
             A (possibly empty) list of :class:`~kinoforge.core.interfaces.Instance`.
         """
         sky = self._sky()
-        clusters: list[dict[str, Any]] = sky.status()
-        return [_cluster_dict_to_instance(c) for c in clusters]
+        clusters = _resolve(sky, sky.status())
+        return [_cluster_record_to_instance(c) for c in clusters]
 
     def stop_instance(self, instance_id: str) -> None:
         """No-op for SkyPilot: use destroy_instance or rely on autostop.
@@ -382,11 +602,15 @@ class SkyPilotProvider(ComputeProvider):
             instance_id: The SkyPilot cluster name to destroy.
         """
         sky = self._sky()
-        sky.down(instance_id)
+        # Resolve the down RequestId so the call blocks until SkyPilot has
+        # accepted (and committed to) the teardown — otherwise the provider
+        # returns while teardown is still pending and the status-poll loop
+        # may observe stale records.
+        _resolve(sky, sky.down(instance_id))
         # Poll until the cluster disappears from the status listing.
         while True:
-            clusters: list[dict[str, Any]] = sky.status()
-            names = {str(c.get("name", "")) for c in clusters}
+            clusters = _resolve(sky, sky.status())
+            names = {_record_field(c, "name") for c in clusters}
             if instance_id not in names:
                 return  # confirmed gone
             self._sleep(3.0)

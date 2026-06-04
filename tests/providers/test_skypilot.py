@@ -3,10 +3,14 @@
 All sky SDK calls are intercepted via an injected ``_FakeSky`` client so that
 running these tests does **not** require ``skypilot`` to be installed.
 
+The fakes return payloads directly (dicts / lists). The provider's
+:func:`_resolve` helper short-circuits when the payload is not a string
+(``RequestId``), so dict-shaped fakes flow through unmodified.
+
 Coverage:
   AC1: Import isolation — no top-level sky imports outside providers/skypilot/
   AC2: Lazy import + injectable client — real sky never touched when sky_client injected
-  AC3: find_offers — calls sky_client.gpu_list(), converts to Offers, filters via filter_offers
+  AC3: find_offers — calls sky_client.list_accelerators(), converts to Offers, filters
   AC4: create_instance — calls sky_client.launch() with autostop in minutes
   AC5: list_instances — calls sky_client.status(), converts to Instances
   AC6: destroy_instance — calls sky_client.down(), polls until gone, idempotent
@@ -38,10 +42,18 @@ from kinoforge.core.interfaces import (
 
 
 class _FakeSky:
-    """Ad-hoc fake for the sky module interface.
+    """Ad-hoc fake for the modern sky module interface.
+
+    Returns payloads directly (lists / dicts); the provider's ``_resolve``
+    helper passes non-string returns through, so the dict-shaped fakes
+    here exercise the same code path that ``RequestId`` resolution
+    eventually feeds. To exercise the ``RequestId`` branch, see the
+    ``test_resolve_*`` tests below — they use a separate stub.
 
     Args:
-        gpu_list_result: Return value for ``gpu_list()``.
+        accelerator_result: Return value for ``list_accelerators()``.
+            May be a flat ``list[dict]`` (legacy shape — still supported by
+            the provider) or a ``dict[str, list[dict]]`` (modern shape).
         status_sequence: Successive return values for ``status()`` calls.
             Defaults to always returning ``[]``.
         launch_result: Return value for ``launch()``.
@@ -49,24 +61,37 @@ class _FakeSky:
 
     def __init__(
         self,
-        gpu_list_result: list[dict[str, Any]] | None = None,
+        accelerator_result: list[dict[str, Any]]
+        | dict[str, list[dict[str, Any]]]
+        | None = None,
         status_sequence: list[list[dict[str, Any]]] | None = None,
         launch_result: dict[str, Any] | None = None,
     ) -> None:
-        self._gpu_list_result: list[dict[str, Any]] = gpu_list_result or []
+        self._accelerator_result: (
+            list[dict[str, Any]] | dict[str, list[dict[str, Any]]]
+        ) = accelerator_result if accelerator_result is not None else []
         self._status_sequence: list[list[dict[str, Any]]] = status_sequence or [[]]
         self._launch_result: dict[str, Any] = launch_result or {}
         # Call records
         self.launch_calls: list[tuple[Any, dict[str, Any]]] = []
         self.status_call_count: int = 0
         self.down_calls: list[str] = []
+        self.list_accelerators_call_count: int = 0
         self._status_idx: int = 0
 
-    def gpu_list(self) -> list[dict[str, Any]]:
-        """Return the configured GPU list."""
-        return self._gpu_list_result
+    def list_accelerators(
+        self, **_kwargs: Any
+    ) -> list[dict[str, Any]] | dict[str, list[dict[str, Any]]]:
+        """Return the configured accelerator listing.
 
-    def status(self) -> list[dict[str, Any]]:
+        Mirrors :func:`sky.list_accelerators` (modern replacement for the
+        removed ``sky.gpu_list``). Accepts and ignores all keyword args so
+        the provider may pass through filter kwargs in future.
+        """
+        self.list_accelerators_call_count += 1
+        return self._accelerator_result
+
+    def status(self, **_kwargs: Any) -> list[dict[str, Any]]:
         """Return the next item in status_sequence (cycling on last entry)."""
         idx = min(self._status_idx, len(self._status_sequence) - 1)
         result = self._status_sequence[idx]
@@ -176,7 +201,7 @@ def test_ac2_all_methods_use_injected_client_without_touching_real_sky() -> None
     from kinoforge.providers.skypilot import SkyPilotProvider
 
     fake = _FakeSky(
-        gpu_list_result=_sample_gpu_list(),
+        accelerator_result=_sample_gpu_list(),
         status_sequence=[
             [{"name": "cluster-abc", "status": "UP"}],
             [],  # second call returns empty (for destroy polling)
@@ -234,7 +259,7 @@ def test_ac3_find_offers_calls_gpu_list_and_converts_to_offers() -> None:
     """find_offers calls gpu_list() and returns filtered Offer objects."""
     from kinoforge.providers.skypilot import SkyPilotProvider
 
-    fake = _FakeSky(gpu_list_result=_sample_gpu_list())
+    fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
     # With min_vram_gb=48, only A100 (80 GB) should survive
@@ -251,7 +276,7 @@ def test_ac3_find_offers_returns_all_when_no_filter_applied() -> None:
     """find_offers returns all offers when requirements are generous."""
     from kinoforge.providers.skypilot import SkyPilotProvider
 
-    fake = _FakeSky(gpu_list_result=_sample_gpu_list())
+    fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
     reqs = HardwareRequirements(min_vram_gb=0, min_cuda="11.0", max_usd_per_hr=9.99)
@@ -452,3 +477,280 @@ def test_ac9_factory_default_args_lazy_path() -> None:
 
     # sky_client must be None so the real lazy path would be used at runtime
     assert provider._sky_client is None  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Modern-API adapters — _resolve, _record_field, _collapse_status, vram parse
+# ---------------------------------------------------------------------------
+
+
+class _StubResponse:
+    """Attribute-bearing stub mimicking ``StatusResponse`` / ``InstanceTypeInfo``."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+class _SkyWithStreamAndGet:
+    """Fake sky module that resolves RequestId strings via ``stream_and_get``."""
+
+    def __init__(self, payload_by_request_id: dict[str, Any]) -> None:
+        self._payloads = payload_by_request_id
+        self.stream_and_get_calls: list[str] = []
+
+    def stream_and_get(self, request_id: str) -> Any:  # noqa: ANN401
+        self.stream_and_get_calls.append(request_id)
+        return self._payloads[request_id]
+
+
+def test_resolve_unwraps_string_request_id_via_stream_and_get() -> None:
+    """``_resolve`` calls ``stream_and_get`` exactly once when handed a str.
+
+    A bug that would catch: forgetting to invoke ``stream_and_get`` and
+    instead returning the raw RequestId string to the caller would make
+    every downstream ``isinstance(result, dict)`` / ``for c in clusters``
+    blow up because a string is iterated character-by-character.
+    """
+    from kinoforge.providers.skypilot import _resolve
+
+    payload = [{"name": "x", "status": "UP"}]
+    sky_stub = _SkyWithStreamAndGet({"req-123": payload})
+
+    result = _resolve(sky_stub, "req-123")
+
+    assert result is payload, "_resolve should return the resolved payload object"
+    assert sky_stub.stream_and_get_calls == ["req-123"], (
+        "stream_and_get should be called exactly once with the RequestId string"
+    )
+
+
+def test_resolve_passes_through_non_string_payload_without_calling_stream_and_get() -> (
+    None
+):
+    """``_resolve`` is a no-op when given a list / dict / typed record.
+
+    A bug that would catch: incorrectly always-calling ``stream_and_get``
+    would (a) crash test fakes that don't implement it and (b) double-
+    unwrap on legacy synchronous SkyPilot builds.
+    """
+    from kinoforge.providers.skypilot import _resolve
+
+    sky_stub = _SkyWithStreamAndGet({})  # no payloads — would raise on lookup
+    list_payload = [{"name": "x"}]
+
+    assert _resolve(sky_stub, list_payload) is list_payload
+    assert _resolve(sky_stub, {"k": "v"}) == {"k": "v"}
+    assert sky_stub.stream_and_get_calls == [], (
+        "stream_and_get must not be touched for non-string payloads"
+    )
+
+
+def test_record_field_reads_attribute_from_typed_object() -> None:
+    """``_record_field`` reads from typed records via ``getattr``.
+
+    A bug that would catch: treating a :class:`StatusResponse` like a
+    dict (``record.get("name")``) raises ``AttributeError`` on the real
+    SDK because pydantic ``BaseModel`` has no ``.get`` method.
+    """
+    from kinoforge.providers.skypilot import _record_field
+
+    record = _StubResponse(name="cluster-7", status="UP")
+    assert _record_field(record, "name") == "cluster-7"
+    assert _record_field(record, "missing", default="fallback") == "fallback"
+
+
+def test_record_field_reads_key_from_dict() -> None:
+    """``_record_field`` still reads from dicts via ``.get``.
+
+    A bug that would catch: regressing dict access would break every
+    offline test that injects dict-shaped fakes.
+    """
+    from kinoforge.providers.skypilot import _record_field
+
+    assert _record_field({"name": "c"}, "name") == "c"
+    assert _record_field({}, "missing", default="x") == "x"
+
+
+def test_record_field_returns_default_when_value_is_none() -> None:
+    """``_record_field`` substitutes the default when the value is explicitly ``None``.
+
+    A bug that would catch: SkyPilot's :class:`StatusResponse` declares
+    ``handle: Optional[Any] = None``; ``str(None)`` yields ``"None"`` and
+    would silently propagate into Instance.id / cluster lookups.
+    """
+    from kinoforge.providers.skypilot import _record_field
+
+    record = _StubResponse(handle=None)
+    assert _record_field(record, "handle", default="empty") == "empty"
+
+
+def test_collapse_status_strips_enum_prefix() -> None:
+    """``_collapse_status`` collapses ``ClusterStatus.UP`` → ``UP``.
+
+    A bug that would catch: passing the raw enum-string to
+    :data:`_SKY_STATUS_MAP` (which keys on ``"UP"``) yields the default
+    ``"starting"`` instead of ``"ready"`` for an actually-running cluster.
+    """
+    from kinoforge.providers.skypilot import _collapse_status
+
+    assert _collapse_status("ClusterStatus.UP") == "UP"
+    assert _collapse_status("UP") == "UP", "plain values must pass through"
+    assert _collapse_status("") == ""
+
+
+def test_sky_status_to_kinoforge_handles_enum_form() -> None:
+    """``_sky_status_to_kinoforge`` maps ``ClusterStatus.UP`` to ``'ready'``.
+
+    A bug that would catch: real ``str(StatusResponse.status)`` returns
+    ``'ClusterStatus.UP'`` and without the collapse the provider reports
+    every live cluster as ``'starting'`` indefinitely.
+    """
+    from kinoforge.providers.skypilot import _sky_status_to_kinoforge
+
+    assert _sky_status_to_kinoforge("ClusterStatus.UP") == "ready"
+    assert _sky_status_to_kinoforge("ClusterStatus.INIT") == "starting"
+    assert _sky_status_to_kinoforge("ClusterStatus.STOPPED") == "stopped"
+    assert _sky_status_to_kinoforge("ClusterStatus.AUTOSTOPPING") == "stopped"
+    # Bare forms still work (test-fake compatibility).
+    assert _sky_status_to_kinoforge("UP") == "ready"
+
+
+def test_list_instances_handles_typed_status_response_records() -> None:
+    """``list_instances`` reads ``.name`` / ``.status`` from typed records.
+
+    A bug that would catch: a regression to ``cluster.get("name")``
+    crashes with ``AttributeError`` on the live path because real
+    :class:`StatusResponse` (pydantic BaseModel) has no ``.get``.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    typed_record = _StubResponse(name="real-cluster", status="ClusterStatus.UP")
+
+    class _SkyTyped:
+        def __init__(self) -> None:
+            self.status_calls = 0
+
+        def status(self, **_kwargs: Any) -> list[Any]:
+            self.status_calls += 1
+            return [typed_record]
+
+    fake = _SkyTyped()
+    provider = SkyPilotProvider(sky_client=fake)
+    insts = provider.list_instances()
+
+    assert len(insts) == 1
+    assert insts[0].id == "real-cluster"
+    assert insts[0].status == "ready", (
+        "ClusterStatus.UP must collapse and map to 'ready'"
+    )
+
+
+def test_destroy_instance_resolves_down_request_id() -> None:
+    """``destroy_instance`` resolves the ``down`` RequestId before polling.
+
+    A bug that would catch: NOT resolving ``sky.down(...)``'s RequestId
+    means the provider returns while teardown is still pending; the
+    subsequent status poll observes stale records and the destroy
+    appears to hang (or in the worst case, returns 'gone' prematurely
+    because the cluster has not yet appeared in status updates).
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    class _SkyDown:
+        def __init__(self) -> None:
+            self.down_calls: list[str] = []
+            self.stream_and_get_calls: list[str] = []
+            self._status_idx = 0
+
+        def down(self, cluster_id: str) -> str:
+            self.down_calls.append(cluster_id)
+            return "down-req-id-42"
+
+        def stream_and_get(self, request_id: str) -> Any:  # noqa: ANN401
+            self.stream_and_get_calls.append(request_id)
+            return None  # sky.down resolves to None
+
+        def status(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            self._status_idx += 1
+            return [] if self._status_idx >= 1 else [{"name": "c", "status": "UP"}]
+
+    fake = _SkyDown()
+    provider = SkyPilotProvider(sky_client=fake, sleep=lambda _s: None)
+    provider.destroy_instance("c")
+
+    assert fake.down_calls == ["c"]
+    assert "down-req-id-42" in fake.stream_and_get_calls, (
+        "the RequestId returned by sky.down() must be resolved via stream_and_get"
+    )
+
+
+def test_find_offers_flattens_dict_of_list_from_real_list_accelerators() -> None:
+    """``find_offers`` handles the modern ``dict[str, list[InstanceTypeInfo]]`` shape.
+
+    A bug that would catch: iterating the dict directly yields keys
+    (accelerator names as strings); ``_record_field(str, "...")`` returns
+    ``""``, and every offer would carry an empty gpu_type. This test
+    pins the dict-of-list flattening explicitly.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    # Modern shape: keyed by accelerator name; values are records with
+    # ``accelerator_name`` + ``device_memory`` (free-form string).
+    modern_payload: dict[str, list[Any]] = {
+        "A100": [
+            _StubResponse(
+                cloud="GCP",
+                accelerator_name="A100",
+                accelerator_count=1,
+                device_memory="80GB",
+                price=1.50,
+                region="us-central1",
+            )
+        ],
+        "T4": [
+            _StubResponse(
+                cloud="GCP",
+                accelerator_name="T4",
+                accelerator_count=1,
+                device_memory="16GB",
+                price=0.40,
+                region="us-central1",
+            )
+        ],
+    }
+    fake = _FakeSky(accelerator_result=modern_payload)
+    provider = SkyPilotProvider(sky_client=fake)
+
+    # Generous reqs so both records survive the filter (A100=80GB$1.50,
+    # T4=16GB$0.40; provider parses cuda default as "12.0").
+    offers = provider.find_offers(
+        HardwareRequirements(min_vram_gb=0, min_cuda="12.0", max_usd_per_hr=9.99)
+    )
+    gpu_types = {o.gpu_type for o in offers}
+    assert "A100" in gpu_types, "A100 record must surface as an Offer"
+    assert "T4" in gpu_types, "T4 record must surface as an Offer"
+    a100 = next(o for o in offers if o.gpu_type == "A100")
+    assert a100.vram_gb == 80, "device_memory='80GB' must parse to vram_gb=80"
+    assert a100.cost_rate_usd_per_hr == pytest.approx(1.50)
+
+
+def test_find_offers_calls_list_accelerators_not_gpu_list() -> None:
+    """``find_offers`` invokes ``list_accelerators`` (modern), not ``gpu_list`` (removed).
+
+    A bug that would catch: a regression to ``sky.gpu_list()`` raises
+    ``AttributeError: module 'sky' has no attribute 'gpu_list'`` on the
+    live path because modern SkyPilot removed that callable.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky(accelerator_result=_sample_gpu_list())
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.find_offers(HardwareRequirements(min_vram_gb=0))
+
+    assert fake.list_accelerators_call_count == 1, (
+        "find_offers must invoke sky.list_accelerators (gpu_list is removed)"
+    )
+    assert not hasattr(fake, "gpu_list_call_count"), (
+        "no legacy gpu_list bookkeeping should remain"
+    )
