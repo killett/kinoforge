@@ -230,6 +230,7 @@ def download_one(
             stdlib HTTP transport failure.
     """
     target_path = dest / artifact.filename
+    target_path.parent.mkdir(parents=True, exist_ok=True)
     part_path = Path(str(target_path) + ".part")
 
     # ------------------------------------------------------------------
