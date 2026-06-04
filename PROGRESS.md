@@ -151,7 +151,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 30 CLOSED (GH #8). Phase 30 entry below in the Post-MVP block. Test suite at ~1071 passed, 4 skipped (3 existing + 1 live-gated HF smoke). Working tree clean after T6 commit. Live-smoke confirmation block in the Phase 30 entry is marked PENDING for Dr. Twinklebrane's manual `KINOFORGE_LIVE_HF=1` run.
+**Where we are:** Phase 30 CLOSED (GH #8). Phase 30 entry below in the Post-MVP block. Test suite at 1071 passed, 5 skipped (3 existing + 2 live-gated HF smoke). Working tree clean after T6 commit. Live-smoke confirmation block in the Phase 30 entry is marked PENDING for Dr. Twinklebrane's manual `KINOFORGE_LIVE_HF=1` run.
 
 **Read in this order:**
 1. The Phase 30 entry below (per-task SHAs + design decisions + LIVE SMOKE PENDING placeholder).
