@@ -636,11 +636,28 @@ directory trees.
 
 **Live-smoke confirmation (Phase 30 T6 gate):**
 
-<!-- LIVE SMOKE PENDING: Dr. Twinklebrane to run
+```
+KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_huggingface_live.py -v
+============================== 2 passed in 0.70s ===============================
+```
 
-    KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_huggingface_live.py -v
+Canary repo: `hf-internal-testing/tiny-random-CLIPModel` — 13 files
+enumerated via real HF tree API. Representative artifacts:
 
-and paste the test summary + 3-5 representative artifact filenames here. -->
+| filename | size | sha256 (lfs.oid) |
+|---|---|---|
+| `.gitattributes` | 1477 | `None` (non-LFS) |
+| `config.json` | 4570 | `None` (non-LFS) |
+| `onnx/model.onnx` | 767977 | `3c1108337f06...` |
+| `onnx/text_model.onnx` | 483660 | `925d5251526c...` |
+| `pytorch_model.bin` | 578637 | `4d0ce4dd8f7b...` |
+| `tf_model.h5` | 722684 | `7714fee94709...` |
+| `tokenizer.json` | 33401 | `None` (non-LFS) |
+
+End-to-end live verification covers: real Link-header pagination loop,
+real LFS `oid` → `Artifact.sha256` (5/13 files LFS-tracked), subdir
+preservation (`onnx/model.onnx` materialised verbatim), non-LFS files
+correctly get `sha256=None`, no auth required for the public read API.
 
 **Side-effect — latent CivitAI bug closed:** the generic provisioner
 guard turns formerly-silent N-1 verification failures on multi-file
