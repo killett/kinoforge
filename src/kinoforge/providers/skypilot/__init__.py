@@ -357,6 +357,44 @@ def _cluster_record_to_instance(cluster: Any) -> Instance:  # noqa: ANN401
     )
 
 
+def _normalize_image_id(image: str) -> str:
+    """Normalize an image reference for ``sky.Task.resources.image_id``.
+
+    SkyPilot rejects bare image names (e.g. ``"alpine:3"``) unless a
+    ``cloud`` is also specified, because the image registry is per-cloud.
+    Docker-prefixed names (``"docker:..."``) are cloud-agnostic and pass
+    validation without requiring a cloud setting. Cloud-registry-qualified
+    names (containing a host like ``"gcr.io/..."`` or ``"public.ecr.aws/..."``)
+    are also passed through unchanged.
+
+    Args:
+        image: Raw image reference as provided by the caller.
+
+    Returns:
+        A normalized image_id suitable for ``sky.Task.resources.image_id``.
+
+    Examples:
+        >>> _normalize_image_id("alpine:3")
+        'docker:alpine:3'
+        >>> _normalize_image_id("docker:alpine:3")
+        'docker:alpine:3'
+        >>> _normalize_image_id("gcr.io/my-proj/my-img")
+        'gcr.io/my-proj/my-img'
+    """
+    if image.startswith("docker:"):
+        return image
+    # Heuristic for cloud-registry-qualified names: leading segment is a
+    # registry host (contains a dot) AND the image is path-qualified
+    # (contains a slash), e.g. ``gcr.io/proj/img`` or ``public.ecr.aws/foo/bar``.
+    # Versioned bare names like ``python:3.12-slim`` also contain a dot but
+    # have no slash, so they are correctly treated as bare Docker Hub images.
+    if "/" in image:
+        first_segment = image.split("/", 1)[0]
+        if "." in first_segment:
+            return image  # e.g. gcr.io/..., public.ecr.aws/...
+    return f"docker:{image}"
+
+
 # ---------------------------------------------------------------------------
 # SkyPilotProvider
 # ---------------------------------------------------------------------------
@@ -554,7 +592,7 @@ class SkyPilotProvider(ComputeProvider):
 
         resources: dict[str, Any] = {}
         if spec.image:
-            resources["image_id"] = spec.image
+            resources["image_id"] = _normalize_image_id(spec.image)
         # Resource selection: CPU synthetic offer triggers ``cpus``/``memory``
         # so SkyPilot picks the cheapest CPU SKU; a GPU offer triggers
         # ``accelerators=<gpu_type>:1``.

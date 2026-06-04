@@ -494,8 +494,10 @@ def test_ac4_create_instance_task_config_uses_envs_and_resources_keys() -> None:
     assert "image" not in cfg, (
         "pre-T7b top-level 'image' key must not appear — moves under resources.image_id"
     )
-    assert cfg["resources"]["image_id"] == spec.image, (
-        "image_id belongs under resources per SkyPilot YAML schema"
+    assert cfg["resources"]["image_id"] == f"docker:{spec.image}", (
+        "image_id belongs under resources per SkyPilot YAML schema and is "
+        "normalized with a 'docker:' prefix for cloud-agnostic Docker images "
+        "(T7h: SkyPilot v0.12+ rejects bare image_ids without a cloud)"
     )
 
 
@@ -1003,3 +1005,27 @@ def test_find_offers_calls_list_accelerators_not_gpu_list() -> None:
     assert not hasattr(fake, "gpu_list_call_count"), (
         "no legacy gpu_list bookkeeping should remain"
     )
+
+
+def test_normalize_image_id_adds_docker_prefix_to_bare_names() -> None:
+    """Bare image names get a ``docker:`` prefix so SkyPilot's validate()
+    doesn't require an explicit cloud.
+
+    Bug catch: SkyPilot v0.12+ raises ``Cloud must be specified when
+    image_id is provided.`` if the image is not docker-prefixed and no
+    cloud is set.
+    """
+    from kinoforge.providers.skypilot import _normalize_image_id
+
+    assert _normalize_image_id("alpine:3") == "docker:alpine:3"
+    assert _normalize_image_id("python:3.12-slim") == "docker:python:3.12-slim"
+
+
+def test_normalize_image_id_passes_through_prefixed_names() -> None:
+    """Already-prefixed Docker images and registry-qualified URIs pass
+    through unchanged."""
+    from kinoforge.providers.skypilot import _normalize_image_id
+
+    assert _normalize_image_id("docker:alpine:3") == "docker:alpine:3"
+    assert _normalize_image_id("gcr.io/my-proj/img:v1") == "gcr.io/my-proj/img:v1"
+    assert _normalize_image_id("public.ecr.aws/foo/bar") == "public.ecr.aws/foo/bar"
