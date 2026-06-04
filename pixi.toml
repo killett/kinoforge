@@ -129,5 +129,13 @@ pre-commit-install = "python -m pre_commit install --install-hooks"
 [feature.live-skypilot.pypi-dependencies]
 skypilot = { version = "*", extras = ["gcp"] }
 
+[feature.live-skypilot.dependencies]
+# google-cloud-sdk provides the `gcloud` binary on PATH inside the
+# live-skypilot env. Required because SkyPilot's API server (a background
+# daemon launched on first sky.* call) shells out to gcloud for GCP
+# provisioning and inherits PATH from the activating env — the host-side
+# gcloud at ~/google-cloud-sdk/bin is not visible to it.
+google-cloud-sdk = "*"
+
 [environments]
 live-skypilot = { features = ["live-skypilot"] }
