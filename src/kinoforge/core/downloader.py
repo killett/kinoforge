@@ -201,8 +201,10 @@ def download_one(
       (multi-connection per file, configurable via :data:`_ARIA2_BASE_ARGS`).
     - On aria2c success, the existing sha256 verify + atomic rename runs
       unchanged.
-    - On aria2c failure, ``KinoforgeError`` is raised in this task; the
-      silent stdlib fallback is added in T3.
+    - On aria2c failure (subprocess crash, non-zero exit, timeout), a
+      ``WARNING`` is logged, the ``.part`` is unlinked, and the stdlib
+      branch runs as a transparent fallback so the operator still gets
+      the file.
     - When ``which_aria2()`` returns ``None`` (binary absent or test stub),
       the stdlib branch runs exactly as before.
 
