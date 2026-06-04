@@ -500,3 +500,90 @@ def test_aria2c_no_sha256_succeeds(http_server, tmp_path):
         run_aria2=counting_aria,
     )
     assert aria_call_count[0] == 1, "second call hit aria2c instead of skip-path"
+
+
+# ---------------------------------------------------------------------------
+# T3 A3: aria2c failure falls back to stdlib + WARNING log
+# ---------------------------------------------------------------------------
+
+
+def test_aria2c_failure_falls_back_to_stdlib(http_server, tmp_path, caplog):
+    """T3 A3: aria2c raises -> WARNING logged, stdlib fetch produces the file.
+
+    Bug this catches: subprocess failure becomes a hard error and operators
+    lose their existing single-connection download path.
+    """
+    http_server.serve_bytes("model.bin", SAMPLE_DATA)
+    artifact = Artifact(
+        filename="model.bin",
+        url=f"{http_server.base_url}/model.bin",
+        sha256=_sha256(SAMPLE_DATA),
+    )
+
+    with caplog.at_level("WARNING", logger="kinoforge.core.downloader"):
+        result = download_one(
+            artifact,
+            tmp_path,
+            which_aria2=lambda: "/usr/bin/aria2c",
+            run_aria2=_failing_aria("simulated aria2c exit 22"),
+        )
+
+    dest_file = tmp_path / "model.bin"
+    assert dest_file.exists()
+    assert dest_file.read_bytes() == SAMPLE_DATA
+    assert result.uri == str(dest_file)
+
+    # WARNING log records contain the contract substrings.
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings, "expected a WARNING log on aria2c fallback"
+    msg = warnings[0].getMessage()
+    assert "aria2c" in msg, f"WARNING message missing 'aria2c': {msg!r}"
+    assert "fallback" in msg.lower(), f"WARNING message missing 'fallback': {msg!r}"
+
+
+# ---------------------------------------------------------------------------
+# T3 A4: aria2c failure unlinks poisoned .part before fallback
+# ---------------------------------------------------------------------------
+
+
+def test_aria2c_failure_unlinks_part_before_fallback(http_server, tmp_path):
+    """T3 A4: a failed aria2c that wrote garbage bytes must NOT cause the
+    stdlib fallback to Range-resume off the garbage prefix.
+
+    Bug this catches: the fallback path inherits the poisoned .part,
+    producing a corrupt assembled file that fails sha256 verify on every
+    retry forever.
+    """
+    http_server.serve_bytes("model.bin", SAMPLE_DATA)
+    artifact = Artifact(
+        filename="model.bin",
+        url=f"{http_server.base_url}/model.bin",
+        sha256=_sha256(SAMPLE_DATA),
+    )
+
+    # Snapshot the loopback server's request log so we can detect any
+    # Range header sent by the fallback.
+    pre_count = len(http_server.request_log)
+
+    download_one(
+        artifact,
+        tmp_path,
+        which_aria2=lambda: "/usr/bin/aria2c",
+        run_aria2=_aria_writing_garbage_then_failing(),
+    )
+
+    dest_file = tmp_path / "model.bin"
+    part_file = Path(str(dest_file) + ".part")
+    assert dest_file.exists()
+    assert dest_file.read_bytes() == SAMPLE_DATA, (
+        "fallback produced corrupt bytes — likely Range-resumed off the "
+        "garbage prefix from the failed aria2c run"
+    )
+    assert not part_file.exists()
+
+    # Fallback request MUST NOT carry a Range header (no resume off garbage).
+    new_requests = http_server.request_log[pre_count:]
+    range_requests = [entry for entry in new_requests if entry[2].startswith("bytes=")]
+    assert range_requests == [], (
+        "fallback sent a Range header — poisoned .part was not unlinked"
+    )
