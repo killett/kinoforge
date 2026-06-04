@@ -190,88 +190,83 @@ def download_one(
     dest: Path,
     *,
     fetch: FetchCallable = _urllib_fetch,
+    which_aria2: WhichCallable = _shutil_which_aria2,
+    run_aria2: RunAriaCallable = _subprocess_run_aria2,
 ) -> Artifact:
     """Download *artifact* into *dest*, resuming from a ``.part`` file if present.
 
-    Behaviour summary:
-    - **Skip path**: if ``dest/<filename>`` already exists AND either no
-      ``sha256`` is specified (filename-based trust) OR ``sha256`` matches the
-      on-disk file, return immediately — ZERO HTTP traffic.
-    - **Corrupt target**: if ``dest/<filename>`` exists but sha256 does NOT
-      match, delete it and fall through to a fresh download.
-    - **Resume path**: if ``dest/<filename>.part`` exists, send
-      ``Range: bytes=<size>-`` and append the response body to the ``.part``
-      file.
-    - **Fresh path**: otherwise fetch without a Range header and write the
-      body to the ``.part`` file.
-    - After writing, if ``artifact.sha256`` is set, verify the assembled
-      ``.part``.  On mismatch the ``.part`` is deleted and
-      :class:`~kinoforge.core.errors.KinoforgeError` is raised.
+    Transport selection (added in Phase 29):
+    - If ``which_aria2()`` returns a non-``None`` path, the aria2c
+      subprocess is used to fetch the entire file in one shot
+      (multi-connection per file, configurable via :data:`_ARIA2_BASE_ARGS`).
+    - On aria2c success, the existing sha256 verify + atomic rename runs
+      unchanged.
+    - On aria2c failure, ``KinoforgeError`` is raised in this task; the
+      silent stdlib fallback is added in T3.
+    - When ``which_aria2()`` returns ``None`` (binary absent or test stub),
+      the stdlib branch runs exactly as before.
 
-    Corrupt ``.part`` strategy (AC #5):
-        We do NOT pre-validate the ``.part`` before appending.  After appending
-        the server response, the full sha256 is checked.  If it fails (because
-        the prefix bytes were garbage), ``.part`` is deleted and
-        ``KinoforgeError`` is raised.  The *next* call finds no ``.part`` and
-        downloads cleanly from scratch.  This keeps the code simple and
-        produces a correct file after at most two calls (or one call if the
-        first call's Range response is also garbage — not the server's fault).
+    See module docstring for the rest of the skip / resume / verify
+    behaviour.
 
     Args:
         artifact: Source descriptor; ``filename``, ``url``, and optionally
             ``sha256`` are used.
         dest: Directory into which the final file is written.
-        fetch: Injectable HTTP callable (default: :func:`_urllib_fetch`).
-            Signature: ``(url, headers) -> (status, body, resp_headers)``.
+        fetch: Injectable stdlib HTTP callable (default: :func:`_urllib_fetch`).
+        which_aria2: Detector callable returning the absolute path of
+            ``aria2c`` or ``None`` (default: :func:`_shutil_which_aria2`).
+        run_aria2: Subprocess invoker for aria2c (default:
+            :func:`_subprocess_run_aria2`).
 
     Returns:
         A new :class:`~kinoforge.core.interfaces.Artifact` with ``uri`` set to
         the absolute path of the downloaded file.
 
     Raises:
-        KinoforgeError: On sha256 mismatch or HTTP transport failure.
+        KinoforgeError: On sha256 mismatch, aria2c subprocess failure, or
+            stdlib HTTP transport failure.
     """
     target_path = dest / artifact.filename
     part_path = Path(str(target_path) + ".part")
 
     # ------------------------------------------------------------------
-    # Skip path
+    # Skip path (unchanged)
     # ------------------------------------------------------------------
     if target_path.exists():
         if artifact.sha256 is None:
-            # No checksum — trust the filename, skip entirely.
             return replace(artifact, uri=str(target_path))
         if sha256_file(target_path) == artifact.sha256:
-            # Checksum matches — idempotent skip, no HTTP.
             return replace(artifact, uri=str(target_path))
-        # Checksum mismatch on existing target — discard and re-download.
         target_path.unlink()
 
     # ------------------------------------------------------------------
-    # Decide whether to resume or start fresh
+    # Transport branch
     # ------------------------------------------------------------------
-    req_headers: dict[str, str] = {}
-
-    if part_path.exists():
-        n = part_path.stat().st_size
-        req_headers["Range"] = f"bytes={n}-"
-
-    _status, body, _resp_headers = fetch(artifact.url, req_headers)
-
-    # ------------------------------------------------------------------
-    # Write body
-    # ------------------------------------------------------------------
-    if part_path.exists():
-        # Append resume bytes.
-        with part_path.open("ab") as fh:
-            fh.write(body)
+    aria_path = which_aria2()
+    if aria_path is not None:
+        # Pre-delete any pre-existing .part so aria2c starts fresh.
+        # Resume / Range stays a stdlib-branch responsibility.
+        part_path.unlink(missing_ok=True)
+        run_aria2(artifact.url, part_path, {})
     else:
-        # Fresh write.
-        with part_path.open("wb") as fh:
-            fh.write(body)
+        # Stdlib branch (unchanged from pre-Phase-29).
+        req_headers: dict[str, str] = {}
+        if part_path.exists():
+            n = part_path.stat().st_size
+            req_headers["Range"] = f"bytes={n}-"
+
+        _status, body, _resp_headers = fetch(artifact.url, req_headers)
+
+        if part_path.exists():
+            with part_path.open("ab") as fh:
+                fh.write(body)
+        else:
+            with part_path.open("wb") as fh:
+                fh.write(body)
 
     # ------------------------------------------------------------------
-    # Verify checksum
+    # Verify checksum (unchanged)
     # ------------------------------------------------------------------
     if artifact.sha256 is not None:
         actual = sha256_file(part_path)
@@ -283,7 +278,7 @@ def download_one(
             )
 
     # ------------------------------------------------------------------
-    # Atomically promote .part → final file
+    # Atomic promote (unchanged)
     # ------------------------------------------------------------------
     os.replace(part_path, target_path)
     return replace(artifact, uri=str(target_path))
