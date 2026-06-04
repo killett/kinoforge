@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -103,6 +104,25 @@ def _poll_until_ready(
     )
 
 
+def _gcloud_path() -> str:
+    """Return absolute path to the ``gcloud`` binary.
+
+    Prefers ``shutil.which("gcloud")`` (PATH resolution); falls back to
+    ``~/google-cloud-sdk/bin/gcloud`` (the kinoforge container's standard
+    install location). The pixi live-skypilot env does not include gcloud
+    on PATH, so the fallback is the load-bearing path in practice.
+
+    Returns:
+        Absolute path string suitable for passing as ``argv[0]`` to
+        :func:`subprocess.run`.
+    """
+    resolved = shutil.which("gcloud")
+    if resolved:
+        return resolved
+    fallback = Path.home() / "google-cloud-sdk" / "bin" / "gcloud"
+    return str(fallback)
+
+
 def _teardown(provider: SkyPilotProvider, cluster_name: str) -> None:
     """Four-tier teardown.
 
@@ -138,7 +158,7 @@ def _teardown(provider: SkyPilotProvider, cluster_name: str) -> None:
         _log.info("tearing down via gcloud nuclear")
         listing = subprocess.run(
             [
-                "gcloud",
+                _gcloud_path(),
                 "compute",
                 "instances",
                 "list",
@@ -158,7 +178,7 @@ def _teardown(provider: SkyPilotProvider, cluster_name: str) -> None:
             name, _, zone = line.partition("\t")
             subprocess.run(
                 [
-                    "gcloud",
+                    _gcloud_path(),
                     "compute",
                     "instances",
                     "delete",
@@ -175,7 +195,7 @@ def _teardown(provider: SkyPilotProvider, cluster_name: str) -> None:
 
     survivors = subprocess.run(
         [
-            "gcloud",
+            _gcloud_path(),
             "compute",
             "instances",
             "list",
