@@ -8,15 +8,41 @@ from kinoforge.core.interfaces import InstanceSpec
 from kinoforge.providers.skypilot import SkyPilotProvider
 
 
+class _FakeTask:
+    """Stand-in for :class:`sky.Task` carrying the config dict for inspection."""
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config: dict[str, Any] = config
+
+
+class _FakeTaskNamespace:
+    """Stand-in for ``sky.Task`` exposing the ``from_yaml_config`` factory."""
+
+    def __init__(self) -> None:
+        self.configs: list[dict[str, Any]] = []
+
+    def from_yaml_config(self, config: dict[str, Any]) -> _FakeTask:
+        self.configs.append(config)
+        return _FakeTask(config)
+
+
 class _FakeSky:
-    """Minimal sky-client stub that records launches."""
+    """Minimal sky-client stub that records launches.
+
+    ``launches`` is kept on the public API but each entry's first element is
+    now the *task config dict* (extracted from the :class:`_FakeTask` the
+    provider builds via :meth:`Task.from_yaml_config`) so existing assertions
+    continue to read like ``sky.launches[0][0]["setup"]``.
+    """
 
     def __init__(self) -> None:
         self.launches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        self.Task: _FakeTaskNamespace = _FakeTaskNamespace()
 
-    def launch(self, task_config: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
-        self.launches.append((task_config, kwargs))
-        return {"cluster_name": "fake-cluster"}
+    def launch(self, task: Any, **kwargs: Any) -> tuple[None, None]:  # noqa: ANN401
+        config: dict[str, Any] = task.config if isinstance(task, _FakeTask) else task
+        self.launches.append((config, kwargs))
+        return (None, None)
 
     def status(self) -> list[dict[str, Any]]:
         return []

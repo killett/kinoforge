@@ -34,11 +34,36 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     Lifecycle,
+    Offer,
 )
 
 # ---------------------------------------------------------------------------
 # _FakeSky: minimal injectable sky SDK stub
 # ---------------------------------------------------------------------------
+
+
+class _FakeTask:
+    """Minimal stand-in for :class:`sky.Task` built via ``from_yaml_config``.
+
+    Carries the config dict so tests can inspect what the provider passed to
+    SkyPilot. The real :class:`sky.Task` is opaque from the caller's
+    perspective — kinoforge only needs to round-trip it to ``sky.launch``.
+    """
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config: dict[str, Any] = config
+
+
+class _FakeTaskNamespace:
+    """Stand-in for ``sky.Task`` exposing the ``from_yaml_config`` factory."""
+
+    def __init__(self) -> None:
+        self.from_yaml_config_calls: list[dict[str, Any]] = []
+
+    def from_yaml_config(self, config: dict[str, Any]) -> _FakeTask:
+        """Record the config and return a :class:`_FakeTask` wrapping it."""
+        self.from_yaml_config_calls.append(config)
+        return _FakeTask(config)
 
 
 class _FakeSky:
@@ -50,13 +75,18 @@ class _FakeSky:
     eventually feeds. To exercise the ``RequestId`` branch, see the
     ``test_resolve_*`` tests below — they use a separate stub.
 
+    Exposes ``Task`` with a ``from_yaml_config`` factory because modern
+    :func:`sky.launch` accepts only :class:`sky.Task` objects, not raw
+    dicts — the provider constructs the Task from a YAML-config dict.
+
     Args:
         accelerator_result: Return value for ``list_accelerators()``.
             May be a flat ``list[dict]`` (legacy shape — still supported by
             the provider) or a ``dict[str, list[dict]]`` (modern shape).
         status_sequence: Successive return values for ``status()`` calls.
             Defaults to always returning ``[]``.
-        launch_result: Return value for ``launch()``.
+        launch_result: Return value for ``launch()``. Defaults to a
+            modern-shaped tuple ``(None, None)``.
     """
 
     def __init__(
@@ -65,19 +95,23 @@ class _FakeSky:
         | dict[str, list[dict[str, Any]]]
         | None = None,
         status_sequence: list[list[dict[str, Any]]] | None = None,
-        launch_result: dict[str, Any] | None = None,
+        launch_result: Any = None,  # noqa: ANN401
     ) -> None:
         self._accelerator_result: (
             list[dict[str, Any]] | dict[str, list[dict[str, Any]]]
         ) = accelerator_result if accelerator_result is not None else []
         self._status_sequence: list[list[dict[str, Any]]] = status_sequence or [[]]
-        self._launch_result: dict[str, Any] = launch_result or {}
+        self._launch_result: Any = (
+            launch_result if launch_result is not None else (None, None)
+        )
         # Call records
         self.launch_calls: list[tuple[Any, dict[str, Any]]] = []
         self.status_call_count: int = 0
         self.down_calls: list[str] = []
         self.list_accelerators_call_count: int = 0
         self._status_idx: int = 0
+        # Task namespace — exposes ``from_yaml_config`` factory.
+        self.Task: _FakeTaskNamespace = _FakeTaskNamespace()
 
     def list_accelerators(
         self, **_kwargs: Any
@@ -99,9 +133,9 @@ class _FakeSky:
         self.status_call_count += 1
         return result
 
-    def launch(self, task_config: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+    def launch(self, task: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         """Record the call and return launch_result."""
-        self.launch_calls.append((task_config, kwargs))
+        self.launch_calls.append((task, kwargs))
         return self._launch_result
 
     def down(self, cluster_id: str) -> None:
@@ -272,16 +306,71 @@ def test_ac3_find_offers_calls_gpu_list_and_converts_to_offers() -> None:
     assert offers[0].cost_rate_usd_per_hr == 1.50
 
 
-def test_ac3_find_offers_returns_all_when_no_filter_applied() -> None:
-    """find_offers returns all offers when requirements are generous."""
+def test_ac3_find_offers_returns_all_when_generous_gpu_filter() -> None:
+    """find_offers returns all GPU offers when requirements are generous.
+
+    Uses a low-but-non-zero ``min_vram_gb`` to exercise the GPU path —
+    ``min_vram_gb=0`` triggers the CPU short-circuit (see
+    :func:`test_ac3_find_offers_cpu_short_circuits_to_synthetic_offer`).
+    """
     from kinoforge.providers.skypilot import SkyPilotProvider
 
     fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
 
-    reqs = HardwareRequirements(min_vram_gb=0, min_cuda="11.0", max_usd_per_hr=9.99)
+    reqs = HardwareRequirements(min_vram_gb=1, min_cuda="11.0", max_usd_per_hr=9.99)
     offers = provider.find_offers(reqs)
     assert len(offers) == 2
+
+
+def test_ac3_find_offers_cpu_short_circuits_to_synthetic_offer() -> None:
+    """``find_offers(min_vram_gb=0)`` returns a single synthetic CPU offer.
+
+    A bug that would catch: real :func:`sky.list_accelerators` defaults to
+    ``gpus_only=True`` and returns an empty mapping for CPU workloads.
+    Without the short-circuit, ``find_offers`` would return ``[]`` and
+    the orchestrator (or the live CPU smoke) would fail with 'no offers
+    matched requirements'.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky(accelerator_result={})  # what real list_accelerators returns
+    provider = SkyPilotProvider(sky_client=fake)
+
+    offers = provider.find_offers(HardwareRequirements(min_vram_gb=0))
+
+    assert len(offers) == 1, "CPU short-circuit must return exactly one synthetic offer"
+    cpu_offer = offers[0]
+    assert cpu_offer.gpu_type == "", "CPU offer must declare empty gpu_type"
+    assert cpu_offer.vram_gb == 0, "CPU offer must declare vram_gb=0"
+    assert cpu_offer.id == "sky-cpu-auto"
+    assert cpu_offer.mode == "pod"
+    # The CPU short-circuit must NOT invoke list_accelerators — it would
+    # be wasted work for the live path (the call requires SkyPilot's
+    # cluster catalog to be initialised which the CPU smoke skips).
+    assert fake.list_accelerators_call_count == 0, (
+        "CPU short-circuit must not call list_accelerators"
+    )
+
+
+def test_ac3_find_offers_gpu_path_still_calls_list_accelerators() -> None:
+    """Non-zero ``min_vram_gb`` still routes through ``list_accelerators``.
+
+    A bug that would catch: regressing the CPU short-circuit to always-on
+    would make every GPU-class call return the synthetic CPU offer instead
+    of real candidates.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky(accelerator_result=_sample_gpu_list())
+    provider = SkyPilotProvider(sky_client=fake)
+
+    offers = provider.find_offers(HardwareRequirements(min_vram_gb=8))
+
+    assert fake.list_accelerators_call_count == 1
+    assert all(o.gpu_type for o in offers), (
+        "GPU path must produce offers with a non-empty gpu_type"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -289,34 +378,191 @@ def test_ac3_find_offers_returns_all_when_no_filter_applied() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ac4_create_instance_passes_autostop_in_minutes() -> None:
-    """create_instance maps idle_timeout_s → autostop in minutes."""
+def test_ac4_create_instance_passes_idle_minutes_to_autostop() -> None:
+    """create_instance maps ``idle_timeout_s`` → ``idle_minutes_to_autostop`` (int minutes).
+
+    A bug that would catch: passing ``autostop=`` (the pre-T7b kwarg name)
+    or a float fraction would raise ``TypeError`` on the live path because
+    modern :func:`sky.launch` only accepts the ``idle_minutes_to_autostop:
+    int`` kwarg.
+    """
     from kinoforge.providers.skypilot import SkyPilotProvider
 
     idle_s = 3600.0  # 1 hour = 60 minutes
-    fake = _FakeSky(launch_result={"cluster_name": "cluster-test"})
+    fake = _FakeSky()
     provider = SkyPilotProvider(sky_client=fake)
 
     spec = _make_spec(idle_timeout_s=idle_s)
     provider.create_instance(spec)
 
     assert len(fake.launch_calls) == 1
-    _task_cfg, kwargs = fake.launch_calls[0]
-    assert "autostop" in kwargs, "autostop kwarg not passed to launch()"
-    assert kwargs["autostop"] == pytest.approx(60.0)  # 3600 / 60
+    _task, kwargs = fake.launch_calls[0]
+    assert "idle_minutes_to_autostop" in kwargs, (
+        "modern sky.launch requires idle_minutes_to_autostop kwarg "
+        "(the pre-T7b 'autostop' name is wrong)"
+    )
+    assert kwargs["idle_minutes_to_autostop"] == 60
+    assert isinstance(kwargs["idle_minutes_to_autostop"], int), (
+        "idle_minutes_to_autostop must be an int (live path will TypeError on float)"
+    )
+
+
+def test_ac4_create_instance_passes_cluster_name_kwarg() -> None:
+    """create_instance passes ``cluster_name`` explicitly to ``sky.launch``.
+
+    A bug that would catch: modern :func:`sky.launch` resolves to a
+    ``(job_id, ResourceHandle)`` tuple — there is no ``cluster_name`` in
+    the return payload. If the provider does not pass ``cluster_name=``
+    on the call, SkyPilot generates a random name and the
+    :class:`Instance` id we return will not match the real cluster — every
+    subsequent ``status``/``down`` would fail.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+
+    spec = _make_spec()
+    spec.run_id = "run-xyz"
+    inst = provider.create_instance(spec)
+
+    _task, kwargs = fake.launch_calls[0]
+    assert kwargs.get("cluster_name") == "run-xyz"
+    assert inst.id == "run-xyz"
 
 
 def test_ac4_create_instance_returns_instance_with_starting_status() -> None:
     """create_instance returns an Instance with status='starting' and provider='skypilot'."""
     from kinoforge.providers.skypilot import SkyPilotProvider
 
-    fake = _FakeSky(launch_result={"cluster_name": "cluster-abc"})
+    fake = _FakeSky()
     provider = SkyPilotProvider(sky_client=fake)
 
     inst = provider.create_instance(_make_spec())
     assert inst.provider == "skypilot"
     assert inst.status == "starting"
     assert inst.id  # non-empty
+
+
+def test_ac4_create_instance_builds_task_via_from_yaml_config() -> None:
+    """``create_instance`` converts the YAML config dict to a ``sky.Task``.
+
+    A bug that would catch: modern :func:`sky.launch` raises
+    ``TypeError`` when handed a raw dict — it requires :class:`sky.Task`.
+    The provider must call :meth:`sky.Task.from_yaml_config` to convert.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+
+    provider.create_instance(_make_spec())
+
+    assert len(fake.Task.from_yaml_config_calls) == 1, (
+        "create_instance must build the task via sky.Task.from_yaml_config"
+    )
+    task_arg, _kwargs = fake.launch_calls[0]
+    # The task passed to launch() must be the _FakeTask produced by
+    # from_yaml_config — not the raw dict.
+    assert hasattr(task_arg, "config"), (
+        "sky.launch must receive a sky.Task, not a raw dict"
+    )
+
+
+def test_ac4_create_instance_task_config_uses_envs_and_resources_keys() -> None:
+    """``create_instance`` emits ``envs`` and ``resources`` keys per SkyPilot YAML schema.
+
+    A bug that would catch: the pre-T7b dict used ``env`` and a top-level
+    ``image``; SkyPilot's YAML schema requires ``envs`` (plural) and nests
+    ``image_id`` under ``resources``. Wrong keys are silently ignored by
+    ``from_yaml_config`` and the resulting Task would launch without the
+    requested env / image.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    spec = _make_spec()
+    spec.env = {"FOO": "bar"}
+    provider.create_instance(spec)
+
+    cfg = fake.Task.from_yaml_config_calls[0]
+    assert cfg["envs"] == {"FOO": "bar"}, (
+        "task config must use 'envs' (plural) per SkyPilot YAML schema"
+    )
+    assert "env" not in cfg, "pre-T7b 'env' (singular) key must not appear"
+    assert "image" not in cfg, (
+        "pre-T7b top-level 'image' key must not appear — moves under resources.image_id"
+    )
+    assert cfg["resources"]["image_id"] == spec.image, (
+        "image_id belongs under resources per SkyPilot YAML schema"
+    )
+
+
+def test_ac4_create_instance_cpu_offer_sets_cpus_and_memory_resources() -> None:
+    """A synthetic CPU offer (gpu_type='', vram_gb=0) sets ``cpus``/``memory``.
+
+    A bug that would catch: omitting ``cpus``/``memory`` for a CPU smoke
+    causes SkyPilot to fall back to its default ``accelerators`` selection
+    which (on the live path) errors with 'no GPU offers found'. The CPU
+    SKU must be requested explicitly via resource constraints.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+
+    cpu_offer = Offer(
+        id="sky-cpu-auto",
+        gpu_type="",
+        vram_gb=0,
+        cuda="0.0",
+        cost_rate_usd_per_hr=0.05,
+        mode="pod",
+    )
+    spec = _make_spec()
+    spec.offer = cpu_offer
+    provider.create_instance(spec)
+
+    cfg = fake.Task.from_yaml_config_calls[0]
+    resources = cfg["resources"]
+    assert resources.get("cpus") == "1+", (
+        "CPU offer must request cpus='1+' so SkyPilot picks the cheapest CPU SKU"
+    )
+    assert resources.get("memory") == "2+", (
+        "CPU offer must request memory='2+' so SkyPilot picks the cheapest CPU SKU"
+    )
+    assert "accelerators" not in resources, "CPU offer must not request accelerators"
+
+
+def test_ac4_create_instance_gpu_offer_sets_accelerators() -> None:
+    """A GPU offer sets ``accelerators=<gpu_type>:1`` on the Task config.
+
+    A bug that would catch: forgetting to forward the GPU type means
+    SkyPilot picks an arbitrary accelerator instead of the one the
+    orchestrator filtered for.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+
+    gpu_offer = Offer(
+        id="A100",
+        gpu_type="A100",
+        vram_gb=80,
+        cuda="12.1",
+        cost_rate_usd_per_hr=1.50,
+        mode="pod",
+    )
+    spec = _make_spec()
+    spec.offer = gpu_offer
+    provider.create_instance(spec)
+
+    cfg = fake.Task.from_yaml_config_calls[0]
+    resources = cfg["resources"]
+    assert resources.get("accelerators") == "A100:1"
+    assert "cpus" not in resources, "GPU offer must not also request CPU resources"
 
 
 # ---------------------------------------------------------------------------
@@ -722,10 +968,11 @@ def test_find_offers_flattens_dict_of_list_from_real_list_accelerators() -> None
     fake = _FakeSky(accelerator_result=modern_payload)
     provider = SkyPilotProvider(sky_client=fake)
 
-    # Generous reqs so both records survive the filter (A100=80GB$1.50,
-    # T4=16GB$0.40; provider parses cuda default as "12.0").
+    # Generous-but-non-zero VRAM so both records survive the filter and the
+    # CPU short-circuit does NOT trigger (A100=80GB$1.50, T4=16GB$0.40;
+    # provider parses cuda default as "12.0").
     offers = provider.find_offers(
-        HardwareRequirements(min_vram_gb=0, min_cuda="12.0", max_usd_per_hr=9.99)
+        HardwareRequirements(min_vram_gb=1, min_cuda="12.0", max_usd_per_hr=9.99)
     )
     gpu_types = {o.gpu_type for o in offers}
     assert "A100" in gpu_types, "A100 record must surface as an Offer"
@@ -746,7 +993,9 @@ def test_find_offers_calls_list_accelerators_not_gpu_list() -> None:
 
     fake = _FakeSky(accelerator_result=_sample_gpu_list())
     provider = SkyPilotProvider(sky_client=fake)
-    provider.find_offers(HardwareRequirements(min_vram_gb=0))
+    # Use a non-zero VRAM so the CPU short-circuit doesn't trigger and the
+    # GPU path actually invokes list_accelerators.
+    provider.find_offers(HardwareRequirements(min_vram_gb=1))
 
     assert fake.list_accelerators_call_count == 1, (
         "find_offers must invoke sky.list_accelerators (gpu_list is removed)"
