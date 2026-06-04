@@ -227,7 +227,7 @@ Four ref shapes are recognised:
 Bare-repo resolves auto-populate per-file SHA256 from LFS metadata when
 present (every weights file ships LFS-tracked, so integrity verification
 runs without the operator setting `sha256:` per entry). Setting
-`sha256:` on a bare-repo entry raises `ValidationError` at config-load
+`sha256:` on a bare-repo entry raises `ValidationError` at provision
 time — use a pinned `@<commit-sha>` for tree-level reproducibility, or
 split into per-file refs for per-file pinning.
 
