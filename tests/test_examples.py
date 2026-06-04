@@ -34,6 +34,7 @@ EXAMPLE_CONFIGS = [
     "diffusers.yaml",
     "hosted.yaml",
     "local-fake.yaml",
+    "skypilot.yaml",
 ]
 
 
@@ -43,6 +44,26 @@ def test_example_config_loads(filename: str) -> None:
     path = EXAMPLES_DIR / filename
     assert path.exists(), f"example config not found: {path}"
     load_config(path)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Phase 31 T3 — SkyPilot operator-facing example
+# ---------------------------------------------------------------------------
+
+
+def test_skypilot_example_parses() -> None:
+    """examples/configs/skypilot.yaml loads and carries the Phase 31 SkyPilot knobs.
+
+    Bug catch: a future edit drops the compute.provider key or rewrites
+    idle_timeout into a non-60 s value, silently breaking the SkyPilot
+    autostop=1-minute contract documented in the live-smoke spec §3.3.
+    """
+    cfg = load_config(Path("examples/configs/skypilot.yaml"))
+    assert cfg.compute is not None
+    assert cfg.compute.provider == "skypilot"
+    # idle_timeout_s == 60 maps to SkyPilot autostop=1 (minute) per spec §3.3.
+    lc = cfg.lifecycle()
+    assert lc.idle_timeout_s == 60
 
 
 def test_hosted_yaml_loads_under_new_validators() -> None:

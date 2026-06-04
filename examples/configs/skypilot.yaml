@@ -1,0 +1,79 @@
+# kinoforge example: SkyPilot (CPU lifecycle smoke) — Phase 31
+#
+# Demonstrates the bare SkyPilotProvider configuration used by the
+# Phase 31 real-cloud verification smoke (spec §3.3, plan T3):
+#   - Smallest CPU SKU on GCP us-central1 (SkyPilot picks SKU from
+#     cpus/memory requirements; no GPU)
+#   - Quadruple-locked cleanup: idle_timeout 60 s -> SkyPilot
+#     autostop=1 (minute), plus orchestrator try/finally, preflight
+#     guard, and gcloud nuclear fallback
+#   - Engine-on-SkyPilot smoke is deferred (spec §7); the engine
+#     block below is a comfyui placeholder for schema completeness
+#
+# Cost envelope: <= $0.05 per smoke run, layer ceiling $0.50.
+
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+    kind: base
+    target: checkpoints
+
+compute:
+  # SkyPilot picks the concrete SKU from cpus/memory requirements at
+  # launch time; the live smoke uses the smallest CPU class GCP
+  # offers (~e2-micro / n1-standard-1, ~$0.01/hr).  Region pinning
+  # (us-central1) is enforced by the smoke test itself, not by this
+  # YAML — ComputeConfig has no region field today.
+  provider: skypilot
+  image: "skypilot/skypilot:latest"
+  mode: pod
+  requirements:
+    min_vram_gb: 0
+    min_cuda: "0"
+    max_usd_per_hr: 0.50
+    disk_gb: 50
+  lifecycle:
+    # idle_timeout (seconds) -> SkyPilot autostop (minutes) via
+    # InterfaceLifecycle.idle_timeout_s in SkyPilotProvider.create_instance.
+    # 60 s == autostop=1 minute, the tightest reliable cleanup window.
+    idle_timeout: 60
+    job_timeout: 25m
+    time_buffer: 5m
+    max_lifetime: 30m
+    boot_timeout: 10m
+    max_in_flight: 1
+    # Per-run ceiling; the layer-wide $0.50 envelope is enforced
+    # externally by the smoke harness.
+    budget: 0.50
+
+# Engine-on-SkyPilot smoke is deferred (spec §7) — these blocks are
+# kept minimal so the example parses end-to-end without claiming a
+# runnable ComfyUI graph on a CPU SKU.
+spec:
+  graph:
+    nodes: []
+  node_overrides: {}
+
+params: {}
+
+# --- Optional: GCS artifact store (Phase 13 / Layer C) ----------------------
+# Uncomment and fill in `bucket:` to publish artifacts to GCS.  Authenticate
+# via the standard GCP path: set GOOGLE_APPLICATION_CREDENTIALS to a service
+# account JSON file (see `.env.example`).  YAML interpolation of ${VAR} is
+# not supported by the kinoforge loader; uncomment and edit `bucket:` directly.
+#
+# store:
+#   kind: gcs
+#   bucket: my-org-kinoforge
+#   prefix: prod/runs
+
+# Layer O — user-facing output directory.  Uncomment to override defaults.
+# output:
+#   kind: local
+#   dir: output
+#   enabled: true
