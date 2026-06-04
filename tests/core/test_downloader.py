@@ -247,3 +247,30 @@ def test_download_one_no_sha256_skips_existing(http_server, tmp_path):
     assert len(http_server.request_log) == count_after_first, (
         "second call without sha256 should not hit server"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 1: aria2c seams importable
+# ---------------------------------------------------------------------------
+
+
+def test_aria2c_seams_importable():
+    """T1: the new aria2c module-level seams are importable.
+
+    Bug this catches: a future refactor that renames or removes one of the
+    seams without updating downstream callers (the seam contract is part of
+    the public-ish API of this module).
+    """
+    from kinoforge.core.downloader import (
+        RunAriaCallable,
+        WhichCallable,
+        _shutil_which_aria2,
+        _subprocess_run_aria2,
+    )
+
+    # Trivial use to silence unused-import warnings and prove the names bind.
+    assert callable(_shutil_which_aria2)
+    assert callable(_subprocess_run_aria2)
+    # Type aliases are not callables at runtime in 3.10+ — just bound.
+    assert WhichCallable is not None
+    assert RunAriaCallable is not None

@@ -1,21 +1,24 @@
 """Resumable, checksum-verifying parallel HTTP downloader.
 
-Uses only stdlib: ``hashlib``, ``urllib.request``, ``concurrent.futures``,
-``pathlib``, ``os``, ``threading``.
+Uses stdlib (``hashlib``, ``urllib.request``, ``concurrent.futures``,
+``pathlib``, ``os``, ``threading``, ``shutil``, ``subprocess``,
+``logging``) plus the optional ``aria2c`` system binary as a transparent
+fast-path.
 
-The HTTP transport is injected via a ``fetch`` callable, making it trivially
-replaceable in tests by pointing at a loopback server instead of the real
-network.
-
-# DEFERRED: aria2c fast path — opportunistic shutil.which("aria2c") escape hatch
-# not implemented in this task; add KINOFORGE_USE_ARIA2=1 check when aria2c
-# integration is scoped.
+The HTTP transport is injected via a ``fetch`` callable, making it
+trivially replaceable in tests by pointing at a loopback server instead
+of the real network.  The aria2c subprocess transport is injected via
+``which_aria2`` (detect) and ``run_aria2`` (invoke) callables for the
+same reason.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
+import shutil
+import subprocess
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
@@ -27,11 +30,38 @@ from urllib.request import Request, urlopen
 from kinoforge.core.errors import KinoforgeError
 from kinoforge.core.interfaces import Artifact
 
+logger = logging.getLogger(__name__)
+
 # Type alias for the injected fetch callable.
 # Returns (status_code, body_bytes, response_headers).
 FetchCallable = Callable[[str, dict[str, str]], tuple[int, bytes, dict[str, str]]]
 
+# Type aliases for the aria2c seams.
+# - WhichCallable: returns the absolute path to aria2c, or None when absent.
+# - RunAriaCallable: spawns aria2c to download `url` -> `part_path` with
+#   the given HTTP headers; raises KinoforgeError on any failure.
+WhichCallable = Callable[[], str | None]
+RunAriaCallable = Callable[[str, Path, dict[str, str]], None]
+
 _CHUNK = 8192  # 8 KiB read buffer for sha256 streaming
+
+# aria2c invocation knobs.  Battle-tested defaults for HuggingFace /
+# CivitAI CDNs; not operator-tunable in this layer (YAGNI).
+_ARIA2_BASE_ARGS: tuple[str, ...] = (
+    "-x",
+    "16",
+    "-s",
+    "16",
+    "-k",
+    "1M",
+    "--file-allocation=none",
+    "--max-tries=3",
+    "--retry-wait=2",
+    "--allow-overwrite=true",
+    "--auto-file-renaming=false",
+    "--summary-interval=0",
+    "--console-log-level=warn",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -88,6 +118,71 @@ def _urllib_fetch(
     if status not in (200, 206):
         raise KinoforgeError(f"Unexpected HTTP status {status} for {url!r}")
     return status, body, resp_headers
+
+
+def _shutil_which_aria2() -> str | None:
+    """Return the absolute path to aria2c, or ``None`` when not on ``PATH``.
+
+    Returns:
+        Result of :func:`shutil.which`.  No caching — repeat callers pay
+        a ``PATH`` walk per call (~30us on Linux, negligible against the
+        per-file subprocess spawn cost).
+    """
+    return shutil.which("aria2c")
+
+
+def _subprocess_run_aria2(
+    url: str,
+    part_path: Path,
+    headers: dict[str, str],
+) -> None:
+    """Spawn ``aria2c`` to download *url* into *part_path*.
+
+    Behaviour:
+    - Uses :data:`_ARIA2_BASE_ARGS` plus ``-d``/`-o`` for the output path
+      and one ``--header`` flag per header.
+    - Wall-clock timeout is 3600s (one hour); larger files at typical
+      saturated bandwidth (200+ Mbps) complete inside this window.
+    - On non-zero exit, missing binary, or wall-clock timeout, raises
+      :class:`~kinoforge.core.errors.KinoforgeError`.
+
+    Args:
+        url: Fully-qualified source URL.
+        part_path: Target ``.part`` file.  ``part_path.parent`` must
+            already exist; aria2c does NOT create directories.
+        headers: HTTP request headers (e.g. ``{"Authorization": "Bearer ..."}``).
+
+    Raises:
+        KinoforgeError: On any aria2c failure path.
+    """
+    header_args: list[str] = []
+    for key, value in headers.items():
+        header_args.extend(["--header", f"{key}: {value}"])
+    cmd = [
+        "aria2c",
+        *_ARIA2_BASE_ARGS,
+        "-d",
+        str(part_path.parent),
+        "-o",
+        part_path.name,
+        *header_args,
+        url,
+    ]
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3600,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise KinoforgeError(f"aria2c spawn failed for {url!r}: {exc}") from exc
+    if result.returncode != 0:
+        raise KinoforgeError(
+            f"aria2c failed for {url!r} (exit {result.returncode}): "
+            f"{result.stderr.strip()[:500]}"
+        )
 
 
 def download_one(
