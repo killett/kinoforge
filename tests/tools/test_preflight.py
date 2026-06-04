@@ -169,3 +169,77 @@ def test_pod_lister_default_redacts_env_field_from_report(
     assert "hf_REALLOOKINGTOKENVALUE12345" not in joined
     assert "rpa_LEAKYTOKEN12345678" not in joined
     assert "pod_y" in joined  # id still surfaced
+
+
+def test_check_no_active_sky_clusters_skipped_when_skypilot_missing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When skypilot is not installed, the check skips with a clear log line.
+
+    Bug catch: a future refactor that turns the ImportError into a hard
+    failure would break preflight on any developer machine without skypilot.
+    """
+    import builtins
+    import sys
+    from typing import Any
+
+    sys.modules.pop("sky", None)
+    real_import = builtins.__import__
+
+    def _fail_sky(name: str, *a: Any, **kw: Any) -> Any:
+        if name == "sky":
+            raise ImportError("skypilot not installed")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _fail_sky)
+    from tools.preflight import _check_no_active_sky_clusters
+
+    caplog.set_level("INFO")
+    assert _check_no_active_sky_clusters() is True
+    assert "skypilot not installed" in caplog.text
+
+
+def test_check_no_active_sky_clusters_passes_when_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When sky.status() returns empty, the check passes.
+
+    Bug catch: a future refactor that returns False on empty lists would
+    block live spend even when the project is in the clean state required.
+    """
+    import sys
+    import types
+
+    fake_sky = types.ModuleType("sky")
+    fake_sky.status = lambda **kw: []  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sky", fake_sky)
+
+    from tools.preflight import _check_no_active_sky_clusters
+
+    assert _check_no_active_sky_clusters() is True
+
+
+def test_check_no_active_sky_clusters_fails_when_cluster_up(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When sky.status() shows an UP or INIT cluster, the check fails loud.
+
+    Bug catch: skipping leaked clusters silently would cause live-spend
+    runs to fail intermittently when prior runs leaked state.
+    """
+    import sys
+    import types
+
+    fake_sky = types.ModuleType("sky")
+    fake_sky.status = lambda **kw: [  # type: ignore[attr-defined]
+        {"name": "leftover-cluster", "status": "UP"},
+        {"name": "another", "status": "INIT"},
+    ]
+    monkeypatch.setitem(sys.modules, "sky", fake_sky)
+
+    from tools.preflight import _check_no_active_sky_clusters
+
+    assert _check_no_active_sky_clusters() is False
+    err = capsys.readouterr().err
+    assert "leftover-cluster" in err
+    assert "another" in err
