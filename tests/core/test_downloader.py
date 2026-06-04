@@ -65,19 +65,6 @@ def _failing_aria(exc_msg: str = "boom") -> RunAriaCallable:
     return stub
 
 
-def _spying_aria(
-    record: list[tuple[str, Path, dict[str, str]]],
-    bytes_to_write: bytes,
-) -> RunAriaCallable:
-    """Stub that records every call and writes correct bytes to part_path."""
-
-    def stub(url: str, part_path: Path, headers: dict[str, str]) -> None:
-        record.append((url, part_path, dict(headers)))
-        part_path.write_bytes(bytes_to_write)
-
-    return stub
-
-
 def _aria_writing_garbage_then_failing() -> RunAriaCallable:
     """Stub that writes garbage to part_path AND raises.
 
