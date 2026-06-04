@@ -239,3 +239,29 @@ def test_next_cursor_extracts_cursor_query_param() -> None:
 def test_fetch_callable_type_importable() -> None:
     """Bug: FetchCallable not exported from the module."""
     assert FetchCallable is not None
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 — @<rev> interpolation in single-file branch
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_single_file_with_revision_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bug: hardcoded /resolve/main/ ignoring parsed revision."""
+    creds = _make_creds(monkeypatch, None)
+    src = HuggingFaceSource()
+    artifacts = src.resolve("hf:org/repo@v1.0:path/file.bin", creds)
+    assert len(artifacts) == 1
+    assert (
+        artifacts[0].url == "https://huggingface.co/org/repo/resolve/v1.0/path/file.bin"
+    )
+
+
+def test_resolve_single_file_default_revision_main(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: parser regression dropping the default 'main' revision."""
+    creds = _make_creds(monkeypatch, None)
+    src = HuggingFaceSource()
+    artifacts = src.resolve("hf:org/repo:path/file.bin", creds)
+    assert artifacts[0].url.endswith("/resolve/main/path/file.bin")
