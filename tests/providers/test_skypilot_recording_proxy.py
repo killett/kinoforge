@@ -158,3 +158,35 @@ def test_to_jsonable_converts_tuple_to_list() -> None:
         {"head_ip": "<volatile>", "name": "a"},
         {"name": "b"},
     ]
+
+
+def test_to_jsonable_handles_pydantic_basemodel() -> None:
+    """Pydantic v2 ``BaseModel`` -> ``.model_dump()`` then recurse.
+
+    Bug catch: real SkyPilot's ``StatusResponse`` is pydantic; without
+    this branch the recorder would ``repr()`` the model via the lenient
+    ``default=str`` fallback, producing useless string-of-repr fixtures
+    instead of structured JSON.
+    """
+    try:
+        from pydantic import BaseModel
+    except ImportError:
+        import pytest
+
+        pytest.skip("pydantic not installed")
+
+    class _SampleStatusModel(BaseModel):
+        name: str
+        cluster_name_on_cloud: str  # volatile - should be stripped
+        status: str
+
+    record = _SampleStatusModel(
+        name="cluster-abc",
+        cluster_name_on_cloud="gcp-12345",
+        status="UP",
+    )
+    assert _to_jsonable(record) == {
+        "name": "cluster-abc",
+        "cluster_name_on_cloud": "<volatile>",
+        "status": "UP",
+    }

@@ -34,7 +34,8 @@ _VOLATILE_SENTINEL: str = "<volatile>"
 def _to_jsonable(obj: Any) -> Any:  # noqa: ANN401
     """Convert an SDK return value to a JSON-serialisable form.
 
-    Handles dataclasses, enums, ``pathlib.Path``, ``datetime``, and arbitrary
+    Handles dataclasses, pydantic v2 ``BaseModel`` instances (duck-typed via
+    ``model_dump``), enums, ``pathlib.Path``, ``datetime``, and arbitrary
     nested dicts/lists. Keys in :data:`VOLATILE_KEYS` are replaced with
     :data:`_VOLATILE_SENTINEL` so PR diffs surface shape changes, not noise.
 
@@ -46,6 +47,15 @@ def _to_jsonable(obj: Any) -> Any:  # noqa: ANN401
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return _to_jsonable(dataclasses.asdict(obj))
+    # Pydantic v2 BaseModel duck-type: has callable ``model_dump``. Placed
+    # before the Enum branch so models with enum fields get dumped as a unit
+    # (model_dump converts nested enums correctly). Wrapped in try/except so
+    # a broken model_dump implementation can't crash recording.
+    if hasattr(obj, "model_dump") and callable(obj.model_dump):
+        try:
+            return _to_jsonable(obj.model_dump())
+        except Exception:  # noqa: BLE001
+            pass
     if isinstance(obj, Enum):
         return obj.value
     if isinstance(obj, Path):
