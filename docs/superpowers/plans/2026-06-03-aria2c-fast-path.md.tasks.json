@@ -38,10 +38,10 @@
     {
       "id": 13,
       "subject": "Task 6: Whole-suite gate + push to origin/main",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [12],
       "description": "**Goal:** Run the full test suite, confirm 1044 passing, then push the Phase 29 commits to `origin/main` per the established direct-to-main pattern.\n\n**Files:** None (gate + push only).\n\n**Acceptance Criteria:**\n- pixi run test exits 0 with 1044 passed\n- pixi run pre-commit run --all-files passes\n- git push origin main succeeds\n- working tree clean post-push\n\n**Verify:** `pixi run test`\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run test\", \"acceptanceCriteria\": [\"pixi run test exits 0 with 1044 passed\", \"pixi run pre-commit run --all-files passes\", \"git push origin main succeeds\", \"working tree clean post-push\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-03T20:03:18-0700"
+  "lastUpdated": "2026-06-03T20:04:40-0700"
 }
