@@ -18,6 +18,7 @@ git-dirty without touching real RunPod or the test repo's git state.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -30,6 +31,8 @@ from typing import Any
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+
+_log = logging.getLogger(__name__)
 
 
 _REQUIRED_ENV = (
@@ -80,6 +83,54 @@ def _git_dirty_default() -> str:
         check=False,
     )
     return proc.stdout
+
+
+def _check_no_active_sky_clusters() -> bool:
+    """Verify no SkyPilot clusters are currently ``UP`` or ``INIT``.
+
+    SkyPilot is optional infrastructure — this check skips silently if
+    the SDK is not installed in the active env (e.g. the default env).
+    When the SDK IS installed, any active cluster is treated as leaked
+    state from a prior live run and fails preflight loud.
+
+    Returns:
+        ``True`` if safe to proceed (no active clusters OR skypilot not
+        installed); ``False`` if leaked clusters were found. The
+        offending cluster names are written to ``sys.stderr`` so the
+        operator can ``sky down <name>`` each one before retrying.
+    """
+    try:
+        import sky  # type: ignore[import-not-found]
+    except ImportError:
+        _log.info("skypilot not installed; skipping SkyPilot cluster check")
+        return True
+
+    # Modern SkyPilot returns a RequestId from ``status()``; the actual
+    # list of cluster records comes from ``sky.get(request_id)``. Older
+    # versions and our unit-test fakes return the list directly, so we
+    # only resolve via ``sky.get`` when ``status()`` did not give us a
+    # list. The ``status`` field on each record is either a plain
+    # string (``"UP"``) from older versions and test fakes, or a
+    # ``ClusterStatus`` enum (str-able as ``"ClusterStatus.UP"``) from
+    # modern SkyPilot. ``rsplit(".", 1)[-1]`` collapses both shapes to
+    # the bare name.
+    clusters = sky.status()
+    if not isinstance(clusters, list):
+        clusters = sky.get(clusters)
+    active = [
+        c
+        for c in clusters
+        if str(c.get("status", "")).rsplit(".", 1)[-1] in {"UP", "INIT"}
+    ]
+    if active:
+        names = ", ".join(c.get("name", "<unknown>") for c in active)
+        print(
+            f"FAIL: active SkyPilot clusters present: {names}\n"
+            f"      run `sky down <name>` for each before invoking the live smoke",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def run_preflight(
@@ -171,6 +222,16 @@ def main() -> int:
     )
     for ln in lines:
         print(ln)
+
+    # SkyPilot cluster check — skipped silently when sky SDK is absent
+    # (default env). On installed envs (live-skypilot) any active
+    # cluster fails preflight with the same severity as a RunPod leak.
+    if not _check_no_active_sky_clusters():
+        code = 1
+        print("  FAIL sky: active SkyPilot clusters present (see stderr)")
+    else:
+        print("  OK   sky: 0 active clusters (or skypilot not installed)")
+
     if code == 0:
         print("preflight: PASS — safe to spend")
     else:

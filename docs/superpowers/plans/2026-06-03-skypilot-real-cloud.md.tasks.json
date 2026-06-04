@@ -5,14 +5,16 @@
       "id": 0,
       "nativeTaskId": 17,
       "subject": "Task 1: live-skypilot pixi feature env + test-live-skypilot task",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "ed0dbda",
       "description": "**Goal:** Add a pixi feature env carrying `skypilot[gcp]` and a wrapper task so the smoke can be invoked without touching the default env.\n\n**Files:**\n- Modify: `pixi.toml` (~12 LOC added)\n\n**Acceptance Criteria:**\n- [ ] `pixi info -e live-skypilot` lists `skypilot` in the env's PyPI deps\n- [ ] `pixi run -e live-skypilot python -c \"import sky; print(sky.__version__)\"` exits 0\n- [ ] `pixi run test` (default env) does NOT install skypilot\n- [ ] `pixi run -e live-skypilot test-live-skypilot --collect-only` collects the (skipped) live test\n\n**Verify:** `pixi info -e live-skypilot | rg skypilot && pixi run -e live-skypilot python -c \"import sky\"` → 0\n\n```json:metadata\n{\"files\": [\"pixi.toml\", \"pixi.lock\"], \"verifyCommand\": \"pixi info -e live-skypilot | rg skypilot && pixi run -e live-skypilot python -c \\\"import sky\\\"\", \"acceptanceCriteria\": [\"pixi info -e live-skypilot lists skypilot\", \"live env imports sky cleanly\", \"default env does not install sky\", \"test-live-skypilot task collects the live test\"]}\n```"
     },
     {
       "id": 1,
       "nativeTaskId": 18,
       "subject": "Task 2: _RecordingProxy + _to_jsonable + Ring-2 unit tests",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "005eca2 + fd8cac9 (review fixup)",
       "blockedBy": [0],
       "description": "**Goal:** Implement the test-local recording proxy and serializer with full unit-test coverage (no skypilot needed).\n\n**Files:**\n- Create: `tests/live/_skypilot_recorder.py` (~80 LOC)\n- Create: `tests/providers/test_skypilot_recording_proxy.py` (~120 LOC, 8 tests)\n\n**Acceptance Criteria:** proxy delegation, dataclass via asdict, enum via .value, Path via str, datetime via isoformat, volatile-key recursive strip, file written with sort_keys+indent, two runs byte-identical.\n\n**Verify:** `pixi run test tests/providers/test_skypilot_recording_proxy.py -v` → 8 passed\n\n```json:metadata\n{\"files\": [\"tests/live/_skypilot_recorder.py\", \"tests/providers/test_skypilot_recording_proxy.py\"], \"verifyCommand\": \"pixi run test tests/providers/test_skypilot_recording_proxy.py -v\", \"acceptanceCriteria\": [\"proxy delegates calls\", \"dataclass via asdict\", \"enum via .value\", \"Path via str\", \"datetime via isoformat\", \"volatile keys stripped recursively\", \"fixture written with sort_keys+indent\", \"two runs byte-identical\"]}\n```"
     },
@@ -20,7 +22,8 @@
       "id": 2,
       "nativeTaskId": 19,
       "subject": "Task 3: examples/configs/skypilot.yaml operator example",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "eedf7db",
       "blockedBy": [1],
       "description": "**Goal:** Ship runnable example YAML for SkyPilot+GCS; verify it parses via `Config.load()`.\n\n**Files:**\n- Create: `examples/configs/skypilot.yaml` (~80 LOC)\n- Modify: `tests/test_examples.py`\n\n**Acceptance Criteria:** yaml parses; `compute.provider == skypilot`, `compute.region == us-central1`, `lifecycle.idle_timeout_s == 60`.\n\n**Verify:** `pixi run test tests/test_examples.py -v -k skypilot` → 1+ passed\n\n```json:metadata\n{\"files\": [\"examples/configs/skypilot.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run test tests/test_examples.py -v -k skypilot\", \"acceptanceCriteria\": [\"yaml parses via load_config\", \"compute.provider == skypilot\", \"compute.region == us-central1\", \"lifecycle.idle_timeout_s == 60\", \"layout mirrors wan.yaml\"]}\n```"
     },
@@ -65,5 +68,5 @@
       "description": "**Goal:** Document the layer in PROGRESS.md mirroring Phase 30's shape; close PROGRESS:114 carry-forward #2; add new CPU-only known-limitation.\n\n**Files:**\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:** Phase 31 entry exists (per-task SHAs, key decisions, live-smoke confirmation block, test count delta); PROGRESS:114 #2 struck-through + marked CLOSED; new CPU-only known-limitation added; RESUME block refreshed.\n\n**Verify:** `rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md\", \"acceptanceCriteria\": [\"Phase 31 entry exists with all required sub-sections\", \"PROGRESS:114 #2 struck-through + marked CLOSED\", \"new CPU-only known-limitation added\", \"RESUME block refreshed\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-03T23:45:00"
+  "lastUpdated": "2026-06-04T00:30:00"
 }
