@@ -89,6 +89,12 @@ test-cov = "python -m pytest --cov"  # Later on, consider adding --cov-fail-unde
 # tests/live/ directory is created in Layer I Task 13; until then this task
 # reports "no tests collected", which is the expected default.
 test-live = { cmd = "python -m pytest tests/live/ -v -m live", env = { KINOFORGE_LIVE_TESTS = "1" } }
+# SkyPilot live smoke (Phase 31). Lives in a separate feature env so the
+# default env stays lean — skypilot pulls ~500MB of transitive deps.
+# Gated by KINOFORGE_LIVE_TESTS=1 (set here) + GOOGLE_APPLICATION_CREDENTIALS
+# pointing at a service-account key with compute.admin + storage.admin.
+# Cost: <= $0.05 per run (smallest GCP CPU SKU x ~30 min wall-clock).
+test-live-skypilot = { cmd = "python -m pytest tests/live/test_skypilot_live.py -v", env = { KINOFORGE_LIVE_TESTS = "1" } }
 # Pre-live-spend gate. Verifies env vars, zero active RunPod pods, and clean
 # git working tree before any tool that costs money is invoked. Operator-facing
 # — exit 0 == safe to spend; non-zero == fix the surfaced gap. See tools/preflight.py.
@@ -119,3 +125,9 @@ typecheck = "python -m mypy ."
 pre-commit = "python -m pre_commit"
 pre-commit-all = "python -m pre_commit run --all-files"
 pre-commit-install = "python -m pre_commit install --install-hooks"
+
+[feature.live-skypilot.pypi-dependencies]
+skypilot = { version = "*", extras = ["gcp"] }
+
+[environments]
+live-skypilot = { features = ["live-skypilot"] }
