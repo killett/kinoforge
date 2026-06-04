@@ -244,13 +244,26 @@ def download_one(
     # Transport branch
     # ------------------------------------------------------------------
     _aria_bin = which_aria2()
+    aria_succeeded = False
     if _aria_bin is not None:
         # Pre-delete any pre-existing .part so aria2c starts fresh.
         # Resume / Range stays a stdlib-branch responsibility.
         part_path.unlink(missing_ok=True)
-        # headers: passthrough deferred to a future layer (spec Q6).
-        run_aria2(artifact.url, part_path, {})
-    else:
+        try:
+            run_aria2(artifact.url, part_path, {})
+        except KinoforgeError as exc:
+            logger.warning(
+                "aria2c failed for %s: %s; fallback to stdlib",
+                artifact.filename,
+                exc,
+            )
+            # Discard any partial bytes aria2c wrote before raising so
+            # the stdlib branch does not Range-resume off poisoned data.
+            part_path.unlink(missing_ok=True)
+        else:
+            aria_succeeded = True
+
+    if not aria_succeeded:
         # Stdlib branch (unchanged from pre-Phase-29).
         req_headers: dict[str, str] = {}
         if part_path.exists():
