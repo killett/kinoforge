@@ -149,15 +149,11 @@ def _parse_hf_ref(ref: str) -> tuple[str, str, str | None]:
 
 
 class HuggingFaceSource(ModelSource):
-    """Resolves ``hf:<repo>:<path>`` refs to a single HuggingFace resolve URL.
+    """Resolves ``hf:<repo>[@<rev>][:<path>]`` refs to one or more Artifacts.
 
-    The ref format is::
-
-        hf:<org>/<model>:<path/to/file>
-
-    A bare ``hf:<org>/<model>`` ref (no file path) raises
-    :class:`~kinoforge.core.errors.ValidationError` — directory listing is
-    deferred to a later task.
+    Single-file refs return exactly one Artifact whose URL is the canonical
+    HuggingFace resolve URL for that file at the parsed revision.  Bare
+    refs are routed through the tree-listing branch added in Task 4.
 
     Attributes:
         scheme: Registry scheme key — ``"hf"``.
@@ -165,60 +161,72 @@ class HuggingFaceSource(ModelSource):
 
     scheme = "hf"
 
-    def handles(self, ref: str) -> bool:
-        """Return ``True`` when *ref* starts with ``hf:`` followed by a repo path.
+    def __init__(self, *, fetch: FetchCallable = _urllib_fetch_json) -> None:
+        """Initialise the source with an optional transport override.
 
         Args:
-            ref: The model reference string to test.
-
-        Returns:
-            ``True`` if *ref* matches ``^hf:[^:]+(:.*)?$``.
+            fetch: Callable used to perform tree-listing HTTP requests.
+                Defaults to :func:`_urllib_fetch_json`.  Unused on the
+                single-file branch.
         """
+        self._fetch = fetch
+
+    def handles(self, ref: str) -> bool:
+        """Return ``True`` when *ref* matches ``^hf:[^:]+(:.*)?$``."""
         return _REF_RE.match(ref) is not None
 
     def resolve(self, ref: str, creds: CredentialProvider) -> list[Artifact]:
-        """Resolve a HuggingFace ref to a single :class:`~kinoforge.core.interfaces.Artifact`.
+        """Resolve *ref* to a list of Artifacts.
 
-        Parses ``hf:<repo>:<path>`` and constructs the canonical HuggingFace
-        resolve URL.  No network requests are made.
+        Single-file refs return a single-element list; bare-repo refs raise
+        ``ValidationError`` until Task 4 lands the tree branch.
 
         Args:
-            ref: The model reference string (e.g.
-                ``"hf:Wan-AI/Wan2.2:diffusion/model.safetensors"``).
+            ref: The HuggingFace reference string.
             creds: Credential provider; reads ``HF_TOKEN`` from it.
 
         Returns:
-            A list containing exactly one :class:`~kinoforge.core.interfaces.Artifact`
-            whose ``url`` is the HuggingFace resolve URL for the file.
+            List of :class:`~kinoforge.core.interfaces.Artifact` objects.
 
         Raises:
-            ValidationError: *ref* is a bare repo ref with no file path.
-                Directory listing is DEFERRED; callers must specify a file path
-                (e.g. ``hf:org/model:path/to/file``).
+            ValidationError: *ref* is a bare repo ref (no file path).
         """
-        # Strip the leading "hf:" scheme prefix.
-        remainder = ref[len("hf:") :]
+        repo, revision, path = _parse_hf_ref(ref)
+        token: str | None = creds.get("HF_TOKEN")
+        headers: dict[str, str] = {"Authorization": f"Bearer {token}"} if token else {}
 
-        # Split into at most two parts: <repo> and <path>.
-        parts = remainder.split(":", 1)
-        repo = parts[0]
-
-        if len(parts) < 2 or not parts[1]:
-            # DEFERRED: directory listing via HF API
+        if path is None:
+            # DEFERRED to Task 4: directory listing via HF tree API.
             raise ValidationError(
                 f"No file path in HuggingFace ref {ref!r} — "
                 "specify a file path (hf:repo:path/to/file). "
                 "Directory listing is not yet supported."
             )
 
-        path = parts[1]
+        return [self._single_file_artifact(repo, revision, path, headers)]
+
+    def _single_file_artifact(
+        self,
+        repo: str,
+        revision: str,
+        path: str,
+        headers: dict[str, str],
+    ) -> Artifact:
+        """Build the canonical resolve-URL Artifact for one file.
+
+        Args:
+            repo: ``<org>/<name>`` HuggingFace repo identifier.
+            revision: Branch, tag, or commit SHA.
+            path: Relative file path within the repo.
+            headers: HTTP headers (``Authorization`` when ``HF_TOKEN`` set).
+
+        Returns:
+            A single :class:`~kinoforge.core.interfaces.Artifact` whose
+            ``filename`` is the leaf of *path* (existing flatten contract).
+        """
         filename = path.rsplit("/", 1)[-1]
-        url = f"{_HF_BASE}/{repo}/resolve/main/{path}"
-
-        token: str | None = creds.get("HF_TOKEN")
-        headers: dict[str, str] = {"Authorization": f"Bearer {token}"} if token else {}
-
-        return [Artifact(url=url, filename=filename, headers=headers)]
+        url = f"{_HF_BASE}/{repo}/resolve/{revision}/{path}"
+        return Artifact(url=url, filename=filename, headers=dict(headers))
 
 
 # Self-register on import so a single ``import kinoforge.sources.huggingface``
