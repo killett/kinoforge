@@ -31,7 +31,9 @@
       "id": 3,
       "nativeTaskId": 20,
       "subject": "Task 4: preflight extension — _check_no_active_sky_clusters",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "6dd3530 + 90a6452 (review fixup)",
+      "forwardFlag": "src/kinoforge/providers/skypilot/__init__.py has 3 sky.status() call sites (list_instances, get_instance, destroy_instance) that need the same RequestId resolve + enum-collapse pattern. Will surface in T6.",
       "blockedBy": [2],
       "description": "**Goal:** Add `_check_no_active_sky_clusters()` to `tools/preflight.py` so `pixi run preflight` fails fast on leftover SkyPilot clusters.\n\n**Files:**\n- Modify: `tools/preflight.py` (~25 LOC)\n- Modify: `tests/test_preflight.py`\n\n**Acceptance Criteria:** skipped cleanly when skypilot absent; passes when status empty; fails with names when UP cluster found; existing checks unchanged.\n\n**Verify:** `pixi run test tests/test_preflight.py -v -k sky` → 3 new tests pass\n\n```json:metadata\n{\"files\": [\"tools/preflight.py\", \"tests/test_preflight.py\"], \"verifyCommand\": \"pixi run test tests/test_preflight.py -v -k sky\", \"acceptanceCriteria\": [\"skip cleanly when skypilot missing\", \"pass when status empty\", \"fail with names when UP cluster found\", \"existing checks unaffected\"]}\n```"
     },
@@ -39,7 +41,8 @@
       "id": 4,
       "nativeTaskId": 21,
       "subject": "Task 5: RED live-smoke scaffold — tests/live/test_skypilot_live.py",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "c3beb96",
       "blockedBy": [3],
       "description": "**Goal:** Commit full live-smoke scaffold (test function, helpers, gates, 4-tier teardown) BEFORE any live spend (CLAUDE.md mandate).\n\n**Files:**\n- Create: `tests/live/test_skypilot_live.py` (~220 LOC)\n\n**Acceptance Criteria:** default env reports skipped (no live execution); module imports cleanly under live env; skip message lists every missing precondition; `_teardown` has 4 independent tiers.\n\n**Verify:** `pixi run test tests/live/test_skypilot_live.py -v` → skipped\n\n```json:metadata\n{\"files\": [\"tests/live/test_skypilot_live.py\"], \"verifyCommand\": \"pixi run test tests/live/test_skypilot_live.py -v\", \"acceptanceCriteria\": [\"default env: skipped with reasons list\", \"live env collect-only works\", \"imports clean under live env\", \"_teardown has 4 tiers\", \"RED scaffold committed BEFORE T6 spends money\"]}\n```"
     },
