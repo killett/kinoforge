@@ -614,7 +614,8 @@ directory trees.
 - T3 (@rev in single-file branch + 2 ACs): `482058b`
 - T4 (tree branch + 13 ACs + bare-ref rewrite, closes deferred T3 AC4): `5580f09`
 - T5 (provisioner generic guard + 2 ACs): `1a9276e`
-- T6 (README + examples + PROGRESS + live smoke): `<backfill after commit>`
+- T6 (README + examples + PROGRESS + live smoke + convention conformance):
+  `8300887`, `cd7483a`, `e129686`, `7264e9f`
 
 **Key design decisions:**
 - Mirror CivitAI minimalism (Q1=A): bare `hf:<repo>` returns every file;
