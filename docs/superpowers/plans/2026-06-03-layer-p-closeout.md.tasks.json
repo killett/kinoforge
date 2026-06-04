@@ -11,17 +11,17 @@
     {
       "id": 9,
       "subject": "Task 9: ComfyUI shape-lockdown tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8],
       "description": "**Goal:** Append two new shape-lockdown tests to tests/engines/test_comfyui.py that pin the captured ComfyUI HTTP response contract.\n\n**Files:**\n- Modify: tests/engines/test_comfyui.py (+2 tests appended)\n\n**Acceptance Criteria:**\n- test_comfyui_prompt_submit_shape exists and passes\n- test_comfyui_real_shape_required_keys exists and passes\n- no view.json test added (intentional)\n- full file = 36 passed\n\n**Verify:** `pixi run pytest tests/engines/test_comfyui.py -v -k 'shape or required_keys'`\n\n```json:metadata\n{\"files\": [\"tests/engines/test_comfyui.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui.py -v -k 'shape or required_keys'\", \"acceptanceCriteria\": [\"test_comfyui_prompt_submit_shape exists and passes\", \"test_comfyui_real_shape_required_keys exists and passes\", \"no view.json test added\", \"full file = 36 passed\"], \"planPath\": \"docs/superpowers/plans/2026-06-03-layer-p-closeout.md\"}\n```"
     },
     {
       "id": 10,
       "subject": "Task 10: README + PROGRESS Phase 28 + layer-p-closed tag",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** Document Layer P close-out (README user-facing sub-section + PROGRESS Phase 28 entry), reset Single Next Action, create annotated layer-p-closed git tag at the closure commit.\n\n**Files:**\n- Modify: README.md\n- Modify: PROGRESS.md\n- (Tag): annotated layer-p-closed at the T10 commit\n\n**Acceptance Criteria:**\n- README sub-section exists with env vars + quickstart + KEEP_POD + cost shape\n- PROGRESS Phase 28 entry with per-task SHAs + bug-catch list + design decisions\n- Single Next Action reset\n- Layer-O carry-forward #1 left intact (already closed by Layer N)\n- layer-p-closed annotated tag at T10 commit\n- full offline gate green\n- 1036 passed, 3 skipped\n\n**Verify:** `pixi run pre-commit run --all-files && pixi run test && pixi run typecheck && pixi run lint && rg 'Engine integration \\(ComfyUI \\+ Wan i2v\\)' README.md && rg '^### Phase 28 — Layer P close-out' PROGRESS.md && git tag -l 'layer-p-closed' -n1`\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files && pixi run test && pixi run typecheck && pixi run lint && rg 'Engine integration \\\\(ComfyUI \\\\+ Wan i2v\\\\)' README.md && rg '^### Phase 28 — Layer P close-out' PROGRESS.md && git tag -l 'layer-p-closed' -n1\", \"acceptanceCriteria\": [\"README sub-section exists with env vars + quickstart + KEEP_POD + cost shape\", \"PROGRESS Phase 28 entry with per-task SHAs + bug-catch list + design decisions\", \"Single Next Action reset\", \"Layer-O carry-forward #1 left intact (already closed by Layer N)\", \"layer-p-closed annotated tag at T10 commit\", \"full offline gate green\", \"1036 passed, 3 skipped\"], \"planPath\": \"docs/superpowers/plans/2026-06-03-layer-p-closeout.md\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-03T17:45:00-0700"
+  "lastUpdated": "2026-06-03T18:30:00-0700"
 }
