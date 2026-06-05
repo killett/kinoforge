@@ -4,6 +4,10 @@
 stores profiles as JSON under ``<store-root>/<run_id>/profiles/<hash>.json``
 where ``<hash>`` is ``CapabilityKey.derive()``.
 
+``JsonImageProfileCache`` is a thin subclass namespaced to
+``<hash>.image.json`` so image and video profiles for the same
+``CapabilityKey`` never collide on disk.
+
 Thread safety
 -------------
 ``resolve_or_discover`` implements a per-key single-flight guarantee: if two
@@ -36,6 +40,9 @@ from kinoforge.core.interfaces import (
     CapabilityKey,
     GenerationBackend,
     GenerationEngine,
+    ImageBackend,
+    ImageEngine,
+    ImageProfile,
     ModelProfile,
     ModelProfileProvider,
 )
@@ -128,6 +135,8 @@ class JsonProfileCache(ModelProfileProvider):
             ``"_profiles"`` so they are isolated from clip artifacts.
     """
 
+    _FILENAME_SUFFIX = ".json"
+
     def __init__(
         self,
         store: ArtifactStore,
@@ -151,6 +160,51 @@ class JsonProfileCache(ModelProfileProvider):
         self._inflight: dict[str, threading.Event] = {}
 
     # ------------------------------------------------------------------
+    # Seam methods — override in subclasses for different profile types
+    # ------------------------------------------------------------------
+
+    def _filename_for(self, key: CapabilityKey) -> str:
+        """Return the bare filename (no directory prefix) for *key*.
+
+        Args:
+            key: The ``CapabilityKey`` whose derived hash forms the filename.
+
+        Returns:
+            A filename string, e.g. ``"<hex>.json"``.
+        """
+        return f"{key.derive()}{self._FILENAME_SUFFIX}"
+
+    def _profile_from_payload(self, payload: dict) -> ModelProfile:  # type: ignore[type-arg]
+        """Deserialise a profile from a JSON-loaded dict.
+
+        Args:
+            payload: A dict as produced by :meth:`_payload_from_profile`.
+
+        Returns:
+            A ``ModelProfile`` with correct field types.
+        """
+        return _dict_to_profile(payload)
+
+    def _payload_from_profile(self, profile: ModelProfile) -> dict:  # type: ignore[type-arg]
+        """Serialise a profile to a JSON-safe dict.
+
+        Args:
+            profile: The profile to serialise.
+
+        Returns:
+            A JSON-safe dict.
+        """
+        return _profile_to_dict(profile)
+
+    def _verify_fields(self) -> tuple[str, ...]:
+        """Return the tuple of field names compared by :meth:`verify`.
+
+        Returns:
+            Field names to compare between the cached profile and a live probe.
+        """
+        return _PROBEABLE_FIELDS
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -163,7 +217,7 @@ class JsonProfileCache(ModelProfileProvider):
         Returns:
             A relative name string suitable for ``put_json`` / ``get_json``.
         """
-        return f"profiles/{key.derive()}.json"
+        return f"profiles/{self._filename_for(key)}"
 
     def _persist(self, key: CapabilityKey, profile: ModelProfile) -> None:
         """Serialise *profile* and write it to the store under *key*'s name.
@@ -173,7 +227,7 @@ class JsonProfileCache(ModelProfileProvider):
             profile: The ``ModelProfile`` to persist.
         """
         name = self._profile_name(key)
-        self._store.put_json(self._run_id, name, _profile_to_dict(profile))
+        self._store.put_json(self._run_id, name, self._payload_from_profile(profile))
 
     # ------------------------------------------------------------------
     # Public test seam
@@ -218,7 +272,7 @@ class JsonProfileCache(ModelProfileProvider):
             )
         uri = self._store.uri_for(self._run_id, name)
         raw = self._store.get_json(uri)
-        return _dict_to_profile(raw)
+        return self._profile_from_payload(raw)
 
     def discover(
         self,
@@ -340,7 +394,7 @@ class JsonProfileCache(ModelProfileProvider):
                     key.derive(),
                 )
 
-        for field_name in _PROBEABLE_FIELDS:
+        for field_name in self._verify_fields():
             cached_val = getattr(profile, field_name)
             probed_val = getattr(probe, field_name)
             if cached_val != probed_val:
@@ -428,3 +482,229 @@ class JsonProfileCache(ModelProfileProvider):
             except ProfileNotCached:
                 pass
             return self._discover_single_flight(key, engine, backend)
+
+
+# ---------------------------------------------------------------------------
+# JsonImageProfileCache
+# ---------------------------------------------------------------------------
+
+
+class JsonImageProfileCache(JsonProfileCache):
+    """JsonProfileCache namespaced to ``<hex>.image.json`` for ImageProfile.
+
+    Same single-flight + URI-index machinery; only filename and (de)serialised
+    dataclass differ.
+
+    Profiles are stored as JSON files under::
+
+        <store-root>/_profiles/profiles/<key.derive()>.image.json
+
+    so image and video profiles for the same ``CapabilityKey`` never collide.
+
+    Args:
+        store: Any ``ArtifactStore`` implementation.
+        run_id: Namespace under which profiles are stored.  Defaults to
+            ``"_profiles"`` so they are isolated from clip artifacts.
+        discover_ttl_s: Outer cross-process lease duration for discovery.
+    """
+
+    _FILENAME_SUFFIX = ".image.json"
+
+    def _filename_for(self, key: CapabilityKey) -> str:
+        """Return ``<hex>.image.json`` for *key*.
+
+        Args:
+            key: The ``CapabilityKey`` whose derived hash forms the filename.
+
+        Returns:
+            A filename string, e.g. ``"<hex>.image.json"``.
+        """
+        return f"{key.derive()}{self._FILENAME_SUFFIX}"
+
+    def _profile_from_payload(self, payload: dict[str, Any]) -> ImageProfile:  # type: ignore[override]
+        """Deserialise an ``ImageProfile`` from a JSON-loaded dict.
+
+        Args:
+            payload: A dict as produced by :meth:`_payload_from_profile`.
+
+        Returns:
+            An ``ImageProfile`` with ``supported_modes`` as ``set`` and
+            ``max_resolution`` as ``tuple``.
+        """
+        return ImageProfile(
+            name=str(payload["name"]),
+            max_resolution=tuple(payload["max_resolution"]),
+            supported_modes=set(payload["supported_modes"]),
+        )
+
+    def _payload_from_profile(self, profile: ImageProfile) -> dict[str, Any]:  # type: ignore[override]
+        """Serialise an ``ImageProfile`` to a JSON-safe dict.
+
+        Args:
+            profile: The ``ImageProfile`` to serialise.
+
+        Returns:
+            A JSON-safe dict with ``supported_modes`` as a sorted list and
+            ``max_resolution`` as a two-element list.
+        """
+        return {
+            "name": profile.name,
+            "max_resolution": list(profile.max_resolution),
+            "supported_modes": sorted(profile.supported_modes),
+        }
+
+    def _verify_fields(self) -> tuple[str, ...]:
+        """Return the fields compared by :meth:`verify` for image profiles.
+
+        Returns:
+            ``("max_resolution", "supported_modes")`` — the two probeable
+            fields of ``ImageProfile``.
+        """
+        return ("max_resolution", "supported_modes")
+
+    def discover(  # type: ignore[override]
+        self,
+        key: CapabilityKey,
+        engine: ImageEngine,
+        backend: ImageBackend,
+    ) -> ImageProfile:
+        """Probe the live image backend, persist the profile, and return it.
+
+        If a profile is already cached for *key*, return it immediately without
+        calling ``inspect_capabilities``.  This provides an idempotency
+        guarantee: calling ``discover()`` twice for the same key incurs only one
+        backend probe.
+
+        ``backend.inspect_capabilities()`` is called exactly once per miss.
+        ``ImageEngine`` has no ``declared_flags`` concept so no flag merging is
+        performed.
+
+        Args:
+            key: The ``CapabilityKey`` identifying the model configuration.
+            engine: The image engine (unused here; present for API symmetry).
+            backend: A live image backend whose ``inspect_capabilities`` is
+                called on a cache miss.
+
+        Returns:
+            The persisted ``ImageProfile``.
+        """
+        # Idempotency: skip the backend probe if already cached.
+        try:
+            return self.resolve(key)  # type: ignore[return-value]
+        except ProfileNotCached:
+            pass
+
+        probe = backend.inspect_capabilities()
+        self._persist(key, probe)  # type: ignore[arg-type]
+        return probe
+
+    def verify(  # type: ignore[override]
+        self,
+        profile: ImageProfile,
+        backend: ImageBackend,
+        *,
+        engine: ImageEngine | None = None,
+        key: CapabilityKey | None = None,
+    ) -> None:
+        """Re-probe the image backend and compare probeable fields against *profile*.
+
+        Only ``max_resolution`` and ``supported_modes`` are compared.
+        ``ImageEngine`` has no strategy-flag concept so no drift warning is
+        emitted.
+
+        Args:
+            profile: The cached ``ImageProfile`` to verify against.
+            backend: A live image backend whose ``inspect_capabilities`` is
+                called.
+            engine: Accepted for API symmetry; not used.
+            key: Accepted for API symmetry; not used.
+
+        Raises:
+            CapabilityMismatch: Any probeable field differs between *profile*
+                and the live probe.
+        """
+        probe = backend.inspect_capabilities()
+
+        for field_name in self._verify_fields():
+            cached_val = getattr(profile, field_name)
+            probed_val = getattr(probe, field_name)
+            if cached_val != probed_val:
+                raise CapabilityMismatch(
+                    f"profile drift on field {field_name!r}: "
+                    f"expected {cached_val!r} got {probed_val!r}"
+                )
+
+    def image_discover(
+        self,
+        key: CapabilityKey,
+        engine: ImageEngine,
+        backend: ImageBackend,
+    ) -> ImageProfile:
+        """Alias for :meth:`discover`; provided for callers that prefer explicit naming.
+
+        Args:
+            key: The ``CapabilityKey`` identifying the model configuration.
+            engine: The image engine (unused here; present for API symmetry).
+            backend: A live image backend whose ``inspect_capabilities`` is
+                called on a cache miss.
+
+        Returns:
+            The persisted ``ImageProfile``.
+        """
+        return self.discover(key, engine, backend)
+
+    def image_resolve_or_discover(
+        self,
+        key: CapabilityKey,
+        engine: ImageEngine,
+        backend: ImageBackend,
+    ) -> ImageProfile:
+        """Return the cached image profile for *key*, discovering it if needed.
+
+        Cache hits return without taking any lock.  On a miss, an outer
+        cross-process lock serialises discovery; the in-process single-flight
+        body is the inner guard.
+
+        Args:
+            key: The ``CapabilityKey`` whose profile to return.
+            engine: Passed to :meth:`discover` if discovery is needed.
+            backend: Passed to :meth:`discover` if discovery is needed.
+
+        Returns:
+            The ``ImageProfile`` for *key*, from cache or freshly discovered.
+        """
+        try:
+            return self.resolve(key)  # type: ignore[return-value]
+        except ProfileNotCached:
+            pass
+
+        hash_key = key.derive()
+        with self._store.acquire_lock(
+            f"profiles/{hash_key}", ttl_s=self._discover_ttl_s
+        ):
+            try:
+                return self.resolve(key)  # type: ignore[return-value]
+            except ProfileNotCached:
+                pass
+
+            # In-process single-flight for image discover.
+            with self._lock:
+                ev = self._inflight.get(hash_key)
+                if ev is None:
+                    ev = threading.Event()
+                    self._inflight[hash_key] = ev
+                    is_leader = True
+                else:
+                    is_leader = False
+
+            if is_leader:
+                try:
+                    profile = self.discover(key, engine, backend)
+                finally:
+                    with self._lock:
+                        ev.set()
+                        self._inflight.pop(hash_key, None)
+                return profile
+
+            ev.wait()
+            return self.resolve(key)  # type: ignore[return-value]
