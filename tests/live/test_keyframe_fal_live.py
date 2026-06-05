@@ -26,8 +26,15 @@ pytestmark = pytest.mark.skipif(
     not LIVE, reason="set KINOFORGE_LIVE_TESTS=1 to enable live smoke"
 )
 
-# PNG magic bytes: 0x89 50 4E 47
+# Image magic bytes: PNG starts 0x89 50 4E 47; JPEG starts 0xFF D8 FF.
+# fal-ai/flux/schnell returns JPEG by default. Accept either.
 PNG_MAGIC = b"\x89PNG"
+JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _is_image_bytes(data: bytes) -> bool:
+    """Return True if `data` starts with PNG or JPEG magic bytes."""
+    return data.startswith(PNG_MAGIC) or data.startswith(JPEG_MAGIC)
 
 
 def _require_fal_key() -> str:
@@ -72,12 +79,12 @@ def test_fal_image_engine_t2i_live(tmp_path: Path) -> None:
     assert artifact.url, "result must populate Artifact.url"
     assert artifact.filename, "result must populate Artifact.filename"
 
-    png_bytes = artifact_bytes(artifact)
-    assert png_bytes.startswith(PNG_MAGIC), (
-        f"downloaded bytes are not a PNG (no PNG magic): {png_bytes[:8]!r}"
+    img_bytes = artifact_bytes(artifact)
+    assert _is_image_bytes(img_bytes), (
+        f"downloaded bytes are not PNG or JPEG: {img_bytes[:8]!r}"
     )
-    assert len(png_bytes) > 1000, (
-        f"PNG suspiciously small ({len(png_bytes)} bytes) — likely an error page"
+    assert len(img_bytes) > 1000, (
+        f"image suspiciously small ({len(img_bytes)} bytes) — likely an error page"
     )
 
 
@@ -142,9 +149,14 @@ def test_keyframe_stage_with_fal_image_engine_live(tmp_path: Path) -> None:
         "expected ConditioningAsset(role='init_image') appended to request.assets"
     )
 
-    # File persisted to disk under run_id with PNG magic
+    # File persisted to disk under run_id with image magic (PNG or JPEG).
+    # Filename is .png because KeyframeStage hardcodes that extension; the
+    # actual bytes can be JPEG when the image engine returns JPEG (fal
+    # flux/schnell default). Mismatched extension is a known cosmetic issue
+    # documented as Layer R carry-forward — content-type sniffing would let
+    # KeyframeStage pick the right extension.
     kf_files = list(tmp_path.glob("**/keyframe-init_image.png"))
     assert len(kf_files) == 1, f"expected 1 keyframe-init_image.png, got {kf_files}"
     kf_bytes = kf_files[0].read_bytes()
-    assert kf_bytes.startswith(PNG_MAGIC), f"keyframe is not a PNG: {kf_bytes[:8]!r}"
+    assert _is_image_bytes(kf_bytes), f"keyframe is not PNG or JPEG: {kf_bytes[:8]!r}"
     assert len(kf_bytes) > 1000
