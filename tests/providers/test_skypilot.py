@@ -567,6 +567,36 @@ def test_ac4_create_instance_gpu_offer_sets_accelerators() -> None:
     assert "cpus" not in resources, "GPU offer must not also request CPU resources"
 
 
+def test_ac4_create_instance_defaults_disk_size_to_30_gb() -> None:
+    """``create_instance`` defaults ``disk_size=30`` (GB) on the resources block.
+
+    A bug that would catch: SkyPilot's own default ``disk_size`` is 256 GB,
+    which exceeds GCP's default per-project ``SSD_TOTAL_GB=250`` quota and
+    causes ``quotaExceeded: 403`` on every region during live launch (T7f
+    attempt 7 surfaced this). The provider sets a sensible default of 30 GB
+    so CPU smokes launch on a fresh GCP project without manual quota
+    increases. The default must land in the dict passed to
+    ``sky.Task.from_yaml_config`` — that's the configuration SkyPilot acts
+    on.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.create_instance(_make_spec())
+
+    cfg = fake.Task.from_yaml_config_calls[0]
+    assert "resources" in cfg, (
+        "create_instance must emit a resources block when image_id is set "
+        "so the disk_size default has somewhere to land"
+    )
+    assert cfg["resources"].get("disk_size") == 30, (
+        "disk_size must default to 30 GB to stay under GCP's default "
+        "per-project SSD_TOTAL_GB=250 quota (SkyPilot's own default of "
+        "256 GB exceeds that quota on a fresh project)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # AC5: list_instances
 # ---------------------------------------------------------------------------
