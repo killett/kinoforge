@@ -10,9 +10,9 @@ This module owns:
     _batch_summary.json on every exit path.
 
 Core-import-ban: this module imports ONLY from kinoforge.core.* +
-kinoforge.pipeline.generate_clip + kinoforge.stores.base + stdlib +
-pydantic + PyYAML.  No kinoforge.providers / engines / sources.  The
-invariant test in tests/test_core_invariant.py enforces this via
+kinoforge.pipeline.* + kinoforge.stores.base + kinoforge.outputs.base +
+stdlib + pydantic + PyYAML.  No kinoforge.providers / engines / sources.
+The invariant test in tests/test_core_invariant.py enforces this via
 subprocess isolation.
 """
 
@@ -34,25 +34,32 @@ from kinoforge.core.errors import (
     BudgetExceeded,
     CapabilityMismatch,
     ConfigError,
+    ProfileNotCached,
     TeardownError,
 )
 from kinoforge.core.interfaces import (
     Artifact,
     ConditioningAsset,
     GenerationRequest,
+    ImageBackend,
+    ImageEngine,
+    ImageProfile,
+    ImageProfileProvider,
     Instance,
     PipelineState,
     Segment,
 )
 from kinoforge.core.logging import get_logger
 from kinoforge.core.orchestrator import deploy_session
+from kinoforge.core.profiles import JsonImageProfileCache
 from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
+from kinoforge.pipeline.keyframe import KeyframeStage
 from kinoforge.stores.base import ArtifactStore
 
 if TYPE_CHECKING:
-    from kinoforge.core.config import Config
+    from kinoforge.core.config import Config, KeyframeConfig
     from kinoforge.core.interfaces import (
         ComputeProvider,
         CredentialProvider,
@@ -84,6 +91,10 @@ class BatchEntry(BaseModel):
         spec: Engine-interpreted spec overrides shallow-merged onto
             cfg.spec (entry wins per key).
         assets: List of asset dicts forwarded into GenerationRequest.assets.
+        keyframe: Per-entry keyframe overrides shallow-merged onto
+            cfg.keyframe (entry wins per key).  Only the fields present
+            in this dict are overridden; omitted fields fall back to
+            cfg.keyframe defaults.  Ignored when cfg.keyframe is None.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -95,6 +106,7 @@ class BatchEntry(BaseModel):
     params: dict[str, Any] | None = None
     spec: dict[str, Any] | None = None
     assets: list[dict[str, Any]] | None = None
+    keyframe: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _exactly_one_prompt_source(self) -> BatchEntry:
@@ -255,6 +267,7 @@ def _build_stage_for_entry(
     store: ArtifactStore,
     batch_id: str,
     sink: OutputSink | None = None,
+    keyframe_state: PipelineState | None = None,
 ) -> tuple[GenerateClipStage, PipelineState]:
     """Build a stage + initial PipelineState pair for one batch entry.
 
@@ -265,6 +278,12 @@ def _build_stage_for_entry(
     engine that does ``job.params["nested"]["a"] = 99`` corrupt
     ``cfg.params`` in place.  Entry-side overrides are deep-copied too
     so the same protection applies to per-entry nested dicts.
+
+    When ``keyframe_state`` is supplied, its ``request`` (which carries
+    the keyframe-filled assets) is used as the base for validation
+    instead of the raw entry request.  This is the Layer R T11 shape:
+    KeyframeStage runs BEFORE ``_build_stage_for_entry`` so that
+    ``validate_request`` sees the enriched (filled) request.
 
     Args:
         cfg: The loaded kinoforge configuration.
@@ -279,6 +298,11 @@ def _build_stage_for_entry(
         sink: Optional user-facing publish target forwarded to each
             per-entry :class:`~kinoforge.pipeline.generate_clip.GenerateClipStage`.
             When ``None`` (the default), no publish side-effect occurs.
+        keyframe_state: Optional pre-run KeyframeStage output.  When
+            non-None, its ``request`` (assets already filled) is
+            validated instead of the bare entry request.  Its
+            ``artifacts`` are carried forward into the initial
+            PipelineState so keyframe artifacts survive downstream.
 
     Returns:
         A ``(stage, initial_state)`` tuple ready for
@@ -294,13 +318,21 @@ def _build_stage_for_entry(
         **copy.deepcopy(dict(cfg.spec)),
         **copy.deepcopy(entry.spec or {}),
     }
-    request = GenerationRequest(
-        prompt=entry.prompt or "",
-        mode=entry.mode,
-        assets=[ConditioningAsset(**a) for a in (entry.assets or [])],
-    )
+
+    if keyframe_state is not None:
+        # KeyframeStage already ran; use its enriched request directly.
+        request_to_validate = keyframe_state.request
+        prior_artifacts = dict(keyframe_state.artifacts)
+    else:
+        request_to_validate = GenerationRequest(
+            prompt=entry.prompt or "",
+            mode=entry.mode,
+            assets=[ConditioningAsset(**a) for a in (entry.assets or [])],
+        )
+        prior_artifacts = {}
+
     validated = validate_request(
-        session.profile, request, accepted_kinds=accepted_kinds
+        session.profile, request_to_validate, accepted_kinds=accepted_kinds
     )
 
     splitter = registry.get_splitter(cfg.splitter.kind)()
@@ -325,7 +357,7 @@ def _build_stage_for_entry(
         sink=sink,
         namespace=batch_id,
     )
-    initial_state = PipelineState(request=validated, artifacts={})
+    initial_state = PipelineState(request=validated, artifacts=prior_artifacts)
     return stage, initial_state
 
 
@@ -459,8 +491,10 @@ def batch_generate(
     concurrent: int | None = None,
     provider: ComputeProvider | None = None,
     engine: GenerationEngine | None = None,
+    image_engine: ImageEngine | None = None,
     creds: CredentialProvider | None = None,
     profile_provider: ModelProfileProvider | None = None,
+    image_profile_provider: ImageProfileProvider | None = None,
     state_dir: Path = Path(".kinoforge"),
     sink: OutputSink | None = None,
     instance: Instance | None = None,
@@ -505,12 +539,22 @@ def batch_generate(
         engine: Optional pre-constructed
             :class:`~kinoforge.core.interfaces.GenerationEngine` (test
             injection).
+        image_engine: Optional pre-constructed
+            :class:`~kinoforge.core.interfaces.ImageEngine` (test
+            injection for the keyframe path).  When ``None`` and
+            ``cfg.keyframe`` is set, resolved from the registry via
+            ``cfg.keyframe.engine``.
         creds: Optional credential provider, forwarded to the
             provisioner via :func:`deploy_session`.
         profile_provider: Optional
             :class:`~kinoforge.core.interfaces.ModelProfileProvider`
             (test injection).  Defaults to
             :class:`~kinoforge.core.profiles.JsonProfileCache`.
+        image_profile_provider: Optional
+            :class:`~kinoforge.core.interfaces.ImageProfileProvider`
+            (test injection for the image-engine profile cache).
+            Defaults to ``JsonImageProfileCache(store)`` when
+            ``cfg.keyframe`` is set.
         state_dir: Operator state root (provision markers, weights,
             locks).
         sink: Optional user-facing publish target.  When non-None,
@@ -578,6 +622,36 @@ def batch_generate(
     # can fall back to it for never-started futures.
     batch_start = monotonic()
 
+    # ------------------------------------------------------------------
+    # Pre-resolve image engine + backend + profile ONCE per batch if
+    # cfg.keyframe is set.  Amortises construction cost; unknown engine
+    # names fail fast here before any compute spend.
+    # ------------------------------------------------------------------
+    _image_backend: ImageBackend | None = None
+    _image_profile: ImageProfile | None = None
+    _resolved_image_engine: ImageEngine | None = None
+    if cfg.keyframe is not None:
+        _resolved_image_engine = (
+            image_engine
+            if image_engine is not None
+            else registry.get_image_engine(cfg.keyframe.engine)()
+        )
+        kf_cfg_dict = cfg.keyframe.model_dump()
+        _resolved_image_engine.provision(None, kf_cfg_dict)
+        _image_backend = _resolved_image_engine.backend(None, kf_cfg_dict)
+        image_key = cfg.keyframe.capability_key()
+        ipp: ImageProfileProvider = (
+            image_profile_provider
+            if image_profile_provider is not None
+            else JsonImageProfileCache(store)  # type: ignore[assignment]
+        )
+        try:
+            _image_profile = ipp.resolve(image_key)
+        except ProfileNotCached:
+            _image_profile = ipp.discover(
+                image_key, _resolved_image_engine, _image_backend
+            )
+
     try:
         with deploy_session(
             cfg,
@@ -607,6 +681,41 @@ def batch_generate(
             try:
                 for idx, entry in enumerate(manifest.entries):
                     try:
+                        # --------------------------------------------------
+                        # Per-entry keyframe phase: run BEFORE validate_request
+                        # so that missing image-kind roles (e.g. init_image for
+                        # i2v) are filled before validation fires.
+                        # --------------------------------------------------
+                        keyframe_state: PipelineState | None = None
+                        if cfg.keyframe is not None:
+                            # Merge per-entry keyframe overrides onto cfg-level
+                            # defaults (shallow merge; entry wins per key).
+                            base_kf_dict = cfg.keyframe.model_dump()
+                            if entry.keyframe:
+                                base_kf_dict.update(entry.keyframe)
+                            # Re-parse to a validated KeyframeConfig so
+                            # KeyframeStage receives a well-typed object.
+
+                            entry_kf_cfg: KeyframeConfig = cfg.keyframe.__class__(
+                                **base_kf_dict
+                            )
+                            entry_run_id = f"{batch_id}/{entry.run_id}"
+                            raw_request = GenerationRequest(
+                                prompt=entry.prompt or "",
+                                mode=entry.mode,
+                                assets=[
+                                    ConditioningAsset(**a) for a in (entry.assets or [])
+                                ],
+                            )
+                            keyframe_state = KeyframeStage(
+                                keyframe_cfg=entry_kf_cfg,
+                                image_engine=_resolved_image_engine,  # type: ignore[arg-type]
+                                image_backend=_image_backend,  # type: ignore[arg-type]
+                                image_profile=_image_profile,  # type: ignore[arg-type]
+                                store=store,
+                                run_id=entry_run_id,
+                            ).run(PipelineState(request=raw_request, artifacts={}))
+
                         stage, initial_state = _build_stage_for_entry(
                             cfg,
                             entry,
@@ -615,6 +724,7 @@ def batch_generate(
                             store,
                             batch_id,
                             sink=sink,
+                            keyframe_state=keyframe_state,
                         )
                     except Exception as build_exc:  # noqa: BLE001 — per-entry catch
                         # Validation errors (e.g. unsupported mode) detected
