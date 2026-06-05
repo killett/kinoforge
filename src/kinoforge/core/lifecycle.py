@@ -440,7 +440,13 @@ class Ledger:
     # Public API
     # ------------------------------------------------------------------
 
-    def record(self, instance: Instance) -> None:
+    def record(
+        self,
+        instance: Instance,
+        *,
+        idle_timeout_s: int | None = None,
+        max_age_s: int | None = None,
+    ) -> None:
         """Append an instance entry to the ledger.
 
         Reads the current ledger (or starts fresh if none exists), appends
@@ -451,6 +457,14 @@ class Ledger:
             instance: The :class:`~kinoforge.core.interfaces.Instance` to
                 record.  Fields ``id``, ``provider``, ``tags``,
                 ``created_at``, and ``cost_rate_usd_per_hr`` are stored.
+            idle_timeout_s: Optional lifecycle policy snapshot — when
+                non-None, persisted into the entry so ``kinoforge status``
+                can surface it without re-loading the YAML config.
+            max_age_s: Optional lifecycle policy snapshot — same purpose
+                as ``idle_timeout_s``.  Sourced at the call site from the
+                effective ``Lifecycle.max_lifetime_s`` value (Layer S
+                names the persisted key generically; the value is the
+                maximum allowed lifetime in seconds).
         """
         with self._store.acquire_lock(
             f"ledger/{self._run_id}", ttl_s=self._mutate_ttl_s
@@ -463,6 +477,10 @@ class Ledger:
                 "created_at": instance.created_at,
                 "cost_rate_usd_per_hr": instance.cost_rate_usd_per_hr,
             }
+            if idle_timeout_s is not None:
+                entry["idle_timeout_s"] = int(idle_timeout_s)
+            if max_age_s is not None:
+                entry["max_age_s"] = int(max_age_s)
             entries.append(entry)
             self._write_entries(entries)
 

@@ -11,10 +11,12 @@ AC #7: Lifecycle() defaults carry expected timeout values.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from kinoforge.core.clock import FakeClock
-from kinoforge.core.interfaces import InstanceSpec, Lifecycle
+from kinoforge.core.interfaces import Instance, InstanceSpec, Lifecycle
 from kinoforge.core.lifecycle import (
     LifecycleManager,
     effective_deadline,
@@ -272,3 +274,103 @@ def test_lifecycle_defaults() -> None:
     assert lc.idle_timeout_s == 2 * 3600
     assert lc.job_timeout_s == 30 * 60
     assert lc.max_lifetime_s == 5 * 3600
+
+
+# ---------------------------------------------------------------------------
+# Layer S — Ledger.record schema extension (idle_timeout_s + max_age_s)
+# ---------------------------------------------------------------------------
+
+
+def _layer_s_make_instance(iid: str = "i-1") -> Instance:
+    """Construct a minimal Instance for Layer S Ledger.record tests."""
+    return Instance(
+        id=iid,
+        provider="fake",
+        status="ready",
+        endpoints={},
+        tags={},
+        created_at=1717635791.0,
+        cost_rate_usd_per_hr=0.35,
+    )
+
+
+def test_record_persists_idle_timeout_s_and_max_age_s(tmp_path: Path) -> None:
+    """Ledger.record with both new kwargs writes them into the JSON entry.
+
+    Bug-catch: if the new kwargs were accepted but dropped on the floor,
+    `kinoforge status` would silently fall back to `<not in ledger>` even
+    on freshly recorded entries.
+    """
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.local import LocalArtifactStore
+
+    ledger = Ledger(store=LocalArtifactStore(tmp_path), run_id="_lifecycle")
+
+    ledger.record(_layer_s_make_instance(), idle_timeout_s=900, max_age_s=14400)
+
+    entries = ledger.entries()
+    assert len(entries) == 1
+    assert entries[0]["idle_timeout_s"] == 900
+    assert entries[0]["max_age_s"] == 14400
+    assert isinstance(entries[0]["idle_timeout_s"], int)
+    assert isinstance(entries[0]["max_age_s"], int)
+
+
+def test_record_omits_new_keys_when_kwargs_none(tmp_path: Path) -> None:
+    """Backwards-compat: record() without kwargs writes the legacy entry shape.
+
+    Bug-catch: if a default-None kwarg accidentally persisted as `null`, legacy
+    consumers that switch on `key in entry` would flip behavior.
+    """
+    import json
+
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.local import LocalArtifactStore
+
+    ledger = Ledger(store=LocalArtifactStore(tmp_path), run_id="_lifecycle")
+
+    ledger.record(_layer_s_make_instance())
+
+    # Disk layout: <root>/<run_id>/ledger.json containing {"entries": [...]}.
+    on_disk = json.loads((tmp_path / "_lifecycle" / "ledger.json").read_text())
+    entry = on_disk["entries"][0]
+    assert "idle_timeout_s" not in entry
+    assert "max_age_s" not in entry
+
+
+def test_entries_reads_legacy_entry_without_new_keys(tmp_path: Path) -> None:
+    """A ledger.json written before this layer must read cleanly.
+
+    Bug-catch: if the new fields became required, this would KeyError on
+    every read after upgrade.
+    """
+    import json
+
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.local import LocalArtifactStore
+
+    target = tmp_path / "_lifecycle" / "ledger.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "id": "legacy-1",
+                        "provider": "runpod",
+                        "tags": {},
+                        "created_at": 1700000000.0,
+                        "cost_rate_usd_per_hr": 0.35,
+                    }
+                ]
+            }
+        )
+    )
+
+    ledger = Ledger(store=LocalArtifactStore(tmp_path), run_id="_lifecycle")
+    entries = ledger.entries()
+
+    assert len(entries) == 1
+    assert entries[0]["id"] == "legacy-1"
+    assert "idle_timeout_s" not in entries[0]
+    assert "max_age_s" not in entries[0]

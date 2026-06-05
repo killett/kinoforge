@@ -729,3 +729,41 @@ def test_cli_default_run_id_uniquifies_per_invocation(
     pattern = re.compile(r"^run-\d{8}-\d{6}$")
     assert pattern.match(rid1), f"run_id {rid1!r} does not match run-YYYYMMDD-HHMMSS"
     assert pattern.match(rid2), f"run_id {rid2!r} does not match run-YYYYMMDD-HHMMSS"
+
+
+# ---------------------------------------------------------------------------
+# Layer S — _cmd_deploy threads lifecycle policy into Ledger.record
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_deploy_persists_lifecycle_policy_into_ledger(
+    tmp_path: Path,
+) -> None:
+    """`kinoforge deploy` records idle_timeout_s + max_age_s into the ledger.
+
+    Bug-catch: a future refactor of _cmd_deploy that drops the kwargs would
+    leave a silent gap — `kinoforge status` would fall back to
+    `<not in ledger>` even when --config wasn't supplied.
+    """
+    import json as _json
+
+    cfg_path = _write_cfg(tmp_path)
+    state_dir = tmp_path / "state"
+
+    rc = _call(["deploy", "--config", str(cfg_path)], state_dir)
+
+    assert rc == 0
+    ledger_path = state_dir / "_lifecycle" / "ledger.json"
+    data = _json.loads(ledger_path.read_text())
+    entries = data["entries"]
+    assert len(entries) == 1
+    entry = entries[0]
+    # _LOCAL_FAKE_YAML carries lifecycle: idle_timeout: 1h, max_lifetime: 3h.
+    # The persisted ledger key `max_age_s` mirrors the effective
+    # `Lifecycle.max_lifetime_s` value at deploy time (Layer S spec naming).
+    assert "idle_timeout_s" in entry
+    assert "max_age_s" in entry
+    assert isinstance(entry["idle_timeout_s"], int)
+    assert isinstance(entry["max_age_s"], int)
+    assert entry["idle_timeout_s"] == 3600  # 1h
+    assert entry["max_age_s"] == 3 * 3600  # 3h

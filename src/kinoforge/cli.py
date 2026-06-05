@@ -304,7 +304,16 @@ def _cmd_deploy(args: argparse.Namespace, state_dir: Path) -> int:
         # Record to ledger if an instance was created
         if result.instance is not None:
             ledger = _ledger(state_dir)
-            ledger.record(result.instance)
+            lc = cfg.lifecycle()
+            # Layer S: snapshot lifecycle policy onto the ledger entry so
+            # `kinoforge status` can surface it without re-loading the YAML.
+            # The persisted key `max_age_s` mirrors the spec naming; the
+            # source attribute on the Lifecycle dataclass is `max_lifetime_s`.
+            ledger.record(
+                result.instance,
+                idle_timeout_s=int(lc.idle_timeout_s),
+                max_age_s=int(lc.max_lifetime_s),
+            )
 
     return 0
 
