@@ -141,7 +141,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 | #1 | Continuity / stitching fallback | CLOSED (Layer B) |
 | #2 | Audio sync stage | Open |
 | #3 | Concurrent / distributed backend scheduler | CLOSED (Layer G) |
-| #4 | Keyframe / image-generation upstream Stage | Open |
+| #4 | Keyframe / image-generation upstream Stage | CLOSED (Layer R) |
 | #5 | S3 / GCS artifact stores | CLOSED (Layer C) |
 | #6 | `ArtifactStore.uri_for(run_id, name)` ABC | CLOSED (Layer A) |
 | #7 | Cross-process discovery lock | CLOSED (Layer H) |
@@ -152,16 +152,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 31 fully CLOSED — SkyPilot real-cloud verification (PROGRESS:114 carry-forward #2). HEAD `9301c83` (prior to this T8 PROGRESS commit). Test suite at 1111 passed, 6 skipped (3 existing + 2 live-gated HF smoke + 1 live-gated SkyPilot smoke). Working tree clean. Live smoke ran clean against real GCP twice in succession (~6.8 min and ~6.9 min wall-clock; `us-east1-b`; cluster `kinoforge-skypilot-smoke-<8hex>`); 4 SDK fixtures captured byte-identical across both runs (sha256 chain: `b7d4192…` for `down`/`launch`/`status`, `37517e5…` for `stream_and_get` — the three-way collision is intentional, see Phase 31 entry).
+**Where we are:** Phase 32 fully CLOSED — Layer R (keyframe / image-generation upstream Stage, GH #4). HEAD at the Phase 32 close-out commit. Test suite at 1198 passed, 8 skipped (3 existing + 2 live-gated HF smoke + 1 live-gated SkyPilot smoke + 2 live-gated keyframe fal smoke). Working tree clean. Live smoke ran clean against real fal.ai twice in succession (~9.3 s and ~6.6 s wall-clock); fal spend across all T16 attempts ~$0.26.
 
 **Read in this order:**
-1. The Phase 31 entry below (per-task SHAs + design decisions + live-smoke confirmation + fixture sha256 chain).
-2. `docs/superpowers/specs/2026-06-03-skypilot-real-cloud-design.md` for the brainstorming-locked decisions and the §7 scope cuts that became Phase 31's carry-forward.
+1. The Phase 32 entry below (per-task SHAs + design decisions + live-smoke confirmation + bug-catch trail).
+2. `docs/superpowers/specs/` for the Layer R design doc (brainstorming-locked decisions).
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates: GH #4 keyframe stage; CLI `_cmd_status` ledger reads; batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7).
+**First unchecked task in fresh session:** pick next layer. Candidates: CLI `_cmd_status` ledger reads; batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward, Layer S candidate).
 
-**Budget remaining: ~$11.18 of $15.** Phase 31 spent ~$0.082 across all T6 + T7f live attempts against real GCP.
+**Budget remaining: ~$10.92 of $15.** Phase 32 spent ~$0.26 across all T16 live attempts against real fal.ai.
 
 ## Post-MVP
 
@@ -810,3 +810,116 @@ default-skip count goes from 3 to 5.
 - Live smoke for gated/private repos.
 
 Closes GH #8.
+
+### Phase 32 — Layer R (keyframe / image-generation upstream Stage, GH #4)
+
+Closes the deferred `Keyframe / image-generation upstream Stage` item (GH #4 /
+PROGRESS:78 deferred layer). Ships a new `image_engines/` subsystem
+(`ImageEngine` ABC + `ImageBackend` ABC + `FakeImageEngine` + `FalImageEngine`)
+alongside `KeyframeStage` (the pre-phase that calls the image engine and injects
+`ConditioningAsset` results into the request before `validate_request` runs).
+Config opt-in via a new `keyframe:` YAML block; configs without the block are
+fully backwards-compatible.
+
+- Spec: `docs/superpowers/specs/` (Layer R design doc)
+- Plan: `docs/superpowers/plans/` (Layer R plan)
+
+**Per-task SHAs:**
+
+| Task | SHA(s) |
+|---|---|
+| T1 (Image-side ABCs + PipelineState + Stage Protocol + registry helpers) | `14e97fc` (initial) + `472cd78` (review fixups) |
+| T2 (MODE_ROLE_REQUIREMENTS schema migration) | `3decc87` |
+| T3 (Extract artifact_bytes helper) | `9ddb551` |
+| T4 (GenerateClipStage signature migration) | `58bf231` |
+| T5 (JsonImageProfileCache namespace split) | `0be8be6` |
+| T6 (FakeImageEngine + FakeImageBackend + self-registration) | `51a71fe` |
+| T7 (FalImageEngine + FalImageBackend + self-registration) | `09dc9b3` |
+| T8 (KeyframeConfig pydantic + Config.keyframe field) | `87e6952` |
+| T9 (KeyframeStage implementation) | `ce9790a` |
+| T10 (Orchestrator pipeline list-walker + image engine pre-resolution) | `7c1b19c` |
+| T11 (batch_generate() mirror) | `3dbed46` |
+| T12 (Example YAMLs + load-lockdown tests) | `9cfdc89` |
+| T13 (Backwards-compat lockdown tests) | `cce3877` |
+| T14 (Core invariant scan extension) | `495cde9` |
+| T15 (RED scaffold for live smoke, pre-spend) | `65b32fe` |
+| T16 bug-catches | `73deb53` (#1+#2 slug + persist URLs) + `32376fb` (#3+#4 wan-asset-scope-cut + flf2v in stub) + `cf90696` (#5 JPEG accept) |
+| chore (.tasks.json sync mid-execution) | `38e1838` |
+
+**Key design decisions / spec deviations:**
+
+- **KeyframeStage is a pre-validation phase, NOT a Stage list peer.** Spec §2.2
+  showed `validate_request → splitter → stages list [KeyframeStage,
+  GenerateClipStage]`. Reality: `validate_request` rejects `mode=i2v` with empty
+  assets, so `KeyframeStage` must run BEFORE `validate_request`. T10 implementer
+  made `KeyframeStage` a pre-phase outside the stages list; the orchestrator then
+  runs `validate_request` + splitter + `GenerateClipStage` (sole stages entry).
+  Foundation note: future stages (audio, upscale) face the same pre/post-validation
+  choice — consider making `validate_request` itself a Stage in a future layer.
+- **Config schema additions:** T12 added `mode: str | None = None` and
+  `prompt: str | None = None` to the top-level `Config` model to make example
+  YAMLs self-contained. Existing configs unaffected (None defaults).
+- **MODE_ROLE_REQUIREMENTS schema:** T1 implementer changed `flf2v` from `set`
+  to `list` for ordering BEFORE T2's planned full migration to
+  `dict[str, dict[str, str]]`. T2 then migrated to the final dict shape. No net
+  impact on consumers.
+
+**Bug-catch trail (T16 live wave):**
+
+1. **fal slug**: `fal-ai/flux-schnell` (hyphen) is wrong; correct slug is
+   `fal-ai/flux/schnell` (forward slash). Returns HTTP 404
+   "Application 'flux-schnell' not found" on POST. Verified by direct curl probe.
+2. **canonical status/response URLs**: `FalImageBackend.result()` initially
+   reconstructed URLs from endpoint name. fal's actual request paths use the
+   family root (`fal-ai/flux/requests/<id>`), stripping the leaf endpoint. Fix:
+   persist submit response per `request_id` in `_jobs` dict.
+3. **wan keyframe-asset-upload scope cut**: end-to-end keyframe→wan-i2v requires
+   fal storage upload (wan endpoints need `image_url` as a public or fal-CDN URL).
+   Layer R does not ship that glue. Live tests scoped to exercise only the new
+   Layer R surface (`FalImageEngine` + `KeyframeStage` + persistence). Wan video
+   engine live verification already shipped Phase 19.
+4. **flf2v not in fal stub profile**: `_DEFAULT_STUB_PROFILE.supported_modes`
+   excluded `flf2v`. Added.
+5. **JPEG vs PNG**: fal flux/schnell returns JPEG (`\xff\xd8\xff`), not PNG.
+   `KeyframeStage` hardcodes `.png` filename — bytes are valid (JPEG content
+   under `.png` extension). Tests now accept either magic. Documented as
+   cosmetic carry-forward (content-type sniffing).
+
+**Live-smoke confirmation (T16 gate — both runs PASS):**
+
+```
+KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_keyframe_fal_live.py -v
+============================== 2 passed in 9.34s ==============================
+KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_keyframe_fal_live.py -v
+============================== 2 passed in 6.64s ==============================
+```
+
+Two successive runs. Total fal spend across all T16 attempts (including probes +
+bug-fix wave): ~$0.26 (slightly over the $0.20 budget projection due to early
+`curl` probes against fal queue — those POSTs queued real jobs that got billed).
+
+**Test count:** 1111 passed (pre-Phase-32) → **1198 passed, 8 skipped**
+(post-Phase-32). Delta: +87 net new offline tests across T1–T15; live smoke adds
++2 under `KINOFORGE_LIVE_TESTS=1` (skip count goes from 6 to 8 under default env).
+
+**Out of scope (carry-forwards):**
+
+- **fal storage upload integration for keyframe→wan i2v/flf2v end-to-end** —
+  wan endpoints need `image_url` as a public/fal-CDN URL; Layer R scoped down to
+  the new surface only. Layer S candidate.
+- `HostedImageEngine` + `DiffusersImageEngine` concretes.
+- Image-backend pool for parallel flf2v role fills (today serial).
+- Keyframe caching across runs.
+- User-facing `pipeline:` YAML override.
+- `output_intermediates: true` cfg knob.
+- LoRA support on image engines.
+- Dynamic fal per-endpoint capability sniffing.
+- Splitter into `GenerateClipStage`.
+- Multi-pass refinement keyframes.
+- **Content-type sniffing:** `KeyframeStage` hardcodes `.png` filename regardless
+  of actual image format. flux/schnell returns JPEG; bytes are valid but extension
+  is misleading. Sniff `Artifact.url` or response content-type to pick `.png`/`.jpg`.
+- **`validate_request` as a Stage:** would let `KeyframeStage` be a real Stage
+  peer instead of a pre-phase. Foundation cleanup.
+
+Closes GH #4.

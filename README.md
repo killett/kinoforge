@@ -329,6 +329,102 @@ via fal's queue API.
 To run the live test suite (`pixi run test-live`), set `KINOFORGE_LIVE_TESTS=1`
 alongside `FAL_KEY` in your environment.
 
+## Keyframe stage
+
+The keyframe stage runs an image-generation model **before** the video-generation
+step and injects the result as a conditioning asset. Add a `keyframe:` block to
+any config to opt in — configs without the block are unaffected.
+
+### When to use it
+
+| Scenario | Without keyframe | With keyframe |
+|---|---|---|
+| i2v (image-to-video) | Supply your own init image via `--init-image` | Let kinoforge generate the init frame from a tailored prompt |
+| flf2v (first-last-frame-to-video) | Supply both bookend frames manually | Let kinoforge generate each bookend independently, with per-role prompts and seeds |
+| t2v | Not applicable | Not applicable |
+
+### i2v — generate the init frame automatically
+
+```yaml
+mode: i2v
+prompt: "a cat walking through a sunlit meadow, soft motion"
+
+engine:
+  kind: fal
+  fal:
+    endpoint: "fal-ai/wan-i2v"
+    queue_base: "https://queue.fal.run"
+    api_key_env: "FAL_KEY"
+    url_path: "video.url"
+
+spec:
+  model: "fal-ai/wan-i2v"
+
+keyframe:
+  engine: fal
+  prompt: "photorealistic cat in a sunlit meadow, shot on 35mm film, shallow depth of field"
+  spec:
+    model: "fal-ai/flux/schnell"
+```
+
+`keyframe.prompt` is the image-generation prompt (usually more precise than the
+video prompt). `keyframe.spec.model` is the image model slug. The generated image
+is injected automatically as the `init_image` conditioning asset — you do not
+supply `--init-image` at the CLI.
+
+### flf2v — differentiated bookend frames
+
+flf2v requires one image per bookend role. The `roles:` map lets each bookend
+carry an independent prompt and `spec` overrides while sharing the same image
+model:
+
+```yaml
+mode: flf2v
+prompt: "a cat morphing into a tiger, smooth transition"
+
+engine:
+  kind: fal
+  fal:
+    endpoint: "fal-ai/wan-flf2v"
+    queue_base: "https://queue.fal.run"
+    api_key_env: "FAL_KEY"
+    url_path: "video.url"
+
+spec:
+  model: "fal-ai/wan-flf2v"
+
+keyframe:
+  engine: fal
+  spec:
+    model: "fal-ai/flux/schnell"
+  roles:
+    first_frame:
+      prompt: "photorealistic cat sitting in meadow, centered, soft daylight"
+      spec:
+        seed: 42
+    last_frame:
+      prompt: "photorealistic tiger sitting in meadow, centered, same composition, same lighting"
+      spec:
+        seed: 43
+```
+
+Each role entry can override `prompt` and any `spec` keys. A top-level
+`keyframe.prompt` can be set as a shared default for roles that omit their own
+`prompt`.
+
+### Implementation note
+
+`KeyframeStage` runs as a **pre-phase** before `validate_request` + splitter +
+`GenerateClipStage`. This ordering is necessary because `validate_request`
+rejects `mode=i2v` with empty assets — the keyframe image must exist before
+validation runs. Future stages (audio, upscale) may face the same pre/post
+choice; a future layer may promote `validate_request` itself into a Stage to make
+the ordering explicit.
+
+See ready-to-run examples:
+- [`examples/configs/keyframe-fal-i2v.yaml`](examples/configs/keyframe-fal-i2v.yaml)
+- [`examples/configs/keyframe-fal-flf2v.yaml`](examples/configs/keyframe-fal-flf2v.yaml)
+
 ### Real providers — RunPod
 
 kinoforge ships an opt-in live smoke against the real RunPod GraphQL API
