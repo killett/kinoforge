@@ -83,6 +83,9 @@ class FalImageBackend(ImageBackend):
     sleep: Callable[[float], None] = field(default=time.sleep)
     poll_interval_s: float = 1.0
     max_polls: int = 600
+    _jobs: dict[str, dict] = field(  # type: ignore[type-arg]
+        default_factory=dict, init=False, repr=False
+    )
 
     def capabilities(self) -> ImageProfile:
         """Return the static profile for this backend."""
@@ -124,7 +127,14 @@ class FalImageBackend(ImageBackend):
                 "Content-Type": "application/json",
             },
         )
-        return str(resp["request_id"])
+        request_id = str(resp["request_id"])
+        # Persist the submit response so result() can use the canonical
+        # status_url + response_url instead of reconstructing them from the
+        # endpoint name (fal's request paths use the family root, not the
+        # leaf endpoint, so reconstruction would 404 on families like
+        # fal-ai/flux/schnell → requests live under fal-ai/flux/).
+        self._jobs[request_id] = resp
+        return request_id
 
     def result(self, job_id: str) -> Artifact:
         """Poll fal status URL then fetch response URL; return image Artifact.
@@ -144,17 +154,15 @@ class FalImageBackend(ImageBackend):
         api_key = self.creds.get("FAL_KEY") or ""
         headers = {"Authorization": f"Key {api_key}"}
 
-        # Build URLs via wire helpers, passing empty submit_response so they
-        # fall through to the constructed URL form (we do not keep the submit
-        # response here — the caller only passes us the job_id).
+        submit_resp = self._jobs.get(job_id, {})
         status_url = wire.build_status_url(
-            submit_response={},
+            submit_response=submit_resp,
             queue_base=_QUEUE_BASE,
             endpoint=endpoint,
             request_id=job_id,
         )
         response_url = wire.build_response_url(
-            submit_response={},
+            submit_response=submit_resp,
             queue_base=_QUEUE_BASE,
             endpoint=endpoint,
             request_id=job_id,
