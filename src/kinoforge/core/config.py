@@ -391,6 +391,83 @@ class ComputeConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Keyframe generation config (Layer R)
+# ---------------------------------------------------------------------------
+
+
+class KeyframeRoleOverride(BaseModel):
+    """Per-role keyframe overrides (prompt / spec / params).
+
+    All fields optional; populated only where the user wants to deviate
+    from the top-level keyframe defaults.
+    """
+
+    prompt: str | None = None
+    spec: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+
+class KeyframeConfig(BaseModel):
+    """Keyframe-generation block for image-engine pipeline head.
+
+    Presence opts the orchestrator into constructing a KeyframeStage at the
+    head of the pipeline.
+
+    Required: ``engine`` (image-engine registry name).
+    Required by validator: either ``prompt`` (top-level default) OR
+    ``roles.<name>.prompt`` for at least one role.
+    """
+
+    engine: str
+    prompt: str | None = None
+    spec: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
+    roles: dict[str, KeyframeRoleOverride] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _at_least_one_prompt(self) -> KeyframeConfig:
+        """Require at least one non-empty prompt (top-level or per-role)."""
+        has_top = bool(self.prompt and self.prompt.strip())
+        has_role = any((r.prompt and r.prompt.strip()) for r in self.roles.values())
+        if not has_top and not has_role:
+            raise ValueError(
+                "keyframe block requires either top-level `prompt` "
+                "or at least one `roles.<role>.prompt`"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _role_names_known(self) -> KeyframeConfig:
+        """Reject role names not defined in MODE_ROLE_REQUIREMENTS."""
+        from kinoforge.core.interfaces import MODE_ROLE_REQUIREMENTS
+
+        known = {role for roles in MODE_ROLE_REQUIREMENTS.values() for role in roles}
+        unknown = set(self.roles) - known
+        if unknown:
+            raise ValueError(
+                f"keyframe.roles contains unknown role(s): {sorted(unknown)}; "
+                f"known: {sorted(known)}"
+            )
+        return self
+
+    def capability_key(self) -> CapabilityKey:
+        """Derive a CapabilityKey for image-engine cache lookup.
+
+        Returns:
+            A CapabilityKey with base_model and precision from ``spec``,
+            loras empty, and engine from ``self.engine``.
+        """
+        return CapabilityKey(
+            base_model=str(self.spec.get("model", "")),
+            loras=(),
+            engine=self.engine,
+            precision=str(self.spec.get("precision", "")),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Top-level Config model
 # ---------------------------------------------------------------------------
 
@@ -487,6 +564,7 @@ class Config(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     spec: dict[str, Any] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
+    keyframe: KeyframeConfig | None = None
 
     model_config = {"populate_by_name": True}
 
