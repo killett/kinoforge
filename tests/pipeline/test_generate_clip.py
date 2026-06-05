@@ -30,6 +30,7 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.core.pool import ConcurrentPool, SequentialPool
 from kinoforge.engines.fake import FakeBackend
+from kinoforge.pipeline.artifact_bytes import artifact_bytes
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.stores.base import ArtifactStore
 from kinoforge.stores.local import LocalArtifactStore
@@ -879,7 +880,7 @@ def test_artifact_bytes_reads_local_file_when_uri_points_at_file(
     src = tmp_path / "real.mp4"
     src.write_bytes(payload)
     artifact = Artifact(filename="real.mp4", uri=str(src))
-    assert stage._artifact_bytes(artifact) == payload
+    assert artifact_bytes(artifact, stage.http_get_bytes) == payload
 
 
 def test_artifact_bytes_downloads_when_url_is_http(
@@ -921,7 +922,7 @@ def test_artifact_bytes_downloads_when_url_is_http(
 
     monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen, raising=True)
     artifact = Artifact(filename="out.mp4", url="https://example.com/x.mp4")
-    assert stage._artifact_bytes(artifact) == expected
+    assert artifact_bytes(artifact, stage.http_get_bytes) == expected
     assert calls == ["https://example.com/x.mp4"]
 
 
@@ -937,7 +938,7 @@ def test_artifact_bytes_synthetic_fallback_when_no_uri_or_url(
     stage = _make_stage(tmp_path, profile=profile, backend=FakeBackend(probe=profile))
     artifact = Artifact(filename="x.mp4", meta={"k": "v"})
     expected = b"x.mp4" + b"|" + repr(sorted({"k": "v"}.items())).encode("utf-8")
-    assert stage._artifact_bytes(artifact) == expected
+    assert artifact_bytes(artifact, stage.http_get_bytes) == expected
 
 
 # ---------------------------------------------------------------------------
