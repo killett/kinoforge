@@ -941,7 +941,7 @@ advisory points at a real recovery command. Fully offline-tested (no live spend)
 |---|---|
 | T1 (`Ledger.record` schema extension — persists `idle_timeout_s` + `max_age_s`; `_cmd_deploy` threads `cfg.lifecycle()` values into the call) | `acdc8e1` |
 | T2 (`_cmd_status` ledger-first rewrite — `_build_ledger_block` pure helper + `_print_status_block` formatter + sibling-parity provider dispatch; `--config`/`-c` flag added) | `fc90b21` |
-| T3 (`kinoforge forget --id <id>` recovery subcommand + README "Operator commands" section + this PROGRESS entry) | T3 SHA captured in the commit message footer |
+| T3 (`kinoforge forget --id <id>` recovery subcommand + README "Operator commands" section + this PROGRESS entry) | `c947f9b` |
 
 **Key design decisions:**
 
