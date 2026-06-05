@@ -1,0 +1,51 @@
+# Keyframe + flf2v: fal generates both first and last frame, fal generates clip.
+#
+# The keyframe block instructs the orchestrator to call a fal image-generation
+# model (flux-schnell) twice — once per role — before submitting the video job.
+# Per-role overrides let each frame carry a distinct prompt and seed while
+# sharing the same image model (flux-schnell).
+#
+# Set FAL_KEY in your .env file before running.
+
+mode: flf2v
+prompt: "a cat morphing into a tiger, smooth transition"
+
+engine:
+  kind: fal
+  precision: ""
+  fal:
+    endpoint: "fal-ai/wan-flf2v"
+    queue_base: "https://queue.fal.run"
+    api_key_env: "FAL_KEY"
+    url_path: "video.url"
+
+spec:
+  model: "fal-ai/wan-flf2v"
+
+keyframe:
+  engine: fal
+  spec:
+    model: "fal-ai/flux-schnell"
+  roles:
+    first_frame:
+      prompt: "photorealistic cat sitting in meadow, centered, soft daylight"
+      spec:
+        seed: 42
+    last_frame:
+      prompt: "photorealistic tiger sitting in meadow, centered, same composition, same lighting"
+      spec:
+        seed: 43
+
+models:
+  - kind: base
+    ref: "fal://fal-ai/wan-flf2v"
+    target: checkpoints
+
+compute: null
+
+lifecycle:
+  idle_timeout: 60s
+  job_timeout: 30m
+  max_lifetime: 1h
+  budget: 1.0
+  max_in_flight: 1

@@ -540,6 +540,14 @@ class Config(BaseModel):
     """Top-level kinoforge configuration.
 
     Attributes:
+        mode: Generation mode string (e.g. "t2v", "i2v", "flf2v"). Optional;
+            omitting defaults to engine-default behaviour. Keyframe configs
+            should always set this so orchestrators and validators can apply
+            the correct role contract without inspecting assets at load time.
+        prompt: Top-level default prompt string. Optional; per-segment prompts
+            in a batch manifest override this. Included as a convenience field
+            so operator-facing example configs can carry a representative prompt
+            without requiring a manifest file for single-shot runs.
         engine: Engine configuration block.
         models: List of model entries.
         compute: Optional compute block (omitted for hosted engines).
@@ -555,6 +563,8 @@ class Config(BaseModel):
             the generation job; arbitrary nested structure, defaults to ``{}``.
     """
 
+    mode: str | None = None
+    prompt: str | None = None
     engine: EngineConfig
     models: list[ModelEntry]
     compute: ComputeConfig | None = None
