@@ -64,12 +64,13 @@ def test_max_segment_seconds_is_frames_over_fps():
     assert math.isclose(p.max_segment_seconds, 81 / 16)
 
 
-def test_mode_role_requirements_table_is_authoritative():
+def test_mode_role_requirements_shape() -> None:
     # Bug this catches: per-model role logic creeping in instead of one shared table.
+    # Shape: dict[mode, dict[role, kind]] since Layer R.
     assert MODE_ROLE_REQUIREMENTS == {
-        "t2v": set(),
-        "i2v": {"init_image"},
-        "flf2v": ["first_frame", "last_frame"],
+        "t2v": {},
+        "i2v": {"init_image": "image"},
+        "flf2v": {"first_frame": "image", "last_frame": "image"},
     }
 
 
@@ -131,3 +132,21 @@ def test_extract_last_frame_default_raises_with_engine_name() -> None:
     eng = _NonOverriding()
     with pytest.raises(NotImplementedError, match="_NonOverriding"):
         eng.extract_last_frame(Artifact(filename="x.mp4"))
+
+
+# ---------------------------------------------------------------------------
+# MODE_ROLE_REQUIREMENTS drift guards
+# ---------------------------------------------------------------------------
+
+VALID_KINDS = {"image", "audio", "video"}
+
+
+def test_mode_role_requirements_kinds_are_valid() -> None:
+    """Drift guard: every kind in MODE_ROLE_REQUIREMENTS must be a known kind.
+    Bug guard: catches typos (e.g. "imag") and accidental drift on additions."""
+    for mode, roles in MODE_ROLE_REQUIREMENTS.items():
+        for role, kind in roles.items():
+            assert kind in VALID_KINDS, (
+                f"role {role!r} in mode {mode!r} has unknown kind {kind!r}; "
+                f"valid kinds: {sorted(VALID_KINDS)}"
+            )

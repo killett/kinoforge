@@ -163,7 +163,7 @@ class GenerateClipStage:
         # i2v only), thread each rendered tail-frame into the next segment's
         # init_image slot. Stitching across the N artifacts is DEFERRED to its
         # own follow-up; we still persist only the last artifact below.
-        should_chain = "init_image" in MODE_ROLE_REQUIREMENTS.get(request.mode, set())
+        should_chain = "init_image" in MODE_ROLE_REQUIREMENTS.get(request.mode, {})
         if not should_chain and len(jobs) > 1:
             # Layer G: t2v non-chained fallback fans out via pool.map.
             # Chained continuity (i2v) and trivial 1-job paths take the
