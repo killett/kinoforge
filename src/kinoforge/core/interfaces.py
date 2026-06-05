@@ -273,10 +273,12 @@ class ImageBackend(ABC):
     """A live, ready image engine jobs are submitted to."""
 
     @abstractmethod
-    def capabilities(self) -> ImageProfile: ...  # noqa: D102
+    def capabilities(self) -> ImageProfile:
+        """Return the in-force profile (cached/configured) for this backend."""
 
     @abstractmethod
-    def inspect_capabilities(self) -> ImageProfile: ...  # noqa: D102
+    def inspect_capabilities(self) -> ImageProfile:
+        """Live-probe the backend to discover capabilities fresh (for profile-cache discover/verify)."""
 
     @abstractmethod
     def submit(self, job: ImageJob) -> str: ...  # noqa: D102
@@ -324,7 +326,7 @@ def required_image_roles(mode: str) -> list[str]:
     roles = MODE_ROLE_REQUIREMENTS.get(mode, ())
     if isinstance(roles, dict):
         return [role for role, kind in roles.items() if kind == "image"]
-    return [role for role in roles]
+    return list(roles)
 
 
 @dataclass(frozen=True)

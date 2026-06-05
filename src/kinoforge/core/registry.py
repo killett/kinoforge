@@ -214,6 +214,7 @@ def get_image_engine(name: str) -> Callable[[], ImageEngine]:
     Raises:
         UnknownAdapter: ``name`` is not registered.
     """
-    if name not in _image_engines:
-        raise UnknownAdapter(f"unknown image engine: {name!r}")
-    return _image_engines[name]
+    try:
+        return _image_engines[name]
+    except KeyError:
+        raise UnknownAdapter(f"no image engine registered: {name!r}") from None
