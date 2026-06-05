@@ -62,13 +62,26 @@ def _make_stage(
     engine: object | None = None,
     http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None,
     result_override: Callable[[str], Artifact] | None = None,
+    segments: list[Segment] | None = None,
 ) -> GenerateClipStage:
+    """Construct a GenerateClipStage with a SequentialPool and LocalArtifactStore.
+
+    Layer R migrated segments_override (run() kwarg) → segments (constructor
+    field). Pass ``segments`` explicitly; when omitted a single-segment list
+    derived from a dummy request is used as a placeholder (callers that run the
+    stage through ``_run`` will pick up the real prompt from the request).
+    """
     pool = SequentialPool(backend)
     store = LocalArtifactStore(tmp_path)
     if engine is None:
         engine = _fake_engine_for_tests(profile)
     if result_override is not None:
         backend.result = result_override  # type: ignore[assignment]
+    # Default: single-segment placeholder so the constructor is satisfied.
+    # Real tests that care about multi-segment dispatch pass segments= explicitly.
+    resolved_segments: list[Segment] = (
+        segments if segments is not None else [Segment(prompt="placeholder")]
+    )
     return GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -78,8 +91,24 @@ def _make_stage(
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        segments=resolved_segments,
         http_get_bytes=http_get_bytes,
     )
+
+
+def _run(stage: GenerateClipStage, request: GenerationRequest) -> Artifact:
+    """Wrap request in PipelineState, run stage, return stored clip Artifact.
+
+    Layer R helper: callers that previously called ``stage.run(request)`` or
+    ``stage.run(request, segments_override=...)`` now call ``_run(stage, request)``.
+    The segments are already on the stage constructor; this helper just packages
+    the PipelineState envelope.
+    """
+    from kinoforge.core.interfaces import PipelineState
+
+    state = PipelineState(request=request, artifacts={})
+    out = stage.run(state)
+    return out.artifacts["clip"]
 
 
 # ---------------------------------------------------------------------------
@@ -91,10 +120,15 @@ def test_happy_path_artifact_stored_and_uri_exists(tmp_path: Path) -> None:
     """t2v request produces Artifact; its uri points to an existing file."""
     profile = _profile()
     backend = FakeBackend(probe=profile)
-    stage = _make_stage(tmp_path, profile=profile, backend=backend)
-
     request = GenerationRequest(prompt="a red sunset", mode="t2v")
-    result = stage.run(request)
+    stage = _make_stage(
+        tmp_path,
+        profile=profile,
+        backend=backend,
+        segments=[Segment(prompt=request.prompt)],
+    )
+
+    result = _run(stage, request)
 
     assert result.uri != ""
     assert Path(result.uri).exists()
@@ -103,20 +137,29 @@ def test_happy_path_artifact_stored_and_uri_exists(tmp_path: Path) -> None:
 def test_same_inputs_produce_same_uri(tmp_path: Path) -> None:
     """Deterministic: identical request through same profile → same stored name."""
     profile = _profile()
+    req = GenerationRequest(prompt="consistent", mode="t2v")
 
     # Run 1
     backend1 = FakeBackend(probe=profile)
     stage1 = _make_stage(
-        tmp_path / "r1", profile=profile, backend=backend1, run_id="r1"
+        tmp_path / "r1",
+        profile=profile,
+        backend=backend1,
+        run_id="r1",
+        segments=[Segment(prompt=req.prompt)],
     )
-    result1 = stage1.run(GenerationRequest(prompt="consistent", mode="t2v"))
+    result1 = _run(stage1, req)
 
     # Run 2 — fresh backend but same logic
     backend2 = FakeBackend(probe=profile)
     stage2 = _make_stage(
-        tmp_path / "r2", profile=profile, backend=backend2, run_id="r1"
+        tmp_path / "r2",
+        profile=profile,
+        backend=backend2,
+        run_id="r1",
+        segments=[Segment(prompt=req.prompt)],
     )
-    result2 = stage2.run(GenerationRequest(prompt="consistent", mode="t2v"))
+    result2 = _run(stage2, req)
 
     # URIs differ only in root path prefix; the filename portion is identical
     assert Path(result1.uri).name == Path(result2.uri).name
@@ -143,13 +186,10 @@ def test_native_extension_true_one_job_for_n_segments(tmp_path: Path) -> None:
     """supports_native_extension=True → 1 call to backend.submit for 3 segments."""
     profile = _profile(supports_native_extension=True)
     backend = CountingBackend(probe=profile)
-    stage = _make_stage(tmp_path, profile=profile, backend=backend)
-
     segments = [Segment(prompt=f"segment {i}") for i in range(3)]
-    stage.run(
-        GenerationRequest(prompt="ignored when override set", mode="t2v"),
-        segments_override=segments,
-    )
+    stage = _make_stage(tmp_path, profile=profile, backend=backend, segments=segments)
+
+    _run(stage, GenerationRequest(prompt="ignored when override set", mode="t2v"))
 
     assert backend.submit_count == 1
 
@@ -158,14 +198,11 @@ def test_native_extension_false_n_jobs_for_n_segments(tmp_path: Path) -> None:
     """supports_native_extension=False → N calls to backend.submit for N segments."""
     profile = _profile(supports_native_extension=False)
     backend = CountingBackend(probe=profile)
-    stage = _make_stage(tmp_path, profile=profile, backend=backend)
-
     n = 3
     segments = [Segment(prompt=f"segment {i}") for i in range(n)]
-    stage.run(
-        GenerationRequest(prompt="ignored when override set", mode="t2v"),
-        segments_override=segments,
-    )
+    stage = _make_stage(tmp_path, profile=profile, backend=backend, segments=segments)
+
+    _run(stage, GenerationRequest(prompt="ignored when override set", mode="t2v"))
 
     assert backend.submit_count == n
 
@@ -211,6 +248,7 @@ def test_stage_non_native_i2v_n3_chains_segs_1_and_2(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     engine = _fake_engine_for_tests(profile)
 
+    segments = [Segment(prompt=f"segment {i}") for i in range(3)]
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -220,13 +258,10 @@ def test_stage_non_native_i2v_n3_chains_segs_1_and_2(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,
+        segments=segments,
     )
 
-    segments = [Segment(prompt=f"segment {i}") for i in range(3)]
-    stage.run(
-        GenerationRequest(prompt="ignored", mode="i2v"),
-        segments_override=segments,
-    )
+    _run(stage, GenerationRequest(prompt="ignored", mode="i2v"))
 
     # Job 0: no chain (no prior render to extract from).
     assert backend.submitted_seg0_assets[0] == []
@@ -248,14 +283,27 @@ def test_stage_non_native_i2v_n3_chains_segs_1_and_2(tmp_path: Path) -> None:
 
 
 def test_unsupported_mode_raises_before_submit(tmp_path: Path) -> None:
-    """ValidationError on bad mode; backend.submit is never called."""
+    """ValidationError on bad mode; backend.submit is never called.
+
+    Layer R: validation has moved upstream to validate_request (called by the
+    orchestrator before constructing the stage).  This test verifies that
+    validate_request raises ValidationError for an unsupported mode — the
+    backend is never reached because the orchestrator would abort before
+    building the stage.
+    """
+    from kinoforge.core.validation import validate_request
+
     profile = _profile()  # supported_modes={"t2v"}
     backend = CountingBackend(probe=profile)
-    stage = _make_stage(tmp_path, profile=profile, backend=backend)
 
     with pytest.raises(ValidationError):
-        stage.run(GenerationRequest(prompt="test", mode="unsupported"))
+        validate_request(
+            profile,
+            GenerationRequest(prompt="test", mode="unsupported"),
+            accepted_kinds={"image"},
+        )
 
+    # Backend is never reached — validation is upstream of stage construction.
     assert backend.submit_count == 0
 
 
@@ -270,6 +318,7 @@ def test_round_trip_bytes(tmp_path: Path) -> None:
     backend = FakeBackend(probe=profile)
     store = LocalArtifactStore(tmp_path)
     pool = SequentialPool(backend)
+    request = GenerationRequest(prompt="round trip check", mode="t2v")
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -279,10 +328,10 @@ def test_round_trip_bytes(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=_fake_engine_for_tests(profile),
+        segments=[Segment(prompt=request.prompt)],
     )
 
-    request = GenerationRequest(prompt="round trip check", mode="t2v")
-    artifact = stage.run(request)
+    artifact = _run(stage, request)
 
     retrieved = store.get_bytes(artifact.uri)
     assert len(retrieved) > 0
@@ -300,8 +349,9 @@ def test_round_trip_bytes(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=_fake_engine_for_tests(profile),
+        segments=[Segment(prompt=request.prompt)],
     )
-    artifact2 = stage2.run(GenerationRequest(prompt="round trip check", mode="t2v"))
+    artifact2 = _run(stage2, request)
     retrieved2 = store2.get_bytes(artifact2.uri)
 
     assert retrieved == retrieved2
@@ -345,6 +395,7 @@ def test_stage_native_branch_i2v_no_chain(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     engine = _CountingExtractEngine(probe=profile)
 
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -354,13 +405,10 @@ def test_stage_native_branch_i2v_no_chain(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        segments=segments,
     )
 
-    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
-    stage.run(
-        GenerationRequest(prompt="ignored", mode="i2v"),
-        segments_override=segments,
-    )
+    _run(stage, GenerationRequest(prompt="ignored", mode="i2v"))
 
     # Native branch: 1 job submitted.
     assert len(backend.submitted_seg0_assets) == 1
@@ -379,6 +427,7 @@ def test_stage_non_native_t2v_n3_no_chain(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     engine = _CountingExtractEngine(probe=profile)
 
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -388,13 +437,10 @@ def test_stage_non_native_t2v_n3_no_chain(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        segments=segments,
     )
 
-    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
-    stage.run(
-        GenerationRequest(prompt="ignored", mode="t2v"),
-        segments_override=segments,
-    )
+    _run(stage, GenerationRequest(prompt="ignored", mode="t2v"))
 
     # 3 jobs submitted; all with empty seg-0 assets; engine never invoked.
     assert len(backend.submitted_seg0_assets) == 3
@@ -424,12 +470,10 @@ def test_stage_non_native_i2v_n1_no_chain(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        segments=[Segment(prompt="only")],
     )
 
-    stage.run(
-        GenerationRequest(prompt="ignored", mode="i2v"),
-        segments_override=[Segment(prompt="only")],
-    )
+    _run(stage, GenerationRequest(prompt="ignored", mode="i2v"))
 
     assert len(backend.submitted_seg0_assets) == 1
     assert engine.extract_calls == 0
@@ -448,6 +492,7 @@ def test_stage_chain_persists_tail_via_store(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     engine = _fake_engine_for_tests(profile)
 
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -457,13 +502,10 @@ def test_stage_chain_persists_tail_via_store(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,
+        segments=segments,
     )
 
-    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
-    stage.run(
-        GenerationRequest(prompt="ignored", mode="i2v"),
-        segments_override=segments,
-    )
+    _run(stage, GenerationRequest(prompt="ignored", mode="i2v"))
 
     listed = store.list("run-persist")
     tails = sorted(n for n in listed if n.endswith("-tail.png"))
@@ -551,6 +593,7 @@ def test_stage_calls_validate_spec_on_each_chained_job(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     engine = _ValidatingEngine(probe=profile)
 
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -560,13 +603,10 @@ def test_stage_calls_validate_spec_on_each_chained_job(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        segments=segments,
     )
 
-    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
-    stage.run(
-        GenerationRequest(prompt="ignored", mode="i2v"),
-        segments_override=segments,
-    )
+    _run(stage, GenerationRequest(prompt="ignored", mode="i2v"))
 
     # 3 upfront (raw) + 2 post-inject (chained) = 5 total
     assert len(engine.validate_calls) == 5
@@ -590,6 +630,7 @@ def test_stage_validates_chained_job_carries_injected_asset(tmp_path: Path) -> N
     store = LocalArtifactStore(tmp_path)
     engine = _ValidatingEngine(probe=profile)
 
+    segments = [Segment(prompt="p-0"), Segment(prompt="p-1")]
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -599,13 +640,10 @@ def test_stage_validates_chained_job_carries_injected_asset(tmp_path: Path) -> N
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        segments=segments,
     )
 
-    segments = [Segment(prompt="p-0"), Segment(prompt="p-1")]
-    stage.run(
-        GenerationRequest(prompt="ignored", mode="i2v"),
-        segments_override=segments,
-    )
+    _run(stage, GenerationRequest(prompt="ignored", mode="i2v"))
 
     # 2 upfront (raw, empty assets) + 1 post-inject (chained, with asset) = 3 total.
     assert len(engine.validate_calls) == 3
@@ -650,6 +688,7 @@ def test_stage_aborts_when_validate_spec_raises_on_chained_segment(
     # Raise on call 4 (= 3 upfront + first post-inject chained call for seg-1).
     engine = _ValidatingEngine(probe=profile, raise_on_validate_call=4)
 
+    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -659,14 +698,11 @@ def test_stage_aborts_when_validate_spec_raises_on_chained_segment(
         base_params={},
         base_spec={},
         engine=engine,  # type: ignore[arg-type]
+        segments=segments,
     )
 
-    segments = [Segment(prompt=f"seg {i}") for i in range(3)]
     with pytest.raises(ValidationError, match="simulated misconfig"):
-        stage.run(
-            GenerationRequest(prompt="ignored", mode="i2v"),
-            segments_override=segments,
-        )
+        _run(stage, GenerationRequest(prompt="ignored", mode="i2v"))
 
     # seg-0 was submitted (pre-chain), seg-1 raised before submit, seg-2 never reached.
     assert len(backend.submitted_seg0_assets) == 1
@@ -686,6 +722,7 @@ def _stage_with_concurrent_pool(
     mode: str,
     profile: ModelProfile,
     store: ArtifactStore,
+    segments: list[Segment],
 ) -> tuple[GenerateClipStage, ConcurrentPool]:
     """Build a stage backed by ConcurrentPool(cap) with a non-chaining engine.
 
@@ -710,6 +747,7 @@ def _stage_with_concurrent_pool(
         base_params={},
         base_spec={},
         engine=fake_engine,
+        segments=segments,
     )
     return stage, pool
 
@@ -719,11 +757,11 @@ def test_unchained_branch_uses_pool_map_parallel_dispatch(tmp_path: Path) -> Non
     probe = _profile()
     store = LocalArtifactStore(root=tmp_path)
     backend = BlockingFakeBackend()
+    segments = [Segment(prompt=f"p{i}", assets=[]) for i in range(3)]
     stage, pool = _stage_with_concurrent_pool(
-        backend, cap=3, mode="t2v", profile=probe, store=store
+        backend, cap=3, mode="t2v", profile=probe, store=store, segments=segments
     )
 
-    segments = [Segment(prompt=f"p{i}", assets=[]) for i in range(3)]
     request = GenerationRequest(prompt="x", mode="t2v")
 
     # Spawn a releaser thread that waits until all 3 reach backend.submit,
@@ -742,7 +780,7 @@ def test_unchained_branch_uses_pool_map_parallel_dispatch(tmp_path: Path) -> Non
 
     threading.Thread(target=_releaser, daemon=True).start()
     try:
-        result = stage.run(request, segments_override=segments)
+        result = _run(stage, request)
         assert result is not None
     finally:
         pool.close()
@@ -763,9 +801,6 @@ def test_chained_branch_remains_serial_under_concurrent_pool(tmp_path: Path) -> 
     # test at tests/pipeline/test_generate_clip.py:190.
     store = LocalArtifactStore(root=tmp_path)
     backend = BlockingFakeBackend()
-    stage, pool = _stage_with_concurrent_pool(
-        backend, cap=3, mode="i2v", profile=probe, store=store
-    )
 
     # Seed asset for seg 0.
     seed_uri = store.put_bytes("r-concurrent", "seed.png", b"seed").uri
@@ -779,6 +814,10 @@ def test_chained_branch_remains_serial_under_concurrent_pool(tmp_path: Path) -> 
         Segment(prompt="p1", assets=[]),
         Segment(prompt="p2", assets=[]),
     ]
+    stage, pool = _stage_with_concurrent_pool(
+        backend, cap=3, mode="i2v", profile=probe, store=store, segments=segments
+    )
+
     request = GenerationRequest(prompt="x", mode="i2v", assets=[seed_asset])
 
     released_count = [0]
@@ -803,7 +842,7 @@ def test_chained_branch_remains_serial_under_concurrent_pool(tmp_path: Path) -> 
 
     threading.Thread(target=_releaser, daemon=True).start()
     try:
-        result = stage.run(request, segments_override=segments)
+        result = _run(stage, request)
         assert result is not None
     finally:
         pool.close()
@@ -815,13 +854,14 @@ def test_one_job_native_skips_map_uses_submit(tmp_path: Path) -> None:
     probe = _profile()
     store = LocalArtifactStore(root=tmp_path)
     backend = BlockingFakeBackend()
-    stage, pool = _stage_with_concurrent_pool(
-        backend, cap=3, mode="t2v", profile=probe, store=store
-    )
 
     # Single segment — strategy.decide produces 1 job for native or
     # 1-segment fallback; either way len(jobs) == 1.
     segments = [Segment(prompt="solo", assets=[])]
+    stage, pool = _stage_with_concurrent_pool(
+        backend, cap=3, mode="t2v", profile=probe, store=store, segments=segments
+    )
+
     request = GenerationRequest(prompt="x", mode="t2v")
 
     def _releaser() -> None:
@@ -847,7 +887,7 @@ def test_one_job_native_skips_map_uses_submit(tmp_path: Path) -> None:
 
     threading.Thread(target=_releaser, daemon=True).start()
     try:
-        result = stage.run(request, segments_override=segments)
+        result = _run(stage, request)
         assert result is not None
     finally:
         pool.map = original_map  # type: ignore[method-assign]
@@ -963,6 +1003,7 @@ def test_layer_m_seam_receives_artifact_headers(tmp_path: Path) -> None:
     profile = _profile()
     expected_headers = {"Authorization": "Bearer test-token-9001"}
     backend = FakeBackend(probe=profile)
+    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
     stage = _make_stage(
         tmp_path,
         profile=profile,
@@ -974,10 +1015,10 @@ def test_layer_m_seam_receives_artifact_headers(tmp_path: Path) -> None:
             url="https://example.com/media/clip.mp4",
             headers=expected_headers,
         ),
+        segments=[Segment(prompt=request.prompt)],
     )
 
-    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
-    stage.run(request)
+    _run(stage, request)
 
     assert captured["url"] == "https://example.com/media/clip.mp4"
     assert captured["headers"] == expected_headers
@@ -997,6 +1038,7 @@ def test_layer_m_seam_receives_empty_dict_not_none(tmp_path: Path) -> None:
 
     profile = _profile()
     backend = FakeBackend(probe=profile)
+    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
     stage = _make_stage(
         tmp_path,
         profile=profile,
@@ -1007,10 +1049,10 @@ def test_layer_m_seam_receives_empty_dict_not_none(tmp_path: Path) -> None:
             filename="clip.mp4",
             url="https://example.com/media/clip.mp4",
         ),
+        segments=[Segment(prompt=request.prompt)],
     )
 
-    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
-    stage.run(request)
+    _run(stage, request)
 
     assert captured["headers"] == {}
     assert captured["headers"] is not None
@@ -1034,6 +1076,7 @@ def test_layer_m_file_uri_bypasses_seam(tmp_path: Path) -> None:
 
     profile = _profile()
     backend = FakeBackend(probe=profile)
+    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
     stage = _make_stage(
         tmp_path / "store",
         profile=profile,
@@ -1044,10 +1087,10 @@ def test_layer_m_file_uri_bypasses_seam(tmp_path: Path) -> None:
             filename="local.mp4",
             uri=local_clip.as_uri(),
         ),
+        segments=[Segment(prompt=request.prompt)],
     )
 
-    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
-    stored = stage.run(request)
+    stored = _run(stage, request)
 
     # The point: the seam was NOT consulted because the file:// branch
     # short-circuited to Path.read_bytes(). Round-trip equality is covered
@@ -1091,6 +1134,7 @@ def test_layer_m_default_seam_passes_headers_to_urllib_request(
 
     profile = _profile()
     backend = FakeBackend(probe=profile)
+    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
     stage = _make_stage(
         tmp_path,
         profile=profile,
@@ -1102,10 +1146,10 @@ def test_layer_m_default_seam_passes_headers_to_urllib_request(
             url="https://example.com/media/clip.mp4",
             headers={"Authorization": "Bearer default-seam-token"},
         ),
+        segments=[Segment(prompt=request.prompt)],
     )
 
-    request = GenerationRequest(mode="t2v", prompt="hi", assets=[])
-    stage.run(request)
+    _run(stage, request)
 
     assert captured["url"] == "https://example.com/media/clip.mp4"
     headers = captured["headers"]
@@ -1141,6 +1185,7 @@ def test_layer_m_e2e_hosted_auth_artifact_persisted(tmp_path: Path) -> None:
     profile = _profile()
     bearer = {"Authorization": "Bearer e2e-tok"}
     backend = FakeBackend(probe=profile)
+    request = GenerationRequest(mode="t2v", prompt="hello", assets=[])
     stage = _make_stage(
         tmp_path,
         profile=profile,
@@ -1152,9 +1197,9 @@ def test_layer_m_e2e_hosted_auth_artifact_persisted(tmp_path: Path) -> None:
             url="https://hosted.example.com/media/e2e.mp4",
             headers=bearer,
         ),
+        segments=[Segment(prompt=request.prompt)],
     )
-    request = GenerationRequest(mode="t2v", prompt="hello", assets=[])
-    persisted = stage.run(request)
+    persisted = _run(stage, request)
 
     # Spy was called with the exact bearer header.
     assert captured["url"] == "https://hosted.example.com/media/e2e.mp4"
@@ -1204,12 +1249,17 @@ def test_sink_none_no_publish_call(tmp_path: Path) -> None:
     """
     profile = _profile()
     backend = FakeBackend(probe=profile)
-    stage = _make_stage(tmp_path, profile=profile, backend=backend)
+    request = GenerationRequest(prompt="a red sunset", mode="t2v")
+    stage = _make_stage(
+        tmp_path,
+        profile=profile,
+        backend=backend,
+        segments=[Segment(prompt=request.prompt)],
+    )
     # No sink argument — stage constructed without it.
     assert stage.sink is None
 
-    request = GenerationRequest(prompt="a red sunset", mode="t2v")
-    result = stage.run(request)
+    result = _run(stage, request)
 
     # Returns a valid stored Artifact (uri exists).
     assert result.uri != ""
@@ -1232,6 +1282,7 @@ def test_sink_present_publishes_once_with_correct_args(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     engine = _fake_engine_for_tests(profile)
 
+    request = GenerationRequest(prompt="a red sunset", mode="t2v")
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -1241,11 +1292,11 @@ def test_sink_present_publishes_once_with_correct_args(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,
+        segments=[Segment(prompt=request.prompt)],
         sink=spy,
     )
 
-    request = GenerationRequest(prompt="a red sunset", mode="t2v")
-    stage.run(request)
+    _run(stage, request)
 
     assert len(spy.calls) == 1
     call = spy.calls[0]
@@ -1264,6 +1315,7 @@ def test_sink_namespace_propagated(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     engine = _fake_engine_for_tests(profile)
 
+    request = GenerationRequest(prompt="namespace test", mode="t2v")
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -1273,12 +1325,12 @@ def test_sink_namespace_propagated(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,
+        segments=[Segment(prompt=request.prompt)],
         sink=spy,
         namespace="batch-X",
     )
 
-    request = GenerationRequest(prompt="namespace test", mode="t2v")
-    stage.run(request)
+    _run(stage, request)
 
     assert len(spy.calls) == 1
     assert spy.calls[0]["namespace"] == "batch-X"
@@ -1300,6 +1352,7 @@ def test_sink_multi_segment_publishes_only_last(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)
     engine = _fake_engine_for_tests(profile)
 
+    segments = [Segment(prompt=f"seg-{i}") for i in range(3)]
     stage = GenerateClipStage(
         profile=profile,
         pool=pool,
@@ -1309,14 +1362,11 @@ def test_sink_multi_segment_publishes_only_last(tmp_path: Path) -> None:
         base_params={},
         base_spec={},
         engine=engine,
+        segments=segments,
         sink=spy,
     )
 
-    segments_override = [Segment(prompt=f"seg-{i}") for i in range(3)]
-    stage.run(
-        GenerationRequest(prompt="ignored", mode="t2v"),
-        segments_override=segments_override,
-    )
+    _run(stage, GenerationRequest(prompt="ignored", mode="t2v"))
 
     # Only 1 publish call regardless of segment count.
     assert len(spy.calls) == 1

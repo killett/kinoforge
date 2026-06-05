@@ -1,12 +1,12 @@
 """GenerateClipStage: the single-clip happy path that proves the seam.
 
-Builds a 1-segment job from the request (prompt splitter DEFERRED), dispatches
-through a BackendPool, persists the resulting clip Artifact into an ArtifactStore,
-and returns the stored Artifact.
+Dispatches through a BackendPool, persists the resulting clip Artifact into an
+ArtifactStore, and returns an updated PipelineState.
 
-The ``segments_override`` parameter on :meth:`GenerateClipStage.run` allows tests
-to bypass the single-segment build and exercise the packaging branches (native
-extension vs fallback) directly without a real splitter.
+``segments`` is now a constructor field — the orchestrator (and batch) populate
+it from the splitter output before constructing the stage. Validation runs
+upstream (orchestrator.validate_request); the stage body assumes
+``state.request`` is already validated.
 """
 
 from __future__ import annotations
@@ -18,16 +18,14 @@ from pathlib import Path
 from kinoforge.core.continuity import inject_tail_frame
 from kinoforge.core.interfaces import (
     MODE_ROLE_REQUIREMENTS,
-    Artifact,
     BackendPool,
     ConditioningAsset,
     GenerationEngine,
-    GenerationRequest,
     ModelProfile,
+    PipelineState,
     Segment,
 )
 from kinoforge.core.strategy import decide
-from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.artifact_bytes import artifact_bytes
 from kinoforge.stores.base import ArtifactStore
@@ -35,13 +33,7 @@ from kinoforge.stores.base import ArtifactStore
 
 @dataclass
 class GenerateClipStage:
-    """Single-clip pipeline stage.
-
-    Validates a :class:`~kinoforge.core.interfaces.GenerationRequest`, packages
-    it into one or more :class:`~kinoforge.core.interfaces.GenerationJob` objects
-    via :func:`~kinoforge.core.strategy.decide`, dispatches through a
-    :class:`~kinoforge.core.interfaces.BackendPool`, and persists the resulting
-    bytes to an :class:`~kinoforge.stores.base.ArtifactStore`.
+    """Single-clip pipeline stage (Layer R: PipelineState in, PipelineState out).
 
     Attributes:
         profile: The model's cached capability profile.
@@ -52,6 +44,8 @@ class GenerateClipStage:
         base_params: Engine-neutral params for every produced job.
         base_spec: Engine-interpreted spec template merged into every job.
         engine: The GenerationEngine providing extract_last_frame for continuity chaining.
+        segments: Ordered segment list produced by the splitter — always
+            populated by the orchestrator before construction.
         http_get_bytes: Optional injectable seam for http(s) artifact downloads.
             When ``None`` (the default), :func:`_default_http_get_bytes` is used,
             which builds a :class:`urllib.request.Request` with the artifact's
@@ -76,45 +70,27 @@ class GenerateClipStage:
     base_params: dict  # type: ignore[type-arg]
     base_spec: dict  # type: ignore[type-arg]
     engine: GenerationEngine
+    segments: list[Segment]  # NEW — always populated by orchestrator
     http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None
     sink: OutputSink | None = None
     namespace: str | None = None
 
-    def run(
-        self,
-        request: GenerationRequest,
-        *,
-        segments_override: list[Segment] | None = None,
-    ) -> Artifact:
-        """Validate, package, dispatch, persist.
+    def run(self, state: PipelineState) -> PipelineState:
+        """Dispatch jobs through pool, persist clip artifact, return updated state.
+
+        Validation runs upstream (orchestrator.validate_request); body assumes
+        ``state.request`` is already validated and ``self.segments`` is the
+        ordered segment list produced by the splitter.
 
         Args:
-            request: The user-level generation request.
-            segments_override: For testing the packaging branches directly.
-                When ``None``, the happy path builds one ``Segment`` from the
-                request. When provided, these segments are used verbatim and
-                the single-segment build is skipped.
+            state: The current pipeline state carrying the validated request.
 
         Returns:
-            The persisted :class:`~kinoforge.core.interfaces.Artifact` (uri in
-            the store) of the produced clip.
-
-        Raises:
-            ValidationError: If the request fails mode/role/kind validation.
-                Validation runs only when ``segments_override`` is ``None``;
-                callers that pre-build segments (e.g. the orchestrator after
-                its own ``validate_request`` call) are expected to have
-                validated upstream.
+            Updated :class:`~kinoforge.core.interfaces.PipelineState` with
+            ``state.artifacts["clip"]`` set to the persisted Artifact.
         """
-        if segments_override is not None:
-            segments = segments_override
-        else:
-            validated = validate_request(
-                self.profile, request, accepted_kinds=self.accepted_kinds
-            )
-            segments = [Segment(prompt=validated.prompt, assets=list(validated.assets))]
-
-        jobs = decide(self.profile, segments, self.base_params, self.base_spec)
+        request = state.request
+        jobs = decide(self.profile, self.segments, self.base_params, self.base_spec)
 
         # Validate every job's spec ONCE, before any dispatch.  Previously
         # this only ran inside the chained branch (i > 0) and the fan-out
@@ -142,11 +118,13 @@ class GenerateClipStage:
                 if i > 0 and should_chain:
                     tail_bytes = self.engine.extract_last_frame(results[-1])
                     tail_name = f"seg-{i - 1}-tail.png"
-                    stored = self.store.put_bytes(self.run_id, tail_name, tail_bytes)
+                    stored_tail = self.store.put_bytes(
+                        self.run_id, tail_name, tail_bytes
+                    )
                     # Stores return Artifact(uri=...) with filename=""; pre-populate
                     # filename so downstream consumers don't have to derive it from
                     # Path(ref.uri).name.
-                    tail_artifact = replace(stored, filename=tail_name)
+                    tail_artifact = replace(stored_tail, filename=tail_name)
                     tail_asset = ConditioningAsset(
                         kind="image",
                         role="init_image",
@@ -177,9 +155,12 @@ class GenerateClipStage:
             ext = Path(last.filename).suffix or ".bin"
             self.sink.publish(
                 payload,
-                prompt=segments[-1].prompt,
+                prompt=self.segments[-1].prompt,
                 extension=ext,
                 namespace=self.namespace,
             )
 
-        return stored
+        return replace(
+            state,
+            artifacts={**state.artifacts, "clip": stored},
+        )

@@ -738,22 +738,22 @@ class TestSplitterWiring:
         engine = _make_engine()
         provider = LocalProvider()
 
-        captured: dict[str, list[Segment] | None] = {"segments_override": None}
+        from kinoforge.core.interfaces import PipelineState
+
+        captured: dict[str, list[Segment] | None] = {"segments": None}
         real_run = GenerateClipStage.run
 
         def _spy(
             self: GenerateClipStage,
-            req: GenerationRequest,
-            *,
-            segments_override: list[Segment] | None = None,
-        ) -> Artifact:
-            captured["segments_override"] = segments_override
-            return real_run(self, req, segments_override=segments_override)
+            state: PipelineState,
+        ) -> PipelineState:
+            captured["segments"] = list(self.segments)
+            return real_run(self, state)
 
         with patch.object(GenerateClipStage, "run", _spy):
             generate(cfg, request, store=store, provider=provider, engine=engine)
 
-        segments = captured["segments_override"]
+        segments = captured["segments"]
         assert segments is not None
         assert [s.prompt for s in segments] == [
             "paragraph one",
@@ -778,22 +778,22 @@ class TestSplitterWiring:
         cfg = _compute_cfg()
         provider = LocalProvider()
 
-        captured: dict[str, list[Segment] | None] = {"segments_override": None}
+        from kinoforge.core.interfaces import PipelineState
+
+        captured: dict[str, list[Segment] | None] = {"segments": None}
         real_run = GenerateClipStage.run
 
         def _spy(
             self: GenerateClipStage,
-            req: GenerationRequest,
-            *,
-            segments_override: list[Segment] | None = None,
-        ) -> Artifact:
-            captured["segments_override"] = segments_override
-            return real_run(self, req, segments_override=segments_override)
+            state: PipelineState,
+        ) -> PipelineState:
+            captured["segments"] = list(self.segments)
+            return real_run(self, state)
 
         with patch.object(GenerateClipStage, "run", _spy):
             generate(cfg, request, store=store, provider=provider, engine=engine)
 
-        segments = captured["segments_override"]
+        segments = captured["segments"]
         assert segments is not None
         assert len(segments) == 2
         assert len(segments[0].assets) == 1
@@ -815,22 +815,22 @@ class TestSplitterWiring:
         cfg = _compute_cfg()
         provider = LocalProvider()
 
-        captured: dict[str, list[Segment] | None] = {"segments_override": None}
+        from kinoforge.core.interfaces import PipelineState
+
+        captured: dict[str, list[Segment] | None] = {"segments": None}
         real_run = GenerateClipStage.run
 
         def _spy(
             self: GenerateClipStage,
-            req: GenerationRequest,
-            *,
-            segments_override: list[Segment] | None = None,
-        ) -> Artifact:
-            captured["segments_override"] = segments_override
-            return real_run(self, req, segments_override=segments_override)
+            state: PipelineState,
+        ) -> PipelineState:
+            captured["segments"] = list(self.segments)
+            return real_run(self, state)
 
         with patch.object(GenerateClipStage, "run", _spy):
             generate(cfg, request, store=store, provider=provider, engine=engine)
 
-        segments = captured["segments_override"]
+        segments = captured["segments"]
         assert segments is not None
         assert len(segments) == 1
         assert segments[0].prompt == "just one paragraph"
