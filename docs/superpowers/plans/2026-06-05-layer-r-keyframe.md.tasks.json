@@ -1,0 +1,124 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-05-layer-r-keyframe.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: Image-side ABCs + PipelineState + Stage Protocol + registry helpers",
+      "status": "pending",
+      "description": "**Goal:** Add ImageProfile, ImageJob, ImageBackend, ImageEngine, PipelineState, required_image_roles; update Stage Protocol to run(state)->state; add register_image_engine/get_image_engine.\n\n**Files:**\n- Modify: src/kinoforge/core/interfaces.py\n- Modify: src/kinoforge/core/registry.py\n- Create: tests/core/test_image_interfaces.py\n- Create: tests/pipeline/test_pipeline_state.py\n\n**Acceptance Criteria:**\n- ImageProfile/ImageJob/ImageBackend(ABC)/ImageEngine(ABC) defined per spec §3\n- PipelineState(frozen) with request + artifacts dict default empty\n- Stage Protocol run(self, state)->PipelineState\n- required_image_roles helper handles both pre/post-T2 schemas\n- register/get_image_engine work with UnknownAdapter on miss\n- 8 tests pass; mypy/ruff/pre-commit clean\n\n**Verify:** pixi run test tests/core/test_image_interfaces.py tests/pipeline/test_pipeline_state.py -v && pixi run pre-commit run --files <touched files>\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/registry.py\", \"tests/core/test_image_interfaces.py\", \"tests/pipeline/test_pipeline_state.py\"], \"verifyCommand\": \"pixi run test tests/core/test_image_interfaces.py tests/pipeline/test_pipeline_state.py -v\", \"acceptanceCriteria\": [\"ABCs defined\", \"PipelineState frozen\", \"Stage Protocol updated\", \"required_image_roles works\", \"registry helpers work\", \"8 tests pass\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: MODE_ROLE_REQUIREMENTS schema migration",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Migrate MODE_ROLE_REQUIREMENTS from dict[str, set[str]] to dict[str, dict[str, str]]. Update 3 prod touch sites + 1 test literal. Add VALID_KINDS drift-guard.\n\n**Files:**\n- Modify: src/kinoforge/core/interfaces.py:237\n- Modify: src/kinoforge/pipeline/generate_clip.py:166\n- Modify: src/kinoforge/core/validation.py:62\n- Modify: tests/core/test_interfaces.py:69\n- Modify: PROGRESS.md:72\n\n**Acceptance Criteria:**\n- Schema migrated to new shape; key-membership preserved\n- New VALID_KINDS lockdown test passes\n- Existing tests (continuity dispatch, validation role contract) still pass\n- required_image_roles returns same lists pre/post\n\n**Verify:** pixi run test tests/core/test_interfaces.py tests/core/test_validation.py tests/pipeline/test_generate_clip.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/pipeline/generate_clip.py\", \"src/kinoforge/core/validation.py\", \"tests/core/test_interfaces.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test tests/core/test_interfaces.py tests/core/test_validation.py tests/pipeline/test_generate_clip.py -v\", \"acceptanceCriteria\": [\"schema migrated\", \"3 prod sites updated\", \"VALID_KINDS lockdown passes\", \"existing tests green\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Extract artifact_bytes helper",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Move GenerateClipStage._artifact_bytes into src/kinoforge/pipeline/artifact_bytes.py so KeyframeStage reuses it.\n\n**Files:**\n- Create: src/kinoforge/pipeline/artifact_bytes.py\n- Modify: src/kinoforge/pipeline/generate_clip.py (delete _artifact_bytes; import + delegate)\n- Create: tests/pipeline/test_artifact_bytes.py\n\n**Acceptance Criteria:**\n- artifact_bytes(artifact, http_get_bytes=None)->bytes resolves uri→file → url→http → synthetic fallback\n- GenerateClipStage delegates via the helper\n- Existing generate_clip tests still pass\n- 8 new tests pass\n\n**Verify:** pixi run test tests/pipeline/test_artifact_bytes.py tests/pipeline/test_generate_clip.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/artifact_bytes.py\", \"src/kinoforge/pipeline/generate_clip.py\", \"tests/pipeline/test_artifact_bytes.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/test_artifact_bytes.py tests/pipeline/test_generate_clip.py -v\", \"acceptanceCriteria\": [\"helper resolves all 3 paths\", \"GenerateClipStage delegates\", \"8 new tests pass\", \"existing tests green\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: GenerateClipStage signature migration — segments=constructor, run(state)->state",
+      "status": "pending",
+      "blockedBy": [1, 3],
+      "description": "**Goal:** GenerateClipStage.run(state)->PipelineState. Drop segments_override kwarg, promote to segments constructor field. ~30 test sites migrated via _make_stage/_run helpers.\n\n**Files:**\n- Modify: src/kinoforge/pipeline/generate_clip.py\n- Modify: src/kinoforge/core/orchestrator.py (callsite)\n- Modify: src/kinoforge/core/batch.py (callsite)\n- Modify: tests/pipeline/test_generate_clip.py (~30 sites + helper)\n- Modify: tests/core/test_pool.py (stage_kwargs)\n\n**Acceptance Criteria:**\n- segments is non-default dataclass field\n- run(state)->PipelineState; state.artifacts['clip'] populated\n- Orchestrator + batch call stage.run(state) (no override kwarg)\n- All pre-existing tests pass via _make_stage + _run helpers\n\n**Verify:** pixi run test tests/pipeline/ tests/core/test_pool.py tests/core/test_orchestrator.py tests/core/test_batch.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"src/kinoforge/core/orchestrator.py\", \"src/kinoforge/core/batch.py\", \"tests/pipeline/test_generate_clip.py\", \"tests/core/test_pool.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/ tests/core/test_pool.py tests/core/test_orchestrator.py tests/core/test_batch.py -v\", \"acceptanceCriteria\": [\"segments constructor field\", \"run(state)->state\", \"callsites updated\", \"existing tests pass\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: JsonImageProfileCache namespace split",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** JsonImageProfileCache stores ImageProfile under <hex>.image.json (separate from <hex>.json video namespace). Thin subclass of JsonProfileCache via factored extension seams.\n\n**Files:**\n- Modify: src/kinoforge/core/profiles.py (factor seams + append subclass)\n- Create: tests/core/test_image_profile_cache.py\n\n**Acceptance Criteria:**\n- resolve miss → ProfileNotCached; discover writes .image.json; resolve hit reads it\n- Image and video caches for same CapabilityKey don't collide\n- verify match/mismatch semantics correct\n- supported_modes set round-trips; max_resolution tuple round-trips\n- 10 tests pass; existing video-cache tests still pass\n\n**Verify:** pixi run test tests/core/test_image_profile_cache.py tests/core/test_profiles.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/profiles.py\", \"tests/core/test_image_profile_cache.py\"], \"verifyCommand\": \"pixi run test tests/core/test_image_profile_cache.py tests/core/test_profiles.py -v\", \"acceptanceCriteria\": [\"namespace split works\", \"no cross-cache collision\", \"verify semantics\", \"round-trips\", \"10 new + existing tests pass\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: FakeImageEngine + FakeImageBackend + self-registration",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Deterministic GPU-free image engine for offline tests.\n\n**Files:**\n- Create: src/kinoforge/image_engines/__init__.py\n- Create: src/kinoforge/image_engines/fake/__init__.py\n- Create: tests/image_engines/__init__.py\n- Create: tests/image_engines/test_fake.py\n\n**Acceptance Criteria:**\n- name='fake', requires_compute=False, requires_local_weights=False\n- submit deterministic 16-hex ID from sha256(prompt+spec)\n- result returns Artifact(filename=f'fake-image-{id}.png', meta=...)\n- validate_spec raises on missing 'model'\n- Self-registers under 'fake'\n- 7 tests pass\n\n**Verify:** pixi run test tests/image_engines/test_fake.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/image_engines/__init__.py\", \"src/kinoforge/image_engines/fake/__init__.py\", \"tests/image_engines/__init__.py\", \"tests/image_engines/test_fake.py\"], \"verifyCommand\": \"pixi run test tests/image_engines/test_fake.py -v\", \"acceptanceCriteria\": [\"engine flags correct\", \"deterministic submit IDs\", \"validate_spec gates work\", \"self-registers\", \"7 tests pass\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: FalImageEngine + FalImageBackend + self-registration",
+      "status": "pending",
+      "blockedBy": [1, 6],
+      "description": "**Goal:** Live-fire image engine wrapping fal.ai queue API. Reuses engines/fal/wire.py helpers. HTTP via injected seams; offline tests use fakes.\n\n**Files:**\n- Create: src/kinoforge/image_engines/fal/__init__.py\n- Create: tests/image_engines/test_fal.py\n\n**Acceptance Criteria:**\n- provision raises AuthError when FAL_KEY unset; passes when set\n- submit POSTs to https://queue.fal.run/<endpoint> with Auth header + spec.input + params merge\n- result polls status_url then fetches response_url; ERROR raises; empty images raises\n- profile_for returns static ImageProfile((1024,1024), {'t2i'})\n- validate_spec gates prompt + spec.model\n- Self-registers under 'fal'\n- 13 offline tests pass with injected seams\n\n**Verify:** pixi run test tests/image_engines/test_fal.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/image_engines/fal/__init__.py\", \"tests/image_engines/test_fal.py\"], \"verifyCommand\": \"pixi run test tests/image_engines/test_fal.py -v\", \"acceptanceCriteria\": [\"auth gate works\", \"submit POST shape\", \"result poll-then-fetch\", \"error paths\", \"self-registers\", \"13 tests pass\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: KeyframeConfig pydantic + Config.keyframe field",
+      "status": "pending",
+      "blockedBy": [1, 2],
+      "description": "**Goal:** Add KeyframeRoleOverride + KeyframeConfig + Config.keyframe field with prompt-required + role-names-known validators.\n\n**Files:**\n- Modify: src/kinoforge/core/config.py\n- Create: tests/core/test_keyframe_config.py\n- Modify: tests/core/test_config.py (1 extra test)\n\n**Acceptance Criteria:**\n- Config without keyframe loads; cfg.keyframe is None\n- Missing both top-level + role prompts raises ValueError\n- Unknown role name raises ValueError\n- extra='forbid' enforced\n- capability_key deterministic on spec dict-key order\n- 8 new + 1 config test pass\n\n**Verify:** pixi run test tests/core/test_keyframe_config.py tests/core/test_config.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_keyframe_config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run test tests/core/test_keyframe_config.py tests/core/test_config.py -v\", \"acceptanceCriteria\": [\"validators work\", \"extra=forbid\", \"capability_key deterministic\", \"9 tests pass\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: KeyframeStage implementation",
+      "status": "pending",
+      "blockedBy": [1, 2, 3, 6, 8],
+      "description": "**Goal:** Implement KeyframeStage.run per spec §5. Per-role gap fill; persistence via ArtifactStore; prompt/spec/params resolution helpers.\n\n**Files:**\n- Create: src/kinoforge/pipeline/keyframe.py\n- Create: tests/pipeline/test_keyframe_stage.py\n\n**Acceptance Criteria:**\n- i2v empty assets → fills init_image\n- flf2v empty assets → fills both bookends with per-role prompts\n- Partial fill: user-supplied first_frame preserved bit-identical; only last_frame generated\n- Per-role prompt > top-level; missing both raises ValidationError\n- Per-role spec/params shallow-merge\n- Non-image-kind roles skipped (forward-compat)\n- Filename keyframe-<role>.png; state.artifacts[f'keyframe-{role}'] populated\n- Original state not mutated\n- 12 tests pass\n\n**Verify:** pixi run test tests/pipeline/test_keyframe_stage.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/keyframe.py\", \"tests/pipeline/test_keyframe_stage.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/test_keyframe_stage.py -v\", \"acceptanceCriteria\": [\"i2v fill\", \"flf2v fill\", \"partial fill preserves user\", \"prompt resolution\", \"spec merge\", \"kind filter\", \"no mutation\", \"12 tests pass\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Orchestrator pipeline list-walker + image engine pre-resolution",
+      "status": "pending",
+      "blockedBy": [1, 4, 5, 6, 8, 9],
+      "description": "**Goal:** Refactor generate() to pre-resolve image engine + backend + profile when cfg.keyframe set; build stages list; walk via shared PipelineState; extract state.artifacts['clip']. Add image_engine + image_profile_provider test seams.\n\n**Files:**\n- Modify: src/kinoforge/core/orchestrator.py (generate body)\n- Modify: src/kinoforge/core/interfaces.py (add ImageProfileProvider ABC)\n- Modify: tests/core/test_orchestrator.py (6 new tests)\n\n**Acceptance Criteria:**\n- cfg.keyframe is None → 1-stage pipeline\n- cfg.keyframe set → KeyframeStage first, GenerateClipStage second\n- Image engine resolved BEFORE deploy_session (unknown name fails fast)\n- ImageProfileProvider seam: cache miss → discover; hit → resolve\n- ValidationError triggers existing teardown\n- Returns tuple[Artifact, Instance|None]; Artifact is state.artifacts['clip']\n- 6 new tests pass\n\n**Verify:** pixi run test tests/core/test_orchestrator.py tests/pipeline/ tests/core/test_pool.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"src/kinoforge/core/interfaces.py\", \"tests/core/test_orchestrator.py\"], \"verifyCommand\": \"pixi run test tests/core/test_orchestrator.py tests/pipeline/ tests/core/test_pool.py -v\", \"acceptanceCriteria\": [\"1-stage default\", \"2-stage when keyframe\", \"image engine pre-resolved\", \"cache miss→discover\", \"teardown on ValidationError\", \"6 new tests pass\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: batch_generate() mirror",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Apply T10 shape to batch_generate. Per-entry keyframe.prompt override honoured via existing shallow-merge.\n\n**Files:**\n- Modify: src/kinoforge/core/batch.py\n- Modify: tests/core/test_batch.py (2 new tests)\n\n**Acceptance Criteria:**\n- Image engine + profile resolved once per batch (amortised)\n- Per-entry keyframe.prompt override honoured for that entry only\n- Per-batch summary records clip artifact unchanged for no-keyframe runs\n- 2 new tests + existing batch tests pass\n\n**Verify:** pixi run test tests/core/test_batch.py tests/test_batch_cli.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/batch.py\", \"tests/core/test_batch.py\"], \"verifyCommand\": \"pixi run test tests/core/test_batch.py tests/test_batch_cli.py -v\", \"acceptanceCriteria\": [\"per-batch pre-resolution\", \"per-entry override works\", \"existing tests pass\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 12: Example YAMLs + load-lockdown tests",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** Add keyframe-fal-i2v.yaml + keyframe-fal-flf2v.yaml examples; lock down with parse + structural tests.\n\n**Files:**\n- Create: examples/configs/keyframe-fal-i2v.yaml\n- Create: examples/configs/keyframe-fal-flf2v.yaml\n- Modify: tests/test_examples.py (4 new tests)\n\n**Acceptance Criteria:**\n- Both YAML files parse via load_config\n- i2v has prompt; flf2v has differentiated per-role bookends\n- Existing 'every example loads' test still passes for new files\n- 4 new tests pass\n\n**Verify:** pixi run test tests/test_examples.py -v\n\n```json:metadata\n{\"files\": [\"examples/configs/keyframe-fal-i2v.yaml\", \"examples/configs/keyframe-fal-flf2v.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run test tests/test_examples.py -v\", \"acceptanceCriteria\": [\"both YAMLs parse\", \"i2v structural\", \"flf2v differentiated\", \"4 new tests pass\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 13: Backwards-compat lockdown tests",
+      "status": "pending",
+      "blockedBy": [10, 12],
+      "description": "**Goal:** Lock down pre-Layer-R behaviour is bit-identical for configs without keyframe block.\n\n**Files:**\n- Create: tests/test_layer_r_backcompat.py\n\n**Acceptance Criteria:**\n- cfg.keyframe is None → exactly one stage constructed (recorder fixture)\n- Every existing examples/configs/*.yaml (excluding 2 new) loads with cfg.keyframe is None\n- 'init_image' in MODE_ROLE_REQUIREMENTS['i2v'] True post-migration\n- 3 tests pass\n\n**Verify:** pixi run test tests/test_layer_r_backcompat.py -v\n\n```json:metadata\n{\"files\": [\"tests/test_layer_r_backcompat.py\"], \"verifyCommand\": \"pixi run test tests/test_layer_r_backcompat.py -v\", \"acceptanceCriteria\": [\"1-stage default\", \"existing examples no keyframe\", \"key membership preserved\", \"3 tests pass\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 14: Core invariant scan extension",
+      "status": "pending",
+      "blockedBy": [1, 6, 7],
+      "description": "**Goal:** Extend invariant scan to allow image_engines/; lock down core/ does NOT import image_engines.\n\n**Files:**\n- Modify: tests/test_core_invariant.py\n\n**Acceptance Criteria:**\n- Existing invariant scan passes\n- core/ MUST NOT import kinoforge.image_engines.*\n- image_engines/fal MAY import engines/fal/wire (sibling cross-ref)\n- 2 new tests pass\n\n**Verify:** pixi run test tests/test_core_invariant.py -v\n\n```json:metadata\n{\"files\": [\"tests/test_core_invariant.py\"], \"verifyCommand\": \"pixi run test tests/test_core_invariant.py -v\", \"acceptanceCriteria\": [\"existing scan green\", \"core ban\", \"sibling cross-ref allowed\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 15: RED scaffold for live smoke (commit before any spend)",
+      "status": "pending",
+      "blockedBy": [10, 12],
+      "description": "**Goal:** Per CLAUDE.md durability rule — commit failing live-smoke scaffold BEFORE invoking paid fal API. Default-skip pattern.\n\n**Files:**\n- Create: tests/live/test_keyframe_fal_live.py\n\n**Acceptance Criteria:**\n- Test file with 2 tests; both pytest.skip when KINOFORGE_LIVE_TESTS unset\n- pytest.fail (not skip) when env set but FAL_KEY missing\n- Default pixi run test gains +2 skips (6→8)\n- Committed BEFORE T16 invocation\n\n**Verify:** pixi run test tests/live/test_keyframe_fal_live.py -v (expect 2 skipped)\n\n```json:metadata\n{\"files\": [\"tests/live/test_keyframe_fal_live.py\"], \"verifyCommand\": \"pixi run test tests/live/test_keyframe_fal_live.py -v\", \"acceptanceCriteria\": [\"2 tests defined\", \"default skip\", \"fail-loud on env+no-creds\", \"committed pre-spend\"]}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 16: Live smoke run + iterate on real-cloud bugs",
+      "status": "pending",
+      "blockedBy": [15],
+      "description": "**Goal:** Invoke KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_keyframe_fal_live.py -v against real fal-ai/flux-schnell + wan endpoints autonomously. Iterate on any real-cloud bugs surfaced.\n\n**Files:**\n- Modify (if bugs surface): src/kinoforge/image_engines/fal/__init__.py + related\n\n**Acceptance Criteria:**\n- pixi run preflight exits 0 before invocation\n- 2 passed under KINOFORGE_LIVE_TESTS=1 + FAL_KEY\n- keyframe-init_image.png PNG magic (i2v)\n- keyframe-first_frame != keyframe-last_frame bytes (flf2v)\n- clip MP4 ftyp box in first 32 bytes\n- Total spend ≤ $0.20\n- Each real-cloud bug gets own fix commit + regression test\n\n**Verify:** KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_keyframe_fal_live.py -v 2>&1 | tee /tmp/layer-r-live.log\n\n```json:metadata\n{\"files\": [\"src/kinoforge/image_engines/fal/__init__.py\", \"tests/live/test_keyframe_fal_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_keyframe_fal_live.py -v 2>&1 | tee /tmp/layer-r-live.log\", \"acceptanceCriteria\": [\"preflight exits 0\", \"2 passed\", \"PNG magic on keyframes\", \"flf2v bookends differ\", \"MP4 ftyp\", \"spend <= $0.20\", \"each bug fix atomic\"]}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 17: README + PROGRESS.md Phase 32 entry + final-gate full suite",
+      "status": "pending",
+      "blockedBy": [11, 13, 14, 16],
+      "description": "**Goal:** Add README 'Keyframe stage' section; append Phase 32 entry to PROGRESS.md; run full suite + invariants; commit close-out.\n\n**Files:**\n- Modify: README.md\n- Modify: PROGRESS.md\n\n**Acceptance Criteria:**\n- README has 'Keyframe stage' subsection with i2v + flf2v examples\n- PROGRESS Phase 32 entry follows existing format (per-task SHAs, decisions, live confirmation, carry-forwards)\n- GH-issue table row #4 flips to CLOSED (Layer R)\n- Single-next-action updated\n- pixi run test passes full suite (~1186 + 8 skipped)\n- pixi run pre-commit run --all-files clean\n- Final commit references Phase 32 + closes #4\n\n**Verify:** pixi run test -q && pixi run pre-commit run --all-files\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"README section\", \"PROGRESS Phase 32\", \"GH #4 CLOSED\", \"full suite green\", \"pre-commit clean\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-05T00:00:00-07:00"
+}
