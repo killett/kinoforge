@@ -111,7 +111,8 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 **Real-cloud verification gaps (offline-tested only):**
 - ~~`RunPodProvider.find_offers` REST shape is a stub~~ — **CLOSED** by Phase 24 (Layer N). Real-cloud verified end-to-end; 10 production bugs fixed.
-- `SkyPilotProvider._get_sky()` lazy path wired but unexercised against real `sky` SDK.
+- ~~`SkyPilotProvider._get_sky()` lazy path wired but unexercised against real `sky` SDK.~~ — **CLOSED** by Phase 31 (CPU lifecycle smoke against real GCP; 4 SDK fixtures captured; provider ported to modern async API).
+- SkyPilot live smoke is CPU lifecycle only against GCP; GPU + engine smokes + multi-cloud (AWS, Azure) remain deferred (see `docs/superpowers/specs/2026-06-03-skypilot-real-cloud-design.md` section 7 for scope cuts).
 - `S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.
 
 **Architectural follow-ups:**
@@ -151,16 +152,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 30 fully CLOSED (GH #8). HEAD `d752919`. Test suite at 1071 passed, 5 skipped (3 existing + 2 live-gated HF smoke). Working tree clean. Live smoke ran clean against real HF tree API (`hf-internal-testing/tiny-random-CLIPModel`, 13 files, 5 LFS sha256 populated incl. `onnx/model.onnx` proving subdir preservation); confirmation block populated.
+**Where we are:** Phase 31 fully CLOSED — SkyPilot real-cloud verification (PROGRESS:114 carry-forward #2). HEAD `9301c83` (prior to this T8 PROGRESS commit). Test suite at 1111 passed, 6 skipped (3 existing + 2 live-gated HF smoke + 1 live-gated SkyPilot smoke). Working tree clean. Live smoke ran clean against real GCP twice in succession (~6.8 min and ~6.9 min wall-clock; `us-east1-b`; cluster `kinoforge-skypilot-smoke-<8hex>`); 4 SDK fixtures captured byte-identical across both runs (sha256 chain: `b7d4192…` for `down`/`launch`/`status`, `37517e5…` for `stream_and_get` — the three-way collision is intentional, see Phase 31 entry).
 
 **Read in this order:**
-1. The Phase 30 entry below (per-task SHAs + design decisions + live-smoke confirmation table).
-2. `docs/superpowers/specs/2026-06-03-hf-bare-repo-design.md` for the brainstorming-locked decisions.
+1. The Phase 31 entry below (per-task SHAs + design decisions + live-smoke confirmation + fixture sha256 chain).
+2. `docs/superpowers/specs/2026-06-03-skypilot-real-cloud-design.md` for the brainstorming-locked decisions and the §7 scope cuts that became Phase 31's carry-forward.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates: GH #4 keyframe stage; CLI `_cmd_status` ledger reads; batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of SkyPilot or S3/GCS stores.
+**First unchecked task in fresh session:** pick next layer. Candidates: GH #4 keyframe stage; CLI `_cmd_status` ledger reads; batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7).
 
-**Budget remaining: ~$11.26 of $15.** Phase 30 was offline-only (live HF tree read API is unauthenticated for public repos — $0 live spend).
+**Budget remaining: ~$11.18 of $15.** Phase 31 spent ~$0.082 across all T6 + T7f live attempts against real GCP.
 
 ## Post-MVP
 
@@ -595,6 +596,137 @@ new (A1-A7 + the T1 symbol-lock test).
   + aria2c sub-files; deferred until a follow-up task touches the file.
 
 Closes GH #9.
+
+### Phase 31 — SkyPilot real-cloud verification (PROGRESS:114 #2)
+
+Closes the dormant `SkyPilotProvider._get_sky()` lazy path against real
+GCP. CPU-only bare lifecycle smoke (Layer-N analog); captures four SDK
+return-shape fixtures (`gpu_list`/`status`/`launch`/`down` — most
+collapse to `<volatile-uuid>` because modern SkyPilot's async API
+returns `RequestId` UUIDs from these calls) as the PR review surface
+for future SDK upgrades. Provider rewritten for modern async API
+(RequestId resolution via `sky.stream_and_get`, typed `StatusResponse`
+records via dual-shape `_record_field` adapter, `sky.Task.from_yaml_config`
+construction, CPU-offer synthesis, `docker:` image normalisation,
+`disk_size=30` default to fit fresh-project GCP `SSD_TOTAL_GB=250`
+quota). Pixi `live-skypilot` feature env now ships `google-cloud-sdk`,
+`rsync`, and `openssh` so the SkyPilot API server (background daemon)
+finds all its CLI prereqs.
+
+- Spec: `docs/superpowers/specs/2026-06-03-skypilot-real-cloud-design.md`
+- Plan: `docs/superpowers/plans/2026-06-03-skypilot-real-cloud.md`
+- T1 (pixi feature env): `ed0dbda`
+- T2 (recording proxy + 8 Ring-2 tests): `005eca2` + `fd8cac9` (review fixup)
+- T3 (skypilot.yaml + parse test): `eedf7db`
+- T4 (preflight SkyPilot check + 3 tests): `6dd3530` + `90a6452` (review fixup)
+- T5 (RED live-smoke scaffold, pre-spend): `c3beb96` + `44101f2` (tasks.json sync)
+- T5.5 (live-env mypy hygiene — preflight + recorder typing): `f1a684e`
+- T6 (1st live invocation, $0 spend, surfaced sky.gpu_list missing): `44101f2`
+- T7a (provider rewrite for modern async API): `b9fd9ee` + `f86db8a` (tasks.json sync)
+- T7b (sky.Task construction + CPU-offer synthesis): `91139c2`
+- T7d (recorder pydantic BaseModel support): `fffb034`
+- T7e (teardown uses absolute gcloud path): `d2d90ce`
+- T7g (recorder passes classes through unchanged): `32186a1`
+- T7h (image_id docker: prefix normalisation): `2a921ae`
+- T7i (google-cloud-sdk in live-skypilot env): `b425407`
+- T7j (rsync + openssh in live-skypilot env): `ddf5aa6`
+- T7k (provider default disk_size=30): `2e6c233`
+- T7l+T7m (image swap + UUID-volatile recorder): `afeb635`
+- T7n (image swap bash:5 → debian:12-slim): `c6679ba`
+- T7f (live smoke fixtures, byte-identical across 2 runs): `9301c83`
+
+**Key design decisions:**
+- Bare CPU lifecycle only (Q1=A): GPU smoke deferred — same SDK code paths
+  exercised at ~1/100th cost.
+- Fixture capture via decorator-based seam in test code (Q6=A): zero
+  production-code touch; matches Layer N's sibling pattern.
+- Four-tier teardown (Q3=B): `try/finally` + `autostop=1` + extended
+  preflight + `gcloud` nuclear fallback. Survivor check uses absolute
+  gcloud path (T7e).
+- Pixi feature env `live-skypilot` (Q4=A): default `pixi run test` stays
+  lean. Feature env ships skypilot[gcp] + google-cloud-sdk + rsync + openssh
+  to satisfy SkyPilot's API-server prereqs.
+- Full method coverage (Q5=A): `gpu_list → launch → status → endpoints
+  → down`. Provider rewrites use `sky.stream_and_get` to resolve each
+  RequestId.
+- Provider auto-normalisations: `docker:` image-id prefix, CPU-offer
+  synthesis when `min_vram_gb == 0`, `disk_size=30` default. All keep
+  the smoke runnable against any fresh GCP project.
+
+**Real-world SDK + cloud-prep findings (the value Phase 31 delivered):**
+- `sky.gpu_list()` no longer exists — replaced by `sky.list_accelerators()`.
+- `sky.status()`/`launch()`/`down()` are async (return `RequestId`);
+  callers must `sky.stream_and_get(req)` to block on the resolved payload.
+- `StatusResponse` is a pydantic BaseModel with attribute access (not a
+  dict) — recorder + provider both updated to handle.
+- SkyPilot's API server is a background daemon needing gcloud + rsync +
+  ssh on PATH; pixi feature env now provides all three.
+- SkyPilot's GCP setup requires SA permissions beyond `compute.admin`:
+  `serviceusage.serviceUsageAdmin` + `iam.serviceAccountAdmin` + `viewer`
+  + `iam.securityAdmin`. The last lets the SA self-grant future roles
+  without re-OAuth.
+- `bash:5` Docker image is Alpine-based (bash at `/usr/local/bin/bash`);
+  SkyPilot's docker bootstrap hardcodes `/bin/bash` — `debian:12-slim`
+  is the right minimal CPU image.
+- Default GCP SSD quota (`SSD_TOTAL_GB=250`) is below SkyPilot's default
+  `disk_size=256`. Provider now defaults to 30 GB.
+
+**Live-smoke confirmation (T7f attempt 10, both runs PASS):**
+
+```
+KINOFORGE_LIVE_TESTS=1 pixi run -e live-skypilot pytest tests/live/test_skypilot_live.py -v
+============================== 1 passed in 408.99s (0:06:48) ===============================
+============================== 1 passed in 413.18s (0:06:53) ===============================
+```
+
+Two successive runs: ~6.8 min and ~6.9 min wall-clock each. Cluster name
+pattern: `kinoforge-skypilot-smoke-<8hex>`. Provisioning landed in
+`us-east1-b` both runs (5 zone retries each on quota exhaustion). Total
+GCP spend across all T6 + T7f attempts: **~$0.082** (of the layer's
+$0.50 ceiling).
+
+Fixture sha256 chain (byte-identical across 2 successive runs after
+volatile-key + UUID-sentinel normalisation):
+
+```
+b7d419236e47a6d02cae538462dc0d66909df7a63b5e4595664ef5da8b4bce46  tests/providers/fixtures/skypilot/down.json
+b7d419236e47a6d02cae538462dc0d66909df7a63b5e4595664ef5da8b4bce46  tests/providers/fixtures/skypilot/launch.json
+b7d419236e47a6d02cae538462dc0d66909df7a63b5e4595664ef5da8b4bce46  tests/providers/fixtures/skypilot/status.json
+37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570  tests/providers/fixtures/skypilot/stream_and_get.json
+```
+
+(Three of the four files share a sha256 because each call site returns a
+distinct RequestId UUID and the recorder normalises those to a
+single `<volatile-uuid>` sentinel — the byte-for-byte identical payload
+is intentional and is the contract being locked.)
+
+**Side-effect — gcloud persistence:** Earlier in the session we minted
+`kinoforge-runner` SA + a key at `/workspace/.gcp/kinoforge-sa.json`. T7's
+IAM-discovery surfaced the need for re-OAuth to grant additional roles.
+Resolution: `~/.config/gcloud` is now persisted at
+`/workspace/.gcp/gcloud-config` (host-visible mount, gitignored) and
+`.env` exports `CLOUDSDK_CONFIG=/workspace/.gcp/gcloud-config` so future
+sessions skip the OAuth dance entirely. The SA additionally holds
+`roles/iam.securityAdmin`, so future role grants can come from the SA
+itself without going back through user OAuth.
+
+**Test count:** ~1071 (post-Phase-30) → **1111 passed / 6 skipped** (post-
+Phase-31). Delta: +40 net new offline tests across T2 (8+2), T3 (1),
+T4 (3+1), T7a (+11), T7b (+7), T7d (+1), T7g (+1), T7h (+2), T7k (+1),
+T7m (+1). T7f adds +1 live-skipped under default env (3 pre-existing +
+2 HF live + 1 SkyPilot live = 6 skips).
+
+**Out of scope (carry-forward — see spec §7):**
+- GPU lifecycle smoke (CPU was sufficient to validate the modern SDK shape).
+- Engine-on-SkyPilot smoke (ComfyUI/Wan via SkyPilot setup, ~$2-5/run).
+- Multi-cloud verification (AWS, Azure, Lambda Labs).
+- Retroactive backfill of offline tests from fixtures.
+- Per-call fixture differentiation (the recorder's single-file-per-method
+  scheme makes multi-call methods like `status` last-call-wins; not
+  blocking T7f's contract but a fidelity improvement for future review).
+- Cross-process recording (kinoforge CLI subprocess invoked by pytest).
+
+Closes PROGRESS:114 carry-forward #2.
 
 ### Phase 30 — HF bare-repo listing (GH #8)
 
