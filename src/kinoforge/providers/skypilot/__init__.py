@@ -607,6 +607,15 @@ class SkyPilotProvider(ComputeProvider):
             "envs": dict(spec.env),
         }
         if resources:
+            # Default disk_size to 30 GB so we stay well under GCP's per-project
+            # default ``SSD_TOTAL_GB=250`` quota. SkyPilot's own default is
+            # 256 GB which exceeds that quota out of the box on a fresh
+            # project and causes ``quotaExceeded: 403`` on every region.
+            # Operators who need more disk can raise their GCP quota and
+            # override at the spec level (future ``InstanceSpec.disk_size_gb``
+            # field). Applied only when other resources are set — if the
+            # resources block is empty, SkyPilot's own defaults are fine.
+            resources.setdefault("disk_size", 30)
             task_config["resources"] = resources
         # Layer Q dual-exec hazard resolution: the script's trailing
         # ``exec <run_cmd>`` line is stripped before it becomes Task.setup so
