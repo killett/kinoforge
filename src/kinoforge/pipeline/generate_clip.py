@@ -29,41 +29,8 @@ from kinoforge.core.interfaces import (
 from kinoforge.core.strategy import decide
 from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
+from kinoforge.pipeline.artifact_bytes import artifact_bytes
 from kinoforge.stores.base import ArtifactStore
-
-_DEFAULT_USER_AGENT = "kinoforge/0.1"
-
-
-def _default_http_get_bytes(url: str, headers: dict[str, str]) -> bytes:
-    """GET *url* with optional *headers* and return the raw bytes.
-
-    Builds a :class:`urllib.request.Request` so that any populated
-    headers (e.g. ``Authorization: Bearer …``) are sent on the wire.
-    Inserts a default ``User-Agent: kinoforge/0.1`` if the caller did
-    not supply one — RunPod's edge proxy rejects requests carrying the
-    stdlib default ``Python-urllib/<ver>`` UA with HTTP 403 (same fix
-    family as commit 8058dc2 for ComfyUI's helpers and fcaa213 for the
-    multipart upload path). Live verification 2026-06-03 (pod
-    i3h8ythan3pc4p): /view?filename=... returned 403 without a UA and
-    delivered the MP4 bytes with this default in place.
-
-    Args:
-        url: The http(s) URL to fetch.
-        headers: Request headers to attach (e.g. ``{"Authorization": "Bearer …"}``).
-            Pass an empty dict for no additional headers.
-
-    Returns:
-        The raw response bytes.
-    """
-    import urllib.request
-
-    merged = dict(headers)
-    has_ua = any(k.lower() == "user-agent" for k in merged)
-    if not has_ua:
-        merged["User-Agent"] = _DEFAULT_USER_AGENT
-    req = urllib.request.Request(url, headers=merged)  # noqa: S310
-    with urllib.request.urlopen(req) as resp:  # noqa: S310
-        return bytes(resp.read())
 
 
 @dataclass
@@ -197,7 +164,7 @@ class GenerateClipStage:
         last = results[-1]
 
         # Persist the bytes derived from the engine's Artifact.
-        payload = self._artifact_bytes(last)
+        payload = artifact_bytes(last, self.http_get_bytes)
         stored = self.store.put_bytes(self.run_id, last.filename, payload)
 
         # Layer O — also publish to the user-facing sink if one is wired.
@@ -216,52 +183,3 @@ class GenerateClipStage:
             )
 
         return stored
-
-    def _artifact_bytes(self, artifact: Artifact) -> bytes:
-        """Derive bytes from the engine's Artifact.
-
-        Resolution order:
-
-        1. ``artifact.uri`` — a ``file://`` URI or local path written by a
-           local engine.  Read the file directly.
-        2. ``artifact.url`` — an http(s) URL returned by a hosted/queue engine
-           (e.g. fal.ai's signed media URL).  Download it.
-        3. Fallback: synthesize deterministic bytes from ``filename + meta``
-           so FakeEngine-driven unit tests keep working without HTTP.
-
-        Args:
-            artifact: The :class:`~kinoforge.core.interfaces.Artifact` returned
-                by the backend.
-
-        Returns:
-            The bytes to persist in the store.
-        """
-        import urllib.parse
-        import urllib.request
-        from pathlib import Path
-
-        uri = (artifact.uri or "").strip()
-        if uri:
-            parsed = urllib.parse.urlparse(uri)
-            local_path: str | None = None
-            if parsed.scheme == "file":
-                local_path = urllib.request.url2pathname(parsed.path)
-            elif parsed.scheme == "" and uri:
-                local_path = uri
-            if local_path is not None:
-                candidate = Path(local_path)
-                if candidate.exists():
-                    return candidate.read_bytes()
-
-        url = (artifact.url or "").strip()
-        if url.startswith(("http://", "https://")):
-            fetch = self.http_get_bytes or _default_http_get_bytes
-            return fetch(url, dict(artifact.headers))
-
-        # Synthetic fallback retained for FakeEngine-driven tests that
-        # exercise the pipeline without a real backend.
-        return (
-            artifact.filename.encode("utf-8")
-            + b"|"
-            + repr(sorted(artifact.meta.items())).encode("utf-8")
-        )
