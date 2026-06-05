@@ -11,7 +11,7 @@ first unchecked task without redoing committed work.
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
 ## Phase
-ALL 28 tasks complete. All 9 phases complete.
+ALL 28 tasks complete. All 9 phases complete. Post-MVP layers shipped through Phase 33 (Layer S — `kinoforge status` reads the ledger + `kinoforge forget` recovery subcommand).
 
 ## Task checklist (high-level; plan refines into 28 bite-sized tasks)
 - [x] Read SPEC.md, explore project context
@@ -117,7 +117,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 **Architectural follow-ups:**
 - ~~**Layer F: engine `submit()` ignores seg-0 assets.**~~ Closed by Phase 16 (see below).
-- `cli._cmd_status` queries in-process provider state only, not the ledger.
+- ~~`cli._cmd_status` queries in-process provider state only, not the ledger.~~ — **CLOSED** by Phase 33 (Layer S). `_cmd_status` is now ledger-first: reads the entry, dispatches to the recorded provider, prints rich `key=value` block; stale-ledger path emits a `kinoforge forget --id <id>` advisory.
 - `provisioner.provision` typed as `_ProvisionConfig` Protocol — `# type: ignore[arg-type]` at call site for mypy generic variance.
 - `GenerateClipStage` persists only final artifact (intermediates in-memory) — stitching, when shipped, must refactor persistence model or stitching read path.
 - `flf2v + N > 1 + non-native` is a pre-existing gap (no continuity for two-image-bookend non-native).
@@ -152,16 +152,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 32 fully CLOSED — Layer R (keyframe / image-generation upstream Stage, GH #4). HEAD at the Phase 32 close-out commit. Test suite at 1198 passed, 8 skipped (3 existing + 2 live-gated HF smoke + 1 live-gated SkyPilot smoke + 2 live-gated keyframe fal smoke). Working tree clean. Live smoke ran clean against real fal.ai twice in succession (~9.3 s and ~6.6 s wall-clock); fal spend across all T16 attempts ~$0.26.
+**Where we are:** Phase 33 fully CLOSED — Layer S (`kinoforge status` reads the ledger + `kinoforge forget` recovery subcommand). HEAD at the Phase 33 T3 close-out commit. Test suite at 1222 passed, 8 skipped (3 existing + 2 live-gated HF smoke + 1 live-gated SkyPilot smoke + 2 live-gated keyframe fal smoke). Working tree clean. No live spend in Layer S (fully offline-tested).
 
 **Read in this order:**
-1. The Phase 32 entry below (per-task SHAs + design decisions + live-smoke confirmation + bug-catch trail).
-2. `docs/superpowers/specs/` for the Layer R design doc (brainstorming-locked decisions).
+1. The Phase 33 entry below (per-task SHAs + design decisions).
+2. `docs/superpowers/specs/2026-06-05-layer-s-cmd-status-ledger-design.md` for the Layer S design doc.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates: CLI `_cmd_status` ledger reads; batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward, Layer S candidate).
+**First unchecked task in fresh session:** pick next layer. Candidates: cloud-ledger CLI routing (PROGRESS:127 carry-forward — `cli._ledger(state_dir)` always constructs a `LocalArtifactStore`, even when `store.kind` is `s3`/`gcs`); batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam, not yet wired).
 
-**Budget remaining: ~$10.92 of $15.** Phase 32 spent ~$0.26 across all T16 live attempts against real fal.ai.
+**Budget remaining: ~$10.92 of $15.** Phase 33 spent $0.00 (Layer S offline-only).
 
 ## Post-MVP
 
@@ -923,3 +923,79 @@ bug-fix wave): ~$0.26 (slightly over the $0.20 budget projection due to early
   peer instead of a pre-phase. Foundation cleanup.
 
 Closes GH #4.
+
+### Phase 33 — Layer S (`kinoforge status` reads the ledger + `kinoforge forget`)
+
+Closes the PROGRESS:120 carry-forward (`cli._cmd_status` queried in-process
+provider state only, not the ledger). Ships ledger-first dispatch for
+`kinoforge status`, surfaces rich ledger-derived facts in an alphabetised
+`key=value` block, and adds `kinoforge forget --id <id>` so the new stale-ledger
+advisory points at a real recovery command. Fully offline-tested (no live spend).
+
+- Spec: `docs/superpowers/specs/2026-06-05-layer-s-cmd-status-ledger-design.md`
+- Plan: `docs/superpowers/plans/2026-06-05-layer-s-cmd-status-ledger.md`
+
+**Per-task SHAs:**
+
+| Task | SHA |
+|---|---|
+| T1 (`Ledger.record` schema extension — persists `idle_timeout_s` + `max_age_s`; `_cmd_deploy` threads `cfg.lifecycle()` values into the call) | `acdc8e1` |
+| T2 (`_cmd_status` ledger-first rewrite — `_build_ledger_block` pure helper + `_print_status_block` formatter + sibling-parity provider dispatch; `--config`/`-c` flag added) | `fc90b21` |
+| T3 (`kinoforge forget --id <id>` recovery subcommand + README "Operator commands" section + this PROGRESS entry) | T3 SHA captured in the commit message footer |
+
+**Key design decisions:**
+
+- **Spec scope locked at A+B (Q1):** ledger-first dispatch + rich
+  ledger-derived output. Cloud-ledger CLI routing (PROGRESS:127) is explicitly
+  out of scope.
+- **Exit-code split (Q2=B):** provider `KeyError` ⇒ exit 0 (stale ledger;
+  operator action = `forget`); any other provider exception ⇒ exit 2
+  (transient). `endpoints()` failure when `get_instance` succeeds keeps exit 0
+  (ancillary lookup must not turn a healthy `ready` instance into an outage).
+- **Multi-line `key=value` alphabetised output (Q3=A):** scales as fields are
+  added, plays well with `grep`/`awk`, no `jq` dependency.
+- **Ledger-schema extension + optional `--config` (Q5=A+C):** values frozen at
+  instance creation time, immune to later YAML edits; legacy entries fall back
+  to cfg or `<not in ledger>` sentinel via `_ledger_field_or_cfg`.
+- **Soft migration (Q6=A):** no `kinoforge ledger migrate` helper; legacy
+  entries age out fast.
+- **Sibling parity for provider construction (Q7=A):** same `registry.get_provider(name)()`
+  shape as `stop`/`destroy`/`reap`.
+- **New `kinoforge forget --id <id>` (Q9=B):** closes the recovery gap
+  end-to-end; the advisory line in `_cmd_status` points to a real command.
+- **`--id` flag style for `forget` (plan deviation from spec §3.3 positional draft):**
+  matches `stop`/`destroy` house style; the advisory string emitted by
+  `_cmd_status` was wired as `kinoforge forget --id <id>` in T2 so T3's parser
+  has to match.
+- **Spec naming `max_age_s` vs. dataclass attribute `max_lifetime_s`:** Layer S
+  names the persisted ledger key generically (`max_age_s`) per spec; the source
+  attribute on the `Lifecycle` dataclass is `max_lifetime_s`. T1 implementer
+  threaded `lc.max_lifetime_s` into the `max_age_s` kwarg at the `_cmd_deploy`
+  call site.
+- **Non-idempotent `forget` (spec §6 edge case #7):** a second `forget` on the
+  same id (after the first removes it) returns exit 1. Mirrors `stop`/`destroy`.
+  Idempotent-success would mask script bugs that pass the wrong id.
+- **Forward-compat `last_heartbeat` field:** `_build_ledger_block` surfaces it
+  when present and omits it when absent. `Ledger.record` does NOT yet persist
+  it — when a future layer wires production-side persistence, the operator-visible
+  side will light up automatically with no further `_cmd_status` work.
+
+**Test count:** 1198 passed + 8 skipped pre-Layer-S → **1222 passed + 8 skipped**
+post-Layer-S (+24 net new: T1 adds 4 offline tests; T2 adds 16; T3 adds 4).
+
+**Out of scope (carry-forwards):**
+
+- **PROGRESS:127 — cloud-ledger CLI routing.** `cli._ledger(state_dir)` still
+  always constructs a `LocalArtifactStore(state_dir)` even when `store.kind`
+  is `s3`/`gcs`. Layer S explicitly did not touch `_ledger()` callers other
+  than `status` and `forget`. Layer S did NOT close this item.
+- **Production-side `last_heartbeat` persistence.** Surface is wired
+  (`_build_ledger_block` reads it when present); the writer (`Ledger.record`
+  or a sibling `Ledger.touch(instance_id, last_heartbeat=...)` method) is a
+  future layer.
+- **`kinoforge status --all`** (operator view over every ledger entry).
+- **`kinoforge status --json`** (machine-readable output mode).
+- **`kinoforge ledger migrate`** helper for backfilling legacy entries
+  (soft migration accepted instead).
+
+Closes PROGRESS:120.

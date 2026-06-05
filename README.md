@@ -28,6 +28,56 @@ Expected output sketch for the dry-run:
   models: 1 entry (1 base, 0 lora, 0 vae)
 ```
 
+## Operator commands
+
+### `kinoforge status --id <id>` — introspect one instance
+
+`kinoforge status` reads the local ledger first and dispatches to the
+provider recorded for that instance. The output is an alphabetised block
+of `key=value` lines covering ledger-side facts (age, accrued spend,
+lifecycle policy) plus live `provider_status` and `endpoints` from the
+provider.
+
+```
+$ kinoforge status --id ia66l3rlto5x66
+accrued_spend_usd=0.8400
+age_h=2.4
+cost_rate_usd_per_hr=0.3500
+created_at=2026-06-05T14:23:11-07:00
+endpoints={"http": "https://abc.proxy.runpod.net"}
+id=ia66l3rlto5x66
+idle_timeout_s=900
+max_age_s=14400
+provider=runpod
+provider_status=ready
+```
+
+When the provider has no record of the id (stale ledger), `status`
+exits 0 and appends an advisory:
+
+```
+provider_status=unknown (stale ledger — provider has no record)
+advisory: ledger entry is stale — run 'kinoforge forget --id ia66l3rlto5x66'
+```
+
+Transient provider failures (network outage, SDK 5xx) exit 2.
+
+Pass `--config PATH` (or `-c PATH`) to fill missing lifecycle fields on
+legacy entries written before Layer S.
+
+### `kinoforge forget --id <id>` — clear a stale ledger entry
+
+Removes a single entry from the local ledger without touching the
+upstream provider. Use when `kinoforge status` reports
+`provider_status=unknown (stale ledger ...)`. Pairs naturally with
+`kinoforge gc` for sweep-style cleanup. Non-idempotent by design: a
+second `forget` on the same id (after the first removes it) exits 1.
+
+```
+$ kinoforge forget --id ia66l3rlto5x66
+forgot: ia66l3rlto5x66
+```
+
 ## Batch generation
 
 Render N clips on one shared deployed instance with continue-on-error
