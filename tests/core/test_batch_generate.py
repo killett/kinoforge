@@ -405,13 +405,16 @@ def test_warm_cache_verify_runs_once(tmp_path: Path) -> None:
 
 
 def test_validate_request_runs_once_per_entry(tmp_path: Path) -> None:
-    """Stage.validate_request is invoked exactly len(manifest.entries) times.
+    """validate_request is invoked exactly len(manifest.entries) times.
 
     Bug catch: skipping per-entry validation lets bad mode/role/asset
     combinations dispatch to the engine, where the failure mode is
     cryptic.  We pin the contract by patching
-    ``kinoforge.pipeline.generate_clip.validate_request`` with a wraps=
-    spy and asserting call_count equals the manifest size.
+    ``kinoforge.core.validation.validate_request`` with a wraps= spy and
+    asserting call_count equals the manifest size.
+
+    Layer R: validation moved from generate_clip.py to batch._build_stage_for_entry;
+    patch target updated to kinoforge.core.validation.validate_request.
     """
     cfg = _compute_cfg()
     store = LocalArtifactStore(tmp_path)
@@ -421,7 +424,7 @@ def test_validate_request_runs_once_per_entry(tmp_path: Path) -> None:
     import kinoforge.core.validation as validation_mod
 
     with patch(
-        "kinoforge.pipeline.generate_clip.validate_request",
+        "kinoforge.core.batch.validate_request",
         wraps=validation_mod.validate_request,
     ) as spy:
         batch_generate(

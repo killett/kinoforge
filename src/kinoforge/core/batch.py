@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import copy
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from kinoforge.core import registry
 from kinoforge.core.errors import (
     BudgetExceeded,
     CapabilityMismatch,
@@ -40,9 +41,12 @@ from kinoforge.core.interfaces import (
     ConditioningAsset,
     GenerationRequest,
     Instance,
+    PipelineState,
+    Segment,
 )
 from kinoforge.core.logging import get_logger
 from kinoforge.core.orchestrator import deploy_session
+from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.stores.base import ArtifactStore
@@ -251,8 +255,8 @@ def _build_stage_for_entry(
     store: ArtifactStore,
     batch_id: str,
     sink: OutputSink | None = None,
-) -> tuple[GenerateClipStage, GenerationRequest]:
-    """Build a stage + request pair for one batch entry.
+) -> tuple[GenerateClipStage, PipelineState]:
+    """Build a stage + initial PipelineState pair for one batch entry.
 
     Deep-copies cfg.params / cfg.spec so neither cfg nor any sibling
     entry's stage shares a mutable reference with this entry's
@@ -277,10 +281,10 @@ def _build_stage_for_entry(
             When ``None`` (the default), no publish side-effect occurs.
 
     Returns:
-        A ``(stage, request)`` tuple ready for
-        ``executor.submit(stage.run, request)``.  The request carries
-        the entry's prompt, mode, and any declared
-        :class:`ConditioningAsset` objects built from ``entry.assets``.
+        A ``(stage, initial_state)`` tuple ready for
+        ``executor.submit(_run_with_clock, stage, initial_state, ...)``.
+        The state carries the validated request; the stage carries the
+        ordered segment list produced by the splitter.
     """
     merged_params = {
         **copy.deepcopy(dict(cfg.params)),
@@ -295,6 +299,18 @@ def _build_stage_for_entry(
         mode=entry.mode,
         assets=[ConditioningAsset(**a) for a in (entry.assets or [])],
     )
+    validated = validate_request(
+        session.profile, request, accepted_kinds=accepted_kinds
+    )
+
+    splitter = registry.get_splitter(cfg.splitter.kind)()
+    prompt_segments: list[Segment] = splitter.split(
+        validated.prompt, session.profile, {}
+    )
+    # Attach assets to segment 0 only.  Continuity fills 1..N-1.
+    if prompt_segments and validated.assets:
+        prompt_segments[0] = replace(prompt_segments[0], assets=list(validated.assets))
+
     entry_run_id = f"{batch_id}/{entry.run_id}"
     stage = GenerateClipStage(
         profile=session.profile,
@@ -305,15 +321,17 @@ def _build_stage_for_entry(
         base_params=merged_params,
         base_spec=merged_spec,
         engine=session.engine,
+        segments=prompt_segments,
         sink=sink,
         namespace=batch_id,
     )
-    return stage, request
+    initial_state = PipelineState(request=validated, artifacts={})
+    return stage, initial_state
 
 
 def _run_with_clock(
     stage: GenerateClipStage,
-    request: GenerationRequest,
+    initial_state: PipelineState,
     start_times: dict[int, float],
     idx: int,
 ) -> Artifact:
@@ -327,17 +345,19 @@ def _run_with_clock(
 
     Args:
         stage: The pre-built GenerateClipStage for this entry.
-        request: The GenerationRequest carrying prompt / mode / assets.
+        initial_state: The initial PipelineState (validated request,
+            empty artifacts) for this entry.
         start_times: Shared dict keyed by entry index; this worker
             writes its slot before doing real work.
         idx: The entry's position in ``manifest.entries``.
 
     Returns:
-        Whatever ``stage.run(request)`` returns (the persisted
-        :class:`~kinoforge.core.interfaces.Artifact`).
+        The persisted :class:`~kinoforge.core.interfaces.Artifact`
+        extracted from ``state.artifacts["clip"]`` after the stage runs.
     """
     start_times[idx] = monotonic()
-    return stage.run(request)
+    out_state = stage.run(initial_state)
+    return out_state.artifacts["clip"]
 
 
 def _mark_remaining_after_fatal(
@@ -586,17 +606,30 @@ def batch_generate(
 
             try:
                 for idx, entry in enumerate(manifest.entries):
-                    stage, request = _build_stage_for_entry(
-                        cfg,
-                        entry,
-                        session,
-                        accepted_kinds,
-                        store,
-                        batch_id,
-                        sink=sink,
-                    )
+                    try:
+                        stage, initial_state = _build_stage_for_entry(
+                            cfg,
+                            entry,
+                            session,
+                            accepted_kinds,
+                            store,
+                            batch_id,
+                            sink=sink,
+                        )
+                    except Exception as build_exc:  # noqa: BLE001 — per-entry catch
+                        # Validation errors (e.g. unsupported mode) detected
+                        # at build time are recorded as per-entry failures so
+                        # the rest of the batch continues.
+                        start_times[idx] = monotonic()
+                        outcomes_by_idx[idx] = BatchOutcome(
+                            run_id=entry.run_id or str(idx),
+                            status="fail",
+                            duration_s=0.0,
+                            error=f"{type(build_exc).__name__}: {build_exc}",
+                        )
+                        continue
                     fut = executor.submit(
-                        _run_with_clock, stage, request, start_times, idx
+                        _run_with_clock, stage, initial_state, start_times, idx
                     )
                     future_to_idx[fut] = idx
 

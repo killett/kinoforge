@@ -153,7 +153,10 @@ def test_pool_swap_same_result(tmp_path: Path) -> None:
     pool_sequential = SequentialPool(backend_a)
     pool_list = _ListPool(backend_b)
 
+    from kinoforge.core.interfaces import PipelineState, Segment
     from kinoforge.engines.fake import FakeEngine
+
+    request = GenerationRequest(prompt="hello pool swap", mode="t2v")
 
     stage_kwargs = dict(
         profile=probe,
@@ -165,16 +168,17 @@ def test_pool_swap_same_result(tmp_path: Path) -> None:
         engine=FakeEngine(
             probe_profile=probe, declared_flags_map={}, required_spec_keys=set()
         ),
+        segments=[Segment(prompt=request.prompt)],
     )
 
     stage_s = GenerateClipStage(pool=pool_sequential, **stage_kwargs)  # type: ignore[arg-type]
     stage_l = GenerateClipStage(pool=pool_list, **stage_kwargs)  # type: ignore[arg-type]
     stage_l.store = store2
 
-    request = GenerationRequest(prompt="hello pool swap", mode="t2v")
-
-    result_s = stage_s.run(request)
-    result_l = stage_l.run(request)
+    state_s = PipelineState(request=request, artifacts={})
+    state_l = PipelineState(request=request, artifacts={})
+    result_s = stage_s.run(state_s).artifacts["clip"]
+    result_l = stage_l.run(state_l).artifacts["clip"]
 
     # Both produce an artifact stored in their respective stores; bytes are equal
     bytes_s = store1.get_bytes(result_s.uri)

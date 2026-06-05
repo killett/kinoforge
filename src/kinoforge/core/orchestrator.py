@@ -47,6 +47,7 @@ from kinoforge.core.interfaces import (
     ModelProfile,
     ModelProfileProvider,
     Offer,
+    PipelineState,
 )
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
@@ -1002,10 +1003,13 @@ def generate(
             base_params=dict(cfg.params),
             base_spec=dict(cfg.spec),
             engine=session.engine,
+            segments=prompt_segments,
             sink=sink,
         )
         try:
-            artifact = stage.run(request, segments_override=prompt_segments)
+            state = PipelineState(request=validated, artifacts={})
+            state = stage.run(state)
+            artifact = state.artifacts["clip"]
         except ValidationError:
             _log.warning(
                 "spec validation failed; tearing down instance before re-raising"
