@@ -136,6 +136,12 @@ skypilot = { version = "*", extras = ["gcp"] }
 # provisioning and inherits PATH from the activating env — the host-side
 # gcloud at ~/google-cloud-sdk/bin is not visible to it.
 google-cloud-sdk = "*"
+# rsync + openssh: SkyPilot's API server shells out to rsync for
+# workdir/file-mount transfer (runs the prerequisite check even when the
+# workdir is empty) and to ssh for post-provision login. Both are conda
+# packages on conda-forge.
+rsync = "*"
+openssh = "*"
 
 [environments]
 live-skypilot = { features = ["live-skypilot"] }
