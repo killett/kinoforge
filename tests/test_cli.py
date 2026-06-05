@@ -767,3 +767,451 @@ def test_cmd_deploy_persists_lifecycle_policy_into_ledger(
     assert isinstance(entry["max_age_s"], int)
     assert entry["idle_timeout_s"] == 3600  # 1h
     assert entry["max_age_s"] == 3 * 3600  # 3h
+
+
+# ---------------------------------------------------------------------------
+# Layer S — _build_ledger_block helper (pure)
+# ---------------------------------------------------------------------------
+
+
+def _legacy_entry() -> dict[str, object]:
+    """Return a legacy-shape ledger entry (no idle_timeout_s / max_age_s)."""
+    return {
+        "id": "i-legacy",
+        "provider": "runpod",
+        "tags": {},
+        "created_at": 1717635791.0,
+        "cost_rate_usd_per_hr": 0.35,
+    }
+
+
+def _new_entry() -> dict[str, object]:
+    """Return a Layer-S-shape ledger entry with lifecycle keys present."""
+    e = _legacy_entry()
+    e["id"] = "i-new"
+    e["idle_timeout_s"] = 900
+    e["max_age_s"] = 14400
+    return e
+
+
+def test_build_ledger_block_legacy_entry_no_cfg_shows_sentinel() -> None:
+    """Legacy entry + no cfg → idle_timeout_s / max_age_s fall back to sentinel.
+
+    Bug-catch: if the fallback chain skipped the sentinel and emitted "None",
+    operators would see a confusing 'None' string with no actionable signal.
+    """
+    from kinoforge.cli import _build_ledger_block
+
+    block = _build_ledger_block(_legacy_entry(), cfg=None, now=1717635791.0)
+
+    assert block["idle_timeout_s"] == "<not in ledger>"
+    assert block["max_age_s"] == "<not in ledger>"
+
+
+def test_build_ledger_block_legacy_entry_with_cfg_fills_from_lifecycle(
+    tmp_path: Path,
+) -> None:
+    """Legacy entry + cfg → cfg.lifecycle() values fill the gap.
+
+    Bug-catch: spec requires entry > cfg > sentinel precedence. If cfg won
+    over entry, new-shape entries would silently lose their snapshot.
+    """
+    from kinoforge.cli import _build_ledger_block
+    from kinoforge.core.config import load_config
+
+    cfg_yaml = tmp_path / "cfg.yaml"
+    cfg_yaml.write_text(Path("examples/configs/local-fake.yaml").read_text())
+    cfg = load_config(cfg_yaml)
+
+    block = _build_ledger_block(_legacy_entry(), cfg=cfg, now=1717635791.0)
+    lc = cfg.lifecycle()
+
+    # Note: ledger key `max_age_s` maps to Lifecycle attribute `max_lifetime_s`
+    # at the cfg-side; the dict key here intentionally stays the spec-named
+    # `max_age_s` (matches the ledger schema).
+    assert block["idle_timeout_s"] == str(lc.idle_timeout_s)
+    assert block["max_age_s"] == str(lc.max_lifetime_s)
+
+
+def test_build_ledger_block_new_entry_ignores_cfg() -> None:
+    """Entry-supplied idle / max win over cfg.
+
+    Bug-catch: a future operator who edits the YAML lifecycle limits AFTER
+    spinning a pod must still see the pod's snapshot, not the new YAML.
+    """
+    from kinoforge.cli import _build_ledger_block
+    from kinoforge.core.config import load_config
+
+    cfg_yaml = Path("examples/configs/local-fake.yaml")
+    cfg = load_config(cfg_yaml)
+
+    block = _build_ledger_block(_new_entry(), cfg=cfg, now=1717635791.0)
+
+    assert block["idle_timeout_s"] == "900"
+    assert block["max_age_s"] == "14400"
+
+
+def test_build_ledger_block_clamps_negative_age_to_zero() -> None:
+    """`created_at > now` (clock skew on resume) clamps age_h to 0.0.
+
+    Bug-catch: negative age would propagate to a negative accrued_spend_usd
+    and confuse the operator.
+    """
+    from kinoforge.cli import _build_ledger_block
+
+    block = _build_ledger_block(
+        _legacy_entry(),
+        cfg=None,
+        now=1717635791.0 - 3600.0,  # 1h before created_at
+    )
+
+    assert block["age_h"] == "0.0"
+    assert block["accrued_spend_usd"] == "0.0000"
+
+
+def test_build_ledger_block_created_at_is_local_iso8601() -> None:
+    """`created_at` formatted via .astimezone().isoformat(timespec='seconds').
+
+    Bug-catch: if the formatter used .utcfromtimestamp / .isoformat() without
+    offset, operators in non-UTC zones would misread the timestamp.  CLAUDE.md
+    + memory both insist on local timezone.
+    """
+    import re
+
+    from kinoforge.cli import _build_ledger_block
+
+    block = _build_ledger_block(_legacy_entry(), cfg=None, now=1717635791.0)
+
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}",
+        block["created_at"],
+    ), block["created_at"]
+
+
+def test_build_ledger_block_surfaces_last_heartbeat_when_present() -> None:
+    """`last_heartbeat` (when present in entry) is formatted like created_at.
+
+    Bug-catch: spec is forward-compat — production doesn't persist this yet,
+    but the surface must be wired so the operator-visible side lights up the
+    moment a future layer starts persisting it.
+    """
+    import re
+
+    from kinoforge.cli import _build_ledger_block
+
+    entry = _legacy_entry()
+    entry["last_heartbeat"] = 1717636791.0
+
+    block = _build_ledger_block(entry, cfg=None, now=1717636791.0)
+
+    assert "last_heartbeat" in block
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}",
+        block["last_heartbeat"],
+    ), block["last_heartbeat"]
+
+
+def test_build_ledger_block_omits_last_heartbeat_when_absent() -> None:
+    """No `last_heartbeat` key → block omits the field entirely.
+
+    Bug-catch: emitting `last_heartbeat=None` would be a usability regression.
+    """
+    from kinoforge.cli import _build_ledger_block
+
+    block = _build_ledger_block(_legacy_entry(), cfg=None, now=1717635791.0)
+
+    assert "last_heartbeat" not in block
+
+
+# ---------------------------------------------------------------------------
+# Layer S — _cmd_status ledger-first dispatch
+# ---------------------------------------------------------------------------
+
+
+class _StatusFakeProvider:
+    """Test double for ``kinoforge status`` provider dispatch.
+
+    Per-test overrides of ``get_instance_impl`` and ``endpoints_impl`` let each
+    test target a single branch in ``_cmd_status``. The fake intentionally does
+    NOT inherit :class:`kinoforge.core.interfaces.ComputeProvider`; the registry
+    only stores the factory (``Callable[[], ComputeProvider]``) and the runtime
+    type annotation is not enforced — matching the
+    ``tests/core/test_registry.py`` lambda pattern.
+    """
+
+    name = "fake-status"
+
+    def __init__(self) -> None:
+        from kinoforge.core.interfaces import Instance
+
+        self.get_instance_impl = lambda iid: Instance(
+            id=iid,
+            provider=self.name,
+            status="ready",
+            endpoints={"http": "https://example/"},
+            tags={},
+            created_at=0.0,
+            cost_rate_usd_per_hr=0.0,
+        )
+        self.endpoints_impl = lambda iid: {"http": "https://example/"}
+
+    # ComputeProvider methods used by _cmd_status:
+    def get_instance(self, instance_id):
+        return self.get_instance_impl(instance_id)
+
+    def endpoints(self, instance_id):
+        return self.endpoints_impl(instance_id)
+
+
+@pytest.fixture
+def status_fake_provider():
+    """Register a fake provider under ``fake-status``; yield it; tear down."""
+    from kinoforge.core import registry
+
+    inst = _StatusFakeProvider()
+    # Lambda returns a duck-typed fake, not a ComputeProvider subclass;
+    # registry only stores the factory and the runtime type is not enforced
+    # (matches `tests/core/test_registry.py` `lambda: "P"` pattern).
+    registry.register_provider("fake-status", lambda: inst)  # type: ignore[arg-type, return-value]
+    try:
+        yield inst
+    finally:
+        # The registry has no public unregister API; pop the private dict
+        # entry so the registration does not leak across tests. Test-only
+        # escape hatch (private module attr).
+        registry._providers.pop("fake-status", None)
+
+
+def _seed_ledger_with(tmp_path: Path, entry: dict[str, object]) -> Path:
+    """Write a ledger.json under ``tmp_path/state/_lifecycle/`` and return state_dir."""
+    import json as _json
+
+    state_dir = tmp_path / "state"
+    target = state_dir / "_lifecycle" / "ledger.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(_json.dumps({"entries": [entry]}))
+    return state_dir
+
+
+def _runpod_entry(iid: str = "i-runpod") -> dict[str, object]:
+    """Return a Layer-S-shape ledger entry pointing at the fake provider."""
+    return {
+        "id": iid,
+        "provider": "fake-status",
+        "tags": {},
+        "created_at": 1717635791.0,
+        "cost_rate_usd_per_hr": 0.35,
+        "idle_timeout_s": 900,
+        "max_age_s": 14400,
+    }
+
+
+def test_cmd_status_id_absent_from_ledger_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """status --id <unknown> → exit 1 + stderr 'not found in ledger'.
+
+    Bug-catch: this is the ONE precondition for the entire status workflow.
+    A regression here would let stale references silently succeed.
+    """
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry("i-existing"))
+
+    rc = _call(["status", "--id", "i-missing"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "not found in ledger" in captured.err
+
+
+def test_cmd_status_provider_success_prints_full_block_exit_0(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """Happy path: ledger entry + provider returns Instance → exit 0 + full block.
+
+    Bug-catch: prior to Layer S the LocalProvider-only dispatch would always
+    return 'not found' for any non-local entry. This lock proves the new
+    dispatch path actually runs.
+    """
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry())
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "provider_status=ready" in captured.out
+    assert "endpoints=" in captured.out
+    assert "provider=fake-status" in captured.out
+
+
+def test_cmd_status_keyerror_prints_advisory_exit_0(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """Provider KeyError → stale ledger advisory + exit 0.
+
+    Bug-catch: returning exit 1 here would block scripts that expect "the
+    instance is gone, ledger is stale, move on" as a successful outcome.
+    """
+
+    def raise_keyerror(iid):
+        raise KeyError(iid)
+
+    status_fake_provider.get_instance_impl = raise_keyerror
+
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry())
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "stale ledger" in captured.out
+    assert "advisory:" in captured.out
+    assert "kinoforge forget --id i-runpod" in captured.out
+    # Advisory printed exactly once
+    assert captured.out.count("advisory:") == 1
+
+
+def test_cmd_status_transient_error_exits_2(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """Provider raises non-KeyError → transient outcome → exit 2.
+
+    Bug-catch: exit 0 here would mask real outages from monitoring scripts.
+    """
+
+    def raise_runtime(iid):
+        raise RuntimeError("simulated network failure")
+
+    status_fake_provider.get_instance_impl = raise_runtime
+
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry())
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "provider lookup failed: RuntimeError" in captured.out
+
+
+def test_cmd_status_unknown_adapter_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ledger entry references a provider name not in the registry → exit 2.
+
+    Bug-catch: silently returning 0 would hide broken installs.
+    """
+    entry = _runpod_entry()
+    entry["provider"] = "this-provider-does-not-exist"
+    state_dir = _seed_ledger_with(tmp_path, entry)
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "unknown provider" in captured.out
+
+
+def test_cmd_status_endpoints_raises_still_exit_0(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """``endpoints()`` raises while ``get_instance`` succeeds → endpoints=unknown(...) + exit 0.
+
+    Bug-catch: ancillary endpoint discovery failure must not turn a healthy
+    ``ready`` instance into an apparent outage.
+    """
+
+    def raise_endpoints(iid):
+        raise RuntimeError("endpoint api down")
+
+    status_fake_provider.endpoints_impl = raise_endpoints
+
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry())
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "provider_status=ready" in captured.out
+    assert "endpoints=unknown (RuntimeError)" in captured.out
+
+
+def test_cmd_status_output_is_alphabetised_key_value(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """Stdout key=value lines are alphabetised; advisory (if any) is the last line.
+
+    Bug-catch: unsorted output would break operator scripts that grep/awk by
+    line number. The advisory line lacks ``=`` so it must NOT participate in
+    the sort check.
+    """
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry())
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    assert rc == 0
+    out_lines = [
+        ln
+        for ln in capsys.readouterr().out.splitlines()
+        if "=" in ln and not ln.startswith("[instance overview]")
+    ]
+    keys = [ln.split("=", 1)[0] for ln in out_lines]
+    assert keys == sorted(keys), keys
+
+
+def test_cmd_status_short_alias_dash_c_parses(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """``status --id ID -c PATH`` parses (mirrors the documented quickstart).
+
+    Bug-catch: argparse mis-wiring of the short alias would error before
+    ``_cmd_status`` ever runs.
+    """
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(Path("examples/configs/local-fake.yaml").read_text())
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry())
+
+    rc = _call(
+        ["status", "--id", "i-runpod", "-c", str(cfg_path)],
+        state_dir,
+    )
+
+    assert rc == 0
+
+
+def test_cmd_status_legacy_entry_with_cfg_fills_lifecycle(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """Legacy entry (no idle/max keys) + --config → cfg.lifecycle() fills the block.
+
+    Bug-catch: legacy ledger entries from before Layer S would otherwise show
+    '<not in ledger>' for every operator with a YAML on hand.
+    """
+    legacy = _runpod_entry()
+    del legacy["idle_timeout_s"]
+    del legacy["max_age_s"]
+    state_dir = _seed_ledger_with(tmp_path, legacy)
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(Path("examples/configs/local-fake.yaml").read_text())
+
+    rc = _call(
+        ["status", "--id", "i-runpod", "--config", str(cfg_path)],
+        state_dir,
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "idle_timeout_s=" in captured.out
+    assert "<not in ledger>" not in captured.out

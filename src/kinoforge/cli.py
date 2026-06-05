@@ -23,6 +23,7 @@ before running the subcommand.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from datetime import datetime
@@ -217,6 +218,14 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     # status
     p_status = sub.add_parser("status", help="show status of one instance")
     p_status.add_argument("--id", required=True, metavar="ID")
+    p_status.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="optional config; fills missing legacy ledger fields",
+    )
 
     # stop
     p_stop = sub.add_parser("stop", help="stop an instance")
@@ -556,36 +565,179 @@ def _cmd_list(state_dir: Path) -> int:
     return 0
 
 
-def _cmd_status(args: argparse.Namespace, state_dir: Path) -> int:  # noqa: ARG001
-    """Handle ``status`` subcommand.
+# ---------------------------------------------------------------------------
+# Layer S — `kinoforge status` helpers
+# ---------------------------------------------------------------------------
+
+
+# Map ledger key -> Lifecycle attribute. The ledger persists the generic
+# name `max_age_s`; the Lifecycle dataclass attribute is `max_lifetime_s`.
+# T1 commit acdc8e1 introduced the same mapping at the _cmd_deploy call
+# site; this map mirrors it on read.
+_CFG_LIFECYCLE_ATTR: dict[str, str] = {
+    "idle_timeout_s": "idle_timeout_s",
+    "max_age_s": "max_lifetime_s",
+}
+
+
+def _ledger_field_or_cfg(
+    entry: dict,  # type: ignore[type-arg]
+    key: str,
+    cfg: Config | None,
+) -> str:
+    """Return entry-supplied value, else ``cfg.lifecycle()`` value, else sentinel.
 
     Args:
-        args: Parsed CLI arguments.
+        entry: Ledger entry dict (may be a legacy entry missing newer keys).
+        key: One of ``"idle_timeout_s"`` or ``"max_age_s"``.
+        cfg: Optional Config for fallback when entry lacks the key.
+
+    Returns:
+        Stringified value, or ``"<not in ledger>"`` when neither source has it.
+    """
+    value = entry.get(key)
+    if value is not None:
+        return str(value)
+    if cfg is not None:
+        lc = cfg.lifecycle()
+        return str(getattr(lc, _CFG_LIFECYCLE_ATTR[key]))
+    return "<not in ledger>"
+
+
+def _build_ledger_block(
+    entry: dict,  # type: ignore[type-arg]
+    *,
+    cfg: Config | None,
+    now: float,
+) -> dict[str, str]:
+    """Build the ledger-derived portion of ``kinoforge status`` output.
+
+    Pure: no I/O, no clock reads. All time inputs flow through ``now``.
+
+    Args:
+        entry: A ledger entry dict (possibly legacy-shaped).
+        cfg: Optional config used as fallback for lifecycle policy fields.
+        now: Wall-clock seconds-since-epoch used for age / spend calculations.
+
+    Returns:
+        An ordered dict of ``{field: stringified_value}``. The ``last_heartbeat``
+        key is included only when the entry has it.
+    """
+    out: dict[str, str] = {}
+    out["id"] = str(entry.get("id", "?"))
+    out["provider"] = str(entry.get("provider", "?"))
+    created_at_raw = float(entry.get("created_at", now))
+    age_h = max(0.0, (now - created_at_raw) / 3600.0)
+    out["created_at"] = (
+        datetime.fromtimestamp(created_at_raw)
+        .astimezone()
+        .isoformat(timespec="seconds")
+    )
+    out["age_h"] = f"{age_h:.1f}"
+    rate = float(entry.get("cost_rate_usd_per_hr", 0.0))
+    out["cost_rate_usd_per_hr"] = f"{rate:.4f}"
+    out["accrued_spend_usd"] = f"{age_h * rate:.4f}"
+    out["idle_timeout_s"] = _ledger_field_or_cfg(entry, "idle_timeout_s", cfg)
+    out["max_age_s"] = _ledger_field_or_cfg(entry, "max_age_s", cfg)
+    hb = entry.get("last_heartbeat")
+    if hb is not None:
+        out["last_heartbeat"] = (
+            datetime.fromtimestamp(float(hb)).astimezone().isoformat(timespec="seconds")
+        )
+    return out
+
+
+def _print_status_block(
+    ledger_block: dict[str, str],
+    provider_block: dict[str, str],
+    *,
+    advisory: str | None = None,
+) -> None:
+    """Print a merged + alphabetically sorted ``key=value`` block to stdout.
+
+    Args:
+        ledger_block: Output of :func:`_build_ledger_block`.
+        provider_block: Provider-derived fields (``provider_status`` and
+            optionally ``endpoints``).
+        advisory: Optional advisory line; printed AFTER the sorted block when set.
+    """
+    merged = {**ledger_block, **provider_block}
+    for key in sorted(merged):
+        print(f"{key}={merged[key]}")
+    if advisory is not None:
+        print(advisory)
+
+
+def _cmd_status(args: argparse.Namespace, state_dir: Path) -> int:
+    """Handle ``status`` subcommand: read ledger, dispatch to recorded provider.
+
+    Args:
+        args: Parsed CLI arguments. Uses ``args.id`` and optionally
+            ``args.config`` (``--config``/``-c``) for legacy-entry fallback.
         state_dir: Path to the state directory.
 
     Returns:
-        Exit code (0 on success, 1 on error).
+        Exit code per the Layer S design contract:
+            * 0 — provider success OR stale ledger (``KeyError``) OR
+              endpoints-only failure.
+            * 1 — ledger entry absent.
+            * 2 — unknown provider in entry OR non-``KeyError`` exception
+              from the provider lookup.
     """
+    from kinoforge.core import registry
+    from kinoforge.core.config import load_config
+
+    ledger = _ledger(state_dir)
+    entry = next((e for e in ledger.entries() if e.get("id") == args.id), None)
+    if entry is None:
+        print(f"instance {args.id!r} not found in ledger", file=sys.stderr)
+        return 1
+
+    cfg = load_config(args.config) if getattr(args, "config", None) else None
+    ledger_block = _build_ledger_block(entry, cfg=cfg, now=time.time())
+
+    provider_name = str(entry.get("provider", "local"))
     try:
-        # Try all registered providers to find the instance
-        # For the local provider path:
-        from kinoforge.providers.local import LocalProvider
+        provider = registry.get_provider(provider_name)()
+    except UnknownAdapter:
+        provider_block = {
+            "provider_status": f"unknown (unknown provider: {provider_name})",
+        }
+        _print_status_block(ledger_block, provider_block)
+        return 2
 
-        provider = LocalProvider()
-        try:
-            instance = provider.get_instance(args.id)
-            print(
-                f"id={instance.id}  status={instance.status}  provider={instance.provider}"
-            )
-            return 0
-        except KeyError:
-            pass
+    try:
+        instance = provider.get_instance(args.id)
+    except KeyError:
+        provider_block = {
+            "provider_status": "unknown (stale ledger — provider has no record)",
+        }
+        _print_status_block(
+            ledger_block,
+            provider_block,
+            advisory=(
+                f"advisory: ledger entry is stale — "
+                f"run 'kinoforge forget --id {args.id}'"
+            ),
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001 — explicit transient-error surface
+        provider_block = {
+            "provider_status": (
+                f"unknown (provider lookup failed: {exc.__class__.__name__})"
+            ),
+        }
+        _print_status_block(ledger_block, provider_block)
+        return 2
 
-        print(f"instance {args.id!r} not found", file=sys.stderr)
-        return 1
-    except UnknownAdapter as exc:
-        print(f"error: unknown adapter — {exc}", file=sys.stderr)
-        return 1
+    provider_block = {"provider_status": instance.status}
+    try:
+        provider_block["endpoints"] = json.dumps(provider.endpoints(args.id))
+    except Exception as exc:  # noqa: BLE001
+        provider_block["endpoints"] = f"unknown ({exc.__class__.__name__})"
+
+    _print_status_block(ledger_block, provider_block)
+    return 0
 
 
 def _cmd_stop(args: argparse.Namespace, state_dir: Path) -> int:
