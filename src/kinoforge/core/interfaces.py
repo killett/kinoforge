@@ -234,10 +234,10 @@ class ModelProfile:
         return self.max_frames / self.fps
 
 
-MODE_ROLE_REQUIREMENTS: dict[str, set[str] | list[str]] = {
-    "t2v": set(),
-    "i2v": {"init_image"},
-    "flf2v": ["first_frame", "last_frame"],
+MODE_ROLE_REQUIREMENTS: dict[str, dict[str, str]] = {
+    "t2v": {},
+    "i2v": {"init_image": "image"},
+    "flf2v": {"first_frame": "image", "last_frame": "image"},
 }
 
 
