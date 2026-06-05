@@ -463,3 +463,60 @@ class TestOutputBlockExamples:
         assert cfg.output.kind == "local"
         assert cfg.output.dir == Path("output")
         assert cfg.output.enabled is True
+
+
+# ---------------------------------------------------------------------------
+# Layer R Task 12 — keyframe example configs load-lockdown tests
+# ---------------------------------------------------------------------------
+
+
+def test_keyframe_fal_i2v_example_loads() -> None:
+    """Bug guard: example YAML must round-trip through load_config + reflect cfg.keyframe.
+
+    A broken example silently misleads operators into a config shape that doesn't work.
+    """
+    from kinoforge.core.config import load_config
+
+    cfg = load_config("examples/configs/keyframe-fal-i2v.yaml")
+    assert cfg.mode == "i2v"
+    assert cfg.keyframe is not None
+    assert cfg.keyframe.engine == "fal"
+    assert cfg.keyframe.prompt
+    assert cfg.keyframe.spec["model"] == "fal-ai/flux-schnell"
+
+
+def test_keyframe_fal_flf2v_example_loads() -> None:
+    """Bug guard: flf2v with per-role overrides must round-trip and preserve distinct prompts."""
+    from kinoforge.core.config import load_config
+
+    cfg = load_config("examples/configs/keyframe-fal-flf2v.yaml")
+    assert cfg.mode == "flf2v"
+    assert cfg.keyframe is not None
+    assert "first_frame" in cfg.keyframe.roles
+    assert "last_frame" in cfg.keyframe.roles
+    assert (
+        cfg.keyframe.roles["first_frame"].prompt
+        != cfg.keyframe.roles["last_frame"].prompt
+    )
+
+
+def test_keyframe_examples_in_master_loader() -> None:
+    """Bug guard: existing 'every example loads' iteration in this file MUST cover the 2 new files."""
+    from pathlib import Path
+
+    yamls = sorted(Path("examples/configs").glob("*.yaml"))
+    names = {p.name for p in yamls}
+    assert "keyframe-fal-i2v.yaml" in names
+    assert "keyframe-fal-flf2v.yaml" in names
+
+
+def test_keyframe_examples_have_no_compute() -> None:
+    """Bug guard: keyframe examples ship as hosted/queue path; compute: null must hold.
+
+    Accidental compute requirement would force users to provision a GPU pod.
+    """
+    from kinoforge.core.config import load_config
+
+    for name in ("keyframe-fal-i2v.yaml", "keyframe-fal-flf2v.yaml"):
+        cfg = load_config(f"examples/configs/{name}")
+        assert cfg.compute is None, f"{name}: expected compute=null"

@@ -1,0 +1,42 @@
+# Keyframe + i2v: fal generates first frame, fal generates clip.
+#
+# The keyframe block instructs the orchestrator to call a fal image-generation
+# model (flux-schnell) before submitting the video job.  The resulting image is
+# injected as the init_image conditioning asset for the wan-i2v model.
+#
+# Set FAL_KEY in your .env file before running.
+
+mode: i2v
+prompt: "a cat walking through a sunlit meadow, soft motion"
+
+engine:
+  kind: fal
+  precision: ""
+  fal:
+    endpoint: "fal-ai/wan-i2v"
+    queue_base: "https://queue.fal.run"
+    api_key_env: "FAL_KEY"
+    url_path: "video.url"
+
+spec:
+  model: "fal-ai/wan-i2v"
+
+keyframe:
+  engine: fal
+  prompt: "photorealistic cat in a sunlit meadow, shot on 35mm film, shallow depth of field"
+  spec:
+    model: "fal-ai/flux-schnell"
+
+models:
+  - kind: base
+    ref: "fal://fal-ai/wan-i2v"
+    target: checkpoints
+
+compute: null
+
+lifecycle:
+  idle_timeout: 60s
+  job_timeout: 30m
+  max_lifetime: 1h
+  budget: 1.0
+  max_in_flight: 1
