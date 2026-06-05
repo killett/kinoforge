@@ -234,11 +234,116 @@ class ModelProfile:
         return self.max_frames / self.fps
 
 
-MODE_ROLE_REQUIREMENTS: dict[str, set[str]] = {
+MODE_ROLE_REQUIREMENTS: dict[str, set[str] | list[str]] = {
     "t2v": set(),
     "i2v": {"init_image"},
-    "flf2v": {"first_frame", "last_frame"},
+    "flf2v": ["first_frame", "last_frame"],
 }
+
+
+# --- image generation siblings (Layer R) --------------------------------------
+
+
+@dataclass
+class ImageProfile:
+    """Capabilities of an image-generation model, read at plan time from cache.
+
+    Sibling of ModelProfile (the video one) but image-shaped only.
+    No fps / max_frames / native_extension / joint_audio.
+    """
+
+    name: str
+    max_resolution: tuple[int, int]
+    supported_modes: set[str]
+
+
+@dataclass
+class ImageJob:
+    """One image-generation unit of work.
+
+    Sibling of GenerationJob but no segments concept — one prompt → one image.
+    """
+
+    spec: dict  # type: ignore[type-arg]
+    prompt: str
+    params: dict = field(default_factory=dict)  # type: ignore[type-arg]
+
+
+class ImageBackend(ABC):
+    """A live, ready image engine jobs are submitted to."""
+
+    @abstractmethod
+    def capabilities(self) -> ImageProfile: ...  # noqa: D102
+
+    @abstractmethod
+    def inspect_capabilities(self) -> ImageProfile: ...  # noqa: D102
+
+    @abstractmethod
+    def submit(self, job: ImageJob) -> str: ...  # noqa: D102
+
+    @abstractmethod
+    def result(self, job_id: str) -> Artifact: ...  # noqa: D102
+
+    @abstractmethod
+    def endpoints(self) -> dict[str, str]: ...  # noqa: D102
+
+
+class ImageEngine(ABC):
+    """A swappable image-generation engine; owns its env setup; knows if it needs compute."""
+
+    name: str
+    requires_compute: bool
+    requires_local_weights: bool
+
+    @abstractmethod
+    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None: ...  # noqa: D102
+
+    @abstractmethod
+    def backend(  # noqa: D102
+        self, instance: Instance | None, cfg: dict[str, object]
+    ) -> ImageBackend: ...
+
+    @abstractmethod
+    def profile_for(self, key: CapabilityKey) -> ImageProfile: ...  # noqa: D102
+
+    @abstractmethod
+    def validate_spec(self, job: ImageJob) -> None: ...  # noqa: D102
+
+
+def required_image_roles(mode: str) -> list[str]:
+    """Return ordered list of image-kind roles required by ``mode``.
+
+    Order is dict-insertion order from MODE_ROLE_REQUIREMENTS so flf2v always
+    returns [first_frame, last_frame], never [last_frame, first_frame].
+
+    Schema-shape-agnostic: handles BOTH the pre-T2 ``dict[str, set[str]]`` shape
+    and the post-T2 ``dict[str, dict[str, str]]`` shape. After T2 the kind
+    filter is meaningful; before T2 every role is treated as image-kind
+    (correct because all current roles are image-kind today).
+    """
+    roles = MODE_ROLE_REQUIREMENTS.get(mode, ())
+    if isinstance(roles, dict):
+        return [role for role, kind in roles.items() if kind == "image"]
+    return [role for role in roles]
+
+
+@dataclass(frozen=True)
+class PipelineState:
+    """State threaded between pipeline stages.
+
+    Frozen wrapper; stages produce a new state via ``dataclasses.replace``.
+    The artifacts dict is mutable in-place (matches the project pattern where
+    dataclass.replace handles top-level swaps but contained collections may
+    be mutated for clarity).
+
+    Keys in ``artifacts`` are stage-defined names. KeyframeStage writes
+    ``keyframe-<role>`` (e.g. ``keyframe-init_image``, ``keyframe-first_frame``).
+    GenerateClipStage writes ``clip``. Future stages: ``audio``, ``upscaled``,
+    ``stitched``, etc.
+    """
+
+    request: GenerationRequest
+    artifacts: dict[str, Artifact] = field(default_factory=dict)
 
 
 @dataclass
@@ -491,8 +596,8 @@ class BackendPool(ABC):
 
 @runtime_checkable
 class Stage(Protocol):
-    """A pipeline stage: typed input -> typed output over a shared context."""
+    """A pipeline stage: PipelineState in, PipelineState out."""
 
-    def run(self, ctx: object) -> object:
-        """Execute the stage with the given context and return the result."""
+    def run(self, state: PipelineState) -> PipelineState:
+        """Execute the stage with the given state and return the updated state."""
         ...

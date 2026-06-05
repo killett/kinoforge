@@ -69,7 +69,7 @@ def test_mode_role_requirements_table_is_authoritative():
     assert MODE_ROLE_REQUIREMENTS == {
         "t2v": set(),
         "i2v": {"init_image"},
-        "flf2v": {"first_frame", "last_frame"},
+        "flf2v": ["first_frame", "last_frame"],
     }
 
 

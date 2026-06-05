@@ -14,6 +14,7 @@ source, not the caller.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import (
@@ -23,6 +24,9 @@ from kinoforge.core.interfaces import (
     Splitter,
 )
 from kinoforge.stores.base import ArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.interfaces import ImageEngine
 
 _providers: dict[str, Callable[[], ComputeProvider]] = {}
 _engines: dict[str, Callable[[], GenerationEngine]] = {}
@@ -177,3 +181,39 @@ def get_splitter(name: str) -> Callable[[], Splitter]:
         return _splitters[name]
     except KeyError:
         raise UnknownAdapter(f"no splitter registered: {name!r}") from None
+
+
+# --- image engines (Layer R) --------------------------------------------------
+
+_image_engines: dict[str, Callable[[], ImageEngine]] = {}
+
+
+def register_image_engine(name: str, factory: Callable[[], ImageEngine]) -> None:
+    """Register an image engine under ``name``.
+
+    Mirrors :func:`register_engine` shape. Separate registry namespace from
+    video engines — names may collide across the two (e.g. ``"fake"`` engine
+    coexists with ``"fake"`` image engine without conflict).
+
+    Args:
+        name: The registry key for this image engine.
+        factory: Zero-arg callable that returns an ``ImageEngine`` instance.
+    """
+    _image_engines[name] = factory
+
+
+def get_image_engine(name: str) -> Callable[[], ImageEngine]:
+    """Return the registered factory for image engine ``name``.
+
+    Args:
+        name: The registry key to look up.
+
+    Returns:
+        The zero-arg factory registered under ``name``.
+
+    Raises:
+        UnknownAdapter: ``name`` is not registered.
+    """
+    if name not in _image_engines:
+        raise UnknownAdapter(f"unknown image engine: {name!r}")
+    return _image_engines[name]
