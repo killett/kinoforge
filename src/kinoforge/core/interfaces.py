@@ -407,6 +407,28 @@ class ModelProfileProvider(ABC):
     ) -> None: ...
 
 
+class ImageProfileProvider(ABC):
+    """A cache of ImageProfiles keyed by CapabilityKey (image-side)."""
+
+    @abstractmethod
+    def resolve(self, key: CapabilityKey) -> ImageProfile: ...  # noqa: D102
+
+    @abstractmethod
+    def discover(  # noqa: D102
+        self, key: CapabilityKey, engine: ImageEngine, backend: ImageBackend
+    ) -> ImageProfile: ...
+
+    @abstractmethod
+    def verify(  # noqa: D102
+        self,
+        profile: ImageProfile,
+        backend: ImageBackend,
+        *,
+        engine: ImageEngine | None = None,
+        key: CapabilityKey | None = None,
+    ) -> None: ...
+
+
 class Splitter(ABC):
     """Convert a long-form prompt into ordered ``Segment`` objects.
 
