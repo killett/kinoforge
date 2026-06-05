@@ -1,6 +1,6 @@
 """Architectural invariant: kinoforge.core must never import concrete adapters.
 
-Three tests:
+Five tests:
 
 1. subprocess_isolation — imports core modules in a fresh interpreter and
    asserts that no kinoforge.providers.*, kinoforge.sources.*, or
@@ -14,6 +14,20 @@ Three tests:
    line imports kinoforge.providers, kinoforge.sources, or
    kinoforge.engines.  Imports from kinoforge.stores are explicitly allowed
    (stores is an axis sibling, not a forbidden concrete adapter).
+
+4. core_does_not_import_image_engines — walks src/kinoforge/core and asserts
+   that no line imports kinoforge.image_engines.*.  image_engines/ is
+   registry-mediated; direct imports from core would break the registry
+   indirection and force eager loading of every image engine.
+
+5. engine_packages_confined_to_their_subdir — each engine adapter must remain
+   within its own engines/<name>/ subtree or the adapter hub.  One explicit
+   carve-out: image_engines/fal may import kinoforge.engines.fal.wire because
+   wire.py is a shared pure-function helper module, not a full engine
+   cross-dependency.
+
+6. image_engine_fal_may_import_engines_fal_wire — smoke-import that verifies
+   the cross-reference is live and the expected helper functions are present.
 """
 
 import re
@@ -143,6 +157,26 @@ def test_no_adapter_imports_in_core() -> None:
 
 
 # ---------------------------------------------------------------------------
+# AC 3b: core modules must not import image_engines either
+# ---------------------------------------------------------------------------
+
+
+def test_core_does_not_import_image_engines() -> None:
+    """Layer R: image_engines/ is registry-mediated. core/ must not import them.
+
+    Bug guard: a direct import from core would break the registry indirection
+    and force all consumers to eagerly load every image engine.
+    """
+    forbidden = "kinoforge.image_engines"
+    offenders: list[str] = []
+    for py_file in sorted(CORE_ROOT.rglob("*.py")):
+        text = py_file.read_text()
+        if forbidden in text:
+            offenders.append(str(py_file))
+    assert offenders == [], f"core/ files importing image_engines: {offenders}"
+
+
+# ---------------------------------------------------------------------------
 # AC 4: engine packages confined to their own subdirectory
 # ---------------------------------------------------------------------------
 
@@ -150,13 +184,41 @@ def test_no_adapter_imports_in_core() -> None:
 # subdirectory.  The sole permitted exception is ``src/kinoforge/_adapters.py``
 # — the adapter self-registration hub that imports every engine for its
 # side-effect registration call.
+#
+# Carve-out: ``image_engines/fal`` is allowed to import
+# ``kinoforge.engines.fal.wire`` (and only that module).  ``wire.py``
+# contains shared pure-function HTTP-shape helpers used by both the video and
+# image fal adapters; it carries no provider/engine dependency of its own.
+# Any other cross-adapter import from image_engines/ into engines/ is still a
+# violation.
 _ENGINE_ALLOWLIST: set[str] = {"comfyui", "diffusers", "hosted", "fake", "fal"}
 
 _ADAPTER_HUB = SRC_ROOT / "_adapters.py"
 
+# Files that are explicitly allowed to import a specific engines.* module.
+# Each entry: (importer_file, allowed_import_pattern_regex_fragment)
+_ENGINE_CROSS_REF_ALLOWLIST: list[tuple[Path, re.Pattern[str]]] = [
+    (
+        SRC_ROOT / "image_engines" / "fal" / "__init__.py",
+        re.compile(
+            r"^\s*(import|from)\s+kinoforge\.engines\.fal\.wire(\s|\.|$)"
+            r"|^\s*(import|from)\s+kinoforge\.engines\.fal\s+import\s+wire\b"
+        ),
+    ),
+]
+
 
 def test_engine_packages_confined_to_their_subdir() -> None:
-    """Each allowlisted engine must only be imported from its own subdir or the adapter hub."""
+    """Each allowlisted engine must only be imported from its own subdir or the adapter hub.
+
+    Carve-out: ``image_engines/fal/__init__.py`` may import
+    ``kinoforge.engines.fal.wire`` (``from kinoforge.engines.fal import wire``
+    or ``from kinoforge.engines.fal.wire import ...``).  ``wire.py`` is a
+    pure-function helper module shared between the video and image fal
+    adapters; it is not a full engine cross-dependency.  All other
+    cross-adapter imports from ``image_engines/`` into ``engines/`` are still
+    violations.
+    """
     violations: list[str] = []
 
     for engine_name in sorted(_ENGINE_ALLOWLIST):
@@ -176,6 +238,13 @@ def test_engine_packages_confined_to_their_subdir() -> None:
                 pass
             for lineno, line in enumerate(py_file.read_text().splitlines(), start=1):
                 if pattern.match(line):
+                    # Check whether this (file, line) is in the cross-ref allowlist.
+                    allowed = any(
+                        py_file == allowed_file and allowed_pattern.match(line)
+                        for allowed_file, allowed_pattern in _ENGINE_CROSS_REF_ALLOWLIST
+                    )
+                    if allowed:
+                        continue
                     violations.append(
                         f"engines.{engine_name} imported outside its package "
                         f"({engine_dir.relative_to(SRC_ROOT.parent.parent)}): "
@@ -187,3 +256,21 @@ def test_engine_packages_confined_to_their_subdir() -> None:
         raise AssertionError(
             f"Engine package(s) leaked outside their subdirectory:\n  {detail}"
         )
+
+
+# ---------------------------------------------------------------------------
+# AC 6: smoke-import verifying the image_engines/fal cross-reference is live
+# ---------------------------------------------------------------------------
+
+
+def test_image_engine_fal_may_import_engines_fal_wire() -> None:
+    """Sibling-adapter cross-reference for shared pure-function helpers is allowed.
+
+    Bug guard: a refactor that breaks this import would silently re-implement
+    wire helpers in the image engine instead of reusing the canonical copy.
+    """
+    from kinoforge.engines.fal import wire  # noqa: PLC0415
+
+    assert hasattr(wire, "build_status_url")
+    assert hasattr(wire, "build_response_url")
+    assert hasattr(wire, "interpret_status")
