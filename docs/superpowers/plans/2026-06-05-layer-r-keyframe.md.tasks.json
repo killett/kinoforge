@@ -108,17 +108,17 @@
     {
       "id": 16,
       "subject": "Task 16: Live smoke run + iterate on real-cloud bugs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [15],
       "description": "**Goal:** Invoke KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_keyframe_fal_live.py -v against real fal-ai/flux-schnell + wan endpoints autonomously. Iterate on any real-cloud bugs surfaced.\n\n**Files:**\n- Modify (if bugs surface): src/kinoforge/image_engines/fal/__init__.py + related\n\n**Acceptance Criteria:**\n- pixi run preflight exits 0 before invocation\n- 2 passed under KINOFORGE_LIVE_TESTS=1 + FAL_KEY\n- keyframe-init_image.png PNG magic (i2v)\n- keyframe-first_frame != keyframe-last_frame bytes (flf2v)\n- clip MP4 ftyp box in first 32 bytes\n- Total spend ≤ $0.20\n- Each real-cloud bug gets own fix commit + regression test\n\n**Verify:** KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_keyframe_fal_live.py -v 2>&1 | tee /tmp/layer-r-live.log\n\n```json:metadata\n{\"files\": [\"src/kinoforge/image_engines/fal/__init__.py\", \"tests/live/test_keyframe_fal_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run test tests/live/test_keyframe_fal_live.py -v 2>&1 | tee /tmp/layer-r-live.log\", \"acceptanceCriteria\": [\"preflight exits 0\", \"2 passed\", \"PNG magic on keyframes\", \"flf2v bookends differ\", \"MP4 ftyp\", \"spend <= $0.20\", \"each bug fix atomic\"]}\n```"
     },
     {
       "id": 17,
       "subject": "Task 17: README + PROGRESS.md Phase 32 entry + final-gate full suite",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11, 13, 14, 16],
       "description": "**Goal:** Add README 'Keyframe stage' section; append Phase 32 entry to PROGRESS.md; run full suite + invariants; commit close-out.\n\n**Files:**\n- Modify: README.md\n- Modify: PROGRESS.md\n\n**Acceptance Criteria:**\n- README has 'Keyframe stage' subsection with i2v + flf2v examples\n- PROGRESS Phase 32 entry follows existing format (per-task SHAs, decisions, live confirmation, carry-forwards)\n- GH-issue table row #4 flips to CLOSED (Layer R)\n- Single-next-action updated\n- pixi run test passes full suite (~1186 + 8 skipped)\n- pixi run pre-commit run --all-files clean\n- Final commit references Phase 32 + closes #4\n\n**Verify:** pixi run test -q && pixi run pre-commit run --all-files\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"README section\", \"PROGRESS Phase 32\", \"GH #4 CLOSED\", \"full suite green\", \"pre-commit clean\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-05T10:00:00-07:00"
+  "lastUpdated": "2026-06-05T16:00:00-07:00"
 }
