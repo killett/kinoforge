@@ -482,7 +482,7 @@ def test_keyframe_fal_i2v_example_loads() -> None:
     assert cfg.keyframe is not None
     assert cfg.keyframe.engine == "fal"
     assert cfg.keyframe.prompt
-    assert cfg.keyframe.spec["model"] == "fal-ai/flux-schnell"
+    assert cfg.keyframe.spec["model"] == "fal-ai/flux/schnell"
 
 
 def test_keyframe_fal_flf2v_example_loads() -> None:

@@ -25,7 +25,7 @@ spec:
 keyframe:
   engine: fal
   spec:
-    model: "fal-ai/flux-schnell"
+    model: "fal-ai/flux/schnell"
   roles:
     first_frame:
       prompt: "photorealistic cat sitting in meadow, centered, soft daylight"

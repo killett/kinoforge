@@ -25,7 +25,7 @@ keyframe:
   engine: fal
   prompt: "photorealistic cat in a sunlit meadow, shot on 35mm film, shallow depth of field"
   spec:
-    model: "fal-ai/flux-schnell"
+    model: "fal-ai/flux/schnell"
 
 models:
   - kind: base
