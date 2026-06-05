@@ -42,16 +42,20 @@ from kinoforge.core.interfaces import (
     GenerationBackend,
     GenerationEngine,
     GenerationRequest,
+    ImageBackend,
+    ImageEngine,
+    ImageProfileProvider,
     Instance,
     InstanceSpec,
     ModelProfile,
     ModelProfileProvider,
     Offer,
     PipelineState,
+    Stage,
 )
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
-from kinoforge.core.profiles import JsonProfileCache
+from kinoforge.core.profiles import JsonImageProfileCache, JsonProfileCache
 from kinoforge.core.provision_state import (
     is_marker_current,
     marker_path,
@@ -59,8 +63,10 @@ from kinoforge.core.provision_state import (
     write_marker,
 )
 from kinoforge.core.provisioner import provision as provisioner_provision
+from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
+from kinoforge.pipeline.keyframe import KeyframeStage
 from kinoforge.stores.base import ArtifactStore
 
 _log = get_logger("orchestrator")
@@ -865,8 +871,10 @@ def generate(
     store: ArtifactStore,
     provider: ComputeProvider | None = None,
     engine: GenerationEngine | None = None,
+    image_engine: ImageEngine | None = None,
     creds: CredentialProvider | None = None,
     profile_provider: ModelProfileProvider | None = None,
+    image_profile_provider: ImageProfileProvider | None = None,
     run_id: str = "run",
     state_dir: Path = Path(".kinoforge"),
     sink: OutputSink | None = None,
@@ -875,27 +883,25 @@ def generate(
 ) -> tuple[Artifact, Instance | None]:
     """Run the full generation pipeline for a single clip.
 
+    When ``cfg.keyframe`` is set, a :class:`~kinoforge.pipeline.keyframe.KeyframeStage`
+    is prepended to the pipeline to fill any missing image-kind conditioning roles
+    before the main clip generation step.
+
     **Guaranteed ordering (explicit, in this order):**
 
-    1. Derive ``CapabilityKey`` from *cfg*.
-    2. Resolve engine (and provider when ``requires_compute``).
-    3. Get ``profile_provider`` (defaults to ``JsonProfileCache(store)``).
-    4. Try ``profile_provider.resolve(key)``.  On ``ProfileNotCached``:
-
-       * **Compute path:** create a minimal instance via ``provider.create_instance``;
-         build ``backend = engine.backend(instance, cfg_dict)``.
-       * **Hosted path:** ``backend = engine.backend(None, cfg_dict)`` — no instance.
-       * Call ``profile_provider.discover(key, engine, backend)`` to populate the cache.
-
-    5. Validate the request via ``validate_request``.
-    6. If ``backend`` was not yet created (profile was already cached), create it now:
-       compute path calls ``provider.create_instance`` + ``engine.backend``; hosted calls
-       ``engine.backend(None, ...)``.
-    7. ``profile_provider.verify(profile, backend)`` — on ``CapabilityMismatch``, tear
-       down the compute instance (if one exists) then **re-raise**.  This is fail-hard.
-    8. Build a ``ConcurrentPool(...).add(backend, max_in_flight=cfg.lifecycle().max_in_flight)``
-       + ``GenerateClipStage``; call ``stage.run(request)`` inside the ``with`` block;
-       return the resulting ``Artifact``.
+    1. If ``cfg.keyframe`` is set, pre-resolve the image engine + backend + profile
+       BEFORE ``deploy_session`` so that unknown image-engine names fail fast without
+       incurring any compute spend.
+    2. Enter ``deploy_session`` — resolves the video engine, profile, backend, and
+       compute instance (or uses the hosted path).
+    3. Validate the request against the video profile.
+    4. Split the validated prompt into ordered segments.
+    5. Build ``stages: list[Stage]`` — ``[KeyframeStage, GenerateClipStage]`` when
+       ``cfg.keyframe`` is set, else ``[GenerateClipStage]``.
+    6. Walk the stage list with a shared ``PipelineState``; extract
+       ``state.artifacts["clip"]`` as the return artifact.
+    7. On ``ValidationError`` from any stage: tear down the compute instance (if the
+       orchestrator created it) then re-raise.
 
     Args:
         cfg: The loaded kinoforge configuration.
@@ -903,9 +909,15 @@ def generate(
         store: The artifact store for persisting results and profiles.
         provider: Optional ``ComputeProvider`` (test injection).
         engine: Optional ``GenerationEngine`` (test injection).
+        image_engine: Optional ``ImageEngine`` (test injection for the keyframe path).
+            When ``None`` and ``cfg.keyframe`` is set, resolved from the registry via
+            ``cfg.keyframe.engine``.
         creds: Optional credential provider (forwarded to provisioner).
         profile_provider: Optional ``ModelProfileProvider`` (test injection).
             Defaults to ``JsonProfileCache(store)``.
+        image_profile_provider: Optional ``ImageProfileProvider`` (test injection for
+            the image-engine profile cache).  Defaults to ``JsonImageProfileCache(store)``
+            when ``cfg.keyframe`` is set.
         run_id: Namespace for output artifacts in the store.
         state_dir: Root directory for kinoforge state (provision markers,
             weights, locks).  Defaults to ``Path(".kinoforge")`` for test
@@ -940,14 +952,41 @@ def generate(
             cached profile; instance has already been destroyed before this
             propagates.
         CapacityError: No compute offer satisfies ``cfg.hardware_requirements()``.
-        ValidationError: The ``request`` fails mode/role/kind validation.
+        UnknownAdapter: ``cfg.keyframe.engine`` is not registered in the image-engine
+            registry.
+        ValidationError: The ``request`` fails mode/role/kind validation, or a
+            stage raises ``ValidationError`` (e.g. missing keyframe prompt).
     """
-    # Steps 1-4, 7, 8 now live in deploy_session.__enter__.  This body
-    # owns only the per-request work: validate (5), split (6), stage.run
-    # (9).  ``dict(cfg.spec)`` / ``dict(cfg.params)`` still defensively
-    # copies the pydantic-owned dicts so stage-side mutation cannot leak
-    # back into ``cfg``.
     _caller_supplied_instance = instance is not None
+
+    # ------------------------------------------------------------------
+    # Pre-resolve image engine + backend + profile if keyframe block present.
+    # Image engine resolved BEFORE deploy_session so unknown names fail fast
+    # without incurring any compute spend.
+    # ------------------------------------------------------------------
+    image_backend: ImageBackend | None = None
+    image_prof = None
+    resolved_image_engine: ImageEngine | None = None
+    if cfg.keyframe is not None:
+        resolved_image_engine = (
+            image_engine
+            if image_engine is not None
+            else registry.get_image_engine(cfg.keyframe.engine)()
+        )
+        kf_cfg_dict = cfg.keyframe.model_dump()
+        resolved_image_engine.provision(None, kf_cfg_dict)
+        image_backend = resolved_image_engine.backend(None, kf_cfg_dict)
+        image_key = cfg.keyframe.capability_key()
+        ipp: ImageProfileProvider = (
+            image_profile_provider
+            if image_profile_provider is not None
+            else JsonImageProfileCache(store)  # type: ignore[assignment]
+        )
+        try:
+            image_prof = ipp.resolve(image_key)
+        except ProfileNotCached:
+            image_prof = ipp.discover(image_key, resolved_image_engine, image_backend)
+
     with deploy_session(
         cfg,
         store=store,
@@ -960,56 +999,85 @@ def generate(
         instance=instance,
         tags=tags,
     ) as session:
-        # ------------------------------------------------------------------
-        # Step 5 — validate the request against the profile
-        # ------------------------------------------------------------------
-        accepted_kinds: set[str]
-        if hasattr(session.engine, "accepted_kinds"):
-            accepted_kinds = session.engine.accepted_kinds
-        else:
-            accepted_kinds = {"image"}
+        accepted_kinds: set[str] = getattr(session.engine, "accepted_kinds", {"image"})
 
-        from kinoforge.core.validation import validate_request
+        # ------------------------------------------------------------------
+        # When a keyframe block is present, run KeyframeStage FIRST so that
+        # any missing image-kind conditioning roles (e.g. init_image for i2v)
+        # are filled BEFORE validate_request checks for required roles.
+        # validate_request is then called on the enriched request so the role
+        # contract is satisfied by the keyframe-generated assets.
+        # ------------------------------------------------------------------
+        state = PipelineState(request=request, artifacts={})
+        if cfg.keyframe is not None:
+            try:
+                state = KeyframeStage(
+                    keyframe_cfg=cfg.keyframe,
+                    image_engine=resolved_image_engine,  # type: ignore[arg-type]
+                    image_backend=image_backend,  # type: ignore[arg-type]
+                    image_profile=image_prof,  # type: ignore[arg-type]
+                    store=store,
+                    run_id=run_id,
+                ).run(state)
+            except ValidationError:
+                _log.warning(
+                    "spec validation failed; tearing down instance before re-raising"
+                )
+                if (
+                    session.instance is not None
+                    and session.provider is not None
+                    and not _caller_supplied_instance
+                ):
+                    session.provider.destroy_instance(session.instance.id)
+                raise
 
+        # ------------------------------------------------------------------
+        # Validate the (possibly keyframe-enriched) request against the
+        # video profile.
+        # ------------------------------------------------------------------
         validated = validate_request(
-            session.profile, request, accepted_kinds=accepted_kinds
+            session.profile, state.request, accepted_kinds=accepted_kinds
         )
+        state = dataclasses.replace(state, request=validated)
 
         # ------------------------------------------------------------------
-        # Step 6 — split the validated prompt into ordered segments
+        # Split the validated prompt into ordered segments.
+        # Attach assets to segment 0 only.  Continuity (#02) fills 1..N-1.
         # ------------------------------------------------------------------
         splitter = registry.get_splitter(cfg.splitter.kind)()
         prompt_segments = splitter.split(validated.prompt, session.profile, {})
-
-        # Attach assets to segment 0 only.  Continuity (#02) fills 1..N-1.
         if prompt_segments and validated.assets:
             prompt_segments[0] = dataclasses.replace(
                 prompt_segments[0], assets=list(validated.assets)
             )
 
         # ------------------------------------------------------------------
-        # Step 9 — run the pipeline stage
-        #
-        # ValidationError from engine.validate_spec is treated like
-        # CapabilityMismatch in deploy_session: tear down compute before
-        # re-raising so a config typo cannot leave a billing pod alive.
+        # Build stage list from cfg-block presence (GenerateClipStage only
+        # here — KeyframeStage already ran above when keyframe was set).
         # ------------------------------------------------------------------
-        stage = GenerateClipStage(
-            profile=session.profile,
-            pool=session.pool,
-            store=store,
-            run_id=run_id,
-            accepted_kinds=accepted_kinds,
-            base_params=dict(cfg.params),
-            base_spec=dict(cfg.spec),
-            engine=session.engine,
-            segments=prompt_segments,
-            sink=sink,
-        )
+        stages: list[Stage] = [
+            GenerateClipStage(
+                profile=session.profile,
+                pool=session.pool,
+                store=store,
+                run_id=run_id,
+                accepted_kinds=accepted_kinds,
+                base_params=dict(cfg.params),
+                base_spec=dict(cfg.spec),
+                engine=session.engine,
+                segments=prompt_segments,
+                sink=sink,
+            )
+        ]
+
+        # ------------------------------------------------------------------
+        # Walk the remaining stages with shared PipelineState.
+        # ValidationError from any stage → tear down compute before re-raise
+        # so a config typo cannot leave a billing pod alive.
+        # ------------------------------------------------------------------
         try:
-            state = PipelineState(request=validated, artifacts={})
-            state = stage.run(state)
-            artifact = state.artifacts["clip"]
+            for stage in stages:
+                state = stage.run(state)
         except ValidationError:
             _log.warning(
                 "spec validation failed; tearing down instance before re-raising"
@@ -1017,17 +1085,12 @@ def generate(
             if (
                 session.instance is not None
                 and session.provider is not None
-                and not _caller_supplied_instance  # only destroy when orchestrator owns the instance
+                and not _caller_supplied_instance
             ):
                 session.provider.destroy_instance(session.instance.id)
             raise
+
+        artifact = state.artifacts["clip"]
         _log.info("generate completed — artifact uri=%r", artifact.uri)
-        # Surface the compute instance the orchestrator owned (or None for
-        # hosted / caller-supplied paths) so callers can run targeted
-        # teardown by pod id without relying on provider tag-discovery.
-        owned_instance: Instance | None
-        if _caller_supplied_instance:
-            owned_instance = None
-        else:
-            owned_instance = session.instance
+        owned_instance = None if _caller_supplied_instance else session.instance
         return artifact, owned_instance

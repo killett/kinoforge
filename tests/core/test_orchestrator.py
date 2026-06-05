@@ -40,6 +40,8 @@ from kinoforge.core.interfaces import (
     GenerationJob,
     GenerationRequest,
     HardwareRequirements,
+    ImageProfile,
+    ImageProfileProvider,
     Instance,
     InstanceSpec,
     ModelProfile,
@@ -2190,3 +2192,316 @@ def test_deploy_session_with_caller_supplied_instance_skips_destroy_on_provision
     )
 
     assert spy.create_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Layer R Task 10: generate() pipeline list-walker + image engine pre-resolution
+# ---------------------------------------------------------------------------
+
+
+def _make_keyframe_cfg_yaml() -> str:
+    """Minimal compute config with a keyframe block using the fake image engine."""
+    return """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake-base.safetensors"
+    kind: base
+    target: diffusion_models
+compute:
+  provider: local
+  image: fake:latest
+  lifecycle:
+    budget: 1.0
+keyframe:
+  engine: fake
+  prompt: "a vivid keyframe"
+  spec:
+    model: "fake-model"
+"""
+
+
+def _load_keyframe_cfg() -> Config:
+    from kinoforge.core.config import load_config
+
+    return load_config(_make_keyframe_cfg_yaml())
+
+
+class _RecordingImageProfileProvider(ImageProfileProvider):
+    """Minimal ImageProfileProvider spy: records resolve + discover calls.
+
+    First resolve() raises ProfileNotCached; subsequent calls return the cached profile.
+    """
+
+    def __init__(self) -> None:
+        self._profile = ImageProfile(
+            name="fake-image",
+            max_resolution=(1024, 1024),
+            supported_modes={"t2i"},
+        )
+        self._cached = False
+        self.resolve_calls: int = 0
+        self.discover_calls: int = 0
+
+    def resolve(self, key: CapabilityKey) -> ImageProfile:
+        self.resolve_calls += 1
+        if not self._cached:
+            raise ProfileNotCached("no image profile cached")
+        return self._profile
+
+    def discover(self, key: CapabilityKey, engine: Any, backend: Any) -> ImageProfile:
+        self.discover_calls += 1
+        self._cached = True
+        return self._profile
+
+    def verify(
+        self,
+        profile: ImageProfile,
+        backend: Any,
+        *,
+        engine: Any = None,
+        key: Any = None,
+    ) -> None:
+        pass
+
+
+class _AlwaysCachedImageProfileProvider(_RecordingImageProfileProvider):
+    """Variant that always returns the profile from resolve (simulates cache-hit)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._cached = True  # resolve() returns immediately
+
+    def resolve(self, key: CapabilityKey) -> ImageProfile:
+        self.resolve_calls += 1
+        return self._profile
+
+
+def test_generate_no_keyframe_block_runs_single_stage(tmp_path: Path) -> None:
+    """Layer R T10: cfg.keyframe is None → 1-stage pipeline; no keyframe-* artifacts.
+
+    Bug guard: accidental KeyframeStage construction would call
+    image_engine.provision and break tests without FAL_KEY.
+    """
+    cfg = _compute_cfg()
+    assert cfg.keyframe is None
+
+    engine = _make_engine()
+    provider = LocalProvider()
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="a sunset", mode="t2v")
+
+    artifact, _ = generate(
+        cfg,
+        request,
+        store=store,
+        provider=provider,
+        engine=engine,
+    )
+
+    assert isinstance(artifact, Artifact)
+    assert artifact.uri != ""
+    # No keyframe-*.png files should appear in the store
+    keyframe_files = list(tmp_path.rglob("keyframe-*.png"))
+    assert keyframe_files == [], (
+        f"no keyframe images should be generated when cfg.keyframe is None; "
+        f"found {keyframe_files!r}"
+    )
+
+
+def test_generate_with_keyframe_runs_two_stages_in_order(tmp_path: Path) -> None:
+    """Layer R T10: KeyframeStage runs BEFORE GenerateClipStage.
+
+    Bug guard: reversed order → clip stage sees an empty assets list for i2v.
+    Asserts: returned Artifact is the clip; keyframe-init_image artifact persisted.
+    """
+    import kinoforge.image_engines.fake  # noqa: F401 — registers "fake" image engine
+
+    cfg = _load_keyframe_cfg()
+    store = LocalArtifactStore(tmp_path)
+    provider = LocalProvider()
+    engine = _make_i2v_engine()
+    ipp = _RecordingImageProfileProvider()
+
+    request = GenerationRequest(prompt="a vivid sunset", mode="i2v", assets=[])
+
+    artifact, _ = generate(
+        cfg,
+        request,
+        store=store,
+        provider=provider,
+        engine=engine,
+        image_profile_provider=ipp,
+    )
+
+    assert isinstance(artifact, Artifact)
+    assert artifact.uri != ""
+    # KeyframeStage must have persisted a keyframe-init_image artifact
+    keyframe_files = list(tmp_path.rglob("keyframe-init_image.png"))
+    assert len(keyframe_files) == 1, (
+        f"expected keyframe-init_image.png in store; found {keyframe_files!r}"
+    )
+
+
+def test_generate_keyframe_image_engine_resolved_before_deploy_session(
+    tmp_path: Path,
+) -> None:
+    """Layer R T10: unknown image engine name raises UnknownAdapter BEFORE create_instance.
+
+    Bug guard: if image-engine resolution happened inside deploy_session (after
+    create_instance), an unknown name would orphan a billing pod.
+    """
+    from kinoforge.core.errors import UnknownAdapter
+
+    cfg = _load_keyframe_cfg()
+    # Patch the keyframe engine name to something unregistered
+    assert cfg.keyframe is not None  # guaranteed by _load_keyframe_cfg
+    cfg = cfg.model_copy(
+        update={
+            "keyframe": cfg.keyframe.model_copy(update={"engine": "bogus_engine_xyz"})
+        }
+    )
+
+    create_calls: list[object] = []
+
+    class _TrackingProvider(LocalProvider):
+        def create_instance(self, spec: InstanceSpec) -> Instance:
+            create_calls.append(spec)
+            return super().create_instance(spec)
+
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="a sunset", mode="t2v")
+
+    with pytest.raises(UnknownAdapter):
+        generate(
+            cfg,
+            request,
+            store=store,
+            provider=_TrackingProvider(),
+            engine=_make_engine(),
+        )
+
+    assert create_calls == [], (
+        f"create_instance must NOT be called before image engine is resolved; "
+        f"got {create_calls!r}"
+    )
+
+
+def test_generate_keyframe_profile_cache_miss_triggers_discover(
+    tmp_path: Path,
+) -> None:
+    """Layer R T10: ImageProfileProvider.resolve raises ProfileNotCached → discover called once.
+
+    Bug guard: if discover is never called on a cache miss, the image profile is
+    never populated and image generation proceeds without capabilities knowledge.
+    """
+    import kinoforge.image_engines.fake  # noqa: F401
+
+    cfg = _load_keyframe_cfg()
+    store = LocalArtifactStore(tmp_path)
+    ipp = _RecordingImageProfileProvider()
+
+    request = GenerationRequest(prompt="a vivid sunset", mode="t2v")
+
+    generate(
+        cfg,
+        request,
+        store=store,
+        provider=LocalProvider(),
+        engine=_make_engine(),
+        image_profile_provider=ipp,
+    )
+
+    assert ipp.resolve_calls == 1, (
+        f"resolve must be called once (cache miss); got {ipp.resolve_calls}"
+    )
+    assert ipp.discover_calls == 1, (
+        f"discover must be called once on cache miss; got {ipp.discover_calls}"
+    )
+
+
+def test_generate_keyframe_profile_cache_hit_skips_discover(
+    tmp_path: Path,
+) -> None:
+    """Layer R T10: resolve returns profile → discover NOT called.
+
+    Bug guard: calling discover on every generate() call would hit the backend
+    on every run even when the profile is already known.
+    """
+    import kinoforge.image_engines.fake  # noqa: F401
+
+    cfg = _load_keyframe_cfg()
+    store = LocalArtifactStore(tmp_path)
+    ipp = _AlwaysCachedImageProfileProvider()
+
+    request = GenerationRequest(prompt="a vivid sunset", mode="t2v")
+
+    generate(
+        cfg,
+        request,
+        store=store,
+        provider=LocalProvider(),
+        engine=_make_engine(),
+        image_profile_provider=ipp,
+    )
+
+    assert ipp.resolve_calls == 1, (
+        f"resolve must be called once; got {ipp.resolve_calls}"
+    )
+    assert ipp.discover_calls == 0, (
+        f"discover must NOT be called on cache hit; got {ipp.discover_calls}"
+    )
+
+
+def test_generate_validation_error_in_keyframe_tears_down_video_instance(
+    tmp_path: Path,
+) -> None:
+    """Layer R T10: ValidationError from KeyframeStage → video pod destroyed once.
+
+    Bug guard: without the teardown wrapper around the stage loop, a missing
+    prompt in the keyframe block leaves a billing RunPod pod alive.
+
+    The KeyframeStage._resolve_prompt raises ValidationError when no prompt is
+    configured for a required role. We bypass the pydantic validator by using
+    model_copy to build a KeyframeConfig without a prompt, then inject it.
+    """
+    import kinoforge.image_engines.fake  # noqa: F401
+    from kinoforge.core.config import KeyframeConfig
+
+    # Build a cfg with keyframe, then strip the prompt field so
+    # _resolve_prompt raises ValidationError during KeyframeStage.run.
+    # We use model_construct to bypass the @model_validator check.
+    bad_kf = KeyframeConfig.model_construct(
+        engine="fake",
+        prompt=None,  # no top-level prompt
+        spec={"model": "fake-model"},
+        params={},
+        roles={},  # no per-role prompts either
+    )
+    cfg = _load_keyframe_cfg()
+    cfg = cfg.model_copy(update={"keyframe": bad_kf})
+
+    destroy_calls: list[str] = []
+
+    class _TrackingProvider(LocalProvider):
+        def destroy_instance(self, instance_id: str) -> None:
+            destroy_calls.append(instance_id)
+            super().destroy_instance(instance_id)
+
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="a sunset", mode="i2v")
+
+    with pytest.raises(ValidationError):
+        generate(
+            cfg,
+            request,
+            store=store,
+            provider=_TrackingProvider(),
+            engine=_make_i2v_engine(),
+        )
+
+    assert len(destroy_calls) == 1, (
+        f"expected destroy_instance called once on ValidationError from KeyframeStage; "
+        f"got {destroy_calls!r}"
+    )
