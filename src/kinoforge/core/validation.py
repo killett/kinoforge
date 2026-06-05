@@ -59,7 +59,7 @@ def validate_request(
                 f" (accepted={sorted(accepted_kinds)})"
             )
 
-    required_roles: set[str] = MODE_ROLE_REQUIREMENTS[request.mode]
+    required_roles: set[str] | list[str] = MODE_ROLE_REQUIREMENTS[request.mode]
 
     # --- 3. Single-asset-mode lone-image default ------------------------------
     # Copy the list so we never mutate the caller's data.
