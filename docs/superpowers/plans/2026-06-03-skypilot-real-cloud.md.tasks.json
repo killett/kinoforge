@@ -58,25 +58,39 @@
     },
     {
       "id": 6,
-      "nativeTaskId": 23,
+      "nativeTaskId": 30,
       "subject": "Task 7: Stability re-run + commit fixtures",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "9301c83 (fixtures); 11 T7 sub-tasks landed during iteration",
+      "outcome": "T7 expanded into T7a-T7n sub-tasks as real-world SkyPilot SDK divergences surfaced. T7f succeeded at attempt 10. Total GCP spend: ~$0.082 of $0.50 ceiling.",
       "blockedBy": [5],
-      "description": "**Goal:** Confirm fixtures byte-identical across two runs (proves volatile-stripping works), commit in own commit for PR-diff isolation.\n\n**Files:** 4 fixtures + commit them in own commit.\n\n**Acceptance Criteria:** second run exit 0; fixtures byte-identical to T6 run (`diff -r` empty); fixtures committed in own commit. Shape disagreements (if any) become sub-tasks.\n\n**Verify:** `diff -r /tmp/skypilot-fixtures-t6/ tests/providers/fixtures/skypilot/`\n\n```json:metadata\n{\"files\": [\"tests/providers/fixtures/skypilot/gpu_list.json\", \"tests/providers/fixtures/skypilot/launch.json\", \"tests/providers/fixtures/skypilot/status.json\", \"tests/providers/fixtures/skypilot/down.json\"], \"verifyCommand\": \"diff -r /tmp/skypilot-fixtures-t6/ tests/providers/fixtures/skypilot/\", \"acceptanceCriteria\": [\"second run exit 0\", \"fixtures byte-identical (diff -r empty)\", \"fixtures committed in own commit\", \"shape disagreements (if any) become sub-tasks with regression tests\"]}\n```"
+      "description": "**Goal:** Confirm fixtures byte-identical across two runs, commit in own commit. Sub-tasks: T7a (provider port to async API), T7b (Task + CPU offer), T7d (recorder pydantic), T7e (gcloud abs path), T7g (recorder classes passthrough), T7h (image_id docker: prefix), T7i (gcloud in env), T7j (rsync + openssh in env), T7k (disk_size default), T7l+m (debian image + UUID volatile), T7n (final image swap). T7f gating done in commit 9301c83.\n\n```json:metadata\n{\"files\": [\"tests/providers/fixtures/skypilot/launch.json\", \"tests/providers/fixtures/skypilot/status.json\", \"tests/providers/fixtures/skypilot/down.json\", \"tests/providers/fixtures/skypilot/stream_and_get.json\"], \"verifyCommand\": \"pixi run -e live-skypilot pytest tests/live/test_skypilot_live.py -v\", \"acceptanceCriteria\": [\"smoke exits 0\", \"fixtures byte-identical across 2 runs\", \"zero VM survivors\", \"fixtures committed in own commit\"]}\n```"
     },
     {
       "id": 7,
       "nativeTaskId": 24,
       "subject": "Task 8: PROGRESS.md Phase 31 entry + strike PROGRESS:114 #2",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "2ebda6b",
       "blockedBy": [6],
-      "description": "**Goal:** Document the layer in PROGRESS.md mirroring Phase 30's shape; close PROGRESS:114 carry-forward #2; add new CPU-only known-limitation.\n\n**Files:**\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:** Phase 31 entry exists (per-task SHAs, key decisions, live-smoke confirmation block, test count delta); PROGRESS:114 #2 struck-through + marked CLOSED; new CPU-only known-limitation added; RESUME block refreshed.\n\n**Verify:** `rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md\", \"acceptanceCriteria\": [\"Phase 31 entry exists with all required sub-sections\", \"PROGRESS:114 #2 struck-through + marked CLOSED\", \"new CPU-only known-limitation added\", \"RESUME block refreshed\"]}\n```"
+      "description": "**Goal:** Document the layer in PROGRESS.md mirroring Phase 30's shape; close PROGRESS:114 carry-forward #2; add new CPU-only known-limitation. Done.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'Phase 31' PROGRESS.md && rg -n 'CLOSED.*Phase 31' PROGRESS.md\", \"acceptanceCriteria\": [\"Phase 31 entry exists\", \"PROGRESS:114 #2 CLOSED\", \"new known-limitation added\", \"RESUME block refreshed\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-04T01:30:00",
+  "lastUpdated": "2026-06-04T16:55:00",
+  "phaseStatus": "COMPLETED",
+  "totalGcpSpend": "~$0.082 of $0.50 ceiling",
   "t7Sublog": {
-    "t7a-commit": "b9fd9ee",
-    "t7a-finding-deferred-1": "create_instance still passes dict to sky.launch; modern sky.launch wants sky.Task. Live invocation will TypeError. T7b addresses.",
-    "t7a-finding-deferred-2": "find_offers calls list_accelerators() with default gpus_only=True, returns nothing for CPU-only smokes. T7b synthesises CPU offer."
+    "t7a (b9fd9ee)": "provider port to modern async API",
+    "t7b (91139c2)": "sky.Task construction + CPU offer synthesis",
+    "t7d (fffb034)": "recorder pydantic BaseModel support",
+    "t7e (d2d90ce)": "teardown uses absolute gcloud path",
+    "t7g (32186a1)": "recorder passes classes through",
+    "t7h (2a921ae)": "image_id docker: prefix normalisation",
+    "t7i (b425407)": "google-cloud-sdk in live env",
+    "t7j (ddf5aa6)": "rsync + openssh in live env",
+    "t7k (2e6c233)": "default disk_size=30",
+    "t7lm (afeb635)": "image swap to bash:5 + UUID-volatile recorder",
+    "t7n (c6679ba)": "final image swap bash:5 -> debian:12-slim",
+    "t7f (9301c83)": "live smoke fixtures, byte-identical across 2 runs"
   }
 }
