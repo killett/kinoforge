@@ -192,6 +192,37 @@ def test_to_jsonable_handles_pydantic_basemodel() -> None:
     }
 
 
+def test_to_jsonable_uuid_strings_become_volatile_sentinel() -> None:
+    """Bare UUID strings (RequestId from modern SkyPilot) become a
+    sentinel so successive runs produce byte-identical fixtures.
+
+    Bug catch: without this, every fixture written from a sky.* async
+    call (launch/status/down) contains the literal RequestId, making
+    byte-identical comparison structurally impossible.
+    """
+    # Canonical UUID
+    assert _to_jsonable("c5d72e2e-eae5-429f-86c7-f2ee6393401c") == "<volatile-uuid>"
+    # Case-insensitive
+    assert _to_jsonable("C5D72E2E-EAE5-429F-86C7-F2EE6393401C") == "<volatile-uuid>"
+    # Non-UUID strings pass through
+    assert _to_jsonable("cluster-abc-def") == "cluster-abc-def"
+    assert (
+        _to_jsonable("not-a-uuid-only-some-segments") == "not-a-uuid-only-some-segments"
+    )
+    # Nested in a dict
+    assert _to_jsonable(
+        {"name": "x", "id": "c5d72e2e-eae5-429f-86c7-f2ee6393401c"}
+    ) == {
+        "name": "x",
+        "id": "<volatile-uuid>",
+    }
+    # Nested in a list
+    assert _to_jsonable(["non-uuid", "c5d72e2e-eae5-429f-86c7-f2ee6393401c"]) == [
+        "non-uuid",
+        "<volatile-uuid>",
+    ]
+
+
 def test_proxy_passes_through_class_attributes(tmp_path: Path) -> None:
     """Class attributes pass through unchanged so classmethods can be called.
 

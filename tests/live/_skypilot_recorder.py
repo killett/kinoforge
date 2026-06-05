@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
+import re
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -30,6 +31,12 @@ VOLATILE_KEYS: frozenset[str] = frozenset(
 )
 
 _VOLATILE_SENTINEL: str = "<volatile>"
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+_VOLATILE_UUID_SENTINEL: str = "<volatile-uuid>"
 
 
 def _to_jsonable(obj: Any) -> Any:  # noqa: ANN401
@@ -63,6 +70,14 @@ def _to_jsonable(obj: Any) -> Any:  # noqa: ANN401
         return str(obj)
     if isinstance(obj, datetime):
         return obj.isoformat()
+    # UUID-shaped strings (e.g. SkyPilot RequestId, which is a UUID-string
+    # subclass returned from async API calls). Replaced with a sentinel so
+    # successive recording runs produce byte-identical fixtures. Placed
+    # after the dataclass/pydantic/enum/Path/datetime branches (which take
+    # priority) and before the dict/list branches (so nested UUIDs are
+    # caught via str-recursion).
+    if isinstance(obj, str) and _UUID_RE.match(obj):
+        return _VOLATILE_UUID_SENTINEL
     if isinstance(obj, dict):
         return {
             k: (_VOLATILE_SENTINEL if k in VOLATILE_KEYS else _to_jsonable(v))
