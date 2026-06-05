@@ -1121,3 +1121,26 @@ def test_spec_graph_file_relative_path_with_raw_string_yaml_raises(
         "absolute" in str(excinfo.value).lower()
         or "file-based" in str(excinfo.value).lower()
     )
+
+
+def test_config_keyframe_absent_defaults_none(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Layer R: Config without keyframe block has cfg.keyframe is None.
+    Bug guard: regression that makes keyframe required would break every existing config."""
+    import yaml
+
+    from kinoforge.core.config import load_config
+
+    p = tmp_path / "c.yaml"
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "engine": {"kind": "fake", "precision": "fp16"},
+                "models": [
+                    {"kind": "base", "ref": "fake://m", "target": "checkpoints"}
+                ],
+                "compute": None,
+            }
+        )
+    )
+    cfg = load_config(p)
+    assert cfg.keyframe is None
