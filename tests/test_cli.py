@@ -1215,3 +1215,84 @@ def test_cmd_status_legacy_entry_with_cfg_fills_lifecycle(
     assert rc == 0
     assert "idle_timeout_s=" in captured.out
     assert "<not in ledger>" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Layer S — kinoforge forget --id <id>
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_forget_removes_existing_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``forget --id ID`` removes the entry; stdout 'forgot: ID'; exit 0.
+
+    Bug-catch: a no-op forget that returned 0 without mutating the ledger
+    would leave operators chasing the same stale id forever.
+    """
+    import json as _json
+
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry("i-target"))
+
+    rc = _call(["forget", "--id", "i-target"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "forgot: i-target" in captured.out
+    on_disk = _json.loads((state_dir / "_lifecycle" / "ledger.json").read_text())
+    # Ledger.forget rewrites as a dict-with-"entries" key.
+    entries = on_disk["entries"] if isinstance(on_disk, dict) else on_disk
+    assert all(e.get("id") != "i-target" for e in entries)
+
+
+def test_cmd_forget_absent_id_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``forget --id <missing>`` → stderr 'not found in ledger'; exit 1.
+
+    Bug-catch: silent success on absent ids would mask script bugs that
+    pass a wrong instance id.
+    """
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry("i-other"))
+
+    rc = _call(["forget", "--id", "i-missing"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "not found in ledger" in captured.err
+
+
+def test_cmd_forget_is_non_idempotent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Second forget on the same id (post-success) returns exit 1.
+
+    Bug-catch: idempotent ``forget`` would diverge from the design decision
+    in spec §6 and from sibling commands ``stop`` / ``destroy``.
+    """
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry("i-twice"))
+
+    rc1 = _call(["forget", "--id", "i-twice"], state_dir)
+    rc2 = _call(["forget", "--id", "i-twice"], state_dir)
+
+    assert rc1 == 0
+    assert rc2 == 1
+    captured = capsys.readouterr()
+    # Second call's stderr surfaces the absent-entry message.
+    assert "not found in ledger" in captured.err
+
+
+def test_build_parser_registers_forget_with_id_flag() -> None:
+    """``_build_parser()`` accepts ``forget --id ID`` → ``args.cmd == 'forget'``.
+
+    Bug-catch: parser wiring is the only thing the dispatch in ``main()``
+    relies on. A typo in the subparser name would route forget to argparse
+    error before ``_cmd_forget`` ever runs.
+    """
+    from kinoforge.cli import _build_parser
+
+    parser = _build_parser()
+    ns = parser.parse_args(["forget", "--id", "i-foo"])
+
+    assert ns.cmd == "forget"
+    assert ns.id == "i-foo"

@@ -235,6 +235,12 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_destroy = sub.add_parser("destroy", help="destroy an instance")
     p_destroy.add_argument("--id", required=True, metavar="ID")
 
+    # forget
+    p_forget = sub.add_parser(
+        "forget", help="remove an instance entry from the local ledger"
+    )
+    p_forget.add_argument("--id", required=True, metavar="ID")
+
     # reap
     sub.add_parser("reap", help="sweep and destroy stale instances")
 
@@ -801,6 +807,34 @@ def _cmd_destroy(args: argparse.Namespace, state_dir: Path) -> int:
         return 1
 
 
+def _cmd_forget(args: argparse.Namespace, state_dir: Path) -> int:
+    """Handle ``forget`` subcommand: remove one ledger entry.
+
+    Layer S recovery command — clears the stale entries that
+    ``kinoforge status`` advises about (when the provider has no record
+    of the id). Touches the local ledger only; does not contact the
+    upstream provider. Non-idempotent by design (sibling parity with
+    ``stop`` and ``destroy``): a second call on the same id, after the
+    first removes it, returns exit 1.
+
+    Args:
+        args: Parsed CLI arguments (uses ``args.id``).
+        state_dir: Path to the state directory.
+
+    Returns:
+        Exit code:
+            * 0 — entry was present and has been removed.
+            * 1 — no ledger entry matched ``args.id``.
+    """
+    ledger = _ledger(state_dir)
+    if not any(e.get("id") == args.id for e in ledger.entries()):
+        print(f"instance {args.id!r} not found in ledger", file=sys.stderr)
+        return 1
+    ledger.forget(args.id)
+    print(f"forgot: {args.id}")
+    return 0
+
+
 def _cmd_reap(state_dir: Path) -> int:
     """Handle ``reap`` subcommand.
 
@@ -912,6 +946,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_stop(args, state_dir)
     if args.cmd == "destroy":
         return _cmd_destroy(args, state_dir)
+    if args.cmd == "forget":
+        return _cmd_forget(args, state_dir)
     if args.cmd == "reap":
         return _cmd_reap(state_dir)
     if args.cmd == "gc":
