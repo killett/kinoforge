@@ -139,10 +139,11 @@ def act_on_verdict(
             elif v2 == Verdict.STALE_LEDGER:
                 ledger.forget(instance_id)
                 action = "forgot"
-            elif v2 == Verdict.UNROUTABLE:
-                ledger.forget(instance_id)
-                action = "forgot_unroutable"
             else:
+                # LIVE / HEARTBEAT_UNKNOWN → no_op.
+                # UNROUTABLE is unreachable here: classify never returns it and
+                # sweep skips UNROUTABLE entries (no provider to invoke). The
+                # `forgot_unroutable` path lives in sweep() — see Layer V T5.
                 action = "no_op"
         except TeardownError as exc:
             return ActionResult(

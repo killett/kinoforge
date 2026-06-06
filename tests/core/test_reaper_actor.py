@@ -278,6 +278,7 @@ def test_act_on_verdict_orphan_reap_destroys_and_forgets() -> None:
 
     assert result.action == "destroyed_and_forgot"
     assert provider.destroyed == ["i-1"]
+    assert ledger.forgotten == ["i-1"]
 
 
 def test_act_on_verdict_stale_ledger_only_forgets() -> None:
@@ -303,21 +304,23 @@ def test_act_on_verdict_stale_ledger_only_forgets() -> None:
     assert ledger.forgotten == ["i-1"]
 
 
-def test_act_on_verdict_unroutable_only_forgets() -> None:
-    """UNROUTABLE → ledger.forget (callers only reach this with --force-forget)."""
+def test_act_on_verdict_unroutable_snapshot_drifts_to_stale_ledger() -> None:
+    """UNROUTABLE-snapshot calls drift to STALE_LEDGER on re-classify.
+
+    classify() never returns UNROUTABLE (T1 contract), so a caller
+    passing snapshot_verdict=UNROUTABLE will always observe drift on
+    re-classify. In practice, sweep() never reaches act_on_verdict
+    for UNROUTABLE entries (no provider to invoke); the
+    `forgot_unroutable` action is produced directly in sweep() — see
+    Layer V T5. This test documents the drift behaviour for any
+    hypothetical caller that passes UNROUTABLE.
+    """
     store = _FakeStore()
     ledger = _FakeLedger()
-    # Provider doesn't matter; we pre-stamp UNROUTABLE snapshot.
-    provider = _FakeProvider(live_ids=set())
+    provider = _FakeProvider(live_ids=set())  # pod_up=False → STALE_LEDGER
     e = _entry(id_="i-1")
     clock = FakeClock(start=500.0)
 
-    # NB: classify never returns UNROUTABLE — so to test the action="forgot_unroutable"
-    # path, we need snapshot=UNROUTABLE AND re-classify must also yield UNROUTABLE.
-    # But classify can't yield UNROUTABLE. So we exercise via the drift-skip code path
-    # by asserting that an UNROUTABLE snapshot always drifts → "skipped". That tests
-    # the safe-by-default branch. The "forgot_unroutable" branch is exercised by
-    # test_reaper_sweep with a mocked classify.
     result = act_on_verdict(
         store,  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
@@ -327,8 +330,10 @@ def test_act_on_verdict_unroutable_only_forgets() -> None:
         thresholds=_THR,
         clock=clock,
     )
-    # re-classify yields STALE_LEDGER (pod_up=False) — drift
+
     assert result.action == "skipped"
+    assert result.applied_verdict == Verdict.STALE_LEDGER
+    assert provider.destroyed == []
     assert ledger.forgotten == []
 
 
