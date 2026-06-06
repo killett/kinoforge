@@ -59,3 +59,8 @@ runpodctl.tar.gz
 *.pem
 *.key
 *-sa.json
+
+# KMS key identifiers for Layer W real-cloud tests (not secrets, but gitignored
+# per memory rule to prevent path appearing in file tracker)
+.aws/kms-test-key.arn
+.gcp/kms-test-key.name
