@@ -17,6 +17,7 @@ from tests.stores.recording import (
     _GCSRecordingAdapter,
     _persist,
     _redact,
+    _ReplayResponse,
 )
 
 # ---------------------------------------------------------------------------
@@ -131,7 +132,7 @@ def test_redact_roundtrip_no_secrets_remain() -> None:
 
 def test_persist_writes_meta_block(tmp_path: Path) -> None:
     target = tmp_path / "fx.json"
-    _persist("hot_path", {"entries": []}, target, cloud="s3", axis="hot_path")
+    _persist("hot_path", [], target, cloud="s3", axis="hot_path")
     body = json.loads(target.read_text())
     meta = body["_meta"]
     assert meta["cloud"] == "s3"
@@ -142,17 +143,19 @@ def test_persist_writes_meta_block(tmp_path: Path) -> None:
     assert "T" in meta["captured_at_local"]
     # Must NOT end with +00:00 (UTC offset) — should be naive local
     assert not meta["captured_at_local"].endswith("+00:00")
+    # entries must be a list (never double-wrapped)
+    assert isinstance(body["entries"], list)
 
 
 def test_persist_creates_parent_directories(tmp_path: Path) -> None:
     target = tmp_path / "deep" / "nested" / "fx.json"
-    _persist("ax", {"entries": []}, target, cloud="gcs", axis="ax")
+    _persist("ax", [], target, cloud="gcs", axis="ax")
     assert target.exists()
 
 
 def test_persist_applies_redaction(tmp_path: Path) -> None:
     target = tmp_path / "fx.json"
-    payload = {"entries": [{"Bucket": "<S3_BUCKET>"}]}
+    payload = [{"Bucket": "<S3_BUCKET>"}]
     _persist("ax", payload, target, cloud="s3", axis="ax")
     raw = target.read_text()
     assert "<AWS_ACCOUNT>" not in raw
@@ -189,7 +192,7 @@ def test_s3_recorder_replay_raises_on_miss(tmp_path: Path) -> None:
 
 
 def test_s3_recorder_replay_returns_fixture(tmp_path: Path) -> None:
-    """Replay mode returns the stored http-form list when match_key hits."""
+    """Replay mode returns an AWSResponse-shaped object when match_key hits."""
     import base64 as _b64
 
     op = "GetObject"
@@ -199,7 +202,7 @@ def test_s3_recorder_replay_returns_fixture(tmp_path: Path) -> None:
     key = rec_build._match_key(op, params)
     # Fixture stores body as base64 so the JSON is all strings/ints.
     body_b64 = _b64.b64encode(b"hello").decode("ascii")
-    expected_response = [200, {"Content-Type": "application/octet-stream"}, body_b64]
+    stored_response = [200, {"Content-Type": "application/octet-stream"}, body_b64]
 
     fx_path = tmp_path / "replay.json"
     fx_path.write_text(
@@ -209,7 +212,7 @@ def test_s3_recorder_replay_returns_fixture(tmp_path: Path) -> None:
                 "entries": [
                     {
                         "match_key": key,
-                        "parsed_response_http_form": expected_response,
+                        "parsed_response_http_form": stored_response,
                     }
                 ],
             }
@@ -217,7 +220,11 @@ def test_s3_recorder_replay_returns_fixture(tmp_path: Path) -> None:
     )
     rec = S3Recorder(mode="replay", fixture_path=fx_path)
     result = rec._before_send(operation_name=op, params=params, request=None)
-    assert result == expected_response
+    # Must return an AWSResponse-shaped object, not the raw list.
+    assert isinstance(result, _ReplayResponse)
+    assert result.status_code == 200
+    assert result.headers == {"Content-Type": "application/octet-stream"}
+    assert result.content == b"hello"
 
 
 def test_s3_recorder_record_mode_captures(tmp_path: Path) -> None:
@@ -252,6 +259,10 @@ def test_s3_recorder_record_mode_captures(tmp_path: Path) -> None:
     written = json.loads(target.read_text())
     assert written["_meta"]["cloud"] == "s3"
     assert written["_meta"]["axis"] == "hot_path"
+    # entries must be a flat list — never double-wrapped
+    assert isinstance(written["entries"], list)
+    assert len(written["entries"]) > 0
+    assert "match_key" in written["entries"][0]
 
 
 def test_s3_recorder_before_send_stashes_context() -> None:
@@ -361,6 +372,146 @@ def test_gcs_recorder_record_mode_captures(tmp_path: Path) -> None:
     written = json.loads(target.read_text())
     assert written["_meta"]["cloud"] == "gcs"
     assert written["_meta"]["axis"] == "hot_path"
+    # entries must be a flat list — never double-wrapped
+    assert isinstance(written["entries"], list)
+    assert len(written["entries"]) > 0
+    assert "match_key" in written["entries"][0]
+
+
+# ---------------------------------------------------------------------------
+# _ReplayResponse unit tests (Finding 2 — AWSResponse-shaped object)
+# ---------------------------------------------------------------------------
+
+
+def test_replay_response_attributes() -> None:
+    """_ReplayResponse exposes .status_code, .headers, .content like AWSResponse."""
+    resp = _ReplayResponse(200, {"Content-Type": "text/plain"}, b"body data")
+    assert resp.status_code == 200
+    assert resp.headers == {"Content-Type": "text/plain"}
+    assert resp.content == b"body data"
+
+
+def test_s3_recorder_replay_decodes_base64_body(tmp_path: Path) -> None:
+    """Replay returns _ReplayResponse with decoded body bytes, not raw base64."""
+    import base64 as _b64
+
+    raw_body = b"\x00\x01\x02\x03\xff"
+    body_b64 = _b64.b64encode(raw_body).decode("ascii")
+    op = "GetObject"
+    params: dict[str, str] = {"Bucket": "b", "Key": "binary"}
+    rec_build = S3Recorder(mode="record")
+    key = rec_build._match_key(op, params)
+
+    fx_path = tmp_path / "binary.json"
+    fx_path.write_text(
+        json.dumps(
+            {
+                "_meta": {},
+                "entries": [
+                    {
+                        "match_key": key,
+                        "parsed_response_http_form": [206, {}, body_b64],
+                    }
+                ],
+            }
+        )
+    )
+    rec = S3Recorder(mode="replay", fixture_path=fx_path)
+    result = rec._before_send(operation_name=op, params=params, request=None)
+    assert isinstance(result, _ReplayResponse)
+    assert result.status_code == 206
+    assert result.content == raw_body
+
+
+# ---------------------------------------------------------------------------
+# GCS file-like body tests (Finding 3)
+# ---------------------------------------------------------------------------
+
+
+def test_gcs_recording_adapter_file_like_body_match_key(tmp_path: Path) -> None:
+    """File-like body yields same match key as equivalent bytes body."""
+    import io
+
+    rec = GCSRecorder(mode="record")
+    body_content = b"file content for upload"
+    method = "PUT"
+    url = "https://storage.googleapis.com/bucket/obj"
+
+    # Match key from bytes body
+    key_bytes = rec._match_key(method, url, body_content)
+
+    # Build a fixture replay (we just need _GCSRecordingAdapter.send to compute key)
+    # Simulate what send() does with a file-like body: it reads it.
+    class _FakeInnerAdapter:
+        def send(self, request: Any, **kwargs: Any) -> Any:
+            import requests as _requests
+
+            r = _requests.Response()
+            r.status_code = 200
+            r._content = b"ok"
+            return r
+
+        def close(self) -> None:
+            pass
+
+    rec2 = GCSRecorder(mode="record")
+    adapter = _GCSRecordingAdapter(rec2, _FakeInnerAdapter())
+
+    stream = io.BytesIO(body_content)
+    req = SimpleNamespace(
+        method=method,
+        url=url,
+        body=stream,
+        headers={},
+    )
+    adapter.send(req)
+    assert len(rec2.captured) == 1
+    assert rec2.captured[0]["match_key"] == key_bytes
+    # Stream should be reset to position 0 after send
+    assert stream.tell() == 0
+
+
+def test_gcs_recording_adapter_file_like_replay_hits(tmp_path: Path) -> None:
+    """Replay mode with a file-like body request correctly hits the fixture."""
+    import io
+
+    body_content = b"upload data"
+    method = "PUT"
+    url = "https://storage.googleapis.com/bucket/upload"
+
+    rec_build = GCSRecorder(mode="record")
+    key = rec_build._match_key(method, url, body_content)
+
+    import base64 as _b64
+
+    fx_path = tmp_path / "filelike.json"
+    fx_path.write_text(
+        json.dumps(
+            {
+                "_meta": {},
+                "entries": [
+                    {
+                        "match_key": key,
+                        "status": 200,
+                        "headers": {"ETag": "abc123"},
+                        "body_b64": _b64.b64encode(b"").decode("ascii"),
+                    }
+                ],
+            }
+        )
+    )
+    rec = GCSRecorder(mode="replay", fixture_path=fx_path)
+    inner = requests.adapters.HTTPAdapter()
+    adapter = _GCSRecordingAdapter(rec, inner)
+
+    req = SimpleNamespace(
+        method=method,
+        url=url,
+        body=io.BytesIO(body_content),
+        headers={},
+    )
+    resp = adapter.send(req)
+    assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
