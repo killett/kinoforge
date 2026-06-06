@@ -98,6 +98,7 @@ class LifecycleConfig(BaseModel):
     budget: float
     max_in_flight: int = 1
     boot_timeout: float = 900.0
+    heartbeat_interval_s: float | None = None
 
     @field_validator(
         "idle_timeout",
@@ -112,6 +113,21 @@ class LifecycleConfig(BaseModel):
         """Parse duration strings; pass through numeric values unchanged."""
         if isinstance(v, str):
             return parse_duration(v)
+        return v
+
+    @field_validator("heartbeat_interval_s")
+    @classmethod
+    def _validate_heartbeat_interval_positive(cls, v: float | None) -> float | None:
+        """Reject non-positive heartbeat_interval_s at load time.
+
+        Layer U: HeartbeatLoop.__init__ also raises ValueError on
+        non-positive values, but doing the check at config-load means
+        the bad config is rejected before the orchestrator creates any
+        instance — no chance of leaving a pod orphaned by a late
+        ValueError after create_instance returns.
+        """
+        if v is not None and v <= 0:
+            raise ValueError(f"heartbeat_interval_s must be > 0 when set; got {v}")
         return v
 
 
@@ -700,6 +716,7 @@ class Config(BaseModel):
             budget_usd=lc.budget,
             max_in_flight=lc.max_in_flight,
             boot_timeout_s=lc.boot_timeout,
+            heartbeat_interval_s=lc.heartbeat_interval_s,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:

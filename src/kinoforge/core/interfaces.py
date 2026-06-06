@@ -50,7 +50,15 @@ class Offer:
 
 @dataclass
 class Lifecycle:
-    """Cost-safety guardrails carried into an InstanceSpec (all seconds)."""
+    """Cost-safety guardrails carried into an InstanceSpec (all seconds).
+
+    Attributes:
+        heartbeat_interval_s: Layer U — seconds between background
+            HeartbeatLoop ticks inside an active deploy_session.
+            ``None`` (the default) disables the feature, preserving
+            backwards-compatibility for every existing YAML config.
+            Operator guidance: values < 10 risk lock contention at scale.
+    """
 
     idle_timeout_s: float = 2 * 3600
     job_timeout_s: float = 30 * 60
@@ -60,6 +68,7 @@ class Lifecycle:
     max_workers: int = 1
     max_in_flight: int = 1
     boot_timeout_s: float = 900.0
+    heartbeat_interval_s: float | None = None
 
 
 @dataclass(frozen=True)
