@@ -538,7 +538,28 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         return 1
 
     cfg = ctx.cfg
-    ledger_block = _build_ledger_block(entry, cfg=cfg, now=time.time())
+    now = time.time()
+    ledger_block = _build_ledger_block(entry, cfg=cfg, now=now)
+
+    # Layer U — sentinel-staleness advisory. When the ledger entry carries
+    # both `last_heartbeat` and the writer's `heartbeat_thread_tick`
+    # sentinel, surface an advisory if the sentinel is older than
+    # 3 * heartbeat_interval_s. This is the user-visible side of the
+    # forward-compat gate documented on Ledger.touch — it tells the
+    # operator the loop has stopped writing (e.g. silent thread crash)
+    # without claiming the pod is dead.
+    heartbeat_advisory: str | None = None
+    hb_tick = entry.get("heartbeat_thread_tick")
+    hb = entry.get("last_heartbeat")
+    if hb_tick is not None and hb is not None:
+        interval = 30.0
+        if cfg is not None and cfg.lifecycle().heartbeat_interval_s is not None:
+            interval = float(cfg.lifecycle().heartbeat_interval_s or interval)
+        age = now - float(hb_tick)
+        if age > 3 * interval:
+            heartbeat_advisory = (
+                f"advisory: heartbeat thread stale ({age:.0f}s since last tick)"
+            )
 
     provider_name = str(entry.get("provider", "local"))
     try:
@@ -547,7 +568,7 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         provider_block = {
             "provider_status": f"unknown (unknown provider: {provider_name})",
         }
-        _print_status_block(ledger_block, provider_block)
+        _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
         return 2
 
     try:
@@ -556,6 +577,8 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         provider_block = {
             "provider_status": "unknown (stale ledger — provider has no record)",
         }
+        # Stale-ledger advisory wins over heartbeat advisory: the entry
+        # is gone from the provider, so heartbeat freshness is moot.
         _print_status_block(
             ledger_block,
             provider_block,
@@ -571,7 +594,7 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
                 f"unknown (provider lookup failed: {exc.__class__.__name__})"
             ),
         }
-        _print_status_block(ledger_block, provider_block)
+        _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
         return 2
 
     provider_block = {"provider_status": instance.status}
@@ -580,7 +603,7 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     except Exception as exc:  # noqa: BLE001
         provider_block["endpoints"] = f"unknown ({exc.__class__.__name__})"
 
-    _print_status_block(ledger_block, provider_block)
+    _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
     return 0
 
 
