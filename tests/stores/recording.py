@@ -78,11 +78,33 @@ def _drop_secret_headers(obj: Any) -> Any:
     return obj
 
 
+class _SafeEncoder(json.JSONEncoder):
+    """JSON encoder that handles types boto3 / GCS return in parsed responses.
+
+    Handles:
+    - ``datetime`` / ``date`` → ISO-8601 string
+    - ``bytes`` → base64 string
+    - Unknown types → ``repr()`` string (never raises)
+    """
+
+    def default(self, o: Any) -> Any:
+        if isinstance(o, (_dt.datetime, _dt.date)):
+            return o.isoformat()
+        if isinstance(o, (bytes, bytearray)):
+            return base64.b64encode(o).decode("ascii")
+        try:
+            return super().default(o)
+        except TypeError:
+            return repr(o)
+
+
 def _redact(payload: Any, extra_subs: dict[str, str] | None = None) -> Any:
     """Recursively redact secrets from a JSON-shaped payload.
 
     Args:
         payload: Any JSON-serialisable structure (dict, list, str, …).
+            Non-serialisable values (e.g. ``datetime``, ``bytes``) are
+            coerced to strings by :class:`_SafeEncoder`.
         extra_subs: Additional literal-string substitutions, e.g.
             ``{"arn:aws:kms:…": "<S3_KMS_KEY>"}``. Applied after the
             built-in regex rules.
@@ -91,7 +113,7 @@ def _redact(payload: Any, extra_subs: dict[str, str] | None = None) -> Any:
         A new structure with secrets replaced.
     """
     subs = dict(extra_subs or {})
-    text = json.dumps(payload)
+    text = json.dumps(payload, cls=_SafeEncoder)
     for pattern, replacement in _REDACT_RULES:
         text = pattern.sub(replacement, text)
     for needle, replacement in subs.items():
@@ -284,7 +306,15 @@ class S3Recorder:
                 "parsed_response_http_form": [
                     http_response.status_code,
                     dict(http_response.headers),
-                    base64.b64encode(http_response.content).decode("ascii"),
+                    # Use _content (already-cached) to avoid consuming a
+                    # streaming body (e.g. GetObject).  If not yet cached
+                    # (streaming response), store empty bytes — the parsed
+                    # response carries the data for replay.
+                    base64.b64encode(
+                        http_response._content
+                        if getattr(http_response, "_content", None) is not None
+                        else b""
+                    ).decode("ascii"),
                 ],
             }
         )
