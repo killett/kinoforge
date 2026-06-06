@@ -67,3 +67,21 @@ class ProvisionFailed(KinoforgeError):
 
 class ProvisionTimeout(KinoforgeError):
     """Ready check never returned success within ``boot_timeout_s``."""
+
+
+class SidecarMismatch(KinoforgeError):
+    """cfg.store differs from sidecar on disk.
+
+    Raised by ``cli.sidecar.verify_or_write_sidecar`` when the operator
+    runs a cfg-bearing command with a config whose store identity
+    differs from the sidecar already recorded in ``state_dir/store.json``.
+    """
+
+
+class SidecarMigrationBlocked(KinoforgeError):
+    """First cloud-store command refused while local ledger non-empty.
+
+    Raised by ``cli.sidecar.verify_or_write_sidecar`` when the operator
+    runs a cloud-store cfg on a ``state_dir`` whose local ledger still
+    has entries — guards against silently orphaning in-flight pods.
+    """
