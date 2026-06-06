@@ -128,6 +128,22 @@ batch namespace at once.
 
 ## Breaking changes
 
+### Layer T — cloud `store.kind` now routes the ledger too
+
+Operators who configured `store.kind: s3` (or `gcs`) for artifacts but
+expected the instance ledger to remain on local disk: the ledger now
+lives in the configured store. Same authentication, same bucket; the
+sidecar at `<state-dir>/store.json` records the routing.
+
+Detection: kinoforge hard-blocks the first cloud-routed command if your
+local state directory still has tracked instances. See
+[Migration from a local ledger](#migration-from-a-local-ledger) for the
+4-step procedure.
+
+Non-breaking for: operators on `store.kind: local` (default), operators
+on fresh state directories, and operators who already had no in-flight
+local instances.
+
 ### Layer M — `engine.hosted.model` removed; use top-level `spec.model`
 
 Hosted configs that previously declared the model identifier under
@@ -212,13 +228,98 @@ mode:
 
 `max_in_flight: 1` (the default) preserves the original sequential behaviour.
 
+### Cloud-backed ledger
+
+When `store.kind` is `s3` or `gcs` in your `kinoforge.yaml`, the instance
+ledger (the list of running pods, their providers, their lifecycle policy
+snapshots) is persisted in the configured artifact store — not on the host
+that ran `kinoforge deploy`. The ledger lives at
+`<store-uri>/_lifecycle/ledger.json`.
+
+On first run of a cfg-bearing command (`deploy`, `provision`, `generate`,
+`gc`, `batch`), kinoforge writes a sidecar at `<state-dir>/store.json`
+recording which store backs the ledger. Subsequent no-config commands
+(`list`, `stop`, `destroy`, `forget`, `reap`) read the sidecar and
+construct the matching store transparently — no `--config` flag needed.
+
+```yaml
+# kinoforge.yaml
+engine:
+  kind: fake  # or hosted / diffusers / comfyui / fal
+  precision: fp16
+models:
+  - kind: base
+    name: m
+    ref: fake://m
+    target: checkpoints
+store:
+  kind: s3
+  bucket: kf-prod
+  prefix: kinoforge
+```
+
+```bash
+# Host A — first command writes the sidecar
+$ kinoforge deploy --config kinoforge.yaml
+[instance overview] No running instances.
+deployed: instance='i-abc'
+
+# Host B — once it has its own sidecar (see "Multi-host setup" below),
+# `kinoforge list` reads the same S3 ledger as Host A
+$ kinoforge deploy --dry-run --config kinoforge.yaml  # writes Host-B sidecar
+$ kinoforge list
+  i-abc  provider=runpod
+```
+
+If you change `cfg.store` and re-run a cfg-bearing command, kinoforge
+hard-errors with `error: cfg.store ({...}) differs from sidecar ({...});
+remove <path> or revert cfg.store to switch`. Remove `state_dir/store.json`
+to explicitly opt into the switch — but read the migration steps below first.
+
+### Multi-host setup
+
+The sidecar is per-host: every host's `.kinoforge/store.json` must be
+written before its first state-mutating command. **The first command per
+host MUST be cfg-bearing** (e.g. `kinoforge deploy --dry-run --config
+kinoforge.yaml`) so the sidecar gets written. A no-config command on a
+fresh host with no sidecar falls back to a local `state_dir` ledger,
+meaning kinoforge will not see the instances tracked in the shared
+cloud ledger, and the duplicate-instance guard in `kinoforge deploy`
+may not fire.
+
+This is a documented v1 constraint. A future layer will add
+`--store-uri s3://kf-prod` (or `KINOFORGE_STORE_URI`) so that any
+command can bootstrap its own sidecar from a single flag.
+
+### Migration from a local ledger
+
+If you previously used a cloud `store.kind` for artifacts but the
+ledger lived locally (pre-Layer-T behaviour), kinoforge will refuse
+to switch to a cloud-backed ledger while in-flight pods are still
+recorded locally. The error is:
+
+```
+error: refusing to switch to cloud store (s3) while local ledger has
+entries; run `kinoforge destroy` on each local-tracked instance, then
+re-run
+```
+
+Migration steps:
+
+1. `kinoforge list` — inventory in-flight instances tracked locally.
+2. `kinoforge destroy --id <id>` for each — empties the local ledger.
+3. Upgrade to the Layer T release.
+4. `kinoforge deploy --config kinoforge.yaml` — writes the sidecar,
+   opens a fresh cloud-backed ledger.
+
 ### Multi-node coordination
 
-Multi-node deployments where several `kinoforge` workers point at one shared
-artifact store (S3 or GCS) are coordinated by a lease-based mutex returned
-from `ArtifactStore.acquire_lock(key, *, ttl_s)`. Local-disk stores use
-`fcntl.flock`; S3 uses conditional PUT (`If-None-Match: *`); GCS uses native
-`if_generation_match=0`.
+Once the sidecar wires every host at the same store, multi-node
+deployments where several `kinoforge` workers point at one shared
+artifact store (S3 or GCS) are coordinated by a lease-based mutex
+returned from `ArtifactStore.acquire_lock(key, *, ttl_s)`. Local-disk
+stores use `fcntl.flock`; S3 uses conditional PUT (`If-None-Match: *`);
+GCS uses native `if_generation_match=0`.
 
 Two surfaces use the lock automatically:
 
@@ -227,6 +328,8 @@ Two surfaces use the lock automatically:
    the cached profile.
 2. **Ledger mutations** (`Ledger.record`, `Ledger.forget`) — read-modify-write
    stays atomic across workers; entries cannot be lost to concurrent updates.
+   Under Layer T's cloud-backed ledger, this is the mechanism that lets
+   two CLI invocations on different hosts both land their entries.
 
 Semantics are best-effort: a holder that dies mid-hold has its lease expire
 after `ttl_s`, at which point another acquirer can steal. There are no
