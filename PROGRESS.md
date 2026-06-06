@@ -1201,7 +1201,8 @@ sentinel and the reusable substrate every future heartbeat consumer
 - [x] Task 5: `sweep` orchestration with caches + UNROUTABLE force-forget path — commit `94ff68e`
 - [x] Task 6: `kinoforge reap` rewrite + flags + JSONL formatter — commits `0340b4d` + review fix `c2713e1`
 - [x] Task 7: `kinoforge status` verdict line — commits `fbe00c8` + honest-fallback fix `f3c7567`
-- [x] Task 8: README + PROGRESS + examples + final gate + merge — commit `f6045ab` (this commit)
+- [x] Task 8: README + PROGRESS + examples + final gate + merge — commit `f6045ab`
+- [x] Merge to main via `--no-ff` — merge commit `7442808`
 
 **Key design decisions:**
 
