@@ -11,6 +11,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TextIO
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -180,26 +181,33 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     return parser
 
 
-def _print_instance_overview(ctx: SessionContext) -> None:
+def _print_instance_overview(
+    ctx: SessionContext, *, file: TextIO | None = None
+) -> None:
     """Print one-line overview per ledger entry; degrade gracefully on failure.
 
     Args:
         ctx: Per-invocation session context.
+        file: Output stream. ``None`` resolves to ``sys.stdout`` at call
+            time (capsys-safe).  Callers running in machine-readable
+            streaming modes (e.g. ``--stream-format=jsonl``) pass
+            ``sys.stderr`` so stdout stays pure JSONL for piping.
     """
+    out = file if file is not None else sys.stdout
     ledger, warn = ctx.ledger_safe()
     if ledger is None:
-        print(f"[instance overview] unavailable: {warn}")
+        print(f"[instance overview] unavailable: {warn}", file=out)
         return
     try:
         entries = ledger.entries()
     except Exception as exc:  # noqa: BLE001 — best-effort surface
-        print(f"[instance overview] unavailable: {type(exc).__name__}: {exc}")
+        print(f"[instance overview] unavailable: {type(exc).__name__}: {exc}", file=out)
         return
     now = time.time()
     if not entries:
-        print("[instance overview] No running instances.")
+        print("[instance overview] No running instances.", file=out)
         return
-    print("[instance overview]")
+    print("[instance overview]", file=out)
     for entry in entries:
         iid = entry.get("id", "?")
         created_at = float(entry.get("created_at", now))
@@ -207,7 +215,7 @@ def _print_instance_overview(ctx: SessionContext) -> None:
         age_h = age_s / 3600.0
         rate = float(entry.get("cost_rate_usd_per_hr", 0.0))
         spend = age_h * rate
-        print(f"  {iid}  age={age_h:.1f}h  est_spend=${spend:.4f}")
+        print(f"  {iid}  age={age_h:.1f}h  est_spend=${spend:.4f}", file=out)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -244,7 +252,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: config: {exc}", file=sys.stderr)
         return 1
 
-    _print_instance_overview(ctx)
+    # In JSONL streaming mode, route the instance-overview header to stderr
+    # so stdout stays pure JSONL for piping (`kinoforge batch ... | jq .`).
+    _print_instance_overview(
+        ctx,
+        file=sys.stderr if getattr(args, "stream_format", None) == "jsonl" else None,
+    )
 
     if args.cmd is None:
         parser.print_help()
