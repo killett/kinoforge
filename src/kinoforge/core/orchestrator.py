@@ -34,6 +34,7 @@ from kinoforge.core.errors import (
     ProvisionTimeout,
     ValidationError,
 )
+from kinoforge.core.heartbeat_loop import HeartbeatLoop, HeartbeatLoopProtocol
 from kinoforge.core.interfaces import (
     Artifact,
     CapabilityKey,
@@ -53,6 +54,7 @@ from kinoforge.core.interfaces import (
     PipelineState,
     Stage,
 )
+from kinoforge.core.lifecycle import Ledger
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
 from kinoforge.core.profiles import JsonImageProfileCache, JsonProfileCache
@@ -492,6 +494,7 @@ def deploy_session(
     state_dir: Path = Path(".kinoforge"),
     instance: Instance | None = None,
     tags: dict[str, str] | None = None,
+    heartbeat_loop_factory: Callable[..., HeartbeatLoopProtocol] | None = None,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -558,6 +561,14 @@ def deploy_session(
             orchestrator creates the pod on the cold path. Caller wins on
             key collision. Ignored when ``instance=`` is supplied (caller
             already owns the instance's tags).
+        heartbeat_loop_factory: Layer U seam — optional callable that
+            builds a :class:`HeartbeatLoopProtocol` given the kwargs
+            ``ledger``/``provider``/``instance_id``/``interval_s``.
+            Defaults to :class:`HeartbeatLoop`. Tests substitute a
+            non-threaded spy. Only called when
+            ``cfg.lifecycle().heartbeat_interval_s`` is set AND a
+            compute instance was created (hosted-engine sessions skip
+            the loop entirely).
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -702,9 +713,35 @@ def deploy_session(
         engine=resolved_engine,
         provider=resolved_provider,
     )
+
+    # Layer U — spawn a background HeartbeatLoop when configured. Gated on
+    # both (a) a positive interval AND (b) a compute instance to track.
+    # Hosted-engine sessions have no instance + no provider.heartbeat to
+    # call, so the loop would log exceptions every tick. The factory seam
+    # lets tests substitute a non-threaded spy.
+    hb_loop: HeartbeatLoopProtocol | None = None
+    interval = cfg.lifecycle().heartbeat_interval_s
+    if (
+        interval is not None
+        and interval > 0
+        and instance is not None
+        and resolved_provider is not None
+    ):
+        factory: Callable[..., HeartbeatLoopProtocol] = (
+            heartbeat_loop_factory or HeartbeatLoop
+        )
+        hb_loop = factory(
+            ledger=Ledger(store=store),
+            provider=resolved_provider,
+            instance_id=instance.id,
+            interval_s=interval,
+        )
+        hb_loop.start()
     try:
         yield session
     finally:
+        if hb_loop is not None:
+            hb_loop.stop()
         pool.close()
 
 
