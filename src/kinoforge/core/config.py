@@ -514,6 +514,25 @@ class SplitterConfig(BaseModel):
     kind: str = "heuristic"
 
 
+class StoreEncryptionConfig(BaseModel):
+    """Encryption settings for an ArtifactStore.
+
+    ``mode="default"`` lets the cloud provider apply its bucket-default encryption
+    (SSE-S3 on AWS, Google-managed on GCS). ``mode="kms"`` activates client-side
+    routing through a caller-owned KMS key.
+    """
+
+    mode: Literal["default", "kms"] = "default"
+    kms_key_id: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _key_required_for_kms(self) -> Self:
+        if self.mode == "kms" and not self.kms_key_id:
+            raise ValueError("encryption.mode='kms' requires encryption.kms_key_id")
+        return self
+
+
 class StoreConfig(BaseModel):
     """Optional artifact-store selector.
 
@@ -527,12 +546,18 @@ class StoreConfig(BaseModel):
         bucket: Cloud bucket name. Required when ``kind in {"s3", "gcs"}``;
             rejected when ``kind == "local"``.
         prefix: Cloud key prefix. Defaults to empty string.
+        encryption: Encryption configuration block (Layer W). Defaults to
+            ``StoreEncryptionConfig(mode="default")``.
+        signed_url_default_ttl_s: Default time-to-live in seconds for signed URLs
+            (Layer W). Defaults to 3600 (1 hour).
     """
 
     kind: Literal["local", "s3", "gcs"] = "local"
     root: Path | None = None
     bucket: str | None = None
     prefix: str = ""
+    encryption: StoreEncryptionConfig = Field(default_factory=StoreEncryptionConfig)
+    signed_url_default_ttl_s: int = 3600
 
     @model_validator(mode="after")
     def _check_kind_requirements(self) -> StoreConfig:
