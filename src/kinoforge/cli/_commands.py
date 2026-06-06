@@ -697,11 +697,14 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         provider_block["endpoints"] = f"unknown ({exc.__class__.__name__})"
 
     # Layer V — verdict line, same source of truth as `kinoforge reap`.
+    # When list_instances raises, we cannot trust pod presence to
+    # compute classify; surface HEARTBEAT_UNKNOWN rather than silently
+    # bias toward LIVE.
     try:
         live_ids = {i.id for i in provider.list_instances()}
-    except Exception:  # noqa: BLE001 — fall back to assume present
-        live_ids = {args.id}
-    provider_block["verdict"] = _classify_for_status(entry, live_ids, cfg, now)
+        provider_block["verdict"] = _classify_for_status(entry, live_ids, cfg, now)
+    except Exception:  # noqa: BLE001 — honest "I can't tell" verdict
+        provider_block["verdict"] = "HEARTBEAT_UNKNOWN"
 
     _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
     return 0
