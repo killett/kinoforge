@@ -7,9 +7,6 @@ preserves every import path that tests and the entry point rely on::
     from kinoforge.cli import _build_store   # used by tests/test_cli.py
     from kinoforge.cli import _build_parser  # used by tests/test_cli.py
     from kinoforge.cli import _build_ledger_block  # used by tests/test_cli.py
-
-Note: ``_cmd_gc`` calls ``store.uri_for(run_id, name)`` to locate artifacts.
-See ``cli._commands`` for the implementation.
 """
 
 from kinoforge.cli._commands import (
