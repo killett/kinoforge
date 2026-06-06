@@ -124,7 +124,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - `test_core_invariant.py` allowlist does not yet include a `splitters/` directory — first adapter splitter (LLM, scene-detect) must extend the allowlist.
 
 **Layer C / D residuals:**
-- Ledger remains local-only by CLI wiring — `cli._ledger(state_dir)` always constructs a `LocalArtifactStore(state_dir)` even when `store.kind` is `s3`/`gcs`. Cross-process safety for cloud-backed ledger is now available via Layer H (`store.acquire_lock`), but routing the CLI through the configured cloud store still needs a follow-up.
+- ~~Ledger remains local-only by CLI wiring — `cli._ledger(state_dir)` always constructs a `LocalArtifactStore(state_dir)` even when `store.kind` is `s3`/`gcs`.~~ — **CLOSED** by Phase 34 (Layer T). `cli/_ledger(state_dir)` helper deleted; every subcommand routes ledger access via `SessionContext.ledger()` backed by the configured store (sidecar at `state_dir/store.json`).
 - Default zero-arg store factories require env vars set — `register_store("s3", _default_factory)` reads `KINOFORGE_S3_BUCKET`; raises with helpful message when unset. The CLI doesn't use this path (constructs directly via `_build_store`).
 - No multipart threshold knob on cloud stores — SDK defaults (boto3 ~8 MiB) cover the common case; if real workloads need custom control, kwargs are a future layer.
 
@@ -152,16 +152,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 33 fully CLOSED — Layer S (`kinoforge status` reads the ledger + `kinoforge forget` recovery subcommand). HEAD at the Phase 33 T3 close-out commit. Test suite at 1222 passed, 8 skipped (3 existing + 2 live-gated HF smoke + 1 live-gated SkyPilot smoke + 2 live-gated keyframe fal smoke). Working tree clean. No live spend in Layer S (fully offline-tested).
+**Where we are:** Phase 34 fully CLOSED — Layer T (cloud-ledger CLI routing via SessionContext + `state_dir/store.json` sidecar). HEAD at the Phase 34 merge commit on `main`. Test suite at 1297 passed, 8 skipped. Working tree clean. No live spend in Layer T (fully offline-tested).
 
 **Read in this order:**
-1. The Phase 33 entry below (per-task SHAs + design decisions).
-2. `docs/superpowers/specs/2026-06-05-layer-s-cmd-status-ledger-design.md` for the Layer S design doc.
+1. The Phase 34 entry below (per-task SHAs + design decisions).
+2. `docs/superpowers/specs/2026-06-05-layer-t-cloud-ledger-cli-routing-design.md` for the Layer T design doc.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates: cloud-ledger CLI routing (PROGRESS:127 carry-forward — `cli._ledger(state_dir)` always constructs a `LocalArtifactStore`, even when `store.kind` is `s3`/`gcs`); batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam, not yet wired).
+**First unchecked task in fresh session:** pick next layer. Candidates: batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam, not yet wired); cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap (Layer T+1 candidate).
 
-**Budget remaining: ~$10.92 of $15.** Phase 33 spent $0.00 (Layer S offline-only).
+**Budget remaining: ~$10.92 of $15.** Phase 34 spent $0.00 (Layer T offline-only).
 
 ## Post-MVP
 
@@ -985,10 +985,7 @@ post-Layer-S (+24 net new: T1 adds 4 offline tests; T2 adds 16; T3 adds 4).
 
 **Out of scope (carry-forwards):**
 
-- **PROGRESS:127 — cloud-ledger CLI routing.** `cli._ledger(state_dir)` still
-  always constructs a `LocalArtifactStore(state_dir)` even when `store.kind`
-  is `s3`/`gcs`. Layer S explicitly did not touch `_ledger()` callers other
-  than `status` and `forget`. Layer S did NOT close this item.
+- ~~**PROGRESS:127 — cloud-ledger CLI routing.**~~ — **CLOSED** by Phase 34.
 - **Production-side `last_heartbeat` persistence.** Surface is wired
   (`_build_ledger_block` reads it when present); the writer (`Ledger.record`
   or a sibling `Ledger.touch(instance_id, last_heartbeat=...)` method) is a
@@ -999,3 +996,66 @@ post-Layer-S (+24 net new: T1 adds 4 offline tests; T2 adds 16; T3 adds 4).
   (soft migration accepted instead).
 
 Closes PROGRESS:120.
+
+### Phase 34 — Layer T (cloud-ledger CLI routing)
+
+Routes the CLI ledger through `cfg.store` (s3/gcs) via a JSON sidecar in
+`state_dir/store.json`. Introduces `SessionContext` threaded through every
+subcommand. Refactors `Ledger._compute_uri` to use the universal
+`store.uri_for` ABC. Splits the 1000-LOC `cli.py` monolith into a `cli/`
+package (`_main`, `_commands`, `context`, `sidecar`).
+
+- [x] Task 1: `Ledger._compute_uri` uses `store.uri_for` — commits `18e6837` + `0ed8f67`
+- [x] Task 2: `SidecarMismatch` + `SidecarMigrationBlocked` errors — commits `878d76f` + `f0f3bb8`
+- [x] Task 3: `cli.py` → `cli/` package promotion — commit `13d5a91`
+- [x] Task 4: `cli/sidecar.py` module + 27 tests — commits `2552b0e` + `0575c39`
+- [x] Task 5: `cli/context.py` `SessionContext` + 16 tests — commits `a067a46` + `4668537`
+- [x] Task 6: `cli/` split into `_main` + `_commands` (mechanical, no behaviour change) — commits `035b524` + `f9be21f`
+- [x] Task 7: `SessionContext` wired through `main()`; every `_cmd_*` signature migrated; 24 new tests in `tests/cli/test_commands_routing.py` + `tests/cli/test_main_flow.py` — commits `710b679` + `ddab26b`
+- [x] Task 8: Multi-node lock integration test (Layer T's headline win) — commit `2ebeaad`
+- [x] Task 9: README + PROGRESS + final gate + merge — *this commit*
+
+**Key design decisions:**
+- Sidecar JSON in `state_dir/store.json` over global `--config` flag (Q1=A):
+  no breaking flag change for single-user CLI; no-config commands like
+  `kinoforge list` discover the store transparently.
+- Hard error on cfg-vs-sidecar mismatch (Q2=A): mirrors `kinoforge gc
+  --config` precedent — explicit > silent.
+- Hard block on first cloud cmd when local ledger non-empty (Q3=A):
+  prevents silently orphaning in-flight pods.
+- Best-effort overview when cloud creds unavailable (Q4=A): keeps
+  `kinoforge --help` working during credential rotation.
+- `SessionContext` over thread-cfg-through-9-fns: single integration
+  point for every future per-session field (streaming logs, spend cap,
+  multi-tenant profiles, daemon mode).
+- `cli.py` → `cli/` package: file was 1000+ LOC; splitting now while
+  the surface is small avoids paying it later when more layers land here.
+
+**Test count:** 1222 → 1297 passed (+75 net new across T1, T2, T4, T5, T7, T8).
+
+**Known limitations / carry-forwards:**
+- Cross-machine bootstrap requires every host's first command to be
+  cfg-bearing. `--store-uri` / `KINOFORGE_STORE_URI` is a Layer T+1
+  candidate (non-breaking, additive).
+- Two concurrent cfg-bearing cmds on the same `state_dir` with different
+  configs: last writer wins. Documented as operator-side concern.
+- Lock-contention surfacing in non-batch handlers is a pre-existing
+  gap inherited from Phase 18 (`LockTimeout` is a `KinoforgeError` but
+  only `_cmd_batch` has the catch arm). Layer T does not extend the
+  catch sites.
+- No real-cloud verification — PROGRESS:116 (S3 / GCS real-cloud) is
+  the gate for that.
+
+**Established patterns reinforced:**
+- `SessionContext` lazy-built and identity-cached per invocation, so
+  `kinoforge --help` never touches cloud SDKs.
+- `ledger_safe()` for the always-on instance overview — never raises,
+  prints `unavailable: <reason>` header on store-construction failure.
+- Spec §9 error matrix is honoured at the `main()` envelope:
+  `SidecarMismatch` / `SidecarMigrationBlocked` / corrupt-sidecar
+  `PydanticValidationError` / config `FileNotFoundError` all exit 1
+  with clean stderr.
+- Parametrized field-mirror lockdown for `SidecarRecord` matches the
+  Phase 16 `484e368` post-merge fix pattern.
+
+Closes PROGRESS:127.
