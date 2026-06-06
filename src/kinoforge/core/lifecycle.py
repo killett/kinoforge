@@ -349,6 +349,14 @@ def warm_reuse_or_create(
 # ---------------------------------------------------------------------------
 
 
+# Keys that ``Ledger.record`` owns. ``Ledger.touch`` silently filters them
+# out of its ``**extra`` payload so a future Layer V consumer cannot
+# accidentally clobber an instance's identity by passing them through.
+_PROTECTED_LEDGER_KEYS: frozenset[str] = frozenset(
+    {"id", "provider", "tags", "created_at", "cost_rate_usd_per_hr"}
+)
+
+
 class Ledger:
     """Persistent record of every launched instance, backed by an ArtifactStore.
 
@@ -504,6 +512,77 @@ class Ledger:
             updated = [e for e in entries if e.get("id") != instance_id]
             if len(updated) != len(entries):
                 self._write_entries(updated)
+
+    def touch(
+        self,
+        instance_id: str,
+        *,
+        last_heartbeat: float | None = None,
+        **extra: float | int | str | None,
+    ) -> bool:
+        """Update fields on an existing ledger entry in place (strict update).
+
+        Strict update: an unknown ``instance_id`` is a silent no-op (returns
+        False). Insertion remains the sole responsibility of :meth:`record`
+        — touch never resurrects a forgotten entry.
+
+        Args:
+            instance_id: Identity of the entry to mutate.
+            last_heartbeat: Float seconds-since-epoch heartbeat timestamp.
+                ``None`` skips the field entirely.
+            **extra: Forward-compat seam for additional fields the touch
+                consumer wants to thread through (e.g. the sentinel
+                ``heartbeat_thread_tick`` written by
+                :class:`kinoforge.core.heartbeat_loop.HeartbeatLoop`).
+                Keys in the protected set
+                ``{"id", "provider", "tags", "created_at", "cost_rate_usd_per_hr"}``
+                are silently filtered so a future caller cannot rewrite
+                ``record``-owned fields. ``None`` values are skipped.
+
+        Returns:
+            ``True`` iff a disk write happened.  ``False`` on unknown id,
+            no-op kwargs (all ``None``), or when every proposed value
+            already equals the on-disk value (skip-unchanged guard against
+            lock thrash for sub-second-cadence consumers).
+
+        Threading:
+            Acquires ``self._store.acquire_lock(f"ledger/{run_id}",
+            ttl_s=self._mutate_ttl_s)`` — the same lock key/ttl as
+            :meth:`record` and :meth:`forget`.  When all kwargs are
+            ``None`` the lock is not acquired (cheap fast-path).
+
+        Sentinel-gate contract (forward-compat — no reaper consumes it
+        today): code that consults ``last_heartbeat`` for a reaping or
+        destructive decision MUST first check the sentinel field
+        ``heartbeat_thread_tick``.  If
+        ``now - heartbeat_thread_tick > 3 * heartbeat_interval_s``,
+        treat ``last_heartbeat`` as untrustworthy — the writer thread
+        may have crashed.  See Layer U spec §3.4 for the rationale.
+        """
+        proposed: dict[str, float | int | str] = {}
+        if last_heartbeat is not None:
+            proposed["last_heartbeat"] = float(last_heartbeat)
+        for key, value in extra.items():
+            if key in _PROTECTED_LEDGER_KEYS or value is None:
+                continue
+            proposed[key] = value
+        if not proposed:
+            return False
+        with self._store.acquire_lock(
+            f"ledger/{self._run_id}", ttl_s=self._mutate_ttl_s
+        ):
+            entries = self._read_entries()
+            for entry in entries:
+                if entry.get("id") == instance_id:
+                    changed = False
+                    for key, value in proposed.items():
+                        if entry.get(key) != value:
+                            entry[key] = value
+                            changed = True
+                    if changed:
+                        self._write_entries(entries)
+                    return changed
+        return False
 
 
 # ---------------------------------------------------------------------------

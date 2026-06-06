@@ -65,6 +65,47 @@ Transient provider failures (network outage, SDK 5xx) exit 2.
 Pass `--config PATH` (or `-c PATH`) to fill missing lifecycle fields on
 legacy entries written before Layer S.
 
+When the entry carries a `last_heartbeat` field, `status` also surfaces
+it as an ISO timestamp. The writer is the Layer U `HeartbeatLoop` — see
+*Heartbeat persistence* below for how to enable it.
+
+### Heartbeat persistence (Layer U)
+
+Set `lifecycle.heartbeat_interval_s` in your YAML to enable background
+heartbeat writes from `kinoforge generate` / `kinoforge batch`:
+
+```yaml
+lifecycle:
+  budget: 25.0
+  heartbeat_interval_s: 30   # seconds; null (the default) disables
+```
+
+While a `deploy_session` is open, a daemon thread calls
+`provider.heartbeat(id)` and persists the timestamp to the ledger as
+`last_heartbeat`. A later `kinoforge status --id <id>` from any
+process — even on a different machine when the ledger is on S3 or GCS
+— shows "last seen N seconds ago".
+
+**Operator guidance:** values < 10 risk ledger lock contention at
+scale. The recommended starting point is 30s; tune up if your fleet
+size makes the per-tick lock acquisition visible in `kinoforge gc`
+timings.
+
+**Crash-safety contract.** Every successful tick writes a sentinel
+`heartbeat_thread_tick` alongside `last_heartbeat`. If the loop ever
+dies silently (logged via `kinoforge.core.heartbeat_loop` at ERROR),
+`kinoforge status` emits an advisory after `3 * heartbeat_interval_s`:
+
+```
+advisory: heartbeat thread stale (90s since last tick)
+```
+
+Any future code that consults `last_heartbeat` for a destructive
+decision (e.g. a heartbeat-aware reaper) **MUST** check sentinel
+freshness first — otherwise a crashed loop would look indistinguishable
+from a healthy quiet session and the reaper would destroy live pods.
+See `Ledger.touch`'s docstring for the formal contract.
+
 ### `kinoforge forget --id <id>` — clear a stale ledger entry
 
 Removes a single entry from the local ledger without touching the
