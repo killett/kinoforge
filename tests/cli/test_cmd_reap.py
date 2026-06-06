@@ -94,9 +94,10 @@ def test_reap_empty_ledger_prints_message_and_exits_zero(
     """Empty ledger → exit 0 with informational message."""
     ctx = _ctx([])
     code = _cmd_reap(_args(), ctx)
-    out = capsys.readouterr().out + capsys.readouterr().err
+    captured = capsys.readouterr()
     assert code == 0
-    assert "empty" in out.lower() or "no" in out.lower()
+    combined = captured.out + captured.err
+    assert "empty" in combined.lower() or "no" in combined.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +155,18 @@ def test_reap_apply_include_orphans_extends_policy() -> None:
     assert Verdict.ORPHAN_REAP in mock_sweep.call_args.kwargs["policy"].act_verdicts
 
 
+def test_reap_apply_force_forget_extends_policy() -> None:
+    """--force-forget with --apply adds UNROUTABLE to policy."""
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.reaper_actor import SweepReport
+
+    ctx = _ctx([{"id": "i-1", "provider": "fake"}])
+    with patch("kinoforge.cli._commands.sweep") as mock_sweep:
+        mock_sweep.return_value = SweepReport(snapshot={}, actions=[])
+        _cmd_reap(_args(apply=True, force_forget=True), ctx)
+    assert Verdict.UNROUTABLE in mock_sweep.call_args.kwargs["policy"].act_verdicts
+
+
 # ---------------------------------------------------------------------------
 # --strict
 # ---------------------------------------------------------------------------
@@ -183,6 +196,29 @@ def test_reap_strict_no_uncertainty_exits_0() -> None:
         mock_sweep.return_value = SweepReport(snapshot=snapshot, actions=[])
         code = _cmd_reap(_args(strict=True), ctx)
     assert code == 0
+
+
+def test_reap_id_flag_restricts_sweep_to_one_entry() -> None:
+    """--id X passes a ledger that surfaces only one entry to sweep."""
+    from kinoforge.core.reaper_actor import SweepReport
+
+    entries = [
+        {"id": "i-1", "provider": "fake"},
+        {"id": "i-2", "provider": "fake"},
+    ]
+    ctx = _ctx(entries)
+
+    with patch("kinoforge.cli._commands.sweep") as mock_sweep:
+        mock_sweep.return_value = SweepReport(snapshot={}, actions=[])
+        _cmd_reap(_args(id="i-1"), ctx)
+
+    # sweep is called with a ledger whose entries() returns only the
+    # matching entry — verifies the --id filter took effect at the
+    # boundary the implementation chose.
+    passed_ledger = mock_sweep.call_args.kwargs["ledger"]
+    filtered = list(passed_ledger.entries())
+    assert len(filtered) == 1
+    assert filtered[0]["id"] == "i-1"
 
 
 # ---------------------------------------------------------------------------

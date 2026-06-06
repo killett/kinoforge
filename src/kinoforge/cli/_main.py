@@ -160,7 +160,7 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_reap.add_argument(
         "--force-forget",
         action="store_true",
-        help="extend --apply to UNROUTABLE entries",
+        help="also forget ledger entries whose provider can no longer be reached (implies --apply)",
     )
     p_reap.add_argument(
         "--strict",
