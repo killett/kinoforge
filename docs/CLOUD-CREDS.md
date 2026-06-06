@@ -30,7 +30,7 @@ The pattern: gitignored `<provider>/` directory + tracked entry in this file.
 | Provider     | Status                       | Files                                               | Identity                                                            |
 |--------------|------------------------------|-----------------------------------------------------|---------------------------------------------------------------------|
 | GCP          | ✅ Bootstrapped               | `.gcp/kinoforge-sa.json`, `.gcp/gcloud-config/`     | `kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com`     |
-| AWS          | ⏳ Awaiting user bootstrap    | `.aws/credentials`, `.aws/config`                   | `kinoforge-ci` (to be created by user; see `.aws/README.md`)        |
+| AWS          | ✅ Bootstrapped               | `.aws/credentials`, `.aws/config`                   | `kinoforge-ci` (account `<AWS_ACCOUNT>`, policy `AmazonS3FullAccess`) |
 | fal.ai       | ✅ Bootstrapped               | `.env` → `FAL_KEY`                                  | personal fal API key                                                 |
 | HuggingFace  | ✅ Bootstrapped               | `.env` → `HF_TOKEN`                                 | personal HF read-only token                                          |
 | CivitAI      | ✅ Bootstrapped               | `.env` → `CIVITAI_TOKEN`                            | personal CivitAI API key                                             |
@@ -67,17 +67,24 @@ for AWS/GCS.
   Uniform bucket-level access ON. Public access prevention ENFORCED.
   Lifecycle: delete objects + abort multipart at age 1 day.
 
-## AWS — bootstrap protocol (one-time, user-side)
+## AWS — provisioning history
 
-See `.aws/README.md` for the 6-step bootstrap. Summary:
+- 2026-06-06: IAM user `kinoforge-ci` created by operator in account
+  `<AWS_ACCOUNT>`. Policy `AmazonS3FullAccess` attached. Access key pasted
+  directly into `/workspace/.aws/credentials` (gitignored).
+- 2026-06-06: bucket `s3://<S3_BUCKET>` created in
+  `us-east-1`. Public access block enforced (all 4 flags). Lifecycle: object
+  expiration + abort-incomplete-multipart, both at age 1 day.
+- 2026-06-06: end-to-end S3 smoke (boto3 default chain + bucket
+  put/get/delete) verified clean.
 
-1. User creates IAM user `kinoforge-ci` in AWS Console with `AmazonS3FullAccess`.
-2. User creates access key (CLI use case) and pastes both halves directly
-   into `/workspace/.aws/credentials` (NOT into chat).
-3. Claude verifies via `boto3.client("sts").get_caller_identity()`.
-4. Claude creates the test bucket (`kinoforge-realcloud-tests-<account-id>`),
-   sets lifecycle, scope-down policy. All subsequent layer work needs no
-   further user-side action.
+### Scope-down follow-up (operator action recommended)
+
+`AmazonS3FullAccess` is broader than required. Once the layer is shipped,
+operator should swap it for the scoped policy in `.aws/README.md` (limits
+the `kinoforge-ci` key to the `kinoforge-realcloud-tests-*` bucket prefix).
+This requires IAM perms that the `kinoforge-ci` key does NOT itself hold;
+the swap is done in the AWS Console.
 
 ## Rotation policy
 
