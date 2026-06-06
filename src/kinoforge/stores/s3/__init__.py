@@ -61,7 +61,7 @@ class S3ArtifactStore(ArtifactStore):
         self._cfg = cfg if cfg is not None else StoreConfig(kind="s3", bucket=bucket)
         _retry_config = {"max_attempts": 3, "mode": "standard"}
         if client is None:
-            import boto3  # type: ignore[import-untyped]  # noqa: PLC0415 — lazy: tests inject a fake and never trip this
+            import boto3  # noqa: PLC0415 — lazy: tests inject a fake and never trip this
             from botocore.config import (  # noqa: PLC0415
                 Config as BotocoreConfig,
             )
