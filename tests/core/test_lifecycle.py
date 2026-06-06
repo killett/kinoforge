@@ -374,3 +374,81 @@ def test_entries_reads_legacy_entry_without_new_keys(tmp_path: Path) -> None:
     assert entries[0]["id"] == "legacy-1"
     assert "idle_timeout_s" not in entries[0]
     assert "max_age_s" not in entries[0]
+
+
+# ---------------------------------------------------------------------------
+# Phase 34 T1 — _compute_uri delegates to store.uri_for (no isinstance switch)
+# ---------------------------------------------------------------------------
+
+
+def test_ledger_compute_uri_delegates_to_store_uri_for(tmp_path: Path) -> None:
+    """Bug-catch: prevents reintroduction of the isinstance switch.
+
+    A future edit that re-adds isinstance(LocalArtifactStore) checking
+    breaks the universal ABC contract. This test calls _compute_uri on a
+    NON-Local store and asserts it returns the result of store.uri_for —
+    not raises TypeError.
+    """
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.s3 import S3ArtifactStore
+    from tests.stores.conftest import FakeS3Client
+
+    fake = FakeS3Client()
+    store = S3ArtifactStore(bucket="b", prefix="p", client=fake)
+
+    ledger = Ledger(store=store, run_id="_lifecycle")
+
+    assert ledger._compute_uri() == store.uri_for("_lifecycle", "ledger.json")
+
+
+def test_ledger_round_trip_against_fake_s3(tmp_path: Path) -> None:
+    """Record + entries() round-trips through fake S3 store."""
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.s3 import S3ArtifactStore
+    from tests.stores.conftest import FakeS3Client
+
+    fake = FakeS3Client()
+    store = S3ArtifactStore(bucket="b", prefix="p", client=fake)
+    ledger = Ledger(store=store, run_id="_lifecycle")
+
+    inst = Instance(
+        id="i-1",
+        provider="local",
+        status="ready",
+        tags={"kinoforge_key": "abc"},
+        created_at=1000.0,
+        cost_rate_usd_per_hr=0.5,
+    )
+    ledger.record(inst)
+
+    entries = ledger.entries()
+    assert len(entries) == 1
+    assert entries[0]["id"] == "i-1"
+    assert entries[0]["provider"] == "local"
+
+
+def test_ledger_round_trip_against_fake_gcs(tmp_path: Path) -> None:
+    """Same contract against fake GCS — proves both clouds work."""
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.gcs import GCSArtifactStore
+    from tests.stores.conftest import FakeGCSClient
+
+    fake = FakeGCSClient()
+    store = GCSArtifactStore(
+        bucket="b",
+        prefix="p",
+        client=fake,
+        not_found_exc=fake.NotFound,
+    )
+    ledger = Ledger(store=store, run_id="_lifecycle")
+
+    inst = Instance(
+        id="i-2",
+        provider="local",
+        status="ready",
+        tags={},
+        created_at=2000.0,
+        cost_rate_usd_per_hr=0.0,
+    )
+    ledger.record(inst)
+    assert [e["id"] for e in ledger.entries()] == ["i-2"]

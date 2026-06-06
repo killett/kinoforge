@@ -399,20 +399,15 @@ class Ledger:
     def _compute_uri(self) -> str:
         """Return the store URI for the ledger JSON.
 
-        We derive the URI deterministically from the store's internal path
-        rather than requiring a prior ``put_json`` call.
+        Delegates to ``self._store.uri_for`` — the universal ABC (Phase 11 /
+        Layer A) that every artifact store implements. The previous
+        isinstance(LocalArtifactStore) switch was a vestige from before
+        that ABC existed.
 
         Returns:
             Absolute URI string for the ledger JSON file.
         """
-        from kinoforge.stores.local import LocalArtifactStore
-
-        if isinstance(self._store, LocalArtifactStore):
-            return str(self._store._path(self._run_id, self._LEDGER_NAME))
-        # Fallback: compute from a dummy put path (won't exist yet but consistent)
-        raise TypeError(  # pragma: no cover
-            f"Ledger._compute_uri: unsupported store type {type(self._store).__name__!r}"
-        )
+        return self._store.uri_for(self._run_id, self._LEDGER_NAME)
 
     def _read_entries(self) -> list[dict]:  # type: ignore[type-arg]
         """Load existing entries from the store; return empty list if not yet written.
