@@ -94,6 +94,22 @@ def test_redact_substitutes_kms_key() -> None:
     assert out["SSEKMSKeyId"] == "<S3_KMS_KEY>"
 
 
+def test_redact_extra_subs_applied_before_account_rule() -> None:
+    """Regression: KMS ARN must be substituted before account-id regex strips the account id."""
+    payload = {"SSEKMSKeyId": "arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/abcdef-1234"}
+    out = _redact(
+        payload,
+        extra_subs={
+            "arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/abcdef-1234": "<S3_KMS_KEY>"
+        },
+    )
+    assert out["SSEKMSKeyId"] == "<S3_KMS_KEY>"
+    # The original UUID + account id must both be gone.
+    blob = json.dumps(out)
+    assert "abcdef-1234" not in blob
+    assert "<AWS_ACCOUNT>" not in blob
+
+
 def test_redact_roundtrip_no_secrets_remain() -> None:
     """Full round-trip: a payload with every redactable token leaves no secret."""
     payload = {

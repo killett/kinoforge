@@ -106,18 +106,21 @@ def _redact(payload: Any, extra_subs: dict[str, str] | None = None) -> Any:
             Non-serialisable values (e.g. ``datetime``, ``bytes``) are
             coerced to strings by :class:`_SafeEncoder`.
         extra_subs: Additional literal-string substitutions, e.g.
-            ``{"arn:aws:kms:…": "<S3_KMS_KEY>"}``. Applied after the
-            built-in regex rules.
+            ``{"arn:aws:kms:…": "<S3_KMS_KEY>"}``. Applied BEFORE the
+            built-in regex rules so full identifiers (e.g. KMS ARNs with
+            account IDs embedded) match before account-id regex mutates them.
 
     Returns:
         A new structure with secrets replaced.
     """
     subs = dict(extra_subs or {})
     text = json.dumps(payload, cls=_SafeEncoder)
-    for pattern, replacement in _REDACT_RULES:
-        text = pattern.sub(replacement, text)
+    # extra_subs FIRST so full identifiers (KMS ARNs, project paths) match before regex
+    # rules mutate sub-segments (account ids, project ids).
     for needle, replacement in subs.items():
         text = text.replace(needle, replacement)
+    for pattern, replacement in _REDACT_RULES:
+        text = pattern.sub(replacement, text)
     out: Any = json.loads(text)
     return _drop_secret_headers(out)
 
