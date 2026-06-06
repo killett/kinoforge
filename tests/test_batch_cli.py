@@ -269,3 +269,148 @@ def test_one_bad_entry_continues_others(
     summary = json.loads((state_dir / "b" / "_batch_summary.json").read_text())
     statuses = {e["run_id"]: e["status"] for e in summary["entries"]}
     assert statuses == {"x": "ok", "y": "fail", "z": "ok"}
+
+
+def _run_batch(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    extra_args: list[str] | None = None,
+) -> tuple[int, str, str]:
+    """Run `kinoforge batch` against a 3-entry local-fake manifest.
+
+    Returns (exit_code, stdout, stderr) so callers can assert on each.
+    """
+    cfg_path = _write_local_fake_cfg(tmp_path)
+    manifest = [
+        {"prompt": "a", "mode": "t2v", "run_id": "x"},
+        {"prompt": "b", "mode": "t2v", "run_id": "y"},
+        {"prompt": "c", "mode": "t2v", "run_id": "z"},
+    ]
+    manifest_path = tmp_path / "m.yaml"
+    manifest_path.write_text(yaml.safe_dump(manifest))
+    state_dir = tmp_path / "state"
+
+    args = [
+        "--state-dir",
+        str(state_dir),
+        "batch",
+        "-c",
+        str(cfg_path),
+        "--manifest",
+        str(manifest_path),
+        "--batch-id",
+        "b",
+    ]
+    if extra_args:
+        args.extend(extra_args)
+
+    rc = main(args)
+    cap = capsys.readouterr()
+    return rc, cap.out, cap.err
+
+
+def test_stream_format_human_default_emits_per_entry_lines(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC7. Default --stream-format=human emits one START + one terminal
+    line per entry, plus the summary table.
+
+    Bug: a wiring regression that drops on_event would silently revert
+    Layer L-T4 to the pre-streaming behaviour (header + summary only).
+    """
+    rc, out, _err = _run_batch(tmp_path, capsys, extra_args=[])
+    assert rc == 0
+    # Match the full structural prefix `] START ` so a prompt containing
+    # the literal " START " can't inflate the count — the closing `]` is
+    # the end of the `[idx/run_id]` block, never inside a quoted prompt.
+    assert out.count("] START ") == 3
+    # "] OK " discriminates streaming-event OK lines from summary-table OK lines
+    # (streaming: "[b] [1/x] OK 0.0s ..."  vs  summary: "  x  OK    ...").
+    assert out.count("] OK ") == 3
+    assert "summary:" in out
+    assert "batch-id: b" in out
+
+
+def test_stream_format_jsonl_pure_stdout_and_summary_terminator(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC8. --stream-format=jsonl: every stdout line is a JSON object;
+    final line carries kind='batch_summary'; manifest-loaded header is
+    on stderr; no human summary table on stdout.
+
+    Bug: a leaked `print(header)` on stdout in jsonl mode would corrupt
+    downstream pipes like `kinoforge batch ... | jq .` with a non-JSON line.
+    """
+    rc, out, err = _run_batch(tmp_path, capsys, extra_args=["--stream-format=jsonl"])
+    assert rc == 0
+
+    # AC8 contract: stdout is PURE JSONL — every non-empty line must parse.
+    # No filtering: a single non-JSON line on stdout breaks `| jq .` in
+    # production, so the test must catch any leak.  The instance-overview
+    # header and the manifest-loaded header are both routed to stderr in
+    # jsonl mode (gated in cli/_main.py and _cmd_batch respectively).
+    lines = [line for line in out.splitlines() if line.strip()]
+    parsed = [json.loads(line) for line in lines]  # raises on any non-JSON line
+
+    # Terminal object is the batch_summary marker.
+    assert parsed[-1]["kind"] == "batch_summary"
+    assert parsed[-1]["batch_id"] == "b"
+
+    # No human summary table on stdout.
+    assert "summary:" not in out
+    # Both headers (manifest loaded + instance overview) on stderr.
+    assert "manifest loaded" in err
+    assert "[instance overview]" in err
+    # Verify start + finish events for all 3 entries appear in the JSONL.
+    starts = [p for p in parsed if p.get("kind") == "entry_start"]
+    finishes = [p for p in parsed if p.get("kind") == "entry_finish"]
+    assert len(starts) == 3
+    assert len(finishes) == 3
+
+
+def test_stream_format_none_preserves_pre_layer_behaviour(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC9. --stream-format=none: only the manifest-loaded header and the
+    summary block reach stdout; no mid-run START lines.
+
+    Bug: a wiring regression that routes NoOpFormatter.emit to
+    HumanFormatter.emit would silently re-stream the per-entry lines
+    despite the opt-out.
+    """
+    rc, out, _err = _run_batch(tmp_path, capsys, extra_args=["--stream-format=none"])
+    assert rc == 0
+    assert " START " not in out
+    assert "manifest loaded" in out
+    assert "summary:" in out
+    assert "batch-id: b" in out
+
+
+def test_stream_format_invalid_choice_exits_two(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC10. argparse rejects --stream-format=xyz with exit code 2.
+
+    Bug: a misspelled flag that silently fell back to the default
+    instead of failing would mask configuration errors in CI.
+    """
+    cfg_path = _write_local_fake_cfg(tmp_path)
+    manifest_path = tmp_path / "m.yaml"
+    manifest_path.write_text(yaml.safe_dump([{"prompt": "x", "mode": "t2v"}]))
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "--state-dir",
+                str(tmp_path / "state"),
+                "batch",
+                "-c",
+                str(cfg_path),
+                "--manifest",
+                str(manifest_path),
+                "--stream-format=xyz",
+            ]
+        )
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "stream-format" in err.lower() or "invalid choice" in err.lower()

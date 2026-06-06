@@ -4,44 +4,44 @@
     {
       "id": 1,
       "subject": "Task 1: Extract batch dataclasses to core/batch_models.py",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Move `BatchEntry`, `BatchManifest`, `BatchOutcome`, `BatchResult` out of `core/batch.py` into a new `core/batch_models.py` so `core/batch_events.py` (Task 2) can import `BatchEntry` without a cycle. Pure refactor; no semantic change.\n\n**Files:**\n- Create: `src/kinoforge/core/batch_models.py`\n- Modify: `src/kinoforge/core/batch.py` (remove model defs at lines 74-259; add re-exports at top)\n\n**Acceptance Criteria:**\n- existing import sites unchanged via re-export\n- new import path works\n- 1297 tests pass unmodified\n- lint+mypy clean\n- invariant scan passes\n\n**Verify:** `pixi run test -q` -> 1297 passed / 8 skipped.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/batch.py\", \"src/kinoforge/core/batch_models.py\"], \"verifyCommand\": \"pixi run test -q && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"existing import sites unchanged via re-export\", \"new import path works\", \"1297 tests pass unmodified\", \"lint+mypy clean\", \"invariant scan passes\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Create core/batch_events.py (BatchEvent + _LockedEmitter)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Ship the streaming-event data contract and the thread-safe emitter helper.\n\n**Files:**\n- Create: `src/kinoforge/core/batch_events.py`\n- Create: `tests/core/test_batch_events.py`\n\n**Acceptance Criteria:**\n- BatchEvent frozen (mutation raises)\n- JSON roundtrip identity-equal\n- Lock serializes 4-worker barrier stress\n- None-callback noop + still tracks _started_idxs\n- has_started reflects entry_start adds\n- field-nullability validators enforce kind contract\n\n**Verify:** `pixi run test tests/core/test_batch_events.py -v` -> 6 tests pass; full suite -> 1303 passed / 8 skipped.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/batch_events.py\", \"tests/core/test_batch_events.py\"], \"verifyCommand\": \"pixi run test tests/core/test_batch_events.py -v && pixi run test -q && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"BatchEvent frozen\", \"JSON roundtrip identity-equal\", \"Lock serializes 4-worker stress\", \"None-callback noop + tracking\", \"has_started reflects entry_start adds\", \"field-nullability validators enforce kind contract\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: Thread on_event through batch_generate (5 emission sites)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Wire the emitter into `batch_generate` so streaming events fire at build-fail, worker-start, per-entry-ok, per-entry-fail, and batch-fatal sites. Backward-compatible: `on_event=None` is byte-identical.\n\n**Files:**\n- Modify: `src/kinoforge/core/batch.py` (signature + `_run_with_clock` + `_mark_remaining_after_fatal` + 5 emission sites)\n- Modify: `tests/core/test_batch.py` (5 new ACs)\n\n**Acceptance Criteria:**\n- AC1 on_event=None byte-identical to today\n- AC2 start_count == finish_count == len(entries) across 4 exit paths\n- AC3 entry_start precedes entry_finish per idx\n- AC4 4-worker lock-stress: no overlapping windows\n- AC5 build-fail emits both events back-to-back with duration_s=0.0\n- AC6 batch-fatal: interrupted for raising/in-flight, synth start+finish for never-started aborted\n\n**Verify:** `pixi run test tests/core/test_batch.py -v -k \"on_event or stream\"` passes; full suite -> 1308 passed / 8 skipped.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/batch.py\", \"tests/core/test_batch.py\"], \"verifyCommand\": \"pixi run test tests/core/test_batch.py -v && pixi run test -q && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"AC1 on_event=None byte-identical\", \"AC2 invariant across 4 exit paths\", \"AC3 start-before-finish per idx\", \"AC4 lock-stress no overlaps\", \"AC5 build-fail emits both\", \"AC6 batch-fatal: interrupted+aborted with start synth for never-started\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Create cli/batch_formatters.py (Human / JSONL / NoOp)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Three formatters that consume `BatchEvent` and render to a stream. `HumanFormatter` carries the summary-table render lifted verbatim from `_cmd_batch`.\n\n**Files:**\n- Create: `src/kinoforge/cli/batch_formatters.py`\n- Create: `tests/cli/test_batch_formatters.py`\n\n**Acceptance Criteria:**\n- Human emit entry_start shape\n- Human emit entry_finish(ok) shape\n- Human render_summary matches legacy table\n- JSONL emit roundtrips back to BatchEvent\n- JSONL render_summary writes one batch_summary JSON object\n- NoOp emit writes nothing; NoOp render_summary matches Human\n- build_formatter dispatch + KeyError on unknown kind\n\n**Verify:** `pixi run test tests/cli/test_batch_formatters.py -v` -> 8 tests pass; full suite -> 1316 passed / 8 skipped.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/batch_formatters.py\", \"tests/cli/test_batch_formatters.py\"], \"verifyCommand\": \"pixi run test tests/cli/test_batch_formatters.py -v && pixi run test -q && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"Human emit start shape\", \"Human emit finish ok shape\", \"Human summary matches legacy\", \"JSONL emit roundtrips\", \"JSONL summary batch_summary object\", \"NoOp emit silent\", \"NoOp summary matches Human\", \"build_formatter dispatch + KeyError on unknown\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: Wire --stream-format into cli/_commands.py + cli/_main.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3, 4],
       "description": "**Goal:** Add the CLI flag, pass `formatter.emit` to `batch_generate`, route the summary render through the formatter, confirm existing tests pass under the new `human` default.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py` (add `--stream-format` to batch subparser)\n- Modify: `src/kinoforge/cli/_commands.py` (build formatter, pass `on_event`, replace summary block)\n- Modify: `tests/cli/test_batch.py` (4 new ACs)\n\n**Acceptance Criteria:**\n- AC7 --stream-format=human default emits per-entry START + terminal lines + summary\n- AC8 --stream-format=jsonl: every stdout line is JSON; final line kind=batch_summary; manifest-loaded header on stderr; no human summary table\n- AC9 --stream-format=none: only header + summary (no START lines)\n- AC10 invalid choice exits 2\n- existing 6 _cmd_batch tests pass unchanged\n\n**Verify:** `pixi run test tests/cli/test_batch.py -v` -> 10 pass (6 existing + 4 new); full suite -> 1320 passed / 8 skipped.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_batch.py\"], \"verifyCommand\": \"pixi run test tests/cli/test_batch.py -v && pixi run test -q && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"AC7 human default per-entry lines\", \"AC8 jsonl pure stdout parseable + batch_summary terminator\", \"AC9 none preserves prior shape\", \"AC10 invalid choice exit 2\", \"existing 6 tests pass unchanged\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: README + PROGRESS + final gate + merge prep",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5],
       "description": "**Goal:** Document the new flag, record Phase 35 close-out in PROGRESS.md, run the final full-suite gate, prepare the merge commit.\n\n**Files:**\n- Modify: `README.md` (Batch jobs section: new `### Streaming output` subheading)\n- Modify: `PROGRESS.md` (Phase 35 entry + close PROGRESS:325 deferral + rewrite RESUME pointer)\n\n**Acceptance Criteria:**\n- README has a ### Streaming output subheading with one example per --stream-format choice\n- PROGRESS Phase 35 entry under ## Post-MVP with per-task SHAs + key design decisions + Closes PROGRESS:325 follow-up #1\n- Known-limitations 'Streaming per-entry log lines (DEFERRED)' line marked CLOSED\n- RESUME pointer rewritten to reflect Phase 35\n- Final gate: full suite + lint + mypy clean\n\n**Verify:** `pixi run test -q && pixi run lint && pixi run typecheck` -> ~1322 passed / 8 skipped; `git log --oneline -8` shows 6 task commits + this docs commit.\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test -q && pixi run lint && pixi run typecheck && git log --oneline -8\", \"acceptanceCriteria\": [\"README streaming subsection with 3 examples\", \"PROGRESS Phase 35 entry with SHAs + design decisions\", \"known-limitations line marked CLOSED\", \"RESUME pointer rewritten\", \"final gate clean\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-05T20:30:00-07:00"
+  "lastUpdated": "2026-06-05T21:30:00-07:00"
 }

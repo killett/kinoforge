@@ -927,3 +927,307 @@ def test_batch_per_entry_keyframe_prompt_override(tmp_path: Path) -> None:
         "different keyframe artifacts; got identical bytes — per-entry prompt "
         "override is not flowing through"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer L-T4 — streaming event ACs
+# ---------------------------------------------------------------------------
+
+from collections.abc import Callable  # noqa: E402 — keep imports together
+
+from kinoforge.core.batch_events import BatchEvent  # noqa: E402
+
+
+def _record_events() -> tuple[list[BatchEvent], Callable[[BatchEvent], None]]:
+    """Return a (log, callback) pair for recording streaming events.
+
+    Returns:
+        A 2-tuple of (list to accumulate events, callback to pass as on_event).
+    """
+    log: list[BatchEvent] = []
+
+    def cb(ev: BatchEvent) -> None:
+        log.append(ev)
+
+    return log, cb
+
+
+def test_streaming_on_event_none_default_byte_identical(tmp_path: Path) -> None:
+    """AC1 (regression).  on_event=None must produce byte-identical
+    side-effects to the pre-Layer-L-T4 behaviour.
+
+    Bug: a refactor that wires the emitter incorrectly may silently
+    flip outcome ordering or _batch_summary.json shape.  We re-run
+    the happy-path setup (mirroring test_three_entries_all_ok_round_trip)
+    with the explicit on_event=None and assert the result is
+    indistinguishable.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_spy_engine()
+    provider = LocalProvider()
+
+    result = batch_generate(
+        cfg,
+        _three_entry_manifest(),
+        store=store,
+        batch_id="b",
+        engine=engine,
+        provider=provider,
+        state_dir=tmp_path / "_state",
+        on_event=None,
+    )
+    assert [o.status for o in result.outcomes] == ["ok", "ok", "ok"]
+    assert [o.run_id for o in result.outcomes] == ["x", "y", "z"]
+
+    # _batch_summary.json on disk must match the pre-Layer-L-T4 contract:
+    # an emitter that accidentally added new top-level fields or
+    # altered the entries shape would slip past the in-memory checks.
+    summary_path = tmp_path / "b" / "_batch_summary.json"
+    assert summary_path.is_file(), f"missing summary at {summary_path}"
+    summary = json.loads(summary_path.read_text())
+    assert summary["batch_id"] == "b"
+    assert [e["status"] for e in summary["entries"]] == ["ok", "ok", "ok"]
+    assert [e["run_id"] for e in summary["entries"]] == ["x", "y", "z"]
+
+
+def test_streaming_invariant_clean_path(tmp_path: Path) -> None:
+    """AC2 (clean exit).  start_count == finish_count == 3.
+
+    Bug: an emitter that fires two finish events (e.g. from both the
+    exception branch and the aborted fallback) or that skips entry_start
+    for never-cancelled futures would break count equality on the clean
+    exit path.  The invariant is the foundation of every downstream
+    consumer's "match start to finish per idx" assumption.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_spy_engine()
+    provider = LocalProvider()
+    log, cb = _record_events()
+    batch_generate(
+        cfg,
+        _three_entry_manifest(),
+        store=store,
+        batch_id="b",
+        engine=engine,
+        provider=provider,
+        state_dir=tmp_path / "_state",
+        on_event=cb,
+    )
+    starts = [e for e in log if e.kind == "entry_start"]
+    finishes = [e for e in log if e.kind == "entry_finish"]
+    assert len(starts) == 3
+    assert len(finishes) == 3
+    assert all(f.status == "ok" for f in finishes)
+
+
+def test_streaming_ordering_start_before_finish(tmp_path: Path) -> None:
+    """AC3.  For every idx, entry_start precedes entry_finish.
+
+    Bug: an emitter that fires entry_finish on the wrong code path (e.g.
+    inside the executor.submit branch before the worker has fired
+    entry_start) would let a consumer observe a finish for an idx whose
+    start hasn't arrived — breaking strict pairing for log aggregators
+    that index events by (kind, idx) sequence number.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_spy_engine()
+    provider = LocalProvider()
+    log, cb = _record_events()
+    batch_generate(
+        cfg,
+        _three_entry_manifest(),
+        store=store,
+        batch_id="b",
+        engine=engine,
+        provider=provider,
+        state_dir=tmp_path / "_state",
+        on_event=cb,
+    )
+    for idx in range(3):
+        starts = [
+            i for i, e in enumerate(log) if e.kind == "entry_start" and e.idx == idx
+        ]
+        finishes = [
+            i for i, e in enumerate(log) if e.kind == "entry_finish" and e.idx == idx
+        ]
+        assert starts and finishes, f"idx={idx}: missing start or finish"
+        assert min(starts) < min(finishes), (
+            f"idx={idx}: start@{starts} not before finish@{finishes}"
+        )
+
+
+def test_streaming_lock_serializes_workers(tmp_path: Path) -> None:
+    """AC4 (lock stress).  Under 4 concurrent workers, callback windows
+    must not overlap.
+
+    Bug: two workers emitting concurrently produce interleaved stdout.
+    """
+    import threading
+    import time
+
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_spy_engine()
+    provider = LocalProvider()
+
+    manifest = BatchManifest(
+        entries=[
+            BatchEntry(prompt=p, mode="t2v", run_id=p) for p in ("a", "b", "c", "d")
+        ]
+    )
+
+    windows: list[tuple[float, float]] = []
+    win_lock = threading.Lock()
+
+    def cb(_ev: BatchEvent) -> None:
+        t0 = time.monotonic()
+        time.sleep(0.01)
+        t1 = time.monotonic()
+        with win_lock:
+            windows.append((t0, t1))
+
+    batch_generate(
+        cfg,
+        manifest,
+        store=store,
+        batch_id="b",
+        engine=engine,
+        provider=provider,
+        state_dir=tmp_path / "_state",
+        on_event=cb,
+        concurrent=4,
+    )
+    windows.sort(key=lambda w: w[0])
+    for (_, e1), (s2, _) in zip(windows, windows[1:], strict=False):
+        assert e1 <= s2, f"overlap: window ending {e1} vs next start {s2}"
+
+
+def test_streaming_build_fail_emits_both_back_to_back(tmp_path: Path) -> None:
+    """AC5 (build-time fail).  An entry that raises during stage build
+    must emit entry_start + entry_finish(status='fail', duration_s=0.0)
+    back-to-back from the main thread.
+
+    Bug: a build-fail that skips the executor would skip both events,
+    breaking the start_count == finish_count invariant.
+
+    A mode the engine does not accept triggers validate_request to
+    raise inside _build_stage_for_entry.  The exact exception class is
+    not asserted here — only that fail emission happened.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_spy_engine()
+    provider = LocalProvider()
+
+    manifest = BatchManifest(
+        entries=[
+            BatchEntry(prompt="ok-1", mode="t2v", run_id="x"),
+            BatchEntry(prompt="bad", mode="no-such-mode", run_id="y"),
+            BatchEntry(prompt="ok-2", mode="t2v", run_id="z"),
+        ]
+    )
+
+    log, cb = _record_events()
+    batch_generate(
+        cfg,
+        manifest,
+        store=store,
+        batch_id="b",
+        engine=engine,
+        provider=provider,
+        state_dir=tmp_path / "_state",
+        on_event=cb,
+    )
+    bad_starts = [e for e in log if e.kind == "entry_start" and e.idx == 1]
+    bad_finishes = [e for e in log if e.kind == "entry_finish" and e.idx == 1]
+    assert len(bad_starts) == 1
+    assert len(bad_finishes) == 1
+    finish = bad_finishes[0]
+    assert finish.status == "fail"
+    assert finish.duration_s == 0.0
+    assert finish.error is not None
+    # Invariant: 3 starts, 3 finishes total.
+    assert len([e for e in log if e.kind == "entry_start"]) == 3
+    assert len([e for e in log if e.kind == "entry_finish"]) == 3
+
+
+def test_streaming_batch_fatal_interrupted_and_aborted(tmp_path: Path) -> None:
+    """AC6 (batch-fatal).  BudgetExceeded mid-batch emits 'interrupted'
+    for the fatal entry; all other entries get 'aborted' or 'interrupted'
+    with synthetic start emission so start_count == finish_count holds.
+
+    Bug: an aborted entry without a matching entry_start would force
+    consumers into a special 'finish without start' branch — we want
+    the invariant to hold uniformly across all exit paths.
+
+    Uses concurrent=1 so execution is sequential and deterministic:
+    alpha completes successfully, beta raises BudgetExceeded, gamma
+    has not yet been submitted to a worker thread (concurrent=1 means
+    only one future runs at a time and the second future — gamma — is
+    still pending in the executor queue).
+
+    Note: with concurrent=1, after beta's future raises, the executor
+    still has the gamma future queued.  _mark_remaining_after_fatal
+    attempts cancel() on gamma's future; if cancel() succeeds, gamma is
+    'aborted'; if the executor already picked it up, it is 'interrupted'.
+    Either way, the invariant (start == finish == 3) must hold and every
+    non-ok entry must carry an error.
+    """
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    engine = _make_spy_engine(
+        fail_on_prompt="beta",
+        fail_with=BudgetExceeded("forced"),
+    )
+    provider = LocalProvider()
+
+    log, cb = _record_events()
+    with pytest.raises(BudgetExceeded):
+        batch_generate(
+            cfg,
+            _three_entry_manifest(),
+            store=store,
+            batch_id="b",
+            engine=engine,
+            provider=provider,
+            state_dir=tmp_path / "_state",
+            on_event=cb,
+            concurrent=1,
+        )
+
+    # Primary invariant: every entry has exactly one start + one finish.
+    for idx in range(3):
+        starts = [e for e in log if e.kind == "entry_start" and e.idx == idx]
+        finishes = [e for e in log if e.kind == "entry_finish" and e.idx == idx]
+        assert len(starts) == 1, f"idx={idx}: missing start/finish; log={log}"
+        assert len(finishes) == 1, f"idx={idx}: missing start/finish; log={log}"
+
+    statuses = {e.idx: e.status for e in log if e.kind == "entry_finish"}
+    # alpha (idx 0) ran first and completed before beta exploded.
+    assert statuses[0] == "ok", f"alpha must be ok; got {statuses[0]!r}"
+    # beta (idx 1) raised BudgetExceeded → always interrupted.
+    assert statuses[1] == "interrupted", (
+        f"beta must be interrupted; got {statuses[1]!r}"
+    )
+    # gamma (idx 2) is either aborted (cancelled) or interrupted (started
+    # before cancel ran) — both satisfy the spec.
+    assert statuses[2] in ("aborted", "interrupted"), (
+        f"gamma must be aborted or interrupted; got {statuses[2]!r}"
+    )
+
+    # All non-ok finish events must carry an error string.
+    for ev in log:
+        if ev.kind == "entry_finish" and ev.status != "ok":
+            assert ev.error is not None, (
+                f"idx={ev.idx} status={ev.status!r} must carry error"
+            )
+
+    # Any aborted entry must reference BudgetExceeded in its error.
+    for ev in log:
+        if ev.kind == "entry_finish" and ev.status == "aborted":
+            assert "BudgetExceeded" in (ev.error or ""), (
+                f"aborted entry error must name BudgetExceeded; got {ev.error!r}"
+            )

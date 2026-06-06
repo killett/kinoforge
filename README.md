@@ -126,6 +126,41 @@ with code 2. The summary JSON is written before the exit in every case.
 **Cleanup.** `kinoforge gc --run <batch_id> -c <config>` walks the entire
 batch namespace at once.
 
+### Streaming output
+
+`kinoforge batch` emits per-entry progress lines as the run proceeds.
+The output shape is controlled by `--stream-format`:
+
+- `--stream-format=human` (default) — operator-readable lines on stdout:
+
+  ```
+  [batch-20260605-103000] [1/dawn] START mode=t2v prompt='a sunrise over the cliffs'
+  [batch-20260605-103000] [1/dawn] OK 1.5s local://.kinoforge/batch-20260605-103000/dawn/clip.mp4
+  ```
+
+  Lines are paired (one `START` per entry, one terminal status per
+  entry — `OK` / `FAIL` / `INTERRUPTED` / `ABORTED`). The final summary
+  table is printed after the batch completes.
+
+- `--stream-format=jsonl` — one JSON event per stdout line, terminated
+  by a `{"kind": "batch_summary", ...}` object. The `manifest loaded`
+  and `[instance overview]` headers are routed to stderr so stdout
+  stays pure JSONL for piping:
+
+  ```bash
+  kinoforge batch --config c.yaml --manifest m.yaml --stream-format=jsonl | jq .
+  ```
+
+- `--stream-format=none` — suppress mid-run lines; the final summary
+  table is still printed. Matches pre-Layer-L-T4 behaviour for
+  operators who prefer the original quieter output.
+
+Library users of `batch_generate()` can plug their own consumer by
+passing `on_event=<callable>` directly. The callback receives a
+`BatchEvent` (frozen pydantic model defined in
+`kinoforge.core.batch_events`); calls are serialized via an internal
+`threading.Lock` so multi-line output never interleaves.
+
 ## Breaking changes
 
 ### Layer T — cloud `store.kind` now routes the ledger too

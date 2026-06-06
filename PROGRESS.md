@@ -152,16 +152,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 34 fully CLOSED — Layer T (cloud-ledger CLI routing via SessionContext + `state_dir/store.json` sidecar). HEAD at the Phase 34 merge commit on `main`. Test suite at 1297 passed, 8 skipped. Working tree clean. No live spend in Layer T (fully offline-tested).
+**Where we are:** Phase 35 fully CLOSED — Layer L-T4 (batch streaming logs). HEAD at the Phase 35 merge commit on `main`. Test suite at 1321 passed, 8 skipped. Working tree clean. No live spend in Layer L-T4 (fully offline-tested).
 
 **Read in this order:**
-1. The Phase 34 entry below (per-task SHAs + design decisions).
-2. `docs/superpowers/specs/2026-06-05-layer-t-cloud-ledger-cli-routing-design.md` for the Layer T design doc.
+1. The Phase 35 entry below (per-task SHAs + design decisions).
+2. `docs/superpowers/specs/2026-06-05-layer-l-t4-batch-streaming-logs-design.md` for the Layer L-T4 design doc.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates: batch streaming log lines (PROGRESS:325 deferred from Layer L T4); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam, not yet wired); cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap (Layer T+1 candidate).
+**First unchecked task in fresh session:** pick next layer. Candidates: cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap (Layer T+1 candidate); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam, not yet wired).
 
-**Budget remaining: ~$10.92 of $15.** Phase 34 spent $0.00 (Layer T offline-only).
+**Budget remaining: ~$10.92 of $15.** Phase 35 spent $0.00 (Layer L-T4 offline-only).
 
 ## Post-MVP
 
@@ -323,7 +323,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - `_batch_summary.json` written in a `finally` clause regardless of exit path; in-flight entries at fatal-abort time are recorded as `interrupted`.
 - Per-entry param/spec overrides are shallow-merged onto `cfg.params` / `cfg.spec` (entry wins per key) via a fresh `dict(...)` copy at stage construction — no mutation leaks to siblings or to `cfg`.
 
-**Streaming per-entry log lines (DEFERRED):** the CLI prints the initial `manifest loaded` header and the final per-entry summary table but no mid-run markers — see the "Layer L Task 4" note in the Single-next-action block above (committed at `38d5394`). Closing the gap requires a callback hook into `batch_generate` so `core/` does not print directly. Future contributor picks this up as a self-contained polish phase.
+~~**Streaming per-entry log lines (DEFERRED):** the CLI prints the initial `manifest loaded` header and the final per-entry summary table but no mid-run markers — see the "Layer L Task 4" note in the Single-next-action block above (committed at `38d5394`). Closing the gap requires a callback hook into `batch_generate` so `core/` does not print directly. Future contributor picks this up as a self-contained polish phase.~~ — **CLOSED** by Phase 35 (Layer L-T4).
 
 **Test count:** 741 tests passed + 1 skipped before Task 5 → 743 tests passed + 1 skipped after Task 5 (+35 net across Layer L; pre-Layer-L baseline was 708 + 1).
 
@@ -400,7 +400,7 @@ at git SHA `7a85d62`. Total cost ≈ $0.001.
 - Serverless mode read-paths + live smoke (Q3 from Layer N brainstorm was pod-only)
 - SkyPilot SDK smoke (PROGRESS:113 carry-forward #2)
 - S3/GCS medium-fidelity tests (PROGRESS:113 carry-forward #3)
-- Streaming per-entry log lines in `kinoforge batch` (PROGRESS:158 deferred from Layer L Task 4)
+- ~~Streaming per-entry log lines in `kinoforge batch` (PROGRESS:158 deferred from Layer L Task 4)~~ — **CLOSED** by Phase 35 (Layer L-T4).
 
 ### Phase 25 — Layer O (user-facing output directory)
 
@@ -1059,3 +1059,65 @@ package (`_main`, `_commands`, `context`, `sidecar`).
   Phase 16 `484e368` post-merge fix pattern.
 
 Closes PROGRESS:127.
+
+### Phase 35 — Layer L-T4 (batch streaming logs)
+
+- [x] Task 1: Extract batch dataclasses to `core/batch_models.py` — commits `08d7c00` + `59f135d`
+- [x] Task 2: `core/batch_events.py` — BatchEvent + _LockedEmitter + 6 ACs — commits `f906b3e` + `ace17a0`
+- [x] Task 3: batch_generate emits at 5 sites; aborted/interrupted outcomes carry duration_s + error for JSONL uniformity — commits `27b3f56` + `93b9c57`
+- [x] Task 4: `cli/batch_formatters.py` — Human / JSONL / NoOp + 8 ACs — commit `b63b527`
+- [x] Task 5: `--stream-format={human,jsonl,none}` wired through `_cmd_batch` + instance-overview stderr routing in jsonl mode + 4 ACs — commits `35436d2` + `2368e1d` + `7017df3`
+- [x] Task 6: README + PROGRESS + final gate — commit `bd9a222`
+- [ ] Merge to main via `--no-ff` — `<SHA-MERGE>` (controller creates the merge commit separately; closes PROGRESS:326 follow-up #1)
+
+**Key design decisions:**
+- Callback hook in core (foundation-first; Q1=C). CLI consumes the seam.
+  Future consumers (Slack, Prometheus, TUI progress bars) cost nothing
+  extra. Matches the existing seam pattern from PROGRESS:87.
+- Bundle JSONL formatter on day one (Q1 follow-up): operators get
+  pipeable output without a follow-on layer.
+- Minimal event vocabulary (Q2=A): `entry_start` + `entry_finish`. New
+  status values added as enum extensions, not new event kinds.
+- Internal `threading.Lock` serializes the user callback (Q3=A). Matches
+  the stdlib `logging.Handler` pattern. Multi-line output never
+  interleaves under concurrency.
+- Lean+entry event payload (Q4=A): `BatchEvent` carries the universal
+  fields plus a full `BatchEntry` on `entry_start` so formatters do not
+  need to close over the manifest.
+- Build-time fail emits both events back-to-back (Q5=A): preserves the
+  invariant `start_count == finish_count == len(entries)` across all 4
+  exit paths.
+- Single CLI flag default `human` (Q6=A): visible behaviour change
+  ships the layer to existing users; `--stream-format=none` preserves
+  prior output for anyone who wants it.
+- Model-extract refactor (Q9): `BatchEntry` / `BatchManifest` /
+  `BatchOutcome` / `BatchResult` moved to `core/batch_models.py` to dodge
+  an import cycle with `core/batch_events.py`. `core/batch.py`
+  re-exports the four names so every existing import site keeps working.
+
+**Behavioural upgrade (small but visible):** `BatchOutcome` for
+`aborted` / `interrupted` entries now carries `duration_s` (0.0 / actual)
++ `error` (`"batch aborted by <FatalType>"`) so the JSONL on-wire shape
+is uniform across every `entry_finish` event. Pre-Layer-L-T4 outcomes
+for these paths had `duration_s = None` and no `error`. The single
+existing assertion at `tests/core/test_batch_generate.py:240` (which
+checks only `interrupted` status, not the new fields) continues to
+pass unchanged.
+
+**AC8 contract enforcement caught in review:** the first T5 cut
+filtered `[instance overview]` lines in the JSONL test; the spec
+reviewer flagged this as masking a real `| jq .` breakage in
+production. The fix (`2368e1d`) routes `_print_instance_overview`
+output to stderr in jsonl mode via a `file: TextIO | None = None`
+kwarg (capsys-safe lazy resolution; same pattern as the
+`batch_formatters.py` `_out` property). The test now asserts strict
+stdout purity (every line must parse as JSON).
+
+**Test count:** 1297 pre-Layer + 6 (batch_events) + 6 (batch_generate
+streaming ACs) + 8 (batch_formatters) + 4 (batch_cli stream-format
+ACs) = 1321 post-Layer (8 skipped unchanged).
+
+**Live spend:** $0. Fully offline-tested via existing
+`_BatchSpyEngine` / `FakeProvider` / `FakeImageEngine` fixtures.
+
+Closes PROGRESS:326 follow-up #1 (Layer L Task 4 streaming-log deferral).
