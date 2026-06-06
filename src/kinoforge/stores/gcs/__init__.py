@@ -12,15 +12,29 @@ tests pass *both* parameters to bypass the two lazy-import gates inside
 
 from __future__ import annotations
 
+import io
 import json
 import os
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
+from google.api_core.retry import Retry
+
 from kinoforge.core.interfaces import Artifact
-from kinoforge.stores.base import ArtifactStore  # noqa: F401 — used in signed_url stub
+from kinoforge.stores.base import ArtifactStore
 
 if TYPE_CHECKING:
+    from kinoforge.core.config import StoreConfig
     from kinoforge.core.locks import Lock
+
+# ---------------------------------------------------------------------------
+# Module-scope retry baseline (Layer W T4).
+# Passed as ``retry=`` on every SDK read + write call so that transient 5xx /
+# connection errors are retried with exponential back-off without relying on
+# the caller to configure retry policy.
+# ---------------------------------------------------------------------------
+
+_GCS_RETRY = Retry(initial=0.1, maximum=2.0, multiplier=2.0, deadline=30.0)
 
 
 class GCSArtifactStore(ArtifactStore):
@@ -40,6 +54,7 @@ class GCSArtifactStore(ArtifactStore):
         *,
         client: Any = None,  # noqa: ANN401 — injected SDK client; typed Any to avoid SDK import in signature
         not_found_exc: type[BaseException] | None = None,
+        cfg: StoreConfig | None = None,
     ) -> None:
         """Initialise the store.
 
@@ -52,6 +67,9 @@ class GCSArtifactStore(ArtifactStore):
                 When ``None``, lazily imports ``google.api_core.exceptions.NotFound``.
                 Tests must pass both ``client`` AND ``not_found_exc`` to bypass
                 both lazy-import gates.
+            cfg: Optional :class:`~kinoforge.core.config.StoreConfig` carrying
+                encryption settings.  When ``None``, defaults are used
+                (provider-managed encryption, no KMS).
         """
         self.bucket = bucket
         self.prefix = prefix.strip("/")
@@ -63,8 +81,17 @@ class GCSArtifactStore(ArtifactStore):
             import google.api_core.exceptions as _gax_exc  # noqa: PLC0415 — lazy: tests inject the exception class and never trip this
 
             not_found_exc = _gax_exc.NotFound
+        self._client: Any = client
         self._bucket_handle: Any = client.bucket(bucket)
         self._not_found_exc: type[BaseException] = not_found_exc
+        # Lazy import to avoid forcing config module into every import path.
+        if cfg is None:
+            from kinoforge.core.config import (
+                StoreConfig as _StoreConfig,  # noqa: PLC0415
+            )
+
+            cfg = _StoreConfig(kind="gcs", bucket=bucket)
+        self._cfg: StoreConfig = cfg
 
     def _key(self, run_id: str, name: str) -> str:
         """Return the absolute object key for ``(run_id, name)``."""
@@ -88,16 +115,36 @@ class GCSArtifactStore(ArtifactStore):
         return f"gs://{self.bucket}/{self._key(run_id, name)}"
 
     def put_bytes(self, run_id: str, name: str, data: bytes) -> Artifact:
-        """Write ``data`` under ``<bucket>/<prefix>/<run_id>/<name>`` (auto-multipart over SDK threshold)."""
+        """Write ``data`` under ``<bucket>/<prefix>/<run_id>/<name>`` via resumable upload.
+
+        Resumable uploads (via ``upload_from_file``) are used in preference to
+        ``upload_from_string`` because the GCS SDK automatically switches to a
+        resumable multi-part upload above ~5 MiB, matching the behaviour of
+        ``upload_fileobj`` on the S3 side.
+
+        If ``cfg.encryption.mode == "kms"``, ``blob.kms_key_name`` is set
+        **before** the upload so the SDK routes the write through the caller's
+        Cloud KMS key.
+        """
         key = self._key(run_id, name)
-        self._bucket_handle.blob(key).upload_from_string(data)
+        blob = self._bucket_handle.blob(key)
+        enc = self._cfg.encryption
+        if enc.mode == "kms":
+            if (
+                enc.kms_key_id is None
+            ):  # pragma: no cover — guaranteed by pydantic validator
+                raise RuntimeError(
+                    "encryption.mode='kms' requires kms_key_id; pydantic should have caught this"
+                )
+            blob.kms_key_name = enc.kms_key_id
+        blob.upload_from_file(io.BytesIO(data), retry=_GCS_RETRY)
         return Artifact(uri=f"gs://{self.bucket}/{key}")
 
     def get_bytes(self, uri: str) -> bytes:
         """Read the bytes at ``uri``; raise FileNotFoundError on miss."""
         _, key = self._split_uri(uri)
         try:
-            return self._bucket_handle.blob(key).download_as_bytes()  # type: ignore[no-any-return]
+            return self._bucket_handle.blob(key).download_as_bytes(retry=_GCS_RETRY)  # type: ignore[no-any-return]
         except self._not_found_exc:
             raise FileNotFoundError(f"artifact not found: {uri!r}") from None
 
@@ -114,14 +161,16 @@ class GCSArtifactStore(ArtifactStore):
         run_prefix = self._key(run_id, "") + "/"
         return [
             blob.name[len(run_prefix) :]
-            for blob in self._bucket_handle.list_blobs(prefix=run_prefix)
+            for blob in self._bucket_handle.list_blobs(
+                prefix=run_prefix, retry=_GCS_RETRY
+            )
         ]
 
     def delete(self, uri: str) -> None:
         """Remove the object at ``uri``; raise FileNotFoundError on miss."""
         _, key = self._split_uri(uri)
         try:
-            self._bucket_handle.blob(key).delete()
+            self._bucket_handle.blob(key).delete(retry=_GCS_RETRY)
         except self._not_found_exc:
             raise FileNotFoundError(f"artifact not found: {uri!r}") from None
 
@@ -147,11 +196,24 @@ class GCSArtifactStore(ArtifactStore):
         op: Literal["GET", "PUT"],
         ttl_s: int,
     ) -> str:
-        """Return a pre-signed URL for GET or PUT on the artifact.
+        """Return a v4 signed URL granting a single GET or PUT on the artifact.
 
-        Temporary stub — implementation in Layer W Task 4.
+        Args:
+            run_id: Run namespace.
+            name: Artifact name within the run.
+            op: HTTP method granted by the URL (``"GET"`` or ``"PUT"``).
+            ttl_s: Validity window in seconds from issuance.
+
+        Returns:
+            Absolute HTTPS URL valid for ``ttl_s`` seconds.
         """
-        raise NotImplementedError("Layer W T4 not yet implemented")
+        key = self._key(run_id, name)
+        blob = self._bucket_handle.blob(key)
+        return blob.generate_signed_url(  # type: ignore[no-any-return]
+            version="v4",
+            expiration=timedelta(seconds=ttl_s),
+            method=op,
+        )
 
 
 # ---------------------------------------------------------------------------

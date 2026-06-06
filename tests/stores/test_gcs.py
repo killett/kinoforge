@@ -1,16 +1,24 @@
 """Tests for GCSArtifactStore — all run against FakeGCSClient (no network).
 
 Spec: docs/superpowers/specs/2026-05-29-s3-gcs-stores-design.md §3.2 + §8.2
+Layer W T4 additions: resumable upload, CMEK, signed_url, retry baseline.
 """
 
 from __future__ import annotations
 
 import sys
+from datetime import timedelta
 
 import pytest
 
-from kinoforge.stores.gcs import GCSArtifactStore
+from kinoforge.core.config import StoreConfig, StoreEncryptionConfig
+from kinoforge.stores.gcs import _GCS_RETRY, GCSArtifactStore
 from tests.stores.conftest import FakeGCSClient
+
+try:
+    from google.api_core.retry import Retry as _Retry
+except ImportError:  # pragma: no cover
+    _Retry = None  # type: ignore[assignment,misc]
 
 
 @pytest.fixture()
@@ -250,3 +258,90 @@ def test_lazy_sdk_import_not_triggered_when_both_injected() -> None:
 
     assert "google.cloud.storage" not in sys.modules
     assert "google.api_core.exceptions" not in sys.modules
+
+
+# ---------------------------------------------------------------------------
+# Layer W T4: resumable upload + CMEK + signed_url + retry baseline
+# ---------------------------------------------------------------------------
+
+
+def _store_with_fake(
+    client: FakeGCSClient, *, encryption: StoreEncryptionConfig | None = None
+) -> GCSArtifactStore:
+    """Build a GCSArtifactStore wired to the given fake client."""
+    cfg = StoreConfig(
+        kind="gcs",
+        bucket="layer-w-test",
+        encryption=encryption or StoreEncryptionConfig(),
+    )
+    return GCSArtifactStore(
+        bucket="layer-w-test",
+        client=client,
+        not_found_exc=FakeGCSClient.NotFound,
+        cfg=cfg,
+    )
+
+
+def test_gcs_retry_instance_is_module_constant() -> None:
+    """_GCS_RETRY is a Retry instance exported from the gcs module."""
+    assert _Retry is not None, "google.api_core.retry.Retry not importable"
+    assert isinstance(_GCS_RETRY, _Retry)
+
+
+def test_gcs_put_bytes_uses_upload_from_file_and_retry(
+    fake_gcs_client: FakeGCSClient,
+) -> None:
+    """put_bytes calls upload_from_file with retry=_GCS_RETRY; kms_key_name left None for default enc."""
+    store = _store_with_fake(fake_gcs_client)
+    store.put_bytes("run1", "out.bin", b"hello")
+    blob = fake_gcs_client.buckets["layer-w-test"]._blob_cache["run1/out.bin"]
+    assert blob.upload_from_file_calls, "expected upload_from_file to be called"
+    body, retry = blob.upload_from_file_calls[0]
+    assert body == b"hello"
+    assert retry is _GCS_RETRY
+    assert blob.kms_key_name is None  # default mode — provider manages encryption
+
+
+def test_gcs_put_bytes_cmek_sets_kms_key_name(fake_gcs_client: FakeGCSClient) -> None:
+    """encryption.mode='kms' sets blob.kms_key_name BEFORE upload_from_file."""
+    enc = StoreEncryptionConfig(
+        mode="kms",
+        kms_key_id="projects/p/locations/us-central1/keyRings/r/cryptoKeys/k",
+    )
+    store = _store_with_fake(fake_gcs_client, encryption=enc)
+    store.put_bytes("run1", "out.bin", b"hello")
+    blob = fake_gcs_client.buckets["layer-w-test"]._blob_cache["run1/out.bin"]
+    assert blob.kms_key_name == enc.kms_key_id
+
+
+def test_gcs_signed_url_get(fake_gcs_client: FakeGCSClient) -> None:
+    """signed_url(op='GET') calls generate_signed_url with version='v4' and correct args."""
+    store = _store_with_fake(fake_gcs_client)
+    url = store.signed_url("run1", "out.bin", op="GET", ttl_s=600)
+    blob = fake_gcs_client.buckets["layer-w-test"]._blob_cache["run1/out.bin"]
+    assert blob.generate_signed_url_calls, "expected generate_signed_url to be called"
+    call = blob.generate_signed_url_calls[0]
+    assert call["version"] == "v4"
+    assert call["expiration"] == timedelta(seconds=600)
+    assert call["method"] == "GET"
+    assert "method=GET" in url
+
+
+def test_gcs_signed_url_put(fake_gcs_client: FakeGCSClient) -> None:
+    """signed_url(op='PUT') calls generate_signed_url with method='PUT' and correct TTL."""
+    store = _store_with_fake(fake_gcs_client)
+    store.signed_url("run1", "out.bin", op="PUT", ttl_s=120)
+    blob = fake_gcs_client.buckets["layer-w-test"]._blob_cache["run1/out.bin"]
+    call = blob.generate_signed_url_calls[0]
+    assert call["method"] == "PUT"
+    assert call["expiration"] == timedelta(seconds=120)
+
+
+def test_gcs_get_bytes_passes_retry(fake_gcs_client: FakeGCSClient) -> None:
+    """get_bytes passes retry=_GCS_RETRY to blob.download_as_bytes."""
+    store = _store_with_fake(fake_gcs_client)
+    artifact = store.put_bytes("run1", "out.bin", b"hello")
+    store.get_bytes(artifact.uri)
+    blob = fake_gcs_client.buckets["layer-w-test"]._blob_cache["run1/out.bin"]
+    assert blob.download_as_bytes_calls, "expected download_as_bytes to be called"
+    assert blob.download_as_bytes_calls[0] is _GCS_RETRY

@@ -181,14 +181,24 @@ class _GCSPreconditionFailed(Exception):
 
 
 class _FakeBlob:
+    """Unified fake GCS blob supporting both lock (generation-CAS) and T4 (retry) paths."""
+
     def __init__(self, bucket: _FakeBucket, name: str) -> None:
         self.bucket = bucket
         self.name = name
         self._captured_generation: int | None = None
+        # T4 attributes -------------------------------------------------------
+        self.kms_key_name: str | None = None
+        self.upload_from_file_calls: list[tuple[bytes, object]] = []
+        self.download_as_bytes_calls: list[object] = []
+        self.delete_calls: list[object] = []
+        self.generate_signed_url_calls: list[dict[str, object]] = []
 
     @property
     def generation(self) -> int | None:
         return self.bucket._generations.get(self.name)
+
+    # --- Original lock path (generation-CAS) ----------------------------------
 
     def upload_from_string(
         self, data: bytes, if_generation_match: int | None = None
@@ -201,26 +211,74 @@ class _FakeBlob:
             else:
                 if existing_gen != if_generation_match:
                     raise _GCSPreconditionFailed()
-        self.bucket._blobs[self.name] = data
+        self.bucket._blobs[self.name] = self
+        new_gen = (existing_gen or 0) + 1
+        self.bucket._generations[self.name] = new_gen
+        self._captured_generation = new_gen
+        # Mirror body so download_as_bytes can return it.
+        self._body = data
+
+    # --- T4 resumable-upload path ---------------------------------------------
+
+    def upload_from_file(self, fileobj: Any, *, retry: object = None) -> None:
+        body = fileobj.read()
+        self._body = body
+        self.upload_from_file_calls.append((body, retry))
+        self.bucket._blobs[self.name] = self
+        existing_gen = self.bucket._generations.get(self.name)
         new_gen = (existing_gen or 0) + 1
         self.bucket._generations[self.name] = new_gen
         self._captured_generation = new_gen
 
-    def download_as_bytes(self) -> bytes:
+    # --- Read path ------------------------------------------------------------
+
+    def download_as_bytes(self, *, retry: object = None) -> bytes:
         if self.name not in self.bucket._blobs:
             raise _GCSNotFound()
+        self.download_as_bytes_calls.append(retry)
         # Capture current generation for release CAS.
         self._captured_generation = self.bucket._generations.get(self.name)
-        return self.bucket._blobs[self.name]
+        blob_entry = self.bucket._blobs[self.name]
+        # _blobs may store _FakeBlob instances (new path) or raw bytes (legacy).
+        if isinstance(blob_entry, _FakeBlob):
+            return blob_entry._body
+        return blob_entry
 
-    def delete(self, if_generation_match: int | None = None) -> None:
+    # --- Delete path ----------------------------------------------------------
+
+    def delete(
+        self,
+        if_generation_match: int | None = None,
+        *,
+        retry: object = None,
+    ) -> None:
         if self.name not in self.bucket._blobs:
             raise _GCSNotFound()
         existing_gen = self.bucket._generations.get(self.name)
         if if_generation_match is not None and existing_gen != if_generation_match:
             raise _GCSPreconditionFailed()
+        self.delete_calls.append(retry)
         del self.bucket._blobs[self.name]
         self.bucket._generations.pop(self.name, None)
+
+    # --- Signed-URL path ------------------------------------------------------
+
+    def generate_signed_url(
+        self, *, version: str, expiration: object, method: str
+    ) -> str:
+        call: dict[str, object] = {
+            "version": version,
+            "expiration": expiration,
+            "method": method,
+        }
+        self.generate_signed_url_calls.append(call)
+        return (
+            f"https://storage.googleapis.com/{self.bucket.name}/{self.name}"
+            f"?X-Goog-Signature=fake&method={method}"
+        )
+
+    def reload(self) -> None:
+        """No-op reload (real SDK re-fetches metadata)."""
 
     def exists(self) -> bool:
         return self.name in self.bucket._blobs
@@ -229,16 +287,22 @@ class _FakeBlob:
 class _FakeBucket:
     def __init__(self, name: str) -> None:
         self.name = name
-        self._blobs: dict[str, bytes] = {}
+        # Values are _FakeBlob instances (or raw bytes for legacy paths).
+        self._blobs: dict[str, Any] = {}
         self._generations: dict[str, int] = {}
+        # Per-name blob cache so test mutations on .kms_key_name stick.
+        self._blob_cache: dict[str, _FakeBlob] = {}
 
     def blob(self, key: str) -> _FakeBlob:
-        return _FakeBlob(self, key)
+        """Return or create the cached blob instance for ``key``."""
+        if key not in self._blob_cache:
+            self._blob_cache[key] = _FakeBlob(self, key)
+        return self._blob_cache[key]
 
-    def list_blobs(self, *, prefix: str) -> Iterator[_FakeBlob]:
+    def list_blobs(self, *, prefix: str, retry: object = None) -> Iterator[_FakeBlob]:
         for k in sorted(self._blobs):
             if k.startswith(prefix):
-                yield _FakeBlob(self, k)
+                yield self.blob(k)
 
 
 class FakeGCSClient:
@@ -249,6 +313,11 @@ class FakeGCSClient:
 
     def __init__(self) -> None:
         self._buckets: dict[str, _FakeBucket] = {}
+
+    @property
+    def buckets(self) -> dict[str, _FakeBucket]:
+        """Public alias for ``_buckets`` used by T4 tests."""
+        return self._buckets
 
     def bucket(self, name: str) -> _FakeBucket:
         return self._buckets.setdefault(name, _FakeBucket(name))
