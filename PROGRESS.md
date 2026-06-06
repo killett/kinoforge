@@ -1068,7 +1068,7 @@ Closes PROGRESS:127.
 - [x] Task 4: `cli/batch_formatters.py` — Human / JSONL / NoOp + 8 ACs — commit `b63b527`
 - [x] Task 5: `--stream-format={human,jsonl,none}` wired through `_cmd_batch` + instance-overview stderr routing in jsonl mode + 4 ACs — commits `35436d2` + `2368e1d` + `7017df3`
 - [x] Task 6: README + PROGRESS + final gate — commit `bd9a222`
-- [ ] Merge to main via `--no-ff` — `<SHA-MERGE>` (controller creates the merge commit separately; closes PROGRESS:326 follow-up #1)
+- [x] Merge to main via `--no-ff` — merge commit `f077e54` (closes PROGRESS:326 follow-up #1)
 
 **Key design decisions:**
 - Callback hook in core (foundation-first; Q1=C). CLI consumes the seam.
