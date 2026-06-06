@@ -320,7 +320,10 @@ def test_stream_format_human_default_emits_per_entry_lines(
     """
     rc, out, _err = _run_batch(tmp_path, capsys, extra_args=[])
     assert rc == 0
-    assert out.count(" START ") == 3
+    # Match the full structural prefix `] START ` so a prompt containing
+    # the literal " START " can't inflate the count — the closing `]` is
+    # the end of the `[idx/run_id]` block, never inside a quoted prompt.
+    assert out.count("] START ") == 3
     # "] OK " discriminates streaming-event OK lines from summary-table OK lines
     # (streaming: "[b] [1/x] OK 0.0s ..."  vs  summary: "  x  OK    ...").
     assert out.count("] OK ") == 3
