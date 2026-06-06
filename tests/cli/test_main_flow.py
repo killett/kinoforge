@@ -7,6 +7,7 @@ state.
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -314,3 +315,28 @@ def test_reap_on_empty_state_dir(tmp_path: Path) -> None:
     state = tmp_path / "state"
     rc = main(["--state-dir", str(state), "reap"])
     assert rc == 0
+
+
+def test_dispatch_table_covers_every_argparse_subcommand() -> None:
+    """Bug-catch: every parser subcommand must have a _DISPATCH entry.
+
+    A future commit that wires a new subcommand into _build_parser but
+    forgets to add the corresponding _cmd_ handler to _DISPATCH would
+    raise KeyError at runtime when the user invokes the cmd. This test
+    locks the two sets in sync.
+    """
+    from kinoforge.cli._main import _DISPATCH, _build_parser
+
+    parser = _build_parser()
+    # argparse exposes the subparsers via the dest's choices on the parent.
+    sub_action = next(
+        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    )
+    parser_cmds = set(sub_action.choices.keys())
+    dispatch_cmds = set(_DISPATCH.keys())
+
+    assert parser_cmds == dispatch_cmds, (
+        f"parser/dispatch drift — parser has {parser_cmds - dispatch_cmds!r} "
+        f"not in dispatch; dispatch has {dispatch_cmds - parser_cmds!r} not "
+        f"in parser"
+    )
