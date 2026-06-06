@@ -296,7 +296,7 @@ def test_gcs_put_bytes_uses_upload_from_file_and_retry(
     store.put_bytes("run1", "out.bin", b"hello")
     blob = fake_gcs_client.buckets["layer-w-test"]._blob_cache["run1/out.bin"]
     assert blob.upload_from_file_calls, "expected upload_from_file to be called"
-    body, retry = blob.upload_from_file_calls[0]
+    body, retry, _ = blob.upload_from_file_calls[0]
     assert body == b"hello"
     assert retry is _GCS_RETRY
     assert blob.kms_key_name is None  # default mode — provider manages encryption
@@ -311,6 +311,9 @@ def test_gcs_put_bytes_cmek_sets_kms_key_name(fake_gcs_client: FakeGCSClient) ->
     store = _store_with_fake(fake_gcs_client, encryption=enc)
     store.put_bytes("run1", "out.bin", b"hello")
     blob = fake_gcs_client.buckets["layer-w-test"]._blob_cache["run1/out.bin"]
+    assert blob.upload_from_file_calls, "upload_from_file must have been called"
+    body, retry, kms_at_call = blob.upload_from_file_calls[0]
+    assert kms_at_call == enc.kms_key_id  # ordering proof: set BEFORE upload
     assert blob.kms_key_name == enc.kms_key_id
 
 

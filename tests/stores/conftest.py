@@ -189,7 +189,7 @@ class _FakeBlob:
         self._captured_generation: int | None = None
         # T4 attributes -------------------------------------------------------
         self.kms_key_name: str | None = None
-        self.upload_from_file_calls: list[tuple[bytes, object]] = []
+        self.upload_from_file_calls: list[tuple[bytes, object, str | None]] = []
         self.download_as_bytes_calls: list[object] = []
         self.delete_calls: list[object] = []
         self.generate_signed_url_calls: list[dict[str, object]] = []
@@ -223,7 +223,7 @@ class _FakeBlob:
     def upload_from_file(self, fileobj: Any, *, retry: object = None) -> None:
         body = fileobj.read()
         self._body = body
-        self.upload_from_file_calls.append((body, retry))
+        self.upload_from_file_calls.append((body, retry, self.kms_key_name))
         self.bucket._blobs[self.name] = self
         existing_gen = self.bucket._generations.get(self.name)
         new_gen = (existing_gen or 0) + 1
