@@ -153,16 +153,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 37 Layer V — T1–T7 committed on branch `layer-v`. Test suite at 1422 passed, 8 skipped. T8 (README + PROGRESS + example YAML + final gate + merge) is next.
+**Where we are:** Phase 37 fully CLOSED — Layer V (heartbeat-aware reaper). HEAD at the Phase 37 merge commit on `main`. Test suite at 1423 passed, 8 skipped. Working tree clean. No live spend in Layer V (fully offline-tested).
 
 **Read in this order:**
-1. The Phase 37 entry below (per-task SHAs + design decisions so far).
-2. `docs/superpowers/specs/2026-06-05-layer-v-heartbeat-reaper-design.md` for the Layer V design doc.
+1. The Phase 37 entry below (per-task SHAs + design decisions).
+2. `docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md` for the Layer V design doc.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** T8 — README + PROGRESS + example YAML + final gate + merge (branch `layer-v`).
+**First unchecked task in fresh session:** pick next layer. Candidates (Layer V closed the heartbeat-aware-reaper carry-forward): cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap; `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); a **Layer W `kinoforge sweeper` daemon** that consumes the Layer V substrate (the next natural follow-on); **Layer X cost dashboard / metrics** (read-only consumer of `classify`); **Layer Y in-session warm-reuse retrofit** (orchestrator consults `classify` when `_states[id]` is missing across CLI invocations).
 
-**Budget remaining: ~$10.92 of $15.** Phase 36 spent $0.00 (Layer U offline-only).
+**Budget remaining: ~$10.92 of $15.** Phase 37 spent $0.00 (Layer V offline-only).
 
 ## Post-MVP
 
@@ -1189,13 +1189,58 @@ persistence" (Layer S forward-compat seam).
 
 ### Phase 37 — Layer V (heartbeat-aware reaper)
 
-- [x] T1: Pure substrate — `Verdict`, `Policy`, `classify`, `partition` in `core/reaper.py` — commit `c2713e1`. 1420 tests passing pre-T7.
-- [x] T2: Invariant scan — `core/reaper.py` purity contract (no I/O, no mutable globals).
-- [x] T3: `Lifecycle.grace_after_session_s` field + config wire.
-- [x] T4: Impure substrate — `act_on_verdict` + `provider_for` in `core/reaper_actor.py`.
-- [x] T5: `sweep` orchestration with caches.
-- [x] T6: `kinoforge reap` CLI rewrite + flags + formatters.
-- [x] T7: `kinoforge status` verdict line — commit `fbe00c8`. Adds `verdict=<VERDICT>` to the sorted key=value status block via `_classify_for_status` helper. Same `classify` call as `kinoforge reap` — single source of truth. Layer U sentinel-staleness advisory preserved. 2 new tests (LIVE + UNROUTABLE paths). 1422 passed, 8 skipped.
-- [ ] T8: README + PROGRESS + example YAML + final gate + merge.
+Closes the "Layer V candidate" carry-forward at PROGRESS:163. Ships
+the first production consumer of Layer U's `heartbeat_thread_tick`
+sentinel and the reusable substrate every future heartbeat consumer
+(sweeper daemon, dashboard, in-session warm-reuse retrofit) will share.
 
-**Key design decision (T7):** `_classify_for_status` delegates entirely to `core/reaper.classify` — no local verdict logic in the CLI layer. When `cfg` is `None` (no `--config`), `Lifecycle()` defaults are used; `heartbeat_interval_s=None` causes `classify` to return `HEARTBEAT_UNKNOWN` (correct: we cannot determine freshness without a configured interval). The LIVE test therefore requires a config with `heartbeat_interval_s=30` to get a deterministic `LIVE` verdict. The fallback for `list_instances()` failure assumes the id is present (`live_ids = {args.id}`) so a transient provider error doesn't falsely surface `STALE_LEDGER`.
+- [x] Task 1: `core/reaper.py` pure substrate (Verdict, Policy, classify, partition) — commits `75a41d0` + review fix `1413bb7`
+- [x] Task 2: invariant scan locking `core/reaper.py` purity — commit `81c02e8`
+- [x] Task 3: `Lifecycle.grace_after_session_s` + config wire — commits `fb3f4fe` + zero-boundary fix `8cb7893`
+- [x] Task 4: `core/reaper_actor.py` — `act_on_verdict`, `provider_for` — commits `d6265ee` + dead-UNROUTABLE-branch removal `a7ca0b7`
+- [x] Task 5: `sweep` orchestration with caches + UNROUTABLE force-forget path — commit `94ff68e`
+- [x] Task 6: `kinoforge reap` rewrite + flags + JSONL formatter — commits `0340b4d` + review fix `c2713e1`
+- [x] Task 7: `kinoforge status` verdict line — commits `fbe00c8` + honest-fallback fix `f3c7567`
+- [x] Task 8: README + PROGRESS + examples + final gate + merge — commit `<T8-SHA>` (this commit)
+
+**Key design decisions:**
+
+- **Substrate, not CLI patch (Q1=A).** Pure `classify` / `Policy` /
+  `partition` shared by every future consumer.
+- **D-hybrid verdict tree (Q2=D).** `LIVE` / `IDLE_REAP` /
+  `ORPHAN_REAP` / `OVERAGE_REAP` / `STALE_LEDGER` /
+  `HEARTBEAT_UNKNOWN` / `UNROUTABLE`. `classify` returns six of those
+  seven; `UNROUTABLE` is assigned by `sweep()` when provider lookup
+  fails.
+- **Dry-run default + bundled `kinoforge status` verdict line
+  (Q3=A).** Two consumers in one release prove the substrate is
+  consumer-shaped, not CLI-shaped.
+- **UNROUTABLE / STALE_LEDGER are first-class verdicts.**
+  `STALE_LEDGER` is acted on by `DEFAULT_APPLY_POLICY` — closes the
+  latent ledger-drift bug in the pre-Layer-V `reap()` (forced-forgot
+  multi-provider entries against Local-only `live_ids`).
+- **A+C compromise on config (Q5).**
+  `lifecycle.grace_after_session_s` in YAML; explicit threshold
+  kwargs to `classify` (no `Lifecycle` import in `core/reaper.py`).
+- **B+C race mitigation (Q6).** `act_on_verdict` re-classifies
+  inside a Layer 18 per-instance `reaper/<id>` lock.
+- **Approach 2 (Q7).** Strict purity split (`core/reaper.py` pure +
+  `core/reaper_actor.py` impure) enforced by
+  `test_core_invariant.py::test_core_reaper_module_is_pure`.
+- **UNROUTABLE force-forget lives in `sweep()`, not
+  `act_on_verdict`** (architectural amendment from T4 review).
+  UNROUTABLE entries have no provider, so `act_on_verdict` cannot
+  reach them. `sweep()` handles `force_forget` by acquiring the same
+  `reaper/<id>` lock and calling `ledger.forget(id)` directly.
+- **`kinoforge status` honest fallback** (T7 review fix). When
+  `provider.list_instances()` raises in the status command, surface
+  `verdict=HEARTBEAT_UNKNOWN` rather than silently bias toward LIVE.
+
+**Test count:** 1351 → 1423 passed + 8 skipped (+72 net Layer V tests).
+Fully offline-tested; no live spend.
+
+**Forward-compat hooks** (spec §7) lock the substrate's public surface
+for **Layer W (`kinoforge sweeper` daemon)**, **Layer X (cost
+dashboard / metrics)**, and **Layer Y (in-session warm-reuse
+retrofit)**. All three reuse `classify` + `Policy` + `partition` +
+`act_on_verdict` + `sweep` without modification.
