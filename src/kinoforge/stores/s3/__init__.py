@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
@@ -136,6 +136,20 @@ class S3ArtifactStore(ArtifactStore):
         import kinoforge.stores.s3.lock as _s3_lock  # noqa: PLC0415
 
         return _s3_lock.S3CloudLock(store=self, key=key, ttl_s=ttl_s)
+
+    def signed_url(
+        self,
+        run_id: str,
+        name: str,
+        *,
+        op: Literal["GET", "PUT"],
+        ttl_s: int,
+    ) -> str:
+        """Return a pre-signed URL for GET or PUT on the artifact.
+
+        Temporary stub — implementation in Layer W Task 3.
+        """
+        raise NotImplementedError("Layer W T3 not yet implemented")
 
 
 # ---------------------------------------------------------------------------
