@@ -14,7 +14,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
 from kinoforge.cli.context import SessionContext
@@ -106,6 +106,54 @@ def _build_sink(cfg: Config, args: argparse.Namespace) -> OutputSink | None:
     if not cfg.output.enabled:
         return None
     return LocalOutputSink(dir=cfg.output.dir, clock=clock)
+
+
+@runtime_checkable
+class _LedgerProto(Protocol):
+    """Structural protocol for the subset of Ledger used by _SingleIdLedgerView."""
+
+    def entries(self) -> list[dict]:  # type: ignore[type-arg]
+        """Return all ledger entries."""
+        ...
+
+    def forget(self, instance_id: str) -> None:
+        """Remove a ledger entry by instance id."""
+        ...
+
+    def touch(self, instance_id: str) -> bool:
+        """Update the last-heartbeat timestamp for an instance."""
+        ...
+
+
+class _SingleIdLedgerView:
+    """Read+mutate proxy that surfaces only the entry matching one id.
+
+    Acts as a thin filter over the underlying Ledger: ``entries()``
+    returns at most one entry; mutating calls (``forget``, ``touch`` if
+    used) pass through to the underlying ledger. Used by
+    ``kinoforge reap --id X`` so the wrapping does not leave the real
+    ledger object in a patched state.
+
+    Args:
+        base: The underlying ledger object.
+        instance_id: The instance id to restrict entries to.
+    """
+
+    def __init__(self, base: _LedgerProto, instance_id: str) -> None:
+        self._base = base
+        self._id = instance_id
+
+    def entries(self) -> list[dict]:  # type: ignore[type-arg]
+        """Return only the entry matching the configured instance id."""
+        return [e for e in self._base.entries() if e.get("id") == self._id]
+
+    def forget(self, instance_id: str) -> None:
+        """Delegate forget to the underlying ledger."""
+        self._base.forget(instance_id)
+
+    def touch(self, instance_id: str) -> bool:
+        """Delegate touch to the underlying ledger (HeartbeatLoop compat)."""
+        return self._base.touch(instance_id)
 
 
 # ---------------------------------------------------------------------------
@@ -749,11 +797,10 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
         )
         return 4
 
-    ledger = ctx.ledger()
-    entries = ledger.entries()
+    ledger: _LedgerProto = ctx.ledger()
     if single_id is not None:
-        entries = [e for e in entries if e.get("id") == single_id]
-    if not entries:
+        ledger = _SingleIdLedgerView(ledger, single_id)
+    if not ledger.entries():
         print("reap: ledger empty (nothing to do)")
         return 0
 
@@ -772,24 +819,13 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
         force_forget=force_forget,
     )
 
-    # Subset-ledger wrapper for --id: sweep enumerates entries via
-    # ledger.entries(); we shim a fresh proxy that returns only the
-    # filtered list. Mutation paths (forget) pass through.
-    if single_id is not None:
-        original_entries = ledger.entries
-
-        def _filtered_entries() -> list[dict]:  # type: ignore[type-arg]
-            return [e for e in original_entries() if e.get("id") == single_id]
-
-        ledger.entries = _filtered_entries  # type: ignore[method-assign]
-
     store = ctx.store()
     _cli_mod = sys.modules.get("kinoforge.cli")
     clock = getattr(_cli_mod, "_cli_clock", _cli_clock)
 
     report = sweep(
         store=store,
-        ledger=ledger,
+        ledger=ledger,  # type: ignore[arg-type]  # _SingleIdLedgerView is structurally compatible
         registry_get_provider=registry.get_provider,
         thresholds=thresholds,
         clock=clock,
