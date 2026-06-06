@@ -31,6 +31,11 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from kinoforge.core import registry
+from kinoforge.core.batch_events import (
+    BatchEvent,
+    BatchEventCallback,
+    _LockedEmitter,
+)
 from kinoforge.core.batch_models import (
     BatchEntry,
     BatchManifest,
@@ -244,6 +249,10 @@ def _run_with_clock(
     initial_state: PipelineState,
     start_times: dict[int, float],
     idx: int,
+    *,
+    emit: _LockedEmitter,
+    entry: BatchEntry,
+    batch_id: str,
 ) -> Artifact:
     """Stamp the real stage-run start time, then run the stage.
 
@@ -260,12 +269,26 @@ def _run_with_clock(
         start_times: Shared dict keyed by entry index; this worker
             writes its slot before doing real work.
         idx: The entry's position in ``manifest.entries``.
+        emit: The locked emitter used to fire streaming events.
+        entry: The batch entry being processed (for the entry_start
+            event payload).
+        batch_id: The batch's top-level namespace ID.
 
     Returns:
         The persisted :class:`~kinoforge.core.interfaces.Artifact`
         extracted from ``state.artifacts["clip"]`` after the stage runs.
     """
     start_times[idx] = monotonic()
+    emit(
+        BatchEvent(
+            kind="entry_start",
+            batch_id=batch_id,
+            idx=idx,
+            run_id=entry.run_id or str(idx),
+            ts=datetime.now(),
+            entry=entry,
+        )
+    )
     out_state = stage.run(initial_state)
     return out_state.artifacts["clip"]
 
@@ -276,6 +299,10 @@ def _mark_remaining_after_fatal(
     manifest: BatchManifest,
     start_times: dict[int, float],
     batch_start: float,
+    *,
+    emit: _LockedEmitter,
+    batch_id: str,
+    fatal_type: str,
 ) -> None:
     """Cancel queued futures and label them aborted/interrupted in-place.
 
@@ -294,15 +321,46 @@ def _mark_remaining_after_fatal(
             so ``duration_s`` is 0 instead of negative or unbounded.
         batch_start: The monotonic timestamp captured at batch entry
             into the dispatch loop.
+        emit: The locked emitter used to fire streaming events.
+        batch_id: The batch's top-level namespace ID.
+        fatal_type: The class name of the fatal exception, used in
+            the error message of aborted/interrupted events.
     """
+    abort_error = f"batch aborted by {fatal_type}"
     for other_fut, other_idx in future_to_idx.items():
         if other_idx in outcomes_by_idx:
             continue
         other_entry = manifest.entries[other_idx]
         if other_fut.cancel():
+            # Never-started: emit synthetic start + finish(aborted).
+            if not emit.has_started(other_idx):
+                emit(
+                    BatchEvent(
+                        kind="entry_start",
+                        batch_id=batch_id,
+                        idx=other_idx,
+                        run_id=other_entry.run_id or str(other_idx),
+                        ts=datetime.now(),
+                        entry=other_entry,
+                    )
+                )
+            emit(
+                BatchEvent(
+                    kind="entry_finish",
+                    batch_id=batch_id,
+                    idx=other_idx,
+                    run_id=other_entry.run_id or str(other_idx),
+                    ts=datetime.now(),
+                    status="aborted",
+                    duration_s=0.0,
+                    error=abort_error,
+                )
+            )
             outcomes_by_idx[other_idx] = BatchOutcome(
                 run_id=other_entry.run_id or str(other_idx),
                 status="aborted",
+                duration_s=0.0,
+                error=abort_error,
             )
         else:
             # An in-flight future cannot be cancelled; record how long
@@ -311,10 +369,25 @@ def _mark_remaining_after_fatal(
             # future was scheduled but never woke up before the fatal
             # took over, so duration is effectively 0.
             other_duration = monotonic() - start_times.get(other_idx, batch_start)
+            # Only emit entry_finish; entry_start was already emitted by
+            # the worker thread when it started running.
+            emit(
+                BatchEvent(
+                    kind="entry_finish",
+                    batch_id=batch_id,
+                    idx=other_idx,
+                    run_id=other_entry.run_id or str(other_idx),
+                    ts=datetime.now(),
+                    status="interrupted",
+                    duration_s=other_duration,
+                    error=abort_error,
+                )
+            )
             outcomes_by_idx[other_idx] = BatchOutcome(
                 run_id=other_entry.run_id or str(other_idx),
                 status="interrupted",
                 duration_s=other_duration,
+                error=abort_error,
             )
 
 
@@ -377,6 +450,7 @@ def batch_generate(
     sink: OutputSink | None = None,
     instance: Instance | None = None,
     tags: dict[str, str] | None = None,
+    on_event: BatchEventCallback | None = None,
 ) -> BatchResult:
     """Run every entry in *manifest* on one shared deployed instance.
 
@@ -459,6 +533,15 @@ def batch_generate(
             collision so cache-key derivation stays deterministic.
             Ignored when ``instance=`` is supplied — the caller already
             owns that pod's tags.
+        on_event: Optional streaming callback fired with one
+            :class:`BatchEvent` per per-entry milestone.  Two event
+            kinds: ``entry_start`` (just before the worker begins the
+            stage) and ``entry_finish`` (after the worker records its
+            terminal status: ``ok`` / ``fail`` / ``interrupted`` /
+            ``aborted``).  Calls are serialized via an internal
+            ``threading.Lock`` so multi-line output never interleaves.
+            When ``None`` (the default), no events fire and behaviour is
+            byte-identical to pre-Layer-L-T4.
 
     Returns:
         A :class:`BatchResult` with one
@@ -481,6 +564,7 @@ def batch_generate(
         config / capacity problem, not a partial batch.
     """
     cap = concurrent if concurrent is not None else cfg.lifecycle().max_in_flight
+    emit = _LockedEmitter(on_event)
 
     started_at = datetime.now().isoformat(timespec="seconds")
     outcomes_by_idx: dict[int, BatchOutcome] = {}
@@ -609,6 +693,28 @@ def batch_generate(
                         # at build time are recorded as per-entry failures so
                         # the rest of the batch continues.
                         start_times[idx] = monotonic()
+                        emit(
+                            BatchEvent(
+                                kind="entry_start",
+                                batch_id=batch_id,
+                                idx=idx,
+                                run_id=entry.run_id or str(idx),
+                                ts=datetime.now(),
+                                entry=entry,
+                            )
+                        )
+                        emit(
+                            BatchEvent(
+                                kind="entry_finish",
+                                batch_id=batch_id,
+                                idx=idx,
+                                run_id=entry.run_id or str(idx),
+                                ts=datetime.now(),
+                                status="fail",
+                                duration_s=0.0,
+                                error=f"{type(build_exc).__name__}: {build_exc}",
+                            )
+                        )
                         outcomes_by_idx[idx] = BatchOutcome(
                             run_id=entry.run_id or str(idx),
                             status="fail",
@@ -617,7 +723,14 @@ def batch_generate(
                         )
                         continue
                     fut = executor.submit(
-                        _run_with_clock, stage, initial_state, start_times, idx
+                        _run_with_clock,
+                        stage,
+                        initial_state,
+                        start_times,
+                        idx,
+                        emit=emit,
+                        entry=entry,
+                        batch_id=batch_id,
                     )
                     future_to_idx[fut] = idx
 
@@ -639,6 +752,18 @@ def batch_generate(
                                 duration_s=duration,
                                 error=f"{type(exc).__name__}: {exc}",
                             )
+                            emit(
+                                BatchEvent(
+                                    kind="entry_finish",
+                                    batch_id=batch_id,
+                                    idx=idx,
+                                    run_id=entry.run_id or str(idx),
+                                    ts=datetime.now(),
+                                    status="interrupted",
+                                    duration_s=duration,
+                                    error=f"{type(exc).__name__}: {exc}",
+                                )
+                            )
                             # Cancel everything else; mark queued as
                             # "aborted", in-flight as "interrupted".
                             _mark_remaining_after_fatal(
@@ -647,6 +772,9 @@ def batch_generate(
                                 manifest,
                                 start_times,
                                 batch_start,
+                                emit=emit,
+                                batch_id=batch_id,
+                                fatal_type=type(exc).__name__,
                             )
                             raise
                         except Exception as exc:  # noqa: BLE001 — per-entry catch
@@ -656,12 +784,36 @@ def batch_generate(
                                 duration_s=duration,
                                 error=f"{type(exc).__name__}: {exc}",
                             )
+                            emit(
+                                BatchEvent(
+                                    kind="entry_finish",
+                                    batch_id=batch_id,
+                                    idx=idx,
+                                    run_id=entry.run_id or str(idx),
+                                    ts=datetime.now(),
+                                    status="fail",
+                                    duration_s=duration,
+                                    error=f"{type(exc).__name__}: {exc}",
+                                )
+                            )
                         else:
                             outcomes_by_idx[idx] = BatchOutcome(
                                 run_id=entry.run_id or str(idx),
                                 status="ok",
                                 duration_s=duration,
                                 uri=artifact.uri,
+                            )
+                            emit(
+                                BatchEvent(
+                                    kind="entry_finish",
+                                    batch_id=batch_id,
+                                    idx=idx,
+                                    run_id=entry.run_id or str(idx),
+                                    ts=datetime.now(),
+                                    status="ok",
+                                    duration_s=duration,
+                                    uri=artifact.uri,
+                                )
                             )
                 finally:
                     executor.shutdown(wait=True, cancel_futures=True)
