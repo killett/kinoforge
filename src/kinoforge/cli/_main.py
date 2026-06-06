@@ -158,6 +158,12 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_batch.add_argument("--batch-id", default=None, metavar="ID")
     p_batch.add_argument("--concurrent", type=int, default=None, metavar="N")
     p_batch.add_argument("--env-file", default=None, metavar="PATH")
+    p_batch.add_argument(
+        "--stream-format",
+        choices=("human", "jsonl", "none"),
+        default="human",
+        help="streaming output format (default: human)",
+    )
     p_batch_output = p_batch.add_mutually_exclusive_group()
     p_batch_output.add_argument(
         "--output-dir",

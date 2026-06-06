@@ -286,6 +286,7 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     from pydantic import ValidationError as PydanticValidationError
 
+    from kinoforge.cli.batch_formatters import build_formatter
     from kinoforge.core.batch import batch_generate, load_manifest
     from kinoforge.core.errors import (
         BudgetExceeded,
@@ -327,6 +328,8 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         else datetime.now().strftime("batch-%Y%m%d-%H%M%S")
     )
 
+    formatter = build_formatter(args.stream_format)
+
     # Collision check via the existing store API; pre-compute on purpose.
     # ``LocalArtifactStore.list`` returns ``[]`` for an unknown ``batch_id``;
     # real S3/GCS adapter errors (auth, permission denied) must NOT be
@@ -341,10 +344,15 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         )
         return 1
 
-    print(
+    header = (
         f"[{batch_id}] manifest loaded: {len(manifest.entries)} entries, "
         f"concurrency={args.concurrent or cfg.lifecycle().max_in_flight}"
     )
+    if args.stream_format == "jsonl":
+        # Keep stdout pure JSONL; operator info goes to stderr.
+        print(header, file=sys.stderr)
+    else:
+        print(header)
 
     try:
         result = batch_generate(
@@ -355,6 +363,7 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
             batch_id=batch_id,
             concurrent=args.concurrent,
             state_dir=ctx.state_dir,
+            on_event=formatter.emit,
         )
     except (BudgetExceeded, CapabilityMismatch, TeardownError) as exc:
         print(
@@ -371,22 +380,9 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
-    # Final per-entry summary table. Auto-size the run_id column to the
-    # widest entry (plus one space) so realistic run_ids like
-    # ``dawn-flight-attempt-3`` (21 chars) don't spill past a hard 20-char
-    # cap and break alignment. Status column stays fixed-width (max label
-    # = "interrupted" = 11 chars, so 12 is enough).
-    print("\nsummary:")
-    rid_width = max((len(o.run_id) for o in result.outcomes), default=1) + 1
-    for o in result.outcomes:
-        status_label = o.status.upper()
-        duration = f"{o.duration_s:.1f}s" if o.duration_s is not None else "—"
-        detail = o.uri if o.uri else (o.error or "")
-        print(f"  {o.run_id:<{rid_width}s} {status_label:<12s} {duration:<8s} {detail}")
-    print(f"batch-id: {batch_id}")
+    formatter.render_summary(result)
     n_ok = sum(1 for o in result.outcomes if o.status == "ok")
     n_fail = len(result.outcomes) - n_ok
-    print(f"results:  {n_ok}/{len(result.outcomes)} ok, {n_fail} failed")
     return 0 if n_fail == 0 else 1
 
 
