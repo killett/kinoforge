@@ -102,7 +102,7 @@ def _redact(payload: Any, extra_subs: dict[str, str] | None = None) -> Any:
 
 def _persist(
     label: str,
-    payload: dict[str, Any],
+    payload: list[dict[str, Any]],
     target_path: Path,
     *,
     cloud: str,
@@ -111,9 +111,14 @@ def _persist(
 ) -> None:
     """Write a redacted fixture JSON file to *target_path*.
 
+    The on-disk shape is always::
+
+        {"_meta": {...}, "entries": [<entry>, <entry>, ...]}
+
     Args:
         label: Human-readable label stored in ``_meta.label``.
-        payload: The raw captured payload (will be redacted before writing).
+        payload: The raw list of captured entry dicts (will be redacted before
+            writing).  Must be a **list**, not a wrapper dict.
         target_path: Destination ``.json`` file path (created with parents).
         cloud: ``"s3"`` or ``"gcs"``.
         axis: Test axis name, e.g. ``"hot_path"``.
@@ -139,6 +144,33 @@ def _body_hash(body: bytes | None) -> str:
     if body is None:
         return ""
     return hashlib.sha256(body).hexdigest()
+
+
+# ----------------------------------------------------------------------------
+# AWSResponse-shaped replay object.
+# ----------------------------------------------------------------------------
+
+
+class _ReplayResponse:
+    """AWSResponse-shaped object returned by :class:`S3Recorder` replay short-circuit.
+
+    botocore's ``before-send`` short-circuit must return an object exposing
+    ``.status_code``, ``.headers``, and ``.content`` — the same attributes
+    present on ``botocore.awsrequest.AWSResponse``.  We hand-roll this to avoid
+    coupling to botocore internals that may drift across versions.
+
+    Args:
+        status_code: HTTP status code, e.g. ``200``.
+        headers: Response headers dict.
+        content: Raw response body bytes.
+    """
+
+    def __init__(
+        self, status_code: int, headers: dict[str, str], content: bytes
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self.content = content
 
 
 # ----------------------------------------------------------------------------
@@ -213,7 +245,12 @@ class S3Recorder:
             key = self._match_key(op, params)
             for entry in self._fixture:
                 if entry["match_key"] == key:
-                    return entry["parsed_response_http_form"]
+                    raw = entry["parsed_response_http_form"]
+                    # raw is [status_code, headers_dict, body_b64]
+                    status_code: int = raw[0]
+                    headers: dict[str, str] = raw[1]
+                    content: bytes = base64.b64decode(raw[2])
+                    return _ReplayResponse(status_code, headers, content)
             raise FixtureMissError(
                 f"No fixture entry for operation={op!r} params_hash={key!r}"
             )
@@ -269,7 +306,7 @@ class S3Recorder:
         assert self.mode == "record", "flush() only valid in record mode"
         _persist(
             label=axis,
-            payload={"entries": self.captured},
+            payload=self.captured,
             target_path=target_path,
             cloud="s3",
             axis=axis,
@@ -313,6 +350,14 @@ class _GCSRecordingAdapter:
             body_bytes: bytes | None = bytes(raw_body)
         elif isinstance(raw_body, str):
             body_bytes = raw_body.encode()
+        elif hasattr(raw_body, "read"):
+            body_bytes = raw_body.read()
+            # Reset stream position so callers can re-read if needed.
+            if hasattr(raw_body, "seek"):
+                try:
+                    raw_body.seek(0)
+                except Exception:
+                    pass
         else:
             body_bytes = None
 
@@ -412,7 +457,7 @@ class GCSRecorder:
         """
         _persist(
             label=axis,
-            payload={"entries": self.captured},
+            payload=self.captured,
             target_path=target_path,
             cloud="gcs",
             axis=axis,
@@ -439,7 +484,6 @@ class FixtureReplayS3Client:
     """
 
     def __init__(self, fixture_path: Path) -> None:
-        self._recorder = S3Recorder(mode="replay", fixture_path=fixture_path)
         raise NotImplementedError("Layer W T11 fleshes this out")
 
 
@@ -457,5 +501,4 @@ class FixtureReplayGCSClient:
     """
 
     def __init__(self, fixture_path: Path) -> None:
-        self._recorder = GCSRecorder(mode="replay", fixture_path=fixture_path)
         raise NotImplementedError("Layer W T11 fleshes this out")
