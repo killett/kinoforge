@@ -1,0 +1,47 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-05-layer-u-heartbeat-persistence.md",
+  "specPath": "docs/superpowers/specs/2026-06-05-layer-u-heartbeat-persistence-design.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "T1: Ledger.touch for in-place entry updates",
+      "status": "pending",
+      "description": "**Goal:** Add `Ledger.touch(instance_id, *, last_heartbeat=None, **extra) -> bool` for strict-update mutation of an existing ledger entry under the existing cross-process lock. No upsert. Skip-unchanged guard. Protected keys filtered.\n\n**Files:**\n- Create: `tests/core/test_ledger_touch.py`\n- Modify: `src/kinoforge/core/lifecycle.py` (+~30 LOC near line 506)\n\n**Acceptance Criteria:**\n- unknown id returns False, no entry appended\n- existing id + new heartbeat returns True, value persisted\n- unchanged value returns False, zero disk writes\n- all-None kwargs returns False, lock never acquired\n- protected keys (id/provider/tags/created_at/cost_rate_usd_per_hr) filtered from **extra\n- lock acquired with key f\"ledger/{run_id}\" and ttl mutate_ttl_s\n- subprocess test: value crosses process boundary\n- forget+touch race: touch on forgotten id returns False, does not resurrect\n\n**Verify:** `pixi run pytest tests/core/test_ledger_touch.py -x -v && pixi run pytest -q && pixi run pre-commit run --all-files`.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lifecycle.py\", \"tests/core/test_ledger_touch.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_ledger_touch.py -x -v && pixi run pytest -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"unknown id no-op\", \"existing id persists\", \"unchanged value zero writes\", \"all-None no-op no lock\", \"protected keys filtered\", \"lock key + ttl correct\", \"cross-process visibility\", \"forget+touch no resurrect\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "T2: HeartbeatLoop threaded poll with crash-safe try/except + sentinel",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** New `core/heartbeat_loop.py` with `HeartbeatLoop` class — threaded periodic poll that calls `provider.heartbeat(id)` then `ledger.touch(id, hb, heartbeat_thread_tick=now)` on a configured cadence. Three-layer crash-safety defense (inner try/except + sentinel + daemon thread).\n\n**Files:**\n- Create: `src/kinoforge/core/heartbeat_loop.py` (~120 LOC)\n- Create: `tests/core/test_heartbeat_loop.py` (~250 LOC)\n\n**Acceptance Criteria:**\n- one tick calls provider.heartbeat then ledger.touch once\n- first tick is eager (no sleep)\n- provider.heartbeat exception caught + logged at ERROR; next tick still runs\n- ledger.touch exception caught + logged at ERROR; next tick still runs\n- sentinel heartbeat_thread_tick advances monotonically\n- stop() during inter-tick sleep returns within join_timeout_s\n- stop() on wedged thread returns within join_timeout_s + slack (daemon)\n- two concurrent loops on different ids do not collide\n\n**Verify:** `pixi run pytest tests/core/test_heartbeat_loop.py -x -v && pixi run pytest -q && pixi run pre-commit run --all-files`.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/heartbeat_loop.py\", \"tests/core/test_heartbeat_loop.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_heartbeat_loop.py -x -v && pixi run pytest -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"per-tick provider+ledger calls\", \"eager first tick\", \"provider exception caught + logged\", \"ledger exception caught + logged\", \"sentinel monotonic\", \"stop joins in time mid-sleep\", \"stop joins in time on wedged thread\", \"two loops isolated\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "T4: LifecycleConfig.heartbeat_interval_s",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Add `heartbeat_interval_s: float | None = None` field to `LifecycleConfig` with positive-value validator. Default None (feature disabled, backwards-compat).\n\n**Files:**\n- Modify: `src/kinoforge/core/config.py` (+~10 LOC on LifecycleConfig)\n- Modify: `tests/core/test_config.py` (+~40 LOC)\n\n**Acceptance Criteria:**\n- default None\n- positive float accepted\n- ValidationError on negative or zero\n- YAML round-trip lifecycle.heartbeat_interval_s = 30 -> cfg.lifecycle().heartbeat_interval_s == 30.0\n\n**Verify:** `pixi run pytest tests/core/test_config.py -x -v && pixi run pytest -q && pixi run pre-commit run --all-files`.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -x -v && pixi run pytest -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"default None\", \"positive float accepted\", \"negative rejected\", \"YAML round-trip\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "T3: deploy_session spawns HeartbeatLoop when configured",
+      "status": "pending",
+      "blockedBy": [2, 3],
+      "description": "**Goal:** Wire `HeartbeatLoop` into `deploy_session` context manager — spawn on enter when `cfg.lifecycle().heartbeat_interval_s` is set, stop on exit (even on exception). Add injectable `heartbeat_loop_factory` kwarg for test substitution.\n\n**Files:**\n- Modify: `src/kinoforge/core/orchestrator.py` (deploy_session +~15 LOC near 483-495)\n- Create: `tests/core/test_orchestrator_heartbeat.py` (~180 LOC)\n\n**Acceptance Criteria:**\n- interval=None: factory spy never called\n- interval=X: factory instantiated, start() then stop() in correct order\n- exception inside ctx body still triggers stop() in finally\n- factory seam supports test substitution (custom factory receives expected kwargs)\n- end-to-end real HeartbeatLoop + FakeClock: after 2 ticks ledger has last_heartbeat + heartbeat_thread_tick\n\n**Verify:** `pixi run pytest tests/core/test_orchestrator_heartbeat.py -x -v && pixi run pytest -q && pixi run pre-commit run --all-files`.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator_heartbeat.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_heartbeat.py -x -v && pixi run pytest -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"interval None no spawn\", \"interval set spawn+start+stop sequence\", \"exit on body raise still stops\", \"factory seam substitution\", \"e2e ledger write\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "T5: kinoforge status surfaces last_heartbeat + sentinel-staleness advisory",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Extend `_cmd_status` to emit a sentinel-staleness advisory when heartbeat_thread_tick is older than 3 * heartbeat_interval_s. The last_heartbeat surfacing already works via Layer S `_build_ledger_block`; tests pin it down.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py` (+~10 LOC in _cmd_status)\n- Modify: `tests/test_cli.py` (+~60 LOC)\n\n**Acceptance Criteria:**\n- surfaces last_heartbeat=<ISO> when present in entry\n- omits last_heartbeat line when absent (negative regression guard)\n- emits advisory when sentinel > 3 * interval old\n- no advisory when sentinel is fresh\n\n**Verify:** `pixi run pytest tests/test_cli.py -x -v -k status && pixi run pytest -q && pixi run pre-commit run --all-files`.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/test_cli.py\"], \"verifyCommand\": \"pixi run pytest tests/test_cli.py -x -v -k status && pixi run pytest -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"surfaces last_heartbeat\", \"omits when absent\", \"advisory when stale\", \"no advisory when fresh\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "T6: Layer U docs + manual smoke + merge to main",
+      "status": "pending",
+      "blockedBy": [4, 5],
+      "description": "**Goal:** Documentation (README + PROGRESS + example yaml), manual smoke (LocalProvider only), final pre-commit + pytest gate, merge to main via --no-ff.\n\n**Files:**\n- Modify: `README.md` (Operator section: heartbeat_interval_s, guidance, sentinel-gate forward-compat note)\n- Modify: `PROGRESS.md` (Phase entry with SHAs of T1-T5 + merge)\n- Modify: `examples/configs/local-fake.yaml` (heartbeat_interval_s comment under lifecycle:)\n\n**Acceptance Criteria:**\n- README operator section added\n- PROGRESS phase entry written with SHAs backfilled\n- example yaml comment added\n- manual smoke run + recorded (status surfaces last_heartbeat, advisory fires on SIGSTOP)\n- full test suite green; pre-commit clean\n- merge commit message references Layer U, closes PROGRESS:162 forward-compat seam\n\n**Verify:** `pixi run pytest -q && pixi run pre-commit run --all-files && git log --oneline -10`.\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\", \"examples/configs/local-fake.yaml\"], \"verifyCommand\": \"pixi run pytest -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"README updated\", \"PROGRESS phase entry\", \"example yaml comment\", \"manual smoke recorded\", \"full suite green + pre-commit clean\", \"merge to main no-ff\"]}\n```"
+    }
+  ]
+}
