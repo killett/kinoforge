@@ -141,9 +141,11 @@ def classify(
         grace_after_session_s: Default post-session warm-reuse window.
 
     Returns:
-        One of six Verdict values. Note: ``UNROUTABLE`` is never
-        returned by classify — it is assigned by ``sweep`` when
-        ``provider_for`` fails. Callers may rely on the
+        One of the six non-UNROUTABLE Verdict values:
+        LIVE, IDLE_REAP, ORPHAN_REAP, OVERAGE_REAP, STALE_LEDGER, or
+        HEARTBEAT_UNKNOWN. UNROUTABLE is assigned by
+        :func:`kinoforge.core.reaper_actor.sweep` when provider lookup
+        fails, never by classify itself. Callers may rely on this
         exclusion when partitioning.
     """
     instance_id = str(entry["id"])
