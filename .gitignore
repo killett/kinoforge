@@ -64,3 +64,6 @@ runpodctl.tar.gz
 # per memory rule to prevent path appearing in file tracker)
 .aws/kms-test-key.arn
 .gcp/kms-test-key.name
+
+# Stray screenshots from operator desktop (never commit)
+*.png
