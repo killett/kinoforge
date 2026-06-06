@@ -25,10 +25,11 @@ htmlcov/
 # Local-only working scratch (issue drafts, handoff notes, etc.)
 .tracking-issues/
 
-# Secrets — never commit .env or GCP service-account keys
+# Secrets — never commit .env, GCP service-account keys, or AWS credentials
 .env
 .env.*
 .gcp/
+.aws/
 # The .env.example template stays tracked
 !.env.example
 
