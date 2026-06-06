@@ -105,9 +105,17 @@ class BatchOutcome:
     Attributes:
         run_id: The entry's run_id (always set after load_manifest).
         status: One of "ok" / "fail" / "aborted" / "interrupted".
-        duration_s: Seconds the entry was in-flight (None for "aborted").
+        duration_s: Seconds the entry was in-flight.  ``0.0`` for
+            "aborted" entries (sweep path, never started); actual
+            wall-clock for "ok" / "fail" / "interrupted".  Only ``None``
+            on the narrow ``_finalize_summary`` backstop path, when an
+            entry was never even scheduled (deploy_session raised
+            before the loop).
         uri: Persisted artifact URI on "ok"; None otherwise.
-        error: Stringified exception on "fail" / "interrupted"; None otherwise.
+        error: Stringified exception on "fail" / "interrupted" /
+            "aborted" (for the latter two, formatted as
+            ``"batch aborted by <FatalType>"``); None on "ok" and on
+            the rare ``_finalize_summary`` backstop path.
     """
 
     run_id: str
