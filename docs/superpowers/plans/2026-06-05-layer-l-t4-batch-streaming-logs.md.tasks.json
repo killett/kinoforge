@@ -31,17 +31,17 @@
     {
       "id": 5,
       "subject": "Task 5: Wire --stream-format into cli/_commands.py + cli/_main.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3, 4],
       "description": "**Goal:** Add the CLI flag, pass `formatter.emit` to `batch_generate`, route the summary render through the formatter, confirm existing tests pass under the new `human` default.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py` (add `--stream-format` to batch subparser)\n- Modify: `src/kinoforge/cli/_commands.py` (build formatter, pass `on_event`, replace summary block)\n- Modify: `tests/cli/test_batch.py` (4 new ACs)\n\n**Acceptance Criteria:**\n- AC7 --stream-format=human default emits per-entry START + terminal lines + summary\n- AC8 --stream-format=jsonl: every stdout line is JSON; final line kind=batch_summary; manifest-loaded header on stderr; no human summary table\n- AC9 --stream-format=none: only header + summary (no START lines)\n- AC10 invalid choice exits 2\n- existing 6 _cmd_batch tests pass unchanged\n\n**Verify:** `pixi run test tests/cli/test_batch.py -v` -> 10 pass (6 existing + 4 new); full suite -> 1320 passed / 8 skipped.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_batch.py\"], \"verifyCommand\": \"pixi run test tests/cli/test_batch.py -v && pixi run test -q && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"AC7 human default per-entry lines\", \"AC8 jsonl pure stdout parseable + batch_summary terminator\", \"AC9 none preserves prior shape\", \"AC10 invalid choice exit 2\", \"existing 6 tests pass unchanged\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: README + PROGRESS + final gate + merge prep",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5],
       "description": "**Goal:** Document the new flag, record Phase 35 close-out in PROGRESS.md, run the final full-suite gate, prepare the merge commit.\n\n**Files:**\n- Modify: `README.md` (Batch jobs section: new `### Streaming output` subheading)\n- Modify: `PROGRESS.md` (Phase 35 entry + close PROGRESS:325 deferral + rewrite RESUME pointer)\n\n**Acceptance Criteria:**\n- README has a ### Streaming output subheading with one example per --stream-format choice\n- PROGRESS Phase 35 entry under ## Post-MVP with per-task SHAs + key design decisions + Closes PROGRESS:325 follow-up #1\n- Known-limitations 'Streaming per-entry log lines (DEFERRED)' line marked CLOSED\n- RESUME pointer rewritten to reflect Phase 35\n- Final gate: full suite + lint + mypy clean\n\n**Verify:** `pixi run test -q && pixi run lint && pixi run typecheck` -> ~1322 passed / 8 skipped; `git log --oneline -8` shows 6 task commits + this docs commit.\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test -q && pixi run lint && pixi run typecheck && git log --oneline -8\", \"acceptanceCriteria\": [\"README streaming subsection with 3 examples\", \"PROGRESS Phase 35 entry with SHAs + design decisions\", \"known-limitations line marked CLOSED\", \"RESUME pointer rewritten\", \"final gate clean\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-05T20:45:00-07:00"
+  "lastUpdated": "2026-06-05T21:30:00-07:00"
 }
