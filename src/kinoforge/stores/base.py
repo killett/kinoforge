@@ -8,7 +8,7 @@ deletes all go through that uri (or the run_id/name pair for listing).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from kinoforge.core.interfaces import Artifact
 
@@ -143,4 +143,29 @@ class ArtifactStore(ABC):
             A new :class:`~kinoforge.core.locks.Lock` instance.  Each call
             returns a fresh object; sharing across threads/processes is the
             caller's concern.
+        """
+
+    @abstractmethod
+    def signed_url(
+        self,
+        run_id: str,
+        name: str,
+        *,
+        op: Literal["GET", "PUT"],
+        ttl_s: int,
+    ) -> str:
+        """Return a pre-signed URL for a single GET or PUT on the artifact.
+
+        Args:
+            run_id: Run namespace.
+            name: Artifact name within the run.
+            op: HTTP method the URL grants. ``"GET"`` downloads; ``"PUT"`` uploads.
+            ttl_s: Validity window in seconds from issuance.
+
+        Returns:
+            Absolute HTTPS URL valid for ``ttl_s`` seconds.
+
+        Raises:
+            NotImplementedError: Backend does not support signed URLs (e.g.
+                ``LocalArtifactStore``).
         """

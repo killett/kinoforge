@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from kinoforge.core.interfaces import Artifact
-from kinoforge.stores.base import ArtifactStore
+from kinoforge.stores.base import ArtifactStore  # noqa: F401 — used in signed_url stub
 
 if TYPE_CHECKING:
     from kinoforge.core.locks import Lock
@@ -138,6 +138,20 @@ class GCSArtifactStore(ArtifactStore):
         import kinoforge.stores.gcs.lock as _gcs_lock  # noqa: PLC0415
 
         return _gcs_lock.GCSCloudLock(store=self, key=key, ttl_s=ttl_s)
+
+    def signed_url(
+        self,
+        run_id: str,
+        name: str,
+        *,
+        op: Literal["GET", "PUT"],
+        ttl_s: int,
+    ) -> str:
+        """Return a pre-signed URL for GET or PUT on the artifact.
+
+        Temporary stub — implementation in Layer W Task 4.
+        """
+        raise NotImplementedError("Layer W T4 not yet implemented")
 
 
 # ---------------------------------------------------------------------------

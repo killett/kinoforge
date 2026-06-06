@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from kinoforge.core.interfaces import Artifact
 from kinoforge.core.locks import Lock, _sanitize_key
@@ -179,6 +180,21 @@ class LocalArtifactStore(ArtifactStore):
         sanitized = _sanitize_key(key)
         path = self.root / "_locks" / f"{sanitized}.lock"
         return FileLock(path=path, key=key, ttl_s=ttl_s)
+
+    def signed_url(
+        self,
+        run_id: str,
+        name: str,
+        *,
+        op: Literal["GET", "PUT"],
+        ttl_s: int,
+    ) -> str:
+        """Signed URLs not supported on local filesystem artifacts.
+
+        Raises:
+            NotImplementedError: Always — local files have no transport-layer auth.
+        """
+        raise NotImplementedError("LocalArtifactStore does not support signed URLs")
 
 
 # ---------------------------------------------------------------------------
