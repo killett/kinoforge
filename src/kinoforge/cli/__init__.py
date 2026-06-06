@@ -7,6 +7,7 @@ preserves every import path that tests and the entry point rely on::
     from kinoforge.cli import _build_store   # used by tests/test_cli.py
     from kinoforge.cli import _build_parser  # used by tests/test_cli.py
     from kinoforge.cli import _build_ledger_block  # used by tests/test_cli.py
+    from kinoforge.cli import SessionContext  # used by tests/cli/
 """
 
 from kinoforge.cli._commands import (
@@ -25,14 +26,15 @@ from kinoforge.cli._commands import (
     _cmd_reap,
     _cmd_status,
     _cmd_stop,
-    _ledger,
     _ledger_field_or_cfg,
     _print_status_block,
 )
 from kinoforge.cli._main import _build_parser, _print_instance_overview, main
+from kinoforge.cli.context import SessionContext
 from kinoforge.core.orchestrator import generate
 
 __all__ = [
+    "SessionContext",
     "_build_ledger_block",
     "_build_parser",
     "_build_sink",
@@ -49,7 +51,6 @@ __all__ = [
     "_cmd_reap",
     "_cmd_status",
     "_cmd_stop",
-    "_ledger",
     "_ledger_field_or_cfg",
     "_print_instance_overview",
     "_print_status_block",

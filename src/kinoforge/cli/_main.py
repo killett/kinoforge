@@ -7,13 +7,17 @@ the back-compat shim in ``cli/__init__.py``.
 from __future__ import annotations
 
 import argparse
+import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+
+from pydantic import ValidationError as PydanticValidationError
 
 from kinoforge.cli._commands import (
     _build_sink,  # noqa: F401 — re-exported via package shim
     _build_store,  # noqa: F401 — re-exported via package shim
-    _cli_clock,
+    _cli_clock,  # noqa: F401 — re-exported via package shim
     _cmd_batch,
     _cmd_deploy,
     _cmd_destroy,
@@ -25,34 +29,29 @@ from kinoforge.cli._commands import (
     _cmd_reap,
     _cmd_status,
     _cmd_stop,
-    _ledger,
 )
+from kinoforge.cli.context import SessionContext
+from kinoforge.cli.sidecar import SIDECAR_NAME
 from kinoforge.core.dotenv_loader import load_env_file
+from kinoforge.core.errors import (
+    ConfigError,
+    SidecarMigrationBlocked,
+    SidecarMismatch,
+)
 
-
-def _print_instance_overview(state_dir: Path) -> None:
-    """Print a one-line overview of every ledger entry to stdout.
-
-    Prints "No running instances." when the ledger is empty.
-
-    Args:
-        state_dir: Root directory used for the state store.
-    """
-    ledger = _ledger(state_dir)
-    entries = ledger.entries()
-    now = time.time()
-    if not entries:
-        print("[instance overview] No running instances.")
-        return
-    print("[instance overview]")
-    for entry in entries:
-        iid = entry.get("id", "?")
-        created_at = float(entry.get("created_at", now))
-        age_s = now - created_at
-        age_h = age_s / 3600.0
-        rate = float(entry.get("cost_rate_usd_per_hr", 0.0))
-        spend = age_h * rate
-        print(f"  {iid}  age={age_h:.1f}h  est_spend=${spend:.4f}")
+_DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
+    "deploy": _cmd_deploy,
+    "provision": _cmd_provision,
+    "generate": _cmd_generate,
+    "batch": _cmd_batch,
+    "list": _cmd_list,
+    "status": _cmd_status,
+    "stop": _cmd_stop,
+    "destroy": _cmd_destroy,
+    "forget": _cmd_forget,
+    "reap": _cmd_reap,
+    "gc": _cmd_gc,
+}
 
 
 def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentParser:
@@ -175,8 +174,38 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     return parser
 
 
+def _print_instance_overview(ctx: SessionContext) -> None:
+    """Print one-line overview per ledger entry; degrade gracefully on failure.
+
+    Args:
+        ctx: Per-invocation session context.
+    """
+    ledger, warn = ctx.ledger_safe()
+    if ledger is None:
+        print(f"[instance overview] unavailable: {warn}")
+        return
+    try:
+        entries = ledger.entries()
+    except Exception as exc:  # noqa: BLE001 — best-effort surface
+        print(f"[instance overview] unavailable: {type(exc).__name__}: {exc}")
+        return
+    now = time.time()
+    if not entries:
+        print("[instance overview] No running instances.")
+        return
+    print("[instance overview]")
+    for entry in entries:
+        iid = entry.get("id", "?")
+        created_at = float(entry.get("created_at", now))
+        age_s = now - created_at
+        age_h = age_s / 3600.0
+        rate = float(entry.get("cost_rate_usd_per_hr", 0.0))
+        spend = age_h * rate
+        print(f"  {iid}  age={age_h:.1f}h  est_spend=${spend:.4f}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Parse *argv* and dispatch to the appropriate subcommand.
+    """Parse argv, build SessionContext, dispatch to subcommand.
 
     Args:
         argv: Explicit argument list; uses ``sys.argv[1:]`` when ``None``.
@@ -186,48 +215,40 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = _build_parser()
     args = parser.parse_args(argv)
-
     state_dir = Path(args.state_dir)
 
     # Load .env secrets before dispatch; shell-set values always win.
     env_file = Path(args.env_file) if args.env_file is not None else None
     load_env_file(env_file)
 
-    # Print instance overview on every invocation (before subcommand work).
-    _print_instance_overview(state_dir)
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    try:
+        ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=cfg_path)
+    except (SidecarMismatch, SidecarMigrationBlocked) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except PydanticValidationError as exc:
+        print(
+            f"error: sidecar at {state_dir / SIDECAR_NAME} is unreadable: "
+            f"{exc}; rm to reset",
+            file=sys.stderr,
+        )
+        return 1
+    except (ConfigError, FileNotFoundError) as exc:
+        print(f"error: config: {exc}", file=sys.stderr)
+        return 1
+
+    _print_instance_overview(ctx)
 
     if args.cmd is None:
         parser.print_help()
         return 0
 
-    if args.cmd == "deploy":
-        return _cmd_deploy(args, state_dir)
-    if args.cmd == "provision":
-        return _cmd_provision(args, state_dir)
-    if args.cmd == "generate":
-        return _cmd_generate(args, state_dir)
-    if args.cmd == "list":
-        return _cmd_list(state_dir)
-    if args.cmd == "status":
-        return _cmd_status(args, state_dir)
-    if args.cmd == "stop":
-        return _cmd_stop(args, state_dir)
-    if args.cmd == "destroy":
-        return _cmd_destroy(args, state_dir)
-    if args.cmd == "forget":
-        return _cmd_forget(args, state_dir)
-    if args.cmd == "reap":
-        return _cmd_reap(state_dir)
-    if args.cmd == "gc":
-        return _cmd_gc(args, state_dir)
-    if args.cmd == "batch":
-        return _cmd_batch(args, state_dir)
-
-    parser.print_help()
-    return 0
+    return _DISPATCH[args.cmd](args, ctx)
 
 
 __all__ = [
+    "_DISPATCH",
     "_build_parser",
     "_build_sink",
     "_build_store",

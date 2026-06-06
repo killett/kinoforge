@@ -1,8 +1,9 @@
 """Subcommand handlers + build helpers for the kinoforge CLI.
 
-Every ``_cmd_*`` handler accepts ``(args, state_dir)`` today; Layer T
-Task 7 migrates them to ``(args, ctx)``. This task moves them verbatim —
-no signature change.
+Every ``_cmd_*`` handler accepts ``(args, ctx)`` where *ctx* is a
+:class:`~kinoforge.cli.context.SessionContext` that bundles
+``state_dir``, loaded ``cfg``, and lazy ``store()`` / ``ledger()``
+accessors.
 """
 
 from __future__ import annotations
@@ -15,11 +16,12 @@ from datetime import datetime
 from pathlib import Path
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
+from kinoforge.cli.context import SessionContext
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import GenerationRequest
-from kinoforge.core.lifecycle import Ledger, destroy_confirmed, reap
+from kinoforge.core.lifecycle import destroy_confirmed, reap
 from kinoforge.core.orchestrator import generate
 from kinoforge.outputs.base import OutputSink
 from kinoforge.outputs.local import LocalOutputSink
@@ -32,19 +34,6 @@ _cli_clock: Clock = RealClock()
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _ledger(state_dir: Path) -> Ledger:
-    """Return a Ledger backed by ``state_dir``.
-
-    Args:
-        state_dir: Root directory for the local artifact store.
-
-    Returns:
-        A :class:`~kinoforge.core.lifecycle.Ledger` instance.
-    """
-    store = LocalArtifactStore(state_dir)
-    return Ledger(store=store, run_id="_lifecycle")
 
 
 def _build_store(cfg: Config, state_dir: Path) -> ArtifactStore:
@@ -119,24 +108,25 @@ def _build_sink(cfg: Config, args: argparse.Namespace) -> OutputSink | None:
 # ---------------------------------------------------------------------------
 
 
-def _cmd_deploy(args: argparse.Namespace, state_dir: Path) -> int:
+def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``deploy`` subcommand.
 
     Args:
         args: Parsed CLI arguments.
-        state_dir: Path to the state directory.
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code (0 on success, non-zero on error).
     """
-    from kinoforge.core.config import load_config
     from kinoforge.core.orchestrator import deploy
 
-    cfg = load_config(Path(args.config))
+    if ctx.cfg is None:
+        raise RuntimeError("_cmd_deploy requires --config")
+    cfg = ctx.cfg
 
     if not args.dry_run:
         # Check for duplicate instance in ledger
-        ledger = _ledger(state_dir)
+        ledger = ctx.ledger()
         key_hash = cfg.capability_key().derive()[:12]
         for entry in ledger.entries():
             tags = entry.get("tags", {})
@@ -159,7 +149,7 @@ def _cmd_deploy(args: argparse.Namespace, state_dir: Path) -> int:
         print(f"deployed: instance={result.instance and result.instance.id!r}")
         # Record to ledger if an instance was created
         if result.instance is not None:
-            ledger = _ledger(state_dir)
+            ledger = ctx.ledger()
             lc = cfg.lifecycle()
             # Layer S: snapshot lifecycle policy onto the ledger entry so
             # `kinoforge status` can surface it without re-loading the YAML.
@@ -174,19 +164,20 @@ def _cmd_deploy(args: argparse.Namespace, state_dir: Path) -> int:
     return 0
 
 
-def _cmd_provision(args: argparse.Namespace, state_dir: Path) -> int:  # noqa: ARG001
+def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``provision`` subcommand.
 
     Args:
         args: Parsed CLI arguments.
-        state_dir: Path to the state directory (unused directly here).
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code (0 on success, non-zero on error).
     """
-    from kinoforge.core.config import load_config
+    if ctx.cfg is None:
+        raise RuntimeError("_cmd_provision requires --config")
+    cfg = ctx.cfg
 
-    cfg = load_config(Path(args.config))
     # Resolve provider and engine, then call provisioner
     try:
         from kinoforge.core import registry
@@ -225,26 +216,26 @@ def _cmd_provision(args: argparse.Namespace, state_dir: Path) -> int:  # noqa: A
         cfg=cfg,  # type: ignore[arg-type]  # Config satisfies _ProvisionConfig structurally
         instance=instance,
         creds=EnvCredentialProvider(),
-        download_dir=state_dir / "weights",
+        download_dir=ctx.state_dir / "weights",
     )
     print(f"provisioned: instance={instance and instance.id!r}")
     return 0
 
 
-def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
+def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``generate`` subcommand.
 
     Args:
         args: Parsed CLI arguments.
-        state_dir: Path to the state directory.
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code (0 on success, non-zero on error).
     """
-    from kinoforge.core.config import load_config
-
-    cfg = load_config(Path(args.config))
-    store = _build_store(cfg, state_dir)
+    if ctx.cfg is None:
+        raise RuntimeError("_cmd_generate requires --config")
+    cfg = ctx.cfg
+    store = ctx.store()
     sink = _build_sink(cfg, args)
     request = GenerationRequest(prompt=args.prompt, mode=args.mode)
 
@@ -263,7 +254,7 @@ def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
 
     try:
         artifact, _ = _generate(
-            cfg, request, store=store, sink=sink, run_id=run_id, state_dir=state_dir
+            cfg, request, store=store, sink=sink, run_id=run_id, state_dir=ctx.state_dir
         )
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
@@ -273,13 +264,13 @@ def _cmd_generate(args: argparse.Namespace, state_dir: Path) -> int:
     return 0
 
 
-def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
+def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``batch`` subcommand.
 
     Args:
         args: Parsed CLI arguments. Required: ``config``, ``manifest``.
             Optional: ``batch_id``, ``concurrent``, ``env_file``.
-        state_dir: Path to the operator state directory.
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code:
@@ -296,7 +287,6 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
     from pydantic import ValidationError as PydanticValidationError
 
     from kinoforge.core.batch import batch_generate, load_manifest
-    from kinoforge.core.config import load_config
     from kinoforge.core.errors import (
         BudgetExceeded,
         CapabilityMismatch,
@@ -304,6 +294,10 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
         KinoforgeError,
         TeardownError,
     )
+
+    if ctx.cfg is None:
+        raise RuntimeError("_cmd_batch requires --config")
+    cfg = ctx.cfg
 
     if args.env_file is not None:
         from kinoforge.core.dotenv_loader import load_env_file
@@ -319,18 +313,12 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
         return 1
 
     try:
-        cfg = load_config(Path(args.config))
-    except (ConfigError, PydanticValidationError) as exc:
-        print(f"error: config: {exc}", file=sys.stderr)
-        return 1
-
-    try:
         manifest = load_manifest(Path(args.manifest))
     except (ConfigError, PydanticValidationError) as exc:
         print(f"error: manifest: {exc}", file=sys.stderr)
         return 1
 
-    store = _build_store(cfg, state_dir)
+    store = ctx.store()
     sink = _build_sink(cfg, args)
 
     batch_id: str = (
@@ -366,7 +354,7 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
             sink=sink,
             batch_id=batch_id,
             concurrent=args.concurrent,
-            state_dir=state_dir,
+            state_dir=ctx.state_dir,
         )
     except (BudgetExceeded, CapabilityMismatch, TeardownError) as exc:
         print(
@@ -402,16 +390,17 @@ def _cmd_batch(args: argparse.Namespace, state_dir: Path) -> int:
     return 0 if n_fail == 0 else 1
 
 
-def _cmd_list(state_dir: Path) -> int:
+def _cmd_list(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: ARG001
     """Handle ``list`` subcommand — prints ledger entries.
 
     Args:
-        state_dir: Path to the state directory.
+        args: Parsed CLI arguments (unused).
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code (always 0).
     """
-    ledger = _ledger(state_dir)
+    ledger = ctx.ledger()
     entries = ledger.entries()
     if not entries:
         print("No instances recorded in ledger.")
@@ -524,13 +513,13 @@ def _print_status_block(
         print(advisory)
 
 
-def _cmd_status(args: argparse.Namespace, state_dir: Path) -> int:
+def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``status`` subcommand: read ledger, dispatch to recorded provider.
 
     Args:
         args: Parsed CLI arguments. Uses ``args.id`` and optionally
             ``args.config`` (``--config``/``-c``) for legacy-entry fallback.
-        state_dir: Path to the state directory.
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code per the Layer S design contract:
@@ -541,15 +530,14 @@ def _cmd_status(args: argparse.Namespace, state_dir: Path) -> int:
               from the provider lookup.
     """
     from kinoforge.core import registry
-    from kinoforge.core.config import load_config
 
-    ledger = _ledger(state_dir)
+    ledger = ctx.ledger()
     entry = next((e for e in ledger.entries() if e.get("id") == args.id), None)
     if entry is None:
         print(f"instance {args.id!r} not found in ledger", file=sys.stderr)
         return 1
 
-    cfg = load_config(args.config) if getattr(args, "config", None) else None
+    cfg = ctx.cfg
     ledger_block = _build_ledger_block(entry, cfg=cfg, now=time.time())
 
     provider_name = str(entry.get("provider", "local"))
@@ -596,17 +584,17 @@ def _cmd_status(args: argparse.Namespace, state_dir: Path) -> int:
     return 0
 
 
-def _cmd_stop(args: argparse.Namespace, state_dir: Path) -> int:
+def _cmd_stop(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``stop`` subcommand.
 
     Args:
         args: Parsed CLI arguments.
-        state_dir: Path to the state directory.
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code (0 on success, 1 on error).
     """
-    ledger = _ledger(state_dir)
+    ledger = ctx.ledger()
     entries = ledger.entries()
     entry = next((e for e in entries if e.get("id") == args.id), None)
     if entry is None:
@@ -626,17 +614,17 @@ def _cmd_stop(args: argparse.Namespace, state_dir: Path) -> int:
         return 1
 
 
-def _cmd_destroy(args: argparse.Namespace, state_dir: Path) -> int:
+def _cmd_destroy(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``destroy`` subcommand.
 
     Args:
         args: Parsed CLI arguments.
-        state_dir: Path to the state directory.
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code (0 on success, 1 on error).
     """
-    ledger = _ledger(state_dir)
+    ledger = ctx.ledger()
     entries = ledger.entries()
     entry = next((e for e in entries if e.get("id") == args.id), None)
     if entry is None:
@@ -657,7 +645,7 @@ def _cmd_destroy(args: argparse.Namespace, state_dir: Path) -> int:
         return 1
 
 
-def _cmd_forget(args: argparse.Namespace, state_dir: Path) -> int:
+def _cmd_forget(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``forget`` subcommand: remove one ledger entry.
 
     Layer S recovery command — clears the stale entries that
@@ -669,14 +657,14 @@ def _cmd_forget(args: argparse.Namespace, state_dir: Path) -> int:
 
     Args:
         args: Parsed CLI arguments (uses ``args.id``).
-        state_dir: Path to the state directory.
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code:
             * 0 — entry was present and has been removed.
             * 1 — no ledger entry matched ``args.id``.
     """
-    ledger = _ledger(state_dir)
+    ledger = ctx.ledger()
     if not any(e.get("id") == args.id for e in ledger.entries()):
         print(f"instance {args.id!r} not found in ledger", file=sys.stderr)
         return 1
@@ -685,11 +673,12 @@ def _cmd_forget(args: argparse.Namespace, state_dir: Path) -> int:
     return 0
 
 
-def _cmd_reap(state_dir: Path) -> int:
+def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: ARG001
     """Handle ``reap`` subcommand.
 
     Args:
-        state_dir: Path to the state directory.
+        args: Parsed CLI arguments (unused).
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code (always 0).
@@ -699,7 +688,7 @@ def _cmd_reap(state_dir: Path) -> int:
     from kinoforge.core.lifecycle import LifecycleManager
     from kinoforge.providers.local import LocalProvider
 
-    ledger = _ledger(state_dir)
+    ledger = ctx.ledger()
     clock = RealClock()
     lifecycle = Lifecycle()
     provider = LocalProvider(clock=clock)
@@ -718,20 +707,19 @@ def _cmd_reap(state_dir: Path) -> int:
     return 0
 
 
-def _cmd_gc(args: argparse.Namespace, state_dir: Path) -> int:
+def _cmd_gc(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``gc`` subcommand — remove store entries matching criteria.
 
     Args:
         args: Parsed CLI arguments.
-        state_dir: Path to the state directory.
+        ctx: Per-invocation session context.
 
     Returns:
         Exit code (always 0).
     """
-    from kinoforge.core.config import load_config
-
-    cfg = load_config(Path(args.config))
-    store = _build_store(cfg, state_dir)
+    if ctx.cfg is None:
+        raise RuntimeError("_cmd_gc requires --config")
+    store = ctx.store()
     run_id: str | None = args.run
     removed = 0
 
