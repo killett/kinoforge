@@ -381,7 +381,7 @@ def test_entries_reads_legacy_entry_without_new_keys(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_ledger_compute_uri_delegates_to_store_uri_for(tmp_path: Path) -> None:
+def test_ledger_compute_uri_delegates_to_store_uri_for() -> None:
     """Bug-catch: prevents reintroduction of the isinstance switch.
 
     A future edit that re-adds isinstance(LocalArtifactStore) checking
@@ -401,7 +401,7 @@ def test_ledger_compute_uri_delegates_to_store_uri_for(tmp_path: Path) -> None:
     assert ledger._compute_uri() == store.uri_for("_lifecycle", "ledger.json")
 
 
-def test_ledger_round_trip_against_fake_s3(tmp_path: Path) -> None:
+def test_ledger_round_trip_against_fake_s3() -> None:
     """Record + entries() round-trips through fake S3 store."""
     from kinoforge.core.lifecycle import Ledger
     from kinoforge.stores.s3 import S3ArtifactStore
@@ -427,7 +427,7 @@ def test_ledger_round_trip_against_fake_s3(tmp_path: Path) -> None:
     assert entries[0]["provider"] == "local"
 
 
-def test_ledger_round_trip_against_fake_gcs(tmp_path: Path) -> None:
+def test_ledger_round_trip_against_fake_gcs() -> None:
     """Same contract against fake GCS — proves both clouds work."""
     from kinoforge.core.lifecycle import Ledger
     from kinoforge.stores.gcs import GCSArtifactStore
