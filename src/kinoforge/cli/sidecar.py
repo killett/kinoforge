@@ -101,7 +101,7 @@ def _local_ledger_nonempty(state_dir: Path) -> bool:
     except (json.JSONDecodeError, OSError):
         return False
     entries = data.get("entries", []) if isinstance(data, dict) else []
-    return bool(entries)
+    return isinstance(entries, list) and bool(entries)
 
 
 def verify_or_write_sidecar(state_dir: Path, cfg: Config) -> None:

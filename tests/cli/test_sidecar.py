@@ -167,6 +167,34 @@ def test_local_ledger_nonempty_corrupt_returns_false(tmp_path: Path) -> None:
     assert _local_ledger_nonempty(tmp_path) is False
 
 
+def test_local_ledger_nonempty_non_list_entries_returns_false() -> None:
+    """Corrupt ledger with non-list `entries` (string, dict, int) → False.
+
+    Bug-catch: a `bool(entries)` check without an isinstance guard
+    treats truthy non-list values as 'has entries' and falsely blocks
+    migration to cloud stores. The ledger writer only ever produces
+    list[dict] under entries; any other shape is corrupt and should be
+    treated as empty.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        from pathlib import Path as _P
+
+        state_dir = _P(tmp)
+        p = state_dir / LEDGER_RUN_ID / LEDGER_NAME
+        p.parent.mkdir(parents=True)
+        for shape in (
+            '{"entries": "garbage"}',
+            '{"entries": {"a": 1}}',
+            '{"entries": 42}',
+        ):
+            p.write_text(shape)
+            assert _local_ledger_nonempty(state_dir) is False, (
+                f"non-list entries shape {shape!r} should be treated as empty"
+            )
+
+
 # ---------------------------------------------------------------------------
 # verify_or_write_sidecar
 # ---------------------------------------------------------------------------
