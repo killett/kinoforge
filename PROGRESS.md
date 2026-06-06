@@ -1067,7 +1067,7 @@ Closes PROGRESS:127.
 - [x] Task 3: batch_generate emits at 5 sites; aborted/interrupted outcomes carry duration_s + error for JSONL uniformity — commits `27b3f56` + `93b9c57`
 - [x] Task 4: `cli/batch_formatters.py` — Human / JSONL / NoOp + 8 ACs — commit `b63b527`
 - [x] Task 5: `--stream-format={human,jsonl,none}` wired through `_cmd_batch` + instance-overview stderr routing in jsonl mode + 4 ACs — commits `35436d2` + `2368e1d` + `7017df3`
-- [x] Task 6: README + PROGRESS + final gate — commit `<SHA-T6>`  (← backfill after the docs commit lands)
+- [x] Task 6: README + PROGRESS + final gate — commit `bd9a222`
 - [ ] Merge to main via `--no-ff` — `<SHA-MERGE>` (controller creates the merge commit separately; closes PROGRESS:326 follow-up #1)
 
 **Key design decisions:**
