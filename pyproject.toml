@@ -54,8 +54,8 @@ exclude = ["tools/_vendored/"]
 # module = ["rasterio.*", "netCDF4.*"]
 # ignore_missing_imports = true
 
-[[tool.mypy.overrides]]  # botocore ships no py.typed marker; suppress the stub-missing noise.
-module = ["botocore.*"]
+[[tool.mypy.overrides]]  # botocore and boto3 ship no py.typed markers; suppress the stub-missing noise.
+module = ["botocore.*", "boto3.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]  # Tests often have untyped functions and use dynamic features, so relax mypy rules for them.
