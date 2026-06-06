@@ -980,9 +980,26 @@ def test_streaming_on_event_none_default_byte_identical(tmp_path: Path) -> None:
     assert [o.status for o in result.outcomes] == ["ok", "ok", "ok"]
     assert [o.run_id for o in result.outcomes] == ["x", "y", "z"]
 
+    # _batch_summary.json on disk must match the pre-Layer-L-T4 contract:
+    # an emitter that accidentally added new top-level fields or
+    # altered the entries shape would slip past the in-memory checks.
+    summary_path = tmp_path / "b" / "_batch_summary.json"
+    assert summary_path.is_file(), f"missing summary at {summary_path}"
+    summary = json.loads(summary_path.read_text())
+    assert summary["batch_id"] == "b"
+    assert [e["status"] for e in summary["entries"]] == ["ok", "ok", "ok"]
+    assert [e["run_id"] for e in summary["entries"]] == ["x", "y", "z"]
+
 
 def test_streaming_invariant_clean_path(tmp_path: Path) -> None:
-    """AC2 (clean exit).  start_count == finish_count == 3."""
+    """AC2 (clean exit).  start_count == finish_count == 3.
+
+    Bug: an emitter that fires two finish events (e.g. from both the
+    exception branch and the aborted fallback) or that skips entry_start
+    for never-cancelled futures would break count equality on the clean
+    exit path.  The invariant is the foundation of every downstream
+    consumer's "match start to finish per idx" assumption.
+    """
     cfg = _compute_cfg()
     store = LocalArtifactStore(tmp_path)
     engine = _make_spy_engine()
@@ -1006,7 +1023,14 @@ def test_streaming_invariant_clean_path(tmp_path: Path) -> None:
 
 
 def test_streaming_ordering_start_before_finish(tmp_path: Path) -> None:
-    """AC3.  For every idx, entry_start precedes entry_finish."""
+    """AC3.  For every idx, entry_start precedes entry_finish.
+
+    Bug: an emitter that fires entry_finish on the wrong code path (e.g.
+    inside the executor.submit branch before the worker has fired
+    entry_start) would let a consumer observe a finish for an idx whose
+    start hasn't arrived — breaking strict pairing for log aggregators
+    that index events by (kind, idx) sequence number.
+    """
     cfg = _compute_cfg()
     store = LocalArtifactStore(tmp_path)
     engine = _make_spy_engine()

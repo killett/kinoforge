@@ -254,13 +254,19 @@ def _run_with_clock(
     entry: BatchEntry,
     batch_id: str,
 ) -> Artifact:
-    """Stamp the real stage-run start time, then run the stage.
+    """Stamp the real stage-run start time, fire ``entry_start``, then run the stage.
 
     Recording ``monotonic()`` before ``executor.submit`` would
     conflate queue-wait time with the stage's real wall-clock cost —
     a 5-entry batch with ``concurrent=1`` would report 5x inflated
     durations for the last entries.  Stamping here, inside the worker
     thread, gives ``BatchOutcome.duration_s`` the actual stage cost.
+
+    The ``entry_start`` event fires after the timestamp stamp and
+    before ``stage.run`` so that ``_LockedEmitter._started_idxs``
+    correctly reflects which entries have begun execution by the time
+    ``_mark_remaining_after_fatal`` runs (it relies on the populated
+    set to distinguish in-flight from never-started cancellations).
 
     Args:
         stage: The pre-built GenerateClipStage for this entry.
@@ -277,6 +283,8 @@ def _run_with_clock(
     Returns:
         The persisted :class:`~kinoforge.core.interfaces.Artifact`
         extracted from ``state.artifacts["clip"]`` after the stage runs.
+        Side-effect: fires one ``entry_start`` event via ``emit`` before
+        delegating to ``stage.run``.
     """
     start_times[idx] = monotonic()
     emit(
