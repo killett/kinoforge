@@ -12,7 +12,8 @@ Layer W fixtures (the key id is embedded in every recorded encryption response).
 
 Persisted files (gitignored):
     .aws/kms-test-key.arn      — AWS KMS key ARN
-    .gcp/kms-test-key.name     — GCP Cloud KMS crypto-key resource name
+    .gcp/kms-test-key.name     — GCP Cloud KMS primary crypto-key version resource name
+                                 (e.g. projects/.../cryptoKeys/.../cryptoKeyVersions/1)
 """
 
 from __future__ import annotations
@@ -80,9 +81,20 @@ def bootstrap_aws() -> None:
     if AWS_KEY_FILE.exists():
         existing_arn = AWS_KEY_FILE.read_text().strip()
         try:
-            kms.describe_key(KeyId=existing_arn)
-            logger.info("AWS: skipped — key already exists at %s", existing_arn)
-            return
+            resp = kms.describe_key(KeyId=existing_arn)
+            key_state = resp["KeyMetadata"]["KeyState"]
+            if key_state != "Enabled":
+                logger.warning(
+                    "AWS: persisted ARN %s exists but KeyState=%s (not Enabled); "
+                    "persisted file is stale — recreating key",
+                    existing_arn,
+                    key_state,
+                )
+                AWS_KEY_FILE.unlink()
+                # Fall through to alias check / creation path.
+            else:
+                logger.info("AWS: skipped — key already exists at %s", existing_arn)
+                return
         except ClientError as exc:
             logger.warning("AWS: persisted ARN unusable (%s); continuing", exc)
 
@@ -90,6 +102,19 @@ def bootstrap_aws() -> None:
     try:
         response = kms.describe_key(KeyId=AWS_ALIAS)
         arn = response["KeyMetadata"]["Arn"]
+        key_state = response["KeyMetadata"]["KeyState"]
+        if key_state != "Enabled":
+            logger.error(
+                "AWS: alias %s resolves to key %s but KeyState=%s — "
+                "key is not usable; manual remediation required",
+                AWS_ALIAS,
+                arn,
+                key_state,
+            )
+            raise RuntimeError(
+                f"AWS KMS alias {AWS_ALIAS!r} points to a key in state "
+                f"{key_state!r}; cancel pending deletion or create a new key"
+            )
         AWS_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
         AWS_KEY_FILE.write_text(arn)
         logger.info(
@@ -99,8 +124,11 @@ def bootstrap_aws() -> None:
             AWS_KEY_FILE,
         )
         return
-    except ClientError:
-        pass  # Alias doesn't exist yet; fall through to creation.
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NotFoundException":
+            pass  # Alias doesn't exist yet; fall through to creation.
+        else:
+            raise
 
     # --- Check 3: operator-supplied ARN via env var ---
     env_arn = os.environ.get("KINOFORGE_AWS_KMS_ARN", "").strip()
@@ -153,7 +181,7 @@ def bootstrap_aws() -> None:
     # Tags are omitted — kinoforge-ci lacks kms:TagResource; tagging can be
     # done from the AWS Console by a privileged user if needed.
     created = kms.create_key(
-        Description="kinoforge realcloud tests CMK (Layer W)",
+        Description="kinoforge realcloud tests CMK",
         KeyUsage="ENCRYPT_DECRYPT",
         Policy=json.dumps(policy),
     )
@@ -258,28 +286,34 @@ def bootstrap_gcp() -> None:
     keyring_path = f"{location_path}/keyRings/{GCP_KEYRING}"
     key_path = f"{keyring_path}/cryptoKeys/{GCP_KEY}"
 
-    # Full idempotence: both the file and the key exist.
+    # Full idempotence: file exists AND key is reachable — skip creation but
+    # still fall through to IAM verification and re-persist with versioned name.
+    key_already_exists = False
     if GCP_KEY_FILE.exists():
         try:
             kms_client.get_crypto_key(name=key_path)
-            logger.info("GCS: skipped — key already exists at %s", key_path)
-            return
+            key_already_exists = True
+            logger.info(
+                "GCS: key already exists at %s — skipping creation, "
+                "re-verifying IAM bindings",
+                key_path,
+            )
         except NotFound:
             logger.warning(
                 "GCS: persisted key name not found in API; creating fresh key"
             )
 
-    # Partial idempotence: key exists in KMS but file wasn't written (prior crash).
-    key_already_exists = False
-    try:
-        kms_client.get_crypto_key(name=key_path)
-        key_already_exists = True
-        logger.info(
-            "GCS: crypto key already exists in KMS (prior partial run); "
-            "skipping key/keyring creation, proceeding to IAM + file write"
-        )
-    except NotFound:
-        pass
+    if not key_already_exists:
+        # Partial idempotence: key exists in KMS but file wasn't written (prior crash).
+        try:
+            kms_client.get_crypto_key(name=key_path)
+            key_already_exists = True
+            logger.info(
+                "GCS: crypto key already exists in KMS (prior partial run); "
+                "skipping key/keyring creation, proceeding to IAM + file write"
+            )
+        except NotFound:
+            pass
 
     if not key_already_exists:
         # --- Create keyring (idempotent) ---
@@ -352,10 +386,25 @@ def bootstrap_gcp() -> None:
     else:
         logger.info("GCS: IAM bindings already correct")
 
-    # Persist the key resource name.
+    # Persist the primary-version resource name (e.g. .../cryptoKeyVersions/1).
+    # This is what callers need to reference the active key version (spec §6.2.5).
+    try:
+        primary_version_name = kms_client.get_crypto_key(name=key_path).primary.name
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "GCS: could not retrieve primary version name (%s); "
+            "falling back to key path",
+            exc,
+        )
+        primary_version_name = key_path
+
     GCP_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    GCP_KEY_FILE.write_text(key_path)
-    logger.info("GCS: key resource name persisted to %s", GCP_KEY_FILE)
+    GCP_KEY_FILE.write_text(primary_version_name)
+    logger.info(
+        "GCS: primary-version resource name persisted to %s (%s)",
+        GCP_KEY_FILE,
+        primary_version_name,
+    )
 
 
 # ---------------------------------------------------------------------------
