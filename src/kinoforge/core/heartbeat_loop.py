@@ -60,6 +60,24 @@ class _TouchableLedger(Protocol):
     ) -> bool: ...
 
 
+@runtime_checkable
+class HeartbeatLoopProtocol(Protocol):
+    """Structural protocol for the deploy_session heartbeat-loop seam.
+
+    Lets tests substitute non-threaded spies for HeartbeatLoop without
+    inheriting the full class. Mirrors the project's structural-Protocol
+    pattern (see :class:`_HeartbeatProvider`).
+    """
+
+    def start(self) -> None:
+        """Begin emitting heartbeat ticks."""
+        ...
+
+    def stop(self) -> None:
+        """Signal the loop to stop and join with a bounded timeout."""
+        ...
+
+
 class HeartbeatLoop:
     """Background thread that pings provider + persists heartbeat to ledger.
 
