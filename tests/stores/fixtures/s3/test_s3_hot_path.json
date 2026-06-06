@@ -1,0 +1,251 @@
+{
+  "_meta": {
+    "axis": "test_s3_hot_path",
+    "captured_at_local": "2026-06-06T16:47:49",
+    "cloud": "s3",
+    "git_sha": "a1e935d",
+    "kinoforge_version": "unknown",
+    "label": "test_s3_hot_path"
+  },
+  "entries": [
+    {
+      "match_key": ":44136fa355b3678a",
+      "operation": "",
+      "params": {},
+      "parsed_response": {
+        "ChecksumCRC32": "DUoRhQ==",
+        "ChecksumType": "FULL_OBJECT",
+        "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+        "Expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+        "ResponseMetadata": {
+          "HTTPHeaders": {
+            "content-length": "0",
+            "date": "Sat, 06 Jun 2026 23:47:49 GMT",
+            "etag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+            "server": "AmazonS3",
+            "x-amz-checksum-crc32": "DUoRhQ==",
+            "x-amz-checksum-type": "FULL_OBJECT",
+            "x-amz-expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+            "x-amz-id-2": "wa3Hxigm6CnrKcuv3deitAPjH4Ln3fPrIIGxflLnhvKXv3a7YE/mCvb6d2+95VeBsXCgDjCPya4=",
+            "x-amz-request-id": "EWYDDN2Q45RGGW0A",
+            "x-amz-server-side-encryption": "AES256"
+          },
+          "HTTPStatusCode": 200,
+          "HostId": "wa3Hxigm6CnrKcuv3deitAPjH4Ln3fPrIIGxflLnhvKXv3a7YE/mCvb6d2+95VeBsXCgDjCPya4=",
+          "RequestId": "EWYDDN2Q45RGGW0A",
+          "RetryAttempts": 0
+        },
+        "ServerSideEncryption": "AES256"
+      },
+      "parsed_response_http_form": [
+        200,
+        {
+          "Content-Length": "0",
+          "Date": "Sat, 06 Jun 2026 23:47:49 GMT",
+          "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+          "Server": "AmazonS3",
+          "x-amz-checksum-crc32": "DUoRhQ==",
+          "x-amz-checksum-type": "FULL_OBJECT",
+          "x-amz-expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+          "x-amz-id-2": "wa3Hxigm6CnrKcuv3deitAPjH4Ln3fPrIIGxflLnhvKXv3a7YE/mCvb6d2+95VeBsXCgDjCPya4=",
+          "x-amz-request-id": "EWYDDN2Q45RGGW0A",
+          "x-amz-server-side-encryption": "AES256"
+        },
+        ""
+      ]
+    },
+    {
+      "match_key": ":44136fa355b3678a",
+      "operation": "",
+      "params": {},
+      "parsed_response": {
+        "AcceptRanges": "bytes",
+        "Body": "<botocore.httpchecksum.StreamingChecksumBody object at 0x7f50dd13f8b0>",
+        "ChecksumCRC32": "DUoRhQ==",
+        "ChecksumType": "FULL_OBJECT",
+        "ContentLength": 11,
+        "ContentType": "binary/octet-stream",
+        "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+        "Expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+        "LastModified": "2026-06-06T23:47:49+00:00",
+        "Metadata": {},
+        "ResponseMetadata": {
+          "ChecksumAlgorithm": "crc32",
+          "HTTPHeaders": {
+            "accept-ranges": "bytes",
+            "content-length": "11",
+            "content-type": "binary/octet-stream",
+            "date": "Sat, 06 Jun 2026 23:47:49 GMT",
+            "etag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+            "last-modified": "Sat, 06 Jun 2026 23:47:49 GMT",
+            "server": "AmazonS3",
+            "x-amz-checksum-crc32": "DUoRhQ==",
+            "x-amz-checksum-type": "FULL_OBJECT",
+            "x-amz-expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+            "x-amz-id-2": "h0B8GO8l994oOgie+JDBcyWihEnuogUej5mUbxNppgiBThUxRZ/cSmFR1QlmkWVo3Uugmzd1K9A=",
+            "x-amz-request-id": "EWY9CQ6N46D0C7H3",
+            "x-amz-server-side-encryption": "AES256"
+          },
+          "HTTPStatusCode": 200,
+          "HostId": "h0B8GO8l994oOgie+JDBcyWihEnuogUej5mUbxNppgiBThUxRZ/cSmFR1QlmkWVo3Uugmzd1K9A=",
+          "RequestId": "EWY9CQ6N46D0C7H3",
+          "RetryAttempts": 0
+        },
+        "ServerSideEncryption": "AES256"
+      },
+      "parsed_response_http_form": [
+        200,
+        {
+          "Accept-Ranges": "bytes",
+          "Content-Length": "11",
+          "Content-Type": "binary/octet-stream",
+          "Date": "Sat, 06 Jun 2026 23:47:49 GMT",
+          "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+          "Last-Modified": "Sat, 06 Jun 2026 23:47:49 GMT",
+          "Server": "AmazonS3",
+          "x-amz-checksum-crc32": "DUoRhQ==",
+          "x-amz-checksum-type": "FULL_OBJECT",
+          "x-amz-expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+          "x-amz-id-2": "h0B8GO8l994oOgie+JDBcyWihEnuogUej5mUbxNppgiBThUxRZ/cSmFR1QlmkWVo3Uugmzd1K9A=",
+          "x-amz-request-id": "EWY9CQ6N46D0C7H3",
+          "x-amz-server-side-encryption": "AES256"
+        },
+        ""
+      ]
+    },
+    {
+      "match_key": ":44136fa355b3678a",
+      "operation": "",
+      "params": {},
+      "parsed_response": {
+        "Contents": [
+          {
+            "ChecksumAlgorithm": [
+              "CRC32"
+            ],
+            "ChecksumType": "FULL_OBJECT",
+            "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+            "Key": "live-87cbdf00/hello.bin",
+            "LastModified": "2026-06-06T23:47:49+00:00",
+            "Size": 11,
+            "StorageClass": "STANDARD"
+          }
+        ],
+        "EncodingType": "url",
+        "IsTruncated": false,
+        "KeyCount": 1,
+        "MaxKeys": 1000,
+        "Name": "kinoforge-realcloud-tests-<AWS_ACCOUNT>",
+        "Prefix": "live-87cbdf00/",
+        "ResponseMetadata": {
+          "HTTPHeaders": {
+            "content-type": "application/xml",
+            "date": "Sat, 06 Jun 2026 23:47:50 GMT",
+            "server": "AmazonS3",
+            "transfer-encoding": "chunked",
+            "x-amz-bucket-region": "us-east-1",
+            "x-amz-id-2": "/I5xhT/Yu2cz+tJkPdnmCF1f+vJk5KyT8Y3EV4a6Db+9QJl3bk8tPX+D8ZkDsqowjMW+oG4z7b4=",
+            "x-amz-request-id": "95VMAVTTPA2JWGRY"
+          },
+          "HTTPStatusCode": 200,
+          "HostId": "/I5xhT/Yu2cz+tJkPdnmCF1f+vJk5KyT8Y3EV4a6Db+9QJl3bk8tPX+D8ZkDsqowjMW+oG4z7b4=",
+          "RequestId": "95VMAVTTPA2JWGRY",
+          "RetryAttempts": 0
+        }
+      },
+      "parsed_response_http_form": [
+        200,
+        {
+          "Content-Type": "application/xml",
+          "Date": "Sat, 06 Jun 2026 23:47:50 GMT",
+          "Server": "AmazonS3",
+          "Transfer-Encoding": "chunked",
+          "x-amz-bucket-region": "us-east-1",
+          "x-amz-id-2": "/I5xhT/Yu2cz+tJkPdnmCF1f+vJk5KyT8Y3EV4a6Db+9QJl3bk8tPX+D8ZkDsqowjMW+oG4z7b4=",
+          "x-amz-request-id": "95VMAVTTPA2JWGRY"
+        },
+        "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPExpc3RCdWNrZXRSZXN1bHQgeG1sbnM9Imh0dHA6Ly9zMy5hbWF6b25hd3MuY29tL2RvYy8yMDA2LTAzLTAxLyI+PE5hbWU+a2lub2ZvcmdlLXJlYWxjbG91ZC10ZXN0cy0wMDk5MTAzNzU2MjE8L05hbWU+PFByZWZpeD5saXZlLTg3Y2JkZjAwLzwvUHJlZml4PjxLZXlDb3VudD4xPC9LZXlDb3VudD48TWF4S2V5cz4xMDAwPC9NYXhLZXlzPjxFbmNvZGluZ1R5cGU+dXJsPC9FbmNvZGluZ1R5cGU+PElzVHJ1bmNhdGVkPmZhbHNlPC9Jc1RydW5jYXRlZD48Q29udGVudHM+PEtleT5saXZlLTg3Y2JkZjAwL2hlbGxvLmJpbjwvS2V5PjxMYXN0TW9kaWZpZWQ+MjAyNi0wNi0wNlQyMzo0Nzo0OS4wMDBaPC9MYXN0TW9kaWZpZWQ+PEVUYWc+JnF1b3Q7NWViNjNiYmJlMDFlZWVkMDkzY2IyMmJiOGY1YWNkYzMmcXVvdDs8L0VUYWc+PENoZWNrc3VtQWxnb3JpdGhtPkNSQzMyPC9DaGVja3N1bUFsZ29yaXRobT48Q2hlY2tzdW1UeXBlPkZVTExfT0JKRUNUPC9DaGVja3N1bVR5cGU+PFNpemU+MTE8L1NpemU+PFN0b3JhZ2VDbGFzcz5TVEFOREFSRDwvU3RvcmFnZUNsYXNzPjwvQ29udGVudHM+PC9MaXN0QnVja2V0UmVzdWx0Pg=="
+      ]
+    },
+    {
+      "match_key": ":44136fa355b3678a",
+      "operation": "",
+      "params": {},
+      "parsed_response": {
+        "AcceptRanges": "bytes",
+        "ContentLength": 11,
+        "ContentType": "binary/octet-stream",
+        "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+        "Expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+        "LastModified": "2026-06-06T23:47:49+00:00",
+        "Metadata": {},
+        "ResponseMetadata": {
+          "HTTPHeaders": {
+            "accept-ranges": "bytes",
+            "content-length": "11",
+            "content-type": "binary/octet-stream",
+            "date": "Sat, 06 Jun 2026 23:47:50 GMT",
+            "etag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+            "last-modified": "Sat, 06 Jun 2026 23:47:49 GMT",
+            "server": "AmazonS3",
+            "x-amz-expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+            "x-amz-id-2": "REKIY4MDm53e58k5LtkSB6gemmMwYdp91vGP8eEYT2hiZIg1SeK3DcG5Vo22Jqt4SJOvJpKEQiE=",
+            "x-amz-request-id": "95VQYRFSPHYQ4AWN",
+            "x-amz-server-side-encryption": "AES256"
+          },
+          "HTTPStatusCode": 200,
+          "HostId": "REKIY4MDm53e58k5LtkSB6gemmMwYdp91vGP8eEYT2hiZIg1SeK3DcG5Vo22Jqt4SJOvJpKEQiE=",
+          "RequestId": "95VQYRFSPHYQ4AWN",
+          "RetryAttempts": 0
+        },
+        "ServerSideEncryption": "AES256"
+      },
+      "parsed_response_http_form": [
+        200,
+        {
+          "Accept-Ranges": "bytes",
+          "Content-Length": "11",
+          "Content-Type": "binary/octet-stream",
+          "Date": "Sat, 06 Jun 2026 23:47:50 GMT",
+          "ETag": "\"5eb63bbbe01eeed093cb22bb8f5acdc3\"",
+          "Last-Modified": "Sat, 06 Jun 2026 23:47:49 GMT",
+          "Server": "AmazonS3",
+          "x-amz-expiration": "expiry-date=\"Mon, 08 Jun 2026 00:00:00 GMT\", rule-id=\"expire-1d\"",
+          "x-amz-id-2": "REKIY4MDm53e58k5LtkSB6gemmMwYdp91vGP8eEYT2hiZIg1SeK3DcG5Vo22Jqt4SJOvJpKEQiE=",
+          "x-amz-request-id": "95VQYRFSPHYQ4AWN",
+          "x-amz-server-side-encryption": "AES256"
+        },
+        ""
+      ]
+    },
+    {
+      "match_key": ":44136fa355b3678a",
+      "operation": "",
+      "params": {},
+      "parsed_response": {
+        "ResponseMetadata": {
+          "HTTPHeaders": {
+            "date": "Sat, 06 Jun 2026 23:47:50 GMT",
+            "server": "AmazonS3",
+            "x-amz-id-2": "ZrZfKeoFU8CtUUMawcMJ8qOB4z2T7n0kGptMDcbcnxqt+TLcSrXqACO8WeHcIcB/L4YWfKv+Xi8=",
+            "x-amz-request-id": "95VP9TK3CNX7KTTA"
+          },
+          "HTTPStatusCode": 204,
+          "HostId": "ZrZfKeoFU8CtUUMawcMJ8qOB4z2T7n0kGptMDcbcnxqt+TLcSrXqACO8WeHcIcB/L4YWfKv+Xi8=",
+          "RequestId": "95VP9TK3CNX7KTTA",
+          "RetryAttempts": 0
+        }
+      },
+      "parsed_response_http_form": [
+        204,
+        {
+          "Date": "Sat, 06 Jun 2026 23:47:50 GMT",
+          "Server": "AmazonS3",
+          "x-amz-id-2": "ZrZfKeoFU8CtUUMawcMJ8qOB4z2T7n0kGptMDcbcnxqt+TLcSrXqACO8WeHcIcB/L4YWfKv+Xi8=",
+          "x-amz-request-id": "95VP9TK3CNX7KTTA"
+        },
+        ""
+      ]
+    }
+  ]
+}
