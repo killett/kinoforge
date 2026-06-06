@@ -1,0 +1,122 @@
+{
+  "_meta": {
+    "axis": "test_gcs_hot_path",
+    "captured_at_local": "2026-06-06T16:57:05",
+    "cloud": "gcs",
+    "git_sha": "14ce2c6",
+    "kinoforge_version": "unknown",
+    "label": "test_gcs_hot_path"
+  },
+  "entries": [
+    {
+      "body_b64": "",
+      "body_hash": "3fa5ffd596aaf280b0a6760ea4889620265412d1aca251d963784202821c84f3",
+      "headers": {
+        "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+        "Content-Length": "0",
+        "Content-Type": "text/plain; charset=utf-8",
+        "Date": "Sat, 06 Jun 2026 23:57:04 GMT",
+        "Expires": "Mon, 01 Jan 1990 00:00:00 GMT",
+        "Location": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&upload_id=AJ5rDhHlZljly2gkyis75fGIw7-eLzu4eNeE7t8BxrcEwwtLEKh-Jyk4tQd4K7bS5hJs9yDnS_QE5eruyLV-eUrJQhqdXnHvuncPEyMVKw5T7w",
+        "Pragma": "no-cache",
+        "Server": "UploadServer",
+        "Vary": "Origin, X-Origin",
+        "X-GUploader-UploadID": "AJ5rDhHlZljly2gkyis75fGIw7-eLzu4eNeE7t8BxrcEwwtLEKh-Jyk4tQd4K7bS5hJs9yDnS_QE5eruyLV-eUrJQhqdXnHvuncPEyMVKw5T7w"
+      },
+      "match_key": "POST:https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable:3fa5ffd596aaf280",
+      "method": "POST",
+      "status": 200,
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable"
+    },
+    {
+      "body_b64": "ewogICJraW5kIjogInN0b3JhZ2Ujb2JqZWN0IiwKICAiaWQiOiAiPEdDU19CVUNLRVQ+L2xpdmUtNGJhNjFiYzMvaGVsbG8uYmluLzE3ODA3OTAyMjQ5NjYyNTYiLAogICJzZWxmTGluayI6ICJodHRwczovL3d3dy5nb29nbGVhcGlzLmNvbS9zdG9yYWdlL3YxL2IvPEdDU19CVUNLRVQ+L28vbGl2ZS00YmE2MWJjMyUyRmhlbGxvLmJpbiIsCiAgIm1lZGlhTGluayI6ICJodHRwczovL3N0b3JhZ2UuZ29vZ2xlYXBpcy5jb20vZG93bmxvYWQvc3RvcmFnZS92MS9iLzxHQ1NfQlVDS0VUPi9vL2xpdmUtNGJhNjFiYzMlMkZoZWxsby5iaW4/Z2VuZXJhdGlvbj0xNzgwNzkwMjI0OTY2MjU2JmFsdD1tZWRpYSIsCiAgIm5hbWUiOiAibGl2ZS00YmE2MWJjMy9oZWxsby5iaW4iLAogICJidWNrZXQiOiAiPEdDU19CVUNLRVQ+IiwKICAiZ2VuZXJhdGlvbiI6ICIxNzgwNzkwMjI0OTY2MjU2IiwKICAibWV0YWdlbmVyYXRpb24iOiAiMSIsCiAgImNvbnRlbnRUeXBlIjogImFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbSIsCiAgInN0b3JhZ2VDbGFzcyI6ICJTVEFOREFSRCIsCiAgInNpemUiOiAiNjQiLAogICJtZDVIYXNoIjogIndidFBnZGlTc3RWNVIyZ3E2eVVrVmc9PSIsCiAgImNyYzMyYyI6ICIyOGZ2WXc9PSIsCiAgImV0YWciOiAiQ1BDa25jYm84NVFERUFFPSIsCiAgInRpbWVDcmVhdGVkIjogIjIwMjYtMDYtMDZUMjM6NTc6MDQuOTcyWiIsCiAgInVwZGF0ZWQiOiAiMjAyNi0wNi0wNlQyMzo1NzowNC45NzJaIiwKICAidGltZVN0b3JhZ2VDbGFzc1VwZGF0ZWQiOiAiMjAyNi0wNi0wNlQyMzo1NzowNC45NzJaIiwKICAidGltZUZpbmFsaXplZCI6ICIyMDI2LTA2LTA2VDIzOjU3OjA0Ljk3MloiCn0K",
+      "body_hash": "7ce100971f64e7001e8fe5a51973ecdfe1ced42befe7ee8d5fd6219506b5393c",
+      "headers": {
+        "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+        "Content-Length": "926",
+        "Content-Type": "application/json; charset=UTF-8",
+        "Date": "Sat, 06 Jun 2026 23:57:04 GMT",
+        "ETag": "CPCkncbo85QDEAE=",
+        "Expires": "Mon, 01 Jan 1990 00:00:00 GMT",
+        "Pragma": "no-cache",
+        "Server": "UploadServer",
+        "Vary": "Origin, X-Origin",
+        "X-GUploader-UploadID": "AJ5rDhHlZljly2gkyis75fGIw7-eLzu4eNeE7t8BxrcEwwtLEKh-Jyk4tQd4K7bS5hJs9yDnS_QE5eruyLV-eUrJQhqdXnHvuncPEyMVKw5T7w"
+      },
+      "match_key": "PUT:https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&upload_id=AJ5rDhHlZljly2gkyis75fGIw7-eLzu4eNeE7t8BxrcEwwtLEKh-Jyk4tQd4K7bS5hJs9yDnS_QE5eruyLV-eUrJQhqdXnHvuncPEyMVKw5T7w:7ce100971f64e700",
+      "method": "PUT",
+      "status": 200,
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&upload_id=AJ5rDhHlZljly2gkyis75fGIw7-eLzu4eNeE7t8BxrcEwwtLEKh-Jyk4tQd4K7bS5hJs9yDnS_QE5eruyLV-eUrJQhqdXnHvuncPEyMVKw5T7w"
+    },
+    {
+      "body_b64": "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eA==",
+      "body_hash": "",
+      "headers": {
+        "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+        "Content-Disposition": "attachment",
+        "Content-Length": "64",
+        "Content-Type": "application/octet-stream",
+        "Date": "Sat, 06 Jun 2026 23:57:05 GMT",
+        "ETag": "CPCkncbo85QDEAE=",
+        "Expires": "Mon, 01 Jan 1990 00:00:00 GMT",
+        "Last-Modified": "Sat, 06 Jun 2026 23:57:04 GMT",
+        "Pragma": "no-cache",
+        "Server": "UploadServer",
+        "Vary": "Origin, X-Origin",
+        "X-GUploader-UploadID": "AJ5rDhEjn0u62B83Ydg5dnT7ERL7iuaSXVIIH6d94n29YMdfw7Uoj9sn2y-YOyTOFiC296ZC4cET9m8",
+        "X-Goog-Generation": "1780790224966256",
+        "X-Goog-Hash": "crc32c=28fvYw==,md5=wbtPgdiSstV5R2gq6yUkVg==",
+        "X-Goog-Metageneration": "1",
+        "X-Goog-Storage-Class": "STANDARD",
+        "X-Goog-Stored-Content-Encoding": "identity",
+        "X-Goog-Stored-Content-Length": "64"
+      },
+      "match_key": "GET:https://storage.googleapis.com/download/storage/v1/b/<GCS_BUCKET>/o/live-4ba61bc3%2Fhello.bin?alt=media:",
+      "method": "GET",
+      "status": 200,
+      "url": "https://storage.googleapis.com/download/storage/v1/b/<GCS_BUCKET>/o/live-4ba61bc3%2Fhello.bin?alt=media"
+    },
+    {
+      "body_b64": "eyJraW5kIjoic3RvcmFnZSNvYmplY3RzIiwiaXRlbXMiOlt7ImtpbmQiOiJzdG9yYWdlI29iamVjdCIsImlkIjoiPEdDU19CVUNLRVQ+L2xpdmUtNGJhNjFiYzMvaGVsbG8uYmluLzE3ODA3OTAyMjQ5NjYyNTYiLCJzZWxmTGluayI6Imh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3N0b3JhZ2UvdjEvYi88R0NTX0JVQ0tFVD4vby9saXZlLTRiYTYxYmMzJTJGaGVsbG8uYmluIiwibWVkaWFMaW5rIjoiaHR0cHM6Ly9zdG9yYWdlLmdvb2dsZWFwaXMuY29tL2Rvd25sb2FkL3N0b3JhZ2UvdjEvYi88R0NTX0JVQ0tFVD4vby9saXZlLTRiYTYxYmMzJTJGaGVsbG8uYmluP2dlbmVyYXRpb249MTc4MDc5MDIyNDk2NjI1NiZhbHQ9bWVkaWEiLCJuYW1lIjoibGl2ZS00YmE2MWJjMy9oZWxsby5iaW4iLCJidWNrZXQiOiI8R0NTX0JVQ0tFVD4iLCJnZW5lcmF0aW9uIjoiMTc4MDc5MDIyNDk2NjI1NiIsIm1ldGFnZW5lcmF0aW9uIjoiMSIsImNvbnRlbnRUeXBlIjoiYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtIiwic3RvcmFnZUNsYXNzIjoiU1RBTkRBUkQiLCJzaXplIjoiNjQiLCJtZDVIYXNoIjoid2J0UGdkaVNzdFY1UjJncTZ5VWtWZz09IiwiY3JjMzJjIjoiMjhmdll3PT0iLCJldGFnIjoiQ1BDa25jYm84NVFERUFFPSIsInRpbWVDcmVhdGVkIjoiMjAyNi0wNi0wNlQyMzo1NzowNC45NzJaIiwidXBkYXRlZCI6IjIwMjYtMDYtMDZUMjM6NTc6MDQuOTcyWiIsInRpbWVTdG9yYWdlQ2xhc3NVcGRhdGVkIjoiMjAyNi0wNi0wNlQyMzo1NzowNC45NzJaIiwidGltZUZpbmFsaXplZCI6IjIwMjYtMDYtMDZUMjM6NTc6MDQuOTcyWiJ9XX0=",
+      "body_hash": "",
+      "headers": {
+        "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "Cache-Control": "private, max-age=0, must-revalidate, no-transform",
+        "Content-Length": "889",
+        "Content-Type": "application/json; charset=UTF-8",
+        "Date": "Sat, 06 Jun 2026 23:57:05 GMT",
+        "Expires": "Sat, 06 Jun 2026 23:57:05 GMT",
+        "Server": "UploadServer",
+        "Vary": "Origin, X-Origin",
+        "X-GUploader-UploadID": "AJ5rDhGEgCoDNyNgDV6SUvssUJUUMdEOp7o5YbJmwNVzJkl-lhABNdZ8ReFNYR2cPAb4ItLaeGdIg4g"
+      },
+      "match_key": "GET:https://storage.googleapis.com/storage/v1/b/<GCS_BUCKET>/o?projection=noAcl&prefix=live-4ba61bc3%2F&prettyPrint=false:",
+      "method": "GET",
+      "status": 200,
+      "url": "https://storage.googleapis.com/storage/v1/b/<GCS_BUCKET>/o?projection=noAcl&prefix=live-4ba61bc3%2F&prettyPrint=false"
+    },
+    {
+      "body_b64": "",
+      "body_hash": "",
+      "headers": {
+        "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+        "Content-Length": "0",
+        "Content-Type": "application/json",
+        "Date": "Sat, 06 Jun 2026 23:57:05 GMT",
+        "Expires": "Mon, 01 Jan 1990 00:00:00 GMT",
+        "Pragma": "no-cache",
+        "Server": "UploadServer",
+        "Vary": "Origin, X-Origin",
+        "X-GUploader-UploadID": "AJ5rDhE7qF9IQHHZgqCXRaVrJ_skVIDxz1H5NOCxEv5ERTg1fa5fOLDDqNcZeCBBZv8gIeNjxVwo9S8"
+      },
+      "match_key": "DELETE:https://storage.googleapis.com/storage/v1/b/<GCS_BUCKET>/o/live-4ba61bc3%2Fhello.bin?prettyPrint=false:",
+      "method": "DELETE",
+      "status": 204,
+      "url": "https://storage.googleapis.com/storage/v1/b/<GCS_BUCKET>/o/live-4ba61bc3%2Fhello.bin?prettyPrint=false"
+    }
+  ]
+}
