@@ -153,14 +153,14 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 36 fully CLOSED — Layer U (heartbeat persistence). HEAD at the Phase 36 merge commit on `main`. Test suite at 1351 passed, 8 skipped. Working tree clean. No live spend in Layer U (fully offline-tested).
+**Where we are:** Phase 37 Layer V — T1–T7 committed on branch `layer-v`. Test suite at 1422 passed, 8 skipped. T8 (README + PROGRESS + example YAML + final gate + merge) is next.
 
 **Read in this order:**
-1. The Phase 36 entry below (per-task SHAs + design decisions).
-2. `docs/superpowers/specs/2026-06-05-layer-u-heartbeat-persistence-design.md` for the Layer U design doc.
+1. The Phase 37 entry below (per-task SHAs + design decisions so far).
+2. `docs/superpowers/specs/2026-06-05-layer-v-heartbeat-reaper-design.md` for the Layer V design doc.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates (Layer U closed the `last_heartbeat` carry-forward): cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap; `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); a heartbeat-aware reaper that consumes the new sentinel-gate contract from Layer U (Layer V candidate).
+**First unchecked task in fresh session:** T8 — README + PROGRESS + example YAML + final gate + merge (branch `layer-v`).
 
 **Budget remaining: ~$10.92 of $15.** Phase 36 spent $0.00 (Layer U offline-only).
 
@@ -1186,3 +1186,16 @@ user-visible advisory.
 
 Closes PROGRESS:113 carry-forward "production-side `last_heartbeat`
 persistence" (Layer S forward-compat seam).
+
+### Phase 37 — Layer V (heartbeat-aware reaper)
+
+- [x] T1: Pure substrate — `Verdict`, `Policy`, `classify`, `partition` in `core/reaper.py` — commit `c2713e1`. 1420 tests passing pre-T7.
+- [x] T2: Invariant scan — `core/reaper.py` purity contract (no I/O, no mutable globals).
+- [x] T3: `Lifecycle.grace_after_session_s` field + config wire.
+- [x] T4: Impure substrate — `act_on_verdict` + `provider_for` in `core/reaper_actor.py`.
+- [x] T5: `sweep` orchestration with caches.
+- [x] T6: `kinoforge reap` CLI rewrite + flags + formatters.
+- [x] T7: `kinoforge status` verdict line — commit `fbe00c8`. Adds `verdict=<VERDICT>` to the sorted key=value status block via `_classify_for_status` helper. Same `classify` call as `kinoforge reap` — single source of truth. Layer U sentinel-staleness advisory preserved. 2 new tests (LIVE + UNROUTABLE paths). 1422 passed, 8 skipped.
+- [ ] T8: README + PROGRESS + example YAML + final gate + merge.
+
+**Key design decision (T7):** `_classify_for_status` delegates entirely to `core/reaper.classify` — no local verdict logic in the CLI layer. When `cfg` is `None` (no `--config`), `Lifecycle()` defaults are used; `heartbeat_interval_s=None` causes `classify` to return `HEARTBEAT_UNKNOWN` (correct: we cannot determine freshness without a configured interval). The LIVE test therefore requires a config with `heartbeat_interval_s=30` to get a deterministic `LIVE` verdict. The fallback for `list_instances()` failure assumes the id is present (`live_ids = {args.id}`) so a transient provider error doesn't falsely surface `STALE_LEDGER`.
