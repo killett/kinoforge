@@ -169,3 +169,23 @@ def test_build_from_sidecar_unknown_kind_raises(tmp_path: Path) -> None:
     rec = SidecarRecord.model_construct(kind="azure", bucket="x")
     with pytest.raises(UnknownAdapter):
         _build_store_from_sidecar(rec, tmp_path)
+
+
+def test_build_from_sidecar_s3_missing_bucket_raises(tmp_path: Path) -> None:
+    """ValueError fires at runtime when a corrupt s3 sidecar lacks bucket.
+
+    Bug-catch: the prior `assert sc.bucket is not None` would be stripped
+    under `python -O` and proceed to S3ArtifactStore(bucket=None) — a
+    silent NoneType crash one frame deeper. The runtime `raise ValueError`
+    must fire on every interpreter mode.
+    """
+    rec = SidecarRecord.model_construct(kind="s3", bucket=None, prefix="")
+    with pytest.raises(ValueError, match="bucket"):
+        _build_store_from_sidecar(rec, tmp_path)
+
+
+def test_build_from_sidecar_gcs_missing_bucket_raises(tmp_path: Path) -> None:
+    """Same guard for gcs sidecars."""
+    rec = SidecarRecord.model_construct(kind="gcs", bucket=None, prefix="")
+    with pytest.raises(ValueError, match="bucket"):
+        _build_store_from_sidecar(rec, tmp_path)
