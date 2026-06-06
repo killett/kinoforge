@@ -1,13 +1,15 @@
-"""Batch generation: manifest schema + dispatch (Layer L).
+"""Batch generation: manifest dispatch (Layer L).
 
 This module owns:
-  * BatchEntry / BatchManifest pydantic models with strict validation.
   * load_manifest() — reads YAML, resolves prompt_file paths, auto-indexes
     run_ids, returns a fully validated BatchManifest.
-  * BatchOutcome / BatchResult dataclasses.
   * batch_generate() — the orchestration entry point that wraps
     deploy_session, fans entries out via ThreadPoolExecutor, and writes
     _batch_summary.json on every exit path.
+
+The four batch dataclasses (BatchEntry, BatchManifest, BatchOutcome,
+BatchResult) now live in core/batch_models.py and are re-exported from
+this module for backward compatibility with existing import sites.
 
 Core-import-ban: this module imports ONLY from kinoforge.core.* +
 kinoforge.pipeline.* + kinoforge.stores.base + kinoforge.outputs.base +
