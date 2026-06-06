@@ -24,6 +24,12 @@ compute:
     time_buffer: 30m
     max_lifetime: 3h
     budget: 10.0
+    # Layer U — heartbeat persistence. Uncomment to enable a background
+    # thread that pings provider.heartbeat() and persists the timestamp
+    # to the ledger every N seconds. Operator-visible via
+    # `kinoforge status --id <id>` ("last_heartbeat=<ISO>"). Default null
+    # (disabled). Recommended >= 10s to avoid lock contention at scale.
+    # heartbeat_interval_s: 30
 
 # Layer O — user-facing output directory.  Uncomment to override defaults.
 # Final clips are published to <dir>/<batch_id>?/{YYYYMMDD-HHMMSS}_{prompt-slug}{ext}.
