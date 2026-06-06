@@ -1,0 +1,61 @@
+{
+  "_meta": {
+    "axis": "test_gcs_signed_url_put",
+    "captured_at_local": "2026-06-06T16:57:22",
+    "cloud": "gcs",
+    "git_sha": "14ce2c6",
+    "kinoforge_version": "unknown",
+    "label": "test_gcs_signed_url_put"
+  },
+  "entries": [
+    {
+      "body_b64": "c2lnbmVkLXB1dC1wYXlsb2Fk",
+      "body_hash": "",
+      "headers": {
+        "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+        "Content-Disposition": "attachment",
+        "Content-Length": "18",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Date": "Sat, 06 Jun 2026 23:57:22 GMT",
+        "ETag": "CPW2oc7o85QDEAE=",
+        "Expires": "Mon, 01 Jan 1990 00:00:00 GMT",
+        "Last-Modified": "Sat, 06 Jun 2026 23:57:21 GMT",
+        "Pragma": "no-cache",
+        "Server": "UploadServer",
+        "Vary": "Origin, X-Origin",
+        "X-GUploader-UploadID": "AJ5rDhHFzB3uT9RV0oK_t6IYsXMUA27HpptiT0W092r5tY7suY0i20e76DZp1KQZUgDdtndIIfOziUM",
+        "X-Goog-Generation": "1780790241811317",
+        "X-Goog-Hash": "crc32c=AdTq+A==,md5=s9jLVIHXSw58IGTirmIoDA==",
+        "X-Goog-Metageneration": "1",
+        "X-Goog-Storage-Class": "STANDARD",
+        "X-Goog-Stored-Content-Encoding": "identity",
+        "X-Goog-Stored-Content-Length": "18"
+      },
+      "match_key": "GET:https://storage.googleapis.com/download/storage/v1/b/<GCS_BUCKET>/o/live-251b7dc8%2Fsigned-put.bin?alt=media:",
+      "method": "GET",
+      "status": 200,
+      "url": "https://storage.googleapis.com/download/storage/v1/b/<GCS_BUCKET>/o/live-251b7dc8%2Fsigned-put.bin?alt=media"
+    },
+    {
+      "body_b64": "",
+      "body_hash": "",
+      "headers": {
+        "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+        "Content-Length": "0",
+        "Content-Type": "application/json",
+        "Date": "Sat, 06 Jun 2026 23:57:22 GMT",
+        "Expires": "Mon, 01 Jan 1990 00:00:00 GMT",
+        "Pragma": "no-cache",
+        "Server": "UploadServer",
+        "Vary": "Origin, X-Origin",
+        "X-GUploader-UploadID": "AJ5rDhHN9tbciW4UDse4vlQLfOf6NnyDO15Wkqmt7jT060u5ZgOunfw8EIGvJkoYoyJPTtETcvKXLcQ"
+      },
+      "match_key": "DELETE:https://storage.googleapis.com/storage/v1/b/<GCS_BUCKET>/o/live-251b7dc8%2Fsigned-put.bin?prettyPrint=false:",
+      "method": "DELETE",
+      "status": 204,
+      "url": "https://storage.googleapis.com/storage/v1/b/<GCS_BUCKET>/o/live-251b7dc8%2Fsigned-put.bin?prettyPrint=false"
+    }
+  ]
+}

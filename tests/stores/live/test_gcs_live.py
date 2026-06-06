@@ -152,11 +152,13 @@ def test_gcs_signed_url_put(gcs_record_session, gcs_live_bucket_and_kms):
 
 @pytest.mark.xfail(
     reason=(
-        "GCS ClientOptions(api_endpoint=...) routes the storage.googleapis.com traffic "
-        "through the proxy but the SDK may send HTTPS CONNECT tunnelling which the "
-        "plain-HTTP Fail503Proxy cannot intercept; or TLS cert validation may fail "
-        "against localhost. If the proxy does work, the test passes; this xfail is "
-        "conservative — documented to be attempted per Layer W T10 spec."
+        "google-resumable-media intercepts the 503 from the plain-HTTP localhost proxy "
+        "and raises google.api_core.exceptions.ServiceUnavailable before the outer "
+        "_GCS_RETRY wrapper can re-issue the request. The proxy endpoint is HTTP, not "
+        "HTTPS, so TLS negotiation is not the issue — rather, the resumable-upload "
+        "sub-library treats 503 as a terminal error on the initiation POST, bypassing "
+        "the api_core.retry layer. Retry logic is verified offline via test_proxy.py "
+        "+ FakeGCSClient unit tests (analogous to S3 SigV4 Host-binding xfail in T9)."
     ),
     strict=False,
 )
