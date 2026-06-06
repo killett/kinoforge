@@ -313,3 +313,52 @@ def test_cmd_status_surfaces_verdict_unroutable(
     out = capsys.readouterr().out
     assert code == 2
     assert "verdict=UNROUTABLE" in out
+
+
+def test_cmd_status_verdict_heartbeat_unknown_on_list_instances_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """list_instances() failure surfaces verdict=HEARTBEAT_UNKNOWN.
+
+    Honest fallback: if the provider can't enumerate instances we can
+    no longer compute classify reliably, so we don't bias toward LIVE.
+    """
+    import time as _t
+
+    from kinoforge.cli import _commands
+    from kinoforge.cli.context import SessionContext
+    from kinoforge.core.interfaces import Instance
+    from kinoforge.providers.local import LocalProvider
+
+    state_dir = tmp_path / "state"
+    ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=None)
+    ledger = ctx.ledger()
+    now = _t.time()
+    instance = Instance(
+        id="i-1",
+        provider="local",
+        created_at=now,
+        status="ready",
+        cost_rate_usd_per_hr=0.0,
+        tags={},
+    )
+    ledger.record(instance)
+
+    class _BrokenLocal(LocalProvider):
+        def list_instances(self) -> list[Instance]:
+            raise RuntimeError("simulated list failure")
+
+    broken = _BrokenLocal()
+    broken._instances = {"i-1": instance}
+
+    monkeypatch.setattr(
+        "kinoforge.core.registry.get_provider", lambda _name: lambda: broken
+    )
+
+    args = argparse.Namespace(id="i-1", config=None)
+    code = _commands._cmd_status(args, ctx)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "verdict=HEARTBEAT_UNKNOWN" in out
