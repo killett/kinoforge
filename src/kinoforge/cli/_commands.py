@@ -14,6 +14,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
 from kinoforge.cli.context import SessionContext
@@ -21,12 +22,16 @@ from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import GenerationRequest
-from kinoforge.core.lifecycle import destroy_confirmed, reap
+from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.orchestrator import generate
+from kinoforge.core.reaper_actor import sweep
 from kinoforge.outputs.base import OutputSink
 from kinoforge.outputs.local import LocalOutputSink
 from kinoforge.stores.base import ArtifactStore
 from kinoforge.stores.local import LocalArtifactStore
+
+if TYPE_CHECKING:
+    from kinoforge.core.reaper_actor import SweepReport
 
 # Module-level clock seam preserved for test monkeypatching.
 _cli_clock: Clock = RealClock()
@@ -696,38 +701,204 @@ def _cmd_forget(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
-def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: ARG001
-    """Handle ``reap`` subcommand.
+def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``reap`` subcommand (Layer V — heartbeat-aware).
+
+    Dry-run by default. ``--apply`` activates DEFAULT_APPLY_POLICY
+    (IDLE_REAP, OVERAGE_REAP, STALE_LEDGER). Opt-in flags
+    ``--include-orphans`` and ``--force-forget`` add ORPHAN_REAP and
+    UNROUTABLE respectively. ``--strict`` exits non-zero when uncertain
+    verdicts are surfaced.
 
     Args:
-        args: Parsed CLI arguments (unused).
+        args: Parsed CLI arguments — apply, include_orphans, force_forget,
+            strict, id, format, config (all optional).
         ctx: Per-invocation session context.
 
     Returns:
-        Exit code (always 0).
+        Exit code per spec §3.7:
+            * 0 — normal (dry-run or --apply with no failures)
+            * 2 — at least one action="failed" under --apply
+            * 3 — --strict tripped by UNROUTABLE / HEARTBEAT_UNKNOWN
+            * 4 — invalid flag combo
     """
-    from kinoforge.core.clock import RealClock
+    from kinoforge.core import registry
     from kinoforge.core.interfaces import Lifecycle
-    from kinoforge.core.lifecycle import LifecycleManager
-    from kinoforge.providers.local import LocalProvider
-
-    ledger = ctx.ledger()
-    clock = RealClock()
-    lifecycle = Lifecycle()
-    provider = LocalProvider(clock=clock)
-    manager = LifecycleManager(
-        provider=provider,
-        clock=clock,
-        lifecycle=lifecycle,
-        run_id="_lifecycle",
+    from kinoforge.core.reaper import (
+        DEFAULT_STRICT_VERDICTS,
+        policy_from_cli_flags,
     )
 
-    destroyed = reap(provider=provider, lifecycle_manager=manager, ledger=ledger)
-    if destroyed:
-        print(f"reaped: {', '.join(destroyed)}")
+    apply_flag = bool(getattr(args, "apply", False))
+    include_orphans = bool(getattr(args, "include_orphans", False))
+    force_forget = bool(getattr(args, "force_forget", False))
+    strict = bool(getattr(args, "strict", False))
+    single_id: str | None = getattr(args, "id", None)
+    fmt: str = getattr(args, "format", "human") or "human"
+
+    if include_orphans and not apply_flag:
+        print(
+            "error: --include-orphans requires --apply (Layer V opt-in safety)",
+            file=sys.stderr,
+        )
+        return 4
+    if force_forget and not apply_flag:
+        print(
+            "error: --force-forget requires --apply (Layer V opt-in safety)",
+            file=sys.stderr,
+        )
+        return 4
+
+    ledger = ctx.ledger()
+    entries = ledger.entries()
+    if single_id is not None:
+        entries = [e for e in entries if e.get("id") == single_id]
+    if not entries:
+        print("reap: ledger empty (nothing to do)")
+        return 0
+
+    cfg = ctx.cfg
+    lifecycle = cfg.lifecycle() if cfg is not None else Lifecycle()
+    thresholds = {
+        "idle_timeout_s": lifecycle.idle_timeout_s,
+        "max_lifetime_s": lifecycle.max_lifetime_s,
+        "heartbeat_interval_s": lifecycle.heartbeat_interval_s,
+        "grace_after_session_s": lifecycle.grace_after_session_s,
+    }
+
+    policy = policy_from_cli_flags(
+        apply=apply_flag,
+        include_orphans=include_orphans,
+        force_forget=force_forget,
+    )
+
+    # Subset-ledger wrapper for --id: sweep enumerates entries via
+    # ledger.entries(); we shim a fresh proxy that returns only the
+    # filtered list. Mutation paths (forget) pass through.
+    if single_id is not None:
+        original_entries = ledger.entries
+
+        def _filtered_entries() -> list[dict]:  # type: ignore[type-arg]
+            return [e for e in original_entries() if e.get("id") == single_id]
+
+        ledger.entries = _filtered_entries  # type: ignore[method-assign]
+
+    store = ctx.store()
+    _cli_mod = sys.modules.get("kinoforge.cli")
+    clock = getattr(_cli_mod, "_cli_clock", _cli_clock)
+
+    report = sweep(
+        store=store,
+        ledger=ledger,
+        registry_get_provider=registry.get_provider,
+        thresholds=thresholds,
+        clock=clock,
+        policy=policy if apply_flag else None,
+    )
+
+    if fmt == "json":
+        _emit_reap_jsonl(report)
     else:
-        print("reap: no instances destroyed")
+        _emit_reap_human(report, apply_flag, include_orphans)
+
+    # Exit code priority: failed actions > strict > 0
+    if any(a.action == "failed" for a in report.actions):
+        return 2
+    if strict:
+        verdicts = {v for _, v in report.snapshot.values()}
+        if verdicts & DEFAULT_STRICT_VERDICTS:
+            return 3
     return 0
+
+
+def _emit_reap_human(report: SweepReport, applied: bool, include_orphans: bool) -> None:
+    """Pretty-print the verdict table + summary (Layer V T6).
+
+    Args:
+        report: SweepReport returned by sweep().
+        applied: True when --apply was set.
+        include_orphans: True when --include-orphans was set.
+    """
+    if not report.snapshot:
+        print("reap: no entries to classify")
+        return
+    print(
+        f"{'verdict':<18}{'id':<22}{'provider':<10}{'age_h':>7}"
+        f"{'hb_age_s':>10}{'sent_age_s':>12}"
+    )
+    now = time.time()
+    for eid, (entry, verdict) in report.snapshot.items():
+        provider = entry.get("provider", "?")
+        created_at = entry.get("created_at", now)
+        try:
+            age_h = max(0.0, (now - float(created_at)) / 3600.0)
+            age_str = f"{age_h:.1f}"
+        except (TypeError, ValueError):
+            age_str = "-"
+        hb = entry.get("last_heartbeat")
+        hb_str = f"{(now - float(hb)):.0f}" if hb is not None else "-"
+        tick = entry.get("heartbeat_thread_tick")
+        sent_str = f"{(now - float(tick)):.0f}" if tick is not None else "-"
+        print(
+            f"{verdict.value:<18}{eid:<22}{str(provider):<10}"
+            f"{age_str:>7}{hb_str:>10}{sent_str:>12}"
+        )
+    print()
+    if not applied:
+        print(
+            f"{len(report.snapshot)} entries classified — pass --apply "
+            "to act on default policy"
+        )
+        if not include_orphans:
+            orphans = sum(
+                1 for _, v in report.snapshot.values() if v.value == "ORPHAN_REAP"
+            )
+            if orphans:
+                print(f"add --include-orphans to also act on {orphans} orphan(s)")
+    else:
+        destroyed = sum(1 for a in report.actions if a.action == "destroyed_and_forgot")
+        forgot = sum(
+            1 for a in report.actions if a.action in {"forgot", "forgot_unroutable"}
+        )
+        skipped = sum(1 for a in report.actions if a.action == "skipped")
+        failed = sum(1 for a in report.actions if a.action == "failed")
+        print(
+            f"acted on {len(report.actions)}: {destroyed} destroyed · "
+            f"{forgot} forgotten · {skipped} drift-skipped · {failed} failed"
+        )
+
+
+def _emit_reap_jsonl(report: SweepReport) -> None:
+    """Emit JSONL: one record per snapshot entry plus one per action.
+
+    Args:
+        report: SweepReport returned by sweep().
+    """
+    print(json.dumps({"type": "header", "entries": len(report.snapshot)}))
+    for eid, (entry, verdict) in report.snapshot.items():
+        print(
+            json.dumps(
+                {
+                    "type": "verdict",
+                    "id": eid,
+                    "provider": str(entry.get("provider", "?")),
+                    "verdict": verdict.value,
+                }
+            )
+        )
+    for action in report.actions:
+        print(
+            json.dumps(
+                {
+                    "type": "action",
+                    "id": action.instance_id,
+                    "snapshot_verdict": action.snapshot_verdict.value,
+                    "applied_verdict": action.applied_verdict.value,
+                    "action": action.action,
+                    "reason": action.reason,
+                }
+            )
+        )
 
 
 def _cmd_gc(args: argparse.Namespace, ctx: SessionContext) -> int:

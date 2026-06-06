@@ -132,12 +132,12 @@ def test_cmd_destroy_unknown_id_returns_1(tmp_path: Path) -> None:
 def test_cmd_reap_returns_0_with_empty_ledger(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """_cmd_reap on an empty ledger exits 0 and prints 'no instances'."""
+    """_cmd_reap on an empty ledger exits 0 and prints an informational message."""
     ctx = _ctx_no_cfg(tmp_path)
     args = _ns()
     assert _commands._cmd_reap(args, ctx) == 0
     out = capsys.readouterr().out
-    assert "no instances" in out.lower()
+    assert "empty" in out.lower() or "no" in out.lower()
 
 
 # ---------------------------------------------------------------------------
