@@ -26,13 +26,17 @@ htmlcov/
 
 # Secrets — never commit .env or GCP service-account keys
 .env
+.env.*
 .gcp/
+# The .env.example template stays tracked
+!.env.example
 
 # Layer O — user-facing output directory (configurable per-run via --output-dir)
 output/
 
 # Superpowers brainstorming session state (PIDs, logs, transient HTML)
 .superpowers/
+*.log
 
 # Live-smoke per-run record (git_sha, timings, artifact sha256) — local only
 tests/engines/fixtures/comfyui/last_smoke.json
@@ -41,3 +45,15 @@ tests/engines/fixtures/comfyui/last_smoke.json
 runpodctl
 runpodctl.tar.gz
 .gc-url.txt
+
+# Stray local model weights (if a model/LoRA is ever pulled locally for tests)
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.gguf
+
+# Stray credentials outside .gcp/ (backstop)
+*.pem
+*.key
+*-sa.json
