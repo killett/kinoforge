@@ -269,7 +269,11 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     Args:
         args: Parsed CLI arguments. Required: ``config``, ``manifest``.
-            Optional: ``batch_id``, ``concurrent``, ``env_file``.
+            Optional: ``batch_id``, ``concurrent``, ``env_file``,
+            ``stream_format`` (``human`` / ``jsonl`` / ``none``;
+            default ``human``).  In ``jsonl`` mode, the manifest-loaded
+            header is routed to stderr so stdout stays pure JSONL for
+            piping (``kinoforge batch ... | jq .``).
         ctx: Per-invocation session context.
 
     Returns:
