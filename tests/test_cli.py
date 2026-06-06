@@ -1218,6 +1218,127 @@ def test_cmd_status_legacy_entry_with_cfg_fills_lifecycle(
 
 
 # ---------------------------------------------------------------------------
+# Layer U T5 — last_heartbeat surface + sentinel-staleness advisory
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_status_surfaces_last_heartbeat_when_present_in_entry(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """Layer U: ledger entry with last_heartbeat → status prints `last_heartbeat=<ISO>`.
+
+    Half of the regression-guard pair (the omit-when-absent test below
+    is the negative half). Together they pin down the Layer S
+    forward-compat read path — if the write side (T1/T3) silently
+    breaks, this test fails noisily.
+    """
+    import time as _time
+
+    entry = _runpod_entry()
+    entry["last_heartbeat"] = _time.time() - 5.0
+    state_dir = _seed_ledger_with(tmp_path, entry)
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "last_heartbeat=" in captured.out
+    # Sanity: ISO timestamp shape, not raw float.
+    lines = [ln for ln in captured.out.splitlines() if ln.startswith("last_heartbeat=")]
+    assert len(lines) == 1
+    _, _, value = lines[0].partition("=")
+    assert "T" in value, f"expected ISO timestamp with 'T', got {value!r}"
+
+
+def test_cmd_status_omits_last_heartbeat_when_absent(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """No last_heartbeat field → no last_heartbeat= line in the output.
+
+    Negative half of the regression-guard pair. Catches a future
+    refactor that emits the field unconditionally with an empty value.
+    """
+    entry = _runpod_entry()
+    # Explicitly no last_heartbeat key.
+    state_dir = _seed_ledger_with(tmp_path, entry)
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "last_heartbeat=" not in captured.out
+
+
+def test_cmd_status_advisory_when_heartbeat_thread_tick_is_stale(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """Stale sentinel (> 3 * interval) → 'heartbeat thread stale' advisory.
+
+    Operator-visible signal of the Layer 2 crash-safety defense (Layer U
+    spec §3.4). Without this advisory a silently-crashed loop looks
+    identical to a quiet but healthy session, and a future
+    heartbeat-aware reaper would have no way to gate on freshness.
+    """
+    import time as _time
+
+    entry = _runpod_entry()
+    entry["last_heartbeat"] = 0.0  # epoch zero — clearly old
+    entry["heartbeat_thread_tick"] = 0.0  # > 3 * default 30s = 90s stale
+    state_dir = _seed_ledger_with(tmp_path, entry)
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "advisory:" in captured.out
+    assert "heartbeat thread stale" in captured.out
+    # Sanity: advisory message includes the staleness amount.
+    advisory_lines = [
+        ln for ln in captured.out.splitlines() if "heartbeat thread stale" in ln
+    ]
+    assert len(advisory_lines) == 1
+    # The age value scales with time since epoch — at least seconds-large.
+    assert "since last tick" in advisory_lines[0]
+    # The forget-style advisory line from KeyError must NOT appear here.
+    assert "kinoforge forget" not in captured.out
+    # And the test must actually have been "stale" relative to now.
+    assert _time.time() - 0.0 > 90
+
+
+def test_cmd_status_no_advisory_when_heartbeat_thread_tick_is_fresh(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """Fresh sentinel → no advisory, regardless of last_heartbeat presence.
+
+    Discriminating pair against the stale test: pins down the threshold
+    semantics so a future refactor cannot silently widen or invert the
+    comparison (e.g. always-advisory or never-advisory bug).
+    """
+    import time as _time
+
+    now = _time.time()
+    entry = _runpod_entry()
+    entry["last_heartbeat"] = now - 1.0
+    entry["heartbeat_thread_tick"] = now - 1.0  # well under 90s threshold
+    state_dir = _seed_ledger_with(tmp_path, entry)
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "heartbeat thread stale" not in captured.out
+    assert "advisory:" not in captured.out
+
+
+# ---------------------------------------------------------------------------
 # Layer S — kinoforge forget --id <id>
 # ---------------------------------------------------------------------------
 
