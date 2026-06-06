@@ -135,6 +135,59 @@ def test_lifecycle_max_in_flight_honoured_from_yaml():
     assert lc.max_in_flight == 4
 
 
+# ---------------------------------------------------------------------------
+# Layer U T4 — heartbeat_interval_s
+# ---------------------------------------------------------------------------
+
+
+def test_lifecycle_heartbeat_interval_s_default_is_none():
+    """Default is None — feature disabled, backwards-compat for every existing config.
+
+    Bug this catches: a refactor that defaults the field to a positive
+    float would silently enable the background HeartbeatLoop for every
+    user's deploy_session, adding a thread + lock writes nobody asked for.
+    """
+    cfg = load_config(HOSTED)
+    lc = cfg.lifecycle()
+    assert lc.heartbeat_interval_s is None
+
+
+def test_lifecycle_heartbeat_interval_s_accepts_positive_float():
+    """A positive float in YAML round-trips into Lifecycle.heartbeat_interval_s.
+
+    Bug this catches: LifecycleConfig declaring the field but lifecycle()
+    not propagating it — would silently default to None and break Layer U's
+    deploy_session HeartbeatLoop spawn (T3 gate).
+    """
+    cfg = load_config(
+        HOSTED.replace("budget: 25.0", "budget: 25.0, heartbeat_interval_s: 30")
+    )
+    lc = cfg.lifecycle()
+    assert lc.heartbeat_interval_s == 30.0
+
+
+def test_lifecycle_heartbeat_interval_s_rejects_negative():
+    """Negative heartbeat_interval_s raises at load time.
+
+    Bug this catches: a missing validator would let a negative interval
+    reach HeartbeatLoop.__init__, which raises ValueError — but only
+    after the orchestrator has already created the instance, leaving the
+    pod orphaned. Reject at config-load.
+    """
+    with pytest.raises(ConfigError, match="heartbeat_interval_s"):
+        load_config(
+            HOSTED.replace("budget: 25.0", "budget: 25.0, heartbeat_interval_s: -1")
+        )
+
+
+def test_lifecycle_heartbeat_interval_s_rejects_zero():
+    """Zero heartbeat_interval_s raises at load time (same rationale as negative)."""
+    with pytest.raises(ConfigError, match="heartbeat_interval_s"):
+        load_config(
+            HOSTED.replace("budget: 25.0", "budget: 25.0, heartbeat_interval_s: 0")
+        )
+
+
 def test_hardware_requirements_defaults_applied():
     cfg = load_config(WAN)
     reqs = cfg.hardware_requirements()
