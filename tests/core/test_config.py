@@ -1231,6 +1231,20 @@ def test_lifecycle_config_grace_after_session_s_rejects_negative() -> None:
         LifecycleConfig(budget=1.0, grace_after_session_s=-1.0)
 
 
+def test_lifecycle_config_grace_after_session_s_accepts_zero() -> None:
+    """Zero is allowed (boundary); only negatives are rejected.
+
+    Regression guard against a future tightening of the validator
+    from `v < 0` to `v <= 0`.
+    """
+    from kinoforge.core.config import LifecycleConfig
+
+    assert (
+        LifecycleConfig(budget=1.0, grace_after_session_s=0.0).grace_after_session_s
+        == 0.0
+    )
+
+
 def test_config_lifecycle_wires_grace_after_session_s() -> None:
     """Top-level Config.lifecycle() populates the field on the interface dataclass."""
     from kinoforge.core.config import load_config
