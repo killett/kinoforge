@@ -341,16 +341,13 @@ def test_stream_format_jsonl_pure_stdout_and_summary_terminator(
     rc, out, err = _run_batch(tmp_path, capsys, extra_args=["--stream-format=jsonl"])
     assert rc == 0
 
-    # Every non-empty stdout line that is NOT the instance-overview header
-    # must parse as JSON.  The "[instance overview]" line is emitted by
-    # _print_instance_overview() before the subcommand dispatches; it is
-    # not batch-format-aware and intentionally stays on stdout.
-    lines = [
-        line
-        for line in out.splitlines()
-        if line.strip() and not line.startswith("[instance overview]")
-    ]
-    parsed = [json.loads(line) for line in lines]  # raises on failure
+    # AC8 contract: stdout is PURE JSONL — every non-empty line must parse.
+    # No filtering: a single non-JSON line on stdout breaks `| jq .` in
+    # production, so the test must catch any leak.  The instance-overview
+    # header and the manifest-loaded header are both routed to stderr in
+    # jsonl mode (gated in cli/_main.py and _cmd_batch respectively).
+    lines = [line for line in out.splitlines() if line.strip()]
+    parsed = [json.loads(line) for line in lines]  # raises on any non-JSON line
 
     # Terminal object is the batch_summary marker.
     assert parsed[-1]["kind"] == "batch_summary"
@@ -358,8 +355,9 @@ def test_stream_format_jsonl_pure_stdout_and_summary_terminator(
 
     # No human summary table on stdout.
     assert "summary:" not in out
-    # Manifest-loaded header on stderr.
+    # Both headers (manifest loaded + instance overview) on stderr.
     assert "manifest loaded" in err
+    assert "[instance overview]" in err
     # Verify start + finish events for all 3 entries appear in the JSONL.
     starts = [p for p in parsed if p.get("kind") == "entry_start"]
     finishes = [p for p in parsed if p.get("kind") == "entry_finish"]
