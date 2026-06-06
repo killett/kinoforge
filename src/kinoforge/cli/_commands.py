@@ -566,6 +566,43 @@ def _print_status_block(
         print(advisory)
 
 
+def _classify_for_status(
+    entry: dict,  # type: ignore[type-arg]
+    live_ids: set[str],
+    cfg: Config | None,
+    now: float,
+) -> str:
+    """Compute a verdict string for ``kinoforge status``.
+
+    Uses the same Layer V ``classify`` call as ``kinoforge reap`` so a
+    status-line ``verdict=...`` always agrees with what reap would
+    decide for the same entry. When cfg is None, ``Lifecycle()``
+    defaults are used.
+
+    Args:
+        entry: A ledger entry dict (possibly legacy-shaped).
+        live_ids: Set of instance IDs currently known to the provider.
+        cfg: Optional Config used for lifecycle policy fields.
+        now: Wall-clock seconds-since-epoch.
+
+    Returns:
+        The string value of the :class:`~kinoforge.core.reaper.Verdict` enum.
+    """
+    from kinoforge.core.interfaces import Lifecycle
+    from kinoforge.core.reaper import classify
+
+    lifecycle = cfg.lifecycle() if cfg is not None else Lifecycle()
+    return classify(
+        entry,
+        live_ids,
+        now,
+        idle_timeout_s=lifecycle.idle_timeout_s,
+        max_lifetime_s=lifecycle.max_lifetime_s,
+        heartbeat_interval_s=lifecycle.heartbeat_interval_s,
+        grace_after_session_s=lifecycle.grace_after_session_s,
+    ).value
+
+
 def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``status`` subcommand: read ledger, dispatch to recorded provider.
 
@@ -620,6 +657,7 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     except UnknownAdapter:
         provider_block = {
             "provider_status": f"unknown (unknown provider: {provider_name})",
+            "verdict": "UNROUTABLE",
         }
         _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
         return 2
@@ -629,6 +667,7 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     except KeyError:
         provider_block = {
             "provider_status": "unknown (stale ledger — provider has no record)",
+            "verdict": "STALE_LEDGER",
         }
         # Stale-ledger advisory wins over heartbeat advisory: the entry
         # is gone from the provider, so heartbeat freshness is moot.
@@ -646,6 +685,7 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
             "provider_status": (
                 f"unknown (provider lookup failed: {exc.__class__.__name__})"
             ),
+            "verdict": "HEARTBEAT_UNKNOWN",
         }
         _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
         return 2
@@ -655,6 +695,13 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         provider_block["endpoints"] = json.dumps(provider.endpoints(args.id))
     except Exception as exc:  # noqa: BLE001
         provider_block["endpoints"] = f"unknown ({exc.__class__.__name__})"
+
+    # Layer V — verdict line, same source of truth as `kinoforge reap`.
+    try:
+        live_ids = {i.id for i in provider.list_instances()}
+    except Exception:  # noqa: BLE001 — fall back to assume present
+        live_ids = {args.id}
+    provider_block["verdict"] = _classify_for_status(entry, live_ids, cfg, now)
 
     _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
     return 0
