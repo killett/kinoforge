@@ -23,6 +23,15 @@ models:
 
 lifecycle:
   budget: 5.0
+  # Layer U — heartbeat persistence. Uncomment to enable a background
+  # thread that pings provider.heartbeat() and persists the timestamp
+  # to the ledger every N seconds. Operator-visible via
+  # `kinoforge status --id <id>` ("last_heartbeat=<ISO>"). Default null
+  # (disabled). Recommended >= 10s to avoid lock contention at scale.
+  # heartbeat_interval_s: 30
+  # Layer V — post-session warm-reuse grace window. Sentinel-stale
+  # entries within this window are classified LIVE (not ORPHAN_REAP).
+  # grace_after_session_s: 300
 
 # --- Layer K: per-job spec & params (optional for fal.ai) -------------------
 # FalEngine.validate_spec does not require any spec keys (prompt comes from

@@ -1197,3 +1197,62 @@ def test_config_keyframe_absent_defaults_none(tmp_path) -> None:  # type: ignore
     )
     cfg = load_config(p)
     assert cfg.keyframe is None
+
+
+# ---------------------------------------------------------------------------
+# Layer V — grace_after_session_s on LifecycleConfig
+# ---------------------------------------------------------------------------
+
+
+def test_lifecycle_config_grace_after_session_s_default_is_300() -> None:
+    """Default surfaces through pydantic load too."""
+    from kinoforge.core.config import LifecycleConfig
+
+    assert LifecycleConfig(budget=1.0).grace_after_session_s == 300.0
+
+
+def test_lifecycle_config_grace_after_session_s_round_trips() -> None:
+    """YAML-style round-trip via model_dump_json / model_validate_json."""
+    from kinoforge.core.config import LifecycleConfig
+
+    raw = LifecycleConfig(budget=1.0, grace_after_session_s=42.0).model_dump_json()
+    parsed = LifecycleConfig.model_validate_json(raw)
+    assert parsed.grace_after_session_s == 42.0
+
+
+def test_lifecycle_config_grace_after_session_s_rejects_negative() -> None:
+    """Validator rejects negative values at load time."""
+    import pytest
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import LifecycleConfig
+
+    with pytest.raises(ValidationError):
+        LifecycleConfig(budget=1.0, grace_after_session_s=-1.0)
+
+
+def test_lifecycle_config_grace_after_session_s_accepts_zero() -> None:
+    """Zero is allowed (boundary); only negatives are rejected.
+
+    Regression guard against a future tightening of the validator
+    from `v < 0` to `v <= 0`.
+    """
+    from kinoforge.core.config import LifecycleConfig
+
+    assert (
+        LifecycleConfig(budget=1.0, grace_after_session_s=0.0).grace_after_session_s
+        == 0.0
+    )
+
+
+def test_config_lifecycle_wires_grace_after_session_s() -> None:
+    """Top-level Config.lifecycle() populates the field on the interface dataclass."""
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(
+        WAN.replace(
+            "lifecycle: {idle_timeout: 2h, job_timeout: 30m, max_lifetime: 5h, budget: 25.0}",
+            "lifecycle: {idle_timeout: 2h, job_timeout: 30m, max_lifetime: 5h, budget: 25.0, grace_after_session_s: 999.0}",
+        )
+    )
+    assert cfg.lifecycle().grace_after_session_s == 999.0
