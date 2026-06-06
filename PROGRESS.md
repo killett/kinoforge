@@ -118,6 +118,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 **Architectural follow-ups:**
 - ~~**Layer F: engine `submit()` ignores seg-0 assets.**~~ Closed by Phase 16 (see below).
 - ~~`cli._cmd_status` queries in-process provider state only, not the ledger.~~ — **CLOSED** by Phase 33 (Layer S). `_cmd_status` is now ledger-first: reads the entry, dispatches to the recorded provider, prints rich `key=value` block; stale-ledger path emits a `kinoforge forget --id <id>` advisory.
+- ~~Production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam).~~ — **CLOSED** by Phase 36 (Layer U). `Ledger.touch` ships the write path, `HeartbeatLoop` ships the writer thread, `deploy_session` wires it behind a config gate (`lifecycle.heartbeat_interval_s`), `_cmd_status` surfaces both the timestamp and a sentinel-staleness advisory. **Forward-compat sentinel-gate contract:** any future heartbeat-aware reaper MUST check `heartbeat_thread_tick` freshness before destructive decisions — see `Ledger.touch` docstring + Layer U spec §3.4.
 - `provisioner.provision` typed as `_ProvisionConfig` Protocol — `# type: ignore[arg-type]` at call site for mypy generic variance.
 - `GenerateClipStage` persists only final artifact (intermediates in-memory) — stitching, when shipped, must refactor persistence model or stitching read path.
 - `flf2v + N > 1 + non-native` is a pre-existing gap (no continuity for two-image-bookend non-native).
@@ -152,16 +153,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 35 fully CLOSED — Layer L-T4 (batch streaming logs). HEAD at the Phase 35 merge commit on `main`. Test suite at 1321 passed, 8 skipped. Working tree clean. No live spend in Layer L-T4 (fully offline-tested).
+**Where we are:** Phase 36 fully CLOSED — Layer U (heartbeat persistence). HEAD at the Phase 36 merge commit on `main`. Test suite at 1351 passed, 8 skipped. Working tree clean. No live spend in Layer U (fully offline-tested).
 
 **Read in this order:**
-1. The Phase 35 entry below (per-task SHAs + design decisions).
-2. `docs/superpowers/specs/2026-06-05-layer-l-t4-batch-streaming-logs-design.md` for the Layer L-T4 design doc.
+1. The Phase 36 entry below (per-task SHAs + design decisions).
+2. `docs/superpowers/specs/2026-06-05-layer-u-heartbeat-persistence-design.md` for the Layer U design doc.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates: cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap (Layer T+1 candidate); `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam, not yet wired).
+**First unchecked task in fresh session:** pick next layer. Candidates (Layer U closed the `last_heartbeat` carry-forward): cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap; `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); a heartbeat-aware reaper that consumes the new sentinel-gate contract from Layer U (Layer V candidate).
 
-**Budget remaining: ~$10.92 of $15.** Phase 35 spent $0.00 (Layer L-T4 offline-only).
+**Budget remaining: ~$10.92 of $15.** Phase 36 spent $0.00 (Layer U offline-only).
 
 ## Post-MVP
 
@@ -1121,3 +1122,67 @@ ACs) = 1321 post-Layer (8 skipped unchanged).
 `_BatchSpyEngine` / `FakeProvider` / `FakeImageEngine` fixtures.
 
 Closes PROGRESS:326 follow-up #1 (Layer L Task 4 streaming-log deferral).
+
+### Phase 36 — Layer U (heartbeat persistence)
+
+- [x] T0: Spec doc + plan doc + tasks.json committed — commits `6114b41` + `760e501`
+- [x] T1: `Ledger.touch` for in-place entry updates — commit `0d3614e`. 9 tests including subprocess cross-process visibility and forget+touch no-resurrect lockdown.
+- [x] T2: `HeartbeatLoop` threaded poll with crash-safe try/except + sentinel — commit `09b61e8`. 8 tests including provider/ledger exception isolation (caplog), sentinel monotonic, bounded `stop()` from mid-sleep AND on wedged thread, two-loop semantic isolation. Adds `_HeartbeatProvider` / `_TouchableLedger` / `HeartbeatLoopProtocol` structural Protocols (PROGRESS:121 pattern).
+- [x] T4: `LifecycleConfig.heartbeat_interval_s` config field — commit `9cf1de1`. Default `None`. Positive-value validator rejects bad values at config-load, before any compute is provisioned. 4 tests.
+- [x] T3: `deploy_session` spawns `HeartbeatLoop` when configured — commit `2d7e749`. Gated on positive interval AND compute instance (hosted sessions skip). Injectable `heartbeat_loop_factory` seam for test substitution. 5 tests including end-to-end real Loop ledger write at 50ms cadence.
+- [x] T5: `kinoforge status` surfaces `last_heartbeat` + sentinel-staleness advisory — commit `1fbe58b`. Layer S read formatter already surfaced `last_heartbeat`; T5 adds the sentinel-staleness advisory and a positive/negative regression-guard pair on the read surface. 4 tests.
+- [x] T6: README + PROGRESS + example yaml + final gate + merge — this commit.
+- [ ] Merge to main via `--no-ff`.
+
+**Key design decisions:**
+- Q1 (write trigger) = dedicated periodic poll inside `deploy_session`.
+  Re-opened from "observation-time piggyback" after exploration
+  revealed `LifecycleManager.is_liveness_OK` has zero production
+  callers — the original wire would have shipped to dead code.
+- Q2 (call site) = inside the `deploy_session` ctx manager. Thread
+  lifetime tracks the orchestration session, not the process. One-shot
+  CLI commands (`status`, `forget`, `list`) don't spawn the thread.
+- Q3 (scope) = generation + persistence. Re-opened from "pure pipe"
+  after exploration showed no production caller of
+  `provider.heartbeat()` exists — the pipe would have carried no data.
+  The loop is now both source (`provider.heartbeat(id)`) AND persister
+  (`ledger.touch(id, ...)`) per tick.
+- Q4 (crash-safety) = three-layer defense, explicit constraint:
+  inner `try/except Exception` per tick + sentinel field +
+  `daemon=True` thread with bounded `join(timeout=...)`.
+- Q5 (default) = config-gated, default-off (`heartbeat_interval_s:
+  null`). Every existing YAML config loads unchanged; backwards-compat.
+- Strict-update `Ledger.touch` (no upsert): unknown id is a silent
+  no-op. Insertion stays the sole responsibility of `record`.
+- Skip-unchanged guard inside `touch`: second call with the same
+  value writes zero bytes (pre-mitigation for sub-second-cadence
+  consumers).
+- Protected ledger keys filtered from `**extra`: a future Layer V
+  consumer cannot accidentally overwrite `id` / `provider` / `tags` /
+  `created_at` / `cost_rate_usd_per_hr`.
+- First tick is eager: `_run` ticks BEFORE the first
+  `_stop.wait(interval_s)` so short-lived sessions still write at
+  least one heartbeat.
+- Structural `HeartbeatLoopProtocol` (start/stop) lets tests substitute
+  non-threaded spies without inheriting the full class.
+
+**Forward-compat sentinel-gate contract (load-bearing):**
+Every successful `_tick_once` writes `heartbeat_thread_tick` alongside
+`last_heartbeat`. Any code that consults `last_heartbeat` for a
+reaping or destructive decision MUST first check
+`heartbeat_thread_tick`; if
+`now - heartbeat_thread_tick > 3 * heartbeat_interval_s`, treat
+`last_heartbeat` as untrustworthy. No production reaper consumes the
+field today — the contract is documented for the future Layer V
+heartbeat-aware reaper. The CLI surfaces the same gate as a
+user-visible advisory.
+
+**Test count:** 1321 pre-Layer-U + 9 (ledger_touch) + 8
+(heartbeat_loop) + 4 (config) + 5 (orchestrator_heartbeat) + 4
+(cli_status) = 1351 post-Layer-U (8 skipped unchanged).
+
+**Live spend:** $0. Fully offline-tested via `LocalProvider` +
+`FakeEngine` + duck-typed spy fixtures.
+
+Closes PROGRESS:113 carry-forward "production-side `last_heartbeat`
+persistence" (Layer S forward-compat seam).
