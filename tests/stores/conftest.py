@@ -9,7 +9,10 @@ constructors.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # S3 fakes
@@ -76,6 +79,44 @@ class FakeS3Client:
         # value = (body_bytes, etag)
         self._objects: dict[tuple[str, str], tuple[bytes, str]] = {}
         self._etag_counter = 0
+        self.upload_fileobj_calls: list[tuple[str, str, bytes, dict[str, str]]] = []
+        self.generate_presigned_url_calls: list[tuple[str, dict[str, str], int]] = []
+        self.meta = SimpleNamespace(
+            config=SimpleNamespace(
+                retries={"max_attempts": 0, "mode": "legacy"},
+            ),
+        )
+
+    def set_retry_config(self, retries: dict[str, Any]) -> None:
+        """Mirror what botocore.config.Config does at construction time."""
+        self.meta.config.retries = retries
+
+    def upload_fileobj(
+        self,
+        fileobj: Any,
+        Bucket: str,  # noqa: N803
+        Key: str,  # noqa: N803
+        ExtraArgs: dict[str, str] | None = None,  # noqa: N803
+    ) -> None:
+        """Capture an upload_fileobj call and mirror into the in-memory object map."""
+        body = fileobj.read()
+        self.upload_fileobj_calls.append((Bucket, Key, body, dict(ExtraArgs or {})))
+        etag = self._next_etag()
+        self._objects[(Bucket, Key)] = (body, etag)
+
+    def generate_presigned_url(
+        self,
+        op: str,
+        *,
+        Params: dict[str, str],  # noqa: N803
+        ExpiresIn: int,  # noqa: N803
+    ) -> str:
+        """Capture a generate_presigned_url call and return a deterministic fake URL."""
+        self.generate_presigned_url_calls.append((op, dict(Params), ExpiresIn))
+        return (
+            f"https://{Params['Bucket']}.s3.amazonaws.com/{Params['Key']}"
+            f"?X-Sig=fake&ttl={ExpiresIn}"
+        )
 
     def _next_etag(self) -> str:
         self._etag_counter += 1
@@ -211,3 +252,20 @@ class FakeGCSClient:
 
     def bucket(self, name: str) -> _FakeBucket:
         return self._buckets.setdefault(name, _FakeBucket(name))
+
+
+# ---------------------------------------------------------------------------
+# Pytest fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def fake_s3_client() -> FakeS3Client:
+    """Fresh FakeS3Client for each test."""
+    return FakeS3Client()
+
+
+@pytest.fixture()
+def fake_gcs_client() -> FakeGCSClient:
+    """Fresh FakeGCSClient for each test."""
+    return FakeGCSClient()

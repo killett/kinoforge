@@ -12,15 +12,19 @@ inside ``__init__`` never fires under the test path.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 from typing import TYPE_CHECKING, Any, Literal
 
+from kinoforge.core.config import StoreConfig
 from kinoforge.core.interfaces import Artifact
 from kinoforge.stores.base import ArtifactStore
 
 if TYPE_CHECKING:
     from kinoforge.core.locks import Lock
+
+_OP_TO_BOTOCORE: dict[str, str] = {"GET": "get_object", "PUT": "put_object"}
 
 
 class S3ArtifactStore(ArtifactStore):
@@ -39,6 +43,7 @@ class S3ArtifactStore(ArtifactStore):
         prefix: str = "",
         *,
         client: Any = None,  # noqa: ANN401 — injected SDK client; typed Any to avoid SDK import in signature
+        cfg: StoreConfig | None = None,
     ) -> None:
         """Initialise the store.
 
@@ -47,14 +52,25 @@ class S3ArtifactStore(ArtifactStore):
             prefix: Optional key prefix.  Leading and trailing slashes are stripped.
             client: Optional boto3 S3 client.  When ``None``, a real client is
                 lazily constructed via ``boto3.client("s3")`` (uses the SDK
-                default credential chain).
+                default credential chain) with a pinned retry config.
+            cfg: Optional :class:`~kinoforge.core.config.StoreConfig`.  When
+                ``None``, a default config is constructed from ``bucket``.
         """
         self.bucket = bucket
         self.prefix = prefix.strip("/")
+        self._cfg = cfg if cfg is not None else StoreConfig(kind="s3", bucket=bucket)
+        _retry_config = {"max_attempts": 3, "mode": "standard"}
         if client is None:
             import boto3  # type: ignore[import-untyped]  # noqa: PLC0415 — lazy: tests inject a fake and never trip this
+            from botocore.config import (  # noqa: PLC0415
+                Config as BotocoreConfig,
+            )
 
-            client = boto3.client("s3")
+            client = boto3.client("s3", config=BotocoreConfig(retries=_retry_config))
+        else:
+            # Stamp the retry config onto the injected fake so tests can assert it.
+            if hasattr(client, "set_retry_config"):
+                client.set_retry_config(_retry_config)
         self._client: Any = client
 
     def _key(self, run_id: str, name: str) -> str:
@@ -79,9 +95,27 @@ class S3ArtifactStore(ArtifactStore):
         return f"s3://{self.bucket}/{self._key(run_id, name)}"
 
     def put_bytes(self, run_id: str, name: str, data: bytes) -> Artifact:
-        """Write ``data`` under ``<bucket>/<prefix>/<run_id>/<name>``."""
+        """Write ``data`` under ``<bucket>/<prefix>/<run_id>/<name>``.
+
+        Uses ``upload_fileobj`` for multipart-aware uploads.  Encryption
+        ``ExtraArgs`` are derived from :attr:`_cfg`.encryption.
+        """
         key = self._key(run_id, name)
-        self._client.put_object(Bucket=self.bucket, Key=key, Body=data)
+        extra_args: dict[str, str] = {}
+        enc = self._cfg.encryption
+        if enc.mode == "kms":
+            if (
+                enc.kms_key_id is None
+            ):  # pragma: no cover — pydantic validator prevents this
+                raise ValueError("encryption.mode='kms' requires encryption.kms_key_id")
+            extra_args["ServerSideEncryption"] = "aws:kms"
+            extra_args["SSEKMSKeyId"] = enc.kms_key_id
+        self._client.upload_fileobj(
+            io.BytesIO(data),
+            Bucket=self.bucket,
+            Key=key,
+            ExtraArgs=extra_args,
+        )
         return Artifact(uri=f"s3://{self.bucket}/{key}")
 
     def get_bytes(self, uri: str) -> bytes:
@@ -145,11 +179,23 @@ class S3ArtifactStore(ArtifactStore):
         op: Literal["GET", "PUT"],
         ttl_s: int,
     ) -> str:
-        """Return a pre-signed URL for GET or PUT on the artifact.
+        """Return a pre-signed URL for a single GET or PUT on the artifact.
 
-        Temporary stub — implementation in Layer W Task 3.
+        Args:
+            run_id: Run namespace.
+            name: Artifact name within the run.
+            op: HTTP method the URL grants.  ``"GET"`` downloads; ``"PUT"`` uploads.
+            ttl_s: Validity window in seconds from issuance.
+
+        Returns:
+            Absolute HTTPS pre-signed URL valid for ``ttl_s`` seconds.
         """
-        raise NotImplementedError("Layer W T3 not yet implemented")
+        key = self._key(run_id, name)
+        return self._client.generate_presigned_url(  # type: ignore[no-any-return]
+            _OP_TO_BOTOCORE[op],
+            Params={"Bucket": self.bucket, "Key": key},
+            ExpiresIn=ttl_s,
+        )
 
 
 # ---------------------------------------------------------------------------
