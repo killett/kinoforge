@@ -1,6 +1,7 @@
 """Tests for S3ArtifactStore — all run against FakeS3Client (no network).
 
 Spec: docs/superpowers/specs/2026-05-29-s3-gcs-stores-design.md §3.1 + §8.2
+Layer W T3: multipart + encryption + signed_url + retry pin.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ import sys
 
 import pytest
 
+from kinoforge.core.config import StoreConfig, StoreEncryptionConfig
 from kinoforge.stores.s3 import S3ArtifactStore
 from tests.stores.conftest import FakeS3Client
 
@@ -241,3 +243,72 @@ def test_lazy_sdk_import_not_triggered_when_client_injected() -> None:
     S3ArtifactStore(bucket="bkt", client=FakeS3Client())
 
     assert "boto3" not in sys.modules
+
+
+# ---------------------------------------------------------------------------
+# Layer W T3 — retry pin + multipart + encryption + signed_url
+# ---------------------------------------------------------------------------
+
+
+def _store_with_fake(
+    fake_client: FakeS3Client, *, encryption: StoreEncryptionConfig | None = None
+) -> S3ArtifactStore:
+    """Build S3ArtifactStore around an in-test fake with optional encryption config."""
+    cfg = StoreConfig(
+        kind="s3",
+        bucket="layer-w-test",
+        encryption=encryption or StoreEncryptionConfig(),
+    )
+    return S3ArtifactStore(bucket="layer-w-test", client=fake_client, cfg=cfg)
+
+
+def test_s3_retry_config_pinned(fake_s3_client: FakeS3Client) -> None:
+    """T3 AC1: boto3 client built with retries={max_attempts:3, mode:standard}."""
+    store = _store_with_fake(fake_s3_client)
+    retries = store._client.meta.config.retries
+    assert retries["max_attempts"] == 3
+    assert retries["mode"] == "standard"
+
+
+def test_s3_put_bytes_uses_upload_fileobj(fake_s3_client: FakeS3Client) -> None:
+    """T3 AC2+3: put_bytes calls upload_fileobj; default encryption adds no ExtraArgs."""
+    store = _store_with_fake(fake_s3_client)
+    artifact = store.put_bytes("run1", "out.bin", b"hello")
+    assert fake_s3_client.upload_fileobj_calls, "expected upload_fileobj to be called"
+    bucket, key, body, extra = fake_s3_client.upload_fileobj_calls[0]
+    assert bucket == "layer-w-test"
+    assert body == b"hello"
+    assert "ServerSideEncryption" not in extra  # default mode — no override
+    assert artifact.uri.startswith("s3://layer-w-test/")
+
+
+def test_s3_put_bytes_kms_extra_args(fake_s3_client: FakeS3Client) -> None:
+    """T3 AC4: KMS mode injects ServerSideEncryption + SSEKMSKeyId into ExtraArgs."""
+    enc = StoreEncryptionConfig(
+        mode="kms", kms_key_id="arn:aws:kms:us-east-1:1:key/abc"
+    )
+    store = _store_with_fake(fake_s3_client, encryption=enc)
+    store.put_bytes("run1", "out.bin", b"hello")
+    _, _, _, extra = fake_s3_client.upload_fileobj_calls[0]
+    assert extra["ServerSideEncryption"] == "aws:kms"
+    assert extra["SSEKMSKeyId"] == "arn:aws:kms:us-east-1:1:key/abc"
+
+
+def test_s3_signed_url_get(fake_s3_client: FakeS3Client) -> None:
+    """T3 AC5: signed_url GET maps to generate_presigned_url('get_object', ...)."""
+    store = _store_with_fake(fake_s3_client)
+    url = store.signed_url("run1", "out.bin", op="GET", ttl_s=600)
+    op, params, ttl = fake_s3_client.generate_presigned_url_calls[0]
+    assert op == "get_object"
+    assert params == {"Bucket": "layer-w-test", "Key": "run1/out.bin"}
+    assert ttl == 600
+    assert url.startswith("https://layer-w-test.s3.amazonaws.com/run1/out.bin?")
+
+
+def test_s3_signed_url_put(fake_s3_client: FakeS3Client) -> None:
+    """T3 AC6: signed_url PUT maps to generate_presigned_url('put_object', ...)."""
+    store = _store_with_fake(fake_s3_client)
+    store.signed_url("run1", "out.bin", op="PUT", ttl_s=120)
+    op, _, ttl = fake_s3_client.generate_presigned_url_calls[0]
+    assert op == "put_object"
+    assert ttl == 120
