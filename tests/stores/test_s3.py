@@ -7,6 +7,7 @@ Layer W T3: multipart + encryption + signed_url + retry pin.
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 import pytest
 
@@ -268,6 +269,43 @@ def test_s3_retry_config_pinned(fake_s3_client: FakeS3Client) -> None:
     retries = store._client.meta.config.retries
     assert retries["max_attempts"] == 3
     assert retries["mode"] == "standard"
+
+
+def test_s3_retry_config_pinned_on_real_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T3 AC1: boto3.client('s3') is called with pinned retry config.
+
+    Unlike test_s3_retry_config_pinned, this test verifies the actual
+    boto3.client call (not just the fake's stamp). Uses monkeypatch to
+    capture the config kwarg without a live boto3 import.
+    """
+    captured_configs: list[Any] = []
+
+    def fake_boto3_client(
+        service_name: str = "", *args: Any, config: Any = None, **kwargs: Any
+    ) -> Any:
+        """Capture the config kwarg and return a minimal mock."""
+        captured_configs.append(config)
+        # Return a minimal object with meta.config so __init__ doesn't crash.
+        return type(
+            "Client",
+            (),
+            {
+                "meta": type("Meta", (), {"config": config})(),
+                "set_retry_config": lambda self, retries: None,
+            },
+        )()
+
+    # Inject fake boto3 module into sys.modules before S3ArtifactStore imports it.
+    fake_boto3_module = type("Module", (), {"client": fake_boto3_client})()
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3_module)
+
+    # Construct without injecting a client — forces the lazy import path.
+    S3ArtifactStore(bucket="test-bucket")
+    assert len(captured_configs) == 1
+    config = captured_configs[0]
+    assert hasattr(config, "retries")
+    assert config.retries["max_attempts"] == 3
+    assert config.retries["mode"] == "standard"
 
 
 def test_s3_put_bytes_uses_upload_fileobj(fake_s3_client: FakeS3Client) -> None:
