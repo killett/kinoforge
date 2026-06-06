@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from kinoforge.core.clock import Clock
 from kinoforge.core.errors import TeardownError
 from kinoforge.core.lifecycle import Ledger, destroy_confirmed
-from kinoforge.core.reaper import Verdict, classify
+from kinoforge.core.reaper import Policy, Verdict, classify, partition
 
 if TYPE_CHECKING:
     from kinoforge.core.interfaces import ComputeProvider
@@ -161,5 +161,112 @@ def act_on_verdict(
         )
 
 
-# ``sweep`` lives in this module too but is added in Task 5 so the
-# Task-4 commit stays focused on the per-instance contract.
+def sweep(
+    store: ArtifactStore,
+    ledger: Ledger,
+    registry_get_provider: Callable[[str], Callable[[], ComputeProvider]],
+    thresholds: Mapping[str, Any],
+    clock: Clock,
+    *,
+    policy: Policy | None = None,
+) -> SweepReport:
+    """Classify all ledger entries; optionally act.
+
+    Caches resolved providers and ``list_instances()`` results per
+    provider name within the call so N entries with the same provider
+    produce one factory call and one ``list_instances`` round-trip.
+
+    Failure isolation: a single ``list_instances`` exception demotes
+    that provider's entries to ``UNROUTABLE`` for the rest of the
+    sweep but does not abort the sweep. A single ``TeardownError`` is
+    captured by ``act_on_verdict`` as ``action="failed"`` and does
+    not propagate.
+
+    Force-forget UNROUTABLE: when ``policy.act_verdicts`` contains
+    :attr:`Verdict.UNROUTABLE`, a separate post-pass acquires the
+    same ``reaper/<id>`` lock and forgets each UNROUTABLE entry.
+    Architectural note: ``act_on_verdict`` cannot reach this path
+    because UNROUTABLE entries lack a provider — sweep is the
+    correct home.
+
+    Args:
+        store: Artifact store for the cross-process lock used by
+            ``act_on_verdict`` and the UNROUTABLE force-forget path.
+        ledger: Ledger to enumerate and mutate.
+        registry_get_provider: Usually ``kinoforge.core.registry.get_provider``.
+        thresholds: Threshold kwargs forwarded to ``classify``.
+        clock: Wall-clock source.
+        policy: When ``None``, sweep is read-only (no actions returned).
+            Otherwise, snapshot entries whose verdict is in
+            ``policy.act_verdicts`` are dispatched to
+            ``act_on_verdict`` (or the UNROUTABLE force-forget loop).
+
+    Returns:
+        :class:`SweepReport` with the verdict snapshot and (optional)
+        action results.
+    """
+    now = clock.now()
+    provider_cache: dict[str, ComputeProvider | None] = {}
+    live_pod_ids_cache: dict[str, set[str]] = {}
+
+    entries = list(ledger.entries())
+    snapshot: dict[str, tuple[Mapping[str, Any], Verdict]] = {}
+
+    for entry in entries:
+        eid = str(entry["id"])
+        provider = provider_for(entry, registry_get_provider, provider_cache)
+        if provider is None:
+            snapshot[eid] = (entry, Verdict.UNROUTABLE)
+            continue
+        name = str(entry.get("provider", "local"))
+        if name not in live_pod_ids_cache:
+            try:
+                live_pod_ids_cache[name] = {i.id for i in provider.list_instances()}
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("list_instances failed on %s: %s", name, exc)
+                live_pod_ids_cache[name] = set()
+                provider_cache[name] = None
+                snapshot[eid] = (entry, Verdict.UNROUTABLE)
+                continue
+        verdict = classify(entry, live_pod_ids_cache[name], now, **thresholds)
+        snapshot[eid] = (entry, verdict)
+
+    if policy is None:
+        return SweepReport(snapshot=snapshot, actions=[])
+
+    to_act, _to_skip = partition({eid: v for eid, (_, v) in snapshot.items()}, policy)
+    actions: list[ActionResult] = []
+    for eid, verdict in to_act.items():
+        act_entry: Mapping[str, Any] = snapshot[eid][0]
+        if verdict == Verdict.UNROUTABLE:
+            # UNROUTABLE entries have no provider — act_on_verdict cannot
+            # handle them. When policy opts in (--force-forget), sweep
+            # acquires the same reaper/<id> lock and forgets directly.
+            with store.acquire_lock(f"reaper/{eid}", ttl_s=_LOCK_TTL_S):
+                ledger.forget(eid)
+            actions.append(
+                ActionResult(
+                    instance_id=eid,
+                    snapshot_verdict=Verdict.UNROUTABLE,
+                    applied_verdict=Verdict.UNROUTABLE,
+                    action="forgot_unroutable",
+                )
+            )
+            continue
+        name = str(act_entry.get("provider", "local"))
+        provider = provider_cache.get(name)
+        if provider is None:
+            # Defensive: any non-UNROUTABLE verdict was set by classify,
+            # which only runs when the provider resolved successfully.
+            continue
+        result = act_on_verdict(
+            store,
+            ledger,
+            provider,
+            act_entry,
+            verdict,
+            thresholds=thresholds,
+            clock=clock,
+        )
+        actions.append(result)
+    return SweepReport(snapshot=snapshot, actions=actions)
