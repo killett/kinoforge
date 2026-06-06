@@ -37,6 +37,11 @@ The pattern: gitignored `<provider>/` directory + tracked entry in this file.
 | RunPod       | ✅ Bootstrapped               | `.env` → `RUNPOD_API_KEY`, `RUNPOD_TERMINATE_KEY`   | personal RunPod API key (terminate-key reuses main; see Layer N)    |
 | Azure / B2 / R2 | ❌ Not bootstrapped        | —                                                   | —                                                                    |
 
+> Layer W encryption + signed-URL axes require KMS keys. Run
+> `pixi run cloud:bootstrap-kms` after the AWS / GCP rows show ✅.
+> ARN and resource name are persisted to `.aws/kms-test-key.arn` and
+> `.gcp/kms-test-key.name` (both gitignored).
+
 ## Discovery — how credentials reach code
 
 All three "default chain" SDKs honour these env vars, set in
@@ -66,6 +71,13 @@ for AWS/GCS.
   `us-central1` for the S3/GCS real-cloud verification layer.
   Uniform bucket-level access ON. Public access prevention ENFORCED.
   Lifecycle: delete objects + abort multipart at age 1 day.
+- 2026-06-06 (Layer W T5 bootstrap): GCP Cloud KMS keyring
+  `kinoforge-realcloud-tests` + key `bucket-cmek` created in `us-central1`.
+  `kinoforge-runner` SA + GCS service agent
+  (`service-<GCP_PROJECT_NUMBER>@gs-project-accounts.iam.gserviceaccount.com`)
+  granted `roles/cloudkms.cryptoKeyEncrypterDecrypter`. Key resource name
+  persisted to `.gcp/kms-test-key.name` (gitignored).
+  Rotation: NOT auto-rotated — rotation invalidates Layer W recorded fixtures.
 
 ## AWS — provisioning history
 
@@ -77,6 +89,11 @@ for AWS/GCS.
   expiration + abort-incomplete-multipart, both at age 1 day.
 - 2026-06-06: end-to-end S3 smoke (boto3 default chain + bucket
   put/get/delete) verified clean.
+- 2026-06-06 (Layer W T5 bootstrap): AWS KMS key `alias/kinoforge-realcloud-tests`
+  created in `us-east-1`. ARN persisted to `.aws/kms-test-key.arn` (gitignored).
+  Key policy grants `kinoforge-ci` `kms:Encrypt`, `kms:Decrypt`,
+  `kms:GenerateDataKey`, `kms:DescribeKey`. Root account retains `kms:*`.
+  Rotation: NOT auto-rotated — rotation invalidates Layer W recorded fixtures.
 
 ### Scope-down follow-up (operator action recommended)
 
@@ -88,11 +105,12 @@ the swap is done in the AWS Console.
 
 ## Rotation policy
 
-| Credential                | Recommended cadence | Owner            |
-|---------------------------|---------------------|------------------|
-| GCP SA key                | 90 days             | operator         |
-| AWS access key            | 90 days             | operator         |
-| fal / HF / CivitAI / RunPod tokens | as provider expires | operator |
+| Credential                           | Recommended cadence                  | Owner    |
+|--------------------------------------|--------------------------------------|----------|
+| GCP SA key                           | 90 days                              | operator |
+| AWS access key                       | 90 days                              | operator |
+| fal / HF / CivitAI / RunPod tokens   | as provider expires                  | operator |
+| KMS keys (S3 + GCS Layer W)          | defer until next real-cloud layer    | operator |
 
 Rotation steps live in each provider's local README (`.gcp/README.md`,
 `.aws/README.md`). Update this file's table when rotation completes.

@@ -65,6 +65,8 @@ boto3 = "*"
 google-cloud-storage = "*"
 python-dotenv = ">=1.2.2,<2"
 ffmpeg = ">=8.1.1,<9"
+google-cloud-kms = ">=3.13.0,<4"
+google-cloud-resource-manager = ">=1.17.0,<2"
 
 [pypi-dependencies]
 # Group-derived PyPI-only packages are inserted on the line below.
@@ -111,6 +113,10 @@ preflight = "python tools/preflight.py"
 # max_lifetime=60s + a sleep bootstrap, polls until self-destroy or wall
 # cap. Cost ~$0.005-0.01 per run. Run once per release; not part of CI.
 probe-watchdog = "python tools/probe_pod_watchdog.py"
+# Idempotent KMS bootstrap for Layer W real-cloud encryption tests.
+# First run provisions AWS KMS alias/kinoforge-realcloud-tests + GCP Cloud KMS
+# keyring/key. Re-runs detect persisted ARN/name files and skip. ~$0.04/day.
+"cloud:bootstrap-kms" = { cmd = "python tools/bootstrap_kms.py", description = "Idempotently provision AWS KMS + GCP Cloud KMS keys for Layer W realcloud tests." }
 lint = "python -m ruff check ."
 format = "python -m ruff format ."
 typecheck = "python -m mypy ."
