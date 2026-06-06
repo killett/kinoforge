@@ -215,3 +215,73 @@ def test_field_nullability_rules() -> None:
             status="fail",
             duration_s=0.5,
         )
+    # entry_start without entry -> reject
+    with pytest.raises(ValidationError):
+        BatchEvent(
+            kind="entry_start",
+            batch_id="b",
+            idx=0,
+            run_id="0",
+            ts=_now(),
+        )
+    # entry_finish without status -> reject
+    with pytest.raises(ValidationError):
+        BatchEvent(
+            kind="entry_finish",
+            batch_id="b",
+            idx=0,
+            run_id="0",
+            ts=_now(),
+            duration_s=0.5,
+            error="boom",
+        )
+    # entry_finish without duration_s -> reject
+    with pytest.raises(ValidationError):
+        BatchEvent(
+            kind="entry_finish",
+            batch_id="b",
+            idx=0,
+            run_id="0",
+            ts=_now(),
+            status="ok",
+            uri="local://x",
+        )
+    # entry_finish status="ok" with error set -> reject
+    with pytest.raises(ValidationError):
+        BatchEvent(
+            kind="entry_finish",
+            batch_id="b",
+            idx=0,
+            run_id="0",
+            ts=_now(),
+            status="ok",
+            duration_s=0.0,
+            uri="local://x",
+            error="should not be here",
+        )
+    # entry_finish status="interrupted" with uri set -> reject
+    with pytest.raises(ValidationError):
+        BatchEvent(
+            kind="entry_finish",
+            batch_id="b",
+            idx=0,
+            run_id="0",
+            ts=_now(),
+            status="interrupted",
+            duration_s=0.5,
+            uri="local://x",
+            error="batch aborted",
+        )
+    # entry_finish status="aborted" with uri set -> reject
+    with pytest.raises(ValidationError):
+        BatchEvent(
+            kind="entry_finish",
+            batch_id="b",
+            idx=0,
+            run_id="0",
+            ts=_now(),
+            status="aborted",
+            duration_s=0.0,
+            uri="local://x",
+            error="batch aborted",
+        )
