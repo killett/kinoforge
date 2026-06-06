@@ -143,8 +143,47 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     )
     p_forget.add_argument("--id", required=True, metavar="ID")
 
-    # reap
-    sub.add_parser("reap", help="sweep and destroy stale instances")
+    # reap (Layer V — heartbeat-aware sweeper)
+    p_reap = sub.add_parser(
+        "reap", help="classify ledger; optionally destroy stale instances"
+    )
+    p_reap.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually destroy / forget (default: dry-run)",
+    )
+    p_reap.add_argument(
+        "--include-orphans",
+        action="store_true",
+        help="extend --apply to ORPHAN_REAP entries",
+    )
+    p_reap.add_argument(
+        "--force-forget",
+        action="store_true",
+        help="also forget ledger entries whose provider can no longer be reached (implies --apply)",
+    )
+    p_reap.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero on UNROUTABLE / HEARTBEAT_UNKNOWN",
+    )
+    p_reap.add_argument(
+        "--id", default=None, metavar="ID", help="restrict sweep to one ledger entry"
+    )
+    p_reap.add_argument(
+        "--format",
+        choices=("human", "json"),
+        default="human",
+        help="output format (default: human)",
+    )
+    p_reap.add_argument(
+        "--config",
+        "-c",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="cfg for thresholds; defaults to Lifecycle() defaults",
+    )
 
     # gc
     p_gc = sub.add_parser("gc", help="garbage-collect stored artifacts")

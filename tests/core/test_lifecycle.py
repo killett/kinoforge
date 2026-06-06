@@ -452,3 +452,22 @@ def test_ledger_round_trip_against_fake_gcs() -> None:
     )
     ledger.record(inst)
     assert [e["id"] for e in ledger.entries()] == ["i-2"]
+
+
+# ---------------------------------------------------------------------------
+# Layer V — grace_after_session_s field on Lifecycle dataclass
+# ---------------------------------------------------------------------------
+
+
+def test_lifecycle_grace_after_session_s_default_is_300() -> None:
+    """Layer V: default 5-minute post-session warm-reuse grace window."""
+    from kinoforge.core.interfaces import Lifecycle
+
+    assert Lifecycle().grace_after_session_s == 300.0
+
+
+def test_lifecycle_grace_after_session_s_round_trips() -> None:
+    """Constructor accepts an explicit override."""
+    from kinoforge.core.interfaces import Lifecycle
+
+    assert Lifecycle(grace_after_session_s=42.0).grace_after_session_s == 42.0

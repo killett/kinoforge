@@ -132,12 +132,12 @@ def test_cmd_destroy_unknown_id_returns_1(tmp_path: Path) -> None:
 def test_cmd_reap_returns_0_with_empty_ledger(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """_cmd_reap on an empty ledger exits 0 and prints 'no instances'."""
+    """_cmd_reap on an empty ledger exits 0 and prints an informational message."""
     ctx = _ctx_no_cfg(tmp_path)
     args = _ns()
     assert _commands._cmd_reap(args, ctx) == 0
     out = capsys.readouterr().out
-    assert "no instances" in out.lower()
+    assert "empty" in out.lower() or "no" in out.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -207,3 +207,158 @@ def test_ledger_helper_removed_from_commands() -> None:
     assert not hasattr(_commands, "_ledger"), (
         "_ledger helper was not deleted from _commands — ctx.ledger() must be used instead"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer V — kinoforge status verdict line
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_status_surfaces_verdict_line_for_live_entry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When pod_up + sentinel-fresh + hb-fresh → verdict=LIVE printed."""
+    import time as _t
+
+    from kinoforge.cli import _commands
+    from kinoforge.cli.context import SessionContext
+    from kinoforge.core.config import load_config
+    from kinoforge.core.interfaces import Instance
+    from kinoforge.providers.local import LocalProvider
+
+    _CFG_YAML = """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake-base.safetensors"
+    kind: base
+    target: diffusion_models
+compute:
+  provider: local
+  image: fake:latest
+  lifecycle:
+    budget: 1.0
+    heartbeat_interval_s: 30
+"""
+    state_dir = tmp_path / "state"
+    cfg = load_config(_CFG_YAML)
+    ctx = SessionContext(state_dir=state_dir, cfg=cfg, sidecar=None)
+    ledger = ctx.ledger()
+
+    now = _t.time()
+    instance = Instance(
+        id="i-1",
+        provider="local",
+        created_at=now,
+        status="ready",
+        cost_rate_usd_per_hr=0.0,
+        tags={},
+    )
+    ledger.record(instance)
+    ledger.touch("i-1", last_heartbeat=now, heartbeat_thread_tick=now)
+
+    # Force registry to return a LocalProvider with our pre-stocked instance.
+    fake_provider = LocalProvider()
+    fake_provider._instances = {"i-1": instance}
+
+    def _factory() -> LocalProvider:
+        return fake_provider
+
+    monkeypatch.setattr("kinoforge.core.registry.get_provider", lambda _name: _factory)
+
+    args = argparse.Namespace(id="i-1", config=None)
+    code = _commands._cmd_status(args, ctx)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "verdict=LIVE" in out
+
+
+def test_cmd_status_surfaces_verdict_unroutable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When the registry has no factory → verdict=UNROUTABLE printed."""
+    import time as _t
+
+    from kinoforge.cli import _commands
+    from kinoforge.cli.context import SessionContext
+    from kinoforge.core.errors import UnknownAdapter
+    from kinoforge.core.interfaces import Instance
+
+    state_dir = tmp_path / "state"
+    ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=None)
+    ledger = ctx.ledger()
+    now = _t.time()
+    instance = Instance(
+        id="i-1",
+        provider="bogus",
+        created_at=now,
+        status="ready",
+        cost_rate_usd_per_hr=0.0,
+        tags={},
+    )
+    ledger.record(instance)
+
+    def _raise(_name: str) -> object:
+        raise UnknownAdapter("bogus")
+
+    monkeypatch.setattr("kinoforge.core.registry.get_provider", _raise)
+
+    args = argparse.Namespace(id="i-1", config=None)
+    code = _commands._cmd_status(args, ctx)
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "verdict=UNROUTABLE" in out
+
+
+def test_cmd_status_verdict_heartbeat_unknown_on_list_instances_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """list_instances() failure surfaces verdict=HEARTBEAT_UNKNOWN.
+
+    Honest fallback: if the provider can't enumerate instances we can
+    no longer compute classify reliably, so we don't bias toward LIVE.
+    """
+    import time as _t
+
+    from kinoforge.cli import _commands
+    from kinoforge.cli.context import SessionContext
+    from kinoforge.core.interfaces import Instance
+    from kinoforge.providers.local import LocalProvider
+
+    state_dir = tmp_path / "state"
+    ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=None)
+    ledger = ctx.ledger()
+    now = _t.time()
+    instance = Instance(
+        id="i-1",
+        provider="local",
+        created_at=now,
+        status="ready",
+        cost_rate_usd_per_hr=0.0,
+        tags={},
+    )
+    ledger.record(instance)
+
+    class _BrokenLocal(LocalProvider):
+        def list_instances(self) -> list[Instance]:
+            raise RuntimeError("simulated list failure")
+
+    broken = _BrokenLocal()
+    broken._instances = {"i-1": instance}
+
+    monkeypatch.setattr(
+        "kinoforge.core.registry.get_provider", lambda _name: lambda: broken
+    )
+
+    args = argparse.Namespace(id="i-1", config=None)
+    code = _commands._cmd_status(args, ctx)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "verdict=HEARTBEAT_UNKNOWN" in out

@@ -106,6 +106,66 @@ freshness first — otherwise a crashed loop would look indistinguishable
 from a healthy quiet session and the reaper would destroy live pods.
 See `Ledger.touch`'s docstring for the formal contract.
 
+## Reaping orphan pods
+
+`kinoforge reap` classifies every ledger entry and (optionally)
+destroys idle, over-age, or orphaned compute. Layer V is heartbeat-
+aware: an entry whose Layer U `heartbeat_thread_tick` sentinel is
+fresh is treated as live; a stale sentinel + past-grace pod becomes
+an `ORPHAN_REAP` candidate.
+
+### Dry-run (default)
+
+```bash
+kinoforge reap -c config.yaml
+```
+
+Prints a verdict table; no destructive action. Pass `--apply` to act.
+
+### Acting on the default policy
+
+```bash
+kinoforge reap -c config.yaml --apply
+```
+
+Default policy destroys `IDLE_REAP` + `OVERAGE_REAP` and forgets
+`STALE_LEDGER` entries. `ORPHAN_REAP` requires explicit opt-in:
+
+```bash
+kinoforge reap -c config.yaml --apply --include-orphans
+```
+
+### Other flags
+
+| Flag | Effect |
+|---|---|
+| `--force-forget` | Adds UNROUTABLE → ledger.forget under --apply |
+| `--strict` | Exit code 3 if any UNROUTABLE / HEARTBEAT_UNKNOWN present |
+| `--id <X>` | Restrict to one ledger entry |
+| `--format json` | JSONL output, one record per snapshot entry + per action |
+
+### Exit codes
+
+- 0 — normal (dry-run or --apply with no failures)
+- 2 — at least one teardown failed under --apply
+- 3 — `--strict` tripped
+- 4 — invalid flag combo (e.g. `--include-orphans` without `--apply`)
+
+### Sentinel-gate contract (Layer U → V)
+
+The reaper trusts `last_heartbeat` only when the
+`heartbeat_thread_tick` sentinel is fresh (within
+`3 × heartbeat_interval_s`). Stale-sentinel + pod-up past
+`grace_after_session_s` triggers `ORPHAN_REAP`. The grace window
+(default 5 min) is operator-configurable via
+`lifecycle.grace_after_session_s` in YAML or per-entry override.
+
+### Verdict-only inspection
+
+`kinoforge status --id <X>` surfaces the same `verdict=<...>` line
+the reaper would compute for that entry — a "what would reap do
+to this pod" view without invoking reap.
+
 ### `kinoforge forget --id <id>` — clear a stale ledger entry
 
 Removes a single entry from the local ledger without touching the
