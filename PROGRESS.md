@@ -1131,8 +1131,8 @@ Closes PROGRESS:326 follow-up #1 (Layer L Task 4 streaming-log deferral).
 - [x] T4: `LifecycleConfig.heartbeat_interval_s` config field — commit `9cf1de1`. Default `None`. Positive-value validator rejects bad values at config-load, before any compute is provisioned. 4 tests.
 - [x] T3: `deploy_session` spawns `HeartbeatLoop` when configured — commit `2d7e749`. Gated on positive interval AND compute instance (hosted sessions skip). Injectable `heartbeat_loop_factory` seam for test substitution. 5 tests including end-to-end real Loop ledger write at 50ms cadence.
 - [x] T5: `kinoforge status` surfaces `last_heartbeat` + sentinel-staleness advisory — commit `1fbe58b`. Layer S read formatter already surfaced `last_heartbeat`; T5 adds the sentinel-staleness advisory and a positive/negative regression-guard pair on the read surface. 4 tests.
-- [x] T6: README + PROGRESS + example yaml + final gate + merge — this commit.
-- [ ] Merge to main via `--no-ff`.
+- [x] T6: README + PROGRESS + example yaml + final gate — commit `933c01f`.
+- [x] Merge to main via `--no-ff` — merge commit `e466321`.
 
 **Key design decisions:**
 - Q1 (write trigger) = dedicated periodic poll inside `deploy_session`.
