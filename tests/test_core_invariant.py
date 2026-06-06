@@ -274,3 +274,45 @@ def test_image_engine_fal_may_import_engines_fal_wire() -> None:
     assert hasattr(wire, "build_status_url")
     assert hasattr(wire, "build_response_url")
     assert hasattr(wire, "interpret_status")
+
+
+# ---------------------------------------------------------------------------
+# AC 7: core/reaper.py purity contract (Layer V)
+# ---------------------------------------------------------------------------
+
+_REAPER_FORBIDDEN_IMPORTS: list[re.Pattern[str]] = [
+    re.compile(r"^\s*(import|from)\s+urllib\b"),
+    re.compile(r"^\s*(import|from)\s+subprocess\b"),
+    re.compile(r"^\s*(import|from)\s+threading\b"),
+    re.compile(r"^\s*(import|from)\s+time\b"),
+    re.compile(r"^\s*(import|from)\s+pathlib\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.providers\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.sources\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.engines\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.stores\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.cli\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.core\.lifecycle\b"),
+]
+
+
+def test_core_reaper_module_is_pure() -> None:
+    """Layer V: core/reaper.py is pure — no I/O, no Ledger, no adapters.
+
+    The sentinel-gate decision logic lives in classify(). Any I/O
+    import here would let a future contributor reach into the ledger
+    or a provider from inside classify(), violating the purity
+    contract documented in spec §3.4. The contract is enforced
+    architecturally so docstring vigilance is not load-bearing.
+    """
+    reaper_path = SRC_ROOT / "core" / "reaper.py"
+    violations: list[str] = []
+    for lineno, line in enumerate(reaper_path.read_text().splitlines(), start=1):
+        for pattern in _REAPER_FORBIDDEN_IMPORTS:
+            if pattern.match(line):
+                violations.append(f"{reaper_path}:{lineno}: {line.strip()}")
+                break
+    if violations:
+        detail = "\n  ".join(violations)
+        raise AssertionError(
+            f"core/reaper.py must be pure — forbidden import(s) found:\n  {detail}"
+        )
