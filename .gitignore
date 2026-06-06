@@ -1,4 +1,5 @@
 .claude-project-id
+.sandbox_settings.json
 
 # Python bytecode
 __pycache__/
