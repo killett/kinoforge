@@ -58,6 +58,12 @@ class Lifecycle:
             ``None`` (the default) disables the feature, preserving
             backwards-compatibility for every existing YAML config.
             Operator guidance: values < 10 risk lock contention at scale.
+        grace_after_session_s: Layer V — post-session warm-reuse window
+            within which a sentinel-stale, pod-up entry is treated as
+            LIVE rather than ORPHAN_REAP. Default 300 (5 minutes).
+            Prevents the reaper from racing a legitimate session start
+            on a warm-reused pod whose first HeartbeatLoop tick has not
+            yet fired.
     """
 
     idle_timeout_s: float = 2 * 3600
@@ -69,6 +75,7 @@ class Lifecycle:
     max_in_flight: int = 1
     boot_timeout_s: float = 900.0
     heartbeat_interval_s: float | None = None
+    grace_after_session_s: float = 300.0
 
 
 @dataclass(frozen=True)

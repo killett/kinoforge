@@ -99,6 +99,7 @@ class LifecycleConfig(BaseModel):
     max_in_flight: int = 1
     boot_timeout: float = 900.0
     heartbeat_interval_s: float | None = None
+    grace_after_session_s: float = 300.0
 
     @field_validator(
         "idle_timeout",
@@ -128,6 +129,19 @@ class LifecycleConfig(BaseModel):
         """
         if v is not None and v <= 0:
             raise ValueError(f"heartbeat_interval_s must be > 0 when set; got {v}")
+        return v
+
+    @field_validator("grace_after_session_s")
+    @classmethod
+    def _validate_grace_non_negative(cls, v: float) -> float:
+        """Reject negative grace at load time (Layer V).
+
+        Negative grace would invert the row-5/row-6 boundary in
+        ``classify`` and cause sentinel-stale pods to be classified
+        LIVE forever — a paid-leak class of bug.
+        """
+        if v < 0:
+            raise ValueError(f"grace_after_session_s must be >= 0; got {v}")
         return v
 
 
@@ -717,6 +731,7 @@ class Config(BaseModel):
             max_in_flight=lc.max_in_flight,
             boot_timeout_s=lc.boot_timeout,
             heartbeat_interval_s=lc.heartbeat_interval_s,
+            grace_after_session_s=lc.grace_after_session_s,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
