@@ -1,0 +1,7 @@
+{
+  "credentials_present": "(self) -> 'bool'",
+  "health_check": "(self) -> 'HealthResult'",
+  "redact_patterns": "(self) -> 'list[re.Pattern[str]]'",
+  "apply": "(self, request: 'HttpRequest') -> 'HttpRequest'",
+  "client_kwargs": "(self) -> 'dict[str, Any]'"
+}
