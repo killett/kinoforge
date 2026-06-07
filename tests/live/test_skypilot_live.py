@@ -353,7 +353,7 @@ def test_skypilot_live_e2e_t4_gpu_lifecycle_smoke(cloud: str) -> None:
     try:
         offers = provider.find_offers(HW_REQS_T4)
         _log.info("find_offers returned %d offers", len(offers))
-        t4_offers = [o for o in offers if "T4" in (getattr(o, "gpu_name", "") or "")]
+        t4_offers = [o for o in offers if "T4" in (getattr(o, "gpu_type", "") or "")]
         if not t4_offers:
             pytest.skip(
                 f"no T4 offer surfaced for cloud={cloud!r}; "
