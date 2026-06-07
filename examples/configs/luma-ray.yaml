@@ -24,12 +24,15 @@ engine:
     region_name: us-west-2
     model_id: luma.ray-v2:0
     output_s3_uri: s3://bedrock-video-generation-us-west-2-nw51wr/kinoforge-output/
+    # Pricing: $0.75/sec @ 540p 24fps, $1.50/sec @ 720p 24fps (Bedrock catalog).
+    # 540p chosen for smoke iteration cost; bump to 720p for production-quality
+    # comparison runs.
     model_input_template:
       prompt: "${PROMPT}"
       duration: 5
       aspect_ratio: "16:9"
       loop: false
-      resolution: "720p"
+      resolution: "540p"
 
 models:
   - kind: base
