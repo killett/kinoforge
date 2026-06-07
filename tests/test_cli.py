@@ -419,7 +419,7 @@ def test_cli_generate_uses_s3_when_store_kind_s3(tmp_path: Path) -> None:
     # _build_store doesn't inject client= — the lazy gate inside
     # S3ArtifactStore.__init__ would fire and import boto3. We satisfy
     # the import by putting a fake module in sys.modules under "boto3".
-    fake_boto3 = types.SimpleNamespace(client=lambda _: FakeS3Client())
+    fake_boto3 = types.SimpleNamespace(client=lambda *args, **kwargs: FakeS3Client())
     sys.modules["boto3"] = fake_boto3  # type: ignore[assignment]
     try:
         store = _build_store(cfg, tmp_path)
