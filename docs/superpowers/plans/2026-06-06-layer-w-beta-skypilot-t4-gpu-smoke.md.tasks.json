@@ -1,0 +1,12 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-06-layer-w-beta-skypilot-t4-gpu-smoke.md",
+  "specPath": "docs/superpowers/specs/2026-06-06-layer-w-beta-skypilot-t4-gpu-smoke-design.md",
+  "tasks": [
+    {"id": 8,  "subject": "W+β T1: Helpers + test scaffold (RED)",          "status": "pending", "blockedBy": [],          "userGate": false},
+    {"id": 9,  "subject": "W+β T2: GPU example config + offline fixture-shape test", "status": "pending", "blockedBy": [],   "userGate": false},
+    {"id": 10, "subject": "W+β T3: Pre-spend gate",                          "status": "pending", "blockedBy": [8, 9],      "userGate": true,  "tags": ["user-gate", "pre-spend"]},
+    {"id": 11, "subject": "W+β T4: Live GCP T4 smoke + fixture capture",     "status": "pending", "blockedBy": [10],        "userGate": false},
+    {"id": 12, "subject": "W+β T5: Docs + Phase 40 + commit",                "status": "pending", "blockedBy": [11],        "userGate": false}
+  ],
+  "lastUpdated": "2026-06-06"
+}
