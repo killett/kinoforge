@@ -653,6 +653,11 @@ class SkyPilotProvider(ComputeProvider):
             is_gpu = bool(spec.offer is not None and spec.offer.gpu_type)
             default_disk_gb = 60 if is_gpu else 30
             resources.setdefault("disk_size", default_disk_gb)
+            # Spot/preemptible: maps spec.spot → SkyPilot's ``use_spot``.
+            # Preemptible T4 quota (``PREEMPTIBLE_NVIDIA_T4_GPUS``) is granted
+            # separately from the on-demand GPU quota (``GPUS_ALL_REGIONS``).
+            if spec.spot:
+                resources["use_spot"] = True
             task_config["resources"] = resources
         # Layer Q dual-exec hazard resolution: the script's trailing
         # ``exec <run_cmd>`` line is stripped before it becomes Task.setup so

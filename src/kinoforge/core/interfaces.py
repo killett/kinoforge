@@ -122,6 +122,7 @@ class InstanceSpec:
     run_id: str = ""
     provision_script: str | None = None
     run_cmd: list[str] | None = None
+    spot: bool = False  # Request a spot/preemptible instance when True
 
 
 @dataclass
