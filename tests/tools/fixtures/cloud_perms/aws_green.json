@@ -1,0 +1,183 @@
+{
+  "captured_at": "2026-06-06T20:48:16.172563-07:00",
+  "cloud": "aws",
+  "exit_code": 2,
+  "identity": {
+    "Account": "REDACTED",
+    "Arn": "arn:aws:iam::REDACTED:user/kinoforge-ci",
+    "UserId": "REDACTED"
+  },
+  "instance_type": {
+    "g4dn.xlarge": {
+      "AutoRecoverySupported": false,
+      "BareMetal": false,
+      "BurstablePerformanceSupported": false,
+      "CurrentGeneration": true,
+      "DedicatedHostsSupported": false,
+      "EbsInfo": {
+        "AttachmentLimitType": "shared",
+        "EbsOptimizedInfo": {
+          "BaselineBandwidthInMbps": 950,
+          "BaselineIops": 3000,
+          "BaselineThroughputInMBps": 118.75,
+          "MaximumBandwidthInMbps": 3500,
+          "MaximumIops": 20000,
+          "MaximumThroughputInMBps": 437.5
+        },
+        "EbsOptimizedSupport": "default",
+        "EncryptionSupport": "supported",
+        "MaximumEbsAttachments": 25,
+        "NvmeSupport": "required"
+      },
+      "FreeTierEligible": false,
+      "GpuInfo": {
+        "Gpus": [
+          {
+            "Count": 1,
+            "GpuPartitionSize": 1.0,
+            "LogicalGpuCount": 1,
+            "Manufacturer": "NVIDIA",
+            "MemoryInfo": {
+              "SizeInMiB": 16384
+            },
+            "Name": "T4",
+            "Workloads": [
+              "graphics",
+              "ml-ai"
+            ]
+          }
+        ],
+        "TotalGpuMemoryInMiB": 16384
+      },
+      "HibernationSupported": false,
+      "Hypervisor": "nitro",
+      "InstanceStorageInfo": {
+        "Disks": [
+          {
+            "Count": 1,
+            "SizeInGB": 125,
+            "Type": "ssd"
+          }
+        ],
+        "EncryptionSupport": "required",
+        "NvmeSupport": "required",
+        "TotalSizeInGB": 125
+      },
+      "InstanceStorageSupported": true,
+      "InstanceType": "g4dn.xlarge",
+      "MemoryInfo": {
+        "SizeInMiB": 16384
+      },
+      "NetworkInfo": {
+        "ConnectionTrackingConfiguration": {
+          "DefaultTcpEstablishedTimeout": 432000,
+          "DefaultUdpStreamTimeout": 180,
+          "DefaultUdpTimeout": 30
+        },
+        "DefaultNetworkCardIndex": 0,
+        "EfaSupported": false,
+        "EnaSrdSupported": false,
+        "EnaSupport": "required",
+        "EncryptionInTransitSupported": true,
+        "FlexibleEnaQueuesSupport": "unsupported",
+        "Ipv4AddressesPerInterface": 10,
+        "Ipv6AddressesPerInterface": 10,
+        "Ipv6Supported": true,
+        "MaximumNetworkCards": 1,
+        "MaximumNetworkInterfaces": 3,
+        "NetworkCards": [
+          {
+            "BaselineBandwidthInGbps": 5.0,
+            "DefaultEnaQueueCountPerInterface": 8,
+            "MaximumNetworkInterfaces": 3,
+            "NetworkCardIndex": 0,
+            "NetworkPerformance": "Up to 25 Gigabit",
+            "PeakBandwidthInGbps": 25.0
+          }
+        ],
+        "NetworkPerformance": "Up to 25 Gigabit",
+        "SecondaryNetworkSupported": false
+      },
+      "NitroEnclavesSupport": "supported",
+      "NitroTpmInfo": {
+        "SupportedVersions": [
+          "2.0"
+        ]
+      },
+      "NitroTpmSupport": "supported",
+      "PhcSupport": "unsupported",
+      "PlacementGroupInfo": {
+        "SupportedStrategies": [
+          "cluster",
+          "partition",
+          "spread"
+        ]
+      },
+      "ProcessorInfo": {
+        "Manufacturer": "Intel",
+        "SupportedArchitectures": [
+          "x86_64"
+        ],
+        "SustainedClockSpeedInGhz": 2.5
+      },
+      "RebootMigrationSupport": "unsupported",
+      "SupportedBootModes": [
+        "legacy-bios",
+        "uefi"
+      ],
+      "SupportedInRegion": true,
+      "SupportedRootDeviceTypes": [
+        "ebs"
+      ],
+      "SupportedUsageClasses": [
+        "on-demand",
+        "spot"
+      ],
+      "SupportedVirtualizationTypes": [
+        "hvm"
+      ],
+      "VCpuInfo": {
+        "DefaultCores": 2,
+        "DefaultThreadsPerCore": 2,
+        "DefaultVCpus": 4,
+        "ValidCores": [
+          2
+        ],
+        "ValidThreadsPerCore": [
+          1,
+          2
+        ]
+      }
+    }
+  },
+  "quota_gap": {
+    "code": "L-DB2E81BA",
+    "have": 0.0,
+    "want": 4.0
+  },
+  "quotas": {
+    "L-DB2E81BA": {
+      "code": "L-DB2E81BA",
+      "name": "Running On-Demand G and VT instances",
+      "value": 0.0
+    }
+  },
+  "region": "us-east-1",
+  "simulated": {
+    "ec2:CreateSecurityGroup": "allowed",
+    "ec2:CreateTags": "allowed",
+    "ec2:CreateVpc": "allowed",
+    "ec2:DescribeInstances": "allowed",
+    "ec2:RunInstances": "allowed",
+    "ec2:TerminateInstances": "allowed",
+    "iam:CreateInstanceProfile": "allowed",
+    "iam:CreateRole": "allowed",
+    "iam:PassRole": "allowed",
+    "kms:Decrypt": "allowed",
+    "kms:Encrypt": "allowed",
+    "s3:GetObject": "allowed",
+    "s3:PutObject": "allowed",
+    "servicequotas:GetServiceQuota": "allowed",
+    "servicequotas:RequestServiceQuotaIncrease": "allowed"
+  }
+}
