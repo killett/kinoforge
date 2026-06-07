@@ -4,79 +4,79 @@
     {
       "id": 1,
       "subject": "Task 0: Pin boto3 to >=1.34,<2.0 in pixi.toml",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Replace `boto3 = \"*\"` with `boto3 = \">=1.34,<2.0\"` so the SigV4 strategy in Task 4 builds against a tested SDK version range.\n\n**Files:**\n- Modify: `pixi.toml`\n\n**Acceptance Criteria:**\n- boto3 pinned to >=1.34,<2.0\n- pixi install resolves clean\n- full test suite green\n\n**Verify:** `pixi install && pixi run test 2>&1 | tail -5`\n\n```json:metadata\n{\"files\": [\"pixi.toml\"], \"verifyCommand\": \"pixi install --dry-run && pixi run test 2>&1 | tail -5\", \"acceptanceCriteria\": [\"boto3 pinned to >=1.34,<2.0\", \"pixi install resolves clean\", \"full test suite green\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 1: AuthStrategy ABC + typed boundary objects",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Create `core/auth.py` with `HealthResult` + `HttpRequest` frozen dataclasses + `AuthStrategy` ABC (5 abstractmethods).\n\n**Files:**\n- Create: `src/kinoforge/core/auth.py`\n- Create: `tests/core/test_auth.py`\n\n**Acceptance Criteria:**\n- HealthResult frozen dataclass with 3 fields\n- HttpRequest frozen dataclass with 4 fields\n- AuthStrategy ABC with 5 abstractmethods (credentials_present, health_check, redact_patterns, apply, client_kwargs)\n- ABC cannot be instantiated\n- Partial subclasses still abstract\n\n**Verify:** `pixi run test tests/core/test_auth.py -v 2>&1 | tail -10` → 5 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/auth.py\", \"tests/core/test_auth.py\"], \"verifyCommand\": \"pixi run test tests/core/test_auth.py -v 2>&1 | tail -10\", \"acceptanceCriteria\": [\"HealthResult frozen dataclass with 3 fields\", \"HttpRequest frozen dataclass with 4 fields\", \"AuthStrategy ABC with 5 abstractmethods\", \"ABC cannot be instantiated\", \"Partial subclasses still abstract\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 2: Bearer strategy + 8 unit tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Bearer-token strategy from named env var. Used by HostedAPIEngine today + future Replicate/Runway/Luma.\n\n**Files:**\n- Modify: `src/kinoforge/core/auth.py`\n- Modify: `tests/core/test_auth.py`\n\n**Acceptance Criteria:**\n- Bearer constructs from env_var\n- credentials_present reflects env state\n- health_check uses injected http_get seam\n- redact_patterns escapes actual secret value (NOT env var name)\n- apply adds Authorization header immutably\n- apply respects scheme + header_name overrides\n- client_kwargs returns api_key shape\n\n**Verify:** `pixi run test tests/core/test_auth.py -v -k bearer 2>&1 | tail -10` → 8 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/auth.py\", \"tests/core/test_auth.py\"], \"verifyCommand\": \"pixi run test tests/core/test_auth.py -v -k bearer 2>&1 | tail -10\", \"acceptanceCriteria\": [\"Bearer constructs from env_var\", \"credentials_present reflects env state\", \"health_check uses injected http_get seam\", \"redact_patterns escapes actual secret value\", \"apply adds Authorization header immutably\", \"apply respects scheme + header_name overrides\", \"client_kwargs returns api_key shape\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 3: GCPServiceAccount strategy + 7 unit tests (lazy google.auth)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Concrete strategy minting GCP access tokens via google.auth default chain. Lazy-imported.\n\n**Files:**\n- Modify: `src/kinoforge/core/auth.py`\n- Modify: `tests/core/test_auth.py`\n\n**Acceptance Criteria:**\n- GCPServiceAccount constructs with default scopes\n- credentials_present checks GOOGLE_APPLICATION_CREDENTIALS file existence\n- health_check uses google.auth.default via lazy import\n- redact_patterns matches ya29.<base64> token shape\n- apply adds Bearer header with refreshed token\n- client_kwargs returns {credentials: ...}\n- google.auth never imported at module top\n\n**Verify:** `pixi run test tests/core/test_auth.py -v -k gcp 2>&1 | tail -15` → 7 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/auth.py\", \"tests/core/test_auth.py\"], \"verifyCommand\": \"pixi run test tests/core/test_auth.py -v -k gcp 2>&1 | tail -15\", \"acceptanceCriteria\": [\"GCPServiceAccount constructs with default scopes\", \"credentials_present checks GOOGLE_APPLICATION_CREDENTIALS file existence\", \"health_check uses google.auth.default via lazy import\", \"redact_patterns matches ya29 token shape\", \"apply adds Bearer header with refreshed token\", \"client_kwargs returns credentials dict\", \"google.auth never imported at module top\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 4: AWSSigV4 strategy + 7 unit tests (lazy boto3)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2],
       "description": "**Goal:** SigV4 signing via boto3 session credentials chain. SDK lazy-imported. Signing via stdlib hashlib+hmac (not botocore.auth) to keep seam SDK-version-independent.\n\n**Files:**\n- Modify: `src/kinoforge/core/auth.py`\n- Modify: `tests/core/test_auth.py`\n\n**Acceptance Criteria:**\n- AWSSigV4 constructs with required region_name\n- credentials_present reflects boto3 session creds chain\n- health_check via sts.get_caller_identity\n- redact_patterns covers AKIA/ASIA + SigV4 Authorization + session token\n- apply signs via stdlib hashlib+hmac\n- client_kwargs returns full AWS credential shape\n- boto3 never imported at module top\n\n**Verify:** `pixi run test tests/core/test_auth.py -v -k sigv4 2>&1 | tail -15` → 7 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/auth.py\", \"tests/core/test_auth.py\"], \"verifyCommand\": \"pixi run test tests/core/test_auth.py -v -k sigv4 2>&1 | tail -15\", \"acceptanceCriteria\": [\"AWSSigV4 constructs with required region_name\", \"credentials_present reflects boto3 session creds chain\", \"health_check via sts.get_caller_identity\", \"redact_patterns covers AKIA/ASIA + SigV4 Authorization + session token\", \"apply signs via stdlib hashlib+hmac\", \"client_kwargs returns full AWS credential shape\", \"boto3 never imported at module top\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 5: build_auth_strategy registry + 6 unit tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3, 4, 5],
       "description": "**Goal:** Map YAML auth: block to concrete AuthStrategy via build_auth_strategy(spec).\n\n**Files:**\n- Modify: `src/kinoforge/core/auth.py`\n- Modify: `tests/core/test_auth.py`\n\n**Acceptance Criteria:**\n- registry builds Bearer/GCPSA/SigV4 by name\n- unknown name raises UnknownAdapter\n- missing strategy key raises KeyError with helpful message\n- strategy-specific kwargs pass through\n- full test_auth.py count = 33 passed\n\n**Verify:** `pixi run test tests/core/test_auth.py -v 2>&1 | tail -20` → 33 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/auth.py\", \"tests/core/test_auth.py\"], \"verifyCommand\": \"pixi run test tests/core/test_auth.py -v 2>&1 | tail -20\", \"acceptanceCriteria\": [\"registry builds Bearer/GCPSA/SigV4 by name\", \"unknown name raises UnknownAdapter\", \"missing strategy key raises KeyError\", \"strategy-specific kwargs pass through\", \"full test_auth.py = 33 passed\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 6: ABC stable-surface invariant + extended subprocess-isolation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "**Goal:** Lock the 5 ABC method signatures via checked-in JSON baseline. Extend subprocess-isolation to scan for vendor-SDK leaks.\n\n**Files:**\n- Create: `tests/fixtures/auth_strategy_baseline.json`\n- Modify: `tests/test_core_invariant.py` (add 2 tests)\n\n**Acceptance Criteria:**\n- baseline JSON file exists with 5 keys\n- stable-surface test diffs inspect.signature against baseline\n- drift detection actually fails when signature perturbed\n- SDK-leak test asserts no boto3/google.auth/botocore in sys.modules\n- full invariant suite = 8 passed (6 pre-existing + 2 new)\n\n**Verify:** `pixi run test tests/test_core_invariant.py -v 2>&1 | tail -15` → 8 passed\n\n```json:metadata\n{\"files\": [\"tests/fixtures/auth_strategy_baseline.json\", \"tests/test_core_invariant.py\"], \"verifyCommand\": \"pixi run test tests/test_core_invariant.py -v 2>&1 | tail -15\", \"acceptanceCriteria\": [\"baseline JSON file exists with 5 keys\", \"stable-surface test diffs inspect.signature\", \"drift detection actually fails on perturbation\", \"SDK-leak test asserts no boto3/google.auth/botocore in sys.modules\", \"full invariant suite = 8 passed\"]}\n```"
     },
     {
       "id": 8,
       "subject": "Task 7: FakeAuthStrategy shared test fixture + 8 tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Ship FakeAuthStrategy — complete no-network AuthStrategy for engine and probe tests in Layers 2+3.\n\n**Files:**\n- Create: `tests/_fixtures/__init__.py`\n- Create: `tests/_fixtures/fake_auth.py`\n- Create: `tests/_fixtures/test_fake_auth.py`\n\n**Acceptance Criteria:**\n- FakeAuthStrategy subclasses AuthStrategy\n- all 5 ABC methods implemented\n- credentials_ok=False simulates auth failure cleanly\n- redact_patterns matches configured fake token\n\n**Verify:** `pixi run test tests/_fixtures/test_fake_auth.py -v 2>&1 | tail -10` → 8 passed\n\n```json:metadata\n{\"files\": [\"tests/_fixtures/__init__.py\", \"tests/_fixtures/fake_auth.py\", \"tests/_fixtures/test_fake_auth.py\"], \"verifyCommand\": \"pixi run test tests/_fixtures/test_fake_auth.py -v 2>&1 | tail -10\", \"acceptanceCriteria\": [\"FakeAuthStrategy subclasses AuthStrategy\", \"all 5 ABC methods implemented\", \"credentials_ok=False simulates auth failure\", \"redact_patterns matches configured fake token\"]}\n```"
     },
     {
       "id": 9,
       "subject": "Task 8: HostedAPIEngine retrofit with backward-compat",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3, 6],
       "description": "**Goal:** Add optional auth_strategy kwarg. Default-derive Bearer from cfg.api_key_env. All 9 pre-Layer-1 construction sites stay green.\n\n**Files:**\n- Modify: `src/kinoforge/engines/hosted/__init__.py`\n- Modify: `tests/engines/test_hosted.py` (existing tests stay green + 2 new)\n\n**Pre-implementation grep:** `rg -n \"HostedAPIEngine\\\\(\" src/ tests/ examples/ --type py` confirms 9 sites.\n\n**Acceptance Criteria:**\n- auth_strategy=None default still works via Bearer derivation\n- explicit auth_strategy=Bearer(...) stored at self._auth\n- cfg.engine.hosted.auth block routes through build_auth_strategy\n- provision() raises AuthError on credentials_present False\n- all 9 pre-Layer-1 construction sites still pass\n- zero cross-suite regressions\n\n**Verify:** `pixi run test tests/engines/test_hosted.py -v 2>&1 | tail -15` + `pixi run test 2>&1 | tail -10` → all green\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/hosted/__init__.py\", \"tests/engines/test_hosted.py\"], \"verifyCommand\": \"pixi run test tests/engines/test_hosted.py -v 2>&1 | tail -15\", \"acceptanceCriteria\": [\"auth_strategy=None default works via Bearer derivation\", \"explicit auth_strategy=Bearer(...) stored at self._auth\", \"cfg.engine.hosted.auth block routes through build_auth_strategy\", \"provision() raises AuthError on missing creds\", \"all 9 pre-Layer-1 construction sites still pass\", \"zero cross-suite regressions\"]}\n```"
     },
     {
       "id": 10,
       "subject": "Task 9: tools/probe_hosted.py preflight tool + 6 tests + pixi task",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6, 8],
       "description": "**Goal:** Preflight tool walking every configured AuthStrategy + atomic snapshot. Used by Layer 2/3 live smokes as fail-fast gate.\n\n**Files:**\n- Create: `tools/probe_hosted.py`\n- Create: `tests/test_probe_hosted.py`\n- Modify: `pixi.toml` (add probe-hosted task)\n\n**Acceptance Criteria:**\n- ProbeResult dataclass with name/ok/identity/reason\n- probe_strategies iterates and produces results in order\n- write_snapshot is atomic (tmp+rename, no partial files)\n- snapshot JSON includes git_sha + captured_at + strategies\n- exit 0 only when every strategy passes\n- pixi run probe-hosted task wired\n\n**Verify:** `pixi run test tests/test_probe_hosted.py -v 2>&1 | tail -10` → 6 passed; `pixi run probe-hosted -- --help` → argparse usage\n\n```json:metadata\n{\"files\": [\"tools/probe_hosted.py\", \"tests/test_probe_hosted.py\", \"pixi.toml\"], \"verifyCommand\": \"pixi run test tests/test_probe_hosted.py -v 2>&1 | tail -10\", \"acceptanceCriteria\": [\"ProbeResult dataclass with name/ok/identity/reason\", \"probe_strategies iterates and produces results in order\", \"write_snapshot is atomic (tmp+rename)\", \"snapshot JSON includes git_sha + captured_at + strategies\", \"exit 0 only when every strategy passes\", \"pixi run probe-hosted task wired\"]}\n```"
     },
     {
       "id": 11,
       "subject": "Task 10: README auth strategies section + PROGRESS Phase 41 + final gate",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9, 10],
       "description": "**Goal:** Wire Layer 1 into docs and recovery index. Run full suite + lint + typecheck + pre-commit as the closing gate. Backfill per-task SHAs.\n\n**Files:**\n- Modify: `README.md` (Auth strategies subsection)\n- Modify: `PROGRESS.md` (Phase 41 entry with per-task SHAs)\n\n**Acceptance Criteria:**\n- README has Auth strategies subsection documenting 3 strategies + auth: YAML + backward-compat + probe-hosted + how to add new strategy\n- PROGRESS has Phase 41 entry with 11 per-task SHAs filled in\n- full test suite green\n- lint clean\n- typecheck clean\n- pre-commit clean\n\n**Verify:** `pixi run test && pixi run lint && pixi run typecheck && pixi run pre-commit run --all-files 2>&1 | tail -20` → all green\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test && pixi run lint && pixi run typecheck && pixi run pre-commit run --all-files 2>&1 | tail -20\", \"acceptanceCriteria\": [\"README has Auth strategies subsection\", \"PROGRESS has Phase 41 entry with per-task SHAs\", \"full test suite green\", \"lint + typecheck + pre-commit all clean\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-07T00:00:00-07:00"
+  "lastUpdated": "2026-06-07T12:40:00-07:00"
 }
