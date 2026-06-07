@@ -113,7 +113,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - ~~`RunPodProvider.find_offers` REST shape is a stub~~ — **CLOSED** by Phase 24 (Layer N). Real-cloud verified end-to-end; 10 production bugs fixed.
 - ~~`SkyPilotProvider._get_sky()` lazy path wired but unexercised against real `sky` SDK.~~ — **CLOSED** by Phase 31 (CPU lifecycle smoke against real GCP; 4 SDK fixtures captured; provider ported to modern async API).
 - SkyPilot live smoke is CPU lifecycle only against GCP; GPU + engine smokes + multi-cloud (AWS, Azure) remain deferred (see `docs/superpowers/specs/2026-06-03-skypilot-real-cloud-design.md` section 7 for scope cuts).
-- `S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.
+- ~~`S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.~~ — **CLOSED** by Phase 38 (Layer W).
 
 **Architectural follow-ups:**
 - ~~**Layer F: engine `submit()` ignores seg-0 assets.**~~ Closed by Phase 16 (see below).
@@ -153,16 +153,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 37 fully CLOSED — Layer V (heartbeat-aware reaper). HEAD at the Phase 37 merge commit on `main`. Test suite at 1423 passed, 8 skipped. Working tree clean. No live spend in Layer V (fully offline-tested).
+**Where we are:** Phase 38 fully CLOSED — Layer W (S3 / GCS real-cloud verification). HEAD at the T12 docs commit on `main`. Test suite at ~1497 passed, 8 skipped (offline). Plus 14 KINOFORGE_LIVE_TESTS-gated tests (2 × 7 axes; 2 xfailed). Working tree clean.
 
 **Read in this order:**
-1. The Phase 37 entry below (per-task SHAs + design decisions).
-2. `docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md` for the Layer V design doc.
+1. The Phase 38 entry below (per-task SHAs + design decisions + real-artifact lines).
+2. `docs/superpowers/specs/2026-06-06-layer-w-s3-gcs-real-cloud-design.md` for the Layer W design doc.
 3. `git log --oneline -10` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates (Layer V closed the heartbeat-aware-reaper carry-forward): cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap; `Artifact.headers` for HF-gated weights + HF custom mirror; real-cloud verification of S3/GCS stores; GPU + engine smokes + multi-cloud verification for SkyPilot (deferred from Phase 31 §7); fal storage upload integration for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); a **Layer W `kinoforge sweeper` daemon** that consumes the Layer V substrate (the next natural follow-on); **Layer X cost dashboard / metrics** (read-only consumer of `classify`); **Layer Y in-session warm-reuse retrofit** (orchestrator consults `classify` when `_states[id]` is missing across CLI invocations).
+**First unchecked task in fresh session:** pick next layer. Candidates (Layer W closed the S3/GCS real-cloud carry-forward): **Layer W+ `kinoforge sweeper` daemon** that consumes the Layer V substrate (the next natural follow-on); **SkyPilot GPU smokes + multi-cloud verification** (deferred from Phase 31 §7); **cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap** (Layer T carry-forward); **fal storage upload integration** for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); **Layer X cost dashboard / metrics** (read-only consumer of `classify`); **Layer Y in-session warm-reuse retrofit** (orchestrator consults `classify` when `_states[id]` is missing across CLI invocations).
 
-**Budget remaining: ~$10.92 of $15.** Phase 37 spent $0.00 (Layer V offline-only).
+**Budget remaining: ~$10.88 of $15.** Layer W spent ~$0.04 total (~$0.02 S3 live × 2 runs due to redaction recapture; ~$0.02 GCS).
 
 ## Post-MVP
 
@@ -1245,3 +1245,75 @@ for **Layer W (`kinoforge sweeper` daemon)**, **Layer X (cost
 dashboard / metrics)**, and **Layer Y (in-session warm-reuse
 retrofit)**. All three reuse `classify` + `Policy` + `partition` +
 `act_on_verdict` + `sweep` without modification.
+
+### Phase 38 — Layer W (S3 / GCS real-cloud verification)
+
+Verification-only layer that closes PROGRESS:116 carry-forward #4
+(`S3ArtifactStore` + `GCSArtifactStore` never hit real cloud). Five
+axes per cloud (hot path, multipart/resumable, encryption
+defaults + customer-managed KMS, signed GET + PUT, retry via 503
+proxy) with live opt-in capture + offline fixture replay. Mirrors Layer
+N (Phase 24) pattern at the storage substrate.
+
+Production additions: `StoreEncryptionConfig` pydantic block (`mode:
+default | kms`, `kms_key_id`), `ArtifactStore.signed_url` ABC,
+`signed_url_default_ttl_s` store config field, retry-baseline pins in
+both store adapters, `tools/bootstrap_kms.py` + `pixi run
+cloud:bootstrap-kms` task, and `docs/CLOUD-CREDS.md` updated with KMS
+key inventory.
+
+- Spec: `docs/superpowers/specs/2026-06-06-layer-w-s3-gcs-real-cloud-design.md`
+- Plan: `docs/superpowers/plans/2026-06-06-layer-w-s3-gcs-real-cloud.md`
+
+**Per-task SHAs:**
+
+| Task | SHA(s) |
+|---|---|
+| T1 (StoreEncryptionConfig + signed_url_default_ttl_s pydantic) | `2e6fa24` |
+| T2 (ArtifactStore.signed_url ABC + LocalArtifactStore NotImplementedError stub) | `7495634` |
+| T3 (S3ArtifactStore multipart + encryption + signed_url + retry pin) | `5644d3b` + review fix `5a888b0` |
+| T4 (GCSArtifactStore resumable + CMEK + signed_url + retry pin) | `2022332` + review fix `685ed8c` |
+| T5 (bootstrap_kms.py with PendingDeletion guards + IAM re-verify + spec gaps) | `738f9b4` + `53350fe` + `6aa7992` |
+| T6 (recording seam + redaction) | `6d61d60` + review fix `7c2de86` |
+| T7 (Fail503Proxy) | `ac087d7` |
+| T8 (live-suite gate) | `5650f14` |
+| T9 (S3 live + redaction-order fix) | scaffold `a1e935d`, recording fix `f9c2ed8`, fixtures `71cfae8`, redaction fix `56402a2`, recapture `89257e4` |
+| T10 (GCS live) | `350bde2` + `3af0162` |
+| T11 (FixtureReplay clients + offline isolation) | `972d652` + CLI regression fix `e192dec` + quality fix `ad005af` |
+| T12 (README + PROGRESS Phase 38 entry) | this commit |
+
+**Real artifacts captured:**
+
+- S3 multipart ETag: `"0fdfb84099d425daeed95c07873a8f11-2"` (2-part MPU, 16 MiB object)
+- S3 KMS-encrypted object: `ServerSideEncryption=aws:kms` confirmed against key `4b0dbe0c-3a76-401a-ac2e-d0d949b9fa3e`
+- GCS resumable upload size: `16777216` bytes confirmed on blob metadata
+- GCS CMEK `kms_key_name`: `projects/.../keyRings/kinoforge-realcloud-tests/cryptoKeys/bucket-cmek/cryptoKeyVersions/1`
+
+**Key design decisions:**
+
+- **Multipart switch is unconditional.** boto3 + google-cloud-storage SDK defaults handle the threshold; no kinoforge knob (spec §4.1). Both real-cloud axes confirmed at 16 MiB.
+- **`StoreEncryptionConfig.kms_key_id` is a single field across clouds.** The store adapter parses the ARN vs Cloud KMS resource name form at call time (spec §4.2).
+- **`LocalArtifactStore.signed_url` raises `NotImplementedError`.** Local files have no transport-layer auth; the ABC contract documents this as an expected provider limitation (spec §4.3).
+- **Retry baselines pinned in store source.** `botocore.config.Config(retries={"max_attempts": 3, "mode": "standard"})` for S3; `Retry(initial=0.1, maximum=2.0, multiplier=2.0, deadline=30.0)` for GCS. No caller knob (spec §4.0).
+- **KMS keys are NOT auto-rotated.** Rotation invalidates Layer W fixtures committed to the repo; rotation is a manual, deliberate operator action only (spec §6.3).
+- **2 axes xfailed (live only).** S3 retry-via-proxy (SigV4 Host binding prevents Fail503Proxy MITM); GCS retry-via-proxy (`google-resumable-media` treats 503 as terminal on initiation). Retry config verification falls back to offline tests in T7 + T3 + T4; the xfail markers are documented at the test sites.
+- **Redaction-order bug caught during T9 live run.** `extra_subs` ran AFTER the regex pipeline, so the KMS UUID (`4b0dbe0c-…`) leaked into captured fixtures. Fixed in `56402a2` (extra_subs now runs first); fixtures recaptured at `89257e4`. Leaked content exists in git history at `71cfae8` (acceptable for internal repo; would need `git filter-repo` rewrite if repo ever goes public).
+- **S3 recorder `operation_name` empty.** botocore context gap means `operation_name` is `""` in the event hook. T11 worked around via params-pivoting shape fingerprint to identify the operation. TODO marker added in `tests/stores/recording.py` for follow-up root-cause fix.
+
+**Test count:**
+
+- Pre-Layer-W baseline: 1423 passed + 8 skipped.
+- Post-Layer-W offline: ~1497 passed + 8 skipped (~74 net new offline tests).
+- Plus 14 KINOFORGE_LIVE_TESTS-gated tests (2 × 7 axes; 2 of those xfailed for the proxy axes above).
+
+**Out of scope / carry-forward for future layers:**
+
+- S3 + GCS retry-via-proxy live verification (covered offline only; 2 live axes remain xfailed).
+- DSSE-KMS (S3) + CSEK (GCS) encryption modes.
+- Multipart resumability across process restart.
+- Bucket-level default encryption knob.
+- Signed URL custom response headers.
+- Azure + B2 + R2 stores.
+- S3 recorder botocore-context `operation_name` fix (params-pivoting workaround in place; root-cause fix deferred).
+
+Closes PROGRESS:116 carry-forward #4.
