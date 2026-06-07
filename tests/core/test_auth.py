@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 
 import pytest
 
@@ -250,3 +251,154 @@ def test_bearer_apply_raises_when_token_missing() -> None:
     req = HttpRequest(method="GET", url="https://x", headers={}, body=None)
     with pytest.raises(RuntimeError, match="FAL_KEY"):
         strat.apply(req)
+
+
+# ---------------------------------------------------------------------------
+# GCPServiceAccount strategy
+# ---------------------------------------------------------------------------
+
+
+class _FakeGCPCredentials:
+    """Minimal stand-in for ``google.auth.credentials.Credentials``."""
+
+    def __init__(self, token: str, service_account_email: str | None = None) -> None:
+        self.token = token
+        self.service_account_email = service_account_email
+        self.refresh_calls = 0
+
+    def refresh(self, _request: object) -> None:
+        self.refresh_calls += 1
+
+    @property
+    def expired(self) -> bool:
+        return False
+
+    @property
+    def valid(self) -> bool:
+        return True
+
+
+def _install_fake_google_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    credentials: _FakeGCPCredentials | None = None,
+    raise_default: Exception | None = None,
+) -> None:
+    """Install a fake ``google.auth`` module so tests run without the SDK."""
+    import sys
+    import types
+
+    fake_google = types.ModuleType("google")
+    fake_auth = types.ModuleType("google.auth")
+    fake_transport = types.ModuleType("google.auth.transport")
+    fake_transport_requests = types.ModuleType("google.auth.transport.requests")
+
+    def fake_default(scopes=None, quota_project_id=None):  # noqa: ANN001,ANN202
+        if raise_default is not None:
+            raise raise_default
+        return (credentials, "fake-project-id")
+
+    fake_auth.default = fake_default  # type: ignore[attr-defined]
+    fake_transport_requests.Request = lambda: object()  # type: ignore[attr-defined]
+
+    fake_google.auth = fake_auth  # type: ignore[attr-defined]
+    fake_auth.transport = fake_transport  # type: ignore[attr-defined]
+    fake_transport.requests = fake_transport_requests  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+    monkeypatch.setitem(sys.modules, "google.auth", fake_auth)
+    monkeypatch.setitem(sys.modules, "google.auth.transport", fake_transport)
+    monkeypatch.setitem(
+        sys.modules, "google.auth.transport.requests", fake_transport_requests
+    )
+
+
+def test_gcp_credentials_present_true_when_adc_file_exists(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kinoforge.core.auth import GCPServiceAccount
+
+    fake_sa = tmp_path / "sa.json"
+    fake_sa.write_text("{}")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(fake_sa))
+    strat = GCPServiceAccount()
+    assert strat.credentials_present() is True
+
+
+def test_gcp_credentials_present_false_when_adc_file_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import GCPServiceAccount
+
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    strat = GCPServiceAccount()
+    assert strat.credentials_present() is False
+
+
+def test_gcp_health_check_ok_when_default_returns_creds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import GCPServiceAccount
+
+    creds = _FakeGCPCredentials(
+        token="ya29.fake-access-token",
+        service_account_email="kinoforge-runner@proj.iam.gserviceaccount.com",
+    )
+    _install_fake_google_auth(monkeypatch, credentials=creds)
+    strat = GCPServiceAccount()
+    result = strat.health_check()
+    assert result.ok is True
+    assert result.identity == "kinoforge-runner@proj.iam.gserviceaccount.com"
+    assert creds.refresh_calls == 1
+
+
+def test_gcp_health_check_fail_when_default_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import GCPServiceAccount
+
+    _install_fake_google_auth(monkeypatch, raise_default=RuntimeError("no ADC"))
+    strat = GCPServiceAccount()
+    result = strat.health_check()
+    assert result.ok is False
+    assert "no ADC" in (result.reason or "")
+
+
+def test_gcp_redact_patterns_matches_access_token_shape() -> None:
+    from kinoforge.core.auth import GCPServiceAccount
+
+    strat = GCPServiceAccount()
+    patterns = strat.redact_patterns()
+    sample = "Authorization: Bearer ya29.abc-def_ghi-123"
+    assert any(p.search(sample) for p in patterns)
+
+
+def test_gcp_apply_adds_authorization_bearer_from_creds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import GCPServiceAccount, HttpRequest
+
+    creds = _FakeGCPCredentials(
+        token="ya29.actual-token",
+        service_account_email="kf@proj.iam.gserviceaccount.com",
+    )
+    _install_fake_google_auth(monkeypatch, credentials=creds)
+    strat = GCPServiceAccount()
+    req = HttpRequest(
+        method="POST", url="https://aiplatform...", headers={}, body=b"{}"
+    )
+    out = strat.apply(req)
+    assert out.headers["Authorization"] == "Bearer ya29.actual-token"
+
+
+def test_gcp_client_kwargs_returns_credentials_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import GCPServiceAccount
+
+    creds = _FakeGCPCredentials(
+        token="ya29.x", service_account_email="kf@proj.iam.gserviceaccount.com"
+    )
+    _install_fake_google_auth(monkeypatch, credentials=creds)
+    strat = GCPServiceAccount()
+    kwargs = strat.client_kwargs()
+    assert kwargs == {"credentials": creds}

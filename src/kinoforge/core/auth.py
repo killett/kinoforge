@@ -13,6 +13,7 @@ invariant (see ``test_core_invariant.py``).
 from __future__ import annotations
 
 import json as _json
+import os
 import re
 import urllib.request
 from abc import ABC, abstractmethod
@@ -259,3 +260,121 @@ class Bearer(AuthStrategy):
         """
         token = self._creds.get(self._env_var)
         return {"api_key": token} if token else {}
+
+
+class GCPServiceAccount(AuthStrategy):
+    """GCP auth via the ``google.auth`` default credential chain.
+
+    Used by VeoEngine (Layer 2) and any future Vertex AI integrations
+    (Imagen, Lyria, Gemini-Vision). The ``google.auth`` SDK is lazy-imported
+    inside method bodies to preserve the core-import-ban invariant.
+    """
+
+    # GCP access-token shape: ya29.<base64-ish>
+    _TOKEN_PATTERN = re.compile(r"ya29\.[A-Za-z0-9_\-]+")
+
+    def __init__(
+        self,
+        *,
+        scopes: tuple[str, ...] = ("https://www.googleapis.com/auth/cloud-platform",),
+        quota_project_id: str | None = None,
+        impersonation_chain: tuple[str, ...] | None = None,
+        subject: str | None = None,
+    ) -> None:
+        """Initialise.
+
+        Args:
+            scopes: OAuth2 scopes to request. Defaults to cloud-platform.
+            quota_project_id: GCP project to bill API usage against.
+            impersonation_chain: Service account impersonation chain (unused in
+                Layer 1; wired in a future per-engine retrofit if needed).
+            subject: Subject claim for domain-wide delegation (unused in
+                Layer 1; wired in a future per-engine retrofit if needed).
+        """
+        self._scopes = tuple(scopes)
+        self._quota_project_id = quota_project_id
+        self._impersonation_chain = impersonation_chain
+        self._subject = subject
+
+    def credentials_present(self) -> bool:
+        """Return True when ``GOOGLE_APPLICATION_CREDENTIALS`` points to an existing file.
+
+        Returns:
+            True if the ADC file exists, False otherwise.
+        """
+        adc = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if adc and os.path.exists(adc):
+            return True
+        return False
+
+    def health_check(self) -> HealthResult:
+        """Mint a token via ``google.auth.default`` and return identity.
+
+        Returns:
+            :class:`HealthResult` with ``ok=True`` and SA email as identity
+            on success, or ``ok=False`` with the exception text as reason.
+        """
+        try:
+            import google.auth  # lazy
+            import google.auth.transport.requests  # lazy
+
+            credentials, _project = google.auth.default(
+                scopes=self._scopes, quota_project_id=self._quota_project_id
+            )
+            request = google.auth.transport.requests.Request()
+            credentials.refresh(request)  # type: ignore[no-untyped-call]
+        except Exception as exc:  # noqa: BLE001
+            return HealthResult(ok=False, identity=None, reason=str(exc))
+        identity = (
+            getattr(credentials, "service_account_email", None) or "gcp-credentials"
+        )
+        return HealthResult(ok=True, identity=identity, reason=None)
+
+    def redact_patterns(self) -> list[re.Pattern[str]]:
+        """Return a pattern matching the GCP access-token shape (``ya29.<...>``).
+
+        Returns:
+            A list containing one compiled :class:`re.Pattern`.
+        """
+        return [self._TOKEN_PATTERN]
+
+    def apply(self, request: HttpRequest) -> HttpRequest:
+        """Return a new :class:`HttpRequest` with ``Authorization: Bearer <token>`` added.
+
+        Mints a fresh token via ``google.auth.default`` on every call; callers
+        that need caching should wrap this strategy.
+
+        Args:
+            request: The original request. Not mutated.
+
+        Returns:
+            A new :class:`HttpRequest` with the Authorization header added.
+        """
+        import google.auth  # lazy
+        import google.auth.transport.requests  # lazy
+
+        credentials, _project = google.auth.default(
+            scopes=self._scopes, quota_project_id=self._quota_project_id
+        )
+        credentials.refresh(google.auth.transport.requests.Request())  # type: ignore[no-untyped-call]
+        new_headers = dict(request.headers)
+        new_headers["Authorization"] = f"Bearer {credentials.token}"
+        return HttpRequest(
+            method=request.method,
+            url=request.url,
+            headers=new_headers,
+            body=request.body,
+        )
+
+    def client_kwargs(self) -> dict[str, Any]:
+        """Return ``{"credentials": <google.auth.credentials.Credentials>}``.
+
+        Returns:
+            Dict with the credentials object for SDK client construction.
+        """
+        import google.auth  # lazy
+
+        credentials, _project = google.auth.default(
+            scopes=self._scopes, quota_project_id=self._quota_project_id
+        )
+        return {"credentials": credentials}
