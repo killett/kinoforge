@@ -68,7 +68,7 @@ VALID_KIND_TARGETS: dict[str, set[str]] = {
     "clip_vision": {"clip_vision"},
 }
 
-KNOWN_ENGINES = {"comfyui", "diffusers", "hosted", "fake", "fal"}
+KNOWN_ENGINES = {"comfyui", "diffusers", "hosted", "fake", "fal", "nova_reel"}
 
 # ---------------------------------------------------------------------------
 # Sub-models
