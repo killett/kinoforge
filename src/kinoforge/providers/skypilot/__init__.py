@@ -216,13 +216,33 @@ def _coerce_float_field(record: Any, field: str) -> float:  # noqa: ANN401
         return 0.0
 
 
+# VRAM fallback for GPU types whose SkyPilot catalog entries omit ``device_memory``.
+# GCP's InstanceTypeInfo returns ``device_memory=None`` for NVIDIA GPUs; these values
+# come from NVIDIA's official spec sheets. Extend as new GPU types are qualified.
+_KNOWN_GPU_VRAM_GB: dict[str, int] = {
+    "T4": 16,
+    "A100": 40,  # A100-40GB SXM / PCIe variant; A100-80GB has separate entry
+    "A100-80GB": 80,
+    "V100": 16,
+    "P100": 16,
+    "L4": 24,
+    "L40": 48,
+    "H100": 80,
+    "H100-80GB": 80,
+    "A10G": 24,
+    "A10": 24,
+}
+
+
 def _coerce_vram_gb(record: Any) -> int:  # noqa: ANN401
     """Extract VRAM in GB from either offline-fake or real-SDK records.
 
     Offline fakes expose ``vram_gb`` as an int directly. Modern
     :class:`InstanceTypeInfo` exposes ``device_memory`` as a free-form
     string like ``"80GB"`` or ``"24 GiB"`` (per-device VRAM); the leading
-    integer is extracted. Returns ``0`` when no usable value is found.
+    integer is extracted. When neither field is present, looks up the
+    accelerator name in :data:`_KNOWN_GPU_VRAM_GB` (GCP catalogs frequently
+    omit ``device_memory``). Returns ``0`` when no usable value is found.
 
     Args:
         record: A typed SDK record or a dict.
@@ -253,6 +273,12 @@ def _coerce_vram_gb(record: Any) -> int:  # noqa: ANN401
                 return int(float(digits))
             except (TypeError, ValueError):
                 pass
+    # Fallback: look up by accelerator name (GCP catalog omits device_memory).
+    accel_name = _record_field(record, "accelerator_name") or _record_field(
+        record, "name"
+    )
+    if accel_name and accel_name in _KNOWN_GPU_VRAM_GB:
+        return _KNOWN_GPU_VRAM_GB[accel_name]
     return 0
 
 
