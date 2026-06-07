@@ -630,6 +630,44 @@ via fal's queue API.
 To run the live test suite (`pixi run test-live`), set `KINOFORGE_LIVE_TESTS=1`
 alongside `FAL_KEY` in your environment.
 
+### Auth strategies
+
+Hosted engines authenticate via a pluggable `AuthStrategy`. Three concrete
+strategies ship in `kinoforge.core.auth`:
+
+| Name | Used by | Auth shape |
+|---|---|---|
+| `bearer` | `HostedAPIEngine` (fal today; Replicate / Runway / Luma later) | `Authorization: Bearer <env-var>` |
+| `gcp_service_account` | VeoEngine (Layer 2); future Vertex AI integrations | `google.auth` default chain |
+| `aws_sigv4` | NovaReelEngine (Layer 3); future Bedrock integrations | SigV4 request signing |
+
+Each engine config carries a nested `auth:` block with a `strategy:`
+discriminator. Example:
+
+```yaml
+engine:
+  hosted:
+    endpoint: https://fal.run/fal-ai/wan-t2v
+    auth:
+      strategy: bearer
+      env_var: FAL_KEY
+```
+
+Backward-compat: when `auth:` is omitted on an existing hosted config,
+`provision()` derives `Bearer(env_var=cfg.api_key_env)` automatically.
+
+Preflight: `pixi run probe-hosted -- --config <config-path>` walks every
+configured strategy and verifies credentials + health before any live
+call.
+
+Adding a new strategy: subclass `AuthStrategy`, implement all 5 methods
+(`credentials_present`, `health_check`, `redact_patterns`, `apply`,
+`client_kwargs`), then register the class name in `_REGISTRY` in
+`src/kinoforge/core/auth.py`. The ABC's stable surface is locked by
+`test_auth_strategy_abc_stable_surface` — intentional evolution requires
+regenerating `tests/fixtures/auth_strategy_baseline.json` in the same
+commit.
+
 ## Keyframe stage
 
 The keyframe stage runs an image-generation model **before** the video-generation
