@@ -12,9 +12,13 @@ invariant (see ``test_core_invariant.py``).
 
 from __future__ import annotations
 
+import datetime as _dt
+import hashlib as _hashlib
+import hmac as _hmac
 import json as _json
 import os
 import re
+import urllib.parse as _urlparse
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -378,3 +382,225 @@ class GCPServiceAccount(AuthStrategy):
             scopes=self._scopes, quota_project_id=self._quota_project_id
         )
         return {"credentials": credentials}
+
+
+class AWSSigV4(AuthStrategy):
+    """AWS request signing via the ``boto3`` Session credential chain.
+
+    Used by NovaReelEngine (Layer 3) and any future Bedrock integrations.
+    The ``boto3`` SDK is lazy-imported inside method bodies to preserve
+    the core-import-ban invariant. SigV4 signing is performed directly
+    with stdlib ``hashlib`` + ``hmac`` so the seam stays SDK-version-
+    independent.
+    """
+
+    # AWS IAM access-key shapes: long-term (AKIA) + STS session (ASIA).
+    _ACCESS_KEY_PATTERN = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+    # SigV4 Authorization header signature payload.
+    _AUTHZ_PATTERN = re.compile(
+        r"AWS4-HMAC-SHA256\s+Credential=[^\s,]+/[0-9]+/[a-z0-9-]+/[a-z0-9-]+/aws4_request"
+    )
+    # Session-token header value.
+    _SESSION_TOKEN_PATTERN = re.compile(r"X-Amz-Security-Token:[^\r\n]+")
+
+    def __init__(
+        self,
+        *,
+        region_name: str,
+        service_name: str = "bedrock-runtime",
+        profile_name: str | None = None,
+        assume_role_arn: str | None = None,
+        assume_role_external_id: str | None = None,
+    ) -> None:
+        """Initialise.
+
+        Args:
+            region_name: AWS region (e.g. ``"us-east-1"``).
+            service_name: AWS service name used in credential scope.
+                Defaults to ``"bedrock-runtime"``.
+            profile_name: Named AWS CLI profile to use. ``None`` uses the
+                default credential chain.
+            assume_role_arn: IAM role ARN to assume before signing (stored
+                for future use; not wired in Layer 1).
+            assume_role_external_id: External ID for role assumption (stored
+                for future use; not wired in Layer 1).
+        """
+        self._region_name = region_name
+        self._service_name = service_name
+        self._profile_name = profile_name
+        self._assume_role_arn = assume_role_arn
+        self._assume_role_external_id = assume_role_external_id
+
+    def _session(self) -> Any:  # noqa: ANN401
+        """Return a ``boto3.Session``, lazy-importing boto3.
+
+        Returns:
+            A ``boto3.Session`` instance.
+        """
+        import boto3  # lazy — never at module top level
+
+        return boto3.Session(profile_name=self._profile_name)
+
+    def credentials_present(self) -> bool:
+        """Return True when the boto3 session resolves credentials.
+
+        Returns:
+            True if ``boto3.Session().get_credentials()`` returns non-None.
+        """
+        try:
+            return self._session().get_credentials() is not None
+        except Exception:  # noqa: BLE001
+            return False
+
+    def health_check(self) -> HealthResult:
+        """Call STS ``GetCallerIdentity`` to verify credentials.
+
+        Returns:
+            :class:`HealthResult` with the caller ARN as identity on success,
+            or ``ok=False`` with the exception text as reason on failure.
+        """
+        session = self._session()
+        if session.get_credentials() is None:
+            return HealthResult(
+                ok=False, identity=None, reason="no AWS credentials in chain"
+            )
+        try:
+            sts = session.client("sts", region_name=self._region_name)
+            ident = sts.get_caller_identity()
+        except Exception as exc:  # noqa: BLE001
+            return HealthResult(ok=False, identity=None, reason=str(exc))
+        return HealthResult(ok=True, identity=str(ident["Arn"]), reason=None)
+
+    def redact_patterns(self) -> list[re.Pattern[str]]:
+        """Return patterns matching AWS access keys, SigV4 signatures, and session tokens.
+
+        Returns:
+            A list of three compiled :class:`re.Pattern` instances.
+        """
+        return [
+            self._ACCESS_KEY_PATTERN,
+            self._AUTHZ_PATTERN,
+            self._SESSION_TOKEN_PATTERN,
+        ]
+
+    def apply(self, request: HttpRequest) -> HttpRequest:
+        """Sign ``request`` with AWS SigV4 and return a new :class:`HttpRequest`.
+
+        Signing is performed directly via stdlib ``hashlib`` + ``hmac`` rather
+        than going through ``botocore.auth``, keeping the seam SDK-version-
+        independent.
+
+        Args:
+            request: The original request. Not mutated.
+
+        Returns:
+            A new :class:`HttpRequest` with ``Authorization``, ``X-Amz-Date``,
+            and ``X-Amz-Content-Sha256`` headers added (plus
+            ``X-Amz-Security-Token`` when a session token is present).
+
+        Raises:
+            RuntimeError: If no AWS credentials are available.
+        """
+        creds = self._session().get_credentials()
+        if creds is None:
+            raise RuntimeError("AWSSigV4.apply called with no AWS credentials")
+        frozen = creds.get_frozen_credentials()
+
+        method = request.method.upper()
+        parsed = _urlparse.urlparse(request.url)
+        canonical_uri = parsed.path or "/"
+        canonical_query = parsed.query
+        body = request.body or b""
+        payload_hash = _hashlib.sha256(body).hexdigest()
+
+        amz_date = _dt.datetime.now(_dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+        date_stamp = amz_date[:8]
+        host = parsed.netloc
+
+        # Build the signed-headers map (lowercase keys).
+        headers_lc = {k.lower(): v for k, v in request.headers.items()}
+        headers_lc.setdefault("host", host)
+        headers_lc["x-amz-date"] = amz_date
+        headers_lc["x-amz-content-sha256"] = payload_hash
+        if frozen.token:
+            headers_lc["x-amz-security-token"] = frozen.token
+
+        signed_headers = ";".join(sorted(headers_lc))
+        canonical_headers = "".join(
+            f"{k}:{headers_lc[k].strip()}\n" for k in sorted(headers_lc)
+        )
+
+        canonical_request = "\n".join(
+            [
+                method,
+                canonical_uri,
+                canonical_query,
+                canonical_headers,
+                signed_headers,
+                payload_hash,
+            ]
+        )
+
+        credential_scope = (
+            f"{date_stamp}/{self._region_name}/{self._service_name}/aws4_request"
+        )
+        string_to_sign = "\n".join(
+            [
+                "AWS4-HMAC-SHA256",
+                amz_date,
+                credential_scope,
+                _hashlib.sha256(canonical_request.encode()).hexdigest(),
+            ]
+        )
+
+        def _sign(key: bytes, msg: str) -> bytes:
+            return _hmac.new(key, msg.encode("utf-8"), _hashlib.sha256).digest()
+
+        k_date = _sign(("AWS4" + frozen.secret_key).encode("utf-8"), date_stamp)
+        k_region = _sign(k_date, self._region_name)
+        k_service = _sign(k_region, self._service_name)
+        k_signing = _sign(k_service, "aws4_request")
+        signature = _hmac.new(
+            k_signing, string_to_sign.encode("utf-8"), _hashlib.sha256
+        ).hexdigest()
+
+        authorization = (
+            f"AWS4-HMAC-SHA256 "
+            f"Credential={frozen.access_key}/{credential_scope}, "
+            f"SignedHeaders={signed_headers}, "
+            f"Signature={signature}"
+        )
+
+        new_headers = dict(request.headers)
+        new_headers["Authorization"] = authorization
+        new_headers["X-Amz-Date"] = amz_date
+        new_headers["X-Amz-Content-Sha256"] = payload_hash
+        if frozen.token:
+            new_headers["X-Amz-Security-Token"] = frozen.token
+
+        return HttpRequest(
+            method=request.method,
+            url=request.url,
+            headers=new_headers,
+            body=request.body,
+        )
+
+    def client_kwargs(self) -> dict[str, Any]:
+        """Return AWS credential kwargs for SDK client construction.
+
+        Returns:
+            Dict with ``aws_access_key_id``, ``aws_secret_access_key``,
+            ``region_name``, and (when present) ``aws_session_token``.
+        """
+        creds = self._session().get_credentials()
+        if creds is None:
+            return {"region_name": self._region_name}
+        frozen = creds.get_frozen_credentials()
+        kwargs: dict[str, Any] = {
+            "aws_access_key_id": frozen.access_key,
+            "aws_secret_access_key": frozen.secret_key,
+            "region_name": self._region_name,
+        }
+        if frozen.token:
+            kwargs["aws_session_token"] = frozen.token
+        return kwargs
