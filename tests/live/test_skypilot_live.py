@@ -185,6 +185,7 @@ def _t4_smoke_spec(cluster_name: str, offer: Any) -> InstanceSpec:
         offer=offer,
         provision_script="",
         run_cmd=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+        spot=True,  # use preemptible — GCP GPUS_ALL_REGIONS=0; PREEMPTIBLE_T4=1
     )
 
 
