@@ -1,0 +1,16 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-07-layer-3-nova-reel-engine.md",
+  "tasks": [
+    {"id": 12, "subject": "L3 Task 0: NovaReelEngineConfig pydantic + wire to EngineConfig", "status": "pending"},
+    {"id": 13, "subject": "L3 Task 1: engines/nova_reel/ package + 10 offline unit tests", "status": "pending", "blockedBy": [12]},
+    {"id": 14, "subject": "L3 Task 2: examples/configs/nova-reel.yaml + parse test", "status": "pending", "blockedBy": [12]},
+    {"id": 15, "subject": "L3 Task 3: IAM policy doc .aws/policies/bedrock-nova-reel.json", "status": "pending"},
+    {"id": 16, "subject": "L3 Task 4: Attach IAM policy + create S3 output bucket (real cloud mutation)", "status": "pending", "blockedBy": [15]},
+    {"id": 17, "subject": "L3 Task 5: probe_hosted --check-bedrock-model-access flag + 3 tests", "status": "pending", "blockedBy": [16]},
+    {"id": 18, "subject": "L3 Task 6: RED live-smoke scaffold (committed BEFORE spend)", "status": "pending", "blockedBy": [13, 14, 17]},
+    {"id": 19, "subject": "L3 Task 7: Fire live smoke + capture fixture (~$0.50 spend)", "status": "pending", "blockedBy": [18]},
+    {"id": 20, "subject": "L3 Task 8: Offline replay test against captured fixture", "status": "pending", "blockedBy": [19]},
+    {"id": 21, "subject": "L3 Task 9: README + PROGRESS Phase 42 + final gate", "status": "pending", "blockedBy": [20]}
+  ],
+  "lastUpdated": "2026-06-07T13:00:00-07:00"
+}
