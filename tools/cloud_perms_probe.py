@@ -111,6 +111,52 @@ def _write_snapshot_atomic(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
+def _aws_existing_quota_case(sq_client: Any, service: str, code: str) -> str | None:  # noqa: ANN401
+    """Return the case id of an open quota-increase request for ``code``, if any.
+
+    Calls ``ListRequestedServiceQuotaChangeHistory`` and filters for entries
+    matching ``code`` whose ``Status`` is one of PENDING / CASE_OPENED /
+    APPROVED. Returns None on any error (so the gap path falls through to
+    submission, which AWS itself dedupes server-side if a case truly exists).
+    """
+    try:
+        resp = sq_client.list_requested_service_quota_change_history(
+            ServiceCode=service,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    for entry in resp.get("RequestedQuotas", []):
+        if entry.get("QuotaCode") == code and entry.get("Status") in (
+            "PENDING",
+            "CASE_OPENED",
+            "APPROVED",
+        ):
+            return str(entry["Id"])
+    return None
+
+
+def _aws_submit_quota_request(
+    sq_client: Any,  # noqa: ANN401
+    service: str,
+    code: str,
+    target: float,
+) -> str:
+    """Submit a quota increase via service-quotas; return case id.
+
+    Idempotent: if an open request for ``code`` already exists, returns
+    its CaseId without submitting a new one.
+    """
+    existing = _aws_existing_quota_case(sq_client, service, code)
+    if existing is not None:
+        return existing
+    resp = sq_client.request_service_quota_increase(
+        ServiceCode=service,
+        QuotaCode=code,
+        DesiredValue=target,
+    )
+    return str(resp["RequestedQuota"]["Id"])
+
+
 def probe_aws(
     session: Any,  # noqa: ANN401
     *,
@@ -228,11 +274,21 @@ def probe_aws(
         }
         out["quotas"] = {quota_code: quota_entry}
         if quota_entry["value"] < target_vcpus:
+            case_id = _aws_submit_quota_request(
+                sq,
+                quota_service,
+                quota_code,
+                target_vcpus,
+            )
             out["exit_code"] = 2
             out["quota_gap"] = {
                 "code": quota_code,
                 "have": quota_entry["value"],
                 "want": target_vcpus,
+            }
+            out["quota_request"] = {
+                "case_id": case_id,
+                "submitted_at": _now_local_iso(),
             }
             _write_snapshot_atomic(snapshot_path, out)
             return out
@@ -342,12 +398,25 @@ def probe_gcp(
     # T4 quota gap?
     t4 = out["quotas"].get("NVIDIA_T4_GPUS")
     if t4 is None or t4["limit"] < target_t4_quota:
+        console_url = (
+            f"https://console.cloud.google.com/iam-admin/quotas"
+            f"?project={project}&filter=Quota%3A%20NVIDIA_T4_GPUS"
+        )
         out["exit_code"] = 2
         out["quota_gap"] = {
             "metric": "NVIDIA_T4_GPUS",
             "have": t4["limit"] if t4 else 0.0,
             "want": target_t4_quota,
             "region": region,
+        }
+        out["quota_request"] = {
+            "console_url": console_url,
+            "instructions": (
+                "GCP has no SDK surface for compute-quota increases. "
+                "Open the URL above, click 'EDIT QUOTAS' for NVIDIA T4 GPUs "
+                f"in {region}, request limit >= {target_t4_quota:.0f}, submit. "
+                "Re-run `pixi run cloud:perms-probe --cloud gcp` after approval lands."
+            ),
         }
         _write_snapshot_atomic(snapshot_path, out)
         return out
