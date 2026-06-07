@@ -28,8 +28,14 @@ htmlcov/
 # Secrets — never commit .env, GCP service-account keys, or AWS credentials
 .env
 .env.*
-.gcp/
-.aws/
+# Cloud creds dirs: ignore contents by default, re-include tracked operator
+# docs and policy bytes (no secrets). Layer W+α adds the scoped IAM policy
+# JSON and the operator README that explains how to attach it.
+.gcp/*
+.aws/*
+!.gcp/README.md
+!.aws/README.md
+!.aws/policies/
 # The .env.example template stays tracked
 !.env.example
 
