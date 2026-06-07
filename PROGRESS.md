@@ -104,6 +104,7 @@ Patterns proven across MVP + Layers A–D. New layers should follow them by defa
 - `--no-ff` merge pattern with substantive body — merge commit references layer name, AC state, per-task commits, GitHub issue via `Closes #N` trailer. Natural layer boundary.
 - Builder subagent (caveman:cavecrew-builder) has no Bash — use for surgical 1-2 line edits; controller handles verify-and-commit.
 - `import X.Y.Z as alias` for lazy SDK imports — ruff-format wraps `from X.Y import Z` onto multiple lines and splits type-ignore comments off; the alias form keeps comments attached.
+- **Standard prompt for all video-generation live smokes:** every video-gen live smoke (current + future, all engines, all providers, all model variants) reads its prompt body verbatim from `prompt-field-realistic.txt` at the repo root. Tests load the file at runtime — no paste-into-YAML, no paraphrase, no per-smoke override. Rationale: user is comparing how different models/providers respond to the *same* detailed prompt; any prompt variance defeats the comparison. The prompt is a long-form, demanding photorealistic cinematic shot — it also exercises prompt-routing, length caps, and per-model adherence. Image-only / audio-only smokes are exempt. Tracked in user's auto-memory as `feedback_standard_test_prompt`.
 
 ## Known limitations & follow-ups
 
