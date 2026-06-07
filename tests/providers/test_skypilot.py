@@ -1067,7 +1067,7 @@ def test_normalize_image_id_passes_through_prefixed_names() -> None:
 
 
 @pytest.mark.skipif(
-    not GPU_FIXTURE_DIR.exists(),
+    not (GPU_FIXTURE_DIR / "list_accelerators.json").exists(),
     reason="T4 GPU fixtures not captured yet — Layer W+β T4 will land them",
 )
 def test_t4_fixture_shape() -> None:

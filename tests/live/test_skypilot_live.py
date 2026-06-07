@@ -345,7 +345,10 @@ def test_skypilot_live_e2e_t4_gpu_lifecycle_smoke(cloud: str) -> None:
     ``n1-standard-4 + nvidia-tesla-t4`` for ~5–10 min wall-clock.
     """
     cluster_name = f"kinoforge-w-beta-t4-{cloud}-{secrets.token_hex(4)}"
-    provider = SkyPilotProvider(sky_client=_RecordingProxy(sky, _GPU_FIXTURE_DIR))
+    provider = SkyPilotProvider(
+        sky_client=_RecordingProxy(sky, _GPU_FIXTURE_DIR),
+        clouds=["gcp"],
+    )
 
     try:
         offers = provider.find_offers(HW_REQS_T4)
