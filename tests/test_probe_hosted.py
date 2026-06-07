@@ -119,13 +119,11 @@ def test_check_bedrock_model_access_passes_when_model_listed() -> None:
     from tools.probe_hosted import check_bedrock_model_access
 
     fake = _FakeBedrockControlClient(
-        models=[
-            {"modelId": "amazon.nova-reel-v1:1", "modelLifecycle": {"status": "ACTIVE"}}
-        ]
+        models=[{"modelId": "luma.ray-v2:0", "modelLifecycle": {"status": "ACTIVE"}}]
     )
-    result = check_bedrock_model_access(fake, "amazon.nova-reel-v1:1")
+    result = check_bedrock_model_access(fake, "luma.ray-v2:0")
     assert result.ok is True
-    assert "amazon.nova-reel-v1:1" in (result.identity or "")
+    assert "luma.ray-v2:0" in (result.identity or "")
 
 
 def test_check_bedrock_model_access_fails_when_model_missing() -> None:
@@ -136,9 +134,9 @@ def test_check_bedrock_model_access_fails_when_model_missing() -> None:
             {"modelId": "amazon.titan-text-v1", "modelLifecycle": {"status": "ACTIVE"}}
         ]
     )
-    result = check_bedrock_model_access(fake, "amazon.nova-reel-v1:1")
+    result = check_bedrock_model_access(fake, "luma.ray-v2:0")
     assert result.ok is False
-    assert "amazon.nova-reel-v1:1" in (result.reason or "")
+    assert "luma.ray-v2:0" in (result.reason or "")
 
 
 def test_probe_cli_invokes_check_bedrock_model_access_when_flag_set(
@@ -147,7 +145,7 @@ def test_probe_cli_invokes_check_bedrock_model_access_when_flag_set(
     """End-to-end: extra_checks kwarg fires the bedrock probe alongside strategy health checks."""
     from tools.probe_hosted import ProbeResult, run
 
-    strategies = [("nova_reel", FakeAuthStrategy())]
+    strategies = [("bedrock_video", FakeAuthStrategy())]
     # Inject a fake bedrock control client so no real AWS call happens.
     captured: list[ProbeResult] = []
 
@@ -166,8 +164,8 @@ def test_probe_cli_invokes_check_bedrock_model_access_when_flag_set(
     # run() accepts an extra_checks kwarg added in the impl below.
     extra = [
         (
-            "bedrock:amazon.nova-reel-v1:1",
-            lambda: fake_bedrock_check(None, "amazon.nova-reel-v1:1"),
+            "bedrock:luma.ray-v2:0",
+            lambda: fake_bedrock_check(None, "luma.ray-v2:0"),
         )
     ]
     exit_code = run(

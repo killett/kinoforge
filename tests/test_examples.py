@@ -92,16 +92,16 @@ def test_fal_yaml_loads_under_new_validators() -> None:
     assert cfg.engine.fal.url_path == "video.url"
 
 
-def test_nova_reel_example_config_parses() -> None:
-    """examples/configs/nova-reel.yaml must satisfy Layer 3 Task 2 validators."""
+def test_luma_ray_example_config_parses() -> None:
+    """examples/configs/luma-ray.yaml must satisfy Layer 3 (pivot) validators."""
     from kinoforge.core.config import load_config
 
-    cfg = load_config("examples/configs/nova-reel.yaml")
-    assert cfg.engine.kind == "nova_reel"
-    assert cfg.engine.nova_reel is not None
-    assert cfg.engine.nova_reel.region_name == "us-east-1"
-    assert cfg.engine.nova_reel.output_s3_uri.startswith("s3://")
-    assert cfg.engine.nova_reel.model_id == "amazon.nova-reel-v1:1"
+    cfg = load_config("examples/configs/luma-ray.yaml")
+    assert cfg.engine.kind == "bedrock_video"
+    assert cfg.engine.bedrock_video is not None
+    assert cfg.engine.bedrock_video.region_name == "us-west-2"
+    assert cfg.engine.bedrock_video.output_s3_uri.startswith("s3://")
+    assert cfg.engine.bedrock_video.model_id == "luma.ray-v2:0"
 
 
 # ---------------------------------------------------------------------------

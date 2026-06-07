@@ -18,6 +18,7 @@ exports nothing.
 """
 
 # Providers
+import kinoforge.engines.bedrock_video  # noqa: F401  # self-registers under "bedrock_video"
 import kinoforge.engines.comfyui  # noqa: F401
 import kinoforge.engines.diffusers  # noqa: F401
 
@@ -25,7 +26,6 @@ import kinoforge.engines.diffusers  # noqa: F401
 import kinoforge.engines.fake  # noqa: F401
 import kinoforge.engines.fal  # noqa: F401
 import kinoforge.engines.hosted  # noqa: F401
-import kinoforge.engines.nova_reel  # noqa: F401  # self-registers under "nova_reel"
 
 # Output sinks
 import kinoforge.outputs.local  # noqa: F401  side-effect: register "local" OutputSink
