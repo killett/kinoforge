@@ -1444,7 +1444,7 @@ Plan:
 - [x] Task 2: GPU example config + offline fixture-shape regression — commit `c8327e2`
 - [x] Task 3: Pre-spend gate — ran mechanically (operator pre-authorized $20 spend)
 - [~] Task 4: Live GCP T4 smoke — BLOCKED on free-tier billing; 5 fix commits shipped on the path
-- [x] Task 5: CLOUD-CREDS + this entry + final gate — commit `<T5 SHA>`
+- [x] Task 5: CLOUD-CREDS + this entry + final gate — commit `b9a45e4`
 
 **Bug-catch commits (the layer's actual artifact):**
 
