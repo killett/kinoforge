@@ -155,6 +155,10 @@
     "have": 0.0,
     "want": 4.0
   },
+  "quota_request": {
+    "case_id": "REDACTED-CASE-ID",
+    "submitted_at": "2026-06-06T21:02:29.377370-07:00"
+  },
   "quotas": {
     "L-DB2E81BA": {
       "code": "L-DB2E81BA",
