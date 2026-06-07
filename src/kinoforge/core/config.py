@@ -347,6 +347,50 @@ class FalEngineConfig(BaseModel):
         return v
 
 
+class NovaReelEngineConfig(BaseModel):
+    """AWS Bedrock Nova Reel engine parameters.
+
+    Attributes:
+        region_name: AWS region. Nova Reel currently runs in ``us-east-1``;
+            other regions added by AWS over time will be opt-in here.
+        model_id: Bedrock model identifier. Defaults to
+            ``"amazon.nova-reel-v1:1"`` (Nova Reel 1.1).
+        output_s3_uri: S3 prefix Nova Reel writes generated MP4s into. Must
+            start with ``s3://``. Bedrock async invocations require an S3
+            output destination (no inline response shape).
+        output_kms_key_id: Optional SSE-KMS key ARN if the output bucket uses
+            customer-managed encryption.
+        duration_seconds: Length of the generated clip; Nova Reel default 6s.
+        fps: Frames per second; Nova Reel default 24.
+        dimension: Output resolution ``WxH``; default ``"1280x720"``.
+        prompt_body_key: Key in the model input where the prompt lives.
+            Matches Layer J prompt-routing convention.
+        declared_flags_map: Per-capability-key strategy-flag overrides
+            (matches sibling-engine convention).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    region_name: str
+    model_id: str = "amazon.nova-reel-v1:1"
+    output_s3_uri: str
+    output_kms_key_id: str | None = None
+    duration_seconds: int = 6
+    fps: int = 24
+    dimension: str = "1280x720"
+    prompt_body_key: str = "prompt"
+    declared_flags_map: dict[str, dict[str, bool]] = Field(default_factory=dict)
+
+    @field_validator("output_s3_uri")
+    @classmethod
+    def _check_output_s3_uri(cls, v: str) -> str:
+        if not v.startswith("s3://"):
+            raise ValueError(
+                f"engine.nova_reel.output_s3_uri must start with 's3://', got {v!r}"
+            )
+        return v
+
+
 class EngineConfig(BaseModel):
     """Top-level engine block.
 
@@ -358,6 +402,8 @@ class EngineConfig(BaseModel):
         diffusers: Diffusers-specific config, optional even when
             kind == "diffusers" (all fields default to empty).
         fal: fal.ai queue-API config, required when kind == "fal".
+        nova_reel: AWS Bedrock Nova Reel config, required when
+            kind == "nova_reel".
     """
 
     kind: str
@@ -366,6 +412,7 @@ class EngineConfig(BaseModel):
     hosted: HostedEngineConfig | None = None
     diffusers: DiffusersEngineConfig | None = None
     fal: FalEngineConfig | None = None
+    nova_reel: NovaReelEngineConfig | None = None
 
 
 class ModelEntry(BaseModel):
