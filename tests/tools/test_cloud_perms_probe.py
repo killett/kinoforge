@@ -103,6 +103,23 @@ class _FakeServiceQuotasClient:
             }
         }
 
+    def list_requested_service_quota_change_history(
+        self,
+        *,
+        ServiceCode: str,
+        **_k: Any,
+    ) -> dict[str, Any]:
+        return {"RequestedQuotas": []}
+
+    def request_service_quota_increase(
+        self,
+        *,
+        ServiceCode: str,
+        QuotaCode: str,
+        DesiredValue: float,
+    ) -> dict[str, Any]:
+        return {"RequestedQuota": {"Id": "case-stub", "Status": "PENDING"}}
+
 
 def _green_aws_session(*, quota_value: float = 8.0) -> _FakeBoto3Session:
     return _FakeBoto3Session(
@@ -347,3 +364,107 @@ def test_aws_green_fixture_matches_probe_shape() -> None:
     assert fixture["cloud"] == "aws"
     assert fixture["identity"]["Arn"].endswith(":user/kinoforge-ci")
     assert "L-DB2E81BA" in fixture["quotas"]
+
+
+class _FakeServiceQuotasWithRequest(_FakeServiceQuotasClient):
+    def __init__(self, *, value: float, existing_case: str | None = None) -> None:
+        super().__init__(value=value)
+        self._existing_case = existing_case
+        self.requests_made: list[dict[str, Any]] = []
+
+    def list_requested_service_quota_change_history(
+        self,
+        *,
+        ServiceCode: str,
+        **_k: Any,
+    ) -> dict[str, Any]:
+        items = []
+        if self._existing_case is not None:
+            items.append(
+                {
+                    "Id": self._existing_case,
+                    "QuotaCode": "L-DB2E81BA",
+                    "Status": "PENDING",
+                }
+            )
+        return {"RequestedQuotas": items}
+
+    def request_service_quota_increase(
+        self,
+        *,
+        ServiceCode: str,
+        QuotaCode: str,
+        DesiredValue: float,
+    ) -> dict[str, Any]:
+        case_id = self._existing_case or f"case-{len(self.requests_made):04d}"
+        self.requests_made.append(
+            {
+                "ServiceCode": ServiceCode,
+                "QuotaCode": QuotaCode,
+                "DesiredValue": DesiredValue,
+            }
+        )
+        return {"RequestedQuota": {"Id": case_id, "Status": "PENDING"}}
+
+
+def test_probe_aws_submits_quota_request_on_gap(tmp_path: Path) -> None:
+    fake_sq = _FakeServiceQuotasWithRequest(value=0.0)
+    session = _FakeBoto3Session(
+        {
+            "sts": _FakeSTSClient(
+                identity={
+                    "UserId": "AIDA",
+                    "Account": "<AWS_ACCOUNT>",
+                    "Arn": "arn:aws:iam::<AWS_ACCOUNT>:user/kinoforge-ci",
+                }
+            ),
+            "iam": _FakeIAMClient({a: "allowed" for a in probe._REQUIRED_AWS_ACTIONS}),
+            "ec2": _FakeEC2Client(),
+            "service-quotas": fake_sq,
+        }
+    )
+    snapshot_path = tmp_path / "aws.json"
+    result = probe.probe_aws(session, snapshot_path=snapshot_path)
+
+    assert result["exit_code"] == 2
+    assert result["quota_request"]["case_id"].startswith("case-")
+    assert len(fake_sq.requests_made) == 1
+    assert fake_sq.requests_made[0]["DesiredValue"] == 4.0
+
+
+def test_probe_aws_idempotent_quota_request(tmp_path: Path) -> None:
+    """Re-run with an existing open case → no duplicate submission."""
+    fake_sq = _FakeServiceQuotasWithRequest(value=0.0, existing_case="case-EXISTING")
+    session = _FakeBoto3Session(
+        {
+            "sts": _FakeSTSClient(
+                identity={
+                    "UserId": "AIDA",
+                    "Account": "<AWS_ACCOUNT>",
+                    "Arn": "arn:aws:iam::<AWS_ACCOUNT>:user/kinoforge-ci",
+                }
+            ),
+            "iam": _FakeIAMClient({a: "allowed" for a in probe._REQUIRED_AWS_ACTIONS}),
+            "ec2": _FakeEC2Client(),
+            "service-quotas": fake_sq,
+        }
+    )
+    snapshot_path = tmp_path / "aws.json"
+    result = probe.probe_aws(session, snapshot_path=snapshot_path)
+
+    assert result["exit_code"] == 2
+    assert result["quota_request"]["case_id"] == "case-EXISTING"
+    assert len(fake_sq.requests_made) == 0, "must not duplicate existing open case"
+
+
+def test_probe_gcp_quota_gap_emits_console_url(tmp_path: Path) -> None:
+    result = probe.probe_gcp(
+        clients=_green_gcp_clients(t4_quota=0.0),
+        project="<GCP_PROJECT>",
+        sa_email="kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com",
+        snapshot_path=tmp_path / "gcp.json",
+    )
+    assert result["exit_code"] == 2
+    url = result["quota_request"]["console_url"]
+    assert "<GCP_PROJECT>" in url
+    assert "NVIDIA_T4_GPUS" in url
