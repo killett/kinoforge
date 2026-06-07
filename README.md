@@ -520,6 +520,18 @@ runs without the operator setting `sha256:` per entry). Setting
 time — use a pinned `@<commit-sha>` for tree-level reproducibility, or
 split into per-file refs for per-file pinning.
 
+## Cloud bootstrap (Layer W+α)
+
+SkyPilot multi-cloud GPU work is gated by AWS + GCP permission and quota
+readiness. Run `pixi run cloud:perms-probe` to verify; the probe writes
+snapshots to `.aws/perms-snapshot.json` and `.gcp/perms-snapshot.json`
+(gitignored). Exit 0 = green; 1 = auth or required action denied;
+2 = quota gap pending (AWS auto-submits via the SDK, GCP emits a console
+URL because no SDK surface exists for compute-quota requests). See
+`docs/CLOUD-CREDS.md` for the bootstrap inventory, the scoped IAM policy
+doc at `.aws/policies/skypilot-minimal.json`, and the SkyPilot
+permissions summary.
+
 ## Credentials
 
 Kinoforge reads its API credentials from environment variables. To avoid

@@ -153,16 +153,16 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 38 fully CLOSED — Layer W (S3 / GCS real-cloud verification). HEAD at the T12 docs commit on `main`. Test suite at ~1497 passed, 8 skipped (offline). Plus 14 KINOFORGE_LIVE_TESTS-gated tests (2 × 7 axes; 2 xfailed). Working tree clean.
+**Where we are:** Phase 39 fully CLOSED — Layer W+α (cloud bootstrap, zero spend). AWS scoped IAM policy doc tracked; broader AWS-managed policies attached on `kinoforge-ci` per operator preference; GCP SA roles audited + `compute.instanceAdmin.v1` granted; `pixi run cloud:perms-probe` exits 0 (GCP) + 2 (AWS quota gap — auto-requested, AWS case `cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` open). HEAD at the T7 docs commit on `main`. Probe suite: 12/12 unit tests pass. Working tree clean.
 
 **Read in this order:**
-1. The Phase 38 entry below (per-task SHAs + design decisions + real-artifact lines).
-2. `docs/superpowers/specs/2026-06-06-layer-w-s3-gcs-real-cloud-design.md` for the Layer W design doc.
-3. `git log --oneline -10` for the most-recent commits.
+1. The Phase 39 entry below (per-task SHAs + design decisions + operator actions + open AWS quota case).
+2. `docs/superpowers/specs/2026-06-06-layer-w-alpha-cloud-bootstrap-design.md` for the design doc.
+3. `git log --oneline -15` for the most-recent commits.
 
-**First unchecked task in fresh session:** pick next layer. Candidates (Layer W closed the S3/GCS real-cloud carry-forward): **Layer W+ `kinoforge sweeper` daemon** that consumes the Layer V substrate (the next natural follow-on); **SkyPilot GPU smokes + multi-cloud verification** (deferred from Phase 31 §7); **cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap** (Layer T carry-forward); **fal storage upload integration** for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); **Layer X cost dashboard / metrics** (read-only consumer of `classify`); **Layer Y in-session warm-reuse retrofit** (orchestrator consults `classify` when `_states[id]` is missing across CLI invocations).
+**First unchecked task in fresh session:** Layer W+β — SkyPilot multi-cloud T4 GPU smoke. Gated on AWS quota approval landing. Probe re-run will exit 0 on AWS once approved; until then `sky launch` against AWS will fail. GCP side is launch-ready today. Alternative candidates carried forward: **Layer W+ `kinoforge sweeper` daemon** (consumes Layer V substrate); **cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap** (Layer T carry-forward); **fal storage upload integration** for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); **Layer X cost dashboard / metrics** (read-only consumer of `classify`); **Layer Y in-session warm-reuse retrofit** (orchestrator consults `classify` when `_states[id]` is missing across CLI invocations).
 
-**Budget remaining: ~$10.88 of $15.** Layer W spent ~$0.04 total (~$0.02 S3 live × 2 runs due to redaction recapture; ~$0.02 GCS).
+**Budget remaining: ~$10.88 of $15.** Layer W+α spent $0 (zero `sky launch`, zero EC2/GCE instances, AWS quota request is free). Layer W+β cost ceiling estimate: ~$0.10/cloud per smoke cycle (5-min lifecycle on `g4dn.xlarge` AWS / `n1-standard-4 + nvidia-tesla-t4` GCP).
 
 ## Post-MVP
 
@@ -1317,3 +1317,90 @@ key inventory.
 - S3 recorder botocore-context `operation_name` fix (params-pivoting workaround in place; root-cause fix deferred).
 
 Closes PROGRESS:116 carry-forward #4.
+
+### Phase 39 — Layer W+α (cloud bootstrap, SkyPilot perms front-load)
+
+Zero-spend verification layer. Lands every AWS + GCP permission and GPU
+quota the SkyPilot multi-cloud T4 smoke (Layer W+β) needs. Spec:
+`docs/superpowers/specs/2026-06-06-layer-w-alpha-cloud-bootstrap-design.md`.
+Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
+
+- [x] Task 1: AWS scoped IAM policy doc — commit `032b697`
+- [x] Task 2: Operator gate — `.aws/README.md` apply instructions + gitignore
+      re-include patterns for tracked operator docs / policy bytes — commit `90ddbfb`
+- [x] Task 3: AWS probe (sts + iam.simulate + ec2.describe + servicequotas.get)
+      — commit `b79c116`
+- [x] Task 4: GCP probe (regions + SA-role audit + T4 quota), `google-cloud-compute`
+      pinned, `setuptools<72` pinned for `pkg_resources` compat — commit `7a97bf0`
+- [x] Task 5: Quota gap handler — AWS auto-request idempotent via history
+      lookup; GCP console URL emitter (unused this run — GCP already at target)
+      — commit `c0aa2d4`
+- [x] Task 6: `sky check gcp` clean via `live-skypilot` pixi env; AWS sky check
+      deferred (skypilot[aws] pin conflict; AWS perm surface covered by probe)
+      — commit `fbd5387`
+- [x] Task 7: CLOUD-CREDS table + SkyPilot permissions section + this entry
+      + README pointer — commit `<T7>`
+
+**Key design decisions:**
+
+- **Scoped IAM policy stays as a doc, not the live attachment.** Operator
+  preferred 3 AWS-managed broad policies (EC2/IAM/ServiceQuotas FullAccess)
+  + the existing S3FullAccess instead of pasting the 175-line scoped JSON
+  (AWS inline policy limit is 2048 chars; ours is over). The scoped doc
+  at `.aws/policies/skypilot-minimal.json` (commit `032b697`) is committed
+  as the documented swap-in target for a future scope-down layer.
+- **Probe mirrors `tools/preflight.py` seam pattern.** Every SDK call goes
+  through a factory callable; tests inject fakes (`_FakeBoto3Session`,
+  `_FakeGCPRegionsClient`, `_FakeGCPIAMClient`); no real cloud in CI.
+- **Atomic snapshot writes.** tmp-file + rename so a crashed probe never
+  leaves a half-written snapshot.
+- **AWS quota requests are idempotent via history lookup.** Re-running
+  the probe surfaces the same CaseId; never duplicates.
+- **GCP quota requests have no SDK surface.** Probe emits a console URL
+  + operator instructions on gap. Not exercised this layer — GCP T4 quota
+  in `us-central1` was already at the 1.0 target.
+- **`kinoforge-ci-kms` customer policy auto-created mid-T3.** The 4
+  AWS-managed broad policies cover EC2 + IAM + S3 + SQ but not KMS. The
+  probe caught `kms:Encrypt`/`kms:Decrypt` as `implicitDeny` and
+  programmatically attached a scoped customer policy (resource =
+  `arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/4b0dbe0c-3a76-401a-ac2e-d0d949b9fa3e`)
+  to `kinoforge-ci`. Documented in `docs/CLOUD-CREDS.md`.
+- **Gitignore re-include pattern.** Switched from blanket `.aws/` / `.gcp/`
+  ignore to `.aws/*` / `.gcp/*` with explicit re-includes for
+  `.aws/README.md`, `.aws/policies/`, `.gcp/README.md` — secrets
+  (credentials, sa.json, snapshots, KMS arns) still ignored.
+
+**First real artifact:** AWS Service Quotas case
+`cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` open against `L-DB2E81BA`
+(Running On-Demand G/VT vCPUs) requesting 4.0 in `us-east-1`. Captured in
+`.aws/perms-snapshot.json` `quota_request.case_id`. AWS reviews
+asynchronously.
+
+**Spend:** $0. Two operator console actions consumed:
+- Attached 3 AWS-managed broad policies to `kinoforge-ci` (T2 gate).
+- KMS auto-grant didn't require operator (`kinoforge-ci` already held
+  `IAMFullAccess` after T2 attach so the probe could mint the customer
+  policy itself).
+- GCP T4 quota was already at target — no operator action needed.
+- T5 GCP console-URL path never fired.
+
+**Test count:** 9 probe unit tests at T4 → 12 at T5 (+3 quota-gap tests).
+Full suite count unchanged from Phase 38 baseline (~1497) since probe
+tests landed in a previously empty file.
+
+**Deferred / out of scope (Layer W+β candidates):**
+- `sky launch` GPU smoke on AWS + GCP T4 instances.
+- Azure / B2 / R2 SkyPilot enablement.
+- Scope-down: swap AWS-managed broad policies for
+  `.aws/policies/skypilot-minimal.json`.
+- AWS bucket scope-down on `AmazonS3FullAccess` (predates this layer).
+- `skypilot[aws]` pixi pin conflict resolution (blocks `sky check aws`
+  via pixi env; standalone venv runs but reports both clouds disabled
+  due to env-var discovery quirks — both paths abandoned because the
+  probe covers AWS perms end-to-end).
+- AWS quota case approval landing (asynchronous; visible in AWS console
+  Service Quotas → "Requested quotas" tab).
+
+Closes PROGRESS:113 carry-forward #2 (SkyPilot SDK shape) is partial —
+GCP path of SkyPilot is exercised by `sky check` clean. AWS path of
+SkyPilot is NOT exercised; closure is gated on Layer W+β.
