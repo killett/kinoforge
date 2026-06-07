@@ -97,21 +97,29 @@ for AWS/GCS.
   `kms:GenerateDataKey`, `kms:DescribeKey`. Root account retains `kms:*`.
   Rotation: NOT auto-rotated — rotation invalidates Layer W recorded fixtures.
 
-### Layer 3 (Nova Reel) — IAM policies
+### Layer 3 (Luma Ray v2 — pivot from Nova Reel) — IAM policies
+
+**Pivot:** Nova Reel (us-east-1) was blocked on account-level invocation
+approval. Pivoted to Luma Ray v2 in us-west-2 via the generic
+`BedrockVideoEngine`. AWS Model access page is retired — serverless foundation
+models auto-activate on first invoke; no console step needed for Luma Ray v2.
 
 | Policy name | Grants | Attachment | Date | Source |
 |---|---|---|---|---|
-| `kinoforge-nova-reel` | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Nova Reel 1.1 ARN) + ListFoundationModels (`*`) + S3 read/write on `kinoforge-nova-reel-output` | Inline on `kinoforge-ci` | 2026-06-07 | `.aws/policies/bedrock-nova-reel.json` |
+| `kinoforge-luma-ray` | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Luma Ray v2 ARNs in us-west-2) + ListFoundationModels (`*`) + S3 read/write on `bedrock-video-generation-us-west-2-nw51wr` | Inline on `kinoforge-ci` (replaces `kinoforge-nova-reel`) | 2026-06-07 | `.aws/policies/bedrock-luma-ray.json` |
 
-Reversible: `aws iam delete-user-policy --user-name kinoforge-ci --policy-name kinoforge-nova-reel`
+Reversible: `aws iam delete-user-policy --user-name kinoforge-ci --policy-name kinoforge-luma-ray`
 
-### Layer 3 (Nova Reel) — S3 buckets
+Old Nova Reel policy (`kinoforge-nova-reel`) removed when `kinoforge-luma-ray`
+was attached. Old `kinoforge-nova-reel-output` bucket (us-east-1) may still
+exist; remove with:
+`aws s3 rb s3://kinoforge-nova-reel-output --force` (safe to run if not needed)
+
+### Layer 3 (Luma Ray v2) — S3 buckets
 
 | Bucket | Purpose | Region | Date | Notes |
 |---|---|---|---|---|
-| `kinoforge-nova-reel-output` | Nova Reel async-invoke output prefix | `us-east-1` | 2026-06-07 | Created by Layer 3 Task 4; Bedrock writes `{invocation_id}/output.mp4` here |
-
-Reversible: `aws s3 rb s3://kinoforge-nova-reel-output --force`
+| `bedrock-video-generation-us-west-2-nw51wr` | Luma Ray v2 async-invoke output prefix | `us-west-2` | 2026-06-07 | Bedrock-managed bucket; Bedrock writes `{invocation_id}/output.mp4` here |
 
 ### Scope-down follow-up (operator action recommended)
 

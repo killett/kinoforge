@@ -1,0 +1,45 @@
+# AWS Bedrock Luma Ray v2 — text-to-video on Luma Ray v2 in us-west-2.
+#
+# Uses the generic BedrockVideoEngine: engine takes a model_input_template
+# dict where "${PROMPT}" is recursively substituted at submit time.  Swap
+# the model_id + model_input_template block to point at Nova Reel, Luma
+# Ray v2, or any future Bedrock async-video model — no code change needed.
+#
+# Setup (one-time):
+#   1. Attach .aws/policies/bedrock-luma-ray.json to the kinoforge-ci IAM user
+#   2. AWS Model access page is retired — serverless foundation models
+#      auto-activate on first invoke. No console step needed.
+#
+# Live smoke: `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_luma_ray_live.py -v`
+#
+# The prompt body is loaded at smoke-test runtime from
+# /workspace/prompt-field-realistic.txt per the project's standard-prompt
+# directive (see PROGRESS.md "Standard prompt for all video-generation live
+# smokes").
+
+engine:
+  kind: bedrock_video
+  precision: fp16
+  bedrock_video:
+    region_name: us-west-2
+    model_id: luma.ray-v2:0
+    output_s3_uri: s3://bedrock-video-generation-us-west-2-nw51wr/kinoforge-output/
+    model_input_template:
+      prompt: "${PROMPT}"
+      duration: 5
+      aspect_ratio: "16:9"
+      loop: false
+      resolution: "720p"
+
+models:
+  - kind: base
+    ref: bedrock://luma.ray-v2:0
+    target: checkpoints
+
+lifecycle:
+  budget: 5.0
+
+spec:
+  prompt: ""  # filled at runtime from /workspace/prompt-field-realistic.txt
+
+params: {}

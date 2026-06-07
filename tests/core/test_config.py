@@ -1259,70 +1259,84 @@ def test_config_lifecycle_wires_grace_after_session_s() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Layer 3 — NovaReelEngineConfig
+# Layer 3 — BedrockVideoEngineConfig (pivot from Nova Reel to generic engine)
 # ---------------------------------------------------------------------------
 
+_LUMA_RAY_TEMPLATE = {
+    "prompt": "${PROMPT}",
+    "duration": 5,
+    "aspect_ratio": "16:9",
+    "loop": False,
+    "resolution": "720p",
+}
 
-def test_nova_reel_engine_config_loads_required_fields() -> None:
-    from kinoforge.core.config import NovaReelEngineConfig
 
-    cfg = NovaReelEngineConfig(
-        region_name="us-east-1",
-        output_s3_uri="s3://kinoforge-nova-reel-output/",
+def test_bedrock_video_engine_config_loads_required_fields() -> None:
+    from kinoforge.core.config import BedrockVideoEngineConfig
+
+    cfg = BedrockVideoEngineConfig(
+        region_name="us-west-2",
+        model_id="luma.ray-v2:0",
+        output_s3_uri="s3://bedrock-video-generation-us-west-2-nw51wr/kinoforge-output/",
+        model_input_template=_LUMA_RAY_TEMPLATE,
     )
-    assert cfg.region_name == "us-east-1"
-    assert cfg.output_s3_uri == "s3://kinoforge-nova-reel-output/"
-    # Defaults
-    assert cfg.model_id == "amazon.nova-reel-v1:1"
-    assert cfg.duration_seconds == 6
-    assert cfg.fps == 24
-    assert cfg.dimension == "1280x720"
-    assert cfg.prompt_body_key == "prompt"
+    assert cfg.region_name == "us-west-2"
+    assert cfg.model_id == "luma.ray-v2:0"
+    assert cfg.output_s3_uri == (
+        "s3://bedrock-video-generation-us-west-2-nw51wr/kinoforge-output/"
+    )
+    assert cfg.model_input_template == _LUMA_RAY_TEMPLATE
     assert cfg.declared_flags_map == {}
     assert cfg.output_kms_key_id is None
 
 
-def test_nova_reel_engine_config_rejects_non_s3_output_uri() -> None:
+def test_bedrock_video_engine_config_rejects_non_s3_output_uri() -> None:
     import pydantic
 
-    from kinoforge.core.config import NovaReelEngineConfig
+    from kinoforge.core.config import BedrockVideoEngineConfig
 
     with pytest.raises(pydantic.ValidationError, match="s3://"):
-        NovaReelEngineConfig(
-            region_name="us-east-1",
+        BedrockVideoEngineConfig(
+            region_name="us-west-2",
+            model_id="luma.ray-v2:0",
             output_s3_uri="https://wrong.example.com/",
+            model_input_template=_LUMA_RAY_TEMPLATE,
         )
 
 
-def test_nova_reel_engine_config_forbids_unknown_keys() -> None:
+def test_bedrock_video_engine_config_forbids_unknown_keys() -> None:
     import pydantic
 
-    from kinoforge.core.config import NovaReelEngineConfig
+    from kinoforge.core.config import BedrockVideoEngineConfig
 
     with pytest.raises(pydantic.ValidationError, match="extra"):
-        NovaReelEngineConfig.model_validate(
+        BedrockVideoEngineConfig.model_validate(
             {
-                "region_name": "us-east-1",
-                "output_s3_uri": "s3://kinoforge-nova-reel-output/",
+                "region_name": "us-west-2",
+                "model_id": "luma.ray-v2:0",
+                "output_s3_uri": "s3://bedrock-video-generation-us-west-2-nw51wr/",
+                "model_input_template": _LUMA_RAY_TEMPLATE,
                 "unknown_field": "oops",
             }
         )
 
 
-def test_engine_config_nova_reel_optional() -> None:
-    from kinoforge.core.config import EngineConfig, NovaReelEngineConfig
+def test_engine_config_bedrock_video_optional() -> None:
+    from kinoforge.core.config import BedrockVideoEngineConfig, EngineConfig
 
     cfg = EngineConfig(
-        kind="nova_reel",
+        kind="bedrock_video",
         precision="fp16",
-        nova_reel=NovaReelEngineConfig(
-            region_name="us-east-1",
-            output_s3_uri="s3://kinoforge-nova-reel-output/",
+        bedrock_video=BedrockVideoEngineConfig(
+            region_name="us-west-2",
+            model_id="luma.ray-v2:0",
+            output_s3_uri="s3://bedrock-video-generation-us-west-2-nw51wr/kinoforge-output/",
+            model_input_template=_LUMA_RAY_TEMPLATE,
         ),
     )
-    assert cfg.kind == "nova_reel"
-    assert cfg.nova_reel is not None
-    assert cfg.nova_reel.region_name == "us-east-1"
+    assert cfg.kind == "bedrock_video"
+    assert cfg.bedrock_video is not None
+    assert cfg.bedrock_video.region_name == "us-west-2"
     # Sibling engines still default to None
     assert cfg.hosted is None
     assert cfg.fal is None
