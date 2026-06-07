@@ -584,6 +584,189 @@ def test_fixture_replay_gcs_client_constructs_from_empty_fixture(
     assert bucket.list_blobs() == []
 
 
+# ---------------------------------------------------------------------------
+# _s3_op_fingerprint — Bug 1 regression: UploadPart vs PutObject collision
+# ---------------------------------------------------------------------------
+
+
+def test_s3_op_fingerprint_putobject_with_checksum_not_uploadpart() -> None:
+    """PutObject response with ETag+ChecksumCRC32 must NOT be misclassified as UploadPart.
+
+    Regression: when botocore checksum validation is enabled, PutObject responses
+    carry ETag + ChecksumCRC32 + ResponseMetadata — the same shape as UploadPart.
+    The fix pivots on params['PartNumber']: absent on PutObject, present on UploadPart.
+    """
+    from tests.stores.recording import _s3_op_fingerprint
+
+    entry_put = {
+        "params": {"Bucket": "b", "Key": "k"},  # no PartNumber
+        "parsed_response": {
+            "ETag": '"abc123"',
+            "ChecksumCRC32": "AAAA",
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        },
+    }
+    assert _s3_op_fingerprint(entry_put) == "PutObject"
+
+
+def test_s3_op_fingerprint_uploadpart_with_checksum_classified_correctly() -> None:
+    """UploadPart response with ETag+ChecksumCRC32 IS correctly classified as UploadPart.
+
+    Regression: same parsed_response shape as PutObject with checksum enabled;
+    the fix uses params['PartNumber'] (present for UploadPart) to disambiguate.
+    """
+    from tests.stores.recording import _s3_op_fingerprint
+
+    entry_upload_part = {
+        "params": {"Bucket": "b", "Key": "k", "UploadId": "uid", "PartNumber": 1},
+        "parsed_response": {
+            "ETag": '"abc123"',
+            "ChecksumCRC32": "AAAA",
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        },
+    }
+    assert _s3_op_fingerprint(entry_upload_part) == "UploadPart"
+
+
+def test_s3_op_fingerprint_uploadpart_no_checksum_still_uploadpart() -> None:
+    """UploadPart without ChecksumCRC32 is still classified via PartNumber in params."""
+    from tests.stores.recording import _s3_op_fingerprint
+
+    entry = {
+        "params": {"Bucket": "b", "Key": "k", "UploadId": "uid", "PartNumber": 3},
+        "parsed_response": {
+            "ETag": '"deadbeef"',
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        },
+    }
+    assert _s3_op_fingerprint(entry) == "UploadPart"
+
+
+def test_s3_op_fingerprint_putobject_no_checksum_still_putobject() -> None:
+    """PutObject without ChecksumCRC32 is still classified as PutObject."""
+    from tests.stores.recording import _s3_op_fingerprint
+
+    entry = {
+        "params": {"Bucket": "b", "Key": "k"},
+        "parsed_response": {
+            "ETag": '"deadbeef"',
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        },
+    }
+    assert _s3_op_fingerprint(entry) == "PutObject"
+
+
+# ---------------------------------------------------------------------------
+# FixtureReplayGCSClient — Bug 2 regression: PUT-before-GET ordering
+# ---------------------------------------------------------------------------
+
+
+def test_fixture_replay_gcs_client_put_before_get_returns_real_bytes(
+    tmp_path: Path,
+) -> None:
+    """download_as_bytes() must return real bytes even when PUT precedes GET in fixture.
+
+    Regression: the old single-pass _parse_entries built the blob with _content=b""
+    because the download_cache was empty when the PUT entry was processed; the
+    subsequent GET entry stashed bytes that were never applied back to the blob.
+
+    Fix: two-pass parse — pass 1 populates download_cache from all GET entries,
+    pass 2 constructs blobs from PUT entries with the cache already populated.
+    """
+    import base64
+    import json
+
+    from tests.stores.recording import FixtureReplayGCSClient
+
+    blob_name = "artifacts/model.bin"
+    bucket_name = "kinoforge-dev-bucket"
+    real_bytes = b"real content bytes for model"
+
+    # Build a minimal fixture: PUT entry first, then GET entry (normal write→read order).
+    put_meta = {
+        "name": blob_name,
+        "bucket": bucket_name,
+        "size": str(len(real_bytes)),
+        "kmsKeyName": "",
+    }
+    put_entry = {
+        "method": "PUT",
+        "url": f"https://storage.googleapis.com/upload/storage/v1/b/{bucket_name}/o",
+        "status": 200,
+        "body_b64": base64.b64encode(json.dumps(put_meta).encode()).decode("ascii"),
+        "headers": {},
+        "match_key": "PUT:https://...:0000000000000000",
+    }
+
+    get_url = f"https://storage.googleapis.com/download/storage/v1/b/{bucket_name}/o/{blob_name}"
+    get_entry = {
+        "method": "GET",
+        "url": get_url,
+        "status": 200,
+        "body_b64": base64.b64encode(real_bytes).decode("ascii"),
+        "headers": {},
+        "match_key": "GET:https://...:aaaaaaaaaaaaaaaa",
+    }
+
+    fixture = {"_meta": {}, "entries": [put_entry, get_entry]}
+    fx_path = tmp_path / "put_before_get.json"
+    fx_path.write_text(json.dumps(fixture))
+
+    client = FixtureReplayGCSClient(fx_path)
+    downloaded = client.bucket(bucket_name).blob(blob_name).download_as_bytes()
+    assert downloaded == real_bytes, (
+        f"Expected {real_bytes!r}, got {downloaded!r}. "
+        "Two-pass _parse_entries fix may not be applied correctly."
+    )
+
+
+def test_fixture_replay_gcs_client_get_before_put_also_works(
+    tmp_path: Path,
+) -> None:
+    """download_as_bytes() also works in the GET-before-PUT ordering (was always fine)."""
+    import base64
+    import json
+
+    from tests.stores.recording import FixtureReplayGCSClient
+
+    blob_name = "checkpoints/step100.pt"
+    bucket_name = "kinoforge-dev-bucket"
+    real_bytes = b"checkpoint bytes"
+
+    put_meta = {
+        "name": blob_name,
+        "bucket": bucket_name,
+        "size": str(len(real_bytes)),
+        "kmsKeyName": "",
+    }
+    get_url = f"https://storage.googleapis.com/download/storage/v1/b/{bucket_name}/o/{blob_name}"
+
+    get_entry = {
+        "method": "GET",
+        "url": get_url,
+        "status": 200,
+        "body_b64": base64.b64encode(real_bytes).decode("ascii"),
+        "headers": {},
+        "match_key": "GET:https://...:bbbbbbbbbbbbbbbb",
+    }
+    put_entry = {
+        "method": "PUT",
+        "url": f"https://storage.googleapis.com/upload/storage/v1/b/{bucket_name}/o",
+        "status": 200,
+        "body_b64": base64.b64encode(json.dumps(put_meta).encode()).decode("ascii"),
+        "headers": {},
+        "match_key": "PUT:https://...:1111111111111111",
+    }
+
+    fixture = {"_meta": {}, "entries": [get_entry, put_entry]}
+    fx_path = tmp_path / "get_before_put.json"
+    fx_path.write_text(json.dumps(fixture))
+
+    client = FixtureReplayGCSClient(fx_path)
+    downloaded = client.bucket(bucket_name).blob(blob_name).download_as_bytes()
+    assert downloaded == real_bytes
+
+
 def test_fixture_replay_gcs_blob_signed_url_shape(tmp_path: Path) -> None:
     """FixtureReplayGCSBlob.generate_signed_url returns HTTPS URL with method param.
 

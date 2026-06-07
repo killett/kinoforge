@@ -11,7 +11,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
+
+@pytest.mark.slow
 def test_offline_run_makes_no_network_calls(tmp_path: Path) -> None:
     """Run the stores test suite in a subprocess and verify no non-loopback sockets.
 

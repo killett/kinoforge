@@ -76,6 +76,7 @@ addopts = "-v"
 pythonpath = ["src"]
 markers = [
     "live: opt-in tests that hit real APIs (require KINOFORGE_LIVE_TESTS=1 + provider creds)",
+    "slow: tests that are intentionally slow (e.g. subprocess spawning); opt-out with -m 'not slow'",
 ]
 
 [tool.coverage.run]
