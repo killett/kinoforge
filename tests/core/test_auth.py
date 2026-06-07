@@ -616,3 +616,15 @@ def test_registry_passes_through_strategy_specific_kwargs() -> None:
     assert isinstance(strat, Bearer)
     assert strat._scheme == "Token"
     assert strat._header_name == "X-Api-Key"
+
+
+def test_registry_bad_kwargs_re_raises_typeerror_with_strategy_name() -> None:
+    """TypeError from a concrete strategy __init__ gets re-raised with the
+    strategy name in the message so the operator can identify the source.
+    """
+    from kinoforge.core.auth import build_auth_strategy
+
+    with pytest.raises(TypeError, match="bearer"):
+        # `env_var` is required positional; `unknown_kwarg` is not accepted.
+        # Either way, Bearer.__init__ raises TypeError.
+        build_auth_strategy({"strategy": "bearer", "unknown_kwarg": "x"})
