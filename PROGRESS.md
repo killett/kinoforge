@@ -158,11 +158,10 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 0–6 done, probe tightened (Task B), offline replay scaffold committed (Task
 8). Region pivot: us-east-1 → us-west-2 (Luma Ray v2 availability). Task 7
 (live smoke) BLOCKED on AWS Support case (account-level authorization gate).
-AWS Support case workflow: `docs/aws-support-case-luma-ray.md`.
 
 **Single next action (operator):**
-Submit the AWS Support case (see `docs/aws-support-case-luma-ray.md`). On
-AWS reply, run:
+Submit an AWS Support case for Bedrock Luma Ray v2 access in us-west-2.
+On AWS reply, run:
 ```
 KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 pixi run pytest tests/live/test_luma_ray_live.py -v -s
 ```
@@ -1592,9 +1591,9 @@ Plan:
 - [x] Task 6: RED live-smoke scaffold (`tests/live/test_nova_reel_live.py`) — commit `28f31bd`
 - [x] **PIVOT (Phase 1 refactor):** `nova_reel` → `BedrockVideoEngine` + Luma Ray config — see below
 - [x] **Probe tighten:** two-stage `check_bedrock_model_access` (catalog + runtime authorization) — commit `09e9a43`
-- [x] **Region pivot:** us-east-1 → us-west-2 (Luma Ray v2 availability); AWS Support case workflow at `docs/aws-support-case-luma-ray.md`
+- [x] **Region pivot:** us-east-1 → us-west-2 (Luma Ray v2 availability); AWS Support case is the documented unblock path
 - [x] Task 8: Offline replay scaffold (`tests/engines/test_bedrock_video_replay.py`) — commit `b94059e` (skips until fixture lands)
-- [ ] Task 7 (BLOCKED): fire live smoke + capture fixture — blocked on AWS Support case (see `docs/aws-support-case-luma-ray.md`)
+- [ ] Task 7 (BLOCKED): fire live smoke + capture fixture — blocked on AWS Support case for Bedrock Luma Ray v2 access
 - [ ] Task 9: README + PROGRESS final gate (README Bedrock Video section added in this session)
 
 **Phase 2 (live smoke) — BLOCKED (same account-level gate as Nova Reel):**
