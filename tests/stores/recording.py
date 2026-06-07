@@ -5,10 +5,12 @@ from __future__ import annotations
 import base64
 import datetime as _dt
 import hashlib
+import io
 import json
 import re
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 
@@ -503,35 +505,458 @@ class GCSRecorder:
 # ----------------------------------------------------------------------------
 
 
-class FixtureReplayS3Client:
-    """Minimal boto3 S3 client surface backed by an :class:`S3Recorder` in replay mode.
+def _s3_op_fingerprint(entry: dict[str, Any]) -> str:
+    """Classify an S3 fixture entry by its parsed-response shape.
 
-    Note:
-        Task 11 fleshes out the full implementation.
+    The live captures have ``operation=''`` (botocore context was not
+    propagated), so we infer the operation from distinctive response keys.
 
     Args:
-        fixture_path: Path to a previously captured fixture JSON file.
+        entry: A single fixture entry dict.
 
-    Raises:
-        NotImplementedError: Always — Task 11 provides the real implementation.
+    Returns:
+        A string operation label, e.g. ``"HeadObject"``.
+    """
+    keys: frozenset[str] = frozenset(entry["parsed_response"].keys())
+    if "UploadId" in keys:
+        return "CreateMultipartUpload"
+    if "Body" in keys:
+        return "GetObject"
+    if "Contents" in keys or "KeyCount" in keys:
+        return "ListObjectsV2"
+    if "Location" in keys:
+        return "CompleteMultipartUpload"
+    if "AcceptRanges" in keys:
+        return "HeadObject"
+    if keys == frozenset({"ResponseMetadata"}):
+        return "DeleteObject"
+    if "ETag" in keys and "ChecksumCRC32" in keys and "ResponseMetadata" in keys:
+        return "UploadPart"
+    # Fallback — put_object / upload_fileobj acknowledgement.
+    if "ETag" in keys:
+        return "PutObject"
+    return "Unknown"
+
+
+class _FixtureReplayS3Exceptions:
+    """Stand-in ``exceptions`` namespace for :class:`FixtureReplayS3Client`."""
+
+    class NoSuchKey(Exception):
+        """Mimic boto3 NoSuchKey."""
+
+    class ClientError(Exception):
+        """Mimic botocore ClientError."""
+
+        def __init__(self, code: str) -> None:
+            super().__init__(code)
+            self.response = {"Error": {"Code": code}}
+
+
+class FixtureReplayS3Client:
+    """boto3 S3 client surface backed by pre-captured fixture JSON.
+
+    The live-capture recorder does not preserve operation names (they arrive
+    as empty strings due to a botocore-context gap).  This client therefore
+    classifies each fixture entry by **response-shape fingerprint** rather
+    than by match-key lookup, and returns entries in first-match order.
+
+    Args:
+        fixture_path: Path to a previously captured ``.json`` fixture file
+            (shape: ``{"_meta": {...}, "entries": [...]}``.
     """
 
+    exceptions = _FixtureReplayS3Exceptions()
+
     def __init__(self, fixture_path: Path) -> None:
-        raise NotImplementedError("Layer W T11 fleshes this out")
+        raw = json.loads(Path(fixture_path).read_text())
+        self._entries: list[dict[str, Any]] = raw["entries"]
+        self.meta = SimpleNamespace(
+            config=SimpleNamespace(
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
+        )
+
+    def set_retry_config(self, retries: dict[str, Any]) -> None:
+        """Mirror the S3ArtifactStore retry-config setter.
+
+        Args:
+            retries: Dict with ``max_attempts`` and ``mode`` keys.
+        """
+        self.meta.config.retries = retries
+
+    def _first_by_op(self, op: str) -> dict[str, Any]:
+        """Return the parsed_response of the first entry classified as *op*.
+
+        Args:
+            op: Operation label as returned by :func:`_s3_op_fingerprint`.
+
+        Returns:
+            The ``parsed_response`` dict from the matching entry.
+
+        Raises:
+            FixtureMissError: When no entry matches.
+        """
+        for entry in self._entries:
+            if _s3_op_fingerprint(entry) == op:
+                return dict(entry["parsed_response"])
+        raise FixtureMissError(f"No fixture entry classified as {op!r}")
+
+    # ------------------------------------------------------------------
+    # Public SDK surface
+    # ------------------------------------------------------------------
+
+    def upload_fileobj(
+        self,
+        fileobj: Any,
+        Bucket: str,  # noqa: N803
+        Key: str,  # noqa: N803
+        ExtraArgs: dict[str, Any] | None = None,  # noqa: N803
+    ) -> None:
+        """Replay an upload_fileobj call — silently acknowledged (no return value).
+
+        The fixture may carry a PutObject or UploadPart response, but the
+        production ``S3ArtifactStore`` does not inspect the return value of
+        ``upload_fileobj``, so we return ``None``.
+
+        Args:
+            fileobj: Ignored in replay mode.
+            Bucket: Ignored in replay mode.
+            Key: Ignored in replay mode.
+            ExtraArgs: Ignored in replay mode.
+        """
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        """Return the recorded HeadObject response.
+
+        Args:
+            Bucket: Ignored — fixture is keyed by response shape.
+            Key: Ignored — fixture is keyed by response shape.
+
+        Returns:
+            Parsed HeadObject response dict.
+        """
+        return self._first_by_op("HeadObject")
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        """Return the recorded GetObject response with a reconstructed Body.
+
+        The ``Body`` value is replaced with an in-memory ``BytesIO`` so callers
+        can call ``.read()`` without botocore internals.
+
+        Args:
+            Bucket: Ignored.
+            Key: Ignored.
+
+        Returns:
+            Parsed GetObject response dict with ``Body`` replaced by BytesIO.
+        """
+        resp = self._first_by_op("GetObject")
+        # The recorded Body is a repr-string ("botocore.response.StreamingBody ...").
+        # Replace it with an empty BytesIO so callers can .read() it.
+        resp["Body"] = io.BytesIO(b"")
+        return resp
+
+    def list_objects_v2(self, *, Bucket: str, Prefix: str = "") -> dict[str, Any]:
+        """Return the recorded ListObjectsV2 response.
+
+        Args:
+            Bucket: Ignored.
+            Prefix: Ignored.
+
+        Returns:
+            Parsed ListObjectsV2 response dict.
+        """
+        return self._first_by_op("ListObjectsV2")
+
+    def delete_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        """Return the recorded DeleteObject response.
+
+        Args:
+            Bucket: Ignored.
+            Key: Ignored.
+
+        Returns:
+            Parsed DeleteObject response dict (typically just ``ResponseMetadata``).
+        """
+        return self._first_by_op("DeleteObject")
+
+    def generate_presigned_url(
+        self,
+        op: str,
+        *,
+        Params: dict[str, Any],  # noqa: N803
+        ExpiresIn: int,  # noqa: N803
+    ) -> str:
+        """Return a synthetic presigned URL reconstructed from fixture metadata.
+
+        Real ``generate_presigned_url`` is SDK-local (no wire call), so the
+        fixture contains no dedicated entry for it.  We synthesise a URL that
+        satisfies the wire-shape invariants the offline tests assert: starts
+        with ``https://`` and embeds the bucket name.
+
+        Args:
+            op: ``"get_object"`` or ``"put_object"``.
+            Params: Must contain at least ``Bucket`` and ``Key``.
+            ExpiresIn: TTL in seconds.
+
+        Returns:
+            A synthetic HTTPS presigned URL string.
+        """
+        bucket = Params.get("Bucket", "<bucket>")
+        key = Params.get("Key", "<key>")
+        return (
+            f"https://{bucket}.s3.amazonaws.com/{key}"
+            f"?X-Amz-Signature=<REDACTED>&X-Amz-Expires={ExpiresIn}"
+        )
+
+    def get_paginator(self, op: str) -> _FixtureReplayS3Paginator:
+        """Return a paginator backed by the ListObjectsV2 fixture entry.
+
+        Args:
+            op: Must be ``"list_objects_v2"``.
+
+        Returns:
+            A :class:`_FixtureReplayS3Paginator` instance.
+        """
+        assert op == "list_objects_v2", f"unexpected paginator op: {op!r}"
+        return _FixtureReplayS3Paginator(self._first_by_op("ListObjectsV2"))
+
+
+class _FixtureReplayS3Paginator:
+    """Single-page paginator backed by a ListObjectsV2 fixture entry.
+
+    Args:
+        list_response: Parsed ListObjectsV2 response dict.
+    """
+
+    def __init__(self, list_response: dict[str, Any]) -> None:
+        self._response = list_response
+
+    def paginate(self, *, Bucket: str, Prefix: str) -> list[dict[str, Any]]:
+        """Yield the single fixture page.
+
+        Args:
+            Bucket: Ignored.
+            Prefix: Ignored.
+
+        Returns:
+            List containing the single fixture response.
+        """
+        return [self._response]
+
+
+# ---------------------------------------------------------------------------
+# GCS fixture replay — HTTP-level fixture → high-level blob surface.
+# ---------------------------------------------------------------------------
+
+
+class _FixtureReplayGCSBlob:
+    """A fixture-backed blob exposing the surface GCSArtifactStore calls.
+
+    Args:
+        name: Blob name (key).
+        metadata: The parsed JSON metadata dict from the fixture PUT response,
+            or ``None`` if the blob only has raw bytes (e.g. download response).
+        content: Raw bytes body (from the GET response), or ``b""`` if absent.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        metadata: dict[str, Any] | None,
+        content: bytes,
+    ) -> None:
+        self.name = name
+        self._metadata = metadata or {}
+        self._content = content
+        self.kms_key_name: str | None = self._metadata.get("kmsKeyName")
+        self.size: int = int(self._metadata.get("size", len(content)))
+
+    def upload_from_file(self, fileobj: Any, *, retry: Any = None) -> None:
+        """No-op upload in replay mode.
+
+        Args:
+            fileobj: Ignored.
+            retry: Ignored.
+        """
+
+    def download_as_bytes(self, *, retry: Any = None) -> bytes:
+        """Return the recorded response bytes.
+
+        Args:
+            retry: Ignored.
+
+        Returns:
+            The bytes captured in the fixture GET response.
+        """
+        return self._content
+
+    def delete(self, *args: Any, retry: Any = None, **kwargs: Any) -> None:
+        """No-op delete in replay mode.
+
+        Args:
+            *args: Ignored.
+            retry: Ignored.
+            **kwargs: Ignored.
+        """
+
+    def reload(self) -> None:
+        """No-op reload in replay mode."""
+
+    def generate_signed_url(self, *, version: str, expiration: Any, method: str) -> str:
+        """Return a synthetic signed URL satisfying wire-shape invariants.
+
+        Args:
+            version: Signing version (e.g. ``"v4"``).
+            expiration: Timedelta or seconds.
+            method: ``"GET"`` or ``"PUT"``.
+
+        Returns:
+            A synthetic HTTPS signed URL string.
+        """
+        return (
+            f"https://storage.googleapis.com/{self.name}"
+            f"?X-Goog-Signature=<REDACTED>&method={method}"
+        )
+
+
+class _FixtureReplayGCSBucket:
+    """A fixture-backed bucket exposing the surface GCSArtifactStore calls.
+
+    Args:
+        name: Bucket name.
+        blobs: Pre-populated mapping of blob-name → :class:`_FixtureReplayGCSBlob`.
+    """
+
+    def __init__(self, name: str, blobs: dict[str, _FixtureReplayGCSBlob]) -> None:
+        self.name = name
+        self._blobs = blobs
+
+    def blob(self, key: str) -> _FixtureReplayGCSBlob:
+        """Return the fixture-backed blob for *key*.
+
+        Falls back to an empty blob if *key* is not in the fixture.
+
+        Args:
+            key: Blob name.
+
+        Returns:
+            :class:`_FixtureReplayGCSBlob` instance.
+        """
+        if key in self._blobs:
+            return self._blobs[key]
+        return _FixtureReplayGCSBlob(key, None, b"")
+
+    def list_blobs(
+        self, *, prefix: str = "", retry: Any = None
+    ) -> list[_FixtureReplayGCSBlob]:
+        """Return blobs matching *prefix*.
+
+        Args:
+            prefix: Key prefix filter.
+            retry: Ignored.
+
+        Returns:
+            List of :class:`_FixtureReplayGCSBlob` instances.
+        """
+        return [b for name, b in sorted(self._blobs.items()) if name.startswith(prefix)]
 
 
 class FixtureReplayGCSClient:
-    """Minimal GCS client surface backed by a :class:`GCSRecorder` in replay mode.
+    """GCS client surface backed by pre-captured HTTP-level fixture JSON.
 
-    Note:
-        Task 11 fleshes out the full implementation.
+    The GCS recorder captures raw HTTPS round-trips.  This client parses
+    those entries to reconstruct a blob-level surface for offline tests:
+
+    - ``POST`` resumable-upload initiation → ignored (no useful response body).
+    - ``PUT``  resumable-upload completion → JSON body = blob metadata.
+    - ``GET``  download                   → raw bytes body = blob content.
+    - ``DELETE``                          → ignored.
+
+    The blob name and bucket are extracted from the metadata JSON (``name``
+    and ``bucket`` fields present in GCS upload-complete responses).
 
     Args:
-        fixture_path: Path to a previously captured fixture JSON file.
-
-    Raises:
-        NotImplementedError: Always — Task 11 provides the real implementation.
+        fixture_path: Path to a previously captured ``.json`` fixture file.
     """
 
     def __init__(self, fixture_path: Path) -> None:
-        raise NotImplementedError("Layer W T11 fleshes this out")
+        raw = json.loads(Path(fixture_path).read_text())
+        self._meta: dict[str, Any] = raw.get("_meta", {})
+        entries: list[dict[str, Any]] = raw["entries"]
+
+        # Build blob map: bucket_name → {blob_name → blob}
+        self._buckets: dict[str, dict[str, _FixtureReplayGCSBlob]] = {}
+        self._parse_entries(entries)
+
+    def _parse_entries(self, entries: list[dict[str, Any]]) -> None:
+        """Parse HTTP entries and populate ``_buckets``.
+
+        Args:
+            entries: Raw list of fixture entry dicts.
+        """
+        # Track the last download bytes (GET responses) keyed by blob name.
+        download_cache: dict[str, bytes] = {}
+
+        for entry in entries:
+            method = entry.get("method", "")
+            body_bytes = base64.b64decode(entry.get("body_b64", ""))
+            status = entry.get("status", 0)
+
+            if method == "PUT" and status == 200 and body_bytes:
+                # Resumable upload completion — body is blob metadata JSON.
+                try:
+                    meta = json.loads(body_bytes)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                blob_name: str = meta.get("name", "")
+                bucket_name: str = meta.get("bucket", "")
+                if not blob_name or not bucket_name:
+                    continue
+                content = download_cache.get(blob_name, b"")
+                blob = _FixtureReplayGCSBlob(blob_name, meta, content)
+                self._buckets.setdefault(bucket_name, {})[blob_name] = blob
+
+            elif method == "GET" and status == 200:
+                # Download response — stash bytes by URL-fragment blob name.
+                url = entry.get("url", "")
+                # Extract blob name from URL path after /o/ (URL-decoded).
+                blob_name = _extract_gcs_blob_name(url)
+                if blob_name:
+                    import urllib.parse
+
+                    download_cache[urllib.parse.unquote(blob_name)] = body_bytes
+
+    def bucket(self, name: str) -> _FixtureReplayGCSBucket:
+        """Return the fixture-backed bucket for *name*.
+
+        Args:
+            name: Bucket name.
+
+        Returns:
+            :class:`_FixtureReplayGCSBucket` with blobs parsed from fixture.
+        """
+        return _FixtureReplayGCSBucket(name, self._buckets.get(name, {}))
+
+
+def _extract_gcs_blob_name(url: str) -> str:
+    """Extract the blob name from a GCS download URL.
+
+    Expected pattern:
+    ``https://storage.googleapis.com/download/storage/v1/b/<bucket>/o/<blob>?...``
+
+    Args:
+        url: Full GCS HTTPS URL string.
+
+    Returns:
+        The blob name segment (URL-encoded), or empty string if not matched.
+    """
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path  # e.g. /download/storage/v1/b/bucket/o/blob%2Fname
+    # Split on /o/
+    parts = path.split("/o/", 1)
+    if len(parts) == 2:
+        return parts[1]
+    return ""

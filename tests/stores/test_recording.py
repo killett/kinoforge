@@ -531,23 +531,75 @@ def test_gcs_recording_adapter_file_like_replay_hits(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# FixtureReplay stubs — raise NotImplementedError at __init__
+# FixtureReplay clients — Layer W T11 working implementations
 # ---------------------------------------------------------------------------
 
 
-def test_fixture_replay_s3_client_raises_not_implemented(tmp_path: Path) -> None:
+def test_fixture_replay_s3_client_constructs_from_empty_fixture(tmp_path: Path) -> None:
+    """FixtureReplayS3Client must construct without error from an empty fixture.
+
+    Bug this catches: constructor raises on missing or empty entries list.
+    """
     from tests.stores.recording import FixtureReplayS3Client
 
-    fx = tmp_path / "stub.json"
+    fx = tmp_path / "empty.json"
     fx.write_text(json.dumps({"_meta": {}, "entries": []}))
-    with pytest.raises(NotImplementedError, match="T11"):
-        FixtureReplayS3Client(fx)
+    client = FixtureReplayS3Client(fx)
+    assert client.meta.config.retries["max_attempts"] == 3
+    assert client.meta.config.retries["mode"] == "standard"
 
 
-def test_fixture_replay_gcs_client_raises_not_implemented(tmp_path: Path) -> None:
+def test_fixture_replay_s3_client_generate_presigned_url(tmp_path: Path) -> None:
+    """FixtureReplayS3Client.generate_presigned_url returns an HTTPS URL with bucket.
+
+    Bug this catches: URL is non-HTTPS or omits the bucket name.
+    """
+    from tests.stores.recording import FixtureReplayS3Client
+
+    fx = tmp_path / "empty.json"
+    fx.write_text(json.dumps({"_meta": {}, "entries": []}))
+    client = FixtureReplayS3Client(fx)
+    url = client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": "my-bucket", "Key": "my/key"},
+        ExpiresIn=600,
+    )
+    assert url.startswith("https://")
+    assert "my-bucket" in url
+
+
+def test_fixture_replay_gcs_client_constructs_from_empty_fixture(
+    tmp_path: Path,
+) -> None:
+    """FixtureReplayGCSClient must construct without error from an empty fixture.
+
+    Bug this catches: constructor raises on missing or empty entries list.
+    """
     from tests.stores.recording import FixtureReplayGCSClient
 
-    fx = tmp_path / "stub.json"
+    fx = tmp_path / "empty.json"
     fx.write_text(json.dumps({"_meta": {}, "entries": []}))
-    with pytest.raises(NotImplementedError, match="T11"):
-        FixtureReplayGCSClient(fx)
+    client = FixtureReplayGCSClient(fx)
+    bucket = client.bucket("any-bucket")
+    assert bucket.list_blobs() == []
+
+
+def test_fixture_replay_gcs_blob_signed_url_shape(tmp_path: Path) -> None:
+    """FixtureReplayGCSBlob.generate_signed_url returns HTTPS URL with method param.
+
+    Bug this catches: synthesised signed URL does not start with https:// or
+    omits the X-Goog-Signature marker.
+    """
+    from datetime import timedelta
+
+    from tests.stores.recording import FixtureReplayGCSClient
+
+    fx = tmp_path / "empty.json"
+    fx.write_text(json.dumps({"_meta": {}, "entries": []}))
+    client = FixtureReplayGCSClient(fx)
+    blob = client.bucket("bkt").blob("some/key")
+    url = blob.generate_signed_url(
+        version="v4", expiration=timedelta(seconds=300), method="GET"
+    )
+    assert url.startswith("https://")
+    assert "X-Goog-Signature" in url

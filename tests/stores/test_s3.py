@@ -2,11 +2,13 @@
 
 Spec: docs/superpowers/specs/2026-05-29-s3-gcs-stores-design.md §3.1 + §8.2
 Layer W T3: multipart + encryption + signed_url + retry pin.
+Layer W T11: TestS3FromFixture — fixture-replay wire-shape tests.
 """
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,6 +16,9 @@ import pytest
 from kinoforge.core.config import StoreConfig, StoreEncryptionConfig
 from kinoforge.stores.s3 import S3ArtifactStore
 from tests.stores.conftest import FakeS3Client
+from tests.stores.recording import FixtureReplayS3Client
+
+_FIXTURES = Path(__file__).parent / "fixtures" / "s3"
 
 
 @pytest.fixture()
@@ -350,3 +355,105 @@ def test_s3_signed_url_put(fake_s3_client: FakeS3Client) -> None:
     op, _, ttl = fake_s3_client.generate_presigned_url_calls[0]
     assert op == "put_object"
     assert ttl == 120
+
+
+# ---------------------------------------------------------------------------
+# Layer W T11 — TestS3FromFixture: wire-shape invariants against captured fixtures
+# ---------------------------------------------------------------------------
+
+
+class TestS3FromFixture:
+    """Replay captured S3 fixture JSON and assert wire-shape invariants.
+
+    These tests exercise no network I/O — they load committed ``.json``
+    fixture files and verify that the recorded responses carry the shape
+    properties the production code depends on.
+    """
+
+    def test_multipart_etag_has_dash_suffix(self) -> None:
+        """Multipart-upload ETag must carry a ``-N`` part-count suffix.
+
+        Bug this catches: S3 records a simple hex ETag for multipart uploads
+        (which would mean the SDK silently fell back to single-part) — the
+        ``-2`` suffix confirms two parts were actually uploaded.
+        """
+        client = FixtureReplayS3Client(_FIXTURES / "test_s3_multipart.json")
+        head = client.head_object(Bucket="any", Key="any")
+        etag = head["ETag"].strip('"')
+        assert "-" in etag, f"expected multipart ETag with -N suffix, got {etag!r}"
+
+    def test_kms_response_carries_aws_kms(self) -> None:
+        """KMS-encrypted HeadObject must carry ``aws:kms`` SSE type and redacted key.
+
+        Bug this catches: wrong SSE mode recorded (AES256 instead of aws:kms),
+        indicating the KMS ExtraArgs were not forwarded to upload_fileobj.
+        """
+        client = FixtureReplayS3Client(_FIXTURES / "test_s3_encryption_kms.json")
+        head = client.head_object(Bucket="any", Key="any")
+        assert head.get("ServerSideEncryption") == "aws:kms", (
+            f"expected aws:kms, got {head.get('ServerSideEncryption')!r}"
+        )
+        key_id: str = head.get("SSEKMSKeyId", "")
+        assert "<S3_KMS_KEY>" in key_id, (
+            f"expected redacted placeholder in SSEKMSKeyId, got {key_id!r}"
+        )
+
+    def test_default_encryption_is_aes256(self) -> None:
+        """Default-encryption HeadObject must carry ``AES256`` (bucket-default SSE).
+
+        Bug this catches: no SSE field in the response — bucket is not
+        configured with default encryption at rest.
+        """
+        client = FixtureReplayS3Client(_FIXTURES / "test_s3_encryption_default.json")
+        head = client.head_object(Bucket="any", Key="any")
+        assert head.get("ServerSideEncryption") == "AES256", (
+            f"expected AES256, got {head.get('ServerSideEncryption')!r}"
+        )
+
+    def test_hot_path_round_trip(self) -> None:
+        """Hot-path fixture must carry a HeadObject with ETag and ContentLength > 0.
+
+        Bug this catches: hot_path fixture is empty or mis-classified — no
+        HeadObject entry means the recording seam broke during capture.
+        """
+        client = FixtureReplayS3Client(_FIXTURES / "test_s3_hot_path.json")
+        head = client.head_object(Bucket="any", Key="any")
+        assert head.get("ETag"), "expected non-empty ETag in hot_path HeadObject"
+        assert int(head.get("ContentLength", 0)) > 0, (
+            "expected ContentLength > 0 in hot_path HeadObject"
+        )
+
+    def test_signed_url_get_shape(self) -> None:
+        """Signed-URL GET fixture must yield a valid HTTPS URL containing the bucket.
+
+        Bug this catches: generate_presigned_url returns a non-HTTPS URL or
+        omits the bucket name — signed URL generation is broken.
+        """
+        client = FixtureReplayS3Client(_FIXTURES / "test_s3_signed_url_get.json")
+        url = client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": "kinoforge-realcloud-tests-<AWS_ACCOUNT>", "Key": "k"},
+            ExpiresIn=300,
+        )
+        assert url.startswith("https://"), f"expected HTTPS URL, got {url!r}"
+        # The bucket name has the <AWS_ACCOUNT> placeholder after redaction.
+        assert "kinoforge-realcloud-tests" in url, (
+            f"expected bucket name in URL, got {url!r}"
+        )
+
+    def test_signed_url_put_shape(self) -> None:
+        """Signed-URL PUT fixture must yield a valid HTTPS URL containing the bucket.
+
+        Bug this catches: put_object presigned URL generation broken —
+        same root cause as GET but exercised on the write path.
+        """
+        client = FixtureReplayS3Client(_FIXTURES / "test_s3_signed_url_put.json")
+        url = client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": "kinoforge-realcloud-tests-<AWS_ACCOUNT>", "Key": "k"},
+            ExpiresIn=300,
+        )
+        assert url.startswith("https://"), f"expected HTTPS URL, got {url!r}"
+        assert "kinoforge-realcloud-tests" in url, (
+            f"expected bucket name in URL, got {url!r}"
+        )

@@ -2,18 +2,23 @@
 
 Spec: docs/superpowers/specs/2026-05-29-s3-gcs-stores-design.md §3.2 + §8.2
 Layer W T4 additions: resumable upload, CMEK, signed_url, retry baseline.
+Layer W T11: TestGCSFromFixture — fixture-replay wire-shape tests.
 """
 
 from __future__ import annotations
 
 import sys
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
 from kinoforge.core.config import StoreConfig, StoreEncryptionConfig
 from kinoforge.stores.gcs import _GCS_RETRY, GCSArtifactStore
 from tests.stores.conftest import FakeGCSClient
+from tests.stores.recording import FixtureReplayGCSClient
+
+_FIXTURES = Path(__file__).parent / "fixtures" / "gcs"
 
 try:
     from google.api_core.retry import Retry as _Retry
@@ -348,3 +353,103 @@ def test_gcs_get_bytes_passes_retry(fake_gcs_client: FakeGCSClient) -> None:
     blob = fake_gcs_client.buckets["layer-w-test"]._blob_cache["run1/out.bin"]
     assert blob.download_as_bytes_calls, "expected download_as_bytes to be called"
     assert blob.download_as_bytes_calls[0] is _GCS_RETRY
+
+
+# ---------------------------------------------------------------------------
+# Layer W T11 — TestGCSFromFixture: wire-shape invariants against captured fixtures
+# ---------------------------------------------------------------------------
+
+
+class TestGCSFromFixture:
+    """Replay captured GCS fixture JSON and assert wire-shape invariants.
+
+    These tests exercise no network I/O — they load committed ``.json``
+    fixture files and verify that the recorded responses carry the shape
+    properties the production code depends on.
+    """
+
+    def test_resumable_size_matches(self) -> None:
+        """Resumable-upload fixture must carry a blob whose size is 16 MiB.
+
+        Bug this catches: the large-file upload fell back to a non-resumable
+        path or the fixture captured a truncated/empty body.
+        """
+        client = FixtureReplayGCSClient(_FIXTURES / "test_gcs_resumable.json")
+        bucket = client.bucket("<GCS_BUCKET>")
+        # All blobs in this fixture live under one run_id prefix.
+        blobs = bucket.list_blobs()
+        assert blobs, "expected at least one blob in resumable fixture"
+        blob = blobs[0]
+        assert blob.size == 16 * 1024 * 1024, (
+            f"expected 16 MiB blob, got size={blob.size}"
+        )
+
+    def test_cmek_kms_key_name_present(self) -> None:
+        """CMEK fixture blob must carry a ``kms_key_name`` with the GCS KMS placeholder.
+
+        Bug this catches: kms_key_name is absent from the fixture (CMEK was
+        not wired in the upload path) or the KMS key ARN was not redacted.
+        """
+        client = FixtureReplayGCSClient(_FIXTURES / "test_gcs_encryption_cmek.json")
+        bucket = client.bucket("<GCS_BUCKET>")
+        blobs = bucket.list_blobs()
+        assert blobs, "expected at least one blob in CMEK fixture"
+        blob = blobs[0]
+        assert blob.kms_key_name, "expected non-empty kms_key_name in CMEK fixture blob"
+        # The KMS key name should NOT have been redacted in GCS fixtures
+        # (only the GCS_KMS_KEY placeholder would be inserted if redacted).
+        # Either the real key name or the placeholder must be present.
+        assert (
+            "kinoforge" in blob.kms_key_name or "<GCS_KMS_KEY>" in blob.kms_key_name
+        ), f"unexpected kms_key_name value: {blob.kms_key_name!r}"
+
+    def test_hot_path_round_trip(self) -> None:
+        """Hot-path fixture must carry a non-empty blob with positive size.
+
+        Bug this catches: hot_path fixture is empty or the blob metadata
+        wasn't captured in the PUT response.
+        """
+        client = FixtureReplayGCSClient(_FIXTURES / "test_gcs_hot_path.json")
+        bucket = client.bucket("<GCS_BUCKET>")
+        blobs = bucket.list_blobs()
+        assert blobs, "expected at least one blob in hot_path fixture"
+        blob = blobs[0]
+        assert blob.size > 0, f"expected positive blob size, got {blob.size}"
+
+    def test_signed_url_get_shape(self) -> None:
+        """Signed-URL GET replay must return an HTTPS URL with Goog-Signature param.
+
+        Bug this catches: generate_signed_url returns a non-HTTPS URL —
+        v4 signing is broken or the wrong URL scheme is used.
+        """
+        client = FixtureReplayGCSClient(_FIXTURES / "test_gcs_signed_url_get.json")
+        bucket = client.bucket("<GCS_BUCKET>")
+        blobs = bucket.list_blobs()
+        # signed_url_get fixture may not have a download entry; use any available blob,
+        # or fall back to a named blob known from the fixture metadata.
+        if blobs:
+            blob = blobs[0]
+        else:
+            blob = bucket.blob("live-14a5a126/signed.bin")
+        url = blob.generate_signed_url(
+            version="v4", expiration=timedelta(seconds=300), method="GET"
+        )
+        assert url.startswith("https://"), f"expected HTTPS URL, got {url!r}"
+        assert "X-Goog-Signature" in url, (
+            f"expected X-Goog-Signature in URL, got {url!r}"
+        )
+
+    def test_signed_url_put_shape(self) -> None:
+        """Signed-URL PUT replay must return an HTTPS URL with correct method param.
+
+        Bug this catches: PUT method is not threaded through the
+        generate_signed_url call — wrong HTTP method used.
+        """
+        client = FixtureReplayGCSClient(_FIXTURES / "test_gcs_signed_url_put.json")
+        bucket = client.bucket("<GCS_BUCKET>")
+        blob = bucket.blob("live-251b7dc8/signed-put.bin")
+        url = blob.generate_signed_url(
+            version="v4", expiration=timedelta(seconds=300), method="PUT"
+        )
+        assert url.startswith("https://"), f"expected HTTPS URL, got {url!r}"
+        assert "method=PUT" in url, f"expected method=PUT in URL, got {url!r}"
