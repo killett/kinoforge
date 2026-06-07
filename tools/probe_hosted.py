@@ -122,22 +122,35 @@ def write_snapshot(path: Path, results: Sequence[ProbeResult]) -> None:
     os.replace(tmp, path)
 
 
-def check_bedrock_model_access(client: Any, model_id: str) -> ProbeResult:  # noqa: ANN401
-    """Probe whether ``model_id`` is accessible to the caller.
+def check_bedrock_model_access(
+    bedrock_client: Any,  # noqa: ANN401
+    bedrock_runtime_client: Any,  # noqa: ANN401
+    model_id: str,
+) -> ProbeResult:
+    """Probe whether model_id is BOTH listed AND invokable.
+
+    Two-stage check:
+
+    1. Catalog: list_foundation_models must include model_id (proves the model
+       exists + is region-available + IAM grants ListFoundationModels).
+    2. Authorization: a deliberately-malformed StartAsyncInvoke must return
+       ValidationException with a body-format error, NOT 'Operation not
+       allowed'. The latter is AWS's account-level access gate.
 
     Args:
-        client: A boto3 bedrock control-plane client (NOT bedrock-runtime).
-        model_id: Bedrock foundation-model identifier
-            (e.g. ``"amazon.nova-reel-v1:1"``).
+        bedrock_client: boto3 bedrock (control plane).
+        bedrock_runtime_client: boto3 bedrock-runtime (data plane).
+        model_id: e.g. ``"luma.ray-v2:0"``.
 
     Returns:
-        :class:`ProbeResult` with ``ok=True`` and ``identity=<model_id>``
-        when the model appears in :py:meth:`list_foundation_models`,
-        otherwise ``ok=False`` with a descriptive reason.
+        :class:`ProbeResult` with ``ok=True`` when the model is both listed
+        and invokable, otherwise ``ok=False`` with a descriptive reason.
     """
     name = f"bedrock:{model_id}"
+
+    # Stage 1: catalog
     try:
-        resp = client.list_foundation_models()
+        resp = bedrock_client.list_foundation_models()
     except Exception as exc:  # noqa: BLE001
         return ProbeResult(
             name=name,
@@ -151,9 +164,40 @@ def check_bedrock_model_access(client: Any, model_id: str) -> ProbeResult:  # no
             name=name,
             ok=False,
             identity=None,
-            reason=f"model {model_id!r} not in list_foundation_models response",
+            reason=f"model {model_id!r} not in catalog (region or IAM problem)",
         )
-    return ProbeResult(name=name, ok=True, identity=model_id, reason=None)
+
+    # Stage 2: authorization
+    # Send a deliberately-malformed StartAsyncInvoke. If access is GRANTED, the
+    # API returns a ValidationException complaining about the body. If access
+    # is DENIED, the API returns ValidationException with the literal message
+    # 'Operation not allowed' — that's AWS's account-level gate.
+    try:
+        bedrock_runtime_client.start_async_invoke(
+            modelId=model_id,
+            modelInput={},  # empty body — invalid for every model
+            outputDataConfig={"s3OutputDataConfig": {"s3Uri": "s3://probe-discard/"}},
+        )
+        # If we somehow succeed, access works (the model accepted the empty body — unlikely).
+        return ProbeResult(name=name, ok=True, identity=model_id, reason=None)
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc)
+        if "Operation not allowed" in msg:
+            return ProbeResult(
+                name=name,
+                ok=False,
+                identity=None,
+                reason=(
+                    "account-level access not granted "
+                    "(authorizationStatus=NOT_AUTHORIZED). "
+                    "Open AWS Support case — see "
+                    "docs/aws-support-case-luma-ray.md."
+                ),
+            )
+        # Any other ValidationException = access works, body just bad
+        if "ValidationException" in type(exc).__name__ or "ValidationException" in msg:
+            return ProbeResult(name=name, ok=True, identity=model_id, reason=None)
+        return ProbeResult(name=name, ok=False, identity=None, reason=str(exc))
 
 
 def run(
@@ -251,19 +295,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_bedrock_model_access:
         import boto3  # noqa: PLC0415 — lazy
 
-        # Use the first AWSSigV4 strategy's region if any was configured;
-        # otherwise default to us-west-2 (Luma Ray v2 preferred region).
         region = "us-west-2"
         for _, strat in strategies:
             if isinstance(strat, AWSSigV4):
-                region = strat._region_name
+                region = strat._region_name  # noqa: SLF001
                 break
-        client = boto3.Session().client("bedrock", region_name=region)
+        session = boto3.Session()
+        bedrock_client = session.client("bedrock", region_name=region)
+        bedrock_runtime_client = session.client("bedrock-runtime", region_name=region)
         model_id = args.check_bedrock_model_access
         extra_checks.append(
             (
                 f"bedrock:{model_id}",
-                lambda: check_bedrock_model_access(client, model_id),
+                lambda: check_bedrock_model_access(
+                    bedrock_client, bedrock_runtime_client, model_id
+                ),
             )
         )
 
