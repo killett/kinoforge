@@ -1280,7 +1280,7 @@ key inventory.
 | T9 (S3 live + redaction-order fix) | scaffold `a1e935d`, recording fix `f9c2ed8`, fixtures `71cfae8`, redaction fix `56402a2`, recapture `89257e4` |
 | T10 (GCS live) | `350bde2` + `3af0162` |
 | T11 (FixtureReplay clients + offline isolation) | `972d652` + CLI regression fix `e192dec` + quality fix `ad005af` |
-| T12 (README + PROGRESS Phase 38 entry) | this commit |
+| T12 (README + PROGRESS Phase 38 entry) | `e0e16d2` |
 
 **Real artifacts captured:**
 
