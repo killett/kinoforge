@@ -154,39 +154,21 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 40 PARTIAL — Layer W+β attempted live T4 smoke,
-discovered GCP free tier blocks GPUs, shipped 5 adapter/test bug fixes
-on the path before pausing. HEAD at the T5 docs commit on `main`. Test
-suite at ~1509 passed / 23 skipped. Working tree clean. AWS quota case
-`cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` still open from W+α.
+**Where we are:** Phase 42 (Layer 3 Nova Reel) — Tasks 0–5 complete
+(commit `018213a`). IAM policy attached + S3 bucket live. Nova Reel
+model access verified by live probe. Next: Task 6 RED live-smoke
+scaffold (commit before any spend), then Task 7 fire the live smoke.
 
 **Read in this order:**
-1. The Phase 40 entry below (5 fix commit SHAs + blocker context +
-   re-fire instructions).
-2. `docs/superpowers/specs/2026-06-06-layer-w-beta-skypilot-t4-gpu-smoke-design.md`.
-3. `git log --oneline -15` for recent commits.
+1. The Phase 42 entry below (per-task SHAs).
+2. `docs/superpowers/plans/2026-06-07-layer-3-nova-reel-engine.md`.
+3. `git log --oneline -10` for recent commits.
 
-**First unchecked task in fresh session:** operator upgrades GCP
-billing tier (one click — no immediate spend, only future VM usage is
-billed). Once upgraded, re-fire the live smoke:
+**First unchecked task:** Task 6 — write `tests/live/test_nova_reel_live.py`
+scaffold (env-gated, skips without `KINOFORGE_LIVE_TESTS=1`), commit RED
+BEFORE any live spend. Then Task 7 fires the actual smoke (~$0.50).
 
-    KINOFORGE_LIVE_TESTS=1 pixi run -e live-skypilot pytest \
-      tests/live/test_skypilot_live.py::test_skypilot_live_e2e_t4_gpu_lifecycle_smoke \
-      -v -s
-
-Expected outcome: PASS, ~5–10 min, $0.03–$0.06 spend. Then T11/T12
-close + Phase 40 flips PARTIAL → CLOSED. Alternative candidates if
-billing upgrade is declined: **Layer W+ `kinoforge sweeper` daemon**
-(consumes Layer V substrate); **cross-machine `--store-uri` /
-`KINOFORGE_STORE_URI` bootstrap** (Layer T carry-forward); **fal
-storage upload integration** for keyframe→wan i2v/flf2v end-to-end
-(Layer R carry-forward); **Layer X cost dashboard / metrics**
-(read-only consumer of `classify`); **Layer Y in-session warm-reuse
-retrofit**.
-
-**Budget remaining: ~$10.88 of $15.** Layer W+β spent $0 (all attempts
-failed before any VM provisioned; the 5 fix commits are pure
-intellectual artifact).
+**Budget remaining: ~$10.88 of $15.** Layer 3 Tasks 0–5 spent $0.
 
 ## Post-MVP
 
@@ -1577,3 +1559,48 @@ auth family.
 Closes (partial): PROGRESS:113 carry-forward "Engine-integration live
 smoke" — Layer 1 is the architectural foundation; Layer 2 + Layer 3
 close the engine surface.
+
+### Phase 42 — Layer 3 NovaReelEngine + live smoke
+
+AWS Bedrock Nova Reel 1.1 text-to-video engine. Sibling of
+`engines/fal/` and `engines/hosted/`. Lazy-imports `boto3` inside
+`_default_session_factory` only. Consumes Layer 1 `AWSSigV4` strategy.
+Async-invocation pattern: `start_async_invoke` → poll
+`get_async_invoke` → S3 output at
+`{output_s3_uri}/{invocation_id}/output.mp4`.
+
+Spec:
+`docs/superpowers/specs/2026-06-07-veo-novareel-auth-strategy-design.md`.
+Plan:
+`docs/superpowers/plans/2026-06-07-layer-3-nova-reel-engine.md`.
+
+- [x] Task 0: `NovaReelEngineConfig` pydantic + wire onto `EngineConfig` — commit `(from prior session — see git log)`
+- [x] Task 1: `engines/nova_reel/` package + 10 offline unit tests — commit `(from prior session)`
+- [x] Task 2: `examples/configs/nova-reel.yaml` + parse test — commit `(from prior session)`
+- [x] Task 3: `.aws/policies/bedrock-nova-reel.json` IAM policy doc — commit `(from prior session)`
+- [x] Task 4: Attach IAM policy + create S3 output bucket (real cloud mutation) — commit `(from prior session)`
+- [x] Task 5: `probe_hosted --check-bedrock-model-access` flag + 3 tests — commit `018213a`
+- [ ] Task 6: RED live-smoke scaffold (`tests/live/test_nova_reel_live.py`) — committed BEFORE any spend
+- [ ] Task 7: Fire live smoke + capture fixtures (~$0.50)
+- [ ] Task 8: Offline replay test against captured fixtures
+- [ ] Task 9: README + PROGRESS final gate
+
+**Task 5 live-probe result:**
+```
+PASS strategy=bedrock:amazon.nova-reel-v1:1 identity=amazon.nova-reel-v1:1
+exit=0
+```
+Nova Reel model access confirmed for `kinoforge-ci` in `us-east-1`.
+
+**Key decisions:**
+- `extra_checks: Sequence[(label, Callable[[], ProbeResult])]` seam on
+  `run()` — future provider-specific checks (Vertex Veo model list,
+  etc.) plug in without touching the probe shape.
+- `boto3.Session().client("bedrock", ...)` (control plane) for
+  `list_foundation_models` — distinct from `bedrock-runtime` used by
+  the engine.
+- Region resolved from first `AWSSigV4` strategy in the loaded config;
+  falls back to `us-east-1` if none present.
+
+**Test count:** 1584 pre-Layer-3-T5 → +3 new probe tests = 1587 total
+(9 probe tests, all pass offline).
