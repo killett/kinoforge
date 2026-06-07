@@ -38,7 +38,7 @@ class HealthResult:
 
 @dataclass(frozen=True)
 class HttpRequest:
-    """Mutable representation of an HTTP request for :meth:`AuthStrategy.apply`.
+    """Immutable representation of an HTTP request for :meth:`AuthStrategy.apply`.
 
     Used by direct-HTTP engines that do not go through an SDK. SDK-wrapped
     engines may still build an :class:`HttpRequest` and call ``apply()`` to
