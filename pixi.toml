@@ -117,6 +117,7 @@ probe-watchdog = "python tools/probe_pod_watchdog.py"
 # First run provisions AWS KMS alias/kinoforge-realcloud-tests + GCP Cloud KMS
 # keyring/key. Re-runs detect persisted ARN/name files and skip. ~$0.04/day.
 "cloud:bootstrap-kms" = { cmd = "python tools/bootstrap_kms.py", description = "Idempotently provision AWS KMS + GCP Cloud KMS keys for Layer W realcloud tests." }
+"cloud:perms-probe" = "python tools/cloud_perms_probe.py"
 lint = "python -m ruff check ."
 format = "python -m ruff format ."
 typecheck = "python -m mypy ."
