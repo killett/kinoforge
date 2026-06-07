@@ -154,21 +154,23 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 42 (Layer 3 Nova Reel) — Tasks 0–5 complete
-(commit `018213a`). IAM policy attached + S3 bucket live. Nova Reel
-model access verified by live probe. Next: Task 6 RED live-smoke
-scaffold (commit before any spend), then Task 7 fire the live smoke.
+**Where we are:** Phase 42 (Layer 3 Nova Reel) — Tasks 0–6 complete,
+Task 7 BLOCKED on AWS account-level Nova Reel invocation approval.
+No spend has been incurred; all failures were pre-submit (IAM / Bedrock
+model-access gate). Two IAM policy bugs fixed (commits `a42f3d1` +
+`216e4c5`); the remaining block is a console-only operator action.
 
 **Read in this order:**
-1. The Phase 42 entry below (per-task SHAs).
+1. The Phase 42 entry below — especially the Task 7 blocker section.
 2. `docs/superpowers/plans/2026-06-07-layer-3-nova-reel-engine.md`.
 3. `git log --oneline -10` for recent commits.
 
-**First unchecked task:** Task 6 — write `tests/live/test_nova_reel_live.py`
-scaffold (env-gated, skips without `KINOFORGE_LIVE_TESTS=1`), commit RED
-BEFORE any live spend. Then Task 7 fires the actual smoke (~$0.50).
+**First unchecked task (operator action required first):**
+Operator must enable Nova Reel model access in the AWS Console
+(Bedrock → Model access → Amazon Nova Reel → Request access).
+After that, Task 7 resumes: re-run the smoke, capture fixture, commit.
 
-**Budget remaining: ~$10.88 of $15.** Layer 3 Tasks 0–5 spent $0.
+**Budget remaining: ~$10.88 of $15.** Layer 3 Tasks 0–7 spent $0.
 
 ## Post-MVP
 
@@ -1580,8 +1582,8 @@ Plan:
 - [x] Task 3: `.aws/policies/bedrock-nova-reel.json` IAM policy doc — commit `(from prior session)`
 - [x] Task 4: Attach IAM policy + create S3 output bucket (real cloud mutation) — commit `(from prior session)`
 - [x] Task 5: `probe_hosted --check-bedrock-model-access` flag + 3 tests — commit `018213a`
-- [ ] Task 6: RED live-smoke scaffold (`tests/live/test_nova_reel_live.py`) — committed BEFORE any spend
-- [ ] Task 7: Fire live smoke + capture fixtures (~$0.50)
+- [x] Task 6: RED live-smoke scaffold (`tests/live/test_nova_reel_live.py`) — commit `28f31bd`
+- [x] Task 7: Fire live smoke + capture fixtures (~$0.50) — BLOCKED (see below)
 - [ ] Task 8: Offline replay test against captured fixtures
 - [ ] Task 9: README + PROGRESS final gate
 
@@ -1591,6 +1593,64 @@ PASS strategy=bedrock:amazon.nova-reel-v1:1 identity=amazon.nova-reel-v1:1
 exit=0
 ```
 Nova Reel model access confirmed for `kinoforge-ci` in `us-east-1`.
+
+**Task 7 blocker — AWS account Nova Reel invocation not approved:**
+
+The smoke test is blocked on an AWS account-level restriction that cannot
+be resolved programmatically. Two IAM bugs were found and fixed during the
+attempt (commits `a42f3d1` + `216e4c5`), but the root cause is that the
+AWS account has not been granted model-invocation access for Nova Reel.
+
+Diagnostic trail:
+1. **First failure** — `AccessDeniedException: bedrock:InvokeModel on
+   async-invoke/*` — IAM policy only covered the foundation-model ARN;
+   async-invoke actions also need permission on
+   `arn:aws:bedrock:us-east-1:<acct>:async-invoke/*`. Fixed at `a42f3d1`.
+2. **Second failure** — same error, different facet: `StartAsyncInvoke`
+   internally evaluates as `bedrock:InvokeModel` against the async-invoke
+   resource ARN. Added that ARN to the `InvokeModel` statement. Fixed at
+   `216e4c5`.
+3. **Third failure (all subsequent)** — `ValidationException: Operation
+   not allowed` — the same error on both `StartAsyncInvoke` (async) and
+   `InvokeModel` (sync). This is NOT an IAM error; it fires AFTER IAM
+   passes. It means Bedrock's own model-access gate is rejecting the call.
+4. **Root cause confirmed** — `bedrock.put_use_case_for_model_access`
+   returns `ValidationException: Your account is not authorized to perform
+   this action. Please create a support case`. Amazon Nova Reel requires
+   explicit account-level approval before any invocation is permitted —
+   separate from, and beyond, IAM policies.
+
+**Note:** `probe_hosted --check-bedrock-model-access` passing is a false
+positive. The probe checks `list_foundation_models` (model is listed =
+PASS), but listing a model does not mean the account can invoke it.
+Nova Reel appears in the list with `status=LEGACY` and
+`inferenceTypesSupported=['ON_DEMAND']` — both correct — but invocation
+still requires a separate account-level approval.
+
+**What the operator must do (one-time, cannot be scripted):**
+1. Sign in to the AWS Console as an IAM admin.
+2. Navigate to: Amazon Bedrock → Left menu → "Model access".
+3. Find "Amazon Nova Reel" and click "Request access" (or "Manage model
+   access"). Accept any EULA / use-case form.
+4. Wait for access to be granted (usually instant for Amazon's own models,
+   but can take up to 24 hours).
+5. Re-run: `KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 pixi run
+   pytest tests/live/test_nova_reel_live.py::test_nova_reel_live_e2e_smoke
+   -v -s`
+
+**IAM fixes committed (no spend incurred — all failures were pre-submit):**
+- `a42f3d1`: `async-invoke/*` added to `StartAsyncInvoke`/`GetAsyncInvoke`
+  resource list.
+- `216e4c5`: `async-invoke/*` added to `bedrock:InvokeModel` resource list
+  (AWS evaluates `StartAsyncInvoke` as `InvokeModel` on the async-invoke
+  resource ARN).
+
+**Probe fix needed (Task 7 follow-up):** `check_bedrock_model_access`
+should verify actual invocation capability, not just list presence.
+A lightweight fix: attempt a `start_async_invoke` with a clearly-invalid
+input (e.g. `durationSeconds: 0`) and accept any error *except*
+`AccessDeniedException` / `ValidationException("Operation not allowed")`
+as proof of access. Or use the IAM policy simulator API.
 
 **Key decisions:**
 - `extra_checks: Sequence[(label, Callable[[], ProbeResult])]` seam on
