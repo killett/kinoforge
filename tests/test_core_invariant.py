@@ -91,11 +91,16 @@ _VENDOR_PATTERNS: list[tuple[re.Pattern[str], list[Path], str]] = [
         "runpod",
     ),
     (
-        # boto3 may also appear as a lazy import in core/auth.py (AWSSigV4 strategy).
+        # boto3 may also appear as a lazy import in core/auth.py (AWSSigV4 strategy)
+        # and the nova_reel engine adapter (_default_session_factory).
         # Lazy imports (inside method bodies) are fine; the subprocess-isolation test
         # in AC 8 verifies that boto3 never enters sys.modules at import time.
         re.compile(r"^\s*(import|from)\s+boto3\b"),
-        [SRC_ROOT / "stores" / "s3", SRC_ROOT / "core"],
+        [
+            SRC_ROOT / "stores" / "s3",
+            SRC_ROOT / "core",
+            SRC_ROOT / "engines" / "nova_reel",
+        ],
         "boto3",
     ),
     (
