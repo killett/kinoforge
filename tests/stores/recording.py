@@ -295,6 +295,14 @@ class S3Recorder:
         """botocore ``after-call`` handler — captures the parsed response."""
         if self.mode != "record":
             return
+        # TODO(Layer W follow-up): botocore does NOT propagate the context dict set in
+        # ``before-send`` to the ``after-call`` event, so ``_kinoforge_op`` is always
+        # missing here and ``op`` is always ``''``.  The workaround is
+        # ``_s3_op_fingerprint`` (this file, same module), which classifies entries by
+        # request-params shape instead of by operation name.  To fix the root cause,
+        # research whether a botocore ``before-call`` hook (fired with the full context
+        # before the request is built) can inject the op name more reliably, or whether
+        # ``provide-client-params.s3.*`` is a better attachment point.
         op = context.get("_kinoforge_op", "") if isinstance(context, dict) else ""
         params: dict[str, Any] = (
             context.get("_kinoforge_params", {}) if isinstance(context, dict) else {}
@@ -506,10 +514,16 @@ class GCSRecorder:
 
 
 def _s3_op_fingerprint(entry: dict[str, Any]) -> str:
-    """Classify an S3 fixture entry by its parsed-response shape.
+    """Classify an S3 fixture entry by its request params and parsed-response shape.
 
     The live captures have ``operation=''`` (botocore context was not
-    propagated), so we infer the operation from distinctive response keys.
+    propagated), so we infer the operation from distinctive params/response keys.
+
+    UploadPart is detected first via the **request params** (``PartNumber``
+    present), not by the parsed-response shape.  Both ``UploadPart`` and
+    ``PutObject`` responses carry ``ETag + ChecksumCRC32 + ResponseMetadata``
+    when checksum validation is enabled in botocore; only ``UploadPart``
+    requests carry ``PartNumber`` in the request params.
 
     Args:
         entry: A single fixture entry dict.
@@ -517,6 +531,11 @@ def _s3_op_fingerprint(entry: dict[str, Any]) -> str:
     Returns:
         A string operation label, e.g. ``"HeadObject"``.
     """
+    # Pivot on request params FIRST to disambiguate before inspecting response shape.
+    params: dict[str, Any] = entry.get("params", {})
+    if "PartNumber" in params:
+        return "UploadPart"
+
     keys: frozenset[str] = frozenset(entry["parsed_response"].keys())
     if "UploadId" in keys:
         return "CreateMultipartUpload"
@@ -530,8 +549,6 @@ def _s3_op_fingerprint(entry: dict[str, Any]) -> str:
         return "HeadObject"
     if keys == frozenset({"ResponseMetadata"}):
         return "DeleteObject"
-    if "ETag" in keys and "ChecksumCRC32" in keys and "ResponseMetadata" in keys:
-        return "UploadPart"
     # Fallback — put_object / upload_fileobj acknowledgement.
     if "ETag" in keys:
         return "PutObject"
@@ -892,18 +909,41 @@ class FixtureReplayGCSClient:
     def _parse_entries(self, entries: list[dict[str, Any]]) -> None:
         """Parse HTTP entries and populate ``_buckets``.
 
+        Two-pass algorithm so that GET (download) entries recorded AFTER PUT
+        (upload) entries in the same fixture are still applied to the correct
+        blob.  A single forward pass would construct the blob with empty content
+        because the download cache is not yet populated when the PUT is processed.
+
+        - Pass 1: walk all entries and populate ``download_cache`` from GET
+          responses.
+        - Pass 2: walk all entries again and construct blobs from PUT responses,
+          now looking up the pre-populated cache.
+
         Args:
             entries: Raw list of fixture entry dicts.
         """
-        # Track the last download bytes (GET responses) keyed by blob name.
-        download_cache: dict[str, bytes] = {}
+        import urllib.parse
 
+        # Pass 1: populate download_cache from all GET responses.
+        download_cache: dict[str, bytes] = {}
         for entry in entries:
             method = entry.get("method", "")
-            body_bytes = base64.b64decode(entry.get("body_b64", ""))
             status = entry.get("status", 0)
+            if method == "GET" and status == 200:
+                body_bytes = base64.b64decode(entry.get("body_b64", ""))
+                url = entry.get("url", "")
+                raw_blob_name = _extract_gcs_blob_name(url)
+                if raw_blob_name:
+                    download_cache[urllib.parse.unquote(raw_blob_name)] = body_bytes
 
-            if method == "PUT" and status == 200 and body_bytes:
+        # Pass 2: construct blobs from PUT responses, using the cache.
+        for entry in entries:
+            method = entry.get("method", "")
+            status = entry.get("status", 0)
+            if method == "PUT" and status == 200:
+                body_bytes = base64.b64decode(entry.get("body_b64", ""))
+                if not body_bytes:
+                    continue
                 # Resumable upload completion — body is blob metadata JSON.
                 try:
                     meta = json.loads(body_bytes)
@@ -916,16 +956,6 @@ class FixtureReplayGCSClient:
                 content = download_cache.get(blob_name, b"")
                 blob = _FixtureReplayGCSBlob(blob_name, meta, content)
                 self._buckets.setdefault(bucket_name, {})[blob_name] = blob
-
-            elif method == "GET" and status == 200:
-                # Download response — stash bytes by URL-fragment blob name.
-                url = entry.get("url", "")
-                # Extract blob name from URL path after /o/ (URL-decoded).
-                blob_name = _extract_gcs_blob_name(url)
-                if blob_name:
-                    import urllib.parse
-
-                    download_cache[urllib.parse.unquote(blob_name)] = body_bytes
 
     def bucket(self, name: str) -> _FixtureReplayGCSBucket:
         """Return the fixture-backed bucket for *name*.
