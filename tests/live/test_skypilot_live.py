@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -72,6 +73,14 @@ _DESTROY_TIMEOUT_S: float = 300.0  # 5 min
 
 # CPU smoke: zero VRAM requirement; min_cuda kept permissive.
 HW_REQS_CPU = HardwareRequirements(min_vram_gb=0, min_cuda="0.0")
+
+# T4 smoke (Layer W+β): 16 GB VRAM, modern CUDA. min_vram_gb=8 is
+# safely below the T4's 16 GB and excludes accelerators smaller than T4.
+HW_REQS_T4 = HardwareRequirements(min_vram_gb=8, min_cuda="11.0")
+
+_GPU_FIXTURE_DIR = FIXTURE_DIR / "gpu"
+_GPU_READY_TIMEOUT_S: float = 900.0  # 15 min — GPU provision slower than CPU
+_SSH_TIMEOUT_S: float = 60.0
 
 
 def _poll_until_ready(
@@ -121,6 +130,62 @@ def _gcloud_path() -> str:
         return resolved
     fallback = Path.home() / "google-cloud-sdk" / "bin" / "gcloud"
     return str(fallback)
+
+
+def _ssh_capture_stdout(
+    cluster_name: str,
+    cmd: str,
+    timeout_s: float = _SSH_TIMEOUT_S,
+) -> str:
+    """SSH to ``cluster_name`` (sky-managed ~/.ssh/config) and capture stdout.
+
+    Args:
+        cluster_name: SkyPilot cluster name (also the SSH host alias sky
+            writes into ``~/.ssh/config`` after a successful launch).
+        cmd: Shell command to run on the remote host.
+        timeout_s: Wall-clock seconds before the SSH call is killed.
+
+    Returns:
+        Decoded stdout (utf-8, trailing newline preserved).
+
+    Raises:
+        subprocess.CalledProcessError: SSH exit code was non-zero.
+        subprocess.TimeoutExpired: ``timeout_s`` elapsed before the
+            command returned.
+    """
+    completed = subprocess.run(
+        ["ssh", "-o", "StrictHostKeyChecking=no", cluster_name, cmd],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=timeout_s,
+    )
+    return completed.stdout
+
+
+def _t4_smoke_spec(cluster_name: str, offer: Any) -> InstanceSpec:
+    """Build the GPU-smoke ``InstanceSpec`` for a given T4 offer.
+
+    Mirrors the CPU-smoke shape with GPU image + GPU autostop.
+
+    Args:
+        cluster_name: SkyPilot cluster name (also the SSH host alias).
+        offer: A ``ComputeOffer`` with a T4 GPU.
+
+    Returns:
+        ``InstanceSpec`` ready to pass to ``provider.create_instance``.
+    """
+    lifecycle = Lifecycle(idle_timeout_s=180, max_lifetime_s=1800)
+    return InstanceSpec(
+        run_id=cluster_name,
+        image="skypilot/skypilot-gpu:latest",
+        env={},
+        tags={"layer": "layer-w-beta-smoke"},
+        lifecycle=lifecycle,
+        offer=offer,
+        provision_script="",
+        run_cmd=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+    )
 
 
 def _teardown(provider: SkyPilotProvider, cluster_name: str) -> None:
@@ -258,5 +323,53 @@ def test_skypilot_live_e2e_cpu_lifecycle_smoke() -> None:
         assert any(i.id == inst.id for i in listed), (
             f"cluster {inst.id!r} missing from list_instances()"
         )
+    finally:
+        _teardown(provider, cluster_name)
+
+
+@pytest.mark.parametrize("cloud", ["gcp"])
+def test_skypilot_live_e2e_t4_gpu_lifecycle_smoke(cloud: str) -> None:
+    """End-to-end live smoke: T4 GPU lifecycle via ``providers/skypilot``.
+
+    Layer W+β. Cheapest GPU test that exercises the adapter end-to-end:
+    ``find_offers`` (T4 surfaced) → ``create_instance`` (accelerators=T4:1)
+    → poll until ready → SSH ``nvidia-smi`` → assert T4 in stdout →
+    4-tier teardown.
+
+    Parametrize prepared for AWS at Layer W+β2; today only ``gcp`` is in
+    the parameter list because the AWS GPU vCPU quota request
+    (``L-DB2E81BA``, AWS case
+    ``cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR``) is still pending.
+
+    Cost ceiling: $0.10 GCP per run. Typical: $0.03–$0.06 on
+    ``n1-standard-4 + nvidia-tesla-t4`` for ~5–10 min wall-clock.
+    """
+    cluster_name = f"kinoforge-w-beta-t4-{cloud}-{secrets.token_hex(4)}"
+    provider = SkyPilotProvider(sky_client=_RecordingProxy(sky, _GPU_FIXTURE_DIR))
+
+    try:
+        offers = provider.find_offers(HW_REQS_T4)
+        _log.info("find_offers returned %d offers", len(offers))
+        t4_offers = [o for o in offers if "T4" in (getattr(o, "gpu_name", "") or "")]
+        if not t4_offers:
+            pytest.skip(
+                f"no T4 offer surfaced for cloud={cloud!r}; "
+                "check sky.list_accelerators() / region quota"
+            )
+        offer = t4_offers[0]
+        _log.info("picked T4 offer: %r", offer)
+
+        spec = _t4_smoke_spec(cluster_name, offer)
+        _log.info("launching cluster=%s accelerators=T4:1 autostop=3min", cluster_name)
+        inst = provider.create_instance(spec)
+
+        _poll_until_ready(provider, inst.id, timeout_s=_GPU_READY_TIMEOUT_S)
+
+        stdout = _ssh_capture_stdout(
+            cluster_name,
+            "nvidia-smi --query-gpu=name --format=csv,noheader",
+        )
+        _log.info("nvidia-smi stdout: %r", stdout)
+        assert "T4" in stdout, f"expected T4 in nvidia-smi output, got: {stdout!r}"
     finally:
         _teardown(provider, cluster_name)
