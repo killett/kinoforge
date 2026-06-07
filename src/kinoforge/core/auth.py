@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json as _json
 import re
-import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable

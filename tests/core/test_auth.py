@@ -192,3 +192,61 @@ def test_bearer_client_kwargs_returns_api_key_shape() -> None:
         env_var="FAL_KEY", credential_provider=_StaticCreds({"FAL_KEY": "abc"})
     )
     assert strat.client_kwargs() == {"api_key": "abc"}
+
+
+def test_bearer_client_kwargs_empty_when_no_token() -> None:
+    from kinoforge.core.auth import Bearer
+
+    strat = Bearer(
+        env_var="FAL_KEY", credential_provider=_StaticCreds({"FAL_KEY": None})
+    )
+    assert strat.client_kwargs() == {}
+
+
+def test_bearer_health_check_ok_without_url_returns_env_var_identity() -> None:
+    """When no health_check_url is configured, health_check returns ok=True
+    with identity = env-var-name as a proxy (used when 'key is present' is
+    all the check needs).
+    """
+    from kinoforge.core.auth import Bearer
+
+    strat = Bearer(
+        env_var="FAL_KEY",
+        credential_provider=_StaticCreds({"FAL_KEY": "secret-abc"}),
+        # health_check_url omitted on purpose
+    )
+    result = strat.health_check()
+    assert result.ok is True
+    assert result.identity == "FAL_KEY"
+    assert result.reason is None
+
+
+def test_bearer_health_check_fail_on_http_error() -> None:
+    """A raising http_get must surface as ok=False with the exception text."""
+    from kinoforge.core.auth import Bearer
+
+    def boom(url: str, headers: dict[str, str]) -> dict[str, str]:
+        raise ConnectionError("upstream 503")
+
+    strat = Bearer(
+        env_var="FAL_KEY",
+        credential_provider=_StaticCreds({"FAL_KEY": "secret-abc"}),
+        health_check_url="https://fal.run/health",
+        http_get=boom,
+    )
+    result = strat.health_check()
+    assert result.ok is False
+    assert result.identity is None
+    assert "upstream 503" in (result.reason or "")
+
+
+def test_bearer_apply_raises_when_token_missing() -> None:
+    """apply() must NOT silently emit an empty Bearer header when token is missing."""
+    from kinoforge.core.auth import Bearer, HttpRequest
+
+    strat = Bearer(
+        env_var="FAL_KEY", credential_provider=_StaticCreds({"FAL_KEY": None})
+    )
+    req = HttpRequest(method="GET", url="https://x", headers={}, body=None)
+    with pytest.raises(RuntimeError, match="FAL_KEY"):
+        strat.apply(req)
