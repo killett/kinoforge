@@ -1,0 +1,47 @@
+# kinoforge example: SkyPilot (T4 GPU lifecycle smoke) — Layer W+β
+#
+# Demonstrates the bare SkyPilotProvider configuration used by the
+# Layer W+β real-cloud verification smoke (spec
+# docs/superpowers/specs/2026-06-06-layer-w-beta-skypilot-t4-gpu-smoke-design.md).
+#
+#   - Cheapest GCP T4 SKU (n1-standard-4 + nvidia-tesla-t4 in us-central1)
+#   - autostop = 3 min, max_lifetime = 30 min
+#   - run command is nvidia-smi so launch-time logs carry the T4
+#     confirmation as a secondary signal alongside the SSH stdout
+#     assertion in tests/live/test_skypilot_live.py.
+#   - 4-tier teardown shared with the Phase 31 CPU smoke.
+#
+# Cost envelope: ~$0.03–$0.06 per smoke run (5–10 min wall-clock),
+# layer ceiling $0.10.
+
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+    kind: base
+    target: checkpoints
+
+compute:
+  # SkyPilot picks the concrete SKU from accelerator + memory
+  # requirements at launch time. min_vram_gb=8 forces a GPU with ≥ 8 GB
+  # VRAM (T4 has 16 GB and clears the bar; weaker accelerators are
+  # excluded). The smoke test pins region us-central1 explicitly; this
+  # YAML does not (ComputeConfig has no region field today).
+  provider: skypilot
+  image: "skypilot/skypilot-gpu:latest"
+  mode: pod
+  requirements:
+    min_vram_gb: 8
+    min_cuda: "11.0"
+    max_usd_per_hr: 1.00
+    disk_gb: 100
+  lifecycle:
+    idle_timeout_s: 180
+    max_lifetime_s: 1800
+    job_timeout_s: 600
+    boot_timeout_s: 900
+    budget_usd: 0.10

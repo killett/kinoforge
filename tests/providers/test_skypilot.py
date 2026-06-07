@@ -21,9 +21,11 @@ Coverage:
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -36,6 +38,9 @@ from kinoforge.core.interfaces import (
     Lifecycle,
     Offer,
 )
+
+# Module-level constants
+GPU_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "skypilot" / "gpu"
 
 # ---------------------------------------------------------------------------
 # _FakeSky: minimal injectable sky SDK stub
@@ -1059,3 +1064,32 @@ def test_normalize_image_id_passes_through_prefixed_names() -> None:
     assert _normalize_image_id("docker:alpine:3") == "docker:alpine:3"
     assert _normalize_image_id("gcr.io/my-proj/img:v1") == "gcr.io/my-proj/img:v1"
     assert _normalize_image_id("public.ecr.aws/foo/bar") == "public.ecr.aws/foo/bar"
+
+
+@pytest.mark.skipif(
+    not GPU_FIXTURE_DIR.exists(),
+    reason="T4 GPU fixtures not captured yet — Layer W+β T4 will land them",
+)
+def test_t4_fixture_shape() -> None:
+    """Lockdown: GPU fixtures must satisfy SkyPilotProvider's dual-shape parse.
+
+    Lands after Layer W+β T4 captures the fixtures. Catches sky SDK shape
+    drift before the next live run is attempted.
+    """
+    list_accel = json.loads((GPU_FIXTURE_DIR / "list_accelerators.json").read_text())
+    assert isinstance(list_accel, (dict, list)), (
+        f"unexpected list_accelerators shape: {type(list_accel)}"
+    )
+    blob = json.dumps(list_accel)
+    assert "T4" in blob, "T4 not present in list_accelerators fixture"
+
+    launch_blob = json.dumps(json.loads((GPU_FIXTURE_DIR / "launch.json").read_text()))
+    assert "T4" in launch_blob, "T4 not present in launch fixture"
+
+    status_blob = json.dumps(json.loads((GPU_FIXTURE_DIR / "status.json").read_text()))
+    assert "kinoforge-w-beta-t4" in status_blob or "T4" in status_blob, (
+        "status fixture neither names the cluster nor mentions T4"
+    )
+
+    down_obj = json.loads((GPU_FIXTURE_DIR / "down.json").read_text())
+    assert down_obj is not None
