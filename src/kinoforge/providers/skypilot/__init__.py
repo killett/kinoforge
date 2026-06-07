@@ -429,6 +429,7 @@ class SkyPilotProvider(ComputeProvider):
         self,
         sky_client: Any | None = None,  # noqa: ANN401
         *,
+        clouds: list[str] | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         """Initialise the provider.
@@ -442,9 +443,15 @@ class SkyPilotProvider(ComputeProvider):
                 rather than ``RequestId`` strings) intentionally diverge
                 from the modern signature; :class:`_SkyClientProtocol`
                 documents the *minimum* surface the provider relies on.
+            clouds: Optional list of cloud names (e.g. ``["gcp"]``) passed
+                to :func:`sky.list_accelerators` to restrict catalog
+                enumeration. When ``None``, SkyPilot queries all registered
+                clouds. Pass ``["gcp"]`` in GCP-only environments to avoid
+                spurious Kubernetes/SSH catalog errors.
             sleep: Injectable sleep used between destroy-poll iterations.
         """
         self._sky_client = sky_client
+        self._clouds = clouds
         self._sleep = sleep
 
     # ------------------------------------------------------------------
@@ -515,7 +522,9 @@ class SkyPilotProvider(ComputeProvider):
                     mode="pod",
                 )
             ]
-        raw = sky.list_accelerators()
+        raw = sky.list_accelerators(
+            **({} if self._clouds is None else {"clouds": self._clouds})
+        )
         resolved = _resolve(sky, raw)
 
         # Normalise to an iterable of records. Modern shape is a dict-of-list;
