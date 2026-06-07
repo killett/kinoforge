@@ -252,8 +252,8 @@ def main(argv: list[str] | None = None) -> int:
         import boto3  # noqa: PLC0415 — lazy
 
         # Use the first AWSSigV4 strategy's region if any was configured;
-        # otherwise default to us-east-1.
-        region = "us-east-1"
+        # otherwise default to us-west-2 (Luma Ray v2 preferred region).
+        region = "us-west-2"
         for _, strat in strategies:
             if isinstance(strat, AWSSigV4):
                 region = strat._region_name

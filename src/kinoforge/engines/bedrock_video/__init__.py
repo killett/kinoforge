@@ -1,4 +1,4 @@
-"""AWS Bedrock Nova Reel 1.1 generation engine.
+"""AWS Bedrock generic video-generation engine.
 
 Talks to Bedrock's async-invocation video API via boto3 bedrock-runtime,
 authed by the Layer 1 :class:`~kinoforge.core.auth.AWSSigV4` strategy.
@@ -7,11 +7,17 @@ authed by the Layer 1 :class:`~kinoforge.core.auth.AWSSigV4` strategy.
 preserve the core-import-ban invariant (see
 ``tests/test_core_invariant.py``); tests inject a fake session factory.
 
-Self-registers under the engine name ``"nova_reel"`` on module import.
+The engine takes a YAML-supplied ``model_input_template`` dict where
+``"${PROMPT}"`` is recursively substituted with the actual prompt at
+submit time.  This lets a single engine handle Nova Reel, Luma Ray v2,
+and any future Bedrock video model — new providers are config-only.
+
+Self-registers under the engine name ``"bedrock_video"`` on module import.
 """
 
 from __future__ import annotations
 
+import copy
 import time
 import uuid
 from collections.abc import Callable
@@ -33,9 +39,9 @@ from kinoforge.core.prompt_routing import resolve_prompt
 
 # Default no-op ModelProfile until ModelProfileProvider resolves the real one.
 _DEFAULT_STUB_PROFILE = ModelProfile(
-    name="nova-reel-stub",
+    name="bedrock-video-stub",
     fps=24,
-    max_frames=144,  # ~6s @ 24fps
+    max_frames=150,  # ~5s @ 30fps or ~6s @ 24fps
     max_resolution=(1280, 720),
     supported_modes={"t2v"},
     supports_native_extension=False,
@@ -59,8 +65,37 @@ def _default_session_factory(**kwargs: Any) -> Any:  # noqa: ANN401
     return boto3.Session(**kwargs)
 
 
-class NovaReelBackend(GenerationBackend):
-    """Backend that talks to Bedrock async-invoke for Nova Reel.
+def _substitute_prompt(template: dict[str, Any], prompt: str) -> dict[str, Any]:
+    """Recursively deep-copy *template* and replace every ``"${PROMPT}"`` value.
+
+    Walks the template dict recursively.  Any string value that equals
+    ``"${PROMPT}"`` is replaced with *prompt*.  Other value types are
+    preserved untouched.  Uses :func:`copy.deepcopy` to avoid mutating
+    the caller's config.
+
+    Args:
+        template: The ``model_input_template`` dict from the YAML config.
+        prompt: The resolved prompt string to substitute in.
+
+    Returns:
+        A new dict with all ``"${PROMPT}"`` occurrences replaced.
+    """
+
+    def _walk(obj: Any) -> Any:  # noqa: ANN401
+        if isinstance(obj, dict):
+            return {k: _walk(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_walk(item) for item in obj]
+        if obj == "${PROMPT}":
+            return prompt
+        return obj
+
+    result: dict[str, Any] = _walk(copy.deepcopy(template))
+    return result
+
+
+class BedrockVideoBackend(GenerationBackend):
+    """Backend that talks to Bedrock async-invoke for any Bedrock video model.
 
     Attributes:
         _client: bedrock-runtime client (real or test-double).
@@ -123,11 +158,13 @@ class NovaReelBackend(GenerationBackend):
         return {"bedrock": "bedrock-runtime"}
 
     def submit(self, job: GenerationJob) -> str:
-        """Invoke Nova Reel async and return an opaque job ID.
+        """Invoke Bedrock async and return an opaque job ID.
 
         Calls ``bedrock_runtime.start_async_invoke`` with the model input
-        and output config derived from ``cfg``.  The returned
-        ``invocationArn`` is stored keyed by the generated job ID.
+        derived from ``cfg.engine.bedrock_video.model_input_template``
+        after substituting ``"${PROMPT}"`` with the resolved prompt.
+        The returned ``invocationArn`` is stored keyed by the generated
+        job ID.
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` to run.
@@ -135,24 +172,16 @@ class NovaReelBackend(GenerationBackend):
         Returns:
             An opaque job-ID string; pass to :meth:`result` to poll.
         """
-        nova_cfg = self._cfg["engine"]["nova_reel"]
-        prompt = resolve_prompt(job)
-        model_input: dict[str, Any] = {
-            "taskType": "TEXT_VIDEO",
-            "textToVideoParams": {"text": prompt},
-            "videoGenerationConfig": {
-                "durationSeconds": nova_cfg["duration_seconds"],
-                "fps": nova_cfg["fps"],
-                "dimension": nova_cfg["dimension"],
-            },
-        }
+        bv_cfg = self._cfg["engine"]["bedrock_video"]
+        prompt = resolve_prompt(job) or ""
+        model_input = _substitute_prompt(bv_cfg["model_input_template"], prompt)
         output_cfg: dict[str, Any] = {
-            "s3OutputDataConfig": {"s3Uri": nova_cfg["output_s3_uri"]}
+            "s3OutputDataConfig": {"s3Uri": bv_cfg["output_s3_uri"]}
         }
-        if nova_cfg.get("output_kms_key_id"):
-            output_cfg["s3OutputDataConfig"]["kmsKeyId"] = nova_cfg["output_kms_key_id"]
+        if bv_cfg.get("output_kms_key_id"):
+            output_cfg["s3OutputDataConfig"]["kmsKeyId"] = bv_cfg["output_kms_key_id"]
         resp = self._client.start_async_invoke(
-            modelId=nova_cfg["model_id"],
+            modelId=bv_cfg["model_id"],
             modelInput=model_input,
             outputDataConfig=output_cfg,
         )
@@ -178,7 +207,7 @@ class NovaReelBackend(GenerationBackend):
         arn = self._inflight.get(job_id)
         if arn is None:
             raise KinoforgeError(
-                f"nova_reel job {job_id!r} not found — was submit() called?"
+                f"bedrock_video job {job_id!r} not found — was submit() called?"
             )
         # Build a finite poll sequence with a bounded backoff that caps.
         backoff_iter = iter(self._poll_backoff_s + (self._poll_backoff_s[-1],) * 50)
@@ -187,34 +216,36 @@ class NovaReelBackend(GenerationBackend):
             status = status_resp.get("status")
             if status == "Completed":
                 invocation_id = arn.rsplit("/", 1)[-1]
-                prefix = self._cfg["engine"]["nova_reel"]["output_s3_uri"].rstrip("/")
+                prefix = self._cfg["engine"]["bedrock_video"]["output_s3_uri"].rstrip(
+                    "/"
+                )
                 return Artifact(
                     uri=f"{prefix}/{invocation_id}/output.mp4",
                     filename="output.mp4",
                 )
             if status == "Failed":
                 raise KinoforgeError(
-                    f"Nova Reel invocation failed: "
+                    f"Bedrock video invocation failed: "
                     f"{status_resp.get('failureMessage', 'no message')}"
                 )
             self._sleep(sleep_s)
-        raise KinoforgeError(f"Nova Reel poll loop exhausted for {arn!r}")
+        raise KinoforgeError(f"Bedrock video poll loop exhausted for {arn!r}")
 
 
-class NovaReelEngine(GenerationEngine):
-    """Engine adapter for AWS Bedrock Nova Reel.
+class BedrockVideoEngine(GenerationEngine):
+    """Engine adapter for any AWS Bedrock async-video model.
 
     No GPU instance is required; credentials are provided by the Layer 1
     :class:`~kinoforge.core.auth.AWSSigV4` strategy via
     ``auth.client_kwargs()``.
 
     Class attributes:
-        name: Registry key ``"nova_reel"``.
+        name: Registry key ``"bedrock_video"``.
         requires_compute: ``False`` — no GPU instance needed.
         requires_local_weights: ``False`` — weights live on Bedrock.
     """
 
-    name: str = "nova_reel"
+    name: str = "bedrock_video"
     requires_compute: bool = False
     requires_local_weights: bool = False
 
@@ -234,7 +265,7 @@ class NovaReelEngine(GenerationEngine):
                 resolved from ``cfg`` at provision time.
             boto3_session_factory: Callable returning a boto3.Session-like
                 object. Tests inject a fake.
-            sleep: Sleep callable threaded into :class:`NovaReelBackend`.
+            sleep: Sleep callable threaded into :class:`BedrockVideoBackend`.
             probe_profile: Stub :class:`ModelProfile` returned by the
                 backend until the real profile is resolved.
         """
@@ -259,7 +290,7 @@ class NovaReelEngine(GenerationEngine):
         """
         if self._auth is not None:
             return self._auth
-        region = cfg["engine"]["nova_reel"]["region_name"]
+        region = cfg["engine"]["bedrock_video"]["region_name"]
         return AWSSigV4(region_name=region, service_name="bedrock-runtime")
 
     # ------------------------------------------------------------------
@@ -269,7 +300,7 @@ class NovaReelEngine(GenerationEngine):
     def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
         """Build the bedrock-runtime client after health-checking credentials.
 
-        ``instance`` must be ``None``; Nova Reel is a hosted API.
+        ``instance`` must be ``None``; Bedrock video is a hosted API.
 
         Args:
             instance: Must be ``None``; raises :class:`KinoforgeError` otherwise.
@@ -281,39 +312,39 @@ class NovaReelEngine(GenerationEngine):
         """
         if instance is not None:
             raise KinoforgeError(
-                "NovaReelEngine.provision: instance must be None (requires_compute=False)"
+                "BedrockVideoEngine.provision: instance must be None (requires_compute=False)"
             )
         auth = self._resolve_auth(cfg)
         if not auth.credentials_present():
             raise AuthError(
-                f"nova_reel: credentials not present (strategy={type(auth).__name__})"
+                f"bedrock_video: credentials not present (strategy={type(auth).__name__})"
             )
         health = auth.health_check()
         if not health.ok:
-            raise AuthError(f"nova_reel: health check failed — {health.reason}")
+            raise AuthError(f"bedrock_video: health check failed — {health.reason}")
         session = self._session_factory(**auth.client_kwargs())
-        region = cfg["engine"]["nova_reel"]["region_name"]
+        region = cfg["engine"]["bedrock_video"]["region_name"]
         self._client = session.client("bedrock-runtime", region_name=region)
         self._auth = auth
 
     def backend(
         self, instance: Instance | None, cfg: dict[str, Any]
-    ) -> NovaReelBackend:
-        """Return a :class:`NovaReelBackend` wired to the provisioned client.
+    ) -> BedrockVideoBackend:
+        """Return a :class:`BedrockVideoBackend` wired to the provisioned client.
 
         Args:
-            instance: Ignored (no compute for Nova Reel).
+            instance: Ignored (no compute for Bedrock video).
             cfg: Runtime config dict.
 
         Returns:
-            A :class:`NovaReelBackend` ready to accept jobs.
+            A :class:`BedrockVideoBackend` ready to accept jobs.
 
         Raises:
             KinoforgeError: :meth:`provision` has not been called.
         """
         if self._client is None:
-            raise KinoforgeError("NovaReelEngine.backend called before provision()")
-        return NovaReelBackend(
+            raise KinoforgeError("BedrockVideoEngine.backend called before provision()")
+        return BedrockVideoBackend(
             client=self._client, cfg=cfg, sleep=self._sleep, profile=self._probe
         )
 
@@ -327,11 +358,11 @@ class NovaReelEngine(GenerationEngine):
             NotImplementedError: Always.
         """
         raise NotImplementedError(
-            "NovaReelEngine.profile_for is supplied by ModelProfileProvider"
+            "BedrockVideoEngine.profile_for is supplied by ModelProfileProvider"
         )
 
     def declared_flags(self, key: CapabilityKey) -> dict[str, bool]:
-        """Return ``{}`` — no declared flags for Nova Reel.
+        """Return ``{}`` — no declared flags for Bedrock video.
 
         Args:
             key: Unused.
@@ -342,7 +373,7 @@ class NovaReelEngine(GenerationEngine):
         return {}
 
     def validate_spec(self, job: GenerationJob) -> None:
-        """No-op spec validation — Nova Reel only requires a prompt.
+        """No-op spec validation — Bedrock video only requires a prompt.
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` to check.
@@ -353,4 +384,4 @@ class NovaReelEngine(GenerationEngine):
 # Module-level self-registration
 # ---------------------------------------------------------------------------
 
-registry.register_engine("nova_reel", lambda: NovaReelEngine())
+registry.register_engine("bedrock_video", lambda: BedrockVideoEngine())

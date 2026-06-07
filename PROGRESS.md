@@ -154,21 +154,20 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 42 (Layer 3 Nova Reel) — Tasks 0–6 complete,
-Task 7 BLOCKED on AWS account-level Nova Reel invocation approval.
-No spend has been incurred; all failures were pre-submit (IAM / Bedrock
-model-access gate). Two IAM policy bugs fixed (commits `a42f3d1` +
-`216e4c5`); the remaining block is a console-only operator action.
+**Where we are:** Phase 42 (Layer 3 — pivot to BedrockVideoEngine) —
+Tasks 0–6 complete under the old Nova Reel name; Nova Reel was blocked
+on AWS account-level invocation approval. Pivoted to Luma Ray v2 in
+us-west-2 via a generalized `BedrockVideoEngine`. Phase 1 refactor
+committed (see below). Phase 2 (live smoke) is next.
 
 **Read in this order:**
-1. The Phase 42 entry below — especially the Task 7 blocker section.
-2. `docs/superpowers/plans/2026-06-07-layer-3-nova-reel-engine.md`.
+1. The Phase 42 entry below — includes the pivot rationale.
+2. `docs/superpowers/plans/2026-06-07-layer-3-nova-reel-engine.md` (original plan; pivot is described here in PROGRESS).
 3. `git log --oneline -10` for recent commits.
 
-**First unchecked task (operator action required first):**
-Operator must enable Nova Reel model access in the AWS Console
-(Bedrock → Model access → Amazon Nova Reel → Request access).
-After that, Task 7 resumes: re-run the smoke, capture fixture, commit.
+**First unchecked task:**
+Phase 2 live smoke — attach new IAM policy, access-probe, fire
+`tests/live/test_luma_ray_live.py`.
 
 **Budget remaining: ~$10.88 of $15.** Layer 3 Tasks 0–7 spent $0.
 
@@ -1562,14 +1561,20 @@ Closes (partial): PROGRESS:113 carry-forward "Engine-integration live
 smoke" — Layer 1 is the architectural foundation; Layer 2 + Layer 3
 close the engine surface.
 
-### Phase 42 — Layer 3 NovaReelEngine + live smoke
+### Phase 42 — Layer 3 BedrockVideoEngine (pivot from Nova Reel → Luma Ray v2)
 
-AWS Bedrock Nova Reel 1.1 text-to-video engine. Sibling of
-`engines/fal/` and `engines/hosted/`. Lazy-imports `boto3` inside
-`_default_session_factory` only. Consumes Layer 1 `AWSSigV4` strategy.
-Async-invocation pattern: `start_async_invoke` → poll
-`get_async_invoke` → S3 output at
-`{output_s3_uri}/{invocation_id}/output.mp4`.
+**Pivot rationale:** Nova Reel requires account-level invocation approval
+that cannot be granted programmatically (see "Task 7 blocker" section below).
+User preference is `us-west-2` (Oregon); Nova Reel is `us-east-1` only. Luma
+Ray v2 is available in `us-west-2` and uses the same Bedrock async-invoke
+pattern. The blocker became an opportunity: instead of a Nova-Reel-specific
+engine, we now ship a generic `BedrockVideoEngine` where
+`model_input_template` is YAML-supplied and `"${PROMPT}"` is recursively
+substituted at submit time. Same engine handles Nova Reel, Luma Ray v2, and
+any future Bedrock video model — new models are config-only additions.
+
+**AWS Model access page is retired** — serverless foundation models
+auto-activate on first invoke. No console step needed for Luma Ray v2.
 
 Spec:
 `docs/superpowers/specs/2026-06-07-veo-novareel-auth-strategy-design.md`.
@@ -1583,9 +1588,46 @@ Plan:
 - [x] Task 4: Attach IAM policy + create S3 output bucket (real cloud mutation) — commit `(from prior session)`
 - [x] Task 5: `probe_hosted --check-bedrock-model-access` flag + 3 tests — commit `018213a`
 - [x] Task 6: RED live-smoke scaffold (`tests/live/test_nova_reel_live.py`) — commit `28f31bd`
-- [x] Task 7: Fire live smoke + capture fixtures (~$0.50) — BLOCKED (see below)
+- [x] **PIVOT (Phase 1 refactor):** `nova_reel` → `BedrockVideoEngine` + Luma Ray config — see below
+- [ ] Task 7 (re-fire as Luma Ray): fire live smoke + capture fixture (~$0.50)
 - [ ] Task 8: Offline replay test against captured fixtures
 - [ ] Task 9: README + PROGRESS final gate
+
+**Phase 1 refactor — what changed:**
+- `engines/nova_reel/` → `engines/bedrock_video/`; `NovaReelEngine` →
+  `BedrockVideoEngine`; `NovaReelBackend` → `BedrockVideoBackend`.
+- `_substitute_prompt(template, prompt)` helper walks template recursively,
+  replacing any `"${PROMPT}"` string value with the actual prompt. Uses
+  `copy.deepcopy` to avoid mutating cfg.
+- Self-registers under `"bedrock_video"` (not `"nova_reel"`).
+- `_adapters.py`: import line updated to `bedrock_video`.
+- `core/config.py`: `NovaReelEngineConfig` → `BedrockVideoEngineConfig`
+  with `model_id` + `model_input_template` as required fields (no defaults);
+  Nova-Reel-specific `duration_seconds`/`fps`/`dimension`/`prompt_body_key`
+  removed — those now live in `model_input_template`. `EngineConfig.nova_reel`
+  → `EngineConfig.bedrock_video`. `KNOWN_ENGINES`: `"nova_reel"` →
+  `"bedrock_video"`.
+- `tests/engines/test_nova_reel.py` → `test_bedrock_video.py`; all tests
+  updated for Luma Ray shape; new `test_bedrock_video_submit_substitutes_prompt_in_template`
+  (2-level nesting) and `test_bedrock_video_submit_does_not_mutate_template_config`.
+  12 tests total.
+- `examples/configs/nova-reel.yaml` → `luma-ray.yaml` (Luma Ray v2, us-west-2).
+- `.aws/policies/bedrock-nova-reel.json` → `bedrock-luma-ray.json`
+  (Luma Ray ARNs in us-west-2; bucket `bedrock-video-generation-us-west-2-nw51wr`).
+- `test_examples.py`: `test_nova_reel_example_config_parses` →
+  `test_luma_ray_example_config_parses`; asserts `kind=="bedrock_video"`,
+  `model_id=="luma.ray-v2:0"`, `region_name=="us-west-2"`.
+- `test_core_invariant.py`: boto3 allowed-dirs `engines/nova_reel` →
+  `engines/bedrock_video`.
+- `test_probe_hosted.py`: model ID references updated to `luma.ray-v2:0`;
+  strategy name `nova_reel` → `bedrock_video` in the E2E test.
+- `tools/probe_hosted.py`: fallback region `us-east-1` → `us-west-2`.
+- `tests/live/test_nova_reel_live.py` → `test_luma_ray_live.py`; updated
+  region, model_id, bucket, config path.
+- `tests/core/test_config.py`: 4 `Nova Reel` config tests replaced with
+  `BedrockVideoEngineConfig` equivalents using Luma Ray shape.
+- `docs/CLOUD-CREDS.md`: Nova Reel rows replaced with Luma Ray rows.
+- 1585 tests pass; 0 failures; lint + typecheck + pre-commit clean.
 
 **Task 5 live-probe result:**
 ```
