@@ -402,3 +402,160 @@ def test_gcp_client_kwargs_returns_credentials_dict(
     strat = GCPServiceAccount()
     kwargs = strat.client_kwargs()
     assert kwargs == {"credentials": creds}
+
+
+# ---------------------------------------------------------------------------
+# AWSSigV4 strategy
+# ---------------------------------------------------------------------------
+
+
+class _FakeBoto3Credentials:
+    def __init__(
+        self, access_key: str, secret_key: str, token: str | None = None
+    ) -> None:
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.token = token
+
+    def get_frozen_credentials(self) -> _FakeBoto3Credentials:
+        return self
+
+
+class _FakeStsClient:
+    def __init__(
+        self, arn: str = "arn:aws:iam::123456789012:user/kinoforge-ci"
+    ) -> None:
+        self._arn = arn
+
+    def get_caller_identity(self) -> dict[str, str]:
+        return {"Arn": self._arn, "Account": "123456789012", "UserId": "AIDA..."}
+
+
+class _FakeBoto3Session:
+    def __init__(
+        self,
+        credentials: _FakeBoto3Credentials | None = None,
+        region_name: str = "us-east-1",
+    ) -> None:
+        self._credentials = credentials
+        self.region_name = region_name
+
+    def get_credentials(self) -> _FakeBoto3Credentials | None:
+        return self._credentials
+
+    def client(self, service_name: str, region_name: str | None = None) -> object:
+        if service_name == "sts":
+            return _FakeStsClient()
+        raise NotImplementedError(
+            f"FakeBoto3Session: no fake for service {service_name!r}"
+        )
+
+
+def _install_fake_boto3(
+    monkeypatch: pytest.MonkeyPatch,
+    session: _FakeBoto3Session,
+) -> None:
+    import sys
+    import types
+
+    fake_boto3 = types.ModuleType("boto3")
+    fake_boto3.Session = lambda profile_name=None: session  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+
+
+def test_sigv4_credentials_present_true_when_session_has_creds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import AWSSigV4
+
+    creds = _FakeBoto3Credentials("AKIATESTKEY", "secret")
+    _install_fake_boto3(monkeypatch, _FakeBoto3Session(credentials=creds))
+    strat = AWSSigV4(region_name="us-east-1")
+    assert strat.credentials_present() is True
+
+
+def test_sigv4_credentials_present_false_when_session_has_no_creds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import AWSSigV4
+
+    _install_fake_boto3(monkeypatch, _FakeBoto3Session(credentials=None))
+    strat = AWSSigV4(region_name="us-east-1")
+    assert strat.credentials_present() is False
+
+
+def test_sigv4_health_check_ok_via_sts_get_caller_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import AWSSigV4
+
+    creds = _FakeBoto3Credentials("AKIATESTKEY", "secret")
+    _install_fake_boto3(monkeypatch, _FakeBoto3Session(credentials=creds))
+    strat = AWSSigV4(region_name="us-east-1")
+    result = strat.health_check()
+    assert result.ok is True
+    assert result.identity == "arn:aws:iam::123456789012:user/kinoforge-ci"
+
+
+def test_sigv4_health_check_fail_when_no_creds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import AWSSigV4
+
+    _install_fake_boto3(monkeypatch, _FakeBoto3Session(credentials=None))
+    strat = AWSSigV4(region_name="us-east-1")
+    result = strat.health_check()
+    assert result.ok is False
+    assert "no AWS credentials" in (result.reason or "")
+
+
+def test_sigv4_redact_patterns_includes_access_key_and_authz_signature() -> None:
+    from kinoforge.core.auth import AWSSigV4
+
+    strat = AWSSigV4(region_name="us-east-1")
+    patterns = strat.redact_patterns()
+    assert any(p.search("AKIAIOSFODNN7EXAMPLE") for p in patterns)
+    assert any(
+        p.search(
+            "AWS4-HMAC-SHA256 Credential=AKIA.../20260607/us-east-1/bedrock/aws4_request"
+        )
+        for p in patterns
+    )
+
+
+def test_sigv4_apply_signs_request_with_authorization_and_amz_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import AWSSigV4, HttpRequest
+
+    creds = _FakeBoto3Credentials("AKIATESTKEY", "VerySecretKey123")
+    _install_fake_boto3(monkeypatch, _FakeBoto3Session(credentials=creds))
+    strat = AWSSigV4(region_name="us-east-1", service_name="bedrock-runtime")
+    req = HttpRequest(
+        method="POST",
+        url="https://bedrock-runtime.us-east-1.amazonaws.com/async-invoke",
+        headers={"Content-Type": "application/json"},
+        body=b'{"foo": "bar"}',
+    )
+    out = strat.apply(req)
+    assert out.headers["Authorization"].startswith(
+        "AWS4-HMAC-SHA256 Credential=AKIATESTKEY/"
+    )
+    assert "X-Amz-Date" in out.headers
+
+
+def test_sigv4_client_kwargs_returns_aws_credential_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kinoforge.core.auth import AWSSigV4
+
+    creds = _FakeBoto3Credentials(
+        "AKIATESTKEY", "VerySecretKey123", token="session-token-abc"
+    )
+    _install_fake_boto3(monkeypatch, _FakeBoto3Session(credentials=creds))
+    strat = AWSSigV4(region_name="us-east-1")
+    kwargs = strat.client_kwargs()
+    assert kwargs["aws_access_key_id"] == "AKIATESTKEY"
+    assert kwargs["aws_secret_access_key"] == "VerySecretKey123"
+    assert kwargs["aws_session_token"] == "session-token-abc"
+    assert kwargs["region_name"] == "us-east-1"
