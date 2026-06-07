@@ -92,6 +92,18 @@ def test_fal_yaml_loads_under_new_validators() -> None:
     assert cfg.engine.fal.url_path == "video.url"
 
 
+def test_nova_reel_example_config_parses() -> None:
+    """examples/configs/nova-reel.yaml must satisfy Layer 3 Task 2 validators."""
+    from kinoforge.core.config import load_config
+
+    cfg = load_config("examples/configs/nova-reel.yaml")
+    assert cfg.engine.kind == "nova_reel"
+    assert cfg.engine.nova_reel is not None
+    assert cfg.engine.nova_reel.region_name == "us-east-1"
+    assert cfg.engine.nova_reel.output_s3_uri.startswith("s3://")
+    assert cfg.engine.nova_reel.model_id == "amazon.nova-reel-v1:1"
+
+
 # ---------------------------------------------------------------------------
 # AC2 — Config-only swap tests
 # ---------------------------------------------------------------------------
