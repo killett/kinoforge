@@ -124,3 +124,37 @@ Rotation steps live in each provider's local README (`.gcp/README.md`,
 5. Add a row to the bootstrap-status table above.
 6. Write a `.<provider>/README.md` with bootstrap + rotation instructions.
 7. Reference the new provider from the layer's spec/plan that introduced it.
+
+## SkyPilot check — captured output (Layer W+α T6)
+
+Layer W+α verified permissions via two channels:
+
+1. `pixi run cloud:perms-probe` — covers AWS + GCP. Identity + IAM action
+   simulation (AWS), SA role audit (GCP), GPU quota readouts on both.
+2. `pixi run -e live-skypilot sky check gcp` — SkyPilot's own credential
+   check, captured below.
+
+```text
+✓ SkyPilot API server started.
+Checking credentials to enable infra for SkyPilot.
+  GCP: enabled [compute, storage]
+
+🎉 Enabled infra 🎉
+  GCP [compute, storage]
+```
+
+Captured 2026-06-06. Zero EC2 instances in `us-east-1`, zero GCE instances
+in `us-central1` at the time of capture (verified via
+`aws ec2 describe-instances` and `gcloud compute instances list`).
+
+**Why no `sky check aws`:** the `live-skypilot` pixi feature pins
+`skypilot[gcp]` only. Adding `extras=["aws", "gcp"]` triggers a conda↔PyPI
+pin conflict (conda-pinned `botocore`/`urllib3`/`grpcio`/`protobuf` vs
+`skypilot[aws]`'s upstream constraints, gated further by the workspace's
+`exclude-newer = "7d"`). The AWS permission surface is already covered
+end-to-end by `tools/cloud_perms_probe.py --cloud aws` (identity +
+`iam.simulate_principal_policy` for every required action +
+`ec2.describe_instance_types` + `service-quotas.get_service_quota`).
+`sky check aws` adds nothing the probe does not already cover for this
+zero-spend layer; the real validation happens at Layer W+β's first
+`sky launch`. Resolving the pin conflict is a Layer W+β prerequisite.
