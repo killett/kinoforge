@@ -1,0 +1,103 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md",
+  "specPath": "docs/superpowers/specs/2026-06-06-layer-w-alpha-cloud-bootstrap-design.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "T1: Draft AWS scoped IAM policy",
+      "status": "pending",
+      "blockedBy": [],
+      "userGate": false,
+      "metadata": {
+        "files": [".aws/policies/skypilot-minimal.json"],
+        "verifyCommand": "python -c \"import json; doc=json.load(open('.aws/policies/skypilot-minimal.json')); assert doc['Version']=='2012-10-17'; print(len(doc['Statement']), 'statements')\""
+      }
+    },
+    {
+      "id": 2,
+      "subject": "T2: Apply policy + USER GATE",
+      "status": "pending",
+      "blockedBy": [1],
+      "userGate": true,
+      "tags": ["user-gate"],
+      "metadata": {
+        "files": [".aws/README.md"],
+        "verifyCommand": "aws sts get-caller-identity",
+        "gateScope": "operator-console-action",
+        "failurePolicy": "block-until-resolved"
+      }
+    },
+    {
+      "id": 3,
+      "subject": "T3: AWS probe",
+      "status": "pending",
+      "blockedBy": [2],
+      "userGate": false,
+      "metadata": {
+        "files": [
+          "tools/cloud_perms_probe.py",
+          "tests/tools/test_cloud_perms_probe.py",
+          "tests/tools/fixtures/cloud_perms/aws_green.json",
+          "pixi.toml"
+        ],
+        "verifyCommand": "pixi run pytest tests/tools/test_cloud_perms_probe.py -v"
+      }
+    },
+    {
+      "id": 4,
+      "subject": "T4: GCP probe",
+      "status": "pending",
+      "blockedBy": [],
+      "userGate": false,
+      "metadata": {
+        "files": [
+          "tools/cloud_perms_probe.py",
+          "tests/tools/test_cloud_perms_probe.py",
+          "tests/tools/fixtures/cloud_perms/gcp_green.json",
+          "pixi.toml"
+        ],
+        "verifyCommand": "pixi run pytest tests/tools/test_cloud_perms_probe.py -v"
+      }
+    },
+    {
+      "id": 5,
+      "subject": "T5: Quota gap handler",
+      "status": "pending",
+      "blockedBy": [3, 4],
+      "userGate": true,
+      "tags": ["user-gate"],
+      "metadata": {
+        "files": [
+          "tools/cloud_perms_probe.py",
+          "tests/tools/test_cloud_perms_probe.py"
+        ],
+        "verifyCommand": "pixi run pytest tests/tools/test_cloud_perms_probe.py -v && pixi run cloud:perms-probe",
+        "gateScope": "operator-console-action-gcp-only",
+        "failurePolicy": "block-until-resolved"
+      }
+    },
+    {
+      "id": 6,
+      "subject": "T6: sky check smoke",
+      "status": "pending",
+      "blockedBy": [3, 4, 5],
+      "userGate": false,
+      "metadata": {
+        "files": ["docs/CLOUD-CREDS.md"],
+        "verifyCommand": "pixi run -e live-skypilot sky check aws gcp"
+      }
+    },
+    {
+      "id": 7,
+      "subject": "T7: Docs + Phase 39 + commit",
+      "status": "pending",
+      "blockedBy": [1, 2, 3, 4, 5, 6],
+      "userGate": false,
+      "metadata": {
+        "files": ["docs/CLOUD-CREDS.md", "PROGRESS.md", "README.md"],
+        "verifyCommand": "pixi run pre-commit run --all-files && pixi run test && pixi run cloud:perms-probe"
+      }
+    }
+  ],
+  "lastUpdated": "2026-06-06"
+}
