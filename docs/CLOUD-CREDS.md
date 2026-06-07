@@ -106,7 +106,8 @@ models auto-activate on first invoke; no console step needed for Luma Ray v2.
 
 | Policy name | Grants | Attachment | Date | Source |
 |---|---|---|---|---|
-| `kinoforge-luma-ray` | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Luma Ray v2 ARNs in us-west-2) + ListFoundationModels (`*`) + S3 read/write on `bedrock-video-generation-us-west-2-nw51wr` | Inline on `kinoforge-ci` (replaces `kinoforge-nova-reel`) | 2026-06-07 | `.aws/policies/bedrock-luma-ray.json` |
+| `kinoforge-luma-ray` (inline) | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Luma Ray v2 ARNs in us-west-2) + ListFoundationModels + GetFoundationModelAvailability + CreateFoundationModelAgreement + S3 read/write on `bedrock-video-generation-us-west-2-nw51wr` | Inline on `kinoforge-ci` (replaces `kinoforge-nova-reel`) | 2026-06-07 | `.aws/policies/bedrock-luma-ray.json` (extended in-situ) |
+| `AmazonBedrockFullAccess` (managed) | Full Bedrock control-plane access; used for model-access diagnostics | Attached to `kinoforge-ci` | 2026-06-07 | AWS managed; can be detached once smoke passes |
 
 Reversible: `aws iam delete-user-policy --user-name kinoforge-ci --policy-name kinoforge-luma-ray`
 
@@ -114,6 +115,12 @@ Old Nova Reel policy (`kinoforge-nova-reel`) removed when `kinoforge-luma-ray`
 was attached. Old `kinoforge-nova-reel-output` bucket (us-east-1) may still
 exist; remove with:
 `aws s3 rb s3://kinoforge-nova-reel-output --force` (safe to run if not needed)
+
+**Luma Ray EULA status (2026-06-07):**
+- `CreateFoundationModelAgreement` accepted offer `offer-o5smt33izgzbm`.
+- `agreementAvailability`: AVAILABLE (EULA accepted).
+- `authorizationStatus`: NOT_AUTHORIZED (console action still needed —
+  Bedrock → Model access → Enable Luma AI Ray v2).
 
 ### Layer 3 (Luma Ray v2) — S3 buckets
 

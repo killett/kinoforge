@@ -155,19 +155,24 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 ### RESUME — START HERE
 
 **Where we are:** Phase 42 (Layer 3 — pivot to BedrockVideoEngine) —
-Tasks 0–6 complete under the old Nova Reel name; Nova Reel was blocked
-on AWS account-level invocation approval. Pivoted to Luma Ray v2 in
-us-west-2 via a generalized `BedrockVideoEngine`. Phase 1 refactor
-committed (see below). Phase 2 (live smoke) is next.
+Tasks 0–6 complete; pivoted from Nova Reel to Luma Ray v2 via generic
+`BedrockVideoEngine` (Phase 1 refactor committed at `aae46d7`). Phase 2
+(live smoke) BLOCKED on AWS account-level Bedrock model invocation
+authorization for Luma Ray v2.
+
+**Luma Ray EULA was accepted programmatically** (`CreateFoundationModelAgreement`
+→ `agreementAvailability=AVAILABLE`) but `authorizationStatus` remains
+`NOT_AUTHORIZED` after 6 min. This is the same console-only gate that
+blocked Nova Reel.
 
 **Read in this order:**
-1. The Phase 42 entry below — includes the pivot rationale.
-2. `docs/superpowers/plans/2026-06-07-layer-3-nova-reel-engine.md` (original plan; pivot is described here in PROGRESS).
-3. `git log --oneline -10` for recent commits.
+1. The Phase 42 entry below — pivot rationale + Phase 2 blocker detail.
+2. `git log --oneline -10` for recent commits.
 
-**First unchecked task:**
-Phase 2 live smoke — attach new IAM policy, access-probe, fire
-`tests/live/test_luma_ray_live.py`.
+**First unchecked task (operator action required):**
+AWS Console → Bedrock → Model access → Enable "Luma AI Ray v2".
+After that: `KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 pixi run
+pytest tests/live/test_luma_ray_live.py -v -s`
 
 **Budget remaining: ~$10.88 of $15.** Layer 3 Tasks 0–7 spent $0.
 
@@ -1592,6 +1597,50 @@ Plan:
 - [ ] Task 7 (re-fire as Luma Ray): fire live smoke + capture fixture (~$0.50)
 - [ ] Task 8: Offline replay test against captured fixtures
 - [ ] Task 9: README + PROGRESS final gate
+
+**Phase 2 (live smoke) — BLOCKED (same account-level gate as Nova Reel):**
+
+The Luma Ray v2 agreement (EULA) was accepted programmatically via
+`CreateFoundationModelAgreement` (offer `offer-o5smt33izgzbm`) and
+`agreementAvailability` moved from `PENDING` → `AVAILABLE`. However
+`authorizationStatus` remains `NOT_AUTHORIZED` even after 6 minutes of
+polling. Same pattern as Nova Reel: EULA accepted, but account-level
+invocation authorization has not activated.
+
+`GetFoundationModelAvailability` diagnostic:
+```
+agreementAvailability: AVAILABLE
+authorizationStatus: NOT_AUTHORIZED
+entitlementAvailability: AVAILABLE
+regionAvailability: AVAILABLE
+```
+
+All `StartAsyncInvoke` and `InvokeModel` calls return:
+`ValidationException: Operation not allowed`
+
+**What the operator must do (one-time):**
+1. Sign in to the AWS Console as an IAM admin (or the root account).
+2. Navigate to: Amazon Bedrock → Left menu → "Model access".
+3. Find "Luma AI Ray v2" and click "Enable" / accept the use case form.
+4. Wait for `authorizationStatus` to flip to `AUTHORIZED` (usually instant
+   after console action).
+5. Re-run:
+   ```
+   KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 \
+       pixi run pytest tests/live/test_luma_ray_live.py -v -s
+   ```
+
+**IAM state after Phase 2 cloud work:**
+- Old `kinoforge-nova-reel` inline policy deleted.
+- New `kinoforge-luma-ray` inline policy attached (Luma Ray ARNs in
+  us-west-2 + S3 on `bedrock-video-generation-us-west-2-nw51wr`).
+- `AmazonBedrockFullAccess` AWS managed policy attached (for model
+  access probing; can be detached after smoke succeeds).
+- Luma Ray EULA accepted via `CreateFoundationModelAgreement`.
+- `bedrock:GetFoundationModelAvailability` + agreement management
+  actions added to inline policy for diagnostics.
+
+No spend incurred. All failures were pre-submit.
 
 **Phase 1 refactor — what changed:**
 - `engines/nova_reel/` → `engines/bedrock_video/`; `NovaReelEngine` →
