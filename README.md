@@ -1139,6 +1139,41 @@ Each item below names the deferred layer and the exact seam it plugs into when b
 - **Keyframe / image-generation upstream Stage** — `Stage` Protocol + `ConditioningAsset` with `kind="image"`; add an `ImageGenStage` that satisfies `Stage` and feeds its output into the video generation stage's `segments_override`.
 - **Cross-process discovery lock** — `ModelProfileProvider` currently uses an in-process threading.Event for single-flight; replace with a file-lock or Redis-backed lock for multi-process / distributed workers.
 
+## Cloud stores
+
+Kinoforge ships three `ArtifactStore` backends: `local`, `s3`, and `gcs`.
+Configure via the top-level `store:` block:
+
+```yaml
+store:
+  kind: s3                # or gcs / local
+  bucket: my-bucket
+  encryption:
+    mode: kms             # or "default" (provider-managed)
+    kms_key_id: arn:aws:kms:us-east-1:123456789012:key/abc
+  signed_url_default_ttl_s: 3600
+```
+
+The `kms_key_id` form is cloud-specific:
+
+- **S3:** an AWS KMS ARN — `arn:aws:kms:<region>:<account>:key/<uuid>`
+- **GCS:** a Cloud KMS resource name — `projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>`
+
+Operators that need encrypted artifact storage can opt into
+provider-managed encryption (`mode: default` — the silent default) or
+customer-managed keys (`mode: kms`). See `docs/CLOUD-CREDS.md` for the
+KMS bootstrap path (`pixi run cloud:bootstrap-kms`).
+
+Callers can hand out time-limited URLs without sharing creds:
+
+```python
+url = store.signed_url("run-1", "out.mp4", op="GET", ttl_s=600)
+```
+
+`ttl_s` defaults to `store.signed_url_default_ttl_s` (default 3600 s).
+`LocalArtifactStore` does not support signed URLs (no transport-layer
+auth for local files) and raises `NotImplementedError`.
+
 ## Design references
 
 The `providers/skypilot/` adapter wraps [SkyPilot](https://github.com/skypilot-org/skypilot) (Apache 2.0, UC Berkeley Sky Computing Lab). SkyPilot was a major influence on kinoforge's `ComputeProvider` abstraction, particularly the autostop mapping (`idle_timeout_s → autostop minutes`), the cost-aware GPU offer selection model, and the principle that cloud portability should be configuration-level rather than code-level. We credit the SkyPilot authors and recommend their work for anyone building on cloud-portable ML infrastructure.
