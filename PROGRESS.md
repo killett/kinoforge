@@ -153,16 +153,39 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 39 fully CLOSED — Layer W+α (cloud bootstrap, zero spend). AWS scoped IAM policy doc tracked; broader AWS-managed policies attached on `kinoforge-ci` per operator preference; GCP SA roles audited + `compute.instanceAdmin.v1` granted; `pixi run cloud:perms-probe` exits 0 (GCP) + 2 (AWS quota gap — auto-requested, AWS case `cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` open). HEAD at the T7 docs commit on `main`. Probe suite: 12/12 unit tests pass. Working tree clean.
+**Where we are:** Phase 40 PARTIAL — Layer W+β attempted live T4 smoke,
+discovered GCP free tier blocks GPUs, shipped 5 adapter/test bug fixes
+on the path before pausing. HEAD at the T5 docs commit on `main`. Test
+suite at ~1509 passed / 23 skipped. Working tree clean. AWS quota case
+`cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` still open from W+α.
 
 **Read in this order:**
-1. The Phase 39 entry below (per-task SHAs + design decisions + operator actions + open AWS quota case).
-2. `docs/superpowers/specs/2026-06-06-layer-w-alpha-cloud-bootstrap-design.md` for the design doc.
-3. `git log --oneline -15` for the most-recent commits.
+1. The Phase 40 entry below (5 fix commit SHAs + blocker context +
+   re-fire instructions).
+2. `docs/superpowers/specs/2026-06-06-layer-w-beta-skypilot-t4-gpu-smoke-design.md`.
+3. `git log --oneline -15` for recent commits.
 
-**First unchecked task in fresh session:** Layer W+β — SkyPilot multi-cloud T4 GPU smoke. Gated on AWS quota approval landing. Probe re-run will exit 0 on AWS once approved; until then `sky launch` against AWS will fail. GCP side is launch-ready today. Alternative candidates carried forward: **Layer W+ `kinoforge sweeper` daemon** (consumes Layer V substrate); **cross-machine `--store-uri` / `KINOFORGE_STORE_URI` bootstrap** (Layer T carry-forward); **fal storage upload integration** for keyframe→wan i2v/flf2v end-to-end (Layer R carry-forward); **Layer X cost dashboard / metrics** (read-only consumer of `classify`); **Layer Y in-session warm-reuse retrofit** (orchestrator consults `classify` when `_states[id]` is missing across CLI invocations).
+**First unchecked task in fresh session:** operator upgrades GCP
+billing tier (one click — no immediate spend, only future VM usage is
+billed). Once upgraded, re-fire the live smoke:
 
-**Budget remaining: ~$10.88 of $15.** Layer W+α spent $0 (zero `sky launch`, zero EC2/GCE instances, AWS quota request is free). Layer W+β cost ceiling estimate: ~$0.10/cloud per smoke cycle (5-min lifecycle on `g4dn.xlarge` AWS / `n1-standard-4 + nvidia-tesla-t4` GCP).
+    KINOFORGE_LIVE_TESTS=1 pixi run -e live-skypilot pytest \
+      tests/live/test_skypilot_live.py::test_skypilot_live_e2e_t4_gpu_lifecycle_smoke \
+      -v -s
+
+Expected outcome: PASS, ~5–10 min, $0.03–$0.06 spend. Then T11/T12
+close + Phase 40 flips PARTIAL → CLOSED. Alternative candidates if
+billing upgrade is declined: **Layer W+ `kinoforge sweeper` daemon**
+(consumes Layer V substrate); **cross-machine `--store-uri` /
+`KINOFORGE_STORE_URI` bootstrap** (Layer T carry-forward); **fal
+storage upload integration** for keyframe→wan i2v/flf2v end-to-end
+(Layer R carry-forward); **Layer X cost dashboard / metrics**
+(read-only consumer of `classify`); **Layer Y in-session warm-reuse
+retrofit**.
+
+**Budget remaining: ~$10.88 of $15.** Layer W+β spent $0 (all attempts
+failed before any VM provisioned; the 5 fix commits are pure
+intellectual artifact).
 
 ## Post-MVP
 
@@ -1404,3 +1427,80 @@ tests landed in a previously empty file.
 Closes PROGRESS:113 carry-forward #2 (SkyPilot SDK shape) is partial —
 GCP path of SkyPilot is exercised by `sky check` clean. AWS path of
 SkyPilot is NOT exercised; closure is gated on Layer W+β.
+
+### Phase 40 — Layer W+β PARTIAL (SkyPilot T4 GPU smoke, blocked on GCP billing)
+
+Layer attempted the live T4 GPU lifecycle of the `providers/skypilot/`
+adapter against real hardware. Five real adapter/test bugs caught on
+the path and fixed; live smoke itself blocked by GCP free-tier
+billing restriction.
+
+Spec:
+`docs/superpowers/specs/2026-06-06-layer-w-beta-skypilot-t4-gpu-smoke-design.md`.
+Plan:
+`docs/superpowers/plans/2026-06-06-layer-w-beta-skypilot-t4-gpu-smoke.md`.
+
+- [x] Task 1: Helpers + parametrized scaffold (RED) — commit `384041f`
+- [x] Task 2: GPU example config + offline fixture-shape regression — commit `c8327e2`
+- [x] Task 3: Pre-spend gate — ran mechanically (operator pre-authorized $20 spend)
+- [~] Task 4: Live GCP T4 smoke — BLOCKED on free-tier billing; 5 fix commits shipped on the path
+- [x] Task 5: CLOUD-CREDS + this entry + final gate — commit `<T5 SHA>`
+
+**Bug-catch commits (the layer's actual artifact):**
+
+| SHA | Commit | What it fixes |
+|---|---|---|
+| `ee90ac3` | fix(providers/skypilot): add clouds= param | `sky.list_accelerators()` without `clouds=["gcp"]` triggers a Kubernetes catalog import that fails without the `kubernetes` package |
+| `c9a5aa6` | fix(providers/skypilot): vram fallback + offer attr | GCP `InstanceTypeInfo` returns `device_memory=None` for NVIDIA GPUs — added `_KNOWN_GPU_VRAM_GB` fallback. Also fixed the T4 offer filter attribute name: `gpu_name` (wrong) → `gpu_type` (correct field on the Offer dataclass) |
+| `f0c7783` | fix(providers/skypilot): GPU disk_size default 60 GB | SkyPilot GPU base image needs ≥50 GB; provider defaulted to 30 GB → HTTP 400 from GCP |
+| `819d130` | fix(tests/live): use sky default GPU image | `docker:skypilot/skypilot-gpu:latest` does not translate cleanly to GCP VM images; empty `image=""` lets SkyPilot pick its per-cloud GPU image |
+| `f3ade88` | feat(interfaces,skypilot): InstanceSpec.spot + use_spot mapping | GCP had `GPUS_ALL_REGIONS=0` (on-demand) but `PREEMPTIBLE_NVIDIA_T4_GPUS=1` (spot); added `InstanceSpec.spot: bool = False` (backward compatible) wired through to `resources.use_spot` in the SkyPilot provider |
+
+**Blocker:**
+
+```
+ERROR: Your billing account is currently in the free tier where
+non-TPU accelerators are not available.
+```
+
+Per-region quota (`NVIDIA_T4_GPUS=1`) is pre-granted; activation
+requires upgrading the GCP billing account. The `GPUS_ALL_REGIONS=0`
+global is a free-tier consequence, not separately adjustable.
+
+**Re-fire instructions (post-billing-upgrade):**
+
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run -e live-skypilot pytest \
+  tests/live/test_skypilot_live.py::test_skypilot_live_e2e_t4_gpu_lifecycle_smoke \
+  -v -s
+```
+
+Expected: PASS within 5–10 min, spend $0.03–$0.06.
+
+**Key design decisions / discoveries:**
+
+- **Bug surface of bare lifecycle is exactly as the Layer N pattern
+  predicted.** 5 production bugs caught at $0 spend — every one would
+  have masqueraded as an engine failure if the bare lifecycle had been
+  skipped in favor of a direct ComfyUI smoke.
+- **Adapter `clouds=` param is now load-bearing.** Without explicit
+  `clouds=["gcp"]`, sky tries to probe every catalog backend including
+  k8s. This is a subtle behavior of `sky.list_accelerators()` that
+  isn't surfaced in any sky doc we found.
+- **`InstanceSpec.spot` is a new public ABC field** — added with default
+  `False` so all existing callers unchanged. Layer W+β2 (AWS) will
+  exercise the same field (`PREEMPTIBLE` analogous on AWS spot).
+- **GCP `device_memory=None` discovery.** `_KNOWN_GPU_VRAM_GB` is a
+  manual map covering T4, A10, L4, A100, H100, V100. Maintenance
+  burden ≤ 1 entry/year. Better than silently filtering offers out.
+
+**Spend:** $0. All attempts failed before any VM provisioned.
+
+**Out of scope / carried forward:**
+
+- The live smoke itself — re-fires once billing is upgraded.
+- AWS arm (W+β2) — gated on quota case
+  `cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` landing.
+- Engine smoke on a verified adapter — separable layer that stacks on
+  this one once the smoke fires.
+- `accelerators_in_cost` ordering verification on the GPU branch.
