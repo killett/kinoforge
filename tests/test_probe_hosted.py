@@ -115,13 +115,38 @@ class _FakeBedrockControlClient:
         return {"modelSummaries": self._models}
 
 
+class _FakeBedrockRuntimeClient:
+    """Stand-in for boto3 bedrock-runtime (data plane) client.
+
+    Raises ``exc`` on ``start_async_invoke`` if provided; otherwise succeeds.
+    """
+
+    def __init__(self, raise_on_invoke: Exception | None = None) -> None:
+        self._raise = raise_on_invoke
+
+    def start_async_invoke(self, **kwargs: Any) -> dict[str, Any]:
+        if self._raise is not None:
+            raise self._raise
+        return {"invocationArn": "arn:aws:bedrock:us-west-2::async-invoke/probe-ok"}
+
+
 def test_check_bedrock_model_access_passes_when_model_listed() -> None:
     from tools.probe_hosted import check_bedrock_model_access
 
-    fake = _FakeBedrockControlClient(
+    fake_control = _FakeBedrockControlClient(
         models=[{"modelId": "luma.ray-v2:0", "modelLifecycle": {"status": "ACTIVE"}}]
     )
-    result = check_bedrock_model_access(fake, "luma.ray-v2:0")
+
+    # Runtime raises a ValidationException that is NOT "Operation not allowed" → access ok
+    class _BodyValidationError(Exception):
+        pass
+
+    _BodyValidationError.__name__ = "ValidationException"
+
+    fake_runtime = _FakeBedrockRuntimeClient(
+        raise_on_invoke=_BodyValidationError("Invalid request: missing required field")
+    )
+    result = check_bedrock_model_access(fake_control, fake_runtime, "luma.ray-v2:0")
     assert result.ok is True
     assert "luma.ray-v2:0" in (result.identity or "")
 
@@ -129,14 +154,48 @@ def test_check_bedrock_model_access_passes_when_model_listed() -> None:
 def test_check_bedrock_model_access_fails_when_model_missing() -> None:
     from tools.probe_hosted import check_bedrock_model_access
 
-    fake = _FakeBedrockControlClient(
+    fake_control = _FakeBedrockControlClient(
         models=[
             {"modelId": "amazon.titan-text-v1", "modelLifecycle": {"status": "ACTIVE"}}
         ]
     )
-    result = check_bedrock_model_access(fake, "luma.ray-v2:0")
+    fake_runtime = _FakeBedrockRuntimeClient()
+    result = check_bedrock_model_access(fake_control, fake_runtime, "luma.ray-v2:0")
     assert result.ok is False
     assert "luma.ray-v2:0" in (result.reason or "")
+
+
+def test_check_bedrock_model_access_detects_authorization_denial() -> None:
+    """Stage-2 gate: 'Operation not allowed' → account-level access not granted."""
+    from tools.probe_hosted import check_bedrock_model_access
+
+    fake_control = _FakeBedrockControlClient(
+        models=[{"modelId": "luma.ray-v2:0", "modelLifecycle": {"status": "ACTIVE"}}]
+    )
+    fake_runtime = _FakeBedrockRuntimeClient(
+        raise_on_invoke=Exception(
+            "Operation not allowed: authorizationStatus=NOT_AUTHORIZED"
+        )
+    )
+    result = check_bedrock_model_access(fake_control, fake_runtime, "luma.ray-v2:0")
+    assert result.ok is False
+    assert "account-level access not granted" in (result.reason or "")
+
+
+def test_check_bedrock_model_access_passes_when_runtime_validates_body() -> None:
+    """Stage-2 pass: any ValidationException that is NOT 'Operation not allowed'."""
+    from tools.probe_hosted import check_bedrock_model_access
+
+    fake_control = _FakeBedrockControlClient(
+        models=[{"modelId": "luma.ray-v2:0", "modelLifecycle": {"status": "ACTIVE"}}]
+    )
+    # A generic validation error unrelated to account-level gating.
+    fake_runtime = _FakeBedrockRuntimeClient(
+        raise_on_invoke=Exception("ValidationException: modelInput must not be empty")
+    )
+    result = check_bedrock_model_access(fake_control, fake_runtime, "luma.ray-v2:0")
+    assert result.ok is True
+    assert result.identity == "luma.ray-v2:0"
 
 
 def test_probe_cli_invokes_check_bedrock_model_access_when_flag_set(
@@ -146,10 +205,12 @@ def test_probe_cli_invokes_check_bedrock_model_access_when_flag_set(
     from tools.probe_hosted import ProbeResult, run
 
     strategies = [("bedrock_video", FakeAuthStrategy())]
-    # Inject a fake bedrock control client so no real AWS call happens.
+    # Inject fakes so no real AWS call happens.
     captured: list[ProbeResult] = []
 
-    def fake_bedrock_check(client: object, model_id: str) -> ProbeResult:
+    def fake_bedrock_check(
+        control: object, runtime: object, model_id: str
+    ) -> ProbeResult:
         captured.append(
             ProbeResult(
                 name=f"bedrock:{model_id}", ok=True, identity=model_id, reason=None
@@ -161,11 +222,10 @@ def test_probe_cli_invokes_check_bedrock_model_access_when_flag_set(
         "tools.probe_hosted.check_bedrock_model_access", fake_bedrock_check
     )
 
-    # run() accepts an extra_checks kwarg added in the impl below.
     extra = [
         (
             "bedrock:luma.ray-v2:0",
-            lambda: fake_bedrock_check(None, "luma.ray-v2:0"),
+            lambda: fake_bedrock_check(None, None, "luma.ray-v2:0"),
         )
     ]
     exit_code = run(
