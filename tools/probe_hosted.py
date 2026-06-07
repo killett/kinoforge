@@ -190,8 +190,7 @@ def check_bedrock_model_access(
                 reason=(
                     "account-level access not granted "
                     "(authorizationStatus=NOT_AUTHORIZED). "
-                    "Open AWS Support case — see "
-                    "docs/aws-support-case-luma-ray.md."
+                    "Open an AWS Support case for Bedrock model access."
                 ),
             )
         # Any other ValidationException = access works, body just bad

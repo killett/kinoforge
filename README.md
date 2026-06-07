@@ -679,10 +679,11 @@ Auth: AWS SigV4 via Layer 1 `AWSSigV4` strategy. No Bearer key.
 
 Live smoke: `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_luma_ray_live.py -v`
 
-NOTE: AWS gates new third-party models behind a one-time per-account
-authorization that, as of 2026-06, requires an AWS Support case (the
-console "Model access" page is retired but the gate is not). See
-`docs/aws-support-case-luma-ray.md` for the workflow.
+NOTE: AWS gates new third-party Bedrock models behind a one-time per-
+account authorization. As of 2026-06 the gate requires an AWS Support
+case — the console "Model access" page is retired for first-party
+models but the authorization step remains for third-party models.
+Open a case via the AWS Support Center for the target model + region.
 
 ### Bedrock Video probe
 
