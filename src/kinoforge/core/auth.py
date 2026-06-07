@@ -604,3 +604,49 @@ class AWSSigV4(AuthStrategy):
         if frozen.token:
             kwargs["aws_session_token"] = frozen.token
         return kwargs
+
+
+# ---------------------------------------------------------------------------
+# Registry + factory
+# ---------------------------------------------------------------------------
+
+from kinoforge.core.errors import UnknownAdapter  # noqa: E402 — after all classes
+
+_REGISTRY: dict[str, type[AuthStrategy]] = {
+    "bearer": Bearer,
+    "gcp_service_account": GCPServiceAccount,
+    "aws_sigv4": AWSSigV4,
+}
+
+
+def build_auth_strategy(spec: dict[str, Any]) -> AuthStrategy:
+    """Construct a concrete :class:`AuthStrategy` from a parsed YAML block.
+
+    Args:
+        spec: A mapping with a required ``"strategy"`` key naming one of
+            the registered strategy names plus any strategy-specific kwargs.
+
+    Returns:
+        An instance of the named strategy.
+
+    Raises:
+        KeyError: ``"strategy"`` key is missing from ``spec``.
+        UnknownAdapter: ``"strategy"`` names an unregistered strategy.
+        TypeError: strategy-specific kwargs are wrong; re-raised with the
+            offending strategy name for context.
+    """
+    if "strategy" not in spec:
+        raise KeyError(
+            f"auth spec must include a 'strategy' key; got keys: {sorted(spec.keys())}"
+        )
+    name = spec["strategy"]
+    cls = _REGISTRY.get(name)
+    if cls is None:
+        raise UnknownAdapter(
+            f"unknown auth strategy: {name!r} (registered: {sorted(_REGISTRY)})"
+        )
+    kwargs = {k: v for k, v in spec.items() if k != "strategy"}
+    try:
+        return cls(**kwargs)
+    except TypeError as exc:
+        raise TypeError(f"failed to construct auth strategy {name!r}: {exc}") from exc

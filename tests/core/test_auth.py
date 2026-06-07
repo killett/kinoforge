@@ -559,3 +559,60 @@ def test_sigv4_client_kwargs_returns_aws_credential_dict(
     assert kwargs["aws_secret_access_key"] == "VerySecretKey123"
     assert kwargs["aws_session_token"] == "session-token-abc"
     assert kwargs["region_name"] == "us-east-1"
+
+
+# ---------------------------------------------------------------------------
+# build_auth_strategy registry
+# ---------------------------------------------------------------------------
+
+
+def test_registry_builds_bearer() -> None:
+    from kinoforge.core.auth import Bearer, build_auth_strategy
+
+    strat = build_auth_strategy({"strategy": "bearer", "env_var": "FAL_KEY"})
+    assert isinstance(strat, Bearer)
+
+
+def test_registry_builds_gcp_service_account() -> None:
+    from kinoforge.core.auth import GCPServiceAccount, build_auth_strategy
+
+    strat = build_auth_strategy({"strategy": "gcp_service_account"})
+    assert isinstance(strat, GCPServiceAccount)
+
+
+def test_registry_builds_aws_sigv4() -> None:
+    from kinoforge.core.auth import AWSSigV4, build_auth_strategy
+
+    strat = build_auth_strategy({"strategy": "aws_sigv4", "region_name": "us-east-1"})
+    assert isinstance(strat, AWSSigV4)
+
+
+def test_registry_unknown_strategy_raises_unknown_adapter() -> None:
+    from kinoforge.core.auth import build_auth_strategy
+    from kinoforge.core.errors import UnknownAdapter
+
+    with pytest.raises(UnknownAdapter, match="not_a_real_strategy"):
+        build_auth_strategy({"strategy": "not_a_real_strategy"})
+
+
+def test_registry_missing_strategy_key_raises_keyerror() -> None:
+    from kinoforge.core.auth import build_auth_strategy
+
+    with pytest.raises(KeyError, match="strategy"):
+        build_auth_strategy({"env_var": "FAL_KEY"})
+
+
+def test_registry_passes_through_strategy_specific_kwargs() -> None:
+    from kinoforge.core.auth import Bearer, build_auth_strategy
+
+    strat = build_auth_strategy(
+        {
+            "strategy": "bearer",
+            "env_var": "HF_TOKEN",
+            "scheme": "Token",
+            "header_name": "X-Api-Key",
+        }
+    )
+    assert isinstance(strat, Bearer)
+    assert strat._scheme == "Token"
+    assert strat._header_name == "X-Api-Key"
