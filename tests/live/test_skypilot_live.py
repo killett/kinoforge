@@ -178,7 +178,7 @@ def _t4_smoke_spec(cluster_name: str, offer: Any) -> InstanceSpec:
     lifecycle = Lifecycle(idle_timeout_s=180, max_lifetime_s=1800)
     return InstanceSpec(
         run_id=cluster_name,
-        image="skypilot/skypilot-gpu:latest",
+        image="",  # empty → SkyPilot picks its default GPU VM image per cloud
         env={},
         tags={"layer": "layer-w-beta-smoke"},
         lifecycle=lifecycle,
