@@ -1505,3 +1505,75 @@ Expected: PASS within 5–10 min, spend $0.03–$0.06.
 - Engine smoke on a verified adapter — separable layer that stacks on
   this one once the smoke fires.
 - `accelerators_in_cost` ordering verification on the GPU branch.
+
+### Phase 41 — Layer 1 AuthStrategy substrate
+
+Pluggable-auth foundation for hosted engines. Ships an `AuthStrategy`
+ABC (5 stable methods, locked by signature-baseline invariant) plus
+Bearer / GCPServiceAccount / AWSSigV4 concrete strategies, a
+`build_auth_strategy` registry, a backward-compat retrofit of
+`HostedAPIEngine`, a `FakeAuthStrategy` test fixture, and a
+`tools/probe_hosted.py` preflight tool. Foundation for Layer 2 (Veo)
+and Layer 3 (Nova Reel) plus future Bearer providers
+(Replicate / Runway / Luma).
+
+Spec:
+`docs/superpowers/specs/2026-06-07-veo-novareel-auth-strategy-design.md`.
+Plan:
+`docs/superpowers/plans/2026-06-07-layer-1-auth-strategy-substrate.md`.
+
+- [x] Task 0: boto3 pin `>=1.34,<2.0` — commit `5262f3e`
+- [x] Task 1: AuthStrategy ABC + HealthResult + HttpRequest — commits `4ddbb1c` + docstring fix `050bd26`
+- [x] Task 2: Bearer strategy + 8 unit tests — commit `ddb9f1e` + edge-cases follow-up `1718135`
+- [x] Task 3: GCPServiceAccount strategy + 7 unit tests — commit `20decff`
+- [x] Task 4: AWSSigV4 strategy + 7 unit tests — commit `27dc1b2`
+- [x] Task 5: build_auth_strategy registry + 6 unit tests — commit `a790279` + TypeError test follow-up `2da2287`
+- [x] Task 6: ABC stable-surface invariant + extended subprocess-isolation — commit `4a9d594`
+- [x] Task 7: FakeAuthStrategy shared fixture — commit `a388b85`
+- [x] Task 8: HostedAPIEngine retrofit (backward-compat) — commit `aa9591d`
+- [x] Task 9: tools/probe_hosted.py + pixi task — commit `292a392`
+- [x] Task 10: README + PROGRESS + final gate — this commit
+
+**Key design decisions:**
+
+- **5-method ABC** — `credentials_present`, `health_check`,
+  `redact_patterns`, `apply`, `client_kwargs`. Locked by signature
+  baseline + invariant test.
+- **Typed boundary objects** — `HealthResult` / `HttpRequest` frozen
+  dataclasses. No duck-typed `dict[str, Any]` returns from the ABC.
+- **Lazy vendor SDK imports** — `google.auth` and `boto3` only enter
+  `sys.modules` when a strategy method is called, never at module
+  import. Verified by extended subprocess-isolation invariant.
+- **Direct SigV4 implementation** — hashlib + hmac stdlib rather than
+  `botocore.auth.SigV4Auth`. Keeps the seam SDK-version-independent
+  and lazy.
+- **`build_auth_strategy` registry** — single discriminator-based
+  factory. Unknown names raise `UnknownAdapter` for consistency with
+  the rest of the registry pattern (engines, providers, sources,
+  stores, splitters).
+- **`HostedAPIEngine` backward-compat** — `auth_strategy=None` default
+  derives `Bearer(env_var=cfg.api_key_env)` at `provision()` time.
+  All 9 pre-Layer-1 construction sites pass unchanged.
+- **Azure + OCI pseudocode in the spec, NOT the codebase** — verifies
+  the ABC admits both providers without modification. Catches AWS+GCP
+  over-fit before any real third-cloud integration lands.
+
+**Test count:** 1528 pre-Layer-1 → 1584 post-Layer-1
+(+56 net Layer 1 tests; all offline, no live spend).
+
+**Live spend:** $0. Fully offline-tested via `FakeAuthStrategy` and
+monkeypatched fake `google.auth` + `boto3` modules.
+
+**Layer sequencing hard-block:** Layer 2 (Veo) and Layer 3 (Nova Reel)
+plans MUST hard-block on this layer's merge commit per the spec §2
+sequencing rule.
+
+**Forward-compat hooks** (spec §7): future Bearer providers
+(Replicate / Runway / Luma) land config-only — no new engine code.
+Future cloud-native providers (Vertex Imagen, Bedrock Claude, Azure
+DALL-E) reuse the existing strategies or add one new strategy per
+auth family.
+
+Closes (partial): PROGRESS:113 carry-forward "Engine-integration live
+smoke" — Layer 1 is the architectural foundation; Layer 2 + Layer 3
+close the engine surface.
