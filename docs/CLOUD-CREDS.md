@@ -200,3 +200,26 @@ end-to-end by `tools/cloud_perms_probe.py --cloud aws` (identity +
 `sky check aws` adds nothing the probe does not already cover for this
 zero-spend layer; the real validation happens at Layer W+β's first
 `sky launch`. Resolving the pin conflict is a Layer W+β prerequisite.
+
+### Layer W+β attempt — blocked on GCP billing
+
+Captured 2026-06-06: attempting the live T4 lifecycle surfaced GCP's
+free-tier restriction:
+
+> Your billing account is currently in the free tier where non-TPU
+> accelerators are not available.
+
+Per-region quota (`NVIDIA_T4_GPUS=1` in `us-central1`) is pre-granted
+but only activates after the billing account is upgraded. The
+`GPUS_ALL_REGIONS=0` global quota is a free-tier consequence, not a
+separately adjustable quota.
+
+**Operator action to unblock:** upgrade billing at
+<https://cloud.google.com/free/docs/gcp-free-tier#how-to-upgrade>. No
+immediate spend obligation — only future VMs are billed at standard
+rates.
+
+Five adapter/test bug fixes shipped on the discovery path
+(`ee90ac3`, `c9a5aa6`, `f0c7783`, `819d130`, `f3ade88`); see
+`PROGRESS.md` Phase 40 for details. Live smoke re-fires for ~$0.05
+once billing is upgraded.
