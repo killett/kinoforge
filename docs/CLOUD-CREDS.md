@@ -30,11 +30,13 @@ The pattern: gitignored `<provider>/` directory + tracked entry in this file.
 | Provider     | Status                       | Files                                               | Identity                                                            |
 |--------------|------------------------------|-----------------------------------------------------|---------------------------------------------------------------------|
 | GCP          | ✅ Bootstrapped               | `.gcp/kinoforge-sa.json`, `.gcp/gcloud-config/`     | `kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com`     |
-| AWS          | ✅ Bootstrapped               | `.aws/credentials`, `.aws/config`                   | `kinoforge-ci` (account `<AWS_ACCOUNT>`, policy `AmazonS3FullAccess`) |
+| AWS          | ✅ Bootstrapped               | `.aws/credentials`, `.aws/config`                   | `kinoforge-ci` (account `<AWS_ACCOUNT>`)                              |
 | fal.ai       | ✅ Bootstrapped               | `.env` → `FAL_KEY`                                  | personal fal API key                                                 |
 | HuggingFace  | ✅ Bootstrapped               | `.env` → `HF_TOKEN`                                 | personal HF read-only token                                          |
 | CivitAI      | ✅ Bootstrapped               | `.env` → `CIVITAI_TOKEN`                            | personal CivitAI API key                                             |
 | RunPod       | ✅ Bootstrapped               | `.env` → `RUNPOD_API_KEY`, `RUNPOD_TERMINATE_KEY`   | personal RunPod API key (terminate-key reuses main; see Layer N)    |
+| SkyPilot perms (AWS) | ✅ Bootstrapped (Layer W+α) | `.aws/policies/skypilot-minimal.json`, `.aws/perms-snapshot.json` | `kinoforge-ci` + managed policies (EC2/IAM/SQ/S3FullAccess) + `kinoforge-ci-kms` |
+| SkyPilot perms (GCP) | ✅ Bootstrapped (Layer W+α) | `.gcp/perms-snapshot.json`                          | `kinoforge-runner` + `compute.instanceAdmin.v1` + `iam.serviceAccountUser` |
 | Azure / B2 / R2 | ❌ Not bootstrapped        | —                                                   | —                                                                    |
 
 > Layer W encryption + signed-URL axes require KMS keys. Run
@@ -102,6 +104,46 @@ operator should swap it for the scoped policy in `.aws/README.md` (limits
 the `kinoforge-ci` key to the `kinoforge-realcloud-tests-*` bucket prefix).
 This requires IAM perms that the `kinoforge-ci` key does NOT itself hold;
 the swap is done in the AWS Console.
+
+## SkyPilot permissions (Layer W+α)
+
+Front-load layer that landed every AWS + GCP permission and GPU quota
+needed for the SkyPilot multi-cloud T4 smoke (Layer W+β). Spec:
+`docs/superpowers/specs/2026-06-06-layer-w-alpha-cloud-bootstrap-design.md`.
+Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
+
+- **AWS scoped policy doc:** `.aws/policies/skypilot-minimal.json` (tracked,
+  not secret). Covers EC2 lifecycle + IAM PassRole on `skypilot-*` +
+  ServiceQuotas + S3 scoped to `kinoforge-realcloud-tests-*`/`skypilot-*`
+  prefixes + KMS scoped to `alias/kinoforge-realcloud-tests`. NOT attached
+  to `kinoforge-ci` in this layer (operator opted for AWS-managed broad
+  policies instead — see "AWS — actually attached policies" below). The
+  doc stays in repo as the scope-down target for a future layer.
+- **AWS — actually attached policies:** `AmazonEC2FullAccess` +
+  `IAMFullAccess` + `AmazonS3FullAccess` + `ServiceQuotasFullAccess`
+  (AWS managed) + `kinoforge-ci-kms` (customer-managed, scoped to the
+  Layer W KMS key ARN — auto-created by the probe when `kms:Encrypt`
+  simulated as `implicitDeny`). The four managed policies are broader than
+  required; the scoped `.aws/policies/skypilot-minimal.json` is the
+  documented swap-in target.
+- **AWS GPU quota:** `L-DB2E81BA` (Running On-Demand G/VT instance vCPUs)
+  ≥ 4 in `us-east-1`. Initial value was 0; probe auto-submitted case
+  `cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` via
+  `service-quotas.RequestServiceQuotaIncrease`. AWS reviews
+  asynchronously; status visible in the AWS Service Quotas console.
+- **GCP SA roles:** `kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com`
+  holds `roles/compute.instanceAdmin.v1` + `roles/iam.serviceAccountUser`
+  (plus several superset roles from earlier layers). Probe grants the
+  required roles programmatically if missing (SA already holds
+  `roles/iam.securityAdmin`).
+- **GCP GPU quota:** `NVIDIA_T4_GPUS` ≥ 1 in `us-central1`. Already at
+  target before the probe ran; no console action required.
+
+Re-run with `pixi run cloud:perms-probe`. Snapshots written atomically
+via temp-file + rename so a crashed probe never leaves a half-write.
+Exit codes: 0 green; 1 auth failure or required action denied; 2 quota
+gap pending (AWS auto-submits; GCP emits console URL — neither happened
+on the green run).
 
 ## Rotation policy
 
