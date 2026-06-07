@@ -107,6 +107,7 @@ test-live = { cmd = "python -m pytest tests/live/ -v -m live", env = { KINOFORGE
 # pointing at a service-account key with compute.admin + storage.admin.
 # Cost: <= $0.05 per run (smallest GCP CPU SKU x ~30 min wall-clock).
 test-live-skypilot = { cmd = "python -m pytest tests/live/test_skypilot_live.py -v", env = { KINOFORGE_LIVE_TESTS = "1" } }
+probe-hosted = "python -m tools.probe_hosted"
 # Pre-live-spend gate. Verifies env vars, zero active RunPod pods, and clean
 # git working tree before any tool that costs money is invoked. Operator-facing
 # — exit 0 == safe to spend; non-zero == fix the surfaced gap. See tools/preflight.py.
