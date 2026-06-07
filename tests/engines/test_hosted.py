@@ -1100,3 +1100,57 @@ def test_layer_m_result_artifact_no_header_when_token_empty() -> None:
     artifact = backend.result("fake-job-123")
     assert "Authorization" not in artifact.headers
     assert artifact.headers == {}
+
+
+# ---------------------------------------------------------------------------
+# Layer 1 retrofit — auth_strategy kwarg
+# ---------------------------------------------------------------------------
+
+
+def test_hosted_engine_accepts_explicit_auth_strategy() -> None:
+    """Passing auth_strategy=Bearer(...) wires the strategy directly."""
+    from kinoforge.core.auth import Bearer
+    from kinoforge.engines.hosted import HostedAPIEngine
+
+    class _Creds(CredentialProvider):
+        def get(self, key: str) -> str | None:
+            return "secret-explicit" if key == "FAL_KEY" else None
+
+    strat = Bearer(env_var="FAL_KEY", credential_provider=_Creds())
+    engine = HostedAPIEngine(auth_strategy=strat)
+    # The engine should expose the strategy at a stable attribute
+    # for downstream layers (recording-seam, probe-tool) to read.
+    assert engine._auth is strat
+
+
+def test_hosted_engine_default_derives_bearer_from_cfg_api_key_env() -> None:
+    """When auth_strategy is omitted, provision() derives Bearer from cfg.api_key_env."""
+    import os
+
+    from kinoforge.core.auth import Bearer
+    from kinoforge.engines.hosted import HostedAPIEngine
+
+    # Set the env var so credentials_present() returns True.
+    old = os.environ.get("KINOFORGE_TEST_API_KEY")
+    os.environ["KINOFORGE_TEST_API_KEY"] = "secret-default"
+    try:
+        engine = HostedAPIEngine()  # no auth_strategy
+        cfg = {
+            "engine": {
+                "hosted": {
+                    "endpoint": "https://x/predict",
+                    "api_key_env": "KINOFORGE_TEST_API_KEY",
+                    "health_url": "https://x/health",
+                }
+            }
+        }
+        # We don't actually call provision (it would hit a real URL); instead
+        # we assert the lazy resolver materialises a Bearer with the right env.
+        derived = engine._resolve_auth(cfg)
+        assert isinstance(derived, Bearer)
+        assert derived._env_var == "KINOFORGE_TEST_API_KEY"
+    finally:
+        if old is None:
+            del os.environ["KINOFORGE_TEST_API_KEY"]
+        else:
+            os.environ["KINOFORGE_TEST_API_KEY"] = old

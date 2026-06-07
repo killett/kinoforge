@@ -31,7 +31,10 @@ import json
 import time
 import urllib.request
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from kinoforge.core.auth import AuthStrategy
 
 from kinoforge.core import frames, registry
 from kinoforge.core.assets import find_asset, set_by_dot_path
@@ -387,6 +390,7 @@ class HostedAPIEngine(GenerationEngine):
         sleep: Callable[[float], None] = time.sleep,
         probe_profile: ModelProfile = _DEFAULT_PROBE,
         declared_flags_map: dict[str, dict[str, bool]] | None = None,
+        auth_strategy: AuthStrategy | None = None,
     ) -> None:
         """Initialise the engine with all I/O seams as injectable callables.
 
@@ -408,6 +412,12 @@ class HostedAPIEngine(GenerationEngine):
             declared_flags_map: Optional mapping from
                 :meth:`~kinoforge.core.interfaces.CapabilityKey.derive` hex
                 strings to ``dict[str, bool]`` strategy-flag dicts.
+            auth_strategy: Optional explicit
+                :class:`~kinoforge.core.auth.AuthStrategy`.  When ``None``,
+                :meth:`provision` derives a
+                :class:`~kinoforge.core.auth.Bearer` from
+                ``cfg["engine"]["hosted"]["api_key_env"]`` for backward
+                compatibility with pre-Layer-1 callers.
         """
         self._creds: CredentialProvider = creds or _NullCredentialProvider()
         self._http_post = http_post
@@ -433,6 +443,49 @@ class HostedAPIEngine(GenerationEngine):
         # ``cfg["engine"]["hosted"]["prompt_body_key"]`` at backend()
         # time. ``None`` disables routing.
         self._prompt_body_key: str | None = "prompt"
+        # Layer 1 retrofit: optional explicit AuthStrategy. When omitted, the
+        # engine derives a Bearer at provision() time from cfg.api_key_env.
+        # This preserves bit-for-bit backward compatibility with every pre-
+        # Layer-1 construction site.
+        self._auth: AuthStrategy | None = auth_strategy
+
+    # ------------------------------------------------------------------
+    # Auth resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_auth(self, cfg: dict[str, Any]) -> AuthStrategy:
+        """Return the active auth strategy, deriving a default if needed.
+
+        Resolution order:
+        1. If ``auth_strategy`` was passed to ``__init__``, use it.
+        2. If ``cfg["engine"]["hosted"]["auth"]`` is a mapping, build via
+           :func:`kinoforge.core.auth.build_auth_strategy`.
+        3. Otherwise, derive ``Bearer(env_var=cfg["engine"]["hosted"]["api_key_env"])``.
+
+        Args:
+            cfg: Runtime configuration dict.
+
+        Returns:
+            The resolved :class:`~kinoforge.core.auth.AuthStrategy`.
+
+        Raises:
+            AuthError: No ``auth_strategy`` was provided and
+                ``cfg.engine.hosted.api_key_env`` is missing.
+        """
+        if self._auth is not None:
+            return self._auth
+        from kinoforge.core.auth import Bearer, build_auth_strategy
+
+        hosted_cfg = cfg.get("engine", {}).get("hosted", {})
+        auth_spec = hosted_cfg.get("auth")
+        if isinstance(auth_spec, dict):
+            return build_auth_strategy(auth_spec)
+        env_var = hosted_cfg.get("api_key_env")
+        if not env_var:
+            raise AuthError(
+                "engine.hosted.api_key_env is empty — set the env var name in your config"
+            )
+        return Bearer(env_var=env_var, credential_provider=self._creds)
 
     # ------------------------------------------------------------------
     # Helper
@@ -506,20 +559,25 @@ class HostedAPIEngine(GenerationEngine):
                 "(hosted engine has no compute to configure)"
             )
 
+        # Layer 1 retrofit: resolve auth strategy and check credentials before
+        # any HTTP work.
+        auth = self._resolve_auth(cfg)
+        if not auth.credentials_present():
+            _hosted_cfg = (cfg.get("engine") or {}).get("hosted") or {}
+            _key_name = str(_hosted_cfg.get("api_key_env", ""))
+            raise AuthError(
+                f"HostedAPIEngine: credentials not present "
+                f"(strategy={type(auth).__name__}"
+                + (f", env_var={_key_name!r}" if _key_name else "")
+                + ")"
+            )
+        # Stash for downstream code paths (backend, result, fixtures) to use.
+        self._auth = auth
+
         engine_block = cfg.get("engine", {})
         hosted_cfg: dict[str, Any] = (
             engine_block.get("hosted", {}) if isinstance(engine_block, dict) else {}
         )
-
-        # Step 1 — credential check.
-        key_name: str = str(hosted_cfg.get("api_key_env", ""))
-        if not key_name:
-            raise AuthError(
-                "engine.hosted.api_key_env is empty — set the env var name in your config"
-            )
-        cred = self._creds.get(key_name)
-        if cred is None:
-            raise AuthError(f"engine.hosted.api_key_env={key_name!r} is not set in env")
 
         # Step 2 — health ping.
         health_url: str = str(hosted_cfg.get("health_url", ""))
