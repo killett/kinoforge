@@ -189,6 +189,142 @@ def test_probe_aws_exit_1_on_action_denied(tmp_path: Path) -> None:
     assert result["denied"]
 
 
+class _FakeGCPRegionsClient:
+    def __init__(self, *, quotas: list[dict[str, Any]]) -> None:
+        self._quotas = quotas
+
+    def get(self, *, project: str, region: str) -> Any:
+        class _Quota:
+            def __init__(self, d: dict[str, Any]) -> None:
+                self.metric = d["metric"]
+                self.limit = d["limit"]
+                self.usage = d["usage"]
+
+        class _Region:
+            def __init__(
+                self, project: str, region: str, quotas: list[dict[str, Any]]
+            ) -> None:
+                self.name = f"projects/{project}/regions/{region}"
+                self.quotas = [_Quota(q) for q in quotas]
+
+        return _Region(project, region, self._quotas)
+
+
+class _FakeGCPIAMClient:
+    def __init__(self, *, sa_roles: dict[str, list[str]]) -> None:
+        self._roles = sa_roles
+
+    def get_iam_policy(self, *, resource: str, **_k: Any) -> Any:
+        class _Binding:
+            def __init__(self, role: str, members: list[str]) -> None:
+                self.role = role
+                self.members = members
+
+        class _Policy:
+            def __init__(self, bindings: list[_Binding]) -> None:
+                self.bindings = bindings
+
+        return _Policy(
+            [_Binding(role, members) for role, members in self._roles.items()]
+        )
+
+
+def _green_gcp_clients(*, t4_quota: float = 8.0) -> dict[str, Any]:
+    sa_member = (
+        "serviceAccount:kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com"
+    )
+    return {
+        "regions": _FakeGCPRegionsClient(
+            quotas=[
+                {"metric": "NVIDIA_T4_GPUS", "limit": t4_quota, "usage": 0.0},
+                {"metric": "CPUS", "limit": 24.0, "usage": 0.0},
+            ]
+        ),
+        "iam": _FakeGCPIAMClient(
+            sa_roles={
+                "roles/compute.instanceAdmin.v1": [sa_member],
+                "roles/iam.serviceAccountUser": [sa_member],
+                "roles/storage.admin": [sa_member],
+            }
+        ),
+    }
+
+
+def test_probe_gcp_exit_0_on_all_green(tmp_path: Path) -> None:
+    snapshot_path = tmp_path / "gcp_snapshot.json"
+    result = probe.probe_gcp(
+        clients=_green_gcp_clients(),
+        project="<GCP_PROJECT>",
+        sa_email="kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com",
+        snapshot_path=snapshot_path,
+    )
+    assert result["exit_code"] == 0
+    assert result["quotas"]["NVIDIA_T4_GPUS"]["limit"] == 8.0
+    assert "roles/compute.instanceAdmin.v1" in result["sa_roles"]
+    assert json.loads(snapshot_path.read_text()) == result
+
+
+def test_probe_gcp_exit_2_on_quota_zero(tmp_path: Path) -> None:
+    snapshot_path = tmp_path / "gcp_snapshot.json"
+    result = probe.probe_gcp(
+        clients=_green_gcp_clients(t4_quota=0.0),
+        project="<GCP_PROJECT>",
+        sa_email="kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com",
+        snapshot_path=snapshot_path,
+    )
+    assert result["exit_code"] == 2
+    assert result["quota_gap"] == {
+        "metric": "NVIDIA_T4_GPUS",
+        "have": 0.0,
+        "want": 1.0,
+        "region": "us-central1",
+    }
+
+
+def test_probe_gcp_exit_1_on_missing_role(tmp_path: Path) -> None:
+    clients = _green_gcp_clients()
+    sa_member = (
+        "serviceAccount:kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com"
+    )
+    clients["iam"] = _FakeGCPIAMClient(
+        sa_roles={
+            # No instanceAdmin → required role missing.
+            "roles/storage.admin": [sa_member],
+        }
+    )
+    snapshot_path = tmp_path / "gcp_snapshot.json"
+    result = probe.probe_gcp(
+        clients=clients,
+        project="<GCP_PROJECT>",
+        sa_email="kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com",
+        snapshot_path=snapshot_path,
+    )
+    assert result["exit_code"] == 1
+    assert "roles/compute.instanceAdmin.v1" in result["missing_roles"]
+
+
+def test_gcp_green_fixture_matches_probe_shape() -> None:
+    fixture_path = (
+        Path(__file__).resolve().parent / "fixtures" / "cloud_perms" / "gcp_green.json"
+    )
+    fixture = json.loads(fixture_path.read_text())
+    required_top_keys = {
+        "captured_at",
+        "cloud",
+        "project",
+        "region",
+        "sa_email",
+        "quotas",
+        "sa_roles",
+        "exit_code",
+    }
+    assert required_top_keys.issubset(fixture.keys()), (
+        f"missing keys: {required_top_keys - fixture.keys()}"
+    )
+    assert fixture["cloud"] == "gcp"
+    assert "NVIDIA_T4_GPUS" in fixture["quotas"]
+
+
 def test_aws_green_fixture_matches_probe_shape() -> None:
     """Lockdown: live-captured fixture must match the dict shape probe_aws emits."""
     fixture_path = (

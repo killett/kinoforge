@@ -254,6 +254,126 @@ def _real_aws_session_factory() -> Any:  # noqa: ANN401
     return boto3.Session()
 
 
+_GCP_REGION = "us-central1"
+_GCP_TARGET_T4_QUOTA = 1.0
+_GCP_REQUIRED_ROLES: tuple[str, ...] = (
+    "roles/compute.instanceAdmin.v1",
+    "roles/iam.serviceAccountUser",
+)
+
+
+def probe_gcp(
+    *,
+    clients: dict[str, Any],
+    project: str,
+    sa_email: str,
+    snapshot_path: Path | None = None,
+    region: str = _GCP_REGION,
+    target_t4_quota: float = _GCP_TARGET_T4_QUOTA,
+    required_roles: tuple[str, ...] = _GCP_REQUIRED_ROLES,
+) -> dict[str, Any]:
+    """Run GCP probes; write snapshot; return exit-shaped dict.
+
+    ``clients`` is a dict keyed by service name (``regions``, ``iam``) so
+    callers can inject fakes. ``_real_gcp_clients()`` wires the real SDK.
+
+    Args:
+        clients: Dict of service-name → client object (regions, iam).
+        project: GCP project ID.
+        sa_email: Service account email to audit.
+        snapshot_path: Override snapshot location (defaults to .gcp/perms-snapshot.json).
+        region: GCP region for quota lookup.
+        target_t4_quota: Minimum acceptable NVIDIA_T4_GPUS quota.
+        required_roles: Roles that must be bound to the SA.
+
+    Returns:
+        Dict with captured_at, cloud, project, region, sa_email, quotas,
+        sa_roles, exit_code, plus optional error/gap details on unhappy paths.
+    """
+    snapshot_path = snapshot_path or _GCP_SNAPSHOT_PATH
+    out: dict[str, Any] = {
+        "captured_at": _now_local_iso(),
+        "cloud": "gcp",
+        "project": project,
+        "region": region,
+        "sa_email": sa_email,
+    }
+
+    # Region + T4 quota lookup.
+    try:
+        regions_client = clients["regions"]
+        region_obj = regions_client.get(project=project, region=region)
+        quotas: dict[str, dict[str, Any]] = {}
+        for q in region_obj.quotas:
+            quotas[q.metric] = {
+                "metric": q.metric,
+                "limit": float(q.limit),
+                "usage": float(q.usage),
+            }
+        out["quotas"] = quotas
+    except Exception as exc:  # noqa: BLE001 — boundary
+        out["exit_code"] = 1
+        out["region_error"] = str(exc)
+        _write_snapshot_atomic(snapshot_path, out)
+        return out
+
+    # SA role audit.
+    try:
+        iam_client = clients["iam"]
+        policy = iam_client.get_iam_policy(resource=f"projects/{project}")
+        sa_member = f"serviceAccount:{sa_email}"
+        sa_roles = []
+        for binding in policy.bindings:
+            if sa_member in binding.members:
+                sa_roles.append(binding.role)
+        out["sa_roles"] = sa_roles
+        missing = [r for r in required_roles if r not in sa_roles]
+        if missing:
+            out["exit_code"] = 1
+            out["missing_roles"] = missing
+            _write_snapshot_atomic(snapshot_path, out)
+            return out
+    except Exception as exc:  # noqa: BLE001
+        out["exit_code"] = 1
+        out["iam_error"] = str(exc)
+        _write_snapshot_atomic(snapshot_path, out)
+        return out
+
+    # T4 quota gap?
+    t4 = out["quotas"].get("NVIDIA_T4_GPUS")
+    if t4 is None or t4["limit"] < target_t4_quota:
+        out["exit_code"] = 2
+        out["quota_gap"] = {
+            "metric": "NVIDIA_T4_GPUS",
+            "have": t4["limit"] if t4 else 0.0,
+            "want": target_t4_quota,
+            "region": region,
+        }
+        _write_snapshot_atomic(snapshot_path, out)
+        return out
+
+    out["exit_code"] = 0
+    _write_snapshot_atomic(snapshot_path, out)
+    return out
+
+
+def _real_gcp_clients() -> dict[str, Any]:
+    """Return a {regions, iam} dict of real google.cloud clients."""
+    from google.cloud import compute_v1, resourcemanager_v3
+
+    return {
+        "regions": compute_v1.RegionsClient(),
+        "iam": resourcemanager_v3.ProjectsClient(),
+    }
+
+
+def _resolve_gcp_project_and_sa() -> tuple[str, str]:
+    """Read project + SA email from .gcp/kinoforge-sa.json (default chain)."""
+    sa_path = Path(_REPO_ROOT) / ".gcp" / "kinoforge-sa.json"
+    sa_doc = json.loads(sa_path.read_text())
+    return sa_doc["project_id"], sa_doc["client_email"]
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry — dispatch per --cloud arg.
 
@@ -287,7 +407,24 @@ def main(argv: list[str] | None = None) -> int:
         exit_codes.append(result["exit_code"])
 
     if args.cloud in ("gcp", "both"):
-        print("[gcp] not yet implemented (Task 4)")
+        try:
+            project, sa_email = _resolve_gcp_project_and_sa()
+            clients = _real_gcp_clients()
+            result = probe_gcp(clients=clients, project=project, sa_email=sa_email)
+        except Exception as exc:  # noqa: BLE001 — boundary
+            print(f"[gcp] bootstrap error: {exc}")
+            exit_codes.append(1)
+        else:
+            print(f"[gcp] exit={result['exit_code']}")
+            if "missing_roles" in result:
+                print(f"[gcp] missing roles: {result['missing_roles']}")
+            if "region_error" in result:
+                print(f"[gcp] region error: {result['region_error']}")
+            if "iam_error" in result:
+                print(f"[gcp] iam error: {result['iam_error']}")
+            if "quota_gap" in result:
+                print(f"[gcp] quota gap: {result['quota_gap']}")
+            exit_codes.append(result["exit_code"])
 
     return max(exit_codes) if exit_codes else 0
 
