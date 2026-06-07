@@ -154,27 +154,24 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ### RESUME — START HERE
 
-**Where we are:** Phase 42 (Layer 3 — pivot to BedrockVideoEngine) —
-Tasks 0–6 complete; pivoted from Nova Reel to Luma Ray v2 via generic
-`BedrockVideoEngine` (Phase 1 refactor committed at `aae46d7`). Phase 2
-(live smoke) BLOCKED on AWS account-level Bedrock model invocation
-authorization for Luma Ray v2.
+**Where we are:** Phase 42 (Layer 3 — pivot to BedrockVideoEngine) — Tasks
+0–6 done, probe tightened (Task B), offline replay scaffold committed (Task
+8). Region pivot: us-east-1 → us-west-2 (Luma Ray v2 availability). Task 7
+(live smoke) BLOCKED on AWS Support case (account-level authorization gate).
+AWS Support case workflow: `docs/aws-support-case-luma-ray.md`.
 
-**Luma Ray EULA was accepted programmatically** (`CreateFoundationModelAgreement`
-→ `agreementAvailability=AVAILABLE`) but `authorizationStatus` remains
-`NOT_AUTHORIZED` after 6 min. This is the same console-only gate that
-blocked Nova Reel.
+**Single next action (operator):**
+Submit the AWS Support case (see `docs/aws-support-case-luma-ray.md`). On
+AWS reply, run:
+```
+KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 pixi run pytest tests/live/test_luma_ray_live.py -v -s
+```
 
 **Read in this order:**
 1. The Phase 42 entry below — pivot rationale + Phase 2 blocker detail.
 2. `git log --oneline -10` for recent commits.
 
-**First unchecked task (operator action required):**
-AWS Console → Bedrock → Model access → Enable "Luma AI Ray v2".
-After that: `KINOFORGE_LIVE_TESTS=1 KINOFORGE_SAVE_FIXTURES=1 pixi run
-pytest tests/live/test_luma_ray_live.py -v -s`
-
-**Budget remaining: ~$10.88 of $15.** Layer 3 Tasks 0–7 spent $0.
+**Budget remaining: ~$10.88 of $15.** Layer 3 Tasks 0–8 spent $0.
 
 ## Post-MVP
 
@@ -1594,9 +1591,11 @@ Plan:
 - [x] Task 5: `probe_hosted --check-bedrock-model-access` flag + 3 tests — commit `018213a`
 - [x] Task 6: RED live-smoke scaffold (`tests/live/test_nova_reel_live.py`) — commit `28f31bd`
 - [x] **PIVOT (Phase 1 refactor):** `nova_reel` → `BedrockVideoEngine` + Luma Ray config — see below
-- [ ] Task 7 (re-fire as Luma Ray): fire live smoke + capture fixture (~$0.50)
-- [ ] Task 8: Offline replay test against captured fixtures
-- [ ] Task 9: README + PROGRESS final gate
+- [x] **Probe tighten:** two-stage `check_bedrock_model_access` (catalog + runtime authorization) — commit `09e9a43`
+- [x] **Region pivot:** us-east-1 → us-west-2 (Luma Ray v2 availability); AWS Support case workflow at `docs/aws-support-case-luma-ray.md`
+- [x] Task 8: Offline replay scaffold (`tests/engines/test_bedrock_video_replay.py`) — commit `b94059e` (skips until fixture lands)
+- [ ] Task 7 (BLOCKED): fire live smoke + capture fixture — blocked on AWS Support case (see `docs/aws-support-case-luma-ray.md`)
+- [ ] Task 9: README + PROGRESS final gate (README Bedrock Video section added in this session)
 
 **Phase 2 (live smoke) — BLOCKED (same account-level gate as Nova Reel):**
 
