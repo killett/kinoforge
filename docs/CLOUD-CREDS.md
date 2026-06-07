@@ -97,6 +97,22 @@ for AWS/GCS.
   `kms:GenerateDataKey`, `kms:DescribeKey`. Root account retains `kms:*`.
   Rotation: NOT auto-rotated — rotation invalidates Layer W recorded fixtures.
 
+### Layer 3 (Nova Reel) — IAM policies
+
+| Policy name | Grants | Attachment | Date | Source |
+|---|---|---|---|---|
+| `kinoforge-nova-reel` | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Nova Reel 1.1 ARN) + ListFoundationModels (`*`) + S3 read/write on `kinoforge-nova-reel-output` | Inline on `kinoforge-ci` | 2026-06-07 | `.aws/policies/bedrock-nova-reel.json` |
+
+Reversible: `aws iam delete-user-policy --user-name kinoforge-ci --policy-name kinoforge-nova-reel`
+
+### Layer 3 (Nova Reel) — S3 buckets
+
+| Bucket | Purpose | Region | Date | Notes |
+|---|---|---|---|---|
+| `kinoforge-nova-reel-output` | Nova Reel async-invoke output prefix | `us-east-1` | 2026-06-07 | Created by Layer 3 Task 4; Bedrock writes `{invocation_id}/output.mp4` here |
+
+Reversible: `aws s3 rb s3://kinoforge-nova-reel-output --force`
+
 ### Scope-down follow-up (operator action recommended)
 
 `AmazonS3FullAccess` is broader than required. Once the layer is shipped,
