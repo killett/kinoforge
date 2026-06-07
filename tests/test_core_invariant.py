@@ -77,25 +77,30 @@ def test_core_imports_no_provider_source_engine_modules() -> None:
 # ---------------------------------------------------------------------------
 
 # Patterns: an import line that pulls in a vendor SDK at module top level.
-_VENDOR_PATTERNS: list[tuple[re.Pattern[str], Path, str]] = [
+# Each entry: (pattern, list_of_allowed_dirs, vendor_name)
+# A file is allowed if it lives under ANY of the allowed_dirs.
+_VENDOR_PATTERNS: list[tuple[re.Pattern[str], list[Path], str]] = [
     (
         re.compile(r"^\s*(import|from)\s+(sky|skypilot)\b"),
-        SRC_ROOT / "providers" / "skypilot",
+        [SRC_ROOT / "providers" / "skypilot"],
         "sky/skypilot",
     ),
     (
         re.compile(r"^\s*(import|from)\s+runpod\b"),
-        SRC_ROOT / "providers" / "runpod",
+        [SRC_ROOT / "providers" / "runpod"],
         "runpod",
     ),
     (
+        # boto3 may also appear as a lazy import in core/auth.py (AWSSigV4 strategy).
+        # Lazy imports (inside method bodies) are fine; the subprocess-isolation test
+        # in AC 8 verifies that boto3 never enters sys.modules at import time.
         re.compile(r"^\s*(import|from)\s+boto3\b"),
-        SRC_ROOT / "stores" / "s3",
+        [SRC_ROOT / "stores" / "s3", SRC_ROOT / "core"],
         "boto3",
     ),
     (
         re.compile(r"^\s*(import|from)\s+google\.cloud\b"),
-        SRC_ROOT / "stores" / "gcs",
+        [SRC_ROOT / "stores" / "gcs"],
         "google-cloud-storage",
     ),
 ]
@@ -106,14 +111,16 @@ def test_vendor_imports_confined_to_adapter_packages() -> None:
     violations: list[str] = []
 
     for py_file in sorted(SRC_ROOT.rglob("*.py")):
-        for pattern, allowed_dir, vendor_name in _VENDOR_PATTERNS:
+        for pattern, allowed_dirs, vendor_name in _VENDOR_PATTERNS:
             for lineno, line in enumerate(py_file.read_text().splitlines(), start=1):
                 if pattern.match(line):
-                    try:
-                        py_file.relative_to(allowed_dir)
-                    except ValueError:
+                    in_allowed = any(
+                        _is_relative_to(py_file, allowed_dir)
+                        for allowed_dir in allowed_dirs
+                    )
+                    if not in_allowed:
                         violations.append(
-                            f"{vendor_name} import outside {allowed_dir.relative_to(SRC_ROOT.parent.parent)}: "
+                            f"{vendor_name} import outside allowed dirs: "
                             f"{py_file}:{lineno}: {line.strip()}"
                         )
 
@@ -122,6 +129,15 @@ def test_vendor_imports_confined_to_adapter_packages() -> None:
         raise AssertionError(
             f"Vendor SDK import(s) found outside their adapter package:\n  {detail}"
         )
+
+
+def _is_relative_to(path: Path, base: Path) -> bool:
+    """Return True if *path* is relative to *base* (Path.is_relative_to compat)."""
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -315,4 +331,95 @@ def test_core_reaper_module_is_pure() -> None:
         detail = "\n  ".join(violations)
         raise AssertionError(
             f"core/reaper.py must be pure — forbidden import(s) found:\n  {detail}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC 7 (Layer 1): AuthStrategy ABC stable surface
+# ---------------------------------------------------------------------------
+
+
+def test_auth_strategy_abc_stable_surface() -> None:
+    """Lock AuthStrategy ABC public method signatures against silent drift.
+
+    To intentionally evolve the ABC, regenerate
+    tests/fixtures/auth_strategy_baseline.json in the same commit:
+
+        python -c "
+        import inspect, json
+        from pathlib import Path
+        from kinoforge.core.auth import AuthStrategy
+        sigs = {n: str(inspect.signature(getattr(AuthStrategy, n)))
+                for n in ('credentials_present', 'health_check',
+                          'redact_patterns', 'apply', 'client_kwargs')}
+        Path('tests/fixtures/auth_strategy_baseline.json').write_text(
+            json.dumps(sigs, indent=2) + '\n')
+        "
+    """
+    import inspect
+    import json
+
+    from kinoforge.core.auth import AuthStrategy
+
+    actual = {
+        name: str(inspect.signature(getattr(AuthStrategy, name)))
+        for name in (
+            "credentials_present",
+            "health_check",
+            "redact_patterns",
+            "apply",
+            "client_kwargs",
+        )
+    }
+    baseline_path = Path(__file__).parent / "fixtures" / "auth_strategy_baseline.json"
+    expected = json.loads(baseline_path.read_text())
+
+    assert actual == expected, (
+        f"AuthStrategy ABC drifted from baseline.\n"
+        f"  expected: {json.dumps(expected, indent=2)}\n"
+        f"  actual:   {json.dumps(actual, indent=2)}\n"
+        f"If intentional, regenerate {baseline_path} in the same commit."
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC 8 (Layer 1): core/auth.py does not eagerly load vendor SDKs
+# ---------------------------------------------------------------------------
+
+
+def test_core_auth_does_not_leak_sdk_imports() -> None:
+    """Lazy SDK imports — boto3 / google.auth / botocore stay out of sys.modules.
+
+    Verifies that importing kinoforge.core.auth in a fresh interpreter does
+    NOT pull in any of the vendor SDKs the concrete strategies depend on.
+    Construction of strategies is also exercised to ensure lazy paths fire
+    only when methods are called, not at instantiation.
+
+    We diff sys.modules before vs after the import+construction so that
+    environment-level pre-loads (e.g. google.cloud namespace packages
+    installed by sitecustomize) do not produce false positives.
+    """
+    script = (
+        "import sys; "
+        "_before = set(sys.modules); "
+        "import kinoforge.core.auth as a; "
+        "a.Bearer(env_var='FAL_KEY'); "
+        "a.GCPServiceAccount(); "
+        "a.AWSSigV4(region_name='us-east-1'); "
+        "_added = set(sys.modules) - _before; "
+        "print('|'.join(m for m in _added "
+        "if m == 'boto3' or m.startswith('botocore') "
+        "or m == 'google.auth' or m.startswith('google.cloud')))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    leaked = result.stdout.strip()
+    if leaked:
+        offending = "\n  ".join(leaked.split("|"))
+        raise AssertionError(
+            f"core.auth import leaked vendor SDK modules into sys.modules:\n  {offending}"
         )
