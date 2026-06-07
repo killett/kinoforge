@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -90,3 +91,87 @@ def test_probe_exit_code_nonzero_on_any_fail(tmp_path: Path) -> None:
     ]
     exit_code = run(strategies, snapshot_path=tmp_path / "probe.json")
     assert exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 — --check-bedrock-model-access flag
+# ---------------------------------------------------------------------------
+
+
+class _FakeBedrockControlClient:
+    """Stand-in for boto3 bedrock (control plane) client."""
+
+    def __init__(
+        self,
+        models: list[dict[str, Any]] | None = None,
+        raise_on_list: Exception | None = None,
+    ) -> None:
+        self._models = models or []
+        self._raise = raise_on_list
+
+    def list_foundation_models(self, **kwargs: Any) -> dict[str, Any]:
+        if self._raise is not None:
+            raise self._raise
+        return {"modelSummaries": self._models}
+
+
+def test_check_bedrock_model_access_passes_when_model_listed() -> None:
+    from tools.probe_hosted import check_bedrock_model_access
+
+    fake = _FakeBedrockControlClient(
+        models=[
+            {"modelId": "amazon.nova-reel-v1:1", "modelLifecycle": {"status": "ACTIVE"}}
+        ]
+    )
+    result = check_bedrock_model_access(fake, "amazon.nova-reel-v1:1")
+    assert result.ok is True
+    assert "amazon.nova-reel-v1:1" in (result.identity or "")
+
+
+def test_check_bedrock_model_access_fails_when_model_missing() -> None:
+    from tools.probe_hosted import check_bedrock_model_access
+
+    fake = _FakeBedrockControlClient(
+        models=[
+            {"modelId": "amazon.titan-text-v1", "modelLifecycle": {"status": "ACTIVE"}}
+        ]
+    )
+    result = check_bedrock_model_access(fake, "amazon.nova-reel-v1:1")
+    assert result.ok is False
+    assert "amazon.nova-reel-v1:1" in (result.reason or "")
+
+
+def test_probe_cli_invokes_check_bedrock_model_access_when_flag_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: extra_checks kwarg fires the bedrock probe alongside strategy health checks."""
+    from tools.probe_hosted import ProbeResult, run
+
+    strategies = [("nova_reel", FakeAuthStrategy())]
+    # Inject a fake bedrock control client so no real AWS call happens.
+    captured: list[ProbeResult] = []
+
+    def fake_bedrock_check(client: object, model_id: str) -> ProbeResult:
+        captured.append(
+            ProbeResult(
+                name=f"bedrock:{model_id}", ok=True, identity=model_id, reason=None
+            )
+        )
+        return captured[-1]
+
+    monkeypatch.setattr(
+        "tools.probe_hosted.check_bedrock_model_access", fake_bedrock_check
+    )
+
+    # run() accepts an extra_checks kwarg added in the impl below.
+    extra = [
+        (
+            "bedrock:amazon.nova-reel-v1:1",
+            lambda: fake_bedrock_check(None, "amazon.nova-reel-v1:1"),
+        )
+    ]
+    exit_code = run(
+        strategies, snapshot_path=tmp_path / "probe.json", extra_checks=extra
+    )
+    assert exit_code == 0
+    assert len(captured) == 1

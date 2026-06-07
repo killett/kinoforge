@@ -23,12 +23,13 @@ import logging
 import os
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
-from kinoforge.core.auth import AuthStrategy
+from kinoforge.core.auth import AuthStrategy, AWSSigV4
 
 _log = logging.getLogger(__name__)
 
@@ -121,21 +122,61 @@ def write_snapshot(path: Path, results: Sequence[ProbeResult]) -> None:
     os.replace(tmp, path)
 
 
+def check_bedrock_model_access(client: Any, model_id: str) -> ProbeResult:  # noqa: ANN401
+    """Probe whether ``model_id`` is accessible to the caller.
+
+    Args:
+        client: A boto3 bedrock control-plane client (NOT bedrock-runtime).
+        model_id: Bedrock foundation-model identifier
+            (e.g. ``"amazon.nova-reel-v1:1"``).
+
+    Returns:
+        :class:`ProbeResult` with ``ok=True`` and ``identity=<model_id>``
+        when the model appears in :py:meth:`list_foundation_models`,
+        otherwise ``ok=False`` with a descriptive reason.
+    """
+    name = f"bedrock:{model_id}"
+    try:
+        resp = client.list_foundation_models()
+    except Exception as exc:  # noqa: BLE001
+        return ProbeResult(
+            name=name,
+            ok=False,
+            identity=None,
+            reason=f"list_foundation_models failed: {exc}",
+        )
+    listed = [m for m in resp.get("modelSummaries", []) if m.get("modelId") == model_id]
+    if not listed:
+        return ProbeResult(
+            name=name,
+            ok=False,
+            identity=None,
+            reason=f"model {model_id!r} not in list_foundation_models response",
+        )
+    return ProbeResult(name=name, ok=True, identity=model_id, reason=None)
+
+
 def run(
     strategies: Sequence[tuple[str, AuthStrategy]],
     *,
     snapshot_path: Path | None = None,
+    extra_checks: Sequence[tuple[str, Callable[[], ProbeResult]]] = (),
 ) -> int:
     """Probe all strategies and optionally write a snapshot.
 
     Args:
         strategies: Sequence of ``(name, strategy)`` pairs.
         snapshot_path: Optional path to write the JSON snapshot.
+        extra_checks: Optional sequence of ``(label, callable)`` pairs for
+            provider-specific checks (e.g. Bedrock model-access verification).
+            Each callable returns a :class:`ProbeResult`.
 
     Returns:
         0 if all strategies pass; 1 if any fail.
     """
     results = probe_strategies(strategies)
+    for _label, check in extra_checks:
+        results.append(check())
     for r in results:
         if r.ok:
             print(f"PASS strategy={r.name} identity={r.identity}")
@@ -193,13 +234,40 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Where to write the JSON snapshot (default: tools/_snapshots/probe-<config-stem>.json)",
     )
+    parser.add_argument(
+        "--check-bedrock-model-access",
+        default=None,
+        metavar="MODEL_ID",
+        help="In addition to AuthStrategy health, verify the given Bedrock model is listed",
+    )
     args = parser.parse_args(argv)
 
     snapshot_path = (
         args.snapshot or Path("tools/_snapshots") / f"probe-{args.config.stem}.json"
     )
     strategies = _load_strategies_from_config(args.config)
-    return run(strategies, snapshot_path=snapshot_path)
+
+    extra_checks: list[tuple[str, Callable[[], ProbeResult]]] = []
+    if args.check_bedrock_model_access:
+        import boto3  # noqa: PLC0415 — lazy
+
+        # Use the first AWSSigV4 strategy's region if any was configured;
+        # otherwise default to us-east-1.
+        region = "us-east-1"
+        for _, strat in strategies:
+            if isinstance(strat, AWSSigV4):
+                region = strat._region_name
+                break
+        client = boto3.Session().client("bedrock", region_name=region)
+        model_id = args.check_bedrock_model_access
+        extra_checks.append(
+            (
+                f"bedrock:{model_id}",
+                lambda: check_bedrock_model_access(client, model_id),
+            )
+        )
+
+    return run(strategies, snapshot_path=snapshot_path, extra_checks=extra_checks)
 
 
 if __name__ == "__main__":
