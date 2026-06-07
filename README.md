@@ -668,6 +668,36 @@ Adding a new strategy: subclass `AuthStrategy`, implement all 5 methods
 regenerating `tests/fixtures/auth_strategy_baseline.json` in the same
 commit.
 
+## Bedrock Video (AWS Bedrock — Nova Reel, Luma Ray v2, etc.)
+
+Generic engine for any Bedrock async-invoke video model. YAML supplies a
+`model_input_template` dict where `"${PROMPT}"` is substituted at submit
+time. New Bedrock video models (Nova Reel, Luma Ray, future additions)
+drop in config-only.
+
+Auth: AWS SigV4 via Layer 1 `AWSSigV4` strategy. No Bearer key.
+
+Live smoke: `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_luma_ray_live.py -v`
+
+NOTE: AWS gates new third-party models behind a one-time per-account
+authorization that, as of 2026-06, requires an AWS Support case (the
+console "Model access" page is retired but the gate is not). See
+`docs/aws-support-case-luma-ray.md` for the workflow.
+
+### Bedrock Video probe
+
+Before spending on a live smoke, verify catalog + invocation access in one shot:
+
+```bash
+pixi run probe-hosted -- --config examples/configs/luma-ray.yaml \
+    --check-bedrock-model-access luma.ray-v2:0
+```
+
+This runs a two-stage check: (1) `list_foundation_models` for catalog
+presence, then (2) a deliberately-malformed `StartAsyncInvoke` that returns
+a body-format `ValidationException` if access is granted, or `"Operation not
+allowed"` if the account-level authorization gate is still active.
+
 ## Keyframe stage
 
 The keyframe stage runs an image-generation model **before** the video-generation
