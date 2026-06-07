@@ -1339,7 +1339,7 @@ Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
       deferred (skypilot[aws] pin conflict; AWS perm surface covered by probe)
       — commit `fbd5387`
 - [x] Task 7: CLOUD-CREDS table + SkyPilot permissions section + this entry
-      + README pointer — commit `<T7>`
+      + README pointer — commit `1d032d4`
 
 **Key design decisions:**
 
