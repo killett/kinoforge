@@ -163,8 +163,9 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
   done. Probe tightened. Region pivot us-east-1 → us-west-2. NovaReelEngine
   generalized to `BedrockVideoEngine` (YAML-driven `model_input_template`). Task 7
   (live smoke) BLOCKED on AWS Support case for Luma Ray v2 account authorization.
-- **Layer 2 (Veo on Vertex AI):** parked. Plan not started. Blocked on GCP
-  billing tier upgrade (same blocker that paused Layer W+β at `b9a45e4`).
+- **Layer 2 (Veo on Vertex AI):** UNBLOCKED 2026-06-07 — operator upgraded GCP
+  billing to pay-as-you-go. Plan not started yet. The same upgrade also
+  unblocks Layer W+β (SkyPilot T4 GPU smoke from Phase 40) for re-fire.
 
 **Single next action (operator, two parallel tracks):**
 
@@ -179,8 +180,15 @@ Track A — Bedrock Luma Ray v2 (us-west-2):
    ~$3.75 spend at 540p, ~3 min wall time. Fixture lands at `tests/engines/fixtures/luma_ray/last_smoke.json`; offline replay test (skip → pass) auto-activates.
 
 Track B — Veo on Vertex AI (us-central1):
-- One-click upgrade GCP billing tier (operator). No immediate spend; only future
-  VM usage. Then Layer 2 plan + execute via the existing Layer 1 substrate.
+- ✓ **2026-06-07: operator upgraded GCP billing to pay-as-you-go.** Track B is
+  now unblocked. Layer 2 (Veo) ready to plan + execute via the Layer 1
+  substrate. Same upgrade also unblocks **Layer W+β** (SkyPilot T4 GPU smoke,
+  paused at `b9a45e4`) — single command re-fire:
+  ```
+  KINOFORGE_LIVE_TESTS=1 pixi run -e live-skypilot pytest \
+    tests/live/test_skypilot_live.py::test_skypilot_live_e2e_t4_gpu_lifecycle_smoke \
+    -v -s
+  ```
 
 **Read in this order:**
 1. The Phase 42 entry below — pivot rationale + Phase 2 blocker detail.
