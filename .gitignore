@@ -56,6 +56,10 @@ runpodctl
 runpodctl.tar.gz
 .gc-url.txt
 
+# Local probe-tool output (tools/probe_*.py dump JSON snapshots here).
+# Run-local — never commit; new snapshots regenerate on next probe invocation.
+tools/_snapshots/
+
 # Stray local model weights (if a model/LoRA is ever pulled locally for tests)
 *.safetensors
 *.ckpt
