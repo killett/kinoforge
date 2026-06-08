@@ -637,7 +637,7 @@ strategies ship in `kinoforge.core.auth`:
 
 | Name | Used by | Auth shape |
 |---|---|---|
-| `bearer` | `HostedAPIEngine` (fal today; Replicate / Runway / Luma later) | `Authorization: Bearer <env-var>` |
+| `bearer` | `HostedAPIEngine` (fal, Replicate, Runway) | `Authorization: Bearer <env-var>` |
 | `gcp_service_account` | VeoEngine (Layer 2); future Vertex AI integrations | `google.auth` default chain |
 | `aws_sigv4` | NovaReelEngine (Layer 3); future Bedrock integrations | SigV4 request signing |
 
@@ -668,7 +668,7 @@ Adding a new strategy: subclass `AuthStrategy`, implement all 5 methods
 regenerating `tests/fixtures/auth_strategy_baseline.json` in the same
 commit.
 
-## Hosted Bearer providers (Replicate / Runway / Luma)
+## Hosted Bearer providers (Replicate / Runway)
 
 Layer 4 ships three hosted video adapters that share a single foundation —
 `RemoteSubmitPollBackend` in `kinoforge.core.remote_backend`. Each adapter
@@ -679,7 +679,15 @@ core-import-ban invariant) and implements 5 wire-shape hooks:
 |---|---|---|---|---|
 | Replicate | `replicate` | `REPLICATE_API_TOKEN` | `status` (lowercase) | `output: str \| list[str]` |
 | Runway | `runway` | `RUNWAYML_API_SECRET` | `status` (UPPERCASE) | `output: list[str]` |
-| Luma | `luma` | `LUMAAI_API_KEY` | `state` (lowercase) | `assets.video: str` |
+
+> **Luma direct video API retired 2026.** The legacy
+> `api.lumalabs.ai/dream-machine/...` endpoint was retired by the
+> provider and now 308-redirects to the consumer dashboard. Reach Luma
+> video models via AWS Bedrock (`luma.ray-v2:0`, see the Bedrock Video
+> section below) or Replicate (`luma/ray-flash-2`, see the Replicate
+> row above). UNI-1 image-keyframe support via `LumaAgentsImageEngine`
+> is planned in Layer 5b — track the `LUMAAI_API_KEY` env var, which
+> is reserved for that engine.
 
 Each engine's `provision()` validates the Bearer credential via Layer-1
 `Bearer` strategy. Compute is `requires_compute=False` — no GPU instance
@@ -691,7 +699,8 @@ required. `validate_spec` requires `spec.model`; `key_base` returns it.
 # 1. Wire credentials (any subset; missing ones skip silently)
 echo 'REPLICATE_API_TOKEN=r8_xxxxx' >> .env
 echo 'RUNWAYML_API_SECRET=key_yyyyy' >> .env
-echo 'LUMAAI_API_KEY=luma-zzzzz'    >> .env
+# LUMAAI_API_KEY (reserved for Layer 5b UNI-1 keyframe engine; direct video API retired)
+# echo 'LUMAAI_API_KEY=luma-zzzzz' >> .env
 
 # 2. Verify creds present (Layer-4 gate added to preflight)
 pixi run preflight --check-hosted
