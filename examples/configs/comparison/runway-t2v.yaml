@@ -1,0 +1,29 @@
+# kinoforge example: Runway budget-tier t2v
+#
+# Sign up:  https://runwayml.com/signup
+# Get key:  https://dev.runwayml.com/
+# Set RUNWAYML_API_SECRET in your .env file (auto-loaded by the CLI).
+
+engine:
+  kind: runway
+  precision: ""
+
+spec:
+  model: "gen3a_turbo"
+  mode: t2v
+
+params:
+  ratio: "1280:720"
+
+models:
+  - ref: "synthetic:runway-hosted"
+    kind: base
+    target: checkpoints
+
+lifecycle:
+  budget: 1.50
+
+output:
+  kind: local
+  dir: output/comparison
+  enabled: true

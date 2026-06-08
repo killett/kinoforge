@@ -68,7 +68,18 @@ VALID_KIND_TARGETS: dict[str, set[str]] = {
     "clip_vision": {"clip_vision"},
 }
 
-KNOWN_ENGINES = {"comfyui", "diffusers", "hosted", "fake", "fal", "bedrock_video"}
+KNOWN_ENGINES = {
+    "comfyui",
+    "diffusers",
+    "hosted",
+    "fake",
+    "fal",
+    "bedrock_video",
+    # Layer 4 — hosted Bearer-key video providers; no engine-specific YAML block.
+    "replicate",
+    "runway",
+    "luma",
+}
 
 # ---------------------------------------------------------------------------
 # Sub-models
