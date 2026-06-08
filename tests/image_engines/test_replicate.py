@@ -121,7 +121,7 @@ def test_submit_sends_prompt_and_model_via_predictions_create() -> None:
     )
     assert job_id == "img1"
     call = client.predictions.create_calls[0]
-    assert call["version"] == "black-forest-labs/flux-schnell"
+    assert call["model"] == "black-forest-labs/flux-schnell"
     assert call["input"]["prompt"] == "a small cat"
 
 
