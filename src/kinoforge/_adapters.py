@@ -30,6 +30,9 @@ import kinoforge.engines.luma  # noqa: F401  # self-registers under "luma"
 import kinoforge.engines.replicate  # noqa: F401  # self-registers under "replicate"
 import kinoforge.engines.runway  # noqa: F401  # self-registers under "runway"
 
+# Image engines
+import kinoforge.image_engines.replicate  # noqa: F401  # self-registers under "replicate"
+
 # Output sinks
 import kinoforge.outputs.local  # noqa: F401  side-effect: register "local" OutputSink
 import kinoforge.providers.local  # noqa: F401
