@@ -31,7 +31,7 @@ def test_publish_writes_bytes_at_ts_slug_ext_path(tmp_path: Path) -> None:
     """
     sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
     out = sink.publish(b"hello", prompt="Waves crashing", extension=".mp4")
-    expected = tmp_path / f"{_FIXED_TS_STRING}_Waves-crashing.mp4"
+    expected = tmp_path / f"{_FIXED_TS_STRING}_unknown_unknown_Waves-crashing.mp4"
     assert Path(out) == expected.resolve()
     assert expected.read_bytes() == b"hello"
 
@@ -43,7 +43,7 @@ def test_publish_with_namespace_creates_subdir(tmp_path: Path) -> None:
     """
     sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
     out = sink.publish(b"x", prompt="A", extension=".mp4", namespace="batch-X")
-    expected = tmp_path / "batch-X" / f"{_FIXED_TS_STRING}_A.mp4"
+    expected = tmp_path / "batch-X" / f"{_FIXED_TS_STRING}_unknown_unknown_A.mp4"
     assert Path(out) == expected.resolve()
     assert expected.parent.is_dir()
 
@@ -57,8 +57,8 @@ def test_publish_collision_appends_underscore_n(tmp_path: Path) -> None:
     sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
     first = sink.publish(b"one", prompt="Cliffs", extension=".mp4")
     second = sink.publish(b"two", prompt="Cliffs", extension=".mp4")
-    assert Path(first).name == f"{_FIXED_TS_STRING}_Cliffs.mp4"
-    assert Path(second).name == f"{_FIXED_TS_STRING}_Cliffs_2.mp4"
+    assert Path(first).name == f"{_FIXED_TS_STRING}_unknown_unknown_Cliffs.mp4"
+    assert Path(second).name == f"{_FIXED_TS_STRING}_unknown_unknown_Cliffs_2.mp4"
     assert Path(first).read_bytes() == b"one"
     assert Path(second).read_bytes() == b"two"
 
@@ -70,16 +70,17 @@ def test_publish_collision_99_then_hash_suffix(tmp_path: Path) -> None:
     """
     sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
     # Pre-populate the 99 collision targets manually so we don't loop the sink.
-    base = f"{_FIXED_TS_STRING}_X.mp4"
+    stem = f"{_FIXED_TS_STRING}_unknown_unknown_X"
+    base = f"{stem}.mp4"
     (tmp_path / base).write_bytes(b"orig")
     for n in range(2, 100):
-        (tmp_path / f"{_FIXED_TS_STRING}_X_{n}.mp4").write_bytes(b"prior")
+        (tmp_path / f"{stem}_{n}.mp4").write_bytes(b"prior")
     out = sink.publish(b"new", prompt="X", extension=".mp4")
     name = Path(out).name
-    assert name.startswith(f"{_FIXED_TS_STRING}_X_")
+    assert name.startswith(f"{stem}_")
     assert name.endswith(".mp4")
     # Hash suffix is 6 hex chars between underscore and extension.
-    middle = name[len(f"{_FIXED_TS_STRING}_X_") : -len(".mp4")]
+    middle = name[len(f"{stem}_") : -len(".mp4")]
     assert len(middle) == 6
     assert all(c in "0123456789abcdef" for c in middle)
 
@@ -115,7 +116,9 @@ def test_publish_resolves_relative_dir_against_cwd(
     )
     out = sink.publish(b"x", prompt="A", extension=".mp4")
     assert Path(out).is_absolute()
-    assert (tmp_path / "relative-out" / f"{_FIXED_TS_STRING}_A.mp4").exists()
+    assert (
+        tmp_path / "relative-out" / f"{_FIXED_TS_STRING}_unknown_unknown_A.mp4"
+    ).exists()
 
 
 def test_publish_empty_extension_defaults_to_bin(tmp_path: Path) -> None:
@@ -125,7 +128,7 @@ def test_publish_empty_extension_defaults_to_bin(tmp_path: Path) -> None:
     """
     sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
     out = sink.publish(b"x", prompt="A", extension="")
-    assert Path(out).name == f"{_FIXED_TS_STRING}_A.bin"
+    assert Path(out).name == f"{_FIXED_TS_STRING}_unknown_unknown_A.bin"
 
 
 def test_local_sink_self_registers_on_import() -> None:
@@ -161,11 +164,11 @@ def test_publish_uses_atomic_replace(
     with pytest.raises(OutputPublishError):
         sink.publish(b"x", prompt="A", extension=".mp4")
 
-    final = tmp_path / f"{_FIXED_TS_STRING}_A.mp4"
+    final = tmp_path / f"{_FIXED_TS_STRING}_unknown_unknown_A.mp4"
     assert not final.exists()
     # After the rename failure the sink must also clean up the .tmp file so
     # operators never mistake a partial write for a finished clip.
-    assert not (tmp_path / f"{_FIXED_TS_STRING}_A.mp4.tmp").exists()
+    assert not (tmp_path / f"{_FIXED_TS_STRING}_unknown_unknown_A.mp4.tmp").exists()
 
 
 def test_publish_collision_hash_exhausted_raises(
@@ -190,15 +193,16 @@ def test_publish_collision_hash_exhausted_raises(
     slug = "X"
     ts = _FIXED_TS_STRING
     ext = ".mp4"
+    stem = f"{ts}_unknown_unknown_{slug}"
 
     # Pre-populate the primary and all numeric collision slots.
-    (tmp_path / f"{ts}_{slug}{ext}").write_bytes(b"orig")
+    (tmp_path / f"{stem}{ext}").write_bytes(b"orig")
     for n in range(2, 100):
-        (tmp_path / f"{ts}_{slug}_{n}{ext}").write_bytes(b"prior")
+        (tmp_path / f"{stem}_{n}{ext}").write_bytes(b"prior")
 
     # Compute the pinned hash suffix and pre-create it too.
     hash_suffix = hashlib.sha256(b"0").hexdigest()[:6]
-    (tmp_path / f"{ts}_{slug}_{hash_suffix}{ext}").write_bytes(b"hash-collision")
+    (tmp_path / f"{stem}_{hash_suffix}{ext}").write_bytes(b"hash-collision")
 
     with pytest.raises(OutputPublishError, match="non-colliding output path"):
         sink.publish(b"new", prompt=slug, extension=ext)
@@ -215,3 +219,64 @@ def test_clock_now_converted_to_local_tz_naive_datetime(tmp_path: Path) -> None:
     sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=epoch))
     out = sink.publish(b"x", prompt="A", extension=".mp4")
     assert "20260531-210015" in Path(out).name
+
+
+# Layer 4 — provider/model in filename schema ---------------------------------
+
+
+def test_publish_with_provider_and_model_in_filename(tmp_path: Path) -> None:
+    """provider + model named params slot into the filename between ts and slug.
+
+    Catches a regression where the new params silently drop on the floor
+    and the filename still renders as the legacy ``{ts}_{slug}{ext}`` shape.
+    """
+    sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
+    out = sink.publish(
+        b"\x00\x00\x00\x18ftypisom...",
+        prompt="a cat sitting on a fence",
+        extension=".mp4",
+        provider="replicate",
+        model="wan-video/wan-t2v-1.3b",
+    )
+    name = Path(out).stem
+    parts = name.split("_")
+    # ts_provider_modelslug_promptslug
+    assert len(parts) == 4
+    assert parts[0] == _FIXED_TS_STRING
+    assert parts[1] == "replicate"
+    assert parts[2].startswith("wan-video-wan-t2v")  # slugified, '/' → '-'
+    assert parts[3].startswith("a-cat-sitting")
+
+
+def test_publish_without_provider_or_model_uses_unknown(tmp_path: Path) -> None:
+    """Unset provider/model → literal ``"unknown"`` infix preserves a stable schema.
+
+    Catches a regression where omitting provider/model collapses the
+    filename back to the legacy schema instead of substituting the
+    sentinel — which would silently break callers that grep on the
+    fixed-position underscores.
+    """
+    sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
+    out = sink.publish(b"x", prompt="cat", extension=".mp4")
+    assert "_unknown_unknown_" in Path(out).name
+
+
+def test_publish_collision_suffix_still_works_with_provider(tmp_path: Path) -> None:
+    """Two publishes with identical provider/model still collide-and-suffix.
+
+    Catches a regression where threading provider/model through accidentally
+    forks the collision-resolution code path so the second publish silently
+    overwrites the first.
+    """
+    sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
+    a = sink.publish(
+        b"x", prompt="cat", extension=".mp4", provider="luma", model="ray-2"
+    )
+    b = sink.publish(
+        b"y", prompt="cat", extension=".mp4", provider="luma", model="ray-2"
+    )
+    assert a != b
+    assert Path(a).exists()
+    assert Path(b).exists()
+    assert Path(a).read_bytes() == b"x"
+    assert Path(b).read_bytes() == b"y"

@@ -55,8 +55,10 @@ class LocalOutputSink:
         prompt: str,
         extension: str,
         namespace: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> str:
-        """Write *data* to ``<dir>/<namespace?>/<ts>_<slug><ext>``.
+        """Write *data* to ``<dir>/<namespace?>/<ts>_<provider>_<model>_<slug><ext>``.
 
         Args:
             data: Raw bytes to write.
@@ -64,6 +66,8 @@ class LocalOutputSink:
             extension: File suffix with the dot (e.g. ``".mp4"``); empty
                 string defaults to ``".bin"``.
             namespace: Optional batch_id subdirectory.
+            provider: Engine registry key; ``None`` / empty → ``"unknown"``.
+            model: Slugified model identifier; ``None`` / empty → ``"unknown"``.
 
         Returns:
             Absolute path of the published file as a string.
@@ -74,6 +78,14 @@ class LocalOutputSink:
         ext = extension or ".bin"
         ts = datetime.fromtimestamp(self.clock.now()).strftime("%Y%m%d-%H%M%S")
         slug = slugify(prompt)
+        provider_slug = slugify(provider, max_chars=20) if provider else ""
+        model_slug = slugify(model, max_chars=24) if model else ""
+        # `slugify` returns the literal "clip" when the input is empty, so we
+        # treat that as "no value supplied" too.
+        if not provider_slug or provider_slug == "clip":
+            provider_slug = "unknown"
+        if not model_slug or model_slug == "clip":
+            model_slug = "unknown"
 
         target_dir = self.dir / namespace if namespace else self.dir
         try:
@@ -83,7 +95,9 @@ class LocalOutputSink:
                 f"failed to create output directory {target_dir}: {exc}"
             ) from exc
 
-        path = self._resolve_collision(target_dir, ts, slug, ext)
+        path = self._resolve_collision(
+            target_dir, ts, provider_slug, model_slug, slug, ext
+        )
 
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         try:
@@ -101,28 +115,40 @@ class LocalOutputSink:
         return str(path)
 
     def _resolve_collision(
-        self, target_dir: Path, ts: str, slug: str, ext: str
+        self,
+        target_dir: Path,
+        ts: str,
+        provider: str,
+        model: str,
+        slug: str,
+        ext: str,
     ) -> Path:
         """Return the first non-existing path in the collision sequence.
 
         Sequence: ``base.ext`` → ``base_2.ext`` → ... → ``base_99.ext`` →
-        ``base_<6-char-sha256>.ext``.
+        ``base_<6-char-sha256>.ext``, where ``base`` is
+        ``{ts}_{provider}_{model}_{slug}``.
 
         Args:
             target_dir: Directory in which to check for collisions.
             ts: Timestamp string portion of the filename.
+            provider: Pre-slugified provider name.
+            model: Pre-slugified model identifier.
             slug: Slug portion of the filename.
             ext: File extension including the dot.
 
         Returns:
             A :class:`~pathlib.Path` that does not currently exist.
         """
-        primary = target_dir / format_filename(ts=ts, slug=slug, extension=ext)
+        base = f"{ts}_{provider}_{model}_{slug}"
+        primary = target_dir / format_filename(
+            ts=ts, provider=provider, model=model, slug=slug, extension=ext
+        )
         if not primary.exists():
             return primary
 
         for n in range(2, _MAX_COLLISION_SUFFIX + 1):
-            candidate = target_dir / f"{ts}_{slug}_{n}{ext}"
+            candidate = target_dir / f"{base}_{n}{ext}"
             if not candidate.exists():
                 return candidate
 
@@ -136,7 +162,7 @@ class LocalOutputSink:
             hash_suffix = hashlib.sha256(str(time.monotonic_ns()).encode()).hexdigest()[
                 :6
             ]
-            candidate = target_dir / f"{ts}_{slug}_{hash_suffix}{ext}"
+            candidate = target_dir / f"{base}_{hash_suffix}{ext}"
             if not candidate.exists():
                 return candidate
         raise OutputPublishError(

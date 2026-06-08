@@ -1229,6 +1229,8 @@ class _SpyOutputSink:
         prompt: str,
         extension: str,
         namespace: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -1236,6 +1238,8 @@ class _SpyOutputSink:
                 "prompt": prompt,
                 "extension": extension,
                 "namespace": namespace,
+                "provider": provider,
+                "model": model,
             }
         )
         return "/spy/published"
