@@ -1,0 +1,33 @@
+# kinoforge example: Replicate budget-tier t2v
+#
+# Sign up:  https://replicate.com/signin
+# Get key:  https://replicate.com/account/api-tokens
+# Set REPLICATE_API_TOKEN in your .env file (auto-loaded by the CLI).
+
+engine:
+  kind: replicate
+  precision: ""
+
+spec:
+  model: "wan-video/wan-2.1-t2v-1.3b"
+  mode: t2v
+
+params:
+  num_frames: 81
+  fps: 24
+  aspect_ratio: "16:9"
+
+# `models:` is required by Config validation but unused for hosted-Bearer engines
+# (RemoteSubmitPollEngine.requires_local_weights == False). Synthetic entry only.
+models:
+  - ref: "synthetic:replicate-hosted"
+    kind: base
+    target: checkpoints
+
+lifecycle:
+  budget: 1.50
+
+output:
+  kind: local
+  dir: output/comparison
+  enabled: true

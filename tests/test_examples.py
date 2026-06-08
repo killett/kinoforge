@@ -104,6 +104,28 @@ def test_luma_ray_example_config_parses() -> None:
     assert cfg.engine.bedrock_video.model_id == "luma.ray-v2:0"
 
 
+# Layer 4 — comparison batch YAMLs --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "yaml_path",
+    sorted(Path("examples/configs/comparison").glob("*.yaml")),
+    ids=lambda p: p.name,
+)
+def test_comparison_yaml_loads(yaml_path: Path) -> None:
+    """Every comparison-batch config parses via Config.model_validate.
+
+    Catches a regression where a typo in engine.kind, missing models
+    block, or new validator rejects a previously-shipped config.
+    """
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(yaml_path)
+    assert cfg.engine.kind in {"replicate", "runway", "luma"}
+    assert isinstance(cfg.spec, dict)
+    assert cfg.spec.get("model"), f"{yaml_path.name} missing spec.model"
+
+
 # ---------------------------------------------------------------------------
 # AC2 — Config-only swap tests
 # ---------------------------------------------------------------------------
