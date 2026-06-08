@@ -170,10 +170,10 @@ in the filename schema `{ts}_{provider}_{model-slug}_{prompt-slug}.{ext}`.
 - [DEFERRED] Task 7: Fal retrofit onto `RemoteSubmitPollBackend` — base ABC validated against 3 wire shapes already; punt to follow-up.
 - [x] Task 8: `ReplicateImageEngine` — commit `cc5bd6c`
 - [x] Task 9: `GenerateClipStage` threads provider+model — commit `671cd6f`
-- [PARTIAL] Task 10: Comparison configs — 3 of 15 YAMLs (t2v only) — commit `a054877`. i2v/flf2v/keyframe-prestage/manifest deferred.
+- [PARTIAL] Task 10: Comparison configs — 2 of 15 YAMLs (t2v only) — commit `a054877`. i2v/flf2v/keyframe-prestage/manifest deferred; luma-t2v.yaml removed in Phase 44.
 - [x] Task 11: Replicate live smoke (t2v) — `bytedance/seedance-1-lite`, 6 MB MP4, ~32 s, ~$0.10.
 - [x] Task 12: Runway live smoke (t2v) — `gen4.5`, 2.8 MB MP4, ~2 m 40 s, ~$1.25. Caught 4 production bugs (commit `f20a70d`).
-- [DEFERRED] Task 13: Luma live smoke — `LUMAAI_API_KEY` returns 403 at provider (verified bypassing SDK). User-side credential.
+- [CLOSED] Task 13: Luma live smoke — API was retired by the provider in 2026; see Phase 44 / Layer 5a. The 403 observed at deferral time was the provider winding the endpoint down.
 - [DEFERRED] Task 14: Fal i2v + flf2v extension — depends on Task 10 keyframe pre-stage.
 - [DEFERRED] Task 15: Comparison batch capstone — depends on Tasks 10/13/14.
 - [x] Task 16: README + PROGRESS + merge.
@@ -213,7 +213,7 @@ in the filename schema `{ts}_{provider}_{model-slug}_{prompt-slug}.{ext}`.
 ### RESUME — START HERE
 
 **Where we are (as of session 2026-06-07):**
-- **Phase 43 (Layer 4 — Bearer-provider comparison smokes):** PARTIAL (above). 10 of 17 tasks landed end-to-end; 4 deferred + 1 partial. 2 of 3 hosted providers proven live (Runway + Replicate); Luma awaits user credential.
+- **Phase 43 (Layer 4 — Bearer-provider comparison smokes):** PARTIAL (above). 10 of 17 tasks landed end-to-end; 4 deferred + 1 partial. 2 hosted Bearer providers proven live (Runway + Replicate). Phase 44 closes the Luma direct-API carry-forward (API retired by provider); Layer 5b adds `LumaAgentsImageEngine` (UNI-1 image keyframes) — separate spec.
 - **Phase 41 (Layer 1 — AuthStrategy substrate):** CLOSED. 11 tasks, merged to main.
   ABC + Bearer + GCPServiceAccount + AWSSigV4 + `build_auth_strategy` registry +
   HostedAPIEngine retrofit + FakeAuthStrategy fixture + `tools/probe_hosted.py` +
@@ -225,11 +225,13 @@ in the filename schema `{ts}_{provider}_{model-slug}_{prompt-slug}.{ext}`.
 - **Layer 2 (Veo on Vertex AI):** UNBLOCKED 2026-06-07 — operator upgraded GCP
   billing to pay-as-you-go. Plan not started yet. The same upgrade also
   unblocks Layer W+β (SkyPilot T4 GPU smoke from Phase 40) for re-fire.
-- **Bearer-key hosted video (Replicate / Runway / Luma):** UNBLOCKED 2026-06-07
+- **Bearer-key hosted video (Replicate / Runway):** UNBLOCKED 2026-06-07
   — operator signed up, added credit, pasted keys into `.env` for
-  `REPLICATE_API_TOKEN`, `RUNWAYML_API_SECRET`, `LUMAAI_API_KEY`. Same
-  Layer 1 `HostedAPIEngine` + `Bearer` strategy serves all three —
-  config-only addition, no engine work. Each smoke ~$0.05-0.50.
+  `REPLICATE_API_TOKEN` and `RUNWAYML_API_SECRET`. Same Layer 1
+  `HostedAPIEngine` + `Bearer` strategy serves both — config-only
+  addition, no engine work. Each smoke ~$0.05-0.50. (Luma direct API
+  retired by provider in 2026 — see Phase 44 / Layer 5a; `LUMAAI_API_KEY`
+  is reserved for Layer 5b's UNI-1 image-keyframe engine.)
 - **SkyPilot AWS compute:** WIRED 2026-06-07 (`f74a73d`) —
   `skypilot.extras=["gcp","aws"]` + `awscli` in live-skypilot env;
   `.env.example` documents IAM-user / SP-style auth recipe. Live AWS smoke
@@ -1870,3 +1872,48 @@ as proof of access. Or use the IAM policy simulator API.
 
 **Test count:** 1584 pre-Layer-3-T5 → +3 new probe tests = 1587 total
 (9 probe tests, all pass offline).
+
+### Phase 44 — Layer 5a (Luma direct-API retirement, deletion-only)
+
+Luma retired the Dream Machine direct video API in 2026; the dead
+`LumaEngine` package that targeted it and its 12-test unit-test file
+are removed in this layer. The carry-forward in project memory
+`project_luma_video_retirement_2026.md` is now CLOSED.
+
+Spec: `docs/superpowers/specs/2026-06-07-luma-direct-api-retirement-design.md`.
+Plan: `docs/superpowers/plans/2026-06-07-layer-5a-luma-retirement.md`.
+
+- [x] Task 1: code + test deletions + label sweep — commit `20ad7d9`
+- [x] Task 2: README tombstone + PROGRESS Phase 44 entry — this commit (`<TASK2-SHA>`)
+
+**Files removed:**
+- `src/kinoforge/engines/luma/__init__.py` (164 lines)
+- `tests/engines/test_luma.py` (297 lines, 12 tests)
+- `examples/configs/comparison/luma-t2v.yaml` (30 lines)
+
+**Files edited (1-5 line changes):**
+- `src/kinoforge/_adapters.py` — drop the `engines.luma` self-registration import.
+- `src/kinoforge/core/config.py` — drop `"luma"` from `KNOWN_ENGINES`.
+- `tests/test_core_invariant.py` — drop the `lumaai` tuple from the vendor-confinement scan list.
+- `tests/test_examples.py` — tighten the comparison-YAML kind allowlist set to `{"replicate","runway"}`.
+- `tests/pipeline/test_generate_clip.py`, `tests/outputs/test_local.py`,
+  `tests/outputs/test_format_filename.py` — sweep `provider="luma"`
+  free-form labels to `provider="replicate"`.
+- `README.md` — strip Luma from the Bearer-strategy table row, the
+  Hosted Bearer section heading, and the wire-shape table; insert a
+  forward-pointing tombstone paragraph; recomment the
+  `LUMAAI_API_KEY` echo line in the quickstart.
+
+**Test count:** N pre-Layer-5a → N − 13 post-Layer-5a (12 from the deleted
+`test_luma.py` plus 1 from the comparison-YAML parametrize loop losing
+`luma-t2v.yaml`).
+
+**Live spend:** $0. Fully offline source-tree deletion; no provider
+calls, no cloud mutations.
+
+**Out of scope — landed in a separate spec:**
+
+- `LumaAgentsImageEngine` for UNI-1 image keyframes (Layer 5b).
+- Anything Bedrock-side (Luma Ray v2 lives there and is unaffected).
+
+Closes carry-forward: `project_luma_video_retirement_2026.md`.
