@@ -57,8 +57,9 @@ class LocalOutputSink:
         namespace: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        kind: str | None = None,
     ) -> str:
-        """Write *data* to ``<dir>/<namespace?>/<ts>_<provider>_<model>_<slug><ext>``.
+        """Write *data* to ``<dir>/<namespace?>/<ts>_[<kind>_]<provider>_<model>_<slug><ext>``.
 
         Args:
             data: Raw bytes to write.
@@ -68,6 +69,9 @@ class LocalOutputSink:
             namespace: Optional batch_id subdirectory.
             provider: Engine registry key; ``None`` / empty → ``"unknown"``.
             model: Slugified model identifier; ``None`` / empty → ``"unknown"``.
+            kind: Optional artifact-kind tag inserted between ``ts`` and
+                ``provider`` (e.g. ``"keyframe-init"`` / ``"keyframe-first"``
+                / ``"keyframe-last"``). ``None`` / empty → no kind slot.
 
         Returns:
             Absolute path of the published file as a string.
@@ -86,6 +90,11 @@ class LocalOutputSink:
             provider_slug = "unknown"
         if not model_slug or model_slug == "clip":
             model_slug = "unknown"
+        # `kind` is operator-supplied (e.g. "keyframe-init"); slugify defensively
+        # but never substitute "unknown" — empty kind means "no kind slot".
+        kind_slug = slugify(kind, max_chars=24) if kind else ""
+        if kind_slug == "clip":
+            kind_slug = ""
 
         target_dir = self.dir / namespace if namespace else self.dir
         try:
@@ -96,7 +105,7 @@ class LocalOutputSink:
             ) from exc
 
         path = self._resolve_collision(
-            target_dir, ts, provider_slug, model_slug, slug, ext
+            target_dir, ts, provider_slug, model_slug, slug, ext, kind=kind_slug
         )
 
         tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -122,12 +131,14 @@ class LocalOutputSink:
         model: str,
         slug: str,
         ext: str,
+        *,
+        kind: str = "",
     ) -> Path:
         """Return the first non-existing path in the collision sequence.
 
         Sequence: ``base.ext`` → ``base_2.ext`` → ... → ``base_99.ext`` →
         ``base_<6-char-sha256>.ext``, where ``base`` is
-        ``{ts}_{provider}_{model}_{slug}``.
+        ``{ts}_[{kind}_]{provider}_{model}_{slug}``.
 
         Args:
             target_dir: Directory in which to check for collisions.
@@ -136,13 +147,20 @@ class LocalOutputSink:
             model: Pre-slugified model identifier.
             slug: Slug portion of the filename.
             ext: File extension including the dot.
+            kind: Optional artifact-kind tag; empty = omitted.
 
         Returns:
             A :class:`~pathlib.Path` that does not currently exist.
         """
-        base = f"{ts}_{provider}_{model}_{slug}"
+        kind_part = f"{kind}_" if kind else ""
+        base = f"{ts}_{kind_part}{provider}_{model}_{slug}"
         primary = target_dir / format_filename(
-            ts=ts, provider=provider, model=model, slug=slug, extension=ext
+            ts=ts,
+            provider=provider,
+            model=model,
+            slug=slug,
+            extension=ext,
+            kind=kind,
         )
         if not primary.exists():
             return primary

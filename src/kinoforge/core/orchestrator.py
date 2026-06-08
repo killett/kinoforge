@@ -1047,6 +1047,12 @@ def generate(
         # ------------------------------------------------------------------
         state = PipelineState(request=request, artifacts={})
         if cfg.keyframe is not None:
+            # Layer 4 — keyframes publish to the user-facing sink with the
+            # IMAGE engine's name as `provider` and the keyframe spec.model as
+            # `model`, so they land next to the final clip but tagged with
+            # the image-generation provider that produced them.
+            _kf_provider = getattr(resolved_image_engine, "name", None) or None
+            _kf_model = str((cfg.keyframe.spec or {}).get("model", "") or "") or None
             try:
                 state = KeyframeStage(
                     keyframe_cfg=cfg.keyframe,
@@ -1055,6 +1061,9 @@ def generate(
                     image_profile=image_prof,  # type: ignore[arg-type]
                     store=store,
                     run_id=run_id,
+                    sink=sink,
+                    provider=_kf_provider,
+                    model=_kf_model,
                 ).run(state)
             except ValidationError:
                 _log.warning(

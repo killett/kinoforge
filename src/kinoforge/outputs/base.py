@@ -58,6 +58,7 @@ class OutputSink(Protocol):
         namespace: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        kind: str | None = None,
     ) -> str:
         """Publish *data* under a name derived from *prompt*, *provider*, *model*.
 
@@ -74,6 +75,12 @@ class OutputSink(Protocol):
                 literal ``"unknown"``.
             model: ``cfg["spec"]["model"]`` slugified to max 24 chars.
                 ``None`` or empty falls back to the literal ``"unknown"``.
+            kind: Optional artifact-kind tag inserted between ``ts`` and
+                ``provider`` (e.g. ``"keyframe-init"`` for the i2v init
+                frame, ``"keyframe-first"`` / ``"keyframe-last"`` for
+                flf2v bookends). When ``None`` or empty, the kind slot
+                is omitted entirely so video clip filenames stay
+                unchanged.
 
         Returns:
             The absolute path of the published file as a string.
@@ -133,11 +140,18 @@ def format_filename(
     model: str,
     slug: str,
     extension: str,
+    kind: str = "",
 ) -> str:
-    """Compose ``{ts}_{provider}_{model}_{slug}{extension}``.
+    """Compose ``{ts}_[{kind}_]{provider}_{model}_{slug}{extension}``.
 
-    Caller MUST pre-slugify ``provider``, ``model``, and ``slug``; this
-    helper performs no sanitisation.
+    When ``kind`` is non-empty, it is inserted between ``ts`` and
+    ``provider`` separated by an underscore (e.g. ``keyframe-init``);
+    when empty (the default), the slot is omitted entirely so the
+    legacy video schema ``{ts}_{provider}_{model}_{slug}{ext}`` is
+    preserved verbatim.
+
+    Caller MUST pre-slugify ``kind`` / ``provider`` / ``model`` /
+    ``slug``; this helper performs no sanitisation.
 
     Args:
         ts: The local-TZ timestamp string, e.g. ``"20260531-210015"``.
@@ -145,8 +159,11 @@ def format_filename(
         model: Pre-slugified model identifier (or literal ``"unknown"``).
         slug: The ASCII slug from :func:`slugify`.
         extension: File suffix including the dot (e.g. ``".mp4"``).
+        kind: Optional artifact-kind tag (e.g. ``"keyframe-init"``).
+            Empty string = no kind slot.
 
     Returns:
         The composed filename.
     """
-    return f"{ts}_{provider}_{model}_{slug}{extension}"
+    kind_part = f"{kind}_" if kind else ""
+    return f"{ts}_{kind_part}{provider}_{model}_{slug}{extension}"

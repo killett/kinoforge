@@ -22,8 +22,20 @@ from kinoforge.core.interfaces import (
     ImageProfile,
     PipelineState,
 )
+from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.artifact_bytes import artifact_bytes
 from kinoforge.stores.base import ArtifactStore
+
+# Maps full role names (MODE_ROLE_REQUIREMENTS) to the short tokens used in
+# the user-facing keyframe filename schema. flf2v's `first_frame` /
+# `last_frame` collapse to `first` / `last`; i2v's `init_image` collapses
+# to `init`. Tokens chosen so the resulting filename glob
+# `output/keyframe-*.png` groups all keyframes together regardless of mode.
+_ROLE_SHORT_TOKEN: dict[str, str] = {
+    "init_image": "init",
+    "first_frame": "first",
+    "last_frame": "last",
+}
 
 
 @dataclass
@@ -37,6 +49,13 @@ class KeyframeStage:
     store: ArtifactStore
     run_id: str
     http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None
+    # Layer 4 — user-facing keyframe publishing.
+    # When `sink` is non-None each generated keyframe lands at
+    # ``<sink.dir>/<namespace?>/<ts>_keyframe-<role-short>_<provider>_<model>_<slug>.png``.
+    sink: OutputSink | None = None
+    namespace: str | None = None
+    provider: str | None = None
+    model: str | None = None
 
     def run(self, state: PipelineState) -> PipelineState:
         """Fill each missing image-kind role and return an updated PipelineState.
@@ -74,6 +93,22 @@ class KeyframeStage:
             stored = replace(stored, filename=filename, meta=dict(artifact.meta))
             new_assets.append(ConditioningAsset(kind="image", role=role, ref=stored))
             new_artifacts[f"keyframe-{role}"] = stored
+
+            # Layer 4 — also publish the keyframe to the user-facing sink so
+            # operators see it next to the final video clip. The internal
+            # store copy above stays unconditional; the publish call is only
+            # made when the operator wired a sink.
+            if self.sink is not None:
+                short_role = _ROLE_SHORT_TOKEN.get(role, role)
+                self.sink.publish(
+                    png_bytes,
+                    prompt=prompt,
+                    extension=".png",
+                    namespace=self.namespace,
+                    provider=self.provider,
+                    model=self.model,
+                    kind=f"keyframe-{short_role}",
+                )
 
         new_request = replace(request, assets=new_assets)
         return replace(state, request=new_request, artifacts=new_artifacts)

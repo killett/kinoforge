@@ -77,3 +77,54 @@ def test_format_filename_underscore_count_stable() -> None:
     )
     # A_B_C_D.e — three underscores
     assert out.count("_") == 3
+
+
+def test_format_filename_with_kind_inserts_kind_slot() -> None:
+    """`kind` slots between ts and provider with an underscore separator."""
+    assert (
+        format_filename(
+            ts="20260607-200115",
+            provider="replicate",
+            model="flux-schnell",
+            slug="photorealistic-c",
+            extension=".png",
+            kind="keyframe-init",
+        )
+        == "20260607-200115_keyframe-init_replicate_flux-schnell_photorealistic-c.png"
+    )
+
+
+def test_format_filename_empty_kind_omits_slot() -> None:
+    """Default empty `kind` keeps the legacy video schema verbatim."""
+    out = format_filename(
+        ts="A",
+        provider="B",
+        model="C",
+        slug="D",
+        extension=".e",
+        kind="",
+    )
+    assert out == "A_B_C_D.e"
+
+
+def test_format_filename_flf2v_keyframe_first_and_last_distinct() -> None:
+    """flf2v generates frame0 + frame1; the kind slot keeps them apart."""
+    a = format_filename(
+        ts="t",
+        provider="p",
+        model="m",
+        slug="s",
+        extension=".png",
+        kind="keyframe-first",
+    )
+    b = format_filename(
+        ts="t",
+        provider="p",
+        model="m",
+        slug="s",
+        extension=".png",
+        kind="keyframe-last",
+    )
+    assert a != b
+    assert "keyframe-first" in a
+    assert "keyframe-last" in b

@@ -215,6 +215,111 @@ def test_appends_asset_at_end_of_request_assets(tmp_path: Path) -> None:
     assert out.request.assets[1].role == "last_frame"
 
 
+# Layer 4 — keyframe publishing to user-facing sink -------------------------
+
+
+class _Spy:
+    """Minimal OutputSink spy that records every publish call."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def publish(
+        self,
+        data: bytes,
+        *,
+        prompt: str,
+        extension: str,
+        namespace: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        kind: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "len": len(data),
+                "prompt": prompt,
+                "extension": extension,
+                "namespace": namespace,
+                "provider": provider,
+                "model": model,
+                "kind": kind,
+            }
+        )
+        return "/spy/published"
+
+
+def test_keyframe_publishes_i2v_init_with_kind_keyframe_init(tmp_path: Path) -> None:
+    """i2v init_image role publishes with kind='keyframe-init'.
+
+    Catches a regression where the keyframe is persisted to the store only
+    and never reaches the user-facing sink — operator would see the final
+    video but not the source frame.
+    """
+    cfg = KeyframeConfig(
+        engine="fake", prompt="cat by waterfall", spec={"model": "flux-schnell"}
+    )
+    spy = _Spy()
+    stage = _make_stage(cfg, tmp_path)
+    stage.sink = spy
+    stage.provider = "fake"
+    stage.model = "flux-schnell"
+    stage.namespace = "batch-XYZ"
+
+    state = PipelineState(request=GenerationRequest(prompt="ignored", mode="i2v"))
+    stage.run(state)
+
+    assert len(spy.calls) == 1
+    call = spy.calls[0]
+    assert call["kind"] == "keyframe-init"
+    assert call["extension"] == ".png"
+    assert call["provider"] == "fake"
+    assert call["model"] == "flux-schnell"
+    assert call["namespace"] == "batch-XYZ"
+    assert call["prompt"] == "cat by waterfall"
+
+
+def test_keyframe_publishes_flf2v_first_and_last_with_distinct_kinds(
+    tmp_path: Path,
+) -> None:
+    """flf2v generates frame0 + frame1 → two publishes with `keyframe-first` + `keyframe-last`.
+
+    Catches a regression where both bookend frames collide on the same
+    filename slot, hiding one behind the other in the output directory.
+    """
+    cfg = KeyframeConfig(
+        engine="fake", prompt="alpine meadow", spec={"model": "flux-schnell"}
+    )
+    spy = _Spy()
+    stage = _make_stage(cfg, tmp_path)
+    stage.sink = spy
+    stage.provider = "fake"
+    stage.model = "flux-schnell"
+
+    state = PipelineState(request=GenerationRequest(prompt="ignored", mode="flf2v"))
+    stage.run(state)
+
+    kinds = sorted(str(c["kind"]) for c in spy.calls)
+    assert kinds == ["keyframe-first", "keyframe-last"]
+
+
+def test_keyframe_no_sink_no_publish_call(tmp_path: Path) -> None:
+    """Without a wired sink the stage behaves bit-for-bit identically to pre-Layer-4.
+
+    Catches a regression where the publish call fires unconditionally and
+    crashes when sink is None.
+    """
+    cfg = KeyframeConfig(engine="fake", prompt="cat", spec={"model": "m"})
+    spy = _Spy()
+    stage = _make_stage(cfg, tmp_path)
+    # explicitly NOT setting stage.sink
+
+    state = PipelineState(request=GenerationRequest(prompt="ignored", mode="i2v"))
+    stage.run(state)
+
+    assert spy.calls == []
+
+
 def test_artifacts_dict_carries_existing_entries(tmp_path: Path) -> None:
     """Bug guard: stage must not drop pre-existing artifacts from upstream stages."""
     cfg = KeyframeConfig(engine="fake", prompt="x", spec={"model": "m"})
