@@ -1,0 +1,30 @@
+# kinoforge example: Luma budget-tier t2v
+#
+# Sign up:  https://lumalabs.ai/dream-machine/api
+# Get key:  https://lumalabs.ai/dream-machine/api/keys
+# Set LUMAAI_API_KEY in your .env file (auto-loaded by the CLI).
+
+engine:
+  kind: luma
+  precision: ""
+
+spec:
+  model: "ray-flash-2"
+  mode: t2v
+
+params:
+  resolution: "540p"
+  aspect_ratio: "16:9"
+
+models:
+  - ref: "synthetic:luma-hosted"
+    kind: base
+    target: checkpoints
+
+lifecycle:
+  budget: 1.50
+
+output:
+  kind: local
+  dir: output/comparison
+  enabled: true
