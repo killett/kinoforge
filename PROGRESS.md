@@ -180,8 +180,8 @@ in the filename schema `{ts}_{provider}_{model-slug}_{prompt-slug}.{ext}`.
 
 **First real artifacts (Layer 4):**
 
-- Runway gen4.5 t2v: `/workspace/output/comparison/20260607-194607_runway_gen4.5_Photorealistic-cinem.bin` — 2.8 MB ISO-BMFF.
-- Replicate seedance-1-lite t2v: `/workspace/output/comparison/20260607-194858_replicate_bytedance-seedance-1-lit_Cinematic-shot-of-a.mp4` — 6 MB ISO-BMFF, full filename schema verified.
+- Runway gen4.5 t2v: `/workspace/output/20260607-194607_runway_gen4.5_Photorealistic-cinem.bin` — 2.8 MB ISO-BMFF.
+- Replicate seedance-1-lite t2v: `/workspace/output/20260607-194858_replicate_bytedance-seedance-1-lit_Cinematic-shot-of-a.mp4` — 6 MB ISO-BMFF, full filename schema verified.
 
 **Live-smoke bug catches (4 production fixes in `f20a70d`):**
 

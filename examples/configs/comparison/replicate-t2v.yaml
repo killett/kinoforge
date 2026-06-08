@@ -29,5 +29,5 @@ lifecycle:
 
 output:
   kind: local
-  dir: output/comparison
+  dir: output
   enabled: true
