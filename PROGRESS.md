@@ -113,7 +113,7 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 **Real-cloud verification gaps (offline-tested only):**
 - ~~`RunPodProvider.find_offers` REST shape is a stub~~ — **CLOSED** by Phase 24 (Layer N). Real-cloud verified end-to-end; 10 production bugs fixed.
 - ~~`SkyPilotProvider._get_sky()` lazy path wired but unexercised against real `sky` SDK.~~ — **CLOSED** by Phase 31 (CPU lifecycle smoke against real GCP; 4 SDK fixtures captured; provider ported to modern async API).
-- SkyPilot live smoke is CPU lifecycle only against GCP; GPU + per-engine smokes remain deferred (see `docs/superpowers/specs/2026-06-03-skypilot-real-cloud-design.md` section 7 for scope cuts). Multi-cloud status as of 2026-06-07: **AWS extras wired** (`f74a73d`) — live AWS smoke still pending; **Azure deferred** behind an upstream conda-forge / azure-cli packaging gap (azure-cli pins a pre-release-only `azure-batch` range, no GA build on conda-forge; pixi has no prerelease toggle). Full status in the RESUME section above + the TODO comment in `pixi.toml`.
+- SkyPilot live smoke is CPU lifecycle only against GCP; GPU + per-engine smokes remain deferred (see `docs/superpowers/specs/2026-06-03-skypilot-real-cloud-design.md` section 7 for scope cuts). Multi-cloud status as of 2026-06-07: **AWS extras wired** (`f74a73d`) — live AWS smoke still pending; **Azure deferred** behind an upstream conda-forge / azure-cli packaging gap (azure-cli pins a pre-release-only `azure-batch` range, no GA build on conda-forge; uv refuses prereleases by default and pixi 0.69.0 has no `--prerelease=allow` equivalent — the per-package cooldown override tables `[exclude-newer]` / `[pypi-exclude-newer]` don't address the prerelease filter). Full status in the RESUME section above + the TODO comment in `pixi.toml`.
 - ~~`S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.~~ — **CLOSED** by Phase 38 (Layer W).
 
 **Architectural follow-ups:**
@@ -180,8 +180,11 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
   SkyPilot's `[azure]` extra transitively pulls `azure-cli >= 2.73`, which
   pins `azure-batch >=15.0.0b1,<15.1.dev0` — a pre-release-only range.
   conda-forge has no `azure-batch` 15.0.x build (jumps 14.2.0 → 15.1.0);
-  PyPI has 15.0.0b* betas but uv refuses pre-releases by default, and pixi
-  exposes no `--prerelease=allow` knob or per-package cooldown override.
+  PyPI has 15.0.0b* betas but uv refuses pre-releases by default. Pixi
+  does have per-package cooldown overrides (`[exclude-newer]` /
+  `[pypi-exclude-newer]`, verified against 0.69.0 docs) but those address
+  the cooldown filter, not uv's prerelease default — there's no
+  `--prerelease=allow` equivalent surface in pixi 0.69.0.
   Unblock paths: (a) conda-forge ships `azure-batch` 15.0.x GA, (b)
   `azure-cli` loosens the pin, or (c) pixi gains a prerelease allowlist.
   TODO comment in `pixi.toml` next to the `[feature.live-skypilot.pypi-dependencies]`
