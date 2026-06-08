@@ -56,8 +56,10 @@ class OutputSink(Protocol):
         prompt: str,
         extension: str,
         namespace: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> str:
-        """Publish *data* under a name derived from *prompt* and *extension*.
+        """Publish *data* under a name derived from *prompt*, *provider*, *model*.
 
         Args:
             data: The raw clip bytes to write.
@@ -67,6 +69,11 @@ class OutputSink(Protocol):
                 ".bin" when the engine returns no extension.
             namespace: Optional sub-directory under the sink's root; used
                 by ``batch_generate`` to group entries by ``batch_id``.
+            provider: Engine registry key (``replicate`` / ``runway`` /
+                ``luma`` / ``fal``). ``None`` or empty falls back to the
+                literal ``"unknown"``.
+            model: ``cfg["spec"]["model"]`` slugified to max 24 chars.
+                ``None`` or empty falls back to the literal ``"unknown"``.
 
         Returns:
             The absolute path of the published file as a string.
@@ -119,15 +126,27 @@ def slugify(prompt: str, max_chars: int = 20) -> str:
     return final or "clip"
 
 
-def format_filename(*, ts: str, slug: str, extension: str) -> str:
-    """Compose ``{ts}_{slug}{extension}`` with no further sanitization.
+def format_filename(
+    *,
+    ts: str,
+    provider: str,
+    model: str,
+    slug: str,
+    extension: str,
+) -> str:
+    """Compose ``{ts}_{provider}_{model}_{slug}{extension}``.
+
+    Caller MUST pre-slugify ``provider``, ``model``, and ``slug``; this
+    helper performs no sanitisation.
 
     Args:
         ts: The local-TZ timestamp string, e.g. ``"20260531-210015"``.
+        provider: Pre-slugified provider name (or literal ``"unknown"``).
+        model: Pre-slugified model identifier (or literal ``"unknown"``).
         slug: The ASCII slug from :func:`slugify`.
         extension: File suffix including the dot (e.g. ``".mp4"``).
 
     Returns:
         The composed filename.
     """
-    return f"{ts}_{slug}{extension}"
+    return f"{ts}_{provider}_{model}_{slug}{extension}"

@@ -573,6 +573,8 @@ class _PublishCall:
     prompt: str
     extension: str
     namespace: str | None
+    provider: str | None = None
+    model: str | None = None
 
 
 @dataclass
@@ -588,24 +590,18 @@ class _SpyOutputSink:
         prompt: str,
         extension: str,
         namespace: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> str:
-        """Record the call and return a synthetic path string.
-
-        Args:
-            data: Raw clip bytes.
-            prompt: User-facing prompt.
-            extension: File suffix including the dot.
-            namespace: Optional sub-directory grouping.
-
-        Returns:
-            A synthetic path string (not used by the caller in these tests).
-        """
+        """Record the call and return a synthetic path string."""
         self.calls.append(
             _PublishCall(
                 data_len=len(data),
                 prompt=prompt,
                 extension=extension,
                 namespace=namespace,
+                provider=provider,
+                model=model,
             )
         )
         return f"/fake/{namespace}/{prompt}{extension}"

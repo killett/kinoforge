@@ -113,6 +113,8 @@ class _FakeSink:
         prompt: str,
         extension: str,
         namespace: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> str:
         return "/fake"
 
