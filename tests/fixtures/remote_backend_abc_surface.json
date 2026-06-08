@@ -1,0 +1,31 @@
+{
+  "RemoteSubmitPollBackend": {
+    "_client": "(self) -> 'object'",
+    "_endpoints_map": "(self) -> 'dict[str, str]'",
+    "_extract_filename": "(self, status: 'dict[str, Any]') -> 'str'",
+    "_extract_output_url": "(self, status: 'dict[str, Any]') -> 'str'",
+    "_is_done": "(self, status: 'dict[str, Any]') -> 'bool'",
+    "_is_failed": "(self, status: 'dict[str, Any]') -> 'tuple[bool, str]'",
+    "_poll_one": "(self, client: 'object', job_id: 'str') -> 'dict[str, Any]'",
+    "_submit": "(self, client: 'object', job: 'GenerationJob') -> 'str'",
+    "capabilities": "(self) -> 'ModelProfile'",
+    "endpoints": "(self) -> 'dict[str, str]'",
+    "inspect_capabilities": "(self) -> 'ModelProfile'",
+    "result": "(self, job_id: 'str') -> 'Artifact'",
+    "submit": "(self, job: 'GenerationJob') -> 'str'"
+  },
+  "RemoteSubmitPollEngine": {
+    "_build_backend": "(self, cfg: 'dict[str, Any]', instance: 'Instance | None') -> 'RemoteSubmitPollBackend'",
+    "_build_client_factory": "(self, cfg: 'dict[str, Any]', creds: 'CredentialProvider | None') -> 'Callable[[], Any]'",
+    "attach_get_instance": "(self, get_instance: 'Callable[[str], Instance]') -> 'None'",
+    "backend": "(self, instance: 'Instance | None', cfg: 'dict[str, object]') -> 'RemoteSubmitPollBackend'",
+    "declared_flags": "(self, key: 'CapabilityKey') -> 'dict[str, bool]'",
+    "extract_last_frame": "(self, artifact: 'Artifact') -> 'bytes'",
+    "key_base": "(self, cfg: 'dict[str, object]') -> 'str'",
+    "profile_for": "(self, key: 'CapabilityKey') -> 'ModelProfile'",
+    "provision": "(self, instance: 'Instance | None', cfg: 'dict[str, object]') -> 'None'",
+    "render_provision": "(self, cfg: 'dict[str, object]') -> 'RenderedProvision'",
+    "validate_spec": "(self, job: 'GenerationJob') -> 'None'",
+    "wait_for_ready": "(self, instance: 'Instance', *, http_get: 'Callable[[str], dict[str, Any]]', sleep: 'Callable[[float], None]', get_instance: 'Callable[[str], Instance]', timeout_s: 'float') -> 'None'"
+  }
+}
