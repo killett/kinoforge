@@ -457,6 +457,7 @@ class SkyPilotProvider(ComputeProvider):
         *,
         clouds: list[str] | None = None,
         region: str | None = None,
+        retry_until_up: bool = False,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         """Initialise the provider.
@@ -481,11 +482,19 @@ class SkyPilotProvider(ComputeProvider):
                 which can land in surprising zones (e.g. ``asia-southeast1``)
                 when only one region has spot quota. Set this to keep
                 launches in the operator's preferred region.
+            retry_until_up: When ``True``, passed to ``sky.launch`` so
+                SkyPilot loops with backoff across zones / preemption-retry
+                until provisioning succeeds. Required when spot capacity
+                is bursty (the typical case for preemptible GPUs); the
+                default-False single-attempt path bails on the first
+                ``ResourcesUnavailableError`` and is only safe when the
+                operator knows capacity is currently available.
             sleep: Injectable sleep used between destroy-poll iterations.
         """
         self._sky_client = sky_client
         self._clouds = clouds
         self._region = region
+        self._retry_until_up = retry_until_up
         self._sleep = sleep
 
     # ------------------------------------------------------------------
@@ -683,11 +692,13 @@ class SkyPilotProvider(ComputeProvider):
         # Task via from_yaml_config, whose schema matches the dict shape above.
         task = sky.Task.from_yaml_config(task_config)
         cluster_name: str = spec.run_id or "skypilot-cluster"
-        raw = sky.launch(
-            task,
-            cluster_name=cluster_name,
-            idle_minutes_to_autostop=autostop_minutes,
-        )
+        launch_kwargs: dict[str, Any] = {
+            "cluster_name": cluster_name,
+            "idle_minutes_to_autostop": autostop_minutes,
+        }
+        if self._retry_until_up:
+            launch_kwargs["retry_until_up"] = True
+        raw = sky.launch(task, **launch_kwargs)
         # Resolve a possible RequestId — the launch payload itself is not used
         # because the cluster name we passed *is* the canonical id and the
         # payload is ``(Optional[job_id], Optional[ResourceHandle])`` on the
