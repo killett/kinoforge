@@ -670,7 +670,7 @@ commit.
 
 ## Hosted Bearer providers (Replicate / Runway)
 
-Layer 4 ships three hosted video adapters that share a single foundation —
+Layer 4 ships two hosted video adapters that share a single foundation —
 `RemoteSubmitPollBackend` in `kinoforge.core.remote_backend`. Each adapter
 lazy-imports the official provider SDK inside method bodies (preserving the
 core-import-ban invariant) and implements 5 wire-shape hooks:
