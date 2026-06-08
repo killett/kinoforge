@@ -456,6 +456,7 @@ class SkyPilotProvider(ComputeProvider):
         sky_client: Any | None = None,  # noqa: ANN401
         *,
         clouds: list[str] | None = None,
+        region: str | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         """Initialise the provider.
@@ -474,10 +475,17 @@ class SkyPilotProvider(ComputeProvider):
                 enumeration. When ``None``, SkyPilot queries all registered
                 clouds. Pass ``["gcp"]`` in GCP-only environments to avoid
                 spurious Kubernetes/SSH catalog errors.
+            region: Optional cloud region (e.g. ``"us-west1"``) pinned onto
+                ``resources.region`` of every launched task. When ``None``,
+                SkyPilot's optimizer picks a region by quota/availability —
+                which can land in surprising zones (e.g. ``asia-southeast1``)
+                when only one region has spot quota. Set this to keep
+                launches in the operator's preferred region.
             sleep: Injectable sleep used between destroy-poll iterations.
         """
         self._sky_client = sky_client
         self._clouds = clouds
+        self._region = region
         self._sleep = sleep
 
     # ------------------------------------------------------------------
@@ -658,6 +666,8 @@ class SkyPilotProvider(ComputeProvider):
             # separately from the on-demand GPU quota (``GPUS_ALL_REGIONS``).
             if spec.spot:
                 resources["use_spot"] = True
+            if self._region:
+                resources["region"] = self._region
             task_config["resources"] = resources
         # Layer Q dual-exec hazard resolution: the script's trailing
         # ``exec <run_cmd>`` line is stripped before it becomes Task.setup so
