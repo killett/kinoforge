@@ -74,6 +74,12 @@ class GenerateClipStage:
     http_get_bytes: Callable[[str, dict[str, str]], bytes] | None = None
     sink: OutputSink | None = None
     namespace: str | None = None
+    # Layer 4: provider+model surface for the OutputSink filename schema.
+    # When non-None, forwarded verbatim to every sink.publish(...) call.
+    # Orchestrator reads these from cfg["engine"].keys()[0] and cfg["spec"]
+    # ["model"] at stage construction.
+    provider: str | None = None
+    model: str | None = None
 
     def run(self, state: PipelineState) -> PipelineState:
         """Dispatch jobs through pool, persist clip artifact, return updated state.
@@ -158,6 +164,8 @@ class GenerateClipStage:
                 prompt=self.segments[-1].prompt,
                 extension=ext,
                 namespace=self.namespace,
+                provider=self.provider,
+                model=self.model,
             )
 
         return replace(

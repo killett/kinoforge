@@ -227,6 +227,11 @@ def _build_stage_for_entry(
         prompt_segments[0] = replace(prompt_segments[0], assets=list(validated.assets))
 
     entry_run_id = f"{batch_id}/{entry.run_id}"
+    # Layer 4: provider + model are read off the active engine + merged spec
+    # for the OutputSink filename schema. Each entry can override spec.model
+    # so we read the merged value, not cfg.spec.
+    _provider = getattr(session.engine, "name", None) or None
+    _model = str(merged_spec.get("model", "") or "") or None
     stage = GenerateClipStage(
         profile=session.profile,
         pool=session.pool,
@@ -239,6 +244,8 @@ def _build_stage_for_entry(
         segments=prompt_segments,
         sink=sink,
         namespace=batch_id,
+        provider=_provider,
+        model=_model,
     )
     initial_state = PipelineState(request=validated, artifacts=prior_artifacts)
     return stage, initial_state
