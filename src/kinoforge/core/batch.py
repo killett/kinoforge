@@ -684,6 +684,14 @@ def batch_generate(
                                     ConditioningAsset(**a) for a in (entry.assets or [])
                                 ],
                             )
+                            # Layer 4 — publish keyframes alongside videos.
+                            _kf_provider = (
+                                getattr(_resolved_image_engine, "name", None) or None
+                            )
+                            _kf_model = (
+                                str((entry_kf_cfg.spec or {}).get("model", "") or "")
+                                or None
+                            )
                             keyframe_state = KeyframeStage(
                                 keyframe_cfg=entry_kf_cfg,
                                 image_engine=_resolved_image_engine,  # type: ignore[arg-type]
@@ -691,6 +699,10 @@ def batch_generate(
                                 image_profile=_image_profile,  # type: ignore[arg-type]
                                 store=store,
                                 run_id=entry_run_id,
+                                sink=sink,
+                                namespace=batch_id,
+                                provider=_kf_provider,
+                                model=_kf_model,
                             ).run(PipelineState(request=raw_request, artifacts={}))
 
                         stage, initial_state = _build_stage_for_entry(

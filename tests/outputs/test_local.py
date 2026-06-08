@@ -261,6 +261,45 @@ def test_publish_without_provider_or_model_uses_unknown(tmp_path: Path) -> None:
     assert "_unknown_unknown_" in Path(out).name
 
 
+def test_publish_with_kind_inserts_keyframe_slot(tmp_path: Path) -> None:
+    """A kind='keyframe-init' string lands between ts and provider in the filename.
+
+    Catches a regression where the new kind param is silently dropped
+    on the floor, breaking the `output/keyframe-*.png` grouping glob.
+    """
+    sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
+    out = sink.publish(
+        b"img",
+        prompt="cat",
+        extension=".png",
+        provider="replicate",
+        model="flux-schnell",
+        kind="keyframe-init",
+    )
+    name = Path(out).name
+    assert name == f"{_FIXED_TS_STRING}_keyframe-init_replicate_flux-schnell_cat.png"
+
+
+def test_publish_default_kind_omits_slot_back_compat(tmp_path: Path) -> None:
+    """No kind argument keeps the legacy {ts}_{provider}_{model}_{slug} schema.
+
+    Catches a regression where default-None kind accidentally renders
+    'None' or 'unknown' into the filename, breaking every existing
+    video-clip path.
+    """
+    sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
+    out = sink.publish(
+        b"vid",
+        prompt="cat",
+        extension=".mp4",
+        provider="luma",
+        model="ray-2",
+    )
+    name = Path(out).name
+    assert name == f"{_FIXED_TS_STRING}_luma_ray-2_cat.mp4"
+    assert "keyframe" not in name
+
+
 def test_publish_collision_suffix_still_works_with_provider(tmp_path: Path) -> None:
     """Two publishes with identical provider/model still collide-and-suffix.
 
