@@ -17,6 +17,7 @@ git-dirty without touching real RunPod or the test repo's git state.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
@@ -27,6 +28,13 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+_HOSTED_REQUIRED_ENV = (
+    "REPLICATE_API_TOKEN",
+    "RUNWAYML_API_SECRET",
+    "LUMAAI_API_KEY",
+    "FAL_KEY",
+)
 
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
@@ -229,12 +237,56 @@ def run_preflight(
     return (1 if failed else 0, lines)
 
 
-def main() -> int:
+def _check_hosted_credentials(env_getter: Callable[[str], str | None]) -> list[str]:
+    """Return the list of missing Bearer-key env vars (empty when all present).
+
+    Args:
+        env_getter: Lookup function for environment variables.
+
+    Returns:
+        The names of the env vars in ``_HOSTED_REQUIRED_ENV`` that are
+        missing or empty. Empty list == all four creds are present.
+    """
+    return [v for v in _HOSTED_REQUIRED_ENV if not env_getter(v)]
+
+
+def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint: load ``.env``, run checks against real defaults, print, exit.
 
     ``.env`` load is silent if the file is absent. Returns the exit
     code from :func:`run_preflight` (``0`` on full pass).
+
+    Args:
+        argv: Optional argument list (default: ``sys.argv[1:]``). Tests
+            pass this directly to drive ``--check-hosted`` without
+            patching ``sys.argv``.
     """
+    parser = argparse.ArgumentParser(
+        prog="preflight", description="Pre-live-spend gate"
+    )
+    parser.add_argument(
+        "--check-hosted",
+        action="store_true",
+        help=(
+            "Verify hosted Bearer credentials are present in env: "
+            "REPLICATE_API_TOKEN, RUNWAYML_API_SECRET, LUMAAI_API_KEY, FAL_KEY. "
+            "Exits 2 with each missing var named on stderr."
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    # The hosted check runs FIRST and BEFORE any kinoforge import so the
+    # subprocess gate works in a stripped-down env (no PYTHONPATH, no
+    # `.env` to load) — only `os.environ` is consulted.
+    if args.check_hosted:
+        missing = _check_hosted_credentials(os.environ.get)
+        if missing:
+            for var in missing:
+                print(f"preflight: missing {var}", file=sys.stderr)
+            return 2
+        # All four present — fall through to the standard gate so the
+        # operator still sees a full pre-live-spend audit.
+
     from kinoforge.core.dotenv_loader import load_env_file
 
     env_file = Path(_REPO_ROOT) / ".env"
