@@ -1376,3 +1376,112 @@ def test_sink_multi_segment_publishes_only_last(tmp_path: Path) -> None:
     assert len(spy.calls) == 1
     # The prompt comes from segments[-1].prompt, not segments[0].prompt.
     assert spy.calls[0]["prompt"] == "seg-2"
+
+
+# Layer 4 — provider+model threading through sink.publish ---------------------
+
+
+def test_sink_provider_and_model_propagate(tmp_path: Path) -> None:
+    """Layer 4 AC: provider+model constructor args reach every sink.publish call.
+
+    Catches a regression where the stage drops the new params on the floor
+    and the sink falls back to the 'unknown_unknown' schema, breaking the
+    comparison-batch filenames that key on these fields.
+    """
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    spy = _SpyOutputSink()
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _fake_engine_for_tests(profile)
+
+    request = GenerationRequest(prompt="provider+model test", mode="t2v")
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="sink-l4",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,
+        segments=[Segment(prompt=request.prompt)],
+        sink=spy,
+        provider="replicate",
+        model="wan-video/wan-t2v-1-3b",
+    )
+
+    _run(stage, request)
+
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["provider"] == "replicate"
+    assert spy.calls[0]["model"] == "wan-video/wan-t2v-1-3b"
+
+
+def test_sink_default_provider_and_model_are_none(tmp_path: Path) -> None:
+    """Default provider/model are None — LocalOutputSink substitutes 'unknown'.
+
+    Catches a regression where unset Layer-4 fields default to "" or "unknown"
+    in the stage layer, breaking the Protocol contract that 'None == operator
+    did not declare' (and giving the sink no chance to substitute its own
+    sentinel for the filename).
+    """
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    spy = _SpyOutputSink()
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _fake_engine_for_tests(profile)
+
+    request = GenerationRequest(prompt="default p+m", mode="t2v")
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="sink-l4-default",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,
+        segments=[Segment(prompt=request.prompt)],
+        sink=spy,
+    )
+
+    _run(stage, request)
+
+    assert spy.calls[0]["provider"] is None
+    assert spy.calls[0]["model"] is None
+
+
+def test_sink_provider_and_model_with_namespace(tmp_path: Path) -> None:
+    """Layer-4 args + Layer-L namespace cooperate; both reach every publish call."""
+    profile = _profile()
+    backend = FakeBackend(probe=profile)
+    spy = _SpyOutputSink()
+    pool = SequentialPool(backend)
+    store = LocalArtifactStore(tmp_path)
+    engine = _fake_engine_for_tests(profile)
+
+    request = GenerationRequest(prompt="combined", mode="t2v")
+    stage = GenerateClipStage(
+        profile=profile,
+        pool=pool,
+        store=store,
+        run_id="sink-combo",
+        accepted_kinds={"image"},
+        base_params={},
+        base_spec={},
+        engine=engine,
+        segments=[Segment(prompt=request.prompt)],
+        sink=spy,
+        namespace="batch-XYZ",
+        provider="luma",
+        model="ray-2",
+    )
+
+    _run(stage, request)
+
+    call = spy.calls[0]
+    assert call["namespace"] == "batch-XYZ"
+    assert call["provider"] == "luma"
+    assert call["model"] == "ray-2"

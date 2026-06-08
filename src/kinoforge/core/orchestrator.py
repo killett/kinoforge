@@ -1092,6 +1092,10 @@ def generate(
         # Build stage list from cfg-block presence (GenerateClipStage only
         # here — KeyframeStage already ran above when keyframe was set).
         # ------------------------------------------------------------------
+        # Layer 4: provider + model for the OutputSink filename schema.
+        # Provider = registered engine name; model = spec.model when present.
+        _provider = getattr(session.engine, "name", None) or None
+        _model = str(cfg.spec.get("model", "") or "") or None
         stages: list[Stage] = [
             GenerateClipStage(
                 profile=session.profile,
@@ -1104,6 +1108,8 @@ def generate(
                 engine=session.engine,
                 segments=prompt_segments,
                 sink=sink,
+                provider=_provider,
+                model=_model,
             )
         ]
 
