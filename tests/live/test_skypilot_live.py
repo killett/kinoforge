@@ -354,6 +354,11 @@ def test_skypilot_live_e2e_t4_gpu_lifecycle_smoke(cloud: str) -> None:
         # ResourcesUnavailableError — only one region has PREEMPTIBLE T4
         # quota and sky's optimizer-first region was not it.
         region="us-west1",
+        # Spot T4 capacity is bursty: sky picked us-west1-a, single
+        # attempt, exit 1 on ResourcesUnavailableError twice in a row.
+        # retry_until_up loops with backoff across zones until capacity
+        # opens — $0 spend during the wait.
+        retry_until_up=True,
     )
 
     try:
