@@ -121,7 +121,7 @@ def test_comparison_yaml_loads(yaml_path: Path) -> None:
     from kinoforge.core.config import load_config
 
     cfg = load_config(yaml_path)
-    assert cfg.engine.kind in {"replicate", "runway", "luma"}
+    assert cfg.engine.kind in {"replicate", "runway"}
     assert isinstance(cfg.spec, dict)
     assert cfg.spec.get("model"), f"{yaml_path.name} missing spec.model"
 
