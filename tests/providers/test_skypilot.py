@@ -617,6 +617,53 @@ def test_ac4_create_instance_omits_region_when_unset() -> None:
     )
 
 
+def test_ac4_create_instance_passes_retry_until_up_when_set() -> None:
+    """``retry_until_up=True`` ctor arg lands as a kwarg on ``sky.launch``.
+
+    A bug that would catch: forgetting to forward the flag means sky.launch
+    runs with ``retry_until_up=False`` (its default), which makes a single
+    provision attempt and bails on the first ``ResourcesUnavailableError``.
+    The W+β GPU smoke hit this twice on real GCP: spot T4 capacity in
+    us-west1-a was momentarily gone, sky tried only that zone, exited 1.
+    With ``retry_until_up=True`` sky loops with backoff across zones until
+    capacity opens.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake, retry_until_up=True)
+    provider.create_instance(_make_spec())
+
+    _task, kwargs = fake.launch_calls[0]
+    assert kwargs.get("retry_until_up") is True, (
+        "retry_until_up ctor arg must land on sky.launch kwargs — without "
+        "this sky bails after a single ResourcesUnavailableError"
+    )
+
+
+def test_ac4_create_instance_omits_retry_until_up_by_default() -> None:
+    """When ``retry_until_up`` is unset, the kwarg is omitted from sky.launch.
+
+    A bug that would catch: passing ``retry_until_up=False`` explicitly is
+    semantically equivalent to omitting it on real sky.launch, but a future
+    refactor that *always* sets the kwarg would defeat the test-fake
+    discriminator (and surface in noisy provider call records). The
+    provider's default contract is "do not pass the kwarg unless asked".
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.create_instance(_make_spec())
+
+    _task, kwargs = fake.launch_calls[0]
+    assert "retry_until_up" not in kwargs, (
+        "retry_until_up kwarg must be absent when the ctor arg is not set "
+        "(default-False is the sky.launch default; passing it explicitly "
+        "is unnecessary noise)"
+    )
+
+
 def test_ac4_create_instance_defaults_disk_size_to_30_gb() -> None:
     """``create_instance`` defaults ``disk_size=30`` (GB) on the resources block.
 
