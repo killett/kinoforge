@@ -187,5 +187,15 @@ awscli = "*"
 rsync = "*"
 openssh = "*"
 
+[feature.live-hosted.pypi-dependencies]
+# Bearer-key hosted video providers (Layer 4). Lazy-imported inside engine
+# modules so the default env stays lean; each SDK pulled in only when the
+# live-hosted env is selected.
+replicate = ">=1.0.0"
+runwayml = ">=3.0.0"
+lumaai = ">=1.0.0"
+fal-client = ">=0.5.0"
+
 [environments]
 live-skypilot = { features = ["live-skypilot"] }
+live-hosted = { features = ["live-hosted"] }
