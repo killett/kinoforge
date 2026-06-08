@@ -668,6 +668,71 @@ Adding a new strategy: subclass `AuthStrategy`, implement all 5 methods
 regenerating `tests/fixtures/auth_strategy_baseline.json` in the same
 commit.
 
+## Hosted Bearer providers (Replicate / Runway / Luma)
+
+Layer 4 ships three hosted video adapters that share a single foundation —
+`RemoteSubmitPollBackend` in `kinoforge.core.remote_backend`. Each adapter
+lazy-imports the official provider SDK inside method bodies (preserving the
+core-import-ban invariant) and implements 5 wire-shape hooks:
+
+| Provider | Engine kind | Env var | Status field | Output shape |
+|---|---|---|---|---|
+| Replicate | `replicate` | `REPLICATE_API_TOKEN` | `status` (lowercase) | `output: str \| list[str]` |
+| Runway | `runway` | `RUNWAYML_API_SECRET` | `status` (UPPERCASE) | `output: list[str]` |
+| Luma | `luma` | `LUMAAI_API_KEY` | `state` (lowercase) | `assets.video: str` |
+
+Each engine's `provision()` validates the Bearer credential via Layer-1
+`Bearer` strategy. Compute is `requires_compute=False` — no GPU instance
+required. `validate_spec` requires `spec.model`; `key_base` returns it.
+
+### Comparison-batch quickstart
+
+```bash
+# 1. Wire credentials (any subset; missing ones skip silently)
+echo 'REPLICATE_API_TOKEN=r8_xxxxx' >> .env
+echo 'RUNWAYML_API_SECRET=key_yyyyy' >> .env
+echo 'LUMAAI_API_KEY=luma-zzzzz'    >> .env
+
+# 2. Verify creds present (Layer-4 gate added to preflight)
+pixi run preflight --check-hosted
+
+# 3. Run a single t2v smoke per provider
+pixi run -e live-hosted python -m kinoforge \
+    --state-dir /tmp/kf-runway generate \
+    -c examples/configs/comparison/runway-t2v.yaml \
+    --prompt "$(cat prompt-field-realistic.txt)" \
+    --mode t2v --run-id live-runway
+```
+
+### Filename schema
+
+`LocalOutputSink` filenames embed the provider + model so side-by-side
+comparison outputs are easy to grep:
+
+```
+{ts}_{provider}_{model-slug}_{prompt-slug}.{ext}
+20260607-194858_replicate_bytedance-seedance-1-lit_Cinematic-shot-of-a.mp4
+```
+
+`provider` and `model` flow from `engine.kind` + `spec.model` through the
+orchestrator → `GenerateClipStage` → `OutputSink.publish` Protocol. Configs
+that don't supply both substitute the literal `"unknown"` so the schema is
+stable.
+
+### Live-smoke prompt-size + model-entitlement caveats
+
+- **Runway** caps `prompt_text` at 1000 characters. The standard kinoforge
+  comparison prompt is ~1267 chars; for Runway smokes either truncate the
+  prompt or pre-summarise. The kinoforge layer does **not** truncate.
+- Runway model variants are gated per-account. `gen3a_turbo` may return 403
+  "Model variant ... is not available"; `gen4.5` is generally available.
+  The engine narrows on `runwayml.AuthenticationError` (not raw HTTP 403)
+  so model-access failures surface as `KinoforgeError`, not `AuthError`.
+- **Replicate** uses `predictions.create(model="owner/name")` (the slug),
+  not `version=` (a 64-char hash). Pass the operator-friendly slug in
+  `spec.model`. Throttling kicks in when account credit drops below $5
+  (6 req/min burst-of-1).
+
 ## Bedrock Video (AWS Bedrock — Nova Reel, Luma Ray v2, etc.)
 
 Generic engine for any Bedrock async-invoke video model. YAML supplies a

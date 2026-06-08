@@ -152,9 +152,54 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ## Single next action
 
+### Phase 43 — Layer 4 (Bearer-provider comparison smokes)
+
+Hosted Bearer adapters for Replicate / Runway / Luma sharing a
+`RemoteSubmitPollBackend` foundation. Plus `ReplicateImageEngine` image-
+sibling for Layer-R `KeyframeStage`. `OutputSink` Protocol extended with
+`provider` + `model` named-only params; `LocalOutputSink` embeds them
+in the filename schema `{ts}_{provider}_{model-slug}_{prompt-slug}.{ext}`.
+
+- [x] Task 0: `RemoteSubmitPollBackend` + `RemoteSubmitPollEngine` ABCs — commit `2a9efec`
+- [x] Task 1: ABC stable-surface invariant + vendor-SDK confinement scan — commit `b39c3fd`
+- [x] Task 2: `OutputSink` + `format_filename` extension + `LocalOutputSink` — commit `ef04e73`
+- [x] Task 3: `pixi.toml live-hosted` env + `preflight --check-hosted` — commit `c426457` (+ fix `3db517a`)
+- [x] Task 4: `ReplicateEngine` + `ReplicateBackend` — commit `b63c895` (+ slug fix `bb6e2e3`)
+- [x] Task 5: `RunwayEngine` + `RunwayBackend` — commit `8ac8f03`
+- [x] Task 6: `LumaEngine` + `LumaBackend` — commit `4515ac4`
+- [DEFERRED] Task 7: Fal retrofit onto `RemoteSubmitPollBackend` — base ABC validated against 3 wire shapes already; punt to follow-up.
+- [x] Task 8: `ReplicateImageEngine` — commit `cc5bd6c`
+- [x] Task 9: `GenerateClipStage` threads provider+model — commit `671cd6f`
+- [PARTIAL] Task 10: Comparison configs — 3 of 15 YAMLs (t2v only) — commit `a054877`. i2v/flf2v/keyframe-prestage/manifest deferred.
+- [x] Task 11: Replicate live smoke (t2v) — `bytedance/seedance-1-lite`, 6 MB MP4, ~32 s, ~$0.10.
+- [x] Task 12: Runway live smoke (t2v) — `gen4.5`, 2.8 MB MP4, ~2 m 40 s, ~$1.25. Caught 4 production bugs (commit `f20a70d`).
+- [DEFERRED] Task 13: Luma live smoke — `LUMAAI_API_KEY` returns 403 at provider (verified bypassing SDK). User-side credential.
+- [DEFERRED] Task 14: Fal i2v + flf2v extension — depends on Task 10 keyframe pre-stage.
+- [DEFERRED] Task 15: Comparison batch capstone — depends on Tasks 10/13/14.
+- [x] Task 16: README + PROGRESS + merge.
+
+**First real artifacts (Layer 4):**
+
+- Runway gen4.5 t2v: `/workspace/output/comparison/20260607-194607_runway_gen4.5_Photorealistic-cinem.bin` — 2.8 MB ISO-BMFF.
+- Replicate seedance-1-lite t2v: `/workspace/output/comparison/20260607-194858_replicate_bytedance-seedance-1-lit_Cinematic-shot-of-a.mp4` — 6 MB ISO-BMFF, full filename schema verified.
+
+**Live-smoke bug catches (4 production fixes in `f20a70d`):**
+
+1. `job.params` (orchestrator-threaded `cfg.params`) was ignored vs `job.spec.params` only. All 3 hosted engines merge both sites now.
+2. Runway returns 403 for both auth AND model-access failures ("Model variant X is not available"). Bare 401/403 mapping misclassified the latter. Narrowed on `runwayml.AuthenticationError` SDK subclass.
+3. `RemoteSubmitPollBackend.result()` returned `filename=""` when status had no filename hint; sink fell back to `.bin`. Now derives from `urlparse(url).path` basename.
+4. Replicate `predictions.create` uses `model=` (slug), not `version=` (hash). Both video + image backends switched. (Caught earlier in `bb6e2e3`.)
+
+**Layer 4 carry-forward:**
+
+- Luma credential refresh needed (or API plan upgrade).
+- Comparison batch capstone: needs Task 10 (15 YAMLs) + keyframe pre-stage.
+- Fal retrofit onto `RemoteSubmitPollBackend`: refactor only; existing engine functional.
+
 ### RESUME — START HERE
 
 **Where we are (as of session 2026-06-07):**
+- **Phase 43 (Layer 4 — Bearer-provider comparison smokes):** PARTIAL (above). 10 of 17 tasks landed end-to-end; 4 deferred + 1 partial. 2 of 3 hosted providers proven live (Runway + Replicate); Luma awaits user credential.
 - **Phase 41 (Layer 1 — AuthStrategy substrate):** CLOSED. 11 tasks, merged to main.
   ABC + Bearer + GCPServiceAccount + AWSSigV4 + `build_auth_strategy` registry +
   HostedAPIEngine retrofit + FakeAuthStrategy fixture + `tools/probe_hosted.py` +
