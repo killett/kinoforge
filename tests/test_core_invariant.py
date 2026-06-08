@@ -122,11 +122,6 @@ _VENDOR_PATTERNS: list[tuple[re.Pattern[str], list[Path], str]] = [
         "runwayml",
     ),
     (
-        re.compile(r"^\s*(import|from)\s+lumaai\b"),
-        [SRC_ROOT / "engines" / "luma"],
-        "lumaai",
-    ),
-    (
         re.compile(r"^\s*(import|from)\s+fal_client\b"),
         [SRC_ROOT / "engines" / "fal"],
         "fal_client",

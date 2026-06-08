@@ -292,11 +292,11 @@ def test_publish_default_kind_omits_slot_back_compat(tmp_path: Path) -> None:
         b"vid",
         prompt="cat",
         extension=".mp4",
-        provider="luma",
-        model="ray-2",
+        provider="replicate",
+        model="seedance-1-lite",
     )
     name = Path(out).name
-    assert name == f"{_FIXED_TS_STRING}_luma_ray-2_cat.mp4"
+    assert name == f"{_FIXED_TS_STRING}_replicate_seedance-1-lite_cat.mp4"
     assert "keyframe" not in name
 
 
@@ -309,10 +309,18 @@ def test_publish_collision_suffix_still_works_with_provider(tmp_path: Path) -> N
     """
     sink = LocalOutputSink(dir=tmp_path, clock=FakeClock(start=_FIXED_EPOCH))
     a = sink.publish(
-        b"x", prompt="cat", extension=".mp4", provider="luma", model="ray-2"
+        b"x",
+        prompt="cat",
+        extension=".mp4",
+        provider="replicate",
+        model="seedance-1-lite",
     )
     b = sink.publish(
-        b"y", prompt="cat", extension=".mp4", provider="luma", model="ray-2"
+        b"y",
+        prompt="cat",
+        extension=".mp4",
+        provider="replicate",
+        model="seedance-1-lite",
     )
     assert a != b
     assert Path(a).exists()

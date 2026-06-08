@@ -20,12 +20,12 @@ def test_format_filename_empty_slug() -> None:
     assert (
         format_filename(
             ts="20260607-143015",
-            provider="luma",
-            model="ray-2",
+            provider="replicate",
+            model="seedance-1-lite",
             slug="",
             extension=".mp4",
         )
-        == "20260607-143015_luma_ray-2_.mp4"
+        == "20260607-143015_replicate_seedance-1-lite_.mp4"
     )
 
 
