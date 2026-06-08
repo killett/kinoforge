@@ -1477,13 +1477,13 @@ def test_sink_provider_and_model_with_namespace(tmp_path: Path) -> None:
         segments=[Segment(prompt=request.prompt)],
         sink=spy,
         namespace="batch-XYZ",
-        provider="luma",
-        model="ray-2",
+        provider="replicate",
+        model="seedance-1-lite",
     )
 
     _run(stage, request)
 
     call = spy.calls[0]
     assert call["namespace"] == "batch-XYZ"
-    assert call["provider"] == "luma"
-    assert call["model"] == "ray-2"
+    assert call["provider"] == "replicate"
+    assert call["model"] == "seedance-1-lite"

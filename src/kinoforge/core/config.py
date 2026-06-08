@@ -78,7 +78,6 @@ KNOWN_ENGINES = {
     # Layer 4 — hosted Bearer-key video providers; no engine-specific YAML block.
     "replicate",
     "runway",
-    "luma",
 }
 
 # ---------------------------------------------------------------------------
