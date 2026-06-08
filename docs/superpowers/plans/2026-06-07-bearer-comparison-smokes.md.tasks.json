@@ -1,0 +1,123 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-07-bearer-comparison-smokes.md",
+  "specPath": "docs/superpowers/specs/2026-06-07-bearer-comparison-smokes-design.md",
+  "lastUpdated": "2026-06-07T00:00:00-07:00",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: RemoteSubmitPollBackend + RemoteSubmitPollEngine ABCs",
+      "status": "pending",
+      "description": "Foundation ABCs in core/remote_backend.py owning the universal submit-poll-fetch lifecycle. See plan doc for full Goal/Files/AC/Verify/Steps.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/remote_backend.py\", \"tests/core/test_remote_backend.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_remote_backend.py -v\", \"acceptanceCriteria\": [\"RemoteSubmitPollBackend ABC with 5 abstract hooks + 2 default hooks\", \"RemoteSubmitPollEngine ABC with provision/backend/key_base/extract_last_frame\", \"Poll loop raises TimeoutError after max_poll and KinoforgeError on _is_failed\", \"AuthStrategy required at engine construction\", \"11 tests pass\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: ABC stable-surface invariant + vendor-SDK confinement scan",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "Lock RemoteSubmitPollBackend + Engine public surface against checked-in JSON baseline; pre-stage vendor-SDK confinement entries for replicate/runwayml/lumaai/fal_client.\n\n```json:metadata\n{\"files\": [\"tests/test_core_invariant.py\", \"tests/fixtures/remote_backend_abc_surface.json\"], \"verifyCommand\": \"pixi run pytest tests/test_core_invariant.py -v\", \"acceptanceCriteria\": [\"ABC stable-surface test reads baseline JSON\", \"Vendor-SDK confinement extended for 4 new SDKs\", \"Core-import-ban extended for kinoforge.image_engines.*\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: OutputSink Protocol + format_filename extension + LocalOutputSink update",
+      "status": "pending",
+      "description": "Additive provider/model named params on OutputSink.publish; format_filename signature extended; LocalOutputSink slugifies + falls back to 'unknown'.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/outputs/base.py\", \"src/kinoforge/outputs/local.py\", \"tests/outputs/test_format_filename.py\", \"tests/outputs/test_local.py\"], \"verifyCommand\": \"pixi run pytest tests/outputs/ -v\", \"acceptanceCriteria\": [\"OutputSink.publish gains provider/model named-only params\", \"format_filename signature is (ts, provider, model, slug, extension)\", \"LocalOutputSink falls back to 'unknown'\", \"Collision suffix loop preserved\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: pixi.toml live-hosted feature env + preflight --check-hosted",
+      "status": "pending",
+      "description": "Three new lazy SDKs available via live-hosted feature env; preflight.py gains --check-hosted flag.\n\n```json:metadata\n{\"files\": [\"pixi.toml\", \"pixi.lock\", \"tools/preflight.py\", \"tests/tools/test_preflight_hosted.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_preflight_hosted.py -v\", \"acceptanceCriteria\": [\"pixi.toml has [feature.live-hosted.pypi-dependencies] with 4 SDKs\", \"pixi.lock regenerates cleanly\", \"preflight --check-hosted fails on any missing var\", \"Existing preflight invocations unchanged\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: ReplicateEngine + ReplicateBackend + FakeReplicateClient",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "First per-provider subclass — proves Task 0 abstraction against Replicate predictions API. SDK lazy-imported; self-registers under 'replicate'.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/replicate/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/engines/test_replicate.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_replicate.py -v\", \"acceptanceCriteria\": [\"ReplicateBackend implements all 5 abstract hooks\", \"_extract_output_url handles str and list output\", \"_inject_assets maps init/start/end image roles\", \"Self-registers under 'replicate'\", \"12 tests pass\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: RunwayEngine + RunwayBackend + FakeRunwayClient",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "Second per-provider subclass. Bearer via RUNWAYML_API_SECRET. X-Runway-Version header injection handled inside runwayml SDK.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/runway/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/engines/test_runway.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_runway.py -v\", \"acceptanceCriteria\": [\"RunwayBackend implements all 5 abstract hooks\", \"Mode dispatch t2v vs i2v/flf2v\", \"Uppercase status enum SUCCEEDED/FAILED\", \"Asset roles map to prompt_image/first_image/last_image\", \"401/403 mapped to AuthError\", \"12 tests pass\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: LumaEngine + LumaBackend + FakeLumaClient",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "Third per-provider subclass. Bearer via LUMAAI_API_KEY. Uses 'state' (not 'status'); nests output under assets.video.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/luma/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/engines/test_luma.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_luma.py -v\", \"acceptanceCriteria\": [\"LumaBackend implements all 5 abstract hooks\", \"state field used (not status)\", \"Asset roles map to keyframes.frame0/frame1\", \"Output from assets.video\", \"401/403 mapped to AuthError\", \"12 tests pass\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Fal retrofit onto RemoteSubmitPollBackend",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "Rewrite FalEngine/FalBackend as RemoteSubmitPollBackend subclass. YAML surface preserved. Code-only refactor; ~120 LOC -> ~50 LOC.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/fal/__init__.py\", \"tests/engines/test_fal.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_fal.py tests/test_examples.py -v\", \"acceptanceCriteria\": [\"YAML surface preserved\", \"examples/configs/fal.yaml + keyframe-fal-*.yaml load unchanged\", \"All existing 24 test cases still pass\", \"+4 base-class hook tests added\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: ReplicateImageEngine + ReplicateImageBackend",
+      "status": "pending",
+      "blockedBy": [0, 1, 4],
+      "description": "Image-engine sibling for Layer R KeyframeStage. Reuses RemoteSubmitPollBackend base for flux-schnell single-output shape.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/image_engines/replicate/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/image_engines/test_replicate.py\", \"tests/image_engines/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/image_engines/test_replicate.py -v\", \"acceptanceCriteria\": [\"ReplicateImageBackend reuses RemoteSubmitPollBackend base\", \"ReplicateImageEngine conforms to Layer R ImageEngine ABC\", \"Self-registers via image-engine registry under 'replicate'\", \"4 tests pass\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: GenerateClipStage threads provider+model to sink.publish",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "Surgical change: read provider/model from cfg at stage construction; forward to sink.publish on each artifact. Update Orchestrator.generate + batch_generate construction sites.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"src/kinoforge/core/orchestrator.py\", \"src/kinoforge/core/batch.py\", \"tests/pipeline/test_generate_clip.py\"], \"verifyCommand\": \"pixi run pytest tests/pipeline/ tests/core/test_orchestrator.py tests/core/test_batch.py -v\", \"acceptanceCriteria\": [\"GenerateClipStage accepts provider/model named-only params\", \"Forwarded to every sink.publish(...) call\", \"Orchestrator + batch_generate construction sites updated\", \"3 new tests pass\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Comparison configs (12 video + 2 keyframe + manifest)",
+      "status": "pending",
+      "blockedBy": [4, 5, 6, 7, 8, 9],
+      "description": "15 example YAMLs for comparison batch. Keyframe YAMLs use output.enabled:false; downstream YAMLs reference ArtifactStore URIs. Manifest in dependency order.\n\n```json:metadata\n{\"files\": [\"examples/configs/comparison/\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v\", \"acceptanceCriteria\": [\"15 YAMLs parse cleanly\", \"Keyframe YAMLs have output.enabled: false\", \"i2v/flf2v YAMLs reference upstream keyframe URI\", \"Manifest lists entries in dependency order\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: Replicate live smoke (t2v + i2v + flf2v)",
+      "status": "pending",
+      "blockedBy": [3, 4, 9, 10],
+      "description": "Subprocess kinoforge generate against Replicate, 3 modes. Gated by KINOFORGE_LIVE_TESTS=1 + REPLICATE_API_TOKEN. Autonomous per feedback_autonomous_no_gates memory.\n\n```json:metadata\n{\"files\": [\"tests/live/test_replicate_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run -e live-hosted pytest tests/live/test_replicate_live.py -v -s\", \"acceptanceCriteria\": [\"Module-level skip gate\", \"3 live tests (t2v/i2v/flf2v)\", \"Standard prompt verbatim\", \"MP4 magic-bytes assertion\", \"Live spend ~$0.12\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 12: Runway live smoke (t2v + i2v + flf2v)",
+      "status": "pending",
+      "blockedBy": [3, 5, 9, 10],
+      "description": "Mirror Task 11 for Runway. Env var RUNWAYML_API_SECRET. ~$0.75 spend.\n\n```json:metadata\n{\"files\": [\"tests/live/test_runway_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run -e live-hosted pytest tests/live/test_runway_live.py -v -s\", \"acceptanceCriteria\": [\"Module-level skip gate\", \"3 live tests\", \"MP4 magic-bytes assertion\", \"Live spend ~$0.75\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 13: Luma live smoke (t2v + i2v + flf2v)",
+      "status": "pending",
+      "blockedBy": [3, 6, 9, 10],
+      "description": "Mirror Task 11 for Luma. Env var LUMAAI_API_KEY. ~$1.05 spend.\n\n```json:metadata\n{\"files\": [\"tests/live/test_luma_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run -e live-hosted pytest tests/live/test_luma_live.py -v -s\", \"acceptanceCriteria\": [\"Module-level skip gate\", \"3 live tests\", \"MP4 magic-bytes assertion\", \"Live spend ~$1.05\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 14: Fal live smoke extension (add i2v + flf2v)",
+      "status": "pending",
+      "blockedBy": [3, 7, 9, 10],
+      "description": "Extend existing test_fal_live.py from t2v-only to t2v + i2v + flf2v. ~$0.30 spend.\n\n```json:metadata\n{\"files\": [\"tests/live/test_fal_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run -e live-hosted pytest tests/live/test_fal_live.py -v -s\", \"acceptanceCriteria\": [\"t2v test preserved\", \"+2 tests for i2v + flf2v\", \"Standard prompt verbatim\", \"Live spend ~$0.30\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 15: Comparison batch live smoke (end-to-end manifest)",
+      "status": "pending",
+      "blockedBy": [3, 10, 11, 12, 13, 14],
+      "description": "Capstone live test: subprocess kinoforge batch with the manifest; 12 MP4s + 2 keyframes; ~$2.32; ~10-15 min wall clock.\n\n```json:metadata\n{\"files\": [\"tests/live/test_comparison_batch_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run -e live-hosted pytest tests/live/test_comparison_batch_live.py -v -s\", \"acceptanceCriteria\": [\"Module-level skip gate (4 keys + KINOFORGE_LIVE_TESTS=1)\", \"_batch_summary.json verified\", \"12 MP4s ISO-BMFF magic checked\", \"Live spend ~$2.32\"]}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 16: README + PROGRESS + final invariant gate + --no-ff merge",
+      "status": "pending",
+      "blockedBy": [15],
+      "description": "Docs + housekeeping wrap-up: README Comparison Smokes section, PROGRESS Phase 43, final pre-commit + full suite gate, --no-ff merge to main.\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run pytest -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"README has Comparison Smokes section\", \"PROGRESS Phase 43 entry added\", \"Pre-commit + full suite green\", \"Invariant tests green\", \"--no-ff merge with per-task SHA index\"]}\n```"
+    }
+  ]
+}
