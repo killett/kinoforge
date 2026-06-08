@@ -131,8 +131,12 @@ def _stub_runwayml_module() -> types.ModuleType:
             super().__init__(msg)
             self.status_code = status_code
 
+    class _AuthenticationError(_APIError):
+        pass
+
     mod = types.ModuleType("runwayml")
     mod.APIError = _APIError  # type: ignore[attr-defined]
+    mod.AuthenticationError = _AuthenticationError  # type: ignore[attr-defined]
     sys.modules["runwayml"] = mod
     return mod
 
@@ -316,6 +320,8 @@ def test_submit_auth_failure_mapped_to_auth_error() -> None:
     )
     import runwayml
 
-    client.text_to_video.create_exc = runwayml.APIError("Unauthorized", status_code=401)
+    client.text_to_video.create_exc = runwayml.AuthenticationError(
+        "Unauthorized", status_code=401
+    )
     with pytest.raises(AuthError):
         b.submit(_job(spec={"model": "gen3a_turbo", "mode": "t2v"}))
