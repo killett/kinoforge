@@ -27,6 +27,7 @@ import kinoforge.engines.fake  # noqa: F401
 import kinoforge.engines.fal  # noqa: F401
 import kinoforge.engines.hosted  # noqa: F401
 import kinoforge.engines.replicate  # noqa: F401  # self-registers under "replicate"
+import kinoforge.engines.runway  # noqa: F401  # self-registers under "runway"
 
 # Output sinks
 import kinoforge.outputs.local  # noqa: F401  side-effect: register "local" OutputSink
