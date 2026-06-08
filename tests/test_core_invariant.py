@@ -108,6 +108,29 @@ _VENDOR_PATTERNS: list[tuple[re.Pattern[str], list[Path], str]] = [
         [SRC_ROOT / "stores" / "gcs"],
         "google-cloud-storage",
     ),
+    (
+        re.compile(r"^\s*(import|from)\s+replicate\b"),
+        [
+            SRC_ROOT / "engines" / "replicate",
+            SRC_ROOT / "image_engines" / "replicate",
+        ],
+        "replicate",
+    ),
+    (
+        re.compile(r"^\s*(import|from)\s+runwayml\b"),
+        [SRC_ROOT / "engines" / "runway"],
+        "runwayml",
+    ),
+    (
+        re.compile(r"^\s*(import|from)\s+lumaai\b"),
+        [SRC_ROOT / "engines" / "luma"],
+        "lumaai",
+    ),
+    (
+        re.compile(r"^\s*(import|from)\s+fal_client\b"),
+        [SRC_ROOT / "engines" / "fal"],
+        "fal_client",
+    ),
 ]
 
 
@@ -154,7 +177,7 @@ _FORBIDDEN_CORE_IMPORTS = re.compile(
     ^\s*                        # optional leading whitespace
     (import|from)               # import keyword
     \s+
-    kinoforge\.(providers|sources|engines)  # forbidden namespace
+    kinoforge\.(providers|sources|engines|image_engines)  # forbidden namespace
     (\s|\.|$)                   # followed by space, dot, or EOL
     """,
     re.VERBOSE,
@@ -384,6 +407,58 @@ def test_auth_strategy_abc_stable_surface() -> None:
         f"  expected: {json.dumps(expected, indent=2)}\n"
         f"  actual:   {json.dumps(actual, indent=2)}\n"
         f"If intentional, regenerate {baseline_path} in the same commit."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layer 4: RemoteSubmitPollBackend + RemoteSubmitPollEngine ABCs locked
+# ---------------------------------------------------------------------------
+
+
+def test_remote_submit_poll_backend_abc_stable_surface() -> None:
+    """Lock the RemoteSubmitPollBackend + Engine public surface against drift.
+
+    Any change here is intentional contract drift — update the
+    baseline fixture in the same commit so reviewers can see the
+    surface change.
+    """
+    import inspect
+    import json
+
+    from kinoforge.core.remote_backend import (
+        RemoteSubmitPollBackend,
+        RemoteSubmitPollEngine,
+    )
+
+    def _sig(cls: type) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for name in sorted(dir(cls)):
+            if name.startswith("__"):
+                continue
+            obj = getattr(cls, name)
+            if not callable(obj):
+                continue
+            try:
+                out[name] = str(inspect.signature(obj))
+            except (ValueError, TypeError):
+                out[name] = "<unintrospectable>"
+        return out
+
+    actual = {
+        "RemoteSubmitPollBackend": _sig(RemoteSubmitPollBackend),
+        "RemoteSubmitPollEngine": _sig(RemoteSubmitPollEngine),
+    }
+    baseline_path = (
+        Path(__file__).parent / "fixtures" / "remote_backend_abc_surface.json"
+    )
+    expected = json.loads(baseline_path.read_text())
+
+    assert actual == expected, (
+        "RemoteSubmitPollBackend / RemoteSubmitPollEngine public surface "
+        "drifted from the locked baseline. If this is intentional, "
+        f"regenerate {baseline_path} in the same commit.\n"
+        f"  expected: {json.dumps(expected, indent=2, sort_keys=True)}\n"
+        f"  actual:   {json.dumps(actual, indent=2, sort_keys=True)}"
     )
 
 
