@@ -9,12 +9,12 @@ engine:
   precision: ""
 
 spec:
-  model: "wan-video/wan-2.1-t2v-1.3b"
+  model: "bytedance/seedance-1-lite"
   mode: t2v
 
 params:
-  num_frames: 81
-  fps: 24
+  duration: 5
+  resolution: "480p"
   aspect_ratio: "16:9"
 
 # `models:` is required by Config validation but unused for hosted-Bearer engines
