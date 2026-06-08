@@ -310,6 +310,77 @@ def test_engine_self_registers_under_replicate() -> None:
     assert isinstance(instance, ReplicateEngine)
 
 
+def test_submit_min_interval_blocks_burst_submits() -> None:
+    """Second submit within ``submit_min_interval_s`` sleeps until the floor.
+
+    Bug it catches: a regression where the backend ignores the throttle floor
+    and fires two submits back-to-back, triggering Replicate's burst-of-1
+    429 throttle when the account's rate-limit subsystem reports < $5 credit.
+    """
+    from kinoforge.engines.replicate import ReplicateBackend
+
+    client = FakeReplicateClient(
+        predictions_create_response={"id": "p1", "status": "starting"},
+        predictions_get_responses=[],
+    )
+    sleeps: list[float] = []
+    # Monotonic clock starts at 100.0, advances by 0.0 between sleeps.
+    # The backend must call _sleep when consecutive submits are < interval.
+    now = [100.0]
+
+    def _mono() -> float:
+        return now[0]
+
+    def _sleep(s: float) -> None:
+        sleeps.append(s)
+        now[0] += s
+
+    b = ReplicateBackend(
+        client_factory=lambda: client,
+        sleep=_sleep,
+        max_poll=8,
+        poll_interval_s=0.0,
+        probe_profile=_PROBE,
+        submit_min_interval_s=10.0,
+        monotonic=_mono,
+    )
+    b.submit(_job())
+    # No sleep on first submit — throttle floor only applies when there's
+    # a previous submit timestamp to space against.
+    assert sleeps == []
+    b.submit(_job())
+    # Second submit within the same monotonic instant — must sleep exactly
+    # 10.0 s before firing.
+    assert sleeps == [10.0]
+
+
+def test_submit_min_interval_zero_disables_throttle() -> None:
+    """Passing ``submit_min_interval_s=0`` skips the floor entirely.
+
+    Bug it catches: the constant slips into the call path even when an
+    operator explicitly opts out (e.g. after Replicate clears the throttle).
+    """
+    from kinoforge.engines.replicate import ReplicateBackend
+
+    client = FakeReplicateClient(
+        predictions_create_response={"id": "p1", "status": "starting"},
+        predictions_get_responses=[],
+    )
+    sleeps: list[float] = []
+    b = ReplicateBackend(
+        client_factory=lambda: client,
+        sleep=lambda s: sleeps.append(s),
+        max_poll=8,
+        poll_interval_s=0.0,
+        probe_profile=_PROBE,
+        submit_min_interval_s=0.0,
+    )
+    b.submit(_job())
+    b.submit(_job())
+    b.submit(_job())
+    assert sleeps == []
+
+
 def test_submit_auth_failure_mapped_to_auth_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
