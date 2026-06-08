@@ -58,6 +58,10 @@ exclude = ["tools/_vendored/"]
 module = ["botocore.*", "boto3.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]  # Layer-4 hosted-video SDKs: no py.typed markers, lazy-imported.
+module = ["replicate.*", "runwayml.*", "lumaai.*", "fal_client.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]  # Tests often have untyped functions and use dynamic features, so relax mypy rules for them.
 module = ["tests.*"]
 strict = false
