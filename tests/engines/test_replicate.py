@@ -179,7 +179,7 @@ def test_submit_returns_prediction_id_and_sends_prompt_and_model() -> None:
     assert job_id == "abc123"
     assert len(client.predictions.create_calls) == 1
     call = client.predictions.create_calls[0]
-    assert call["version"] == "wan-video/wan-t2v"
+    assert call["model"] == "wan-video/wan-t2v"
     assert call["input"]["prompt"] == "cat sitting"
     assert call["input"]["fps"] == 24
 

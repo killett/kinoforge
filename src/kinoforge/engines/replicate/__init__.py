@@ -45,8 +45,14 @@ class ReplicateBackend(RemoteSubmitPollBackend):
     """Submit/poll backend for Replicate predictions API."""
 
     def _submit(self, client: object, job: GenerationJob) -> str:
-        """Submit a prediction; return the SDK-issued prediction id."""
-        version = job.spec["model"]
+        """Submit a prediction; return the SDK-issued prediction id.
+
+        Uses ``model=`` (the human-readable ``owner/name`` slug) rather than
+        ``version=`` (a 64-char content hash). When the slug is supplied the
+        Replicate SDK resolves the current default version server-side, which
+        matches how operators describe models in YAML configs.
+        """
+        model = job.spec["model"]
         input_dict: dict[str, Any] = {
             "prompt": resolve_prompt(job) or "",
             **(job.spec.get("params") or {}),
@@ -54,7 +60,7 @@ class ReplicateBackend(RemoteSubmitPollBackend):
         self._inject_assets(input_dict, job)
         try:
             pred = client.predictions.create(  # type: ignore[attr-defined]
-                version=version, input=input_dict
+                model=model, input=input_dict
             )
         except Exception as exc:  # noqa: BLE001
             self._raise_for_sdk_error("replicate.predictions.create", exc)
