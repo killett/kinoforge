@@ -32,9 +32,15 @@ channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64"]
 exclude-newer = "7d"
 
-# To urgently bypass the cooldown for a CVE fix, add a per-package override:
-# [workspace.exclude-newer-package]
-# affected-package = "0d"
+# To urgently bypass the cooldown for one package (e.g. a CVE fix), add a
+# per-package override — these are TOP-LEVEL tables, NOT nested under
+# [workspace]. Conda and PyPI use separate tables (verified against pixi
+# 0.69.0 docs):
+#   [exclude-newer]
+#   affected-conda-pkg = "0d"
+#
+#   [pypi-exclude-newer]
+#   affected-pypi-pkg = "0d"
 
 [dependencies]
 python = ">=3.12,<3.14"
