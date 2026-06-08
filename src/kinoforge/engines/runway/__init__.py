@@ -49,7 +49,11 @@ class RunwayBackend(RemoteSubmitPollBackend):
         model = job.spec["model"]
         mode = str(job.spec.get("mode") or "t2v").lower()
         prompt = resolve_prompt(job) or ""
-        base_kw: dict[str, Any] = {"model": model, **(job.spec.get("params") or {})}
+        base_kw: dict[str, Any] = {
+            "model": model,
+            **(job.params or {}),
+            **(job.spec.get("params") or {}),
+        }
         self._inject_assets(base_kw, job)
         try:
             if mode == "t2v":
@@ -113,13 +117,17 @@ class RunwayBackend(RemoteSubmitPollBackend):
                 kw["last_image"] = asset.ref.uri
 
     def _raise_for_sdk_error(self, op: str, exc: BaseException) -> None:
-        """Map ``runwayml.APIError`` 401/403 to AuthError; otherwise KinoforgeError."""
+        """Map ``runwayml.AuthenticationError`` to AuthError; otherwise KinoforgeError.
+
+        Runway returns 403 for both auth failures and model-access failures —
+        we narrow on the SDK-specific :class:`runwayml.AuthenticationError`
+        rather than the raw HTTP status to avoid misclassifying "model not
+        available" as an auth problem.
+        """
         import runwayml  # lazy
 
-        if isinstance(exc, runwayml.APIError):
-            status = getattr(exc, "status_code", None)
-            if status in (401, 403):
-                raise AuthError(f"runway auth failed: {exc}") from exc
+        if isinstance(exc, runwayml.AuthenticationError):
+            raise AuthError(f"runway auth failed: {exc}") from exc
         raise KinoforgeError(f"runway: {op} failed: {exc}") from exc
 
 

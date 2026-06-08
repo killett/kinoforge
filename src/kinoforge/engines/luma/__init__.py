@@ -52,6 +52,7 @@ class LumaBackend(RemoteSubmitPollBackend):
         kw: dict[str, Any] = {
             "prompt": resolve_prompt(job) or "",
             "model": model,
+            **(job.params or {}),
             **(job.spec.get("params") or {}),
         }
         self._inject_assets(kw, job)

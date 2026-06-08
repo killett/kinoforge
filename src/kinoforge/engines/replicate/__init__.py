@@ -55,6 +55,10 @@ class ReplicateBackend(RemoteSubmitPollBackend):
         model = job.spec["model"]
         input_dict: dict[str, Any] = {
             "prompt": resolve_prompt(job) or "",
+            # ``job.params`` is the orchestrator's cfg.params; ``job.spec.params``
+            # is the inline-spec carry-over for direct backend construction.
+            # We merge both so neither path silently drops fields.
+            **(job.params or {}),
             **(job.spec.get("params") or {}),
         }
         self._inject_assets(input_dict, job)

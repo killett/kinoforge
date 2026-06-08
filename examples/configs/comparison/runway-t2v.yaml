@@ -9,11 +9,12 @@ engine:
   precision: ""
 
 spec:
-  model: "gen3a_turbo"
+  model: "gen4.5"
   mode: t2v
 
 params:
   ratio: "1280:720"
+  duration: 5
 
 models:
   - ref: "synthetic:runway-hosted"
