@@ -349,6 +349,11 @@ def test_skypilot_live_e2e_t4_gpu_lifecycle_smoke(cloud: str) -> None:
     provider = SkyPilotProvider(
         sky_client=_RecordingProxy(sky, _GPU_FIXTURE_DIR),
         clouds=["gcp"],
+        # Pin to Oregon (GCP us-west1) per operator cross-cloud default.
+        # Without this, sky picked asia-southeast1-a and failed with
+        # ResourcesUnavailableError — only one region has PREEMPTIBLE T4
+        # quota and sky's optimizer-first region was not it.
+        region="us-west1",
     )
 
     try:

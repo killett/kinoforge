@@ -572,6 +572,51 @@ def test_ac4_create_instance_gpu_offer_sets_accelerators() -> None:
     assert "cpus" not in resources, "GPU offer must not also request CPU resources"
 
 
+def test_ac4_create_instance_region_lands_in_resources_when_set() -> None:
+    """``region`` ctor arg lands on ``resources.region`` of the launched task.
+
+    A bug that would catch: forgetting to forward ``self._region`` into the
+    resources dict means SkyPilot's optimizer auto-picks a region by
+    quota/availability — which in practice picked ``asia-southeast1-a``
+    on the W+β GPU smoke (PREEMPTIBLE_NVIDIA_T4_GPUS quota happened to
+    rank that zone first) and failed with ``ResourcesUnavailableError``.
+    Pinning the region keeps launches in the operator's preferred zone.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake, region="us-west1")
+    provider.create_instance(_make_spec())
+
+    cfg = fake.Task.from_yaml_config_calls[0]
+    assert cfg["resources"]["region"] == "us-west1", (
+        "region ctor arg must land on resources.region — without this the "
+        "sky optimizer auto-picks a region and ignores operator preference"
+    )
+
+
+def test_ac4_create_instance_omits_region_when_unset() -> None:
+    """When ``region`` ctor arg is unset, ``resources.region`` is absent.
+
+    A bug that would catch: accidentally injecting ``region=None`` (or
+    ``region=""``) into the resources dict — SkyPilot's YAML schema would
+    either reject the null or treat the empty string as a real region and
+    fail to match any catalog entry. The key must be omitted entirely
+    when no region is requested.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.create_instance(_make_spec())
+
+    cfg = fake.Task.from_yaml_config_calls[0]
+    assert "region" not in cfg["resources"], (
+        "resources.region must be absent when no region ctor arg is set "
+        "— null/empty-string region keys are not valid SkyPilot YAML"
+    )
+
+
 def test_ac4_create_instance_defaults_disk_size_to_30_gb() -> None:
     """``create_instance`` defaults ``disk_size=30`` (GB) on the resources block.
 
