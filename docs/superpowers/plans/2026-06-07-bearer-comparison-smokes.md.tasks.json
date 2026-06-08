@@ -1,18 +1,20 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-07-bearer-comparison-smokes.md",
   "specPath": "docs/superpowers/specs/2026-06-07-bearer-comparison-smokes-design.md",
-  "lastUpdated": "2026-06-07T00:00:00-07:00",
+  "lastUpdated": "2026-06-07T14:30:00-07:00",
   "tasks": [
     {
       "id": 0,
       "subject": "Task 0: RemoteSubmitPollBackend + RemoteSubmitPollEngine ABCs",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "2a9efec",
       "description": "Foundation ABCs in core/remote_backend.py owning the universal submit-poll-fetch lifecycle. See plan doc for full Goal/Files/AC/Verify/Steps.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/remote_backend.py\", \"tests/core/test_remote_backend.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_remote_backend.py -v\", \"acceptanceCriteria\": [\"RemoteSubmitPollBackend ABC with 5 abstract hooks + 2 default hooks\", \"RemoteSubmitPollEngine ABC with provision/backend/key_base/extract_last_frame\", \"Poll loop raises TimeoutError after max_poll and KinoforgeError on _is_failed\", \"AuthStrategy required at engine construction\", \"11 tests pass\"]}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: ABC stable-surface invariant + vendor-SDK confinement scan",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "b39c3fd",
       "blockedBy": [0],
       "description": "Lock RemoteSubmitPollBackend + Engine public surface against checked-in JSON baseline; pre-stage vendor-SDK confinement entries for replicate/runwayml/lumaai/fal_client.\n\n```json:metadata\n{\"files\": [\"tests/test_core_invariant.py\", \"tests/fixtures/remote_backend_abc_surface.json\"], \"verifyCommand\": \"pixi run pytest tests/test_core_invariant.py -v\", \"acceptanceCriteria\": [\"ABC stable-surface test reads baseline JSON\", \"Vendor-SDK confinement extended for 4 new SDKs\", \"Core-import-ban extended for kinoforge.image_engines.*\"]}\n```"
     },
