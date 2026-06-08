@@ -275,9 +275,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # The hosted check runs FIRST and BEFORE any kinoforge import so the
-    # subprocess gate works in a stripped-down env (no PYTHONPATH, no
-    # `.env` to load) — only `os.environ` is consulted.
+    # Best-effort .env load — silent when the kinoforge package isn't on
+    # sys.path (e.g. a stripped-down subprocess env used by unit tests).
+    # We try the import and the file load; failure simply means the
+    # operator's existing os.environ is the sole credential source.
+    env_file = Path(_REPO_ROOT) / ".env"
+    if env_file.exists():
+        try:
+            from kinoforge.core.dotenv_loader import load_env_file
+
+            load_env_file(env_file)
+        except ImportError:
+            pass  # subprocess test env without PYTHONPATH; that's expected
+
     if args.check_hosted:
         missing = _check_hosted_credentials(os.environ.get)
         if missing:
@@ -286,12 +296,6 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         # All four present — fall through to the standard gate so the
         # operator still sees a full pre-live-spend audit.
-
-    from kinoforge.core.dotenv_loader import load_env_file
-
-    env_file = Path(_REPO_ROOT) / ".env"
-    if env_file.exists():
-        load_env_file(env_file)
 
     print("preflight: pre-live-spend gate")
     code, lines = run_preflight(
