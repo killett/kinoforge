@@ -166,6 +166,11 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 - **Layer 2 (Veo on Vertex AI):** UNBLOCKED 2026-06-07 — operator upgraded GCP
   billing to pay-as-you-go. Plan not started yet. The same upgrade also
   unblocks Layer W+β (SkyPilot T4 GPU smoke from Phase 40) for re-fire.
+- **Bearer-key hosted video (Replicate / Runway / Luma):** UNBLOCKED 2026-06-07
+  — operator signed up, added credit, pasted keys into `.env` for
+  `REPLICATE_API_TOKEN`, `RUNWAYML_API_SECRET`, `LUMAAI_API_KEY`. Same
+  Layer 1 `HostedAPIEngine` + `Bearer` strategy serves all three —
+  config-only addition, no engine work. Each smoke ~$0.05-0.50.
 
 **Single next action (operator, two parallel tracks):**
 
