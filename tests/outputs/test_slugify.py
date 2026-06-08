@@ -115,6 +115,7 @@ class _FakeSink:
         namespace: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        kind: str | None = None,
     ) -> str:
         return "/fake"
 

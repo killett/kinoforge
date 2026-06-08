@@ -575,6 +575,7 @@ class _PublishCall:
     namespace: str | None
     provider: str | None = None
     model: str | None = None
+    kind: str | None = None
 
 
 @dataclass
@@ -592,6 +593,7 @@ class _SpyOutputSink:
         namespace: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        kind: str | None = None,
     ) -> str:
         """Record the call and return a synthetic path string."""
         self.calls.append(
@@ -602,6 +604,7 @@ class _SpyOutputSink:
                 namespace=namespace,
                 provider=provider,
                 model=model,
+                kind=kind,
             )
         )
         return f"/fake/{namespace}/{prompt}{extension}"
