@@ -35,8 +35,10 @@ htmlcov/
 # JSON and the operator README that explains how to attach it.
 .gcp/*
 .aws/*
+.azure/*
 !.gcp/README.md
 !.aws/README.md
+!.azure/README.md
 !.aws/policies/
 
 # Layer O — user-facing output directory (configurable per-run via --output-dir)

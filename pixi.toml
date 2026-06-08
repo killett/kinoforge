@@ -32,8 +32,8 @@ channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64"]
 exclude-newer = "7d"
 
-# To urgently bypass the cooldown for a CVE fix, add:
-# [exclude-newer]
+# To urgently bypass the cooldown for a CVE fix, add a per-package override:
+# [workspace.exclude-newer-package]
 # affected-package = "0d"
 
 [dependencies]
@@ -91,6 +91,12 @@ AWS_SHARED_CREDENTIALS_FILE = "$PIXI_PROJECT_ROOT/.aws/credentials"
 AWS_CONFIG_FILE = "$PIXI_PROJECT_ROOT/.aws/config"
 GOOGLE_APPLICATION_CREDENTIALS = "$PIXI_PROJECT_ROOT/.gcp/kinoforge-sa.json"
 CLOUDSDK_CONFIG = "$PIXI_PROJECT_ROOT/.gcp/gcloud-config"
+# Azure CLI cached login tokens land here (workspace-local, gitignored). The
+# azure-sdk DefaultAzureCredential chain falls back to `az`-CLI creds when env
+# vars aren't set, so an operator `az login` from any pixi shell suffices for
+# interactive auth. Headless service-principal auth uses AZURE_* env vars
+# from .env directly and ignores this dir. Symmetric with CLOUDSDK_CONFIG.
+AZURE_CONFIG_DIR = "$PIXI_PROJECT_ROOT/.azure"
 
 [tasks]
 # On macOS, pixi-installed tools (pytest, ruff, mypy) can fail due to shebang path resolution issues. Using python -m <tool> bypasses this reliably.
@@ -145,15 +151,29 @@ pre-commit-all = "python -m pre_commit run --all-files"
 pre-commit-install = "python -m pre_commit install --install-hooks"
 
 [feature.live-skypilot.pypi-dependencies]
-skypilot = { version = "*", extras = ["gcp"] }
+skypilot = { version = "*", extras = ["gcp", "aws"] }
+# TODO: add "azure" to the extras above once the upstream packaging gap clears.
+# SkyPilot's [azure] extra transitively pulls azure-cli (>=2.73), which pins
+# `azure-batch >=15.0.0b1,<15.1.dev0` — a pre-release-only range. conda-forge
+# jumps from azure-batch 14.2.0 → 15.1.0 with no 15.0.x build; PyPI has the
+# 15.0.0b* betas but uv refuses pre-releases by default, and pixi exposes
+# neither a `--prerelease=allow` toggle nor a per-package cooldown override.
+# Status to revisit: (a) conda-forge ships azure-batch 15.0.x GA, or
+# (b) azure-cli loosens the pin to allow 15.1.x, or (c) pixi adds a prerelease
+# allowlist. Operator who needs Azure SkyPilot today can `brew install
+# azure-cli` / `apt install azure-cli` host-side and run `sky` from a non-
+# pixi shell with the matching Python env.
 
 [feature.live-skypilot.dependencies]
-# google-cloud-sdk provides the `gcloud` binary on PATH inside the
-# live-skypilot env. Required because SkyPilot's API server (a background
-# daemon launched on first sky.* call) shells out to gcloud for GCP
-# provisioning and inherits PATH from the activating env — the host-side
-# gcloud at ~/google-cloud-sdk/bin is not visible to it.
+# Cloud-SDK CLIs on PATH inside the live-skypilot env. SkyPilot's API server
+# (a background daemon launched on first sky.* call) shells out to gcloud /
+# aws for catalog scanning + provisioning on the respective clouds, and
+# inherits PATH from the activating env — host-side installs (e.g. gcloud at
+# ~/google-cloud-sdk/bin) are not visible to it.
 google-cloud-sdk = "*"
+# conda-forge's `awscli` package tracks the v2 series (current: 2.34.x) —
+# the legacy v1 line is no longer published here, so no `-v2` suffix needed.
+awscli = "*"
 # rsync + openssh: SkyPilot's API server shells out to rsync for
 # workdir/file-mount transfer (runs the prerequisite check even when the
 # workdir is empty) and to ssh for post-provision login. Both are conda
