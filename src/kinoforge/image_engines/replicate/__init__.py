@@ -51,7 +51,7 @@ class _ReplicateImageInnerBackend(RemoteSubmitPollBackend):
 
     def _submit(self, client: object, job: GenerationJob) -> str:
         """Submit a prediction; reuse the video backend's request shape."""
-        version = job.spec["model"]
+        model = job.spec["model"]
         prompt = job.segments[0].prompt if job.segments else ""
         input_dict: dict[str, Any] = {
             "prompt": prompt,
@@ -59,7 +59,7 @@ class _ReplicateImageInnerBackend(RemoteSubmitPollBackend):
         }
         try:
             pred = client.predictions.create(  # type: ignore[attr-defined]
-                version=version, input=input_dict
+                model=model, input=input_dict
             )
         except Exception as exc:  # noqa: BLE001
             raise KinoforgeError(
