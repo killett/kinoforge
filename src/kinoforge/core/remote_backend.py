@@ -138,6 +138,9 @@ class RemoteSubmitPollBackend(GenerationBackend):
 
     def result(self, job_id: str) -> Artifact:
         """Poll until done or failed; return an Artifact on done."""
+        import urllib.parse
+        from pathlib import PurePosixPath
+
         client = self._client()
         for _ in range(self._max_poll):
             status = self._poll_one(client, job_id)
@@ -145,9 +148,18 @@ class RemoteSubmitPollBackend(GenerationBackend):
             if failed:
                 raise KinoforgeError(f"{type(self).__name__}: {reason or 'job failed'}")
             if self._is_done(status):
+                url = self._extract_output_url(status)
+                # Fallback: derive filename from URL basename so downstream
+                # stages get a real extension (.mp4 / .png) instead of the
+                # ".bin" default LocalOutputSink uses when the engine
+                # returns an empty filename.
+                filename = self._extract_filename(status)
+                if not filename and url:
+                    path = urllib.parse.urlparse(url).path
+                    filename = PurePosixPath(path).name
                 return Artifact(
-                    filename=self._extract_filename(status),
-                    url=self._extract_output_url(status),
+                    filename=filename,
+                    url=url,
                     meta={"job_id": job_id},
                     headers={},
                 )
