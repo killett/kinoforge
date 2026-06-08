@@ -195,6 +195,20 @@ in the filename schema `{ts}_{provider}_{model-slug}_{prompt-slug}.{ext}`.
 - Luma credential refresh needed (or API plan upgrade).
 - Comparison batch capstone: needs Task 10 (15 YAMLs) + keyframe pre-stage.
 - Fal retrofit onto `RemoteSubmitPollBackend`: refactor only; existing engine functional.
+- **Hosted-engine per-prediction cost capture (Layer 5 candidate).** Hosted
+  engines bill per-prediction, not per-second, so the existing
+  `BudgetTracker` (pod-time only) does not cover them. Spend is currently
+  not recorded anywhere — not in `Artifact.meta`, not in any sidecar, not
+  in the ledger. Proposed surface: per-engine `_extract_cost(status) ->
+  float | None` hook on `RemoteSubmitPollBackend` (Replicate exposes
+  `metrics.predict_time` × rate-card; Runway / Luma return duration +
+  resolution from which the rate card is recoverable). Lift the value onto
+  `Artifact.meta["cost_usd"]`, optionally write a `.cost.json` sidecar
+  next to each clip, and add a `KINOFORGE_SESSION_BUDGET_USD` env-gated
+  pre-submit check that raises `BudgetExceeded`. Tracked here so the
+  next layer planner sees the seam already mapped — the
+  `RemoteSubmitPollBackend` docstring already names "spend tracking" as
+  one of the planned cross-cutting features bolting onto this foundation.
 
 ### RESUME — START HERE
 
