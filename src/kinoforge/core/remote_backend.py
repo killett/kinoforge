@@ -21,9 +21,12 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import frames
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import (
     AuthError,
     ConfigError,
+    EphemeralDeleteFailedError,
+    EphemeralDeleteHTTPError,
     FrameExtractionError,
     KinoforgeError,
 )
@@ -110,6 +113,29 @@ class RemoteSubmitPollBackend(GenerationBackend):
     def _extract_output_url(self, status: dict[str, Any]) -> str:
         """Return the output URL from a done ``status``."""
 
+    @abstractmethod
+    def _delete(self, job_id: str) -> None:
+        """Issue the provider's DELETE for ``job_id``.
+
+        Concrete subclasses send the provider-specific DELETE request and
+        raise ``EphemeralDeleteHTTPError`` on a retryable non-2xx (so
+        ``_delete_with_retries`` drives the backoff). Engines whose
+        provider has no public DELETE endpoint raise
+        ``EphemeralDeleteUnsupportedError`` — pre-flight (Task 18)
+        refuses those providers under ephemeral so this branch is
+        belt-and-suspenders for the runtime path.
+        """
+
+    @classmethod
+    @abstractmethod
+    def manual_cleanup_url(cls, job_id: str) -> str:
+        """Return the provider's browser-facing cleanup URL for ``job_id``.
+
+        Embedded in ``EphemeralDeleteFailedError.__str__`` so the
+        operator can finish a partial scrub by hand. Engines whose
+        provider has no public DELETE endpoint return ``""``.
+        """
+
     # ------------------------------------------------------------------
     # Subclass hooks (default impls)
     # ------------------------------------------------------------------
@@ -136,8 +162,48 @@ class RemoteSubmitPollBackend(GenerationBackend):
         """Build + submit the request via :meth:`_submit`."""
         return self._submit(self._client(), job)
 
+    def _delete_with_retries(
+        self,
+        job_id: str,
+        *,
+        retries: int = 3,
+        sleep_fn: Callable[[float], None] = time.sleep,
+    ) -> None:
+        """Call ``_delete(job_id)`` with 1s/2s/4s exponential backoff.
+
+        Catches ``EphemeralDeleteHTTPError`` on each attempt, sleeps
+        ``2 ** attempt`` seconds before the next try, and on exhaustion
+        raises ``EphemeralDeleteFailedError`` carrying the manual
+        cleanup URL. ``sleep_fn`` is injectable so tests run fast.
+        """
+        last_error = ""
+        for attempt in range(retries):
+            try:
+                self._delete(job_id)
+                return
+            except EphemeralDeleteHTTPError as e:
+                last_error = str(e)
+                if attempt + 1 < retries:
+                    sleep_fn(2.0**attempt)
+        raise EphemeralDeleteFailedError(
+            job_id=job_id,
+            provider=type(self).__name__.replace("Backend", "").lower(),
+            manual_url=self.manual_cleanup_url(job_id),
+            attempts=retries,
+            last_error=last_error,
+        )
+
     def result(self, job_id: str) -> Artifact:
-        """Poll until done or failed; return an Artifact on done."""
+        """Poll until done or failed; return an Artifact on done.
+
+        Under an active ``EphemeralSession`` with
+        ``policy.delete_on_completion=True``, fires
+        ``_delete_with_retries(job_id, retries=policy.delete_retries)``
+        AFTER the artifact has been built but BEFORE returning. A
+        successful delete scrubs the provider-side record so the
+        prompt-laden job ID does not survive on the provider's
+        dashboard.
+        """
         import urllib.parse
         from pathlib import PurePosixPath
 
@@ -157,12 +223,18 @@ class RemoteSubmitPollBackend(GenerationBackend):
                 if not filename and url:
                     path = urllib.parse.urlparse(url).path
                     filename = PurePosixPath(path).name
-                return Artifact(
+                artifact = Artifact(
                     filename=filename,
                     url=url,
                     meta={"job_id": job_id},
                     headers={},
                 )
+                _session = EphemeralSession.current()
+                if _session is not None and _session.policy.delete_on_completion:
+                    self._delete_with_retries(
+                        job_id, retries=_session.policy.delete_retries
+                    )
+                return artifact
             self._sleep(self._poll_interval_s)
         raise TimeoutError(
             f"{type(self).__name__}: job {job_id!r} not done after "

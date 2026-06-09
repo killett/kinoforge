@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from kinoforge.core.clock import Clock
 from kinoforge.core.errors import BudgetExceeded, TeardownError
 from kinoforge.core.interfaces import Instance, InstanceSpec, Lifecycle
+from kinoforge.core.redaction import RedactionRegistry
 
 if TYPE_CHECKING:
     from kinoforge.core.interfaces import ComputeProvider
@@ -432,12 +433,37 @@ class Ledger:
             return []
 
     def _write_entries(self, entries: list[dict]) -> None:  # type: ignore[type-arg]
-        """Persist the full entries list.
+        """Persist the full entries list with the canonical redaction shape.
+
+        Under an active ``EphemeralSession`` with
+        ``policy.ledger_record=False``, the payload is stashed on the
+        session's ``in_memory_ledger`` instead of being written to the
+        store — so a strict run leaves no ledger file on disk.
+
+        Otherwise the payload flows through
+        :meth:`RedactionRegistry.redact_json` immediately before
+        ``put_json`` so any prompt-derived strings registered by the
+        active vault are substituted with placeholders. Public-by-design
+        runs (empty registry) pass through unchanged.
 
         Args:
             entries: Complete list of entry dicts to write.
         """
-        self._store.put_json(self._run_id, self._LEDGER_NAME, {"entries": entries})
+        from kinoforge.core.ephemeral import EphemeralSession
+
+        payload: dict = {"entries": entries}  # type: ignore[type-arg]
+        session = EphemeralSession.current()
+        if session is not None and not session.policy.ledger_record:
+            session.in_memory_ledger[self._run_id] = payload
+            return
+        redacted = RedactionRegistry.instance().redact_json(payload)
+        if not isinstance(
+            redacted, dict
+        ):  # pragma: no cover — redact_json keeps dict shape
+            raise TypeError(
+                f"redact_json must preserve dict shape, got {type(redacted).__name__}"
+            )
+        self._store.put_json(self._run_id, self._LEDGER_NAME, redacted)
 
     # ------------------------------------------------------------------
     # Public API

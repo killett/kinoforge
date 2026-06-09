@@ -15,6 +15,22 @@ from pathlib import Path
 
 import pytest
 
+from kinoforge.core.redaction import RedactionRegistry
+
+
+@pytest.fixture(autouse=True)
+def _clear_redaction_registry_between_tests() -> Generator[None, None, None]:
+    """Reset the process-wide RedactionRegistry around every test.
+
+    The registry is a singleton — tokens written by tests in
+    test_redaction.py / test_ledger_redaction.py / test_downloader_opaque_name.py
+    / OutputSink.publish would otherwise leak into unrelated tests and
+    redact substrings (e.g. cluster names) inside captured fixture JSON.
+    """
+    RedactionRegistry.instance().clear_session()
+    yield
+    RedactionRegistry.instance().clear_session()
+
 
 @dataclass
 class HttpServerInfo:

@@ -83,7 +83,11 @@ def write_sidecar(state_dir: Path, cfg: Config) -> None:
     """
     state_dir.mkdir(parents=True, exist_ok=True)
     rec = SidecarRecord.from_cfg(cfg)
-    _path(state_dir).write_text(json.dumps(rec.model_dump(), indent=2))
+    _path(
+        state_dir
+    ).write_text(  # kinoforge:public-write — sidecar carries cfg.store identity only, no prompt-derived bytes
+        json.dumps(rec.model_dump(), indent=2)
+    )
 
 
 def _local_ledger_nonempty(state_dir: Path) -> bool:

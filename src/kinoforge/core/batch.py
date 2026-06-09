@@ -42,6 +42,7 @@ from kinoforge.core.batch_models import (
     BatchOutcome,
     BatchResult,
 )
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import (
     BudgetExceeded,
     CapabilityMismatch,
@@ -642,6 +643,9 @@ def batch_generate(
             instance=instance,
             tags=tags,
         ) as session:
+            _eph = EphemeralSession.current()
+            if _eph is not None:
+                _eph.register_store(store, batch_id)
             accepted_kinds: set[str]
             if hasattr(session.engine, "accepted_kinds"):
                 accepted_kinds = session.engine.accepted_kinds
@@ -858,7 +862,23 @@ def batch_generate(
         # BatchResult is still returned (or the original exception
         # re-raised).
         try:
-            store.put_json(batch_id, "_batch_summary.json", summary.to_dict())
+            from kinoforge.core.redaction import RedactionRegistry
+
+            payload = summary.to_dict()
+            _eph = EphemeralSession.current()
+            if _eph is not None and not _eph.policy.batch_summary_write:
+                # Strict mode: in-memory summary still returned to caller
+                # via BatchResult; no _batch_summary.json on disk.
+                pass
+            else:
+                redacted = RedactionRegistry.instance().redact_json(payload)
+                if not isinstance(
+                    redacted, dict
+                ):  # pragma: no cover — redact_json keeps dict shape
+                    raise TypeError(
+                        f"redact_json must preserve dict shape, got {type(redacted).__name__}"
+                    )
+                store.put_json(batch_id, "_batch_summary.json", redacted)
         except Exception:  # noqa: BLE001
             _log.exception(
                 "failed to write _batch_summary.json for batch_id=%s",
