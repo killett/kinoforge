@@ -241,7 +241,20 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
             ref=Artifact(filename=init_frame.name, uri=init_frame.resolve().as_uri()),
         )
         request = GenerationRequest(
-            prompt="a cat turns into a woman",
+            # Init-frame-aligned prompt: the canonical
+            # prompt-field-realistic.txt is a long-form t2v cinematic about a
+            # woman in an alpine meadow, which fights the init image rather
+            # than animating it (re-introduces the cat-turns-into-a-woman
+            # morph problem that Phase 46 excluded). A short prompt that
+            # describes the init image's actual subject — a white long-haired
+            # cat — is what exercises i2v's "preserve subject identity"
+            # capability cleanly.
+            prompt=(
+                "A photorealistic close-up of a fluffy white long-haired cat "
+                "with bright orange eyes, calmly blinking. Slow gentle "
+                "breeze ripples through the fur. Soft bokeh black "
+                "background, warm cinematic tones, film grain."
+            ),
             mode="i2v",
             assets=[init_asset],
         )
