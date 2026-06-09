@@ -1,0 +1,32 @@
+# Example vault file for kinoforge — DO NOT use as-is.
+#
+# 1. Copy this file to a path OUTSIDE the repo (e.g. ~/.kinoforge/vault/foo.yaml).
+# 2. chmod 600 so it's user-only readable.
+# 3. Edit the placeholders below with your actual content.
+# 4. Run kinoforge with --vault ~/.kinoforge/vault/foo.yaml (or set KINOFORGE_VAULT).
+#
+# Anything in this file is registered with the RedactionRegistry on load
+# and will be substituted with placeholders in every log line, JSON write,
+# and error traceback. See
+# docs/superpowers/specs/2026-06-08-ephemeral-workspaces-design.md.
+
+positive_prompt: |
+  REPLACE THIS with your actual prompt. Multi-line via YAML block scalar.
+  Blank lines separate segments when fed through the HeuristicSplitter.
+
+# Alternative to positive_prompt — exactly one of the two:
+# segments:
+#   - prompt: "first segment text"
+#     params: { seed: 42 }
+#   - prompt: "second segment text"
+#     params: { seed: 43 }
+
+negative_prompt: |
+  REPLACE THIS with your negative prompt body, or remove the field entirely.
+
+loras:
+  - ref: civitai:0000@0000
+    label: example-style
+  - ref: hf:org/lora:foo.safetensors
+
+# alias: my-stable-id    # optional explicit override; default is sha256-derived

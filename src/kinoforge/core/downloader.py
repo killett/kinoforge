@@ -192,6 +192,7 @@ def download_one(
     fetch: FetchCallable = _urllib_fetch,
     which_aria2: WhichCallable = _shutil_which_aria2,
     run_aria2: RunAriaCallable = _subprocess_run_aria2,
+    opaque_name: bool = False,
 ) -> Artifact:
     """Download *artifact* into *dest*, resuming from a ``.part`` file if present.
 
@@ -220,6 +221,11 @@ def download_one(
             ``aria2c`` or ``None`` (default: :func:`_shutil_which_aria2`).
         run_aria2: Subprocess invoker for aria2c (default:
             :func:`_subprocess_run_aria2`).
+        opaque_name: When ``True``, the on-disk filename is
+            ``<artifact.sha256>.bin`` instead of ``artifact.filename``,
+            and ``artifact.filename`` is registered with the
+            :class:`RedactionRegistry` (kind=``lora:filename``) before
+            the download begins. Requires ``artifact.sha256`` to be set.
 
     Returns:
         A new :class:`~kinoforge.core.interfaces.Artifact` with ``uri`` set to
@@ -229,7 +235,22 @@ def download_one(
         KinoforgeError: On sha256 mismatch, aria2c subprocess failure, or
             stdlib HTTP transport failure.
     """
-    target_path = dest / artifact.filename
+    if opaque_name:
+        if not artifact.sha256:
+            raise ValueError(
+                f"opaque-naming requires Artifact.sha256 (got {artifact.filename!r})"
+            )
+        # Register the original filename with the redaction registry
+        # BEFORE the download begins so any in-flight log line that
+        # interpolates it (progress, retry, fallback warning) is redacted.
+        if len(artifact.filename) >= 4:
+            from kinoforge.core.redaction import RedactionRegistry
+
+            RedactionRegistry.instance().add(artifact.filename, kind="lora:filename")
+        target_name = f"{artifact.sha256}.bin"
+    else:
+        target_name = artifact.filename
+    target_path = dest / target_name
     target_path.parent.mkdir(parents=True, exist_ok=True)
     part_path = Path(str(target_path) + ".part")
 
@@ -309,6 +330,7 @@ def download_all(
     fetch: FetchCallable = _urllib_fetch,
     which_aria2: WhichCallable = _shutil_which_aria2,
     run_aria2: RunAriaCallable = _subprocess_run_aria2,
+    opaque_name: bool = False,
 ) -> list[Artifact]:
     """Download multiple artifacts concurrently.
 
@@ -329,6 +351,8 @@ def download_all(
             :func:`download_one` call.
         run_aria2: Subprocess invoker forwarded to each
             :func:`download_one` call.
+        opaque_name: Forwarded to every per-artifact
+            :func:`download_one` call; see that function for semantics.
 
     Returns:
         List of updated :class:`~kinoforge.core.interfaces.Artifact`
@@ -350,6 +374,7 @@ def download_all(
                 fetch=fetch,
                 which_aria2=which_aria2,
                 run_aria2=run_aria2,
+                opaque_name=opaque_name,
             ): idx
             for idx, artifact in enumerate(artifacts)
         }

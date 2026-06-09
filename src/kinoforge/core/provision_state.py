@@ -92,6 +92,7 @@ def write_marker(
     # Atomic rename pattern: write to temp file in same directory, then replace.
     fd, tmp_name = tempfile.mkstemp(prefix=".provisioned.tmp.", dir=str(path.parent))
     try:
+        # kinoforge:public-write — capability_key + instance_id only, no prompt-derived bytes
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f)
         os.replace(tmp_name, path)

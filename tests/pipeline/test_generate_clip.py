@@ -10,6 +10,7 @@ AC 8: store.get_bytes(artifact.uri) returns original engine output bytes (round-
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -272,8 +273,11 @@ def test_stage_non_native_i2v_n3_chains_segs_1_and_2(tmp_path: Path) -> None:
         asset = assets[0]
         assert asset.kind == "image"
         assert asset.role == "init_image"
-        # URI contains the tail PNG name under the stage's run_id namespace.
-        assert asset.ref.uri.endswith("-tail.png")
+        # The on-disk URI is sha-derived (opaque_store_name) so it ends
+        # with .png but no longer carries the human "-tail.png" suffix.
+        # The downstream-visible filename label preserves the friendly
+        # "seg-{i-1}-tail.png" form via dataclasses.replace.
+        assert asset.ref.uri.endswith(".png")
         assert asset.ref.filename == f"seg-{i - 1}-tail.png"
 
 
@@ -508,22 +512,19 @@ def test_stage_chain_persists_tail_via_store(tmp_path: Path) -> None:
     _run(stage, GenerationRequest(prompt="ignored", mode="i2v"))
 
     listed = store.list("run-persist")
-    tails = sorted(n for n in listed if n.endswith("-tail.png"))
+    # opaque_store_name produces <16hex>.png for tail bytes — no friendly
+    # "seg-<i>-tail.png" name ever lands on disk.
+    pngs = sorted(n for n in listed if n.endswith(".png"))
     # 3 segments → 2 chain gaps → 2 tail PNGs.
-    assert tails == ["seg-0-tail.png", "seg-1-tail.png"]
+    assert len(pngs) == 2, pngs
+    assert all(re.fullmatch(r"[0-9a-f]{16}\.png", n) for n in pngs), pngs
 
-    # Bytes round-trip: store returned the FakeEngine's deterministic bytes
-    # derived from each prior segment's BACKEND-OUTPUT filename (which is
-    # sha256-of-job for FakeBackend — segment-specific).
-    seg0_tail_bytes = store.get_bytes(store.uri_for("run-persist", "seg-0-tail.png"))
-    seg1_tail_bytes = store.get_bytes(store.uri_for("run-persist", "seg-1-tail.png"))
-
-    assert seg0_tail_bytes.startswith(b"FAKE_TAIL:")
-    assert seg1_tail_bytes.startswith(b"FAKE_TAIL:")
-    # Off-by-one in results[-1] indexing (e.g. always using results[0]) would
-    # leave both tail PNGs identical. They MUST differ because each is derived
-    # from a different prior segment's artifact filename.
-    assert seg0_tail_bytes != seg1_tail_bytes
+    # Bytes round-trip via the URIs the store issued. Both tails carry
+    # FakeEngine's deterministic "FAKE_TAIL:" prefix; off-by-one in
+    # results[-1] indexing would leave both identical.
+    tail_bodies = [store.get_bytes(store.uri_for("run-persist", n)) for n in pngs]
+    assert all(b.startswith(b"FAKE_TAIL:") for b in tail_bodies)
+    assert tail_bodies[0] != tail_bodies[1]
 
 
 # ---------------------------------------------------------------------------

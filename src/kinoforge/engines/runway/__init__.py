@@ -11,13 +11,19 @@ Wire-shape note:
 
 from __future__ import annotations
 
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import registry
 from kinoforge.core.auth import Bearer
 from kinoforge.core.credentials import EnvCredentialProvider
-from kinoforge.core.errors import AuthError, KinoforgeError
+from kinoforge.core.errors import (
+    AuthError,
+    EphemeralDeleteHTTPError,
+    KinoforgeError,
+)
 from kinoforge.core.interfaces import (
     CredentialProvider,
     GenerationJob,
@@ -41,8 +47,40 @@ _PROBE = ModelProfile(
 )
 
 
+def _urllib_delete(url: str, headers: dict[str, str]) -> int:
+    """Default stdlib HTTP DELETE returning the response status code."""
+    req = urllib.request.Request(  # noqa: S310 — schemes hardcoded by caller
+        url, method="DELETE", headers=headers
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            return int(resp.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+
+
 class RunwayBackend(RemoteSubmitPollBackend):
     """Submit/poll backend for Runway tasks API."""
+
+    def __init__(
+        self,
+        *,
+        token: str = "",
+        http_delete: Callable[[str, dict[str, str]], int] | None = None,
+        **kw: Any,  # noqa: ANN401 — forwarded to RemoteSubmitPollBackend
+    ) -> None:
+        """Initialise the backend with the Bearer token + DELETE seam.
+
+        Args:
+            token: Runway API key used by ``_delete`` for the
+                ``Authorization: Bearer ...`` header.
+            http_delete: Injectable HTTP DELETE seam returning the
+                response status code; defaults to a stdlib ``urllib`` helper.
+            **kw: Forwarded to :class:`RemoteSubmitPollBackend`.
+        """
+        super().__init__(**kw)
+        self._token = token
+        self._http_delete = http_delete or _urllib_delete
 
     def _submit(self, client: object, job: GenerationJob) -> str:
         """Submit a task; dispatches on mode → text_to_video / image_to_video."""
@@ -130,6 +168,24 @@ class RunwayBackend(RemoteSubmitPollBackend):
             raise AuthError(f"runway auth failed: {exc}") from exc
         raise KinoforgeError(f"runway: {op} failed: {exc}") from exc
 
+    def _delete(self, job_id: str) -> None:
+        """Issue ``DELETE /v1/tasks/{job_id}`` against the Runway API.
+
+        200/204/404 are treated as success. Any other non-2xx raises
+        ``EphemeralDeleteHTTPError`` so ``_delete_with_retries`` can drive
+        the exponential backoff. The Bearer token threaded via the
+        constructor authorises the request.
+        """
+        url = f"https://api.dev.runwayml.com/v1/tasks/{job_id}"
+        status = self._http_delete(url, {"Authorization": f"Bearer {self._token}"})
+        if status not in (200, 204, 404):
+            raise EphemeralDeleteHTTPError(f"runway DELETE returned {status}")
+
+    @classmethod
+    def manual_cleanup_url(cls, job_id: str) -> str:
+        """Return the browser-facing cleanup URL for ``job_id``."""
+        return f"https://app.runwayml.com/tasks/{job_id}"
+
 
 class RunwayEngine(RemoteSubmitPollEngine):
     """Hosted ``runwayml.com`` adapter."""
@@ -157,9 +213,11 @@ class RunwayEngine(RemoteSubmitPollEngine):
     ) -> RemoteSubmitPollBackend:
         """Build a ``RunwayBackend`` instance bound to ``cfg`` credentials."""
         del instance
+        token = str(self._auth.client_kwargs().get("api_key", ""))
         return RunwayBackend(
             client_factory=self._build_client_factory(cfg, None),
             probe_profile=self._probe,
+            token=token,
         )
 
 

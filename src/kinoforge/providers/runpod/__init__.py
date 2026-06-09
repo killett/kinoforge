@@ -26,12 +26,14 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 import time
 import urllib.request
 from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import registry
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import CapacityError, TeardownError
 from kinoforge.core.interfaces import (
     ComputeProvider,
@@ -531,6 +533,14 @@ class RunPodProvider(ComputeProvider):
             docker_args = ""
 
         gpu_type_id = spec.offer.gpu_type if spec.offer else ""
+        # Under ephemeral mode, suppress the alias-laden run_id from the
+        # provider-visible pod name and stamp ``kinoforge-ephemeral=true``
+        # on the Instance tags. Default mode is unchanged.
+        _eph = EphemeralSession.current()
+        if _eph is not None and not _eph.policy.pod_name_includes_alias:
+            pod_name = f"kinoforge-{secrets.token_hex(4)}"
+        else:
+            pod_name = spec.run_id or "kinoforge-pod"
         body: dict[str, Any] = {
             "query": _CREATE_POD_MUTATION,
             "variables": {
@@ -542,7 +552,7 @@ class RunPodProvider(ComputeProvider):
                     "minVcpuCount": 2,
                     "minMemoryInGb": 15,
                     "gpuTypeId": gpu_type_id,
-                    "name": spec.run_id or "kinoforge-pod",
+                    "name": pod_name,
                     "imageName": spec.image,
                     "dockerArgs": docker_args,
                     # RunPod's HTTP reverse proxy
@@ -610,6 +620,8 @@ class RunPodProvider(ComputeProvider):
         instance_tags: dict[str, str] = {k: v for k, v in spec.tags.items()}
         if resolved_ports and "ports" not in instance_tags:
             instance_tags["ports"] = ",".join(resolved_ports)
+        if _eph is not None and not _eph.policy.pod_name_includes_alias:
+            instance_tags["kinoforge-ephemeral"] = "true"
         return Instance(
             id=pod_id,
             provider=self.name,
@@ -631,11 +643,16 @@ class RunPodProvider(ComputeProvider):
         Returns:
             Instance with ``status="ready"`` (serverless is ready immediately).
         """
+        _eph = EphemeralSession.current()
+        if _eph is not None and not _eph.policy.pod_name_includes_alias:
+            endpoint_name = f"kinoforge-{secrets.token_hex(4)}"
+        else:
+            endpoint_name = spec.run_id or "kinoforge-serverless"
         body: dict[str, Any] = {
             "query": _CREATE_SERVERLESS_MUTATION,
             "variables": {
                 "input": {
-                    "name": spec.run_id or "kinoforge-serverless",
+                    "name": endpoint_name,
                     "imageName": spec.image,
                     "gpuIds": "ADA_24",
                     "workersMin": 0,
@@ -661,12 +678,15 @@ class RunPodProvider(ComputeProvider):
                 f"RunPod create-serverless returned no endpoint id; full response: {resp!r}"
             )
 
+        serverless_tags: dict[str, str] = {k: v for k, v in spec.tags.items()}
+        if _eph is not None and not _eph.policy.pod_name_includes_alias:
+            serverless_tags["kinoforge-ephemeral"] = "true"
         return Instance(
             id=endpoint_id,
             provider=self.name,
             status="ready",
             created_at=time.time(),
-            tags={k: v for k, v in spec.tags.items()},
+            tags=serverless_tags,
             cost_rate_usd_per_hr=0.0,
         )
 

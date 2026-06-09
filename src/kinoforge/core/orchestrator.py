@@ -25,6 +25,7 @@ from pathlib import Path
 from kinoforge.core import registry
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import (
     AuthError,
     CapabilityMismatch,
@@ -1036,6 +1037,9 @@ def generate(
         instance=instance,
         tags=tags,
     ) as session:
+        _eph = EphemeralSession.current()
+        if _eph is not None:
+            _eph.register_store(store, run_id)
         accepted_kinds: set[str] = getattr(session.engine, "accepted_kinds", {"image"})
 
         # ------------------------------------------------------------------

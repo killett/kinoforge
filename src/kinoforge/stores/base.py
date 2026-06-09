@@ -146,6 +146,39 @@ class ArtifactStore(ABC):
         """
 
     @abstractmethod
+    def delete_run(self, run_id: str) -> None:
+        """Remove every artifact stored under ``run_id``.
+
+        Idempotent: a missing ``run_id`` is a no-op, not an error. Atomic at
+        the per-name level; implementations unable to remove the prefix
+        atomically MUST iterate :meth:`list` and delete each item, raising
+        on the first per-name failure that is not ``FileNotFoundError``.
+
+        Args:
+            run_id: The run namespace to wipe.
+
+        Raises:
+            OSError: A per-name delete failed for a reason other than the
+                item being absent.
+        """
+
+    @abstractmethod
+    def manual_cleanup_command(self, run_id: str) -> str:
+        """Return a single-line shell command that wipes ``run_id``'s prefix.
+
+        Used in error messages when :meth:`delete_run` fails so the user can
+        finish the cleanup by hand. Must produce an absolute, copy-pasteable
+        command.
+
+        Args:
+            run_id: The run namespace the command targets.
+
+        Returns:
+            A single-line shell command that, when run by the operator, will
+            wipe everything under this store's ``run_id`` prefix.
+        """
+
+    @abstractmethod
     def signed_url(
         self,
         run_id: str,
