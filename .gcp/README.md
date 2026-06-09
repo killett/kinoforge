@@ -36,11 +36,9 @@ CLI both auto-discover these.
   - `roles/storage.admin` ← covers all GCS bucket + object ops.
   - `roles/viewer`
 
-> Migrated 2026-06-09 from previous project `<GCP_PROJECT>`
-> (operator account `emmykillett@gmail.com`, billing
-> `<GCP_BILLING_ACCOUNT>`). Old project scheduled for soft-delete after
-> verification completes; old SA key kept at `kinoforge-sa.json.old`
-> in the same directory for rollback.
+> Migrated 2026-06-09 from a previous GCP project under a separate
+> operator account (now retired). Old SA key file has been deleted;
+> legacy OAuth + legacy SA revoked from local gcloud config.
 
 ## Real-cloud test bucket
 
