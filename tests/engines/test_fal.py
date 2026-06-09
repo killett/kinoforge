@@ -477,3 +477,33 @@ def test_submit_spec_prompt_wins_over_segment_prompt() -> None:
     backend.submit(job)
     _, body, _ = backend._spy_posts[0]
     assert body["prompt"] == "explicit-prompt"
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_fal_model_identity_returns_endpoint_slug() -> None:
+    """FalEngine reads model slug from engine.fal.endpoint.
+
+    Bug catch: reads from spec.model instead of the fal-specific endpoint field.
+    """
+    from kinoforge.core import registry
+
+    eng = registry.get_engine("fal")()
+    cfg: dict[str, object] = {"engine": {"fal": {"endpoint": "fal-ai/wan-t2v"}}}
+    assert eng.model_identity(cfg) == "fal-ai/wan-t2v"
+
+
+def test_fal_model_identity_empty_on_missing_engine_block() -> None:
+    """FalEngine returns empty string when engine or fal block is absent.
+
+    Bug catch: KeyError raised on bare cfg breaks slug derivation for all clips.
+    """
+    from kinoforge.core import registry
+
+    eng = registry.get_engine("fal")()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"engine": {}}) == ""
+    assert eng.model_identity({"engine": {"fal": {}}}) == ""

@@ -1154,3 +1154,28 @@ def test_hosted_engine_default_derives_bearer_from_cfg_api_key_env() -> None:
             del os.environ["KINOFORGE_TEST_API_KEY"]
         else:
             os.environ["KINOFORGE_TEST_API_KEY"] = old
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_hosted_model_identity_returns_spec_model_slug() -> None:
+    """HostedAPIEngine reads model slug from spec.model.
+
+    Bug catch: reads from wrong field after Layer 8 renamed the config key.
+    """
+    eng = registry.get_engine("hosted")()
+    cfg: dict[str, object] = {"spec": {"model": "bytedance/seedance-1-lite"}}
+    assert eng.model_identity(cfg) == "bytedance/seedance-1-lite"
+
+
+def test_hosted_model_identity_empty_on_missing_spec() -> None:
+    """HostedAPIEngine returns empty string when spec or model is absent.
+
+    Bug catch: KeyError raised on bare cfg breaks slug derivation for all clips.
+    """
+    eng = registry.get_engine("hosted")()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"spec": {}}) == ""

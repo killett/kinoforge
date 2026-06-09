@@ -182,3 +182,32 @@ def test_engine_provision_raises_auth_error_when_token_missing(
     )
     with pytest.raises(AuthError):
         e.provision(None, {"spec": {"model": "m"}})
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_replicate_image_engine_model_identity_returns_spec_model_slug() -> None:
+    """ReplicateImageEngine reads model slug from spec.model.
+
+    Bug catch: reads from wrong field after Layer 8 renamed the config key.
+    """
+    from kinoforge.core import registry
+
+    eng = registry.get_image_engine("replicate")()
+    cfg: dict[str, object] = {"spec": {"model": "black-forest-labs/flux-1.1-pro"}}
+    assert eng.model_identity(cfg) == "black-forest-labs/flux-1.1-pro"
+
+
+def test_replicate_image_engine_model_identity_empty_on_missing_spec() -> None:
+    """ReplicateImageEngine returns empty string when spec or model is absent.
+
+    Bug catch: KeyError raised on bare cfg breaks slug derivation for all image jobs.
+    """
+    from kinoforge.core import registry
+
+    eng = registry.get_image_engine("replicate")()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"spec": {}}) == ""

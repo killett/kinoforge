@@ -938,3 +938,28 @@ lifecycle:
     backend.submit(job)
     assert posts[0][1]["input"] == "from-seg"
     assert "prompt" not in posts[0][1]
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_diffusers_model_identity_returns_spec_model_slug() -> None:
+    """DiffusersEngine reads model slug from spec.model.
+
+    Bug catch: reads from wrong field after Layer 8 renamed the config key.
+    """
+    eng = registry.get_engine("diffusers")()
+    cfg: dict[str, object] = {"spec": {"model": "Wan-AI/Wan2.2-T2V-A14B-Diffusers"}}
+    assert eng.model_identity(cfg) == "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+
+
+def test_diffusers_model_identity_empty_on_missing_spec() -> None:
+    """DiffusersEngine returns empty string when spec or model is absent.
+
+    Bug catch: KeyError raised on bare cfg breaks slug derivation for all clips.
+    """
+    eng = registry.get_engine("diffusers")()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"spec": {}}) == ""
