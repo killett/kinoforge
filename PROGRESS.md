@@ -2070,7 +2070,7 @@ Plan: `docs/superpowers/plans/2026-06-08-successful-generations-log.md` (`bafbd5
 - [x] Task 3: `CLAUDE.md` Durability bullet — commit `1a76df9`
 - [ ] Task 4: `PROGRESS.md` pointer + this section — commit `<sha>`
 - [x] Task 5: `kinoforge --version` flag + 2 tests — commit `b913732`
-- [ ] Task 6: fal-ai/wan-t2v re-fire + entry #1 — commit `<sha>`
+- [x] Task 6: fal-ai/wan-t2v re-fire + entry #1 — commit `ef6d7a9`
 - [ ] Task 7: Wan 2.1 14B i2v on RunPod+ComfyUI re-fire + entry #2 — commit `<sha>`
 - [ ] Task 8: Runway gen4.5 t2v re-fire + entry #3 — commit `<sha>`
 - [ ] Task 9: Replicate seedance-1-lite t2v re-fire + entry #4 — commit `<sha>`
