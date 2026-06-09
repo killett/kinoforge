@@ -152,6 +152,11 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 ## Single next action
 
+**Phase 45 — Layer 5b (prompt + LoRA confidentiality) CLOSED.** All 21
+tasks landed end-to-end (full entry near end of this file). +37 net
+tests across Tasks 17-20. Tracks A/B below remain queued live-spend
+work — not blocked by Layer 5b, not blocking it.
+
 ### Phase 43 — Layer 4 (Bearer-provider comparison smokes)
 
 Hosted Bearer adapters for Replicate / Runway / Luma sharing a
@@ -1917,3 +1922,131 @@ calls, no cloud mutations.
 - Anything Bedrock-side (Luma Ray v2 lives there and is unaffected).
 
 Closes carry-forward: `project_luma_video_retirement_2026.md`.
+
+### Phase 45 — Layer 5b (ephemeral workspaces: vault + `--ephemeral`)
+
+Ephemeral workspaces = vault (workspace content) + `--ephemeral` (workspace
+lifetime) + `RedactionRegistry` (workspace boundary). Vault loader +
+`RedactionRegistry` singleton + `RedactingLogFilter` on the root `kinoforge`
+logger (Sub-α). Canonical write-site pattern at every persistent-write site;
+`ArtifactStore.delete_run` + `manual_cleanup_command`; `OutputSink.publish`
+registers basename; opaque sha256-derived names at every `put_bytes` (Sub-β).
+`EphemeralSession` context manager via class-attribute storage with
+`EphemeralPolicy` toggling each gate (Sub-γ).
+Hosted-engine `_delete_with_retries` on `RemoteSubmitPollBackend`;
+`EPHEMERAL_CAPABILITIES` pre-flight table refuses fal/luma/hosted (Sub-δ).
+AST-based `tests/test_no_unredacted_writes.py` invariant + E2E (Sub-ε).
+
+Spec: `docs/superpowers/specs/2026-06-08-ephemeral-workspaces-design.md`.
+Plan: `docs/superpowers/plans/2026-06-08-ephemeral-workspaces.md`.
+
+**Sub-α (vault loader + redaction substrate):**
+- [x] Task 1: `Secret` newtype — commit `4533461`
+- [x] Task 2: `RedactionRegistry` singleton + token rules — commit `5d12780`
+- [x] Task 3: `RedactingLogFilter` for root `kinoforge` logger — commit `00d8ad6`
+- [x] Task 4: Vault loader + alias derivation + repo-root check — commit `89a772c`
+
+**Sub-β (canonical write-site pattern):**
+- [x] Task 5: `opaque_store_name` helper — commit `8f120e5`
+- [x] Task 6: `ArtifactStore.delete_run` + `manual_cleanup_command` across all stores — commit `fd0978a`
+- [x] Task 7: `Ledger` persists via `redact_json` — commit `b1258aa`
+- [x] Task 8: previously-skipped tasks-json checkpoint — commit `398ddfc`
+- [x] Task 9: `JsonProfileCache._persist` redaction — commit `ff3d27d`
+- [x] Task 10: `batch_generate _batch_summary.json` redaction — commit `da41f86`
+- [x] Task 11: `LocalOutputSink.publish` registers basename — commit `fea947a`
+- [x] Task 12: `Downloader` opaque-name path — commit `7e88398`
+- [x] Task 13: `GenerateClipStage` opaque store names at every `put_bytes` — commit `7bbb2c8`
+
+**Sub-γ (EphemeralSession context manager):**
+- [x] Task 14: `core/ephemeral.py` — `EphemeralSession` + `EphemeralPolicy` +
+  `EPHEMERAL_CAPABILITIES`; `EphemeralError` base in `errors.py`. Storage is
+  a process-wide class attribute (NOT `contextvars`) because stdlib
+  `ThreadPoolExecutor.map` does not auto-propagate `ContextVar` across
+  worker threads, and `ConcurrentPool` relies on workers seeing the active
+  session. 11/11 new tests pass. — commit `669fe0d`
+- [x] Task 15: `EphemeralSession.__exit__` calls `store.delete_run(run_id)`
+  for every registered store; `EphemeralStoreCleanupFailedError` carries
+  `manual_cleanup_command` via `.cleanup_command`; spec §10.5 error block
+  format; orchestrator + batch register the (store, run_id) pair after
+  `deploy_session` opens; `RunPodProvider._create_pod` /
+  `_create_serverless` rename pod to `kinoforge-<rand8>` and tag
+  `kinoforge-ephemeral=true` under `policy.pod_name_includes_alias=False`.
+  5/5 new tests pass; full suite passes (1 pre-existing skypilot fixture
+  failure unrelated). **AC deferral:** the AC's "default mode:
+  `kinoforge-<alias>-<rand4>` with `capability=<alias>` tag" is deferred —
+  no `spec.tags["capability"]` is populated anywhere in the current code,
+  so introducing the default rename would change observable pod naming
+  without a wired alias source. Sub-δ candidate. — commit `4740c09`
+
+**Sub-δ (hosted-engine delete + pre-flight gate):**
+- [x] Task 16: `RemoteSubmitPollBackend._delete` ABC + `manual_cleanup_url`
+  classmethod ABC + concrete `_delete_with_retries` (1s/2s/4s backoff,
+  injectable sleep) on the base; `result()` fires the retry chain iff
+  active session + `delete_on_completion=True`. Three new errors:
+  `EphemeralDeleteUnsupportedError`, `EphemeralDeleteHTTPError`,
+  `EphemeralDeleteFailedError` (spec §10.5 format). Replicate, Runway,
+  and `_ReplicateImageInnerBackend` scaffold-stubbed (NotImplementedError
+  on `_delete`; real `manual_cleanup_url` URL). ABC surface fixture
+  regenerated. — commit `4c73b96`
+- [x] Task 17: per-engine concrete `_delete` on Replicate
+  (`DELETE /v1/predictions/{id}`) and Runway
+  (`DELETE /v1/tasks/{id}`); `FalBackend._delete` raises
+  `EphemeralDeleteUnsupportedError`. Token threaded from
+  `Bearer.client_kwargs()` into each backend via new `token=` +
+  `http_delete=` ctor kwargs; stdlib `urllib` default,
+  injectable fake for tests. 14/14 new tests pass. — commit `6ba1ce0`
+
+**CLI surface:**
+- [x] Task 18: `--vault PATH` / `--ephemeral` / `--debug-show-secrets`
+  global flags on the top-level parser. `main()` validates mutex on
+  ephemeral + debug-show-secrets (exit 2 + named error before any work);
+  loads vault from `--vault` or `KINOFORGE_VAULT` env (rejecting
+  in-repo paths with exit 2); installs `RedactingLogFilter` on root +
+  `kinoforge` loggers. Pre-flight check looks up
+  `(engine.kind, compute.provider)` in `EPHEMERAL_CAPABILITIES` and
+  refuses with the spec §11.4 error block on unsupported combinations
+  (fal, luma, hosted). Read-only subcommands emit a stderr note and
+  skip the gate. Entire dispatch wrapped in
+  `with EphemeralSession(enabled=args.ephemeral)`. 9/9 new tests pass.
+  — commit `c797627`
+
+**Sub-ε (CI invariant + E2E proof points):**
+- [x] Task 19: `tests/test_no_unredacted_writes.py` — AST-based scan of
+  `src/kinoforge/` asserting the canonical write-site pattern (AC1-7,
+  exemption tags). Three Sub-α/β sites retrofitted to add the
+  `EphemeralSession`-gate (`Ledger._write_entries`,
+  `JsonProfileCache._persist`, `batch_generate` finally). USER-ORDERED
+  GATE re-verified RED→GREEN with a deliberately-injected put_json
+  violation. 7/7 ACs pass. — commit `6b8b7f7`
+- [x] Task 20: 3 E2E integration tests in `tests/integration/` driving
+  the real CLI through FakeEngine + LocalProvider stack. Plus
+  `setLogRecordFactory` hardening on the CLI filter install (logger-
+  filters do NOT run during child-logger propagation; the factory
+  override redacts every record at birth). `EPHEMERAL_CAPABILITIES`
+  gains `("fake", "local"): True`. USER-ORDERED GATE re-verified
+  RED→GREEN against all 3 tests (removed basename register, flipped
+  STRICT delete_on_completion, removed filter install — each broke
+  the corresponding test as expected). 3/3 tests pass.
+  — commit `835704d`
+
+**Docs:**
+- [x] Task 21: `examples/vault/example.yaml` template with safety
+  preamble + all documented fields. `DESIGN.md` Privacy boundary
+  section with the 8 forward-compat contracts. PROGRESS.md Phase 45
+  entry finalised with all 21 task SHAs. — this commit.
+
+**Sub-ε (invariants + docs):**
+- [ ] Task 20: `tests/test_no_unredacted_writes.py` AST invariant.
+- [ ] Task 21: README "Confidentiality mode" section + Phase 45 finalisation.
+
+**Single next action:** Layer 5b shipped. Choose next: Track A (Bedrock
+Luma Ray v2 live smoke, blocked on AWS Support case) or Track B (Veo on
+Vertex AI plan, unblocked since 2026-06-07), per the RESUME block in
+the Phase 43 section. Or open a new layer.
+
+**Pre-existing failure (unrelated to Layer 5b):**
+- `tests/providers/test_skypilot.py::test_t4_fixture_shape` fails on `main`
+  with `AssertionError: T4 not present in launch fixture` — the captured
+  launch fixture got volatile-uuid'd by the redaction pattern in a way
+  the assertion didn't anticipate. Caught at Task 14 verify; not introduced
+  by Task 14. Fix candidate for an early Sub-δ commit.

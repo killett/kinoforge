@@ -47,6 +47,7 @@ from kinoforge.core.interfaces import (
     ModelProfileProvider,
 )
 from kinoforge.core.logging import get_logger
+from kinoforge.core.redaction import RedactionRegistry
 from kinoforge.stores.base import ArtifactStore
 
 _log = get_logger("profiles")
@@ -222,12 +223,37 @@ class JsonProfileCache(ModelProfileProvider):
     def _persist(self, key: CapabilityKey, profile: ModelProfile) -> None:
         """Serialise *profile* and write it to the store under *key*'s name.
 
+        Under an active ``EphemeralSession`` with
+        ``policy.profile_cache_persist=False``, the profile is stashed on
+        the session's ``in_memory_profiles`` instead — so a strict run
+        leaves no profile-cache file on disk.
+
+        Otherwise the payload flows through
+        :meth:`RedactionRegistry.redact_json` before ``put_json`` so any
+        prompt / LoRA tokens registered by the active vault are
+        substituted with placeholders. Public-by-design runs (empty
+        registry) pass through unchanged.
+
         Args:
             key: The ``CapabilityKey`` that identifies this profile.
             profile: The ``ModelProfile`` to persist.
         """
+        from kinoforge.core.ephemeral import EphemeralSession
+
         name = self._profile_name(key)
-        self._store.put_json(self._run_id, name, self._payload_from_profile(profile))
+        payload = self._payload_from_profile(profile)
+        session = EphemeralSession.current()
+        if session is not None and not session.policy.profile_cache_persist:
+            session.in_memory_profiles[str(key)] = profile
+            return
+        redacted = RedactionRegistry.instance().redact_json(payload)
+        if not isinstance(
+            redacted, dict
+        ):  # pragma: no cover — redact_json keeps dict shape
+            raise TypeError(
+                f"redact_json must preserve dict shape, got {type(redacted).__name__}"
+            )
+        self._store.put_json(self._run_id, name, redacted)
 
     # ------------------------------------------------------------------
     # Public test seam

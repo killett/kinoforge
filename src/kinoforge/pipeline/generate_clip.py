@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from kinoforge.core.artifacts import opaque_store_name
 from kinoforge.core.continuity import inject_tail_frame
 from kinoforge.core.interfaces import (
     MODE_ROLE_REQUIREMENTS,
@@ -124,8 +125,12 @@ class GenerateClipStage:
                 if i > 0 and should_chain:
                     tail_bytes = self.engine.extract_last_frame(results[-1])
                     tail_name = f"seg-{i - 1}-tail.png"
+                    # Opaque store-side name: prompt-derived filenames are
+                    # never written to the store. The downstream-visible
+                    # filename label stays as the human "seg-N-tail.png".
+                    store_name = opaque_store_name(tail_bytes, ".png")
                     stored_tail = self.store.put_bytes(
-                        self.run_id, tail_name, tail_bytes
+                        self.run_id, store_name, tail_bytes
                     )
                     # Stores return Artifact(uri=...) with filename=""; pre-populate
                     # filename so downstream consumers don't have to derive it from
@@ -147,9 +152,14 @@ class GenerateClipStage:
                 results.append(art)
         last = results[-1]
 
-        # Persist the bytes derived from the engine's Artifact.
+        # Persist the bytes derived from the engine's Artifact. Use
+        # opaque_store_name so the on-disk filename never carries
+        # prompt-derived material; the engine's friendly name is preserved
+        # only on the user-facing sink (publish) below.
         payload = artifact_bytes(last, self.http_get_bytes)
-        stored = self.store.put_bytes(self.run_id, last.filename, payload)
+        ext = Path(last.filename).suffix or ".bin"
+        store_name = opaque_store_name(payload, ext)
+        stored = self.store.put_bytes(self.run_id, store_name, payload)
 
         # Layer O — also publish to the user-facing sink if one is wired.
         # Read prompt from the LAST segment so chained continuity (i2v)

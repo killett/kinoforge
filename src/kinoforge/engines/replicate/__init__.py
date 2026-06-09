@@ -12,13 +12,19 @@ Wire-shape note:
 from __future__ import annotations
 
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import registry
 from kinoforge.core.auth import Bearer
 from kinoforge.core.credentials import EnvCredentialProvider
-from kinoforge.core.errors import AuthError, KinoforgeError
+from kinoforge.core.errors import (
+    AuthError,
+    EphemeralDeleteHTTPError,
+    KinoforgeError,
+)
 from kinoforge.core.interfaces import (
     CredentialProvider,
     GenerationJob,
@@ -39,6 +45,19 @@ from kinoforge.core.remote_backend import (
 # Override via ``submit_min_interval_s`` on the engine constructor when the
 # throttle clears.
 _REPLICATE_SUBMIT_MIN_INTERVAL_S = 12.0
+
+
+def _urllib_delete(url: str, headers: dict[str, str]) -> int:
+    """Default stdlib HTTP DELETE returning the response status code."""
+    req = urllib.request.Request(  # noqa: S310 — schemes hardcoded by caller
+        url, method="DELETE", headers=headers
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            return int(resp.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+
 
 _PROBE = ModelProfile(
     name="replicate",
@@ -64,6 +83,8 @@ class ReplicateBackend(RemoteSubmitPollBackend):
         *,
         submit_min_interval_s: float = _REPLICATE_SUBMIT_MIN_INTERVAL_S,
         monotonic: Callable[[], float] = time.monotonic,
+        token: str = "",
+        http_delete: Callable[[str, dict[str, str]], int] | None = None,
         **kw: Any,  # noqa: ANN401 — forwarded to RemoteSubmitPollBackend
     ) -> None:
         """Initialise the backend with optional submit-rate spacing.
@@ -74,12 +95,20 @@ class ReplicateBackend(RemoteSubmitPollBackend):
                 Set ``0.0`` to disable (e.g. when Replicate lifts the
                 rate-limit on your account).
             monotonic: Injectable clock for tests.
+            token: Replicate API token used by ``_delete`` for the
+                ``Authorization: Bearer ...`` header. The engine threads
+                this from ``Bearer.client_kwargs()`` at construction.
+            http_delete: Injectable HTTP DELETE seam returning the
+                response status code. Defaults to a stdlib ``urllib``
+                helper; tests inject a fake.
             **kw: Forwarded to :class:`RemoteSubmitPollBackend`.
         """
         super().__init__(**kw)
         self._submit_min_interval_s = float(submit_min_interval_s)
         self._monotonic = monotonic
         self._last_submit_at: float = 0.0
+        self._token = token
+        self._http_delete = http_delete or _urllib_delete
 
     def _submit(self, client: object, job: GenerationJob) -> str:
         """Submit a prediction; return the SDK-issued prediction id.
@@ -173,6 +202,24 @@ class ReplicateBackend(RemoteSubmitPollBackend):
                 raise AuthError(f"replicate auth failed: {exc}") from exc
         raise KinoforgeError(f"replicate: {op} failed: {exc}") from exc
 
+    def _delete(self, job_id: str) -> None:
+        """Issue ``DELETE /v1/predictions/{job_id}`` against the Replicate API.
+
+        200/204/404 are treated as success (404 = already gone). Any other
+        non-2xx raises ``EphemeralDeleteHTTPError`` so
+        ``_delete_with_retries`` can drive the exponential backoff. The
+        Bearer token threaded via the constructor authorises the request.
+        """
+        url = f"https://api.replicate.com/v1/predictions/{job_id}"
+        status = self._http_delete(url, {"Authorization": f"Bearer {self._token}"})
+        if status not in (200, 204, 404):
+            raise EphemeralDeleteHTTPError(f"replicate DELETE returned {status}")
+
+    @classmethod
+    def manual_cleanup_url(cls, job_id: str) -> str:
+        """Return the browser-facing cleanup URL for ``job_id``."""
+        return f"https://replicate.com/predictions/{job_id}"
+
 
 class ReplicateEngine(RemoteSubmitPollEngine):
     """Hosted ``replicate.com`` adapter."""
@@ -200,9 +247,11 @@ class ReplicateEngine(RemoteSubmitPollEngine):
     ) -> RemoteSubmitPollBackend:
         """Build a ``ReplicateBackend`` instance bound to ``cfg`` credentials."""
         del instance
+        token = str(self._auth.client_kwargs().get("api_key", ""))
         return ReplicateBackend(
             client_factory=self._build_client_factory(cfg, None),
             probe_profile=self._probe,
+            token=token,
         )
 
 

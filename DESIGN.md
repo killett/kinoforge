@@ -219,3 +219,32 @@ each interface + exactly one real path now; do not build the named future layers
 9. CLI + examples/configs + README + CI (lint + types + tests on Linux/macOS/Windows)
 
 Acceptance criteria = SPEC.md §"Definition of done" (each written as a failing test first).
+
+
+## Ephemeral workspaces
+
+Phase 45 (Layer 5b) added an always-on content-confidentiality layer
+(vault + redaction) plus an `--ephemeral` flag that flips persistent
+writes to in-memory and triggers provider-side scrub on completion.
+Together they form the "ephemeral workspaces" concept. See
+`docs/superpowers/specs/2026-06-08-ephemeral-workspaces-design.md`.
+
+Forward-compat contracts (any layer that touches these areas MUST honor):
+
+1. External sweeper treats `kinoforge-ephemeral=true` pod tag as
+   alive-by-construction.
+2. New `core/cost.py` (Layer 5 candidate) consults
+   `EphemeralSession.current().policy.cost_sidecar_write`.
+3. New `ArtifactStore` implementations MUST implement `delete_run` +
+   `manual_cleanup_command`.
+4. New `RemoteSubmitPollBackend` subclasses MUST implement `_delete` (or
+   raise `EphemeralDeleteUnsupportedError`) AND register in
+   `EPHEMERAL_CAPABILITIES`.
+5. Future `hooks.post_generate` MUST receive paths via stdin or env var,
+   never argv.
+6. New `OutputSink` subclasses MUST call
+   `RedactionRegistry.instance().add(basename, kind="output")` before
+   `publish` returns.
+7. New splitter adapters — no contract change.
+8. New `_save_fixture` methods MUST check
+   `RedactionRegistry.instance().is_active` and refuse when active.

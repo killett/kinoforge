@@ -89,7 +89,9 @@ class KeyframeStage:
             artifact = self.image_backend.result(job_id)
             png_bytes = artifact_bytes(artifact, self.http_get_bytes)
             filename = f"keyframe-{role}.png"
-            stored = self.store.put_bytes(self.run_id, filename, png_bytes)
+            stored = self.store.put_bytes(  # kinoforge:public-name — role is a short fixed identifier, not prompt-derived
+                self.run_id, filename, png_bytes
+            )
             stored = replace(stored, filename=filename, meta=dict(artifact.meta))
             new_assets.append(ConditioningAsset(kind="image", role=role, ref=stored))
             new_artifacts[f"keyframe-{role}"] = stored

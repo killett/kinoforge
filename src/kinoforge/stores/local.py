@@ -10,6 +10,7 @@ Self-registers under ``"local"`` on import via the store registry.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Literal
 
@@ -164,6 +165,30 @@ class LocalArtifactStore(ArtifactStore):
         if not p.exists():
             raise FileNotFoundError(f"artifact not found: {uri!r}")
         p.unlink()
+
+    def delete_run(self, run_id: str) -> None:
+        """Recursively remove ``<root>/<run_id>/``; idempotent if absent.
+
+        Args:
+            run_id: Run identifier whose directory is wiped.
+        """
+        target = self.root / run_id
+        try:
+            shutil.rmtree(target)
+        except FileNotFoundError:
+            return
+
+    def manual_cleanup_command(self, run_id: str) -> str:
+        """Return ``rm -rf "<absolute path>"`` for the run's directory.
+
+        Args:
+            run_id: Run identifier whose directory the command targets.
+
+        Returns:
+            A copy-pasteable shell command that wipes the run prefix.
+        """
+        target = (self.root / run_id).resolve()
+        return f'rm -rf "{target}"'
 
     def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
         """Return a :class:`FileLock` rooted under ``<root>/_locks/``.

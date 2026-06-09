@@ -157,6 +157,35 @@ class S3ArtifactStore(ArtifactStore):
             raise
         self._client.delete_object(Bucket=bucket, Key=key)
 
+    def delete_run(self, run_id: str) -> None:
+        """Paginate-list then batch-delete every object under ``<run_id>/``.
+
+        Idempotent: a missing prefix produces zero API calls. S3
+        ``delete_objects`` accepts at most 1000 keys per request; this method
+        chunks accordingly.
+
+        Args:
+            run_id: Run namespace whose prefix is wiped.
+        """
+        run_prefix = self._key(run_id, "") + "/"
+        paginator = self._client.get_paginator("list_objects_v2")
+        batch: list[dict[str, str]] = []
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=run_prefix):
+            for obj in page.get("Contents", []):
+                batch.append({"Key": obj["Key"]})
+                if len(batch) == 1000:
+                    self._client.delete_objects(
+                        Bucket=self.bucket, Delete={"Objects": batch}
+                    )
+                    batch = []
+        if batch:
+            self._client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
+
+    def manual_cleanup_command(self, run_id: str) -> str:
+        """Return ``aws s3 rm s3://<bucket>/<prefix><run_id>/ --recursive``."""
+        run_prefix = self._key(run_id, "") + "/"
+        return f"aws s3 rm s3://{self.bucket}/{run_prefix} --recursive"
+
     def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
         """Return an :class:`S3CloudLock` rooted under ``<prefix>/_locks/``.
 

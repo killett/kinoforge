@@ -166,6 +166,21 @@ class FakeS3Client:
         # Paginator only needs keys; pass through the key set.
         return _S3Paginator({k: v[0] for k, v in self._objects.items()})
 
+    def delete_objects(
+        self,
+        *,
+        Bucket: str,  # noqa: N803
+        Delete: dict[str, list[dict[str, str]]],  # noqa: N803
+    ) -> dict[str, list[dict[str, str]]]:
+        """Mirror boto3 shape: Delete={'Objects': [{'Key': str}, ...]}."""
+        wanted = {o["Key"] for o in Delete["Objects"]}
+        self._objects = {
+            (b, k): v
+            for (b, k), v in self._objects.items()
+            if not (b == Bucket and k in wanted)
+        }
+        return {"Deleted": [{"Key": k} for k in wanted]}
+
 
 # ---------------------------------------------------------------------------
 # GCS fakes
@@ -303,6 +318,12 @@ class _FakeBucket:
         for k in sorted(self._blobs):
             if k.startswith(prefix):
                 yield self.blob(k)
+
+    def delete_blobs(self, blobs: list[_FakeBlob]) -> None:
+        """Mirror google.cloud.storage Bucket.delete_blobs — drop each by name."""
+        for blob in blobs:
+            self._blobs.pop(blob.name, None)
+            self._generations.pop(blob.name, None)
 
 
 class FakeGCSClient:

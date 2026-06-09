@@ -99,6 +99,17 @@ class _ReplicateImageInnerBackend(RemoteSubmitPollBackend):
             return str(out[0]) if out else ""
         return str(out) if out else ""
 
+    def _delete(self, job_id: str) -> None:
+        """Scaffold for the ``_delete`` ABC; concrete impl lands in Task 17."""
+        raise NotImplementedError(
+            "_ReplicateImageInnerBackend._delete is filled in Task 17"
+        )
+
+    @classmethod
+    def manual_cleanup_url(cls, job_id: str) -> str:
+        """Scaffold for the ABC; concrete impl lands in Task 17."""
+        return f"https://replicate.com/predictions/{job_id}"
+
 
 class ReplicateImageBackend(ImageBackend):
     """Image-shape adapter wrapping the Replicate submit-poll lifecycle."""

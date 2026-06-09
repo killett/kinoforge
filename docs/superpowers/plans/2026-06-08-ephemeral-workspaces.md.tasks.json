@@ -1,0 +1,221 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-08-ephemeral-workspaces.md",
+  "specPath": "docs/superpowers/specs/2026-06-08-ephemeral-workspaces-design.md",
+  "lastUpdated": "2026-06-08T00:00:00Z",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: core/secret.py \u2014 Secret lightweight newtype",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "4533461",
+      "description": "Goal: Secret wrapper at vault\u2192orchestrator\u2192engine boundary; ABCs stay str.\n\nFiles: src/kinoforge/core/secret.py (new); tests/core/test_secret.py (new).\n\nVerify: pixi run pytest tests/core/test_secret.py -v \u2192 7 pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/secret.py\",\"tests/core/test_secret.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_secret.py -v\",\"subMerge\":\"alpha\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: core/redaction.py \u2014 RedactionRegistry singleton",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "5d12780",
+      "description": "Goal: Process-wide registry of redacted tokens; longest-first matching; redact_json deep walk.\n\nFiles: src/kinoforge/core/redaction.py (new); tests/core/test_redaction.py (new).\n\nVerify: pixi run pytest tests/core/test_redaction.py -v \u2192 13 pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/redaction.py\",\"tests/core/test_redaction.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_redaction.py -v\",\"subMerge\":\"alpha\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: core/redaction.py \u2014 RedactingLogFilter",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "00d8ad6",
+      "blockedBy": [
+        2
+      ],
+      "description": "Goal: logging.Filter calling registry.redact() on record.msg + str args; bypass=True passthrough.\n\nFiles: src/kinoforge/core/redaction.py (append); tests/core/test_redaction.py (append 5 tests).\n\nVerify: pixi run pytest tests/core/test_redaction.py -v \u2192 18 pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/redaction.py\",\"tests/core/test_redaction.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_redaction.py -v\",\"subMerge\":\"alpha\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: core/vault.py \u2014 Vault loader + alias derivation + path validation",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "89a772c",
+      "blockedBy": [
+        2
+      ],
+      "description": "Goal: Vault pydantic + load_vault + compute_profile_alias + register_vault_tokens + repo-root check.\n\nFiles: src/kinoforge/core/vault.py (new); src/kinoforge/core/errors.py (extend); tests/core/test_vault.py (new).\n\nVerify: pixi run pytest tests/core/test_vault.py -v \u2192 14 pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/vault.py\",\"src/kinoforge/core/errors.py\",\"tests/core/test_vault.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_vault.py -v\",\"subMerge\":\"alpha\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: core/artifacts.py \u2014 opaque_store_name helper",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "8f120e5",
+      "description": "Goal: sha256-derived 16-hex prefix + verified extension helper for put_bytes call sites.\n\nFiles: src/kinoforge/core/artifacts.py (new); tests/core/test_artifacts.py (new).\n\nVerify: pixi run pytest tests/core/test_artifacts.py -v \u2192 4 pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/artifacts.py\",\"tests/core/test_artifacts.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_artifacts.py -v\",\"subMerge\":\"alpha\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: ArtifactStore.delete_run + manual_cleanup_command ABC + LocalArtifactStore",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "fd5d56f",
+      "description": "Goal: Add abstract delete_run + manual_cleanup_command on ArtifactStore; implement on LocalArtifactStore.\n\nFiles: src/kinoforge/stores/base.py (extend); src/kinoforge/stores/local.py (extend); tests/stores/test_delete_run.py (new).\n\nVerify: pixi run pytest tests/stores/ -v \u2192 existing + 3 new pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/stores/base.py\",\"src/kinoforge/stores/local.py\",\"tests/stores/test_delete_run.py\"],\"verifyCommand\":\"pixi run pytest tests/stores/ -v\",\"subMerge\":\"beta\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: S3 + GCS delete_run + manual_cleanup_command",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "fd5d56f",
+      "blockedBy": [
+        6
+      ],
+      "description": "Goal: Implement delete_run + manual_cleanup_command on S3ArtifactStore + GCSArtifactStore.\n\nFiles: src/kinoforge/stores/s3.py + gcs.py (extend); tests/stores/test_delete_run.py (append 6); tests/stores/conftest.py (extend fakes).\n\nVerify: pixi run pytest tests/stores/test_delete_run.py -v \u2192 9 pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/stores/s3.py\",\"src/kinoforge/stores/gcs.py\",\"tests/stores/test_delete_run.py\",\"tests/stores/conftest.py\"],\"verifyCommand\":\"pixi run pytest tests/stores/test_delete_run.py -v\",\"subMerge\":\"beta\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Ledger.record + Ledger.touch + Ledger.forget canonical redaction pattern",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "b1258aa",
+      "blockedBy": [
+        2
+      ],
+      "description": "Goal: First adopter of canonical write-site pattern with guarded EphemeralSession import.\n\nFiles: src/kinoforge/core/lifecycle.py (extend); tests/core/test_ledger_redaction.py (new).\n\nVerify: pixi run pytest tests/core/test_ledger_redaction.py tests/core/test_lifecycle_sweeper.py -v \u2192 existing + 6 new pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/lifecycle.py\",\"tests/core/test_ledger_redaction.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_ledger_redaction.py tests/core/test_lifecycle_sweeper.py -v\",\"subMerge\":\"beta\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: JsonProfileCache alias-keyed + canonical redaction",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "ff3d27d",
+      "scopeNote": "Redaction half shipped; alias-keyed filename deferred until orchestrator threads compute_profile_alias.",
+      "blockedBy": [
+        2,
+        4
+      ],
+      "description": "Goal: Profile cache keyed by alias instead of CapabilityKey.derive() hash; canonical _persist pattern.\n\nFiles: src/kinoforge/core/profiles.py (extend); tests/core/test_profile_cache_redaction.py (new).\n\nVerify: pixi run pytest tests/core/test_profile_cache_redaction.py tests/core/test_profiles.py -v \u2192 existing 13 + 7 new pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/profiles.py\",\"tests/core/test_profile_cache_redaction.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_profile_cache_redaction.py tests/core/test_profiles.py -v\",\"subMerge\":\"beta\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: batch_generate _write_summary canonical pattern",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "da41f86",
+      "blockedBy": [
+        2
+      ],
+      "description": "Goal: _write_summary consults EphemeralSession (skip under ephemeral) + RedactionRegistry (redact under default).\n\nFiles: src/kinoforge/core/batch.py (extend); tests/core/test_batch_summary_skipped.py (new).\n\nVerify: pixi run pytest tests/core/test_batch_summary_skipped.py tests/core/test_batch_generate.py -v \u2192 existing 10 + 4 new pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/batch.py\",\"tests/core/test_batch_summary_skipped.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_batch_summary_skipped.py tests/core/test_batch_generate.py -v\",\"subMerge\":\"beta\"}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: LocalOutputSink.publish registers basename",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "fea947a",
+      "blockedBy": [
+        2
+      ],
+      "description": "Goal: Two-line addition registering basename with RedactionRegistry so downstream surfaces redact.\n\nFiles: src/kinoforge/stores/sinks.py (extend); tests/stores/test_sink_basename_registration.py (new).\n\nVerify: pixi run pytest tests/stores/test_sink_basename_registration.py tests/stores/test_sinks.py -v \u2192 existing + 3 new pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/stores/sinks.py\",\"tests/stores/test_sink_basename_registration.py\"],\"verifyCommand\":\"pixi run pytest tests/stores/test_sink_basename_registration.py tests/stores/test_sinks.py -v\",\"subMerge\":\"beta\"}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 12: Downloader opaque_name path",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "7e88398",
+      "blockedBy": [
+        2
+      ],
+      "description": "Goal: opaque_name=True writes <sha>.bin + registers original filename with registry before download.\n\nFiles: src/kinoforge/core/downloader.py (extend); tests/core/test_downloader_opaque_name.py (new).\n\nVerify: pixi run pytest tests/core/test_downloader_opaque_name.py tests/core/test_downloader.py -v \u2192 existing 8 + 5 new pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/downloader.py\",\"tests/core/test_downloader_opaque_name.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_downloader_opaque_name.py tests/core/test_downloader.py -v\",\"subMerge\":\"beta\"}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 13: GenerateClipStage opaque + per-engine _save_fixture refusal",
+      "status": "completed",
+      "lastUpdated": "2026-06-08T00:00:00Z",
+      "commit": "7bbb2c8",
+      "scopeNote": "Opaque store names shipped. Per-engine _save_fixture refusal is a no-op \u2014 no engine source carries _save_fixture today (fixture capture lives in tests/live/* gated by KINOFORGE_SAVE_FIXTURES, outside Task 13 scope).",
+      "blockedBy": [
+        2,
+        5
+      ],
+      "description": "Goal: GenerateClipStage._persist_clip uses opaque_store_name; every engine's _save_fixture refuses if RedactionRegistry.is_active.\n\nFiles: src/kinoforge/pipeline/generate_clip.py + engines/{replicate,runway,fal,hosted,comfyui,diffusers,fake}/__init__.py (extend); tests/pipeline/test_opaque_store_name.py (new); tests/engines/test_fixture_capture_refused.py (new).\n\nVerify: pixi run pytest tests/pipeline/test_opaque_store_name.py tests/engines/test_fixture_capture_refused.py tests/pipeline/ tests/engines/ -v.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/pipeline/generate_clip.py\",\"src/kinoforge/engines/\",\"tests/pipeline/test_opaque_store_name.py\",\"tests/engines/test_fixture_capture_refused.py\"],\"verifyCommand\":\"pixi run pytest tests/pipeline/test_opaque_store_name.py tests/engines/test_fixture_capture_refused.py tests/pipeline/ tests/engines/ -v\",\"subMerge\":\"beta\"}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 14: core/ephemeral.py \u2014 EphemeralSession + EphemeralPolicy + EPHEMERAL_CAPABILITIES",
+      "status": "completed",
+      "blockedBy": [
+        8,
+        9,
+        10,
+        13
+      ],
+      "description": "Goal: Central context manager + frozen policy dataclass + pre-flight capability table. Removes guarded-import shims from Tasks 8\u201313.\n\nFiles: src/kinoforge/core/ephemeral.py (new); src/kinoforge/core/errors.py (extend); src/kinoforge/core/{lifecycle,profiles,batch}.py + engines (de-guard); tests/core/test_ephemeral.py (new).\n\nVerify: pixi run pytest tests/core/test_ephemeral.py -v && pixi run test \u2192 10 new + full suite passes.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/ephemeral.py\",\"src/kinoforge/core/errors.py\",\"src/kinoforge/core/lifecycle.py\",\"src/kinoforge/core/profiles.py\",\"src/kinoforge/core/batch.py\",\"tests/core/test_ephemeral.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_ephemeral.py -v && pixi run test\",\"subMerge\":\"gamma\"}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 15: EphemeralSession.__exit__ store cleanup + pod naming",
+      "status": "completed",
+      "blockedBy": [
+        6,
+        14
+      ],
+      "description": "Goal: __exit__ calls store.delete_run for every registered store; EphemeralStoreCleanupFailedError UX (no preserved-file enumeration). Pod naming reads policy.\n\nFiles: src/kinoforge/core/ephemeral.py + errors.py + orchestrator.py + providers/runpod/__init__.py (extend); tests/core/test_ephemeral_run_cleanup.py (new).\n\nVerify: pixi run pytest tests/core/test_ephemeral_run_cleanup.py tests/providers/test_runpod.py tests/core/test_orchestrator.py -v.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/ephemeral.py\",\"src/kinoforge/core/errors.py\",\"src/kinoforge/core/orchestrator.py\",\"src/kinoforge/providers/runpod/__init__.py\",\"tests/core/test_ephemeral_run_cleanup.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_ephemeral_run_cleanup.py tests/providers/test_runpod.py tests/core/test_orchestrator.py -v\",\"subMerge\":\"gamma\"}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 16: RemoteSubmitPollBackend._delete ABC + retries + error classes",
+      "status": "completed",
+      "blockedBy": [
+        14
+      ],
+      "description": "Goal: Abstract _delete + manual_cleanup_url; concrete _delete_with_retries (1s/2s/4s); result() calls under ephemeral. EphemeralDeleteFailedError __str__ matches spec.\n\nFiles: src/kinoforge/engines/hosted/remote_submit.py (extend); src/kinoforge/core/errors.py (extend); tests/engines/test_delete_with_retries.py (new).\n\nVerify: pixi run pytest tests/engines/test_delete_with_retries.py -v \u2192 6 pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/engines/hosted/remote_submit.py\",\"src/kinoforge/core/errors.py\",\"tests/engines/test_delete_with_retries.py\"],\"verifyCommand\":\"pixi run pytest tests/engines/test_delete_with_retries.py -v\",\"subMerge\":\"delta\"}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 17: Per-engine _delete + manual_cleanup_url (Replicate/Runway/Fal)",
+      "status": "completed",
+      "blockedBy": [
+        16
+      ],
+      "description": "Goal: Replicate DELETE /v1/predictions/{id}, Runway DELETE /v1/tasks/{id}, Fal raises EphemeralDeleteUnsupportedError.\n\nFiles: src/kinoforge/engines/{replicate,runway,fal}/__init__.py (extend); tests/engines/test_delete_on_completion.py (new, 12); tests/engines/test_fal_ephemeral_refused.py (new, 2).\n\nVerify: pixi run pytest tests/engines/test_delete_on_completion.py tests/engines/test_fal_ephemeral_refused.py -v \u2192 14 pass.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/engines/replicate/__init__.py\",\"src/kinoforge/engines/runway/__init__.py\",\"src/kinoforge/engines/fal/__init__.py\",\"tests/engines/test_delete_on_completion.py\",\"tests/engines/test_fal_ephemeral_refused.py\"],\"verifyCommand\":\"pixi run pytest tests/engines/test_delete_on_completion.py tests/engines/test_fal_ephemeral_refused.py -v\",\"subMerge\":\"delta\"}\n```"
+    },
+    {
+      "id": 18,
+      "subject": "Task 18: CLI flags + pre-flight + session wrap",
+      "status": "completed",
+      "blockedBy": [
+        4,
+        14
+      ],
+      "description": "Goal: --vault / --ephemeral / --debug-show-secrets flags; pre-flight EPHEMERAL_CAPABILITIES gate; install RedactingLogFilter; wrap generate/batch/deploy in EphemeralSession.\n\nFiles: src/kinoforge/cli.py (extend); tests/cli/test_preflight_ephemeral.py (new, 5); tests/cli/test_flags_validation.py (new, 3).\n\nVerify: pixi run pytest tests/cli/test_preflight_ephemeral.py tests/cli/test_flags_validation.py tests/test_cli.py -v.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/cli.py\",\"tests/cli/test_preflight_ephemeral.py\",\"tests/cli/test_flags_validation.py\"],\"verifyCommand\":\"pixi run pytest tests/cli/test_preflight_ephemeral.py tests/cli/test_flags_validation.py tests/test_cli.py -v\",\"subMerge\":\"cli\"}\n```"
+    },
+    {
+      "id": 19,
+      "subject": "Task 19: tests/test_no_unredacted_writes.py \u2014 CI invariant gate (USER-GATE)",
+      "status": "completed",
+      "blockedBy": [
+        18
+      ],
+      "description": "USER-ORDERED GATE \u2014 NON-SKIPPABLE.\n\nGoal: AST-based scan of src/kinoforge/ enforcing 7 ACs (put_json canonical, put_bytes opaque, OutputSink registers basename, _save_fixture is_active check, cli installs filter, ArtifactStores implement delete_run+cleanup, no rogue path writes).\n\nFiles: tests/test_no_unredacted_writes.py (new).\n\nVerify: pixi run pytest tests/test_no_unredacted_writes.py -v \u2192 7 ACs pass. Then deliberate-violation cycle (add bogus put_json, confirm AC1 FAILS, revert, confirm PASS).\n\n```json:metadata\n{\"files\":[\"tests/test_no_unredacted_writes.py\"],\"verifyCommand\":\"pixi run pytest tests/test_no_unredacted_writes.py -v\",\"userGate\":true,\"tags\":[\"user-gate\"],\"requiresUserSpecification\":false,\"requireEvidenceTokens\":[[\"pass\",\"PASS\"],[\"fail-on-violation\",\"FAIL\",\"violation\"]],\"subMerge\":\"epsilon\"}\n```"
+    },
+    {
+      "id": 20,
+      "subject": "Task 20: E2E integration tests \u2014 proof points (USER-GATE)",
+      "status": "completed",
+      "blockedBy": [
+        17,
+        18
+      ],
+      "description": "USER-ORDERED GATE \u2014 NON-SKIPPABLE.\n\nGoal: 3 deterministic E2E tests using FakeEngine + LocalProvider proving (a) only output dir survives ephemeral, (b) no log record contains prompt body, (c) post-publish basename redacted in logs.\n\nFiles: tests/integration/{__init__.py,test_ephemeral_only_output_dir_survives.py,test_logging_filter_e2e.py,test_output_filename_redacted_in_logs.py} (new).\n\nVerify: pixi run pytest tests/integration/ -v \u2192 3 pass. Then break-then-revert cycle per test confirming failure assertion.\n\n```json:metadata\n{\"files\":[\"tests/integration/__init__.py\",\"tests/integration/test_ephemeral_only_output_dir_survives.py\",\"tests/integration/test_logging_filter_e2e.py\",\"tests/integration/test_output_filename_redacted_in_logs.py\"],\"verifyCommand\":\"pixi run pytest tests/integration/ -v\",\"userGate\":true,\"tags\":[\"user-gate\"],\"requiresUserSpecification\":false,\"requireEvidenceTokens\":[[\"pass\",\"PASS\"],[\"fail-on-break\",\"FAIL\",\"broken\"]],\"subMerge\":\"integration\"}\n```"
+    },
+    {
+      "id": 21,
+      "subject": "Task 21: Documentation + PROGRESS.md update",
+      "status": "completed",
+      "blockedBy": [
+        19,
+        20
+      ],
+      "description": "Goal: examples/vault/example.yaml template; DESIGN.md 'Privacy boundary' section; PROGRESS.md Phase 45 entry. No README change; no CLAUDE.md change.\n\nFiles: examples/vault/example.yaml (new); DESIGN.md + PROGRESS.md (extend).\n\nVerify: git log --oneline | head -25 && pixi run test && pixi run pytest tests/test_no_unredacted_writes.py -v.\n\n```json:metadata\n{\"files\":[\"examples/vault/example.yaml\",\"DESIGN.md\",\"PROGRESS.md\"],\"verifyCommand\":\"git log --oneline | head -25 && pixi run test && pixi run pytest tests/test_no_unredacted_writes.py -v\",\"subMerge\":\"docs\"}\n```"
+    }
+  ]
+}

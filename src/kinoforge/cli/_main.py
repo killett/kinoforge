@@ -34,10 +34,20 @@ from kinoforge.cli._commands import (
 from kinoforge.cli.context import SessionContext
 from kinoforge.cli.sidecar import SIDECAR_NAME
 from kinoforge.core.dotenv_loader import load_env_file
+from kinoforge.core.ephemeral import EPHEMERAL_CAPABILITIES, EphemeralSession
 from kinoforge.core.errors import (
     ConfigError,
     SidecarMigrationBlocked,
     SidecarMismatch,
+    VaultError,
+)
+from kinoforge.core.redaction import RedactingLogFilter, RedactionRegistry
+from kinoforge.core.vault import Vault, load_vault, register_vault_tokens
+
+# Subcommands that never trigger orchestration. ``--ephemeral`` is a no-op
+# for them; emit a one-line stderr note rather than running pre-flight.
+_READ_ONLY_CMDS: frozenset[str] = frozenset(
+    {"list", "status", "stop", "destroy", "forget", "reap", "gc"}
 )
 
 _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
@@ -53,6 +63,117 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "reap": _cmd_reap,
     "gc": _cmd_gc,
 }
+
+
+def _install_redacting_filter(*, bypass: bool) -> None:
+    """Install ``RedactingLogFilter`` AND a record-factory redactor.
+
+    Two complementary layers:
+
+    1. ``RedactingLogFilter`` on root + ``kinoforge`` loggers — runs for
+       any record emitted DIRECTLY to those loggers (the logger-filter
+       chain is consulted by ``Logger.handle()``).
+    2. ``setLogRecordFactory`` override — Python's logger-filters do NOT
+       run during child-logger propagation; only handler-filters do.
+       Hooking the factory redacts every record AT BIRTH, so propagated
+       records (e.g. ``kinoforge.<submodule>`` logs flowing up to root's
+       handler) are caught regardless of where filters live downstream.
+
+    Both layers are idempotent — repeated ``main()`` calls within one
+    Python process (as the test suite does) install at most one filter
+    per logger and one factory override.
+    """
+    import logging
+
+    flt = RedactingLogFilter(RedactionRegistry.instance(), bypass=bypass)
+    for logger in (logging.getLogger("kinoforge"), logging.getLogger()):
+        existing = [f for f in logger.filters if isinstance(f, RedactingLogFilter)]
+        for f in existing:
+            logger.removeFilter(f)
+        logger.addFilter(flt)
+
+    # Record-factory hook: catches propagated child-logger records that
+    # the logger-filter chain misses. Uses the BASE factory (the original
+    # default), not the previously installed redactor — so repeated calls
+    # don't double-wrap.
+    registry = RedactionRegistry.instance()
+    base_factory = getattr(
+        _install_redacting_filter, "_base_factory", logging.getLogRecordFactory()
+    )
+    _install_redacting_filter._base_factory = base_factory  # type: ignore[attr-defined]
+
+    def _redacting_factory(*args: object, **kwargs: object) -> logging.LogRecord:
+        record = base_factory(*args, **kwargs)
+        if bypass:
+            return record
+        if isinstance(record.msg, str):
+            record.msg = registry.redact(record.msg)
+        if record.args:
+            if isinstance(record.args, tuple):
+                record.args = tuple(
+                    registry.redact(a) if isinstance(a, str) else a for a in record.args
+                )
+            elif isinstance(record.args, dict):
+                record.args = {
+                    k: (registry.redact(v) if isinstance(v, str) else v)
+                    for k, v in record.args.items()
+                }
+        return record
+
+    logging.setLogRecordFactory(_redacting_factory)
+
+
+def _load_vault_or_none(vault_arg: str | None) -> Vault | None:
+    """Load vault from ``--vault`` flag, ``KINOFORGE_VAULT`` env, or ``None``.
+
+    On success, also registers the vault's prompt-derived tokens with the
+    ``RedactionRegistry`` so the logging filter substitutes them.
+    """
+    import os
+
+    path = vault_arg or os.environ.get("KINOFORGE_VAULT")
+    if path is None:
+        return None
+    vault = load_vault(Path(path))
+    register_vault_tokens(vault)
+    return vault
+
+
+def _preflight_error_block(engine: str, provider: str | None) -> str:
+    return (
+        "ERROR: --ephemeral is not supported for this configuration.\n"
+        f"  engine:    {engine}\n"
+        f"  provider:  {provider or '(none — hosted API)'}\n"
+        f"  reason:    {engine} has no public prediction-delete endpoint.\n"
+        "\n"
+        "  Use one of these instead:\n"
+        "    engine: replicate     (DELETE /v1/predictions/{id})\n"
+        "    engine: runway        (DELETE /v1/tasks/{id})\n"
+        "    engine: comfyui       (any pod-based provider)\n"
+        "    engine: diffusers     (any pod-based provider)\n"
+        "\n"
+        "  Or drop --ephemeral to allow provider-side record retention."
+    )
+
+
+def _preflight_ephemeral(ctx: SessionContext) -> str | None:
+    """Look up ``(engine, provider)`` in ``EPHEMERAL_CAPABILITIES``.
+
+    Returns ``None`` when the combination is supported (or no config is
+    bound to the session) and an error-block string when refused.
+    """
+    cfg = ctx.cfg
+    if cfg is None:
+        return None
+    engine_kind = cfg.engine.kind if cfg.engine else ""
+    provider = cfg.compute.provider if cfg.compute else None
+    # Provider-less hosted engines (replicate, runway) carry None in the
+    # capability table.
+    key = (engine_kind, provider) if cfg.compute else (engine_kind, None)
+    supported = EPHEMERAL_CAPABILITIES.get(key)
+    if not supported:
+        return _preflight_error_block(engine_kind, provider)
+    return None
 
 
 def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentParser:
@@ -81,6 +202,32 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         help=(
             "path to a .env file containing kinoforge credentials "
             "(default: ./.env if it exists; absent default is silent)"
+        ),
+    )
+    parser.add_argument(
+        "--vault",
+        default=None,
+        metavar="PATH",
+        help=(
+            "path to a vault YAML file (outside the repo) holding the "
+            "positive prompt and optional LoRA references. Or set "
+            "KINOFORGE_VAULT."
+        ),
+    )
+    parser.add_argument(
+        "--ephemeral",
+        action="store_true",
+        help=(
+            "ephemeral run: skip local writes, delete provider records "
+            "on completion, in-memory run id."
+        ),
+    )
+    parser.add_argument(
+        "--debug-show-secrets",
+        action="store_true",
+        help=(
+            "bypass logging redaction (forbidden under --ephemeral; for "
+            "local debugging only)."
         ),
     )
 
@@ -270,6 +417,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     state_dir = Path(args.state_dir)
 
+    # Confidentiality flags — validate exclusion + load vault before any work.
+    if args.ephemeral and args.debug_show_secrets:
+        print(
+            "error: --ephemeral and --debug-show-secrets are mutually "
+            "exclusive (the debug flag bypasses log redaction, which "
+            "ephemeral requires).",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        _load_vault_or_none(args.vault)
+    except VaultError as exc:
+        print(f"error: vault: {exc}", file=sys.stderr)
+        return 2
+    _install_redacting_filter(bypass=args.debug_show_secrets)
+
     # Load .env secrets before dispatch; shell-set values always win.
     env_file = Path(args.env_file) if args.env_file is not None else None
     load_env_file(env_file)
@@ -302,7 +465,23 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    return _DISPATCH[args.cmd](args, ctx)
+    # Pre-flight: refuse --ephemeral on engine/provider combos that cannot
+    # honour delete-on-completion. Read-only subcommands emit a stderr
+    # note and skip the gate (they never trigger orchestration).
+    if args.ephemeral:
+        if args.cmd in _READ_ONLY_CMDS:
+            print(
+                "note: --ephemeral has no effect on read-only subcommands",
+                file=sys.stderr,
+            )
+        else:
+            err_block = _preflight_ephemeral(ctx)
+            if err_block is not None:
+                print(err_block, file=sys.stderr)
+                return 2
+
+    with EphemeralSession(enabled=args.ephemeral):
+        return _DISPATCH[args.cmd](args, ctx)
 
 
 __all__ = [

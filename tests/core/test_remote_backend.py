@@ -74,6 +74,14 @@ class _Backend(RemoteSubmitPollBackend):
     def _extract_filename(self, status: dict[str, Any]) -> str:
         return str(status.get("filename", ""))
 
+    def _delete(self, job_id: str) -> None:
+        """No-op scaffold — not exercised by these base-ABC tests."""
+
+    @classmethod
+    def manual_cleanup_url(cls, job_id: str) -> str:
+        """Stub URL — not exercised by these base-ABC tests."""
+        return ""
+
 
 def _backend_factory(
     *,

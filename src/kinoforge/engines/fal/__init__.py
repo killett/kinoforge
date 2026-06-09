@@ -215,6 +215,24 @@ class FalBackend(GenerationBackend):
         """Return the per-request Authorization header dict."""
         return {"Authorization": f"Key {self._api_key}"}
 
+    def _delete(self, job_id: str) -> None:
+        """Raise — fal has no public DELETE endpoint for queue requests.
+
+        Pre-flight (Task 18) refuses ephemeral for the fal engine before
+        any submit fires, so this branch is belt-and-suspenders. Surface
+        ``EphemeralDeleteUnsupportedError`` rather than silently no-op so
+        a buggy caller bypassing pre-flight cannot quietly leak the
+        prompt-laden record.
+        """
+        from kinoforge.core.errors import EphemeralDeleteUnsupportedError
+
+        raise EphemeralDeleteUnsupportedError("fal has no public DELETE endpoint")
+
+    @classmethod
+    def manual_cleanup_url(cls, job_id: str) -> str:
+        """Return ``""`` — fal has no browser-facing per-job dashboard URL."""
+        return ""
+
     def submit(self, job: GenerationJob) -> str:
         """POST the spec to ``{queue_base}/{endpoint}`` and return the request_id.
 
