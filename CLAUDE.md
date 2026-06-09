@@ -33,6 +33,13 @@ a design or plan exists (see Durability rules).
   `tools/preflight.py` for the contract. There is NO operator-side env-switch — Claude runs inside
   a container and the user does not (and should not) need to `docker exec` to flip a flag. Live
   spend is authorised by user statement in conversation, not by env-var ceremony.
+- **Log every qualifying successful generation.** Any kinoforge generation that produces a video AND
+  introduces a new capability axis (new mode — t2v / i2v / flf2v / keyframe — new provider, engine,
+  model, or YAML shape that changes the reproduction recipe, new kinoforge command, etc.) AND was
+  NOT run with the `--ephemeral` flag MUST get a new detailed section in
+  `/workspace/successful-generations.md` per the schema in that file's preamble. Same-tuple
+  `(provider, engine, model, mode)` repeats get a "See also" line under the existing TOC entry, not
+  a new section. Generations invoked with `--ephemeral` must NEVER appear in that file.
 
 ## Process & testing
 - **Superpowers owns the workflow:** brainstorm → plan → execute, with red/green TDD and two-stage
