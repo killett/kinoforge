@@ -410,3 +410,33 @@ def test_fake_engine_extract_last_frame_returns_deterministic_bytes() -> None:
     out = engine.extract_last_frame(input_artifact)
 
     assert out == b"FAKE_TAIL:prev.mp4"
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_fake_engine_model_identity_returns_spec_model_slug() -> None:
+    """FakeEngine reads model slug from spec.model for offline test pins.
+
+    Bug catch: returns empty string even when spec.model is set, breaking
+    per-engine assertions in downstream orchestrator tests.
+    """
+    from kinoforge.core import registry
+
+    eng = registry.get_engine("fake")()
+    cfg: dict[str, object] = {"spec": {"model": "fake-model"}}
+    assert eng.model_identity(cfg) == "fake-model"
+
+
+def test_fake_engine_model_identity_empty_on_missing_spec() -> None:
+    """FakeEngine returns empty string when spec or model is absent.
+
+    Bug catch: KeyError raised on bare cfg breaks slug derivation for all clips.
+    """
+    from kinoforge.core import registry
+
+    eng = registry.get_engine("fake")()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"spec": {}}) == ""
