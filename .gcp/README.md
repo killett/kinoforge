@@ -12,6 +12,8 @@ Gitignored. Never commit. Survives container restarts (see auto-memory
 |----------------------|----------------------------------------------------------|
 | `kinoforge-sa.json`  | Service-account key for `kinoforge-runner@…`.            |
 | `gcloud-config/`     | `gcloud` config dir (active account, project, tokens).   |
+| `kms-test-key.name`  | KMS key resource name (Layer W CMEK bucket).             |
+| `perms-snapshot.json`| SkyPilot-perms probe snapshot (Layer W+α).               |
 | `README.md`          | This file.                                               |
 
 `pixi.toml` sets `GOOGLE_APPLICATION_CREDENTIALS` and `CLOUDSDK_CONFIG` in
@@ -22,6 +24,8 @@ CLI both auto-discover these.
 
 - Email: `kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com`
 - Project: `<GCP_PROJECT>`
+- Operator account: `<OPERATOR_EMAIL>`
+- Billing account: `<GCP_BILLING_ACCOUNT>`
 - Roles (granted on the project):
   - `roles/compute.admin`
   - `roles/iam.securityAdmin` ← lets Claude grant additional roles to self
@@ -32,7 +36,13 @@ CLI both auto-discover these.
   - `roles/storage.admin` ← covers all GCS bucket + object ops.
   - `roles/viewer`
 
-## Real-cloud test bucket (Phase TBD — Layer S3GCS-verify)
+> Migrated 2026-06-09 from previous project `<GCP_PROJECT>`
+> (operator account `[personal-email-redacted]`, billing
+> `<GCP_BILLING_ACCOUNT>`). Old project scheduled for soft-delete after
+> verification completes; old SA key kept at `kinoforge-sa.json.old`
+> in the same directory for rollback.
+
+## Real-cloud test bucket
 
 - Bucket: `gs://<GCS_BUCKET>`
 - Location: `US-CENTRAL1`
@@ -57,9 +67,10 @@ Lives in the `live-skypilot` pixi feature env. Invoke via:
 pixi run -e live-skypilot gcloud <args>
 ```
 
-Already configured account: `kinoforge-runner@…` (default).
-Operator account: `[personal-email-redacted]` (also authenticated; switch with
-`gcloud config set account [personal-email-redacted]`).
+Already configured account: `kinoforge-runner@…` (default via
+`GOOGLE_APPLICATION_CREDENTIALS`).
+Operator account: `<OPERATOR_EMAIL>` (also authenticated; switch with
+`gcloud config set account <OPERATOR_EMAIL>`).
 
 ## Rotation
 

@@ -280,7 +280,9 @@ def bootstrap_gcp() -> None:
 
     # Derive project id from the service-account key (avoids a separate env var).
     sa_email = _read_sa_email()
-    project_id = sa_email.split("@")[1].split(".iam.")[0]  # "<GCP_PROJECT>"
+    project_id = sa_email.split("@")[1].split(".iam.")[
+        0
+    ]  # e.g. "<GCP_PROJECT>"
 
     location_path = f"projects/{project_id}/locations/{GCP_LOCATION}"
     keyring_path = f"{location_path}/keyRings/{GCP_KEYRING}"

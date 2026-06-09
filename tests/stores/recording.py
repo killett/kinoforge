@@ -43,7 +43,13 @@ def _kinoforge_version() -> str:
 
 _REDACT_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"<AWS_ACCOUNT>"), "<AWS_ACCOUNT>"),
-    (re.compile(r"<GCP_PROJECT>"), "<GCP_PROJECT>"),
+    # Generalized to match the original <GCP_PROJECT> (6 hex) AND the
+    # 2026-06-09 swap to <GCP_PROJECT> (8 hex). Anchored on the
+    # `kinoforge-(dev|prod)-` prefix + a run of 4-12 lowercase hex chars; the
+    # wide span absorbs the historical 6-char suffix and the post-swap 8-char
+    # suffix without hardcoding either. Extend the alt if a future env tag
+    # (test, staging, ...) lands.
+    (re.compile(r"kinoforge-(?:dev|prod)-[0-9a-f]{4,12}"), "<GCP_PROJECT>"),
     (
         re.compile(r"X-Amz-Signature=[^&\s\"]+", re.IGNORECASE),
         "X-Amz-Signature=<REDACTED>",
