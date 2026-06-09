@@ -49,6 +49,7 @@ compute:
 # DiffusersBackend.submit reads spec.pipeline + spec.scheduler to construct
 # the request body for the headless diffusers server.
 spec:
+  model: "stabilityai/stable-video-diffusion-img2vid-xt"
   pipeline: "DiffusionPipeline"
   scheduler: "DDIMScheduler"
 

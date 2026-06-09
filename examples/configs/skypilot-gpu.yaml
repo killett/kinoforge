@@ -40,8 +40,8 @@ compute:
     max_usd_per_hr: 1.00
     disk_gb: 100
   lifecycle:
-    idle_timeout_s: 180
-    max_lifetime_s: 1800
-    job_timeout_s: 600
-    boot_timeout_s: 900
-    budget_usd: 0.10
+    idle_timeout: 180
+    max_lifetime: 1800
+    job_timeout: 600
+    boot_timeout: 900
+    budget: 0.10
