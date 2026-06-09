@@ -19,6 +19,7 @@ from pathlib import Path
 
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.logging import get_logger
+from kinoforge.core.redaction import RedactionRegistry
 from kinoforge.outputs import register_sink
 from kinoforge.outputs.base import OutputPublishError, format_filename, slugify
 
@@ -119,6 +120,17 @@ class LocalOutputSink:
             except OSError:
                 pass
             raise OutputPublishError(f"failed to publish to {path}: {exc}") from exc
+
+        # Register the basename with the redaction registry so every
+        # downstream surface that interpolates path or basename (logs,
+        # stdout, JSON summary, error tracebacks) substitutes
+        # ``<output:<hash6>>``. The file on disk keeps its permissive name;
+        # only its mention in logged or persisted strings is redacted.
+        # Length guard mirrors RedactionRegistry's minimum-token rule —
+        # short filenames (< 4 chars) would otherwise raise ValueError.
+        basename = path.name
+        if len(basename) >= 4:
+            RedactionRegistry.instance().add(basename, kind="output")
 
         _log.info("output published: %s", path)
         return str(path)

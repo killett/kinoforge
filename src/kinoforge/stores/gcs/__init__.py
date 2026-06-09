@@ -174,6 +174,26 @@ class GCSArtifactStore(ArtifactStore):
         except self._not_found_exc:
             raise FileNotFoundError(f"artifact not found: {uri!r}") from None
 
+    def delete_run(self, run_id: str) -> None:
+        """List then batch-delete every blob under ``<run_id>/``.
+
+        Idempotent: an empty prefix produces zero ``delete_blobs`` calls.
+
+        Args:
+            run_id: Run namespace whose prefix is wiped.
+        """
+        run_prefix = self._key(run_id, "") + "/"
+        blobs = list(
+            self._bucket_handle.list_blobs(prefix=run_prefix, retry=_GCS_RETRY)
+        )
+        if blobs:
+            self._bucket_handle.delete_blobs(blobs)
+
+    def manual_cleanup_command(self, run_id: str) -> str:
+        """Return ``gcloud storage rm -r gs://<bucket>/<prefix><run_id>/``."""
+        run_prefix = self._key(run_id, "") + "/"
+        return f"gcloud storage rm -r gs://{self.bucket}/{run_prefix}"
+
     def acquire_lock(self, key: str, *, ttl_s: float) -> Lock:
         """Return a :class:`GCSCloudLock` rooted under ``<prefix>/_locks/``.
 

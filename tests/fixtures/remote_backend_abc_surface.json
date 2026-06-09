@@ -1,6 +1,8 @@
 {
   "RemoteSubmitPollBackend": {
     "_client": "(self) -> 'object'",
+    "_delete": "(self, job_id: 'str') -> 'None'",
+    "_delete_with_retries": "(self, job_id: 'str', *, retries: 'int' = 3, sleep_fn: 'Callable[[float], None]' = <built-in function sleep>) -> 'None'",
     "_endpoints_map": "(self) -> 'dict[str, str]'",
     "_extract_filename": "(self, status: 'dict[str, Any]') -> 'str'",
     "_extract_output_url": "(self, status: 'dict[str, Any]') -> 'str'",
@@ -11,6 +13,7 @@
     "capabilities": "(self) -> 'ModelProfile'",
     "endpoints": "(self) -> 'dict[str, str]'",
     "inspect_capabilities": "(self) -> 'ModelProfile'",
+    "manual_cleanup_url": "(job_id: 'str') -> 'str'",
     "result": "(self, job_id: 'str') -> 'Artifact'",
     "submit": "(self, job: 'GenerationJob') -> 'str'"
   },
