@@ -7,6 +7,8 @@ No real git, network, or ComfyUI traffic occurs.
 from __future__ import annotations
 
 import copy
+import email.message
+import logging as _stdlib_logging
 import urllib.error
 import urllib.parse
 from typing import Any
@@ -1707,58 +1709,165 @@ def test_comfyui_real_shape_required_keys() -> None:
     assert body["outputs"], "outputs dict empty"
 
 
-def test_result_logs_diagnostic_on_http_error_before_reraise(
+_EMPTY_HEADERS: email.message.Message = email.message.Message()
+
+
+def _make_http_error(
+    url: str, code: int = 404, msg: str = "Not Found"
+) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        url=url, code=code, msg=msg, hdrs=_EMPTY_HEADERS, fp=None
+    )
+
+
+def test_result_retries_on_transient_404_then_returns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """result() emits a WARNING with poll_idx + URL + code before re-raising HTTPError.
+    """result() retries on HTTPError 404 (transient proxy startup race) until 200.
 
-    Catches the Phase 46 Task 7 carry-forward 404 regression in a
-    debuggable form: production traceback was just
-    ``urllib.error.HTTPError: HTTP Error 404: Not Found`` with no URL
-    context, no poll index, no body. Without these fields, root cause
-    triage requires another live-spend reproduction. With them, the
-    next live re-fire prints enough state to discriminate proxy 404
-    (pod terminated) from ComfyUI 404 (impossible — route always
-    returns 200) from URL malformation.
+    Live-pod root cause (Phase 46 Task 7 carry-forward): RunPod's
+    HTTP proxy serves /system_stats 200 the moment ComfyUI binds the
+    listener, but POST routes and parameterised paths (/history/{id},
+    /upload/image) can 404 for a short startup window. After warmup
+    the same paths return 200 indefinitely. Probed live on pod
+    xawdweboxapubz 2026-06-08 — 50 sequential warm POSTs all 200.
 
-    Bug it catches: a regression that strips the diagnostic log line
-    would leave production failures unactionable.
+    Each 404 emits a WARNING with poll_idx + URL + code; loop continues
+    until 200 or _MAX_POLL exhausted.
+
+    Bug it catches: a regression that drops the retry would re-introduce
+    the production 404 traceback from Phase 46 Task 7.
     """
-    import logging
+    _DONE_FIXTURE = _load_comfy_fixture("history_done.json")
+    _PROMPT_ID = next(iter(_DONE_FIXTURE))
 
-    _PROMPT_ID = "abc12345-def6-7890-abcd-ef1234567890"
-    _BASE = "http://example-pod-8188.proxy.example.net"
-
-    import email.message
-
-    _empty_headers: email.message.Message = email.message.Message()
+    _RUNNING: dict[str, Any] = {_PROMPT_ID: {"outputs": {}}}
+    calls = {"n": 0}
 
     def get_spy(url: str) -> dict[str, Any]:
-        raise urllib.error.HTTPError(
-            url=url, code=404, msg="Not Found", hdrs=_empty_headers, fp=None
-        )
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise _make_http_error(url, 404, "Not Found")
+        if calls["n"] == 3:
+            return _RUNNING
+        return _DONE_FIXTURE
 
-    engine = _make_engine(http_get=get_spy, sleep=lambda s: None)
     backend = ComfyUIBackend(
         http_post=lambda u, b: {},
         http_get=get_spy,
-        base_url=_BASE,
+        base_url="http://test-pod-8188.proxy.example.net",
         probe=_DEFAULT_PROBE,
         sleep=lambda s: None,
     )
-    del engine  # only used to keep _make_engine signature consistent
 
-    with caplog.at_level(logging.WARNING, logger="kinoforge.comfyui"):
-        with pytest.raises(urllib.error.HTTPError):
-            backend.result(_PROMPT_ID)
+    with caplog.at_level(_stdlib_logging.WARNING, logger="kinoforge.comfyui"):
+        artifact = backend.result(_PROMPT_ID)
 
-    diagnostic = [
+    assert isinstance(artifact, Artifact)
+    assert calls["n"] == 4  # 2 × 404, 1 × empty, 1 × done
+    warnings = [
         r
         for r in caplog.records
-        if r.name == "kinoforge.comfyui" and r.levelno >= logging.WARNING
+        if r.name == "kinoforge.comfyui" and r.levelno >= _stdlib_logging.WARNING
     ]
-    assert diagnostic, "expected a WARNING+ log record from kinoforge.comfyui"
-    msg = diagnostic[0].getMessage()
-    assert f"/history/{_PROMPT_ID}" in msg, f"URL absent from log: {msg!r}"
-    assert "404" in msg, f"HTTP code absent from log: {msg!r}"
-    assert "poll" in msg.lower(), f"poll index absent from log: {msg!r}"
+    assert len(warnings) >= 2, "expected diagnostic WARNING per 404"
+    msg = warnings[0].getMessage()
+    assert "404" in msg
+    assert f"/history/{_PROMPT_ID}" in msg
+
+
+def test_result_raises_after_persistent_404(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """result() raises HTTPError when 404 persists past _MAX_POLL."""
+    _PROMPT_ID = "abc12345-def6-7890-abcd-ef1234567890"
+
+    def get_spy(url: str) -> dict[str, Any]:
+        raise _make_http_error(url, 404)
+
+    backend = ComfyUIBackend(
+        http_post=lambda u, b: {},
+        http_get=get_spy,
+        base_url="http://test-pod-8188.proxy.example.net",
+        probe=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+    )
+
+    with caplog.at_level(_stdlib_logging.WARNING, logger="kinoforge.comfyui"):
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            backend.result(_PROMPT_ID)
+
+    assert exc.value.code == 404
+
+
+def test_submit_retries_upload_image_on_transient_404() -> None:
+    """submit() retries POST /upload/image on transient 404 then continues."""
+    upload_attempts: list[int] = []
+    post_attempts: list[int] = []
+
+    def upload_spy(url: str, *, field_name: str, filename: str, content: bytes) -> str:
+        upload_attempts.append(len(upload_attempts))
+        if len(upload_attempts) <= 2:
+            raise _make_http_error(url, 404, "Not Found")
+        return "uploaded.png"
+
+    def post_spy(url: str, body: Any) -> dict[str, Any]:
+        post_attempts.append(len(post_attempts))
+        return {"prompt_id": "pid-1"}
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        base_url="http://test-pod-8188.proxy.example.net",
+        probe=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+        http_get_bytes=lambda u: b"png-bytes",
+        http_post_file=upload_spy,
+    )
+
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="init.png", uri="https://example.org/init.png"),
+    )
+    job = GenerationJob(
+        spec={
+            "graph": {},
+            "asset_node_ids": {"init_image": "58"},
+        },
+        segments=[Segment(prompt="hello", params={}, assets=[asset])],
+        params={},
+    )
+
+    prompt_id = backend.submit(job)
+    assert prompt_id == "pid-1"
+    assert len(upload_attempts) == 3
+    assert len(post_attempts) == 1
+
+
+def test_submit_retries_prompt_post_on_transient_404() -> None:
+    """submit() retries POST /prompt on transient 404 then returns prompt_id."""
+    post_attempts: list[int] = []
+
+    def post_spy(url: str, body: Any) -> dict[str, Any]:
+        post_attempts.append(len(post_attempts))
+        if len(post_attempts) <= 2:
+            raise _make_http_error(url, 404, "Not Found")
+        return {"prompt_id": "pid-2"}
+
+    backend = ComfyUIBackend(
+        http_post=post_spy,
+        http_get=lambda u: {},
+        base_url="http://test-pod-8188.proxy.example.net",
+        probe=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+    )
+
+    job = GenerationJob(
+        spec={"graph": {}},
+        segments=[Segment(prompt="hello", params={}, assets=[])],
+        params={},
+    )
+    prompt_id = backend.submit(job)
+    assert prompt_id == "pid-2"
+    assert len(post_attempts) == 3
