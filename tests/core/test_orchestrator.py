@@ -2621,3 +2621,89 @@ def test_orchestrator_warns_when_engine_model_identity_empty(
     assert "fake" in warnings[0].message, (
         f"engine name 'fake' should appear in WARNING; got {warnings[0].message!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 Task 3: keyframe-stage model identity wiring
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_threads_image_engine_model_identity_into_keyframe_stage(
+    tmp_path: Path,
+) -> None:
+    """Keyframe path mirrors clip path: image_engine.model_identity drives the
+    keyframe filename slug.
+
+    Bug catch: keyframe stage keeps reading cfg.keyframe.spec.model directly,
+    so a future image engine whose identity lives elsewhere (e.g. LumaAgentsImageEngine
+    UNI-1, Layer 5b) regresses to 'unknown'.
+
+    The sentinel image engine returns a hard-coded slug that differs from
+    cfg.keyframe.spec.model, so any regression to the old cfg-read path will
+    publish "kf-spec-distinct" instead of "kf-engine-derived" and fail the assertion.
+    """
+    import kinoforge.image_engines.fake  # noqa: F401 — registers "fake" image engine
+    from kinoforge.image_engines.fake import FakeImageEngine
+
+    # cfg.keyframe.spec.model is deliberately different from what the sentinel
+    # engine returns.  A regression would capture "kf-spec-distinct" here.
+    cfg = _load_keyframe_cfg()
+    assert cfg.keyframe is not None
+    cfg = cfg.model_copy(
+        update={
+            "keyframe": cfg.keyframe.model_copy(
+                update={"spec": {"model": "kf-spec-distinct"}}
+            )
+        }
+    )
+
+    class _SentinelImageEngine(FakeImageEngine):
+        """Override model_identity to return a fixed slug unrelated to cfg."""
+
+        def model_identity(self, cfg: dict[str, object]) -> str:  # noqa: ARG002
+            return "kf-engine-derived"
+
+    captured: list[dict[str, object]] = []
+
+    class _CapturingSink:
+        def publish(
+            self,
+            data: bytes,
+            *,
+            prompt: str,
+            extension: str,
+            namespace: str | None = None,
+            provider: str | None = None,
+            model: str | None = None,
+            kind: str | None = None,
+        ) -> str:
+            captured.append(
+                {
+                    "provider": provider,
+                    "model": model,
+                    "kind": kind,
+                }
+            )
+            return f"capturing://{prompt[:20]}{extension}"
+
+    generate(
+        cfg,
+        GenerationRequest(prompt="a vivid sunset", mode="i2v", assets=[]),
+        store=LocalArtifactStore(tmp_path),
+        provider=LocalProvider(),
+        engine=_make_i2v_engine(),
+        image_engine=_SentinelImageEngine(),
+        image_profile_provider=_AlwaysCachedImageProfileProvider(),
+        sink=_CapturingSink(),
+    )
+
+    keyframe_publishes = [
+        kw for kw in captured if str(kw.get("kind", "")).startswith("keyframe")
+    ]
+    assert len(keyframe_publishes) >= 1, (
+        f"sink.publish() was never called for a keyframe artifact; got {captured!r}"
+    )
+    assert keyframe_publishes[0]["model"] == "kf-engine-derived", (
+        f"expected model='kf-engine-derived' from image_engine.model_identity; "
+        f"got model={keyframe_publishes[0]['model']!r}"
+    )

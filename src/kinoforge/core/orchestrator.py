@@ -1055,12 +1055,26 @@ def generate(
             # IMAGE engine's name as `provider` and the keyframe spec.model as
             # `model`, so they land next to the final clip but tagged with
             # the image-generation provider that produced them.
-            _kf_provider = getattr(resolved_image_engine, "name", None) or None
-            _kf_model = str((cfg.keyframe.spec or {}).get("model", "") or "") or None
+            # Layer 8 — keyframe stage mirrors clip stage: image_engine.model_identity
+            # owns the slug so non-spec-model image engines (e.g. fal image, future
+            # LumaAgentsImageEngine) get a real slug instead of "unknown".
+            # resolved_image_engine is guaranteed non-None here: it was assigned
+            # in the matching `if cfg.keyframe is not None:` block above (line ~1008).
+            # Narrow to ImageEngine so mypy can resolve attribute access below.
+            _kf_eng: ImageEngine = resolved_image_engine  # type: ignore[assignment]
+            _kf_provider = getattr(_kf_eng, "name", None) or None
+            _raw_kf_model = _kf_eng.model_identity(kf_cfg_dict)
+            if not _raw_kf_model:
+                _log.warning(
+                    "image engine %s returned empty model identity; "
+                    "sink will render keyframe filename slug as 'unknown'",
+                    _kf_eng.name,
+                )
+            _kf_model = _raw_kf_model or None
             try:
                 state = KeyframeStage(
                     keyframe_cfg=cfg.keyframe,
-                    image_engine=resolved_image_engine,  # type: ignore[arg-type]
+                    image_engine=_kf_eng,
                     image_backend=image_backend,  # type: ignore[arg-type]
                     image_profile=image_prof,  # type: ignore[arg-type]
                     store=store,
