@@ -2079,7 +2079,7 @@ Plan: `docs/superpowers/plans/2026-06-08-successful-generations-log.md` (`bafbd5
 
 **Carry-forwards:**
 - ~~Task 7 — Wan 2.1 14B i2v RunPod+ComfyUI HTTP 404 regression in `ComfyUIBackend.result()`.~~ — **CLOSED** by Phase 47 (Layer 7). Root cause was a RunPod-proxy startup-window race, not a ComfyUI or kijai-node regression.
-- LocalOutputSink renders the `model` slug as `unknown` for the fal config because `cfg.engine.fal.endpoint` isn't propagated to the sink. Provenance-only, not a generation defect; small follow-up. Same defect now also visible on the Phase 47 ComfyUI entry — `comfyui_unknown_...` filename.
+- ~~LocalOutputSink renders the `model` slug as `unknown` for the fal config because `cfg.engine.fal.endpoint` isn't propagated to the sink.~~ — **CLOSED** by Phase 48 (Layer 8). `model_identity(cfg)` ABC method on every engine; orchestrator threads engine-native slug into the sink.
 
 ### Phase 47 — Layer 7 (ComfyUI RunPod-proxy 404 retry)
 
@@ -2095,21 +2095,49 @@ Fix shipped via two atomic commits + a final green smoke that produced a 964 KiB
 **Spend this layer:** ~$1.30 total (failed attempt on `xawdweboxapubz` ~$1.00 — kept alive for live probing before destroy, plus the green smoke ~$0.30). Remaining session budget: ~$17.30.
 
 **Carry-forwards:**
-- `LocalOutputSink` `model` slug = `unknown` for the ComfyUI config — same defect as the fal carry-forward. Single Layer-O follow-up to surface `engine.<kind>.<model_identity>` to the sink across all engines.
+- ~~`LocalOutputSink` `model` slug = `unknown` for the ComfyUI config — same defect as the fal carry-forward.~~ — **CLOSED** by Phase 48 (Layer 8).
 - No retries actually fired during the green run — the proxy startup window had closed before submit attempted. The retry helper is defensive coverage for the race, not a smoke-time bug-trigger. Future flaky-run investigation should confirm the WARNING line `[comfyui.submit.upload] transient HTTPError ...` lands in logs when the race re-occurs.
 
 ### Phase 48 — Layer 8 (model_identity ABC)
 
-Fixes the `LocalOutputSink` `model = "unknown"` defect for non-hosted engines (fal, comfyui, bedrock). Adds a `model_identity(cfg)` ABC method to every engine, wires it into the orchestrator clip-stage and keyframe-stage, and adds an integration regression lock so example YAMLs produce non-`unknown` slugs.
+Fixes the `LocalOutputSink` `model = "unknown"` defect for non-hosted
+engines (fal, ComfyUI, Bedrock). Adds a `model_identity(cfg) -> str`
+`@abstractmethod` to both `GenerationEngine` and `ImageEngine`; each
+engine returns the human-grep-able surface it already interprets
+natively (hosted/diffusers/replicate-image -> `spec.model`; fal ->
+`engine.fal.endpoint`; ComfyUI -> filename stem of the `kind: base`
+entry in `models[]`; Bedrock -> `engine.bedrock_video.model_id`).
+Orchestrator emits one WARNING per `deploy()` per stage when the engine
+returns `""`; the sink falls back to the literal `"unknown"` as before.
 
-Spec: `docs/superpowers/specs/2026-06-08-model-identity-abc-design.md`.
-Plan: `docs/superpowers/plans/2026-06-09-layer-8-model-identity-abc.md`.
+Spec: `docs/superpowers/specs/2026-06-08-model-identity-abc-design.md`
+(`a539b8c` + `8d17123`).
+Plan: `docs/superpowers/plans/2026-06-09-layer-8-model-identity-abc.md`
+(`608b805`).
 
-- [x] Task 0: `model_identity` ABC method + concrete impls on every engine + test-local stubs — commits `c6c6942` + `831a4f7`
+- [x] Task 0: ABC additions + per-engine concrete impls + test-local stubs — commits `c6c6942` + `831a4f7`
 - [x] Task 1: Per-engine unit tests + cross-engine ABC contract test — commits `08ea661` + `306a6ce`
-- [x] Task 2: Orchestrator clip-stage wiring — replace `cfg.spec.get("model")` with `session.engine.model_identity(cfg.model_dump())`; WARNING on empty; 2 new orchestrator tests — commit `3156267`
-- [ ] Task 3: Orchestrator keyframe-stage wiring
-- [ ] Task 4: Integration regression lock — no `unknown` slug for example YAMLs
-- [ ] Task 5: PROGRESS + README + final gate
+- [x] Task 2: Orchestrator clip-stage wiring (`session.engine.model_identity(_cfg_dict(cfg))` + WARNING) — commits `3156267` + `4ac3017`
+- [x] Task 3: Orchestrator keyframe-stage wiring (`resolved_image_engine.model_identity(kf_cfg_dict)` + WARNING) — commit `412aee2`
+- [x] Task 4: Integration regression lock — `tests/integration/test_no_unknown_slug_for_example_configs.py` (12 parametrized cases incl. `examples/configs/comparison/*.yaml`). Caught + fixed 2 real YAML bugs along the way: `diffusers.yaml` missing `spec.model`, `skypilot-gpu.yaml` had wrong lifecycle field names silently dropped by pydantic — commits `1f28118` + `61e765c`
+- [x] Task 5: PROGRESS + README + final gate — this commit
 
-**Single next action:** Task 3 — wire `model_identity` into the keyframe-stage section of `orchestrator.py`.
+**Key design decisions:**
+- Separate ABC method (display-only), independent of `HostedAPIEngine.key_base` (cache identity). Conflating the two would force cache-identity tightening to track filename aesthetics, which is the wrong direction.
+- Each engine reads the cfg field it ALREADY interprets natively — no new schema surfaces, no Layer M reversal.
+- Empty → `""` → WARNING → sink `"unknown"` fallback. Engine MUST NOT raise; cache-identity contract (`key_base`) stays stricter than display contract (`model_identity`).
+- `ImageEngine` gets its own copy of the abstract method (parallel ABCs do not share a parent today; introducing one is out of scope).
+
+**Bug catches during execution:**
+- `diffusers.yaml` shipped without `spec.model` — silently produced `"unknown"` slug. T4 regression lock caught this; fix in `1f28118`.
+- `skypilot-gpu.yaml` shipped with wrong lifecycle field names (`budget_usd` vs `budget`; `idle_timeout_s` vs `idle_timeout`; etc.) — pydantic was silently dropping them as extras, leaving `budget` unset. T4 regression lock surfaced the load failure; fix in `1f28118`.
+- Code-quality review caught `_cfg_dict` local in T2 shadowing the module-level helper `_cfg_dict(cfg)` at orchestrator.py:142. Latent landmine (no live failure today); fix in `4ac3017`.
+- Code-quality review caught `_adapters.py` only importing `image_engines.replicate`, silently hiding `fake` and `fal` image engines from production-side registry iteration. Fix in `306a6ce`.
+
+**Test count delta:** +~45 net (per-engine unit tests +22, ABC contract test +11 parametrized, orchestrator wiring tests +3, integration regression lock +12 parametrized — minus 2 deselected for `cfg.engine.kind == "fake"` and 4 static skips for non-Config / unregistered-engine YAMLs).
+
+**Carry-forwards / known follow-ups:**
+- `nova-reel.yaml` is skip-listed in the regression lock (`nova_reel` engine kind not registered; planned for Layer 3 reactivation). Skip-list comment forward-points to Layer 3.
+- `mode_identity` / `precision_identity` / `lora_stack_identity` sibling ABC methods would let the filename schema grow more facets (e.g. `t2v` / `i2v` / `flf2v` in the slug). Not in scope for Layer 8.
+- Code-quality review observation: `_CapturingSink` is duplicated across orchestrator tests T2 and T3. Acceptable for two sites; promote to a module-level helper if a third site appears.
+- WARNING template `engine %s returned empty model identity ...` is structurally duplicated across clip + keyframe stages. Two sites only; helper extraction premature.
