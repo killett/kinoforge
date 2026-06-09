@@ -19,6 +19,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 1. `2026-06-08 21:17:16` — [fal-ai/wan-t2v — t2v](#1-2026-06-08-211716--fal-aiwan-t2v--t2v)
 2. `2026-06-08 21:26:01` — [Replicate bytedance/seedance-1-lite — t2v](#2-2026-06-08-212601--replicate-bytedanceseedance-1-lite--t2v)
 3. `2026-06-08 21:26:59` — [Runway gen4.5 — t2v](#3-2026-06-08-212659--runway-gen45--t2v)
+4. `2026-06-08 22:28:40` — [ComfyUI Wan 2.1 14B i2v on RunPod — i2v](#4-2026-06-08-222840--comfyui-wan-21-14b-i2v-on-runpod--i2v)
 
 ---
 
@@ -369,5 +370,86 @@ None this run. (Historical Layer-4 bugs documented in PROGRESS.md Phase 43, comm
 
 - Same `live-hosted` pixi feature env requirement as the Replicate entry above.
 - Artifact filename's `.mp4` extension (vs the Phase 43 `.bin`) confirms the Phase 43 `f20a70d` fix is still in effect — the OutputSink derives the extension from `urlparse(url).path` basename.
+
+---
+
+## 4. `2026-06-08 22:28:40` — ComfyUI Wan 2.1 14B i2v on RunPod — i2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `RunPod / ComfyUIEngine / Kijai Wan2_1-I2V-14B-480P_fp8_e4m3fn` |
+| **Mode** | i2v |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `5fcfb9cf2810e3eb039e1fee94f5dbde025eb488` |
+| **Date (local TZ)** | 2026-06-08 22:28:40 -0700 (PDT) |
+| **Layer / phase** | Phase 47 (Layer 7) — ComfyUI RunPod proxy 404 fix; supersedes Phase 46 Task 7 carry-forward (deferred) |
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_comfyui_wan_live.py -v -s
+```
+
+(End-to-end smoke harness because the orchestrator path requires a pre-warmed `JsonProfileCache` for the kijai workflow's i2v probe shape; the test sets it up around `orchestrator.generate()` rather than invoking the CLI. Equivalent CLI command would be `pixi run kinoforge generate --config examples/configs/runpod-comfyui-wan.yaml --mode i2v --prompt "..." --init-image tests/providers/fixtures/runpod/sample_init_frame.png` but the CLI doesn't yet expose `--init-image`; tracked as a separate UX follow-up.)
+
+### YAML config(s)
+
+**`examples/configs/runpod-comfyui-wan.yaml`** at SHA `8aa7ae92d3d447598c476d977bf4fb0e835cc102` — see file at that ref for the kijai custom-node pins, Wan 2.1 14B / VAE / T5 / CLIP-vision models, RunPod compute block (`max_usd_per_hr: 0.50`, RTX 4090 → A5000 → 3090 preference), and 25/15/5/50/30-min lifecycle.
+
+### Prompt
+
+- **Source:** Inlined in the test (`tests/live/test_comfyui_wan_live.py`) — a short init-frame-aligned cat description rather than `prompt-field-realistic.txt`. Rationale captured in commit `5a6b34c2`: the canonical long-form alpine-meadow prompt fights the white-cat init image (re-introduces the cat-turns-into-woman morph). Same-tuple repeats with the canonical prompt land here as "See also" lines.
+
+### Env vars / secret names (names only — never values)
+
+- `RUNPOD_API_KEY` — RunPod GraphQL main key; reads pod offers, creates / lists / destroys pods.
+- `RUNPOD_TERMINATE_KEY` — Scoped self-terminate Bearer key; embedded in the pod's `KINOFORGE_SELFTERM_SCRIPT` dead-man watchdog.
+- `HF_TOKEN` — Hugging Face gated-repo Bearer token; passed via `Authorization: Bearer $HF_TOKEN` into the pod's curl-bootstrap weight downloader for `Kijai/WanVideo_comfy` (gated).
+
+### Region
+
+RunPod cloud assigned, `cloudType: ALL` in the create-pod mutation; no operator-side knob. Pod `7tfkwgtyf83gr2` landed on RTX A5000 (4090 capacity unavailable at submit time, fell back per the `gpu_preference` list).
+
+### Capability key
+
+`a771bb678238aba6cd650c7af96924cceb248980bc3ce9c43ba861e08ba1d84b` (in-memory pre-warmed by the test via `JsonProfileCache.warm`; persistence to `.kinoforge/_profiles/` is bypassed because the test injects its own cache instance and never calls `_persist`).
+
+### Output artifact
+
+- **Path (published):** `/workspace/output/20260608-222840_comfyui_unknown_A-photorealistic-clo.mp4`
+- **Path (internal cache):** `/workspace/.kinoforge/artifacts/run/47b3eb01950ff084.mp4`
+- **File size:** 964,470 bytes (942 KiB)
+- **SHA-256:** `47b3eb01950ff0842b7f451e564e573e50f96a8c76e6e13b78f431cf69d01e35`
+- **Container / codec:** `mov,mp4,m4a,3gp,3g2,mj2` (MP4 / ISO BMFF) / `h264`
+- **Resolution:** 624×624 (Wan VAE upscaled the 480×480 request — kijai workflow's `ImageResizeKJv2` node 68 picks a divisible-by-16 target larger than `params.width × params.height`)
+- **Duration:** 5.0625 s
+- **Frame count:** 81
+- **Average frame rate:** 16/1 (16 fps)
+- **Bit rate:** 1,512,996 bit/s (~1.51 Mbit/s)
+
+### Cost
+
+- **Total:** ~$0.29 estimated.
+- **Formula:** RunPod RTX A5000 spot at $0.16/hr × 1,523.85 s wall (≈25 m 24 s) ≈ $0.068 in compute; plus the 4090-capacity offer-retry round-trip and a small idle window during selfterm; rounded to ~$0.30 for safety.
+- **Wall-clock end-to-end:** 25 m 24 s (provision + weight download + ComfyUI cold-start + Wan 14B inference + VAE decode + result fetch).
+
+### Success criterion
+
+Pending operator visual confirmation. Artifact is valid h264/MP4 at 624×624 with 81 frames @ 16 fps, matching the kijai workflow contract (`params.num_frames: 81`, `params.fps: 16`). ISO-BMFF magic confirmed. SHA-256 verified.
+
+### Failure modes encountered before success
+
+The Phase 46 Task 7 carry-forward (`/history/{id}` 404) and the immediately-prior attempt's `/upload/image` 404 (pod `xawdweboxapubz`) both surfaced as bare `urllib.error.HTTPError: HTTP Error 404` with no URL, no poll index, no body. Root-cause investigation (Phase 47, commit `5fcfb9cf`):
+
+- ComfyUI 0.3.10's `/history/{prompt_id}` and `/upload/image` routes never return 404 themselves (verified in upstream `server.py`).
+- Live probe of pod `xawdweboxapubz` while still warm: 50/50 sequential POSTs to `/upload/image` returned 200; the earlier 404 was a transient RunPod-proxy startup-window failure mode.
+- Fix shipped: `_retry_proxy_call` helper wraps both submit POSTs (1+2+4+8+16+16 s backoff = ~47 s); `result()` poll-body continues on transient 404 and surfaces the last transient on `_MAX_POLL` exhaustion instead of swallowing it as `TimeoutError`.
+
+No 404 retries fired during this green run — pod warmed past the proxy window before submit attempted; the fix is defensive coverage for the race rather than a bug-trigger in the smoke itself.
+
+### Notes
+
+- `LocalOutputSink` renders the `model` slug as `unknown` in the published filename (`comfyui_unknown_...`) because `cfg.engine.comfyui` doesn't surface a `model` field to the sink. Same provenance defect noted on the Phase 43 fal.ai entry; small Layer-O follow-up, not a generation defect.
+- The published filename ends in `.mp4` (vs `.bin`) — ComfyUI engine writes the artifact bytes locally so the sink uses the source file's extension directly.
 
 ---

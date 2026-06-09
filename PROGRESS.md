@@ -2071,12 +2071,29 @@ Plan: `docs/superpowers/plans/2026-06-08-successful-generations-log.md` (`bafbd5
 - [ ] Task 4: `PROGRESS.md` pointer + this section — commit `<sha>`
 - [x] Task 5: `kinoforge --version` flag + 2 tests — commit `b913732`
 - [x] Task 6: fal-ai/wan-t2v re-fire + entry #1 — commit `ef6d7a9`
-- [ ] Task 7: Wan 2.1 14B i2v on RunPod+ComfyUI re-fire + entry #2 — DEFERRED. New HTTP 404 regression in `ComfyUIBackend.result()`. Pod `sapoahjqbgd331` (RTX A5000 @ $0.16/hr fallback after RTX 4090 capacity-unavailable retry) booted cleanly, the workflow POSTed, but `/history/{id}` or `/view` returned 404 before the artifact materialised. Pod was destroyed via the `RUNPOD_TERMINATE_KEY` REST `DELETE /v1/pods/{id}` path (kinoforge's ledger-driven destroy missed because the failed test never recorded the pod). Spend: ~$0.013 (~5 min pod-wall at $0.16/hr). Bug needs its own investigation layer — see `/tmp/task7-run.log` for the full traceback. Not a Phase 28 (Layer P) regression in the engine itself; likely upstream ComfyUI / kijai-node behaviour change since 2026-06-04.
+- [x] Task 7: Wan 2.1 14B i2v on RunPod+ComfyUI re-fire + entry #4 — CLOSED by Phase 47 (Layer 7). Live re-fire on pod `7tfkwgtyf83gr2` (RTX A5000 @ $0.16/hr after 4090 capacity-retry) produced `47b3eb01950ff084.mp4` (964 KiB, 624×624, 81 frames @ 16 fps, 5.0625 s, h264/MP4); 25 m 24 s wall; ~$0.29 estimated. See entry #4 in `successful-generations.md` and Phase 47 below for root cause + fix.
 - [x] Task 9: Replicate seedance-1-lite t2v re-fire + entry #2 — commit `d4fabd5` (864x480, 5.04 s, 121 frames, ~$0.10, 26 s wall)
 - [x] Task 8: Runway gen4.5 t2v re-fire + entry #3 — commit `d4fabd5` (1280x720, 5.04 s, 121 frames, ~$1.25, 100 s wall)
 
 **Live-spend budget (Tasks 6–9):** total spend this session ≈ $1.40 (Task 6 fal ~$0.05 + Task 8 Runway ~$1.25 + Task 9 Replicate ~$0.10 + Task 7 pod-wall ~$0.013). Remaining session budget: ~$18.60.
 
 **Carry-forwards:**
-- Task 7 — Wan 2.1 14B i2v RunPod+ComfyUI HTTP 404 regression in `ComfyUIBackend.result()`. Needs a fresh Layer-P-style investigation; the previous green smoke at `b425407c` (Phase 28) produced a 1.05 MiB artifact, so the breakage is post-`b425407c`. Candidate causes: (a) kijai WanVideoWrapper pinned ref drift (`088128b224242e110d3906c6750e9a3a348a659b`) vs the upstream API; (b) ComfyUI 0.3.10 behaviour around the `/history` polling shape; (c) VHS_VideoCombine custom node interaction. Spec-side fix likely.
-- LocalOutputSink renders the `model` slug as `unknown` for the fal config because `cfg.engine.fal.endpoint` isn't propagated to the sink. Provenance-only, not a generation defect; small follow-up.
+- ~~Task 7 — Wan 2.1 14B i2v RunPod+ComfyUI HTTP 404 regression in `ComfyUIBackend.result()`.~~ — **CLOSED** by Phase 47 (Layer 7). Root cause was a RunPod-proxy startup-window race, not a ComfyUI or kijai-node regression.
+- LocalOutputSink renders the `model` slug as `unknown` for the fal config because `cfg.engine.fal.endpoint` isn't propagated to the sink. Provenance-only, not a generation defect; small follow-up. Same defect now also visible on the Phase 47 ComfyUI entry — `comfyui_unknown_...` filename.
+
+### Phase 47 — Layer 7 (ComfyUI RunPod-proxy 404 retry)
+
+Phase 46 Task 7 carry-forward investigation. The failed re-fire on pod `xawdweboxapubz` surfaced an `/upload/image` HTTPError 404 — a different code path than the prior `/history/{id}` 404 on pod `sapoahjqbgd331` — so the regression was clearly **not** ComfyUI / kijai-pin drift. Live probe of the still-warm `xawdweboxapubz`: 50/50 sequential POSTs to `/upload/image` returned 200, confirming a transient RunPod-proxy startup window. ComfyUI 0.3.10 upstream `server.py` confirmed `/history/{id}` always returns 200 with `{}` for unknown IDs — it cannot 404 itself.
+
+Fix shipped via two atomic commits + a final green smoke that produced a 964 KiB MP4 (`successful-generations.md` entry #4):
+
+- [x] Task 1: diagnostic logger + first instrumentation patch — commit `bc25062`
+- [x] Task 2: `_retry_proxy_call` + `submit()`/`result()` transient-404 retry + 4 new tests — commit `5fcfb9c`
+- [x] Task 3: live re-fire green smoke — pod `7tfkwgtyf83gr2`, 25 m 24 s wall, ~$0.29 RunPod spend
+- [x] Task 4: PROGRESS + successful-generations entry — this commit
+
+**Spend this layer:** ~$1.30 total (failed attempt on `xawdweboxapubz` ~$1.00 — kept alive for live probing before destroy, plus the green smoke ~$0.30). Remaining session budget: ~$17.30.
+
+**Carry-forwards:**
+- `LocalOutputSink` `model` slug = `unknown` for the ComfyUI config — same defect as the fal carry-forward. Single Layer-O follow-up to surface `engine.<kind>.<model_identity>` to the sink across all engines.
+- No retries actually fired during the green run — the proxy startup window had closed before submit attempted. The retry helper is defensive coverage for the race, not a smoke-time bug-trigger. Future flaky-run investigation should confirm the WARNING line `[comfyui.submit.upload] transient HTTPError ...` lands in logs when the race re-occurs.
