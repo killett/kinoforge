@@ -728,6 +728,11 @@ orchestrator → `GenerateClipStage` → `OutputSink.publish` Protocol. Configs
 that don't supply both substitute the literal `"unknown"` so the schema is
 stable.
 
+Filename slugs now reflect engine-native model identity: hosted engines use
+`spec.model`, fal uses `engine.fal.endpoint`, ComfyUI uses the filename stem
+of the base model entry, and Bedrock uses the model id. Engines that cannot
+surface a real identity log a WARNING and the slug falls back to `unknown`.
+
 ### Live-smoke prompt-size + model-entitlement caveats
 
 - **Runway** caps `prompt_text` at 1000 characters. The standard kinoforge
