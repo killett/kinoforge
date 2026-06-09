@@ -244,6 +244,11 @@ class FakeEngine(GenerationEngine):
                 f"job.spec is missing required keys: {sorted(missing)}"
             )
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """FakeEngine reads ``spec.model`` so offline tests can pin a slug."""
+        spec = cfg.get("spec", {})
+        return str(spec.get("model", "") or "") if isinstance(spec, dict) else ""
+
     def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
         """Return a deterministic stub RenderedProvision for tests.
 

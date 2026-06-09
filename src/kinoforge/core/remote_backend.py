@@ -373,6 +373,14 @@ class RemoteSubmitPollEngine(GenerationEngine):
 
             raise ValidationError(f"{type(self).__name__}: job.spec is missing 'model'")
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Remote-submit-poll engines (Replicate, Runway, Luma) read ``spec.model``.
+
+        Subclasses may override if their identity surface diverges.
+        """
+        spec = cfg.get("spec", {})
+        return str(spec.get("model", "") or "") if isinstance(spec, dict) else ""
+
     def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
         """Hosted engines have no remote-provision payload."""
         raise NotImplementedError(
