@@ -2097,3 +2097,19 @@ Fix shipped via two atomic commits + a final green smoke that produced a 964 KiB
 **Carry-forwards:**
 - `LocalOutputSink` `model` slug = `unknown` for the ComfyUI config — same defect as the fal carry-forward. Single Layer-O follow-up to surface `engine.<kind>.<model_identity>` to the sink across all engines.
 - No retries actually fired during the green run — the proxy startup window had closed before submit attempted. The retry helper is defensive coverage for the race, not a smoke-time bug-trigger. Future flaky-run investigation should confirm the WARNING line `[comfyui.submit.upload] transient HTTPError ...` lands in logs when the race re-occurs.
+
+### Phase 48 — Layer 8 (model_identity ABC)
+
+Fixes the `LocalOutputSink` `model = "unknown"` defect for non-hosted engines (fal, comfyui, bedrock). Adds a `model_identity(cfg)` ABC method to every engine, wires it into the orchestrator clip-stage and keyframe-stage, and adds an integration regression lock so example YAMLs produce non-`unknown` slugs.
+
+Spec: `docs/superpowers/specs/2026-06-08-model-identity-abc-design.md`.
+Plan: `docs/superpowers/plans/2026-06-09-layer-8-model-identity-abc.md`.
+
+- [x] Task 0: `model_identity` ABC method + concrete impls on every engine + test-local stubs — commits `c6c6942` + `831a4f7`
+- [x] Task 1: Per-engine unit tests + cross-engine ABC contract test — commits `08ea661` + `306a6ce`
+- [x] Task 2: Orchestrator clip-stage wiring — replace `cfg.spec.get("model")` with `session.engine.model_identity(cfg.model_dump())`; WARNING on empty; 2 new orchestrator tests — commit `3156267`
+- [ ] Task 3: Orchestrator keyframe-stage wiring
+- [ ] Task 4: Integration regression lock — no `unknown` slug for example YAMLs
+- [ ] Task 5: PROGRESS + README + final gate
+
+**Single next action:** Task 3 — wire `model_identity` into the keyframe-stage section of `orchestrator.py`.
