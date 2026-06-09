@@ -129,6 +129,9 @@ def test_extract_last_frame_default_raises_with_engine_name() -> None:
         def validate_spec(self, job):  # noqa: ANN001
             pass
 
+        def model_identity(self, cfg):  # noqa: ANN001
+            return ""
+
     eng = _NonOverriding()
     with pytest.raises(NotImplementedError, match="_NonOverriding"):
         eng.extract_last_frame(Artifact(filename="x.mp4"))

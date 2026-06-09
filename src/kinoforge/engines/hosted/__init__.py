@@ -717,6 +717,11 @@ class HostedAPIEngine(GenerationEngine):
                     f"asset_paths.{asset.role}: <dot.path> in YAML"
                 )
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Hosted identity is the wire-body model slug at ``spec.model``."""
+        spec = cfg.get("spec", {})
+        return str(spec.get("model", "") or "") if isinstance(spec, dict) else ""
+
     def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
         """Hosted engines have ``requires_compute=False`` — refuse remote provisioning.
 

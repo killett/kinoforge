@@ -379,6 +379,16 @@ class BedrockVideoEngine(GenerationEngine):
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` to check.
         """
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Bedrock identity is the Bedrock model id (e.g. ``luma.ray-v2:0``)."""
+        engine_block = cfg.get("engine", {})
+        if not isinstance(engine_block, dict):
+            return ""
+        bv_block = engine_block.get("bedrock_video", {})
+        if not isinstance(bv_block, dict):
+            return ""
+        return str(bv_block.get("model_id", "") or "")
+
 
 # ---------------------------------------------------------------------------
 # Module-level self-registration
