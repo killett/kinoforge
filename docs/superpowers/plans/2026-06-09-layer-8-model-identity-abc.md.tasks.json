@@ -1,0 +1,47 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-09-layer-8-model-identity-abc.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: ABC additions + per-engine concrete impls + test-local stubs",
+      "status": "pending",
+      "description": "**Goal:** Add @abstractmethod model_identity(cfg) to both GenerationEngine and ImageEngine ABCs, and patch every in-repo subclass (source + test-local) with a working impl in the same commit so the test suite continues to instantiate them.\n\n**Files:** see plan §Task 0 Files block (14 files: 1 ABCs, 10 engine sources, 1 remote_backend, 2 test-local stubs).\n\n**Acceptance Criteria:**\n- GenerationEngine.model_identity is @abstractmethod returning str.\n- ImageEngine.model_identity is @abstractmethod returning str.\n- All 7 GenerationEngine concrete subclasses provide an impl.\n- All 3 ImageEngine concrete subclasses provide an impl.\n- Both test-local subclasses provide an impl.\n- pixi run test passes (no TypeError: Can't instantiate abstract class).\n\n**Verify:** `pixi run test -q` — green.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/remote_backend.py\", \"src/kinoforge/engines/hosted/__init__.py\", \"src/kinoforge/engines/diffusers/__init__.py\", \"src/kinoforge/engines/fal/__init__.py\", \"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/engines/bedrock_video/__init__.py\", \"src/kinoforge/engines/fake/__init__.py\", \"src/kinoforge/image_engines/replicate/__init__.py\", \"src/kinoforge/image_engines/fal/__init__.py\", \"src/kinoforge/image_engines/fake/__init__.py\", \"tests/core/test_profiles.py\", \"tests/core/test_interfaces.py\"], \"verifyCommand\": \"pixi run test -q\", \"acceptanceCriteria\": [\"GenerationEngine.model_identity is @abstractmethod returning str\", \"ImageEngine.model_identity is @abstractmethod returning str\", \"All 7 GenerationEngine concrete subclasses provide an impl\", \"All 3 ImageEngine concrete subclasses provide an impl\", \"Both test-local subclasses provide an impl\", \"pixi run test passes with no TypeError\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Per-engine unit tests + cross-engine ABC contract test",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Add 2 unit tests per concrete engine impl (happy path + empty fallback), plus one cross-engine contract test iterating registered engines.\n\n**Files:** see plan §Task 1 Files block (9 engine test modules + 1 new ABC contract test).\n\n**Acceptance Criteria:**\n- Every engine has 2 tests: native source returns expected slug; empty returns \"\".\n- tests/core/test_engine_abc_contract.py iterates engine registry; model_identity({}) == \"\" for every registered engine.\n- All tests fail before Task 0 lands; all pass after.\n\n**Verify:** `pixi run test tests/engines tests/image_engines tests/core/test_engine_abc_contract.py -v` — green.\n\n```json:metadata\n{\"files\": [\"tests/engines/test_hosted.py\", \"tests/engines/test_diffusers.py\", \"tests/engines/test_fal.py\", \"tests/engines/test_comfyui.py\", \"tests/engines/test_bedrock_video.py\", \"tests/engines/test_fake.py\", \"tests/image_engines/test_replicate.py\", \"tests/image_engines/test_fal.py\", \"tests/image_engines/test_fake.py\", \"tests/core/test_engine_abc_contract.py\"], \"verifyCommand\": \"pixi run test tests/engines tests/image_engines tests/core/test_engine_abc_contract.py -v\", \"acceptanceCriteria\": [\"Every engine has 2 tests\", \"ABC contract test passes for every registered engine\", \"All tests green\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Orchestrator clip-stage wiring",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Replace hard-coded `_model = cfg.spec.get(\"model\", \"\")` with `session.engine.model_identity(cfg.model_dump())`. Log one WARNING per deploy() when empty. Cover with 2 tests.\n\n**Files:** src/kinoforge/core/orchestrator.py:1108-1126, tests/core/test_orchestrator.py.\n\n**Acceptance Criteria:**\n- _model sourced from session.engine.model_identity(cfg.model_dump()).\n- Empty return emits exactly one WARNING naming engine + 'will render filename slug as unknown'.\n- _model threaded into GenerateClipStage(... model=_model).\n- 2 new tests pass.\n\n**Verify:** `pixi run test tests/core/test_orchestrator.py -v -k model_identity && pixi run test -q` — green.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator.py\"], \"verifyCommand\": \"pixi run test tests/core/test_orchestrator.py -v -k model_identity && pixi run test -q\", \"acceptanceCriteria\": [\"_model sourced from session.engine.model_identity(cfg.model_dump())\", \"Empty emits exactly one WARNING\", \"_model threaded into GenerateClipStage\", \"2 new tests pass\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Orchestrator keyframe-stage wiring",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Mirror Task 2 for keyframe path: read resolved_image_engine.model_identity(...) instead of cfg.keyframe.spec.model. WARNING on empty. Cover with 1 test.\n\n**Files:** src/kinoforge/core/orchestrator.py:1053-1071, tests/core/test_orchestrator.py.\n\n**Acceptance Criteria:**\n- _kf_model sourced from resolved_image_engine.model_identity(...).\n- Empty return emits one WARNING naming the image engine.\n- KeyframeStage(..., model=_kf_model) threads the value.\n- Keyframe test passes.\n\n**Verify:** `pixi run test tests/core/test_orchestrator.py -v -k keyframe_model_identity && pixi run test -q` — green.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator.py\"], \"verifyCommand\": \"pixi run test tests/core/test_orchestrator.py -v -k keyframe_model_identity && pixi run test -q\", \"acceptanceCriteria\": [\"_kf_model sourced from resolved_image_engine.model_identity\", \"Empty emits one WARNING\", \"KeyframeStage threads the value\", \"Keyframe test passes\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Integration regression lock — no unknown slug for example YAMLs",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Walk every YAML in examples/configs/ (skipping local-fake.yaml + fake engines), resolve engine, call model_identity(cfg.model_dump()), assert non-empty result. Locks the spec invariant.\n\n**Files:** Create tests/integration/test_no_unknown_slug_for_example_configs.py.\n\n**Acceptance Criteria:**\n- Test enumerates every examples/configs/*.yaml.\n- For each: model_identity(...) returns non-empty.\n- Skips local-fake.yaml + any yaml whose engine kind == 'fake'.\n- Failing YAML must be fixed or skip-listed with rationale; assertion MUST NOT be weakened.\n\n**Verify:** `pixi run test tests/integration/test_no_unknown_slug_for_example_configs.py -v` — green.\n\n```json:metadata\n{\"files\": [\"tests/integration/test_no_unknown_slug_for_example_configs.py\"], \"verifyCommand\": \"pixi run test tests/integration/test_no_unknown_slug_for_example_configs.py -v\", \"acceptanceCriteria\": [\"Test enumerates every examples/configs/*.yaml\", \"Non-empty model_identity asserted for each (skipping fake)\", \"Failing YAML must be fixed or skip-listed, not assertion-weakened\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: PROGRESS + README + final gate",
+      "status": "pending",
+      "blockedBy": [0, 1, 2, 3, 4],
+      "description": "**Goal:** Append Phase 48 closeout block to PROGRESS.md; strike through Phase 46/47 carry-forwards; README touch-up; final test/lint/typecheck gate.\n\n**Files:** PROGRESS.md, README.md (if relevant section exists).\n\n**Acceptance Criteria:**\n- PROGRESS.md new ### Phase 48 — Layer 8 (model_identity ABC) section with 5 task SHAs.\n- Phase 46/47 unknown-slug carry-forward bullets struck through with CLOSED by Phase 48.\n- README Output/Sink/Filenames section notes engine-native identity (skip if no relevant section).\n- pixi run test -q green; pixi run lint green; pixi run typecheck green.\n\n**Verify:** `pixi run test -q && pixi run lint && pixi run typecheck` — all green.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"README.md\"], \"verifyCommand\": \"pixi run test -q && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"PROGRESS.md Phase 48 block with 5 SHAs\", \"Phase 46/47 carry-forwards struck through CLOSED by Phase 48\", \"README updated or skip-rationale documented\", \"All gates green\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-09T00:00:00"
+}
