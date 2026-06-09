@@ -67,7 +67,7 @@ for AWS/GCS.
 ## GCP — provisioning history
 
 - 2026-06-03: service account `kinoforge-runner` created in project
-  `<GCP_PROJECT>` (operator account `[personal-email-redacted]`).
+  `<GCP_PROJECT>` (legacy operator account, retired 2026-06-09).
   Roles granted: see `.gcp/README.md`. **SUPERSEDED** by 2026-06-09 swap.
 - 2026-06-06: bucket `gs://<GCS_BUCKET>` created in
   `us-central1` for the S3/GCS real-cloud verification layer.
@@ -83,17 +83,19 @@ for AWS/GCS.
   persisted to `.gcp/kms-test-key.name` (gitignored).
   Rotation: NOT auto-rotated — rotation invalidates Layer W recorded fixtures.
   **SUPERSEDED** by 2026-06-09 swap (re-created on new project; ARN updated).
-- 2026-06-09 (operator account swap): permanent migration off
-  `[personal-email-redacted]` to `<OPERATOR_EMAIL>`. New project
+- 2026-06-09 (operator account swap): permanent migration off the
+  legacy operator account to `<OPERATOR_EMAIL>`. New project
   `<GCP_PROJECT>` created under the new account; billing linked
   to `<GCP_BILLING_ACCOUNT>`. New SA `kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com`
   with the original 7 roles (compute.admin, iam.securityAdmin,
   iam.serviceAccountAdmin, iam.serviceAccountUser,
-  serviceusage.serviceUsageAdmin, storage.admin, viewer). Fresh SA JSON
-  key persisted to `/workspace/.gcp/kinoforge-sa.json` (old key kept at
-  `.json.old` until verification completes). Bucket + KMS keyring + key
-  re-created with identical settings on the new project. Old project
-  scheduled for soft-delete (30-day undelete window) after verification.
+  serviceusage.serviceUsageAdmin, storage.admin, viewer) plus
+  `compute.instanceAdmin.v1` for the perms-probe gate. Fresh SA JSON
+  key persisted to `/workspace/.gcp/kinoforge-sa.json`; old SA key file
+  deleted, legacy operator + legacy SA revoked from local gcloud config.
+  Bucket + KMS keyring + key re-created with identical settings on the
+  new project. Old project shutdown is the legacy operator's
+  responsibility (handled outside this repo).
 
 ## AWS — provisioning history
 
