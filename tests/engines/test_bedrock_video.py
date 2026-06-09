@@ -313,3 +313,36 @@ def test_bedrock_video_submit_does_not_mutate_template_config() -> None:
     assert (
         cfg["engine"]["bedrock_video"]["model_input_template"]["prompt"] == "${PROMPT}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_bedrock_video_model_identity_returns_model_id() -> None:
+    """BedrockVideoEngine reads model slug from engine.bedrock_video.model_id.
+
+    Bug catch: reads from wrong field (e.g. spec.model) instead of the
+    bedrock-specific model_id key.
+    """
+    from kinoforge.core import registry
+
+    eng = registry.get_engine("bedrock_video")()
+    cfg: dict[str, object] = {
+        "engine": {"bedrock_video": {"model_id": "luma.ray-v2:0"}}
+    }
+    assert eng.model_identity(cfg) == "luma.ray-v2:0"
+
+
+def test_bedrock_video_model_identity_empty_on_missing_engine_block() -> None:
+    """BedrockVideoEngine returns empty string when engine or bedrock_video block is absent.
+
+    Bug catch: AttributeError or KeyError raised on bare cfg breaks slug derivation.
+    """
+    from kinoforge.core import registry
+
+    eng = registry.get_engine("bedrock_video")()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"engine": {}}) == ""
+    assert eng.model_identity({"engine": {"bedrock_video": {}}}) == ""

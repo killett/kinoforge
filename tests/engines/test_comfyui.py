@@ -1871,3 +1871,70 @@ def test_submit_retries_prompt_post_on_transient_404() -> None:
     prompt_id = backend.submit(job)
     assert prompt_id == "pid-2"
     assert len(post_attempts) == 3
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_comfyui_model_identity_returns_base_model_stem() -> None:
+    """ComfyUIEngine extracts filename stem of the kind=base model entry.
+
+    Bug catch: returns full ref string or full filename instead of stem-only slug.
+    """
+    eng = registry.get_engine("comfyui")()
+    cfg: dict[str, object] = {
+        "models": [
+            {
+                "kind": "base",
+                "ref": "hf:Kijai/WanVideo_comfy:Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors",
+            }
+        ]
+    }
+    assert eng.model_identity(cfg) == "Wan2_1-I2V-14B-480P_fp8_e4m3fn"
+
+
+def test_comfyui_model_identity_empty_on_missing_base_entry() -> None:
+    """ComfyUIEngine returns empty string when no kind=base entry is present.
+
+    Bug catch: falls through to lora entry and returns wrong slug.
+    """
+    eng = registry.get_engine("comfyui")()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"models": []}) == ""
+    assert (
+        eng.model_identity(
+            {"models": [{"kind": "lora", "ref": "hf:x/y:z.safetensors"}]}
+        )
+        == ""
+    )
+
+
+def test_comfyui_model_identity_strips_extension_and_prefix() -> None:
+    """ComfyUIEngine strips hf: prefix and .safetensors extension, yielding stem only.
+
+    Bug catch: colon-split missing causes full path with extension in slug.
+    """
+    eng = registry.get_engine("comfyui")()
+    cfg: dict[str, object] = {
+        "models": [{"kind": "base", "ref": "hf:org/repo:path.safetensors"}]
+    }
+    assert eng.model_identity(cfg) == "path"
+
+
+def test_comfyui_model_identity_url_ref_returns_stem() -> None:
+    """ComfyUIEngine handles URL-form refs, returning the filename stem.
+
+    Bug catch: rsplit('/') step missing causes full URL as slug.
+    """
+    eng = registry.get_engine("comfyui")()
+    cfg: dict[str, object] = {
+        "models": [
+            {
+                "kind": "base",
+                "ref": "https://example.com/path/file.safetensors",
+            }
+        ]
+    }
+    assert eng.model_identity(cfg) == "file"

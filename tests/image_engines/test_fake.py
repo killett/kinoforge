@@ -87,3 +87,29 @@ def test_profile_for_returns_default_image_profile() -> None:
     assert isinstance(p, ImageProfile)
     assert p.max_resolution == (1024, 1024)
     assert "t2i" in p.supported_modes
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_fake_image_engine_model_identity_returns_spec_model_slug() -> None:
+    """FakeImageEngine reads model slug from spec.model for offline test pins.
+
+    Bug catch: returns empty string even when spec.model is set, breaking
+    per-engine assertions in downstream orchestrator tests.
+    """
+    eng = _engine()
+    cfg: dict[str, object] = {"spec": {"model": "fake-image"}}
+    assert eng.model_identity(cfg) == "fake-image"
+
+
+def test_fake_image_engine_model_identity_empty_on_missing_spec() -> None:
+    """FakeImageEngine returns empty string when spec or model is absent.
+
+    Bug catch: KeyError raised on bare cfg breaks slug derivation for all image jobs.
+    """
+    eng = _engine()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"spec": {}}) == ""
