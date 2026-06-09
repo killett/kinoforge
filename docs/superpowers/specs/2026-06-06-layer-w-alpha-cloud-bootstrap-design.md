@@ -26,7 +26,7 @@ The work is split between:
 - **Azure / B2 / R2** — deferred to a later layer.
 - **Any GPU spend** — no `sky launch`, no `sky exec`. `sky check` is offline metadata.
 - **Engine deployment on GPU** (ComfyUI, Diffusers, Wan) — Layer W+β / later.
-- **AWS bucket scope-down** — `AmazonS3FullAccess` → `kinoforge-realcloud-tests-*`
+- **AWS bucket scope-down** — `AmazonS3FullAccess` → `<GCS_KMS_KEYRING>-*`
   scoped policy is already in `CLOUD-CREDS.md` follow-up, separate work.
 - **Multipart knobs, encryption modes** — covered by Layer W, not revisited.
 
@@ -80,10 +80,10 @@ secrets; the access keys are). Combines:
 
 1. SkyPilot's documented minimal AWS policy (EC2 lifecycle, IAM PassRole for the
    role SkyPilot auto-creates, ServiceQuotas read/request).
-2. S3 access scoped to `arn:aws:s3:::kinoforge-realcloud-tests-*` and
+2. S3 access scoped to `arn:aws:s3:::<GCS_KMS_KEYRING>-*` and
    `arn:aws:s3:::skypilot-*` (SkyPilot's auto-created bucket prefix).
 3. KMS access scoped to the existing Layer W key
-   (`alias/kinoforge-realcloud-tests`).
+   (`alias/<GCS_KMS_KEYRING>`).
 
 Source-of-truth reference for SkyPilot's minimum: SkyPilot docs
 `/docs/reference/cloud-permissions/aws.html`. Pin the version captured at draft time.

@@ -135,7 +135,7 @@
         "IsTruncated": false,
         "KeyCount": 1,
         "MaxKeys": 1000,
-        "Name": "kinoforge-realcloud-tests-<AWS_ACCOUNT>",
+        "Name": "<GCS_KMS_KEYRING>-<AWS_ACCOUNT>",
         "Prefix": "live-1db7da57/",
         "ResponseMetadata": {
           "HTTPHeaders": {

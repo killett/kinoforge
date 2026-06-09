@@ -352,7 +352,7 @@ attempting `kms:DescribeKey` / `cloudkms.cryptoKeys.get`.
 
 1. Create symmetric encryption key in `us-east-1` (matches bucket region) with
    description `kinoforge realcloud tests CMK`.
-2. Create alias `alias/kinoforge-realcloud-tests`.
+2. Create alias `alias/<GCS_KMS_KEYRING>`.
 3. Attach key policy granting `kinoforge-ci` IAM user
    `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`.
    Root account retains admin per AWS default policy.
@@ -362,7 +362,7 @@ attempting `kms:DescribeKey` / `cloudkms.cryptoKeys.get`.
 
 ### 6.2 GCP Cloud KMS
 
-1. Create keyring `kinoforge-realcloud-tests` in `us-central1` (matches bucket
+1. Create keyring `<GCS_KMS_KEYRING>` in `us-central1` (matches bucket
    region).
 2. Create key `bucket-cmek` with purpose `ENCRYPT_DECRYPT`, default protection
    level `SOFTWARE`.
@@ -387,13 +387,13 @@ table.
 ## 7. `docs/CLOUD-CREDS.md` updates
 
 1. **AWS provisioning history** — append:
-   - 2026-06-06 (Layer W bootstrap): KMS key `alias/kinoforge-realcloud-tests`
+   - 2026-06-06 (Layer W bootstrap): KMS key `alias/<GCS_KMS_KEYRING>`
      created in `us-east-1`. ARN persisted to `.aws/kms-test-key.arn`. Policy
      grants `kinoforge-ci` Encrypt/Decrypt/GenerateDataKey/DescribeKey.
 
 2. **GCP provisioning history** — append:
    - 2026-06-06 (Layer W bootstrap): Cloud KMS keyring
-     `kinoforge-realcloud-tests` + key `bucket-cmek` created in `us-central1`.
+     `<GCS_KMS_KEYRING>` + key `bucket-cmek` created in `us-central1`.
      `kinoforge-runner` SA + GCS service agent granted
      `roles/cloudkms.cryptoKeyEncrypterDecrypter`. Key name persisted to
      `.gcp/kms-test-key.name`.

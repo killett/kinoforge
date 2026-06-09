@@ -62,7 +62,7 @@ key):
         "s3:GetBucketLifecycleConfiguration",
         "s3:GetBucketVersioning"
       ],
-      "Resource": "arn:aws:s3:::kinoforge-realcloud-tests-*"
+      "Resource": "arn:aws:s3:::<GCS_KMS_KEYRING>-*"
     },
     {
       "Sid": "TestBucketObjects",
@@ -77,8 +77,8 @@ key):
         "s3:ListBucketMultipartUploads"
       ],
       "Resource": [
-        "arn:aws:s3:::kinoforge-realcloud-tests-*",
-        "arn:aws:s3:::kinoforge-realcloud-tests-*/*"
+        "arn:aws:s3:::<GCS_KMS_KEYRING>-*",
+        "arn:aws:s3:::<GCS_KMS_KEYRING>-*/*"
       ]
     }
   ]
@@ -90,9 +90,9 @@ key):
 The scoped IAM policy doc lives at
 `.aws/policies/skypilot-minimal.json` (tracked, not secret). It covers
 EC2 lifecycle + IAM PassRole on `skypilot-*` roles + ServiceQuotas +
-S3 access scoped to `kinoforge-realcloud-tests-*` and `skypilot-*`
+S3 access scoped to `<GCS_KMS_KEYRING>-*` and `skypilot-*`
 prefixes + KMS access scoped to the existing Layer W key
-(`alias/kinoforge-realcloud-tests`).
+(`alias/<GCS_KMS_KEYRING>`).
 
 To attach it to the existing `kinoforge-ci` IAM user:
 
@@ -113,7 +113,7 @@ exits 0 against AWS (Layer W+α T3). Once green, detach
 > Remove.
 
 The scoped policy covers all S3 operations kinoforge needs against the
-`kinoforge-realcloud-tests-*` and `skypilot-*` prefixes; broader S3
+`<GCS_KMS_KEYRING>-*` and `skypilot-*` prefixes; broader S3
 access is no longer required.
 
 ## Rotation
