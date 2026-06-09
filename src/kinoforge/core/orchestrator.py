@@ -1110,8 +1110,8 @@ def generate(
         # so non-hosted engines (fal, comfyui, bedrock) get a real slug instead
         # of "unknown". Empty return -> WARNING + None -> sink renders "unknown".
         _provider = getattr(session.engine, "name", None) or None
-        _cfg_dict = cfg.model_dump()
-        _raw_model = session.engine.model_identity(_cfg_dict)
+        cfg_dict = _cfg_dict(cfg)
+        _raw_model = session.engine.model_identity(cfg_dict)
         if not _raw_model:
             _log.warning(
                 "engine %s returned empty model identity; "
