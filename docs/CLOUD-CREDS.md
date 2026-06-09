@@ -29,7 +29,7 @@ The pattern: gitignored `<provider>/` directory + tracked entry in this file.
 
 | Provider     | Status                       | Files                                               | Identity                                                            |
 |--------------|------------------------------|-----------------------------------------------------|---------------------------------------------------------------------|
-| GCP          | ✅ Bootstrapped               | `.gcp/kinoforge-sa.json`, `.gcp/gcloud-config/`     | `kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com`     |
+| GCP          | ✅ Bootstrapped               | `.gcp/kinoforge-sa.json`, `.gcp/gcloud-config/`     | `kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com`  |
 | AWS          | ✅ Bootstrapped               | `.aws/credentials`, `.aws/config`                   | `kinoforge-ci` (account `<AWS_ACCOUNT>`)                              |
 | fal.ai       | ✅ Bootstrapped               | `.env` → `FAL_KEY`                                  | personal fal API key                                                 |
 | HuggingFace  | ✅ Bootstrapped               | `.env` → `HF_TOKEN`                                 | personal HF read-only token                                          |
@@ -67,12 +67,14 @@ for AWS/GCS.
 ## GCP — provisioning history
 
 - 2026-06-03: service account `kinoforge-runner` created in project
-  `<GCP_PROJECT>`. Key file persisted to `/workspace/.gcp/kinoforge-sa.json`.
-  Roles granted: see `.gcp/README.md`.
+  `<GCP_PROJECT>` (operator account `emmykillett@gmail.com`).
+  Roles granted: see `.gcp/README.md`. **SUPERSEDED** by 2026-06-09 swap.
 - 2026-06-06: bucket `gs://<GCS_BUCKET>` created in
   `us-central1` for the S3/GCS real-cloud verification layer.
   Uniform bucket-level access ON. Public access prevention ENFORCED.
   Lifecycle: delete objects + abort multipart at age 1 day.
+  **SUPERSEDED** by 2026-06-09 swap (replaced by
+  `gs://<GCS_BUCKET>`, same settings, new project).
 - 2026-06-06 (Layer W T5 bootstrap): GCP Cloud KMS keyring
   `kinoforge-realcloud-tests` + key `bucket-cmek` created in `us-central1`.
   `kinoforge-runner` SA + GCS service agent
@@ -80,6 +82,18 @@ for AWS/GCS.
   granted `roles/cloudkms.cryptoKeyEncrypterDecrypter`. Key resource name
   persisted to `.gcp/kms-test-key.name` (gitignored).
   Rotation: NOT auto-rotated — rotation invalidates Layer W recorded fixtures.
+  **SUPERSEDED** by 2026-06-09 swap (re-created on new project; ARN updated).
+- 2026-06-09 (operator account swap): permanent migration off
+  `emmykillett@gmail.com` to `retool4251@proton.me`. New project
+  `<GCP_PROJECT>` created under the new account; billing linked
+  to `<GCP_BILLING_ACCOUNT>`. New SA `kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com`
+  with the original 7 roles (compute.admin, iam.securityAdmin,
+  iam.serviceAccountAdmin, iam.serviceAccountUser,
+  serviceusage.serviceUsageAdmin, storage.admin, viewer). Fresh SA JSON
+  key persisted to `/workspace/.gcp/kinoforge-sa.json` (old key kept at
+  `.json.old` until verification completes). Bucket + KMS keyring + key
+  re-created with identical settings on the new project. Old project
+  scheduled for soft-delete (30-day undelete window) after verification.
 
 ## AWS — provisioning history
 
@@ -166,7 +180,8 @@ Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
   holds `roles/compute.instanceAdmin.v1` + `roles/iam.serviceAccountUser`
   (plus several superset roles from earlier layers). Probe grants the
   required roles programmatically if missing (SA already holds
-  `roles/iam.securityAdmin`).
+  `roles/iam.securityAdmin`). [Migrated 2026-06-09 from old account /
+  project `<GCP_PROJECT>`.]
 - **GCP GPU quota:** `NVIDIA_T4_GPUS` ≥ 1 in `us-central1`. Already at
   target before the probe ran; no console action required.
 
