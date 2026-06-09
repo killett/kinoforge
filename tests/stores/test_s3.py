@@ -432,14 +432,12 @@ class TestS3FromFixture:
         client = FixtureReplayS3Client(_FIXTURES / "test_s3_signed_url_get.json")
         url = client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": "kinoforge-realcloud-tests-<AWS_ACCOUNT>", "Key": "k"},
+            Params={"Bucket": "<GCS_KMS_KEYRING>-<AWS_ACCOUNT>", "Key": "k"},
             ExpiresIn=300,
         )
         assert url.startswith("https://"), f"expected HTTPS URL, got {url!r}"
         # The bucket name has the <AWS_ACCOUNT> placeholder after redaction.
-        assert "kinoforge-realcloud-tests" in url, (
-            f"expected bucket name in URL, got {url!r}"
-        )
+        assert "<GCS_KMS_KEYRING>" in url, f"expected bucket name in URL, got {url!r}"
 
     def test_signed_url_put_shape(self) -> None:
         """Signed-URL PUT fixture must yield a valid HTTPS URL containing the bucket.
@@ -450,10 +448,8 @@ class TestS3FromFixture:
         client = FixtureReplayS3Client(_FIXTURES / "test_s3_signed_url_put.json")
         url = client.generate_presigned_url(
             "put_object",
-            Params={"Bucket": "kinoforge-realcloud-tests-<AWS_ACCOUNT>", "Key": "k"},
+            Params={"Bucket": "<GCS_KMS_KEYRING>-<AWS_ACCOUNT>", "Key": "k"},
             ExpiresIn=300,
         )
         assert url.startswith("https://"), f"expected HTTPS URL, got {url!r}"
-        assert "kinoforge-realcloud-tests" in url, (
-            f"expected bucket name in URL, got {url!r}"
-        )
+        assert "<GCS_KMS_KEYRING>" in url, f"expected bucket name in URL, got {url!r}"

@@ -36,13 +36,13 @@ logger = logging.getLogger("bootstrap_kms")
 # ---------------------------------------------------------------------------
 
 AWS_REGION = "us-east-1"
-AWS_ALIAS = "alias/kinoforge-realcloud-tests"
+AWS_ALIAS = "alias/<GCS_KMS_KEYRING>"
 # Path is relative to the repo root (script must be run via pixi run from root).
 AWS_KEY_FILE = Path(".aws/kms-test-key.arn")
 AWS_IAM_USER = "kinoforge-ci"
 
 GCP_LOCATION = "us-central1"
-GCP_KEYRING = "kinoforge-realcloud-tests"
+GCP_KEYRING = "<GCS_KMS_KEYRING>"
 GCP_KEY = "bucket-cmek"
 GCP_KEY_FILE = Path(".gcp/kms-test-key.name")
 GCP_ROLE = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
@@ -58,7 +58,7 @@ def bootstrap_aws() -> None:
 
     Idempotence checks (in order):
     1. ``.aws/kms-test-key.arn`` exists and ``kms:DescribeKey`` succeeds → skip.
-    2. ``kms:DescribeKey`` on ``alias/kinoforge-realcloud-tests`` succeeds →
+    2. ``kms:DescribeKey`` on ``alias/<GCS_KMS_KEYRING>`` succeeds →
        record the ARN and skip (key already exists but ARN file is missing).
     3. ``KINOFORGE_AWS_KMS_ARN`` env var set → record it and skip (operator
        pre-provisioned the key via admin credentials or the AWS Console; this
@@ -280,9 +280,7 @@ def bootstrap_gcp() -> None:
 
     # Derive project id from the service-account key (avoids a separate env var).
     sa_email = _read_sa_email()
-    project_id = sa_email.split("@")[1].split(".iam.")[
-        0
-    ]  # e.g. "<GCP_PROJECT>"
+    project_id = sa_email.split("@")[1].split(".iam.")[0]  # e.g. "<GCP_PROJECT>"
 
     location_path = f"projects/{project_id}/locations/{GCP_LOCATION}"
     keyring_path = f"{location_path}/keyRings/{GCP_KEYRING}"
@@ -452,7 +450,7 @@ def main() -> int:
             "  a) AWS Console → IAM → kinoforge-ci → Add inline policy granting "
             "kms:CreateKey + kms:CreateAlias + kms:PutKeyPolicy, run this script, "
             "then remove the inline policy.\n"
-            "  b) Create the key in the AWS Console (alias: alias/kinoforge-realcloud-tests, "
+            "  b) Create the key in the AWS Console (alias: alias/<GCS_KMS_KEYRING>, "
             "region: us-east-1) and re-run with:\n"
             "     KINOFORGE_AWS_KMS_ARN=<arn> pixi run cloud:bootstrap-kms"
         )

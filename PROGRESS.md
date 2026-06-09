@@ -1417,7 +1417,7 @@ key inventory.
 - S3 multipart ETag: `"0fdfb84099d425daeed95c07873a8f11-2"` (2-part MPU, 16 MiB object)
 - S3 KMS-encrypted object: `ServerSideEncryption=aws:kms` confirmed against key `4b0dbe0c-3a76-401a-ac2e-d0d949b9fa3e`
 - GCS resumable upload size: `16777216` bytes confirmed on blob metadata
-- GCS CMEK `kms_key_name`: `projects/.../keyRings/kinoforge-realcloud-tests/cryptoKeys/bucket-cmek/cryptoKeyVersions/1`
+- GCS CMEK `kms_key_name`: `projects/.../keyRings/<GCS_KMS_KEYRING>/cryptoKeys/bucket-cmek/cryptoKeyVersions/1`
 
 **Key design decisions:**
 

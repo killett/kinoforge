@@ -26,26 +26,28 @@ from tests.stores.recording import (
 
 
 def test_redact_strips_account_id() -> None:
-    payload = {"Bucket": "<S3_BUCKET>", "Body": "ok"}
+    # Use a publicly-safe dummy 12-digit AWS account number.
+    payload = {"Bucket": "kinoforge-realcloud-tests-123456789012", "Body": "ok"}
     out = _redact(payload)
-    assert "<AWS_ACCOUNT>" not in json.dumps(out)
+    assert "123456789012" not in json.dumps(out)
     assert "<AWS_ACCOUNT>" in out["Bucket"]
 
 
 def test_redact_strips_project_id() -> None:
-    payload = {"resource": "projects/<GCP_PROJECT>/buckets/foo"}
+    # Use a shape-matching dummy GCP project ID with 6-hex suffix.
+    payload = {"resource": "projects/kinoforge-dev-abcdef/buckets/foo"}
     out = _redact(payload)
-    assert "<GCP_PROJECT>" not in json.dumps(out)
+    assert "kinoforge-dev-abcdef" not in json.dumps(out)
     assert "<GCP_PROJECT>" in out["resource"]
 
 
 def test_redact_strips_prod_project_id_shape() -> None:
     # Lockdown for the generalized regex (2026-06-09 GCP account swap):
-    # `kinoforge-(dev|prod)-<8hex>`. Without the alternation the prod-suffix
-    # variant would slip through fixture redaction.
-    payload = {"resource": "projects/<GCP_PROJECT>/buckets/foo"}
+    # `kinoforge-(dev|prod)-<4-12 hex>`. Without the alternation the prod-suffix
+    # variant would slip through fixture redaction. 8-hex shape exercised here.
+    payload = {"resource": "projects/kinoforge-prod-deadbeef/buckets/foo"}
     out = _redact(payload)
-    assert "<GCP_PROJECT>" not in json.dumps(out)
+    assert "kinoforge-prod-deadbeef" not in json.dumps(out)
     assert "<GCP_PROJECT>" in out["resource"]
 
 
@@ -106,18 +108,18 @@ def test_redact_substitutes_kms_key() -> None:
 
 def test_redact_extra_subs_applied_before_account_rule() -> None:
     """Regression: KMS ARN must be substituted before account-id regex strips the account id."""
-    payload = {"SSEKMSKeyId": "arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/abcdef-1234"}
+    payload = {"SSEKMSKeyId": "arn:aws:kms:us-east-1:123456789012:key/abcdef-1234"}
     out = _redact(
         payload,
         extra_subs={
-            "arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/abcdef-1234": "<S3_KMS_KEY>"
+            "arn:aws:kms:us-east-1:123456789012:key/abcdef-1234": "<S3_KMS_KEY>"
         },
     )
     assert out["SSEKMSKeyId"] == "<S3_KMS_KEY>"
     # The original UUID + account id must both be gone.
     blob = json.dumps(out)
     assert "abcdef-1234" not in blob
-    assert "<AWS_ACCOUNT>" not in blob
+    assert "123456789012" not in blob
 
 
 def test_redact_roundtrip_no_secrets_remain() -> None:
@@ -127,11 +129,11 @@ def test_redact_roundtrip_no_secrets_remain() -> None:
         "X-Amz-Security-Token": "SESSION_TOKEN",
         "X-Goog-Authorization": "Bearer GOOGLE_TOKEN",
         "url": (
-            "https://s3.amazonaws.com/<S3_BUCKET>/obj"
+            "https://s3.amazonaws.com/kinoforge-realcloud-tests-123456789012/obj"
             "?X-Amz-Signature=deadbeef1234"
             "&X-Amz-Credential=AKIA/20260606/us-east-1"
             "&X-Goog-Signature=cafebabe5678"
-            "&x-goog-credential=sa%40<GCP_PROJECT>.iam.gserviceaccount.com"
+            "&x-goog-credential=sa%40kinoforge-dev-abcdef.iam.gserviceaccount.com"
         ),
         "kms_key": "arn:aws:kms:us-east-1:1:key/REAL_KEY",
     }
@@ -141,8 +143,8 @@ def test_redact_roundtrip_no_secrets_remain() -> None:
     )
     serialised = json.dumps(out)
     # All secrets gone
-    assert "<AWS_ACCOUNT>" not in serialised
-    assert "<GCP_PROJECT>" not in serialised
+    assert "123456789012" not in serialised
+    assert "kinoforge-dev-abcdef" not in serialised
     assert "deadbeef1234" not in serialised
     assert "cafebabe5678" not in serialised
     assert "REAL_KEY" not in serialised
@@ -181,10 +183,10 @@ def test_persist_creates_parent_directories(tmp_path: Path) -> None:
 
 def test_persist_applies_redaction(tmp_path: Path) -> None:
     target = tmp_path / "fx.json"
-    payload = [{"Bucket": "<S3_BUCKET>"}]
+    payload = [{"Bucket": "kinoforge-realcloud-tests-123456789012"}]
     _persist("ax", payload, target, cloud="s3", axis="ax")
     raw = target.read_text()
-    assert "<AWS_ACCOUNT>" not in raw
+    assert "123456789012" not in raw
     assert "<AWS_ACCOUNT>" in raw
 
 

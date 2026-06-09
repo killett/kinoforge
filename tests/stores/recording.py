@@ -42,12 +42,15 @@ def _kinoforge_version() -> str:
 
 
 _REDACT_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"<AWS_ACCOUNT>"), "<AWS_ACCOUNT>"),
-    # Generalized to match the original <GCP_PROJECT> (6 hex) AND the
-    # 2026-06-09 swap to <GCP_PROJECT> (8 hex). Anchored on the
-    # `kinoforge-(dev|prod)-` prefix + a run of 4-12 lowercase hex chars; the
-    # wide span absorbs the historical 6-char suffix and the post-swap 8-char
-    # suffix without hardcoding either. Extend the alt if a future env tag
+    # Any standalone 12-digit number is treated as an AWS account ID. False
+    # positives are acceptable here because over-redaction in committed
+    # fixtures is the safer direction than letting a real account ID slip
+    # through. The `(?<!\d)` and `(?!\d)` lookarounds prevent matching the
+    # middle of a longer numeric run (e.g. a 16-digit timestamp).
+    (re.compile(r"(?<!\d)\d{12}(?!\d)"), "<AWS_ACCOUNT>"),
+    # GCP project IDs of the form kinoforge-(dev|prod)-<hex>. Anchored on
+    # the prefix; the 4-12 hex span absorbs both 6-char and 8-char project
+    # suffixes used historically. Extend the alt if a future env tag
     # (test, staging, ...) lands.
     (re.compile(r"kinoforge-(?:dev|prod)-[0-9a-f]{4,12}"), "<GCP_PROJECT>"),
     (

@@ -45,8 +45,8 @@ Files that change together (the probe + its tests + fixtures) live together unde
 - [ ] EC2 statement covers: `Describe*`, `RunInstances`, `TerminateInstances`, `CreateTags`, `DeleteTags`, `Create/Delete/Modify*` for VPC / Subnet / SG / Route / IGW / EIP / VolumeAttachment
 - [ ] IAM statement scoped to roles/profiles named `skypilot-*` or `sky-*`: `Create/DeleteRole`, `Create/DeleteInstanceProfile`, `AddRoleToInstanceProfile`, `RemoveRoleFromInstanceProfile`, `PutRolePolicy`, `AttachRolePolicy`, `DetachRolePolicy`, `PassRole`, `GetRole`, `GetInstanceProfile`, `ListRolePolicies`, `ListInstanceProfilesForRole`
 - [ ] ServiceQuotas statement: `GetServiceQuota`, `ListServiceQuotas`, `RequestServiceQuotaIncrease`, `ListRequestedServiceQuotaChangeHistory`
-- [ ] S3 statement scoped to `arn:aws:s3:::kinoforge-realcloud-tests-*`, `arn:aws:s3:::skypilot-*` (+ object children) — bucket + object operations
-- [ ] KMS statement scoped to `arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/<id>` for `alias/kinoforge-realcloud-tests`: `Encrypt`, `Decrypt`, `GenerateDataKey`, `DescribeKey`
+- [ ] S3 statement scoped to `arn:aws:s3:::<GCS_KMS_KEYRING>-*`, `arn:aws:s3:::skypilot-*` (+ object children) — bucket + object operations
+- [ ] KMS statement scoped to `arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/<id>` for `alias/<GCS_KMS_KEYRING>`: `Encrypt`, `Decrypt`, `GenerateDataKey`, `DescribeKey`
 - [ ] JSON parses cleanly (`python -c "import json; json.load(open('.aws/policies/skypilot-minimal.json'))"`)
 - [ ] No `Resource: "*"` on data-bearing actions (only on `Describe*` and read-only metadata)
 
@@ -209,8 +209,8 @@ Capture the ARN; it lands in the policy KMS resource list verbatim.
         "s3:ListBucketMultipartUploads"
       ],
       "Resource": [
-        "arn:aws:s3:::kinoforge-realcloud-tests-*",
-        "arn:aws:s3:::kinoforge-realcloud-tests-*/*",
+        "arn:aws:s3:::<GCS_KMS_KEYRING>-*",
+        "arn:aws:s3:::<GCS_KMS_KEYRING>-*/*",
         "arn:aws:s3:::skypilot-*",
         "arn:aws:s3:::skypilot-*/*"
       ]
@@ -261,7 +261,7 @@ feat(aws): scoped SkyPilot IAM policy doc
 
 Layer W+α T1. Tracked policy bytes (no secrets). EC2 lifecycle +
 IAM PassRole on skypilot-* + ServiceQuotas + S3/KMS scoped to
-kinoforge-realcloud-tests-* and skypilot-* buckets.
+<GCS_KMS_KEYRING>-* and skypilot-* buckets.
 EOF
 )"
 ```
@@ -323,7 +323,7 @@ exits 0 against AWS. Once green, detach `AmazonS3FullAccess`:
 > Remove.
 
 The scoped policy covers all S3 operations kinoforge needs against the
-`kinoforge-realcloud-tests-*` prefix; broader S3 access is no longer
+`<GCS_KMS_KEYRING>-*` prefix; broader S3 access is no longer
 required.
 ```
 
@@ -1578,8 +1578,8 @@ the SkyPilot multi-cloud T4 smoke (Layer W+β) needs. Spec:
 
 - AWS scoped policy: `.aws/policies/skypilot-minimal.json` (tracked).
   EC2 lifecycle + IAM PassRole for `skypilot-*` + ServiceQuotas + S3
-  scoped to `kinoforge-realcloud-tests-*` and `skypilot-*` prefixes +
-  KMS scoped to `alias/kinoforge-realcloud-tests`.
+  scoped to `<GCS_KMS_KEYRING>-*` and `skypilot-*` prefixes +
+  KMS scoped to `alias/<GCS_KMS_KEYRING>`.
 - AWS quota: `L-DB2E81BA` (Running On-Demand G/VT instances) ≥ 4 vCPUs
   in `us-east-1`. Auto-requested via SDK if low; CaseId captured in
   `.aws/perms-snapshot.json`.
