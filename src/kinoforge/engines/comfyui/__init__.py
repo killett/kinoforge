@@ -75,6 +75,20 @@ _DEFAULT_COMFYUI_ROOT = "ComfyUI"
 #: Module-level logger; named so callers can filter via ``kinoforge.comfyui``.
 _log = logging.getLogger("kinoforge.comfyui")
 
+#: HTTP status codes treated as transient RunPod-proxy startup-window failures.
+#: Phase 46 Task 7 root cause: live probe of pod xawdweboxapubz showed
+#: ``/system_stats`` returning 200 (so wait_for_ready succeeds) while POST
+#: ``/upload/image`` and parameterised paths like ``/history/{prompt_id}``
+#: returned 404 for the first ~minute of pod lifetime, then 200 indefinitely
+#: (50/50 sequential warm probes). 502/503/504 added defensively for normal
+#: edge-layer transient failures.
+_PROXY_TRANSIENT_CODES: frozenset[int] = frozenset({404, 502, 503, 504})
+
+#: Backoff schedule for the ``submit()`` retry helper.  Caps total wait at
+#: ~60 s — well under ``boot_timeout`` and large enough to cover the
+#: startup-window race observed in live probes.
+_SUBMIT_RETRY_BACKOFFS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0, 16.0)
+
 #: Stock container image used when cfg does not specify one.
 _DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 
@@ -399,6 +413,66 @@ _DEFAULT_PROBE = ModelProfile(
 # ---------------------------------------------------------------------------
 
 
+def _retry_proxy_call[T](
+    label: str,
+    url: str,
+    fn: Callable[[], T],
+    sleep: Callable[[float], None],
+) -> T:
+    """Run *fn* with bounded retry on RunPod-proxy transient HTTP codes.
+
+    Each transient failure (codes in :data:`_PROXY_TRANSIENT_CODES`) logs a
+    WARNING and sleeps per :data:`_SUBMIT_RETRY_BACKOFFS`. Non-transient
+    HTTPError and non-HTTPError exceptions propagate immediately. After the
+    backoff schedule exhausts, the final transient HTTPError is re-raised.
+
+    Args:
+        label: Short tag for log lines (e.g. ``"submit.upload"``).
+        url: URL passed to *fn*; included in WARNING messages.
+        fn: Zero-arg callable performing the HTTP request.
+        sleep: Injected sleep seam; receives backoff seconds.
+
+    Returns:
+        The successful return value of *fn*.
+
+    Raises:
+        urllib.error.HTTPError: The last transient HTTPError after the
+            backoff schedule exhausts, or a non-transient HTTPError on
+            any attempt.
+    """
+    last_exc: urllib.error.HTTPError | None = None
+    attempts = 1 + len(_SUBMIT_RETRY_BACKOFFS)
+    for attempt_idx, delay in enumerate((0.0,) + _SUBMIT_RETRY_BACKOFFS):
+        if delay > 0:
+            sleep(delay)
+        try:
+            return fn()
+        except urllib.error.HTTPError as exc:
+            if exc.code not in _PROXY_TRANSIENT_CODES:
+                raise
+            _log.warning(
+                "[comfyui.%s] transient HTTPError url=%s code=%d "
+                "attempt=%d/%d next_backoff=%.1fs",
+                label,
+                url,
+                exc.code,
+                attempt_idx + 1,
+                attempts,
+                _SUBMIT_RETRY_BACKOFFS[attempt_idx]
+                if attempt_idx < len(_SUBMIT_RETRY_BACKOFFS)
+                else 0.0,
+            )
+            last_exc = exc
+    # last_exc is always set after the first transient-codes branch above,
+    # but mypy needs the explicit guard. A non-transient path returns or
+    # raises directly inside the loop.
+    if last_exc is None:  # pragma: no cover — unreachable
+        raise RuntimeError(
+            "_retry_proxy_call exited loop without recording an HTTPError"
+        )
+    raise last_exc
+
+
 class ComfyUIBackend(GenerationBackend):
     """Live backend that communicates with a running ComfyUI server.
 
@@ -509,12 +583,26 @@ class ComfyUIBackend(GenerationBackend):
                 http_get_bytes=self._http_get_bytes,
             )
             upload_url = f"{self._base_url}/upload/image"
-            try:
-                uploaded_name = self._http_post_file(
-                    upload_url,
+            upload_filename = asset.ref.filename or f"{role}.png"
+
+            def _upload(
+                _url: str = upload_url,
+                _name: str = upload_filename,
+                _bytes: bytes = payload,
+            ) -> str:
+                return self._http_post_file(
+                    _url,
                     field_name="image",
-                    filename=asset.ref.filename or f"{role}.png",
-                    content=payload,
+                    filename=_name,
+                    content=_bytes,
+                )
+
+            try:
+                uploaded_name = _retry_proxy_call(
+                    "submit.upload",
+                    upload_url,
+                    _upload,
+                    self._sleep,
                 )
             except (urllib.error.URLError, OSError) as e:
                 raise AssetFetchError(
@@ -557,7 +645,12 @@ class ComfyUIBackend(GenerationBackend):
             else:
                 graph[node_id] = copy.deepcopy(node_patch)
         url = f"{self._base_url}/prompt"
-        response = self._http_post(url, {"prompt": graph})
+        response = _retry_proxy_call(
+            "submit.prompt",
+            url,
+            lambda: self._http_post(url, {"prompt": graph}),
+            self._sleep,
+        )
         return str(response["prompt_id"])
 
     def result(self, job_id: str) -> Artifact:
@@ -579,18 +672,33 @@ class ComfyUIBackend(GenerationBackend):
                 limit.
         """
         url = f"{self._base_url}/history/{job_id}"
+        last_transient: urllib.error.HTTPError | None = None
         for poll_idx in range(_MAX_POLL):
             try:
                 data = self._http_get(url)
             except urllib.error.HTTPError as exc:
-                # Phase 46 Task 7 carry-forward: production failure was a
-                # bare ``HTTPError: HTTP Error 404`` with no URL, no poll
-                # index, no body. ComfyUI 0.3.10's ``/history/{prompt_id}``
-                # route returns 200 with ``{}`` for unknown IDs; it never
-                # 404s. A 404 here therefore points at the proxy / pod
-                # liveness layer, not at ComfyUI. Surface enough state to
-                # discriminate proxy 404 (pod terminated) from URL drift on
-                # the next live re-fire.
+                # Phase 46 Task 7 root cause: ComfyUI 0.3.10's
+                # ``/history/{prompt_id}`` route always returns 200 with
+                # ``{}`` for unknown IDs — it never 404s itself. A 404
+                # surfacing here is the RunPod HTTP proxy's startup-window
+                # failure mode (verified live on pod xawdweboxapubz
+                # 2026-06-08: /upload/image 404s for the first ~minute,
+                # then serves indefinitely). Log diagnostic state, treat
+                # transient codes as "keep polling", remember the last
+                # one so we re-raise it on _MAX_POLL exhaustion instead
+                # of a misleading TimeoutError.
+                if exc.code in _PROXY_TRANSIENT_CODES:
+                    _log.warning(
+                        "[comfyui.result] transient HTTPError poll=%d "
+                        "url=%s code=%d reason=%s",
+                        poll_idx,
+                        url,
+                        exc.code,
+                        str(exc.reason)[:200],
+                    )
+                    last_transient = exc
+                    self._sleep(_POLL_INTERVAL_S)
+                    continue
                 _log.warning(
                     "[comfyui.result] HTTPError poll=%d url=%s code=%d reason=%s",
                     poll_idx,
@@ -611,6 +719,8 @@ class ComfyUIBackend(GenerationBackend):
                     meta={"prompt_id": job_id},
                 )
             self._sleep(_POLL_INTERVAL_S)
+        if last_transient is not None:
+            raise last_transient
         raise TimeoutError(
             f"ComfyUI did not complete prompt {job_id!r} within {_MAX_POLL} polls "
             f"× {_POLL_INTERVAL_S}s = {_MAX_POLL * _POLL_INTERVAL_S:.0f}s"
