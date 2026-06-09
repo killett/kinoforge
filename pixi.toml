@@ -106,6 +106,8 @@ AZURE_CONFIG_DIR = "$PIXI_PROJECT_ROOT/.azure"
 
 [tasks]
 # On macOS, pixi-installed tools (pytest, ruff, mypy) can fail due to shebang path resolution issues. Using python -m <tool> bypasses this reliably.
+# `pixi run kinoforge ...` shim: project has no [project.scripts] entry-point (no [build-system]), so this exposes `python -m kinoforge` under the conventional task name used throughout the README and the successful-generations log workflow.
+kinoforge = "python -m kinoforge"
 test = "python -m pytest"
 test-cov = "python -m pytest --cov"  # Later on, consider adding --cov-fail-under=80
 # Opt-in live tests that hit real provider APIs. Requires KINOFORGE_LIVE_TESTS=1
