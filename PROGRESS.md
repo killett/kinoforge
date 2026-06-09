@@ -217,6 +217,10 @@ in the filename schema `{ts}_{provider}_{model-slug}_{prompt-slug}.{ext}`.
 
 ### RESUME — START HERE
 
+**Successful generations log:** see `successful-generations.md` (added Phase 46). Per `CLAUDE.md`
+Durability rules, every new-capability success gets a new entry unless `--ephemeral` was passed;
+same-tuple `(provider, engine, model, mode)` repeats get a "See also" line.
+
 **Where we are (as of session 2026-06-07):**
 - **Phase 43 (Layer 4 — Bearer-provider comparison smokes):** PARTIAL (above). 10 of 17 tasks landed end-to-end; 4 deferred + 1 partial. 2 hosted Bearer providers proven live (Runway + Replicate). Phase 44 closes the Luma direct-API carry-forward (API retired by provider); Layer 5b adds `LumaAgentsImageEngine` (UNI-1 image keyframes) — separate spec.
 - **Phase 41 (Layer 1 — AuthStrategy substrate):** CLOSED. 11 tasks, merged to main.
@@ -2050,3 +2054,27 @@ the Phase 43 section. Or open a new layer.
   launch fixture got volatile-uuid'd by the redaction pattern in a way
   the assertion didn't anticipate. Caught at Task 14 verify; not introduced
   by Task 14. Fix candidate for an early Sub-δ commit.
+
+### Phase 46 — Successful-generations log scaffold
+
+Layer 6. Stands up `successful-generations.md` as the durable C-rule log of every kinoforge
+generation that introduces a new capability axis. Adds reminders to `CLAUDE.md` (Durability rules
+bullet) and the RESUME block above. Adds a top-level `kinoforge --version` CLI flag so future log
+entries don't have to grep `pyproject.toml`. Closes with four live-spend re-fires (one per known
+stack) — each appends one entry + commits atomically.
+
+Spec: `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md` (`df70955`).
+Plan: `docs/superpowers/plans/2026-06-08-successful-generations-log.md` (`bafbd59`).
+
+- [x] Task 2: `successful-generations.md` scaffold — commit `72f5b18`
+- [x] Task 3: `CLAUDE.md` Durability bullet — commit `1a76df9`
+- [ ] Task 4: `PROGRESS.md` pointer + this section — commit `<sha>`
+- [ ] Task 5: `kinoforge --version` flag + 2 tests — commit `<sha>`
+- [ ] Task 6: fal-ai/wan-t2v re-fire + entry #1 — commit `<sha>`
+- [ ] Task 7: Wan 2.1 14B i2v on RunPod+ComfyUI re-fire + entry #2 — commit `<sha>`
+- [ ] Task 8: Runway gen4.5 t2v re-fire + entry #3 — commit `<sha>`
+- [ ] Task 9: Replicate seedance-1-lite t2v re-fire + entry #4 — commit `<sha>`
+
+**Live-spend budget (Tasks 6–9):** ~$2 of ~$10.88 remaining.
+
+**Carry-forwards:** none — Layer 6 is self-contained and additive.
