@@ -70,7 +70,9 @@ work assume the slug is a real identity.
 
 ### 5.1 ABC contract
 
-`src/kinoforge/core/interfaces.py` — add to `class GenerationEngine`:
+`src/kinoforge/core/interfaces.py` — add to BOTH `class GenerationEngine`
+and `class ImageEngine` (parallel ABCs; clip stage uses
+`GenerationEngine`, keyframe stage uses `ImageEngine`):
 
 ```python
 @abstractmethod
@@ -100,6 +102,11 @@ def model_identity(self, cfg: dict[str, object]) -> str:
     """
     ...
 ```
+
+The method is identical on both ABCs — same docstring, same contract,
+same return type. Two definitions because `GenerationEngine` and
+`ImageEngine` do not share a parent ABC today, and introducing one is
+out of scope.
 
 ### 5.2 Per-engine implementations
 
@@ -138,7 +145,31 @@ def model_identity(self, cfg):
 # engines/fake/__init__.py  (offline test path)
 def model_identity(self, cfg):
     return str(cfg.get("spec", {}).get("model", "") or "")
+
+# image_engines/replicate/__init__.py (ImageEngine ABC)
+def model_identity(self, cfg):
+    return str(cfg.get("spec", {}).get("model", "") or "")
+
+# image_engines/fal/__init__.py (ImageEngine ABC)
+def model_identity(self, cfg):
+    return str(
+        cfg.get("engine", {}).get("fal", {}).get("endpoint", "") or ""
+    )
+
+# image_engines/fake/__init__.py (ImageEngine ABC, offline test path)
+def model_identity(self, cfg):
+    return str(cfg.get("spec", {}).get("model", "") or "")
 ```
+
+The keyframe path's cfg shape: `KeyframeStage` builds a synthetic
+cfg-shaped dict by walking `cfg.keyframe` (which has `spec` / `params`
+blocks but no top-level `engine` block today). Image engines whose
+identity lives at `engine.<kind>.endpoint` (fal) read from a synthesised
+sub-block; the orchestrator passes `{"engine": {"fal":
+{"endpoint": cfg.keyframe.engine_endpoint, ...}}, "spec": cfg.keyframe.spec}`
+or equivalent. Exact shape is decided during implementation; the
+contract is just "engine reads the same key its `backend()` already
+reads".
 
 ### 5.3 Orchestrator wiring — clip stage
 
@@ -255,7 +286,8 @@ loud.
 ### 7.1 Per-engine unit tests (`tests/engines/test_<engine>.py`)
 
 For each of `hosted` / `diffusers` / `fal` / `comfyui` / `bedrock_video` /
-`fake`:
+`fake` (GenerationEngine), and `replicate` / `fal` / `fake`
+(ImageEngine):
 
 - `test_model_identity_reads_native_source` — minimal cfg dict produces
   the expected raw slug. Bug it catches: engine reads the wrong field
