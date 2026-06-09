@@ -39,6 +39,16 @@ def test_redact_strips_project_id() -> None:
     assert "<GCP_PROJECT>" in out["resource"]
 
 
+def test_redact_strips_prod_project_id_shape() -> None:
+    # Lockdown for the generalized regex (2026-06-09 GCP account swap):
+    # `kinoforge-(dev|prod)-<8hex>`. Without the alternation the prod-suffix
+    # variant would slip through fixture redaction.
+    payload = {"resource": "projects/<GCP_PROJECT>/buckets/foo"}
+    out = _redact(payload)
+    assert "<GCP_PROJECT>" not in json.dumps(out)
+    assert "<GCP_PROJECT>" in out["resource"]
+
+
 def test_redact_strips_signature_query_param() -> None:
     payload = {
         "url": "https://s3.amazonaws.com/foo?X-Amz-Signature=ababab1234&Expires=42"
