@@ -1105,10 +1105,20 @@ def generate(
         # Build stage list from cfg-block presence (GenerateClipStage only
         # here — KeyframeStage already ran above when keyframe was set).
         # ------------------------------------------------------------------
-        # Layer 4: provider + model for the OutputSink filename schema.
-        # Provider = registered engine name; model = spec.model when present.
+        # Layer 8: provider + model for the OutputSink filename schema.
+        # Provider = registered engine name; model = engine.model_identity(cfg)
+        # so non-hosted engines (fal, comfyui, bedrock) get a real slug instead
+        # of "unknown". Empty return -> WARNING + None -> sink renders "unknown".
         _provider = getattr(session.engine, "name", None) or None
-        _model = str(cfg.spec.get("model", "") or "") or None
+        _cfg_dict = cfg.model_dump()
+        _raw_model = session.engine.model_identity(_cfg_dict)
+        if not _raw_model:
+            _log.warning(
+                "engine %s returned empty model identity; "
+                "sink will render filename slug as 'unknown'",
+                session.engine.name,
+            )
+        _model = _raw_model or None
         stages: list[Stage] = [
             GenerateClipStage(
                 profile=session.profile,

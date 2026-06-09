@@ -2511,3 +2511,99 @@ def test_generate_validation_error_in_keyframe_tears_down_video_instance(
         f"expected destroy_instance called once on ValidationError from KeyframeStage; "
         f"got {destroy_calls!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 Task 2: clip-stage model identity wiring
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_threads_engine_model_identity_into_clip_stage(
+    tmp_path: Path,
+) -> None:
+    """Orchestrator sources clip-stage sink model slug from engine.model_identity.
+
+    Bug catch: orchestrator regresses to direct cfg.spec.model read, so engines
+    whose identity lives outside spec (fal, comfyui, bedrock) re-surface as
+    'unknown'.
+    """
+
+    cfg = _compute_cfg().model_copy(update={"spec": {"model": "fake-pinned-model"}})
+    engine = _make_engine()
+    provider = LocalProvider()
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="a calm sea at dusk", mode="t2v")
+
+    captured: list[dict[str, object]] = []
+
+    class _CapturingSink:
+        def publish(
+            self,
+            data: bytes,
+            *,
+            prompt: str,
+            extension: str,
+            namespace: str | None = None,
+            provider: str | None = None,
+            model: str | None = None,
+            kind: str | None = None,
+        ) -> str:
+            captured.append(
+                {
+                    "provider": provider,
+                    "model": model,
+                }
+            )
+            return f"capturing://{prompt[:20]}{extension}"
+
+    generate(
+        cfg,
+        request,
+        store=store,
+        provider=provider,
+        engine=engine,
+        sink=_CapturingSink(),
+    )
+
+    assert len(captured) >= 1, f"sink.publish() was never called; got {captured!r}"
+    assert captured[0]["model"] == "fake-pinned-model", (
+        f"expected model='fake-pinned-model' from engine.model_identity; "
+        f"got model={captured[0]['model']!r}"
+    )
+
+
+def test_orchestrator_warns_when_engine_model_identity_empty(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Empty engine identity emits one WARNING naming the engine.
+
+    Bug catch: silent fallback to None means future 'unknown' filenames surface
+    only in user-visible artifacts, never in CI / smoke output.
+    """
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="kinoforge.orchestrator")
+
+    # FakeEngine.model_identity reads cfg.spec.model; empty string → empty identity
+    cfg = _compute_cfg().model_copy(update={"spec": {"model": ""}})
+    engine = _make_engine()
+    provider = LocalProvider()
+    store = LocalArtifactStore(tmp_path)
+    request = GenerationRequest(prompt="a stormy ocean wave", mode="t2v")
+
+    generate(
+        cfg,
+        request,
+        store=store,
+        provider=provider,
+        engine=engine,
+    )
+
+    warnings = [r for r in caplog.records if "model identity" in r.message]
+    assert len(warnings) == 1, (
+        f"expected exactly 1 WARNING about model identity; got {warnings!r}"
+    )
+    assert "fake" in warnings[0].message, (
+        f"engine name 'fake' should appear in WARNING; got {warnings[0].message!r}"
+    )
