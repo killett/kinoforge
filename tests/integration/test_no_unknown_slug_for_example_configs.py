@@ -16,7 +16,6 @@ import pytest
 import kinoforge._adapters  # noqa: F401
 from kinoforge.core import registry
 from kinoforge.core.config import load_config
-from kinoforge.core.errors import ConfigError
 
 _EXAMPLE_DIR = Path(__file__).resolve().parents[2] / "examples" / "configs"
 _SKIP_YAMLS = {
@@ -32,7 +31,9 @@ _SKIP_YAMLS = {
 
 
 def _collect_example_configs() -> list[Path]:
-    return sorted(p for p in _EXAMPLE_DIR.glob("*.yaml") if p.name not in _SKIP_YAMLS)
+    return sorted(
+        p for p in _EXAMPLE_DIR.glob("**/*.yaml") if p.name not in _SKIP_YAMLS
+    )
 
 
 @pytest.mark.parametrize(
@@ -46,10 +47,7 @@ def test_example_config_produces_non_empty_model_identity(config_path: Path) -> 
     Args:
         config_path: Path to the example YAML under ``examples/configs/``.
     """
-    try:
-        cfg = load_config(str(config_path))
-    except ConfigError as exc:
-        pytest.skip(f"config load failed — skipping: {exc}")
+    cfg = load_config(str(config_path))
 
     if cfg.engine.kind == "fake":
         pytest.skip("fake engine — identity intentionally absent")
