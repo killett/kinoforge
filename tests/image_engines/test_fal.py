@@ -187,3 +187,29 @@ def test_result_no_images_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_endpoints_static_queue_url(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = _build_backend(monkeypatch)
     assert backend.endpoints() == {"queue": "https://queue.fal.run"}
+
+
+# ---------------------------------------------------------------------------
+# Layer 8 — model_identity
+# ---------------------------------------------------------------------------
+
+
+def test_fal_image_engine_model_identity_returns_endpoint_slug() -> None:
+    """FalImageEngine reads model slug from engine.fal.endpoint.
+
+    Bug catch: reads from spec.model instead of the fal-specific endpoint field.
+    """
+    eng = _engine()
+    cfg = {"engine": {"fal": {"endpoint": "fal-ai/flux/dev"}}}
+    assert eng.model_identity(cfg) == "fal-ai/flux/dev"
+
+
+def test_fal_image_engine_model_identity_empty_on_missing_engine_block() -> None:
+    """FalImageEngine returns empty string when engine or fal block is absent.
+
+    Bug catch: KeyError raised on bare cfg breaks slug derivation for all image jobs.
+    """
+    eng = _engine()
+    assert eng.model_identity({}) == ""
+    assert eng.model_identity({"engine": {}}) == ""
+    assert eng.model_identity({"engine": {"fal": {}}}) == ""
