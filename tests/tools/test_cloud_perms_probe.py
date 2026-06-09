@@ -247,9 +247,7 @@ class _FakeGCPIAMClient:
 
 
 def _green_gcp_clients(*, t4_quota: float = 8.0) -> dict[str, Any]:
-    sa_member = (
-        "serviceAccount:kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com"
-    )
+    sa_member = "serviceAccount:kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com"
     return {
         "regions": _FakeGCPRegionsClient(
             quotas=[
@@ -300,9 +298,7 @@ def test_probe_gcp_exit_2_on_quota_zero(tmp_path: Path) -> None:
 
 def test_probe_gcp_exit_1_on_missing_role(tmp_path: Path) -> None:
     clients = _green_gcp_clients()
-    sa_member = (
-        "serviceAccount:kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com"
-    )
+    sa_member = "serviceAccount:kinoforge-runner@<GCP_PROJECT>.iam.gserviceaccount.com"
     clients["iam"] = _FakeGCPIAMClient(
         sa_roles={
             # No instanceAdmin → required role missing.

@@ -437,9 +437,7 @@ class TestS3FromFixture:
         )
         assert url.startswith("https://"), f"expected HTTPS URL, got {url!r}"
         # The bucket name has the <AWS_ACCOUNT> placeholder after redaction.
-        assert "<GCS_KMS_KEYRING>" in url, (
-            f"expected bucket name in URL, got {url!r}"
-        )
+        assert "<GCS_KMS_KEYRING>" in url, f"expected bucket name in URL, got {url!r}"
 
     def test_signed_url_put_shape(self) -> None:
         """Signed-URL PUT fixture must yield a valid HTTPS URL containing the bucket.
@@ -454,6 +452,4 @@ class TestS3FromFixture:
             ExpiresIn=300,
         )
         assert url.startswith("https://"), f"expected HTTPS URL, got {url!r}"
-        assert "<GCS_KMS_KEYRING>" in url, (
-            f"expected bucket name in URL, got {url!r}"
-        )
+        assert "<GCS_KMS_KEYRING>" in url, f"expected bucket name in URL, got {url!r}"
