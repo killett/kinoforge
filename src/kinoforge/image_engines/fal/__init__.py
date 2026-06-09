@@ -278,5 +278,15 @@ class FalImageEngine(ImageEngine):
         if not job.spec.get("model") and not job.spec.get("endpoint"):
             raise ValidationError("FalImageEngine: spec.model (fal endpoint) required")
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Fal image identity is the queue endpoint."""
+        engine_block = cfg.get("engine", {})
+        if not isinstance(engine_block, dict):
+            return ""
+        fal_block = engine_block.get("fal", {})
+        if not isinstance(fal_block, dict):
+            return ""
+        return str(fal_block.get("endpoint", "") or "")
+
 
 registry.register_image_engine("fal", lambda: FalImageEngine())

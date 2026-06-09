@@ -104,6 +104,9 @@ def test_register_and_get_image_engine_round_trip() -> None:
         def validate_spec(self, job: ImageJob) -> None:
             return None
 
+        def model_identity(self, cfg: dict[str, object]) -> str:  # noqa: D102
+            return ""
+
     registry.register_image_engine("_stub_T1_test", lambda: _StubEngine())
     factory = registry.get_image_engine("_stub_T1_test")
     assert factory().name == "_stub_T1_test"

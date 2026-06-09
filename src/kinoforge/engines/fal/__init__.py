@@ -550,6 +550,16 @@ class FalEngine(GenerationEngine):
             "fal engine requires a non-empty prompt in job.spec or segments[0]"
         )
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Fal identity is the queue endpoint (e.g. ``fal-ai/wan-t2v``)."""
+        engine_block = cfg.get("engine", {})
+        if not isinstance(engine_block, dict):
+            return ""
+        fal_block = engine_block.get("fal", {})
+        if not isinstance(fal_block, dict):
+            return ""
+        return str(fal_block.get("endpoint", "") or "")
+
 
 # ---------------------------------------------------------------------------
 # Module-level self-registration

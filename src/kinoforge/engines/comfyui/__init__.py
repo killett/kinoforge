@@ -1199,6 +1199,22 @@ class ComfyUIEngine(GenerationEngine):
                     "spec.prompt_node_ids"
                 )
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """ComfyUI identity is the filename stem of the kind=base model entry."""
+        models = cfg.get("models", []) or []
+        if not isinstance(models, list):
+            return ""
+        for entry in models:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("kind") == "base":
+                ref = str(entry.get("ref", "") or "")
+                if not ref:
+                    return ""
+                tail = ref.rsplit(":", 1)[-1] if ":" in ref else ref
+                return tail.rsplit(".", 1)[0] if "." in tail else tail
+        return ""
+
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Fetch the rendered video bytes via HTTP and decode the last frame.
 

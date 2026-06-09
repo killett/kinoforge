@@ -90,6 +90,9 @@ class _FakeEngine(GenerationEngine):
     def validate_spec(self, job: GenerationJob) -> None:  # noqa: D102
         pass
 
+    def model_identity(self, cfg: dict[str, object]) -> str:  # noqa: D102
+        return ""
+
 
 # --- minimal fake backend ----------------------------------------------------
 

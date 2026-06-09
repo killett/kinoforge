@@ -328,6 +328,16 @@ class ImageEngine(ABC):
     @abstractmethod
     def validate_spec(self, job: ImageJob) -> None: ...  # noqa: D102
 
+    @abstractmethod
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Return a human-readable model slug for keyframe sink filenames.
+
+        See :meth:`GenerationEngine.model_identity` for the full contract —
+        identical semantics; declared separately because ``ImageEngine`` and
+        ``GenerationEngine`` do not share a parent ABC today.
+        """
+        ...
+
 
 def required_image_roles(mode: str) -> list[str]:
     """Return ordered list of image-kind roles required by ``mode``.
@@ -512,6 +522,35 @@ class GenerationEngine(ABC):
 
     @abstractmethod
     def validate_spec(self, job: GenerationJob) -> None: ...  # noqa: D102
+
+    @abstractmethod
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Return a human-readable model slug for sink filenames.
+
+        Display-only; independent of CapabilityKey / cache identity (see
+        ``HostedAPIEngine.key_base``).  Engines return the most specific
+        human-grep-able surface they natively interpret: hosted ->
+        ``cfg["spec"]["model"]``, fal -> ``cfg["engine"]["fal"]["endpoint"]``,
+        comfyui -> filename stem of the ``kind == "base"`` entry in
+        ``cfg["models"]``, etc.
+
+        ``cfg`` is the same dict shape the engine receives in ``backend()``
+        and ``validate_spec()``.  For the keyframe path that is the keyframe
+        sub-cfg the stage feeds into the image engine, not the top-level
+        Config.
+
+        MUST NOT raise on a missing / empty source — return ``""`` instead.
+        The orchestrator logs a single WARNING and the sink falls back to
+        the literal ``"unknown"``.
+
+        Args:
+            cfg: Runtime configuration dict.
+
+        Returns:
+            Engine-native raw slug (slugified downstream by the sink) or
+            ``""`` when the underlying field is absent / empty.
+        """
+        ...
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Decode the last frame of a rendered clip as PNG bytes.

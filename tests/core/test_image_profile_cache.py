@@ -74,6 +74,9 @@ class _FakeImageEngine(ImageEngine):
     def validate_spec(self, job: ImageJob) -> None:
         return
 
+    def model_identity(self, cfg: dict[str, object]) -> str:  # noqa: D102
+        return ""
+
 
 def test_resolve_miss_raises(tmp_path: Path) -> None:
     """Bug guard: missing image profile must raise the same ProfileNotCached as video side.

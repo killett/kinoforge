@@ -681,6 +681,11 @@ class DiffusersEngine(GenerationEngine):
                     f"asset_paths.{asset.role}: <dot.path> in YAML"
                 )
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Diffusers identity matches the hosted pattern — ``spec.model``."""
+        spec = cfg.get("spec", {})
+        return str(spec.get("model", "") or "") if isinstance(spec, dict) else ""
+
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Fetch the rendered video bytes via HTTP and decode the last frame.
 
