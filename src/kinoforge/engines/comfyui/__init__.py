@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import re
 import secrets
@@ -70,6 +71,9 @@ _POLL_INTERVAL_S: float = 3.0
 
 #: Default ComfyUI installation root (resolved at runtime, NOT at import time).
 _DEFAULT_COMFYUI_ROOT = "ComfyUI"
+
+#: Module-level logger; named so callers can filter via ``kinoforge.comfyui``.
+_log = logging.getLogger("kinoforge.comfyui")
 
 #: Stock container image used when cfg does not specify one.
 _DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
@@ -575,8 +579,26 @@ class ComfyUIBackend(GenerationBackend):
                 limit.
         """
         url = f"{self._base_url}/history/{job_id}"
-        for _ in range(_MAX_POLL):
-            data = self._http_get(url)
+        for poll_idx in range(_MAX_POLL):
+            try:
+                data = self._http_get(url)
+            except urllib.error.HTTPError as exc:
+                # Phase 46 Task 7 carry-forward: production failure was a
+                # bare ``HTTPError: HTTP Error 404`` with no URL, no poll
+                # index, no body. ComfyUI 0.3.10's ``/history/{prompt_id}``
+                # route returns 200 with ``{}`` for unknown IDs; it never
+                # 404s. A 404 here therefore points at the proxy / pod
+                # liveness layer, not at ComfyUI. Surface enough state to
+                # discriminate proxy 404 (pod terminated) from URL drift on
+                # the next live re-fire.
+                _log.warning(
+                    "[comfyui.result] HTTPError poll=%d url=%s code=%d reason=%s",
+                    poll_idx,
+                    url,
+                    exc.code,
+                    str(exc.reason)[:200],
+                )
+                raise
             entry = data.get(job_id, {})
             outputs = entry.get("outputs")
             if outputs:

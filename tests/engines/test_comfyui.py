@@ -1705,3 +1705,60 @@ def test_comfyui_real_shape_required_keys() -> None:
     assert "outputs" in body, "missing 'outputs' field"
     assert isinstance(body["outputs"], dict), "outputs is not a dict"
     assert body["outputs"], "outputs dict empty"
+
+
+def test_result_logs_diagnostic_on_http_error_before_reraise(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """result() emits a WARNING with poll_idx + URL + code before re-raising HTTPError.
+
+    Catches the Phase 46 Task 7 carry-forward 404 regression in a
+    debuggable form: production traceback was just
+    ``urllib.error.HTTPError: HTTP Error 404: Not Found`` with no URL
+    context, no poll index, no body. Without these fields, root cause
+    triage requires another live-spend reproduction. With them, the
+    next live re-fire prints enough state to discriminate proxy 404
+    (pod terminated) from ComfyUI 404 (impossible — route always
+    returns 200) from URL malformation.
+
+    Bug it catches: a regression that strips the diagnostic log line
+    would leave production failures unactionable.
+    """
+    import logging
+
+    _PROMPT_ID = "abc12345-def6-7890-abcd-ef1234567890"
+    _BASE = "http://example-pod-8188.proxy.example.net"
+
+    import email.message
+
+    _empty_headers: email.message.Message = email.message.Message()
+
+    def get_spy(url: str) -> dict[str, Any]:
+        raise urllib.error.HTTPError(
+            url=url, code=404, msg="Not Found", hdrs=_empty_headers, fp=None
+        )
+
+    engine = _make_engine(http_get=get_spy, sleep=lambda s: None)
+    backend = ComfyUIBackend(
+        http_post=lambda u, b: {},
+        http_get=get_spy,
+        base_url=_BASE,
+        probe=_DEFAULT_PROBE,
+        sleep=lambda s: None,
+    )
+    del engine  # only used to keep _make_engine signature consistent
+
+    with caplog.at_level(logging.WARNING, logger="kinoforge.comfyui"):
+        with pytest.raises(urllib.error.HTTPError):
+            backend.result(_PROMPT_ID)
+
+    diagnostic = [
+        r
+        for r in caplog.records
+        if r.name == "kinoforge.comfyui" and r.levelno >= logging.WARNING
+    ]
+    assert diagnostic, "expected a WARNING+ log record from kinoforge.comfyui"
+    msg = diagnostic[0].getMessage()
+    assert f"/history/{_PROMPT_ID}" in msg, f"URL absent from log: {msg!r}"
+    assert "404" in msg, f"HTTP code absent from log: {msg!r}"
+    assert "poll" in msg.lower(), f"poll index absent from log: {msg!r}"
