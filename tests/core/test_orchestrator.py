@@ -2526,10 +2526,23 @@ def test_orchestrator_threads_engine_model_identity_into_clip_stage(
     Bug catch: orchestrator regresses to direct cfg.spec.model read, so engines
     whose identity lives outside spec (fal, comfyui, bedrock) re-surface as
     'unknown'.
+
+    The sentinel engine returns a hard-coded slug that differs from cfg.spec.model,
+    so any regression to ``cfg.spec.get("model")`` will assert the wrong value.
     """
 
-    cfg = _compute_cfg().model_copy(update={"spec": {"model": "fake-pinned-model"}})
-    engine = _make_engine()
+    # cfg.spec.model is deliberately different from the sentinel the engine returns.
+    # A regression to the old cfg.spec path would capture "spec-model-distinct"
+    # instead of "engine-derived-slug", making the assertion fail.
+    cfg = _compute_cfg().model_copy(update={"spec": {"model": "spec-model-distinct"}})
+
+    class _SentinelEngine(FakeEngine):
+        """Override model_identity to return a fixed slug unrelated to cfg."""
+
+        def model_identity(self, cfg: dict[str, object]) -> str:  # noqa: ARG002
+            return "engine-derived-slug"
+
+    engine = _SentinelEngine()
     provider = LocalProvider()
     store = LocalArtifactStore(tmp_path)
     request = GenerationRequest(prompt="a calm sea at dusk", mode="t2v")
@@ -2566,8 +2579,9 @@ def test_orchestrator_threads_engine_model_identity_into_clip_stage(
     )
 
     assert len(captured) >= 1, f"sink.publish() was never called; got {captured!r}"
-    assert captured[0]["model"] == "fake-pinned-model", (
-        f"expected model='fake-pinned-model' from engine.model_identity; "
+    # Must equal the engine sentinel, NOT "spec-model-distinct" (the cfg value).
+    assert captured[0]["model"] == "engine-derived-slug", (
+        f"expected model='engine-derived-slug' from engine.model_identity; "
         f"got model={captured[0]['model']!r}"
     )
 
