@@ -332,9 +332,23 @@ class ImageEngine(ABC):
     def model_identity(self, cfg: dict[str, object]) -> str:
         """Return a human-readable model slug for keyframe sink filenames.
 
-        See :meth:`GenerationEngine.model_identity` for the full contract —
-        identical semantics; declared separately because ``ImageEngine`` and
-        ``GenerationEngine`` do not share a parent ABC today.
+        Display-only; independent of CapabilityKey / cache identity. Image
+        engines return the most specific human-grep-able surface they
+        natively interpret: hosted -> ``cfg["spec"]["model"]``, fal ->
+        ``cfg["engine"]["fal"]["endpoint"]``.
+
+        MUST NOT raise on a missing / empty source — return ``""`` instead.
+        The orchestrator logs a single WARNING and the keyframe sink falls
+        back to the literal ``"unknown"``.
+
+        Args:
+            cfg: Runtime configuration dict (same shape the image engine
+                receives in ``backend()`` and ``validate_spec()``; for the
+                keyframe path this is the keyframe sub-cfg).
+
+        Returns:
+            Engine-native raw slug (slugified downstream by the sink) or
+            ``""`` when the underlying field is absent / empty.
         """
         ...
 

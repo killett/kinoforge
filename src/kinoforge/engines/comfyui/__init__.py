@@ -1212,7 +1212,8 @@ class ComfyUIEngine(GenerationEngine):
                 if not ref:
                     return ""
                 tail = ref.rsplit(":", 1)[-1] if ":" in ref else ref
-                return tail.rsplit(".", 1)[0] if "." in tail else tail
+                basename = tail.rsplit("/", 1)[-1]
+                return basename.rsplit(".", 1)[0] if "." in basename else basename
         return ""
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
