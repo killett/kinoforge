@@ -233,6 +233,11 @@ class ReplicateImageEngine(ImageEngine):
         if not job.prompt:
             raise ValidationError("replicate-image: prompt is empty")
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Replicate image identity is the prediction model slug at ``spec.model``."""
+        spec = cfg.get("spec", {})
+        return str(spec.get("model", "") or "") if isinstance(spec, dict) else ""
+
 
 def _default_factory() -> ReplicateImageEngine:
     """Zero-arg engine factory used by the image-engine registry."""

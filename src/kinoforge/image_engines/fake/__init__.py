@@ -147,5 +147,10 @@ class FakeImageEngine(ImageEngine):
                 f"FakeImageEngine: missing spec keys: {sorted(missing)}"
             )
 
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """FakeImageEngine reads ``spec.model`` for test pins."""
+        spec = cfg.get("spec", {})
+        return str(spec.get("model", "") or "") if isinstance(spec, dict) else ""
+
 
 registry.register_image_engine("fake", lambda: FakeImageEngine())
