@@ -76,7 +76,7 @@ for AWS/GCS.
   **SUPERSEDED** by 2026-06-09 swap (replaced by
   `gs://<GCS_BUCKET>`, same settings, new project).
 - 2026-06-06 (Layer W T5 bootstrap): GCP Cloud KMS keyring
-  `kinoforge-realcloud-tests` + key `bucket-cmek` created in `us-central1`.
+  `<GCS_KMS_KEYRING>` + key `bucket-cmek` created in `us-central1`.
   `kinoforge-runner` SA + GCS service agent
   (`service-<GCP_PROJECT_NUMBER>@gs-project-accounts.iam.gserviceaccount.com`)
   granted `roles/cloudkms.cryptoKeyEncrypterDecrypter`. Key resource name
@@ -107,7 +107,7 @@ for AWS/GCS.
   expiration + abort-incomplete-multipart, both at age 1 day.
 - 2026-06-06: end-to-end S3 smoke (boto3 default chain + bucket
   put/get/delete) verified clean.
-- 2026-06-06 (Layer W T5 bootstrap): AWS KMS key `alias/kinoforge-realcloud-tests`
+- 2026-06-06 (Layer W T5 bootstrap): AWS KMS key `alias/<GCS_KMS_KEYRING>`
   created in `us-east-1`. ARN persisted to `.aws/kms-test-key.arn` (gitignored).
   Key policy grants `kinoforge-ci` `kms:Encrypt`, `kms:Decrypt`,
   `kms:GenerateDataKey`, `kms:DescribeKey`. Root account retains `kms:*`.
@@ -148,7 +148,7 @@ exist; remove with:
 
 `AmazonS3FullAccess` is broader than required. Once the layer is shipped,
 operator should swap it for the scoped policy in `.aws/README.md` (limits
-the `kinoforge-ci` key to the `kinoforge-realcloud-tests-*` bucket prefix).
+the `kinoforge-ci` key to the `<GCS_KMS_KEYRING>-*` bucket prefix).
 This requires IAM perms that the `kinoforge-ci` key does NOT itself hold;
 the swap is done in the AWS Console.
 
@@ -161,8 +161,8 @@ Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
 
 - **AWS scoped policy doc:** `.aws/policies/skypilot-minimal.json` (tracked,
   not secret). Covers EC2 lifecycle + IAM PassRole on `skypilot-*` +
-  ServiceQuotas + S3 scoped to `kinoforge-realcloud-tests-*`/`skypilot-*`
-  prefixes + KMS scoped to `alias/kinoforge-realcloud-tests`. NOT attached
+  ServiceQuotas + S3 scoped to `<GCS_KMS_KEYRING>-*`/`skypilot-*`
+  prefixes + KMS scoped to `alias/<GCS_KMS_KEYRING>`. NOT attached
   to `kinoforge-ci` in this layer (operator opted for AWS-managed broad
   policies instead — see "AWS — actually attached policies" below). The
   doc stays in repo as the scope-down target for a future layer.

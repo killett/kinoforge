@@ -18,16 +18,16 @@
         "Content-Type": "text/plain; charset=utf-8",
         "Date": "Sat, 06 Jun 2026 23:57:18 GMT",
         "Expires": "Mon, 01 Jan 1990 00:00:00 GMT",
-        "Location": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2Fkinoforge-realcloud-tests%2FcryptoKeys%2Fbucket-cmek&upload_id=AJ5rDhH8WtdW5grKnVVAsEkfvkqB1UF48MxzK1OH9IjEGu6GEy5_mT1esN5xVDLBt2N5VOsZlIxaUDzlpNxThggqKjtLa9PY3G4cFieqnX1XX5E",
+        "Location": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2F<GCS_KMS_KEYRING>%2FcryptoKeys%2Fbucket-cmek&upload_id=AJ5rDhH8WtdW5grKnVVAsEkfvkqB1UF48MxzK1OH9IjEGu6GEy5_mT1esN5xVDLBt2N5VOsZlIxaUDzlpNxThggqKjtLa9PY3G4cFieqnX1XX5E",
         "Pragma": "no-cache",
         "Server": "UploadServer",
         "Vary": "Origin, X-Origin",
         "X-GUploader-UploadID": "AJ5rDhH8WtdW5grKnVVAsEkfvkqB1UF48MxzK1OH9IjEGu6GEy5_mT1esN5xVDLBt2N5VOsZlIxaUDzlpNxThggqKjtLa9PY3G4cFieqnX1XX5E"
       },
-      "match_key": "POST:https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2Fkinoforge-realcloud-tests%2FcryptoKeys%2Fbucket-cmek:a8867268be97c482",
+      "match_key": "POST:https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2F<GCS_KMS_KEYRING>%2FcryptoKeys%2Fbucket-cmek:a8867268be97c482",
       "method": "POST",
       "status": 200,
-      "url": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2Fkinoforge-realcloud-tests%2FcryptoKeys%2Fbucket-cmek"
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2F<GCS_KMS_KEYRING>%2FcryptoKeys%2Fbucket-cmek"
     },
     {
       "body_b64": "ewogICJraW5kIjogInN0b3JhZ2Ujb2JqZWN0IiwKICAiaWQiOiAiPEdDU19CVUNLRVQ+L2xpdmUtNWM2MDQ1M2MvY21lay5iaW4vMTc4MDc5MDIzOTAyNDI5NSIsCiAgInNlbGZMaW5rIjogImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3N0b3JhZ2UvdjEvYi88R0NTX0JVQ0tFVD4vby9saXZlLTVjNjA0NTNjJTJGY21lay5iaW4iLAogICJtZWRpYUxpbmsiOiAiaHR0cHM6Ly9zdG9yYWdlLmdvb2dsZWFwaXMuY29tL2Rvd25sb2FkL3N0b3JhZ2UvdjEvYi88R0NTX0JVQ0tFVD4vby9saXZlLTVjNjA0NTNjJTJGY21lay5iaW4/Z2VuZXJhdGlvbj0xNzgwNzkwMjM5MDI0Mjk1JmFsdD1tZWRpYSIsCiAgIm5hbWUiOiAibGl2ZS01YzYwNDUzYy9jbWVrLmJpbiIsCiAgImJ1Y2tldCI6ICI8R0NTX0JVQ0tFVD4iLAogICJnZW5lcmF0aW9uIjogIjE3ODA3OTAyMzkwMjQyOTUiLAogICJtZXRhZ2VuZXJhdGlvbiI6ICIxIiwKICAiY29udGVudFR5cGUiOiAiYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtIiwKICAic3RvcmFnZUNsYXNzIjogIlNUQU5EQVJEIiwKICAic2l6ZSI6ICI5IiwKICAibWQ1SGFzaCI6ICJlOXlLa2o2alN2bE1YVFpnVFErejNBPT0iLAogICJjcmMzMmMiOiAibGdoT0N3PT0iLAogICJldGFnIjogIkNLZXA5OHpvODVRREVBRT0iLAogICJrbXNLZXlOYW1lIjogInByb2plY3RzLzxHQ1BfUFJPSkVDVD4vbG9jYXRpb25zL3VzLWNlbnRyYWwxL2tleVJpbmdzL2tpbm9mb3JnZS1yZWFsY2xvdWQtdGVzdHMvY3J5cHRvS2V5cy9idWNrZXQtY21lay9jcnlwdG9LZXlWZXJzaW9ucy8xIiwKICAidGltZUNyZWF0ZWQiOiAiMjAyNi0wNi0wNlQyMzo1NzoxOS4wMjhaIiwKICAidXBkYXRlZCI6ICIyMDI2LTA2LTA2VDIzOjU3OjE5LjAyOFoiLAogICJ0aW1lU3RvcmFnZUNsYXNzVXBkYXRlZCI6ICIyMDI2LTA2LTA2VDIzOjU3OjE5LjAyOFoiLAogICJ0aW1lRmluYWxpemVkIjogIjIwMjYtMDYtMDZUMjM6NTc6MTkuMDI4WiIKfQo=",
@@ -45,10 +45,10 @@
         "Vary": "Origin, X-Origin",
         "X-GUploader-UploadID": "AJ5rDhH8WtdW5grKnVVAsEkfvkqB1UF48MxzK1OH9IjEGu6GEy5_mT1esN5xVDLBt2N5VOsZlIxaUDzlpNxThggqKjtLa9PY3G4cFieqnX1XX5E"
       },
-      "match_key": "PUT:https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2Fkinoforge-realcloud-tests%2FcryptoKeys%2Fbucket-cmek&upload_id=AJ5rDhH8WtdW5grKnVVAsEkfvkqB1UF48MxzK1OH9IjEGu6GEy5_mT1esN5xVDLBt2N5VOsZlIxaUDzlpNxThggqKjtLa9PY3G4cFieqnX1XX5E:2d5e8600a4fba66e",
+      "match_key": "PUT:https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2F<GCS_KMS_KEYRING>%2FcryptoKeys%2Fbucket-cmek&upload_id=AJ5rDhH8WtdW5grKnVVAsEkfvkqB1UF48MxzK1OH9IjEGu6GEy5_mT1esN5xVDLBt2N5VOsZlIxaUDzlpNxThggqKjtLa9PY3G4cFieqnX1XX5E:2d5e8600a4fba66e",
       "method": "PUT",
       "status": 200,
-      "url": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2Fkinoforge-realcloud-tests%2FcryptoKeys%2Fbucket-cmek&upload_id=AJ5rDhH8WtdW5grKnVVAsEkfvkqB1UF48MxzK1OH9IjEGu6GEy5_mT1esN5xVDLBt2N5VOsZlIxaUDzlpNxThggqKjtLa9PY3G4cFieqnX1XX5E"
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/<GCS_BUCKET>/o?uploadType=resumable&kmsKeyName=projects%2F<GCP_PROJECT>%2Flocations%2Fus-central1%2FkeyRings%2F<GCS_KMS_KEYRING>%2FcryptoKeys%2Fbucket-cmek&upload_id=AJ5rDhH8WtdW5grKnVVAsEkfvkqB1UF48MxzK1OH9IjEGu6GEy5_mT1esN5xVDLBt2N5VOsZlIxaUDzlpNxThggqKjtLa9PY3G4cFieqnX1XX5E"
     },
     {
       "body_b64": "eyJraW5kIjoic3RvcmFnZSNvYmplY3QiLCJpZCI6IjxHQ1NfQlVDS0VUPi9saXZlLTVjNjA0NTNjL2NtZWsuYmluLzE3ODA3OTAyMzkwMjQyOTUiLCJzZWxmTGluayI6Imh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3N0b3JhZ2UvdjEvYi88R0NTX0JVQ0tFVD4vby9saXZlLTVjNjA0NTNjJTJGY21lay5iaW4iLCJtZWRpYUxpbmsiOiJodHRwczovL3N0b3JhZ2UuZ29vZ2xlYXBpcy5jb20vZG93bmxvYWQvc3RvcmFnZS92MS9iLzxHQ1NfQlVDS0VUPi9vL2xpdmUtNWM2MDQ1M2MlMkZjbWVrLmJpbj9nZW5lcmF0aW9uPTE3ODA3OTAyMzkwMjQyOTUmYWx0PW1lZGlhIiwibmFtZSI6ImxpdmUtNWM2MDQ1M2MvY21lay5iaW4iLCJidWNrZXQiOiI8R0NTX0JVQ0tFVD4iLCJnZW5lcmF0aW9uIjoiMTc4MDc5MDIzOTAyNDI5NSIsIm1ldGFnZW5lcmF0aW9uIjoiMSIsImNvbnRlbnRUeXBlIjoiYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtIiwic3RvcmFnZUNsYXNzIjoiU1RBTkRBUkQiLCJzaXplIjoiOSIsIm1kNUhhc2giOiJlOXlLa2o2alN2bE1YVFpnVFErejNBPT0iLCJjcmMzMmMiOiJsZ2hPQ3c9PSIsImV0YWciOiJDS2VwOTh6bzg1UURFQUU9Iiwia21zS2V5TmFtZSI6InByb2plY3RzLzxHQ1BfUFJPSkVDVD4vbG9jYXRpb25zL3VzLWNlbnRyYWwxL2tleVJpbmdzL2tpbm9mb3JnZS1yZWFsY2xvdWQtdGVzdHMvY3J5cHRvS2V5cy9idWNrZXQtY21lay9jcnlwdG9LZXlWZXJzaW9ucy8xIiwidGltZUNyZWF0ZWQiOiIyMDI2LTA2LTA2VDIzOjU3OjE5LjAyOFoiLCJ1cGRhdGVkIjoiMjAyNi0wNi0wNlQyMzo1NzoxOS4wMjhaIiwidGltZVN0b3JhZ2VDbGFzc1VwZGF0ZWQiOiIyMDI2LTA2LTA2VDIzOjU3OjE5LjAyOFoiLCJ0aW1lRmluYWxpemVkIjoiMjAyNi0wNi0wNlQyMzo1NzoxOS4wMjhaIn0=",

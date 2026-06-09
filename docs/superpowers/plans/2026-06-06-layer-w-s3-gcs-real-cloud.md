@@ -865,8 +865,8 @@ git commit -m "feat(gcs): resumable + CMEK + signed_url + retry pin (Layer W T4)
 
 **Acceptance Criteria:**
 - [ ] Re-runs are idempotent: if `.aws/kms-test-key.arn` exists AND `kms:DescribeKey` succeeds, the AWS branch logs `skipped — key already exists` and exits 0; same for GCS.
-- [ ] AWS: creates symmetric `ENCRYPT_DECRYPT` key in `us-east-1`; attaches alias `alias/kinoforge-realcloud-tests`; key policy grants `kinoforge-ci` IAM user `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`.
-- [ ] GCS: creates keyring `kinoforge-realcloud-tests` + key `bucket-cmek` in `us-central1`; grants the SA `roles/cloudkms.cryptoKeyEncrypterDecrypter`; grants the GCS service agent (resolved at runtime via `Project.projectNumber` → `service-<n>@gs-project-accounts.iam.gserviceaccount.com`) the same role.
+- [ ] AWS: creates symmetric `ENCRYPT_DECRYPT` key in `us-east-1`; attaches alias `alias/<GCS_KMS_KEYRING>`; key policy grants `kinoforge-ci` IAM user `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`.
+- [ ] GCS: creates keyring `<GCS_KMS_KEYRING>` + key `bucket-cmek` in `us-central1`; grants the SA `roles/cloudkms.cryptoKeyEncrypterDecrypter`; grants the GCS service agent (resolved at runtime via `Project.projectNumber` → `service-<n>@gs-project-accounts.iam.gserviceaccount.com`) the same role.
 - [ ] Persisted files: ARN in `.aws/kms-test-key.arn`; resource name in `.gcp/kms-test-key.name`.
 - [ ] `docs/CLOUD-CREDS.md` carries the two new provisioning history rows + bootstrap-status footnote + rotation row.
 
@@ -914,12 +914,12 @@ from google.api_core.exceptions import NotFound
 logger = logging.getLogger("bootstrap_kms")
 
 AWS_REGION = "us-east-1"
-AWS_ALIAS = "alias/kinoforge-realcloud-tests"
+AWS_ALIAS = "alias/<GCS_KMS_KEYRING>"
 AWS_KEY_FILE = Path(".aws/kms-test-key.arn")
 AWS_IAM_USER = "kinoforge-ci"
 
 GCP_LOCATION = "us-central1"
-GCP_KEYRING = "kinoforge-realcloud-tests"
+GCP_KEYRING = "<GCS_KMS_KEYRING>"
 GCP_KEY = "bucket-cmek"
 GCP_KEY_FILE = Path(".gcp/kms-test-key.name")
 
@@ -1079,7 +1079,7 @@ pixi add google-cloud-kms google-cloud-resource-manager
 Append to the AWS provisioning history section:
 
 ```markdown
-- 2026-06-06 (Layer W bootstrap): AWS KMS key `alias/kinoforge-realcloud-tests`
+- 2026-06-06 (Layer W bootstrap): AWS KMS key `alias/<GCS_KMS_KEYRING>`
   created in `us-east-1`. ARN persisted to `.aws/kms-test-key.arn`. Key policy
   grants `kinoforge-ci` Encrypt / Decrypt / GenerateDataKey / DescribeKey.
   Rotation: NOT auto-rotated — rotation invalidates Layer W fixtures.
@@ -1089,7 +1089,7 @@ Append to the GCP provisioning history section:
 
 ```markdown
 - 2026-06-06 (Layer W bootstrap): GCP Cloud KMS keyring
-  `kinoforge-realcloud-tests` + key `bucket-cmek` in `us-central1`.
+  `<GCS_KMS_KEYRING>` + key `bucket-cmek` in `us-central1`.
   `kinoforge-runner` SA + GCS service agent granted
   `roles/cloudkms.cryptoKeyEncrypterDecrypter`. Key name persisted to
   `.gcp/kms-test-key.name`. Rotation: NOT auto-rotated.
@@ -2484,7 +2484,7 @@ Verification-only layer that closes PROGRESS:116 carry-forward #4 (`S3ArtifactSt
 - S3: object `live/<run-id>/big.bin` (16 MiB) at `s3://<S3_BUCKET>/<run-id>/big.bin`, multipart `ETag = "<etag>-<N>"`.
 - GCS: object `live/<run-id>/big.bin` (16 MiB) at `gs://<GCS_BUCKET>/<run-id>/big.bin`, resumable `size = 16777216`.
 - KMS-encrypted S3 object verified `ServerSideEncryption=aws:kms` + `SSEKMSKeyId` ending `<key-tail>`.
-- CMEK-encrypted GCS blob verified `kms_key_name` startswith `projects/.../keyRings/kinoforge-realcloud-tests/cryptoKeys/bucket-cmek`.
+- CMEK-encrypted GCS blob verified `kms_key_name` startswith `projects/.../keyRings/<GCS_KMS_KEYRING>/cryptoKeys/bucket-cmek`.
 
 **Key design decisions:**
 - Multipart switch is unconditional — boto3 + google-cloud-storage SDK defaults handle the threshold; no kinoforge knob (spec §4.1).
