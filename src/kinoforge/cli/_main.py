@@ -15,6 +15,7 @@ from typing import TextIO
 
 from pydantic import ValidationError as PydanticValidationError
 
+from kinoforge import __version__
 from kinoforge.cli._commands import (
     _build_sink,  # noqa: F401 — re-exported via package shim
     _build_store,  # noqa: F401 — re-exported via package shim
@@ -229,6 +230,12 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "bypass logging redaction (forbidden under --ephemeral; for "
             "local debugging only)."
         ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"kinoforge {__version__}",
+        help="print kinoforge version and exit",
     )
 
     sub = parser.add_subparsers(dest="cmd", metavar="SUBCOMMAND")

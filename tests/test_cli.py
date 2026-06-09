@@ -1417,3 +1417,51 @@ def test_build_parser_registers_forget_with_id_flag() -> None:
 
     assert ns.cmd == "forget"
     assert ns.id == "i-foo"
+
+
+def test_version_flag_prints_metadata_version(capsys):
+    """--version surfaces importlib.metadata.version when the package is installed.
+
+    argparse's ``action="version"`` raises SystemExit(0) after printing,
+    so the test catches it explicitly.
+    """
+    import re
+
+    from kinoforge.cli import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert re.match(r"^kinoforge \d+\.\d+\.\d+\n?$", captured.out), captured.out
+
+
+def test_version_flag_falls_back_to_pyproject_when_metadata_missing(
+    capsys, monkeypatch
+):
+    """When importlib.metadata can't resolve the package, fall back to pyproject.toml."""
+    import importlib
+    import importlib.metadata
+    import re
+
+    def _raise(_pkg: str) -> str:
+        raise importlib.metadata.PackageNotFoundError("kinoforge")
+
+    monkeypatch.setattr("importlib.metadata.version", _raise)
+
+    # Re-import kinoforge so _resolve_version runs again under the patched metadata.
+    import kinoforge
+
+    importlib.reload(kinoforge)
+
+    # Re-import _main too so its `from kinoforge import __version__` picks up the new value.
+    import kinoforge.cli._main
+
+    importlib.reload(kinoforge.cli._main)
+    from kinoforge.cli._main import main as main2
+
+    with pytest.raises(SystemExit) as exc:
+        main2(["--version"])
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert re.match(r"^kinoforge \d+\.\d+\.\d+\n?$", captured.out), captured.out
