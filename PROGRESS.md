@@ -2071,10 +2071,12 @@ Plan: `docs/superpowers/plans/2026-06-08-successful-generations-log.md` (`bafbd5
 - [ ] Task 4: `PROGRESS.md` pointer + this section — commit `<sha>`
 - [x] Task 5: `kinoforge --version` flag + 2 tests — commit `b913732`
 - [x] Task 6: fal-ai/wan-t2v re-fire + entry #1 — commit `ef6d7a9`
-- [ ] Task 7: Wan 2.1 14B i2v on RunPod+ComfyUI re-fire + entry #2 — commit `<sha>`
-- [ ] Task 8: Runway gen4.5 t2v re-fire + entry #3 — commit `<sha>`
-- [ ] Task 9: Replicate seedance-1-lite t2v re-fire + entry #4 — commit `<sha>`
+- [ ] Task 7: Wan 2.1 14B i2v on RunPod+ComfyUI re-fire + entry #2 — DEFERRED. New HTTP 404 regression in `ComfyUIBackend.result()`. Pod `sapoahjqbgd331` (RTX A5000 @ $0.16/hr fallback after RTX 4090 capacity-unavailable retry) booted cleanly, the workflow POSTed, but `/history/{id}` or `/view` returned 404 before the artifact materialised. Pod was destroyed via the `RUNPOD_TERMINATE_KEY` REST `DELETE /v1/pods/{id}` path (kinoforge's ledger-driven destroy missed because the failed test never recorded the pod). Spend: ~$0.013 (~5 min pod-wall at $0.16/hr). Bug needs its own investigation layer — see `/tmp/task7-run.log` for the full traceback. Not a Phase 28 (Layer P) regression in the engine itself; likely upstream ComfyUI / kijai-node behaviour change since 2026-06-04.
+- [x] Task 9: Replicate seedance-1-lite t2v re-fire + entry #2 — commit `d4fabd5` (864x480, 5.04 s, 121 frames, ~$0.10, 26 s wall)
+- [x] Task 8: Runway gen4.5 t2v re-fire + entry #3 — commit `d4fabd5` (1280x720, 5.04 s, 121 frames, ~$1.25, 100 s wall)
 
-**Live-spend budget (Tasks 6–9):** ~$2 of ~$10.88 remaining.
+**Live-spend budget (Tasks 6–9):** total spend this session ≈ $1.40 (Task 6 fal ~$0.05 + Task 8 Runway ~$1.25 + Task 9 Replicate ~$0.10 + Task 7 pod-wall ~$0.013). Remaining session budget: ~$18.60.
 
-**Carry-forwards:** none — Layer 6 is self-contained and additive.
+**Carry-forwards:**
+- Task 7 — Wan 2.1 14B i2v RunPod+ComfyUI HTTP 404 regression in `ComfyUIBackend.result()`. Needs a fresh Layer-P-style investigation; the previous green smoke at `b425407c` (Phase 28) produced a 1.05 MiB artifact, so the breakage is post-`b425407c`. Candidate causes: (a) kijai WanVideoWrapper pinned ref drift (`088128b224242e110d3906c6750e9a3a348a659b`) vs the upstream API; (b) ComfyUI 0.3.10 behaviour around the `/history` polling shape; (c) VHS_VideoCombine custom node interaction. Spec-side fix likely.
+- LocalOutputSink renders the `model` slug as `unknown` for the fal config because `cfg.engine.fal.endpoint` isn't propagated to the sink. Provenance-only, not a generation defect; small follow-up.
