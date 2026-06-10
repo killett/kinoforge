@@ -512,9 +512,15 @@ class TestSelfRegistration:
         """ComfyUIEngine.requires_compute is True."""
         assert ComfyUIEngine.requires_compute is True
 
-    def test_requires_local_weights_true(self) -> None:
-        """ComfyUIEngine.requires_local_weights is True."""
-        assert ComfyUIEngine.requires_local_weights is True
+    def test_requires_local_weights_false(self) -> None:
+        """ComfyUIEngine.requires_local_weights is False.
+
+        ComfyUI's Layer Q ``render_provision`` emits a pod-side curl
+        bootstrap that downloads weights ON the pod, so the controller-
+        side local download is pure waste. Flipped to False as of
+        PROGRESS B20; full rationale in the class docstring.
+        """
+        assert ComfyUIEngine.requires_local_weights is False
 
 
 # ---------------------------------------------------------------------------
