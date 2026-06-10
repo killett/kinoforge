@@ -185,6 +185,10 @@ their category.
 - **C15. `mode_identity` / `precision_identity` / `lora_stack_identity` sibling ABCs.** Layer 8 forward-pointer for finer filename slug facets.
 - **C16. Legacy `lifecycle.reap(policy=...)` dead seam** (`core/lifecycle.py:681,708`). Accepted-and-ignored before Layer V; superseded by `sweep()`. Delete or wire to `Policy`.
 - **C17. Stale `core/pool.py:32` docstring** — says multi-backend variants are DEFERRED but Layer G `ConcurrentPool` is multi-backend.
+- **C18. Split-wait helper for cooperative poll loops.** Phase 50 shipped the `token.raise_if_set(); …probe…; token.wait(interval_s)` pattern at two sites (`ComfyUIBackend.result` + `RemoteSubmitPollBackend.result`). Factor into `kinoforge.core.cancel` as a reusable `bounded_poll` / `poll_with_cancel` helper when a 3rd caller appears (Diffusers / Hosted / Bedrock cancel hardening would qualify).
+- **C19. Per-backend cancel hardening for Diffusers / Hosted / Bedrock.** Phase 50 grew the `cancel_token` kwarg on every concrete backend at the ABC level; only `ComfyUIBackend` and `RemoteSubmitPollBackend` honor it. The remaining engines accept the kwarg as a no-op until the C18 helper exists or a real stall surfaces.
+- **C20. `pool.map` ignores `cancel_token`.** The t2v non-chained fan-out path. Workers still honor the token internally; the wait on the orchestrator side is longer because `pool.map` joins every in-flight future before raising. Forward the kwarg through `BackendPool.map` when fan-out latency on interrupt becomes a real complaint.
+- **C21. `KeyframeStage` cancel_token plumbing.** `KeyframeStage` uses `ImageBackend` directly (no `pool.submit` site). Production WARN-not-destroy is provided by the orchestrator outer except today; in-stage cancel honoring waits on `ImageBackend` growing the same kwarg.
 
 ### D. CI / platform
 
@@ -2209,10 +2213,15 @@ Plan: `docs/superpowers/plans/2026-06-08-ephemeral-workspaces.md`.
 - [ ] Task 20: `tests/test_no_unredacted_writes.py` AST invariant.
 - [ ] Task 21: README "Confidentiality mode" section + Phase 45 finalisation.
 
-**Single next action:** Layer 5b shipped. Choose next: Track A (Bedrock
-Luma Ray v2 live smoke, blocked on AWS Support case) or Track B (Veo on
-Vertex AI plan, unblocked since 2026-06-07), per the RESUME block in
-the Phase 43 section. Or open a new layer.
+**Single next action:** Phase 50 (graceful interrupt + ComfyUI poll
+observability) shipped. The next `kinoforge generate` carries the new
+per-tick poll logging + hard `poll_timeout_s` for free; any future stall
+self-diagnoses via the structured `status` / `queue_pos` / `exec_node`
+log fields and Ctrl-C returns the shell within ~30 s without leaking a
+pod. Choose next: Track A (Bedrock Luma Ray v2 live smoke, blocked on
+AWS Support case) or Track B (Veo on Vertex AI plan, unblocked since
+2026-06-07), per the RESUME block in the Phase 43 section. Or open a
+new layer.
 
 **Pre-existing failure (unrelated to Layer 5b):**
 - `tests/providers/test_skypilot.py::test_t4_fixture_shape` fails on `main`
@@ -2341,3 +2350,107 @@ documentation commit at the end.
 - **PROGRESS B3 / B4 still open.** This smoke proves the in-process warm-reuse path works end-to-end; CLI exposure (`kinoforge generate` consulting the ledger for matching live pods) remains spec'd but unbuilt. Two CLI invocations against the same pod still cold-boot twice.
 - **GPU type not captured into smoke fixture.** `last_t2v_smoke.json` records `pod_id` but not `gpu_type`; entry #4's fixture also lacked it. Surface candidate: `orchestrator._provision_instance_and_build_backend` could lift `Instance.tags["gpu_type"]` into the return path. Trivial; non-blocking.
 - **Test count delta:** +7 net (6 offline graph-shape tests + 1 live smoke that skips offline).
+
+### Phase 50 — Graceful interrupt + ComfyUI poll observability
+
+Sibling layer triggered by a 2026-06-10 Wan 14B t2v live smoke that hung
+silently after `provisioner.provision` returned, required two `Ctrl-C`
+presses to escape, and left `provider.destroy_instance` unrun. Three
+orthogonal defects (silent stall with no per-tick log; two-press
+requirement from a wedged `ConcurrentPool.close`; no
+`KeyboardInterrupt` WARN naming the surviving pod) repaired in one
+six-commit phase. No live spend — every fix lands offline behind
+injected I/O seams and `caplog` assertions.
+
+Spec: `docs/superpowers/specs/2026-06-10-graceful-interrupt-and-poll-observability-design.md` (`8318686`).
+Plan: `docs/superpowers/plans/2026-06-10-graceful-interrupt-and-poll-observability.md` (`aa4e407`).
+
+- [x] Task 0: `CancelToken` + `Cancelled` foundation — commit `f52eb00`
+- [x] Task 1: ABC + pool signature changes + bounded `ConcurrentPool.close` watchdog — commits `e774e2a` + `9578ed7` (quality-review fix forwarding `cancel_token` in the `_ListPool` test fake)
+- [x] Task 2: ComfyUI per-tick poll log + `poll_timeout_s` cfg field + cooperative cancel — commit `71fb9ab`
+- [x] Task 3: `RemoteSubmitPollBackend` cancel honoring (Replicate / Runway / Luma / Fal share the path) — commit `611d243`
+- [x] Task 4: Orchestrator stage-loop `(KeyboardInterrupt, Cancelled)` arm — WARN-not-destroy, cancel-aware `deploy_session.__exit__` pool close — commit `b8234da`
+- [x] Task 5: CLI two-press SIGINT handler + `SessionContext.cancel_token` — commit `ca3862d`
+- [x] Task 6: Closeout — this commit
+
+**Key design decisions:**
+- **Cooperative cancellation, not preemption.** `CancelToken` is a thin
+  `threading.Event` wrapper; backends call `raise_if_set()` at the top
+  of every poll iteration and `wait(interval)` in place of
+  `time.sleep`. No thread is killed; in-flight HTTP requests complete,
+  then the next loop iteration raises `Cancelled`. Preserves the
+  semantics existing tests expect.
+- **`_NULL_TOKEN` sentinel as default-kwarg default.** Library + test
+  callers that pass no token get unchanged behavior; the sentinel is
+  never `set()`, so `raise_if_set()` and `wait()` are no-ops with the
+  same blocking semantics as `time.sleep`. Lets every ABC grow a
+  defaulted kwarg without breaking a single caller.
+- **WARN-not-destroy on interrupt.** Matches the Layer 5b session
+  manager intent locked in `3bc6473` — `--ephemeral` and
+  non-`--ephemeral` runs both keep the pod alive on Ctrl-C; the in-pod
+  self-terminator + `kinoforge reap` handle teardown. `ValidationError`
+  path still destroys (existing behavior preserved).
+- **Hard `poll_timeout_s` upper bound surfaces stalls without operator
+  patience.** Default 600 s (10 min) on `ComfyUIEngineConfig`; lift for
+  known-slow models. The `TimeoutError` message contains the literal
+  substrings `last_status=` and `exec_node=` (plus the actual node
+  name) so a single line in CI logs diagnoses the stall.
+- **Structured per-tick INFO log** — every poll iteration emits
+  `comfyui poll job=… elapsed=…s status=… queue_pos=… exec_node=…`
+  matching a regex the test pins. `queue_pos=None` when not queued;
+  separate `/queue` probe populates it when status is `queued`. Means
+  the next stall self-diagnoses without a separate diagnostic patch.
+- **Bounded `ConcurrentPool.close(cancel_pending=True, timeout=…)`
+  via watchdog thread.** A wedged worker that ignores cancellation no
+  longer blocks shutdown forever. `close()` with no kwargs preserves
+  today's `wait=True, no cancel_futures` semantics — the new path is
+  strictly opt-in. WARN log "worker still running after %.1fs;
+  abandoning slot" tells the operator a slot was abandoned (daemon
+  thread exits with the process).
+- **Two-press SIGINT handler.** First press sets the token; second
+  press restores `SIG_DFL`. Third press kills the process the usual
+  way. Operator never has to escalate to `SIGKILL`.
+
+**Bug catches during execution:**
+- **`_ListPool` test fake silently dropped `cancel_token` kwarg** —
+  Task 1 quality review (`9578ed7`) caught the test-only `_ListPool`
+  forwarding `pool.submit(job)` to its backend without the new kwarg.
+  Tests would have green'd without exercising the production path. Fix
+  forwards `cancel_token` to the backend; matches the production
+  `SequentialPool` shape.
+
+**Carry-forwards / known follow-ups:**
+- **KeyframeStage cancel_token plumbing — deferred.** `KeyframeStage`
+  uses `ImageBackend` directly (no `pool.submit` site). The current
+  keyframe except-arm provides WARN-not-destroy via the orchestrator
+  outer except, but the in-stage cancel honoring waits on
+  `ImageBackend` growing the same kwarg. Slot when the next image
+  backend exhibits a stall.
+- **`pool.map` cancel_token forwarding — deferred.** The t2v
+  non-chained fan-out path. `pool.map(jobs)` ignores token today;
+  interrupt during fan-out waits for all in-flight backends to finish
+  their current poll tick before the except fires. Workers still honor
+  the token internally — the wait is just longer than the
+  `pool.submit` path. Promote when a fan-out smoke shows the latency
+  in practice.
+- **Diffusers / Hosted / Bedrock per-backend cancel hardening —
+  inherited at the ABC level.** Every concrete backend grew the
+  `cancel_token` kwarg in Task 1, but only `ComfyUIBackend` (Task 2)
+  and `RemoteSubmitPollBackend` (Task 3) actually honor it. If
+  `DiffusersBackend` / `HostedAPIBackend` / `BedrockVideoBackend` stall
+  in production the same way ComfyUI did, the structured logs from
+  Task 2 will tell us where, and a follow-up layer adds backend-
+  specific per-tick logging + `wait()`-based sleep replacement.
+- **Split-wait helper DRY** — the same `token.raise_if_set();
+  …probe…; token.wait(interval_s)` pattern is duplicated at 2 sites
+  (`ComfyUIBackend.result` + `RemoteSubmitPollBackend.result`). Factor
+  into `kinoforge.core.cancel` as a reusable helper (`poll_with_cancel`
+  / `bounded_poll`) when a 3rd caller appears — see new C-section
+  entry below.
+- **`kinoforge reap --orphans` helper — deferred.** Operator helper
+  that walks the RunPod REST API for pods absent from the ledger.
+  Already mostly covered by Layer V `sweep` but ergonomics could
+  improve — single command after an interrupt that destroys every
+  unaccounted pod.
+
+**Test count delta:** +27 net offline tests (Task 0 +7 `test_cancel.py`; Task 1 +4 `test_pool_cancel.py`; Task 2 +5 across `test_comfyui_cancel.py` + `test_comfyui_timeout.py` + `test_comfyui_poll_log.py`; Task 3 +4 `test_remote_submit_poll_cancel.py`; Task 4 +5 across `test_orchestrator_interrupt.py` + `test_orchestrator_cancelled.py`; Task 5 +2 `test_sigint_handler.py`). Full suite at end of Task 5: **1898 passed, 26 skipped** — no live smoke required for this layer.
