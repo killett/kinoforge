@@ -24,6 +24,17 @@ from __future__ import annotations
 import re
 import sys
 
+# ---------------------------------------------------------------------------
+# _CREDENTIAL_PATTERNS — keep in sync with the Claude Code user-scope hook at
+# ~/.claude/hooks/redact_secrets.py (CREDENTIAL_PATTERNS). That hook scrubs
+# tool output before the bytes reach the conversation transcript, and it
+# carries a SUPERSET of this list (project shapes + extra cloud-key shapes
+# the project itself doesn't need to redact internally).
+#
+# Drift caught by /workspace/tests/test_redact_hook_parity.py — that test
+# asserts the hook's pattern set ⊇ this one. Rule when adding a new pattern:
+# add HERE first, then mirror to the hook file, then re-run the parity test.
+# ---------------------------------------------------------------------------
 _CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("bearer_auth", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{8,}")),
     ("rpa_token", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b")),
