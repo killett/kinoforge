@@ -169,11 +169,12 @@ def test_runpod_comfyui_wan_t2v_warm_reuse_two_prompts() -> None:
         http_get=comfy_get,
         probe_profile=workflow_profile,
     )
-    # Layer Q render_provision moves weight DLs to the POD via curl
-    # bootstrap; the provisioner's local download phase would otherwise
-    # pull ~24 GB to this container before wait_for_ready. Same fixup as
-    # the i2v live test.
-    engine.requires_local_weights = False
+    # ComfyUIEngine now declares requires_local_weights=False at the class
+    # level (Layer Q's pod-side curl bootstrap is the actual provisioning
+    # path), so the per-instance override that earlier live tests carried
+    # is no longer needed. Kept here as a comment for archeology — the flag
+    # behavior is regression-tested by
+    # tests/engines/test_comfyui_no_local_weight_dl.py.
 
     state_dir = Path(".kinoforge")
     store = LocalArtifactStore(root=state_dir / "artifacts")

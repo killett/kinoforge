@@ -180,13 +180,11 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
             probe_profile=workflow_profile,
         )
 
-    # Layer Q render_provision moves weight downloads to the POD via the
-    # rendered curl bootstrap; the provisioner's local download phase
-    # would otherwise pull ~21 GB to this container before generate()
-    # even gets to wait_for_ready. Flag should be conditionally False on
-    # remote-pod engines (Layer Q follow-up); set explicitly here to
-    # mirror tools/capture_object_info.py:213.
-    engine.requires_local_weights = False
+    # ComfyUIEngine now declares requires_local_weights=False at the class
+    # level (Layer Q's pod-side curl bootstrap is the actual provisioning
+    # path), so the per-instance override that earlier revisions of this
+    # test carried is no longer needed. Regression-locked by
+    # tests/engines/test_comfyui_no_local_weight_dl.py.
 
     # Pre-warm the JsonProfileCache so discover() is skipped and
     # generate() takes the cache-hit branch; verify() then sees the

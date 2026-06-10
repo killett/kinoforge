@@ -761,12 +761,22 @@ class ComfyUIEngine(GenerationEngine):
     Class attributes:
         name: Registry key ``"comfyui"``.
         requires_compute: ``True`` — a GPU instance is needed.
-        requires_local_weights: ``True`` — weights must be provisioned locally.
+        requires_local_weights: ``False`` — weights are downloaded ON THE POD
+            by the Layer Q :meth:`render_provision` curl bootstrap, not on
+            the controller. The provisioner's local-download step would
+            otherwise pull ~20-30 GB of Wan/diffusion weights through the
+            controller container before delegating to :meth:`provision`,
+            doubling wall-clock cost and risking OOM on lightweight
+            containers (observed in capture-tool runs; see
+            ``tools/capture_object_info.py:55``). Engines that genuinely
+            need local-bytes-before-pod-upload should override to ``True``.
+            Tracked architecturally as B20 (``WeightProvisioning`` enum) in
+            PROGRESS.md.
     """
 
     name: str = "comfyui"
     requires_compute: bool = True
-    requires_local_weights: bool = True
+    requires_local_weights: bool = False
 
     def __init__(
         self,
