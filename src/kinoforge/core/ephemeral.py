@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
+    from kinoforge.core.vault import Vault
     from kinoforge.stores.base import ArtifactStore
 
 
@@ -109,9 +110,25 @@ class EphemeralSession:
 
     _active: ClassVar[EphemeralSession | None] = None
 
-    def __init__(self, *, enabled: bool) -> None:
-        """Construct a session bound to STRICT or DEFAULT policy."""
+    def __init__(self, *, enabled: bool, vault: Vault | None = None) -> None:
+        """Construct a session bound to STRICT or DEFAULT policy.
+
+        Args:
+            enabled: When True, binds to ``STRICT_POLICY``; otherwise
+                ``DEFAULT_POLICY``.
+            vault: Optional loaded :class:`Vault`. Threaded in by the
+                CLI's ``_load_vault_or_none`` result so downstream
+                ephemeral-aware sites (notably the provision marker
+                alias-key swap; see
+                ``docs/superpowers/specs/2026-06-10-provision-marker-alias-keying-design.md``)
+                can derive a deterministic alias instead of writing the
+                raw ``CapabilityKey.derive()`` hash to disk. ``None`` is
+                valid — vault-less ``--ephemeral`` runs fall back to the
+                raw hash (no alias source available, no sensitive
+                material in scope).
+        """
         self.policy = STRICT_POLICY if enabled else DEFAULT_POLICY
+        self.vault = vault
         self.in_memory_ledger: dict[str, dict[str, Any]] = {}
         self.in_memory_profiles: dict[str, Any] = {}
         self._registered_stores: list[tuple[ArtifactStore, str]] = []

@@ -61,6 +61,7 @@ from kinoforge.core.pool import ConcurrentPool
 from kinoforge.core.profiles import JsonImageProfileCache, JsonProfileCache
 from kinoforge.core.provision_state import (
     is_marker_current,
+    marker_key_for,
     marker_path,
     read_marker,
     write_marker,
@@ -431,7 +432,12 @@ def _provision_instance_and_build_backend(
             creds=creds,
             store=store,
             state_dir=state_dir,
-            capability_key_hex=key.derive(),
+            # Alias-key the .provisioned marker under STRICT + vault.
+            # default=key.derive() preserves the pre-existing contract for
+            # call sites + tests that mock ``key`` directly; the alias
+            # path fires only when an EphemeralSession + vault are active.
+            # See docs/superpowers/specs/2026-06-10-provision-marker-alias-keying-design.md.
+            capability_key_hex=marker_key_for(cfg, default=key.derive()),
             cfg_dict_override=cfg_dict,
         )
     except (ProvisionFailed, ProvisionTimeout, CapabilityMismatch, ValidationError):
