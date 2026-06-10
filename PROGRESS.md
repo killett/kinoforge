@@ -108,43 +108,198 @@ Patterns proven across MVP + Layers A–D. New layers should follow them by defa
 
 ## Known limitations & follow-ups
 
-Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future layer.
+**This is the canonical index of every open deferred item.** Per-phase
+entries below may still mention out-of-scope notes in context, but every
+non-trivial open follow-up MUST also appear here so future-us can find
+the full set in one read. When closing a phase, mirror its
+`Out of scope` / `Carry-forwards` / `Forward-compat hooks` block here.
+When closing an item, strike-through (`~~item~~ — CLOSED by …`) rather
+than delete — historical context aids future reviewers.
 
-**Real-cloud verification gaps (offline-tested only):**
-- ~~`RunPodProvider.find_offers` REST shape is a stub~~ — **CLOSED** by Phase 24 (Layer N). Real-cloud verified end-to-end; 10 production bugs fixed.
-- ~~`SkyPilotProvider._get_sky()` lazy path wired but unexercised against real `sky` SDK.~~ — **CLOSED** by Phase 31 (CPU lifecycle smoke against real GCP; 4 SDK fixtures captured; provider ported to modern async API).
-- SkyPilot live smoke is CPU lifecycle only against GCP; GPU + per-engine smokes remain deferred (see `docs/superpowers/specs/2026-06-03-skypilot-real-cloud-design.md` section 7 for scope cuts). Multi-cloud status as of 2026-06-07: **AWS extras wired** (`f74a73d`) — live AWS smoke still pending; **Azure deferred** behind an upstream conda-forge / azure-cli packaging gap (azure-cli pins a pre-release-only `azure-batch` range, no GA build on conda-forge; uv refuses prereleases by default and pixi 0.69.0 has no `--prerelease=allow` equivalent — the per-package cooldown override tables `[exclude-newer]` / `[pypi-exclude-newer]` don't address the prerelease filter). Full status in the RESUME section above + the TODO comment in `pixi.toml`.
-- ~~`S3ArtifactStore` + `GCSArtifactStore` never hit real cloud — fake clients don't simulate multipart edge cases, transient retries, SSE/KMS, signed URLs.~~ — **CLOSED** by Phase 38 (Layer W).
+Numbering is stable across rewrites; new items append at the bottom of
+their category.
 
-**Architectural follow-ups:**
-- ~~**Layer F: engine `submit()` ignores seg-0 assets.**~~ Closed by Phase 16 (see below).
-- ~~`cli._cmd_status` queries in-process provider state only, not the ledger.~~ — **CLOSED** by Phase 33 (Layer S). `_cmd_status` is now ledger-first: reads the entry, dispatches to the recorded provider, prints rich `key=value` block; stale-ledger path emits a `kinoforge forget --id <id>` advisory.
-- ~~Production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam).~~ — **CLOSED** by Phase 36 (Layer U). `Ledger.touch` ships the write path, `HeartbeatLoop` ships the writer thread, `deploy_session` wires it behind a config gate (`lifecycle.heartbeat_interval_s`), `_cmd_status` surfaces both the timestamp and a sentinel-staleness advisory. **Forward-compat sentinel-gate contract:** any future heartbeat-aware reaper MUST check `heartbeat_thread_tick` freshness before destructive decisions — see `Ledger.touch` docstring + Layer U spec §3.4.
-- `provisioner.provision` typed as `_ProvisionConfig` Protocol — `# type: ignore[arg-type]` at call site for mypy generic variance.
-- `GenerateClipStage` persists only final artifact (intermediates in-memory) — stitching, when shipped, must refactor persistence model or stitching read path.
-- `flf2v + N > 1 + non-native` is a pre-existing gap (no continuity for two-image-bookend non-native).
-- `test_core_invariant.py` allowlist does not yet include a `splitters/` directory — first adapter splitter (LLM, scene-detect) must extend the allowlist.
+### A. Live-spend / operator-gated (paid work, blocked or queued)
 
-**Layer C / D residuals:**
-- ~~Ledger remains local-only by CLI wiring — `cli._ledger(state_dir)` always constructs a `LocalArtifactStore(state_dir)` even when `store.kind` is `s3`/`gcs`.~~ — **CLOSED** by Phase 34 (Layer T). `cli/_ledger(state_dir)` helper deleted; every subcommand routes ledger access via `SessionContext.ledger()` backed by the configured store (sidecar at `state_dir/store.json`).
-- Default zero-arg store factories require env vars set — `register_store("s3", _default_factory)` reads `KINOFORGE_S3_BUCKET`; raises with helpful message when unset. The CLI doesn't use this path (constructs directly via `_build_store`).
-- No multipart threshold knob on cloud stores — SDK defaults (boto3 ~8 MiB) cover the common case; if real workloads need custom control, kwargs are a future layer.
+- **A1. Bedrock Luma Ray v2 live smoke** — Phase 42 Task 7. BLOCKED on AWS Support case for account-level model authorization. Re-fire ~$3.75; see RESUME block Track A above for the command.
+- **A2. Layer 2 — Veo on Vertex AI.** UNBLOCKED 2026-06-07 (GCP billing upgraded). Plan not started.
+- **A3. Layer W+β SkyPilot T4 GPU smoke re-fire** — Phase 40 Task 4. UNBLOCKED 2026-06-07. Single command in RESUME Track B above.
+- **A4. AWS arm of W+β2 (SkyPilot AWS GPU smoke)** — gated on AWS Service Quotas case `cd3e0e81…I2kxtcvR` landing.
+- **A5. SkyPilot live AWS smoke (any).** Extras wired (`f74a73d`); smoke pending.
+- **A6. SkyPilot Azure compute.** DEFERRED on upstream conda-forge / `azure-cli` / `azure-batch` packaging gap; 3 unblock paths in RESUME block.
+- **A7. SkyPilot GPU + per-engine smokes beyond Layer W+β.** Phase 31 scope cut.
+- **A8. Engine smoke on a verified SkyPilot adapter** — Phase 40 carry-forward; stacks on A3 once smoke fires.
+- **A9. Engine-integration live smoke for Diffusers + Hosted on real RunPod.** Phase 24 Layer N + Phase 28 Layer P closed ComfyUI/Wan; Diffusers + Hosted gap remains.
+- **A10. RunPod serverless mode read-paths + live smoke.** Phase 24 was pod-only.
+- **A11. HuggingFace live smoke for gated/private repos.** Phase 30 carry-forward.
+- **A12. aria2c real-binary smoke (`KINOFORGE_LIVE_ARIA2=1`).** Phase 29 carry-forward.
+- **A13. Luma credential refresh OR API-plan upgrade.** Phase 43 Layer 4 carry-forward (Luma direct video API retired in 2026; `LUMAAI_API_KEY` reserved for Layer 5b UNI-1 keyframes).
+- **A14. Layer 4 comparison configs** — 2 of 15 YAMLs shipped (t2v only); i2v / flf2v / keyframe-prestage / manifest deferred. Phase 43 Task 10.
+- **A15. Layer 4 Fal i2v + flf2v extension.** Phase 43 Task 14, depends on A14.
+- **A16. Layer 4 comparison batch capstone.** Phase 43 Task 15, depends on A14 + A15.
+- **A17. Fal retrofit onto `RemoteSubmitPollBackend`.** Phase 43 Task 7; engine functional, refactor-only.
 
-**CI / platform:**
-- Windows CI declined — see `windows-migration-cancelled.md`. Linux + macOS only.
-- ~~**macOS heartbeat-ledger race (flaky CI, pre-existing since Layer U /
-  Phase 36).**~~ — **CLOSED** by commit `6b9fba3` (2026-06-09). The poll
-  in `test_deploy_session_writes_last_heartbeat_to_ledger_end_to_end`
-  now tolerates `json.JSONDecodeError` mid-flush as "not yet written"
-  and retries, plus the post-with bare reads were replaced with the
-  same poll helper to cover any APFS write-visibility lag that
-  straddles the `HeartbeatLoop.stop()` join. Test-only change; the
-  source-side root-cause fix (atomic write via tmp + `os.replace` in
-  `LocalArtifactStore.put_bytes`) remains a candidate for a future
-  layer covering all concurrent readers, not just this test.
+### B. Spec-locked future layers (substrate ready, layer not started)
 
-**Breaking changes already shipped:**
-- `kinoforge gc` requires `--config PATH` (since Layer C) — anyone resuming with old shell scripts must update.
+- **B1. Layer W — `kinoforge sweeper` daemon.** `while True: sweep(...); sleep(interval)` consumer of the Layer V substrate. Closes idle-pod cost-leak window between manual `kinoforge reap` invocations. Surface: `kinoforge sweeper start|stop|status` + `sweeper:` YAML block + daemon-side heartbeat (mirrors Layer U `HeartbeatLoop`). Low risk; `act_on_verdict` already per-instance-locked. Spec hook at `2026-06-06-layer-v-heartbeat-aware-reaper-design.md` §6.
+- **B2. Layer X — cost dashboard / metrics consumer.** Walks ledger, runs `classify` per entry, aggregates burning-$/hr + per-provider breakdown + LIVE/IDLE/HEARTBEAT_UNKNOWN counts + lifetime $/session. `kinoforge cost` subcommand; `--json` for Grafana/Prometheus. Pure read path; ledger already stores `cost_rate_usd_per_hr` (Layer V Task 1) + `created_at`. Lowest-risk of B1/B2/B3.
+- **B3. Layer Y — in-session orchestrator warm-reuse retrofit.** `deploy_session` consults `classify` against the ledger when `_states[id]` is empty; attaches to a LIVE matching-`capability_key` pod instead of `create_instance`. Kills cold-start (1–5 min ComfyUI + Wan spin-up) on every fresh-shell `kinoforge generate`. Highest blast radius — touches the generate hot path. Prereq: B7 cooperative session-start/reaper lock. Spec hook at Layer V §5.6 + §6.
+- **B4. Cross-CLI warm-reuse CLI exposure.** Layer P Task 7 item #2 (`2026-06-01-layer-p-task7-item2-warm-reuse-design.md:54,546`) noted `LifecycleManager.warm_reuse_or_create` CLI surface as a Layer Q candidate; Layer Q shipped HF source instead — surface never materialized. Sub-item of B3.
+- **B5. Real `provider.heartbeat()` for RunPod / SkyPilot.** Both have native dead-man mechanisms today; production heartbeat call returns no-op. Layer V §6 candidate. Required before B1 / B3 give honest verdicts on real cloud.
+- **B6. Per-entry `heartbeat_interval_s` override.** Layer V §6 candidate.
+- **B7. Cooperative lock between session-start and reaper.** Layer V §6 candidate, prereq for B3.
+- **B8. `--policy policy.yaml` (JSON/YAML policy file).** Layer V §6 candidate; CLI flag composition today.
+- **B9. Bearer Layer 5+ provider adapters — Pika, Kling, Higgsfield, MiniMax, Hailuo.** Config-only via `RemoteSubmitPollBackend`; one thin subclass each. Layer 4 §13 future layers.
+- **B10. Hosted-engine per-prediction cost capture (Layer 5 candidate).** Per-engine `_extract_cost(status) -> float | None` hook on `RemoteSubmitPollBackend`; lifts onto `Artifact.meta["cost_usd"]` + `.cost.json` sidecar + `KINOFORGE_SESSION_BUDGET_USD` pre-submit gate. Substrate already names "spend tracking" as planned. Phase 43 Layer 4 carry-forward.
+- **B11. Future cloud-native hosted providers (Vertex Imagen, Bedrock Claude, Azure DALL-E).** Reuse existing AuthStrategy or +1 per family. Phase 41 Layer 1 §7.
+- **B12. Future Bedrock video models (drop-in via `model_input_template`).** Phase 42 Layer 3 / README:754.
+- **B13. Layer 5b cost sidecar implementation.** Pre-wired gate from ephemeral-workspaces §2; concrete writer is the open work.
+- **B14. `validate_request` promoted to Stage peer.** Then `KeyframeStage` becomes a real Stage entry instead of a pre-phase. Layer R §10.4 / README:870.
+- **B15. Splitter into `GenerateClipStage`.** Eliminates orchestrator's splitter knowledge; cleaner separation. Layer R §10.4.
+- **B16. Distributed / cross-process `BackendPool` variant** (e.g. `RayPool`). Slots in via `BackendPool` ABC unchanged. README:1298.
+- **B17. Audio sync stage (GH #2).** `strategy.decide` already marks `spec["_audio_mode"]="separate"`; stage reads marker.
+- **B18. Stitching layer.** Slots between `pool.map` and `store.put_bytes` in `GenerateClipStage`. Required to close persistence model — `GenerateClipStage` keeps intermediates in memory today.
+- **B19. Stitching across multi-segment clips sharing one keyframe.** Layer R §10.4; orthogonal to B18.
+
+### C. Architectural follow-ups (in-tree work, no new layer required)
+
+- ~~**Layer F: engine `submit()` ignores seg-0 assets.**~~ — CLOSED by Phase 16.
+- ~~`cli._cmd_status` queried in-process provider state only, not the ledger.~~ — CLOSED by Phase 33 (Layer S).
+- ~~Production-side `last_heartbeat` persistence on `Ledger.record` (Layer S forward-compat seam).~~ — CLOSED by Phase 36 (Layer U). Sentinel-gate contract: any future heartbeat-aware reaper MUST check `heartbeat_thread_tick` freshness before destructive decisions — see `Ledger.touch` docstring + Layer U spec §3.4.
+- ~~Ledger local-only by CLI wiring~~ — CLOSED by Phase 34 (Layer T).
+- **C1. Atomic write in `LocalArtifactStore.put_bytes`** (tmp + `os.replace`). Root-cause fix for the race bandaged in test-side at `6b9fba3`. Helps every concurrent reader, not just the one test.
+- **C2. `provisioner.provision` `# type: ignore[arg-type]`** — Protocol generic-variance cleanup.
+- **C3. `flf2v + N > 1 + non-native` continuity** — pre-existing two-image-bookend gap.
+- **C4. `test_core_invariant.py` allowlist extension for `splitters/`** — first adapter splitter (LLM, scene-detect) must add it.
+- **C5. Default zero-arg store factories require env vars set** (`KINOFORGE_S3_BUCKET` etc.). CLI bypasses via `_build_store`.
+- **C6. No multipart-threshold knob on cloud stores.** SDK defaults cover today.
+- **C7. `Orchestrator.generate` `base_spec={}` hardcode** at `core/orchestrator.py:605`. Layer K landed most of the routing; this line residual.
+- **C8. Hosted YAML `engine.hosted.model` vs `spec.model` collapse.** Documented in `examples/configs/hosted.yaml`; Layer-L+ candidate.
+- **C9. `--header=` Artifact-headers population.** Passthrough mechanism shipped (Phase 29); population deferred until `Artifact.headers` field lands.
+- **C10. `local_path_for` hardlink / zero-copy optimization** (`ArtifactStore.local_path_for`). Phase 25 Layer O scope cut; sub-GB disk doubling negligible today.
+- **C11. S3 recorder botocore-context `operation_name` empty.** Workaround in `tests/stores/recording.py:307`; root-cause fix deferred. Phase 38 Layer W.
+- **C12. Phase 45 Sub-γ pod-name alias rename.** `kinoforge-<alias>-<rand4>` + `capability=<alias>` tag default; needs `spec.tags["capability"]` populated somewhere first.
+- **C13. `_CapturingSink` test-helper dedup.** Promote to module helper if a third site appears (Layer 8).
+- **C14. WARNING template helper extraction** for `engine %s returned empty model identity ...`. Two sites; premature at 2.
+- **C15. `mode_identity` / `precision_identity` / `lora_stack_identity` sibling ABCs.** Layer 8 forward-pointer for finer filename slug facets.
+- **C16. Legacy `lifecycle.reap(policy=...)` dead seam** (`core/lifecycle.py:681,708`). Accepted-and-ignored before Layer V; superseded by `sweep()`. Delete or wire to `Policy`.
+- **C17. Stale `core/pool.py:32` docstring** — says multi-backend variants are DEFERRED but Layer G `ConcurrentPool` is multi-backend.
+
+### D. CI / platform
+
+- ~~**macOS heartbeat-ledger race** (flaky CI since Layer U / Phase 36).~~ — CLOSED by commit `6b9fba3` (2026-06-09). Test-side JSONDecodeError tolerance + post-with poll. C1 above is the source-side root-cause fix.
+- **D1. Windows CI.** DECLINED. Full implementation plan committed at `windows-migration-cancelled.md`. Revivable: real `win-64` platform support, pixi 4-platform lock, `as_posix()` path normalization, Windows-portable `check-added-large-files` hook. Linux + macOS only today.
+
+### E. Per-phase Out-of-Scope (mostly polish; reviewed once for promotion)
+
+These were noted as out-of-scope in their parent phase. Listed here so the
+central index stays the single source of truth. Promotion to A/B/C
+happens when a concrete next-step is identified.
+
+#### Phase 25 — Layer O (output directory)
+- **E1.** Cloud-native sinks (S3 mirror, webhook POST).
+- **E2.** Filename template customization.
+- **E3.** Migrate existing `.kinoforge/<run_id>/*.mp4` → `output/`.
+- **E4.** `Artifact.published_path` field for CLI status / batch summary.
+
+#### Phase 29 — aria2c
+- **E5.** `Artifact.headers` field for HF-gated weights via `Authorization: Bearer hf_…` (also see C9).
+- **E6.** aria2c knobs via env-var / YAML config.
+- **E7.** aria2c `--checksum=` flag short-circuit.
+- **E8.** Split `tests/core/test_downloader.py` (658 lines) into stdlib + aria2c sub-files.
+
+#### Phase 30 — Layer Q (HF)
+- **E9.** `include` / `exclude` filtering on `ModelEntry`.
+- **E10.** `GatedModelError` for HF 403 nuance.
+- **E11.** Custom HF mirror (`HF_ENDPOINT` env var support).
+
+#### Phase 32 — Layer R (keyframe)
+- **E12.** `HostedImageEngine` + `DiffusersImageEngine` concretes.
+- **E13.** Image-backend pool for parallel `flf2v` role fills (serial today).
+- **E14.** Keyframe caching across runs (`store.get_bytes` pre-check).
+- **E15.** User-facing `pipeline:` YAML override (add at ≥3 stages).
+- **E16.** `output_intermediates: true` cfg knob.
+- **E17.** LoRA support on image engines (extend `ImageProfile.loras`).
+- **E18.** Dynamic fal per-endpoint capability sniffing.
+- **E19.** Multi-pass refinement keyframes (`KeyframeStage → KeyframeRefineStage → GenerateClipStage`).
+- **E20.** Content-type sniffing (`KeyframeStage` hardcodes `.png` regardless of JPEG/PNG actual).
+- **E21.** fal storage upload integration for keyframe→wan i2v / flf2v end-to-end (Layer S candidate as noted in PROGRESS:1046).
+- **E22.** Asset-role wiring beyond `init_image` — `first_frame` / `last_frame` / `drive_audio` / `source_video`. No engine declares support today (README:1136).
+
+#### Phase 33 — Layer S (`kinoforge status` ledger)
+- **E23.** `kinoforge status --all` (every ledger entry).
+- **E24.** `kinoforge status --json` (machine-readable).
+- **E25.** `kinoforge ledger migrate` helper for legacy entries.
+
+#### Phase 34 — Layer T (cloud ledger CLI routing)
+- **E26.** `--store-uri s3://kf-prod` / `KINOFORGE_STORE_URI` cross-machine bootstrap (README:426).
+- **E27.** Lock-contention surfacing in non-batch handlers (`LockTimeout` catch-arm beyond `_cmd_batch`).
+
+#### Phase 38 — Layer W (S3 / GCS real-cloud)
+- **E28.** S3 + GCS retry-via-proxy live verification (2 xfail axes; covered offline).
+- **E29.** DSSE-KMS (S3) + CSEK (GCS) encryption modes.
+- **E30.** Multipart resumability across process restart.
+- **E31.** Bucket-level default encryption knob.
+- **E32.** Signed URL custom response headers.
+- **E33.** Azure + B2 + R2 store backends.
+
+#### Phase 39 — Layer W+α (cloud bootstrap)
+- **E34.** Scope-down AWS-managed broad policies → `.aws/policies/skypilot-minimal.json`.
+- **E35.** AWS bucket scope-down on `AmazonS3FullAccess` (predates this layer).
+- **E36.** `skypilot[aws]` pixi pin-conflict resolution (blocks `sky check aws`).
+
+#### Phase 40 — Layer W+β (SkyPilot T4 GPU smoke)
+- **E37.** `accelerators_in_cost` ordering verification on the GPU branch.
+
+#### Phase 43 — Layer 4 (Bearer comparison smokes)
+- **E38.** Rate limiting on `RemoteSubmitPollBackend` (home exists; YAGNI today).
+- **E39.** Webhook callback path (each provider supports; polling fine today).
+- **E40.** HTTP-recording fixtures for SDK-drift detection.
+- **E41.** Flagship-tier YAMLs (budget-tier first).
+- **E42.** Cross-provider quality scoring (CLIP, FVD).
+- **E43.** Alt image engines beyond Replicate flux-schnell — SDXL via Replicate, Imagen via Vertex AI.
+- **E44.** Per-mode budget-vs-flagship model upgrades for `flf2v`.
+- **E45.** `probe_hosted --check-bedrock-model-access` root-cause fix (list-only false positive). Phase 42 Task 7 follow-up.
+
+#### Phase 45 — Layer 5b (ephemeral workspaces)
+- **E46.** Vault encryption at rest (chmod 600 only).
+- **E47.** Multi-vault composition / inheritance.
+- **E48.** Online vault validation against CivitAI / HF.
+- **E49.** Keyring / OS credential-store integration.
+- **E50.** Provider-internal log retention coverage (Replicate / Runway / RunPod internal logs).
+- **E51.** Git-history rewrite for prompt-field-*.txt.
+- **E52.** `Secret[str]` newtype across SPEC ABCs (D10 rejected — architecture choice).
+- **E53.** Per-segment LoRA stacks.
+- **E54.** Encrypted profile cache (opaque alias supersedes).
+- **E55.** `hooks.post_generate` (forward-compat contract spelled out).
+- **E56.** RunPod billing-log scrub.
+- **E57.** Auto-redact of output-directory contents.
+
+#### Phase 48 — Layer 8 (`model_identity` ABC)
+- See C13, C14, C15 above (sibling identity ABCs).
+
+#### Phase 28 — ComfyUI UI→API converter (sub-plan)
+- **E58.** Wrap `_meta` header into converter output.
+- **E59.** Auto-derive `_meta.source_repo` / `source_sha` / `source_path` from CLI flags.
+- **E60.** AST-walk source for `INPUT_TYPES` as offline fallback (no live capture).
+- **E61.** `tools/capture_object_info.py` in CI (operator-invoked today).
+- **E62.** Cache `/object_info` across pod boots.
+- **E63.** Multi-pack-stack composition.
+- **E64.** Vendor `pydn/ComfyUI-to-Python-Extension` for API→Python direction.
+- **E65.** Lint Seth's vendored code (excluded from ruff + mypy).
+- **E66.** `tools/capture_object_info.py` SkyPilot / other-provider support.
+
+### F. Intentionally-kept smells
+
+See `docs/hygiene-notes.md`. Reviewer checks before re-flagging.
+
+- **F1.** Duplicated provision branch in `core/orchestrator.py` (cache-miss vs post-cache-hit). Reconsider on third caller or branch divergence.
+
+### G. Breaking changes already shipped (operator-visible)
+
+- `kinoforge gc` requires `--config PATH` (since Layer C). Old shell scripts must update.
+- `kinoforge generate` default `--run-id` flipped `"run"` → `f"run-{ts}"` (Layer O). Pass `--run-id run` to restore prior behavior.
+
 
 ## GitHub issues status
 
