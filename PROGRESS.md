@@ -132,6 +132,23 @@ Carry-forward gaps + post-Layer-D housekeeping. Each is a candidate for a future
 
 **CI / platform:**
 - Windows CI declined — see `windows-migration-cancelled.md`. Linux + macOS only.
+- **macOS heartbeat-ledger race (flaky CI, pre-existing since Layer U /
+  Phase 36).** `tests/core/test_orchestrator_heartbeat.py::test_deploy_session_writes_last_heartbeat_to_ledger_end_to_end`
+  fails on `macos-latest` with `JSONDecodeError: Expecting value: line 1
+  column 1 (char 0)`. Passes 100% on `ubuntu-latest` and 100% locally on
+  Linux. Root cause: `HeartbeatLoop` writes the ledger JSON file from a
+  background thread while the test thread reads it; on APFS the test
+  occasionally observes a zero-byte file mid-flush. Linux's writeback
+  coalescing hides the window. Last observed: run `27246761033` attempt
+  1 (2026-06-10), succeeded on attempt 2 unchanged. **Fix candidate:**
+  add a sync seam — either explicitly join the HeartbeatLoop writer
+  before asserting, or poll the ledger entry for the expected
+  `last_heartbeat` field with a short timeout, instead of doing a bare
+  read. Roughly a 10-line test-only change; no production-code touch
+  needed. **Risk if ignored:** CI rerun usually clears it, but each
+  flake fires a GitHub "workflow failed" email + blocks any merge gate
+  that doesn't allow reruns. Should be fixed before adding required
+  status checks.
 
 **Breaking changes already shipped:**
 - `kinoforge gc` requires `--config PATH` (since Layer C) — anyone resuming with old shell scripts must update.
