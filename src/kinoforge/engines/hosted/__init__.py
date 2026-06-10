@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from kinoforge.core.auth import AuthStrategy
+    from kinoforge.core.cancel import CancelToken
 
 from kinoforge.core import frames, registry
 from kinoforge.core.assets import find_asset, set_by_dot_path
@@ -260,7 +261,12 @@ class HostedAPIBackend(GenerationBackend):
         """
         return self._probe
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         """POST the job spec (with asset URIs injected) to the hosted endpoint.
 
         For each role declared in ``self._asset_paths``, look up the
@@ -277,10 +283,14 @@ class HostedAPIBackend(GenerationBackend):
 
         Args:
             job: The ``GenerationJob`` whose ``spec`` is the request body.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored — hosted submit is synchronous and has
+                nothing cooperative to cancel.
 
         Returns:
             The ``job_id`` (or task id) string from the API response.
         """
+        del cancel_token  # ABC parity; hosted submit is synchronous, nothing to cancel.
         from kinoforge.core.prompt_routing import (
             resolve_prompt,  # local — avoid circular at module load
         )
@@ -298,7 +308,12 @@ class HostedAPIBackend(GenerationBackend):
         response = self._http_post(self._endpoint, body)
         return str(response["job_id"])
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact:
         """Poll the hosted endpoint for completion and return the produced Artifact.
 
         Polls at most :data:`_MAX_POLL` times, sleeping between iterations
@@ -307,6 +322,9 @@ class HostedAPIBackend(GenerationBackend):
 
         Args:
             job_id: The job ID returned by a prior ``submit`` call.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored at this layer. Full cooperative honoring
+                of the poll loop is added by a follow-up layer.
 
         Returns:
             An ``Artifact`` whose ``filename`` comes from the API response
@@ -323,6 +341,7 @@ class HostedAPIBackend(GenerationBackend):
             TimeoutError: The hosted API did not return ``status == "done"``
                 within the poll limit.
         """
+        del cancel_token  # ABC parity; full honoring deferred to a future task.
         status_url = f"{self._endpoint.rstrip('/')}/status/{job_id}"
         for _ in range(_MAX_POLL):
             data = self._http_get(status_url)
