@@ -30,7 +30,10 @@ import time
 import urllib.request
 from collections.abc import Callable
 from os.path import basename
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from kinoforge.core.cancel import CancelToken
 from urllib.parse import urlparse
 
 from kinoforge.core import registry
@@ -233,7 +236,12 @@ class FalBackend(GenerationBackend):
         """Return ``""`` — fal has no browser-facing per-job dashboard URL."""
         return ""
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         """POST the spec to ``{queue_base}/{endpoint}`` and return the request_id.
 
         For each role in ``self._asset_paths``, look up the matching asset on
@@ -251,10 +259,13 @@ class FalBackend(GenerationBackend):
 
         Args:
             job: The generation job to submit.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored — fal queue submit is synchronous.
 
         Returns:
             The ``request_id`` string returned by the queue.
         """
+        del cancel_token  # ABC parity; fal queue submit is synchronous.
         from kinoforge.core.prompt_routing import (
             resolve_prompt,  # local — avoid circular at module load
         )
@@ -293,11 +304,19 @@ class FalBackend(GenerationBackend):
         }
         return request_id
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact:
         """Poll the recorded status_url until COMPLETED, then GET the result URL.
 
         Args:
             job_id: The request_id returned by a prior ``submit`` call.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored at this layer. Full cooperative honoring
+                of the poll loop is added by a follow-up layer.
 
         Returns:
             An :class:`~kinoforge.core.interfaces.Artifact` whose ``url``
@@ -312,6 +331,7 @@ class FalBackend(GenerationBackend):
             TimeoutError: The job did not complete within ``self._max_poll``
                 iterations.
         """
+        del cancel_token  # ABC parity; full honoring deferred to a future task.
         urls = self._jobs.get(job_id)
         if urls is None:
             raise KinoforgeError(f"fal job {job_id!r} not found — was submit() called?")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.interfaces import (
     Artifact,
     GenerationBackend,
@@ -76,15 +77,23 @@ class BlockingFakeBackend(GenerationBackend):
         """
         return {}
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         """Register a new job id, return it. Does not block.
 
         Args:
             job: The :class:`GenerationJob`; only used to advance the counter.
+            cancel_token: Accepted for ABC parity with the new
+                :class:`GenerationBackend` signature; ignored.
 
         Returns:
             A unique job id of the form ``"<name>-<counter>"``.
         """
+        del cancel_token
         with self._lock:
             self._counter += 1
             jid = f"{self._name}-{self._counter}"
@@ -92,7 +101,12 @@ class BlockingFakeBackend(GenerationBackend):
             self.submit_log.append(jid)
         return jid
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact:
         """Block until ``release(job_id)`` is called; then return an Artifact.
 
         Args:
@@ -107,6 +121,7 @@ class BlockingFakeBackend(GenerationBackend):
             RuntimeError: ``job_id`` was added to ``_raise_for`` via
                 :meth:`fail_for` — used to test failure paths.
         """
+        del cancel_token
         if not self._gates[job_id].wait(timeout=5.0):
             raise TimeoutError(f"{job_id} never released")
         if job_id in self._raise_for:

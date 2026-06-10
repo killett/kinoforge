@@ -111,10 +111,20 @@ class _CountingBackend(GenerationBackend):
     def capabilities(self) -> ModelProfile:  # noqa: D102
         return self._probe
 
-    def submit(self, job: GenerationJob) -> str:  # noqa: D102
+    def submit(  # noqa: D102
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: object | None = None,
+    ) -> str:
         raise NotImplementedError
 
-    def result(self, job_id: str) -> Any:  # noqa: D102
+    def result(  # noqa: D102
+        self,
+        job_id: str,
+        *,
+        cancel_token: object | None = None,
+    ) -> Any:
         raise NotImplementedError
 
     def endpoints(self) -> dict[str, str]:  # noqa: D102
@@ -778,10 +788,20 @@ class _RecordingBackend(GenerationBackend):
     def capabilities(self) -> ModelProfile:  # noqa: D102
         return self._probe
 
-    def submit(self, job: GenerationJob) -> str:  # noqa: D102
+    def submit(  # noqa: D102
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: object | None = None,
+    ) -> str:
         raise NotImplementedError
 
-    def result(self, job_id: str) -> Any:  # noqa: D102
+    def result(  # noqa: D102
+        self,
+        job_id: str,
+        *,
+        cancel_token: object | None = None,
+    ) -> Any:
         raise NotImplementedError
 
     def endpoints(self) -> dict[str, str]:  # noqa: D102

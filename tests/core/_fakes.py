@@ -25,6 +25,7 @@ import threading
 import time
 from typing import Any
 
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.interfaces import (
     CapabilityKey,
     ConditioningAsset,
@@ -83,7 +84,12 @@ class _BatchSpyBackend(FakeBackend):
         self._observed_params = observed_params
         self._observed_assets_per_prompt = observed_assets_per_prompt
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         prompt = job.segments[0].prompt if job.segments else ""
         # Record observed params keyed by the segment-0 prompt — tests pick
         # prompts that uniquely identify the entry under test.
@@ -125,7 +131,7 @@ class _BatchSpyBackend(FakeBackend):
         ):
             raise self._fail_with
 
-        return super().submit(job)
+        return super().submit(job, cancel_token=cancel_token)
 
 
 class _BatchSpyEngine(FakeEngine):

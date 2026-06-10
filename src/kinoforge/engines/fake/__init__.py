@@ -19,9 +19,12 @@ from __future__ import annotations
 import hashlib
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import registry
+
+if TYPE_CHECKING:
+    from kinoforge.core.cancel import CancelToken
 from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
@@ -75,20 +78,33 @@ class FakeBackend(GenerationBackend):
         """
         return self._probe
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         """Store ``job`` and return a unique job identifier.
 
         Args:
             job: The ``GenerationJob`` to queue.
+            cancel_token: Accepted for ABC parity; ignored — FakeBackend
+                completes synchronously and has nothing to cancel.
 
         Returns:
             A non-empty UUID-4 string that identifies this submission.
         """
+        del cancel_token
         job_id = str(uuid.uuid4())
         self._jobs[job_id] = job
         return job_id
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact:
         """Return a deterministic ``Artifact`` for the previously submitted job.
 
         The filename is derived from the segment prompts so that two
@@ -97,6 +113,8 @@ class FakeBackend(GenerationBackend):
 
         Args:
             job_id: The identifier returned by a prior ``submit`` call.
+            cancel_token: Accepted for ABC parity; ignored — FakeBackend
+                completes synchronously and has nothing to cancel.
 
         Returns:
             An ``Artifact`` whose ``filename`` is
@@ -105,6 +123,7 @@ class FakeBackend(GenerationBackend):
         Raises:
             KeyError: ``job_id`` was never submitted to this backend.
         """
+        del cancel_token
         job = self._jobs[job_id]
         combined = "|".join(s.prompt for s in job.segments)
         hex12 = hashlib.sha256(combined.encode("utf-8")).hexdigest()[:12]

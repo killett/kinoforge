@@ -65,7 +65,13 @@ class _ListPool(BackendPool):
     def add(self, backend: GenerationBackend, *, max_in_flight: int = 1) -> None:  # noqa: D102
         self._backends.append(backend)
 
-    def submit(self, job: GenerationJob) -> Future[Artifact]:
+    def submit(  # noqa: D102
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: object | None = None,
+    ) -> Future[Artifact]:
+        del cancel_token
         backend = self._backends[0]
         job_id = backend.submit(job)
         artifact = backend.result(job_id)
@@ -76,7 +82,13 @@ class _ListPool(BackendPool):
     def map(self, jobs: list[GenerationJob]) -> list[Artifact]:
         return [self.submit(j).result() for j in jobs]
 
-    def close(self) -> None:  # noqa: D102
+    def close(  # noqa: D102
+        self,
+        *,
+        cancel_pending: bool = False,
+        timeout: float | None = None,
+    ) -> None:
+        del cancel_pending, timeout
         return None
 
 
@@ -248,9 +260,14 @@ def test_sequential_pool_as_context_manager_calls_close():
     closed_called: list[bool] = []
 
     class _SpyPool(SequentialPool):
-        def close(self) -> None:
+        def close(
+            self,
+            *,
+            cancel_pending: bool = False,
+            timeout: float | None = None,
+        ) -> None:
             closed_called.append(True)
-            super().close()
+            super().close(cancel_pending=cancel_pending, timeout=timeout)
 
     with _SpyPool(backend) as pool:
         assert isinstance(pool, _SpyPool)

@@ -22,9 +22,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import frames, registry
+
+if TYPE_CHECKING:
+    from kinoforge.core.cancel import CancelToken
 from kinoforge.core.assets import asset_bytes, find_asset
 from kinoforge.core.errors import (
     AssetFetchError,
@@ -541,7 +544,12 @@ class ComfyUIBackend(GenerationBackend):
         """
         return self._probe
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         """POST the merged workflow graph to ``/prompt`` and return the prompt ID.
 
         The workflow graph is taken from ``job.spec["graph"]``.  The keys in
@@ -561,6 +569,10 @@ class ComfyUIBackend(GenerationBackend):
         Args:
             job: The ``GenerationJob`` whose ``spec`` contains ``"graph"``
                 and ``"node_overrides"`` (and optionally ``"asset_node_ids"``).
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored at this layer. Full cooperative honoring
+                of the poll loop in :meth:`result` is added by a
+                follow-up task.
 
         Returns:
             The ``prompt_id`` string from the ComfyUI server response.
@@ -570,6 +582,7 @@ class ComfyUIBackend(GenerationBackend):
                 :func:`~kinoforge.core.assets.asset_bytes`) or upload to
                 ``/upload/image`` failed.
         """
+        del cancel_token  # Task 2 wires real honoring; Task 1 only adds the kwarg.
         graph: dict[str, Any] = copy.deepcopy(job.spec.get("graph", {}))
         overrides: dict[str, Any] = copy.deepcopy(job.spec.get("node_overrides", {}))
         asset_node_ids: dict[str, str] = job.spec.get("asset_node_ids", {})
@@ -653,7 +666,12 @@ class ComfyUIBackend(GenerationBackend):
         )
         return str(response["prompt_id"])
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact:
         """Poll ``/history/{job_id}`` until outputs are available.
 
         Polls at most :data:`_MAX_POLL` times, sleeping between iterations
@@ -661,6 +679,9 @@ class ComfyUIBackend(GenerationBackend):
 
         Args:
             job_id: The ``prompt_id`` returned by a prior ``submit`` call.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored at this layer. Full cooperative honoring
+                of the poll loop is added by a follow-up task.
 
         Returns:
             An ``Artifact`` whose ``filename`` is the first filename from the
@@ -671,6 +692,7 @@ class ComfyUIBackend(GenerationBackend):
             TimeoutError: The server did not return outputs within the poll
                 limit.
         """
+        del cancel_token  # Task 2 wires real honoring; Task 1 only adds the kwarg.
         url = f"{self._base_url}/history/{job_id}"
         last_transient: urllib.error.HTTPError | None = None
         for poll_idx in range(_MAX_POLL):

@@ -15,9 +15,12 @@ import subprocess
 import time
 import urllib.request
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import frames, registry
+
+if TYPE_CHECKING:
+    from kinoforge.core.cancel import CancelToken
 from kinoforge.core.assets import find_asset, set_by_dot_path
 from kinoforge.core.errors import (
     FrameExtractionError,
@@ -236,7 +239,12 @@ class DiffusersBackend(GenerationBackend):
         """
         return self._probe
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         """POST the job spec (with asset URIs injected) to ``/generate``.
 
         For each role declared in ``self._asset_paths``, look up the
@@ -253,10 +261,13 @@ class DiffusersBackend(GenerationBackend):
 
         Args:
             job: The ``GenerationJob`` whose ``spec`` is the request body.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored — diffusers submit is synchronous.
 
         Returns:
             The ``job_id`` string from the server response.
         """
+        del cancel_token  # ABC parity; this backend completes via poll in result().
         from kinoforge.core.prompt_routing import (
             resolve_prompt,  # local — avoid circular at module load
         )
@@ -275,7 +286,12 @@ class DiffusersBackend(GenerationBackend):
         response = self._http_post(url, body)
         return str(response["job_id"])
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact:
         """Poll ``/status/{job_id}`` until ``status == "done"``.
 
         Polls at most :data:`_MAX_POLL` times, sleeping between iterations
@@ -283,6 +299,9 @@ class DiffusersBackend(GenerationBackend):
 
         Args:
             job_id: The job ID returned by a prior ``submit`` call.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored at this layer. Full cooperative honoring
+                of the poll loop is added by a follow-up layer.
 
         Returns:
             An ``Artifact`` whose ``filename`` comes from the server response
@@ -292,6 +311,7 @@ class DiffusersBackend(GenerationBackend):
             TimeoutError: The server did not return ``status == "done"``
                 within the poll limit.
         """
+        del cancel_token  # ABC parity; full honoring deferred to a future task.
         url = f"{self._base_url}/status/{job_id}"
         for _ in range(_MAX_POLL):
             data = self._http_get(url)

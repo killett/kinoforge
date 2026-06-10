@@ -21,9 +21,12 @@ import copy
 import time
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import registry
+
+if TYPE_CHECKING:
+    from kinoforge.core.cancel import CancelToken
 from kinoforge.core.auth import AuthStrategy, AWSSigV4
 from kinoforge.core.errors import AuthError, KinoforgeError
 from kinoforge.core.interfaces import (
@@ -157,7 +160,12 @@ class BedrockVideoBackend(GenerationBackend):
         """
         return {"bedrock": "bedrock-runtime"}
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         """Invoke Bedrock async and return an opaque job ID.
 
         Calls ``bedrock_runtime.start_async_invoke`` with the model input
@@ -168,10 +176,14 @@ class BedrockVideoBackend(GenerationBackend):
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` to run.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored — Bedrock submit is a single
+                ``start_async_invoke`` call with nothing to cancel.
 
         Returns:
             An opaque job-ID string; pass to :meth:`result` to poll.
         """
+        del cancel_token  # ABC parity; Bedrock submit is synchronous.
         bv_cfg = self._cfg["engine"]["bedrock_video"]
         prompt = resolve_prompt(job) or ""
         model_input = _substitute_prompt(bv_cfg["model_input_template"], prompt)
@@ -189,11 +201,19 @@ class BedrockVideoBackend(GenerationBackend):
         self._inflight[job_id] = resp["invocationArn"]
         return job_id
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact:
         """Poll ``get_async_invoke`` until status is Completed or Failed.
 
         Args:
             job_id: The opaque job ID returned by :meth:`submit`.
+            cancel_token: Accepted for :class:`GenerationBackend` ABC
+                parity; ignored at this layer. Full cooperative honoring
+                of the poll loop is added by a follow-up layer.
 
         Returns:
             An :class:`~kinoforge.core.interfaces.Artifact` with
@@ -204,6 +224,7 @@ class BedrockVideoBackend(GenerationBackend):
             KinoforgeError: If ``job_id`` was not submitted, the invocation
                 failed, or the poll loop exhausted.
         """
+        del cancel_token  # ABC parity; full honoring deferred to a future task.
         arn = self._inflight.get(job_id)
         if arn is None:
             raise KinoforgeError(
