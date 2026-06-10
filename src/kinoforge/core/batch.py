@@ -73,6 +73,7 @@ from kinoforge.pipeline.keyframe import KeyframeStage
 from kinoforge.stores.base import ArtifactStore
 
 if TYPE_CHECKING:
+    from kinoforge.core.cancel import CancelToken
     from kinoforge.core.config import Config, KeyframeConfig
     from kinoforge.core.interfaces import (
         ComputeProvider,
@@ -153,6 +154,7 @@ def _build_stage_for_entry(
     batch_id: str,
     sink: OutputSink | None = None,
     keyframe_state: PipelineState | None = None,
+    cancel_token: CancelToken | None = None,
 ) -> tuple[GenerateClipStage, PipelineState]:
     """Build a stage + initial PipelineState pair for one batch entry.
 
@@ -188,6 +190,10 @@ def _build_stage_for_entry(
             validated instead of the bare entry request.  Its
             ``artifacts`` are carried forward into the initial
             PipelineState so keyframe artifacts survive downstream.
+        cancel_token: Phase 50 cooperative-cancellation token forwarded
+            verbatim into the built :class:`GenerateClipStage` so its
+            ``pool.submit`` calls observe the operator's interrupt.
+            ``None`` (the default) preserves library-caller behavior.
 
     Returns:
         A ``(stage, initial_state)`` tuple ready for
@@ -248,6 +254,7 @@ def _build_stage_for_entry(
         namespace=batch_id,
         provider=_provider,
         model=_model,
+        cancel_token=cancel_token,
     )
     initial_state = PipelineState(request=validated, artifacts=prior_artifacts)
     return stage, initial_state
@@ -468,6 +475,7 @@ def batch_generate(
     instance: Instance | None = None,
     tags: dict[str, str] | None = None,
     on_event: BatchEventCallback | None = None,
+    cancel_token: CancelToken | None = None,
 ) -> BatchResult:
     """Run every entry in *manifest* on one shared deployed instance.
 
@@ -559,6 +567,14 @@ def batch_generate(
             ``threading.Lock`` so multi-line output never interleaves.
             When ``None`` (the default), no events fire and behaviour is
             byte-identical to pre-Layer-L-T4.
+        cancel_token: Phase 50 cooperative-cancellation token. Forwarded
+            verbatim into ``deploy_session`` (which uses it to bound the
+            pool's shutdown) and into every per-entry
+            :class:`GenerateClipStage` (which threads it into
+            ``pool.submit`` so backend poll loops can observe and
+            unwind). The CLI's SIGINT handler sets this token on first
+            Ctrl-C. ``None`` (the default) preserves library-caller
+            behavior.
 
     Returns:
         A :class:`BatchResult` with one
@@ -652,6 +668,7 @@ def batch_generate(
             state_dir=state_dir,
             instance=instance,
             tags=tags,
+            cancel_token=cancel_token,
         ) as session:
             _eph = EphemeralSession.current()
             if _eph is not None:
@@ -728,6 +745,7 @@ def batch_generate(
                             batch_id,
                             sink=sink,
                             keyframe_state=keyframe_state,
+                            cancel_token=cancel_token,
                         )
                     except Exception as build_exc:  # noqa: BLE001 — per-entry catch
                         # Validation errors (e.g. unsupported mode) detected
