@@ -167,12 +167,24 @@ class RemoteSubmitPollBackend(GenerationBackend):
     ) -> str:
         """Build + submit the request via :meth:`_submit`.
 
+        Honors *cancel_token* with a single cheap ``raise_if_set`` check
+        before any provider-side network call — symmetry with
+        :meth:`ComfyUIBackend.submit` so an operator who presses Ctrl-C
+        between job construction and the first wire call does not pay
+        for a wasted submission.
+
         Args:
             job: The :class:`GenerationJob` to send to the provider.
-            cancel_token: Accepted for ABC parity; full cooperative
-                honoring inside the poll loop is added in a later task.
+            cancel_token: Optional :class:`CancelToken`. Checked once
+                before ``_submit``; defaults to a never-set sentinel.
+
+        Raises:
+            Cancelled: ``cancel_token`` was set when ``submit`` was
+                entered.
         """
-        del cancel_token
+        from kinoforge.core.cancel import _NULL_TOKEN
+
+        (cancel_token or _NULL_TOKEN).raise_if_set()
         return self._submit(self._client(), job)
 
     def _delete_with_retries(
@@ -214,6 +226,14 @@ class RemoteSubmitPollBackend(GenerationBackend):
     ) -> Artifact:
         """Poll until done or failed; return an Artifact on done.
 
+        Honors *cancel_token* both at the top of every iteration (cheap
+        ``raise_if_set`` check before any I/O) and across the inter-poll
+        wait (``cancel_token.wait`` in place of ``time.sleep`` so a
+        sibling thread's ``token.set()`` interrupts the wait promptly).
+        This closes the Ctrl-C path for every Bearer-API hosted provider
+        in one shot (Replicate / Runway / Luma / Fal all subclass this
+        backend).
+
         Under an active ``EphemeralSession`` with
         ``policy.delete_on_completion=True``, fires
         ``_delete_with_retries(job_id, retries=policy.delete_retries)``
@@ -224,15 +244,40 @@ class RemoteSubmitPollBackend(GenerationBackend):
 
         Args:
             job_id: Provider-side job ID returned by :meth:`submit`.
-            cancel_token: Accepted for ABC parity; full cooperative
-                honoring inside the poll loop is added in a later task.
+            cancel_token: Optional :class:`CancelToken`. When ``None``,
+                the legacy path is preserved verbatim: the inter-poll
+                wait calls ``self._sleep`` (which existing engine tests
+                inject as ``lambda s: None`` to keep tick latency at
+                zero). When supplied, the wait calls ``token.wait`` so
+                a mid-wait set() returns promptly.
+
+        Raises:
+            Cancelled: ``cancel_token`` was set.
+            TimeoutError: ``max_poll`` iterations elapsed without
+                completion.
+            KinoforgeError: ``_is_failed`` returned ``(True, reason)``.
         """
-        del cancel_token
+        from kinoforge.core.cancel import _NULL_TOKEN
+
+        token = cancel_token if cancel_token is not None else _NULL_TOKEN
+
+        # Token-aware wait: when a real token is supplied, use Event.wait
+        # so a mid-wait set() returns promptly. When the caller passes no
+        # token (existing engine tests inject ``sleep=lambda s: None``
+        # to keep ticks instant), fall back to the injected sleep so the
+        # legacy timeout / iteration-cap contract is preserved verbatim.
+        def _interpoll_wait(seconds: float) -> None:
+            if cancel_token is None:
+                self._sleep(seconds)
+                return
+            token.wait(seconds)
+
         import urllib.parse
         from pathlib import PurePosixPath
 
         client = self._client()
         for _ in range(self._max_poll):
+            token.raise_if_set()
             status = self._poll_one(client, job_id)
             failed, reason = self._is_failed(status)
             if failed:
@@ -259,7 +304,7 @@ class RemoteSubmitPollBackend(GenerationBackend):
                         job_id, retries=_session.policy.delete_retries
                     )
                 return artifact
-            self._sleep(self._poll_interval_s)
+            _interpoll_wait(self._poll_interval_s)
         raise TimeoutError(
             f"{type(self).__name__}: job {job_id!r} not done after "
             f"{self._max_poll} polls"
