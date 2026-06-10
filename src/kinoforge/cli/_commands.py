@@ -307,7 +307,16 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     try:
         artifact, _ = _generate(
-            cfg, request, store=store, sink=sink, run_id=run_id, state_dir=ctx.state_dir
+            cfg,
+            request,
+            store=store,
+            sink=sink,
+            run_id=run_id,
+            state_dir=ctx.state_dir,
+            # Phase 50 — thread the per-invocation cancel token into the
+            # orchestrator so a CLI SIGINT (set by _install_sigint_handler
+            # in cli._main) propagates through every backend poll loop.
+            cancel_token=ctx.cancel_token,
         )
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
@@ -421,6 +430,10 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
             concurrent=args.concurrent,
             state_dir=ctx.state_dir,
             on_event=formatter.emit,
+            # Phase 50 — thread the per-invocation cancel token in so a
+            # CLI SIGINT propagates through the inner deploy_session +
+            # every per-entry GenerateClipStage.run() poll loop.
+            cancel_token=ctx.cancel_token,
         )
     except (BudgetExceeded, CapabilityMismatch, TeardownError) as exc:
         print(
