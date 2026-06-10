@@ -33,6 +33,15 @@ class BudgetExceeded(KinoforgeError):
     """Estimated spend crossed the configured budget ceiling."""
 
 
+class Cancelled(KinoforgeError):
+    """Raised when a CancelToken is set mid-operation.
+
+    Backends honoring cooperative cancellation raise this from their
+    submit/result methods so the orchestrator can distinguish an operator
+    interrupt from a real failure.
+    """
+
+
 class TeardownError(KinoforgeError):
     """destroy_instance could not confirm termination."""
 
