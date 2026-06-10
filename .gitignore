@@ -48,8 +48,13 @@ output/
 .superpowers/
 *.log
 
-# Live-smoke per-run record (git_sha, timings, artifact sha256) — local only
-tests/engines/fixtures/comfyui/last_smoke.json
+# Live-smoke per-run records (git_sha, pod_id, timings, artifact sha256) — local only.
+# Durable record lives in successful-generations.md; the JSON is overwritten on
+# every smoke and would otherwise dirty the working tree after every live run.
+# Covers every fixture dir that hosts a per-run smoke record (comfyui, nova_reel,
+# luma_ray, runpod, ...). Deterministic fixtures (history_done.json,
+# create_pod.json, etc.) do not match this pattern.
+tests/**/fixtures/**/last*_smoke.json
 
 # Stray ops binaries downloaded into the workspace (runpodctl, etc.)
 runpodctl
