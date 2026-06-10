@@ -416,6 +416,78 @@ _DEFAULT_PROBE = ModelProfile(
 # ---------------------------------------------------------------------------
 
 
+def _extract_poll_fields(
+    envelope: dict[str, Any],
+) -> tuple[str, int | None, str | None]:
+    """Pull (status, queue_pos, exec_node) from a ComfyUI history envelope.
+
+    ComfyUI versions vary the envelope shape. Tolerate missing keys by
+    returning the ``"unknown"`` sentinel for status, ``None`` for the
+    other two. ``queue_pos`` is always returned as ``None`` here — it
+    is populated by a separate ``/queue`` probe in the poll loop when
+    ``status == "queued"``.
+
+    Args:
+        envelope: Decoded JSON body from ``/history/{prompt_id}``.
+
+    Returns:
+        ``(status_str, queue_pos, exec_node)`` triple.
+    """
+    status_block = envelope.get("status", {}) if isinstance(envelope, dict) else {}
+    if not isinstance(status_block, dict):
+        status_block = {}
+    status = status_block.get("status_str", "unknown")
+    exec_info = status_block.get("exec_info", {})
+    if not isinstance(exec_info, dict):
+        exec_info = {}
+    exec_node = exec_info.get("current_node")
+    return str(status), None, exec_node
+
+
+def _extract_queue_position(
+    envelope: dict[str, Any],
+    job_id: str,
+) -> int | None:
+    """Best-effort lookup of *job_id* position in ComfyUI's ``/queue`` envelope.
+
+    Args:
+        envelope: Decoded JSON body from ``/queue``.
+        job_id: The ``prompt_id`` whose position should be located.
+
+    Returns:
+        Zero-based position (running entries first, then pending), or
+        ``None`` when *job_id* is not present.
+    """
+    if not isinstance(envelope, dict):
+        return None
+    running = envelope.get("queue_running", []) or []
+    pending = envelope.get("queue_pending", []) or []
+    for idx, entry in enumerate(running):
+        if _entry_matches(entry, job_id):
+            return idx
+    for idx, entry in enumerate(pending):
+        if _entry_matches(entry, job_id):
+            return len(running) + idx
+    return None
+
+
+def _entry_matches(entry: object, job_id: str) -> bool:
+    """Return True when a ``/queue`` entry refers to *job_id*.
+
+    ComfyUI queue entries are typically ``[number, prompt_id, ...]``.
+
+    Args:
+        entry: A single entry from ``queue_running`` or ``queue_pending``.
+        job_id: The ``prompt_id`` to match against.
+
+    Returns:
+        ``True`` when ``entry[1] == job_id``.
+    """
+    if isinstance(entry, list) and len(entry) >= 2:
+        return bool(entry[1] == job_id)
+    return False
+
+
 def _retry_proxy_call[T](
     label: str,
     url: str,
@@ -500,6 +572,8 @@ class ComfyUIBackend(GenerationBackend):
         sleep: Callable[[float], None] = time.sleep,
         http_get_bytes: Callable[[str], bytes] = _urllib_get_bytes,
         http_post_file: Callable[..., str] = _urllib_post_multipart,
+        poll_interval_s: float = _POLL_INTERVAL_S,
+        poll_timeout_s: float = 600.0,
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -510,6 +584,10 @@ class ComfyUIBackend(GenerationBackend):
                 ``"http://localhost:8188"``.  No trailing slash.
             probe: ``ModelProfile`` returned by ``inspect_capabilities``.
             sleep: Callable invoked between poll iterations in ``result``.
+                Retained for the ``_retry_proxy_call`` backoff path
+                (Phase 47 startup-window 404 retries); the inter-poll
+                wait in :meth:`result` uses ``cancel_token.wait`` so
+                cooperative cancellation is honored promptly.
             http_get_bytes: Byte fetcher used by ``submit`` to resolve
                 ``http``/``https`` asset URIs (``file://`` is read by
                 :func:`kinoforge.core.assets.asset_bytes` via stdlib
@@ -519,6 +597,15 @@ class ComfyUIBackend(GenerationBackend):
                 returning the server-side filename. Defaults to the
                 stdlib urllib multipart helper
                 :func:`_urllib_post_multipart`.
+            poll_interval_s: Wait between :meth:`result` poll ticks
+                (seconds). Default :data:`_POLL_INTERVAL_S` matches the
+                pre-cancel-token behavior.
+            poll_timeout_s: Hard upper bound (seconds) on a single
+                :meth:`result` poll wait. Exceeding it raises
+                :class:`TimeoutError` whose message carries
+                ``last_status`` + ``exec_node`` for self-diagnosis.
+                Default 600 s covers Wan 14B t2v (~6 min) while
+                bounding pathological hangs.
         """
         self._http_post = http_post
         self._http_get = http_get
@@ -527,6 +614,8 @@ class ComfyUIBackend(GenerationBackend):
         self._sleep = sleep
         self._http_get_bytes = http_get_bytes
         self._http_post_file = http_post_file
+        self._poll_interval_s = poll_interval_s
+        self._poll_timeout_s = poll_timeout_s
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -569,20 +658,29 @@ class ComfyUIBackend(GenerationBackend):
         Args:
             job: The ``GenerationJob`` whose ``spec`` contains ``"graph"``
                 and ``"node_overrides"`` (and optionally ``"asset_node_ids"``).
-            cancel_token: Accepted for :class:`GenerationBackend` ABC
-                parity; ignored at this layer. Full cooperative honoring
-                of the poll loop in :meth:`result` is added by a
-                follow-up task.
+            cancel_token: Optional :class:`CancelToken`. Checked once
+                at the top of submit so an operator Ctrl-C between
+                ``deploy_session`` setup and the first ``/prompt`` POST
+                raises :class:`Cancelled` instead of charging an asset
+                upload + prompt enqueue. In-flight ``/upload/image``
+                retries are not interruptible (each call is bounded by
+                ``_SUBMIT_RETRY_BACKOFFS`` and runs in the calling
+                thread); :meth:`result` is where cooperative cancel
+                buys the operator their shell back.
 
         Returns:
             The ``prompt_id`` string from the ComfyUI server response.
 
         Raises:
+            Cancelled: ``cancel_token`` was set when ``submit`` was
+                entered.
             AssetFetchError: Asset URI fetch failed (raised from
                 :func:`~kinoforge.core.assets.asset_bytes`) or upload to
                 ``/upload/image`` failed.
         """
-        del cancel_token  # Task 2 wires real honoring; Task 1 only adds the kwarg.
+        from kinoforge.core.cancel import _NULL_TOKEN
+
+        (cancel_token or _NULL_TOKEN).raise_if_set()
         graph: dict[str, Any] = copy.deepcopy(job.spec.get("graph", {}))
         overrides: dict[str, Any] = copy.deepcopy(job.spec.get("node_overrides", {}))
         asset_node_ids: dict[str, str] = job.spec.get("asset_node_ids", {})
@@ -674,14 +772,27 @@ class ComfyUIBackend(GenerationBackend):
     ) -> Artifact:
         """Poll ``/history/{job_id}`` until outputs are available.
 
-        Polls at most :data:`_MAX_POLL` times, sleeping between iterations
-        using the injected *sleep* callable.
+        Honors *cancel_token* both at the top of every iteration (cheap
+        ``raise_if_set`` check before any I/O) and across the inter-poll
+        wait (``cancel_token.wait`` in place of ``time.sleep`` so a
+        Ctrl-C lands within ~``poll_interval_s``). Every iteration emits
+        one structured ``INFO`` log line of the form::
+
+            comfyui poll job=<id> elapsed=<s>s status=<str>
+                          queue_pos=<n|None> exec_node=<name|None>
+
+        so the operator can self-diagnose where a stall is parked.
+
+        Bounded by ``poll_timeout_s`` (see constructor) — exceeding it
+        raises :class:`TimeoutError` whose message contains the last
+        observed ``status`` and ``exec_node`` for triage.
 
         Args:
             job_id: The ``prompt_id`` returned by a prior ``submit`` call.
-            cancel_token: Accepted for :class:`GenerationBackend` ABC
-                parity; ignored at this layer. Full cooperative honoring
-                of the poll loop is added by a follow-up task.
+            cancel_token: Optional :class:`CancelToken`. When ``None``,
+                a sentinel that is never set is used so existing callers
+                that pass no token see unchanged behavior. When set
+                mid-poll, raises :class:`Cancelled` promptly.
 
         Returns:
             An ``Artifact`` whose ``filename`` is the first filename from the
@@ -689,48 +800,119 @@ class ComfyUIBackend(GenerationBackend):
             ``{"prompt_id": job_id}``.
 
         Raises:
-            TimeoutError: The server did not return outputs within the poll
-                limit.
+            Cancelled: ``cancel_token`` was set.
+            TimeoutError: ``poll_timeout_s`` elapsed without outputs.
         """
-        del cancel_token  # Task 2 wires real honoring; Task 1 only adds the kwarg.
+        from kinoforge.core.cancel import _NULL_TOKEN
+
+        token = cancel_token if cancel_token is not None else _NULL_TOKEN
+
+        # Token-aware wait: when a real token is supplied, use Event.wait
+        # so a mid-wait set() returns promptly. When the caller passes no
+        # token (legacy callers + the existing unit-test suite that
+        # injects ``sleep=lambda s: None`` to stop the loop from blocking
+        # on real time), fall back to the injected sleep so test ticks
+        # stay instant.
+        def _interpoll_wait(seconds: float) -> bool:
+            if cancel_token is None:
+                self._sleep(seconds)
+                return False
+            return token.wait(seconds)
+
         url = f"{self._base_url}/history/{job_id}"
+        queue_url = f"{self._base_url}/queue"
+        start = time.monotonic()
+        last_status: str = "unknown"
+        queue_pos: int | None = None
+        exec_node: str | None = None
         last_transient: urllib.error.HTTPError | None = None
-        for poll_idx in range(_MAX_POLL):
+        poll_idx = 0
+        while True:
+            token.raise_if_set()
+            elapsed = time.monotonic() - start
+            # Belt-and-braces: preserve the legacy _MAX_POLL iteration cap
+            # so existing tests that inject ``sleep=lambda s: None`` (which
+            # makes the wall-clock check trivially false until ~600s of
+            # real wall-clock elapses) still terminate. Production calls
+            # land first on the poll_timeout_s check below.
+            if poll_idx >= _MAX_POLL or elapsed > self._poll_timeout_s:
+                # If we have an unresolved transient HTTPError, re-raise
+                # it in preference to a TimeoutError so the pre-existing
+                # `test_result_raises_after_persistent_404` contract
+                # (and the Phase 47 production-diagnostic message) is
+                # preserved.
+                if last_transient is not None:
+                    raise last_transient
+                raise TimeoutError(
+                    f"comfyui poll timed out after {elapsed:.1f}s "
+                    f"(job={job_id}, last_status={last_status!r}, "
+                    f"exec_node={exec_node!r})"
+                )
             try:
-                data = self._http_get(url)
+                # Preserve Phase 47 _retry_proxy_call wrapping so a
+                # RunPod proxy startup-window 404 keeps polling rather
+                # than raising. Token + timeout checks live OUTSIDE the
+                # retry wrapper (above) so cancellation cannot be
+                # swallowed by a transient-retry storm.
+                data = _retry_proxy_call(
+                    "result.history",
+                    url,
+                    lambda: self._http_get(url),
+                    self._sleep,
+                )
             except urllib.error.HTTPError as exc:
-                # Phase 46 Task 7 root cause: ComfyUI 0.3.10's
-                # ``/history/{prompt_id}`` route always returns 200 with
-                # ``{}`` for unknown IDs — it never 404s itself. A 404
-                # surfacing here is the RunPod HTTP proxy's startup-window
-                # failure mode (verified live on pod xawdweboxapubz
-                # 2026-06-08: /upload/image 404s for the first ~minute,
-                # then serves indefinitely). Log diagnostic state, treat
-                # transient codes as "keep polling", remember the last
-                # one so we re-raise it on _MAX_POLL exhaustion instead
-                # of a misleading TimeoutError.
+                # Non-transient HTTPError: log + propagate (today's
+                # behavior). Transient codes are absorbed by
+                # _retry_proxy_call itself; if it exhausted its backoff
+                # schedule it re-raises the final transient — record
+                # and continue polling within poll_timeout_s.
                 if exc.code in _PROXY_TRANSIENT_CODES:
                     _log.warning(
-                        "[comfyui.result] transient HTTPError poll=%d "
-                        "url=%s code=%d reason=%s",
-                        poll_idx,
-                        url,
+                        "[comfyui.result] transient HTTPError exhausted "
+                        "elapsed=%.1fs url=/history/%s code=%d reason=%s",
+                        elapsed,
+                        job_id,
                         exc.code,
                         str(exc.reason)[:200],
                     )
                     last_transient = exc
-                    self._sleep(_POLL_INTERVAL_S)
+                    poll_idx += 1
+                    if _interpoll_wait(self._poll_interval_s):
+                        token.raise_if_set()
                     continue
                 _log.warning(
-                    "[comfyui.result] HTTPError poll=%d url=%s code=%d reason=%s",
-                    poll_idx,
+                    "[comfyui.result] HTTPError elapsed=%.1fs url=%s code=%d reason=%s",
+                    elapsed,
                     url,
                     exc.code,
                     str(exc.reason)[:200],
                 )
                 raise
-            entry = data.get(job_id, {})
-            outputs = entry.get("outputs")
+            last_status, queue_pos, exec_node = _extract_poll_fields(data)
+            if last_status == "queued":
+                try:
+                    queue_envelope = self._http_get(queue_url)
+                    queue_pos = _extract_queue_position(queue_envelope, job_id)
+                except Exception:  # noqa: BLE001
+                    queue_pos = None
+            _log.info(
+                "comfyui poll job=%s elapsed=%.1fs status=%s queue_pos=%s exec_node=%s",
+                job_id,
+                elapsed,
+                last_status,
+                queue_pos,
+                exec_node,
+            )
+            # Envelope shape varies: ComfyUI's real ``/history/{id}`` is
+            # keyed by ``prompt_id`` at the top with ``{"outputs": ...}``
+            # one level down; some test fixtures (and the timeout/log
+            # tests in this commit) put ``outputs`` at the top. Tolerate
+            # both. ``last_transient`` is silenced once we see real data.
+            outputs = data.get("outputs")
+            if not outputs:
+                entry = data.get(job_id, {})
+                if isinstance(entry, dict):
+                    outputs = entry.get("outputs")
             if outputs:
                 filename = _first_filename(outputs)
                 encoded_fn = urllib.parse.quote(filename, safe="")
@@ -740,13 +922,15 @@ class ComfyUIBackend(GenerationBackend):
                     url=view_url,
                     meta={"prompt_id": job_id},
                 )
-            self._sleep(_POLL_INTERVAL_S)
-        if last_transient is not None:
-            raise last_transient
-        raise TimeoutError(
-            f"ComfyUI did not complete prompt {job_id!r} within {_MAX_POLL} polls "
-            f"× {_POLL_INTERVAL_S}s = {_MAX_POLL * _POLL_INTERVAL_S:.0f}s"
-        )
+            if last_transient is not None:
+                last_transient = None
+            poll_idx += 1
+            # Inter-poll wait. With a real token, threading.Event.wait
+            # returns True promptly on set(); without one, the injected
+            # sleep keeps the legacy test contract (sleep=lambda s: None
+            # → instant tick).
+            if _interpoll_wait(self._poll_interval_s):
+                token.raise_if_set()
 
     def endpoints(self) -> dict[str, str]:
         """Return the ComfyUI endpoint map.
@@ -1125,12 +1309,15 @@ class ComfyUIEngine(GenerationEngine):
 
         Args:
             instance: The compute instance whose endpoints are consulted.
-            cfg: Runtime configuration dict (unused currently).
+            cfg: Runtime configuration dict. Read for
+                ``engine.comfyui.poll_timeout_s`` to bound the
+                ``.result`` poll wait; absent (or non-dict shapes
+                fed by unit tests) fall back to the
+                :class:`ComfyUIBackend` constructor default.
 
         Returns:
             A :class:`ComfyUIBackend` ready to accept jobs.
         """
-        del cfg
         base_url = "http://localhost:8188"
         if instance is not None and instance.endpoints:
             # Prefer a logical "comfyui" alias if present, then fall back to
@@ -1146,6 +1333,23 @@ class ComfyUIEngine(GenerationEngine):
                     break
             else:
                 base_url = next(iter(instance.endpoints.values()), base_url)
+
+        # Pull poll_timeout_s from cfg.engine.comfyui.poll_timeout_s with a
+        # tolerant fallback chain for the assorted cfg shapes tests pass
+        # in. Production callers feed a pydantic-dumped dict, so the
+        # nested .get() chain wins; ad-hoc dicts in tests fall through
+        # to the constructor default.
+        poll_timeout_s: float = 600.0
+        engine_block = cfg.get("engine", {}) if isinstance(cfg, dict) else {}
+        if isinstance(engine_block, dict):
+            comfyui_cfg = engine_block.get("comfyui", {})
+            if isinstance(comfyui_cfg, dict):
+                raw = comfyui_cfg.get("poll_timeout_s", poll_timeout_s)
+                try:
+                    poll_timeout_s = float(raw)
+                except (TypeError, ValueError):
+                    poll_timeout_s = 600.0
+
         return ComfyUIBackend(
             http_post=self._http_post,
             http_get=self._http_get,
@@ -1154,6 +1358,7 @@ class ComfyUIEngine(GenerationEngine):
             sleep=self._sleep,
             http_get_bytes=self._http_get_bytes,
             http_post_file=self._http_post_file,
+            poll_timeout_s=poll_timeout_s,
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:

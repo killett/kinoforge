@@ -165,10 +165,17 @@ class ComfyUIEngineConfig(BaseModel):
             :func:`~kinoforge.engines.comfyui.nodes.clone_and_install`.
             Defaults to an empty list so existing configs without this block
             remain valid.
+        poll_timeout_s: Hard upper bound (seconds) on a single
+            ``ComfyUIBackend.result`` poll wait. Raises ``TimeoutError``
+            with ``last_status`` + ``exec_node`` in the message when
+            exceeded. Default 600 s is generous enough for Wan 14B t2v
+            (~6 min) while bounding pathological hangs. Lift for known-
+            slower models.
     """
 
     version: str
     custom_nodes: list[dict[str, Any]] = Field(default_factory=list)
+    poll_timeout_s: float = Field(default=600.0, gt=0.0)
 
 
 class HostedEngineConfig(BaseModel):
