@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-10-graceful-interrupt-and-poll-observability.md",
   "specPath": "docs/superpowers/specs/2026-06-10-graceful-interrupt-and-poll-observability-design.md",
-  "lastUpdated": "2026-06-10T16:50:00",
+  "lastUpdated": "2026-06-10T17:10:00",
   "tasks": [
     {
       "id": 0,
@@ -55,7 +55,8 @@
     {
       "id": 6,
       "subject": "Task 6: README + PROGRESS closeout",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "c30fccc",
       "blockedBy": [2, 3, 4, 5],
       "description": "**Goal:** Document operator-visible behavior in README; append Phase 50 closeout to PROGRESS.\n\n**Files:** `README.md`, `PROGRESS.md`\n\n**Verify:** `pixi run pre-commit run --files README.md PROGRESS.md` PASS, `git log --oneline -10` shows six task commits.\n\nSee plan §Task 6 for markdown blocks.\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --files README.md PROGRESS.md && git log --oneline -10\", \"acceptanceCriteria\": [\"README has 'Interrupting a generation' section explaining 2-press UX + kinoforge reap recovery\", \"README documents engine.comfyui.poll_timeout_s YAML field\", \"PROGRESS gets Phase 50 closeout block with task SHAs + carry-forwards + test count delta\", \"PROGRESS Single-next-action updated\", \"Known limitations index updated if new items surfaced\"]}\n```"
     }
