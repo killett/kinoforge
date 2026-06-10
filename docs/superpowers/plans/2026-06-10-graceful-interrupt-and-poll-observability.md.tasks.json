@@ -1,0 +1,55 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-10-graceful-interrupt-and-poll-observability.md",
+  "specPath": "docs/superpowers/specs/2026-06-10-graceful-interrupt-and-poll-observability-design.md",
+  "lastUpdated": "2026-06-10T14:45:00",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: CancelToken + Cancelled foundation",
+      "status": "pending",
+      "description": "**Goal:** Add the `CancelToken` primitive and `Cancelled` exception with no callers yet. Pure foundation.\n\n**Files:**\n- Create: `src/kinoforge/core/cancel.py`\n- Modify: `src/kinoforge/core/errors.py`\n- Modify: `src/kinoforge/core/__init__.py`\n- Create: `tests/core/test_cancel.py`\n\n**Acceptance Criteria:**\n- [ ] `from kinoforge.core import CancelToken, Cancelled` works.\n- [ ] `CancelToken().is_set()` False initially; True after `.set()`.\n- [ ] `CancelToken().wait(0.05)` returns False on timeout; True when set mid-wait (< 0.5s).\n- [ ] `raise_if_set()` no-op when unset; raises `Cancelled` when set.\n- [ ] Module exposes `_NULL_TOKEN` sentinel.\n- [ ] `Cancelled` subclasses `KinoforgeError`.\n\n**Verify:** `pixi run pytest tests/core/test_cancel.py -v` → 7 PASS.\n\nSee plan §Task 0 for full code.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/cancel.py\", \"src/kinoforge/core/errors.py\", \"src/kinoforge/core/__init__.py\", \"tests/core/test_cancel.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_cancel.py -v\", \"acceptanceCriteria\": [\"from kinoforge.core import CancelToken, Cancelled works\", \"CancelToken().is_set() False initially; True after .set()\", \"wait() returns False on timeout, True when set mid-wait within 0.5s\", \"raise_if_set() no-op when unset, raises Cancelled when set\", \"_NULL_TOKEN exposed and never set\", \"Cancelled subclasses KinoforgeError\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: ABC + pool signature changes + bounded close watchdog",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Plumb `cancel_token=None` through `BackendPool` + `GenerationBackend` ABCs and into `SequentialPool` / `ConcurrentPool`. Add `cancel_pending` + `timeout` kwargs to `ConcurrentPool.close` with a bounded watchdog. All concrete backends accept (and ignore) the new kwarg.\n\n**Files:**\n- Modify: `src/kinoforge/core/interfaces.py`, `src/kinoforge/core/pool.py`, `src/kinoforge/core/remote_backend.py`, every `src/kinoforge/engines/*/__init__.py`\n- Create: `tests/core/test_pool_cancel.py`\n\n**Verify:** `pixi run pytest tests/core/test_pool_cancel.py tests/core/test_pool.py tests/engines/ -v` → all PASS.\n\nSee plan §Task 1 for full code.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/pool.py\", \"src/kinoforge/engines/fake/__init__.py\", \"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/engines/diffusers/__init__.py\", \"src/kinoforge/engines/hosted/__init__.py\", \"src/kinoforge/engines/bedrock_video/__init__.py\", \"src/kinoforge/core/remote_backend.py\", \"tests/core/test_pool_cancel.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_pool_cancel.py tests/core/test_pool.py tests/engines/ -v\", \"acceptanceCriteria\": [\"BackendPool.submit + GenerationBackend.submit/.result ABCs accept cancel_token kwarg\", \"SequentialPool.submit forwards token\", \"ConcurrentPool.submit forwards token through executor closure\", \"ConcurrentPool.close(cancel_pending=True, timeout=0.5) returns <1.5s with wedged worker; emits WARN\", \"ConcurrentPool.close() with no kwargs preserves today's behavior\", \"All concrete backends accept cancel_token kwarg\", \"Existing pool/backend tests still pass\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: ComfyUI per-tick poll log + poll_timeout_s + cooperative cancel",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** `ComfyUIBackend.result` honors the cancel token, emits a structured per-tick INFO log, and raises `TimeoutError` after `poll_timeout_s` (default 600s).\n\n**Files:**\n- Modify: `src/kinoforge/core/config.py`, `src/kinoforge/engines/comfyui/__init__.py`\n- Create: `tests/engines/test_comfyui_cancel.py`, `tests/engines/test_comfyui_timeout.py`, `tests/engines/test_comfyui_poll_log.py`\n\n**Verify:** `pixi run pytest tests/engines/test_comfyui_cancel.py tests/engines/test_comfyui_timeout.py tests/engines/test_comfyui_poll_log.py tests/engines/test_comfyui.py -v` → all PASS.\n\nSee plan §Task 2 for full code.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"src/kinoforge/engines/comfyui/__init__.py\", \"tests/engines/test_comfyui_cancel.py\", \"tests/engines/test_comfyui_timeout.py\", \"tests/engines/test_comfyui_poll_log.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui_cancel.py tests/engines/test_comfyui_timeout.py tests/engines/test_comfyui_poll_log.py tests/engines/test_comfyui.py -v\", \"acceptanceCriteria\": [\"ComfyUIEngineConfig.poll_timeout_s field defaults to 600.0\", \"result(cancel_token=<set>) raises Cancelled with zero http_get calls\", \"Inter-poll wait honors token set() within poll_interval_s\", \"TimeoutError after poll_timeout_s contains last_status= and exec_node=\", \"Each poll tick emits structured INFO line with 5 fields\", \"queue_pos None when status != queued; real value via /queue when queued\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: RemoteSubmitPollBackend cancel honoring",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** `RemoteSubmitPollBackend.result` honors `cancel_token` (Replicate / Runway / Luma / Fal inherit).\n\n**Files:**\n- Modify: `src/kinoforge/core/remote_backend.py`\n- Create: `tests/engines/test_remote_submit_poll_cancel.py`\n\n**Verify:** `pixi run pytest tests/engines/test_remote_submit_poll_cancel.py tests/engines/test_replicate.py tests/engines/test_runway.py tests/engines/test_luma.py tests/engines/test_fal.py -v` → all PASS.\n\nSee plan §Task 3 for full code.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/remote_backend.py\", \"tests/engines/test_remote_submit_poll_cancel.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_remote_submit_poll_cancel.py tests/engines/test_replicate.py tests/engines/test_runway.py tests/engines/test_luma.py tests/engines/test_fal.py -v\", \"acceptanceCriteria\": [\"result(cancel_token=<set>) raises Cancelled on first iteration\", \"Inter-poll wait honors token set() within poll_interval_s\", \"Replicate/Runway/Luma/Fal existing tests still pass\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Orchestrator stage-loop except + deploy_session cancel-aware close",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** `generate` + `deploy_session` accept `cancel_token=None`. Stage-loop except arms at lines 1085 + 1173 gain `(KeyboardInterrupt, Cancelled)` clause that logs WARN naming pod ID + `kinoforge reap` and does NOT destroy. `deploy_session.__exit__` passes cancel_pending to pool.close(timeout=30.0).\n\n**Files:**\n- Modify: `src/kinoforge/pipeline/generate_clip.py`, `src/kinoforge/core/orchestrator.py`\n- Create: `tests/core/test_orchestrator_interrupt.py`, `tests/core/test_orchestrator_cancelled.py`\n\n**Verify:** `pixi run pytest tests/core/test_orchestrator_interrupt.py tests/core/test_orchestrator_cancelled.py tests/core/test_orchestrator.py tests/pipeline/test_generate_clip.py -v` → all PASS.\n\nSee plan §Task 4 for full code.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator_interrupt.py\", \"tests/core/test_orchestrator_cancelled.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_interrupt.py tests/core/test_orchestrator_cancelled.py tests/core/test_orchestrator.py tests/pipeline/test_generate_clip.py -v\", \"acceptanceCriteria\": [\"generate + deploy_session accept cancel_token kwarg\", \"KeyboardInterrupt mid-stage does NOT call destroy_instance\", \"Cancelled mid-stage does NOT call destroy_instance\", \"Both emit one WARN with pod ID + kinoforge reap substring\", \"ValidationError still destroys (preserved)\", \"deploy_session.__exit__ branches on token state for pool.close kwargs\", \"GenerateClipStage forwards cancel_token into pool.submit\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: CLI SIGINT handler + SessionContext.cancel_token",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** CLI installs SIGINT handler in `main()` for `generate` / `batch` subcommands. First press sets token; second restores SIG_DFL + re-raises. `SessionContext.cancel_token` carries the token.\n\n**Files:**\n- Modify: `src/kinoforge/cli/context.py`, `src/kinoforge/cli/_main.py`, `src/kinoforge/cli/_commands.py`\n- Create: `tests/cli/test_sigint_handler.py`\n\n**Verify:** `pixi run pytest tests/cli/test_sigint_handler.py tests/cli/ -v` → all PASS.\n\nSee plan §Task 5 for full code.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/context.py\", \"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_sigint_handler.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_sigint_handler.py tests/cli/ -v\", \"acceptanceCriteria\": [\"SessionContext.cancel_token uses default_factory=CancelToken\", \"main() installs handler only for generate/batch subcommands\", \"First SIGINT sets token, no raise\", \"Second SIGINT raises KeyboardInterrupt + restores SIG_DFL\", \"_cmd_generate + _cmd_batch pass ctx.cancel_token into generate/batch_generate\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: README + PROGRESS closeout",
+      "status": "pending",
+      "blockedBy": [2, 3, 4, 5],
+      "description": "**Goal:** Document operator-visible behavior in README; append Phase 50 closeout to PROGRESS.\n\n**Files:** `README.md`, `PROGRESS.md`\n\n**Verify:** `pixi run pre-commit run --files README.md PROGRESS.md` PASS, `git log --oneline -10` shows six task commits.\n\nSee plan §Task 6 for markdown blocks.\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --files README.md PROGRESS.md && git log --oneline -10\", \"acceptanceCriteria\": [\"README has 'Interrupting a generation' section explaining 2-press UX + kinoforge reap recovery\", \"README documents engine.comfyui.poll_timeout_s YAML field\", \"PROGRESS gets Phase 50 closeout block with task SHAs + carry-forwards + test count delta\", \"PROGRESS Single-next-action updated\", \"Known limitations index updated if new items surfaced\"]}\n```"
+    }
+  ]
+}
