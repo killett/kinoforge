@@ -995,6 +995,15 @@ def generate(
         ValidationError: The ``request`` fails mode/role/kind validation, or a
             stage raises ``ValidationError`` (e.g. missing keyframe prompt).
     """
+    # Default-shim: a None creds reaches the provisioner as None and trips
+    # AuthError on the first env_required var even when os.environ holds
+    # the value. CLI callers and ad-hoc harnesses routinely forget the
+    # kwarg; default it here so the public API matches operator
+    # expectations. Mirrors the precedent at _provision_compute_once
+    # (line 209). Drift-locked by
+    # tests/core/test_orchestrator_creds_default.py.
+    if creds is None:
+        creds = EnvCredentialProvider()
     _caller_supplied_instance = instance is not None
 
     # ------------------------------------------------------------------
