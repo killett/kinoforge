@@ -179,6 +179,50 @@ $ kinoforge forget --id ia66l3rlto5x66
 forgot: ia66l3rlto5x66
 ```
 
+## Interrupting a generation
+
+Press `Ctrl-C` once during `kinoforge generate` to trigger a graceful
+drain. The orchestrator stops issuing new poll requests, in-flight
+backend calls unwind cooperatively, and the CLI prints a WARN line
+naming the surviving pod ID and the recovery command:
+
+```
+WARN orchestrator interrupt received; finishing in-flight work + draining pool. Press Ctrl-C again to force-exit.
+WARN orchestrator KeyboardInterrupt during stages; pod abc123 kept alive (selfterm/reap path). Run `kinoforge reap` to destroy now.
+```
+
+The pod is **not** destroyed on interrupt — warm-reuse intent applies
+in both `--ephemeral` and non-ephemeral modes (matches the Layer 5b
+session-manager contract in `3bc6473`). The in-pod self-terminator
+(idle-timeout / max-lifetime) kills the pod eventually, and
+`kinoforge reap` destroys it immediately. Run `kinoforge reap` if you
+don't want to wait.
+
+Press `Ctrl-C` a second time to force-exit immediately. The default
+SIGINT handler is restored on the second press, so a third `Ctrl-C`
+would terminate the process the usual way.
+
+### Configurable ComfyUI poll timeout
+
+`ComfyUIBackend.result` has a hard upper bound on a single poll wait
+to surface silent stalls quickly:
+
+```yaml
+engine:
+  kind: comfyui
+  comfyui:
+    poll_interval_s: 2.0
+    poll_timeout_s: 600.0    # raise for known-slow models (Wan 14B t2v ~6 min)
+```
+
+Default is `600.0` s (10 min). When the timeout fires, `TimeoutError`
+is raised with the last observed `status` and `current_node` baked into
+the message — enough state to diagnose a stall without re-running the
+smoke. Each poll tick also emits a structured INFO line
+(`comfyui poll job=… elapsed=…s status=… queue_pos=… exec_node=…`)
+so a hang shows you exactly which node is blocking before the timeout
+fires.
+
 ## Batch generation
 
 Render N clips on one shared deployed instance with continue-on-error

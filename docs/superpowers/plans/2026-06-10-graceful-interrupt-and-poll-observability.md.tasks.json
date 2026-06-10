@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-10-graceful-interrupt-and-poll-observability.md",
   "specPath": "docs/superpowers/specs/2026-06-10-graceful-interrupt-and-poll-observability-design.md",
-  "lastUpdated": "2026-06-10T16:30:00",
+  "lastUpdated": "2026-06-10T16:50:00",
   "tasks": [
     {
       "id": 0,
@@ -47,7 +47,8 @@
     {
       "id": 5,
       "subject": "Task 5: CLI SIGINT handler + SessionContext.cancel_token",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "ca3862d",
       "blockedBy": [4],
       "description": "**Goal:** CLI installs SIGINT handler in `main()` for `generate` / `batch` subcommands. First press sets token; second restores SIG_DFL + re-raises. `SessionContext.cancel_token` carries the token.\n\n**Files:**\n- Modify: `src/kinoforge/cli/context.py`, `src/kinoforge/cli/_main.py`, `src/kinoforge/cli/_commands.py`\n- Create: `tests/cli/test_sigint_handler.py`\n\n**Verify:** `pixi run pytest tests/cli/test_sigint_handler.py tests/cli/ -v` → all PASS.\n\nSee plan §Task 5 for full code.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/context.py\", \"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_sigint_handler.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_sigint_handler.py tests/cli/ -v\", \"acceptanceCriteria\": [\"SessionContext.cancel_token uses default_factory=CancelToken\", \"main() installs handler only for generate/batch subcommands\", \"First SIGINT sets token, no raise\", \"Second SIGINT raises KeyboardInterrupt + restores SIG_DFL\", \"_cmd_generate + _cmd_batch pass ctx.cancel_token into generate/batch_generate\"]}\n```"
     },
