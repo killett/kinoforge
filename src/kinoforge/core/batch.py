@@ -42,6 +42,7 @@ from kinoforge.core.batch_models import (
     BatchOutcome,
     BatchResult,
 )
+from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import (
     BudgetExceeded,
@@ -579,6 +580,15 @@ def batch_generate(
         because no batch state exists yet — the failure is a pre-flight
         config / capacity problem, not a partial batch.
     """
+    # Default-shim: sibling to orchestrator.generate's default. A None
+    # creds reaches the provisioner via deploy_session and trips
+    # AuthError on the first env_required var even when os.environ
+    # holds the value. CLI's _cmd_batch + ad-hoc programmatic callers
+    # routinely forget the kwarg; default it here so the public API
+    # matches operator expectations. Drift-locked by
+    # tests/core/test_batch_creds_default.py.
+    if creds is None:
+        creds = EnvCredentialProvider()
     cap = concurrent if concurrent is not None else cfg.lifecycle().max_in_flight
     emit = _LockedEmitter(on_event)
 
