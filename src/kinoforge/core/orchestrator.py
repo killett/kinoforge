@@ -23,11 +23,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kinoforge.core import registry
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import (
     AuthError,
+    Cancelled,
     CapabilityMismatch,
     CapacityError,
     ProfileNotCached,
@@ -502,6 +504,7 @@ def deploy_session(
     instance: Instance | None = None,
     tags: dict[str, str] | None = None,
     heartbeat_loop_factory: Callable[..., HeartbeatLoopProtocol] | None = None,
+    cancel_token: CancelToken | None = None,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -576,6 +579,12 @@ def deploy_session(
             ``cfg.lifecycle().heartbeat_interval_s`` is set AND a
             compute instance was created (hosted-engine sessions skip
             the loop entirely).
+        cancel_token: Phase 50 cooperative-cancellation token. When set
+            (typically by the CLI SIGINT handler) the ``__exit__``
+            ``finally`` calls ``pool.close(cancel_pending=True,
+            timeout=30.0)`` so a wedged worker no longer blocks
+            shutdown forever. ``None`` (the library default) preserves
+            today's unbounded-wait behavior.
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -749,7 +758,20 @@ def deploy_session(
     finally:
         if hb_loop is not None:
             hb_loop.stop()
-        pool.close()
+        # Phase 50: when the caller requested cancellation, drain the pool
+        # with a bounded watchdog so a wedged worker no longer blocks
+        # shutdown forever. The token-unset path preserves today's
+        # unbounded-wait behavior so library callers without a token see
+        # no change. ``pool.close`` failures are logged at ERROR but do
+        # not swallow ``BaseException`` — a fresh KeyboardInterrupt during
+        # shutdown must still propagate so the operator can force-exit.
+        if cancel_token is not None and cancel_token.is_set():
+            try:
+                pool.close(cancel_pending=True, timeout=30.0)
+            except Exception as close_exc:
+                _log.error("pool.close failed during interrupt cleanup: %s", close_exc)
+        else:
+            pool.close()
 
 
 # ---------------------------------------------------------------------------
@@ -924,6 +946,7 @@ def generate(
     sink: OutputSink | None = None,
     instance: Instance | None = None,
     tags: dict[str, str] | None = None,
+    cancel_token: CancelToken | None = None,
 ) -> tuple[Artifact, Instance | None]:
     """Run the full generation pipeline for a single clip.
 
@@ -979,6 +1002,14 @@ def generate(
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}`` on the cold path
             (no ``instance=``). Ignored when ``instance=`` is supplied.
+        cancel_token: Phase 50 cooperative-cancellation token. When the
+            CLI SIGINT handler flips this on operator Ctrl-C, the
+            backend poll loops, the pool shutdown, and the stage loop
+            unwind cooperatively. On a ``Cancelled`` raise the pod is
+            NOT destroyed (warm-reuse intent per commit ``3bc6473``);
+            a single WARN names the surviving pod id + ``kinoforge
+            reap`` recovery command. ``None`` (the library default)
+            preserves the pre-Phase-50 uncancellable path.
 
     Returns:
         A ``(Artifact, Instance | None)`` tuple. The ``Artifact`` is the
@@ -1051,6 +1082,7 @@ def generate(
         state_dir=state_dir,
         instance=instance,
         tags=tags,
+        cancel_token=cancel_token,
     ) as session:
         _eph = EphemeralSession.current()
         if _eph is not None:
@@ -1109,6 +1141,21 @@ def generate(
                 ):
                     session.provider.destroy_instance(session.instance.id)
                 raise
+            except (KeyboardInterrupt, Cancelled) as exc:
+                # Phase 50: operator-initiated cancellation. Warm-reuse
+                # intent preserved (per commit 3bc6473) — the pod stays
+                # alive for ledger-driven reap or the next session. We
+                # log a single WARN naming the pod id so the operator
+                # knows exactly which pod to destroy with `kinoforge
+                # reap`. Hosted-engine sessions render ``<hosted>``.
+                _log.warning(
+                    "%s during keyframe stage; pod %s kept alive "
+                    "(selfterm/reap path). Run `kinoforge reap` to "
+                    "destroy now.",
+                    type(exc).__name__,
+                    session.instance.id if session.instance is not None else "<hosted>",
+                )
+                raise
 
         # ------------------------------------------------------------------
         # Validate the (possibly keyframe-enriched) request against the
@@ -1162,6 +1209,7 @@ def generate(
                 sink=sink,
                 provider=_provider,
                 model=_model,
+                cancel_token=cancel_token,
             )
         ]
 
@@ -1183,6 +1231,23 @@ def generate(
                 and not _caller_supplied_instance
             ):
                 session.provider.destroy_instance(session.instance.id)
+            raise
+        except (KeyboardInterrupt, Cancelled) as exc:
+            # Phase 50: operator-initiated cancellation. Pod stays alive
+            # (warm-reuse intent per commit 3bc6473) — log a single WARN
+            # naming the surviving pod id so the operator knows exactly
+            # what to destroy with ``kinoforge reap``. Hosted-engine
+            # sessions render ``<hosted>``. Catch order matters: this
+            # arm runs AFTER ValidationError so config-typo failures
+            # still tear down the pod; KeyboardInterrupt is a
+            # BaseException and would otherwise propagate silently.
+            _log.warning(
+                "%s during stages; pod %s kept alive "
+                "(selfterm/reap path). Run `kinoforge reap` to destroy "
+                "now.",
+                type(exc).__name__,
+                session.instance.id if session.instance is not None else "<hosted>",
+            )
             raise
 
         artifact = state.artifacts["clip"]
