@@ -5,6 +5,9 @@
 **Issue:** none yet (recommend opening one before plan phase)
 **Status:** validated, awaiting user spec review before plan phase
 
+**Changelog:**
+- **2026-06-10:** Revised §10.4 + §11.5 + Appendix A: `EphemeralSession.__exit__` no longer destroys the compute instance. Original wording would have forced cold-boot on every `--ephemeral` run, defeating the upcoming warm-reuse roadmap (PROGRESS B5→B3). Pod lifecycle governed by selfterm / sweeper / budget tracker as in any non-ephemeral run.
+
 ---
 
 ## 1. Motivation
@@ -695,11 +698,34 @@ class EphemeralStoreCleanupFailedError(EphemeralError):
 
 ### 10.4 Self-hosted engine handling
 
-ComfyUI / Diffusers on pod: no `_delete` needed. The "provider-side record" is
-the pod itself; the `deploy_session` context (Phase 22 Task 1) already
-destroys it on exit. Under `EphemeralSession`, `__exit__` belt-and-suspenders
-calls `provider.destroy_instance` if the orchestrator still holds an instance
-handle, bypassing `idle_timeout` (no warm-reuse under ephemeral).
+ComfyUI / Diffusers on pod: no `_delete` needed. The "provider-side record"
+is the pod itself, and pod teardown is **not** an `EphemeralSession`
+responsibility — it never was. `deploy_session` deliberately leaves the
+instance alive on a successful exit (`core/orchestrator.py` ~L531: "Does
+NOT call `provider.destroy_instance` — the instance is left alive for warm
+reuse by the next session or for the sweeper / budget tracker to reap.").
+Forcing destruction under `--ephemeral` would defeat the upcoming
+warm-reuse roadmap (PROGRESS B5 → B7 → B4 → B2 → B1 → B3) — every
+`--ephemeral` run would pay a fresh cold-boot (~2-15 min + weight DL),
+which is roughly half of inference wall time on a typical Wan run
+(`successful-generations.md` entry #5: "Warm-reuse savings: ~140 s of
+provision + boot ... roughly half its own runtime").
+
+The pod is governed by the same safety nets as any non-ephemeral run:
+
+- In-pod selfterm watchdog (Phase 7) — dead-man's switch at
+  `idle_timeout`.
+- `max_lifetime` wall cap inside selfterm.
+- Out-of-band `kinoforge reap` + future external sweeper.
+- `BudgetTracker` mid-run circuit breaker.
+
+`EphemeralSession.__exit__` is therefore scoped to **records, not
+compute** — it deletes the `ArtifactStore` run directory, leaves the
+pod alone, and lets the warm-reuse machinery (current + future) decide
+when the pod actually dies. The `kinoforge-ephemeral=true` pod tag (per
+§A + §8.7) is what the future sweeper uses to skip heartbeat-staleness
+checks for these pods and reap them by `create_time + max_lifetime`
+instead.
 
 ### 10.5 Error block UX
 
@@ -792,7 +818,7 @@ Under `--ephemeral`:
 
 - Whole batch runs inside one `EphemeralSession` context.
 - Per-entry hosted-API: `result()` calls `_delete()` after artifact retrieval.
-- Per-pod entries share one pod, destroyed at batch end (warm-reuse within).
+- Per-pod entries share one pod for the duration of the batch (warm-reuse within); the pod survives `batch_generate` exit on the same terms as any single `generate()` call — `deploy_session` does not destroy on success. Safety nets per §10.4 govern teardown.
 - `_batch_summary.json` not written.
 - A single delete-failure on any entry: remaining entries continue, batch exits
   non-zero with summary of which job_ids need manual cleanup.
@@ -1039,6 +1065,7 @@ Spell out in `DESIGN.md` "Privacy boundary" section + `PROGRESS.md` regression n
 | Run id | `uuid4`, threaded through `Ledger.record` | `uuid4`, never written |
 | Hosted-API request body | Sent (necessary) | Sent (necessary) |
 | Hosted-API prediction record | Persists on provider | `DELETE /predictions/{id}` with 3-retry; hard-fail with manual cleanup command |
+| Compute instance (pod / VM) | Survives session exit per `deploy_session` contract; governed by selfterm + sweeper + budget tracker | **Same — pod NOT destroyed by `EphemeralSession.__exit__`** (revised from earlier draft; see §10.4 rationale). `kinoforge-ephemeral=true` pod tag lets sweeper skip heartbeat-staleness check and reap by create-time + max_lifetime. |
 | RunPod pod name | `kinoforge-{alias}-{rand4}` | `kinoforge-{rand8}` (no alias) |
 | RunPod pod tags | `engine=<kind>`, `capability=<alias>` | `engine=<kind>`, `kinoforge-ephemeral=true` |
 | RunPod self-terminate credential | Injected on create (Phase 7) | Same |
