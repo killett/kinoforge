@@ -58,12 +58,20 @@ from tools._redact import safe_print  # noqa: E402  sys.path edit above
 def _bypass_local_weights_download(engine: object) -> None:
     """Disable the engine's local weight pre-download for capture runs.
 
-    ``ComfyUIEngine.requires_local_weights`` is a class attribute set to
-    ``True`` — provisioner.provision then unconditionally downloads every
-    declared model artifact onto the controller filesystem BEFORE
-    delegating to ``engine.provision()``. For Wan 2.1 i2v that is ~24 GB
-    of weights through a ~15 GB-RAM container, which OOM's the host
-    (observed twice this session: 3h leaked pod after first OS crash;
+    As of PROGRESS B20 (today's fix), ``ComfyUIEngine.requires_local_weights``
+    defaults to ``False`` at the class level, so this helper is a no-op
+    for the default case — it stays in place as a belt-and-braces guard
+    against a future engine that subclasses ``ComfyUIEngine`` and sets
+    ``True`` (e.g. an upload-from-local variant). The contract is "after
+    this returns, the engine MUST NOT pre-fetch weights locally during
+    capture", regardless of the subclass's chosen default.
+
+    Background: provisioner.provision unconditionally downloads every
+    declared model artifact onto the controller filesystem when
+    ``engine.requires_local_weights`` is ``True``, BEFORE delegating to
+    ``engine.provision()``. For Wan 2.1 i2v that is ~24 GB of weights
+    through a ~15 GB-RAM container, which OOM's the host (observed
+    twice in prior sessions: 3h leaked pod after first OS crash;
     6 GB RSS climb during second attempt before manual SIGKILL).
 
     The Layer Q ``render_provision`` bootstrap already emits ``curl``
@@ -73,10 +81,13 @@ def _bypass_local_weights_download(engine: object) -> None:
     path is unchanged.
 
     Note:
-        This is the surgical capture-script fix. The architectural fix
-        belongs in ``provisioner.provision`` (branch on
-        ``instance.provider != 'local'`` to skip local download
-        regardless of the engine flag). Tracked as Fix 2 / Layer R.
+        The architectural fix is B20 (``WeightProvisioning`` enum) —
+        provisioner switches on a four-value enum that distinguishes
+        ``LOCAL`` / ``SELF_PROVISION`` / ``UPLOAD_FROM_LOCAL`` /
+        ``HOSTED`` rather than overloading a single bool. Today's
+        narrow fix (flipping the ComfyUI default) closed the immediate
+        regression for the canonical case; the enum closes the design
+        gap for the next caller.
 
     Args:
         engine: The just-instantiated ``GenerationEngine`` whose local

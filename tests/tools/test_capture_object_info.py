@@ -10,13 +10,21 @@ from __future__ import annotations
 
 
 class _StubEngine:
-    """Minimal stand-in mirroring the class-attribute shape of every
-    real ``GenerationEngine`` (``requires_local_weights: bool = True``).
+    """Minimal stand-in for ``GenerationEngine``.
 
-    Instantiating a real ``ComfyUIEngine`` here would require a probe
-    profile + the full FakeBackend wiring; the bypass helper only reads
-    + writes ``requires_local_weights``, so a stub captures the exact
-    invariant under test without dragging the dependency graph in.
+    The stub starts with ``requires_local_weights = True`` because the
+    bypass helper's contract is "flip True → False"; a stub that started
+    at ``False`` would never exercise the flip and the assertion would
+    be vacuous. The real ``ComfyUIEngine`` class default is now ``False``
+    (PROGRESS B20 / today's fix), so callers that DO want a local-DL
+    engine for upload-from-local cases would have to subclass and set
+    ``True`` explicitly — and the bypass helper still needs to work for
+    that subclass too.
+
+    Instantiating a real engine here would require a probe profile + the
+    full FakeBackend wiring; the bypass helper only reads + writes
+    ``requires_local_weights``, so a stub captures the exact invariant
+    under test without dragging the dependency graph in.
     """
 
     requires_local_weights: bool = True
@@ -67,6 +75,12 @@ def test_bypass_local_weights_download_against_real_comfyui_engine() -> None:
     ``Final``-typed or ``@property`` that rejects the assignment. This
     test exercises the actual production engine class to guarantee the
     monkey-patch lands.
+
+    As of PROGRESS B20 the class default is False, so the production
+    engine already arrives at the desired state. The bypass helper is
+    a no-op for the default case here — we still call it and assert
+    False post-call to lock the contract for any future subclass that
+    flips the default back to True (e.g. an upload-from-local variant).
     """
     # Defer import to avoid pulling kinoforge.engines into module-load
     # cost for callers running only the stub tests above.
@@ -74,8 +88,10 @@ def test_bypass_local_weights_download_against_real_comfyui_engine() -> None:
     from tools.capture_object_info import _bypass_local_weights_download
 
     engine = ComfyUIEngine(probe_profile=None)  # type: ignore[arg-type]
-    assert engine.requires_local_weights is True
+    # New baseline — class default is False (B20 fix).
+    assert engine.requires_local_weights is False
 
     _bypass_local_weights_download(engine)
 
+    # Helper must leave it False regardless of starting value.
     assert engine.requires_local_weights is False

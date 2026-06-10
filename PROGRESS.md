@@ -160,6 +160,7 @@ their category.
 - **B17. Audio sync stage (GH #2).** `strategy.decide` already marks `spec["_audio_mode"]="separate"`; stage reads marker.
 - **B18. Stitching layer.** Slots between `pool.map` and `store.put_bytes` in `GenerateClipStage`. Required to close persistence model — `GenerateClipStage` keeps intermediates in memory today.
 - **B19. Stitching across multi-segment clips sharing one keyframe.** Layer R §10.4; orthogonal to B18.
+- **B20. `WeightProvisioning` enum to replace `requires_local_weights` bool.** Today's bool collapses two orthogonal axes (engine intent × deployment target). A four-value enum (`HOSTED` / `LOCAL` / `SELF_PROVISION` / `UPLOAD_FROM_LOCAL`) gives the provisioner a single switch point per engine and gives future engines (custom-weights LoRAs, cross-pod sharing, BYO-weights paths) a real home. Today's path narrowed B20 by flipping `ComfyUIEngine.requires_local_weights` from `True` to `False` (ComfyUI's pod-side Layer Q `render_provision` was already the actual provisioning path); the enum refactor is the durable shape. Engine churn: every `GenerationEngine` + `ImageEngine` subclass declares its strategy; provisioner branches on the enum; legacy bool retained as a `@property` alias during the transition. Spec hook: write at `docs/superpowers/specs/<date>-weight-provisioning-enum-design.md` when the next caller hits the upload-from-local case.
 
 ### C. Architectural follow-ups (in-tree work, no new layer required)
 
