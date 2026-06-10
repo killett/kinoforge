@@ -16,6 +16,7 @@ contract is:
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -316,6 +317,30 @@ def test_deploy_session_writes_last_heartbeat_to_ledger_end_to_end(
 
     capture = _IDCaptureProvider()
 
+    def _poll_entry(*, require_keys: tuple[str, ...]) -> dict[str, Any]:
+        """Poll the ledger until ``require_keys`` all appear on the entry.
+
+        Tolerates ``json.JSONDecodeError`` mid-poll: ``HeartbeatLoop``
+        writes via ``LocalArtifactStore.put_bytes`` → ``Path.write_bytes``,
+        which is non-atomic on APFS (truncate, then write). A concurrent
+        reader can observe the zero-byte window and raise. Treat that as
+        "not yet written" and retry.
+        """
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                entries = Ledger(store=store).entries()
+            except json.JSONDecodeError:
+                time.sleep(0.05)
+                continue
+            entry = next(
+                (e for e in entries if e.get("id") == seen_instance[0].id), None
+            )
+            if entry is not None and all(k in entry for k in require_keys):
+                return entry
+            time.sleep(0.05)
+        pytest.fail(f"ledger entry never gained {require_keys} within 5s")
+
     with deploy_session(
         cfg,
         store=store,
@@ -323,24 +348,11 @@ def test_deploy_session_writes_last_heartbeat_to_ledger_end_to_end(
         engine=engine,
     ):
         assert len(seen_instance) == 1
-        # Poll until the ledger entry surfaces last_heartbeat. Use a
-        # generous timeout since CI thread scheduling varies; loop tick
-        # interval is 50ms so a fresh write should land within a few
-        # hundred ms.
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            entries = Ledger(store=store).entries()
-            entry = next(
-                (e for e in entries if e.get("id") == seen_instance[0].id), None
-            )
-            if entry is not None and "last_heartbeat" in entry:
-                break
-            time.sleep(0.05)
-        else:
-            pytest.fail("loop never wrote last_heartbeat within 5s")
+        # Wait for the first heartbeat write.
+        _poll_entry(require_keys=("last_heartbeat",))
 
-    # After exit, the entry must have both keys.
-    entries = Ledger(store=store).entries()
-    entry = next(e for e in entries if e.get("id") == seen_instance[0].id)
+    # After exit, the entry must have both keys. Re-poll defensively in
+    # case the macOS APFS write-visibility lag straddles the join.
+    entry = _poll_entry(require_keys=("last_heartbeat", "heartbeat_thread_tick"))
     assert "last_heartbeat" in entry
     assert "heartbeat_thread_tick" in entry
