@@ -434,7 +434,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     try:
-        _load_vault_or_none(args.vault)
+        _loaded_vault = _load_vault_or_none(args.vault)
     except VaultError as exc:
         print(f"error: vault: {exc}", file=sys.stderr)
         return 2
@@ -487,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(err_block, file=sys.stderr)
                 return 2
 
-    with EphemeralSession(enabled=args.ephemeral):
+    with EphemeralSession(enabled=args.ephemeral, vault=_loaded_vault):
         return _DISPATCH[args.cmd](args, ctx)
 
 
