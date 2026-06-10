@@ -24,6 +24,7 @@ import pytest
 import kinoforge.engines.fake  # noqa: F401
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.sources.http  # noqa: F401 — registers https:// source for provisioner
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.config import Config
 from kinoforge.core.errors import (
     CapabilityMismatch,
@@ -652,9 +653,14 @@ class TestSplitterStub:
         segments_seen: list[list[Any]] = []
 
         class CapturingBackend(FakeBackend):
-            def submit(self, job: GenerationJob) -> str:
+            def submit(
+                self,
+                job: GenerationJob,
+                *,
+                cancel_token: CancelToken | None = None,
+            ) -> str:
                 segments_seen.append(list(job.segments))
-                return super().submit(job)
+                return super().submit(job, cancel_token=cancel_token)
 
         class CapturingEngine(FakeEngine):
             def backend(
@@ -871,9 +877,14 @@ def test_generate_closes_concurrent_pool_after_run(tmp_path: Path) -> None:
     close_calls: list[bool] = []
     original_close = pool_mod.ConcurrentPool.close
 
-    def _spy_close(self: pool_mod.ConcurrentPool) -> None:
+    def _spy_close(
+        self: pool_mod.ConcurrentPool,
+        *,
+        cancel_pending: bool = False,
+        timeout: float | None = None,
+    ) -> None:
         close_calls.append(True)
-        original_close(self)
+        original_close(self, cancel_pending=cancel_pending, timeout=timeout)
 
     pool_mod.ConcurrentPool.close = _spy_close  # type: ignore[method-assign]
     try:
@@ -925,12 +936,17 @@ class _OrderTrackingBackend(FakeBackend):
         self.submit_call_count: int = 0
         self.submit_call_order: int | None = None
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         self.submit_call_count += 1
         # Record only the first submit so AC1's ordering check is unambiguous.
         if self.submit_call_order is None:
             self.submit_call_order = self._tracker.tick()
-        return super().submit(job)
+        return super().submit(job, cancel_token=cancel_token)
 
 
 class _PreflightHostedEngine(FakeEngine):

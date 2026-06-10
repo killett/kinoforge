@@ -10,15 +10,19 @@ pool exposes.
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import threading
 from dataclasses import dataclass, field
 
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.interfaces import (
     Artifact,
     BackendPool,
     GenerationBackend,
     GenerationJob,
 )
+
+_log = logging.getLogger(__name__)
 
 
 class SequentialPool(BackendPool):
@@ -65,13 +69,21 @@ class SequentialPool(BackendPool):
         """
         self._backends.append(backend)
 
-    def submit(self, job: GenerationJob) -> concurrent.futures.Future[Artifact]:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> concurrent.futures.Future[Artifact]:
         """Run *job* inline through the first registered backend.
 
         The returned ``Future`` is already in the ``done`` state.
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` to execute.
+            cancel_token: Optional :class:`CancelToken`. Forwarded
+                verbatim to ``backend.submit`` and ``backend.result``;
+                ``None`` preserves today's library-caller behavior.
 
         Returns:
             An already-resolved ``Future[Artifact]`` containing the result.
@@ -82,8 +94,8 @@ class SequentialPool(BackendPool):
         if not self._backends:
             raise RuntimeError("SequentialPool has no registered backend")
         backend = self._backends[0]
-        job_id = backend.submit(job)
-        artifact = backend.result(job_id)
+        job_id = backend.submit(job, cancel_token=cancel_token)
+        artifact = backend.result(job_id, cancel_token=cancel_token)
         fut: concurrent.futures.Future[Artifact] = concurrent.futures.Future()
         fut.set_result(artifact)
         return fut
@@ -103,13 +115,25 @@ class SequentialPool(BackendPool):
         """
         return [self.submit(j).result() for j in jobs]
 
-    def close(self) -> None:
+    def close(
+        self,
+        *,
+        cancel_pending: bool = False,
+        timeout: float | None = None,
+    ) -> None:
         """Release any resources held by this pool.
 
         ``SequentialPool`` owns no threads or open handles; this is a no-op
         provided for :class:`BackendPool` ABC parity with concurrent pools
         that must drain worker threads.
+
+        Args:
+            cancel_pending: Accepted for ABC parity with
+                :class:`ConcurrentPool`; ignored — there is no executor
+                with queued futures to cancel.
+            timeout: Accepted for ABC parity; ignored.
         """
+        del cancel_pending, timeout
         return None
 
 
@@ -190,11 +214,19 @@ class ConcurrentPool(BackendPool):
         )
         self._slots.append(_Slot(backend=backend, executor=executor, cap=max_in_flight))
 
-    def submit(self, job: GenerationJob) -> concurrent.futures.Future[Artifact]:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> concurrent.futures.Future[Artifact]:
         """Dispatch *job* to the least-loaded backend.
 
         Args:
             job: The :class:`GenerationJob` to execute.
+            cancel_token: Optional :class:`CancelToken` forwarded to the
+                chosen backend's ``submit`` and ``result`` calls. ``None``
+                preserves today's library-caller behavior.
 
         Returns:
             A :class:`concurrent.futures.Future` resolving to the Artifact.
@@ -212,18 +244,34 @@ class ConcurrentPool(BackendPool):
                 raise RuntimeError("ConcurrentPool has no registered backend")
         slot = self._pick()
         try:
-            return slot.executor.submit(self._run_one, slot, job)
+            return slot.executor.submit(self._run_one, slot, job, cancel_token)
         except BaseException:
             self._release(slot)
             raise
 
-    def close(self) -> None:
-        """Shut down every per-backend executor, waiting for in-flight jobs.
+    def close(
+        self,
+        *,
+        cancel_pending: bool = False,
+        timeout: float | None = None,
+    ) -> None:
+        """Shut down every per-backend executor.
 
         Two-phase: flip the ``_closed`` flag under the lock so new
-        :meth:`submit` calls reject immediately; then call
-        ``executor.shutdown(wait=True)`` on each slot outside the lock so
-        long-running shutdowns do not serialise.
+        :meth:`submit` calls reject immediately; then shut down each slot
+        outside the lock so long-running shutdowns do not serialise.
+
+        Args:
+            cancel_pending: When ``True``, queued-but-not-started futures
+                are cancelled via ``cancel_futures=True``. Running workers
+                still finish their current poll tick (cooperative
+                cancellation happens via the :class:`CancelToken` passed
+                through :meth:`submit`).
+            timeout: Per-slot wait cap in seconds. When set, the shutdown
+                joins each slot in a watchdog thread and logs ``WARN
+                "worker still running after %.1fs; abandoning slot"`` if
+                the join exceeds the cap. ``None`` preserves the
+                unconditional-wait behavior expected by existing callers.
 
         Idempotent — second call is a no-op.
         """
@@ -233,7 +281,7 @@ class ConcurrentPool(BackendPool):
             self._closed = True
             slots = list(self._slots)
         for slot in slots:
-            slot.executor.shutdown(wait=True)
+            _shutdown_slot(slot, cancel_pending=cancel_pending, timeout=timeout)
 
     # ------------------------------------------------------------------
     # internals
@@ -263,12 +311,21 @@ class ConcurrentPool(BackendPool):
         with self._lock:
             slot.in_flight -= 1
 
-    def _run_one(self, slot: _Slot, job: GenerationJob) -> Artifact:
+    def _run_one(
+        self,
+        slot: _Slot,
+        job: GenerationJob,
+        cancel_token: CancelToken | None,
+    ) -> Artifact:
         """Run *job* through *slot*'s backend, ensuring counter release.
 
         Args:
             slot: The :class:`_Slot` chosen by :meth:`_pick`.
             job: The :class:`GenerationJob`.
+            cancel_token: Token forwarded verbatim to ``backend.submit`` and
+                ``backend.result``; ``None`` is forwarded unchanged so
+                backends that do not honor cancellation observe today's
+                behavior.
 
         Returns:
             The :class:`Artifact` produced by the backend.
@@ -278,8 +335,8 @@ class ConcurrentPool(BackendPool):
             is re-raised after the slot counter is released.
         """
         try:
-            job_id = slot.backend.submit(job)
-            return slot.backend.result(job_id)
+            job_id = slot.backend.submit(job, cancel_token=cancel_token)
+            return slot.backend.result(job_id, cancel_token=cancel_token)
         finally:
             self._release(slot)
 
@@ -321,3 +378,57 @@ class ConcurrentPool(BackendPool):
             raise first_exc
         # All slots filled; cast is safe because no None remains.
         return [r for r in results if r is not None]
+
+
+def _shutdown_slot(
+    slot: _Slot,
+    *,
+    cancel_pending: bool,
+    timeout: float | None,
+) -> None:
+    """Best-effort bounded shutdown of one slot's executor.
+
+    When ``timeout is None`` the call delegates to
+    ``executor.shutdown(wait=True, cancel_futures=cancel_pending)`` and
+    blocks until every worker exits — today's behavior, preserved for
+    callers that don't opt in to the watchdog.
+
+    When ``timeout`` is set, the executor shutdown runs in a daemon
+    watchdog thread and the main thread waits on a
+    :class:`threading.Event` for up to ``timeout`` seconds. On expiry,
+    a single WARN is logged and control returns — the worker thread is
+    leaked (daemon, dies with the process). This is the load-bearing
+    primitive that ends the "second Ctrl-C required" UX: even if a
+    backend never honors the cancel token, pool shutdown returns within
+    ``timeout`` seconds.
+
+    Args:
+        slot: The slot whose executor to shut down.
+        cancel_pending: Forwarded to ``executor.shutdown(cancel_futures=)``
+            so queued-but-not-started futures are cancelled. Running
+            workers are NOT interrupted by this flag — cancellation of
+            running workers happens cooperatively via the
+            :class:`CancelToken` plumbed through ``submit``.
+        timeout: Per-slot wait cap in seconds, or ``None`` to wait
+            unconditionally.
+    """
+    if timeout is None:
+        slot.executor.shutdown(wait=True, cancel_futures=cancel_pending)
+        return
+    done = threading.Event()
+
+    def _do_shutdown() -> None:
+        slot.executor.shutdown(wait=True, cancel_futures=cancel_pending)
+        done.set()
+
+    watchdog = threading.Thread(
+        target=_do_shutdown,
+        daemon=True,
+        name=f"kinoforge-pool-shutdown-{id(slot)}",
+    )
+    watchdog.start()
+    if not done.wait(timeout):
+        _log.warning(
+            "worker still running after %.1fs; abandoning slot",
+            timeout,
+        )
