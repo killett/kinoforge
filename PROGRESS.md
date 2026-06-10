@@ -2306,3 +2306,37 @@ Plan: `docs/superpowers/plans/2026-06-09-layer-8-model-identity-abc.md`
 - `mode_identity` / `precision_identity` / `lora_stack_identity` sibling ABC methods would let the filename schema grow more facets (e.g. `t2v` / `i2v` / `flf2v` in the slug). Not in scope for Layer 8.
 - Code-quality review observation: `_CapturingSink` is duplicated across orchestrator tests T2 and T3. Acceptable for two sites; promote to a module-level helper if a third site appears.
 - WARNING template `engine %s returned empty model identity ...` is structurally duplicated across clip + keyframe stages. Two sites only; helper extraction premature.
+
+### Phase 49 — Wan 2.1 14B t2v on RunPod + in-process warm-reuse smoke
+
+Sibling of the Phase 47 / Phase 28 ComfyUI + Wan i2v stack on the t2v
+mode axis, plus the first proof of the in-process warm-reuse path
+across two consecutive generations on the same pod. Same provider,
+same engine, same custom-node pack pins; t2v variant of the diffusion
+checkpoint; new graph with `WanVideoEmptyEmbeds` substituted in for
+the i2v image-input pipeline.
+
+No spec / plan document — single-session smoke driven from PROGRESS
+B-row context (the user's "do this autonomously" prompt + the
+`successful-generations.md` C-rule). One RED scaffold commit before
+live spend, one conftest fix when the first live attempt skipped, one
+documentation commit at the end.
+
+- [x] Task 0: t2v YAML + hand-authored API graph + offline graph-shape lock (6 tests, all green) — commit `4c6ea68`
+- [x] Task 1: `tests/live/conftest.py` — session-scoped silent `.env` loader so credential gates fire at pytest collection (benefits every live test) — commit `36b65ca`
+- [x] Task 2: live smoke green — cold (402.4 s) + warm (271.7 s) on pod `1cyd9v4e17ufvc`, two MP4s @ 480×480 / 16 fps / 81 frames, ~$0.10 estimated, log entry #5 in `successful-generations.md` — this commit
+
+**Key design decisions:**
+- **Why a programmatic harness, not a CLI re-invocation:** PROGRESS B3 (in-session orchestrator warm-reuse retrofit) + B4 (CLI exposure of `LifecycleManager.warm_reuse_or_create`) remain unbuilt. The only way to keep one pod across two generations today is to hold the `Instance` returned by `orchestrator.generate()` and pass it back in as the next call's `instance=` kwarg — exactly what the test does. Building Layer Y to make two `kinoforge generate` invocations land on the same pod is multi-day work (cooperative session-start lock B7 first, then ledger-classify integration, hot-path touch) and was explicitly out of scope here.
+- **Why a separate graph file:** the i2v graph relies on `LoadImage` + `WanVideoImageToVideoEncode` + `WanVideoClipVisionEncode` + `ImageResizeKJv2`, all of which the sampler's `image_embeds` slot consumes. T2V wants a text-only embed shape — `WanVideoEmptyEmbeds` produces it from `(width, height, num_frames)` widget values. Trying to overload the i2v graph with conditional branches would have broken the offline graph-shape lock that catches kijai-pin drift.
+- **Why double the budget + extend max_lifetime:** the lifecycle block governs the BudgetTracker mid-run circuit breaker, not an estimate. With two generations on the same pod, the original i2v limits (budget 2.0, max_lifetime 50m) would have been hit ~70 % through gen 2 in the worst case. Doubled to 4.0 / 90 m respectively.
+- **Why `WanVideoEmptyEmbeds(width=480, height=480, num_frames=81)` widget-baked:** the graph + YAML params must agree (lock test `test_empty_embeds_shape_matches_params` enforces). A runtime-override path through `spec.node_overrides` would have been cleaner but isn't needed until the next caller wants a different shape.
+
+**Bug catches during execution:**
+- **Live test skipped silently on first run because pytest never loaded `.env`.** Module-import-time gate (`os.getenv("KINOFORGE_LIVE_TESTS") == "1"` and three secret keys) ran before pixi's `[activation.env]` block injected anything into `os.environ`. The historical workaround was for the operator to `source .env` in the host shell before `pixi run pytest`; that doesn't compose with Claude's autonomous execution path. Fix in `36b65ca` (session-scoped conftest) is silent + override-`False` so explicit shell exports always win — no regression risk for the operator-driven path.
+- **No t2v-specific runtime regressions.** The hand-authored graph + `WanVideoEmptyEmbeds` rewiring landed on the first live attempt — testament to the i2v graph being a good template and the offline graph-shape lock catching what it was meant to catch.
+
+**Carry-forwards / known follow-ups:**
+- **PROGRESS B3 / B4 still open.** This smoke proves the in-process warm-reuse path works end-to-end; CLI exposure (`kinoforge generate` consulting the ledger for matching live pods) remains spec'd but unbuilt. Two CLI invocations against the same pod still cold-boot twice.
+- **GPU type not captured into smoke fixture.** `last_t2v_smoke.json` records `pod_id` but not `gpu_type`; entry #4's fixture also lacked it. Surface candidate: `orchestrator._provision_instance_and_build_backend` could lift `Instance.tags["gpu_type"]` into the return path. Trivial; non-blocking.
+- **Test count delta:** +7 net (6 offline graph-shape tests + 1 live smoke that skips offline).

@@ -20,6 +20,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 2. `2026-06-08 21:26:01` — [Replicate bytedance/seedance-1-lite — t2v](#2-2026-06-08-212601--replicate-bytedanceseedance-1-lite--t2v)
 3. `2026-06-08 21:26:59` — [Runway gen4.5 — t2v](#3-2026-06-08-212659--runway-gen45--t2v)
 4. `2026-06-08 22:28:40` — [ComfyUI Wan 2.1 14B i2v on RunPod — i2v](#4-2026-06-08-222840--comfyui-wan-21-14b-i2v-on-runpod--i2v)
+5. `2026-06-09 21:19:45` — [ComfyUI Wan 2.1 14B t2v on RunPod (in-process warm-reuse, 2 prompts) — t2v](#5-2026-06-09-211945--comfyui-wan-21-14b-t2v-on-runpod-in-process-warm-reuse-2-prompts--t2v)
 
 ---
 
@@ -451,5 +452,104 @@ No 404 retries fired during this green run — pod warmed past the proxy window 
 
 - `LocalOutputSink` renders the `model` slug as `unknown` in the published filename (`comfyui_unknown_...`) because `cfg.engine.comfyui` doesn't surface a `model` field to the sink. Same provenance defect noted on the Phase 43 fal.ai entry; small Layer-O follow-up, not a generation defect.
 - The published filename ends in `.mp4` (vs `.bin`) — ComfyUI engine writes the artifact bytes locally so the sink uses the source file's extension directly.
+
+---
+
+## 5. `2026-06-09 21:19:45` — ComfyUI Wan 2.1 14B t2v on RunPod (in-process warm-reuse, 2 prompts) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `RunPod / ComfyUIEngine / Kijai Wan2_1-T2V-14B_fp8_e4m3fn` |
+| **Mode** | t2v |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `36b65caada5d0af21f6ff78acab377d80aec9b7b` |
+| **Date (local TZ)** | 2026-06-09 21:19:45 -0700 (PDT) |
+| **Layer / phase** | Phase 49 (Wan t2v on RunPod + in-process warm-reuse smoke); sibling of Phase 47's i2v config |
+
+New capability axes vs entry #4:
+
+- **t2v** instead of i2v — text-only conditioning, no init image, no CLIP-vision.
+- **Two back-to-back generations on the same pod** — the cold `generate()` returns the orchestrator-created `Instance`; the warm `generate()` receives it back via the `instance=` kwarg and skips `create_instance` + boot poll. Demonstrates the warm-reuse path that PROGRESS B3/B4 (CLI exposure of `LifecycleManager.warm_reuse_or_create`) does not yet provide at the `kinoforge` CLI surface.
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_comfyui_wan_t2v_live.py -v -s
+```
+
+(Same harness rationale as entry #4 — orchestrator-level test rather than two CLI invocations, because the warm-reuse path is only reachable in-process today and the JsonProfileCache needs pre-warming with the workflow-specific probe shape. A `kinoforge generate` CLI form would still create a fresh pod on each invocation.)
+
+### YAML config(s)
+
+**`examples/configs/runpod-comfyui-wan-t2v.yaml`** at SHA `4c6ea68` — derived from `runpod-comfyui-wan.yaml` (i2v) with: I2V → T2V diffusion checkpoint (`Wan2_1-T2V-14B_fp8_e4m3fn.safetensors`), no CLIP-vision model entry, no `init_image` asset wiring, lifecycle budget doubled (2.0 → 4.0) and `max_lifetime` extended (50 m → 90 m) to cover two consecutive generations.
+
+**`examples/configs/runpod-comfyui-wan-t2v.graph.json`** — hand-authored from the i2v graph: nodes 58/59/63/65/68 (`LoadImage` / `CLIPVisionLoader` / `WanVideoImageToVideoEncode` / `WanVideoClipVisionEncode` / `ImageResizeKJv2`) dropped; node 80 (`WanVideoEmptyEmbeds` with `width=480`, `height=480`, `num_frames=81`) added to feed `WanVideoSampler.image_embeds`. Graph-shape lockdown lives in `tests/engines/test_comfyui_wan_t2v_graph_shape.py` (6 offline assertions that trip before any RunPod spend).
+
+### Prompts
+
+Read verbatim from the two prompt files at the repo root (per `feedback_standard_test_prompt` — same prompt-substrate the upcoming Bearer-comparison smokes use):
+
+- **Realistic:** `/workspace/prompt-field-realistic.txt` — long-form alpine-meadow cinematic with anamorphic lenses, golden-hour rake light, fae creatures.
+- **Dreamlike:** `/workspace/prompt-field-dreamlike.txt` — same scene rendered with jewel-tone bloom, opalescent sky, stained-glass dragonflies — written specifically to exercise prompt-driven style divergence on identical compute.
+
+### Env vars / secret names (names only — never values)
+
+- `RUNPOD_API_KEY` — RunPod GraphQL main key.
+- `RUNPOD_TERMINATE_KEY` — Scoped self-terminate Bearer key for the in-pod selfterm watchdog.
+- `HF_TOKEN` — Hugging Face gated-repo Bearer token for `Kijai/WanVideo_comfy` weight pulls.
+- `KINOFORGE_LIVE_TESTS=1` — global live-mode gate (test skips silently when unset).
+
+### Region
+
+RunPod cloud assigned, `cloudType: ALL`. Pod `1cyd9v4e17ufvc`; GPU type not captured into the smoke fixture (`Instance.tags["gpu_type"]` is set by the orchestrator's tag policy; absent here). Cost arithmetic below assumes the worst-case RTX 4090 to keep the upper bound honest.
+
+### Capability key
+
+`db992da0b751f8e7e76119fd62f5fd5710644facb9fc17fd06ea4536b438367b` (pre-warmed via `JsonProfileCache.warm` in the test, mirroring entry #4). Distinct from entry #4's i2v key because `spec.graph_file` and the asset / model identifiers differ.
+
+### Output artifacts
+
+| # | Prompt | Path (published) | Path (internal cache) | Size | SHA-256 |
+|---|---|---|---|---|---|
+| 1 | realistic | `/workspace/output/20260609-212621_comfyui_Wan2_1-T2V-14B_fp8_e4m3f_Photorealistic-cinem.mp4` | `/workspace/.kinoforge/artifacts/t2v-realistic/d1f8cfef54439b2c.mp4` | 1,277,945 B (1.22 MiB) | `d1f8cfef54439b2c9695ba464e387b1a419f5808017a6e5c4e8d5f5b0c7eb513` |
+| 2 | dreamlike | `/workspace/output/20260609-213053_comfyui_Wan2_1-T2V-14B_fp8_e4m3f_Photorealistic-yet-d.mp4` | `/workspace/.kinoforge/artifacts/t2v-dreamlike/139a7d9c91557efe.mp4` | 1,703,715 B (1.62 MiB) | `139a7d9c91557efea1b8dbd34306ec862977c10b88af09830c773556c667d1d1` |
+
+Common to both:
+
+- **Container / codec:** MP4 / ISO BMFF / h264 High, yuv420p (bt709)
+- **Resolution:** 480×480 (matches `params.width`/`height`; no upscale because the t2v graph has no `ImageResizeKJv2` node)
+- **Duration:** 5.0625 s
+- **Frame count:** 81
+- **Average frame rate:** 16/1 (16 fps)
+- **Bit rate:** 2,019 kb/s (realistic) / 2,681 kb/s (dreamlike) — content-driven delta, not a pipeline difference
+
+### Cost
+
+- **Total:** ~$0.10 estimated.
+- **Wall-clock:**
+  - Cold path (provision + ~24 GB weight download + ComfyUI cold-start + gen 1): 402.4 s (≈ 6 m 42 s)
+  - Warm path (gen 2 on the same pod, no re-provision, no boot): 271.7 s (≈ 4 m 32 s)
+  - Total pod-up time: ≈ 11 m 17 s end-to-end
+- **Formula:** worst-case RunPod RTX 4090 spot at ~$0.40/hr × 677 s ≈ $0.075; A5000 fallback at $0.16/hr × 677 s ≈ $0.030. Rounded up to ~$0.10 for safety.
+- **Warm-reuse savings:** the second generation would otherwise have paid ~140 s of provision + boot (the cold delta above gen-1 inference), or roughly half its own runtime — proves the path's value even on a single repeat.
+
+### Success criteria
+
+Pending operator visual confirmation. Programmatic checks all pass:
+
+- Both artifacts are valid h264/MP4 at 480×480, 81 frames @ 16 fps (ISO-BMFF `ftyp*` magic verified).
+- SHA-256 of the two clips differ — distinct prompts produced distinct bytes, ruling out the "second generation got the first's cached output" failure mode.
+- `warm_elapsed (271.7 s) < cold_elapsed (402.4 s)` — proves the warm path skipped re-provision (a regression that re-provisioned would land warm ≥ cold).
+- Single `provider.destroy_instance(pod_id)` at the end; finally-arm verifies the pod is gone.
+
+### Failure modes encountered before success
+
+- First run skipped silently because the live-test module-import-time env-var check fired before pixi's `[activation.env]` had any chance to inject the credentials into `os.environ`. Root cause: live tests previously assumed the operator had sourced `.env` in the shell; the loader (`kinoforge.core.dotenv_loader.load_env_file`) was only invoked from `tools/preflight.py`, not from pytest. Fixed by adding `tests/live/conftest.py` (commit `36b65ca`) — a session-scoped, silent, override-`False` dotenv loader. Benefits every live-test module.
+- No t2v-specific runtime regressions — the hand-authored graph + `WanVideoEmptyEmbeds` rewiring landed on the first live attempt. The offline `tests/engines/test_comfyui_wan_t2v_graph_shape.py` regression lock catches the structural diff before the next person touches the YAML.
+
+### Notes
+
+- Published filename now reads `comfyui_Wan2_1-T2V-14B_fp8_e4m3f_...` (not `unknown` like entry #4) because Phase 48 / Layer 8 shipped the `model_identity(cfg)` ABC; `ComfyUIEngine.model_identity` returns the `kind: base` model's filename stem. Same fix that closed the entry-#4 carry-forward.
+- This entry's "warm-reuse" still goes through the in-process orchestrator harness — no Layer Y CLI exposure yet (PROGRESS B3/B4 remain). A future `kinoforge generate` invocation against the same pod would re-create-and-destroy because the CLI does not consult the ledger for matching live pods.
 
 ---
