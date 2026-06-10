@@ -19,6 +19,7 @@ from kinoforge.cli.sidecar import (
     read_sidecar,
     verify_or_write_sidecar,
 )
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config, load_config
 from kinoforge.core.errors import UnknownAdapter
@@ -45,6 +46,14 @@ class SessionContext:
     cfg: Config | None
     sidecar: SidecarRecord | None
     clock: Clock = field(default_factory=RealClock)
+    # Phase 50 — per-invocation cooperative-cancellation token. The CLI's
+    # SIGINT handler (installed for ``generate`` / ``batch``) sets this
+    # token on first Ctrl-C; the orchestrator + every backend poll loop
+    # observe it and unwind cooperatively. ``default_factory=CancelToken``
+    # so each SessionContext gets a *fresh* token — sharing one across
+    # invocations would let a previously-set token instant-cancel the
+    # next run.
+    cancel_token: CancelToken = field(default_factory=CancelToken)
     _store: ArtifactStore | None = None
     _ledger: Ledger | None = None
 

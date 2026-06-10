@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-10-graceful-interrupt-and-poll-observability.md",
   "specPath": "docs/superpowers/specs/2026-06-10-graceful-interrupt-and-poll-observability-design.md",
-  "lastUpdated": "2026-06-10T16:10:00",
+  "lastUpdated": "2026-06-10T16:30:00",
   "tasks": [
     {
       "id": 0,
@@ -38,7 +38,9 @@
     {
       "id": 4,
       "subject": "Task 4: Orchestrator stage-loop except + deploy_session cancel-aware close",
-      "status": "pending",
+      "status": "completed",
+      "commitSha": "b8234da",
+      "carryForwards": ["KeyframeStage cancel_token plumbing (waits on ImageBackend cancel honoring)", "pool.map cancel_token forwarding for t2v fan-out"],
       "blockedBy": [1],
       "description": "**Goal:** `generate` + `deploy_session` accept `cancel_token=None`. Stage-loop except arms at lines 1085 + 1173 gain `(KeyboardInterrupt, Cancelled)` clause that logs WARN naming pod ID + `kinoforge reap` and does NOT destroy. `deploy_session.__exit__` passes cancel_pending to pool.close(timeout=30.0).\n\n**Files:**\n- Modify: `src/kinoforge/pipeline/generate_clip.py`, `src/kinoforge/core/orchestrator.py`\n- Create: `tests/core/test_orchestrator_interrupt.py`, `tests/core/test_orchestrator_cancelled.py`\n\n**Verify:** `pixi run pytest tests/core/test_orchestrator_interrupt.py tests/core/test_orchestrator_cancelled.py tests/core/test_orchestrator.py tests/pipeline/test_generate_clip.py -v` → all PASS.\n\nSee plan §Task 4 for full code.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/generate_clip.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator_interrupt.py\", \"tests/core/test_orchestrator_cancelled.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_interrupt.py tests/core/test_orchestrator_cancelled.py tests/core/test_orchestrator.py tests/pipeline/test_generate_clip.py -v\", \"acceptanceCriteria\": [\"generate + deploy_session accept cancel_token kwarg\", \"KeyboardInterrupt mid-stage does NOT call destroy_instance\", \"Cancelled mid-stage does NOT call destroy_instance\", \"Both emit one WARN with pod ID + kinoforge reap substring\", \"ValidationError still destroys (preserved)\", \"deploy_session.__exit__ branches on token state for pool.close kwargs\", \"GenerateClipStage forwards cancel_token into pool.submit\"]}\n```"
     },

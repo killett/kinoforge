@@ -7,6 +7,8 @@ the back-compat shim in ``cli/__init__.py``.
 from __future__ import annotations
 
 import argparse
+import logging
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -34,6 +36,7 @@ from kinoforge.cli._commands import (
 )
 from kinoforge.cli.context import SessionContext
 from kinoforge.cli.sidecar import SIDECAR_NAME
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.dotenv_loader import load_env_file
 from kinoforge.core.ephemeral import EPHEMERAL_CAPABILITIES, EphemeralSession
 from kinoforge.core.errors import (
@@ -44,6 +47,14 @@ from kinoforge.core.errors import (
 )
 from kinoforge.core.redaction import RedactingLogFilter, RedactionRegistry
 from kinoforge.core.vault import Vault, load_vault, register_vault_tokens
+
+_log = logging.getLogger(__name__)
+
+# Subcommands that run a long orchestration loop and therefore need the
+# graceful-interrupt SIGINT handler installed before dispatch. Every
+# other subcommand keeps the default Ctrl-C behavior (read-only
+# operations should exit immediately on the first press).
+_INTERRUPTIBLE_CMDS: frozenset[str] = frozenset({"generate", "batch"})
 
 # Subcommands that never trigger orchestration. ``--ephemeral`` is a no-op
 # for them; emit a one-line stderr note rather than running pre-flight.
@@ -175,6 +186,46 @@ def _preflight_ephemeral(ctx: SessionContext) -> str | None:
     if not supported:
         return _preflight_error_block(engine_kind, provider)
     return None
+
+
+def _install_sigint_handler(token: CancelToken) -> None:
+    """Install a two-press SIGINT handler that flips *token* on first press.
+
+    Behavior:
+
+    1. **First press:** logs a WARN line and sets ``token``. The
+       orchestrator + every backend poll loop observe ``token.is_set()``
+       and unwind cooperatively (Phase 50 cancel cascade). No
+       ``KeyboardInterrupt`` is raised, so a graceful drain has time to
+       complete.
+    2. **Second press:** restores ``signal.SIG_DFL`` and re-raises
+       ``KeyboardInterrupt`` so the operator can always force-exit, even
+       if a backend is wedged in non-interruptible I/O.
+
+    Idempotent at the level of the second press — once we restore
+    ``SIG_DFL``, any subsequent ``SIGINT`` runs the default handler
+    (process termination) and never re-enters this closure.
+
+    Args:
+        token: The shared :class:`CancelToken` from
+            :attr:`SessionContext.cancel_token`. Backends that received
+            this same token via the orchestrator's plumbing observe the
+            flip on their next poll tick.
+    """
+
+    def _handler(signum: int, frame: object) -> None:  # noqa: ARG001
+        if token.is_set():
+            # Second press — restore default first so KeyboardInterrupt
+            # raised below cannot recurse into this handler.
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            raise KeyboardInterrupt
+        _log.warning(
+            "interrupt received; finishing in-flight work + draining pool. "
+            "Press Ctrl-C again to force-exit."
+        )
+        token.set()
+
+    signal.signal(signal.SIGINT, _handler)
 
 
 def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentParser:
@@ -487,6 +538,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(err_block, file=sys.stderr)
                 return 2
 
+    # Phase 50 — install the graceful-interrupt SIGINT handler ONLY for
+    # the long-running orchestration subcommands. Read-only operations
+    # (list / status / stop / destroy / forget / reap / gc) keep the
+    # default Ctrl-C semantics so the operator doesn't have to press
+    # twice to escape a hung ledger read.
+    if args.cmd in _INTERRUPTIBLE_CMDS:
+        _install_sigint_handler(ctx.cancel_token)
+
     with EphemeralSession(enabled=args.ephemeral, vault=_loaded_vault):
         return _DISPATCH[args.cmd](args, ctx)
 
@@ -497,6 +556,7 @@ __all__ = [
     "_build_sink",
     "_build_store",
     "_cli_clock",
+    "_install_sigint_handler",
     "_print_instance_overview",
     "main",
 ]
