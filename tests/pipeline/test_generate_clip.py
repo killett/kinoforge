@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.errors import ValidationError
 from kinoforge.core.interfaces import (
     Artifact,
@@ -77,7 +78,16 @@ def _make_stage(
     if engine is None:
         engine = _fake_engine_for_tests(profile)
     if result_override is not None:
-        backend.result = result_override  # type: ignore[assignment]
+        # Wrap so the new keyword-only ``cancel_token`` plumbed through
+        # the BackendPool ABC (Phase 50 Task 1) is absorbed before the
+        # caller-supplied positional lambda runs.
+        _override = result_override
+
+        def _adapted(job_id: str, *, cancel_token: object | None = None) -> Artifact:
+            del cancel_token
+            return _override(job_id)
+
+        backend.result = _adapted  # type: ignore[method-assign]
     # Default: single-segment placeholder so the constructor is satisfied.
     # Real tests that care about multi-segment dispatch pass segments= explicitly.
     resolved_segments: list[Segment] = (
@@ -178,9 +188,14 @@ class CountingBackend(FakeBackend):
         super().__init__(probe=probe)
         self.submit_count = 0
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         self.submit_count += 1
-        return super().submit(job)
+        return super().submit(job, cancel_token=cancel_token)
 
 
 def test_native_extension_true_one_job_for_n_segments(tmp_path: Path) -> None:
@@ -220,10 +235,15 @@ class RecordingBackend(FakeBackend):
         super().__init__(probe=probe)
         self.submitted_seg0_assets: list[list] = []  # type: ignore[type-arg]
 
-    def submit(self, job: GenerationJob) -> str:
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
         # Capture a snapshot of the first segment's assets at submit time.
         self.submitted_seg0_assets.append(list(job.segments[0].assets))
-        return super().submit(job)
+        return super().submit(job, cancel_token=cancel_token)
 
 
 def _fake_engine_for_tests(probe: ModelProfile) -> GenerationEngine:

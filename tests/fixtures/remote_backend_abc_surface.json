@@ -14,8 +14,8 @@
     "endpoints": "(self) -> 'dict[str, str]'",
     "inspect_capabilities": "(self) -> 'ModelProfile'",
     "manual_cleanup_url": "(job_id: 'str') -> 'str'",
-    "result": "(self, job_id: 'str') -> 'Artifact'",
-    "submit": "(self, job: 'GenerationJob') -> 'str'"
+    "result": "(self, job_id: 'str', *, cancel_token: 'CancelToken | None' = None) -> 'Artifact'",
+    "submit": "(self, job: 'GenerationJob', *, cancel_token: 'CancelToken | None' = None) -> 'str'"
   },
   "RemoteSubmitPollEngine": {
     "_build_backend": "(self, cfg: 'dict[str, Any]', instance: 'Instance | None') -> 'RemoteSubmitPollBackend'",

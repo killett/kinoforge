@@ -44,6 +44,7 @@ from kinoforge.core.interfaces import (
 
 if TYPE_CHECKING:
     from kinoforge.core.auth import AuthStrategy
+    from kinoforge.core.cancel import CancelToken
 
 
 def _urllib_get_bytes(url: str) -> bytes:
@@ -158,8 +159,20 @@ class RemoteSubmitPollBackend(GenerationBackend):
             self._client_cached = self._client_factory()
         return self._client_cached
 
-    def submit(self, job: GenerationJob) -> str:
-        """Build + submit the request via :meth:`_submit`."""
+    def submit(
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str:
+        """Build + submit the request via :meth:`_submit`.
+
+        Args:
+            job: The :class:`GenerationJob` to send to the provider.
+            cancel_token: Accepted for ABC parity; full cooperative
+                honoring inside the poll loop is added in a later task.
+        """
+        del cancel_token
         return self._submit(self._client(), job)
 
     def _delete_with_retries(
@@ -193,7 +206,12 @@ class RemoteSubmitPollBackend(GenerationBackend):
             last_error=last_error,
         )
 
-    def result(self, job_id: str) -> Artifact:
+    def result(
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact:
         """Poll until done or failed; return an Artifact on done.
 
         Under an active ``EphemeralSession`` with
@@ -203,7 +221,13 @@ class RemoteSubmitPollBackend(GenerationBackend):
         successful delete scrubs the provider-side record so the
         prompt-laden job ID does not survive on the provider's
         dashboard.
+
+        Args:
+            job_id: Provider-side job ID returned by :meth:`submit`.
+            cancel_token: Accepted for ABC parity; full cooperative
+                honoring inside the poll loop is added in a later task.
         """
+        del cancel_token
         import urllib.parse
         from pathlib import PurePosixPath
 

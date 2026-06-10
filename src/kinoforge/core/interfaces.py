@@ -12,7 +12,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
+
+if TYPE_CHECKING:
+    from kinoforge.core.cancel import CancelToken
 
 # --- compute axis -----------------------------------------------------------
 
@@ -504,10 +507,20 @@ class GenerationBackend(ABC):
     def inspect_capabilities(self) -> ModelProfile: ...  # noqa: D102
 
     @abstractmethod
-    def submit(self, job: GenerationJob) -> str: ...  # noqa: D102
+    def submit(  # noqa: D102
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> str: ...
 
     @abstractmethod
-    def result(self, job_id: str) -> Artifact: ...  # noqa: D102
+    def result(  # noqa: D102
+        self,
+        job_id: str,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Artifact: ...
 
     @abstractmethod
     def endpoints(self) -> dict[str, str]: ...  # noqa: D102
@@ -673,13 +686,23 @@ class BackendPool(ABC):
     def add(self, backend: GenerationBackend, *, max_in_flight: int = 1) -> None: ...  # noqa: D102
 
     @abstractmethod
-    def submit(self, job: GenerationJob) -> Future[Artifact]: ...  # noqa: D102
+    def submit(  # noqa: D102
+        self,
+        job: GenerationJob,
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> Future[Artifact]: ...
 
     @abstractmethod
     def map(self, jobs: list[GenerationJob]) -> list[Artifact]: ...  # noqa: D102
 
     @abstractmethod
-    def close(self) -> None: ...  # noqa: D102
+    def close(  # noqa: D102
+        self,
+        *,
+        cancel_pending: bool = False,
+        timeout: float | None = None,
+    ) -> None: ...
 
     def __enter__(self) -> Self:  # noqa: D105
         return self
