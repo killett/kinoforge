@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.interfaces import (
     Artifact,
     BackendPool,
@@ -69,12 +70,11 @@ class _ListPool(BackendPool):
         self,
         job: GenerationJob,
         *,
-        cancel_token: object | None = None,
+        cancel_token: CancelToken | None = None,
     ) -> Future[Artifact]:
-        del cancel_token
         backend = self._backends[0]
-        job_id = backend.submit(job)
-        artifact = backend.result(job_id)
+        job_id = backend.submit(job, cancel_token=cancel_token)
+        artifact = backend.result(job_id, cancel_token=cancel_token)
         fut: Future[Artifact] = Future()
         fut.set_result(artifact)
         return fut
