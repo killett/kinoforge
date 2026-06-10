@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from kinoforge.core.artifacts import opaque_store_name
+from kinoforge.core.cancel import CancelToken
 from kinoforge.core.continuity import inject_tail_frame
 from kinoforge.core.interfaces import (
     MODE_ROLE_REQUIREMENTS,
@@ -81,6 +82,11 @@ class GenerateClipStage:
     # ["model"] at stage construction.
     provider: str | None = None
     model: str | None = None
+    # Phase 50: cooperative-cancellation token forwarded into every
+    # pool.submit() call so a worker parked in a backend poll loop can
+    # observe ``token.is_set()`` and raise ``Cancelled`` instead of running
+    # to completion. Default ``None`` preserves library-caller behavior.
+    cancel_token: CancelToken | None = None
 
     def run(self, state: PipelineState) -> PipelineState:
         """Dispatch jobs through pool, persist clip artifact, return updated state.
@@ -148,7 +154,7 @@ class GenerateClipStage:
                     # pre-dispatch validate_request saw seg-0's spec only; it
                     # didn't know about the tail-frame asset injected here.
                     self.engine.validate_spec(job)
-                art = self.pool.submit(job).result()
+                art = self.pool.submit(job, cancel_token=self.cancel_token).result()
                 results.append(art)
         last = results[-1]
 
