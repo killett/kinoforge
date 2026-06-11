@@ -72,6 +72,7 @@ def _make_aws_clients() -> FakeAwsClients:
 
 
 def test_aws_spin_up_returns_resource_ids() -> None:
+    """Bug catch: returning the wrong shape breaks Manifest construction in the CLI dispatcher."""
     clients = _make_aws_clients()
     out = aws_spin_up(clients, region="us-west-2", tag="kinoforge-quota-burn")
     assert set(out.keys()) == {"instance", "volume", "bucket", "table", "budget_name"}
@@ -105,6 +106,7 @@ def test_aws_spin_up_arms_kernel_shutdown_and_self_terminate() -> None:
 
 
 def test_aws_spin_up_tags_every_resource() -> None:
+    """Bug catch: untagged resources are invisible to teardown's tag-filter and would leak budget at live time."""
     clients = _make_aws_clients()
     aws_spin_up(clients, region="us-west-2", tag="kinoforge-quota-burn")
     ec2_tags = clients.ec2.run_calls[0]["TagSpecifications"]
@@ -130,3 +132,14 @@ def test_aws_spin_up_caps_budget_at_5_usd() -> None:
     assert amount["Unit"] == "USD"
     subscribers = budget_call["NotificationsWithSubscribers"][0]["Subscribers"]
     assert any(s["Address"] == "operator@example.test" for s in subscribers)
+
+
+def test_aws_spin_up_omits_create_bucket_config_for_us_east_1() -> None:
+    """Bug catch: S3 raises IllegalLocationConstraintException if
+    CreateBucketConfiguration is passed for us-east-1 (the global endpoint
+    region). The guard prevents a silent live-time failure if the project
+    ever flips off the Oregon-default-region policy."""
+    clients = _make_aws_clients()
+    aws_spin_up(clients, region="us-east-1", tag="kinoforge-quota-burn")
+    create_call = clients.s3.create_calls[0]
+    assert "CreateBucketConfiguration" not in create_call
