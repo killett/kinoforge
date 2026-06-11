@@ -297,6 +297,13 @@ def test_gcp_tear_down_deletes_every_resource() -> None:
     assert "kinoforge-quota-burn-gcp-xyz" in deleted
     assert "billingAccounts/ACME/budgets/burn-7" in deleted
     assert storage_spy == ["kinoforge-quota-burn-gcp-xyz"]
+    # Order: VMs before disks before buckets before budget (spec contract).
+    assert (
+        deleted.index("kinoforge-burn-xyz")
+        < deleted.index("kinoforge-burn-xyz-disk")
+        < deleted.index("kinoforge-quota-burn-gcp-xyz")
+        < deleted.index("billingAccounts/ACME/budgets/burn-7")
+    )
 
 
 def test_gcp_tear_down_is_idempotent_on_missing() -> None:
@@ -356,12 +363,11 @@ class FakeBillingClient:
 
 
 def test_gcp_mtd_spend_groups_by_service() -> None:
-    """Bug catch: returning ungrouped rows would force the snapshot to aggregate
-    again and risk double-counting."""
+    """Contract: BigQuery's own GROUP BY returns one row per service; we map that
+    directly to a dict without any Python-side re-aggregation."""
     client = FakeBillingClient(
         rows=[
-            {"service_description": "Compute Engine", "cost_usd": 1.20},
-            {"service_description": "Compute Engine", "cost_usd": 0.80},
+            {"service_description": "Compute Engine", "cost_usd": 2.00},
             {"service_description": "Cloud Storage", "cost_usd": 0.50},
             {"service_description": "BigQuery", "cost_usd": 1.50},
         ]
