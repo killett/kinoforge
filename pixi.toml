@@ -80,6 +80,8 @@ setuptools = ">=40,<72"
 # Group-derived PyPI-only packages are inserted on the line below.
 graphifyy = "*"
 google-cloud-bigquery = ">=3.11"
+google-cloud-billing = ">=1.13"
+google-cloud-billing-budgets = ">=1.16"
 
 # Conda deps that only resolve on linux-64 (e.g. ocrmypdf, which pulls
 # pngquant — no osx-arm64 build available). Empty section is valid TOML
