@@ -2556,11 +2556,34 @@ Lib: `tools/quota_burn_lib.py` | CLI: `tools/quota_burn.py` (Task 8+)
 - [x] Task 5: AWS teardown + MTD spend snapshot helpers — commit `33129a7`
 - [x] Task 6: Quota-submit helpers (GCP fallback URL + AWS case attach) — commit `12267f4`
 - [x] Task 7: BigQuery dry-run gate — `BigQueryCapExceeded` + `bq_scan_with_cap`; added `google-cloud-bigquery>=3.11` PyPI dep; 2 tests green — commit `ac00594`
-- [ ] Task 8: CLI dispatcher with subcommands
-- [ ] Task 9: Justification draft templates + PROGRESS update
+- [x] Task 8: CLI dispatcher — `tools/quota_burn.py` with 5 subcommands (`spin-up`, `tear-down`, `snapshot`, `scan-bigquery`, `submit-quota`); 108 tests green — commit `93fcbd9`
+- [x] Task 9: Justification draft templates + PROGRESS update — `docs/quota-justification-gcp.md` + `docs/quota-justification-aws.md`; Phase 52 prerequisites documented
 - [ ] Task 10: Day 0 — live spinup
 - [ ] Task 11: Days 1–4 daily snapshot
 - [ ] Task 12: Day 4 — populate justification drafts
 - [ ] Task 13: Day 5 — submit quotas + teardown + closeout
 
-**Single next action:** Task 8 — create `tools/quota_burn.py` CLI dispatcher with subcommands (`spin-up`, `tear-down`, `snapshot`, `scan-bigquery`, `submit-quota`); lazy-imports SDKs on the branch that needs them.
+#### Justification drafts
+
+- GCP: `docs/quota-justification-gcp.md`
+- AWS: `docs/quota-justification-aws.md`
+
+Both contain `$MTD_SPEND_USD$` placeholder; Task 12 substitutes the live value from `pixi run kinoforge snapshot` output before submission.
+
+#### Task 10 prerequisites (operator — REQUIRED before live spinup)
+
+Task 10 will abort at GCP budget creation unless these are set in `/workspace/.env` first:
+
+1. **`GCP_BILLING_ACCOUNT_ID`** (REQUIRED) — format `XXXXXX-XXXXXX-XXXXXX`.
+   Find it: Cloud Console -> Billing -> Account Management -> Billing Account ID.
+   ```
+   GCP_BILLING_ACCOUNT_ID=XXXXXX-XXXXXX-XXXXXX
+   ```
+2. **`GCP_NOTIFICATION_CHANNEL_ID`** (OPTIONAL) — format `projects/<proj>/notificationChannels/<id>`.
+   Omit to create the budget with no extra notification channel (owner email still fires via the
+   billing budget default).
+3. AWS creds already present in `.env` (see memory: `project_hosted_video_keys_configured`).
+4. Run `pixi run preflight` — must exit 0 (checks creds present, zero active RunPod pods, clean
+   working tree) before invoking `python -m tools.quota_burn spinup`.
+
+**Single next action:** Task 10 — operator sets `GCP_BILLING_ACCOUNT_ID` in `.env`, runs `pixi run preflight`, then `python -m tools.quota_burn spinup` to kick off the live 5-day utilization-burn window (2026-06-11 → 2026-06-15).
