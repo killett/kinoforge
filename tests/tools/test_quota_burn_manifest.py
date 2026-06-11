@@ -37,6 +37,29 @@ def test_manifest_from_json_raises_when_missing(tmp_path: Path) -> None:
         Manifest.from_json(tmp_path / "nope.json")
 
 
+def test_manifest_persists_aws_region(tmp_path: Path) -> None:
+    """Bug catch: teardown's _build_aws_clients() needs to know the region
+    spinup used. Without aws_region in the manifest, teardown defaults to
+    us-west-2 and would miss resources created in any other region."""
+    m = Manifest(
+        gcp_vms=[],
+        gcp_disks=[],
+        gcp_buckets=[],
+        gcp_budget_id=None,
+        aws_instances=[],
+        aws_volumes=[],
+        aws_buckets=[],
+        aws_tables=[],
+        aws_budget_name=None,
+        created_at="2026-06-11T00:00:00",
+        tag="kinoforge-quota-burn",
+        aws_region="us-east-1",
+    )
+    path = tmp_path / "m.json"
+    m.to_json(path)
+    assert Manifest.from_json(path).aws_region == "us-east-1"
+
+
 def test_manifest_json_is_pretty_and_sorted(tmp_path: Path) -> None:
     """Sorted keys make manifest diffs reviewable; pretty-printing aids manual inspection."""
     m = Manifest(
