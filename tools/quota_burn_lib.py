@@ -21,7 +21,7 @@ import json
 import logging
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -560,10 +560,18 @@ def aws_mtd_spend(
 
     Returns:
         Dict mapping service name to total USD spend for the current month.
+
+    Note:
+        ``end_dt`` is set to ``today + timedelta(days=1)`` so that ``Start <
+        End`` holds strictly even on the 1st of the month (when
+        ``start_dt == today``). Cost Explorer raises ``ValidationException``
+        if ``Start >= End``.
     """
     today = datetime.now()
-    start = today.replace(day=1).strftime("%Y-%m-%d")
-    end = today.strftime("%Y-%m-%d")
+    start_dt = today.replace(day=1)
+    end_dt = today + timedelta(days=1)  # CE requires Start < End strictly.
+    start = start_dt.strftime("%Y-%m-%d")
+    end = end_dt.strftime("%Y-%m-%d")
     resp = client.get_cost_and_usage(
         TimePeriod={"Start": start, "End": end},
         Granularity="MONTHLY",
