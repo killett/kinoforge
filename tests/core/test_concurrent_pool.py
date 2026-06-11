@@ -382,6 +382,23 @@ def test_stress_in_flight_invariant_under_parallel_load():
             t.join(timeout=10.0)
             assert not t.is_alive()
 
+        # Drain: each `_worker` releases gates known at t=0.005s, but late-queued
+        # jobs create their gates after that, leaving them orphan. Without this
+        # drain the slow-CI path (macOS-latest) lets `BlockingFakeBackend.result`
+        # hit its 5s timeout on the orphans, the executor's `_run_one` finally
+        # decrements `in_flight` AFTER the worker-thread join, and the assert
+        # below races the decrement. Release any straggler gates explicitly,
+        # then poll-wait for `in_flight == 0` with a generous grace.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            for known_jid in list(backend._gates.keys()):
+                backend.release(known_jid)
+            with pool._lock:
+                pending = slot.in_flight
+            if pending == 0:
+                break
+            time.sleep(0.01)
+
         # Final invariant: counter back to 0 and never went negative.
         assert slot.in_flight == 0
         assert not invariant_violated[0], "in_flight went negative during stress test"
