@@ -327,6 +327,9 @@ def test_aws_tear_down_is_idempotent_on_all_not_found_codes() -> None:
     )
     deleted = aws_tear_down(clients, _aws_teardown_manifest())
     assert deleted == []
+    # Waiter must NOT fire when the EC2 NotFound path is hit — terminating
+    # something that's already gone shouldn't wait on it.
+    assert clients.ec2_waiter.waited_for == []
 
 
 def test_aws_tear_down_raises_on_unexpected_clienterror() -> None:
@@ -351,12 +354,14 @@ def test_aws_tear_down_raises_on_unexpected_clienterror() -> None:
         aws_tear_down(clients, _aws_teardown_manifest())
 
 
-def test_aws_mtd_spend_groups_by_service() -> None:
-    """Bug catch: wrong aggregation logic (e.g. overwriting instead of adding)
-    would silently drop costs for services appearing in multiple result windows."""
+def test_aws_mtd_spend_accumulates_across_windows() -> None:
+    """Bug catch: a single-window fixture wouldn't catch out[svc]=amount
+    (overwrite) vs out[svc] = out.get(svc,0.0)+amount (accumulate). This
+    fixture forces 'Amazon EC2 - Compute' to appear in two windows so an
+    overwrite would silently drop the first window's cost."""
 
     class _CE:
-        def get_cost_and_usage(self, **_: Any) -> dict:  # type: ignore[type-arg]
+        def get_cost_and_usage(self, **_: Any) -> dict[str, Any]:
             return {
                 "ResultsByTime": [
                     {
@@ -369,18 +374,26 @@ def test_aws_mtd_spend_groups_by_service() -> None:
                                 "Keys": ["Amazon Simple Storage Service"],
                                 "Metrics": {"UnblendedCost": {"Amount": "0.30"}},
                             },
+                        ]
+                    },
+                    {
+                        "Groups": [
+                            {
+                                "Keys": ["Amazon Elastic Compute Cloud - Compute"],
+                                "Metrics": {"UnblendedCost": {"Amount": "0.20"}},
+                            },
                             {
                                 "Keys": ["EC2 - Other"],
                                 "Metrics": {"UnblendedCost": {"Amount": "0.40"}},
                             },
                         ]
-                    }
+                    },
                 ]
             }
 
     spend = aws_mtd_spend(_CE(), account_id="123456789012")
     assert spend == {
-        "Amazon Elastic Compute Cloud - Compute": 0.50,
+        "Amazon Elastic Compute Cloud - Compute": 0.70,  # 0.50 + 0.20 — accumulate
         "Amazon Simple Storage Service": 0.30,
         "EC2 - Other": 0.40,
     }
