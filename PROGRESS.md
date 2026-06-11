@@ -189,6 +189,7 @@ their category.
 - **C19. Per-backend cancel hardening for Diffusers / Hosted / Bedrock.** Phase 50 grew the `cancel_token` kwarg on every concrete backend at the ABC level; only `ComfyUIBackend` and `RemoteSubmitPollBackend` honor it. The remaining engines accept the kwarg as a no-op until the C18 helper exists or a real stall surfaces.
 - **C20. `pool.map` ignores `cancel_token`.** The t2v non-chained fan-out path. Workers still honor the token internally; the wait on the orchestrator side is longer because `pool.map` joins every in-flight future before raising. Forward the kwarg through `BackendPool.map` when fan-out latency on interrupt becomes a real complaint.
 - **C21. `KeyframeStage` cancel_token plumbing.** `KeyframeStage` uses `ImageBackend` directly (no `pool.submit` site). Production WARN-not-destroy is provided by the orchestrator outer except today; in-stage cancel honoring waits on `ImageBackend` growing the same kwarg.
+- **C22. ComfyUI WebSocket live observability — deferred.** `/history/{prompt_id}` returns `{}` while the job is queued or executing — populates only on completion. `/queue` (now probed every tick when `status=="unknown"`) reveals "my job is currently the running one" via `queue_pos=0` but cannot surface the per-node progress (`current_node`, `step X of Y` from the sampler) that ComfyUI's own web UI shows. Real per-node observability needs a persistent `ws://server/ws` subscription that listens for `executing` + `progress` events and threads the latest into a shared state read by `ComfyUIBackend.result`. Promote to its own layer when the next stall in the middle of a long sampler tick re-surfaces. Scope: WS client with reconnect, background thread/asyncio task, fake-WS test seam, integration with `cancel_token`. Spec hook: write at `docs/superpowers/specs/<date>-comfyui-ws-progress-design.md` when triggered.
 
 ### D. CI / platform
 
@@ -2214,15 +2215,19 @@ Plan: `docs/superpowers/plans/2026-06-08-ephemeral-workspaces.md`.
 - [ ] Task 20: `tests/test_no_unredacted_writes.py` AST invariant.
 - [ ] Task 21: README "Confidentiality mode" section + Phase 45 finalisation.
 
-**Single next action:** Phase 50 (graceful interrupt + ComfyUI poll
-observability) shipped. The next `kinoforge generate` carries the new
-per-tick poll logging + hard `poll_timeout_s` for free; any future stall
-self-diagnoses via the structured `status` / `queue_pos` / `exec_node`
-log fields and Ctrl-C returns the shell within ~30 s without leaking a
-pod. Choose next: Track A (Bedrock Luma Ray v2 live smoke, blocked on
-AWS Support case) or Track B (Veo on Vertex AI plan, unblocked since
-2026-06-07), per the RESUME block in the Phase 43 section. Or open a
-new layer.
+**Single next action:** Phase 51 (ComfyUI poll parser real-shape fix +
+`poll_timeout_s` 600→1800 s bump) shipped. Production parser now
+descends `envelope[prompt_id]["status"]` per the real ComfyUI
+`/history` shape, `/queue` probe fires whenever `status` is `"unknown"`
+(real empty-during-execution), and the default cap covers Wan 14 B on
+A5000-class GPUs. The next Wan 14 B live re-fire on RunPod should run
+to completion without operator intervention; the log line will report
+`queue_pos=0` during execution (live-running). Per-node progress
+(`current_node`, sampler step counter) remains unavailable until C22
+(ComfyUI WebSocket subscription) ships. Choose next: Track A (Bedrock
+Luma Ray v2 live smoke, blocked on AWS Support case), Track B (Veo on
+Vertex AI plan, unblocked since 2026-06-07), Phase 45 Sub-ε tail
+(T20 AST invariant + T21 Confidentiality README), or open a new layer.
 
 **Pre-existing failure (unrelated to Layer 5b):**
 - `tests/providers/test_skypilot.py::test_t4_fixture_shape` fails on `main`
@@ -2455,3 +2460,82 @@ Plan: `docs/superpowers/plans/2026-06-10-graceful-interrupt-and-poll-observabili
   unaccounted pod.
 
 **Test count delta:** +27 net offline tests (Task 0 +7 `test_cancel.py`; Task 1 +4 `test_pool_cancel.py`; Task 2 +5 across `test_comfyui_cancel.py` + `test_comfyui_timeout.py` + `test_comfyui_poll_log.py`; Task 3 +4 `test_remote_submit_poll_cancel.py`; Task 4 +5 across `test_orchestrator_interrupt.py` + `test_orchestrator_cancelled.py`; Task 5 +2 `test_sigint_handler.py`). Full suite at end of Task 5: **1898 passed, 26 skipped** — no live smoke required for this layer.
+
+### Phase 51 — ComfyUI poll parser real-shape fix + poll_timeout_s bump
+
+Single-task patch phase. A 2026-06-10 Wan 14B t2v live smoke on pod
+`2fhv2v3cccs98d` was killed by Phase 50's 600 s `poll_timeout_s` at
+elapsed 602.8 s while the GPU was at 100% — a healthy sampler tick,
+not a hang. Investigation surfaced two coupled defects: Phase 50's
+`_extract_poll_fields` parser only ever ran against the flat fixture
+shape (`{"status": {"status_str": …}}` at the envelope root), but
+real ComfyUI `/history/{prompt_id}` nests the per-job dict under the
+`prompt_id` key. Production parser therefore returned
+`status="unknown"` for the entire run, which gated the `/queue` probe
+out of firing (it was scoped to `status=="queued"` only), leaving
+`queue_pos` and `exec_node` as `None` for every log line. With no
+real observability and a 10-min cap tuned for ~6-min Wan 1.3 B runs,
+a healthy Wan 14B (25-40 min on A5000-class GPUs) was indistinguishable
+from a stuck job.
+
+No spec / plan doc — single-session offline fix driven by
+systematic-debugging Phase 1 evidence. No live spend.
+
+- [x] Task 1: RED tests — 9 in `tests/engines/test_comfyui_poll_real_shape.py` covering nested envelope shape, flat back-compat, empty-envelope `"unknown"` sentinel, `job_id=None` legacy path, widened `/queue` gate, queue probe with missing job_id stays `None`, backend ctor default 1800 s, and `ComfyUIEngineConfig.poll_timeout_s` default 1800 s.
+- [x] Task 2: GREEN — `_extract_poll_fields` grows an optional `job_id` parameter and descends into `envelope[job_id]["status"]` when the top-level key is absent (mirrors the outputs extractor's existing dual-shape pattern). Caller in `ComfyUIBackend.result` passes `job_id`; gate widened to `if last_status in ("queued", "unknown"):` so the `/queue` probe fires during real execution.
+- [x] Task 3: poll_timeout_s default 600 → 1800 across all four sites (`ComfyUIBackend.__init__`, `ComfyUIEngine.backend` cfg-walk fallback (two lines), `ComfyUIEngineConfig.poll_timeout_s` pydantic Field).
+- [x] Task 4: Two pre-existing regression-test updates — `test_result_polls_until_completed` + `test_result_retries_on_transient_404_then_returns` both mocked `http_get` URL-agnostically; widened queue probe now consumes additional GETs in production reality, so both mocks route `/queue` → empty envelope and assert the history-call counter instead.
+- [x] Task 5: PROGRESS update + new C22 entry covering deferred WebSocket-based per-node observability — this commit.
+
+**Key design decisions:**
+
+- **Parser stays dual-shape, not real-only.** The flat shape is still
+  used by `test_comfyui_poll_log.py`, the Phase 47 retry test, and
+  the capture-tool fixtures. Mirror the outputs extractor's pattern
+  (try flat first, fall back to nested) rather than flipping the
+  parser real-only and forcing test-fixture rewrites.
+- **`/queue` probe widens to `unknown`, not "every tick unconditionally".**
+  `unknown` already means "I cannot tell from `/history` alone" — that
+  is exactly when `/queue` is informative. Once a real `status_str`
+  appears (`executing` / `success` / `error`), `/history` is authoritative
+  and the probe stops. Avoids doubling HTTP load for the steady-state
+  happy path.
+- **`exec_node` stays `None` during real runs.** ComfyUI's
+  `/history/{id}.status.exec_info.current_node` only populates
+  post-completion; while the job runs, `current_node` lives in the
+  WebSocket `executing` event stream that kinoforge does not subscribe
+  to. Real per-node observability is the C22 follow-up, not this phase.
+- **1800 s default, not "no cap".** Phase 50's hard timeout still has
+  value (catching truly wedged processes) — the fix is calibration,
+  not removal. Operators with slower setups override per-config via
+  `engine.comfyui.poll_timeout_s`.
+
+**Bug catches during execution:**
+
+- **Two pre-existing tests modeled production with URL-agnostic GET
+  mocks.** Widening the `/queue` gate exposed both: `test_result_polls_until_completed`
+  raised `IndexError` because the queue probe consumed the next entry
+  in its response list; `test_result_retries_on_transient_404_then_returns`
+  failed `assert calls["n"] == 4` (now 5 with the extra queue probe).
+  Both tests now dispatch by URL and assert on the history-call counter
+  alone — more faithful to production.
+- **`ComfyUIBackend.__init__` docstring previously claimed "Default 600 s
+  covers Wan 14B t2v (~6 min)".** That figure was the Phase 49 Wan
+  *1.3 B* smoke wall time — never the 14 B value. Docstring updated.
+
+**Carry-forwards / known follow-ups:**
+
+- **C22 — ComfyUI WebSocket live observability** (new C-section entry
+  above). Per-node + per-step progress remains invisible without the
+  WebSocket subscription. Deferred until the next stall mid-sampler.
+- **Recovery of orphan pod `2fhv2v3cccs98d`** — operator destroyed
+  manually before this phase landed; no kinoforge-side action needed.
+- **Phase 50 docstring + spec did not require parser validation against
+  the real `/history` envelope shape** — a single sentence "tested
+  against the production envelope, not just the flat fixture" in
+  future observability specs would have caught this offline.
+
+**Test count delta:** +9 net (`test_comfyui_poll_real_shape.py`).
+Full suite: **1930 passed, 26 skipped** (was 1898 + 26 at end of Phase 50;
++32 reflects 9 new Phase 51 tests + 23 unrelated additions across
+in-flight branches collected by full-tree runs).

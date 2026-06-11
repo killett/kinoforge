@@ -418,22 +418,51 @@ _DEFAULT_PROBE = ModelProfile(
 
 def _extract_poll_fields(
     envelope: dict[str, Any],
+    job_id: str | None = None,
 ) -> tuple[str, int | None, str | None]:
     """Pull (status, queue_pos, exec_node) from a ComfyUI history envelope.
 
-    ComfyUI versions vary the envelope shape. Tolerate missing keys by
-    returning the ``"unknown"`` sentinel for status, ``None`` for the
-    other two. ``queue_pos`` is always returned as ``None`` here — it
-    is populated by a separate ``/queue`` probe in the poll loop when
-    ``status == "queued"``.
+    ComfyUI ships two envelope shapes:
+
+    * **Real** ``/history/{prompt_id}``: per-job dict nested under the
+      ``prompt_id`` key (``{prompt_id: {"status": {...}, "outputs": {...}}}``).
+      Returns ``{}`` while the job is still queued or executing — only
+      populates after completion (success OR error).
+    * **Flat** (test fixtures, some legacy capture tools): ``status``
+      and ``outputs`` at the top level.
+
+    Phase 51 made parser dual-shape — Phase 50 only handled flat envelopes,
+    which caused real production runs to report ``status="unknown"`` for
+    the entire job and gated the ``/queue`` probe out of firing.
+
+    ``queue_pos`` is always returned as ``None`` here — it is populated by
+    a separate ``/queue`` probe in the poll loop when ``status`` is
+    ``"queued"`` OR ``"unknown"`` (the latter is the steady state during
+    execution, when ``/history`` is empty).
 
     Args:
         envelope: Decoded JSON body from ``/history/{prompt_id}``.
+        job_id: Optional prompt_id. When supplied and the top-level
+            ``status`` key is absent, the parser descends into
+            ``envelope[job_id]["status"]`` (real production shape).
+            When ``None``, only the flat shape is read — preserves
+            legacy callers + the empty-envelope ``"unknown"`` fallback.
 
     Returns:
         ``(status_str, queue_pos, exec_node)`` triple.
     """
-    status_block = envelope.get("status", {}) if isinstance(envelope, dict) else {}
+    if not isinstance(envelope, dict):
+        return ("unknown", None, None)
+    status_block = envelope.get("status")
+    if not isinstance(status_block, dict):
+        if job_id is not None:
+            nested = envelope.get(job_id, {})
+            if isinstance(nested, dict):
+                status_block = nested.get("status", {})
+            else:
+                status_block = {}
+        else:
+            status_block = {}
     if not isinstance(status_block, dict):
         status_block = {}
     status = status_block.get("status_str", "unknown")
@@ -573,7 +602,7 @@ class ComfyUIBackend(GenerationBackend):
         http_get_bytes: Callable[[str], bytes] = _urllib_get_bytes,
         http_post_file: Callable[..., str] = _urllib_post_multipart,
         poll_interval_s: float = _POLL_INTERVAL_S,
-        poll_timeout_s: float = 600.0,
+        poll_timeout_s: float = 1800.0,
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -604,8 +633,13 @@ class ComfyUIBackend(GenerationBackend):
                 :meth:`result` poll wait. Exceeding it raises
                 :class:`TimeoutError` whose message carries
                 ``last_status`` + ``exec_node`` for self-diagnosis.
-                Default 600 s covers Wan 14B t2v (~6 min) while
-                bounding pathological hangs.
+                Default 1800 s (30 min) covers Wan 14B on A5000-class
+                GPUs (~25-40 min observed) while bounding pathological
+                hangs. Phase 50's original 600 s default killed a
+                healthy run on pod ``2fhv2v3cccs98d`` at 602.8 s while
+                the GPU was at 100% — see Phase 51 in ``PROGRESS.md``.
+                Operators override per-config via
+                ``engine.comfyui.poll_timeout_s`` for slower setups.
         """
         self._http_post = http_post
         self._http_get = http_get
@@ -888,8 +922,14 @@ class ComfyUIBackend(GenerationBackend):
                     str(exc.reason)[:200],
                 )
                 raise
-            last_status, queue_pos, exec_node = _extract_poll_fields(data)
-            if last_status == "queued":
+            last_status, queue_pos, exec_node = _extract_poll_fields(data, job_id)
+            # Phase 51: also probe /queue when status is "unknown". Real
+            # ComfyUI returns ``{}`` from /history while the job is queued
+            # or executing — without the "unknown" arm here, queue_pos
+            # stayed None for the entire run, leaving the operator unable
+            # to distinguish a healthy long sampler tick from a job
+            # ComfyUI has lost (server restarted, prompt_id forgotten).
+            if last_status in ("queued", "unknown"):
                 try:
                     queue_envelope = self._http_get(queue_url)
                     queue_pos = _extract_queue_position(queue_envelope, job_id)
@@ -1339,7 +1379,7 @@ class ComfyUIEngine(GenerationEngine):
         # in. Production callers feed a pydantic-dumped dict, so the
         # nested .get() chain wins; ad-hoc dicts in tests fall through
         # to the constructor default.
-        poll_timeout_s: float = 600.0
+        poll_timeout_s: float = 1800.0
         engine_block = cfg.get("engine", {}) if isinstance(cfg, dict) else {}
         if isinstance(engine_block, dict):
             comfyui_cfg = engine_block.get("comfyui", {})
@@ -1348,7 +1388,7 @@ class ComfyUIEngine(GenerationEngine):
                 try:
                     poll_timeout_s = float(raw)
                 except (TypeError, ValueError):
-                    poll_timeout_s = 600.0
+                    poll_timeout_s = 1800.0
 
         return ComfyUIBackend(
             http_post=self._http_post,

@@ -364,20 +364,28 @@ class TestBackendResult:
     """AC6 — result polls /history/{id} until outputs present; returns Artifact."""
 
     def test_result_polls_until_completed(self) -> None:
-        """result returns Artifact after polling through running → completed."""
-        call_count = 0
+        """result returns Artifact after polling through running → completed.
+
+        Phase 51 widened the ``/queue`` probe gate to fire when status is
+        ``"unknown"`` (real ``/history`` empty-during-execution case), so
+        the mock now routes by URL.
+        """
+        history_calls = 0
         _DONE_FIXTURE = _load_comfy_fixture("history_done.json")
         _PROMPT_ID = next(iter(_DONE_FIXTURE))
 
         _RUNNING: dict[str, Any] = {_PROMPT_ID: {"outputs": {}}}
         _DONE = _DONE_FIXTURE
+        _EMPTY_QUEUE: dict[str, Any] = {"queue_running": [], "queue_pending": []}
 
-        responses = [_RUNNING, _DONE]
+        history_responses = [_RUNNING, _DONE]
 
         def get_spy(url: str) -> dict[str, Any]:
-            nonlocal call_count
-            result = responses[call_count]
-            call_count += 1
+            nonlocal history_calls
+            if url.endswith("/queue"):
+                return _EMPTY_QUEUE
+            result = history_responses[history_calls]
+            history_calls += 1
             return result
 
         engine = _make_engine(http_get=get_spy, sleep=lambda s: None)
@@ -393,7 +401,7 @@ class TestBackendResult:
         expected_filename = node_outputs[key][0]["filename"]
         assert artifact.filename == expected_filename
         assert artifact.meta["prompt_id"] == _PROMPT_ID
-        assert call_count == 2
+        assert history_calls == 2
 
     def test_result_url_contains_history_and_prompt_id(self) -> None:
         """http_get is called with a URL containing /history/<prompt_id>."""
@@ -1748,13 +1756,19 @@ def test_result_retries_on_transient_404_then_returns(
     _PROMPT_ID = next(iter(_DONE_FIXTURE))
 
     _RUNNING: dict[str, Any] = {_PROMPT_ID: {"outputs": {}}}
-    calls = {"n": 0}
+    _EMPTY_QUEUE: dict[str, Any] = {"queue_running": [], "queue_pending": []}
+    history_calls = {"n": 0}
 
     def get_spy(url: str) -> dict[str, Any]:
-        calls["n"] += 1
-        if calls["n"] <= 2:
+        if url.endswith("/queue"):
+            # Phase 51: widened queue probe fires whenever /history is
+            # empty (status="unknown") — answer with an empty envelope
+            # so it does not consume the history-response counter.
+            return _EMPTY_QUEUE
+        history_calls["n"] += 1
+        if history_calls["n"] <= 2:
             raise _make_http_error(url, 404, "Not Found")
-        if calls["n"] == 3:
+        if history_calls["n"] == 3:
             return _RUNNING
         return _DONE_FIXTURE
 
@@ -1770,7 +1784,7 @@ def test_result_retries_on_transient_404_then_returns(
         artifact = backend.result(_PROMPT_ID)
 
     assert isinstance(artifact, Artifact)
-    assert calls["n"] == 4  # 2 × 404, 1 × empty, 1 × done
+    assert history_calls["n"] == 4  # 2 × 404, 1 × empty, 1 × done
     warnings = [
         r
         for r in caplog.records
