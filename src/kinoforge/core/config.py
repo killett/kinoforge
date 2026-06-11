@@ -168,14 +168,17 @@ class ComfyUIEngineConfig(BaseModel):
         poll_timeout_s: Hard upper bound (seconds) on a single
             ``ComfyUIBackend.result`` poll wait. Raises ``TimeoutError``
             with ``last_status`` + ``exec_node`` in the message when
-            exceeded. Default 600 s is generous enough for Wan 14B t2v
-            (~6 min) while bounding pathological hangs. Lift for known-
-            slower models.
+            exceeded. Default 1800 s (30 min) covers Wan 14B on
+            A5000-class GPUs (~25-40 min observed). Phase 51 raised the
+            default after the previous 600 s value killed a healthy run
+            mid-sampler — see ``PROGRESS.md`` Phase 51 for the incident.
+            Lift further for slower setups; lower if pathological hangs
+            must be caught faster.
     """
 
     version: str
     custom_nodes: list[dict[str, Any]] = Field(default_factory=list)
-    poll_timeout_s: float = Field(default=600.0, gt=0.0)
+    poll_timeout_s: float = Field(default=1800.0, gt=0.0)
 
 
 class HostedEngineConfig(BaseModel):
