@@ -15,6 +15,7 @@ Design rules:
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import json
 import logging
@@ -306,3 +307,123 @@ def gcp_mtd_spend(
     )
     rows = client.query(query=sql)
     return {r["service_description"]: float(r["cost_usd"]) for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# AWS helpers
+# ---------------------------------------------------------------------------
+
+_USER_DATA_TEMPLATE = """#!/bin/bash
+set -eux
+# Kernel-side hard shutdown 8h after boot (spec §3 stack layer 1).
+shutdown -h +480
+# Re-arm on every reboot via cron.
+echo '@reboot root /sbin/shutdown -h +480' > /etc/cron.d/kinoforge-burn-shutdown
+chmod 0644 /etc/cron.d/kinoforge-burn-shutdown
+"""
+
+
+def aws_spin_up(
+    clients: Any,  # noqa: ANN401
+    *,
+    region: str,
+    tag: str,
+) -> dict[str, str]:
+    """Provision AWS burn workload; return resource IDs for the manifest.
+
+    Spins: 1× t4g.nano EC2 with 30 GB gp3 EBS (auto-terminate on shutdown),
+    1× S3 bucket, 1× DynamoDB on-demand table, 1× AWS Budget at $5 hard cap.
+
+    All resources tagged `<tag>=true`. EC2 UserData runs `shutdown -h +480`
+    AND InstanceInitiatedShutdownBehavior=terminate so the kernel shutdown
+    actually destroys the instance.
+
+    Args:
+        clients: injected boto3-shaped clients with attributes `ec2`, `s3`,
+            `dynamo`, `budgets`, `account_id`, and `operator_email`.
+            No `boto3` import occurs here — callers inject real or fake clients.
+        region: AWS region for all resources.
+        tag: tag key applied to every resource.
+
+    Returns:
+        Dict with keys `instance`, `volume`, `bucket`, `table`, `budget_name`.
+    """
+    suffix = _rand_suffix()
+    bucket_name = f"kinoforge-quota-burn-aws-{suffix}"
+    table_name = f"kinoforge-quota-burn-{suffix}"
+    budget_name = f"kinoforge-quota-burn-{datetime.now().strftime('%Y%m%d')}-{suffix}"
+    tags = [{"Key": tag, "Value": "true"}]
+
+    user_data_b64 = base64.b64encode(_USER_DATA_TEMPLATE.encode()).decode()
+    run = clients.ec2.run_instances(
+        ImageId="resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id",
+        InstanceType="t4g.nano",
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=[
+            {
+                "DeviceName": "/dev/sda1",
+                "Ebs": {
+                    "VolumeSize": 30,
+                    "VolumeType": "gp3",
+                    "DeleteOnTermination": True,
+                },
+            }
+        ],
+        InstanceInitiatedShutdownBehavior="terminate",
+        UserData=user_data_b64,
+        TagSpecifications=[
+            {"ResourceType": "instance", "Tags": tags},
+            {"ResourceType": "volume", "Tags": tags},
+        ],
+    )
+    instance_id = run["Instances"][0]["InstanceId"]
+    volume_id = run["Instances"][0]["BlockDeviceMappings"][0]["Ebs"]["VolumeId"]
+
+    clients.s3.create_bucket(
+        Bucket=bucket_name,
+        CreateBucketConfiguration={"LocationConstraint": region},
+    )
+    clients.s3.put_bucket_tagging(Bucket=bucket_name, Tagging={"TagSet": tags})
+
+    clients.dynamo.create_table(
+        TableName=table_name,
+        KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
+        AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
+        BillingMode="PAY_PER_REQUEST",
+        Tags=tags,
+    )
+
+    clients.budgets.create_budget(
+        AccountId=clients.account_id,
+        Budget={
+            "BudgetName": budget_name,
+            "BudgetLimit": {"Amount": "5", "Unit": "USD"},
+            "TimeUnit": "MONTHLY",
+            "BudgetType": "COST",
+        },
+        NotificationsWithSubscribers=[
+            {
+                "Notification": {
+                    "NotificationType": "ACTUAL",
+                    "ComparisonOperator": "GREATER_THAN",
+                    "Threshold": 100.0,
+                    "ThresholdType": "PERCENTAGE",
+                },
+                "Subscribers": [
+                    {
+                        "SubscriptionType": "EMAIL",
+                        "Address": clients.operator_email,
+                    }
+                ],
+            }
+        ],
+    )
+
+    return {
+        "instance": instance_id,
+        "volume": volume_id,
+        "bucket": bucket_name,
+        "table": table_name,
+        "budget_name": budget_name,
+    }
