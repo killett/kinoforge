@@ -115,10 +115,10 @@ def test_gcp_spin_up_tags_every_resource() -> None:
     vm_call = clients.instances.insert_calls[0]
 
     # VM labels
-    assert vm_call["instance"].labels == {tag: "true"}
+    assert vm_call["instance"]["labels"] == {tag: "true"}
 
     # Disk labels (embedded in the instance disk initialize_params)
-    disk_labels = vm_call["instance"].disks[0]["initialize_params"]["labels"]
+    disk_labels = vm_call["instance"]["disks"][0]["initialize_params"]["labels"]
     assert disk_labels == {tag: "true"}
 
     # Bucket labels — set via post-create patch()
@@ -127,8 +127,8 @@ def test_gcp_spin_up_tags_every_resource() -> None:
 
     # Budget filter uses real Budgets v1 proto shape (no top-level labels)
     budget_arg = clients.budgets.create_calls[0]["budget"]
-    assert hasattr(budget_arg, "budget_filter")
-    assert budget_arg.budget_filter.labels == {tag: {"values": ["true"]}}
+    assert isinstance(budget_arg, dict)
+    assert budget_arg["budget_filter"]["labels"] == {tag: {"values": ["true"]}}
 
 
 def test_gcp_spin_up_arms_kernel_shutdown() -> None:
@@ -143,7 +143,7 @@ def test_gcp_spin_up_arms_kernel_shutdown() -> None:
         tag="kinoforge-quota-burn",
     )
     vm_call = clients.instances.insert_calls[0]
-    items = vm_call["instance"].metadata["items"]
+    items = vm_call["instance"]["metadata"]["items"]
     startup = next(i for i in items if i["key"] == "startup-script")
     assert "shutdown -h +480" in startup["value"]
 
@@ -160,7 +160,7 @@ def test_gcp_spin_up_uses_e2_small_in_zone() -> None:
     )
     vm_call = clients.instances.insert_calls[0]
     assert vm_call["zone"] == "us-west1-a"
-    assert "e2-small" in vm_call["instance"].machine_type
+    assert "e2-small" in vm_call["instance"]["machine_type"]
 
 
 # ---------------------------------------------------------------------------
