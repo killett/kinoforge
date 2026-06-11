@@ -724,11 +724,18 @@ def aws_submit_quota(
         DesiredValue=float(desired_value),
     )
     request_id = resp["RequestedQuota"]["Id"]
-    case_id = resp["RequestedQuota"]["CaseId"]
-    clients.support.add_communication_to_case(
-        caseId=case_id,
-        communicationBody=justification_text,
-    )
+    case_id = resp["RequestedQuota"].get("CaseId")
+    if case_id:
+        clients.support.add_communication_to_case(
+            caseId=case_id,
+            communicationBody=justification_text,
+        )
+    else:
+        _log.warning(
+            "aws_submit_quota: no CaseId on RequestedQuota response; "
+            "justification not attached. Request id: %s",
+            request_id,
+        )
     return QuotaSubmitResult(
         submitted=True,
         request_ids=[request_id],
