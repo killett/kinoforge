@@ -53,6 +53,56 @@ a design or plan exists (see Durability rules).
 
 - Use `rg` instead of `grep`, `fd` instead of `find`.
 
+## Cloud CLI invocation (`gcloud`, `aws`, `sky`)
+
+`gcloud` and `aws` binaries live ONLY in the `live-skypilot` pixi env, NOT
+the `default` env. Common failure mode (avoid):
+
+```
+$ pixi run -- gcloud config get-value project
+# wrong — pixi run is the task runner; without a matching task name
+# it just prints the task list. No error, just confusing output.
+
+$ gcloud config get-value project
+# wrong — gcloud not on PATH in the bare shell.
+/bin/bash: line 1: gcloud: command not found
+```
+
+Working invocations:
+
+```bash
+# Option A — drop into live-skypilot env for one command
+pixi run -e live-skypilot gcloud config get-value project
+pixi run -e live-skypilot aws sts get-caller-identity
+pixi run -e live-skypilot sky check
+
+# Option B — direct PATH + cred env vars (when pixi env activation isn't on)
+PATH="/workspace/.pixi/envs/live-skypilot/share/google-cloud-sdk-570.0.0-0/bin:/workspace/.pixi/envs/live-skypilot/bin:$PATH" \
+  CLOUDSDK_CONFIG=/workspace/.gcp/gcloud-config \
+  GOOGLE_APPLICATION_CREDENTIALS=/workspace/.gcp/kinoforge-sa.json \
+  AWS_SHARED_CREDENTIALS_FILE=/workspace/.aws/credentials \
+  AWS_CONFIG_FILE=/workspace/.aws/config \
+  gcloud config get-value project
+```
+
+**Why the env vars matter:** `pixi.toml [activation.env]` wires
+`AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`,
+`GOOGLE_APPLICATION_CREDENTIALS`, and `CLOUDSDK_CONFIG` so that
+`pixi run ...` automatically finds workspace-local creds. Outside of a
+`pixi run` invocation those env vars are NOT set — the bare `aws` /
+`gcloud` will report `Unable to locate credentials`.
+
+For Python code (boto3, google-cloud-*), prefer `pixi run python -m
+<module>` so activation fires and SDK default chains pick up the
+workspace creds automatically.
+
+Quick identity probe pattern:
+
+```bash
+pixi run -e live-skypilot gcloud config list account --format='value(core.account)'
+pixi run -e live-skypilot aws sts get-caller-identity
+```
+
 ## Workspace scaffolding
 
 This project has already been scaffolded. The following files
