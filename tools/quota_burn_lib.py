@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlencode
 
 _log = logging.getLogger(__name__)
 
@@ -585,3 +586,151 @@ def aws_mtd_spend(
             amount = float(grp["Metrics"]["UnblendedCost"]["Amount"])
             out[svc] = out.get(svc, 0.0) + amount
     return out
+
+
+# ---------------------------------------------------------------------------
+# Quota-submit helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class QuotaSubmitResult:
+    """Outcome of a quota submission.
+
+    ``submitted`` is True only when the SDK call succeeded. ``request_ids`` is
+    populated on success. ``console_url`` is populated on GCP fallback so the
+    operator can finish the request manually.
+    """
+
+    submitted: bool
+    request_ids: list[str]
+    console_url: str | None
+
+
+def _gcp_console_quota_url(project_id: str) -> str:
+    """Build the pre-filled GCP console URL for the quota fallback path.
+
+    Args:
+        project_id: GCP project ID to embed in the URL.
+
+    Returns:
+        Pre-filled ``https://console.cloud.google.com/iam-admin/quotas`` URL.
+    """
+    qs = urlencode(
+        {
+            "project": project_id,
+            "filter": (
+                "metric:compute.googleapis.com/NVIDIA_T4_GPUS OR "
+                "compute.googleapis.com/gpus_all_regions"
+            ),
+        }
+    )
+    return f"https://console.cloud.google.com/iam-admin/quotas?{qs}"
+
+
+def gcp_submit_quota(
+    client: Any,  # noqa: ANN401
+    *,
+    project_id: str,
+    region: str,
+    justification_text: str,
+) -> QuotaSubmitResult:
+    """Submit GCP GPU quota adjustments (global + regional) for the burn project.
+
+    Submits BOTH ``compute.googleapis.com/gpus_all_regions`` (global) AND
+    ``compute.googleapis.com/nvidia_t4_gpus`` (regional) to ``desired_value=1``.
+
+    On SDK error (the alpha quotas API is rejection-prone), logs a warning and
+    returns a result with a pre-filled console URL so the operator can complete
+    the request manually (spec §7 R3 fallback).
+
+    Args:
+        client: duck-typed quota client exposing ``create_quota_adjustment(**kwargs)``.
+        project_id: GCP project ID.
+        region: GCP region for the regional quota (e.g. ``"us-west1"``).
+        justification_text: free-text reason forwarded to the SDK ``reason`` field.
+
+    Returns:
+        :class:`QuotaSubmitResult` with ``submitted=True`` on success, or
+        ``submitted=False`` + ``console_url`` on failure.
+    """
+    metrics = [
+        ("compute.googleapis.com/gpus_all_regions", "global"),
+        ("compute.googleapis.com/nvidia_t4_gpus", region),
+    ]
+    request_ids: list[str] = []
+    try:
+        for metric, location in metrics:
+            op = client.create_quota_adjustment(
+                parent=f"projects/{project_id}",
+                metric=metric,
+                location=location,
+                desired_value=1,
+                reason=justification_text,
+            )
+            request_ids.append(op.name)
+    except Exception:
+        _log.warning(
+            "gcp_submit_quota: SDK rejected; falling back to console URL",
+            exc_info=True,
+        )
+        return QuotaSubmitResult(
+            submitted=False,
+            request_ids=[],
+            console_url=_gcp_console_quota_url(project_id),
+        )
+    return QuotaSubmitResult(
+        submitted=True,
+        request_ids=request_ids,
+        console_url=None,
+    )
+
+
+def aws_submit_quota(
+    clients: Any,  # noqa: ANN401
+    *,
+    region: str,
+    quota_code: str,
+    desired_value: int,
+    justification_text: str,
+) -> QuotaSubmitResult:
+    """Submit AWS service-quota increase and attach the justification to the case.
+
+    AWS's ``RequestServiceQuotaIncrease`` API does NOT accept a justification
+    field directly; the request automatically opens a Support case, and
+    ``support.add_communication_to_case`` is the only surface where the reason
+    text reaches quota reviewers.
+
+    ``clients`` must expose:
+    - ``.quotas``: boto3 service-quotas client.
+    - ``.support``: boto3 support client.
+
+    Raises on any SDK error — no console-URL fallback (AWS API is reliable).
+
+    Args:
+        clients: injected boto3-shaped client pair (``quotas`` + ``support``).
+        region: AWS region (accepted for API-surface parity; EC2 quota codes are
+            global in Service Quotas, but the region context is logged).
+        quota_code: Service Quotas quota code, e.g. ``"L-DB2E81BA"``.
+        desired_value: target quota value (cast to ``float`` before the API call).
+        justification_text: reason text attached to the auto-opened support case.
+
+    Returns:
+        :class:`QuotaSubmitResult` with ``submitted=True`` and the request ID.
+    """
+    resp = clients.quotas.request_service_quota_increase(
+        ServiceCode="ec2",
+        QuotaCode=quota_code,
+        DesiredValue=float(desired_value),
+    )
+    request_id = resp["RequestedQuota"]["Id"]
+    case_id = resp["RequestedQuota"]["CaseId"]
+    clients.support.add_communication_to_case(
+        caseId=case_id,
+        communicationBody=justification_text,
+    )
+    return QuotaSubmitResult(
+        submitted=True,
+        request_ids=[request_id],
+        console_url=None,
+    )
