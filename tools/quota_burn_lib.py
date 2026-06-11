@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -201,3 +204,104 @@ def gcp_spin_up(
         "bucket": bucket_name,
         "budget_id": budget_resp.name,
     }
+
+
+def gcp_tear_down(
+    clients: Any,  # noqa: ANN401
+    manifest: Manifest,
+    *,
+    project_id: str,
+    zone: str,
+) -> list[str]:
+    """Destroy every GCP resource in the manifest; idempotent on NotFound.
+
+    Returns the list of resource IDs actually deleted in this call. Resources
+    already gone (NotFound) are silently skipped; any other error propagates.
+
+    Order: VMs first → disks → buckets → budget. Disks attached to VMs
+    auto-delete on VM deletion; the explicit second pass cleans orphans.
+
+    Args:
+        clients: injected SDK clients exposing `instances`, `disks`, `storage`,
+            and `budgets` attributes.
+        manifest: persisted resource manifest from spinup.
+        project_id: GCP project that owns the resources.
+        zone: GCP zone the VM and disk live in.
+
+    Returns:
+        List of resource IDs deleted in this invocation.
+    """
+    from google.api_core import exceptions as gax_exc
+
+    deleted: list[str] = []
+
+    def _try(name: str, op_fn: Any) -> None:  # noqa: ANN401
+        try:
+            op_fn()
+            deleted.append(name)
+        except gax_exc.NotFound:
+            _log.info("gcp_tear_down: %s already gone", name)
+
+    for vm in manifest.gcp_vms:
+        _try(
+            vm,
+            lambda v=vm: clients.instances.delete(
+                project=project_id, zone=zone, instance=v
+            ).result(timeout=300),
+        )
+
+    for disk in manifest.gcp_disks:
+        _try(
+            disk,
+            lambda d=disk: clients.disks.delete(
+                project=project_id, zone=zone, disk=d
+            ).result(timeout=300),
+        )
+
+    for bucket in manifest.gcp_buckets:
+
+        def _del_bucket(b: str = bucket) -> None:
+            obj = clients.storage.get_bucket(b)
+            obj.delete(force=True)
+
+        _try(bucket, _del_bucket)
+
+    if manifest.gcp_budget_id is not None:
+        _try(
+            manifest.gcp_budget_id,
+            lambda: clients.budgets.delete_budget(name=manifest.gcp_budget_id),
+        )
+
+    return deleted
+
+
+def gcp_mtd_spend(client: Any, *, project_id: str) -> dict[str, float]:  # noqa: ANN401
+    """Return month-to-date spend grouped by service, in USD.
+
+    `client` must expose `.query(query: str) -> list[dict]` where each row
+    contains `service_description` and `cost_usd` keys. Production wires this
+    to a BigQuery client running against the billing export dataset; tests
+    pass a fake row list.
+
+    Args:
+        client: duck-typed query client (BigQuery in production, fake in tests).
+        project_id: GCP project ID to filter billing rows by.
+
+    Returns:
+        Dict mapping service description to total USD spend for current month.
+    """
+    sql = (
+        "SELECT service.description AS service_description, "  # noqa: S608
+        "SUM(cost) AS cost_usd "
+        "FROM `kinoforge-prod-0ddb375e.all_billing_data.gcp_billing_export_v1_*` "
+        f"WHERE project.id = '{project_id}' "
+        "AND DATE(_PARTITIONTIME) >= DATE_TRUNC(CURRENT_DATE(), MONTH) "
+        "GROUP BY service_description"
+    )
+    rows = client.query(query=sql)
+    out: dict[str, float] = {}
+    for r in rows:
+        out[r["service_description"]] = out.get(r["service_description"], 0.0) + float(
+            r["cost_usd"]
+        )
+    return out
