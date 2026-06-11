@@ -154,6 +154,9 @@ def gcp_spin_up(
     bucket.labels = {tag: "true"}
     bucket.patch()
 
+    # Empty channel string is invalid; budget defaults to IAM-Admin recipients
+    # when no explicit channel is wired. Filter empty out.
+    notification_channels = [ch for ch in [clients.notification_channel] if ch]
     budget: dict[str, Any] = {
         "display_name": f"kinoforge-quota-burn-{datetime.now().strftime('%Y%m%d')}",
         "amount": {"specified_amount": {"currency_code": "USD", "units": 7}},
@@ -162,7 +165,7 @@ def gcp_spin_up(
         "notifications_rule": {
             "pubsub_topic": None,
             "schema_version": "1.0",
-            "monitoring_notification_channels": [clients.notification_channel],
+            "monitoring_notification_channels": notification_channels,
             "disable_default_iam_recipients": False,
         },
     }
