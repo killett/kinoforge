@@ -429,3 +429,151 @@ def aws_spin_up(
         "table": table_name,
         "budget_name": budget_name,
     }
+
+
+# ---------------------------------------------------------------------------
+# AWS teardown + MTD spend snapshot helpers
+# ---------------------------------------------------------------------------
+
+# AWS NotFound codes across the five services we touch.
+_AWS_NOT_FOUND = {
+    "InvalidInstanceID.NotFound",
+    "InvalidVolume.NotFound",
+    "NoSuchBucket",
+    "ResourceNotFoundException",
+    "NotFoundException",
+}
+
+
+def _is_aws_not_found(exc: BaseException) -> bool:
+    """Return True iff exc is a botocore ClientError with a known NotFound code."""
+    from botocore.exceptions import ClientError
+
+    if not isinstance(exc, ClientError):
+        return False
+    code = exc.response.get("Error", {}).get("Code", "")
+    return code in _AWS_NOT_FOUND
+
+
+def aws_tear_down(
+    clients: Any,  # noqa: ANN401
+    manifest: Manifest,
+) -> list[str]:
+    """Destroy every AWS resource in the manifest; idempotent on NotFound.
+
+    Order: EC2 terminate → ec2_waiter wait → EBS orphan-delete → S3 empty +
+    delete → DynamoDB delete → Budget delete. Each step swallows the matching
+    AWS NotFound code so re-runs reach zero without failure.
+
+    The EC2 step is guarded by its own try/except because the waiter and
+    terminate call are coupled — the waiter should only run when terminate
+    succeeded (i.e. the instance existed).
+
+    Args:
+        clients: injected boto3-shaped clients with attributes `ec2`,
+            `ec2_waiter`, `s3`, `dynamo`, `budgets`, and `account_id`.
+        manifest: persisted resource manifest from spinup.
+
+    Returns:
+        List of resource IDs actually deleted in this invocation (already-gone
+        resources are silently skipped and NOT included).
+    """
+    deleted: list[str] = []
+
+    def _try(name: str, fn: Any) -> None:  # noqa: ANN401
+        try:
+            fn()
+            deleted.append(name)
+        except BaseException as exc:
+            if _is_aws_not_found(exc):
+                _log.info("aws_tear_down: %s already gone", name)
+                return
+            raise
+
+    # EC2 terminate + wait (coupled — waiter only runs when terminate succeeded).
+    if manifest.aws_instances:
+        try:
+            clients.ec2.terminate_instances(InstanceIds=manifest.aws_instances)
+            clients.ec2_waiter.wait(
+                InstanceIds=manifest.aws_instances,
+                WaiterConfig={"Delay": 15, "MaxAttempts": 20},
+            )
+            deleted.extend(manifest.aws_instances)
+        except BaseException as exc:
+            if not _is_aws_not_found(exc):
+                raise
+
+    # EBS orphan-delete (attached volumes with DeleteOnTermination=True are
+    # already gone; this pass cleans any orphans).
+    for vol in manifest.aws_volumes:
+        _try(vol, lambda v=vol: clients.ec2.delete_volume(VolumeId=v))
+
+    # S3: empty then delete.
+    for bucket in manifest.aws_buckets:
+
+        def _empty_and_drop(b: str = bucket) -> None:
+            listing = clients.s3.list_objects_v2(Bucket=b)
+            for obj in listing.get("Contents", []):
+                clients.s3.delete_object(Bucket=b, Key=obj["Key"])
+            clients.s3.delete_bucket(Bucket=b)
+
+        _try(bucket, _empty_and_drop)
+
+    # DynamoDB.
+    for table in manifest.aws_tables:
+        _try(table, lambda t=table: clients.dynamo.delete_table(TableName=t))
+
+    # Budget.
+    if manifest.aws_budget_name is not None:
+        _try(
+            manifest.aws_budget_name,
+            lambda: clients.budgets.delete_budget(
+                AccountId=clients.account_id,
+                BudgetName=manifest.aws_budget_name,
+            ),
+        )
+
+    return deleted
+
+
+def aws_mtd_spend(
+    client: Any,  # noqa: ANN401
+    *,
+    account_id: str,
+) -> dict[str, float]:
+    """Return month-to-date spend grouped by service, in USD.
+
+    Queries AWS Cost Explorer for the current calendar month with
+    ``Granularity="MONTHLY"`` and ``GROUP BY SERVICE``. The ``account_id``
+    parameter is accepted for signature parity with ``gcp_mtd_spend``; Cost
+    Explorer always scopes to the calling account regardless of this value.
+
+    Uses ``out.get(svc, 0.0) + amount`` accumulation so that results remain
+    correct if the caller passes a date range spanning multiple calendar months
+    (which produces multiple ``ResultsByTime`` windows).
+
+    Args:
+        client: boto3 ``ce`` (Cost Explorer) client; injected so tests pass a
+            fake without a real AWS call.
+        account_id: AWS account ID. Accepted for API-surface parity with the
+            GCP equivalent; Cost Explorer already scopes to the calling account.
+
+    Returns:
+        Dict mapping service name to total USD spend for the current month.
+    """
+    today = datetime.now()
+    start = today.replace(day=1).strftime("%Y-%m-%d")
+    end = today.strftime("%Y-%m-%d")
+    resp = client.get_cost_and_usage(
+        TimePeriod={"Start": start, "End": end},
+        Granularity="MONTHLY",
+        Metrics=["UnblendedCost"],
+        GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+    )
+    out: dict[str, float] = {}
+    for window in resp["ResultsByTime"]:
+        for grp in window["Groups"]:
+            svc = grp["Keys"][0]
+            amount = float(grp["Metrics"]["UnblendedCost"]["Amount"])
+            out[svc] = out.get(svc, 0.0) + amount
+    return out
