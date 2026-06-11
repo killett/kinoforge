@@ -64,29 +64,6 @@ class Manifest:
         return cls(**data)
 
 
-class _GcpInstanceResource:
-    """Mirror of google.cloud.compute_v1.Instance just enough for tests + production.
-
-    Production code constructs the real type via the SDK; the duck-typed shape
-    here exists so tests can build fakes without importing google.cloud.
-    """
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        machine_type: str,
-        labels: dict[str, str],
-        metadata: dict[str, Any],
-        disks: list[dict[str, Any]],
-    ) -> None:
-        self.name = name
-        self.machine_type = machine_type
-        self.labels = labels
-        self.metadata = metadata
-        self.disks = disks
-
-
 class _GcpClients(Protocol):
     instances: Any
     disks: Any
@@ -135,11 +112,11 @@ def gcp_spin_up(
     disk_name = f"{vm_name}-disk"
     bucket_name = f"kinoforge-quota-burn-gcp-{suffix}"
 
-    instance = _GcpInstanceResource(
-        name=vm_name,
-        machine_type=f"zones/{zone}/machineTypes/e2-small",
-        labels={tag: "true"},
-        metadata={
+    instance: dict[str, Any] = {
+        "name": vm_name,
+        "machine_type": f"zones/{zone}/machineTypes/e2-small",
+        "labels": {tag: "true"},
+        "metadata": {
             "items": [
                 {
                     "key": "startup-script",
@@ -147,7 +124,7 @@ def gcp_spin_up(
                 },
             ]
         },
-        disks=[
+        "disks": [
             {
                 "boot": True,
                 "auto_delete": True,
@@ -160,7 +137,7 @@ def gcp_spin_up(
                 },
             }
         ],
-    )
+    }
     clients.instances.insert(
         project=project_id, zone=zone, instance_resource=instance
     ).result(timeout=300)
@@ -169,34 +146,18 @@ def gcp_spin_up(
     bucket.labels = {tag: "true"}
     bucket.patch()
 
-    @dataclass
-    class _BudgetFilter:
-        labels: dict[str, dict[str, list[str]]]
-
-    @dataclass
-    class _BudgetAmount:
-        specified_amount: dict[str, object]
-
-    @dataclass
-    class _Budget:
-        display_name: str
-        amount: _BudgetAmount
-        budget_filter: _BudgetFilter
-        threshold_rules: list[dict[str, float]]
-        notifications_rule: dict[str, object]
-
-    budget = _Budget(
-        display_name=f"kinoforge-quota-burn-{datetime.now().strftime('%Y%m%d')}",
-        amount=_BudgetAmount(specified_amount={"currency_code": "USD", "units": 7}),
-        budget_filter=_BudgetFilter(labels={tag: {"values": ["true"]}}),
-        threshold_rules=[{"threshold_percent": 1.0}],
-        notifications_rule={
+    budget: dict[str, Any] = {
+        "display_name": f"kinoforge-quota-burn-{datetime.now().strftime('%Y%m%d')}",
+        "amount": {"specified_amount": {"currency_code": "USD", "units": 7}},
+        "budget_filter": {"labels": {tag: {"values": ["true"]}}},
+        "threshold_rules": [{"threshold_percent": 1.0}],
+        "notifications_rule": {
             "pubsub_topic": None,
             "schema_version": "1.0",
             "monitoring_notification_channels": [clients.notification_channel],
             "disable_default_iam_recipients": False,
         },
-    )
+    }
     budget_resp = clients.budgets.create_budget(
         parent=clients.billing_account, budget=budget
     )
