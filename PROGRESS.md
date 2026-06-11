@@ -1006,10 +1006,11 @@ is intentional and is the contract being locked.)
 IAM-discovery surfaced the need for re-OAuth to grant additional roles.
 Resolution: `~/.config/gcloud` is now persisted at
 `/workspace/.gcp/gcloud-config` (host-visible mount, gitignored) and
-`.env` exports `CLOUDSDK_CONFIG=/workspace/.gcp/gcloud-config` so future
-sessions skip the OAuth dance entirely. The SA additionally holds
-`roles/iam.securityAdmin`, so future role grants can come from the SA
-itself without going back through user OAuth.
+`pixi.toml [activation.env]` exports
+`CLOUDSDK_CONFIG=$PIXI_PROJECT_ROOT/.gcp/gcloud-config` so any `pixi run`
+shell inherits it and future sessions skip the OAuth dance entirely. The
+SA additionally holds `roles/iam.securityAdmin`, so future role grants
+can come from the SA itself without going back through user OAuth.
 
 **Test count:** ~1071 (post-Phase-30) → **1111 passed / 6 skipped** (post-
 Phase-31). Delta: +40 net new offline tests across T2 (8+2), T3 (1),
