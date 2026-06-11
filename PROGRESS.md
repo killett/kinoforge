@@ -2541,3 +2541,26 @@ systematic-debugging Phase 1 evidence. No live spend.
 Full suite: **1930 passed, 26 skipped** (was 1898 + 26 at end of Phase 50;
 +32 reflects 9 new Phase 51 tests + 23 unrelated additions across
 in-flight branches collected by full-tree runs).
+
+### Phase 52 — GPU quota utilization-burn (Tasks 1–13)
+
+Spec: `docs/superpowers/specs/2026-06-10-gpu-quota-utilization-burn-spec.md`
+Plan: `docs/superpowers/plans/2026-06-10-gpu-quota-utilization-burn.md`
+
+Lib: `tools/quota_burn_lib.py` | CLI: `tools/quota_burn.py` (Task 8+)
+
+- [x] Task 1: Manifest dataclass + JSON round-trip — commit `682d236`
+- [x] Task 2: GCP spin-up helpers — commit `2b712f1`
+- [x] Task 3: GCP teardown + MTD spend snapshot helpers — commit `7f1bbc1`
+- [x] Task 4: AWS spin-up helpers — commit `698473b`
+- [x] Task 5: AWS teardown + MTD spend snapshot helpers — commit `33129a7`
+- [x] Task 6: Quota-submit helpers (GCP fallback URL + AWS case attach) — commit `12267f4`
+- [x] Task 7: BigQuery dry-run gate — `BigQueryCapExceeded` + `bq_scan_with_cap`; added `google-cloud-bigquery>=3.11` PyPI dep; 2 tests green — commit `ac00594`
+- [ ] Task 8: CLI dispatcher with subcommands
+- [ ] Task 9: Justification draft templates + PROGRESS update
+- [ ] Task 10: Day 0 — live spinup
+- [ ] Task 11: Days 1–4 daily snapshot
+- [ ] Task 12: Day 4 — populate justification drafts
+- [ ] Task 13: Day 5 — submit quotas + teardown + closeout
+
+**Single next action:** Task 8 — create `tools/quota_burn.py` CLI dispatcher with subcommands (`spin-up`, `tear-down`, `snapshot`, `scan-bigquery`, `submit-quota`); lazy-imports SDKs on the branch that needs them.
