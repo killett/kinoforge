@@ -55,6 +55,4 @@ def test_manifest_json_is_pretty_and_sorted(tmp_path: Path) -> None:
     path = tmp_path / "m.json"
     m.to_json(path)
     text = path.read_text()
-    assert "\n  " in text  # pretty
-    parsed_keys = list(json.loads(text).keys())
-    assert parsed_keys == sorted(parsed_keys)
+    assert text == json.dumps(json.loads(text), indent=2, sort_keys=True) + "\n"
