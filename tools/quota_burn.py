@@ -38,6 +38,16 @@ from tools.quota_burn_lib import (
     gcp_tear_down,
 )
 
+# Transparent .env shim — matches the kinoforge CLI convention so operators
+# don't have to remember to `export` every var before invoking the tool.
+# .env never overrides shell env (override=False by design).
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 _MANIFEST_PATH = Path(".quota_burn/manifest.json")
 _TAG = "kinoforge-quota-burn"
 # AWS Service Quotas: "Running On-Demand G/VT instance vCPUs" — gates GPU launches.
@@ -67,7 +77,7 @@ def _build_gcp_clients(*, project_id: str, operator_email: str) -> Any:  # noqa:
         ``billing_account``, ``notification_channel``).
     """
     from google.cloud import compute_v1, storage
-    from google.cloud.billing import budgets_v1  # type: ignore[import-untyped]
+    from google.cloud.billing import budgets_v1
 
     billing_id_raw = os.environ.get("GCP_BILLING_ACCOUNT_ID", "").strip()
     if not billing_id_raw:
