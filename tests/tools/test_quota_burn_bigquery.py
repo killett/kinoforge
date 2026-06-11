@@ -25,9 +25,8 @@ class FakeBqClient:
 
     def query(self, sql: str, **kwargs: Any) -> FakeBqJob:
         self.queries.append({"sql": sql, **kwargs})
-        if kwargs.get("dry_run", False) or (
-            kwargs.get("job_config") and getattr(kwargs["job_config"], "dry_run", False)
-        ):
+        cfg = kwargs.get("job_config")
+        if cfg is not None and getattr(cfg, "dry_run", False):
             return FakeBqJob(total_bytes_processed=self.dry_run_bytes, rows=0)
         return FakeBqJob(total_bytes_processed=self.dry_run_bytes, rows=self.live_rows)
 
@@ -55,3 +54,15 @@ def test_bq_scan_with_cap_blocks_when_over_cap() -> None:
         )
     # Only the dry-run fired, not the live query.
     assert len(client.queries) == 1
+
+
+def test_bq_scan_with_cap_at_exact_cap_runs() -> None:
+    """Bug catch: the guard is `bytes_billed > max_bytes_billed` (strict >).
+    A bytes-equal-to-cap query MUST be allowed through; if someone changes
+    `>` to `>=` this test fails and forces a conscious policy decision."""
+    client = FakeBqClient(dry_run_bytes=10_000_000_000, live_rows=42)
+    out = bq_scan_with_cap(
+        client, sql="SELECT * FROM `t`", max_bytes_billed=10_000_000_000
+    )
+    assert out == {"rows": 42, "bytes_billed": 10_000_000_000}
+    assert len(client.queries) == 2  # both dry-run and live fired
