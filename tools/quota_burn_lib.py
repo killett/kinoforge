@@ -44,6 +44,7 @@ class Manifest:
     aws_budget_name: str | None
     created_at: str
     tag: str = "kinoforge-quota-burn"
+    aws_region: str = "us-west-2"
 
     def to_json(self, path: Path) -> None:
         """Write manifest to path as pretty-sorted JSON."""
