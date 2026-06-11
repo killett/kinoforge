@@ -123,6 +123,7 @@ def _do_spinup(args: argparse.Namespace) -> int:
         aws_budget_name=aws_out["budget_name"],
         created_at=datetime.now().isoformat(timespec="seconds"),
         tag=_TAG,
+        aws_region=args.aws_region,
     )
     m.to_json(_MANIFEST_PATH)
     print(f"manifest written: {_MANIFEST_PATH}")
@@ -133,12 +134,12 @@ def _do_teardown(args: argparse.Namespace) -> int:
     """Read the manifest, destroy every resource it lists, delete manifest."""
     m = Manifest.from_json(_MANIFEST_PATH)
     gcp = _build_gcp_clients(project_id=args.project_id, operator_email="")
-    aws = _build_aws_clients(region="us-west-2", operator_email="")
+    aws = _build_aws_clients(region=m.aws_region, operator_email="")
     gcp_deleted = gcp_tear_down(gcp, m, project_id=args.project_id, zone=args.zone)
     aws_deleted = aws_tear_down(aws, m)
     print(f"GCP deleted: {gcp_deleted}")
     print(f"AWS deleted: {aws_deleted}")
-    _MANIFEST_PATH.unlink()
+    _MANIFEST_PATH.unlink(missing_ok=True)
     return 0
 
 
