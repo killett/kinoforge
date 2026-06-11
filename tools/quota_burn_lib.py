@@ -356,6 +356,8 @@ def aws_spin_up(
 
     user_data_b64 = base64.b64encode(_USER_DATA_TEMPLATE.encode()).decode()
     run = clients.ec2.run_instances(
+        # Note: 'ebs-gp2' in the SSM path is the Canonical AMI family label, NOT the
+        # launch-time volume type. The BlockDeviceMappings override below gets gp3.
         ImageId="resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id",
         InstanceType="t4g.nano",
         MinCount=1,
@@ -380,10 +382,10 @@ def aws_spin_up(
     instance_id = run["Instances"][0]["InstanceId"]
     volume_id = run["Instances"][0]["BlockDeviceMappings"][0]["Ebs"]["VolumeId"]
 
-    clients.s3.create_bucket(
-        Bucket=bucket_name,
-        CreateBucketConfiguration={"LocationConstraint": region},
-    )
+    create_kwargs: dict[str, Any] = {"Bucket": bucket_name}
+    if region != "us-east-1":
+        create_kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
+    clients.s3.create_bucket(**create_kwargs)
     clients.s3.put_bucket_tagging(Bucket=bucket_name, Tagging={"TagSet": tags})
 
     clients.dynamo.create_table(
