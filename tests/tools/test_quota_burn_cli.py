@@ -81,8 +81,9 @@ def test_cli_teardown_reads_manifest_then_deletes_it(
         aws_buckets=["s3-1"],
         aws_tables=["tab"],
         aws_budget_name="bn",
-        created_at="2026-06-10T09:30:00",
+        created_at="2026-06-11T00:00:00",
         tag="kinoforge-quota-burn",
+        aws_region="eu-central-1",  # non-default to prove it flows through
     )
     manifest_path = tmp_path / "manifest.json"
     m.to_json(manifest_path)
@@ -90,11 +91,10 @@ def test_cli_teardown_reads_manifest_then_deletes_it(
 
     with (
         patch("tools.quota_burn._build_gcp_clients", return_value=MagicMock()),
-        patch("tools.quota_burn._build_aws_clients", return_value=MagicMock()),
         patch(
-            "tools.quota_burn.gcp_tear_down",
-            return_value=["v", "d", "b", "bid"],
-        ),
+            "tools.quota_burn._build_aws_clients", return_value=MagicMock()
+        ) as mock_build_aws,
+        patch("tools.quota_burn.gcp_tear_down", return_value=["v", "d", "b", "bid"]),
         patch(
             "tools.quota_burn.aws_tear_down",
             return_value=["i-1", "vol-1", "s3-1", "tab", "bn"],
@@ -111,6 +111,9 @@ def test_cli_teardown_reads_manifest_then_deletes_it(
         )
     assert rc == 0
     assert not manifest_path.exists()
+    # CRITICAL: assert the manifest's aws_region propagated to _build_aws_clients.
+    # Without this, a regression that hardcodes "us-west-2" would silently pass.
+    assert mock_build_aws.call_args.kwargs["region"] == "eu-central-1"
 
 
 def test_cli_root_does_not_import_cloud_sdks() -> None:

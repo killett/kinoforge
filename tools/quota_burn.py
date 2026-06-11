@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -39,10 +40,20 @@ from tools.quota_burn_lib import (
 
 _MANIFEST_PATH = Path(".quota_burn/manifest.json")
 _TAG = "kinoforge-quota-burn"
+# AWS Service Quotas: "Running On-Demand G/VT instance vCPUs" — gates GPU launches.
+_AWS_GPU_QUOTA_CODE = "L-DB2E81BA"
+# Minimum to launch 1× g4dn.xlarge (= 1 GPU + 4 vCPU).
+_AWS_GPU_DESIRED_VALUE = 4
 
 
 def _build_gcp_clients(*, project_id: str, operator_email: str) -> Any:  # noqa: ANN401
     """Lazy-construct the real GCP clients needed for spinup / teardown.
+
+    Reads two env vars:
+    - GCP_BILLING_ACCOUNT_ID: required for spinup (budget parent). Format
+      ``billingAccounts/<ID>`` or just ``<ID>`` (we prefix if missing).
+    - GCP_NOTIFICATION_CHANNEL_ID: optional. Full resource name
+      ``projects/<proj>/notificationChannels/<id>`` or empty string.
 
     Args:
         project_id: Target GCP project ID.
@@ -58,17 +69,29 @@ def _build_gcp_clients(*, project_id: str, operator_email: str) -> Any:  # noqa:
     from google.cloud import compute_v1, storage
     from google.cloud.billing import budgets_v1  # type: ignore[import-untyped]
 
+    billing_id_raw = os.environ.get("GCP_BILLING_ACCOUNT_ID", "").strip()
+    if not billing_id_raw:
+        raise RuntimeError(
+            "GCP_BILLING_ACCOUNT_ID env var is required for quota_burn spinup "
+            "(GCP budget parent). Set it in .env to your billing account ID "
+            "(format: billingAccounts/<ID> or just <ID>)."
+        )
+    billing_id = (
+        billing_id_raw
+        if billing_id_raw.startswith("billingAccounts/")
+        else f"billingAccounts/{billing_id_raw}"
+    )
+    notification_channel_raw = os.environ.get("GCP_NOTIFICATION_CHANNEL_ID", "").strip()
+
     class _Bundle:
         instances = compute_v1.InstancesClient()
         disks = compute_v1.DisksClient()
         storage = storage.Client(project=project_id)
         budgets = budgets_v1.BudgetServiceClient()
-        billing_account = ""  # populated from env or operator config
-        notification_channel = ""
+        billing_account = billing_id
+        notification_channel = notification_channel_raw
 
-    bundle = _Bundle()
-    bundle.operator_email = operator_email  # type: ignore[attr-defined]
-    return bundle
+    return _Bundle()
 
 
 def _build_aws_clients(*, region: str, operator_email: str) -> Any:  # noqa: ANN401
@@ -191,8 +214,8 @@ def _do_submit_quota(args: argparse.Namespace) -> int:
     aws_result = aws_submit_quota(
         _AwsPair(),
         region=args.aws_region,
-        quota_code="L-DB2E81BA",
-        desired_value=4,
+        quota_code=_AWS_GPU_QUOTA_CODE,
+        desired_value=_AWS_GPU_DESIRED_VALUE,
         justification_text=just_aws,
     )
     print(f"AWS request: {aws_result.request_ids}")
