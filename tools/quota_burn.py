@@ -76,7 +76,8 @@ def _build_gcp_clients(*, project_id: str, operator_email: str) -> Any:  # noqa:
         (``instances``, ``disks``, ``storage``, ``budgets``,
         ``billing_account``, ``notification_channel``).
     """
-    from google.cloud import compute_v1, storage
+    from google.cloud import compute_v1
+    from google.cloud import storage as _storage
     from google.cloud.billing import budgets_v1
 
     billing_id_raw = os.environ.get("GCP_BILLING_ACCOUNT_ID", "").strip()
@@ -96,7 +97,7 @@ def _build_gcp_clients(*, project_id: str, operator_email: str) -> Any:  # noqa:
     class _Bundle:
         instances = compute_v1.InstancesClient()
         disks = compute_v1.DisksClient()
-        storage = storage.Client(project=project_id)
+        storage = _storage.Client(project=project_id)
         budgets = budgets_v1.BudgetServiceClient()
         billing_account = billing_id
         notification_channel = notification_channel_raw
