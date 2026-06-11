@@ -1,95 +1,123 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-10-gpu-quota-utilization-burn.md",
-  "lastUpdated": "2026-06-10T10:30:00",
+  "lastUpdated": "2026-06-11T01:19:22",
   "tasks": [
     {
       "id": 1,
       "subject": "Task 1: Manifest dataclass + JSON round-trip",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Persist the tagged-resource list to JSON; round-trips identically.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_manifest.py`, `.gitignore`.\n\n**Acceptance Criteria:** Manifest dataclass(slots=True); to_json pretty-sorted; from_json round-trips + raises FileNotFoundError; .gitignore excludes .quota_burn/.\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_manifest.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_manifest.py\", \".gitignore\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_manifest.py -v\", \"acceptanceCriteria\": [\"Manifest dataclass with slots=True\", \"to_json writes pretty-sorted JSON\", \"from_json round-trips and raises FileNotFoundError\", \".gitignore excludes .quota_burn/\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: GCP spin-up helpers",
-      "status": "pending",
-      "blockedBy": [1],
+      "status": "completed",
+      "blockedBy": [
+        1
+      ],
       "description": "**Goal:** gcp_spin_up provisions VM + disk + GCS bucket + budget via injected clients.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_gcp.py`.\n\n**Acceptance Criteria:** returns {vm,disk,bucket,budget_id}; e2-small + 10GB pd-balanced; tag every resource; shutdown -h +480 in startup-script; no google.cloud import in helper.\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_gcp.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_gcp.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_gcp.py -v\", \"acceptanceCriteria\": [\"gcp_spin_up returns dict with vm/disk/bucket/budget_id keys\", \"every resource carries kinoforge-quota-burn=true label\", \"VM startup-script contains shutdown -h +480\", \"machine type is e2-small\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: GCP teardown + MTD snapshot helpers",
-      "status": "pending",
-      "blockedBy": [2],
-      "description": "**Goal:** gcp_tear_down destroys manifest resources (idempotent on NotFound); gcp_mtd_spend groups BigQuery billing rows by service.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_gcp.py`.\n\n**Acceptance Criteria:** order VMs→disks→buckets→budget; NotFound swallowed; non-NotFound propagates; mtd returns dict[service,usd].\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_gcp.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_gcp.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_gcp.py -v\", \"acceptanceCriteria\": [\"gcp_tear_down deletes every manifest resource\", \"NotFound swallowed; other errors propagate\", \"gcp_mtd_spend groups by service into dict\"]}\n```"
+      "status": "completed",
+      "blockedBy": [
+        2
+      ],
+      "description": "**Goal:** gcp_tear_down destroys manifest resources (idempotent on NotFound); gcp_mtd_spend groups BigQuery billing rows by service.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_gcp.py`.\n\n**Acceptance Criteria:** order VMs\u2192disks\u2192buckets\u2192budget; NotFound swallowed; non-NotFound propagates; mtd returns dict[service,usd].\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_gcp.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_gcp.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_gcp.py -v\", \"acceptanceCriteria\": [\"gcp_tear_down deletes every manifest resource\", \"NotFound swallowed; other errors propagate\", \"gcp_mtd_spend groups by service into dict\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: AWS spin-up helpers",
-      "status": "pending",
-      "blockedBy": [1],
+      "status": "completed",
+      "blockedBy": [
+        1
+      ],
       "description": "**Goal:** aws_spin_up provisions EC2 + EBS + S3 + DynamoDB + Budget via injected boto3 clients.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_aws.py`.\n\n**Acceptance Criteria:** returns {instance,volume,bucket,table,budget_name}; t4g.nano + 30GB gp3; UserData shutdown -h +480 + InstanceInitiatedShutdownBehavior=terminate; every resource tagged; no boto3 import in helper.\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_aws.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_aws.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_aws.py -v\", \"acceptanceCriteria\": [\"aws_spin_up returns dict with 5 keys\", \"t4g.nano with 30 GB gp3\", \"kernel shutdown AND InstanceInitiatedShutdownBehavior=terminate\", \"all resources tagged\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: AWS teardown + MTD snapshot helpers",
-      "status": "pending",
-      "blockedBy": [4],
-      "description": "**Goal:** aws_tear_down destroys manifest in correct order (EC2 + waiter → EBS → S3 empty+delete → DynamoDB → Budget); idempotent on 4 AWS NotFound codes.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_aws.py`.\n\n**Acceptance Criteria:** order respected with waiter; NotFound codes (InvalidInstanceID.NotFound, InvalidVolume.NotFound, NoSuchBucket, ResourceNotFoundException, NotFoundException) all swallowed; non-NotFound ClientError raises; aws_mtd_spend groups CE rows by service.\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_aws.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_aws.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_aws.py -v\", \"acceptanceCriteria\": [\"aws_tear_down deletes in correct order with S3-empty step\", \"idempotent on all 4 AWS NotFound codes\", \"non-NotFound ClientError propagates\", \"aws_mtd_spend groups by service\"]}\n```"
+      "status": "completed",
+      "blockedBy": [
+        4
+      ],
+      "description": "**Goal:** aws_tear_down destroys manifest in correct order (EC2 + waiter \u2192 EBS \u2192 S3 empty+delete \u2192 DynamoDB \u2192 Budget); idempotent on 4 AWS NotFound codes.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_aws.py`.\n\n**Acceptance Criteria:** order respected with waiter; NotFound codes (InvalidInstanceID.NotFound, InvalidVolume.NotFound, NoSuchBucket, ResourceNotFoundException, NotFoundException) all swallowed; non-NotFound ClientError raises; aws_mtd_spend groups CE rows by service.\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_aws.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_aws.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_aws.py -v\", \"acceptanceCriteria\": [\"aws_tear_down deletes in correct order with S3-empty step\", \"idempotent on all 4 AWS NotFound codes\", \"non-NotFound ClientError propagates\", \"aws_mtd_spend groups by service\"]}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: Quota-submit helpers (GCP fallback + AWS case attach)",
-      "status": "pending",
-      "blockedBy": [1],
+      "status": "completed",
+      "blockedBy": [
+        1
+      ],
       "description": "**Goal:** GCP submit_quota submits both metrics or returns console fallback URL; AWS submit_quota attaches justification to auto-opened support case.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_submit.py`.\n\n**Acceptance Criteria:** QuotaSubmitResult(submitted, request_ids, console_url); GCP submits GPUS_ALL_REGIONS + NVIDIA_T4_GPUS; on GCP SDK exception returns submitted=False + console_url; AWS calls request_service_quota_increase then support.add_communication_to_case (no Reason field on quotas API); AWS path raises on SDK error.\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_submit.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_submit.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_submit.py -v\", \"acceptanceCriteria\": [\"QuotaSubmitResult dataclass with submitted/request_ids/console_url\", \"gcp_submit_quota submits both metrics, fallback URL on error\", \"aws_submit_quota attaches justification via support.add_communication_to_case\", \"AWS errors propagate\"]}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: BigQuery dry-run gate",
-      "status": "pending",
-      "blockedBy": [1],
+      "status": "completed",
+      "blockedBy": [
+        1
+      ],
       "description": "**Goal:** bq_scan_with_cap dry-runs first, refuses live query if estimated bytes > cap, sets maximum_bytes_billed on live query.\n\n**Files:** `tools/quota_burn_lib.py`, `tests/tools/test_quota_burn_bigquery.py`.\n\n**Acceptance Criteria:** under-cap returns {rows,bytes_billed}; over-cap raises BigQueryCapExceeded BEFORE live query fires; live query carries maximum_bytes_billed.\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_bigquery.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn_lib.py\", \"tests/tools/test_quota_burn_bigquery.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_bigquery.py -v\", \"acceptanceCriteria\": [\"bq_scan_with_cap dry-runs first\", \"over-cap raises BigQueryCapExceeded before live query\", \"live query carries maximum_bytes_billed\"]}\n```"
     },
     {
       "id": 8,
       "subject": "Task 8: CLI dispatcher with subcommands",
-      "status": "pending",
-      "blockedBy": [2, 3, 4, 5, 6, 7],
+      "status": "completed",
+      "blockedBy": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
       "description": "**Goal:** tools/quota_burn.py CLI with 5 subcommands; lazy SDK imports per branch.\n\n**Files:** `tools/quota_burn.py`, `tests/tools/test_quota_burn_cli.py`.\n\n**Acceptance Criteria:** subcommands spinup/teardown/snapshot/submit-quota/scan-bigquery; spinup writes manifest at .quota_burn/manifest.json; teardown reads it and deletes the file; importing tools.quota_burn does NOT import google.cloud or boto3.\n\n**Verify:** `pixi run pytest tests/tools/test_quota_burn_cli.py -v`\n\n```json:metadata\n{\"files\": [\"tools/quota_burn.py\", \"tests/tools/test_quota_burn_cli.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_quota_burn_cli.py -v\", \"acceptanceCriteria\": [\"5 subcommands wired\", \"spinup writes manifest, teardown deletes it\", \"no SDK imports on root module load\"]}\n```"
     },
     {
       "id": 9,
       "subject": "Task 9: Justification draft templates + PROGRESS update",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Land AWS + GCP justification drafts with $MTD_SPEND_USD$ placeholders + Phase 52 entry in PROGRESS.\n\n**Files:** `docs/quota-justification-aws.md`, `docs/quota-justification-gcp.md`, `PROGRESS.md`.\n\n**Acceptance Criteria:** both drafts have 4 template blocks (Workload/Account context/Cost controls/Repository); $MTD_SPEND_USD$ in both; PROGRESS Phase 52 entry committed; Single-next-action points at Phase 52.\n\n**Verify:** `rg '\\$MTD_SPEND_USD\\$' docs/quota-justification-*.md` returns 2 hits.\n\n```json:metadata\n{\"files\": [\"docs/quota-justification-aws.md\", \"docs/quota-justification-gcp.md\", \"PROGRESS.md\"], \"verifyCommand\": \"rg '\\\\$MTD_SPEND_USD\\\\$' docs/quota-justification-aws.md docs/quota-justification-gcp.md\", \"acceptanceCriteria\": [\"both drafts have 4 template blocks\", \"$MTD_SPEND_USD$ placeholder in both files\", \"PROGRESS Phase 52 entry committed\"]}\n```"
     },
     {
       "id": 10,
-      "subject": "Task 10: Day 0 — live spinup",
+      "subject": "Task 10: Day 0 \u2014 live spinup",
       "status": "pending",
-      "blockedBy": [8, 9],
+      "blockedBy": [
+        8,
+        9
+      ],
       "description": "**Goal:** Run CLI spinup, verify resources exist on both clouds, log resource IDs to PROGRESS.\n\n**Files:** `PROGRESS.md` (manifest .quota_burn/manifest.json is gitignored).\n\n**Acceptance Criteria:** preflight passes; spinup exits 0; gcloud + aws show exactly 1 tagged instance each; PROGRESS Phase 52 Task 10 marked done with non-sensitive resource IDs.\n\n**Verify:** `gcloud compute instances list --filter='labels.kinoforge-quota-burn=true'` shows 1; `aws ec2 describe-instances --filters Name=tag:kinoforge-quota-burn,Values=true` shows 1.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"gcloud compute instances list --project kinoforge-prod-0ddb375e --filter='labels.kinoforge-quota-burn=true' --format='value(name)' | wc -l\", \"acceptanceCriteria\": [\"preflight passes\", \"spinup exits 0\", \"exactly 1 GCP VM + 1 AWS instance tagged\", \"PROGRESS Phase 52 Task 10 marked done\"]}\n```"
     },
     {
       "id": 11,
-      "subject": "Task 11: Days 1–4 daily snapshot",
+      "subject": "Task 11: Days 1\u20134 daily snapshot",
       "status": "pending",
-      "blockedBy": [10],
-      "description": "**Goal:** Daily MTD-spend snapshot logged into PROGRESS so resume sessions see pacing.\n\n**Files:** `PROGRESS.md`.\n\n**Acceptance Criteria:** 4 daily snapshot entries; pause-at-$10 / abort-at-$15 enforced; ≥ 4 'Phase 52 day' commits in git log.\n\n**Verify:** `git log --oneline | rg 'Phase 52 day' | wc -l` ≥ 4.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"git log --oneline | grep 'Phase 52 day' | wc -l\", \"acceptanceCriteria\": [\"snapshot run 4 times\", \"PROGRESS shows 4 day-N lines\", \"pause-at-$10 and abort-at-$15 thresholds enforced\"]}\n```"
+      "blockedBy": [
+        10
+      ],
+      "description": "**Goal:** Daily MTD-spend snapshot logged into PROGRESS so resume sessions see pacing.\n\n**Files:** `PROGRESS.md`.\n\n**Acceptance Criteria:** 4 daily snapshot entries; pause-at-$10 / abort-at-$15 enforced; \u2265 4 'Phase 52 day' commits in git log.\n\n**Verify:** `git log --oneline | rg 'Phase 52 day' | wc -l` \u2265 4.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"git log --oneline | grep 'Phase 52 day' | wc -l\", \"acceptanceCriteria\": [\"snapshot run 4 times\", \"PROGRESS shows 4 day-N lines\", \"pause-at-$10 and abort-at-$15 thresholds enforced\"]}\n```"
     },
     {
       "id": 12,
-      "subject": "Task 12: Day 4 — populate justification drafts",
+      "subject": "Task 12: Day 4 \u2014 populate justification drafts",
       "status": "pending",
-      "blockedBy": [11],
-      "description": "**Goal:** Substitute $MTD_SPEND_USD$ in both justifications with day-4 snapshot per-service breakdown.\n\n**Files:** `docs/quota-justification-gcp.md`, `docs/quota-justification-aws.md`.\n\n**Acceptance Criteria:** zero $MTD_SPEND_USD$ remain; each Account-context paragraph names ≥ 3 services with $ figures; operator surfaced in chat for skim.\n\n**Verify:** `rg '\\$MTD_SPEND_USD\\$' docs/quota-justification-*.md` returns 0 hits.\n\n```json:metadata\n{\"files\": [\"docs/quota-justification-gcp.md\", \"docs/quota-justification-aws.md\"], \"verifyCommand\": \"rg '\\\\$MTD_SPEND_USD\\\\$' docs/quota-justification-aws.md docs/quota-justification-gcp.md | wc -l\", \"acceptanceCriteria\": [\"zero placeholders remain\", \"3+ service breakdown per file\", \"operator reviewed in chat\"]}\n```"
+      "blockedBy": [
+        11
+      ],
+      "description": "**Goal:** Substitute $MTD_SPEND_USD$ in both justifications with day-4 snapshot per-service breakdown.\n\n**Files:** `docs/quota-justification-gcp.md`, `docs/quota-justification-aws.md`.\n\n**Acceptance Criteria:** zero $MTD_SPEND_USD$ remain; each Account-context paragraph names \u2265 3 services with $ figures; operator surfaced in chat for skim.\n\n**Verify:** `rg '\\$MTD_SPEND_USD\\$' docs/quota-justification-*.md` returns 0 hits.\n\n```json:metadata\n{\"files\": [\"docs/quota-justification-gcp.md\", \"docs/quota-justification-aws.md\"], \"verifyCommand\": \"rg '\\\\$MTD_SPEND_USD\\\\$' docs/quota-justification-aws.md docs/quota-justification-gcp.md | wc -l\", \"acceptanceCriteria\": [\"zero placeholders remain\", \"3+ service breakdown per file\", \"operator reviewed in chat\"]}\n```"
     },
     {
       "id": 13,
-      "subject": "Task 13: Day 5 — submit quotas + teardown + closeout",
+      "subject": "Task 13: Day 5 \u2014 submit quotas + teardown + closeout",
       "status": "pending",
-      "blockedBy": [12],
-      "description": "**Goal:** Submit both quota requests with populated justifications; tear down every burn resource; verify zero remaining; commit final PROGRESS closeout.\n\n**Files:** `PROGRESS.md`.\n\n**Acceptance Criteria:** submit-quota exits 0 (or operator clicks GCP fallback URL); AWS Service Quotas shows pending L-DB2E81BA=4 in us-west-2; teardown removes everything + deletes manifest file; zero tagged resources on either cloud; PROGRESS closeout block committed with total spend ≤ $20 + follow-up A18 entry.\n\n**Verify:** four cloud-side queries return 0 / empty.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"aws ec2 describe-instances --region us-west-2 --filters Name=tag:kinoforge-quota-burn,Values=true --query 'length(Reservations[].Instances[])'\", \"acceptanceCriteria\": [\"both quotas submitted (or GCP fallback URL clicked)\", \"teardown removes everything\", \"zero tagged resources on either cloud\", \"PROGRESS closeout committed\"]}\n```"
+      "blockedBy": [
+        12
+      ],
+      "description": "**Goal:** Submit both quota requests with populated justifications; tear down every burn resource; verify zero remaining; commit final PROGRESS closeout.\n\n**Files:** `PROGRESS.md`.\n\n**Acceptance Criteria:** submit-quota exits 0 (or operator clicks GCP fallback URL); AWS Service Quotas shows pending L-DB2E81BA=4 in us-west-2; teardown removes everything + deletes manifest file; zero tagged resources on either cloud; PROGRESS closeout block committed with total spend \u2264 $20 + follow-up A18 entry.\n\n**Verify:** four cloud-side queries return 0 / empty.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"aws ec2 describe-instances --region us-west-2 --filters Name=tag:kinoforge-quota-burn,Values=true --query 'length(Reservations[].Instances[])'\", \"acceptanceCriteria\": [\"both quotas submitted (or GCP fallback URL clicked)\", \"teardown removes everything\", \"zero tagged resources on either cloud\", \"PROGRESS closeout committed\"]}\n```"
     }
   ]
 }
