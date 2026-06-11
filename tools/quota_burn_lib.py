@@ -137,6 +137,14 @@ def gcp_spin_up(
                 },
             }
         ],
+        "network_interfaces": [
+            {
+                "network": "global/networks/default",
+                "access_configs": [
+                    {"name": "External NAT", "type_": "ONE_TO_ONE_NAT"},
+                ],
+            }
+        ],
     }
     clients.instances.insert(
         project=project_id, zone=zone, instance_resource=instance
