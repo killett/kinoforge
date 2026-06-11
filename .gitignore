@@ -16,6 +16,7 @@ htmlcov/
 
 # Build/runtime artefacts
 .kinoforge/
+.quota_burn/
 
 # Editor + OS
 .vscode/
