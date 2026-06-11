@@ -31,12 +31,26 @@ class FakeInstancesClient:
 
 
 @dataclass
+class _FakeBucket:
+    name: str
+    location: str
+    labels: dict[str, str] = field(default_factory=dict)
+    patched: bool = False
+
+    def patch(self) -> None:
+        self.patched = True
+
+
+@dataclass
 class FakeStorageClient:
     create_calls: list[dict[str, Any]] = field(default_factory=list)
+    buckets: list[_FakeBucket] = field(default_factory=list)
 
-    def create_bucket(self, name: str, *, location: str) -> Any:
+    def create_bucket(self, name: str, *, location: str) -> _FakeBucket:
         self.create_calls.append({"name": name, "location": location})
-        return type("Bucket", (), {"name": name, "location": location})()
+        b = _FakeBucket(name=name, location=location)
+        self.buckets.append(b)
+        return b
 
 
 @dataclass
@@ -79,6 +93,7 @@ def test_gcp_spin_up_returns_resource_ids() -> None:
     assert set(out.keys()) == {"vm", "disk", "bucket", "budget_id"}
     assert isinstance(out["vm"], str) and out["vm"].startswith("kinoforge-burn-")
     assert isinstance(out["disk"], str)
+    assert out["disk"].startswith("kinoforge-burn-") and out["disk"].endswith("-disk")
     assert out["bucket"].startswith("kinoforge-quota-burn-gcp-")
     assert out["budget_id"] == "billingAccounts/ACME/budgets/burn-7"
 
@@ -94,8 +109,24 @@ def test_gcp_spin_up_tags_every_resource() -> None:
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
     )
+    tag = "kinoforge-quota-burn"
     vm_call = clients.instances.insert_calls[0]
-    assert vm_call["instance"].labels == {"kinoforge-quota-burn": "true"}
+
+    # VM labels
+    assert vm_call["instance"].labels == {tag: "true"}
+
+    # Disk labels (embedded in the instance disk initialize_params)
+    disk_labels = vm_call["instance"].disks[0]["initialize_params"]["labels"]
+    assert disk_labels == {tag: "true"}
+
+    # Bucket labels — set via post-create patch()
+    assert clients.storage.buckets[0].labels == {tag: "true"}
+    assert clients.storage.buckets[0].patched is True
+
+    # Budget filter uses real Budgets v1 proto shape (no top-level labels)
+    budget_arg = clients.budgets.create_calls[0]["budget"]
+    assert hasattr(budget_arg, "budget_filter")
+    assert budget_arg.budget_filter.labels == {tag: {"values": ["true"]}}
 
 
 def test_gcp_spin_up_arms_kernel_shutdown() -> None:

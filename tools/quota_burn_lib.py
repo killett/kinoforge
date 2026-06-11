@@ -107,7 +107,8 @@ def gcp_spin_up(
     """Provision GCP burn workload; return resource IDs for the manifest.
 
     Spins: 1 e2-small VM with 10 GB pd-balanced disk in `zone`; 1 GCS bucket in
-    `region`; 1 budget at $7 hard cap routed to operator email.
+    `region`; 1 budget at $7 alert threshold routed to operator email; GCP
+    budgets are alerting-only and do not block API usage.
 
     All resources carry label `<tag>=true`. VM startup-script runs
     `shutdown -h +480` (8-hour kernel-side kill, kinoforge spec §3 stack
@@ -158,19 +159,38 @@ def gcp_spin_up(
         project=project_id, zone=zone, instance_resource=instance
     ).result(timeout=300)
 
-    clients.storage.create_bucket(bucket_name, location=region)
+    bucket = clients.storage.create_bucket(bucket_name, location=region)
+    bucket.labels = {tag: "true"}
+    bucket.patch()
 
-    budget = {
-        "display_name": f"kinoforge-quota-burn-{datetime.now().strftime('%Y%m%d')}",
-        "amount": {"specified_amount": {"currency_code": "USD", "units": 7}},
-        "notifications_rule": {
+    @dataclass
+    class _BudgetFilter:
+        labels: dict[str, dict[str, list[str]]]
+
+    @dataclass
+    class _BudgetAmount:
+        specified_amount: dict[str, object]
+
+    @dataclass
+    class _Budget:
+        display_name: str
+        amount: _BudgetAmount
+        budget_filter: _BudgetFilter
+        threshold_rules: list[dict[str, float]]
+        notifications_rule: dict[str, object]
+
+    budget = _Budget(
+        display_name=f"kinoforge-quota-burn-{datetime.now().strftime('%Y%m%d')}",
+        amount=_BudgetAmount(specified_amount={"currency_code": "USD", "units": 7}),
+        budget_filter=_BudgetFilter(labels={tag: {"values": ["true"]}}),
+        threshold_rules=[{"threshold_percent": 1.0}],
+        notifications_rule={
             "pubsub_topic": None,
             "schema_version": "1.0",
             "monitoring_notification_channels": [clients.notification_channel],
             "disable_default_iam_recipients": False,
         },
-        "labels": {tag: "true"},
-    }
+    )
     budget_resp = clients.budgets.create_budget(
         parent=clients.billing_account, budget=budget
     )
