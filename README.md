@@ -1378,6 +1378,26 @@ url = store.signed_url("run-1", "out.mp4", op="GET", ttl_s=600)
 `LocalArtifactStore` does not support signed URLs (no transport-layer
 auth for local files) and raises `NotImplementedError`.
 
+## Releasing
+
+Version bumps run through a single command so the pyproject pin can't
+drift from the git tag (the v0.1.0/v0.4.0 mismatch surfaced during
+Phase 50 closeout):
+
+```
+pixi run release 0.6.0
+pixi run release 0.6.0 --note "graceful interrupt UX"
+```
+
+The helper refuses on dirty tree, existing tag, missing/duplicate
+version line, or non-forward bump. On success it leaves one new commit
+(`chore(release): bump version to X.Y.Z`) and one annotated tag
+(`vX.Y.Z`) ready for `git push origin main --follow-tags`.
+
+See `tools/release.py` for the contract and `tests/tools/test_release.py`
+for the safety guards (multi-line abort, missing-line abort, semver
+shape, forward-only bump).
+
 ## Design references
 
 The `providers/skypilot/` adapter wraps [SkyPilot](https://github.com/skypilot-org/skypilot) (Apache 2.0, UC Berkeley Sky Computing Lab). SkyPilot was a major influence on kinoforge's `ComputeProvider` abstraction, particularly the autostop mapping (`idle_timeout_s → autostop minutes`), the cost-aware GPU offer selection model, and the principle that cloud portability should be configuration-level rather than code-level. We credit the SkyPilot authors and recommend their work for anyone building on cloud-portable ML infrastructure.

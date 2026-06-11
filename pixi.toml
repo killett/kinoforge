@@ -126,6 +126,10 @@ probe-hosted = "python -m tools.probe_hosted"
 # git working tree before any tool that costs money is invoked. Operator-facing
 # — exit 0 == safe to spend; non-zero == fix the surfaced gap. See tools/preflight.py.
 preflight = "python tools/preflight.py"
+# Release helper — bump pyproject version, commit, and create annotated git tag
+# in one shot. Refuses on dirty tree, existing tag, or non-forward bump. Prevents
+# the v0.1.0/v0.4.0 drift that surfaced in Phase 50. See tools/release.py.
+release = "python tools/release.py"
 # Live-verify the in-pod selfterm watchdog. Boots a minimal pod with
 # max_lifetime=60s + a sleep bootstrap, polls until self-destroy or wall
 # cap. Cost ~$0.005-0.01 per run. Run once per release; not part of CI.
