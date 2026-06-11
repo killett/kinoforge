@@ -40,6 +40,8 @@ def test_gcp_submit_quota_submits_both_metrics() -> None:
     assert "compute.googleapis.com/gpus_all_regions" in submitted_metrics
     assert "compute.googleapis.com/nvidia_t4_gpus" in submitted_metrics
     assert result.console_url is None
+    for call in client.calls:
+        assert call["reason"] == "reason text"
 
 
 def test_gcp_submit_quota_falls_back_to_console_url_on_failure() -> None:
@@ -104,6 +106,35 @@ def test_aws_submit_quota_submits_and_attaches_justification() -> None:
     # Justification routed to the case
     assert pair.support.case_comments[0]["caseId"] == "case-456"
     assert pair.support.case_comments[0]["communicationBody"] == "my reason text"
+
+
+def test_aws_submit_quota_handles_missing_case_id_gracefully() -> None:
+    """Bug catch: AWS sometimes doesn't open a Support case for a quota
+    increase (or omits the CaseId field). Unconditional ["CaseId"] access
+    would raise KeyError AFTER the quota was already submitted — caller
+    sees a crash instead of submitted=True. Skip the support call cleanly
+    when CaseId is absent."""
+
+    @dataclass
+    class _NoCaseQuotas:
+        calls: list[dict[str, Any]] = field(default_factory=list)
+
+        def request_service_quota_increase(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(kwargs)
+            return {"RequestedQuota": {"Id": "req-789"}}  # no CaseId
+
+    pair = FakeAwsClientPair(quotas=_NoCaseQuotas(), support=FakeAwsSupport())  # type: ignore[arg-type]
+    result = aws_submit_quota(
+        pair,
+        region="us-west-2",
+        quota_code="L-DB2E81BA",
+        desired_value=4,
+        justification_text="reason",
+    )
+    assert result.submitted is True
+    assert result.request_ids == ["req-789"]
+    # No support call should fire when CaseId is missing.
+    assert pair.support.case_comments == []
 
 
 def test_aws_submit_quota_propagates_sdk_failures() -> None:
