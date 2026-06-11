@@ -741,3 +741,62 @@ def aws_submit_quota(
         request_ids=[request_id],
         console_url=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# BigQuery scan helpers
+# ---------------------------------------------------------------------------
+
+
+class BigQueryCapExceeded(RuntimeError):
+    """Raised when a BigQuery dry-run reports bytes > cap; live query is blocked."""
+
+
+def bq_scan_with_cap(
+    client: Any,  # noqa: ANN401
+    *,
+    sql: str,
+    max_bytes_billed: int = 10_000_000_000,
+) -> dict[str, int]:
+    """Run ``sql`` with a dry-run gate and a hard maximum-bytes-billed cap.
+
+    Spec §7 R5 — the only mechanism by which the burn can blow $20 is an
+    unbounded BigQuery scan. The dry-run pre-check returns the exact
+    bytes-to-scan estimate at zero cost; we refuse to run the live query
+    if that estimate exceeds the cap.
+
+    Step 1: dry-run with ``QueryJobConfig(dry_run=True, use_query_cache=False)``.
+    If ``total_bytes_processed > max_bytes_billed``, raises
+    :class:`BigQueryCapExceeded` BEFORE any billable bytes are consumed.
+
+    Step 2: live query with ``QueryJobConfig(maximum_bytes_billed=max_bytes_billed)``.
+
+    Args:
+        client: duck-typed BigQuery client exposing
+            ``query(sql, job_config=...)`` that returns a job with
+            ``.total_bytes_processed`` and ``.result()`` attributes.
+        sql: SQL string to execute.
+        max_bytes_billed: bytes ceiling for both the dry-run guard and the
+            live ``maximum_bytes_billed`` safety cap. Defaults to 10 GB.
+
+    Returns:
+        Dict with keys ``rows`` (int) and ``bytes_billed`` (int, from dry-run).
+
+    Raises:
+        BigQueryCapExceeded: if dry-run reports ``total_bytes_processed``
+            exceeds ``max_bytes_billed``.
+    """
+    from google.cloud.bigquery import QueryJobConfig
+
+    dry_cfg = QueryJobConfig(dry_run=True, use_query_cache=False)
+    dry_job = client.query(sql, job_config=dry_cfg)
+    bytes_billed = int(dry_job.total_bytes_processed)
+    if bytes_billed > max_bytes_billed:
+        raise BigQueryCapExceeded(
+            f"dry-run bytes_billed={bytes_billed} exceeds cap {max_bytes_billed}"
+        )
+
+    live_cfg = QueryJobConfig(maximum_bytes_billed=max_bytes_billed)
+    live_job = client.query(sql, job_config=live_cfg)
+    rows = list(live_job.result())
+    return {"rows": len(rows), "bytes_billed": bytes_billed}
