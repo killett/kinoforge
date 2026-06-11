@@ -259,12 +259,10 @@ def gcp_tear_down(
         )
 
     for bucket in manifest.gcp_buckets:
-
-        def _del_bucket(b: str = bucket) -> None:
-            obj = clients.storage.get_bucket(b)
-            obj.delete(force=True)
-
-        _try(bucket, _del_bucket)
+        _try(
+            bucket,
+            lambda b=bucket: clients.storage.get_bucket(b).delete(force=True),
+        )
 
     if manifest.gcp_budget_id is not None:
         _try(
@@ -275,7 +273,12 @@ def gcp_tear_down(
     return deleted
 
 
-def gcp_mtd_spend(client: Any, *, project_id: str) -> dict[str, float]:  # noqa: ANN401
+def gcp_mtd_spend(
+    client: Any,  # noqa: ANN401
+    *,
+    project_id: str,
+    billing_dataset: str = "kinoforge-prod-0ddb375e.all_billing_data",
+) -> dict[str, float]:
     """Return month-to-date spend grouped by service, in USD.
 
     `client` must expose `.query(query: str) -> list[dict]` where each row
@@ -286,6 +289,9 @@ def gcp_mtd_spend(client: Any, *, project_id: str) -> dict[str, float]:  # noqa:
     Args:
         client: duck-typed query client (BigQuery in production, fake in tests).
         project_id: GCP project ID to filter billing rows by.
+        billing_dataset: BigQuery dataset containing the billing export table,
+            e.g. ``"<project>.all_billing_data"``. Defaults to kinoforge's own
+            billing-export location; callers in other projects must override.
 
     Returns:
         Dict mapping service description to total USD spend for current month.
@@ -293,15 +299,10 @@ def gcp_mtd_spend(client: Any, *, project_id: str) -> dict[str, float]:  # noqa:
     sql = (
         "SELECT service.description AS service_description, "  # noqa: S608
         "SUM(cost) AS cost_usd "
-        "FROM `kinoforge-prod-0ddb375e.all_billing_data.gcp_billing_export_v1_*` "
+        f"FROM `{billing_dataset}.gcp_billing_export_v1_*` "
         f"WHERE project.id = '{project_id}' "
         "AND DATE(_PARTITIONTIME) >= DATE_TRUNC(CURRENT_DATE(), MONTH) "
         "GROUP BY service_description"
     )
     rows = client.query(query=sql)
-    out: dict[str, float] = {}
-    for r in rows:
-        out[r["service_description"]] = out.get(r["service_description"], 0.0) + float(
-            r["cost_usd"]
-        )
-    return out
+    return {r["service_description"]: float(r["cost_usd"]) for r in rows}
