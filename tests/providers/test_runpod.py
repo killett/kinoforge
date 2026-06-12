@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from kinoforge.core.errors import CapacityError, TeardownError
+from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
 from kinoforge.core.interfaces import (
     CredentialProvider,
     HardwareRequirements,
@@ -1345,3 +1346,92 @@ def test_find_instance_by_tag_recovers_just_created_pod(
     assert found.id == created.id
     assert found.tags.get("kinoforge.layer") == "layer-p-smoke"
     assert found.tags.get("kinoforge.git_sha") == "deadbeef"
+
+
+# ---------------------------------------------------------------------------
+# B5a Task c: heartbeat_endpoint kwarg + delegation + setter
+# ---------------------------------------------------------------------------
+
+
+def test_runpod_constructor_accepts_heartbeat_endpoint(
+    fake_runpod_heartbeat_endpoint: HeartbeatEndpoint,
+) -> None:
+    """Backward-compatible kwarg; default is None (no-op)."""
+    from kinoforge.providers.runpod import RunPodProvider
+
+    p_default = RunPodProvider(
+        creds=None, http_post=lambda *_: {}, http_get=lambda _: {}
+    )
+    assert p_default._heartbeat_endpoint is None
+
+    p_with = RunPodProvider(
+        creds=None,
+        http_post=lambda *_: {},
+        http_get=lambda _: {},
+        heartbeat_endpoint=fake_runpod_heartbeat_endpoint,
+    )
+    assert p_with._heartbeat_endpoint is fake_runpod_heartbeat_endpoint
+
+
+def test_runpod_heartbeat_no_op_when_endpoint_none() -> None:
+    """Backward compat: existing deploys without heartbeat_endpoint set
+    must keep the pre-B5a no-op behaviour. heartbeat() must not raise."""
+    from kinoforge.providers.runpod import RunPodProvider
+
+    p = RunPodProvider(creds=None, http_post=lambda *_: {}, http_get=lambda _: {})
+    p.heartbeat("pod-x")  # no exception
+    assert p.last_heartbeat("pod-x") is None
+
+
+def test_runpod_heartbeat_delegates_to_endpoint(
+    fake_runpod_heartbeat_endpoint: HeartbeatEndpoint,
+) -> None:
+    """heartbeat(id) calls endpoint.write(id, now().astimezone());
+    last_heartbeat(id) calls endpoint.read(id) and converts to float."""
+    import time
+
+    from kinoforge.providers.runpod import RunPodProvider
+
+    p = RunPodProvider(
+        creds=None,
+        http_post=lambda *_: {},
+        http_get=lambda _: {},
+        heartbeat_endpoint=fake_runpod_heartbeat_endpoint,
+    )
+    p.heartbeat("pod-x")
+    got_float = p.last_heartbeat("pod-x")
+    assert got_float is not None
+    # Round-trip: float comes from datetime.timestamp(); fake stored a
+    # TZ-aware datetime; reconstructed datetime must be within a second
+    # of "now".
+    assert abs(time.time() - got_float) < 5.0
+
+
+def test_runpod_set_heartbeat_endpoint_installs_post_construction(
+    fake_runpod_heartbeat_endpoint: HeartbeatEndpoint,
+) -> None:
+    """Post-construction injection path used by orchestrator._resolve_provider."""
+    from kinoforge.providers.runpod import RunPodProvider
+
+    p = RunPodProvider(creds=None, http_post=lambda *_: {}, http_get=lambda _: {})
+    assert p._heartbeat_endpoint is None
+    p.set_heartbeat_endpoint(fake_runpod_heartbeat_endpoint)
+    assert p._heartbeat_endpoint is fake_runpod_heartbeat_endpoint
+
+
+def test_runpod_last_heartbeat_returns_none_on_endpoint_returning_none(
+    fake_runpod_heartbeat_endpoint: HeartbeatEndpoint,
+) -> None:
+    """endpoint.read returning None (pod gone / tag absent) must surface
+    as last_heartbeat returning None — Layer V classify treats both as
+    'no data yet' (HEARTBEAT_UNKNOWN row 7)."""
+    from kinoforge.providers.runpod import RunPodProvider
+
+    p = RunPodProvider(
+        creds=None,
+        http_post=lambda *_: {},
+        http_get=lambda _: {},
+        heartbeat_endpoint=fake_runpod_heartbeat_endpoint,
+    )
+    # never wrote — endpoint.read returns None
+    assert p.last_heartbeat("never-written") is None

@@ -192,6 +192,28 @@ class ComputeProvider(ABC):
     @abstractmethod
     def heartbeat(self, instance_id: str) -> None: ...  # noqa: D102
 
+    def set_heartbeat_endpoint(  # noqa: B027
+        self,
+        endpoint: object | None,
+    ) -> None:
+        """Install a HeartbeatEndpoint post-construction (B5a).
+
+        Default implementation is a no-op so providers that do not yet
+        support the heartbeat substrate (e.g. SkyPilot pre-B5b, Local)
+        silently accept the call. RunPodProvider overrides to wire the
+        endpoint into its ``heartbeat()`` / ``last_heartbeat()`` paths.
+
+        ``endpoint`` is typed as ``object | None`` (not
+        ``HeartbeatEndpoint | None``) to keep ``core/interfaces.py`` free
+        of any heartbeat-module import — the Protocol satisfaction is
+        verified at the call site, not the type-system seam.
+
+        Args:
+            endpoint: A :class:`HeartbeatEndpoint`-Protocol-satisfying
+                instance, or ``None`` to clear.
+        """
+        # Default: ignore. Providers that wire heartbeat override.
+
     @abstractmethod
     def endpoints(self, instance: Instance) -> dict[str, str]: ...  # noqa: D102
 

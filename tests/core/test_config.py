@@ -1340,3 +1340,54 @@ def test_engine_config_bedrock_video_optional() -> None:
     # Sibling engines still default to None
     assert cfg.hosted is None
     assert cfg.fal is None
+
+
+# ---------------------------------------------------------------------------
+# B5a: ComputeConfig.heartbeat_mode validator tests (Task c)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_config_heartbeat_mode_default_is_none() -> None:
+    """Backward compat: existing YAMLs without compute.heartbeat_mode
+    must load unchanged with mode='none' (no-op heartbeat path)."""
+    from kinoforge.core.config import ComputeConfig
+
+    cfg = ComputeConfig(
+        provider="runpod",
+        image="runpod/base:latest",
+    )
+    assert cfg.heartbeat_mode == "none"
+
+
+@pytest.mark.parametrize("mode", ["none", "graphql-tag", "selfterm-http", "ssh-touch"])
+def test_compute_config_heartbeat_mode_accepts_valid_literals(mode: str) -> None:
+    """All four literals in the union of supported modes load.
+
+    Provider-mode compatibility (e.g. RunPod doesn't accept 'ssh-touch')
+    is enforced at adapter dispatch time, not config load — config can't
+    know which provider satisfies which mode without violating
+    core-import-ban.
+    """
+    from kinoforge.core.config import ComputeConfig
+
+    cfg = ComputeConfig(
+        provider="runpod",
+        image="runpod/base:latest",
+        heartbeat_mode=mode,
+    )
+    assert cfg.heartbeat_mode == mode
+
+
+def test_compute_config_heartbeat_mode_rejects_unknown() -> None:
+    """Typo-class bugs ('graphqltag', 'graphql_tag', 'none ') fail loud
+    at config-load, not at runtime when the orchestrator dispatches."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from kinoforge.core.config import ComputeConfig
+
+    with pytest.raises(PydanticValidationError, match="heartbeat_mode"):
+        ComputeConfig(
+            provider="runpod",
+            image="runpod/base:latest",
+            heartbeat_mode="graphql_tag",  # underscore not dash — common typo
+        )

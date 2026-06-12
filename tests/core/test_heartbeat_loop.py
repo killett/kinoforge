@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from kinoforge.core.clock import FakeClock
+from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
 from kinoforge.core.heartbeat_loop import HeartbeatLoop
 from kinoforge.core.lifecycle import Ledger
 from kinoforge.providers.local import LocalProvider
@@ -500,3 +501,77 @@ def test_two_concurrent_loops_on_different_instances_do_not_collide(
     # Each spy only saw its own id.
     assert set(spy_a.calls) == {"i-a"}
     assert set(spy_b.calls) == {"i-b"}
+
+
+# ---------------------------------------------------------------------------
+# B5a Task c: HeartbeatLoop + RunPodProvider + FakeRunPodHeartbeatEndpoint
+# ---------------------------------------------------------------------------
+
+
+def test_heartbeat_loop_with_runpod_and_fake_endpoint_round_trips(
+    fake_runpod_heartbeat_endpoint: HeartbeatEndpoint,
+) -> None:
+    """End-to-end Layer U -> B5a chain:
+
+      HeartbeatLoop.tick()
+        -> provider.heartbeat(id)
+          -> endpoint.write(id, now)
+        -> provider.last_heartbeat(id)
+          -> endpoint.read(id) -> .timestamp() -> float
+        -> ledger.touch(id, last_heartbeat=float, heartbeat_thread_tick=now)
+
+    Bug catches: timestamp/datetime conversion errors, fake-fixture
+    plumbing errors, FakeClock advance not propagating, ledger.touch
+    silently dropping the last_heartbeat kwarg.
+    """
+    from kinoforge.core.clock import FakeClock
+    from kinoforge.core.heartbeat_loop import HeartbeatLoop
+    from kinoforge.providers.runpod import RunPodProvider
+
+    clock = FakeClock(start=1_000_000.0)
+    provider = RunPodProvider(
+        creds=None,
+        http_post=lambda *_: {},
+        http_get=lambda _: {},
+        heartbeat_endpoint=fake_runpod_heartbeat_endpoint,
+    )
+
+    class _SpyLedger:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def touch(self, instance_id: str, **kwargs: object) -> bool:
+            self.calls.append({"id": instance_id, **kwargs})
+            return True
+
+    ledger = _SpyLedger()
+
+    loop = HeartbeatLoop(
+        ledger=ledger,
+        provider=provider,
+        instance_id="pod-x",
+        interval_s=1.0,
+        clock=clock,
+    )
+
+    # Drive 3 tick cycles manually — don't start the thread.
+    loop._tick_once()
+    clock.advance(1.0)
+    loop._tick_once()
+    clock.advance(1.0)
+    loop._tick_once()
+
+    # 3 ticks -> 3 ledger touches
+    assert len(ledger.calls) == 3
+    # last_heartbeat must be populated on every tick (no AttributeError swallow)
+    for call in ledger.calls:
+        assert call["last_heartbeat"] is not None
+        assert isinstance(call["last_heartbeat"], float)
+    # Monotonically advancing (matches our FakeClock advance of 1s/tick)
+    lhs: list[float] = []
+    for c in ledger.calls:
+        v = c["last_heartbeat"]
+        assert isinstance(v, float)
+        lhs.append(v)
+    assert lhs[1] >= lhs[0]
+    assert lhs[2] >= lhs[1]

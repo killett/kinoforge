@@ -128,10 +128,14 @@ def _resolve_provider(cfg: Config, provider: ComputeProvider | None) -> ComputeP
         provider: Optional pre-constructed provider (test injection).
 
     Returns:
-        A ready ``ComputeProvider`` instance.
+        A ready ``ComputeProvider`` instance, with the B5a heartbeat
+        endpoint installed when ``cfg.compute.heartbeat_mode != "none"``.
 
     Raises:
         ValueError: ``cfg.compute`` is ``None`` (called on a hosted config).
+        AuthError: heartbeat mode requires a credential that is not set.
+        ValidationError: provider does not support the configured
+            heartbeat_mode.
     """
     if provider is not None:
         return provider
@@ -139,7 +143,18 @@ def _resolve_provider(cfg: Config, provider: ComputeProvider | None) -> ComputeP
         raise ValueError(
             "cannot resolve provider: cfg.compute is None (hosted engine path)"
         )
-    return registry.get_provider(cfg.compute.provider)()
+    p = registry.get_provider(cfg.compute.provider)()
+    # B5a: install the heartbeat substrate endpoint when the operator
+    # opted in via compute.heartbeat_mode. Lives here (not in the registry
+    # factory) because the factory is zero-arg by ABC and the dispatch
+    # needs cfg + creds. The dispatch lives in _adapters because importing
+    # the concrete satisfier module from core would violate core-import-ban.
+    if cfg.compute.heartbeat_mode != "none":
+        from kinoforge._adapters import build_heartbeat_endpoint_for
+
+        endpoint = build_heartbeat_endpoint_for(cfg, EnvCredentialProvider())
+        p.set_heartbeat_endpoint(endpoint)
+    return p
 
 
 def _cfg_dict(cfg: Config) -> dict[str, object]:

@@ -2723,3 +2723,56 @@ def test_orchestrator_threads_image_engine_model_identity_into_keyframe_stage(
         f"expected model='kf-engine-derived' from image_engine.model_identity; "
         f"got model={keyframe_publishes[0]['model']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# B5a Task c: _resolve_provider heartbeat endpoint injection
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_provider_injects_heartbeat_endpoint_when_mode_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When cfg.compute.heartbeat_mode != 'none' and creds are present,
+    _resolve_provider must call build_heartbeat_endpoint_for and inject
+    the result onto the provider via set_heartbeat_endpoint.
+
+    Bug catches: orchestrator returning a no-op-heartbeat RunPodProvider
+    even when the operator set compute.heartbeat_mode = 'graphql-tag' --
+    the operator believes substrate is on but Layer V keeps emitting
+    HEARTBEAT_UNKNOWN.
+    """
+    import kinoforge.providers.runpod  # noqa: F401 — registers "runpod" provider
+    from kinoforge.core.config import (
+        ComputeConfig,
+        Config,
+        EngineConfig,
+        LifecycleConfig,
+        ModelEntry,
+    )
+    from kinoforge.core.orchestrator import _resolve_provider
+
+    cfg = Config(
+        compute=ComputeConfig(
+            provider="runpod",
+            image="runpod/base:latest",
+            lifecycle=LifecycleConfig(budget=10.0),
+            heartbeat_mode="graphql-tag",
+        ),
+        engine=EngineConfig(kind="fake", precision="fp16"),
+        models=[
+            ModelEntry(
+                kind="base", ref="hf:fake/repo:weights.bin", target="checkpoints"
+            )
+        ],
+    )
+    # Ensure RUNPOD_API_KEY is visible to EnvCredentialProvider.
+    monkeypatch.setenv("RUNPOD_API_KEY", "sk-fake-for-test")
+
+    from kinoforge.providers.runpod import RunPodProvider
+    from kinoforge.providers.runpod.heartbeat import RunPodGraphQLHeartbeatEndpoint
+
+    resolved = _resolve_provider(cfg, provider=None)
+    assert isinstance(resolved, RunPodProvider)
+    assert resolved._heartbeat_endpoint is not None
+    assert isinstance(resolved._heartbeat_endpoint, RunPodGraphQLHeartbeatEndpoint)
