@@ -151,7 +151,7 @@ def _do_spinup(args: argparse.Namespace) -> int:
         gcp_buckets=[gcp_out["bucket"]],
         gcp_budget_id=gcp_out["budget_id"],
         aws_instances=[aws_out["instance"]],
-        aws_volumes=[aws_out["volume"]],
+        aws_volumes=[aws_out["volume"]] if aws_out["volume"] else [],
         aws_buckets=[aws_out["bucket"]],
         aws_tables=[aws_out["table"]],
         aws_budget_name=aws_out["budget_name"],

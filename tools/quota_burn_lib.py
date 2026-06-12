@@ -356,7 +356,12 @@ def aws_spin_up(
         ],
     )
     instance_id = run["Instances"][0]["InstanceId"]
-    volume_id = run["Instances"][0]["BlockDeviceMappings"][0]["Ebs"]["VolumeId"]
+    # run_instances returns BlockDeviceMappings empty until the instance is
+    # actually running (it populates after a poll). Volume tracking isn't
+    # required for teardown because DeleteOnTermination=True auto-removes the
+    # EBS when the EC2 terminates. Keep the dict key for manifest-shape parity.
+    bdms = run["Instances"][0].get("BlockDeviceMappings") or []
+    volume_id = bdms[0]["Ebs"]["VolumeId"] if bdms else ""
 
     create_kwargs: dict[str, Any] = {"Bucket": bucket_name}
     if region != "us-east-1":
