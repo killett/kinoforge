@@ -369,13 +369,25 @@ def aws_spin_up(
     clients.s3.create_bucket(**create_kwargs)
     clients.s3.put_bucket_tagging(Bucket=bucket_name, Tagging={"TagSet": tags})
 
-    clients.dynamo.create_table(
-        TableName=table_name,
-        KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
-        AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
-        BillingMode="PAY_PER_REQUEST",
-        Tags=tags,
-    )
+    # DynamoDB is optional billing-signal padding ($0.10 over 5 days).
+    # If the calling IAM principal lacks dynamodb:CreateTable, skip it cleanly
+    # — losing the line item is acceptable; failing the whole spinup is not.
+    try:
+        clients.dynamo.create_table(
+            TableName=table_name,
+            KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+            Tags=tags,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort skip; only ClientError(AccessDeniedException) is expected.
+        # Other failures fall through to a no-table manifest.
+        _log.warning(
+            "aws_spin_up: DynamoDB create_table skipped (%s); proceeding without table",
+            type(exc).__name__,
+        )
+        table_name = ""
 
     clients.budgets.create_budget(
         AccountId=clients.account_id,
