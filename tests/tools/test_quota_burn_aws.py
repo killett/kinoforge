@@ -105,7 +105,7 @@ def test_aws_spin_up_arms_kernel_shutdown_and_self_terminate() -> None:
     call = clients.ec2.run_calls[0]
     assert call["InstanceInitiatedShutdownBehavior"] == "terminate"
     user_data = base64.b64decode(call["UserData"]).decode()
-    assert "shutdown -h +480" in user_data
+    assert "shutdown -h +11520" in user_data
 
 
 def test_aws_spin_up_tags_every_resource() -> None:
