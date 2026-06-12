@@ -731,10 +731,24 @@ def aws_submit_quota(
     request_id = resp["RequestedQuota"]["Id"]
     case_id = resp["RequestedQuota"].get("CaseId")
     if case_id:
-        clients.support.add_communication_to_case(
-            caseId=case_id,
-            communicationBody=justification_text,
-        )
+        try:
+            clients.support.add_communication_to_case(
+                caseId=case_id,
+                communicationBody=justification_text,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # AccessDeniedException (kinoforge-ci lacks AWSSupportAccess) or
+            # SubscriptionRequiredException (Basic support plan) — quota submit
+            # already succeeded; justification just doesn't auto-attach.
+            # Operator can add it via Console on case `{case_id}`.
+            _log.warning(
+                "aws_submit_quota: add_communication_to_case failed (%s); "
+                "operator must attach justification manually to case %s. "
+                "Request id: %s",
+                type(exc).__name__,
+                case_id,
+                request_id,
+            )
     else:
         _log.warning(
             "aws_submit_quota: no CaseId on RequestedQuota response; "
