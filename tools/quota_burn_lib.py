@@ -329,10 +329,12 @@ def aws_spin_up(
     tags = [{"Key": tag, "Value": "true"}]
 
     user_data_b64 = base64.b64encode(_USER_DATA_TEMPLATE.encode()).decode()
+    # Canonical Ubuntu 22.04 arm64 in us-west-2 (verified 2026-06-11).
+    # Hardcoded because SSM-resolve at run_instances requires ssm:GetParameters
+    # which kinoforge-ci IAM user doesn't have. Region change requires lookup.
+    image_id_us_west_2 = "ami-029ea2abb0342f2f2"
     run = clients.ec2.run_instances(
-        # Note: 'ebs-gp2' in the SSM path is the Canonical AMI family label, NOT the
-        # launch-time volume type. The BlockDeviceMappings override below gets gp3.
-        ImageId="resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id",
+        ImageId=image_id_us_west_2,
         InstanceType="t4g.nano",
         MinCount=1,
         MaxCount=1,
