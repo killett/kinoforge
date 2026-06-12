@@ -10,12 +10,107 @@ import tempfile
 import threading
 from collections.abc import Generator
 from dataclasses import dataclass, field
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
+from kinoforge.core.errors import TransportError
 from kinoforge.core.redaction import RedactionRegistry
+
+
+@dataclass
+class FakeRunPodHeartbeatEndpoint:
+    """Dict-backed test double for the RunPod GraphQL-tag satisfier.
+
+    Mirrors the wire-level shape exactly: sub-second-precision round-trip;
+    explicit transport-failure injection point per call type.
+    """
+
+    _slots: dict[str, datetime] = field(default_factory=dict)
+    _fail_on_write: bool = False
+    _fail_on_read: bool = False
+
+    def write(self, instance_id: str, ts_local: datetime) -> None:
+        if self._fail_on_write:
+            self._fail_on_write = False
+            raise TransportError(
+                f"FakeRunPodHeartbeatEndpoint: injected write failure for {instance_id}"
+            )
+        self._slots[instance_id] = ts_local
+
+    def read(self, instance_id: str) -> datetime | None:
+        if self._fail_on_read:
+            self._fail_on_read = False
+            raise TransportError(
+                f"FakeRunPodHeartbeatEndpoint: injected read failure for {instance_id}"
+            )
+        return self._slots.get(instance_id)
+
+    def inject_transport_failure(self, method: Literal["read", "write"]) -> None:
+        """Arm the next call of ``method`` to raise :class:`TransportError`."""
+        if method == "read":
+            self._fail_on_read = True
+        elif method == "write":
+            self._fail_on_write = True
+        else:
+            raise ValueError(f"method must be 'read' or 'write'; got {method!r}")
+
+    def destroy_instance(self, instance_id: str) -> None:
+        """Test helper: simulate the pod being destroyed.
+
+        After this call, ``read(instance_id)`` returns ``None`` per the
+        Protocol invariant 'returns None if the instance is gone'.
+        """
+        self._slots.pop(instance_id, None)
+
+
+@dataclass
+class FakeSkyPilotHeartbeatEndpoint:
+    """Dict-backed test double for the future B5b SSH-touch satisfier.
+
+    Mirrors the SkyPilot wire shape: round-trip truncates to seconds
+    (``stat -c %Y`` returns POSIX-seconds); cold-vs-warm SSH latency is
+    injectable but not actually measured here.
+    """
+
+    cold_latency_s: float = 0.0
+    _slots: dict[str, datetime] = field(default_factory=dict)
+    _fail_on_write: bool = False
+    _fail_on_read: bool = False
+
+    def write(self, instance_id: str, ts_local: datetime) -> None:
+        if self._fail_on_write:
+            self._fail_on_write = False
+            raise TransportError(
+                f"FakeSkyPilotHeartbeatEndpoint: SSH connection refused for {instance_id}"
+            )
+        # SkyPilot stores via filesystem mtime — second-precision only.
+        truncated = ts_local.replace(microsecond=0)
+        self._slots[instance_id] = truncated
+
+    def read(self, instance_id: str) -> datetime | None:
+        if self._fail_on_read:
+            self._fail_on_read = False
+            raise TransportError(
+                f"FakeSkyPilotHeartbeatEndpoint: SSH connection refused for {instance_id}"
+            )
+        return self._slots.get(instance_id)
+
+    def inject_ssh_refused(self) -> None:
+        """Arm BOTH next read and next write to raise :class:`TransportError`.
+
+        Mirrors the SkyPilot SSH-multiplexer failure mode where one bad
+        ControlMaster takes down both directions.
+        """
+        self._fail_on_read = True
+        self._fail_on_write = True
+
+    def destroy_instance(self, instance_id: str) -> None:
+        """Test helper: simulate the cluster being torn down."""
+        self._slots.pop(instance_id, None)
 
 
 @pytest.fixture(autouse=True)
@@ -121,6 +216,18 @@ def _make_handler(
                 self.wfile.write(data)
 
     return _RangeHandler
+
+
+@pytest.fixture()
+def fake_runpod_heartbeat_endpoint() -> FakeRunPodHeartbeatEndpoint:
+    """Fresh fake RunPod heartbeat endpoint per test."""
+    return FakeRunPodHeartbeatEndpoint()
+
+
+@pytest.fixture()
+def fake_skypilot_heartbeat_endpoint() -> FakeSkyPilotHeartbeatEndpoint:
+    """Fresh fake SkyPilot heartbeat endpoint per test."""
+    return FakeSkyPilotHeartbeatEndpoint()
 
 
 @pytest.fixture()
