@@ -389,31 +389,42 @@ def aws_spin_up(
         )
         table_name = ""
 
-    clients.budgets.create_budget(
-        AccountId=clients.account_id,
-        Budget={
-            "BudgetName": budget_name,
-            "BudgetLimit": {"Amount": "5", "Unit": "USD"},
-            "TimeUnit": "MONTHLY",
-            "BudgetType": "COST",
-        },
-        NotificationsWithSubscribers=[
-            {
-                "Notification": {
-                    "NotificationType": "ACTUAL",
-                    "ComparisonOperator": "GREATER_THAN",
-                    "Threshold": 100.0,
-                    "ThresholdType": "PERCENTAGE",
-                },
-                "Subscribers": [
-                    {
-                        "SubscriptionType": "EMAIL",
-                        "Address": clients.operator_email,
-                    }
-                ],
-            }
-        ],
-    )
+    # AWS Budget alarm — same tolerance pattern as DynamoDB above. Kernel
+    # shutdown + InstanceInitiatedShutdownBehavior=terminate carry the safety
+    # if the IAM principal lacks budgets:ModifyBudget; daily snapshots still
+    # surface spend pacing.
+    try:
+        clients.budgets.create_budget(
+            AccountId=clients.account_id,
+            Budget={
+                "BudgetName": budget_name,
+                "BudgetLimit": {"Amount": "5", "Unit": "USD"},
+                "TimeUnit": "MONTHLY",
+                "BudgetType": "COST",
+            },
+            NotificationsWithSubscribers=[
+                {
+                    "Notification": {
+                        "NotificationType": "ACTUAL",
+                        "ComparisonOperator": "GREATER_THAN",
+                        "Threshold": 100.0,
+                        "ThresholdType": "PERCENTAGE",
+                    },
+                    "Subscribers": [
+                        {
+                            "SubscriptionType": "EMAIL",
+                            "Address": clients.operator_email,
+                        }
+                    ],
+                }
+            ],
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "aws_spin_up: budget create skipped (%s); rely on kernel shutdown + daily snapshot",
+            type(exc).__name__,
+        )
+        budget_name = ""
 
     return {
         "instance": instance_id,
