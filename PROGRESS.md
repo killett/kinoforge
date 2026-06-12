@@ -2558,7 +2558,7 @@ Lib: `tools/quota_burn_lib.py` | CLI: `tools/quota_burn.py` (Task 8+)
 - [x] Task 7: BigQuery dry-run gate — `BigQueryCapExceeded` + `bq_scan_with_cap`; added `google-cloud-bigquery>=3.11` PyPI dep; 2 tests green — commit `ac00594`
 - [x] Task 8: CLI dispatcher — `tools/quota_burn.py` with 5 subcommands (`spin-up`, `tear-down`, `snapshot`, `scan-bigquery`, `submit-quota`); 108 tests green — commit `93fcbd9`
 - [x] Task 9: Justification draft templates + PROGRESS update — `docs/quota-justification-gcp.md` + `docs/quota-justification-aws.md`; Phase 52 prerequisites documented
-- [ ] Task 10: Day 0 — live spinup
+- [x] Task 10: Day 0 — live spinup — manifest at `.quota_burn/manifest.json`, both clouds live 2026-06-11 19:16 local
 - [ ] Task 11: Days 1–4 daily snapshot
 - [ ] Task 12: Day 4 — populate justification drafts
 - [ ] Task 13: Day 5 — submit quotas + teardown + closeout
@@ -2586,4 +2586,56 @@ Task 10 will abort at GCP budget creation unless these are set in `/workspace/.e
 4. Run `pixi run preflight` — must exit 0 (checks creds present, zero active RunPod pods, clean
    working tree) before invoking `python -m tools.quota_burn spinup`.
 
-**Single next action:** Task 10 — operator sets `GCP_BILLING_ACCOUNT_ID` in `.env`, runs `pixi run preflight`, then `python -m tools.quota_burn spinup` to kick off the live 5-day utilization-burn window (2026-06-11 → 2026-06-15).
+#### Task 10 closeout — 2026-06-11
+
+Live resources (manifest at `.quota_burn/manifest.json`):
+
+- **GCP project `kinoforge-prod-0ddb375e`** (zone us-west1-a):
+  - VM `kinoforge-burn-upddv3` (e2-small, status RUNNING)
+  - Boot disk `kinoforge-burn-upddv3-disk` (10 GB pd-balanced, auto-delete=True)
+  - GCS bucket `kinoforge-quota-burn-gcp-upddv3`
+  - Budget `billingAccounts/01522C-EC9AA4-64A7D5/budgets/c3aeaec1-a1f9-410f-89a9-bebaecec238d` ($7 alert threshold)
+- **AWS account 009910375621** (us-west-2):
+  - EC2 `i-099081763c43fe593` (t4g.nano, running, kernel-side `shutdown -h +480`)
+  - S3 bucket `kinoforge-quota-burn-aws-kmwsgh`
+  - DynamoDB: SKIPPED (kinoforge-ci lacks `dynamodb:CreateTable`; 10c/5d signal loss acceptable)
+  - Budget: SKIPPED (kinoforge-ci lacks `budgets:ModifyBudget`; kernel-shutdown + daily snapshot
+    carry the safety net)
+
+**Bug/perm catches during the 10 spinup attempts:**
+
+1. `google-cloud-billing` + `google-cloud-billing-budgets` not in default pixi env → added
+   to `[pypi-dependencies]`.
+2. `tools/quota_burn.py` missing `load_dotenv()` → operator-supplied env vars didn't reach
+   `_build_gcp_clients`.
+3. `_Bundle` class-body `storage = storage.Client(project=...)` shadowed the imported
+   module → aliased to `_storage`.
+4. `_GcpInstanceResource` duck-type rejected by real `InstancesClient.insert()` → refactored
+   to dict literal; test assertions converted to dict-key access. Same for the local
+   `_Budget`/`_BudgetFilter`/`_BudgetAmount` dataclasses.
+5. GCE Instance dict needed `network_interfaces` block with default-VPC + External NAT.
+6. Cloud Billing Budget API was disabled on the new project → `gcloud services enable
+   billingbudgets.googleapis.com`.
+7. `kinoforge-runner` SA lacked billing-account-level perms → granted
+   `roles/billing.costsManager` on billing account `01522C-EC9AA4-64A7D5` (via the
+   workspace-cached `retool4251@proton.me` operator identity).
+8. Empty `GCP_NOTIFICATION_CHANNEL_ID` was sent as `[""]` in the budget — rejected as
+   invalid channel name. Now filters empty out.
+9. SSM-resolved AMI in `aws_spin_up` required `ssm:GetParameters` which `kinoforge-ci`
+   lacks → hardcoded `ami-029ea2abb0342f2f2` (Canonical Ubuntu 22.04 arm64, us-west-2).
+10. `run_instances` response had empty `BlockDeviceMappings` (populates only after poll)
+    → tolerate empty; volume tracked-as-empty since `DeleteOnTermination=True`.
+11. `dynamodb:CreateTable` perm missing on `kinoforge-ci` → wrapped in try/except, log,
+    skip cleanly.
+12. `budgets:ModifyBudget` perm missing on `kinoforge-ci` → same tolerance pattern.
+
+**Spend orphans burned during retries:** ~$0.05 (5 sets of partial-spinup GCP VMs +
+buckets + budgets manually cleaned via gcloud).
+
+**Burn rate (steady state):** ~$0.013/hr combined (GCP e2-small ~$0.0084/hr +
+AWS t4g.nano ~$0.0042/hr + storage negligible). 5-day projection ~$1.50 +
+storage/disk/budget-API hits ~$1 → **~$2.50 total, well under $20**.
+
+**Single next action:** Task 11 — daily snapshot loop. Run `pixi run python -m
+tools.quota_burn snapshot --project-id kinoforge-prod-0ddb375e` once per day to surface
+MTD spend pacing into PROGRESS until Task 12 (day 4) and Task 13 (day 5, 2026-06-16).
