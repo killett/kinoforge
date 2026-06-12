@@ -94,7 +94,7 @@ def gcp_spin_up(
     budgets are alerting-only and do not block API usage.
 
     All resources carry label `<tag>=true`. VM startup-script runs
-    `shutdown -h +480` (8-hour kernel-side kill, kinoforge spec §3 stack
+    `shutdown -h +11520` (8-day kernel-side kill, kinoforge spec §3 stack
     layer 1).
 
     Args:
@@ -120,7 +120,7 @@ def gcp_spin_up(
             "items": [
                 {
                     "key": "startup-script",
-                    "value": "#!/bin/bash\nshutdown -h +480\n",
+                    "value": "#!/bin/bash\nshutdown -h +11520\n",
                 },
             ]
         },
@@ -289,10 +289,12 @@ def gcp_mtd_spend(
 
 _USER_DATA_TEMPLATE = """#!/bin/bash
 set -eux
-# Kernel-side hard shutdown 8h after boot (spec §3 stack layer 1).
-shutdown -h +480
+# Kernel-side hard shutdown 8 days after boot (longer than the 5-day burn window
+# so the day-5 teardown destroys the instance before kernel kill fires).
+# Original 8h (480 min) was too aggressive — instance would die before day 1.
+shutdown -h +11520
 # Re-arm on every reboot via cron.
-echo '@reboot root /sbin/shutdown -h +480' > /etc/cron.d/kinoforge-burn-shutdown
+echo '@reboot root /sbin/shutdown -h +11520' > /etc/cron.d/kinoforge-burn-shutdown
 chmod 0644 /etc/cron.d/kinoforge-burn-shutdown
 """
 
@@ -308,7 +310,7 @@ def aws_spin_up(
     Spins: 1× t4g.nano EC2 with 30 GB gp3 EBS (auto-terminate on shutdown),
     1× S3 bucket, 1× DynamoDB on-demand table, 1× AWS Budget at $5 hard cap.
 
-    All resources tagged `<tag>=true`. EC2 UserData runs `shutdown -h +480`
+    All resources tagged `<tag>=true`. EC2 UserData runs `shutdown -h +11520`
     AND InstanceInitiatedShutdownBehavior=terminate so the kernel shutdown
     actually destroys the instance.
 
