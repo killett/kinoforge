@@ -145,7 +145,7 @@ def test_gcp_spin_up_arms_kernel_shutdown() -> None:
     vm_call = clients.instances.insert_calls[0]
     items = vm_call["instance"]["metadata"]["items"]
     startup = next(i for i in items if i["key"] == "startup-script")
-    assert "shutdown -h +480" in startup["value"]
+    assert "shutdown -h +11520" in startup["value"]
 
 
 def test_gcp_spin_up_uses_e2_small_in_zone() -> None:
