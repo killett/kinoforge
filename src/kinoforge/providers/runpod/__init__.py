@@ -30,11 +30,13 @@ import secrets
 import time
 import urllib.request
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from kinoforge.core import registry
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import CapacityError, TeardownError
+from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
 from kinoforge.core.interfaces import (
     ComputeProvider,
     CredentialProvider,
@@ -212,6 +214,7 @@ class RunPodProvider(ComputeProvider):
         http_get: Callable[[str], dict[str, Any]] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         base_url: str = _DEFAULT_BASE_URL,
+        heartbeat_endpoint: HeartbeatEndpoint | None = None,
     ) -> None:
         """Initialise the provider with injectable seams.
 
@@ -226,6 +229,10 @@ class RunPodProvider(ComputeProvider):
                 ``http_post``.
             sleep: Injectable sleep used between destroy polls.
             base_url: RunPod GraphQL endpoint URL.
+            heartbeat_endpoint: Optional B5a heartbeat substrate endpoint.
+                When provided, ``heartbeat()`` delegates writes and
+                ``last_heartbeat()`` delegates reads to it.  ``None``
+                (the default) preserves the pre-B5a no-op behaviour.
         """
         self._creds = creds
         api_key = creds.get("RUNPOD_API_KEY") if creds is not None else None
@@ -234,6 +241,7 @@ class RunPodProvider(ComputeProvider):
         self._http_get = http_get if http_get is not None else default_get
         self._sleep = sleep
         self._base_url = base_url.rstrip("/")
+        self._heartbeat_endpoint: HeartbeatEndpoint | None = heartbeat_endpoint
         # Process-local registry of pods we created in this process: pod_id
         # -> Instance. RunPod's GraphQL pod schema does not surface
         # user-defined tags on list/get responses (only id, desiredStatus,
@@ -443,13 +451,70 @@ class RunPodProvider(ComputeProvider):
         )
 
     def heartbeat(self, instance_id: str) -> None:
-        """No-op for RunPod: liveness is managed by the in-pod self-terminator.
+        """Stamp a heartbeat for ``instance_id`` via the configured endpoint.
+
+        No-op when no :class:`HeartbeatEndpoint` has been wired (operator
+        opted out via ``compute.heartbeat_mode = "none"``). Otherwise
+        delegates to ``endpoint.write(instance_id, datetime.now().astimezone())``
+        — TZ-aware local time per project memory
+        ``feedback_local_timezone_only``.
 
         Args:
-            instance_id: Unused.
+            instance_id: Pod id whose heartbeat to stamp.
+
+        Raises:
+            TransportError: Propagated from the endpoint's wire layer
+                (HTTP non-2xx, GraphQL errors). The Layer U
+                HeartbeatLoop wraps this in its broad try/except so a
+                single bad tick never kills the loop.
         """
-        # The in-pod self-terminator handles heartbeat / dead-man logic.
-        # The orchestrator should call the pod's own heartbeat endpoint instead.
+        if self._heartbeat_endpoint is None:
+            return
+        self._heartbeat_endpoint.write(instance_id, datetime.now().astimezone())
+
+    def last_heartbeat(self, instance_id: str) -> float | None:
+        """Return the most-recent heartbeat for ``instance_id`` as POSIX epoch.
+
+        The datetime/float seam: :class:`HeartbeatEndpoint` returns
+        TZ-aware datetime; ``HeartbeatLoop`` and ``Ledger`` consume float
+        POSIX epoch. ``datetime.timestamp()`` is TZ-correct on
+        local-aware datetimes (converts to UTC POSIX under the hood;
+        ``datetime.fromtimestamp`` reverses).
+
+        Args:
+            instance_id: Pod id whose heartbeat to read.
+
+        Returns:
+            POSIX-epoch float when the endpoint returned a datetime,
+            ``None`` when the endpoint returned None or no endpoint is
+            wired.
+
+        Raises:
+            TransportError: Propagated from the endpoint's wire layer
+                (same envelope as :meth:`heartbeat`).
+        """
+        if self._heartbeat_endpoint is None:
+            return None
+        dt = self._heartbeat_endpoint.read(instance_id)
+        return dt.timestamp() if dt is not None else None
+
+    def set_heartbeat_endpoint(
+        self,
+        endpoint: object | None,
+    ) -> None:
+        """Install or clear the heartbeat endpoint post-construction.
+
+        Used by :func:`kinoforge.core.orchestrator._resolve_provider` to
+        inject the dispatched endpoint after the registry's zero-arg
+        factory built the provider.
+
+        Args:
+            endpoint: A :class:`HeartbeatEndpoint`-satisfying object, or
+                ``None`` to clear. Typed as ``object | None`` to match the
+                ABC signature (core-import-ban: interfaces.py cannot import
+                HeartbeatEndpoint).
+        """
+        self._heartbeat_endpoint = endpoint  # type: ignore[assignment]
 
     def endpoints(self, instance: Instance) -> dict[str, str]:
         """Return the endpoint map for ``instance``.

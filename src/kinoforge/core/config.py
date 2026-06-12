@@ -479,6 +479,10 @@ class ComputeConfig(BaseModel):
         mode: Instance mode; "pod" or "serverless".
         requirements: Hardware requirements override.
         lifecycle: Lifecycle guardrails (budget required here for non-hosted).
+        heartbeat_mode: Heartbeat substrate gate (B5a). Value space is the
+            union across all providers; provider-mode compatibility is
+            checked at adapter-dispatch time. Default ``"none"`` preserves
+            pre-B5a no-op heartbeat behaviour.
     """
 
     provider: str
@@ -486,6 +490,26 @@ class ComputeConfig(BaseModel):
     mode: str = "pod"
     requirements: RequirementsConfig = RequirementsConfig()
     lifecycle: LifecycleConfig | None = None
+    heartbeat_mode: str = "none"
+
+    @field_validator("heartbeat_mode")
+    @classmethod
+    def _validate_heartbeat_mode(cls, v: str) -> str:
+        """Reject heartbeat_mode values outside the union of supported literals.
+
+        Provider-specific compatibility (e.g. RunPod accepts ``"none"`` +
+        ``"graphql-tag"`` only) is verified by
+        :func:`kinoforge._adapters.build_heartbeat_endpoint_for` at
+        orchestrator dispatch time, where the per-provider module IS
+        importable. Config-load can't gate on provider without violating
+        core-import-ban.
+        """
+        allowed = {"none", "graphql-tag", "selfterm-http", "ssh-touch"}
+        if v not in allowed:
+            raise ValueError(
+                f"heartbeat_mode must be one of {sorted(allowed)}; got {v!r}"
+            )
+        return v
 
 
 # ---------------------------------------------------------------------------
