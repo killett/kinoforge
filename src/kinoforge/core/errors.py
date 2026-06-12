@@ -46,6 +46,17 @@ class TeardownError(KinoforgeError):
     """destroy_instance could not confirm termination."""
 
 
+class TransportError(KinoforgeError):
+    """Raised when a HeartbeatEndpoint satisfier's underlying transport fails.
+
+    Examples: RunPod GraphQL non-2xx, RunPod GraphQL ``errors`` response,
+    SkyPilot SSH ``Connection refused``, selfterm HTTP timeout. Distinct
+    from other KinoforgeError subclasses because callers (HeartbeatLoop
+    ._tick_once) treat transport flakes differently from semantic errors
+    — they retry on the next tick rather than aborting.
+    """
+
+
 class UnknownAdapter(KinoforgeError):
     """No registered provider/source/engine matches the requested name/scheme."""
 
