@@ -153,7 +153,7 @@ def _do_spinup(args: argparse.Namespace) -> int:
         aws_instances=[aws_out["instance"]],
         aws_volumes=[aws_out["volume"]] if aws_out["volume"] else [],
         aws_buckets=[aws_out["bucket"]],
-        aws_tables=[aws_out["table"]],
+        aws_tables=[aws_out["table"]] if aws_out["table"] else [],
         aws_budget_name=aws_out["budget_name"],
         created_at=datetime.now().isoformat(timespec="seconds"),
         tag=_TAG,
