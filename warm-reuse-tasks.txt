@@ -1,0 +1,584 @@
+Updated sequencing recommendation: B5a → B7 → B4 → B2 → B1 → B3 → B5b. Rationale:
+B5 was originally B5 (single layer covering RunPod + SkyPilot). It splits cleanly into a
+provider-agnostic substrate (core/heartbeat_endpoints.py Protocol) + per-provider satisfiers.
+B5a ships substrate + RunPod satisfier first so B1/B2/B3 inherit truthful verdicts on the
+provider that costs money today. B5b ships the SkyPilot satisfier once GPU quota lands
+(A3 / A4 from PROGRESS.md). B7 still slots before the warm-reuse trio because B1 wants the
+cooperative lock honest before its daemon goes autonomous-kill on cloud, and the lock-contract
+test extension lands cleaner before B1 piles on cross-process tests of its own.
+
+Interval contract (B5a shipped, B5b not yet): every B1/B2/B3 consumer of `classify` MUST
+treat HEARTBEAT_UNKNOWN as "do not destroy" on any non-RunPod provider until B5b lands. The
+B5a spec carries the explicit gate text; B1 (sweeper) inherits a no-op branch on
+HEARTBEAT_UNKNOWN-for-non-RunPod that logs WARNING and skips. Once B5b ships the gate flips
+to honor verdicts on SkyPilot too. Sentinel-gate stays conservative-on-ignorance, never
+destroying based on a known-no-op heartbeat source.
+
+
+
+- **B5a. core/heartbeat_endpoints.py substrate + RunPod satisfier.** Closes the
+  cost-leak window between idle pod and 8-day kernel-shutdown on RunPod. Substrate Protocol
+  designed to satisfy BOTH RunPod and SkyPilot wire shapes on paper, even though only the
+  RunPod satisfier ships now. Live spend ~$0.05 (one 60s bare-pod RunPod smoke).
+
+    What it is. Today, RunPodProvider.heartbeat() and SkyPilotProvider.heartbeat() are
+    pure no-ops with comments saying "native dead-man handles it"
+    (providers/runpod/__init__.py:445-452, providers/skypilot/__init__.py:785-791). Neither
+    provider implements last_heartbeat() at all — only LocalProvider does
+    (providers/local/__init__.py:189). When HeartbeatLoop runs against a real RunPod or
+    SkyPilot deploy session today (Layer U gate cfg.lifecycle.heartbeat_interval_s > 0),
+    the inner provider.last_heartbeat(id) call raises AttributeError, which the loop's
+    broad try/except Exception silently swallows and re-logs every tick. The ledger entry
+    never gains a meaningful last_heartbeat value. Layer V's classify then reads None
+    forever and falls back to HEARTBEAT_UNKNOWN for every cloud instance — defeating the
+    entire sentinel-gate contract on the providers that actually cost money.
+
+    Why it goes first. Layer U / V / B1 / B3 all rest on the assumption that
+    last_heartbeat carries truth. Without B5a, the assumption holds only for
+    LocalProvider (a test-only fake). Every higher layer that depends on classify's
+    cloud verdicts — the Layer W sweeper (B1), the Layer Y warm-reuse retrofit (B3),
+    the Layer X cost dashboard's LIVE/IDLE split (B2) — degenerates to "always
+    HEARTBEAT_UNKNOWN" against RunPod. Closing this gap is what makes the V substrate
+    honest on the only live cloud we actually run today. The "native dead-man" comments
+    are accurate for emergency shutdown (RunPod selfterm will still kill the pod), but
+    they do NOT feed back into kinoforge's view of whether the pod is being used right
+    now. That feedback is what the rest of the heartbeat chain needs. Shipping B5a
+    before B1/B2/B3 means the substrate sees its first real consumer with truthful
+    inputs, not retrofit-after-the-fact.
+
+    Surface area. Two halves: provider-agnostic substrate + RunPod satisfier.
+
+  - Substrate (core/heartbeat_endpoints.py). New module hosting a Protocol HeartbeatEndpoint
+    with two methods: write(instance_id, ts_local: datetime) -> None and
+    read(instance_id) -> datetime | None. Both methods document the failure contract:
+    transport errors propagate as TransportError; missing-side (instance gone, file
+    unmodified) returns None from read. Provider construction grows an optional
+    heartbeat_endpoint: HeartbeatEndpoint | None = None kwarg; when None the
+    provider's heartbeat() / last_heartbeat() methods stay no-op as today. Feature gate at
+    YAML level: compute.heartbeat_mode = "graphql-tag" | "selfterm-http" | "none"
+    (default none for backward compat; provider implicit from compute.provider — sibling
+    of compute.lifecycle.heartbeat_interval_s, NOT an engine.* knob). SkyPilot satisfier
+    shape is documented in §B5b
+    Implementation Notes inside the B5a spec so substrate Protocol covers both wire
+    shapes BEFORE RunPod implementation locks the surface.
+  - RunPod satisfier. Two viable shapes:
+    (a) selfterm exposes an HTTP heartbeat endpoint (POST /kf/heartbeat to record, GET
+    /kf/heartbeat to read) on a high port routed through the RunPod proxy; provider
+    methods become thin HTTP calls.
+    (b) a selfterm sidecar writes _last_heartbeat into the RunPod pod's tags via the
+    GraphQL podEditJob mutation; provider methods read tags on the existing
+    find_offers/get_instance calls. (a) is cheaper per-tick but requires opening a new
+    proxy port; (b) is heavier per-tick but reuses the existing GraphQL surface and
+    survives proxy-window races (which we hit in Phase 47). Recommend (b) for first
+    cut — adds zero new network surface. Choice locked in B5a spec; the substrate
+    Protocol is shape-agnostic, so a future (a) variant slots in as a second satisfier
+    without ABI churn.
+  - LocalProvider stays unchanged. Its in-memory dict implementation of last_heartbeat
+    already covers all the offline tests.
+  - Feature gate. compute.heartbeat_mode YAML field (sibling of compute.provider; value
+    space is provider-specific — "graphql-tag" for RunPod, "ssh-touch" for SkyPilot,
+    "none" anywhere). Default "none" preserves today's behavior; operators opt in
+    per-deploy. The B1 sweeper grows a guard at classify-time: if provider is RunPod AND
+    heartbeat_mode == "none", classify returns HEARTBEAT_UNKNOWN and B1 logs a
+    WARNING-once explaining the operator opted out.
+
+    Implementation Notes for B5b (SkyPilot satisfier — write these into the B5a spec
+    while the substrate decisions are hot, to prevent drift):
+
+  - SkyPilot has no native side-channel; cluster state APIs don't expose a writable
+    user metadata field. Three options:
+    (a) touch a sentinel file via SSH (ssh <id> touch /tmp/kf-heartbeat) on write,
+    ssh <id> stat -c %Y on read.
+    (b) sky exec <id> -- runs an arbitrary command on the cluster — same idea wrapped
+    in SkyPilot's own SSH path.
+    (c) the SkyPilot cluster YAML has a setup block that could start a local heartbeat
+    HTTP daemon at launch, then provider methods curl it via the public SSH endpoint.
+    Lock (a) for B5b first cut; per-tick cost is one SSH round-trip (~100ms on a warm
+    connection, ~1s cold). SkyPilot's autostop watches the SSH session for idle, so a
+    periodic touch ALSO acts as an autostop-defer signal — convenient secondary effect.
+  - SkyPilot timestamp precision is filesystem mtime (second granularity), NOT
+    millisecond ISO. Substrate Protocol's read() returns datetime; second-truncation
+    is acceptable. Heartbeat-staleness threshold in Layer V classify must NOT be
+    sub-second; today it isn't (Layer V dead-man window is heartbeat_interval_s * 3,
+    minimum ~30s). Documented as substrate invariant.
+  - SkyPilot SSH-cold latency (~1s) is 6x worse than RunPod GraphQL (~150ms). Substrate
+    Protocol must NOT mandate a single per-tick latency budget; HeartbeatLoop's
+    heartbeat_interval_s already absorbs both. Document: implementers SHOULD complete
+    write+read within heartbeat_interval_s/2 to leave margin.
+  - SkyPilot SSH failure modes (Connection refused, ProxyCommand error,
+    HostKeyVerificationFailed) all map to TransportError per substrate contract. The
+    SSH-touch path MUST reuse SkyPilot's existing SSH multiplexer config (ControlMaster
+    in ~/.ssh/config injected by sky launch) to avoid opening a new connection per
+    tick — opening fresh SSH on every tick interacts badly with autostop's idle
+    detection.
+
+    Risk. Medium. Five concrete risks:
+
+  1. **Per-tick cost (RunPod side).** GraphQL podEditJob mutation ~150ms; at 30s
+     heartbeat_interval, that's 0.5% wall-time consumed by tick. Acceptable, but
+     argues for keeping default interval >= 30s. Documented as substrate invariant
+     and YAML field default.
+  2. **RunPod GraphQL rate-limit (unknown).** Phase 24 didn't characterize this.
+     If the mutation is rate-limited (likely some throttle exists), the loop will
+     throttle and Layer V will fire false-positive stale verdicts. Mitigation:
+     per-provider heartbeat_interval_min_s YAML field that clamps Lifecycle.
+     heartbeat_interval_s upward. Default min 30s for RunPod, 60s for SkyPilot
+     (sized for SSH-cold worst case). B5a live smoke characterizes the actual
+     RunPod rate-limit; document the measured ceiling in the spec.
+  3. **Substrate Protocol designed for one provider could miss SkyPilot quirks.**
+     Mitigation: B5b Implementation Notes above are written INTO the B5a spec.
+     Substrate Protocol code-review checklist explicitly verifies each B5b note
+     is satisfied by the Protocol signature (datetime precision, failure modes,
+     idempotency on double-write, read-of-never-written returns None).
+  4. **B5b drift risk.** Months may pass between B5a and B5b while GPU quota lands.
+     Mitigation: (a) commit B5b Implementation Notes in the B5a spec as a top-level
+     "B5b Implementation Notes" section, NOT as inline comments that decay. (b)
+     ship a FakeSkyPilotEndpoint test double in tests/providers/conftest.py during
+     B5a that exercises the Protocol from the SkyPilot side (touch-then-stat
+     semantics, second-precision mtime, cold-vs-warm latency simulation). When
+     B5b implementation lands, the test double is the contract; only the wire
+     implementation is new.
+  5. **Interval-state consumer dishonesty.** B1/B2/B3 ship during the B5a-shipped /
+     B5b-not-shipped window. SkyPilot classify returns HEARTBEAT_UNKNOWN; if B1
+     destroys on HEARTBEAT_UNKNOWN, it destroys SkyPilot pods that are actively
+     working. Mitigation: B5a ships a `provider_heartbeat_supported(provider_kind)
+     -> bool` core/heartbeat_endpoints.py helper that B1's act_on_verdict consults
+     before destroying on HEARTBEAT_UNKNOWN. If False, log WARNING-once
+     ("provider %s has no heartbeat substrate; skipping HEARTBEAT_UNKNOWN
+     destroy") and skip. B5b flips the helper's return to True for SkyPilot, no
+     B1 code change needed. Documented as the interval contract at the top of
+     this file.
+
+    Effort estimate. ~5-6 tasks. Per-task shape:
+    a. core/heartbeat_endpoints.py Protocol + TransportError + provider_heartbeat_supported
+       helper + offline tests with fake transports (Local + Fake double).
+    b. RunPod satisfier (GraphQL tag write/read path, transport seam injectable for tests).
+    c. RunPod provider wiring (constructor kwarg, last_heartbeat() implementation,
+       heartbeat() implementation, feature gate compute.heartbeat_mode).
+    d. Layer V classify hook to consult provider_heartbeat_supported; B1-readiness
+       no-op branch on HEARTBEAT_UNKNOWN-for-unsupported-provider.
+    e. Offline tests: HeartbeatLoop with real RunPod-shaped FakeEndpoint, full
+       write→read→classify round-trip; cross-provider parity test
+       (Local + FakeSkyPilotEndpoint + FakeRunPodEndpoint all satisfy Protocol).
+    f. Live smoke: bare RunPod pod, 60s session, 2 heartbeat ticks, assert
+       last_heartbeat read on orchestrator side matches write time within
+       precision tolerance. ~$0.05.
+
+
+
+- **B7. Cooperative lock between session-start and reaper.** Layer V §6 candidate, prereq for B3.
+  Closes the deploy-session-vs-sweep race documented at
+  2026-06-06-layer-v-heartbeat-aware-reaper-design.md:670-676 (Risk 3): operator (or B1 daemon) runs
+  kinoforge reap --apply at the same wall-clock window a fresh deploy_session.__enter__ is
+  mid-engine.provision; the new session has not yet called HeartbeatLoop.start(), so classify sees
+  sentinel-stale and act_on_verdict destroys the pod the session is mid-boot on.
+
+    Interaction with B5a: B7's _hold_until_first_tick releases on Ledger.touch tick,
+    which is unconditional in Layer U HeartbeatLoop regardless of B5a status. So B7
+    works whether or not B5a is shipped. The cleaner story is B5a first — sweeper-side
+    reclassification after lock release sees an honest verdict — but B7 is not blocked
+    by B5a's existence. Recommend B5a → B7 for substrate-honesty axis; if B5a hits a
+    snag, B7 can ship in parallel.
+
+  -   What it is. Today the reaper side already holds reaper/<id> via store.acquire_lock(...,
+  ttl_s=_LOCK_TTL_S) inside act_on_verdict (core/reaper_actor.py:123) and re-classifies under the
+  lock before destroying — that part of D9 works. The deploy-session side acquires only
+  provision:<id> (core/orchestrator.py:213) on the engine-provision path, which is a DIFFERENT key —
+  the two locks do not gate each other. B7 makes the orchestrator side acquire reaper/<id>
+  cooperatively from the moment deploy_session commits to a specific instance.id through the moment
+  the first HeartbeatLoop tick lands in the ledger. The sweeper's existing lock-and-reclassify dance
+  then sees a held lock and either blocks (the FileLock.acquire default at
+  stores/local_lock.py:128) or fails-fast on --blocking=False; by the time it re-evaluates, the
+  sentinel is fresh and the verdict flips to LIVE.
+
+  -   Why it goes second (after B5a). Two distinct reasons.
+
+    a. Hard prereq for B3. B3 (Layer Y in-session orchestrator warm-reuse retrofit) deliberately
+  broadens the race surface by having deploy_session consult the ledger and attach to a warm pod
+  when _states[id] is empty. Today the race window is narrow — fires only when the operator manually
+  invokes kinoforge reap --apply during the engine-provision window of a deploy-session — because
+  no other code path attaches to warm pods cross-process. B3 makes attach-to-warm the default code
+  path on every fresh-shell kinoforge generate, widening the race surface by ~10x (every fresh
+  shell, not just operator-triggered reaps). Without B7, B3 will silently double-bill (fresh pod
+  created when the warm one was destroyed mid-claim) or wedge sessions waiting on a destroyed pod's
+  lock somewhere between 1-in-1000 and 1-in-100 invocations depending on B1 daemon cadence. The
+  Layer V spec acknowledges this explicitly at §5 Risk 3: "session code can
+  acquire_lock(f"reaper/{id}") cooperatively when claiming a warm pod. Out of scope for Layer V;
+  documented as Layer Y candidate."
+    b. Improves B1's daemon honesty independently of B3. B1 (sweeper daemon) turns the
+  reap-vs-deploy race from "operator-triggered, once per manual invocation" into "60s-cadence,
+  always running". Even without B3, a sweeper daemon eventually hits the race against any operator
+  running back-to-back kinoforge generate invocations on a configured idle instance whose
+  engine-provision crosses a 60s sweep boundary. ComfyUI + Wan cold provision is 1-5 minutes — the
+  engine-provision window will cross ~1-5 sweep cycles every cold boot. Shipping B7 before B1 means
+  the daemon does not carry a known cost-leak / wedged-session bug from day one.
+
+    Surface area. Smaller than B5a and B3; comparable to B4.
+
+  - Orchestrator side. New cooperative acquire in deploy_session.__enter__ at the point the
+  orchestrator commits to a specific instance.id — covers both the cold path (after create_instance
+  returns, before engine.provision) and the warm-supplied path (after instance= kwarg validated,
+  before idempotent engine.provision). Lock held until the first Ledger.touch(...) tick is observed,
+  then released. Implementation seam: a new internal helper _hold_until_first_tick(store,
+  instance_id, ledger, heartbeat_loop, *, timeout_s) returning a LockToken-bearing context manager
+  that releases once ledger.read(instance_id).heartbeat_thread_tick >= start_time. Scope: ~30 LOC in
+  a new core/session_claim.py (mirrors the purity split of core/reaper.py vs core/reaper_actor.py)
+  + ~10 LOC of wire-up in core/orchestrator.py between resolved instance.id and
+  HeartbeatLoop.start() (line 740). Eager first tick is already implemented
+  (core/heartbeat_loop.py:152 "Loop body: eager first tick, then sleep-and-tick until stopped") so
+  the held duration is approximately engine.provision wall-time + one Ledger.touch round-trip (~10
+  ms on Local, ~100 ms on S3).
+  - Reaper side. Zero code change. The existing act_on_verdict lock at core/reaper_actor.py:123
+  already uses the same key shape and _LOCK_TTL_S = 30.0 TTL. Blocking-acquire default at
+  stores/local_lock.py:128-129 (blocking: bool = True, timeout_s: float | None = None) means the
+  sweeper waits for the orchestrator to release; if the orchestrator holds longer than _LOCK_TTL_S,
+  the lease can be stolen (see Risk 1 below).
+  - Lock-key overload. Reusing reaper/<id> is the cheapest path but overloads the key — it now
+  means "the reaper is destroying OR the orchestrator is claiming". A cleaner separation would be a
+  new session-claim/<id> key plus updating act_on_verdict to acquire BOTH session-claim/<id> AND
+  reaper/<id>. Recommend reuse for first cut — one key, one TTL, one mental model; the overload is
+  documented in the new helper's docstring and at the existing reaper_actor.py:104 "Layer V D9 +
+  D10: holds reaper/<id> ..." comment.
+  - TTL collision with engine.provision duration. The hard constraint: _LOCK_TTL_S = 30.0 is
+  shorter than worst-case ComfyUI + Wan cold provision (1-5 min). Two mitigations: (a) bump
+  _LOCK_TTL_S to a value derived from lifecycle.boot_timeout_s (the existing operator-tunable that
+  bounds engine.provision); (b) implement a TTL-refresh ticker on the held lock that re-writes the
+  sidecar's expires_at field every _LOCK_TTL_S / 3 seconds while held. Recommend (a) — simpler, no
+  new background thread, reuses an existing operator knob.
+  - YAML surface. Zero new fields. Reuses lifecycle.heartbeat_interval_s (for the
+  held-until-first-tick wait timeout) and lifecycle.boot_timeout_s (for the lock TTL derivation in
+  mitigation (a) above). No session-claim: block. No policy knob.
+  - Test substrate. Cross-process subprocess-isolated test mirrors the Layer U cross-process
+  visibility test (PROGRESS:1130 shape). Subprocess A starts a deploy_session against a FakeProvider
+  with a sleepy engine.provision; subprocess B runs kinoforge reap --apply against the same id;
+  assert B blocks until A's first tick is recorded, then verdict flips to LIVE. Offline unit tests
+  cover the helper in isolation (fake ledger + spy HeartbeatLoop).
+
+    - Risk. Low-Medium. Four concrete risks:
+
+    a. Lease-steal during slow engine.provision. ComfyUI + Wan cold provision is 1-5 min;
+  _LOCK_TTL_S = 30.0 allows lease-steal within 30s. If the sweeper steals the lease (Phase 18 lock
+  contract permits it), the cooperative-lock contract is broken and the original race re-opens.
+  Mitigation: derive TTL from boot_timeout_s (mitigation (a) above). Alternative mitigation if the
+  cloud-store lock semantics make long TTLs problematic: TTL-refresh ticker (mitigation (b)).
+    b. Deadlock between sweeper and silently-crashed HeartbeatLoop. Orchestrator holds the lock,
+  HeartbeatLoop has crashed silently (Layer U's broad try/except), first tick never fires,
+  orchestrator waits indefinitely. Mitigation: _hold_until_first_tick takes a finite timeout_s =
+  boot_timeout_s + 2 * heartbeat_interval_s and on timeout raises a clear FirstTickTimeout exception
+  that aborts the deploy_session with the cold-path teardown (destroy the orphaned pod via the
+  existing CapabilityMismatch teardown path). Fail loud rather than wedge silently.
+    c. Operator confusion when --apply hangs. Running kinoforge reap --apply during a long cold
+  provision blocks for up to boot_timeout_s. The CLI should print a "waiting on session-claim lock
+  for <id> (held by deploy-session pid <n>) ..." line at WARNING level after 5s of waiting so
+  operators don't kill the reaper out of confusion. Lock sidecar already carries holder_pid
+  (stores/local_lock.py:90); one-line read-and-log change to _cmd_reap's lock-acquire wrapper. B1
+  daemon inherits the same diagnostic via structured logging.
+    d. Cross-host lock semantics on S3-backed acquire_lock. LocalArtifactStore.acquire_lock uses
+  fcntl.flock — OS releases on process death, bulletproof on a single host. S3-backed acquire_lock
+  orchestrator and reaper run on the same workstation today, so single-host is sufficient; but a
+  future distributed sweeper (B16 RayPool neighbourhood) would need the cloud-host lock path
+  verified. Mitigation: add a cross-store lock contract test (tests/stores/test_lock_contract.py)
+  parametrized over local and mocked-s3 that exercises blocking acquire + steal +
+  held-while-orchestrator-runs. The reaper/<id> lock contract is already exercised under Layer V
+  acceptance tests; B7 grows it by one parametrize case.
+
+    Effort estimate. ~4-5 tasks. Smaller than B5a; comparable to B4. Task shape:
+
+    a. Promote _LOCK_TTL_S from a module constant in core/reaper_actor.py:27 to a
+  lifecycle.boot_timeout_s-derived value with a small safety margin — pure refactor, unit tests at
+  tests/core/test_reaper_actor.py updated.
+    b. Add core/session_claim.py with _hold_until_first_tick helper — pure decision wrapper around
+  store.acquire_lock + ledger.read polling, tested with a fake ledger + spy HeartbeatLoop.
+    c. Wire the helper into core/orchestrator.py deploy_session.__enter__ between
+  resolved-instance.id and HeartbeatLoop.start() for both cold and warm paths, with the
+  finite-timeout fallback from Risk 2 — surgical edit, ~10 LOC.
+    d. Cross-process integration test: subprocess A starts deploy_session against a sleepy
+  FakeProvider; subprocess B runs kinoforge reap --apply; assert B blocks → A's first tick lands →
+  B's classify returns LIVE → no destroy. Mirrors PROGRESS:1130 Layer U cross-process visibility
+  test shape.
+    e. _cmd_reap "waiting on session-claim lock for <id> (held by pid <n>)" diagnostic from Risk 3 +
+  README "Operator session-claim semantics" paragraph + amend Layer V spec §5 Risk 3 + §6 to point
+  at the new B7 spec.
+
+    Total ~60 LOC source + ~150 LOC tests. No live spend — FakeProvider + LocalProvider + mocked-S3
+  cover the lock contract. No new YAML fields, no new substrate, no public CLI surface beyond the
+  WARNING line.
+
+  ---
+  Sanity checks against repo: lock site at core/reaper_actor.py:123 ✓; TTL constant at :27
+  (_LOCK_TTL_S = 30.0) ✓; orchestrator's existing provision:<id> lock at core/orchestrator.py:213 ✓;
+  FileLock default blocking at stores/local_lock.py:128 ✓; eager first tick at
+  core/heartbeat_loop.py:152 ✓; spec hook quote verbatim at
+  2026-06-06-layer-v-heartbeat-aware-reaper-design.md:670-676 ✓.
+
+
+
+- **B4. Cross-CLI warm-reuse CLI exposure.** Layer P Task 7 item #2 (`2026-06-01-layer-p-task7-item2-warm-reuse-design.md:54,546`) noted `LifecycleManager.warm_reuse_or_create` CLI surface as a Layer Q candidate; Layer Q shipped HF source instead — surface never materialized. Sub-item of B3.
+
+    What it is. The Python-side warm-reuse plumbing for kinoforge generate and
+    kinoforge batch already exists end-to-end. deploy_session, generate, and
+    batch_generate all accept an instance: Instance | None = None kwarg (Phase 28 Layer P
+    Task 7 item #2). When non-None, the caller's pre-discovered pod is reused; cold-start
+    create_instance and the matching teardown on CapabilityMismatch / ValidationError
+    are skipped (caller owns the pod, caller decides on destroy). LifecycleManager.
+    warm_reuse_or_create (core/lifecycle.py:308-345) is the pure decision helper. The
+    feature is exercised today by the Layer P live smoke (tests/live/test_comfyui_wan_live.py) in
+    a manual loop that calls find_instance_by_tag then passes instance= directly
+    into generate(). There is no CLI surface for any of this. kinoforge generate and
+    kinoforge batch never expose --instance-id <id>. The operator has no way to say
+    "use the pod I already provisioned" without writing a Python script that imports
+    kinoforge.core.orchestrator directly. The deferral note at 2026-06-01-layer-p-task7-
+    item2-warm-reuse-design.md:54,545-547 explicitly named "Layer Q candidate"; Layer Q
+    shipped HuggingFaceSource (Phase 30) instead and the CLI flag was never picked back up.
+
+    Why it might be next. Three reasons it's a viable layer pick today.
+
+  1. It is the cheapest way to claw back the cold-start cost without committing to the
+  full B3 (Layer Y in-session warm-reuse retrofit) blast-radius work. B3 makes warm-
+  reuse automatic (orchestrator consults the ledger, classifies, attaches). B4 makes
+  it explicit (operator types the id). The user-visible win on a fresh shell is the
+  same: a second kinoforge generate against a still-warm pod skips the 1-5 minute
+  ComfyUI + Wan spin-up. The implementation cost is roughly an order of magnitude
+  smaller because the orchestrator doesn't need to grow a discovery + classify +
+  lock-coordination path.
+  2. It composes naturally with B2 (Layer X cost dashboard). Operator runs kinoforge cost to see
+  what's LIVE-and-burning, picks the matching pod id, passes it to
+  --instance-id on the next generate. The two together turn the ledger from a
+  diagnostic surface into a feature surface.
+  3. It also serves as the override path for B3 once B3 ships. Even with automatic
+  warm-reuse, the operator sometimes wants to pin a specific pod (e.g. two same-
+  capability-key pods exist, only one has the right warmed VRAM state, the operator
+  knows which). --instance-id is the manual escape hatch B3 will eventually need
+  anyway.
+
+    Surface area. Smaller than B1/B2/B3.
+
+  - CLI flags. kinoforge generate --instance-id <id> and kinoforge batch --instance-id <id>. Both
+  threaded through _cmd_generate / _cmd_batch into the
+  existing instance= kwarg. The orchestrator side requires zero changes — it already
+  accepts the kwarg.
+  - Resolution path. The CLI receives a string id, but deploy_session expects an
+  Instance dataclass. Add a provider.get_instance(id) -> Instance lookup at CLI
+  dispatch time. RunPod, SkyPilot, and Local all already implement get_instance (it's
+  on the ComputeProvider ABC) so this is a one-line lookup wired into the existing
+  SessionContext.provider() factory.
+  - Failure surface. Three failure modes: id unknown to provider (raise
+  KeyError-typed exit-code-1 "instance not found"); id known but status != "ready"
+  (refuse with exit-code-1 "instance not ready: status="); id from a different
+  provider than cfg.compute.provider (refuse — the orchestrator's resolved provider
+  can only manage its own ids).
+  - kinoforge list adjacency. Operators need to find candidate ids. kinoforge list already shows
+  live ledger entries (Phase 33 Layer S); appending the
+  instance-id column is a one-line print-format change so the discovery path is
+  list → copy id → generate --instance-id.
+  - Ledger touch. When warm-reusing, the orchestrator should NOT re-record the
+  instance to the ledger (it's already there from the first generate); but it SHOULD
+  Ledger.touch(id, ...) if Layer U's HeartbeatLoop is configured. Existing
+  deploy_session wire-up already handles this conditional correctly.
+
+    Risk. Low. Three concrete risks: (1) operator passes an id that already crossed
+    the dead-man window but kinoforge's view says LIVE (Layer V classify returns LIVE but
+    the pod is wedged) — the operator wastes a job submit and discovers the wedge at
+    HTTP-failure time. Mitigation: run classify against the supplied id at CLI entry and
+    refuse if verdict is HEARTBEAT_UNKNOWN / ORPHAN_REAP / IDLE_REAP unless
+    --force-attach is passed. (2) tag-discovery races: the CLI lookup happens before the
+    orchestrator's engine.provision(idempotent) runs, so an over-eager Layer V sweep
+    (when B1 ships) could destroy the pod between --instance-id validation and generate
+    body. Solvable by holding the same Phase 18 reaper/<id> lock for the duration of the
+    generate. (3) capability_key mismatch: operator passes a pod id whose capability_key
+    doesn't match the supplied --config. Orchestrator already detects this via the
+    CapabilityMismatch path; the spec §Q2 decision says skip teardown on caller-supplied
+    instance. So the operator gets a clean error, the pod survives — but they wasted a CLI
+    invocation. Add a CLI-side pre-check that loads the cfg, derives CapabilityKey, and
+    compares against the ledger entry's stored capability key (Layer S already persists it).
+
+    Effort estimate. ~4-5 tasks. The smallest of the warm-reuse trio. Per-CLI flag
+    wiring + resolution lookup (~30 LOC across cli/_main.py + cli/_commands.py),
+    capability-key pre-check (~20 LOC, reuses Layer S ledger), kinoforge list
+    instance-id column (~10 LOC), offline tests + a dry-run live smoke (FakeProvider
+    exercises every code path), README "Operator warm-reuse" section. Total ~70 LOC source
+    + ~150 LOC tests. No new specs or substrate. The only schema-adjacent decision is
+    whether --instance-id is mutually-exclusive with --dry-run (yes — a dry-run
+    doesn't need a real pod), and whether it interacts with --config (yes — config is
+    still required for capability_key derivation + engine.backend construction). Both
+    decisions resolve to one-line argparse rules.
+
+
+
+- **B2. Layer X — cost dashboard / metrics consumer.** Walks ledger, runs `classify` per entry, aggregates burning-$/hr + per-provider breakdown + LIVE/IDLE/HEARTBEAT_UNKNOWN counts + lifetime $/session. `kinoforge cost` subcommand; `--json` for Grafana/Prometheus. Pure read path; ledger already stores `cost_rate_usd_per_hr` (Layer V Task 1) + `created_at`. Lowest-risk of B1/B2/B3.
+
+  Interval-state visibility (B5a shipped, B5b not yet): SkyPilot-provider entries will
+  classify as HEARTBEAT_UNKNOWN. B2's per-provider breakdown table MUST surface this
+  honestly — a footer line like "WARNING: SkyPilot heartbeat substrate not yet shipped
+  (B5b pending GPU quota); SkyPilot LIVE counts are upper-bound estimates" anchored at
+  the bottom of the human-readable table and as a top-level "heartbeat_partial_truth":
+  ["skypilot"] key in --json mode. Drops once B5b ships and provider_heartbeat_supported
+  returns True everywhere.
+
+  What it is. A read-only consumer that walks the ledger, runs classify over every entry,
+  and emits aggregates: total $/hour currently burning, breakdown by provider, count of
+  LIVE vs IDLE vs HEARTBEAT_UNKNOWN, lifetime $ spent per session/batch_id. Probably a
+  kinoforge cost subcommand with --json for piping to Grafana/Prometheus and a default
+  human-readable table.
+
+  Why it might be next. Cost visibility is the operator's number-one ask after cost safety.
+  Layer V tells you whether an instance should die; Layer X tells you how much it has cost
+  so far. The ledger already stores cost_rate_usd_per_hr (Layer V Task 1) and created_at,
+  so the math is just (now - created_at) * rate summed across LIVE verdicts.
+
+  Surface area. New core/cost.py aggregator (pure, mirrors core/reaper.py purity split),
+  new CLI subcommand, optional Prometheus text-format output mode.
+
+  Risk. Lower than the sweeper. No daemon, no signals, no shutdown semantics. Pure read
+  path.
+
+  Effort estimate. ~4-6 tasks. The smallest of the three Group A options.
+
+
+
+- **B1. Layer W — `kinoforge sweeper` daemon.** `while True: sweep(...); sleep(interval)` consumer of the Layer V substrate. Closes idle-pod cost-leak window between manual `kinoforge reap` invocations. Surface: `kinoforge sweeper start|stop|status` + `sweeper:` YAML block + daemon-side heartbeat (mirrors Layer U `HeartbeatLoop`). Low risk; `act_on_verdict` already per-instance-locked. Spec hook at `2026-06-06-layer-v-heartbeat-aware-reaper-design.md` §6.
+
+  Interval-state safety (B5a shipped, B5b not yet): B1's act_on_verdict MUST consult
+  provider_heartbeat_supported(provider_kind) before destroying on HEARTBEAT_UNKNOWN. If
+  False, log WARNING-once per (provider_kind, instance_id) ("provider %s on instance %s
+  has no heartbeat substrate; B5b pending; skipping HEARTBEAT_UNKNOWN destroy") and skip
+  destruction. This is the sentinel-gate conservative-on-ignorance contract from the top
+  of this file. B5b flips the helper's return on SkyPilot; no B1 code change required at
+  that point. Document the gate at sweeper-startup-banner level so daemon operators see
+  it in their first log line.
+
+  What it is. A long-running process that calls sweep() on a configurable cadence (e.g.
+  every 60 s) instead of requiring an operator to type kinoforge reap. Today, an idle pod
+  that nobody cleans up costs money until the next manual sweep. The daemon closes that
+  gap.
+
+  Why it is the natural next layer. Layer V deliberately shipped kinoforge reap as a
+  one-shot CLI that produces verdicts. The CLI consumer was the proof that the substrate
+  works; the daemon consumer is the proof that the substrate scales. Everything the daemon
+  needs already exists: sweep() is idempotent, act_on_verdict is locked per-instance, the
+  reaper/<id> lock prevents two daemons (or a daemon + a manual CLI) from racing. The
+  daemon is essentially while True: sweep(...); sleep(interval) plus signal handling,
+  structured logging, and a way to start/stop it.
+
+  Surface area. A new kinoforge sweeper start / sweeper stop / sweeper status subcommand
+  family, a sweeper: YAML block (interval, policy overrides), probably a PID file or a
+  Ledger.touch-style heartbeat for the daemon itself so a wedged daemon can be detected.
+
+  Risk. Low. Mirrors HeartbeatLoop from Layer U (signal handling + daemon thread + bounded
+  shutdown), and there is a worked example to copy. No live spend required — FakeProvider +
+  LocalProvider are enough.
+
+  Effort estimate. ~6-8 tasks, comparable to Layer U or Layer V.
+
+
+
+- **B3. Layer Y — in-session orchestrator warm-reuse retrofit.** `deploy_session` consults `classify` against the ledger when `_states[id]` is empty; attaches to a LIVE matching-`capability_key` pod instead of `create_instance`. Kills cold-start (1–5 min ComfyUI + Wan spin-up) on every fresh-shell `kinoforge generate`. Highest blast radius — touches the generate hot path. Prereq: B7 cooperative session-start/reaper lock. Spec hook at Layer V §5.6 + §6.
+
+  Interval-state safety (B5a shipped, B5b not yet): B3's "attach to LIVE matching-
+  capability_key pod" candidate-selection MUST treat HEARTBEAT_UNKNOWN as non-attachable
+  on non-RunPod providers — i.e. fall through to cold create_instance rather than risk
+  attaching to a SkyPilot pod whose actual state is unknown. Same provider_heartbeat_
+  supported gate as B1. The deploy_session log line includes "(B5b pending: SkyPilot
+  HEARTBEAT_UNKNOWN candidates skipped)" once per session when the skip fires. Prevents
+  silent double-bill during the B5a-shipped-B5b-pending window.
+
+  What it is. Today, LifecycleManager.warm_reuse_or_create checks self._states[id], which
+  is in-process state. When you run kinoforge generate twice in two separate CLI
+  invocations against the same configured idle instance, the second invocation has no idea
+  the first one's pod is reusable — _states is empty — so it creates a fresh pod. Layer Y
+  closes that by having the orchestrator consult classify against the ledger when
+  _states[id] is missing, and if the verdict is LIVE for a matching capability_key, attach
+  to that pod instead of creating a new one.
+
+  Why it might be next. This is the closest the project gets to a
+  "user-feels-it-the-next-day" win. The substrate already knows the pod is alive; the
+  orchestrator simply doesn't ask. Right now every kinoforge generate from a fresh shell
+  pays the spin-up cost (1–5 minutes for ComfyUI + Wan models on a real provider).
+
+  Surface area. Mostly orchestrator: a new code path in deploy_session that, before calling
+  create_instance, walks the ledger for entries matching capability_key, classifies them,
+  and reuses the first LIVE match. Needs a per-instance lock to avoid two CLIs grabbing the
+  same warm pod. The hardest part is testing — needs subprocess-isolated tests like the
+  Layer U cross-process visibility test (PROGRESS:1130).
+
+  Risk. Medium. Touches deploy_session, which is on the hot path for every generate and
+  every batch invocation. A bug here could silently double-bill or wedge sessions waiting
+  for a dead pod's lock. Strong test discipline required.
+
+  Effort estimate. ~6-8 tasks, but with more careful review than W or X because of the
+  blast radius on the generate path.
+
+
+
+- **B5b. SkyPilot satisfier for core/heartbeat_endpoints.py substrate.** GATED on
+  A3 / A4 from PROGRESS.md (AWS / GCP GPU quota landing — SkyPilot live smoke is
+  blocked until then). Plug-in satisfier; substrate Protocol shipped in B5a, no
+  substrate churn required. ~3-4 tasks. Live spend ~$0.05 (one bare-cluster
+  SkyPilot smoke once quota lands; CPU cluster acceptable since the heartbeat
+  path is GPU-irrelevant).
+
+  Prerequisites before B5b can start:
+  - A3 (Layer W+β SkyPilot T4 GPU smoke re-fire) lands OR a CPU-only SkyPilot
+    cluster on GCP confirmed working (no GPU quota needed for the heartbeat
+    smoke itself). Document which when B5b kicks off.
+  - B5a's FakeSkyPilotEndpoint test double exists in tests/providers/conftest.py
+    (specified in B5a Task a). B5b's first task is "implement the wire-level
+    real version against the existing Protocol; offline tests already exist."
+
+  What ships:
+  - providers/skypilot/__init__.py heartbeat() implementation: SSH-touch a
+    sentinel file at /tmp/kf-heartbeat-{pid}. Reuses SkyPilot's existing SSH
+    multiplexer config (ControlMaster from sky launch); MUST NOT open a fresh
+    SSH connection per tick — see B5a Implementation Notes for B5b.
+  - providers/skypilot/__init__.py last_heartbeat() implementation: ssh stat
+    -c %Y of the sentinel file; returns mtime as datetime; returns None if
+    file missing or SSH transport fails.
+  - Feature gate compute.heartbeat_mode = "ssh-touch" | "none"
+    (mirrors RunPod gate from B5a; same field, SkyPilot-specific value space).
+  - core/heartbeat_endpoints.py provider_heartbeat_supported helper flips
+    return value for SkyPilot once B5b ships. This is the trigger that
+    re-enables B1's HEARTBEAT_UNKNOWN-destroy path on SkyPilot, B2's honest
+    LIVE-vs-IDLE counts on SkyPilot, and B3's SkyPilot warm-reuse attach.
+  - Tests: parametrize the existing B5a offline tests over a real-SkyPilot
+    fake (mtime-truncated-to-seconds, SSH transport seam injectable, cold-vs-
+    warm latency simulation). Cross-provider parity test (RunPod + SkyPilot
+    + Local all satisfy Protocol identically) extended with SkyPilot's real
+    implementation.
+  - Live smoke: one CPU-cluster SkyPilot session, 60s lifetime, 2 heartbeat
+    ticks, assert orchestrator-side last_heartbeat read matches write time
+    within mtime-second precision.
+
+  Risk. Low at B5b time (substrate decisions already locked, contract already
+  satisfied by B5a's FakeSkyPilotEndpoint, drift mitigated by B5a's documented
+  Implementation Notes). The one real risk is SSH-multiplexer behavior in
+  production differing from test fakes — mitigation: the live smoke's failure
+  mode is observable (touch+stat round-trip latency in logs), and the fallback
+  is reverting heartbeat_mode to "none" YAML-side per-deploy. No code rollback
+  needed.
+
+  Documentation when B5b ships:
+  - PROGRESS.md: B5a closeout note updated to "B5b: SkyPilot satisfier shipped"
+    + link to B5b commit.
+  - All provider_heartbeat_supported WARNING-once messages in B1/B2/B3 source
+    can stay (operator who opted out of heartbeat_mode still triggers them);
+    update message text to "provider %s has heartbeat substrate but mode is
+    'none'; opt in via compute.heartbeat_mode".
+  - README "Operator heartbeat semantics" section updated to document the now-
+    closed gap: cross-provider verdict honesty across RunPod and SkyPilot.
+
+
+
+---
+Sequencing summary:
+  B5a (RunPod heartbeat substrate, ~5-6 tasks, $0.05 live)
+  → B7 (cooperative lock, ~4-5 tasks, no live spend)
+  → B4 (CLI warm-reuse exposure, ~4-5 tasks, $0 or $0.05 live)
+  → B2 (cost dashboard, ~4-6 tasks, no live spend)
+  → B1 (sweeper daemon, ~6-8 tasks, optional live)
+  → B3 (in-session warm-reuse retrofit, ~6-8 tasks, RunPod smoke ~$0.10)
+  → [QUOTA GATE: A3 / A4 land]
+  → B5b (SkyPilot satisfier, ~3-4 tasks, $0.05 live)
+
+Total RunPod-only path: ~30-36 tasks before quota gate, ~$0.25 live spend.
+SkyPilot satisfier slots in cleanly when quota lands; no retrofit of earlier
+layers needed because every consumer is gated through provider_heartbeat_supported.
