@@ -708,8 +708,11 @@ Concurrent reapers (or a sweeper daemon) cooperate by holding the same
 - **Layer Y — in-session orchestrator integration.** Orchestrator
   consults `classify` for warm-reuse decisions when `_states[id]` is
   missing (cross-CLI-invocation reuse).
-- **Layer Z — cost dashboard / metrics consumer.** Read-only consumer
-  of `classify` over the ledger.
+- ~~**Layer Z — cost dashboard / metrics consumer.**~~ — CLOSED by B2
+  (Layer X). Spec at
+  `docs/superpowers/specs/2026-06-12-b2-cost-dashboard-design.md`;
+  consumes Layer V `classify` verdicts for the per-verdict burn-rate
+  breakdown and per-provider aggregation. Closed by commit `5b58bb2`.
 - ~~**Cooperative lock between session-start and reaper**~~ — CLOSED by
   B7 (spec at `docs/superpowers/specs/2026-06-12-b7-cooperative-session-claim-lock-design.md`,
   commit `8f1ee89` and predecessors).
