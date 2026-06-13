@@ -78,6 +78,17 @@ class _FakeLock:
     def __exit__(self, *_: object) -> None:
         return None
 
+    # B7: the probe helper calls acquire(blocking=False) on the lock
+    # returned from store.acquire_lock("provision:<id>", ...). The fake
+    # store's lock is always "free" — returns a sentinel token.
+    def acquire(
+        self, *, blocking: bool = True, timeout_s: float | None = None
+    ) -> object | None:
+        return object()
+
+    def release(self, token: object) -> None:
+        return None
+
 
 class _FakeLedger:
     def __init__(self) -> None:
@@ -182,7 +193,9 @@ def test_act_on_verdict_acquires_per_instance_lock() -> None:
         thresholds=_THR,
         clock=clock,
     )
-    assert store.acquires == [("reaper/i-1", 30.0)]
+    # B7: act_on_verdict acquires the per-instance reaper lock first, then
+    # non-blocking-probes provision:<id> before the destroy flow.
+    assert store.acquires == [("reaper/i-1", 30.0), ("provision:i-1", 0.0)]
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +445,14 @@ def test_act_on_verdict_substrate_missing_does_not_destroy(
         def __exit__(self, *_: object) -> None:
             pass
 
+        def acquire(
+            self, *, blocking: bool = True, timeout_s: float | None = None
+        ) -> object | None:
+            return object()
+
+        def release(self, _token: object) -> None:
+            return None
+
     class _StubStore:
         def acquire_lock(self, _key: str, ttl_s: float = 30.0) -> _DummyLock:
             return _DummyLock()
@@ -502,6 +523,14 @@ def test_act_on_verdict_substrate_missing_warns_once_per_pair(
         def __exit__(self, *_: object) -> None:
             pass
 
+        def acquire(
+            self, *, blocking: bool = True, timeout_s: float | None = None
+        ) -> object | None:
+            return object()
+
+        def release(self, _token: object) -> None:
+            return None
+
     class _StubStore:
         def acquire_lock(self, _key: str, ttl_s: float = 30.0) -> _DummyLock:
             return _DummyLock()
@@ -554,3 +583,114 @@ def test_act_on_verdict_substrate_missing_warns_once_per_pair(
         r for r in caplog.records if "heartbeat substrate" in r.getMessage().lower()
     ]
     assert len(relevant) == 1
+
+
+# ---------------------------------------------------------------------------
+# B7 — act_on_verdict non-blocking probe of provision:<id>
+# ---------------------------------------------------------------------------
+
+
+def test_act_on_verdict_defers_when_provision_lock_held(
+    tmp_path: Any,
+) -> None:
+    """B7: orchestrator-side holds provision:<id>; reaper probe sees the
+    sidecar holder_pid; act_on_verdict returns deferred-session-claim and
+    skips destroy.
+
+    Bug catch: a forgotten probe would race the orchestrator's first-tick
+    polling window — reaper destroys the boot-mid pod the session is
+    still claiming.
+    """
+    import os
+
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(tmp_path)
+    provision_lock = store.acquire_lock("provision:i-deferred", ttl_s=300.0)
+    token = provision_lock.acquire(blocking=True, timeout_s=5.0)
+    assert token is not None
+    try:
+        ledger = _FakeLedger()
+        provider = _FakeProvider(live_ids={"i-deferred"})
+        entry = _entry(
+            id_="i-deferred",
+            created_at=0.0,
+            last_heartbeat=0.0,
+            heartbeat_thread_tick=0.0,
+        )
+        clock = FakeClock(start=1.0)
+
+        result = act_on_verdict(
+            store,
+            ledger,  # type: ignore[arg-type]
+            provider,  # type: ignore[arg-type]
+            entry,
+            Verdict.IDLE_REAP,
+            thresholds=_THR,
+            clock=clock,
+        )
+
+        assert result.action == "deferred-session-claim"
+        assert f"pid {os.getpid()}" in (result.reason or "")
+        assert provider.destroyed == []
+        # Re-classify never ran on the defer path.
+        assert result.applied_verdict == Verdict.IDLE_REAP
+    finally:
+        provision_lock.release(token)
+
+
+def test_act_on_verdict_proceeds_after_provision_lock_released(
+    tmp_path: Any,
+) -> None:
+    """B7: when provision:<id> is free, probe-success releases instantly
+    and act_on_verdict continues into re-classify + destroy.
+
+    Discriminating: pins down probe-success-immediate-release. A bug that
+    forgot to release the probe would deadlock the next sweep.
+    """
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(tmp_path)
+    ledger = _FakeLedger()
+    provider = _FakeProvider(live_ids={"i-released"})
+    entry = _entry(
+        id_="i-released",
+        created_at=0.0,
+        last_heartbeat=0.0,
+        heartbeat_thread_tick=499.0,
+    )
+    # Sentinel-fresh (499 within 3*30=90s of 500) + hb-stale (500-0 > 100)
+    # → classify yields IDLE_REAP confirming the snapshot.
+    clock = FakeClock(start=500.0)
+
+    result = act_on_verdict(
+        store,
+        ledger,  # type: ignore[arg-type]
+        provider,  # type: ignore[arg-type]
+        entry,
+        Verdict.IDLE_REAP,
+        thresholds=_THR,
+        clock=clock,
+    )
+
+    assert result.action == "destroyed_and_forgot"
+    assert provider.destroyed == ["i-released"]
+    # Probe MUST release: a second act_on_verdict against the same store
+    # would block forever if the probe leaked the file lock.
+    second_provider = _FakeProvider(live_ids={"i-second"})
+    second_entry = _entry(
+        id_="i-second",
+        created_at=0.0,
+        last_heartbeat=0.0,
+        heartbeat_thread_tick=499.0,
+    )
+    second = act_on_verdict(
+        store,
+        ledger,  # type: ignore[arg-type]
+        second_provider,  # type: ignore[arg-type]
+        second_entry,
+        Verdict.IDLE_REAP,
+        thresholds=_THR,
+        clock=clock,
+    )
+    assert second.action == "destroyed_and_forgot"

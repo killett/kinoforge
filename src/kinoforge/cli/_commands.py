@@ -961,9 +961,13 @@ def _emit_reap_human(report: SweepReport, applied: bool, include_orphans: bool) 
         )
         skipped = sum(1 for a in report.actions if a.action == "skipped")
         failed = sum(1 for a in report.actions if a.action == "failed")
+        deferred = sum(
+            1 for a in report.actions if a.action == "deferred-session-claim"
+        )
         print(
             f"acted on {len(report.actions)}: {destroyed} destroyed · "
-            f"{forgot} forgotten · {skipped} drift-skipped · {failed} failed"
+            f"{forgot} forgotten · {skipped} drift-skipped · "
+            f"{deferred} deferred · {failed} failed"
         )
 
 

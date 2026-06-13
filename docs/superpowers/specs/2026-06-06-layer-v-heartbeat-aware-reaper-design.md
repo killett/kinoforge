@@ -674,6 +674,15 @@ Concurrent reapers (or a sweeper daemon) cooperate by holding the same
    session's pod. Mitigation: session code can `acquire_lock(f"reaper/{id}")`
    cooperatively when claiming a warm pod. Out of scope for Layer V;
    documented as Layer Y candidate.
+
+   **B7 closure:** the cooperative lock landed in B7 (spec at
+   `docs/superpowers/specs/2026-06-12-b7-cooperative-session-claim-lock-design.md`,
+   commit `8f1ee89` and predecessors). Implementation reuses the existing
+   `provision:<id>` key (not the `reaper/<id>` key sketched here);
+   orchestrator holds it from instance-id committed through first
+   heartbeat tick lands. Reaper non-blocking-probes before destroying
+   and returns `ActionResult(action="deferred-session-claim", reason="held by pid <N>; ...")`
+   on contention. Race window closed.
 4. **`HEARTBEAT_UNKNOWN` confusion for operators not running
    Layer U.** Status line could surprise. Mitigation: README documents
    the new verdict; CLI summary line explicitly calls it out
@@ -701,8 +710,9 @@ Concurrent reapers (or a sweeper daemon) cooperate by holding the same
   missing (cross-CLI-invocation reuse).
 - **Layer Z — cost dashboard / metrics consumer.** Read-only consumer
   of `classify` over the ledger.
-- **Cooperative lock between session-start and reaper** (mitigation
-  for Risk 3 above).
+- ~~**Cooperative lock between session-start and reaper**~~ — CLOSED by
+  B7 (spec at `docs/superpowers/specs/2026-06-12-b7-cooperative-session-claim-lock-design.md`,
+  commit `8f1ee89` and predecessors).
 - **Per-entry `heartbeat_interval_s` override.**
 - **JSON / YAML policy file** (e.g. `--policy policy.yaml`).
 - **Real `provider.heartbeat()` implementations for RunPod /

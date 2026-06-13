@@ -271,3 +271,115 @@ def test_reap_apply_with_failed_action_exits_2() -> None:
         mock_sweep.return_value = SweepReport(snapshot=snapshot, actions=actions)
         code = _cmd_reap(_args(apply=True), ctx)
     assert code == 2
+
+
+# ---------------------------------------------------------------------------
+# B7: deferred-session-claim render coverage
+# ---------------------------------------------------------------------------
+
+
+def test_emit_reap_human_includes_deferred_count(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """_emit_reap_human summary line counts <N> deferred for B7.
+
+    Bug catch: a forgotten `deferred` accumulator would hide the B7
+    action from operators reading the human-readable output.
+    """
+    from kinoforge.cli._commands import _emit_reap_human
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.reaper_actor import ActionResult, SweepReport
+
+    actions = [
+        ActionResult(
+            instance_id="i-a",
+            snapshot_verdict=Verdict.IDLE_REAP,
+            applied_verdict=Verdict.IDLE_REAP,
+            action="destroyed_and_forgot",
+        ),
+        ActionResult(
+            instance_id="i-b",
+            snapshot_verdict=Verdict.IDLE_REAP,
+            applied_verdict=Verdict.IDLE_REAP,
+            action="deferred-session-claim",
+            reason="held by pid 4242; orchestrator mid-session-claim",
+        ),
+        ActionResult(
+            instance_id="i-c",
+            snapshot_verdict=Verdict.IDLE_REAP,
+            applied_verdict=Verdict.IDLE_REAP,
+            action="deferred-session-claim",
+            reason="held by pid 4243; orchestrator mid-session-claim",
+        ),
+    ]
+    report = SweepReport(
+        snapshot={
+            "i-a": (
+                {"id": "i-a", "provider": "local", "created_at": 0.0},
+                Verdict.IDLE_REAP,
+            ),
+            "i-b": (
+                {"id": "i-b", "provider": "local", "created_at": 0.0},
+                Verdict.IDLE_REAP,
+            ),
+            "i-c": (
+                {"id": "i-c", "provider": "local", "created_at": 0.0},
+                Verdict.IDLE_REAP,
+            ),
+        },
+        actions=actions,
+    )
+
+    _emit_reap_human(report, applied=True, include_orphans=False)
+
+    captured = capsys.readouterr()
+    assert "2 deferred" in captured.out, captured.out
+
+
+def test_emit_reap_jsonl_handles_deferred_action(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """_emit_reap_jsonl emits the deferred-session-claim literal in
+    per-action records without crashing on the unknown action.
+
+    Discriminating: the JSONL emitter passes `action` through as-is; a
+    regression that introduced an action-enum gate would drop the new
+    literal silently.
+    """
+    from kinoforge.cli._commands import _emit_reap_jsonl
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.reaper_actor import ActionResult, SweepReport
+
+    actions = [
+        ActionResult(
+            instance_id="i-d",
+            snapshot_verdict=Verdict.IDLE_REAP,
+            applied_verdict=Verdict.IDLE_REAP,
+            action="deferred-session-claim",
+            reason="held by pid 4244; orchestrator mid-session-claim",
+        ),
+    ]
+    report = SweepReport(
+        snapshot={
+            "i-d": (
+                {"id": "i-d", "provider": "local", "created_at": 0.0},
+                Verdict.IDLE_REAP,
+            ),
+        },
+        actions=actions,
+    )
+
+    _emit_reap_jsonl(report)
+
+    captured = capsys.readouterr()
+    found = False
+    for line in captured.out.splitlines():
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("action") == "deferred-session-claim":
+            found = True
+            assert rec.get("reason", "").startswith("held by pid ")
+            break
+    assert found, captured.out
