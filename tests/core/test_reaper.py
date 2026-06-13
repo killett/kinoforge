@@ -432,7 +432,7 @@ def test_classify_treats_missing_provider_kind_as_unknown() -> None:
     that would block operator-driven reaps of orphaned legacy pods."""
     entry = {
         "id": "legacy-x",
-        # provider_kind absent
+        # provider_kind AND provider both absent — fully legacy entry
         "created_at": 1_000.0,
         "heartbeat_thread_tick": None,
         "last_heartbeat": None,
@@ -447,6 +447,64 @@ def test_classify_treats_missing_provider_kind_as_unknown() -> None:
         grace_after_session_s=300.0,
     )
     assert v == Verdict.HEARTBEAT_UNKNOWN
+
+
+def test_classify_reads_provider_key_when_provider_kind_absent() -> None:
+    """Production-shaped ledger entries written by Layer S Ledger.record
+    carry the provider kind under the key ``"provider"`` (NOT
+    ``"provider_kind"`` — see lifecycle.py:504).  Classify must read the
+    same key the ledger writes, otherwise HEARTBEAT_SUBSTRATE_MISSING is
+    unreachable on every real-world ledger entry and the new verdict
+    only fires for hand-crafted dict literals in tests.
+
+    Bug catch: an earlier B5a iteration read only ``"provider_kind"`` and
+    silently fell through to HEARTBEAT_UNKNOWN on every production entry.
+    Caught by the final cross-task review (2026-06-12)."""
+    entry = {
+        "id": "cluster-x",
+        "provider": "skypilot",  # the actual Ledger.record schema key
+        "created_at": 1_000.0,
+        "heartbeat_thread_tick": None,
+        "last_heartbeat": None,
+    }
+    v = classify(
+        entry,
+        live_pod_ids={"cluster-x"},
+        now=2_000.0,
+        idle_timeout_s=600.0,
+        max_lifetime_s=18_000.0,
+        heartbeat_interval_s=30.0,
+        grace_after_session_s=300.0,
+    )
+    assert v == Verdict.HEARTBEAT_SUBSTRATE_MISSING
+
+
+def test_classify_provider_kind_takes_precedence_over_provider() -> None:
+    """When both keys are present (transitional ledger state),
+    provider_kind wins.  This is paranoia — Ledger.record writes only
+    ``"provider"`` today — but the fallback expression
+    ``entry.get("provider_kind") or entry.get("provider")`` evaluates
+    provider_kind first, which means a future Ledger schema migration
+    that adds ``"provider_kind"`` alongside ``"provider"`` does not
+    silently change verdicts when the two disagree."""
+    entry = {
+        "id": "pod-x",
+        "provider_kind": "skypilot",  # would emit SUBSTRATE_MISSING
+        "provider": "runpod",  # would emit UNKNOWN
+        "created_at": 1_000.0,
+        "heartbeat_thread_tick": None,
+        "last_heartbeat": None,
+    }
+    v = classify(
+        entry,
+        live_pod_ids={"pod-x"},
+        now=2_000.0,
+        idle_timeout_s=600.0,
+        max_lifetime_s=18_000.0,
+        heartbeat_interval_s=30.0,
+        grace_after_session_s=300.0,
+    )
+    assert v == Verdict.HEARTBEAT_SUBSTRATE_MISSING
 
 
 def test_classify_emits_live_with_fresh_heartbeat_on_runpod() -> None:
