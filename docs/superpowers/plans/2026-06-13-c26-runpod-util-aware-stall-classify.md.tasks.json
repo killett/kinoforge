@@ -1,0 +1,107 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-13-c26-runpod-util-aware-stall-classify.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "C26 Task 1: Disk-util GraphQL field live probe",
+      "status": "pending",
+      "description": "**Goal:** Disambiguate the RunPod GraphQL runtime{} disk-util field name via trial selection sets against a real cheap pod; capture outcome in committed sidecar.\n\n**Files:** Create tests/live/test_runpod_util_disk_probe.py, tests/live/_runpod_util_disk_probe.json; Modify docs/superpowers/specs/2026-06-13-c26-runpod-util-aware-stall-classify-design.md\n\n**Acceptance Criteria:** gated by KINOFORGE_LIVE_RUNPOD=1; sidecar JSON committed; spec §8+§16 amended; pod destroyed post-probe; spend ≤ $0.005.\n\n**Verify:** KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_runpod_util_disk_probe.py -v -s → PASS\n\n```json:metadata\n{\"files\": [\"tests/live/test_runpod_util_disk_probe.py\", \"tests/live/_runpod_util_disk_probe.json\"], \"verifyCommand\": \"KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_runpod_util_disk_probe.py -v -s\", \"acceptanceCriteria\": [\"sidecar committed\", \"spec amended\", \"pod destroyed\", \"spend ≤ $0.005\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "C26 Task 2: UtilSnapshotEndpoint Protocol + UtilSnapshot dataclass + capability gate",
+      "status": "pending",
+      "description": "**Goal:** Ship provider-agnostic substrate at src/kinoforge/core/util_endpoints.py. Pure module — no I/O.\n\n**Files:** Create src/kinoforge/core/util_endpoints.py, tests/core/test_util_endpoints.py\n\n**Acceptance Criteria:** UtilSnapshot frozen dataclass with 5 Optional fields; UtilSnapshotEndpoint runtime-checkable Protocol; provider_util_supported gate seeded with local/runpod; core-import-ban preserved; 6/6 tests pass.\n\n**Verify:** pixi run pytest tests/core/test_util_endpoints.py -v → 6 PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/util_endpoints.py\", \"tests/core/test_util_endpoints.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_util_endpoints.py -v\", \"acceptanceCriteria\": [\"UtilSnapshot frozen + 5 Optional fields\", \"UtilSnapshotEndpoint runtime-checkable\", \"provider_util_supported gate seeded\", \"6/6 tests pass\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "C26 Task 3: RunPodGraphQLUtilEndpoint satisfier",
+      "status": "pending",
+      "blockedBy": [1, 2],
+      "description": "**Goal:** RunPod GraphQL runtime{} satisfier; single query/tick; MAX across gpus[]. Disk-field finalized using Task 1 probe.\n\n**Files:** Create src/kinoforge/providers/runpod/util.py, tests/providers/test_runpod_util.py; Modify src/kinoforge/providers/runpod/__init__.py\n\n**Acceptance Criteria:** injectable http_post; single GraphQL query; MAX across gpus; data.pod=null → None; errors → TransportError; Bearer+UA headers; disk-field matches Task 1; 8/8 tests pass.\n\n**Verify:** pixi run pytest tests/providers/test_runpod_util.py -v → 8 PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/util.py\", \"tests/providers/test_runpod_util.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_util.py -v\", \"acceptanceCriteria\": [\"single GraphQL query\", \"MAX across gpus\", \"8/8 tests pass\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "C26 Task 4: LocalUtilEndpoint + _adapters.build_util_endpoint_for",
+      "status": "pending",
+      "blockedBy": [2, 3],
+      "description": "**Goal:** Local provider util satisfier (programmable script for tests) + cross-provider dispatch helper.\n\n**Files:** Create src/kinoforge/providers/local/util.py, tests/providers/test_local_util.py; Modify src/kinoforge/providers/local/__init__.py, src/kinoforge/_adapters.py\n\n**Acceptance Criteria:** LocalUtilEndpoint scripted seam; build_util_endpoint_for kill-switch on stall_reap_enabled=False; RunPod branch AuthError on missing key; 7/7 tests pass.\n\n**Verify:** pixi run pytest tests/providers/test_local_util.py -v → 7 PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/local/util.py\", \"src/kinoforge/_adapters.py\", \"tests/providers/test_local_util.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_local_util.py -v\", \"acceptanceCriteria\": [\"LocalUtilEndpoint scripted seam\", \"build_util_endpoint_for kill-switch\", \"7/7 tests pass\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "C26 Task 5: _update_counter pure helper",
+      "status": "pending",
+      "description": "**Goal:** Per-tick counter state machine as pure function. Container restart resets; transport hiccup preserves; both axes low increments; any axis above/None resets.\n\n**Files:** Create src/kinoforge/core/util_counter.py, tests/core/test_util_counter.py\n\n**Acceptance Criteria:** 10/10 table-driven tests pass.\n\n**Verify:** pixi run pytest tests/core/test_util_counter.py -v → 10 PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/util_counter.py\", \"tests/core/test_util_counter.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_util_counter.py -v\", \"acceptanceCriteria\": [\"10/10 table-driven tests pass\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "C26 Task 6: LifecycleConfig stall_* cfg knobs",
+      "status": "pending",
+      "description": "**Goal:** Add 4 fields to LifecycleConfig per spec §9; validate at load time.\n\n**Files:** Modify src/kinoforge/core/config.py, tests/core/test_config.py\n\n**Acceptance Criteria:** stall_reap_enabled=True, stall_window_s=600, stall_gpu_threshold=5, stall_cpu_threshold=20; window>=0 validator; thresholds [0,100] validators; 5/5 tests pass.\n\n**Verify:** pixi run pytest tests/core/test_config.py -v → all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -v\", \"acceptanceCriteria\": [\"4 new fields with spec defaults\", \"validators on window+thresholds\", \"5/5 new tests + suite green\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "C26 Task 7: classify() STALL_REAP + Verdict + DEFAULT_APPLY_POLICY",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Append STALL_REAP to Verdict; include in DEFAULT_APPLY_POLICY; extend classify() with row 3' intercepting LIVE.\n\n**Files:** Modify src/kinoforge/core/reaper.py; Create tests/core/test_reaper_stall.py\n\n**Acceptance Criteria:** STALL_REAP appended (additive); in DEFAULT_APPLY_POLICY; classify gains 3 new kwargs; row 3' honors per-entry stall_window_s override; legacy entries → LIVE; stall_window_s=None → LIVE; 9/9 new tests + reaper suite green.\n\n**Verify:** pixi run pytest tests/core/test_reaper_stall.py tests/core/test_reaper.py -v → all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper.py\", \"tests/core/test_reaper_stall.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_reaper_stall.py tests/core/test_reaper.py -v\", \"acceptanceCriteria\": [\"STALL_REAP appended additively\", \"in DEFAULT_APPLY_POLICY\", \"per-entry override honored\", \"legacy entries fall through\", \"9/9 tests pass\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "C26 Task 8: HeartbeatLoop integration",
+      "status": "pending",
+      "blockedBy": [3, 4, 5, 6, 7],
+      "description": "**Goal:** Wire util read + counter + ledger persist + self-classify + reaper-actor destroy + cancel_token into HeartbeatLoop._tick_once.\n\n**Files:** Modify src/kinoforge/core/heartbeat_loop.py, src/kinoforge/core/orchestrator.py; Create tests/core/test_heartbeat_loop_util.py\n\n**Acceptance Criteria:** util_endpoint=None preserves B5a; TransportError tolerated; 7 ledger fields persisted; STALL_REAP self-classify → destroy + cancel_token + stop; 9/9 tests pass.\n\n**Verify:** pixi run pytest tests/core/test_heartbeat_loop_util.py tests/core/test_heartbeat_loop.py -v → all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/heartbeat_loop.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_heartbeat_loop_util.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_heartbeat_loop_util.py tests/core/test_heartbeat_loop.py -v\", \"acceptanceCriteria\": [\"util_endpoint=None preserves B5a\", \"TransportError tolerated\", \"7 ledger fields persisted\", \"STALL_REAP fires destroy+cancel\", \"9/9 tests pass\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "C26 Task 9: Cross-process consumer threading",
+      "status": "pending",
+      "blockedBy": [7, 8],
+      "description": "**Goal:** Thread 3 new classify() kwargs through 5 existing callsites (CLI _cmd_reap + _resolve_warm_instance + reaper_actor.sweep + act_on_verdict + sweeper).\n\n**Files:** Modify src/kinoforge/cli/_commands.py, src/kinoforge/core/reaper_actor.py, src/kinoforge/core/sweeper.py; tests for each.\n\n**Acceptance Criteria:** all callsites thread kwargs; STALL_REAP outside _FORCE_BYPASSABLE; _cmd_reap --apply destroys stalled; kill-switch path unchanged; touched suites + lint green.\n\n**Verify:** pixi run pytest tests/cli tests/core/test_reaper_actor.py tests/core/test_sweeper.py -v → all PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"src/kinoforge/core/reaper_actor.py\", \"src/kinoforge/core/sweeper.py\"], \"verifyCommand\": \"pixi run pytest tests/cli tests/core/test_reaper_actor.py tests/core/test_sweeper.py -v\", \"acceptanceCriteria\": [\"5 callsites thread kwargs\", \"STALL_REAP refuses attach\", \"all touched suites green\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "C26 Task 10: --stall-window-override CLI flag",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "**Goal:** kinoforge deploy --stall-window-override 1800 persists stall_window_s into ledger entry; classify reads via _resolve() per-entry pattern.\n\n**Files:** Modify src/kinoforge/cli/_commands.py, tests/cli/test_cmd_deploy.py\n\n**Acceptance Criteria:** flag persists value; no flag omits key; negative rejected at parse (rc=1); 3/3 tests pass.\n\n**Verify:** pixi run pytest tests/cli/test_cmd_deploy.py -v -k stall_window_override → 3 PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_cmd_deploy.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_deploy.py -v -k stall_window_override\", \"acceptanceCriteria\": [\"flag persists value\", \"no flag omits key\", \"negative rejected\", \"3/3 tests pass\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "C26 Task 11: Core-import-ban allowlist + RunPod SDK confinement",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** Extend tests/test_core_invariant.py to recognize new core modules + confine RunPod util satisfier.\n\n**Files:** Modify tests/test_core_invariant.py\n\n**Acceptance Criteria:** core/util_endpoints.py + core/util_counter.py allowed; vendor-SDK scan covers providers/runpod/util.py; suite green.\n\n**Verify:** pixi run pytest tests/test_core_invariant.py -v → all PASS\n\n```json:metadata\n{\"files\": [\"tests/test_core_invariant.py\"], \"verifyCommand\": \"pixi run pytest tests/test_core_invariant.py -v\", \"acceptanceCriteria\": [\"allowlist extended for 2 new modules\", \"vendor SDK confinement scan green\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "C26 Task 12: RED live-smoke scaffolds (Phase A + Phase B) — commit BEFORE live spend",
+      "status": "pending",
+      "blockedBy": [10, 11],
+      "description": "**Goal:** Commit failing live-smoke scaffolds BEFORE Tasks 13/14 invoke live spend. CLAUDE.md durability rule.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:** Create tests/live/test_c26_phase_a_stall_detection_live.py, tests/live/test_c26_phase_b_wan_warm_reuse_live.py, tests/live/cfg_c26_phase_a.yaml, tests/live/cfg_c26_phase_b.yaml\n\n**Acceptance Criteria:** both gated by KINOFORGE_LIVE_RUNPOD=1; both xfail until Tasks 13/14; Phase A cfg has tight window=60s + FakeEngine + sleep 240; Phase B cfg clones C25 Wan+ComfyUI + adds stall_* knobs; RED commit recorded.\n\n**Verify:** SKIP without env var; xfail with env var.\n\n```json:metadata\n{\"files\": [\"tests/live/test_c26_phase_a_stall_detection_live.py\", \"tests/live/test_c26_phase_b_wan_warm_reuse_live.py\", \"tests/live/cfg_c26_phase_a.yaml\", \"tests/live/cfg_c26_phase_b.yaml\"], \"verifyCommand\": \"pixi run pytest tests/live/test_c26_phase_a_stall_detection_live.py tests/live/test_c26_phase_b_wan_warm_reuse_live.py -v\", \"acceptanceCriteria\": [\"both gated\", \"both xfail until live tasks\", \"Phase A cfg tight window+FakeEngine\", \"Phase B cfg clones C25\", \"RED commit before live\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"task\"}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "C26 Task 13: Phase A live smoke — FakeEngine intentional stall (~$0.05)",
+      "status": "pending",
+      "blockedBy": [12],
+      "description": "**Goal:** Implement Phase A body; run live; capture sidecar; demonstrate STALL_REAP end-to-end on cheap FakeEngine pod. Mitigates Risk R7.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:** Modify tests/live/test_c26_phase_a_stall_detection_live.py; Create tests/live/_c26_phase_a_smoke_evidence.json\n\n**Acceptance Criteria:** live run on real RunPod; STALL_REAP fires within window + 2*hb_interval (=70s); sidecar with outcome=PROVEN + counter trail + pod_id; pod destroyed; spend ≤ $0.05; preflight green.\n\n**Verify:** KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_c26_phase_a_stall_detection_live.py -v -s → PASS\n\n```json:metadata\n{\"files\": [\"tests/live/test_c26_phase_a_stall_detection_live.py\", \"tests/live/_c26_phase_a_smoke_evidence.json\"], \"verifyCommand\": \"KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_c26_phase_a_stall_detection_live.py -v -s\", \"acceptanceCriteria\": [\"live run on real RunPod\", \"STALL_REAP fires within window+2*hb_interval\", \"sidecar PROVEN + counter trail\", \"pod destroyed\", \"spend ≤ $0.05\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"task\", \"failurePolicy\": \"block\"}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "C26 Task 14: Phase B live smoke — Wan + ComfyUI cold-skip OR PROVEN-PROTECTION (~$0.50)",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "**Goal:** Implement Phase B body; run live with C26 protections; outcome CLEAN-PASS or PROVEN-PROTECTION; closes C25 Task 4 deferred gate.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:** Modify tests/live/test_c26_phase_b_wan_warm_reuse_live.py; Create tests/live/_c26_phase_b_smoke_evidence.json\n\n**Acceptance Criteria:** 2-CLI smoke via fresh subprocesses; CLEAN-PASS: gen2*1.43 <= gen1 + warm-attach log; PROVEN-PROTECTION: STALL_REAP fired + pod destroyed mid-gen1; FAIL guard on false-negative + false-positive; all pods destroyed; spend ≤ $0.55.\n\n**Verify:** KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_c26_phase_b_wan_warm_reuse_live.py -v -s → PASS\n\n```json:metadata\n{\"files\": [\"tests/live/test_c26_phase_b_wan_warm_reuse_live.py\", \"tests/live/_c26_phase_b_smoke_evidence.json\"], \"verifyCommand\": \"KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_c26_phase_b_wan_warm_reuse_live.py -v -s\", \"acceptanceCriteria\": [\"2-CLI fresh subprocesses\", \"CLEAN-PASS or PROVEN-PROTECTION outcome\", \"all pods destroyed\", \"spend ≤ $0.55\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"task\", \"failurePolicy\": \"block\", \"requireEvidenceTokens\": [[\"CLEAN-PASS\", \"PROVEN-PROTECTION\"], [\"sidecar\", \"_c26_phase_b_smoke_evidence.json\"]]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "C26 Task 15: Closeout (PROGRESS / spec §16 / C25 §16 pointer)",
+      "status": "pending",
+      "blockedBy": [14],
+      "description": "**Goal:** Mark C26 closed in PROGRESS §C; amend C26 spec §16; add C25 §16 closure pointer; conditionally amend successful-generations.md (only if Phase B CLEAN-PASS with video); update ## Single next action.\n\n**Files:** Modify PROGRESS.md, both C25+C26 spec files, successful-generations.md (conditional)\n\n**Acceptance Criteria:** PROGRESS §C C26 strike-through; PROGRESS §C C25 amended; ## Single next action updated; C26 spec §16 written; C25 spec §16 amended; successful-generations.md conditional rule honored.\n\n**Verify:** git log --oneline -3\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/superpowers/specs/2026-06-13-c26-runpod-util-aware-stall-classify-design.md\", \"docs/superpowers/specs/2026-06-13-c25-runpod-heartbeat-preserve-and-merge-design.md\"], \"verifyCommand\": \"git log --oneline -3\", \"acceptanceCriteria\": [\"PROGRESS C26 strike-through\", \"PROGRESS C25 amended\", \"## Single next action updated\", \"C26 spec §16 written\", \"C25 spec §16 amended\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-13T15:18:00-07:00"
+}
