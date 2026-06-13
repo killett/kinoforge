@@ -2566,7 +2566,7 @@ Lib: `tools/quota_burn_lib.py` | CLI: `tools/quota_burn.py` (Task 8+)
 - [x] Task 8: CLI dispatcher — `tools/quota_burn.py` with 5 subcommands (`spin-up`, `tear-down`, `snapshot`, `scan-bigquery`, `submit-quota`); 108 tests green — commit `93fcbd9`
 - [x] Task 9: Justification draft templates + PROGRESS update — `docs/quota-justification-gcp.md` + `docs/quota-justification-aws.md`; Phase 52 prerequisites documented
 - [x] Task 10: Day 0 — live spinup — manifest at `.quota_burn/manifest.json`, both clouds live 2026-06-11 19:16 local
-- [ ] Task 11: Days 1–4 daily snapshot
+- [ ] Task 11: Days 1–4 daily snapshot — Day 1 skipped (kernel-shutdown re-spin); Day 2 logged 2026-06-13 (BQ export not ready, partial); Days 3-4 pending
 - [ ] Task 12: Day 4 — populate justification drafts
 - [ ] Task 13: Day 5 — submit quotas + teardown + closeout
 
@@ -2643,6 +2643,42 @@ buckets + budgets manually cleaned via gcloud).
 AWS t4g.nano ~$0.0042/hr + storage negligible). 5-day projection ~$1.50 +
 storage/disk/budget-API hits ~$1 → **~$2.50 total, well under $20**.
 
-**Single next action:** Task 11 — daily snapshot loop. Run `pixi run python -m
-tools.quota_burn snapshot --project-id kinoforge-prod-0ddb375e` once per day to surface
-MTD spend pacing into PROGRESS until Task 12 (day 4) and Task 13 (day 5, 2026-06-16).
+**Single next action:** Task 11 day-3 snapshot (target 2026-06-14, after BQ export
+first job lands — see Task 11 day-2 entry below).
+
+#### Task 11 — Day 2 snapshot — 2026-06-13 12:35 PDT
+
+**Resource re-spin reconciliation:** Task 10 closeout (commit `79cae2f`) cited AWS
+`i-099081763c43fe593` + bucket `kmwsgh`; the current manifest + live state shows AWS
+`i-0c61ecda9dd38fef8` + bucket `at2e8a` (re-spun 2026-06-12 07:36 UTC, ~12h after
+initial spinup — kernel-shutdown safety net almost certainly fired the original
+instance because the 8h `shutdown -h +480` predated commit `72bfda8` that extended the
+window to 8d for the 5-day burn). GCP resources unchanged (`upddv3` suffix).
+
+**Live snapshot output** (`pixi run python -m tools.quota_burn snapshot --project-id
+kinoforge-prod-0ddb375e`, post-hardening commit `977fafa`):
+
+- `gcp_status: export-not-ready` — BQ billing-export dataset `all_billing_data`
+  created 2026-06-13 12:13 PDT, first `gcp_billing_export_v1_*` table not yet landed
+  (6-24h lag). GCP MTD unavailable until day 3.
+- AWS June MTD total: **$0.51** (includes pre-burn Phase 51 spend; quota-burn-only
+  attribution requires `--start-date 2026-06-12` filter — out-of-scope for Task 11).
+  Top services: KMS $0.21, VPC $0.13, EC2-compute $0.10, EC2-other $0.08.
+
+**Steady-state estimate** (40.5 h GCP uptime + 35.2 h AWS uptime, BQ data
+unavailable):
+- GCP VM ~$0.340 + AWS EC2 ~$0.148 → combined **~$0.49**
+- Envelope: $10 pause / $15 abort / $20 cap → ~3% of pause threshold
+
+**Plumbing fixes folded into Day-2:**
+
+13. BQ billing-export NOT enabled on the new project (Cloud Console step) →
+    operator enabled 2026-06-13 12:13 PDT after dataset pre-created via
+    `bq mk --dataset --location=US all_billing_data`.
+14. `kinoforge-runner` SA lacked `bigquery.datasets.create` → self-granted
+    `roles/bigquery.admin` on `kinoforge-prod-0ddb375e` (covers create + manage).
+15. `kinoforge-ci` AWS IAM user lacked `ce:GetCostAndUsage` → self-attached managed
+    policy `AWSBillingReadOnlyAccess`.
+16. `_do_snapshot` blew up at GCP fetch when export not ready → commit `977fafa`
+    translates `NotFound 404` + `BadRequest 400 "does not match any table"` to
+    `BillingExportNotReady`, surfaces as `gcp_status` field on partial report.
