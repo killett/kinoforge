@@ -113,7 +113,7 @@ def test_runpod_heartbeat_round_trip_against_live_pod() -> None:
 
     spec = InstanceSpec(
         offer=cheapest,
-        image="runpod/base:latest",
+        image="alpine:latest",
         env={},
         provision_script=None,
     )
