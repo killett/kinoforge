@@ -14,6 +14,8 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import FrameType
@@ -675,6 +677,171 @@ def _classify_for_status(
 _FORCE_BYPASSABLE_VERDICTS: frozenset[str] = frozenset(
     {"HEARTBEAT_UNKNOWN", "IDLE_REAP", "ORPHAN_REAP"}
 )
+
+
+# ---------------------------------------------------------------------------
+# B3 — auto-discovery warm-attach scan
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ScanReport:
+    """Outcome of a single ``_scan_warm_candidates`` call.
+
+    Attributes:
+        attached: Instance id of the candidate the scan attached to, or
+            ``None`` when no valid candidate was found.
+        skipped: List of ``(instance_id, reason_code)`` tuples per
+            per-candidate validation failure. Coarse-filter rejects
+            (provider mismatch, cap_key mismatch, busy) are NOT
+            recorded here — they short-circuit before validation.
+    """
+
+    attached: str | None = None
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+
+    def summarize(self) -> str:
+        """Single-line INFO summary per D6 lock.
+
+        Returns:
+            On hit:   ``"warm-reuse: attached to <id> (skipped N: ...)"``
+            On miss:  ``"warm-reuse: scanned N, 0 attachable (reasons: ...) — cold create"``
+            On empty: ``""``  (silent — happy first-generate path)
+        """
+        if self.attached is not None:
+            if self.skipped:
+                reasons = ", ".join(f"{rid}={r}" for rid, r in self.skipped)
+                return (
+                    f"warm-reuse: attached to {self.attached} "
+                    f"(skipped {len(self.skipped)}: {reasons})"
+                )
+            return f"warm-reuse: attached to {self.attached}"
+        if not self.skipped:
+            return ""
+        reason_counts: dict[str, int] = {}
+        for _, r in self.skipped:
+            reason_counts[r] = reason_counts.get(r, 0) + 1
+        formatted = ", ".join(f"{n} {r}" for r, n in sorted(reason_counts.items()))
+        return (
+            f"warm-reuse: scanned {len(self.skipped)}, 0 attachable "
+            f"(reasons: {formatted}) — cold create"
+        )
+
+
+def _probe_lock_held(store: ArtifactStore, key: str) -> bool:
+    """Non-blocking probe: is *key* currently held by another process?
+
+    ``ttl_s=0.0`` reflects "we are not claiming this lock for any
+    duration" — the probe acquires + immediately releases. Mirrors B7's
+    reaper-side probe pattern.
+
+    Args:
+        store: ArtifactStore exposing :meth:`acquire_lock`.
+        key: Lock key to probe (e.g. ``"reaper/pod-1"``).
+
+    Returns:
+        True iff the lock is currently held by another process; False
+        iff free.
+    """
+    from kinoforge.core.errors import LockTimeout
+
+    try:
+        lock = store.acquire_lock(key, ttl_s=0.0)
+    except LockTimeout:
+        return True
+    token = lock.acquire(blocking=False)
+    if token is None:
+        return True
+    lock.release(token)
+    return False
+
+
+def _rc_to_reason(rc: int | None, entry: Mapping[str, Any]) -> str:
+    """Map ``_resolve_warm_instance`` return code to scan-report reason code.
+
+    rc=1 → ledger-absent (impossible in scan path; entry already from ledger).
+    rc=2 → catch-all precondition refused; use ``classify-not-live`` as
+    the umbrella since B3 auto-discovery's most common rc=2 path is
+    verdict-gate refusal.
+    """
+    del entry  # reserved for future finer-grained dispatch
+    if rc == 1:
+        return "cap-key-drift"  # defensive — should never fire in scan
+    return "classify-not-live"
+
+
+def _scan_warm_candidates(
+    ctx: SessionContext,
+    cfg: Config,
+    *,
+    clock: Clock | None = None,
+) -> tuple[Instance | None, _ScanReport]:
+    """Auto-discover a warm pod for cfg's capability_key.
+
+    B3 entry point. Walks the ledger for non-busy LIVE candidates
+    matching cfg's provider + capability_key. Validates each via B4's
+    cheap-first chain plus reaper:<id> + provision:<id> non-blocking
+    probes. Returns ``(Instance, report)`` on first valid candidate;
+    ``(None, report)`` when all candidates exhausted or none exist.
+
+    Args:
+        ctx: Per-invocation session context.
+        cfg: Loaded kinoforge config.
+        clock: Optional clock for is_session_busy; defaults to RealClock.
+
+    Returns:
+        ``(Instance, _ScanReport)`` — instance is non-None iff scan
+        attached to a candidate; report carries skip detail for
+        observability + B2 dashboard ingestion.
+    """
+    from kinoforge.core.lifecycle import is_session_busy
+
+    _clock: Clock = clock if clock is not None else RealClock()
+    now = _clock.now()
+    hb_interval = cfg.lifecycle().heartbeat_interval_s
+    cap_key = cfg.capability_key().derive()[:12]
+    provider_kind = cfg.compute.provider if cfg.compute is not None else ""
+
+    entries = ctx.ledger().entries()
+
+    matches = [
+        e
+        for e in entries
+        if e.get("provider") == provider_kind
+        and e.get("tags", {}).get("kinoforge_key") == cap_key
+        and not is_session_busy(e, now=now, heartbeat_interval_s=hb_interval)
+    ]
+    matches.sort(
+        key=lambda e: float(e.get("heartbeat_thread_tick") or 0.0),
+        reverse=True,
+    )
+
+    store = ctx.store()
+    skipped: list[tuple[str, str]] = []
+
+    for entry in matches:
+        instance_id = str(entry["id"])
+
+        # D5 — reaper:<id> non-blocking probe (acquire order matches B1).
+        if _probe_lock_held(store, f"reaper/{instance_id}"):
+            skipped.append((instance_id, "reaper-held"))
+            continue
+
+        # D2 — provision:<id> non-blocking probe.
+        if _probe_lock_held(store, f"provision/{instance_id}"):
+            skipped.append((instance_id, "provision-held"))
+            continue
+
+        # B4 cheap-first chain — force_attach=False (D3
+        # conservative-on-ignorance).
+        instance, rc = _resolve_warm_instance(ctx, cfg, instance_id, force_attach=False)
+        if rc is not None:
+            skipped.append((instance_id, _rc_to_reason(rc, entry)))
+            continue
+
+        return (instance, _ScanReport(attached=instance_id, skipped=skipped))
+
+    return (None, _ScanReport(attached=None, skipped=skipped))
 
 
 def _resolve_warm_instance(
