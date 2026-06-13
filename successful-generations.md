@@ -22,6 +22,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 4. `2026-06-08 22:28:40` — [ComfyUI Wan 2.1 14B i2v on RunPod — i2v](#4-2026-06-08-222840--comfyui-wan-21-14b-i2v-on-runpod--i2v)
 5. `2026-06-09 21:19:45` — [ComfyUI Wan 2.1 14B t2v on RunPod (in-process warm-reuse, 2 prompts) — t2v](#5-2026-06-09-211945--comfyui-wan-21-14b-t2v-on-runpod-in-process-warm-reuse-2-prompts--t2v)
 6. `2026-06-13 11:16:26` — [FakeEngine on RunPod (B3 cross-CLI auto-discovery warm-reuse) — t2v](#6-2026-06-13-111626--fakeengine-on-runpod-b3-cross-cli-auto-discovery-warm-reuse--t2v)
+   - See also: `2026-06-13 12:44:24` — B3 smoke re-fire post-closeout at HEAD `8bf51d6`: gen 1 6.3 s / gen 2 2.6 s (ratio 0.41, 59 % cold-skip), pod `k838y2t6mpq91s` (RTX A5000), spend ~$0.0016. Same tuple `(runpod, FakeEngine, fake-model, t2v)`; confirms B3 mechanics still green after Phase 52 BQ-export plumbing diff.
 
 ---
 
