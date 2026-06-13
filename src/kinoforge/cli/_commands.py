@@ -306,6 +306,24 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         ts = datetime.fromtimestamp(_clock.now()).strftime("%Y%m%d-%H%M%S")
         run_id = f"run-{ts}"
 
+    # B4 — warm-attach precheck.
+    instance: Instance | None = None
+    if getattr(args, "instance_id", None) is not None:
+        instance, rc = _resolve_warm_instance(
+            ctx,
+            cfg,
+            args.instance_id,
+            force_attach=bool(getattr(args, "force_attach", False)),
+        )
+        if rc is not None:
+            return rc
+    elif getattr(args, "force_attach", False):
+        print(
+            "error: --force-attach has no effect without --instance-id",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         artifact, _ = _generate(
             cfg,
@@ -318,6 +336,7 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
             # orchestrator so a CLI SIGINT (set by _install_sigint_handler
             # in cli._main) propagates through every backend poll loop.
             cancel_token=ctx.cancel_token,
+            instance=instance,
         )
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
