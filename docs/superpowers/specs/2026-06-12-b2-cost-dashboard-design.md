@@ -35,9 +35,9 @@ src/kinoforge/core/cost.py                 # pure aggregator (walk + classify + 
 src/kinoforge/core/balance_endpoints.py    # Protocol + ProviderBalance + TransportError
                                            #   + NoBalanceEndpoint + provider_balance_supported helper
 src/kinoforge/providers/runpod/balance.py  # RunPod GraphQL satisfier
-src/kinoforge/cli/_adapters.py             # +build_balance_endpoint_for(cfg, creds) registry
+src/kinoforge/_adapters.py                 # +build_balance_endpoint_for(cfg, creds) registry
 src/kinoforge/cli/_commands.py             # +_cmd_cost + balance disk cache helpers
-src/kinoforge/cli/__init__.py              # +`cost` subparser
+src/kinoforge/cli/_main.py                 # +`cost` subparser
 examples/configs/cost.yaml                 # documented dashboard config
 README.md                                  # +Cost dashboard section
 ```
@@ -146,7 +146,7 @@ _QUERY = "{ myself { clientBalance } }"
 _URL = "https://api.runpod.io/graphql"
 
 
-def _default_http_post_json(
+def _default_http_post(
     url: str, body: dict, headers: dict[str, str], timeout_s: float = 10.0
 ) -> dict:
     req = urllib.request.Request(
@@ -165,14 +165,14 @@ def _default_http_post_json(
 @dataclass
 class RunPodBalanceEndpoint:
     api_key: str | None
-    http_post_json: Callable[..., dict] = _default_http_post_json
+    http_post: Callable[..., dict] = _default_http_post
 
     def read(self) -> ProviderBalance | None:
         if not self.api_key:
             return None
         body = {"query": _QUERY}
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        resp = self.http_post_json(_URL, body, headers)
+        resp = self.http_post(_URL, body, headers)
         try:
             usd = float(resp["data"]["myself"]["clientBalance"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -190,7 +190,7 @@ Schema-drift path: any of (`data` missing, `myself` missing, `clientBalance` mis
 
 ---
 
-## 5. Registry — `cli/_adapters.py`
+## 5. Registry — `_adapters.py`
 
 ```python
 def build_balance_endpoint_for(
@@ -620,10 +620,10 @@ Mirrors B5a / B7 / B4 patterns. All offline. Zero live spend.
    - `now` parameter respected (test passes `datetime(2026, 6, 12, 14, 0, 0)` and asserts snapshot `as_of`).
 
 3. `tests/providers/test_runpod_balance.py`
-   - Happy path: `http_post_json` returns `{"data": {"myself": {"clientBalance": 42.18}}}` → `ProviderBalance(usd=42.18, ...)`.
-   - Transport failure: `http_post_json` raises `TransportError` → re-raised.
+   - Happy path: `http_post` returns `{"data": {"myself": {"clientBalance": 42.18}}}` → `ProviderBalance(usd=42.18, ...)`.
+   - Transport failure: `http_post` raises `TransportError` → re-raised.
    - Schema drift: missing `data` / missing `myself` / missing `clientBalance` / non-numeric value → all raise `TransportError`.
-   - Missing credential: `api_key=None` → `read()` returns None without making any HTTP call (spy assertion: `http_post_json.call_count == 0`).
+   - Missing credential: `api_key=None` → `read()` returns None without making any HTTP call (spy assertion: `http_post.call_count == 0`).
    - Negative balance: `clientBalance: -3.50` → returns `ProviderBalance(usd=-3.50, ...)` verbatim.
 
 4. `tests/cli/test_balance_cache.py`
@@ -646,7 +646,7 @@ Mirrors B5a / B7 / B4 patterns. All offline. Zero live spend.
 6. `tests/test_examples.py` (existing) grows one case
    - `examples/configs/cost.yaml` loads via `load_config` without error.
 
-All `http_post_json` interactions go through injection seams; no real RunPod calls. Operator captures a one-time GraphQL fixture via `curl` at spec-time:
+All `http_post` interactions go through injection seams; no real RunPod calls. Operator captures a one-time GraphQL fixture via `curl` at spec-time:
 
 ```
 curl -sS -X POST https://api.runpod.io/graphql \
@@ -670,7 +670,7 @@ t1. core/balance_endpoints.py
     - RED-first. Atomic commit.
 
 t2. providers/runpod/balance.py
-    - GraphQL satisfier + injectable http_post_json + offline tests (Test 3 above).
+    - GraphQL satisfier + injectable http_post + offline tests (Test 3 above).
     - Operator captures fixture before this task.
     - RED-first. Atomic commit.
 
@@ -732,4 +732,4 @@ All RED-first per CLAUDE.md TDD workflow. Live spend: **$0.** Per-task PR shape 
 
 ## 18. Live spend
 
-Zero. RunPod GraphQL `myself` query authenticates only; no active pod required. Operator captures one fixture via `curl` at spec-time; tests use injected `http_post_json` spies throughout. No `pixi run preflight` call needed for the layer.
+Zero. RunPod GraphQL `myself` query authenticates only; no active pod required. Operator captures one fixture via `curl` at spec-time; tests use injected `http_post` spies throughout. No `pixi run preflight` call needed for the layer.
