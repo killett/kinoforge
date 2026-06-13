@@ -92,8 +92,6 @@ def _kinoforge_generate(
         [
             "pixi",
             "run",
-            "-e",
-            "live-comfyui",
             "kinoforge",
             "generate",
             "-c",
