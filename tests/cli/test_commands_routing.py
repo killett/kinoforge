@@ -362,3 +362,50 @@ def test_cmd_status_verdict_heartbeat_unknown_on_list_instances_failure(
     out = capsys.readouterr().out
     assert code == 0
     assert "verdict=HEARTBEAT_UNKNOWN" in out
+
+
+# ---------------------------------------------------------------------------
+# B4 — _cmd_list capability_key column
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_list_includes_capability_key_column(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Each list row shows `capability_key=<hash>` sourced from tags."""
+    ctx = _ctx_no_cfg(tmp_path)
+    ctx.ledger().record(
+        Instance(
+            id="i-1",
+            provider="local",
+            status="ready",
+            tags={"kinoforge_key": "ab12cd34ef56"},
+            created_at=1.0,
+            cost_rate_usd_per_hr=0.0,
+        )
+    )
+    args = _ns()
+    assert _commands._cmd_list(args, ctx) == 0
+    out = capsys.readouterr().out
+    assert "capability_key=ab12cd34ef56" in out
+
+
+def test_cmd_list_prints_unknown_for_legacy_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Legacy entry without tags.kinoforge_key → capability_key=<unknown>."""
+    ctx = _ctx_no_cfg(tmp_path)
+    ctx.ledger().record(
+        Instance(
+            id="i-legacy",
+            provider="local",
+            status="ready",
+            tags={},
+            created_at=1.0,
+            cost_rate_usd_per_hr=0.0,
+        )
+    )
+    args = _ns()
+    assert _commands._cmd_list(args, ctx) == 0
+    out = capsys.readouterr().out
+    assert "capability_key=<unknown>" in out
