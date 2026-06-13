@@ -208,6 +208,74 @@ def test_replicate_throttle_stub_footer(
     assert payload["throttle_warnings"] == []
 
 
+def test_prom_scrape_errors_counter_emits_per_provider_per_reason(
+    fake_ctx: tuple[Any, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """BUG CATCH: every (provider, reason) tuple MUST emit a sample;
+    transport reason flips to 1 when the balance error mentions transport."""
+    ctx, _ = fake_ctx
+    entry = _ledger_entry()
+    ctx.ledger.return_value.entries.return_value = [entry]
+    with patch("kinoforge.core.registry.get_provider") as get_prov:
+        prov_inst = MagicMock()
+        live_inst = MagicMock()
+        live_inst.id = "pod-abc"
+        prov_inst.list_instances.return_value = [live_inst]
+        get_prov.return_value = lambda: prov_inst
+        with patch("kinoforge._adapters.build_balance_endpoint_for") as build_bal:
+            ep = MagicMock()
+            ep.read.side_effect = TransportError("simulated")
+            build_bal.return_value = ep
+            rc = _cmd_cost(_args(prom=True), ctx)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert (
+        'kinoforge_cost_scrape_errors_total{provider="runpod",reason="transport"} 1'
+        in out
+    )
+    assert (
+        'kinoforge_cost_scrape_errors_total{provider="runpod",reason="schema"} 0' in out
+    )
+    assert (
+        'kinoforge_cost_scrape_errors_total{provider="runpod",reason="cred"} 0' in out
+    )
+
+
+def test_prom_heartbeat_partial_truth_skypilot(
+    fake_ctx: tuple[Any, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SkyPilot ledger entry → heartbeat_partial_truth includes skypilot
+    in --json since provider_heartbeat_supported('skypilot') is False (B5b pending)."""
+    ctx, _ = fake_ctx
+    entry = _ledger_entry(provider="skypilot", rate=1.20)
+    ctx.ledger.return_value.entries.return_value = [entry]
+    with patch("kinoforge.core.registry.get_provider") as get_prov:
+        prov_inst = MagicMock()
+        live_inst = MagicMock()
+        live_inst.id = "pod-abc"
+        prov_inst.list_instances.return_value = [live_inst]
+        get_prov.return_value = lambda: prov_inst
+        rc = _cmd_cost(_args(json=True), ctx)
+    out = capsys.readouterr().out
+    assert rc == 0
+    payload = json.loads(out)
+    assert "skypilot" in payload["heartbeat_partial_truth"]
+
+
+def test_prom_lf_only_no_cr(
+    fake_ctx: tuple[Any, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """BUG CATCH: Prometheus textfile collector is strict about line
+    endings — exposition MUST be LF-only and end with a trailing newline."""
+    ctx, _ = fake_ctx
+    ctx.ledger.return_value.entries.return_value = []
+    rc = _cmd_cost(_args(prom=True), ctx)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "\r" not in out
+    assert out.endswith("\n")
+
+
 def test_replicate_throttle_disabled_zero(
     fake_ctx: tuple[Any, Any],
     capsys: pytest.CaptureFixture[str],
