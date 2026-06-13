@@ -15,12 +15,14 @@ Conventions
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import TracebackType
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
@@ -69,6 +71,7 @@ from kinoforge.core.provision_state import (
     write_marker,
 )
 from kinoforge.core.provisioner import provision as provisioner_provision
+from kinoforge.core.session_claim import hold_until_first_tick
 from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
@@ -228,55 +231,128 @@ def _provision_compute_once(
     )
     marker = marker_path(state_dir, instance.id)
 
-    with store.acquire_lock(f"provision:{instance.id}", ttl_s=300):
-        record = read_marker(marker)
-        if record is not None and is_marker_current(record, capability_key_hex):
-            _log.debug(
-                "provision marker current for instance %s key %s — skipping",
-                instance.id,
-                capability_key_hex[:12],
-            )
-            return
-        _log.info(
-            "running provisioner.provision for instance %s (engine=%s key=%s)",
+    # B7: provision:<id> lock is held by the outer hold_until_first_tick in
+    # deploy_session.__enter__. The marker check remains idempotent for warm-
+    # supplied paths where the caller also pre-provisioned. Concurrent
+    # _provision_compute_once for the same instance.id is impossible by
+    # construction — deploy_session is the only call site.
+    record = read_marker(marker)
+    if record is not None and is_marker_current(record, capability_key_hex):
+        _log.debug(
+            "provision marker current for instance %s key %s — skipping",
             instance.id,
-            engine.name,
             capability_key_hex[:12],
         )
-        # When the caller has enriched cfg_dict (e.g. added a top-level
-        # "lifecycle" key from the resolved Lifecycle dataclass), wrap the
-        # pydantic Config so that its model_dump() returns the enriched form.
-        # The provisioner reads cfg.models (from pydantic) for source
-        # resolution + downloads, then calls cfg.model_dump() to build the
-        # dict passed to engine.provision. Wrapping lets us intercept only
-        # model_dump() without altering the rest of the Config interface.
-        if cfg_dict_override is not None:
+        return
+    _log.info(
+        "running provisioner.provision for instance %s (engine=%s key=%s)",
+        instance.id,
+        engine.name,
+        capability_key_hex[:12],
+    )
+    if cfg_dict_override is not None:
 
-            class _EnrichedCfgWrapper:
-                """Thin shim: delegates .models to pydantic cfg; overrides model_dump."""
+        class _EnrichedCfgWrapper:
+            """Thin shim: delegates .models to pydantic cfg; overrides model_dump."""
 
-                models = cfg.models
+            models = cfg.models
 
-                def model_dump(self) -> dict[str, object]:  # noqa: D102
-                    return cfg_dict_override  # type: ignore[return-value]
+            def model_dump(self) -> dict[str, object]:  # noqa: D102
+                return cfg_dict_override  # type: ignore[return-value]
 
-            effective_cfg: object = _EnrichedCfgWrapper()
-        else:
-            effective_cfg = cfg
-        provisioner_provision(
-            engine,
-            effective_cfg,  # type: ignore[arg-type]
-            instance,
-            creds=effective_creds,
-            download_dir=state_dir / "weights",
+        effective_cfg: object = _EnrichedCfgWrapper()
+    else:
+        effective_cfg = cfg
+    provisioner_provision(
+        engine,
+        effective_cfg,  # type: ignore[arg-type]
+        instance,
+        creds=effective_creds,
+        download_dir=state_dir / "weights",
+    )
+    write_marker(
+        marker,
+        instance.id,
+        capability_key_hex,
+        engine.name,
+        time.time(),
+    )
+
+
+class _LazyClaim:
+    """B7 lazy-acquire wrapper around :func:`hold_until_first_tick`.
+
+    The cooperative session-claim lock keys on ``instance.id``, but
+    ``instance.id`` is only known AFTER ``create_instance`` returns —
+    which is itself nested inside
+    :func:`_provision_instance_and_build_backend`. ``_LazyClaim`` lets
+    :func:`deploy_session` wrap the entire region from cache-resolve
+    through HeartbeatLoop's first tick in a single context manager whose
+    actual lock acquisition is deferred to the moment ``instance.id``
+    becomes available.
+
+    Usage::
+
+        holder = _LazyClaim(store=..., ledger=..., hb_interval=..., claim_ttl=...)
+        with holder:
+            # Some code that may create an instance
+            holder.install(instance)
+            # Subsequent code runs inside hold_until_first_tick
+            # Lock releases on holder __exit__ via first-tick polling.
+
+    ``install`` is a no-op when:
+      * ``hb_interval`` is ``None`` or non-positive (HB disabled → no race), or
+      * Already installed (idempotent — subsequent calls return immediately).
+
+    On the no-op branch the holder stays inert; ``__exit__`` becomes a
+    no-op as well. Hosted-engine paths never call ``install``.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: ArtifactStore,
+        ledger: Ledger,
+        hb_interval: float | None,
+        claim_ttl: float,
+    ) -> None:
+        self._store = store
+        self._ledger = ledger
+        self._hb_interval = hb_interval
+        self._claim_ttl = claim_ttl
+        self._cm: contextlib.AbstractContextManager[None] | None = None
+
+    def install(self, instance: Instance) -> None:
+        """Enter ``hold_until_first_tick`` for ``instance.id`` once known."""
+        if self._cm is not None:
+            return
+        if self._hb_interval is None or self._hb_interval <= 0:
+            return
+        cm = hold_until_first_tick(
+            store=self._store,
+            instance_id=instance.id,
+            ledger=self._ledger,
+            ttl_s=self._claim_ttl,
+            timeout_s=self._claim_ttl,
         )
-        write_marker(
-            marker,
-            instance.id,
-            capability_key_hex,
-            engine.name,
-            time.time(),
-        )
+        cm.__enter__()
+        self._cm = cm
+
+    def __enter__(self) -> _LazyClaim:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool | None:
+        if self._cm is None:
+            return None
+        try:
+            return self._cm.__exit__(exc_type, exc, tb)
+        finally:
+            self._cm = None
 
 
 def _create_with_offer_retry(
@@ -339,6 +415,7 @@ def _provision_instance_and_build_backend(
     state_dir: Path,
     for_discovery: bool,
     tags: dict[str, str] | None = None,
+    on_instance_created: Callable[[Instance], None] | None = None,
 ) -> tuple[Instance, GenerationBackend]:
     """Provision a compute instance and build a backend for it.
 
@@ -360,6 +437,10 @@ def _provision_instance_and_build_backend(
         tags: Optional caller-supplied tags merged onto the orchestrator's
             built-in ``{kinoforge_engine, kinoforge_key}``. Caller wins on
             key collision.
+        on_instance_created: Optional callback fired exactly once,
+            immediately after ``create_instance`` returns, with the
+            freshly-created ``Instance``. B7 uses this seam to enter
+            ``hold_until_first_tick`` before ``engine.provision`` runs.
 
     Returns:
         ``(instance, backend)`` — instance polled to ``ready``, backend
@@ -427,6 +508,12 @@ def _provision_instance_and_build_backend(
     instance, _chosen_offer = _create_with_offer_retry(
         resolved_provider, _build_spec, offers
     )
+    # B7 — acquire the cooperative session-claim lock now that instance.id is
+    # known, BEFORE engine.provision runs. The callback enters the outer
+    # hold_until_first_tick context; release happens on the _LazyClaim
+    # holder's __exit__ in deploy_session.
+    if on_instance_created is not None:
+        on_instance_created(instance)
     # Status-only polling: preserve endpoints + tags from create_instance.
     # provider.get_instance(id) re-queries the API but the GraphQL `pod` query
     # only returns id/desiredStatus/imageName — endpoints + ports tag are
@@ -645,148 +732,183 @@ def deploy_session(
         profile_provider = JsonProfileCache(store)
 
     # ------------------------------------------------------------------
-    # Step 4 — resolve profile; discover on miss
+    # B7 — Build the cooperative session-claim lock holder.
+    # Acquisition is DEFERRED until instance.id becomes available (inside
+    # the cache-miss / cache-hit branches below, or the caller-supplied
+    # path). Release happens when the holder's ``with`` block exits, which
+    # also runs the first-tick polling phase. Hosted-engine paths never
+    # call install — holder stays inert. HB-disabled compute paths call
+    # install but install short-circuits — holder also stays inert.
     # ------------------------------------------------------------------
-    backend: GenerationBackend | None = None
-    _just_discovered: bool = False
-
-    try:
-        profile = profile_provider.resolve(key)
-        _log.debug("profile cache hit for key %s", key.derive()[:12])
-    except ProfileNotCached:
-        _log.debug(
-            "profile cache miss for key %s — running discover", key.derive()[:12]
-        )
-        if resolved_engine.requires_compute:
-            if resolved_provider is None:
-                raise CapacityError(
-                    "requires_compute is True but no provider was resolved"
-                ) from None
-            if _caller_supplied_instance:
-                # Caller pre-created the pod; marker-idempotent provision.
-                resolved_engine.provision(instance, cfg_dict)
-                backend = resolved_engine.backend(instance, cfg_dict)
-            else:
-                instance, backend = _provision_instance_and_build_backend(
-                    resolved_engine=resolved_engine,
-                    resolved_provider=resolved_provider,
-                    cfg=cfg,
-                    run_id=run_id,
-                    key=key,
-                    creds=creds,
-                    store=store,
-                    state_dir=state_dir,
-                    for_discovery=True,
-                    tags=tags,
-                )
-        else:
-            backend = resolved_engine.backend(None, cfg_dict)
-
-        profile = profile_provider.discover(key, resolved_engine, backend)
-        _just_discovered = True
-
-    # ------------------------------------------------------------------
-    # Step 7 — ensure we have a backend (cache-hit branch)
-    # ------------------------------------------------------------------
-    if backend is None:
-        if resolved_engine.requires_compute:
-            if resolved_provider is None:
-                raise CapacityError(
-                    "requires_compute is True but no provider was resolved"
-                ) from None
-            if _caller_supplied_instance:
-                resolved_engine.provision(instance, cfg_dict)
-                backend = resolved_engine.backend(instance, cfg_dict)
-            else:
-                instance, backend = _provision_instance_and_build_backend(
-                    resolved_engine=resolved_engine,
-                    resolved_provider=resolved_provider,
-                    cfg=cfg,
-                    run_id=run_id,
-                    key=key,
-                    creds=creds,
-                    store=store,
-                    state_dir=state_dir,
-                    for_discovery=False,
-                    tags=tags,
-                )
-        else:
-            backend = resolved_engine.backend(None, cfg_dict)
-
-    # ------------------------------------------------------------------
-    # Step 8 — verify (skip when just-discovered).  Fail-hard teardown
-    # ------------------------------------------------------------------
-    if not _just_discovered:
-        try:
-            profile_provider.verify(profile, backend, engine=resolved_engine, key=key)
-        except CapabilityMismatch:
-            _log.warning(
-                "capability mismatch detected; tearing down instance before re-raising"
-            )
-            if (
-                instance is not None
-                and resolved_provider is not None
-                and not _caller_supplied_instance
-            ):
-                resolved_provider.destroy_instance(instance.id)
-            raise
-
-    # ------------------------------------------------------------------
-    # Step 8.5 — build the shared pool + yield
-    # ------------------------------------------------------------------
-    pool = ConcurrentPool()
-    pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)
-    session = DeploySession(
-        backend=backend,
-        profile=profile,
-        pool=pool,
-        instance=instance,
-        engine=resolved_engine,
-        provider=resolved_provider,
+    _ledger_for_claim = Ledger(store=store)
+    _hb_interval = cfg.lifecycle().heartbeat_interval_s
+    _claim_ttl: float = (
+        cfg.lifecycle().boot_timeout_s + 2.0 * _hb_interval
+        if (_hb_interval is not None and _hb_interval > 0)
+        else 0.0
+    )
+    claim_holder = _LazyClaim(
+        store=store,
+        ledger=_ledger_for_claim,
+        hb_interval=_hb_interval,
+        claim_ttl=_claim_ttl,
     )
 
-    # Layer U — spawn a background HeartbeatLoop when configured. Gated on
-    # both (a) a positive interval AND (b) a compute instance to track.
-    # Hosted-engine sessions have no instance + no provider.heartbeat to
-    # call, so the loop would log exceptions every tick. The factory seam
-    # lets tests substitute a non-threaded spy.
-    hb_loop: HeartbeatLoopProtocol | None = None
-    interval = cfg.lifecycle().heartbeat_interval_s
-    if (
-        interval is not None
-        and interval > 0
-        and instance is not None
-        and resolved_provider is not None
-    ):
-        factory: Callable[..., HeartbeatLoopProtocol] = (
-            heartbeat_loop_factory or HeartbeatLoop
-        )
-        hb_loop = factory(
-            ledger=Ledger(store=store),
-            provider=resolved_provider,
-            instance_id=instance.id,
-            interval_s=interval,
-        )
-        hb_loop.start()
-    try:
-        yield session
-    finally:
-        if hb_loop is not None:
-            hb_loop.stop()
-        # Phase 50: when the caller requested cancellation, drain the pool
-        # with a bounded watchdog so a wedged worker no longer blocks
-        # shutdown forever. The token-unset path preserves today's
-        # unbounded-wait behavior so library callers without a token see
-        # no change. ``pool.close`` failures are logged at ERROR but do
-        # not swallow ``BaseException`` — a fresh KeyboardInterrupt during
-        # shutdown must still propagate so the operator can force-exit.
-        if cancel_token is not None and cancel_token.is_set():
+    with claim_holder:
+        # --------------------------------------------------------------
+        # Step 4 — resolve profile; discover on miss
+        # --------------------------------------------------------------
+        backend: GenerationBackend | None = None
+        _just_discovered: bool = False
+
+        try:
+            profile = profile_provider.resolve(key)
+            _log.debug("profile cache hit for key %s", key.derive()[:12])
+        except ProfileNotCached:
+            _log.debug(
+                "profile cache miss for key %s — running discover",
+                key.derive()[:12],
+            )
+            if resolved_engine.requires_compute:
+                if resolved_provider is None:
+                    raise CapacityError(
+                        "requires_compute is True but no provider was resolved"
+                    ) from None
+                if _caller_supplied_instance:
+                    # Caller pre-created the pod; marker-idempotent provision.
+                    claim_holder.install(instance)  # type: ignore[arg-type]
+                    resolved_engine.provision(instance, cfg_dict)
+                    backend = resolved_engine.backend(instance, cfg_dict)
+                else:
+                    instance, backend = _provision_instance_and_build_backend(
+                        resolved_engine=resolved_engine,
+                        resolved_provider=resolved_provider,
+                        cfg=cfg,
+                        run_id=run_id,
+                        key=key,
+                        creds=creds,
+                        store=store,
+                        state_dir=state_dir,
+                        for_discovery=True,
+                        tags=tags,
+                        on_instance_created=claim_holder.install,
+                    )
+            else:
+                backend = resolved_engine.backend(None, cfg_dict)
+
+            profile = profile_provider.discover(key, resolved_engine, backend)
+            _just_discovered = True
+
+        # --------------------------------------------------------------
+        # Step 7 — ensure we have a backend (cache-hit branch)
+        # --------------------------------------------------------------
+        if backend is None:
+            if resolved_engine.requires_compute:
+                if resolved_provider is None:
+                    raise CapacityError(
+                        "requires_compute is True but no provider was resolved"
+                    ) from None
+                if _caller_supplied_instance:
+                    claim_holder.install(instance)  # type: ignore[arg-type]
+                    resolved_engine.provision(instance, cfg_dict)
+                    backend = resolved_engine.backend(instance, cfg_dict)
+                else:
+                    instance, backend = _provision_instance_and_build_backend(
+                        resolved_engine=resolved_engine,
+                        resolved_provider=resolved_provider,
+                        cfg=cfg,
+                        run_id=run_id,
+                        key=key,
+                        creds=creds,
+                        store=store,
+                        state_dir=state_dir,
+                        for_discovery=False,
+                        tags=tags,
+                        on_instance_created=claim_holder.install,
+                    )
+            else:
+                backend = resolved_engine.backend(None, cfg_dict)
+
+        # --------------------------------------------------------------
+        # Step 8 — verify (skip when just-discovered).  Fail-hard teardown
+        # --------------------------------------------------------------
+        if not _just_discovered:
             try:
-                pool.close(cancel_pending=True, timeout=30.0)
-            except Exception as close_exc:
-                _log.error("pool.close failed during interrupt cleanup: %s", close_exc)
-        else:
-            pool.close()
+                profile_provider.verify(
+                    profile, backend, engine=resolved_engine, key=key
+                )
+            except CapabilityMismatch:
+                _log.warning(
+                    "capability mismatch detected; tearing down instance before re-raising"
+                )
+                if (
+                    instance is not None
+                    and resolved_provider is not None
+                    and not _caller_supplied_instance
+                ):
+                    resolved_provider.destroy_instance(instance.id)
+                raise
+
+        # --------------------------------------------------------------
+        # Step 8.5 — build the shared pool + yield
+        # --------------------------------------------------------------
+        pool = ConcurrentPool()
+        pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)
+        session = DeploySession(
+            backend=backend,
+            profile=profile,
+            pool=pool,
+            instance=instance,
+            engine=resolved_engine,
+            provider=resolved_provider,
+        )
+
+        # Layer U — spawn a background HeartbeatLoop when configured.
+        # Gated on both (a) a positive interval AND (b) a compute instance
+        # to track. Hosted-engine sessions have no instance + no
+        # provider.heartbeat to call, so the loop would log exceptions
+        # every tick. The factory seam lets tests substitute a non-
+        # threaded spy.
+        hb_loop: HeartbeatLoopProtocol | None = None
+        interval = cfg.lifecycle().heartbeat_interval_s
+        if (
+            interval is not None
+            and interval > 0
+            and instance is not None
+            and resolved_provider is not None
+        ):
+            factory: Callable[..., HeartbeatLoopProtocol] = (
+                heartbeat_loop_factory or HeartbeatLoop
+            )
+            hb_loop = factory(
+                ledger=Ledger(store=store),
+                provider=resolved_provider,
+                instance_id=instance.id,
+                interval_s=interval,
+            )
+            hb_loop.start()
+        try:
+            yield session
+        finally:
+            if hb_loop is not None:
+                hb_loop.stop()
+            # Phase 50: when the caller requested cancellation, drain the
+            # pool with a bounded watchdog so a wedged worker no longer
+            # blocks shutdown forever. The token-unset path preserves
+            # today's unbounded-wait behavior so library callers without a
+            # token see no change. ``pool.close`` failures are logged at
+            # ERROR but do not swallow ``BaseException`` — a fresh
+            # KeyboardInterrupt during shutdown must still propagate so
+            # the operator can force-exit.
+            if cancel_token is not None and cancel_token.is_set():
+                try:
+                    pool.close(cancel_pending=True, timeout=30.0)
+                except Exception as close_exc:
+                    _log.error(
+                        "pool.close failed during interrupt cleanup: %s", close_exc
+                    )
+            else:
+                pool.close()
 
 
 # ---------------------------------------------------------------------------
