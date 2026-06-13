@@ -1,35 +1,23 @@
-"""RunPod GraphQL-tag heartbeat satisfier (B5a Tasks b + f).
+"""RunPod dockerArgs preserve-and-merge heartbeat satisfier (C25 Task 2, Branch B).
 
 Implements :class:`~kinoforge.core.heartbeat_endpoints.HeartbeatEndpoint`
-by writing a compact JSON heartbeat marker (``{"_kinoforge_hb": "<ISO>"}``)
-into the pod's ``dockerArgs`` field via the GraphQL ``podEditJob`` mutation
-and reading it back via the ``pod`` query. Both methods go through an
-injected ``http_post`` seam so tests can spy the precise wire payload
-without a real RunPod account.
+by appending a trailing bash comment ``# _kinoforge_hb:<ISO>`` to the
+pod's ``dockerArgs`` field. The Phase 24 selfterm boot bash (set at pod
+creation by :meth:`RunPodProvider._create_pod`) is preserved verbatim
+because bash treats ``#`` as start-of-comment; pod restart re-runs the
+preserved boot bash and the in-pod selfterm survives.
 
-The wire-discovery on 2026-06-12 (Task f live smoke) showed that
-``PodEditJobInput`` has NO ``tags`` field; the B5a spec design assumed
-it did. ``dockerArgs`` is the only free-form string field that survives
-both write and read on the live API. The heartbeat marker survives
-across orchestrator process lifetimes, which is what makes the
-cross-session warm-reuse path (B3) workable on a fresh shell.
+Single-writer invariant: B7's ``provision:<id>`` cooperative lock
+guarantees only the holding orchestrator writes a pod's wire state
+during a session; intra-orchestrator HeartbeatLoop is single-threaded.
 
-**Production-safety constraint:** every heartbeat write OVERWRITES the
-pod's ``dockerArgs`` field, which is the same field Phase 24's
-:meth:`RunPodProvider._create_pod` injects the kinoforge in-pod selfterm
-script into at pod creation. This satisfier is therefore SAFE only on
-pods created with ``provision_script=None`` (bare heartbeat-mode pods).
-Enabling ``compute.heartbeat_mode = "graphql-tag"`` on a real workload
-pod will silently overwrite the selfterm script — see PROGRESS.md §C25
-for the follow-up tracking entry and fix candidates. Construction of
-this class is gated by ``_adapters.build_heartbeat_endpoint_for``; that
-function raises ``ValidationError`` for unsafe ``(engine.kind, mode)``
-combinations before a pod is ever created — see PROGRESS §C25.
+Spec: docs/superpowers/specs/2026-06-13-c25-runpod-heartbeat-preserve-and-merge-design.md
 """
 
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -40,15 +28,9 @@ from kinoforge.core.errors import TransportError
 
 __all__ = ["RunPodGraphQLHeartbeatEndpoint"]
 
-#: Historical name reserved for reference. Pre-Task-f the heartbeat was
-#: going to land as a RunPod tag with this key; the live API does not
-#: support a ``tags`` field on ``PodEditJobInput``, so the wire-level
-#: storage moved to ``dockerArgs`` and the JSON key in
-#: ``_HEARTBEAT_JSON_KEY`` below. Kept as a module-private constant for
-#: documentation cross-reference only.
-_HEARTBEAT_TAG_KEY_LEGACY: str = "_kinoforge_last_heartbeat"
-
 _DEFAULT_GRAPHQL_URL: str = "https://api.runpod.io/graphql"
+
+_HEARTBEAT_MARKER_KEY: str = "_kinoforge_hb"
 
 _POD_EDIT_JOB_MUTATION: str = """
 mutation PodEditJob($input: PodEditJobInput!) {
@@ -56,15 +38,6 @@ mutation PodEditJob($input: PodEditJobInput!) {
 }
 """.strip()
 
-# RunPod's PodEditJobInput does NOT have a ``tags`` field — ``tags`` is a
-# design assumption from the B5a spec that proved incorrect when tested
-# against the live API (2026-06-12 live smoke, Task f).  The ``dockerArgs``
-# field IS present in both ``PodEditJobInput`` (write) and the ``pod`` query
-# (read), making it the only available free-form string carrier for
-# cross-session heartbeat state.  Using it for heartbeat timestamps does
-# not break any kinoforge workload because the heartbeat-mode pods have
-# ``provision_script=None`` and do not rely on ``dockerArgs`` for their
-# boot command.
 _POD_QUERY: str = """
 query GetPod($podId: String!) {
   pod(input: {podId: $podId}) {
@@ -74,17 +47,28 @@ query GetPod($podId: String!) {
 }
 """.strip()
 
-#: JSON key embedded in the ``dockerArgs`` string to distinguish the
-#: heartbeat payload from a legitimate docker command string.
-_HEARTBEAT_JSON_KEY: str = "_kinoforge_hb"
+# Strip stale ` # _kinoforge_hb:<ISO>` trailer from prior tick before
+# re-appending. The marker value is a single ISO 8601 timestamp emitted
+# by ``datetime.isoformat()`` — guaranteed no embedded whitespace — so
+# ``\S+`` after the key isolates the trailer without consuming any
+# upstream bash content (the Phase 24 decoder string is the typical
+# upstream content, and it has no `#` mid-string in the real path).
+_STRIP_RE: re.Pattern[str] = re.compile(
+    r"\s*#\s*" + re.escape(_HEARTBEAT_MARKER_KEY) + r":\S+\s*$"
+)
+
+# Read-side extractor. ``\S+`` rejects mid-string ``# _kinoforge_hb:``
+# occurrences whose tail contains whitespace (e.g. ``# _kinoforge_hb:foo &&``
+# inside an ``echo`` argument): such a string ends in ``"`` not ISO chars
+# so the anchored ``\s*$`` can't be reached without consuming whitespace
+# the capture forbids → no match → read returns ``None``.
+_READ_RE: re.Pattern[str] = re.compile(
+    r"#\s*" + re.escape(_HEARTBEAT_MARKER_KEY) + r":(\S+)\s*$"
+)
 
 
 def _default_http_post(api_key: str) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
-    """Build a stdlib-urllib POST callable with Bearer auth.
-
-    Phase 24 pattern: HTTP via stdlib urllib by default, replaceable via
-    the constructor's ``http_post`` kwarg in tests and production opt-in.
-    """
+    """Build a stdlib-urllib POST callable with Bearer auth."""
 
     def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
@@ -118,22 +102,22 @@ def _default_http_post(api_key: str) -> Callable[[str, dict[str, Any]], dict[str
     return _post
 
 
+def _merge_marker(base: str, ts_local: datetime) -> str:
+    """Strip any stale heartbeat marker and append a fresh one."""
+    stripped = _STRIP_RE.sub("", base)
+    if stripped.strip() == "":
+        return f": # {_HEARTBEAT_MARKER_KEY}:{ts_local.isoformat()}"
+    return f"{stripped} # {_HEARTBEAT_MARKER_KEY}:{ts_local.isoformat()}"
+
+
 class RunPodGraphQLHeartbeatEndpoint:
-    """GraphQL-tag satisfier: ``podEditJob`` (write) + ``pod`` (read).
+    """dockerArgs preserve-and-merge satisfier.
 
-    Both methods raise :class:`TransportError` on HTTP non-2xx, GraphQL
-    ``errors`` arrays, JSON parse failures, and corrupted tag values.
-    Pod-gone (``data.pod == null``) and tag-absent are valid ``None``
-    returns, not transport failures.
+    Write path: read current dockerArgs → strip any prior heartbeat
+    marker → append fresh ``# _kinoforge_hb:<ISO>`` trailer → mutate.
+    Two GraphQL round-trips per tick.
 
-    Args:
-        api_key: RunPod API key with write scope (the main
-            ``RUNPOD_API_KEY``, NOT the scoped ``RUNPOD_TERMINATE_KEY``
-            which is delete-only).
-        graphql_url: RunPod GraphQL endpoint URL. Defaults to the
-            production URL.
-        http_post: Optional injected POST callable. ``None`` builds a
-            stdlib-urllib callable with Bearer auth.
+    Read path: query dockerArgs → regex-extract trailing marker.
     """
 
     def __init__(
@@ -143,83 +127,25 @@ class RunPodGraphQLHeartbeatEndpoint:
         graphql_url: str = _DEFAULT_GRAPHQL_URL,
         http_post: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
-        """Initialise the satisfier with credentials and an optional seam."""
+        """Construct the endpoint with an injectable HTTP seam.
+
+        Args:
+            api_key: RunPod API key used for Bearer auth on every call.
+            graphql_url: RunPod GraphQL endpoint URL. Defaults to the
+                production URL; tests can point at a fixture server.
+            http_post: Optional injectable ``(url, body) -> dict`` POST.
+                Defaults to a stdlib-urllib closure that wraps HTTP /
+                JSON errors in :class:`TransportError`.
+        """
         self._api_key = api_key
         self._graphql_url = graphql_url
         self._http_post = (
             http_post if http_post is not None else _default_http_post(api_key)
         )
 
-    def write(self, instance_id: str, ts_local: datetime) -> None:
-        """Stamp the heartbeat on ``instance_id`` via the pod's ``dockerArgs`` field.
-
-        RunPod's ``PodEditJobInput`` does NOT have a ``tags`` field — the
-        live-API discovery on 2026-06-12 (B5a Task f) showed only
-        ``podId``, ``env``, ``dockerArgs``, ``imageName``, ``volumeInGb``,
-        and ``containerDiskInGb`` are accepted.  ``dockerArgs`` is the only
-        free-form string that round-trips through both ``podEditJob`` (write)
-        and ``pod { dockerArgs }`` (read).
-
-        The value written is a compact JSON string:
-        ``{"_kinoforge_hb": "<ISO8601 timestamp>"}``
-        so ``read`` can distinguish a kinoforge heartbeat write from a
-        genuine docker start command that happens to be present on the pod.
-
-        Idempotent: writing the same value twice overwrites the same field.
-
-        Args:
-            instance_id: Pod id whose heartbeat to stamp.
-            ts_local: Timezone-aware datetime in local TZ.
-
-        Raises:
-            TransportError: HTTP non-2xx, GraphQL ``errors`` array, or
-                any other transport-layer failure.
-        """
-        docker_args_value = json.dumps(
-            {_HEARTBEAT_JSON_KEY: ts_local.isoformat()}, separators=(",", ":")
-        )
-        payload = {
-            "query": _POD_EDIT_JOB_MUTATION,
-            "variables": {
-                "input": {
-                    "podId": instance_id,
-                    "dockerArgs": docker_args_value,
-                }
-            },
-        }
-        try:
-            resp = self._http_post(self._graphql_url, payload)
-        except TransportError:
-            raise
-        except Exception as exc:  # noqa: BLE001 — surface ANY transport flake as TransportError
-            raise TransportError(f"RunPod podEditJob transport failure: {exc}") from exc
-        if "errors" in resp:
-            raise TransportError(f"RunPod podEditJob failed: {resp['errors']}")
-
-    def read(self, instance_id: str) -> datetime | None:
-        """Read the heartbeat from ``instance_id``'s ``dockerArgs`` field.
-
-        The value written by :meth:`write` is a compact JSON string of the
-        form ``{"_kinoforge_hb": "<ISO8601>"}`` stored in the pod's
-        ``dockerArgs`` field.  ``read`` retrieves that field and parses the
-        embedded timestamp.
-
-        Args:
-            instance_id: Pod id whose heartbeat to read.
-
-        Returns:
-            The parsed timestamp, or ``None`` when the pod is gone or
-            ``dockerArgs`` has not been written by kinoforge yet.
-
-        Raises:
-            TransportError: HTTP failure, GraphQL ``errors`` array, JSON
-                parse failure, or a ``dockerArgs`` value that appears to
-                be a kinoforge heartbeat but cannot be parsed as ISO-8601.
-        """
-        payload = {
-            "query": _POD_QUERY,
-            "variables": {"podId": instance_id},
-        }
+    def _read_dockerargs(self, instance_id: str) -> str | None:
+        """Return current dockerArgs string, or None if pod gone."""
+        payload = {"query": _POD_QUERY, "variables": {"podId": instance_id}}
         try:
             resp = self._http_post(self._graphql_url, payload)
         except TransportError:
@@ -228,29 +154,70 @@ class RunPodGraphQLHeartbeatEndpoint:
             raise TransportError(f"RunPod pod query transport failure: {exc}") from exc
         if "errors" in resp:
             raise TransportError(f"RunPod pod query failed: {resp['errors']}")
-        pod = resp.get("data", {}).get("pod")
+        pod = (resp.get("data") or {}).get("pod")
         if pod is None:
-            return None  # instance gone — valid None
+            return None
         raw = pod.get("dockerArgs")
-        if not isinstance(raw, str) or raw == "":
-            return None  # never written by kinoforge — valid None
-        # Attempt to parse as kinoforge heartbeat JSON; ignore if it looks
-        # like a genuine docker command string.
+        return raw if isinstance(raw, str) else ""
+
+    def write(self, instance_id: str, ts_local: datetime) -> None:
+        """Append the heartbeat marker to the pod's dockerArgs.
+
+        Reads current ``dockerArgs``, strips any prior heartbeat trailer,
+        appends ``# _kinoforge_hb:<ts_local.isoformat()>`` and writes
+        back via ``podEditJob``. No-op when the pod is gone.
+
+        Args:
+            instance_id: RunPod pod ID.
+            ts_local: Heartbeat timestamp (tz-aware; local-TZ ISO emitted).
+
+        Raises:
+            TransportError: GraphQL ``errors``, HTTP non-2xx, JSON parse
+                failure, or any other transport-layer fault.
+        """
+        base = self._read_dockerargs(instance_id)
+        if base is None:
+            # Pod gone; no-op write. Next tick or classify will surface it.
+            return
+        merged = _merge_marker(base, ts_local)
+        payload = {
+            "query": _POD_EDIT_JOB_MUTATION,
+            "variables": {"input": {"podId": instance_id, "dockerArgs": merged}},
+        }
         try:
-            parsed = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return None  # not a kinoforge heartbeat payload — valid None
-        if not isinstance(parsed, dict) or _HEARTBEAT_JSON_KEY not in parsed:
-            return None  # kinoforge key absent — valid None
-        value = parsed[_HEARTBEAT_JSON_KEY]
-        if not isinstance(value, str):
-            raise TransportError(
-                f"corrupted heartbeat dockerArgs for {instance_id}: "
-                f"key present but value not a string"
-            )
+            resp = self._http_post(self._graphql_url, payload)
+        except TransportError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise TransportError(f"RunPod podEditJob transport failure: {exc}") from exc
+        if "errors" in resp:
+            raise TransportError(f"RunPod podEditJob failed: {resp['errors']}")
+
+    def read(self, instance_id: str) -> datetime | None:
+        """Return the heartbeat timestamp from the pod's dockerArgs.
+
+        Args:
+            instance_id: RunPod pod ID.
+
+        Returns:
+            Tz-aware :class:`datetime` parsed from the trailing
+            ``# _kinoforge_hb:<ISO>`` marker, or ``None`` when the pod
+            is gone, dockerArgs is empty, or no marker is present.
+
+        Raises:
+            TransportError: Marker present but value is not a valid ISO
+                8601 timestamp, or any GraphQL / HTTP transport failure.
+        """
+        raw = self._read_dockerargs(instance_id)
+        if raw is None or raw == "":
+            return None
+        m = _READ_RE.search(raw)
+        if m is None:
+            return None
+        value = m.group(1).strip()
         try:
             return datetime.fromisoformat(value)
         except ValueError as exc:
             raise TransportError(
-                f"corrupted heartbeat dockerArgs for {instance_id}: {value!r}"
+                f"corrupted heartbeat marker for {instance_id}: {value!r}"
             ) from exc
