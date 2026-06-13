@@ -24,14 +24,15 @@
     {
       "id": 12,
       "subject": "Task 4: C25 acceptance smoke — Wan + ComfyUI + 2 CLI gens",
-      "status": "in_progress",
+      "status": "completed-partial",
+      "partial_outcome": "C25 wire fix PROVEN on production pod uokf7x7cbfcunk via direct GraphQL dockerArgs readback (sidecar tests/live/_c25_smoke_evidence.json, commit 7436969). gen1 + gen2 wall-time ratio NOT measured (gen 1 stalled on Wan provision; root cause orthogonal to C25). Deferred unproven criteria routed to new phase C26 (RunPod util-aware stall classify) per user decision 2026-06-13T14:30 PDT.",
       "blockedBy": [10, 11],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. Close only after every item in acceptanceCriteria has been re-validated independently, with output captured.\n\n**Goal:** Prove gen2 auto-attaches to gen1's pod via B3 cross-CLI auto-discovery on real Wan 2.1 14B T2V with engine.kind=comfyui + heartbeat_mode=graphql-tag and no --instance-id / --force-attach.\n\n**Files:** tests/live/cfg_c25_wan_comfyui.yaml; tests/live/test_c25_warm_reuse_comfyui_wan_live.py.\n\n**Verify:** KINOFORGE_LIVE_RUNPOD=1 KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_c25_warm_reuse_comfyui_wan_live.py -v -s\n\n```json:metadata\n{\"userGate\": true, \"tags\": [\"user-gate\"], \"files\": [\"tests/live/cfg_c25_wan_comfyui.yaml\", \"tests/live/test_c25_warm_reuse_comfyui_wan_live.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_RUNPOD=1 KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_c25_warm_reuse_comfyui_wan_live.py -v -s\", \"acceptanceCriteria\": [\"gen1 cold-creates pod and ledger captures pod_id_1\", \"gen2 fresh CLI 60s later (no --instance-id / --force-attach) attaches to pod_id_1 and logs warm-reuse: attached to <pod_id>\", \"gen2_elapsed < 0.7 * gen1_elapsed\", \"post-smoke GraphQL: Branch A KINOFORGE_LAST_HEARTBEAT in env AND KINOFORGE_SELFTERM_SCRIPT survives; Branch B dockerArgs has Phase 24 bash decoder substring AND exactly one heartbeat marker\", \"pod destroyed; absent from myself.pods\", \"live spend <= $0.30\"], \"requireEvidenceTokens\": [[\"gen1\", \"cold\", \"pod_id_1\"], [\"gen2\", \"warm\", \"attached\", \"pod_id_2\"]]}\n```"
     },
     {
       "id": 13,
       "subject": "Task 5: Closeout docs",
-      "status": "pending",
+      "status": "in_progress",
       "blockedBy": [12],
       "description": "**Goal:** Document C25 closure in PROGRESS.md, B5a spec §9, this spec §16 closeout, and successful-generations.md entry #7.\n\n**Files:** PROGRESS.md; docs/superpowers/specs/2026-06-12-b5a-heartbeat-substrate-design.md; docs/superpowers/specs/2026-06-13-c25-runpod-heartbeat-preserve-and-merge-design.md; successful-generations.md.\n\n**Verify:** git log --oneline -1\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/superpowers/specs/2026-06-12-b5a-heartbeat-substrate-design.md\", \"docs/superpowers/specs/2026-06-13-c25-runpod-heartbeat-preserve-and-merge-design.md\", \"successful-generations.md\"], \"verifyCommand\": \"git log --oneline -1\", \"acceptanceCriteria\": [\"PROGRESS.md §C C25 struck-through with CLOSED-by-SHA\", \"B5a spec §9 amended with closure pointer\", \"C25 spec §16 closeout block appended\", \"successful-generations.md entry #7 added with full schema\", \"entry #6 production-limitation paragraph struck-through with pointer to #7\"]}\n```"
     }

@@ -397,3 +397,36 @@ A C25-shipped state satisfies:
 - §B no entries removed (this fix closes an architectural follow-up; does not retire any spec-locked layer).
 - §A no entries added.
 - `successful-generations.md`: new entry #7 (or entry #6 closure note) capturing `(runpod, comfyui, wan-2.1-14b, t2v)` + B3 cross-CLI auto-attach + C25 heartbeat preserve-and-merge.
+
+## 16. Closeout (PARTIAL — 2026-06-13)
+
+**Outcome:** CLOSED (PARTIAL). C25 wire fix shipped and validated on a production pod. The full Wan + ComfyUI + 2-CLI warm-reuse end-to-end acceptance smoke (gen2 cold-skip ratio < 0.7) was deferred — gen 1 stalled before completing on a workload-side issue orthogonal to the C25 wire fix. Follow-up tracked under **C26** (RunPod util-aware stall classify).
+
+**Tasks delivered:**
+
+- **Task a (probe).** Commit `209a180`. `tests/live/_runpod_env_semantics.json` = `read-unavailable` at pod `ssbbm0vjyd56a9` (NVIDIA RTX A2000 @ $0.12/hr × 3.85 s ≈ $0.0001 spend). RunPod's GraphQL `pod.env` is typed `[String]` with no subfields — the `env { key value }` selection returns HTTP 400 `GRAPHQL_VALIDATION_FAILED`. Branch B selected.
+- **Task b (wire fix).** Commit `71dea61`. `RunPodGraphQLHeartbeatEndpoint` rewritten as Branch B preserve-and-merge: two GraphQL round-trips per tick (query → mutation); the marker capture regex tightened from `[^\n]+?` to `\S+` to reject mid-string `# _kinoforge_hb:` occurrences inside `echo` arguments. 11/11 wire-shape unit tests green.
+- **Task c (guard delete).** Commit `23cb880`. `_RUNPOD_HEARTBEAT_SAFE_ENGINES` allow-list deleted; `build_heartbeat_endpoint_for` dispatches purely on `(provider, mode)` now. 7/7 adapter tests green; 228/228 provider suite green.
+- **Task d (acceptance smoke).** Commits `a17ae55` (RED scaffold), `5323907` (cfg graph_file fix), `7436969` (PROVEN-PARTIAL evidence). RED scaffold committed before live spend per durability rule. Live run on production pod `uokf7x7cbfcunk` (RTX A2000 @ $0.16/hr ≈ $0.0646 spend) was killed at ~22 min wall after operator-observed stall on RunPod console; pre-kill GraphQL dockerArgs readback proves the C25 wire fix works on a real pod (Phase 24 bash decoder INTACT + exactly one `# _kinoforge_hb:` marker; ISO matches `ledger.last_heartbeat` for cross-validation).
+- **Task e (this closeout).** Current commit. PROGRESS §C C25 strike-through with PARTIAL note; B5a spec §9 closure pointer; this §16 block. `successful-generations.md` deliberately NOT amended: no qualifying video was produced (file preamble forbids non-video entries). Entry #6's "Production limitation (C25)" paragraph stays as-is; the next operator to land a clean Wan + ComfyUI + warm-reuse run produces the closing entry naturally.
+
+**Evidence captured (Task d):**
+
+- Probe pod (Task a): `ssbbm0vjyd56a9`. Outcome: `read-unavailable`. Sidecar: `tests/live/_runpod_env_semantics.json`.
+- Smoke pod (Task d): `uokf7x7cbfcunk`. Pre-kill dockerArgs:
+
+  ```
+  bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh && chmod +x /tmp/p.sh && bash /tmp/p.sh" # _kinoforge_hb:2026-06-13T14:23:45.666422-07:00
+  ```
+
+  Sidecar: `tests/live/_c25_smoke_evidence.json`.
+
+**Total live spend:** ≈ $0.065 across both pods. Both pods destroyed; preflight clean post-close.
+
+**Deferred to C26 (RunPod util-aware stall classify):**
+
+- gen1 + gen2 wall-time ratio (cold-skip benefit) acceptance gate.
+- `warm-reuse: attached to <pod_id>` log-line assertion across two fresh-CLI subprocesses on the Wan workload.
+- A `STALL_REAP` verdict on the classify path so an idle / stuck pod (RAM/GPU/VRAM/disk util near zero with heartbeats still ticking) auto-tears-down instead of the operator catching it manually.
+
+C25 is honestly closed at the substrate level. The remaining gap is observability of the in-pod workload, which is a different problem.
