@@ -1,0 +1,35 @@
+# kinoforge cost dashboard — minimal config.
+#
+# `kinoforge cost` walks the ledger associated with this config and
+# emits a burn rate + per-provider breakdown + (when RunPod compute is
+# configured + RUNPOD_API_KEY set) the account balance.
+#
+# Usage:
+#   pixi run kinoforge cost -c examples/configs/cost.yaml
+#   pixi run kinoforge cost -c examples/configs/cost.yaml --json
+#   pixi run kinoforge cost -c examples/configs/cost.yaml --prom
+#
+# Textfile-collector cron pattern (write the prom exposition every
+# 30 seconds for Prometheus to scrape):
+#   */30 * * * * pixi run kinoforge cost -c .../cost.yaml --prom \
+#       > /var/lib/node_exporter/textfile/kinoforge.prom
+
+engine:
+  kind: fake  # the dashboard does not run the engine; this is config-load-only
+  precision: fp16
+
+models:
+  - ref: "https://example.com/models/fake-base.safetensors"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: runpod
+  image: "kinoforge/runpod:latest"
+  lifecycle:
+    idle_timeout: 600
+    max_lifetime: 14400
+    budget: 10.0
+
+store:
+  kind: local
