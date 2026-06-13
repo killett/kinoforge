@@ -218,6 +218,51 @@ def _make_handler(
     return _RangeHandler
 
 
+@dataclass
+class LocalHeartbeatEndpoint:
+    """Thin Protocol-shaped adapter around a dict, for parity tests only.
+
+    LocalProvider already manages heartbeats in an in-memory dict and
+    has no production reason to grow a HeartbeatEndpoint satisfier
+    (offline tests use LocalProvider directly). This adapter exists so
+    the cross-provider parity test (Task e) can parametrize across all
+    three satisfiers symmetrically.
+
+    NOT registered as a production satisfier — test fixture only.
+    """
+
+    _slots: dict[str, datetime] = field(default_factory=dict)
+    _fail_on_write: bool = False
+    _fail_on_read: bool = False
+
+    def write(self, instance_id: str, ts_local: datetime) -> None:
+        if self._fail_on_write:
+            self._fail_on_write = False
+            raise TransportError(
+                f"LocalHeartbeatEndpoint: injected write failure for {instance_id}"
+            )
+        self._slots[instance_id] = ts_local
+
+    def read(self, instance_id: str) -> datetime | None:
+        if self._fail_on_read:
+            self._fail_on_read = False
+            raise TransportError(
+                f"LocalHeartbeatEndpoint: injected read failure for {instance_id}"
+            )
+        return self._slots.get(instance_id)
+
+    def inject_transport_failure(self, method: Literal["read", "write"]) -> None:
+        if method == "read":
+            self._fail_on_read = True
+        elif method == "write":
+            self._fail_on_write = True
+        else:
+            raise ValueError(f"method must be 'read' or 'write'; got {method!r}")
+
+    def destroy_instance(self, instance_id: str) -> None:
+        self._slots.pop(instance_id, None)
+
+
 @pytest.fixture()
 def fake_runpod_heartbeat_endpoint() -> FakeRunPodHeartbeatEndpoint:
     """Fresh fake RunPod heartbeat endpoint per test."""
