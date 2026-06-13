@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -127,7 +128,10 @@ def test_runpod_env_array_merge_semantics() -> None:
         if "errors" in edit_resp:
             pytest.fail(f"podEditJob env probe failed: {edit_resp['errors']!r}")
 
-        # Query the pod env back.
+        # Query the pod env back. RunPod's GraphQL pod schema may not
+        # surface env at all — in which case the read either 400s (field
+        # rejected) or returns data.pod.env == null. Both map to
+        # ``read-unavailable`` which selects Task 2 Branch B.
         query = """
         query GetPod($podId: String!) {
           pod(input: {podId: $podId}) {
@@ -136,32 +140,42 @@ def test_runpod_env_array_merge_semantics() -> None:
           }
         }
         """.strip()
-        read_resp = provider._http_post(  # noqa: SLF001
-            provider._base_url,
-            {"query": query, "variables": {"podId": instance_id}},
-        )
-        envelope["read_resp"] = read_resp
-
-        # Determine semantics.
-        pod = (read_resp.get("data") or {}).get("pod") or {}
-        env_field = pod.get("env")
-        if env_field is None:
-            # Pod query does not surface env at all — Branch B fallback.
+        try:
+            read_resp = provider._http_post(  # noqa: SLF001
+                provider._base_url,
+                {"query": query, "variables": {"podId": instance_id}},
+            )
+            envelope["read_resp"] = read_resp
+        except urllib.error.HTTPError as exc:
+            envelope["read_http_error"] = {
+                "code": exc.code,
+                "reason": exc.reason,
+                "body": exc.read().decode("utf-8", errors="replace")[:2000],
+            }
             semantics = "read-unavailable"
-        else:
-            keys = {e.get("key") for e in env_field}
-            has_a = _PROBE_KEEP_A[0] in keys
-            has_b = _PROBE_KEEP_B[0] in keys
-            has_new = _PROBE_NEW[0] in keys
-            if has_a and has_b and has_new:
-                semantics = "additive"
-            elif has_new and not (has_a or has_b):
-                semantics = "replace"
+            read_resp = {}
+
+        if semantics != "read-unavailable":
+            # Determine semantics from the read body.
+            pod = (read_resp.get("data") or {}).get("pod") or {}
+            env_field = pod.get("env")
+            if env_field is None:
+                # Pod query does not surface env at all — Branch B fallback.
+                semantics = "read-unavailable"
             else:
-                pytest.fail(
-                    f"unexpected env state: has_a={has_a} has_b={has_b} "
-                    f"has_new={has_new}; envelope={envelope!r}"
-                )
+                keys = {e.get("key") for e in env_field}
+                has_a = _PROBE_KEEP_A[0] in keys
+                has_b = _PROBE_KEEP_B[0] in keys
+                has_new = _PROBE_NEW[0] in keys
+                if has_a and has_b and has_new:
+                    semantics = "additive"
+                elif has_new and not (has_a or has_b):
+                    semantics = "replace"
+                else:
+                    pytest.fail(
+                        f"unexpected env state: has_a={has_a} has_b={has_b} "
+                        f"has_new={has_new}; envelope={envelope!r}"
+                    )
     finally:
         try:
             provider.destroy_instance(instance_id)
