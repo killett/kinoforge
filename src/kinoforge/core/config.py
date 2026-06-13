@@ -484,6 +484,12 @@ class ComputeConfig(BaseModel):
             union across all providers; provider-mode compatibility is
             checked at adapter-dispatch time. Default ``"none"`` preserves
             pre-B5a no-op heartbeat behaviour.
+        warm_reuse_auto_attach: B3 auto-discovery toggle. When ``True``
+            (default), ``kinoforge generate`` / ``batch`` scans the ledger
+            for warm pods matching the current capability_key on every
+            fresh-shell invocation and attaches transparently. Set to
+            ``False`` per-project to disable; ``--no-reuse`` on the CLI
+            overrides this on a per-invocation basis.
     """
 
     provider: str
@@ -492,6 +498,7 @@ class ComputeConfig(BaseModel):
     requirements: RequirementsConfig = RequirementsConfig()
     lifecycle: LifecycleConfig | None = None
     heartbeat_mode: str = "none"
+    warm_reuse_auto_attach: bool = True
 
     @field_validator("heartbeat_mode")
     @classmethod
