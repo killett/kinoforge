@@ -1487,3 +1487,63 @@ def test_sweeper_policy_bridge_composes_correctly() -> None:
     with_force = base.model_copy(update={"sweeper": SweeperConfig(force_forget=True)})
     p = sweeper_policy_from_cfg(with_force)
     assert Verdict.UNROUTABLE in p.act_verdicts
+
+
+# ---------------------------------------------------------------------------
+# B3 — warm_reuse_auto_attach
+# ---------------------------------------------------------------------------
+
+
+def test_compute_config_warm_reuse_auto_attach_default_true() -> None:
+    """Bug: default-off would silently disable B3 for every existing project."""
+    from kinoforge.core.config import ComputeConfig
+
+    c = ComputeConfig(provider="runpod", image="runpod/comfyui:latest")
+    assert c.warm_reuse_auto_attach is True
+
+
+def test_yaml_warm_reuse_auto_attach_round_trips_false(tmp_path: Path) -> None:
+    """Bug: per-project opt-out not loading would break operator policy."""
+    cfg_yaml = """\
+compute:
+  provider: runpod
+  image: runpod/comfyui:latest
+  warm_reuse_auto_attach: false
+  lifecycle:
+    budget: 1.0
+engine:
+  kind: comfyui
+  precision: fp16
+models:
+  - ref: "https://example.com/x.safetensors"
+    kind: base
+    target: diffusion_models
+"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(cfg_yaml)
+    cfg = load_config(p)
+    assert cfg.compute is not None
+    assert cfg.compute.warm_reuse_auto_attach is False
+
+
+def test_yaml_warm_reuse_auto_attach_absent_defaults_true(tmp_path: Path) -> None:
+    """Bug: legacy configs missing the field crashing would break every existing user."""
+    cfg_yaml = """\
+compute:
+  provider: runpod
+  image: runpod/comfyui:latest
+  lifecycle:
+    budget: 1.0
+engine:
+  kind: comfyui
+  precision: fp16
+models:
+  - ref: "https://example.com/x.safetensors"
+    kind: base
+    target: diffusion_models
+"""
+    p = tmp_path / "cfg.yaml"
+    p.write_text(cfg_yaml)
+    cfg = load_config(p)
+    assert cfg.compute is not None
+    assert cfg.compute.warm_reuse_auto_attach is True

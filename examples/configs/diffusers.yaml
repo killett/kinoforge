@@ -21,6 +21,7 @@ compute:
   provider: runpod
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: serverless
+  # warm_reuse_auto_attach: true  # B3 default — see wan.yaml for full description.
   requirements:
     min_vram_gb: 24
     min_cuda: "12.4"
