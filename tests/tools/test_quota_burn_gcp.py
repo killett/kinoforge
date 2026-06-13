@@ -6,7 +6,13 @@ from typing import Any
 
 import pytest
 
-from tools.quota_burn_lib import Manifest, gcp_mtd_spend, gcp_spin_up, gcp_tear_down
+from tools.quota_burn_lib import (
+    BillingExportNotReady,
+    Manifest,
+    gcp_mtd_spend,
+    gcp_spin_up,
+    gcp_tear_down,
+)
 
 
 @dataclass
@@ -374,3 +380,98 @@ def test_gcp_mtd_spend_groups_by_service() -> None:
     )
     spend = gcp_mtd_spend(client, project_id="kinoforge-prod-0ddb375e")
     assert spend == {"Compute Engine": 2.0, "Cloud Storage": 0.5, "BigQuery": 1.5}
+
+
+def test_gcp_mtd_spend_raises_billing_export_not_ready_when_dataset_missing() -> None:
+    """Bug catch: BigQuery raises ``google.api_core.exceptions.NotFound`` from
+    ``QueryJob.__iter__`` when the billing-export dataset/table does not yet
+    exist (e.g. operator enabled export less than ~6h ago, so the first
+    export job has not landed). Without translation, ``_do_snapshot`` blows
+    up before AWS is even consulted, defeating every Day-N retry. The lib
+    must translate to ``BillingExportNotReady`` so callers can react with a
+    partial report instead of crashing.
+    """
+    from google.api_core import exceptions as gerr
+
+    class _NotFoundOnIter:
+        """Mimics a BQ ``QueryJob`` whose iteration triggers the 404 fetch."""
+
+        def __iter__(self) -> Any:
+            raise gerr.NotFound(
+                "Dataset kinoforge-prod-0ddb375e:all_billing_data was not found"
+            )
+
+    class _Client:
+        def query(self, *, query: str) -> Any:
+            return _NotFoundOnIter()
+
+    with pytest.raises(BillingExportNotReady) as exc_info:
+        gcp_mtd_spend(_Client(), project_id="kinoforge-prod-0ddb375e")
+    assert "all_billing_data" in str(exc_info.value)
+
+
+def test_gcp_mtd_spend_raises_billing_export_not_ready_when_table_glob_empty() -> None:
+    """Bug catch: BigQuery returns ``BadRequest 400 "<table-glob> does not
+    match any table"`` (NOT ``NotFound 404``) when the billing-export
+    dataset exists but no ``gcp_billing_export_v1_*`` table has landed yet.
+    Discovered live on 2026-06-13 ~12:13 PDT after enabling export — the
+    dataset was created first but the first export job had not run. The
+    earlier ``NotFound``-only catch missed this case; a regression would
+    re-blow up every Day-N retry during the 6-24h export-lag window.
+    """
+    from google.api_core import exceptions as gerr
+
+    class _BadRequestOnIter:
+        def __iter__(self) -> Any:
+            raise gerr.BadRequest(
+                "kinoforge-prod-0ddb375e:all_billing_data.gcp_billing_export_v1_* "
+                "does not match any table."
+            )
+
+    class _Client:
+        def query(self, *, query: str) -> Any:
+            return _BadRequestOnIter()
+
+    with pytest.raises(BillingExportNotReady) as exc_info:
+        gcp_mtd_spend(_Client(), project_id="kinoforge-prod-0ddb375e")
+    assert "does not match any table" in str(exc_info.value)
+
+
+def test_gcp_mtd_spend_propagates_unrelated_errors() -> None:
+    """Bug catch: only ``NotFound`` should translate to
+    ``BillingExportNotReady`` — a transient ``ServiceUnavailable`` (503) or
+    auth ``Forbidden`` (403) must surface as-is so the operator sees the
+    real fault, not a "billing export not ready" red herring.
+    """
+    from google.api_core import exceptions as gerr
+
+    class _ForbiddenOnIter:
+        def __iter__(self) -> Any:
+            raise gerr.Forbidden("Permission bigquery.tables.getData denied")
+
+    class _Client:
+        def query(self, *, query: str) -> Any:
+            return _ForbiddenOnIter()
+
+    with pytest.raises(gerr.Forbidden):
+        gcp_mtd_spend(_Client(), project_id="kinoforge-prod-0ddb375e")
+
+
+def test_gcp_mtd_spend_propagates_other_bad_requests() -> None:
+    """Bug catch: only ``BadRequest`` with the "does not match any table"
+    sentinel message is translated. A malformed SQL ``BadRequest`` must
+    surface as-is so the operator sees the real query bug, not a misleading
+    "billing export not ready" red herring.
+    """
+    from google.api_core import exceptions as gerr
+
+    class _SqlBadRequest:
+        def __iter__(self) -> Any:
+            raise gerr.BadRequest("Syntax error: Unexpected keyword GROUPED at [1:5]")
+
+    class _Client:
+        def query(self, *, query: str) -> Any:
+            return _SqlBadRequest()
+
+    with pytest.raises(gerr.BadRequest):
+        gcp_mtd_spend(_Client(), project_id="kinoforge-prod-0ddb375e")
