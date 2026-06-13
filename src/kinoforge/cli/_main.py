@@ -363,6 +363,18 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "OVERAGE_REAP, UNROUTABLE, or capability_key mismatch."
         ),
     )
+    p_generate.add_argument(
+        "--no-reuse",
+        action="store_true",
+        dest="no_reuse",
+        help=(
+            "force cold create_instance (skip warm-reuse auto-discovery) AND "
+            "destroy the pod immediately when generation finishes. Use for "
+            "one-shot jobs, benchmarking cold-boot, or forcing a fresh pod "
+            "after suspected engine-state drift. Mutex with --force-attach. "
+            "Composes with --instance-id (attach to that pod, then destroy at end)."
+        ),
+    )
 
     # list
     sub.add_parser("list", help="list running instances from ledger")
@@ -548,6 +560,15 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         help=(
             "override classify verdicts HEARTBEAT_UNKNOWN, IDLE_REAP, "
             "ORPHAN_REAP for the supplied --instance-id."
+        ),
+    )
+    p_batch.add_argument(
+        "--no-reuse",
+        action="store_true",
+        dest="no_reuse",
+        help=(
+            "force cold create_instance + destroy after the whole batch "
+            "completes. Mutex with --force-attach."
         ),
     )
 
