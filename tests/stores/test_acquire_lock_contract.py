@@ -109,3 +109,33 @@ def test_acquire_lock_signature_has_ttl_kwonly() -> None:
     sig = inspect.signature(ArtifactStore.acquire_lock)
     ttl = sig.parameters["ttl_s"]
     assert ttl.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_held_while_orchestrator_runs(tmp_path: Path) -> None:
+    """B7: outer holder of provision:<id> blocks an inner non-blocking
+    probe; after release, the probe succeeds.
+
+    Pins the contract that ``LocalArtifactStore.acquire_lock`` returns a
+    Lock whose ``acquire(blocking=False)`` returns ``None`` on contention
+    and a non-None token after the holder releases. This is the exact
+    pattern used by ``act_on_verdict``'s B7 probe.
+
+    Cloud-store cross-host semantics deferred to the B16 neighborhood
+    per spec §F5.
+    """
+    store = LocalArtifactStore(tmp_path)
+    outer = store.acquire_lock("provision:i-contract", ttl_s=60.0)
+    outer_token = outer.acquire(blocking=True, timeout_s=5.0)
+    assert outer_token is not None
+
+    inner = store.acquire_lock("provision:i-contract", ttl_s=60.0)
+    inner_token = inner.acquire(blocking=False)
+    assert inner_token is None, "non-blocking probe should fail while outer holds"
+
+    outer.release(outer_token)
+
+    inner_token_2 = inner.acquire(blocking=False)
+    assert inner_token_2 is not None, (
+        "non-blocking probe should succeed after outer releases"
+    )
+    inner.release(inner_token_2)
