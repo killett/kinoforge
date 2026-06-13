@@ -904,6 +904,9 @@ class Config(BaseModel):
             boot_timeout_s=lc.boot_timeout,
             heartbeat_interval_s=lc.heartbeat_interval_s,
             grace_after_session_s=lc.grace_after_session_s,
+            stall_window_s=lc.stall_window_s if lc.stall_reap_enabled else None,
+            stall_gpu_threshold=lc.stall_gpu_threshold,
+            stall_cpu_threshold=lc.stall_cpu_threshold,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
