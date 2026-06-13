@@ -21,6 +21,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 3. `2026-06-08 21:26:59` — [Runway gen4.5 — t2v](#3-2026-06-08-212659--runway-gen45--t2v)
 4. `2026-06-08 22:28:40` — [ComfyUI Wan 2.1 14B i2v on RunPod — i2v](#4-2026-06-08-222840--comfyui-wan-21-14b-i2v-on-runpod--i2v)
 5. `2026-06-09 21:19:45` — [ComfyUI Wan 2.1 14B t2v on RunPod (in-process warm-reuse, 2 prompts) — t2v](#5-2026-06-09-211945--comfyui-wan-21-14b-t2v-on-runpod-in-process-warm-reuse-2-prompts--t2v)
+6. `2026-06-13 11:16:26` — [FakeEngine on RunPod (B3 cross-CLI auto-discovery warm-reuse) — t2v](#6-2026-06-13-111626--fakeengine-on-runpod-b3-cross-cli-auto-discovery-warm-reuse--t2v)
 
 ---
 
@@ -553,3 +554,119 @@ Pending operator visual confirmation. Programmatic checks all pass:
 - This entry's "warm-reuse" still goes through the in-process orchestrator harness — no Layer Y CLI exposure yet (PROGRESS B3/B4 remain). A future `kinoforge generate` invocation against the same pod would re-create-and-destroy because the CLI does not consult the ledger for matching live pods.
 
 ---
+
+## 6. `2026-06-13 11:16:26` — FakeEngine on RunPod (B3 cross-CLI auto-discovery warm-reuse) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / FakeEngine / fake-model` |
+| **Mode** | t2v |
+| **kinoforge version** | `v0.5.0` |
+| **First-success SHA** | `3bdec1c` |
+| **Date (local TZ)** | 2026-06-13 11:16:26 -0700 (PDT) |
+| **Layer / phase** | [B3 — in-session orchestrator warm-reuse retrofit](PROGRESS.md#b3-layer-y--in-session-orchestrator-warm-reuse-retrofit) |
+| **New axis** | Cross-CLI auto-discovery warm-reuse via `_scan_warm_candidates` (B3). Gen 2 attaches to Gen 1's pod through the ledger scan + B5a heartbeat substrate, with no operator-supplied `--instance-id`. |
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_RUNPOD=1 KINOFORGE_LIVE_TESTS=1 \
+  pixi run pytest tests/live/test_b3_warm_attach_live.py -v -s
+```
+
+The smoke runs `pixi run kinoforge --state-dir <tmp>/state generate
+-c tests/live/cfg_b3_warm_attach.yaml --prompt
+"$(cat prompt-field-realistic.txt)" --mode t2v --run-id b3-smoke-1`
+twice, 30 s apart, in separate subprocess CLIs.
+
+### YAML config
+
+**`tests/live/cfg_b3_warm_attach.yaml`** at SHA `3bdec1c`:
+
+```yaml
+engine:
+  kind: fake
+  precision: fp16
+
+models:
+  - ref: "https://example.com/fake-base.safetensors"
+    kind: base
+    target: diffusion_models
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  warm_reuse_auto_attach: true
+  heartbeat_mode: graphql-tag
+  requirements:
+    min_vram_gb: 8
+    min_cuda: "12.0"
+    max_usd_per_hr: 0.50
+    gpu_preference:
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA RTX A5000"
+      - "NVIDIA GeForce RTX 3090"
+    disk_gb: 20
+  lifecycle:
+    idle_timeout: 5m
+    job_timeout: 5m
+    time_buffer: 2m
+    max_lifetime: 30m
+    boot_timeout: 10m
+    budget: 1.0
+    heartbeat_interval_s: 30
+```
+
+### Measured outcome
+
+- **Pod id**: `7bvm89fywnr05r` (RTX A5000 — GeForce 4090 had no current
+  capacity → offer-retry to A5000).
+- **Gen 1 (cold create + first-tick poll + fake gen + ledger.record)**:
+  11.3 s wall.
+- **Gen 2 (B3 auto-discovery scan hit + caller-supplied attach + fake
+  gen)**: 2.9 s wall.
+- **Cold-skip benefit**: 8.4 s (74 % wall-time reduction; ratio 0.26
+  well under the 0.7 pass-threshold).
+- **Total live spend**: $0.0040 RunPod (per `kinoforge destroy`
+  `est_spend` readout).
+- **Pod-id continuity**: `pod_id_1 == pod_id_2` (B3 scan attached
+  cleanly).
+- **Log line confirmed**: `warm-reuse: attached to 7bvm89fywnr05r`.
+- **Cleanup**: explicit `kinoforge destroy --id 7bvm89fywnr05r`
+  succeeded; pod gone from RunPod GraphQL `myself.pods`.
+
+### Mid-task production fixes folded back
+
+Two gaps surfaced during the live smoke iteration, both committed
+before the closeout:
+
+- **`3454b48`** — `_cmd_generate` ledger-record. Prior to this fix,
+  cold-created instances were never recorded by the generate path
+  (only `_cmd_deploy` recorded), so the cross-CLI scan saw an empty
+  ledger and every fresh-shell invocation cold-created a new pod.
+- **`3bdec1c`** — `_record_then_install` callback. Prior to this fix,
+  `HeartbeatLoop.touch` no-oped (strict update) for unrecorded
+  instances, so `heartbeat_thread_tick` never landed and
+  `hold_until_first_tick` polled forever to `FirstTickTimeout`. Wired
+  ledger.record into the existing `on_instance_created` callback so it
+  runs BEFORE the holder enters first-tick polling.
+
+Both gaps were invisible to unit tests because B7's spy HB loop
+pre-records the instance in `spy.start()`, masking the real-world
+strict-update behavior.
+
+### Production limitation (C25)
+
+The B3 production path for `ComfyUI + Wan` on RunPod remains gated by
+C25 (heartbeat carrier `dockerArgs` collides with selfterm injection).
+This smoke uses FakeEngine (the only HB-safe engine on RunPod per
+`_RUNPOD_HEARTBEAT_SAFE_ENGINES`) to validate B3 mechanics end-to-end
+on real cloud without exercising the workload — the workload itself
+is independently tested via the existing Wan 2.1 14B t2v live suite
+(entry #5 above).
+
+Operators wanting B3 warm-reuse with ComfyUI today must use
+`--force-attach` on `kinoforge generate --instance-id <id>` to bypass
+HEARTBEAT_UNKNOWN classification, or wait for C25's preserve-and-merge
+wire path to land.
