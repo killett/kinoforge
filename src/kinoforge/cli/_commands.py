@@ -358,7 +358,7 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
             logger.info(summary)
 
     try:
-        artifact, _ = _generate(
+        artifact, returned_instance = _generate(
             cfg,
             request,
             store=store,
@@ -375,6 +375,20 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
         return 1
+
+    # B3 — record cold-created instance to ledger so the next CLI invocation's
+    # _scan_warm_candidates can find it. Skip when a pre-existing instance
+    # was supplied (warm-attach path; entry already in ledger) or when the
+    # generate path tore the pod down (--no-reuse).
+    if returned_instance is not None and instance is None and not single:
+        ledger = ctx.ledger()
+        if ledger.read(returned_instance.id) is None:
+            lc = cfg.lifecycle()
+            ledger.record(
+                returned_instance,
+                idle_timeout_s=int(lc.idle_timeout_s),
+                max_age_s=int(lc.max_lifetime_s),
+            )
 
     print(f"generated: uri={artifact.uri!r}")
     return 0
