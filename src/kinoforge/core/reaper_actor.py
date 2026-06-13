@@ -51,11 +51,29 @@ class ActionResult:
         instance_id: The id acted on.
         snapshot_verdict: What ``sweep`` classified the entry as.
         applied_verdict: What the act-time re-classify returned (may
-            differ from ``snapshot_verdict`` under drift).
-        action: One of ``"destroyed_and_forgot"``, ``"forgot"``,
-            ``"forgot_unroutable"``, ``"skipped"``, ``"failed"``,
-            ``"no_op"``.
-        reason: Free-text explanation for skipped / failed actions.
+            differ from ``snapshot_verdict`` under drift). For
+            ``"deferred-session-claim"`` the re-classify never ran, so
+            this is set equal to ``snapshot_verdict``.
+        action: One of:
+
+            * ``"destroyed_and_forgot"`` — IDLE_REAP / OVERAGE_REAP /
+              ORPHAN_REAP destroyed + ledger entry forgotten.
+            * ``"forgot"`` — STALE_LEDGER: entry forgotten, no destroy.
+            * ``"forgot_unroutable"`` — sweep-level: provider routing
+              failed; the entry was forgotten without contacting any
+              provider.
+            * ``"skipped"`` — drift between snapshot and act-time verdict.
+            * ``"failed"`` — TeardownError during destroy.
+            * ``"no_op"`` — LIVE / HEARTBEAT_UNKNOWN /
+              HEARTBEAT_SUBSTRATE_MISSING: no action required.
+            * ``"deferred-session-claim"`` — B7: orchestrator holds
+              ``provision:<id>`` (mid-session-claim). Reaper logs INFO
+              and skips this entry on this sweep pass; the next sweep
+              re-evaluates.
+        reason: Free-text explanation for skipped / failed / deferred-
+            session-claim actions. For ``deferred-session-claim`` the
+            reason contains the holder PID when readable from the lock
+            sidecar.
     """
 
     instance_id: str
@@ -105,6 +123,59 @@ def provider_for(
     return provider
 
 
+def _probe_session_claim_holder(store: ArtifactStore, instance_id: str) -> int | None:
+    """Non-blocking probe of ``provision:<instance_id>``.
+
+    B7 reaper-side hook. When the orchestrator's
+    :func:`kinoforge.core.session_claim.hold_until_first_tick` holds the
+    key, this probe returns the holder PID so the reaper can defer with
+    a helpful diagnostic.
+
+    Args:
+        store: Artifact store providing the lock.
+        instance_id: The instance whose claim lock to probe.
+
+    Returns:
+        The orchestrator's PID when the lock is held, ``-1`` when the
+        lock is held but the holder PID is not readable (cloud-store or
+        unreadable sidecar), or ``None`` when the lock is free (probe-
+        success — caller proceeds with destroy). Probe acquires-then-
+        releases immediately on success; the caller does NOT hold
+        ``provision:<id>`` during the destroy flow.
+
+    Implementation note: the probe uses ``ttl_s=0.0`` because we are
+    not claiming the lock for any duration. When acquire succeeds the
+    sidecar is briefly rewritten with an immediately-expired TTL and
+    then released; no other process is in a "wait for TTL to expire"
+    path because orchestrators always use blocking acquire.
+    """
+    probe = store.acquire_lock(f"provision:{instance_id}", ttl_s=0.0)
+    token = probe.acquire(blocking=False)
+    if token is not None:
+        probe.release(token)
+        return None
+    # Lock held — read holder PID from sidecar if we can.
+    holder_pid: int | None = None
+    try:
+        from kinoforge.core.locks import _sanitize_key
+        from kinoforge.stores.local import LocalArtifactStore
+
+        if isinstance(store, LocalArtifactStore):
+            import json
+
+            sanitized = _sanitize_key(f"provision:{instance_id}")
+            sidecar = store.root / "_locks" / f"{sanitized}.lock"
+            if sidecar.exists():
+                data = json.loads(sidecar.read_text())
+                holder_pid = int(data.get("holder_pid", 0)) or None
+    except (OSError, ValueError, KeyError, TypeError):
+        holder_pid = None
+    # Sentinel: unknown holder still returns a sentinel int so the
+    # caller's None-check distinguishes "lock free" from "lock held by
+    # unknown PID".
+    return holder_pid if holder_pid is not None else -1
+
+
 def act_on_verdict(
     store: ArtifactStore,
     ledger: Ledger,
@@ -137,6 +208,23 @@ def act_on_verdict(
     """
     instance_id = str(entry["id"])
     with store.acquire_lock(f"reaper/{instance_id}", ttl_s=_LOCK_TTL_S):
+        # B7: non-blocking probe of provision:<id>. If an orchestrator
+        # process holds it, this entry is mid-session-claim — skip this
+        # sweep, log INFO with holder_pid, retry next pass.
+        deferred = _probe_session_claim_holder(store, instance_id)
+        if deferred is not None:
+            _log.info(
+                "instance %s mid-session-claim (held by pid %s); deferring to next sweep",
+                instance_id,
+                deferred,
+            )
+            return ActionResult(
+                instance_id=instance_id,
+                snapshot_verdict=snapshot_verdict,
+                applied_verdict=snapshot_verdict,
+                action="deferred-session-claim",
+                reason=f"held by pid {deferred}; orchestrator mid-session-claim",
+            )
         live_ids = {i.id for i in provider.list_instances()}
         v2 = classify(entry, live_ids, clock.now(), **thresholds)
         if v2 != snapshot_verdict:
