@@ -37,7 +37,7 @@ import pytest
 pytestmark = pytest.mark.live
 
 PROMPT_PATH = Path("/workspace/prompt-field-realistic.txt")
-CFG_TEMPLATE = Path("/workspace/examples/configs/runpod-comfyui-wan-t2v.yaml")
+CFG_TEMPLATE = Path("/workspace/tests/live/cfg_b3_warm_attach.yaml")
 
 if not (
     os.getenv("KINOFORGE_LIVE_RUNPOD") == "1"
