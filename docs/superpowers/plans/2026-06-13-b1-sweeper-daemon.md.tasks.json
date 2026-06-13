@@ -1,0 +1,56 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-13-b1-sweeper-daemon.md",
+  "specPath": "docs/superpowers/specs/2026-06-13-b1-sweeper-daemon-design.md",
+  "specCommit": "55cb2e6",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task a: SweeperLoop + _SweeperStats substrate",
+      "status": "pending",
+      "description": "**Goal:** Land the background-thread substrate that calls sweep() per cadence, folds report into cumulative stats, writes the sweeper:<host> ledger entry, and supports atomic SIGHUP reload.\n\n**Files:** Create src/kinoforge/core/sweeper.py + tests/core/test_sweeper.py.\n\n**Verify:** pixi run pytest tests/core/test_sweeper.py -v → 12 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/sweeper.py\", \"tests/core/test_sweeper.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_sweeper.py -v\", \"acceptanceCriteria\": [\"SweeperLoop interval_s<=0 raises ValueError\", \"Eager first tick before Event.wait\", \"stop() bounded by join_timeout_s\", \"sweep() exception caught; errors_total increments\", \"Each tick touches sweeper:<host> with heartbeat_thread_tick + stats\", \"fold counts actions + snapshot verdicts\", \"reload atomic under _reload_lock; wakes sleep\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task b: sweep() filter for sweeper:* synthetic ids",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** One-line eid.startswith('sweeper:') continue at top of sweep() per-entry loop so daemon's own liveness entry is not classified or reaped.\n\n**Files:** Modify src/kinoforge/core/reaper_actor.py (around line 334) + tests/core/test_reaper_sweep.py (+1 test).\n\n**Verify:** pixi run pytest tests/core/test_reaper_sweep.py -v → all green.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper_actor.py\", \"tests/core/test_reaper_sweep.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_reaper_sweep.py -v\", \"acceptanceCriteria\": [\"sweep() snapshot omits sweeper:* ids\", \"provider_for not called for _sweeper\", \"Existing test_reaper_sweep cases pass\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task c: SweeperConfig pydantic model + Config.sweeper + policy bridge",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** SweeperConfig BaseModel (interval_s default 60, include_orphans + force_forget opt-ins, host str|None) + Config.sweeper field via Field(default_factory=SweeperConfig) + sweeper_policy_from_cfg(cfg) bridge composing DEFAULT_APPLY_POLICY ∪ opt-ins.\n\n**Files:** Modify src/kinoforge/core/config.py + tests/core/test_config.py (+3 tests).\n\n**Verify:** pixi run pytest tests/core/test_config.py -v -k sweeper → 3 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -v -k sweeper\", \"acceptanceCriteria\": [\"Config w/o sweeper block loads with defaults\", \"interval_s<=0 raises ValidationError\", \"sweeper_policy_from_cfg composes correctly\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task d: sweeper_metrics pure renderers (human / JSON / Prom)",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** Pure render functions (no I/O) — render_status_human, render_status_json, render_metrics_prom — taking a ledger-entry dict + interval_s + host + now and returning text/JSON. Six Prom series with kinoforge_sweeper_* prefix + labelled deferred_total{reason=...}.\n\n**Files:** Create src/kinoforge/core/sweeper_metrics.py + tests/core/test_sweeper_metrics.py.\n\n**Verify:** pixi run pytest tests/core/test_sweeper_metrics.py -v → 6 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/sweeper_metrics.py\", \"tests/core/test_sweeper_metrics.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_sweeper_metrics.py -v\", \"acceptanceCriteria\": [\"6 Prom series + 3 deferred reasons + LF endings\", \"No-entry path emits zeros + omits last_sweep_ts\", \"JSON shape per §4.6.3\", \"stale strict >\", \"human key=value\", \"running false on missing/zero pid\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task e: CLI sweeper start/stop/status/metrics subcommand family",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Argparse sweeper subparser + four _cmd_sweeper_* handlers in cli/_commands.py + dispatcher branch in cli/_main.py + signal handlers (SIGTERM/SIGHUP/SIGUSR1) + synthetic Instance materialised via Ledger.record at startup.\n\n**Files:** Modify src/kinoforge/cli/_commands.py + src/kinoforge/cli/_main.py + create tests/cli/test_cmd_sweeper.py.\n\n**Verify:** pixi run pytest tests/cli/test_cmd_sweeper.py -v → 7 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"src/kinoforge/cli/_main.py\", \"tests/cli/test_cmd_sweeper.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_sweeper.py -v\", \"acceptanceCriteria\": [\"status no entry exit 0 running=false\", \"--json shape per spec\", \"--prom series + LF\", \"stop no entry stderr exit 1\", \"stale entry stale=true\", \"start banner INFO before signal install\", \"start records synthetic Instance + pid\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task f: Cross-process subprocess tests (start→SIGTERM→stop; SIGHUP reload)",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** End-to-end xprocess coverage. Spawn python -m kinoforge sweeper start in subprocess against LocalProvider on tmp_path; verify ledger entry materialises within 10s; SIGTERM exits 0 within 10s; status post-stop reports last_sweep_age_s > 0; SIGHUP after YAML edit shortens cadence.\n\n**Files:** Create tests/cli/test_cmd_sweeper_xprocess.py.\n\n**Verify:** pixi run pytest tests/cli/test_cmd_sweeper_xprocess.py -v → 3 passed.\n\n```json:metadata\n{\"files\": [\"tests/cli/test_cmd_sweeper_xprocess.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_sweeper_xprocess.py -v\", \"acceptanceCriteria\": [\"subprocess start writes sweeper:<host> within 10s; SIGTERM exits 0\", \"status after stop last_sweep_age_s > 0\", \"SIGHUP shortens cadence ~1s within 15s\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task g: examples + README + invariant scan + closeout",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Operator-facing surface (examples/configs/sweeper.yaml + README Sweeper-daemon section) + core/sweeper_metrics.py purity invariant + PROGRESS.md B1 closeout strike + warm-reuse-tasks.txt lines 523-555 replacement. Last commit references the merge sha.\n\n**Files:** Create examples/configs/sweeper.yaml; modify README.md + tests/test_core_invariant.py + PROGRESS.md + warm-reuse-tasks.txt.\n\n**Verify:** pixi run pytest tests/test_examples.py tests/test_core_invariant.py -v → green; git log --oneline -10 shows closeout commits.\n\n```json:metadata\n{\"files\": [\"examples/configs/sweeper.yaml\", \"README.md\", \"tests/test_core_invariant.py\", \"PROGRESS.md\", \"warm-reuse-tasks.txt\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/test_core_invariant.py -v\", \"acceptanceCriteria\": [\"examples/configs/sweeper.yaml loads via load_config\", \"README Sweeper section present\", \"test_core_sweeper_metrics_module_is_pure passes\", \"PROGRESS B1 struck with merge sha\", \"warm-reuse-tasks.txt B1 block replaced\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-13"
+}
