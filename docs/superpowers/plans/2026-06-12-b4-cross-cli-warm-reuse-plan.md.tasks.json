@@ -1,0 +1,53 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-12-b4-cross-cli-warm-reuse-plan.md",
+  "tasks": [
+    {
+      "id": 9,
+      "subject": "Task 0: _resolve_warm_instance helper + unit tests",
+      "status": "pending",
+      "description": "**Goal:** Implement the shared validation helper end-to-end with full verdict-gate coverage. Foundation for every other task.\n\n**Files:**\n- Create: `tests/cli/test_resolve_warm_instance.py`\n- Modify: `src/kinoforge/cli/_commands.py` — add `_resolve_warm_instance` + `_refuse_reason_for_verdict` after `_classify_for_status` (~line 617).\n\n**Acceptance Criteria:**\n- 17 unit tests pass.\n- Helper signature matches spec §3.3.\n- Verdict gate honours D3.\n- Exit codes per D2.\n\n**Verify:** `pixi run pytest tests/cli/test_resolve_warm_instance.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_resolve_warm_instance.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_resolve_warm_instance.py -v\", \"acceptanceCriteria\": [\"17 unit tests pass\", \"_resolve_warm_instance signature matches spec §3.3\", \"verdict gate honours D3\", \"exit codes per D2\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 1: _cmd_generate wiring + argparse flags + dispatch tests",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Wire `--instance-id` and `--force-attach` flags through `p_generate`, thread the resolved Instance into `generate(...)`, verify dispatch end-to-end.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py` lines 304–320.\n- Modify: `src/kinoforge/cli/_commands.py` line 278 (_cmd_generate body).\n- Modify: `tests/cli/test_main_flow.py`.\n\n**Acceptance Criteria:**\n- `kinoforge generate --instance-id <id>` threads instance= into generate().\n- `--force-attach` without `--instance-id` exits 2.\n- Unknown id exits 1.\n- `--force-attach` + IDLE_REAP entry dispatches normally.\n\n**Verify:** `pixi run pytest tests/cli/test_main_flow.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_main_flow.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_main_flow.py -v\", \"acceptanceCriteria\": [\"kinoforge generate --instance-id <id> threads instance= into generate()\", \"--force-attach without --instance-id exits 2\", \"unknown id exits 1\", \"--force-attach + IDLE_REAP entry dispatches normally\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 2: _cmd_batch wiring + dispatch tests",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Same wiring shape as Task 1 but for `kinoforge batch --instance-id`. Single pod across every manifest row (D7).\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py` lines 400–423.\n- Modify: `src/kinoforge/cli/_commands.py` line 329 (_cmd_batch body).\n- Modify: `tests/cli/test_main_flow.py`.\n\n**Acceptance Criteria:**\n- `kinoforge batch --instance-id` threads instance= into batch_generate().\n- Single Instance shared across all manifest rows.\n- cap_key mismatch exits 2 before batch_generate runs.\n- `--force-attach` without `--instance-id` exits 2.\n\n**Verify:** `pixi run pytest tests/cli/test_main_flow.py -v -k batch`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_main_flow.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_main_flow.py -v -k batch\", \"acceptanceCriteria\": [\"kinoforge batch --instance-id threads instance= into batch_generate()\", \"single Instance shared across all manifest rows\", \"cap_key mismatch exits 2 before batch_generate runs\", \"--force-attach without --instance-id exits 2\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 3: _cmd_list capability_key column",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Append `capability_key=<12-char hash>` to every `kinoforge list` row. Pure ledger read; zero new RPC.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py` line 459 (_cmd_list body).\n- Modify: `tests/cli/test_commands_routing.py`.\n\n**Acceptance Criteria:**\n- list shows capability_key=<hash>.\n- Legacy entry shows capability_key=<unknown>.\n- Hash sourced from entry.tags.kinoforge_key.\n\n**Verify:** `pixi run pytest tests/cli/test_commands_routing.py -v -k list`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_commands_routing.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_commands_routing.py -v -k list\", \"acceptanceCriteria\": [\"list shows capability_key=<hash>\", \"legacy entry shows capability_key=<unknown>\", \"hash sourced from entry.tags.kinoforge_key\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 4: FakeProvider end-to-end smoke",
+      "status": "pending",
+      "blockedBy": [10, 11],
+      "description": "**Goal:** Drive the full CLI through `cli.main([...])` against LocalProvider and assert the warm-attach path skips `create_instance`.\n\n**Files:**\n- Create: `tests/live/test_warm_attach_dry_run.py`\n\n**Acceptance Criteria:**\n- Full CLI exits 0.\n- Stdout contains `generated: uri=`.\n- create_instance call_count == 0.\n- get_instance called with the supplied id.\n\n**Verify:** `pixi run pytest tests/live/test_warm_attach_dry_run.py -v`\n\n```json:metadata\n{\"files\": [\"tests/live/test_warm_attach_dry_run.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_warm_attach_dry_run.py -v\", \"acceptanceCriteria\": [\"full CLI exits 0\", \"stdout contains 'generated: uri='\", \"create_instance call_count == 0\", \"get_instance called with the supplied id\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 5: README + PROGRESS + warm-reuse-tasks closeout",
+      "status": "pending",
+      "description": "**Goal:** Document operator workflow; mark B4 done in trackers.\n\n**Files:**\n- Modify: `README.md`.\n- Modify: `PROGRESS.md` line 147.\n- Modify: `warm-reuse-tasks.txt` lines 367–455.\n\n**Acceptance Criteria:**\n- README has discovery loop + bypassable-verdict matrix.\n- PROGRESS B4 entry struck through with closeout pointer.\n- warm-reuse-tasks.txt B4 starter replaced with closeout line.\n\n**Verify:** `git diff HEAD~1 README.md PROGRESS.md warm-reuse-tasks.txt`\n\n```json:metadata\n{\"files\": [\"README.md\", \"PROGRESS.md\", \"warm-reuse-tasks.txt\"], \"verifyCommand\": \"git diff HEAD~1 README.md PROGRESS.md warm-reuse-tasks.txt\", \"acceptanceCriteria\": [\"README has discovery loop + bypassable-verdict matrix\", \"PROGRESS B4 entry struck through with closeout pointer\", \"warm-reuse-tasks.txt B4 starter replaced with closeout line\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 6: Full-suite green gate",
+      "status": "pending",
+      "blockedBy": [9, 10, 11, 12, 13, 14],
+      "description": "**Goal:** Confirm the existing test suite remains green and the spec's AC1–AC12 are all satisfied.\n\n**Files:** No source edits. Diagnostic-only.\n\n**Acceptance Criteria:**\n- full pytest exits 0.\n- lint exits 0.\n- typecheck exits 0.\n- every AC1-AC12 maps to a passing test.\n\n**Verify:** `pixi run pytest && pixi run lint && pixi run typecheck`\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run pytest && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"full pytest exits 0\", \"lint exits 0\", \"typecheck exits 0\", \"every AC1-AC12 maps to a passing test\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-12T00:00:00Z"
+}
