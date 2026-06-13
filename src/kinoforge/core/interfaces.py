@@ -77,6 +77,10 @@ class Lifecycle:
     max_workers: int = 1
     max_in_flight: int = 1
     boot_timeout_s: float = 900.0
+    # C26 — populated by Config.lifecycle() from compute.lifecycle when set.
+    stall_window_s: float | None = None
+    stall_gpu_threshold: float = 5.0
+    stall_cpu_threshold: float = 20.0
     heartbeat_interval_s: float | None = None
     grace_after_session_s: float = 300.0
 
