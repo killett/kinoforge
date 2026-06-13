@@ -1343,7 +1343,7 @@ def cached_balance_read(
         return None, None
     if not no_cache:
         try:
-            store.put_json(
+            store.put_json(  # kinoforge:public-write — balance JSON has no secret fields
                 _COST_CACHE_RUN_ID,
                 name,
                 {
