@@ -887,6 +887,17 @@ def deploy_session(
                 interval_s=interval,
             )
             hb_loop.start()
+            # B3 — record session_start so concurrent scanners see this CLI's claim.
+            # Write AFTER hb_loop.start() so the heartbeat freshness gate trusts
+            # the marker. Touch failure is non-fatal — log + continue.
+            try:
+                Ledger(store=store).touch(instance.id, session_start=time.time())
+            except Exception as touch_exc:  # noqa: BLE001
+                _log.warning(
+                    "B3: ledger.touch(session_start) failed for %s: %s",
+                    instance.id,
+                    touch_exc,
+                )
         try:
             yield session
         finally:
@@ -909,6 +920,20 @@ def deploy_session(
                     )
             else:
                 pool.close()
+            # B3 — record session_end so future scanners auto-clear busy
+            # state. Write BEFORE any --no-reuse destroy (Task d) so the
+            # causal chain session_end-then-destroy is correct: a concurrent
+            # classify never sees STALE_LEDGER for an entry still flagged
+            # busy.
+            if instance is not None and resolved_provider is not None:
+                try:
+                    Ledger(store=store).touch(instance.id, session_end=time.time())
+                except Exception as touch_exc:  # noqa: BLE001
+                    _log.warning(
+                        "B3: ledger.touch(session_end) failed for %s: %s",
+                        instance.id,
+                        touch_exc,
+                    )
 
 
 # ---------------------------------------------------------------------------
