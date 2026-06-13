@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
+
 
 class Verdict(StrEnum):
     """Possible classification outcomes for a single ledger entry.
@@ -31,6 +33,7 @@ class Verdict(StrEnum):
     OVERAGE_REAP = "OVERAGE_REAP"
     STALE_LEDGER = "STALE_LEDGER"
     HEARTBEAT_UNKNOWN = "HEARTBEAT_UNKNOWN"
+    HEARTBEAT_SUBSTRATE_MISSING = "HEARTBEAT_SUBSTRATE_MISSING"  # NEW (B5a)
     UNROUTABLE = "UNROUTABLE"
 
 
@@ -57,7 +60,11 @@ DEFAULT_APPLY_POLICY = Policy(
 )
 
 DEFAULT_STRICT_VERDICTS: frozenset[Verdict] = frozenset(
-    {Verdict.UNROUTABLE, Verdict.HEARTBEAT_UNKNOWN}
+    {
+        Verdict.UNROUTABLE,
+        Verdict.HEARTBEAT_UNKNOWN,
+        Verdict.HEARTBEAT_SUBSTRATE_MISSING,  # NEW (B5a)
+    }
 )
 
 
@@ -141,12 +148,12 @@ def classify(
         grace_after_session_s: Default post-session warm-reuse window.
 
     Returns:
-        One of the six non-UNROUTABLE Verdict values:
-        LIVE, IDLE_REAP, ORPHAN_REAP, OVERAGE_REAP, STALE_LEDGER, or
-        HEARTBEAT_UNKNOWN. UNROUTABLE is assigned by
-        :func:`kinoforge.core.reaper_actor.sweep` when provider lookup
-        fails, never by classify itself. Callers may rely on this
-        exclusion when partitioning.
+        One of the seven non-UNROUTABLE Verdict values:
+        LIVE, IDLE_REAP, ORPHAN_REAP, OVERAGE_REAP, STALE_LEDGER,
+        HEARTBEAT_UNKNOWN, or HEARTBEAT_SUBSTRATE_MISSING. UNROUTABLE
+        is assigned by :func:`kinoforge.core.reaper_actor.sweep` when
+        provider lookup fails, never by classify itself. Callers may
+        rely on this exclusion when partitioning.
     """
     instance_id = str(entry["id"])
     created_at = float(entry.get("created_at", now))
@@ -168,8 +175,20 @@ def classify(
     hb_tick = entry.get("heartbeat_thread_tick")
     hb = entry.get("last_heartbeat")
 
-    # Row 7 — heartbeat data unavailable
+    # Row 7 — heartbeat data unavailable.
+    # B5a: gate on provider substrate support. When the entry's provider
+    # has no wire-level HeartbeatEndpoint shipped yet (e.g. SkyPilot
+    # pre-B5b), emit HEARTBEAT_SUBSTRATE_MISSING so consumers do not
+    # treat the absence as actionable. The provider_kind field is set
+    # by Layer S Ledger.record; legacy entries that pre-date it fall
+    # through to HEARTBEAT_UNKNOWN — that path is operator-opted-in
+    # via cfg.compute.heartbeat_mode="none".
     if hb_tick is None or hb is None or heartbeat_interval_s is None:
+        provider_kind = entry.get("provider_kind")
+        if provider_kind is not None and not provider_heartbeat_supported(
+            str(provider_kind)
+        ):
+            return Verdict.HEARTBEAT_SUBSTRATE_MISSING
         return Verdict.HEARTBEAT_UNKNOWN
 
     sentinel_window = 3.0 * heartbeat_interval_s
