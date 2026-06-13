@@ -173,23 +173,35 @@ destroying based on a known-no-op heartbeat source.
   mid-engine.provision; the new session has not yet called HeartbeatLoop.start(), so classify sees
   sentinel-stale and act_on_verdict destroys the pod the session is mid-boot on.
 
-    Interaction with B5a: B7's _hold_until_first_tick releases on Ledger.touch tick,
-    which is unconditional in Layer U HeartbeatLoop regardless of B5a status. So B7
-    works whether or not B5a is shipped. The cleaner story is B5a first — sweeper-side
-    reclassification after lock release sees an honest verdict — but B7 is not blocked
-    by B5a's existence. Recommend B5a → B7 for substrate-honesty axis; if B5a hits a
-    snag, B7 can ship in parallel.
+    **Status:** design APPROVED 2026-06-12. Spec is the source of truth — this entry summarizes
+    the locked decisions and is intentionally lighter than the spec; for any conflict the spec
+    wins.
 
-  -   What it is. Today the reaper side already holds reaper/<id> via store.acquire_lock(...,
-  ttl_s=_LOCK_TTL_S) inside act_on_verdict (core/reaper_actor.py:123) and re-classifies under the
-  lock before destroying — that part of D9 works. The deploy-session side acquires only
-  provision:<id> (core/orchestrator.py:213) on the engine-provision path, which is a DIFFERENT key —
-  the two locks do not gate each other. B7 makes the orchestrator side acquire reaper/<id>
-  cooperatively from the moment deploy_session commits to a specific instance.id through the moment
-  the first HeartbeatLoop tick lands in the ledger. The sweeper's existing lock-and-reclassify dance
-  then sees a held lock and either blocks (the FileLock.acquire default at
-  stores/local_lock.py:128) or fails-fast on --blocking=False; by the time it re-evaluates, the
-  sentinel is fresh and the verdict flips to LIVE.
+    Spec: docs/superpowers/specs/2026-06-12-b7-cooperative-session-claim-lock-design.md (commit
+    44a35ad).
+
+    Interaction with B5a: B7's hold_until_first_tick releases on Ledger.touch
+    heartbeat_thread_tick, which is unconditional in Layer U HeartbeatLoop regardless of B5a
+    status. So B7 works whether or not B5a is shipped. B5a (CLOSED, commit bade08c + 5aa2dcb) +
+    B7 ship in that order so the sweeper-side reclassification after lock release sees an honest
+    verdict.
+
+  -   What it is. Today the deploy-session side already acquires provision:<id> with ttl_s=300
+  (core/orchestrator.py:231, inside _provision_compute_once) — BUT only for the duration of
+  engine.provision itself. After that lock releases, deploy_session.__enter__ continues with verify
+  (step 8) + pool setup + HeartbeatLoop.start (step 8.5, ~line 740) before the first heartbeat
+  tick lands in the ledger. Between provision:<id> release and first-tick-landed, classify sees
+  heartbeat_thread_tick=0 → stale verdict → reaper destroys. The reaper side already holds a
+  separate reaper/<id> lock (core/reaper_actor.py:123, ttl_s=_LOCK_TTL_S=30.0) for its own
+  re-classify-and-destroy critical section — different key, doesn't gate the orchestrator's
+  provision:<id>.
+
+    B7 extends provision:<id>'s scope: orchestrator holds it from the moment instance.id is
+    available through the moment Ledger.touch records heartbeat_thread_tick >= start_time. Reaper
+    grows a non-blocking probe of provision:<id> inside its existing reaper/<id> critical section;
+    on contention it returns ActionResult(action="deferred-session-claim") and skips this entry for
+    this sweep. By the time the reaper retries on the next pass, the orchestrator has released and
+    classify reads a fresh heartbeat → verdict flips to LIVE.
 
   -   Why it goes second (after B5a). Two distinct reasons.
 
@@ -204,7 +216,8 @@ destroying based on a known-no-op heartbeat source.
   lock somewhere between 1-in-1000 and 1-in-100 invocations depending on B1 daemon cadence. The
   Layer V spec acknowledges this explicitly at §5 Risk 3: "session code can
   acquire_lock(f"reaper/{id}") cooperatively when claiming a warm pod. Out of scope for Layer V;
-  documented as Layer Y candidate."
+  documented as Layer Y candidate." B7 spec resolves the lock-key choice to provision:<id>, not
+  reaper/<id> — see Decisions locked below.
     b. Improves B1's daemon honesty independently of B3. B1 (sweeper daemon) turns the
   reap-vs-deploy race from "operator-triggered, once per manual invocation" into "60s-cadence,
   always running". Even without B3, a sweeper daemon eventually hits the race against any operator
@@ -213,103 +226,141 @@ destroying based on a known-no-op heartbeat source.
   engine-provision window will cross ~1-5 sweep cycles every cold boot. Shipping B7 before B1 means
   the daemon does not carry a known cost-leak / wedged-session bug from day one.
 
+    Decisions locked at brainstorm (spec §2):
+
+  - **D1. Lock key — reuse provision:<id>** (NOT reaper/<id>, NOT new session-claim/<id>). Existing
+    300s-TTL lock at orchestrator.py:231 already covers engine.provision; B7 widens its scope to
+    cover until first-tick. Semantic match ("provisioning in flight"). No new substrate key. The
+    earlier sketch's "reuse reaper/<id>, zero reaper code change" recommendation was reversed once
+    the existing provision:<id> seam was discovered during spec'ing — that key is a better fit and
+    fcntl re-acquire footguns are avoided by lifting the lock out of _provision_compute_once into a
+    single outer acquire site.
+  - **D2. TTL — cfg.lifecycle().boot_timeout_s + 2 * cfg.lifecycle().heartbeat_interval_s**
+    (default 900s + small margin; operator-tunable). 60s margin when heartbeat_interval_s is None,
+    but that branch routes through nullcontext() and never enters the helper. Replaces the existing
+    300s hardcode. No new background thread; no refresh ticker.
+  - **D3. Module — new core/session_claim.py** hosts hold_until_first_tick context manager +
+    FirstTickTimeout error. Mirrors core/reaper.py vs core/reaper_actor.py purity split. ~30 LOC.
+  - **D4. Acquire mode — orchestrator blocking, reaper non-blocking probe-only.** Reaper probes
+    provision:<id> with blocking=False, releases immediately on success (probe-only — does NOT
+    hold during destroy). On contention returns the new "deferred-session-claim" ActionResult and
+    skips this entry.
+  - **D5. Helper signature — hold_until_first_tick(*, store, instance_id, ledger, ttl_s, timeout_s,
+    poll_interval_s=0.05, clock=None)**. NOT the earlier sketch's heartbeat_loop= kwarg —
+    HeartbeatLoop is the writer; the helper only reads ledger via the new Ledger.read API.
+  - **D6. Wire-in gate matches HeartbeatLoop spawn gate** at orchestrator.py:~756. When
+    heartbeat_interval_s is None or <= 0 OR instance is None OR resolved_provider is None, the
+    deploy_session branch uses nullcontext() and skips the lock entirely. Hosted path is the
+    obvious case.
+  - **D7. Ledger.read(instance_id) -> dict | None** ships as part of B7 — Ledger today only has
+    entries() (full list scan) + record/touch/forget; the per-id read is the missing peer in the
+    surface. Returns the matching entry, or None when absent (including post-forget).
+  - **D8. _LOCK_TTL_S (reaper_actor.py:27, value 30.0) UNCHANGED.** That's the reaper's own
+    destroy-window TTL for reaper/<id>; unrelated to B7's session-claim scope. Earlier sketch
+    proposed promoting it to a boot_timeout_s-derived value; spec rejects that — the destroy
+    window is short, 30s is correct for it.
+  - **D9. ActionResult.action Literal grows by one entry — "deferred-session-claim".** CLI summary
+    renders it as "deferred". Downstream consumers (future B1 sweeper, future B2 cost dashboard)
+    see at design time.
+
     Surface area. Smaller than B5a and B3; comparable to B4.
 
-  - Orchestrator side. New cooperative acquire in deploy_session.__enter__ at the point the
-  orchestrator commits to a specific instance.id — covers both the cold path (after create_instance
-  returns, before engine.provision) and the warm-supplied path (after instance= kwarg validated,
-  before idempotent engine.provision). Lock held until the first Ledger.touch(...) tick is observed,
-  then released. Implementation seam: a new internal helper _hold_until_first_tick(store,
-  instance_id, ledger, heartbeat_loop, *, timeout_s) returning a LockToken-bearing context manager
-  that releases once ledger.read(instance_id).heartbeat_thread_tick >= start_time. Scope: ~30 LOC in
-  a new core/session_claim.py (mirrors the purity split of core/reaper.py vs core/reaper_actor.py)
-  + ~10 LOC of wire-up in core/orchestrator.py between resolved instance.id and
-  HeartbeatLoop.start() (line 740). Eager first tick is already implemented
-  (core/heartbeat_loop.py:152 "Loop body: eager first tick, then sleep-and-tick until stopped") so
-  the held duration is approximately engine.provision wall-time + one Ledger.touch round-trip (~10
-  ms on Local, ~100 ms on S3).
-  - Reaper side. Zero code change. The existing act_on_verdict lock at core/reaper_actor.py:123
-  already uses the same key shape and _LOCK_TTL_S = 30.0 TTL. Blocking-acquire default at
-  stores/local_lock.py:128-129 (blocking: bool = True, timeout_s: float | None = None) means the
-  sweeper waits for the orchestrator to release; if the orchestrator holds longer than _LOCK_TTL_S,
-  the lease can be stolen (see Risk 1 below).
-  - Lock-key overload. Reusing reaper/<id> is the cheapest path but overloads the key — it now
-  means "the reaper is destroying OR the orchestrator is claiming". A cleaner separation would be a
-  new session-claim/<id> key plus updating act_on_verdict to acquire BOTH session-claim/<id> AND
-  reaper/<id>. Recommend reuse for first cut — one key, one TTL, one mental model; the overload is
-  documented in the new helper's docstring and at the existing reaper_actor.py:104 "Layer V D9 +
-  D10: holds reaper/<id> ..." comment.
-  - TTL collision with engine.provision duration. The hard constraint: _LOCK_TTL_S = 30.0 is
-  shorter than worst-case ComfyUI + Wan cold provision (1-5 min). Two mitigations: (a) bump
-  _LOCK_TTL_S to a value derived from lifecycle.boot_timeout_s (the existing operator-tunable that
-  bounds engine.provision); (b) implement a TTL-refresh ticker on the held lock that re-writes the
-  sidecar's expires_at field every _LOCK_TTL_S / 3 seconds while held. Recommend (a) — simpler, no
-  new background thread, reuses an existing operator knob.
+  - Orchestrator side. hold_until_first_tick wraps from "instance.id available + resolved_provider
+    available" through "HeartbeatLoop.start() returns + first heartbeat_thread_tick lands". Covers
+    both the cold path (after create_instance returns) and the warm-supplied path (after instance=
+    kwarg validated, before idempotent engine.provision). Implementation seam: ~30 LOC in new
+    core/session_claim.py + ~15 LOC wire-up in core/orchestrator.py between resolved instance.id
+    and HeartbeatLoop.start() (~line 740) + DELETION of the inner with store.acquire_lock(
+    f"provision:{instance.id}", ttl_s=300): from _provision_compute_once at line 231 (dedent body
+    — the outer hold_until_first_tick already owns the key). Eager first tick is already
+    implemented (core/heartbeat_loop.py:152 "Loop body: eager first tick, then sleep-and-tick until
+    stopped") so the held duration is approximately engine.provision wall-time + one Ledger.touch
+    round-trip (~10 ms on Local, ~100 ms on S3).
+  - Reaper side. NON-ZERO code change (reverses the earlier sketch's "zero code change" claim once
+    K2 was chosen). act_on_verdict (core/reaper_actor.py:123) grows ~10 LOC: immediately after
+    entering its own reaper/<id> lock, non-blocking-probes provision:<id>; on contention logs INFO
+    "instance <id> mid-session-claim; deferring to next sweep" and returns ActionResult(action=
+    "deferred-session-claim"). Probe-only: acquire-then-immediate-release; the reaper does NOT
+    hold provision:<id> while destroying. core/reaper.py grows the Literal widening.
   - YAML surface. Zero new fields. Reuses lifecycle.heartbeat_interval_s (for the
-  held-until-first-tick wait timeout) and lifecycle.boot_timeout_s (for the lock TTL derivation in
-  mitigation (a) above). No session-claim: block. No policy knob.
+    held-until-first-tick polling cadence's denominator) and lifecycle.boot_timeout_s (for the
+    lock TTL derivation). No session-claim: block. No policy knob.
+  - CLI surface. Zero new subcommands. One new WARNING line in _cmd_reap's lock-acquire wrapper:
+    "waiting on provision lock for <id> (held by pid <n>) — orchestrator is mid-session-claim",
+    emitted at 5s of contention. Holder_pid is already in the FileLock sidecar
+    (stores/local_lock.py:90).
   - Test substrate. Cross-process subprocess-isolated test mirrors the Layer U cross-process
-  visibility test (PROGRESS:1130 shape). Subprocess A starts a deploy_session against a FakeProvider
-  with a sleepy engine.provision; subprocess B runs kinoforge reap --apply against the same id;
-  assert B blocks until A's first tick is recorded, then verdict flips to LIVE. Offline unit tests
-  cover the helper in isolation (fake ledger + spy HeartbeatLoop).
+    visibility test (PROGRESS:1130 shape). Subprocess A starts a deploy_session against a
+    FakeProvider with a sleepy engine.provision; subprocess B runs kinoforge reap --apply against
+    the same id; assert B's probe returns deferred-session-claim → A's first tick lands → no
+    destroy occurred. Offline unit tests cover hold_until_first_tick in isolation (fake ledger +
+    spy clock) and act_on_verdict's new probe arm. tests/stores/test_lock_contract.py grows one
+    parametrize case (held-while-orchestrator-runs across Local + mocked-S3).
 
     - Risk. Low-Medium. Four concrete risks:
 
-    a. Lease-steal during slow engine.provision. ComfyUI + Wan cold provision is 1-5 min;
-  _LOCK_TTL_S = 30.0 allows lease-steal within 30s. If the sweeper steals the lease (Phase 18 lock
-  contract permits it), the cooperative-lock contract is broken and the original race re-opens.
-  Mitigation: derive TTL from boot_timeout_s (mitigation (a) above). Alternative mitigation if the
-  cloud-store lock semantics make long TTLs problematic: TTL-refresh ticker (mitigation (b)).
+    a. Lease-steal during pathologically slow engine.provision. With T3 (boot_timeout_s-derived
+  TTL), default 900s gives 200%+ margin over the documented 5-min ComfyUI+Wan cold-boot worst case.
+  If the lease is somehow stolen anyway, hold_until_first_tick's polling phase fires
+  FirstTickTimeout at timeout_s exhaustion → cold-path teardown via the existing
+  CapabilityMismatch-shaped teardown surface (orchestrator catches, destroys the orphaned instance,
+  re-raises). Loud, not silent. The earlier sketch's discussion of _LOCK_TTL_S=30 is obsolete —
+  that constant is unchanged by B7; it governs the reaper's own short destroy window, not the
+  session-claim hold.
     b. Deadlock between sweeper and silently-crashed HeartbeatLoop. Orchestrator holds the lock,
-  HeartbeatLoop has crashed silently (Layer U's broad try/except), first tick never fires,
-  orchestrator waits indefinitely. Mitigation: _hold_until_first_tick takes a finite timeout_s =
-  boot_timeout_s + 2 * heartbeat_interval_s and on timeout raises a clear FirstTickTimeout exception
-  that aborts the deploy_session with the cold-path teardown (destroy the orphaned pod via the
-  existing CapabilityMismatch teardown path). Fail loud rather than wedge silently.
+  HeartbeatLoop has crashed silently (Layer U's broad try/except), first tick never fires.
+  Mitigation: hold_until_first_tick takes timeout_s = ttl_s and on exhaustion raises
+  FirstTickTimeout → same cold-path teardown as Risk (a). Fail loud rather than wedge silently.
     c. Operator confusion when --apply hangs. Running kinoforge reap --apply during a long cold
-  provision blocks for up to boot_timeout_s. The CLI should print a "waiting on session-claim lock
-  for <id> (held by deploy-session pid <n>) ..." line at WARNING level after 5s of waiting so
-  operators don't kill the reaper out of confusion. Lock sidecar already carries holder_pid
-  (stores/local_lock.py:90); one-line read-and-log change to _cmd_reap's lock-acquire wrapper. B1
-  daemon inherits the same diagnostic via structured logging.
+  provision blocks for up to boot_timeout_s. The CLI prints a "waiting on provision lock for <id>
+  (held by pid <n>) — orchestrator is mid-session-claim" line at WARNING level after 5s of waiting
+  so operators don't kill the reaper out of confusion. B1 daemon inherits the same diagnostic via
+  structured logging.
     d. Cross-host lock semantics on S3-backed acquire_lock. LocalArtifactStore.acquire_lock uses
   fcntl.flock — OS releases on process death, bulletproof on a single host. S3-backed acquire_lock
-  orchestrator and reaper run on the same workstation today, so single-host is sufficient; but a
-  future distributed sweeper (B16 RayPool neighbourhood) would need the cloud-host lock path
-  verified. Mitigation: add a cross-store lock contract test (tests/stores/test_lock_contract.py)
-  parametrized over local and mocked-s3 that exercises blocking acquire + steal +
-  held-while-orchestrator-runs. The reaper/<id> lock contract is already exercised under Layer V
-  acceptance tests; B7 grows it by one parametrize case.
+  orchestrator and reaper run on the same workstation today, so single-host is sufficient; a future
+  distributed sweeper (B16 RayPool neighbourhood) would need the cloud-host lock path verified.
+  Mitigation: cross-store lock contract test (tests/stores/test_lock_contract.py) parametrized over
+  local and mocked-s3 exercises blocking acquire + steal + held-while-orchestrator-runs. B7 grows
+  it by the one held-while-orchestrator-runs parametrize case.
 
-    Effort estimate. ~4-5 tasks. Smaller than B5a; comparable to B4. Task shape:
+    Effort estimate. ~6 tasks. Smaller than B5a; comparable to B4. Task shape (spec §10):
 
-    a. Promote _LOCK_TTL_S from a module constant in core/reaper_actor.py:27 to a
-  lifecycle.boot_timeout_s-derived value with a small safety margin — pure refactor, unit tests at
-  tests/core/test_reaper_actor.py updated.
-    b. Add core/session_claim.py with _hold_until_first_tick helper — pure decision wrapper around
-  store.acquire_lock + ledger.read polling, tested with a fake ledger + spy HeartbeatLoop.
-    c. Wire the helper into core/orchestrator.py deploy_session.__enter__ between
-  resolved-instance.id and HeartbeatLoop.start() for both cold and warm paths, with the
-  finite-timeout fallback from Risk 2 — surgical edit, ~10 LOC.
-    d. Cross-process integration test: subprocess A starts deploy_session against a sleepy
-  FakeProvider; subprocess B runs kinoforge reap --apply; assert B blocks → A's first tick lands →
-  B's classify returns LIVE → no destroy. Mirrors PROGRESS:1130 Layer U cross-process visibility
-  test shape.
-    e. _cmd_reap "waiting on session-claim lock for <id> (held by pid <n>)" diagnostic from Risk 3 +
-  README "Operator session-claim semantics" paragraph + amend Layer V spec §5 Risk 3 + §6 to point
-  at the new B7 spec.
+    a. Ledger.read API + core/session_claim.py + offline unit tests. RED-first: write
+  tests/core/test_ledger_read.py (mirrors test_ledger_touch.py shape); implement Ledger.read; GREEN.
+  Then RED-first: write tests/core/test_session_claim.py with the 7 cases from spec §5.1; implement
+  hold_until_first_tick + FirstTickTimeout; GREEN. Two atomic commits.
+    b. Orchestrator wire-in + delete inner provision lock. RED-first: deploy_session-level test
+  asserting the outer-hold scope covers verify+HB-start; implement wire-in at orchestrator.py
+  around line 700+; delete _provision_compute_once's acquire_lock line at :231 and dedent body;
+  GREEN.
+    c. Reaper non-blocking probe + ActionResult literal widening. RED-first: extend
+  tests/core/test_reaper_actor.py with the deferred-session-claim cases; implement probe arm in
+  act_on_verdict (after entering reaper/<id>); widen core/reaper.py ActionResult.action Literal;
+  GREEN.
+    d. Cross-process subprocess integration test. RED-first: write
+  tests/core/test_orchestrator_session_claim_xprocess.py per spec §5.2; runs after a/b/c land so
+  the integration is real.
+    e. _cmd_reap WARN diagnostic + lock-contract parametrize. RED-first: extend
+  tests/stores/test_lock_contract.py with held-while-orchestrator-runs case across local +
+  mocked-s3; extend _cmd_reap with the 5s holder_pid-aware watchdog; GREEN.
+    f. PROGRESS.md + this file + Layer V spec closeout. Strike B7 in PROGRESS §B, replace this
+  entry's "Status: design APPROVED" with "Status: CLOSED commit <sha>", amend Layer V spec §5
+  Risk 3 + §6 to point at B7 spec closing the gap.
 
-    Total ~60 LOC source + ~150 LOC tests. No live spend — FakeProvider + LocalProvider + mocked-S3
-  cover the lock contract. No new YAML fields, no new substrate, no public CLI surface beyond the
-  WARNING line.
+    Total ~63 LOC source + ~150 LOC tests. No live spend — FakeProvider + LocalProvider + mocked-S3
+  cover the lock contract. No new YAML fields, no new substrate. One new ActionResult literal
+  ("deferred-session-claim"); one new CLI WARN line; one new Ledger method (read).
 
   ---
-  Sanity checks against repo: lock site at core/reaper_actor.py:123 ✓; TTL constant at :27
-  (_LOCK_TTL_S = 30.0) ✓; orchestrator's existing provision:<id> lock at core/orchestrator.py:213 ✓;
-  FileLock default blocking at stores/local_lock.py:128 ✓; eager first tick at
-  core/heartbeat_loop.py:152 ✓; spec hook quote verbatim at
-  2026-06-06-layer-v-heartbeat-aware-reaper-design.md:670-676 ✓.
+  Sanity checks against repo (verified 2026-06-12 during spec'ing): existing provision:<id> lock
+  at core/orchestrator.py:231 (ttl_s=300, inside _provision_compute_once) ✓; reaper/<id> lock site
+  at core/reaper_actor.py:123 ✓; _LOCK_TTL_S=30.0 at core/reaper_actor.py:27 (UNCHANGED by B7) ✓;
+  FileLock default blocking + holder_pid sidecar at stores/local_lock.py:80-140 ✓; eager first
+  tick at core/heartbeat_loop.py:152 ✓; Ledger.touch heartbeat_thread_tick via **extra at
+  core/lifecycle.py:540-612 ✓; cfg.lifecycle().boot_timeout_s default 900.0 at
+  core/interfaces.py:79 + cfg.lifecycle().heartbeat_interval_s Optional at :80 ✓; spec hook quote
+  verbatim at 2026-06-06-layer-v-heartbeat-aware-reaper-design.md:670-676 ✓.
 
 
 
