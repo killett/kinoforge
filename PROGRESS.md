@@ -145,7 +145,8 @@ their category.
 - **B2. Layer X — cost dashboard / metrics consumer.** Walks ledger, runs `classify` per entry, aggregates burning-$/hr + per-provider breakdown + LIVE/IDLE/HEARTBEAT_UNKNOWN counts + lifetime $/session. `kinoforge cost` subcommand; `--json` for Grafana/Prometheus. Pure read path; ledger already stores `cost_rate_usd_per_hr` (Layer V Task 1) + `created_at`. Lowest-risk of B1/B2/B3.
 - **B3. Layer Y — in-session orchestrator warm-reuse retrofit.** `deploy_session` consults `classify` against the ledger when `_states[id]` is empty; attaches to a LIVE matching-`capability_key` pod instead of `create_instance`. Kills cold-start (1–5 min ComfyUI + Wan spin-up) on every fresh-shell `kinoforge generate`. Highest blast radius — touches the generate hot path. Prereq: B7 cooperative session-start/reaper lock. Spec hook at Layer V §5.6 + §6.
 - **B4. Cross-CLI warm-reuse CLI exposure.** Layer P Task 7 item #2 (`2026-06-01-layer-p-task7-item2-warm-reuse-design.md:54,546`) noted `LifecycleManager.warm_reuse_or_create` CLI surface as a Layer Q candidate; Layer Q shipped HF source instead — surface never materialized. Sub-item of B3.
-- **B5. Real `provider.heartbeat()` for RunPod / SkyPilot.** Both have native dead-man mechanisms today; production heartbeat call returns no-op. Layer V §6 candidate. Required before B1 / B3 give honest verdicts on real cloud.
+- ~~**B5. Real `provider.heartbeat()` for RunPod / SkyPilot.**~~ — CLOSED by Phase 52 Task f (commit `pending-closeout`). B5a substrate + RunPod satisfier shipped end-to-end; live smoke confirmed `podEditJob`/`pod { dockerArgs }` round-trip @ P50=460ms, P99=583ms, no 429 at 5s cadence. B5b SkyPilot satisfier still gated on A3 / A4 GPU quota landing.
+- **B5b. SkyPilot satisfier for `core/heartbeat_endpoints.py` substrate.** Gated on A3 / A4 GPU quota landing. Plug-in satisfier; substrate Protocol shipped in B5a, no substrate churn required. ~3-4 tasks. Live spend ~$0.05 (one bare-cluster SkyPilot smoke once quota lands; CPU cluster acceptable since the heartbeat path is GPU-irrelevant). Spec hook: `docs/superpowers/specs/2026-06-12-b5a-heartbeat-substrate-design.md` §13 (B5b Implementation Notes).
 - **B6. Per-entry `heartbeat_interval_s` override.** Layer V §6 candidate.
 - **B7. Cooperative lock between session-start and reaper.** Layer V §6 candidate, prereq for B3.
 - **B8. `--policy policy.yaml` (JSON/YAML policy file).** Layer V §6 candidate; CLI flag composition today.
@@ -440,6 +441,8 @@ same-tuple `(provider, engine, model, mode)` repeats get a "See also" line.
 
 **Single next action (operator, two parallel tracks):**
 
+**B5a CLOSED (2026-06-12).** Heartbeat substrate + RunPod satisfier live. Next in warm-reuse queue: **B7 — cooperative lock between session-start and reaper** (Layer V §6, prereq for B3 warm-reuse retrofit). Run `pixi run preflight` then start the B7 spec/plan cycle.
+
 Track A — Bedrock Luma Ray v2 (us-west-2):
 1. Open AWS Support case at `https://us-west-2.console.aws.amazon.com/support/home#/case/create` — Technical → Service: Bedrock → Severity: General guidance.
 2. Subject: "Bedrock Luma Ray v2 access — `authorizationStatus=NOT_AUTHORIZED` despite agreement accepted".
@@ -465,7 +468,7 @@ Track B — Veo on Vertex AI (us-central1):
 1. The Phase 42 entry below — pivot rationale + Phase 2 blocker detail.
 2. `git log --oneline -10` for recent commits.
 
-**Budget remaining: ~$10.88 of $15** (Layer 1 + Layer 3 Tasks 0–8 spent $0).
+**Budget remaining: ~$10.88 of $15** (Layer 1 + Layer 3 Tasks 0–8 spent $0; B5a live smokes spent ~$0.004).
 
 ## Post-MVP
 
