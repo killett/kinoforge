@@ -26,6 +26,22 @@ _log = logging.getLogger(__name__)
 
 _LOCK_TTL_S: float = 30.0
 
+# B5a: dedup keys for HEARTBEAT_SUBSTRATE_MISSING warnings. Per
+# (provider_kind, instance_id) — operators get one line per pod, not
+# one per tick. Module-level state is acceptable because the dedup is
+# best-effort (a process restart resets it; the alternative would be
+# leaking dedup state into the ledger).
+_WARNED_SUBSTRATE_MISSING: set[tuple[str, str]] = set()
+
+
+def reset_warning_dedup() -> None:
+    """Clear the substrate-missing WARN dedup set.
+
+    Test helper. Production code does not call this — the dedup persists
+    for the life of the process per the documented best-effort contract.
+    """
+    _WARNED_SUBSTRATE_MISSING.clear()
+
 
 @dataclass(frozen=True)
 class ActionResult:
@@ -132,7 +148,22 @@ def act_on_verdict(
                 reason=f"verdict drift {snapshot_verdict.value} -> {v2.value}",
             )
         try:
-            if v2 in {Verdict.IDLE_REAP, Verdict.OVERAGE_REAP, Verdict.ORPHAN_REAP}:
+            if v2 == Verdict.HEARTBEAT_SUBSTRATE_MISSING:
+                # Conservative-on-ignorance. The substrate hasn't shipped
+                # for this provider yet (e.g. SkyPilot pre-B5b). Operator
+                # cannot fix it by destroying the pod. Skip + WARN-once.
+                provider_kind = str(entry.get("provider_kind", ""))
+                dedup_key = (provider_kind, instance_id)
+                if dedup_key not in _WARNED_SUBSTRATE_MISSING:
+                    _WARNED_SUBSTRATE_MISSING.add(dedup_key)
+                    _log.warning(
+                        "provider %r has no heartbeat substrate; "
+                        "skipping reap decision for %s (B5b pending)",
+                        provider_kind,
+                        instance_id,
+                    )
+                action = "no_op"
+            elif v2 in {Verdict.IDLE_REAP, Verdict.OVERAGE_REAP, Verdict.ORPHAN_REAP}:
                 destroy_confirmed(provider, instance_id, sleep=lambda _: None)
                 ledger.forget(instance_id)
                 action = "destroyed_and_forgot"

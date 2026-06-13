@@ -73,6 +73,7 @@ def test_verdict_values_are_stable_strings() -> None:
         "OVERAGE_REAP",
         "STALE_LEDGER",
         "HEARTBEAT_UNKNOWN",
+        "HEARTBEAT_SUBSTRATE_MISSING",  # B5a
         "UNROUTABLE",
     ]
 
@@ -87,7 +88,11 @@ def test_default_apply_policy_contains_high_confidence_verdicts() -> None:
 def test_default_strict_verdicts_are_uncertain_only() -> None:
     """--strict trips on verdicts that mean 'I don't know enough to decide'."""
     assert DEFAULT_STRICT_VERDICTS == frozenset(
-        {Verdict.UNROUTABLE, Verdict.HEARTBEAT_UNKNOWN}
+        {
+            Verdict.UNROUTABLE,
+            Verdict.HEARTBEAT_UNKNOWN,
+            Verdict.HEARTBEAT_SUBSTRATE_MISSING,  # B5a
+        }
     )
 
 
@@ -366,3 +371,109 @@ def test_partition_returns_independent_dicts() -> None:
     )
     to_act["a"] = Verdict.OVERAGE_REAP
     assert to_skip == {"b": Verdict.LIVE}
+
+
+# ---------------------------------------------------------------------------
+# B5a Task d — HEARTBEAT_SUBSTRATE_MISSING verdict + classify gate
+# ---------------------------------------------------------------------------
+
+
+def test_classify_emits_substrate_missing_on_unsupported_provider() -> None:
+    """SkyPilot pre-B5b: provider_kind='skypilot', last_heartbeat=None.
+    Must NOT emit HEARTBEAT_UNKNOWN — that would let a future B1 sweeper
+    reap a live working SkyPilot pod once HEARTBEAT_UNKNOWN is added to
+    the apply policy. Emit the dedicated verdict instead."""
+    entry = {
+        "id": "cluster-x",
+        "provider_kind": "skypilot",
+        "created_at": 1_000.0,
+        "heartbeat_thread_tick": None,
+        "last_heartbeat": None,
+    }
+    v = classify(
+        entry,
+        live_pod_ids={"cluster-x"},
+        now=2_000.0,
+        idle_timeout_s=600.0,
+        max_lifetime_s=18_000.0,
+        heartbeat_interval_s=30.0,
+        grace_after_session_s=300.0,
+    )
+    assert v == Verdict.HEARTBEAT_SUBSTRATE_MISSING
+
+
+def test_classify_emits_heartbeat_unknown_on_supported_provider_with_no_data() -> None:
+    """RunPod with compute.heartbeat_mode='none' (operator opted out):
+    provider_kind='runpod', last_heartbeat=None. Operator made the
+    choice — sweeper's dead-man fallback (IDLE_REAP after dead-man
+    window) is the next layer of defence. Keep HEARTBEAT_UNKNOWN."""
+    entry = {
+        "id": "pod-x",
+        "provider_kind": "runpod",
+        "created_at": 1_000.0,
+        "heartbeat_thread_tick": None,
+        "last_heartbeat": None,
+    }
+    v = classify(
+        entry,
+        live_pod_ids={"pod-x"},
+        now=2_000.0,
+        idle_timeout_s=600.0,
+        max_lifetime_s=18_000.0,
+        heartbeat_interval_s=30.0,
+        grace_after_session_s=300.0,
+    )
+    assert v == Verdict.HEARTBEAT_UNKNOWN
+
+
+def test_classify_treats_missing_provider_kind_as_unknown() -> None:
+    """Legacy ledger entries pre-Layer-S persistence may lack provider_kind.
+    Defensive: do NOT emit HEARTBEAT_SUBSTRATE_MISSING on legacy entries —
+    that would block operator-driven reaps of orphaned legacy pods."""
+    entry = {
+        "id": "legacy-x",
+        # provider_kind absent
+        "created_at": 1_000.0,
+        "heartbeat_thread_tick": None,
+        "last_heartbeat": None,
+    }
+    v = classify(
+        entry,
+        live_pod_ids={"legacy-x"},
+        now=2_000.0,
+        idle_timeout_s=600.0,
+        max_lifetime_s=18_000.0,
+        heartbeat_interval_s=30.0,
+        grace_after_session_s=300.0,
+    )
+    assert v == Verdict.HEARTBEAT_UNKNOWN
+
+
+def test_classify_emits_live_with_fresh_heartbeat_on_runpod() -> None:
+    """Smoke: substrate working end-to-end. provider_kind='runpod',
+    fresh sentinel + fresh heartbeat → LIVE (the path the operator
+    actually wants)."""
+    entry = {
+        "id": "pod-x",
+        "provider_kind": "runpod",
+        "created_at": 1_000.0,
+        "heartbeat_thread_tick": 1_990.0,  # 10s old → fresh under 90s window
+        "last_heartbeat": 1_990.0,
+    }
+    v = classify(
+        entry,
+        live_pod_ids={"pod-x"},
+        now=2_000.0,
+        idle_timeout_s=600.0,
+        max_lifetime_s=18_000.0,
+        heartbeat_interval_s=30.0,
+        grace_after_session_s=300.0,
+    )
+    assert v == Verdict.LIVE
+
+
+def test_default_policy_does_not_act_on_substrate_missing() -> None:
+    """B1 sweeper inherits this Policy. Sweeper must NEVER reap on
+    HEARTBEAT_SUBSTRATE_MISSING — operator cannot fix the substrate
+    by destroying the pod."""
+    assert Verdict.HEARTBEAT_SUBSTRATE_MISSING not in DEFAULT_APPLY_POLICY.act_verdicts
