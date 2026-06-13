@@ -23,6 +23,7 @@ from kinoforge.cli._commands import (
     _build_store,  # noqa: F401 — re-exported via package shim
     _cli_clock,  # noqa: F401 — re-exported via package shim
     _cmd_batch,
+    _cmd_cost,
     _cmd_deploy,
     _cmd_destroy,
     _cmd_forget,
@@ -59,7 +60,7 @@ _INTERRUPTIBLE_CMDS: frozenset[str] = frozenset({"generate", "batch"})
 # Subcommands that never trigger orchestration. ``--ephemeral`` is a no-op
 # for them; emit a one-line stderr note rather than running pre-flight.
 _READ_ONLY_CMDS: frozenset[str] = frozenset(
-    {"list", "status", "stop", "destroy", "forget", "reap", "gc"}
+    {"list", "status", "stop", "destroy", "forget", "reap", "gc", "cost"}
 )
 
 _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
@@ -74,6 +75,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "forget": _cmd_forget,
     "reap": _cmd_reap,
     "gc": _cmd_gc,
+    "cost": _cmd_cost,
 }
 
 
@@ -415,6 +417,35 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_gc.add_argument("--config", required=True, metavar="PATH")
     p_gc.add_argument("--run", default=None, metavar="RUN_ID")
     p_gc.add_argument("--older-than", default=None, metavar="DUR")
+
+    p_cost = sub.add_parser(
+        "cost",
+        help="show cost dashboard: burn rate + per-provider breakdown + balance",
+    )
+    p_cost.add_argument("-c", "--config", required=True, metavar="PATH")
+    cost_mode = p_cost.add_mutually_exclusive_group()
+    cost_mode.add_argument(
+        "--json",
+        action="store_true",
+        help="emit stable JSON schema for piping (Grafana, jq, etc.)",
+    )
+    cost_mode.add_argument(
+        "--prom",
+        action="store_true",
+        help="emit Prometheus text exposition format",
+    )
+    p_cost.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="bypass disk cache for balance reads (force fresh)",
+    )
+    p_cost.add_argument(
+        "--cache-ttl",
+        type=float,
+        default=15.0,
+        metavar="SECONDS",
+        help="balance cache TTL (default 15s)",
+    )
 
     # batch
     p_batch = sub.add_parser("batch", help="run a batch of generation jobs")
