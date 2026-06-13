@@ -1,0 +1,75 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-13-b3-warm-reuse-retrofit-plan.md",
+  "tasks": [
+    {
+      "id": 10,
+      "subject": "B3 Task a: Ledger.touch session-fields + is_session_busy helper",
+      "status": "pending",
+      "description": "**Goal:** Pure helper at `core/lifecycle.py` correctly classifies ledger entries as busy vs not-busy; `Ledger.touch` persists `session_start` / `session_end` via existing `**extra` seam without altering `_PROTECTED_LEDGER_KEYS`.\n\n**Files:**\n- Modify: `src/kinoforge/core/lifecycle.py`\n- Test (create): `tests/core/test_ledger_session_fields.py`\n\n**Verify:** `pixi run pytest tests/core/test_ledger_session_fields.py -v` → 12 passed\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/lifecycle.py\",\"tests/core/test_ledger_session_fields.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_ledger_session_fields.py -v\",\"acceptanceCriteria\":[\"is_session_busy returns False on empty entry\",\"is_session_busy returns True when session_start set + HB disabled\",\"is_session_busy returns False on cleanly-closed session\",\"is_session_busy returns True on busy + fresh HB\",\"is_session_busy returns False on stale-busy auto-clear\",\"is_session_busy returns False when HB enabled + tick missing\",\"Ledger.touch persists session_start\",\"_PROTECTED_LEDGER_KEYS does not include session_*\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "B3 Task b: deploy_session session_start / session_end writes",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** `deploy_session.__enter__` writes `session_start` via `Ledger.touch` after `hb_loop.start()` returns; `__exit__` writes `session_end` in finally block.\n\n**Files:**\n- Modify: `src/kinoforge/core/orchestrator.py`\n- Test (create): `tests/core/test_orchestrator_session_fields.py`\n\n**Verify:** `pixi run pytest tests/core/test_orchestrator_session_fields.py -v` → 6 passed\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/orchestrator.py\",\"tests/core/test_orchestrator_session_fields.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_orchestrator_session_fields.py -v\",\"acceptanceCriteria\":[\"session_start written post-hb_start\",\"session_start absent when hosted\",\"session_start absent when HB disabled\",\"session_end written in finally\",\"session_end written on exception\",\"touch failure logs WARNING not raise\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "B3 Task c: _scan_warm_candidates + _probe_lock_held + _ScanReport",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "**Goal:** Pure CLI helpers walk ledger, filter cap-key matches, probe reaper:<id> + provision:<id>, validate via B4 chain, return first valid candidate.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py`\n- Test (create): `tests/cli/test_scan_warm_candidates.py`\n\n**Verify:** `pixi run pytest tests/cli/test_scan_warm_candidates.py -v` → 18 passed\n\n```json:metadata\n{\"files\":[\"src/kinoforge/cli/_commands.py\",\"tests/cli/test_scan_warm_candidates.py\"],\"verifyCommand\":\"pixi run pytest tests/cli/test_scan_warm_candidates.py -v\",\"acceptanceCriteria\":[\"empty ledger returns None\",\"provider mismatch coarse-filtered\",\"cap_key mismatch coarse-filtered\",\"busy entries coarse-filtered\",\"reaper-held skip recorded\",\"provision-held skip recorded\",\"classify-not-live skip recorded\",\"newest-tick tiebreaker\",\"ScanReport summarize forms correct\",\"_probe_lock_held semantics\",\"fixed reason vocabulary\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "B3 Task d: --no-reuse argparse + single kwarg + reaper-locked destroy",
+      "status": "pending",
+      "blockedBy": [12],
+      "description": "**Goal:** `--no-reuse` flag + `single: bool` threading + reaper-locked destroy at deploy_session.__exit__ for both orchestrator-managed AND caller-supplied paths (D7).\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py`, `src/kinoforge/cli/_commands.py`, `src/kinoforge/core/orchestrator.py`, `src/kinoforge/core/batch.py`\n- Test (create): `tests/core/test_orchestrator_no_reuse.py`\n\n**Verify:** `pixi run pytest tests/core/test_orchestrator_no_reuse.py -v` → 9 passed\n\n```json:metadata\n{\"files\":[\"src/kinoforge/cli/_main.py\",\"src/kinoforge/cli/_commands.py\",\"src/kinoforge/core/orchestrator.py\",\"src/kinoforge/core/batch.py\",\"tests/core/test_orchestrator_no_reuse.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_orchestrator_no_reuse.py -v\",\"acceptanceCriteria\":[\"--no-reuse argparse on generate + batch\",\"mutex with --force-attach exits 2\",\"reaper:<id> lock during destroy\",\"destroy fires for caller-supplied (D7)\",\"TeardownError preserves ledger\",\"hosted no-op\",\"session_end written before destroy\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "B3 Task e: _cmd_generate + _cmd_batch wiring (scan dispatch + precedence)",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "**Goal:** Precedence chain (instance-id → no-reuse → warm_reuse_auto_attach=false → default scan); scan summary INFO log.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py`\n- Test (delta): `tests/cli/test_cmd_generate.py`, `tests/cli/test_cmd_batch.py`\n\n**Verify:** `pixi run pytest tests/cli/test_cmd_generate.py tests/cli/test_cmd_batch.py -v` → all passed\n\n```json:metadata\n{\"files\":[\"src/kinoforge/cli/_commands.py\",\"tests/cli/test_cmd_generate.py\",\"tests/cli/test_cmd_batch.py\"],\"verifyCommand\":\"pixi run pytest tests/cli/test_cmd_generate.py tests/cli/test_cmd_batch.py -v\",\"acceptanceCriteria\":[\"scan dispatched on default path\",\"scan skipped on --no-reuse\",\"scan skipped on warm_reuse_auto_attach=false\",\"scan instance threaded to generate\",\"summary INFO logged\",\"--instance-id precedence\",\"mutex enforced\",\"D7 composition\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "B3 Task f: ComputeConfig.warm_reuse_auto_attach + YAML round-trip",
+      "status": "pending",
+      "blockedBy": [14],
+      "description": "**Goal:** Config field defaults True; YAML round-trip works; example YAMLs document default.\n\n**Files:**\n- Modify: `src/kinoforge/core/config.py`, `examples/configs/*.yaml`\n- Test (delta): `tests/core/test_config.py`\n\n**Verify:** `pixi run pytest tests/core/test_config.py -v -k warm_reuse` → 3 passed\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/config.py\",\"tests/core/test_config.py\",\"examples/configs/wan.yaml\",\"examples/configs/diffusers.yaml\",\"examples/configs/hosted.yaml\",\"examples/configs/local-fake.yaml\"],\"verifyCommand\":\"pixi run pytest tests/core/test_config.py -v -k warm_reuse\",\"acceptanceCriteria\":[\"default True\",\"YAML round-trip\",\"absent field defaults True\",\"non-bool rejected\"]}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "B3 Task g: Cross-process subprocess tests (xprocess shape)",
+      "status": "pending",
+      "blockedBy": [13, 14],
+      "description": "**Goal:** Mandatory test surface per spec §1.1 risk frame. Five subprocess tests cover B3 hot-path correctness.\n\n**Files:**\n- Test (create): `tests/core/test_b3_warm_attach_xprocess.py`\n- Modify: `src/kinoforge/engines/fake/__init__.py` (KINOFORGE_FAKE_GENERATE_DELAY_S env-var seam)\n\n**Verify:** `pixi run pytest tests/core/test_b3_warm_attach_xprocess.py -v --timeout=120` → 5 passed\n\n```json:metadata\n{\"files\":[\"tests/core/test_b3_warm_attach_xprocess.py\",\"src/kinoforge/engines/fake/__init__.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_b3_warm_attach_xprocess.py -v --timeout=120\",\"acceptanceCriteria\":[\"two CLIs share warm pod\",\"concurrent serialise at B7 lock\",\"--no-reuse destroy + concurrent scan cooperate via reaper:<id>\",\"busy marker coarse-filtered\",\"stale-busy auto-clears via HB freshness\"]}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "B3 Task h: Reaper integration delta",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "**Goal:** B3 --no-reuse destroy + B1 sweeper cooperate via shared reaper:<id> lock; no double-destroy.\n\n**Files:**\n- Test (delta): `tests/core/test_reaper_actor.py`\n\n**Verify:** `pixi run pytest tests/core/test_reaper_actor.py::test_act_on_verdict_blocks_when_b3_no_reuse_destroy_holds_reaper_lock -v` → 1 passed\n\n```json:metadata\n{\"files\":[\"tests/core/test_reaper_actor.py\"],\"verifyCommand\":\"pixi run pytest tests/core/test_reaper_actor.py::test_act_on_verdict_blocks_when_b3_no_reuse_destroy_holds_reaper_lock -v\",\"acceptanceCriteria\":[\"B1 blocks on B3 --no-reuse reaper:<id>\",\"no double-destroy\"]}\n```"
+    },
+    {
+      "id": 18,
+      "subject": "B3 Task i: RED-scaffold commit for live smoke",
+      "status": "pending",
+      "blockedBy": [15, 16, 17],
+      "description": "**Goal:** Per CLAUDE.md durability rule, RED-state smoke scaffold committed BEFORE live invocation.\n\n**Files:**\n- Test (create RED): `tests/live/test_b3_warm_attach_live.py`\n\n**Verify:** `pixi run pytest tests/live/test_b3_warm_attach_live.py -v` → 1 skipped\n\n```json:metadata\n{\"files\":[\"tests/live/test_b3_warm_attach_live.py\"],\"verifyCommand\":\"pixi run pytest tests/live/test_b3_warm_attach_live.py -v\",\"acceptanceCriteria\":[\"env-gated skip on unset\",\"prompt read from prompt-field-realistic.txt\",\"RED scaffold committed before live invocation\"]}\n```"
+    },
+    {
+      "id": 19,
+      "subject": "B3 Task j: Live RunPod smoke + PROGRESS + closeout",
+      "status": "pending",
+      "blockedBy": [18],
+      "description": "**Goal:** Run preflight, fire live smoke (≤$2.50), capture timings, update spec §9 + PROGRESS.md + warm-reuse-tasks.txt + successful-generations.md with closeout commit.\n\n**Files:**\n- Modify: `docs/superpowers/specs/2026-06-13-b3-warm-reuse-retrofit-design.md`, `PROGRESS.md`, `warm-reuse-tasks.txt`, `successful-generations.md`\n\n**Verify:** `KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_b3_warm_attach_live.py -v` → 1 passed\n\n```json:metadata\n{\"files\":[\"docs/superpowers/specs/2026-06-13-b3-warm-reuse-retrofit-design.md\",\"PROGRESS.md\",\"warm-reuse-tasks.txt\",\"successful-generations.md\"],\"verifyCommand\":\"KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_b3_warm_attach_live.py -v\",\"acceptanceCriteria\":[\"preflight exits 0\",\"smoke 1 passed\",\"gen 2 < 70% gen 1\",\"spend ≤ $2.50\",\"spec §9.1 amended\",\"PROGRESS §B.B3 struck\",\"warm-reuse-tasks.txt closeout\",\"successful-generations.md entry\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-13"
+}
