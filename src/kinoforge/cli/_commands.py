@@ -511,7 +511,12 @@ def _cmd_list(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: AR
         print("No instances recorded in ledger.")
     else:
         for entry in entries:
-            print(f"  {entry.get('id', '?')}  provider={entry.get('provider', '?')}")
+            cap_key = str(entry.get("tags", {}).get("kinoforge_key", "<unknown>"))
+            print(
+                f"  {entry.get('id', '?')}  "
+                f"provider={entry.get('provider', '?')}  "
+                f"capability_key={cap_key}"
+            )
     return 0
 
 
