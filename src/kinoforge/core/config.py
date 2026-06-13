@@ -23,6 +23,7 @@ from kinoforge.core.interfaces import (
     HardwareRequirements as InterfaceHardwareRequirements,
 )
 from kinoforge.core.interfaces import Lifecycle as InterfaceLifecycle
+from kinoforge.core.reaper import DEFAULT_APPLY_POLICY, Policy, Verdict
 
 # ---------------------------------------------------------------------------
 # Duration parser
@@ -683,6 +684,32 @@ class OutputConfig(BaseModel):
     enabled: bool = True
 
 
+class SweeperConfig(BaseModel):
+    """YAML surface for the Layer W sweeper daemon.
+
+    Default sleeps at 60s — gentle on RunPod GraphQL (B5a smoke measured
+    P50=460ms, P99=583ms; ~100x headroom at 60s). Two opt-in policy
+    flags extend DEFAULT_APPLY_POLICY:
+
+    - ``include_orphans`` → adds ``ORPHAN_REAP``
+    - ``force_forget`` → adds ``UNROUTABLE``
+
+    ``host`` defaults to ``socket.gethostname()`` at CLI level when None.
+    """
+
+    interval_s: float = 60.0
+    include_orphans: bool = False
+    force_forget: bool = False
+    host: str | None = None
+
+    @field_validator("interval_s")
+    @classmethod
+    def _validate_interval(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"sweeper.interval_s must be > 0; got {v}")
+        return v
+
+
 class Config(BaseModel):
     """Top-level kinoforge configuration.
 
@@ -722,6 +749,7 @@ class Config(BaseModel):
     spec: dict[str, Any] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
     keyframe: KeyframeConfig | None = None
+    sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
 
     model_config = {"populate_by_name": True}
 
@@ -1005,3 +1033,24 @@ def load_config(text_or_path: str | Path) -> Config:
         return Config.model_validate(raw)
     except pydantic.ValidationError as exc:
         raise ConfigError(str(exc)) from exc
+
+
+def sweeper_policy_from_cfg(cfg: Config) -> Policy:
+    """Build the Layer W daemon's Policy from cfg.sweeper.
+
+    Starts with Layer V :data:`DEFAULT_APPLY_POLICY` (IDLE_REAP,
+    OVERAGE_REAP, STALE_LEDGER) and unions the two opt-in verdicts based
+    on YAML flags.
+
+    Args:
+        cfg: Loaded :class:`Config`; ``cfg.sweeper`` is consulted.
+
+    Returns:
+        :class:`Policy` with the resulting frozenset.
+    """
+    act = set(DEFAULT_APPLY_POLICY.act_verdicts)
+    if cfg.sweeper.include_orphans:
+        act.add(Verdict.ORPHAN_REAP)
+    if cfg.sweeper.force_forget:
+        act.add(Verdict.UNROUTABLE)
+    return Policy(act_verdicts=frozenset(act))

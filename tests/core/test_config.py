@@ -1391,3 +1391,99 @@ def test_compute_config_heartbeat_mode_rejects_unknown() -> None:
             image="runpod/base:latest",
             heartbeat_mode="graphql_tag",  # underscore not dash — common typo
         )
+
+
+# ---------------------------------------------------------------------------
+# B1 — SweeperConfig + sweeper_policy_from_cfg
+# ---------------------------------------------------------------------------
+
+
+def test_sweeper_config_defaults_load(tmp_path: Path) -> None:
+    """No `sweeper:` block in YAML → SweeperConfig defaults apply.
+
+    Bug guard: a missing default would make every existing YAML break on
+    upgrade. Field(default_factory=SweeperConfig) is mandatory.
+    """
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(
+        "compute:\n"
+        "  provider: local\n"
+        "  image: dummy\n"
+        "engine:\n"
+        "  kind: fake\n"
+        "  precision: fp16\n"
+        "models:\n"
+        "  - ref: hf:org/m\n"
+        "    kind: base\n"
+        "    target: checkpoints\n"
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.sweeper.interval_s == 60.0
+    assert cfg.sweeper.include_orphans is False
+    assert cfg.sweeper.force_forget is False
+    assert cfg.sweeper.host is None
+
+
+def test_sweeper_interval_negative_rejected(tmp_path: Path) -> None:
+    """sweeper.interval_s <= 0 must be rejected at load time.
+
+    Bug guard: a zero/negative interval at YAML level would either spin-
+    loop the daemon or never tick — SweeperLoop.__init__ already raises,
+    but the YAML must fail fast before the daemon binary even starts.
+    """
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(
+        "compute:\n"
+        "  provider: local\n"
+        "  image: dummy\n"
+        "engine:\n"
+        "  kind: fake\n"
+        "  precision: fp16\n"
+        "models:\n"
+        "  - ref: hf:org/m\n"
+        "    kind: base\n"
+        "    target: checkpoints\n"
+        "sweeper:\n"
+        "  interval_s: -1\n"
+    )
+    with pytest.raises(ConfigError, match="interval_s must be > 0"):
+        load_config(cfg_path)
+
+
+def test_sweeper_policy_bridge_composes_correctly() -> None:
+    """sweeper_policy_from_cfg ∪'s DEFAULT_APPLY_POLICY with the two opt-ins.
+
+    Bug guard: a misnamed verdict in the bridge would silently fail to
+    add ORPHAN_REAP / UNROUTABLE — the daemon would run dry-run forever
+    despite the operator's YAML.
+    """
+    from kinoforge.core.config import (
+        ComputeConfig,
+        Config,
+        EngineConfig,
+        ModelEntry,
+        SweeperConfig,
+        sweeper_policy_from_cfg,
+    )
+    from kinoforge.core.reaper import DEFAULT_APPLY_POLICY, Verdict
+
+    base = Config(
+        compute=ComputeConfig(provider="local", image="x"),
+        engine=EngineConfig(kind="fake", precision="fp16"),
+        models=[ModelEntry(ref="hf:org/m", kind="base", target="checkpoints")],
+        sweeper=SweeperConfig(),
+    )
+    assert (
+        sweeper_policy_from_cfg(base).act_verdicts == DEFAULT_APPLY_POLICY.act_verdicts
+    )
+
+    with_orphans = base.model_copy(
+        update={"sweeper": SweeperConfig(include_orphans=True)}
+    )
+    p = sweeper_policy_from_cfg(with_orphans)
+    assert Verdict.ORPHAN_REAP in p.act_verdicts
+    assert DEFAULT_APPLY_POLICY.act_verdicts <= p.act_verdicts
+
+    with_force = base.model_copy(update={"sweeper": SweeperConfig(force_forget=True)})
+    p = sweeper_policy_from_cfg(with_force)
+    assert Verdict.UNROUTABLE in p.act_verdicts
