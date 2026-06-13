@@ -24,28 +24,41 @@ from pathlib import Path
 import pytest
 
 _LIVE_GATE_ENV = "KINOFORGE_LIVE_RUNPOD"
-_BUDGET_USD_CAP = 0.005
-_SESSION_LIFETIME_S = 90.0
+_BUDGET_USD_CAP = 0.01
+_SESSION_LIFETIME_S = 120.0
 _SIDECAR_PATH = Path("tests/live/_runpod_util_disk_probe.json")
 
-# Trial selection sets, priority order. Each entry is (label, sub-selection,
-# placement) where placement is "container" or "runtime" — controls which
-# block the sub-selection is appended to.
-_DISK_TRIALS: list[tuple[str, str, str]] = [
+# Trial selection sets, priority order. Each entry is (label, full inner
+# runtime selection set). First baseline trial verifies runtime{} itself
+# is reachable; remaining trials add candidate disk-field selections.
+_TRIALS: list[tuple[str, str]] = [
+    (
+        "baseline.runtime.uptimeInSeconds",
+        "uptimeInSeconds",
+    ),
+    (
+        "baseline.runtime.gpus",
+        "uptimeInSeconds gpus { id gpuUtilPercent memoryUtilPercent }",
+    ),
+    (
+        "baseline.runtime.container",
+        "uptimeInSeconds container { cpuPercent memoryPercent }",
+    ),
     (
         "container.diskInfo.utilPercent",
-        "diskInfo { utilPercent }",
-        "container",
+        "uptimeInSeconds container { cpuPercent memoryPercent diskInfo { utilPercent } }",
     ),
     (
         "runtime.disk.utilPercent",
-        "disk { utilPercent }",
-        "runtime",
+        "uptimeInSeconds disk { utilPercent } container { cpuPercent memoryPercent }",
     ),
     (
         "container.storage.used+total",
-        "storage { used total }",
-        "container",
+        "uptimeInSeconds container { cpuPercent memoryPercent storage { used total } }",
+    ),
+    (
+        "container.diskPercent",
+        "uptimeInSeconds container { cpuPercent memoryPercent diskPercent }",
     ),
 ]
 
@@ -59,27 +72,49 @@ def _gate_on_live_env() -> None:
         )
 
 
-def _build_query(disk_sub: str, placement: str, pod_id: str) -> str:
-    container_block = "container { cpuPercent memoryPercent"
-    runtime_extra = ""
-    if placement == "container":
-        container_block += f" {disk_sub}"
-    elif placement == "runtime":
-        runtime_extra = f"      {disk_sub}\n"
-    container_block += " }"
+def _build_query(runtime_inner: str, pod_id: str) -> str:
     return (
         "{\n"
         f'  pod(input: {{ podId: "{pod_id}" }}) {{\n'
         "    id\n"
-        "    runtime {\n"
-        "      uptimeInSeconds\n"
-        "      gpus { id gpuUtilPercent memoryUtilPercent }\n"
-        f"      {container_block}\n"
-        f"{runtime_extra}"
-        "    }\n"
+        f"    runtime {{ {runtime_inner} }}\n"
         "  }\n"
         "}"
     )
+
+
+def _post_capture_body(
+    url: str, body: dict[str, object], api_key: str
+) -> tuple[int | None, str | None, dict[str, object] | None]:
+    """Wire-level POST that captures HTTP status + response body even on non-2xx."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    encoded_key = urllib.parse.quote(api_key, safe="")
+    sep = "&" if "?" in url else "?"
+    full_url = f"{url}{sep}api_key={encoded_key}"
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(  # noqa: S310
+        full_url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "kinoforge/0.1 (+disk-probe)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+            raw = resp.read().decode("utf-8")
+            return resp.status, raw, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            decoded = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            decoded = None
+        return exc.code, raw, decoded
 
 
 def test_runpod_util_disk_field_probe() -> None:
@@ -123,8 +158,10 @@ def test_runpod_util_disk_field_probe() -> None:
     instance_id = instance.id
     print(f"Probe pod created: {instance_id!r}", file=sys.stderr)
 
+    from typing import Any
+
     disk_field: str | None = None
-    envelopes: list[dict[str, object]] = []
+    envelopes: list[dict[str, Any]] = []
 
     try:
         deadline = time.monotonic() + _SESSION_LIFETIME_S
@@ -136,35 +173,55 @@ def test_runpod_util_disk_field_probe() -> None:
         else:
             pytest.fail(f"pod {instance_id} never ready in {_SESSION_LIFETIME_S}s")
 
-        for label, subsel, placement in _DISK_TRIALS:
-            query = _build_query(subsel, placement, instance_id)
-            try:
-                resp = provider._http_post(  # noqa: SLF001 — wire-level probe
-                    provider._base_url,
-                    {"query": query},
-                )
-            except Exception as exc:  # noqa: BLE001 — capture any wire fault
-                envelopes.append(
-                    {
-                        "label": label,
-                        "subsel": subsel,
-                        "placement": placement,
-                        "error": repr(exc),
-                    }
-                )
-                print(f"REJECTED: {label!r} → {exc!r}", file=sys.stderr)
-                continue
-            envelopes.append(
-                {"label": label, "subsel": subsel, "placement": placement, "resp": resp}
+        baseline_ok = False
+        for label, runtime_inner in _TRIALS:
+            query = _build_query(runtime_inner, instance_id)
+            status, raw, decoded = _post_capture_body(
+                provider._base_url,  # noqa: SLF001 — wire-level probe
+                {"query": query},
+                api_key,
             )
-            if "errors" not in resp and resp.get("data", {}).get("pod"):
-                disk_field = label
-                print(f"WINNER: {label!r}", file=sys.stderr)
-                break
-            print(
-                f"REJECTED: {label!r} → {resp.get('errors')!r}",
-                file=sys.stderr,
-            )
+            envelope = {
+                "label": label,
+                "runtime_inner": runtime_inner,
+                "status": status,
+                "body": decoded if decoded is not None else raw,
+            }
+            envelopes.append(envelope)
+            if status == 200 and decoded and "errors" not in decoded:
+                data_val = decoded.get("data")
+                data_dict: dict[str, Any] = (
+                    data_val if isinstance(data_val, dict) else {}
+                )
+                pod_data_raw = data_dict.get("pod")
+                pod_data: dict[str, Any] | None = (
+                    pod_data_raw if isinstance(pod_data_raw, dict) else None
+                )
+                if pod_data:
+                    if label.startswith("baseline."):
+                        baseline_ok = True
+                        print(
+                            f"BASELINE OK: {label!r} → "
+                            f"runtime={pod_data.get('runtime')!r}",
+                            file=sys.stderr,
+                        )
+                    else:
+                        disk_field = label
+                        print(
+                            f"DISK WINNER: {label!r} → {pod_data!r}",
+                            file=sys.stderr,
+                        )
+                        break
+                else:
+                    print(
+                        f"NO POD: {label!r} → data.pod null",
+                        file=sys.stderr,
+                    )
+            else:
+                err = (decoded.get("errors") if decoded else None) or raw
+                print(f"REJECTED: {label!r} ({status}) → {err!r}", file=sys.stderr)
+
+        print(f"\nbaseline_runtime_reachable: {baseline_ok}", file=sys.stderr)
 
     finally:
         provider.destroy_instance(instance_id)
