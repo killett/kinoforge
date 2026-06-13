@@ -340,3 +340,245 @@ def test_dispatch_table_covers_every_argparse_subcommand() -> None:
         f"not in dispatch; dispatch has {dispatch_cmds - parser_cmds!r} not "
         f"in parser"
     )
+
+
+# ---------------------------------------------------------------------------
+# B4 — `kinoforge generate --instance-id` warm-attach
+# ---------------------------------------------------------------------------
+
+
+_LOCAL_FAKE_YAML_HB = (
+    "engine:\n  kind: fake\n  precision: fp16\n"
+    "models:\n  - kind: base\n    name: m\n    ref: fake://m\n    target: checkpoints\n"
+    "compute:\n  provider: local\n  image: kinoforge/local:latest\n"
+    "  lifecycle:\n    idle_timeout: 1h\n    job_timeout: 30m\n"
+    "    time_buffer: 30m\n    max_lifetime: 3h\n    budget: 10.0\n"
+    "    heartbeat_interval_s: 30\n"
+)
+
+
+def _write_local_cfg_hb(p: Path) -> Path:
+    """Local cfg carrying heartbeat_interval_s so classify() can return LIVE.
+
+    The base ``_write_local_cfg`` leaves heartbeat_interval_s at None
+    (Lifecycle default) — classify() Row-7 short-circuits to
+    HEARTBEAT_UNKNOWN, which the B4 helper refuses without --force-attach.
+    """
+    cfg = p / "kf-hb.yaml"
+    cfg.write_text(_LOCAL_FAKE_YAML_HB)
+    return cfg
+
+
+def _ledger_path(state_dir: Path) -> Path:
+    """Return the on-disk Ledger JSON path used by SessionContext.
+
+    SessionContext builds `Ledger(store=LocalArtifactStore(state_dir),
+    run_id="_lifecycle")`; the file lands at
+    ``<state_dir>/_lifecycle/ledger.json``.
+    """
+    return state_dir / "_lifecycle" / "ledger.json"
+
+
+def _seed_ledger_entry(state_dir: Path, *, eid: str, cap_hash: str) -> None:
+    """Pre-populate the ledger with a LIVE-shaped entry for ``eid``."""
+    import time as _time
+
+    p = _ledger_path(state_dir)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    now = _time.time()
+    entry = {
+        "id": eid,
+        "provider": "local",
+        "created_at": now - 60.0,
+        "cost_rate_usd_per_hr": 1.0,
+        "last_heartbeat": now - 5.0,
+        "heartbeat_thread_tick": now - 5.0,
+        "tags": {"kinoforge_key": cap_hash},
+    }
+    p.write_text(json.dumps({"entries": [entry]}))
+
+
+def _cfg_cap_hash(state_dir: Path, cfg_path: Path) -> str:
+    """Return the 12-char capability_key hash for ``cfg_path``."""
+    from kinoforge.cli.context import SessionContext
+
+    sctx = SessionContext.from_args(state_dir=state_dir, cfg_path=cfg_path)
+    assert sctx.cfg is not None
+    return sctx.cfg.capability_key().derive()[:12]
+
+
+def _patch_local_provider_with_live_instance(
+    monkeypatch: pytest.MonkeyPatch, instance_id: str
+) -> None:
+    """Make LocalProvider.list_instances + get_instance report a live pod.
+
+    Real LocalProvider keeps in-process state (no actual pods); the
+    warm-attach path needs classify() to see ``instance_id`` in
+    list_instances and then resolve via get_instance.
+    """
+    from kinoforge.core.interfaces import Instance
+    from kinoforge.providers.local import LocalProvider
+
+    fake = Instance(
+        id=instance_id,
+        provider="local",
+        status="ready",
+        created_at=0.0,
+        endpoints={"http": f"http://localhost/{instance_id}"},
+        tags={},
+    )
+    monkeypatch.setattr(LocalProvider, "list_instances", lambda self: [fake])
+    monkeypatch.setattr(LocalProvider, "get_instance", lambda self, iid: fake)
+
+
+def test_generate_warm_attach_passes_instance_kwarg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--instance-id <id>`` resolves to an Instance and is forwarded."""
+    from unittest.mock import MagicMock
+
+    from kinoforge.cli import main
+    from kinoforge.core.interfaces import Artifact
+
+    cfg = _write_local_cfg_hb(tmp_path)
+    state = tmp_path / "state"
+    cap_hash = _cfg_cap_hash(state, cfg)
+    _seed_ledger_entry(state, eid="i-warm", cap_hash=cap_hash)
+    _patch_local_provider_with_live_instance(monkeypatch, "i-warm")
+
+    spy = MagicMock(return_value=(Artifact(uri="file:///tmp/x.mp4"), None))
+    monkeypatch.setattr("kinoforge.cli.generate", spy)
+
+    rc = main(
+        [
+            "--state-dir",
+            str(state),
+            "generate",
+            "-c",
+            str(cfg),
+            "--prompt",
+            "test prompt",
+            "--mode",
+            "t2v",
+            "--instance-id",
+            "i-warm",
+        ]
+    )
+    assert rc == 0
+    assert spy.call_count == 1
+    kwargs = spy.call_args.kwargs
+    assert kwargs.get("instance") is not None
+    assert kwargs["instance"].id == "i-warm"
+
+
+def test_generate_refuses_unknown_instance_id_exit_1(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from kinoforge.cli import main
+
+    cfg = _write_local_cfg(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "ledger.json").write_text("[]")
+
+    rc = main(
+        [
+            "--state-dir",
+            str(state),
+            "generate",
+            "-c",
+            str(cfg),
+            "--prompt",
+            "p",
+            "--mode",
+            "t2v",
+            "--instance-id",
+            "i-nope",
+        ]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "not found in ledger" in err
+
+
+def test_generate_force_attach_without_instance_id_exit_2(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from kinoforge.cli import main
+
+    cfg = _write_local_cfg(tmp_path)
+    state = tmp_path / "state"
+    rc = main(
+        [
+            "--state-dir",
+            str(state),
+            "generate",
+            "-c",
+            str(cfg),
+            "--prompt",
+            "p",
+            "--mode",
+            "t2v",
+            "--force-attach",
+        ]
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--force-attach" in err
+    assert "--instance-id" in err
+
+
+def test_generate_force_attach_passes_through_idle_reap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """IDLE_REAP entry + --force-attach → dispatches to generate normally."""
+    import time as _time
+    from unittest.mock import MagicMock
+
+    from kinoforge.cli import main
+    from kinoforge.core.interfaces import Artifact
+
+    cfg = _write_local_cfg(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    cap_hash = _cfg_cap_hash(state, cfg)
+    now = _time.time()
+    entry = {
+        "id": "i-idle",
+        "provider": "local",
+        "created_at": now - 60.0,
+        "cost_rate_usd_per_hr": 1.0,
+        "last_heartbeat": now - 99999.0,
+        "heartbeat_thread_tick": now - 5.0,
+        "tags": {"kinoforge_key": cap_hash},
+    }
+    p = _ledger_path(state)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"entries": [entry]}))
+    _patch_local_provider_with_live_instance(monkeypatch, "i-idle")
+
+    spy = MagicMock(return_value=(Artifact(uri="file:///tmp/x.mp4"), None))
+    monkeypatch.setattr("kinoforge.cli.generate", spy)
+
+    rc = main(
+        [
+            "--state-dir",
+            str(state),
+            "generate",
+            "-c",
+            str(cfg),
+            "--prompt",
+            "p",
+            "--mode",
+            "t2v",
+            "--instance-id",
+            "i-idle",
+            "--force-attach",
+        ]
+    )
+    assert rc == 0
+    assert spy.call_args.kwargs.get("instance") is not None
