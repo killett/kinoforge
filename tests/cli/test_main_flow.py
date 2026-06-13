@@ -582,3 +582,150 @@ def test_generate_force_attach_passes_through_idle_reap(
     )
     assert rc == 0
     assert spy.call_args.kwargs.get("instance") is not None
+
+
+# ---------------------------------------------------------------------------
+# B4 — `kinoforge batch --instance-id` warm-attach
+# ---------------------------------------------------------------------------
+
+
+def _write_batch_manifest(p: Path, *, rows: int = 3) -> Path:
+    """Write a minimal batch manifest (top-level YAML list) with N rows."""
+    import yaml
+
+    entries = [
+        {"prompt": f"prompt-{i}", "mode": "t2v", "run_id": f"r-{i}"}
+        for i in range(rows)
+    ]
+    m = p / "manifest.yaml"
+    m.write_text(yaml.safe_dump(entries))
+    return m
+
+
+def _empty_batch_result(batch_id: str) -> object:
+    """Minimal BatchResult for spying."""
+    from kinoforge.core.batch import BatchResult
+
+    return BatchResult(
+        batch_id=batch_id,
+        started_at="2026-06-12T00:00:00",
+        finished_at="2026-06-12T00:00:01",
+        outcomes=[],
+    )
+
+
+def test_batch_warm_attach_single_pod_for_all_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All manifest rows share one Instance via the warm-attach path."""
+    from unittest.mock import MagicMock
+
+    from kinoforge.cli import main
+
+    cfg = _write_local_cfg_hb(tmp_path)
+    state = tmp_path / "state"
+    cap_hash = _cfg_cap_hash(state, cfg)
+    _seed_ledger_entry(state, eid="i-warm-batch", cap_hash=cap_hash)
+    _patch_local_provider_with_live_instance(monkeypatch, "i-warm-batch")
+    manifest = _write_batch_manifest(tmp_path, rows=3)
+
+    spy = MagicMock(return_value=_empty_batch_result("batch-b4"))
+    monkeypatch.setattr("kinoforge.core.batch.batch_generate", spy)
+
+    rc = main(
+        [
+            "--state-dir",
+            str(state),
+            "batch",
+            "-c",
+            str(cfg),
+            "--manifest",
+            str(manifest),
+            "--instance-id",
+            "i-warm-batch",
+            "--stream-format",
+            "none",
+        ]
+    )
+    assert rc == 0
+    assert spy.call_count == 1
+    kwargs = spy.call_args.kwargs
+    assert kwargs.get("instance") is not None
+    assert kwargs["instance"].id == "i-warm-batch"
+
+
+def test_batch_refuses_capability_key_mismatch_exit_2(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import time as _time
+
+    from kinoforge.cli import main
+
+    cfg = _write_local_cfg(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    now = _time.time()
+    bad_entry = {
+        "id": "i-mismatch",
+        "provider": "local",
+        "created_at": now - 60.0,
+        "cost_rate_usd_per_hr": 1.0,
+        "last_heartbeat": now - 5.0,
+        "heartbeat_thread_tick": now - 5.0,
+        "tags": {"kinoforge_key": "zzzzzzzzzzzz"},
+    }
+    p = _ledger_path(state)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"entries": [bad_entry]}))
+    manifest = _write_batch_manifest(tmp_path)
+
+    rc = main(
+        [
+            "--state-dir",
+            str(state),
+            "batch",
+            "-c",
+            str(cfg),
+            "--manifest",
+            str(manifest),
+            "--instance-id",
+            "i-mismatch",
+            "--stream-format",
+            "none",
+        ]
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "capability_key mismatch" in err
+
+
+def test_batch_force_attach_without_instance_id_exit_2(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from kinoforge.cli import main
+
+    cfg = _write_local_cfg(tmp_path)
+    state = tmp_path / "state"
+    manifest = _write_batch_manifest(tmp_path)
+
+    rc = main(
+        [
+            "--state-dir",
+            str(state),
+            "batch",
+            "-c",
+            str(cfg),
+            "--manifest",
+            str(manifest),
+            "--force-attach",
+            "--stream-format",
+            "none",
+        ]
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--force-attach" in err
+    assert "--instance-id" in err

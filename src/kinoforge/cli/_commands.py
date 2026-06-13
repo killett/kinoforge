@@ -440,6 +440,24 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     else:
         print(header)
 
+    # B4 — warm-attach precheck (single Instance reused across every row).
+    instance: Instance | None = None
+    if getattr(args, "instance_id", None) is not None:
+        instance, rc = _resolve_warm_instance(
+            ctx,
+            cfg,
+            args.instance_id,
+            force_attach=bool(getattr(args, "force_attach", False)),
+        )
+        if rc is not None:
+            return rc
+    elif getattr(args, "force_attach", False):
+        print(
+            "error: --force-attach has no effect without --instance-id",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         result = batch_generate(
             cfg,
@@ -454,6 +472,7 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
             # CLI SIGINT propagates through the inner deploy_session +
             # every per-entry GenerateClipStage.run() poll loop.
             cancel_token=ctx.cancel_token,
+            instance=instance,
         )
     except (BudgetExceeded, CapabilityMismatch, TeardownError) as exc:
         print(
