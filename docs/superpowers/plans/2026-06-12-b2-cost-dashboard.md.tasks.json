@@ -53,7 +53,7 @@
     {
       "id": 17,
       "subject": "Task 8: examples + README + PROGRESS + Layer V spec closeout",
-      "status": "in_progress",
+      "status": "completed",
       "blockedBy": [15, 16],
       "description": "**Goal:** Operator-facing entry points + project docs reflect B2 as shipped; PROGRESS, warm-reuse-tasks.txt, Layer V spec updated.\n\n**Files:**\n- Create: `examples/configs/cost.yaml`\n- Modify: `tests/test_examples.py`\n- Modify: `README.md`\n- Modify: `PROGRESS.md`\n- Modify: `warm-reuse-tasks.txt`\n- Modify: `docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md`\n\n**Verify:** `pixi run pytest tests/test_examples.py -v && pixi run pre-commit run --all-files`\n\n```json:metadata\n{\"files\": [\"examples/configs/cost.yaml\", \"tests/test_examples.py\", \"README.md\", \"PROGRESS.md\", \"warm-reuse-tasks.txt\", \"docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"cost.yaml loads\", \"README Cost dashboard section present\", \"PROGRESS B2 struck with sha\", \"warm-reuse-tasks.txt status flipped\", \"Layer V spec §6 amended\"]}\n```"
     }
