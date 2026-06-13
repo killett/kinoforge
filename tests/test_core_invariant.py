@@ -519,6 +519,69 @@ _SWEEPER_METRICS_FORBIDDEN_IMPORTS: list[re.Pattern[str]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# C26 — core/util_endpoints.py + core/util_counter.py purity contract
+# ---------------------------------------------------------------------------
+
+_UTIL_FORBIDDEN_IMPORTS: list[re.Pattern[str]] = [
+    re.compile(r"^\s*(import|from)\s+urllib\b"),
+    re.compile(r"^\s*(import|from)\s+subprocess\b"),
+    re.compile(r"^\s*(import|from)\s+threading\b"),
+    re.compile(r"^\s*(import|from)\s+pathlib\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.providers\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.sources\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.engines\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.stores\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.cli\b"),
+]
+
+
+def test_core_util_endpoints_module_is_pure() -> None:
+    """C26: core/util_endpoints.py is pure (Protocol + frozen dataclass + gate)."""
+    path = SRC_ROOT / "core" / "util_endpoints.py"
+    violations: list[str] = []
+    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+        for pattern in _UTIL_FORBIDDEN_IMPORTS:
+            if pattern.match(line):
+                violations.append(f"{path}:{lineno}: {line.strip()}")
+                break
+    if violations:
+        detail = "\n  ".join(violations)
+        raise AssertionError(
+            f"core/util_endpoints.py must be pure — forbidden import(s):\n  {detail}"
+        )
+
+
+def test_core_util_counter_module_is_pure() -> None:
+    """C26: core/util_counter.py is pure (state-machine helper)."""
+    path = SRC_ROOT / "core" / "util_counter.py"
+    violations: list[str] = []
+    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+        for pattern in _UTIL_FORBIDDEN_IMPORTS:
+            if pattern.match(line):
+                violations.append(f"{path}:{lineno}: {line.strip()}")
+                break
+    if violations:
+        detail = "\n  ".join(violations)
+        raise AssertionError(
+            f"core/util_counter.py must be pure — forbidden import(s):\n  {detail}"
+        )
+
+
+def test_runpod_util_satisfier_is_in_vendor_scan_path() -> None:
+    """C26: vendor-SDK confinement test must scan providers/runpod/util.py.
+
+    Regression guard: if a future refactor moved the new util satisfier
+    out of providers/runpod/, the vendor-SDK confinement test would
+    silently stop checking it. Verify the file path is exercised.
+    """
+    util_path = SRC_ROOT / "providers" / "runpod" / "util.py"
+    assert util_path.exists(), f"expected {util_path} to exist for vendor scan"
+    # The actual confinement check happens in
+    # test_vendor_imports_confined_to_adapter_packages above. This test
+    # is the existence-of-file regression guard.
+
+
 def test_core_sweeper_metrics_module_is_pure() -> None:
     """Layer W: core/sweeper_metrics.py is pure — no I/O, no ledger import.
 

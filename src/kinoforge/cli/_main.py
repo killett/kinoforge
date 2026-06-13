@@ -253,6 +253,29 @@ def _install_sigint_handler(token: CancelToken) -> None:
     signal.signal(signal.SIGINT, _handler)
 
 
+def _nonnegative_float(value: str) -> float:
+    """Argparse type converter — accept any non-negative float, else exit rc=1.
+
+    Args:
+        value: Raw string from the command line.
+
+    Returns:
+        Parsed float value.
+
+    Raises:
+        argparse.ArgumentTypeError: When ``value`` is not a parseable
+            non-negative float (argparse converts this to ``SystemExit(2)``
+            with an "invalid value" message).
+    """
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a float") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"{value!r} must be >= 0")
+    return parsed
+
+
 def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentParser:
     """Build and return the top-level ArgumentParser.
 
@@ -320,6 +343,16 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_deploy = sub.add_parser("deploy", help="provision compute and deploy")
     p_deploy.add_argument("--config", required=True, metavar="PATH")
     p_deploy.add_argument("--dry-run", action="store_true")
+    p_deploy.add_argument(
+        "--stall-window-override",
+        type=_nonnegative_float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "C26: persist a per-entry stall_window_s override into the "
+            "ledger entry (≥ 0). Useful for known-slow-boot workloads."
+        ),
+    )
 
     # provision
     p_provision = sub.add_parser("provision", help="provision an existing instance")
