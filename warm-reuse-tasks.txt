@@ -364,95 +364,12 @@ destroying based on a known-no-op heartbeat source.
 
 
 
-- **B4. Cross-CLI warm-reuse CLI exposure.** Layer P Task 7 item #2 (`2026-06-01-layer-p-task7-item2-warm-reuse-design.md:54,546`) noted `LifecycleManager.warm_reuse_or_create` CLI surface as a Layer Q candidate; Layer Q shipped HF source instead — surface never materialized. Sub-item of B3.
-
-    What it is. The Python-side warm-reuse plumbing for kinoforge generate and
-    kinoforge batch already exists end-to-end. deploy_session, generate, and
-    batch_generate all accept an instance: Instance | None = None kwarg (Phase 28 Layer P
-    Task 7 item #2). When non-None, the caller's pre-discovered pod is reused; cold-start
-    create_instance and the matching teardown on CapabilityMismatch / ValidationError
-    are skipped (caller owns the pod, caller decides on destroy). LifecycleManager.
-    warm_reuse_or_create (core/lifecycle.py:308-345) is the pure decision helper. The
-    feature is exercised today by the Layer P live smoke (tests/live/test_comfyui_wan_live.py) in
-    a manual loop that calls find_instance_by_tag then passes instance= directly
-    into generate(). There is no CLI surface for any of this. kinoforge generate and
-    kinoforge batch never expose --instance-id <id>. The operator has no way to say
-    "use the pod I already provisioned" without writing a Python script that imports
-    kinoforge.core.orchestrator directly. The deferral note at 2026-06-01-layer-p-task7-
-    item2-warm-reuse-design.md:54,545-547 explicitly named "Layer Q candidate"; Layer Q
-    shipped HuggingFaceSource (Phase 30) instead and the CLI flag was never picked back up.
-
-    Why it might be next. Three reasons it's a viable layer pick today.
-
-  1. It is the cheapest way to claw back the cold-start cost without committing to the
-  full B3 (Layer Y in-session warm-reuse retrofit) blast-radius work. B3 makes warm-
-  reuse automatic (orchestrator consults the ledger, classifies, attaches). B4 makes
-  it explicit (operator types the id). The user-visible win on a fresh shell is the
-  same: a second kinoforge generate against a still-warm pod skips the 1-5 minute
-  ComfyUI + Wan spin-up. The implementation cost is roughly an order of magnitude
-  smaller because the orchestrator doesn't need to grow a discovery + classify +
-  lock-coordination path.
-  2. It composes naturally with B2 (Layer X cost dashboard). Operator runs kinoforge cost to see
-  what's LIVE-and-burning, picks the matching pod id, passes it to
-  --instance-id on the next generate. The two together turn the ledger from a
-  diagnostic surface into a feature surface.
-  3. It also serves as the override path for B3 once B3 ships. Even with automatic
-  warm-reuse, the operator sometimes wants to pin a specific pod (e.g. two same-
-  capability-key pods exist, only one has the right warmed VRAM state, the operator
-  knows which). --instance-id is the manual escape hatch B3 will eventually need
-  anyway.
-
-    Surface area. Smaller than B1/B2/B3.
-
-  - CLI flags. kinoforge generate --instance-id <id> and kinoforge batch --instance-id <id>. Both
-  threaded through _cmd_generate / _cmd_batch into the
-  existing instance= kwarg. The orchestrator side requires zero changes — it already
-  accepts the kwarg.
-  - Resolution path. The CLI receives a string id, but deploy_session expects an
-  Instance dataclass. Add a provider.get_instance(id) -> Instance lookup at CLI
-  dispatch time. RunPod, SkyPilot, and Local all already implement get_instance (it's
-  on the ComputeProvider ABC) so this is a one-line lookup wired into the existing
-  SessionContext.provider() factory.
-  - Failure surface. Three failure modes: id unknown to provider (raise
-  KeyError-typed exit-code-1 "instance not found"); id known but status != "ready"
-  (refuse with exit-code-1 "instance not ready: status="); id from a different
-  provider than cfg.compute.provider (refuse — the orchestrator's resolved provider
-  can only manage its own ids).
-  - kinoforge list adjacency. Operators need to find candidate ids. kinoforge list already shows
-  live ledger entries (Phase 33 Layer S); appending the
-  instance-id column is a one-line print-format change so the discovery path is
-  list → copy id → generate --instance-id.
-  - Ledger touch. When warm-reusing, the orchestrator should NOT re-record the
-  instance to the ledger (it's already there from the first generate); but it SHOULD
-  Ledger.touch(id, ...) if Layer U's HeartbeatLoop is configured. Existing
-  deploy_session wire-up already handles this conditional correctly.
-
-    Risk. Low. Three concrete risks: (1) operator passes an id that already crossed
-    the dead-man window but kinoforge's view says LIVE (Layer V classify returns LIVE but
-    the pod is wedged) — the operator wastes a job submit and discovers the wedge at
-    HTTP-failure time. Mitigation: run classify against the supplied id at CLI entry and
-    refuse if verdict is HEARTBEAT_UNKNOWN / ORPHAN_REAP / IDLE_REAP unless
-    --force-attach is passed. (2) tag-discovery races: the CLI lookup happens before the
-    orchestrator's engine.provision(idempotent) runs, so an over-eager Layer V sweep
-    (when B1 ships) could destroy the pod between --instance-id validation and generate
-    body. Solvable by holding the same Phase 18 reaper/<id> lock for the duration of the
-    generate. (3) capability_key mismatch: operator passes a pod id whose capability_key
-    doesn't match the supplied --config. Orchestrator already detects this via the
-    CapabilityMismatch path; the spec §Q2 decision says skip teardown on caller-supplied
-    instance. So the operator gets a clean error, the pod survives — but they wasted a CLI
-    invocation. Add a CLI-side pre-check that loads the cfg, derives CapabilityKey, and
-    compares against the ledger entry's stored capability key (Layer S already persists it).
-
-    Effort estimate. ~4-5 tasks. The smallest of the warm-reuse trio. Per-CLI flag
-    wiring + resolution lookup (~30 LOC across cli/_main.py + cli/_commands.py),
-    capability-key pre-check (~20 LOC, reuses Layer S ledger), kinoforge list
-    instance-id column (~10 LOC), offline tests + a dry-run live smoke (FakeProvider
-    exercises every code path), README "Operator warm-reuse" section. Total ~70 LOC source
-    + ~150 LOC tests. No new specs or substrate. The only schema-adjacent decision is
-    whether --instance-id is mutually-exclusive with --dry-run (yes — a dry-run
-    doesn't need a real pod), and whether it interacts with --config (yes — config is
-    still required for capability_key derivation + engine.backend construction). Both
-    decisions resolve to one-line argparse rules.
+- **B4. Cross-CLI warm-reuse CLI exposure.** CLOSED — see
+  `docs/superpowers/specs/2026-06-12-b4-cross-cli-warm-reuse-design.md`
+  and `docs/superpowers/plans/2026-06-12-b4-cross-cli-warm-reuse-plan.md`.
+  Shipped `kinoforge generate --instance-id <id>` / `kinoforge batch
+  --instance-id <id>` + `--force-attach` override + `kinoforge list`
+  capability_key column. Helper at `cli/_commands.py:_resolve_warm_instance`.
 
 
 

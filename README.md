@@ -106,6 +106,54 @@ freshness first — otherwise a crashed loop would look indistinguishable
 from a healthy quiet session and the reaper would destroy live pods.
 See `Ledger.touch`'s docstring for the formal contract.
 
+## Operator warm-reuse (B4)
+
+After a successful `kinoforge generate` or `kinoforge deploy`, the
+provisioned pod stays in the local ledger. A second invocation can
+reuse it without paying the 1–5 minute ComfyUI + Wan cold-start cost.
+
+### Discovery loop
+
+```bash
+kinoforge list                       # shows id + provider + capability_key
+# Match the printed capability_key against your cfg:
+#   python -c "from kinoforge.core.config import load_config; \
+#              print(load_config('cfg.yaml').capability_key().derive()[:12])"
+kinoforge status --id <id>           # confirm verdict is LIVE
+kinoforge generate -c cfg.yaml --prompt P --mode t2v --instance-id <id>
+```
+
+`kinoforge batch -c cfg.yaml --manifest m.yaml --instance-id <id>` reuses
+the same pod across every manifest row.
+
+### `--force-attach` matrix
+
+When the classify verdict is not LIVE, `kinoforge generate` /
+`kinoforge batch` refuses. Pass `--force-attach` to override the
+salvageable verdicts:
+
+| Verdict | Default | `--force-attach` |
+|---|---|---|
+| LIVE | attach | attach |
+| HEARTBEAT_UNKNOWN | refuse | attach |
+| IDLE_REAP | refuse | attach |
+| ORPHAN_REAP | refuse | attach |
+| STALE_LEDGER | refuse | refuse (pod is gone) |
+| OVERAGE_REAP | refuse | refuse (max_lifetime policy) |
+| UNROUTABLE | refuse | refuse (provider unreachable) |
+| HEARTBEAT_SUBSTRATE_MISSING | refuse | refuse (no wire substrate) |
+
+Capability_key mismatch is never bypassable — use a cfg matching the
+pod or `kinoforge destroy --id <id>` to free the slot.
+
+Exit codes:
+- `0` — warm-attach succeeded.
+- `1` — instance id not in ledger.
+- `2` — precondition refused (provider mismatch / cap_key mismatch /
+  classify verdict non-LIVE without `--force-attach` / pod raced
+  destroyed between classify and attach / `--force-attach` passed
+  without `--instance-id`).
+
 ## Reaping orphan pods
 
 `kinoforge reap` classifies every ledger entry and (optionally)
