@@ -38,14 +38,27 @@ mutation PodEditJob($input: PodEditJobInput!) {
 }
 """.strip()
 
+# RunPod's PodEditJobInput does NOT have a ``tags`` field — ``tags`` is a
+# design assumption from the B5a spec that proved incorrect when tested
+# against the live API (2026-06-12 live smoke, Task f).  The ``dockerArgs``
+# field IS present in both ``PodEditJobInput`` (write) and the ``pod`` query
+# (read), making it the only available free-form string carrier for
+# cross-session heartbeat state.  Using it for heartbeat timestamps does
+# not break any kinoforge workload because the heartbeat-mode pods have
+# ``provision_script=None`` and do not rely on ``dockerArgs`` for their
+# boot command.
 _POD_QUERY: str = """
 query GetPod($podId: String!) {
   pod(input: {podId: $podId}) {
     id
-    tags { key value }
+    dockerArgs
   }
 }
 """.strip()
+
+#: JSON key embedded in the ``dockerArgs`` string to distinguish the
+#: heartbeat payload from a legitimate docker command string.
+_HEARTBEAT_JSON_KEY: str = "_kinoforge_hb"
 
 
 def _default_http_post(api_key: str) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
@@ -120,9 +133,21 @@ class RunPodGraphQLHeartbeatEndpoint:
         )
 
     def write(self, instance_id: str, ts_local: datetime) -> None:
-        """Stamp the heartbeat tag on ``instance_id`` with ``ts_local``.
+        """Stamp the heartbeat on ``instance_id`` via the pod's ``dockerArgs`` field.
 
-        Idempotent: writing the same value twice rewrites the same slot.
+        RunPod's ``PodEditJobInput`` does NOT have a ``tags`` field — the
+        live-API discovery on 2026-06-12 (B5a Task f) showed only
+        ``podId``, ``env``, ``dockerArgs``, ``imageName``, ``volumeInGb``,
+        and ``containerDiskInGb`` are accepted.  ``dockerArgs`` is the only
+        free-form string that round-trips through both ``podEditJob`` (write)
+        and ``pod { dockerArgs }`` (read).
+
+        The value written is a compact JSON string:
+        ``{"_kinoforge_hb": "<ISO8601 timestamp>"}``
+        so ``read`` can distinguish a kinoforge heartbeat write from a
+        genuine docker start command that happens to be present on the pod.
+
+        Idempotent: writing the same value twice overwrites the same field.
 
         Args:
             instance_id: Pod id whose heartbeat to stamp.
@@ -132,12 +157,15 @@ class RunPodGraphQLHeartbeatEndpoint:
             TransportError: HTTP non-2xx, GraphQL ``errors`` array, or
                 any other transport-layer failure.
         """
+        docker_args_value = json.dumps(
+            {_HEARTBEAT_JSON_KEY: ts_local.isoformat()}, separators=(",", ":")
+        )
         payload = {
             "query": _POD_EDIT_JOB_MUTATION,
             "variables": {
                 "input": {
                     "podId": instance_id,
-                    "tags": [{"key": HEARTBEAT_TAG_KEY, "value": ts_local.isoformat()}],
+                    "dockerArgs": docker_args_value,
                 }
             },
         }
@@ -151,19 +179,24 @@ class RunPodGraphQLHeartbeatEndpoint:
             raise TransportError(f"RunPod podEditJob failed: {resp['errors']}")
 
     def read(self, instance_id: str) -> datetime | None:
-        """Read the heartbeat tag on ``instance_id``.
+        """Read the heartbeat from ``instance_id``'s ``dockerArgs`` field.
+
+        The value written by :meth:`write` is a compact JSON string of the
+        form ``{"_kinoforge_hb": "<ISO8601>"}`` stored in the pod's
+        ``dockerArgs`` field.  ``read`` retrieves that field and parses the
+        embedded timestamp.
 
         Args:
             instance_id: Pod id whose heartbeat to read.
 
         Returns:
-            The parsed timestamp, or ``None`` when the pod is gone or the
-            tag has never been written.
+            The parsed timestamp, or ``None`` when the pod is gone or
+            ``dockerArgs`` has not been written by kinoforge yet.
 
         Raises:
             TransportError: HTTP failure, GraphQL ``errors`` array, JSON
-                parse failure, or a tag value that is present but not
-                parseable as an ISO-8601 datetime.
+                parse failure, or a ``dockerArgs`` value that appears to
+                be a kinoforge heartbeat but cannot be parsed as ISO-8601.
         """
         payload = {
             "query": _POD_QUERY,
@@ -180,17 +213,26 @@ class RunPodGraphQLHeartbeatEndpoint:
         pod = resp.get("data", {}).get("pod")
         if pod is None:
             return None  # instance gone — valid None
-        for tag in pod.get("tags") or []:
-            if tag.get("key") == HEARTBEAT_TAG_KEY:
-                value = tag.get("value")
-                if not isinstance(value, str):
-                    raise TransportError(
-                        f"corrupted heartbeat tag for {instance_id}: value not a string"
-                    )
-                try:
-                    return datetime.fromisoformat(value)
-                except ValueError as exc:
-                    raise TransportError(
-                        f"corrupted heartbeat tag for {instance_id}: {value!r}"
-                    ) from exc
-        return None  # never written — valid None
+        raw = pod.get("dockerArgs")
+        if not isinstance(raw, str) or raw == "":
+            return None  # never written by kinoforge — valid None
+        # Attempt to parse as kinoforge heartbeat JSON; ignore if it looks
+        # like a genuine docker command string.
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return None  # not a kinoforge heartbeat payload — valid None
+        if not isinstance(parsed, dict) or _HEARTBEAT_JSON_KEY not in parsed:
+            return None  # kinoforge key absent — valid None
+        value = parsed[_HEARTBEAT_JSON_KEY]
+        if not isinstance(value, str):
+            raise TransportError(
+                f"corrupted heartbeat dockerArgs for {instance_id}: "
+                f"key present but value not a string"
+            )
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise TransportError(
+                f"corrupted heartbeat dockerArgs for {instance_id}: {value!r}"
+            ) from exc
