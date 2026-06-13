@@ -1,120 +1,54 @@
-# Wan 2.1 14B t2v on RunPod + ComfyUI (sibling of runpod-comfyui-wan.yaml).
+# B3 live smoke cfg — fake engine + RunPod + graphql-tag heartbeat.
 #
-# Wan 2.1 (not 2.2): same fp8 quant family as the i2v config; ~17 GB
-# diffusion + 0.5 GB VAE + 6.7 GB T5 = ~24 GB on disk (~3 GB less than
-# i2v since CLIP-vision is not loaded for text-to-video).
+# Rationale: ComfyUI + RunPod + heartbeat is blocked by C25 (selfterm
+# vs heartbeat dockerArgs collision). Fake engine is the only RunPod-
+# HB-safe engine (per _RUNPOD_HEARTBEAT_SAFE_ENGINES = {"fake"}). The
+# smoke validates the B3 mechanics end-to-end (real RunPod pod
+# creation, real ledger, real heartbeat substrate, cross-CLI scan,
+# pod_id continuity) without exercising the workload — which is
+# independently tested via the existing wan-t2v live suite.
 #
-# Lifecycle is sized for TWO back-to-back generations on the same pod
-# (in-process warm-reuse via test harness; see CLI warm-reuse status
-# in PROGRESS B3/B4). Budget + max_lifetime extended accordingly.
-#
-# Usage:
-#   export RUNPOD_API_KEY=...
-#   export RUNPOD_TERMINATE_KEY=...
-#   export HF_TOKEN=...                     # Wan weights are gated
-#   export KINOFORGE_LIVE_TESTS=1
-#   pixi run pytest tests/live/test_comfyui_wan_t2v_live.py -v -s
-#
-# Cost guards (quadruple-locked):
-#   - max_usd_per_hr: 0.50  (filters expensive GPUs upstream)
-#   - budget: 4.00                    (BudgetTracker tears down mid-run; 2× i2v for 2 generations)
-#   - idle_timeout: 25m + selfterm    (pod self-destructs after 25 min idle; covers cold weight DL)
-#   - finally: in test always destroys (unless KEEP_POD=1)
+# Cost guards:
+#   - max_usd_per_hr: 0.50 (filters expensive GPUs upstream)
+#   - budget: 1.00 (BudgetTracker tears down mid-run; fake gen is ~0s)
+#   - idle_timeout: 5m (no model load → fast destroy on idle)
+#   - max_lifetime: 30m (gen 1 cold ~1min + 30s sleep + gen 2 warm
+#     ~30s = 2-3min real; 30m gives 10× headroom)
+#   - boot_timeout: 10m (RunPod pod-ready usually ~30-90s)
 
 engine:
-  kind: comfyui
+  kind: fake
   precision: fp16
-  comfyui:
-    version: "0.3.10"
-    custom_nodes:
-      - git: "https://github.com/kijai/ComfyUI-WanVideoWrapper"
-        ref: "088128b224242e110d3906c6750e9a3a348a659b"
-      - git: "https://github.com/kijai/ComfyUI-KJNodes"
-        ref: "369c8aee9ad4641823d0ffd7035076bcd297b6f2"
-      # VHS_VideoCombine — required by the kijai workflow's output node
-      # (graph node 30). Same pack used by the i2v config.
-      - git: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
-        ref: "4ee72c065db22c9d96c2427954dc69e7b908444b"
 
 models:
-  # T2V swap: I2V-480P checkpoint → T2V-14B checkpoint (same fp8 quant).
-  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1-T2V-14B_fp8_e4m3fn.safetensors"
+  - ref: "https://example.com/fake-base.safetensors"
     kind: base
     target: diffusion_models
-  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1_VAE_bf16.safetensors"
-    kind: vae
-    target: vae
-  - ref: "hf:Kijai/WanVideo_comfy:umt5-xxl-enc-fp8_e4m3fn.safetensors"
-    kind: text_encoder
-    target: text_encoders
-  # NOTE: no CLIP-vision entry — t2v does not consume clip_vision_h.
 
 compute:
   provider: runpod
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: pod
+  # B3 default — explicit for documentation.
+  warm_reuse_auto_attach: true
+  # B5a substrate — RunPod podEditJob endpoint stamps last_heartbeat
+  # into pod dockerArgs (HB-safe with fake engine per C25 guard).
+  heartbeat_mode: graphql-tag
   requirements:
-    min_vram_gb: 24
-    min_cuda: "12.4"
+    min_vram_gb: 8
+    min_cuda: "12.0"
     max_usd_per_hr: 0.50
     gpu_preference:
       - "NVIDIA GeForce RTX 4090"
       - "NVIDIA RTX A5000"
       - "NVIDIA GeForce RTX 3090"
-    disk_gb: 80
+    disk_gb: 20
   lifecycle:
-    # idle_timeout sized to cover cold weight downloads (~24 GB via
-    # render_provision curl). 25m matches the i2v config's worst-case
-    # bootstrap window (see runpod-comfyui-wan.yaml for the diagnosis
-    # against pod 98f0qlyf8h1210).
-    idle_timeout: 25m
-    # job_timeout per-job; 2 jobs in sequence each capped at 15m.
-    job_timeout: 15m
-    time_buffer: 5m
-    # max_lifetime extended for 2 generations: cold boot (5-15m) +
-    # gen 1 (5-10m) + gen 2 (5-10m) = 15-35m worst case. 90m gives
-    # 2.5× headroom.
-    max_lifetime: 90m
-    boot_timeout: 30m
-    # Budget doubled vs i2v (2.0 → 4.0) to cover 2 generations on the
-    # same pod. At RTX A5000 $0.16/hr the realistic spend is ~$0.10
-    # per generation; the cap is the BudgetTracker's mid-run circuit
-    # breaker, not an estimate.
-    budget: 4.0
-    # B3 — heartbeat substrate required for warm-reuse scan to verdict
-    # LIVE on cold-created pods. Without HB the classify gate returns
-    # HEARTBEAT_UNKNOWN, B3 scan skips with classify-not-live, and
-    # gen 2 cold-creates a new pod (warm-reuse disabled). 30s cadence
-    # matches the B5a wan example.
+    idle_timeout: 5m
+    job_timeout: 5m
+    time_buffer: 2m
+    max_lifetime: 30m
+    boot_timeout: 10m
+    budget: 1.0
+    # B3 — heartbeat cadence; 30s mirrors Layer V default.
     heartbeat_interval_s: 30
-  # B5a substrate — RunPod podEditJob endpoint stamps last_heartbeat
-  # into pod tags so classify can read it back without provider-side
-  # state.
-  heartbeat_mode: graphql-tag
-
-spec:
-  graph_file: runpod-comfyui-wan-t2v.graph.json
-  # No init_image asset for t2v — text-only conditioning. The
-  # WanVideoEmptyEmbeds node (id 80 in the graph) provides the
-  # image_embeds slot WanVideoSampler requires.
-  asset_node_ids: {}
-  prompt_node_ids:
-    # Node 16 = WanVideoTextEncode; feeds node 27 (WanVideoSampler.text_embeds).
-    positive: "16"
-  # WanVideoTextEncode reads "positive_prompt" / "negative_prompt"; same
-  # routing as the i2v graph.
-  prompt_input_field: positive_prompt
-  node_overrides: {}
-
-params:
-  fps: 16
-  num_frames: 81
-  steps: 20
-  width: 480
-  height: 480
-
-# Output sink (Layer O) — uncomment to override defaults.
-# output:
-#   kind: local
-#   dir: output
-#   enabled: true
