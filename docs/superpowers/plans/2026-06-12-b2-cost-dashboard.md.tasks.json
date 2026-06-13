@@ -1,0 +1,62 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-12-b2-cost-dashboard.md",
+  "tasks": [
+    {
+      "id": 10,
+      "subject": "Task 1: core/balance_endpoints.py substrate",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Pure substrate (Protocol + ProviderBalance + TransportError + NoBalanceEndpoint + provider_balance_supported helper) committed with full offline test coverage.\n\n**Files:**\n- Create: `src/kinoforge/core/balance_endpoints.py`\n- Test: `tests/core/test_balance_endpoints.py`\n\n**Verify:** `pixi run pytest tests/core/test_balance_endpoints.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/balance_endpoints.py\", \"tests/core/test_balance_endpoints.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_balance_endpoints.py -v\", \"acceptanceCriteria\": [\"ProviderBalance frozen with default currency USD\", \"BalanceEndpoint Protocol shape\", \"NoBalanceEndpoint.read() returns None\", \"TransportError subclasses Exception not ValueError\", \"provider_balance_supported('runpod') == True, else False\", \"no provider/engine/source imports in substrate\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 2: RunPod GraphQL balance satisfier",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Inject-seam RunPod GraphQL satisfier; all five failure modes covered offline; one operator-captured fixture committed.\n\n**Files:**\n- Create: `src/kinoforge/providers/runpod/balance.py`\n- Create: `tests/providers/test_runpod_balance.py`\n- Create: `tests/providers/fixtures/runpod_balance_response.json`\n\n**Verify:** `pixi run pytest tests/providers/test_runpod_balance.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/balance.py\", \"tests/providers/test_runpod_balance.py\", \"tests/providers/fixtures/runpod_balance_response.json\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_balance.py -v\", \"acceptanceCriteria\": [\"happy path returns ProviderBalance\", \"missing api_key returns None without wire call\", \"schema drift raises TransportError\", \"transport error propagates\", \"negative balance verbatim\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 3: build_balance_endpoint_for dispatch helper",
+      "status": "pending",
+      "blockedBy": [10, 11],
+      "description": "**Goal:** `build_balance_endpoint_for(cfg, creds)` returns satisfier for RunPod, NoBalanceEndpoint for everything else; never raises on lookup.\n\n**Files:**\n- Modify: `src/kinoforge/_adapters.py`\n- Create: `tests/test_adapters_balance.py`\n\n**Verify:** `pixi run pytest tests/test_adapters_balance.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/_adapters.py\", \"tests/test_adapters_balance.py\"], \"verifyCommand\": \"pixi run pytest tests/test_adapters_balance.py -v\", \"acceptanceCriteria\": [\"runpod returns RunPodBalanceEndpoint\", \"non-runpod returns NoBalanceEndpoint\", \"hosted engine returns NoBalanceEndpoint\", \"missing cred does not raise\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 4: core/cost.py pure aggregator",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Pure `aggregate(...)` fold over ledger entries + verdicts → CostSnapshot. No I/O. Bad-entry isolation matches sweep().\n\n**Files:**\n- Create: `src/kinoforge/core/cost.py`\n- Create: `tests/core/test_cost.py`\n\n**Verify:** `pixi run pytest tests/core/test_cost.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/cost.py\", \"tests/core/test_cost.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_cost.py -v\", \"acceptanceCriteria\": [\"_BURNING_VERDICTS excludes STALE_LEDGER and UNROUTABLE\", \"empty ledger zero snapshot\", \"per-provider sorted\", \"bad entry skipped\", \"all 8 Verdict keys present in counts\", \"snapshot and breakdown frozen\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 5: kinoforge cost CLI + three renderers",
+      "status": "pending",
+      "blockedBy": [12, 13],
+      "description": "**Goal:** `kinoforge cost` subcommand with three output modes (human/JSON/Prom mutex), reading ledger + classify + balance dispatch + render.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py`\n- Modify: `src/kinoforge/cli/_commands.py`\n- Create: `tests/cli/test_cmd_cost.py`\n\n**Verify:** `pixi run pytest tests/cli/test_cmd_cost.py -v -k 'not cache'`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_cmd_cost.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_cost.py -v -k 'not cache'\", \"acceptanceCriteria\": [\"human table renders top-line + per-provider + balance\", \"--json schema stable per §10\", \"--prom emits 5 gauges + 1 counter with HELP+TYPE\", \"--json --prom mutex argparse error\", \"balance failure does not block burn render\", \"list_instances fallback to assume-up\", \"replicate throttle env-var read\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 6: balance disk cache with TTL + stale-fallback",
+      "status": "pending",
+      "blockedBy": [14],
+      "description": "**Goal:** Replace Task-5 stub with real cached_balance_read; TTL-gated read, stale-fallback, --no-cache bypass; covered across LocalArtifactStore + mocked-S3.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py`\n- Create: `tests/cli/test_balance_cache.py`\n\n**Verify:** `pixi run pytest tests/cli/test_balance_cache.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_balance_cache.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_balance_cache.py -v\", \"acceptanceCriteria\": [\"cache miss writes fresh\", \"cache hit skips endpoint\", \"cache stale refetches\", \"stale fallback on transport error\", \"--no-cache skips read and write\", \"cache write failure does not raise\"]}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 7: Prom scrape_errors counter + heartbeat_partial_truth gate + LF invariant",
+      "status": "pending",
+      "blockedBy": [14],
+      "description": "**Goal:** Wire kinoforge_cost_scrape_errors_total counter to balance_errors content; consult provider_heartbeat_supported for heartbeat_partial_truth; format-lock LF-only.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py`\n- Modify: `tests/cli/test_cmd_cost.py`\n\n**Verify:** `pixi run pytest tests/cli/test_cmd_cost.py -v -k prom`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_cmd_cost.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_cost.py -v -k prom\", \"acceptanceCriteria\": [\"scrape_errors_total per (provider, reason)\", \"heartbeat_partial_truth includes skypilot when present\", \"LF-only exposition with trailing newline\"]}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 8: examples + README + PROGRESS + Layer V spec closeout",
+      "status": "pending",
+      "blockedBy": [15, 16],
+      "description": "**Goal:** Operator-facing entry points + project docs reflect B2 as shipped; PROGRESS, warm-reuse-tasks.txt, Layer V spec updated.\n\n**Files:**\n- Create: `examples/configs/cost.yaml`\n- Modify: `tests/test_examples.py`\n- Modify: `README.md`\n- Modify: `PROGRESS.md`\n- Modify: `warm-reuse-tasks.txt`\n- Modify: `docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md`\n\n**Verify:** `pixi run pytest tests/test_examples.py -v && pixi run pre-commit run --all-files`\n\n```json:metadata\n{\"files\": [\"examples/configs/cost.yaml\", \"tests/test_examples.py\", \"README.md\", \"PROGRESS.md\", \"warm-reuse-tasks.txt\", \"docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"cost.yaml loads\", \"README Cost dashboard section present\", \"PROGRESS B2 struck with sha\", \"warm-reuse-tasks.txt status flipped\", \"Layer V spec §6 amended\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-12T00:00:00-07:00"
+}
