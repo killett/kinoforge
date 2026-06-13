@@ -179,12 +179,18 @@ def classify(
     # B5a: gate on provider substrate support. When the entry's provider
     # has no wire-level HeartbeatEndpoint shipped yet (e.g. SkyPilot
     # pre-B5b), emit HEARTBEAT_SUBSTRATE_MISSING so consumers do not
-    # treat the absence as actionable. The provider_kind field is set
-    # by Layer S Ledger.record; legacy entries that pre-date it fall
-    # through to HEARTBEAT_UNKNOWN — that path is operator-opted-in
-    # via cfg.compute.heartbeat_mode="none".
+    # treat the absence as actionable. Layer S Ledger.record writes the
+    # provider kind under the key ``"provider"`` (lifecycle.py:504);
+    # earlier B5a iterations of this gate read ``"provider_kind"`` which
+    # the ledger never writes, making the new verdict unreachable on
+    # real production entries. Read both for forward compatibility:
+    # the canonical key is ``"provider"`` (matches Ledger schema), but
+    # test fixtures that pre-date this fix may still pass
+    # ``"provider_kind"``. Legacy ledger entries (pre-Layer-S) lack
+    # both keys and fall through to HEARTBEAT_UNKNOWN — operator-
+    # opted-in dead-man fallback applies.
     if hb_tick is None or hb is None or heartbeat_interval_s is None:
-        provider_kind = entry.get("provider_kind")
+        provider_kind = entry.get("provider_kind") or entry.get("provider")
         if provider_kind is not None and not provider_heartbeat_supported(
             str(provider_kind)
         ):
