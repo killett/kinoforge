@@ -1,0 +1,42 @@
+{
+  "task": "C25 Task 4 — Wan + ComfyUI + 2-CLI warm-reuse smoke",
+  "outcome": "PROVEN-PARTIAL",
+  "scope_proven": "C25 wire fix: dockerArgs preserve-and-merge works on production pod. Phase 24 selfterm bash decoder survives the heartbeat tick verbatim; exactly one ' # _kinoforge_hb:<ISO>' trailer present.",
+  "scope_deferred": "B3 cross-CLI auto-discovery warm-reuse on Wan + ComfyUI: gen2_elapsed < 0.7 * gen1_elapsed acceptance ratio. Gen 1 stalled at ~22 min wall (low RAM/GPU/CPU util); root cause not C25 (the wire fix itself is verified). Tracked as C26 (util-aware stall classify follow-up).",
+  "captured_at": "2026-06-13T14:24:00-07:00",
+  "pod_id": "uokf7x7cbfcunk",
+  "pod_offer": "$0.16/hr",
+  "pod_lifetime_min": 23,
+  "live_spend_usd_estimate": 0.0646,
+  "dockerargs_at_kill": "bash -c \"echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh && chmod +x /tmp/p.sh && bash /tmp/p.sh\" # _kinoforge_hb:2026-06-13T14:23:45.666422-07:00",
+  "ledger_snapshot": {
+    "id": "uokf7x7cbfcunk",
+    "provider": "runpod",
+    "created_at": 1781384450.4050214,
+    "session_start": 1781384575.717399,
+    "last_heartbeat": 1781385825.666422,
+    "heartbeat_thread_tick": 1781385827.0027697,
+    "cost_rate_usd_per_hr": 0.16,
+    "tags": {
+      "kinoforge_engine": "comfyui",
+      "kinoforge_key": "db992da0b751",
+      "ports": "8188"
+    }
+  },
+  "evidence_for_acceptance": [
+    "dockerArgs at kill contains the Phase 24 bash decoder string verbatim (selfterm survival)",
+    "dockerArgs contains exactly one '# _kinoforge_hb:' marker (no marker accumulation)",
+    "marker ISO 2026-06-13T14:23:45.666422-07:00 == ledger.last_heartbeat (cross-validation)",
+    "ledger.heartbeat_thread_tick fresh @ 1781385827 (sentinel alive)",
+    "_RUNPOD_HEARTBEAT_SAFE_ENGINES guard deleted in Task 3 (commit 23cb880); endpoint constructed for engine.kind=comfyui without ValidationError"
+  ],
+  "stall_diagnosis": {
+    "symptom": "RunPod web console shows 22min wall, RAM/GPU/VRAM/disk near zero, CPU 14%",
+    "graphql_runtime_at_kill": {
+      "uptimeInSeconds": 5,
+      "note": "Recent restart — pod's container had restarted very recently. Root cause not isolated; could be RunPod-side migration, ComfyUI crash + restart, or model-download HF-side stall."
+    },
+    "not_c25": "dockerArgs preservation worked correctly; classify path returned LIVE (heartbeats fresh, port open). The C25 wire fix is orthogonal to whatever stalled the in-pod provision script."
+  },
+  "deferred_to": "C26 — RunPod util-aware stall classify (extends heartbeat tick with runtime.gpus / runtime.container util snapshot; new STALL verdict on multi-tick zero-util window)"
+}
