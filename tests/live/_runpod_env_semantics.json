@@ -1,0 +1,19 @@
+{
+  "semantics": "read-unavailable",
+  "captured_at": "2026-06-13T13:49:36.544056-07:00",
+  "tested_pod_id": "ssbbm0vjyd56a9",
+  "envelope": {
+    "edit_resp": {
+      "data": {
+        "podEditJob": {
+          "id": "ssbbm0vjyd56a9"
+        }
+      }
+    },
+    "read_http_error": {
+      "code": 400,
+      "reason": "Bad Request",
+      "body": "{\"errors\":[{\"message\":\"Field \\\"env\\\" must not have a selection since type \\\"[String]\\\" has no subfields.\",\"locations\":[{\"line\":4,\"column\":17}],\"extensions\":{\"code\":\"GRAPHQL_VALIDATION_FAILED\"}}]}\n"
+    }
+  }
+}

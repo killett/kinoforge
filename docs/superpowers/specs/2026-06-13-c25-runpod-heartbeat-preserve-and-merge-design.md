@@ -85,6 +85,8 @@ Task b: implementation
 
 The substrate Protocol (`HeartbeatEndpoint` in `core/heartbeat_endpoints.py`) is unchanged in BOTH branches — `write(instance_id, ts_local)` / `read(instance_id)` signatures preserved. Only `RunPodGraphQLHeartbeatEndpoint` internals change.
 
+**Probe outcome (captured 2026-06-13T13:49:36-07:00, pod `ssbbm0vjyd56a9`, commit `3d97f69`):** `read-unavailable`. RunPod's GraphQL `pod.env` field is typed `[String]` (no subfields), so the `env { key value }` selection set returns HTTP 400 `GRAPHQL_VALIDATION_FAILED`. We cannot reliably read individual env keys back, so even though `podEditJob(env:[...])` may merge additively, we cannot verify a tick landed. Task 2 ships **Branch B** (dockerArgs preserve-and-merge). Sidecar: `tests/live/_runpod_env_semantics.json`.
+
 ## 4. Branch A — env-additive happy path
 
 Fires when probe outcome = `"additive"`.
