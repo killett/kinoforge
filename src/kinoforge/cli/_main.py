@@ -441,6 +441,23 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         action="store_true",
         help="disable user-facing publish; clips remain only in the store",
     )
+    p_batch.add_argument(
+        "--instance-id",
+        default=None,
+        metavar="ID",
+        help=(
+            "reuse an existing pod across every manifest row instead of "
+            "cold-creating. Use `kinoforge list` to find candidate ids."
+        ),
+    )
+    p_batch.add_argument(
+        "--force-attach",
+        action="store_true",
+        help=(
+            "override classify verdicts HEARTBEAT_UNKNOWN, IDLE_REAP, "
+            "ORPHAN_REAP for the supplied --instance-id."
+        ),
+    )
 
     return parser
 
