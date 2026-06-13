@@ -21,7 +21,7 @@ from kinoforge.cli.context import SessionContext
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.errors import UnknownAdapter
-from kinoforge.core.interfaces import GenerationRequest
+from kinoforge.core.interfaces import GenerationRequest, Instance
 from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.orchestrator import generate
 from kinoforge.core.reaper_actor import sweep
@@ -31,6 +31,7 @@ from kinoforge.stores.base import ArtifactStore
 from kinoforge.stores.local import LocalArtifactStore
 
 if TYPE_CHECKING:
+    from kinoforge.core.interfaces import Lifecycle
     from kinoforge.core.reaper_actor import SweepReport
 
 # Module-level clock seam preserved for test monkeypatching.
@@ -614,6 +615,192 @@ def _classify_for_status(
         heartbeat_interval_s=lifecycle.heartbeat_interval_s,
         grace_after_session_s=lifecycle.grace_after_session_s,
     ).value
+
+
+# ---------------------------------------------------------------------------
+# B4 — `--instance-id` warm-attach helper
+# ---------------------------------------------------------------------------
+
+
+_FORCE_BYPASSABLE_VERDICTS: frozenset[str] = frozenset(
+    {"HEARTBEAT_UNKNOWN", "IDLE_REAP", "ORPHAN_REAP"}
+)
+
+
+def _resolve_warm_instance(
+    ctx: SessionContext,
+    cfg: Config,
+    instance_id: str,
+    *,
+    force_attach: bool,
+) -> tuple[Instance | None, int | None]:
+    """Validate operator-supplied --instance-id; return Instance or exit code.
+
+    Order (D1 cheap-first):
+      1. Ledger.read(instance_id) — missing → (None, 1).
+      2. Provider-kind: entry["provider"] vs cfg.compute.provider → (None, 2).
+      3. capability_key: cfg.capability_key().derive()[:12] vs
+         entry["tags"]["kinoforge_key"] → (None, 2).
+      4. Provider construction → (None, 2) on UnknownAdapter / other.
+      5. list_instances() → (None, 2) on raise.
+      6. classify(entry, live_ids, now, ...) verdict gate per D3:
+           LIVE: pass.
+           HEARTBEAT_UNKNOWN / IDLE_REAP / ORPHAN_REAP: pass IFF force_attach.
+           STALE_LEDGER / OVERAGE_REAP / UNROUTABLE: refuse always.
+      7. provider.get_instance(instance_id) → (None, 2) on KeyError.
+    """
+    from kinoforge.core import registry
+    from kinoforge.core.errors import UnknownAdapter
+    from kinoforge.core.interfaces import Lifecycle
+    from kinoforge.core.reaper import classify
+
+    now = time.time()
+
+    # 1. Ledger lookup.
+    ledger = ctx.ledger()
+    entry = ledger.read(instance_id)
+    if entry is None:
+        print(
+            f"instance not found in ledger: {instance_id}. "
+            f"Run 'kinoforge list' to see available ids.",
+            file=sys.stderr,
+        )
+        return (None, 1)
+
+    # 2. Provider-kind.
+    entry_provider = str(entry.get("provider", ""))
+    cfg_provider = cfg.compute.provider if cfg.compute is not None else ""
+    if entry_provider != cfg_provider:
+        print(
+            f"provider mismatch: cfg={cfg_provider}, ledger says "
+            f"provider={entry_provider} for {instance_id}. "
+            f"Use a cfg matching the pod's provider.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+
+    # 3. capability_key.
+    cfg_hash = cfg.capability_key().derive()[:12]
+    entry_hash_raw = entry.get("tags", {}).get("kinoforge_key")
+    entry_hash = str(entry_hash_raw) if entry_hash_raw is not None else "<unknown>"
+    if cfg_hash != entry_hash:
+        print(
+            f"capability_key mismatch: cfg={cfg_hash}, ledger entry "
+            f"{instance_id}={entry_hash}. Either use a cfg matching this pod "
+            f"or 'kinoforge destroy --id {instance_id}' first.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+
+    # 4. Provider construction.
+    try:
+        provider = registry.get_provider(entry_provider)()
+    except UnknownAdapter as exc:
+        print(
+            f"provider {entry_provider} unconstructable: "
+            f"{type(exc).__name__}: {exc}. Check provider credentials.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"provider {entry_provider} unconstructable: {type(exc).__name__}: {exc}.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+
+    # 5. list_instances RPC for classify's live_pod_ids.
+    try:
+        live_ids = {i.id for i in provider.list_instances()}
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"provider {entry_provider} list_instances failed: "
+            f"{type(exc).__name__}: {exc}.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+
+    # 6. classify verdict gate.
+    lifecycle = cfg.lifecycle() if cfg is not None else Lifecycle()
+    verdict = classify(
+        entry,
+        live_ids,
+        now,
+        idle_timeout_s=lifecycle.idle_timeout_s,
+        max_lifetime_s=lifecycle.max_lifetime_s,
+        heartbeat_interval_s=lifecycle.heartbeat_interval_s,
+        grace_after_session_s=lifecycle.grace_after_session_s,
+    )
+    v_name = verdict.value
+    if v_name == "LIVE":
+        pass
+    elif v_name in _FORCE_BYPASSABLE_VERDICTS:
+        if not force_attach:
+            reason = _refuse_reason_for_verdict(v_name, entry, lifecycle, now)
+            print(
+                f"classify verdict {v_name} blocks attach for {instance_id}: "
+                f"{reason}. Pass --force-attach to override, or "
+                f"'kinoforge reap --apply' to clean up.",
+                file=sys.stderr,
+            )
+            return (None, 2)
+    elif v_name == "STALE_LEDGER":
+        print(
+            f"instance {instance_id} is stale: provider no longer has this "
+            f"pod. Run 'kinoforge forget --id {instance_id}' and provision "
+            f"a fresh one.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+    elif v_name == "OVERAGE_REAP":
+        print(
+            f"OVERAGE_REAP: instance {instance_id} exceeded max_lifetime_s "
+            f"(cfg policy). Destroy it with "
+            f"'kinoforge destroy --id {instance_id}' before reusing the slot.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+    else:  # UNROUTABLE / HEARTBEAT_SUBSTRATE_MISSING / unknown
+        print(
+            f"classify verdict {v_name} blocks attach for {instance_id}.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+
+    # 7. Provider get_instance.
+    try:
+        instance = provider.get_instance(instance_id)
+    except KeyError:
+        print(
+            f"instance {instance_id} disappeared between classify and "
+            f"lookup; a concurrent reaper may have destroyed it. "
+            f"Re-run after 'kinoforge list'.",
+            file=sys.stderr,
+        )
+        return (None, 2)
+
+    return (instance, None)
+
+
+def _refuse_reason_for_verdict(
+    verdict: str,
+    entry: dict,  # type: ignore[type-arg]
+    lifecycle: Lifecycle,
+    now: float,
+) -> str:
+    """One-line human-readable reason for a refused verdict."""
+    if verdict == "IDLE_REAP":
+        hb = float(entry.get("last_heartbeat", now))
+        return f"hb_age={now - hb:.0f}s > idle_timeout={lifecycle.idle_timeout_s:.0f}s"
+    if verdict == "ORPHAN_REAP":
+        tick = float(entry.get("heartbeat_thread_tick", now))
+        return (
+            f"sentinel_age={now - tick:.0f}s past "
+            f"grace_after_session_s={lifecycle.grace_after_session_s:.0f}s"
+        )
+    if verdict == "HEARTBEAT_UNKNOWN":
+        return "no sentinel data in ledger entry"
+    return verdict
 
 
 def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
