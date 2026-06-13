@@ -798,3 +798,63 @@ Order: a → b → c → d → e → f sequential; g + h parallel after b + d la
 - §Known limitations: no entries added (B3 closes a gap).
 - `successful-generations.md`: live smoke produces a video AND introduces a new capability axis (B3 auto-discovery). Add new entry per file preamble schema.
 - `warm-reuse-tasks.txt:532-566`: replace B3 starter with one-line closeout pointer + commit sha.
+
+---
+
+## 14. §9.1 Measured smoke timings (live, 2026-06-13)
+
+Live RunPod smoke at `tests/live/test_b3_warm_attach_live.py` fired with
+`KINOFORGE_LIVE_RUNPOD=1 KINOFORGE_LIVE_TESTS=1`. Cfg
+`tests/live/cfg_b3_warm_attach.yaml`: FakeEngine + RunPod RTX A5000
+(GeForce 4090 had no current capacity → offer-retry to A5000) +
+graphql-tag heartbeat substrate (FakeEngine is the only HB-safe engine
+on RunPod per C25 guard).
+
+- Gen 1 (cold create + first-tick poll + fake gen + ledger.record):
+  **11.3 s** wall.
+- Gen 2 (B3 auto-discovery scan hit + caller-supplied attach + fake gen):
+  **2.9 s** wall.
+- Cold-skip benefit: **8.4 s** (74 % wall-time reduction).
+- Total live spend: **\$0.0040** RunPod (well under \$2.50 budget envelope).
+- Pod id continuity: `pod_id_1 == pod_id_2` (B3 scan attached cleanly).
+- Scan summary log: `warm-reuse: attached to <pod-id>` confirmed.
+
+Smoke pass-condition `gen2_elapsed < gen1_elapsed * 0.7` satisfied at
+ratio 0.26.
+
+### 14.1 Live findings folded back into B3
+
+Two production gaps surfaced during the live smoke (mid-Task-j commits):
+
+- **B3 fix `3454b48`** — `_cmd_generate` never recorded the cold-created
+  instance to the ledger. Cross-CLI B3 scan therefore saw an empty
+  ledger on every fresh-shell invocation, defeating warm-reuse entirely.
+  Added the record after a successful generate; guarded on
+  caller-supplied-instance + `single=True` to avoid duplicate inserts.
+- **B7+B3 fix `3bdec1c`** — `HeartbeatLoop.touch` is a strict update,
+  so cold-created instances had no ledger entry when the first HB tick
+  fired → `heartbeat_thread_tick` sentinel never persisted →
+  `hold_until_first_tick` polled forever and FirstTickTimeout'd at
+  `boot_timeout_s + 2*hb_interval`. Fix: `_record_then_install`
+  callback wires `Ledger.record(instance)` BEFORE
+  `claim_holder.install(instance)` on the cold-create path.
+
+Both gaps were invisible to unit tests because B7's spy HB loop
+pre-records the instance in `spy.start()`, masking the real-world
+strict-update behavior.
+
+### 14.2 ComfyUI + RunPod limitation (C25)
+
+The fake-engine smoke validates B3 mechanics end-to-end on real cloud.
+The production B3 path for `ComfyUI + Wan` on RunPod remains gated by
+C25 (heartbeat carrier `dockerArgs` collides with selfterm injection);
+operators today must either:
+
+- use `--force-attach` on `kinoforge generate --instance-id <id>` to
+  bypass HEARTBEAT_UNKNOWN classification, or
+- wait for C25's preserve-and-merge wire path to land.
+
+The B3 scan's `_resolve_warm_instance(force_attach=False)` correctly
+records the HEARTBEAT_UNKNOWN entry as `classify-not-live` in
+`_ScanReport.skipped`, so operators see the diagnostic in the scan
+summary INFO line.

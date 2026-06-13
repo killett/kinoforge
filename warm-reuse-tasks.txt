@@ -529,41 +529,15 @@ destroying based on a known-no-op heartbeat source.
 
 
 
-- **B3. Layer Y — in-session orchestrator warm-reuse retrofit.** `deploy_session` consults `classify` against the ledger when `_states[id]` is empty; attaches to a LIVE matching-`capability_key` pod instead of `create_instance`. Kills cold-start (1–5 min ComfyUI + Wan spin-up) on every fresh-shell `kinoforge generate`. Highest blast radius — touches the generate hot path. Prereq: B7 cooperative session-start/reaper lock. Spec hook at Layer V §5.6 + §6.
-
-  Interval-state safety (B5a shipped, B5b not yet): B3's "attach to LIVE matching-
-  capability_key pod" candidate-selection MUST treat HEARTBEAT_UNKNOWN as non-attachable
-  on non-RunPod providers — i.e. fall through to cold create_instance rather than risk
-  attaching to a SkyPilot pod whose actual state is unknown. Same provider_heartbeat_
-  supported gate as B1. The deploy_session log line includes "(B5b pending: SkyPilot
-  HEARTBEAT_UNKNOWN candidates skipped)" once per session when the skip fires. Prevents
-  silent double-bill during the B5a-shipped-B5b-pending window.
-
-  What it is. Today, LifecycleManager.warm_reuse_or_create checks self._states[id], which
-  is in-process state. When you run kinoforge generate twice in two separate CLI
-  invocations against the same configured idle instance, the second invocation has no idea
-  the first one's pod is reusable — _states is empty — so it creates a fresh pod. Layer Y
-  closes that by having the orchestrator consult classify against the ledger when
-  _states[id] is missing, and if the verdict is LIVE for a matching capability_key, attach
-  to that pod instead of creating a new one.
-
-  Why it might be next. This is the closest the project gets to a
-  "user-feels-it-the-next-day" win. The substrate already knows the pod is alive; the
-  orchestrator simply doesn't ask. Right now every kinoforge generate from a fresh shell
-  pays the spin-up cost (1–5 minutes for ComfyUI + Wan models on a real provider).
-
-  Surface area. Mostly orchestrator: a new code path in deploy_session that, before calling
-  create_instance, walks the ledger for entries matching capability_key, classifies them,
-  and reuses the first LIVE match. Needs a per-instance lock to avoid two CLIs grabbing the
-  same warm pod. The hardest part is testing — needs subprocess-isolated tests like the
-  Layer U cross-process visibility test (PROGRESS:1130).
-
-  Risk. Medium. Touches deploy_session, which is on the hot path for every generate and
-  every batch invocation. A bug here could silently double-bill or wedge sessions waiting
-  for a dead pod's lock. Strong test discipline required.
-
-  Effort estimate. ~6-8 tasks, but with more careful review than W or X because of the
-  blast radius on the generate path.
+- ~~**B3. Layer Y — in-session orchestrator warm-reuse retrofit.**~~ —
+  CLOSED. Spec: docs/superpowers/specs/2026-06-13-b3-warm-reuse-retrofit-design.md.
+  Plan: docs/superpowers/plans/2026-06-13-b3-warm-reuse-retrofit-plan.md.
+  Live smoke (FakeEngine + RunPod RTX A5000): Gen 1 (cold) 11.3 s,
+  Gen 2 (warm) 2.9 s — 74 % cold-skip benefit, spend $0.0040.
+  ComfyUI + Wan production path remains C25-gated (heartbeat
+  dockerArgs vs selfterm collision); operators today use
+  `--force-attach` on `kinoforge generate --instance-id <id>` to
+  bypass HEARTBEAT_UNKNOWN until C25 preserve-and-merge ships.
 
 
 
