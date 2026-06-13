@@ -10,8 +10,15 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
+## Active workstream — B2 Layer X (cost dashboard)
+- **Spec:** `docs/superpowers/specs/2026-06-12-b2-cost-dashboard-design.md` (commit `b85f49e`)
+- **Plan:** `docs/superpowers/plans/2026-06-12-b2-cost-dashboard.md` (commit `ab317f5`)
+- **Native task snapshot:** `docs/superpowers/plans/2026-06-12-b2-cost-dashboard.md.tasks.json` (8 tasks, IDs 10–17, dependencies set)
+- **Status:** brainstorm + spec + plan complete; 0 of 8 implementation tasks committed. Resume at Task 1 (`core/balance_endpoints.py` substrate).
+- **Resume command:** `/superpowers-extended-cc:executing-plans docs/superpowers/plans/2026-06-12-b2-cost-dashboard.md`
+
 ## Phase
-ALL 28 tasks complete. All 9 phases complete. Post-MVP layers shipped through Phase 33 (Layer S — `kinoforge status` reads the ledger + `kinoforge forget` recovery subcommand).
+ALL 28 MVP tasks complete. All 9 phases complete. Post-MVP layers shipped through Phase 33 (Layer S — `kinoforge status` reads the ledger + `kinoforge forget` recovery subcommand) and the warm-reuse trio (B5a heartbeat substrate `bade08c` + B7 cooperative session-claim lock `b2d5b8b` + B4 cross-CLI warm-reuse `54d2867`). B2 in flight (see Active workstream above).
 
 ## Task checklist (high-level; plan refines into 28 bite-sized tasks)
 - [x] Read SPEC.md, explore project context
