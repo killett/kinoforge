@@ -67,6 +67,7 @@ import kinoforge.stores.s3  # noqa: F401
 _RUNPOD_HEARTBEAT_SAFE_ENGINES: frozenset[str] = frozenset({"fake"})
 
 if TYPE_CHECKING:
+    from kinoforge.core.balance_endpoints import BalanceEndpoint
     from kinoforge.core.config import Config
     from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
     from kinoforge.core.interfaces import CredentialProvider
@@ -149,3 +150,38 @@ def build_heartbeat_endpoint_for(
         # local-mode tests; no separate substrate satisfier needed.
         return None
     raise ValidationError(f"unknown provider for heartbeat dispatch: {provider!r}")
+
+
+def build_balance_endpoint_for(
+    cfg: "Config",
+    creds: "CredentialProvider",
+) -> "BalanceEndpoint":
+    """Build the right :class:`BalanceEndpoint` for the configured provider.
+
+    Sister to :func:`build_heartbeat_endpoint_for` but with a different
+    failure contract: this helper NEVER raises ``AuthError`` /
+    ``ValidationError`` on lookup. Missing-cred / unknown-provider cases
+    fall through to :class:`NoBalanceEndpoint`, whose ``read()`` returns
+    ``None`` so the cost-render path stays free of provider-dispatch
+    failures.
+
+    Args:
+        cfg: The loaded kinoforge config.
+        creds: Credential provider; the RunPod branch reads
+            ``RUNPOD_API_KEY``.
+
+    Returns:
+        A :class:`BalanceEndpoint`. RunPod kind → satisfier; everything
+        else → :class:`NoBalanceEndpoint`. Hosted engines (no ``compute``
+        block) also resolve to :class:`NoBalanceEndpoint`.
+    """
+    from kinoforge.core.balance_endpoints import NoBalanceEndpoint
+
+    if cfg.compute is None:
+        return NoBalanceEndpoint()
+    provider = cfg.compute.provider
+    if provider == "runpod":
+        from kinoforge.providers.runpod.balance import RunPodBalanceEndpoint
+
+        return RunPodBalanceEndpoint(api_key=creds.get("RUNPOD_API_KEY"))
+    return NoBalanceEndpoint()
