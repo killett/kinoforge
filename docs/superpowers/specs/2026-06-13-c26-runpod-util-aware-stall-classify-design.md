@@ -923,6 +923,55 @@ Captured during implementation:
 Still to capture later:
 
 - Empirical P50 / P99 latency of the util query at 30 s cadence
-  (Phase A smoke).
+  (Phase A smoke ran at 10 s cadence; latency not isolated).
 - Real RunPod multi-GPU response shape (single-GPU pods today; multi-GPU
   not exercised until a real workload requests >1 GPU).
+
+## 17. Closeout — Phase A + Phase B outcomes (2026-06-13)
+
+**Phase A — PROVEN.** Cheap RTX 3070 pod, alpine:latest, no workload.
+HeartbeatLoop with `interval_s=10`, `stall_window_s=60`, real
+RunPodGraphQLUtilEndpoint. Counter trail captured in
+`tests/live/_c26_phase_a_smoke_evidence.json`:
+
+```
+[0, 0, 1, 2, 3, 4, 5, 6]
+```
+
+Ticks 0-1 returned `runtime=null` (early boot — R12 satisfier branch
+preserves counter). Ticks 2-7 saw GPU=0%, CPU=0% (no workload), counter
+incremented each 10 s. At counter=6, 6 × 10 s = 60 s ≥ stall_window_s,
+STALL_REAP fired: `provider.destroy_instance` + `ledger.forget` +
+`cancel_token.set` + `loop._stop.set` all executed; pod absent from
+`list_instances()` within 60 s. Spend ~$0.003. The C26 substrate +
+classify + reaper path all work end-to-end on the real RunPod GraphQL
+runtime{} schema for the "steady low util" stall class.
+
+**Phase B — FAILED-DESIGN-HOLE.** Wan 14B + ComfyUI 2-CLI smoke
+entered a container restart loop. Per-tick util probe at kill:
+
+```
+gpu_util_percent: 0.0
+cpu_percent:     13.0   (< stall_cpu_threshold=20)
+uptime_seconds:   1     (container restarted within the last interval)
+```
+
+Both axes were continuously below threshold, but `_update_counter`'s
+uptime-decrease guard fires every tick (`prev_uptime` ≥ 1 → `curr_uptime`
+= 1 → reset to 0). After 480 s of unbroken low util, counter was still
+0 — STALL_REAP never fires. The shipped design's restart-blip guard,
+designed for one-shot RunPod migrations / spot reclaim, does not
+distinguish a single restart from a chronic restart loop. Sidecar
+`tests/live/_c26_phase_b_smoke_evidence.json` captures the ledger
+snapshot, live probe, and diagnosis.
+
+Phase B kill: ~$0.025 actual spend (well under $0.55 ceiling).
+
+**Net:** C26 ships PARTIAL. The Phase-A class of stall (steady low util)
+is fully protected end-to-end. The Phase-B class (chronic restart loop)
+is the original C25 Task 4 symptom and remains uncovered. Tracked as
+**C27** in PROGRESS §C — needs a sibling predicate (e.g.
+`uptime_seconds < threshold_uptime for K consecutive ticks`) alongside
+the existing low-util predicate. The C26 substrate (UtilSnapshotEndpoint
+Protocol, ledger fields, classify row 3' wiring, CLI flag, threshold
+threading) is the right foundation for C27.

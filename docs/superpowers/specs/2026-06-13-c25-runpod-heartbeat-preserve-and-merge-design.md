@@ -430,3 +430,21 @@ A C25-shipped state satisfies:
 - A `STALL_REAP` verdict on the classify path so an idle / stuck pod (RAM/GPU/VRAM/disk util near zero with heartbeats still ticking) auto-tears-down instead of the operator catching it manually.
 
 C25 is honestly closed at the substrate level. The remaining gap is observability of the in-pod workload, which is a different problem.
+
+**2026-06-13 update — C26 outcome:** the C26 follow-up (RunPod
+util-aware stall classify) was implemented and shipped PARTIAL.
+The C26 substrate (UtilSnapshot Protocol, RunPod GraphQL
+satisfier, consecutive-low counter, classify row 3', HeartbeatLoop
+self-classify, cross-process kwarg threading, --stall-window-override
+CLI flag) all landed end-to-end and was PROVEN on the cheap
+FakeEngine Phase A smoke at counter × interval ≥ window. But the
+Phase B Wan + ComfyUI re-fire of THIS gate exposed a C26 design
+hole: the pod's chronic container restart loop (uptime_seconds=1
+every tick) defeats `_update_counter`'s uptime-decrease guard so
+the counter never accumulates. The Phase-A class of stall (steady
+low util) is protected; the Phase-B class (this C25 stall) is not.
+C25 Task 4's deferred gate remains open. Tracked as **C27**
+(restart-loop stall detection — sibling predicate to C26's low-util
+predicate). See C26 spec §17 + sidecars
+`tests/live/_c26_phase_a_smoke_evidence.json` /
+`tests/live/_c26_phase_b_smoke_evidence.json`.
