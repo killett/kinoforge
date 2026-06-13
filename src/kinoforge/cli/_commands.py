@@ -16,6 +16,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from types import FrameType
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
@@ -1685,3 +1686,240 @@ def _render_cost_prom(snap: CostSnapshot, balance_errors: dict[str, str]) -> str
             )
 
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Layer W — kinoforge sweeper start | stop | status | metrics
+# ---------------------------------------------------------------------------
+
+
+def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Layer W: foreground sweeper daemon supervisor.
+
+    Blocks until SIGTERM. Operator wraps under systemd / nohup / docker
+    PID 1 / tmux. Materialises the synthetic ``sweeper:<host>`` ledger
+    entry (§4.4 init), prints the §4.7 banner, installs SIGTERM /
+    SIGHUP / SIGUSR1 handlers, then starts the SweeperLoop.
+    """
+    import signal
+    import socket
+    import threading
+
+    from kinoforge.core import registry
+    from kinoforge.core.config import load_config, sweeper_policy_from_cfg
+    from kinoforge.core.sweeper import SweeperLoop, _SweeperStats
+
+    cfg = ctx.cfg
+    if cfg is None:
+        sys.stderr.write("kinoforge sweeper start: --config is required\n")
+        return 2
+    cfg_path = args.config
+    host = cfg.sweeper.host or socket.gethostname()
+    interval_s = float(args.interval_s) if args.interval_s else cfg.sweeper.interval_s
+    if interval_s <= 0:
+        logger.error("invalid interval_s=%s", interval_s)
+        return 2
+    policy = sweeper_policy_from_cfg(cfg)
+    lc = cfg.lifecycle()
+    thresholds = {
+        "idle_timeout_s": float(lc.idle_timeout_s),
+        "max_lifetime_s": float(lc.max_lifetime_s),
+        "heartbeat_interval_s": (
+            float(lc.heartbeat_interval_s) if lc.heartbeat_interval_s else None
+        ),
+        "grace_after_session_s": float(lc.grace_after_session_s),
+    }
+    ledger = ctx.ledger()
+    store = ctx.store()
+
+    pid = os.getpid()
+    logger.info(
+        "kinoforge sweeper starting host=%s interval_s=%s policy=%s "
+        "include_orphans=%s force_forget=%s pid=%s",
+        host,
+        interval_s,
+        sorted(v.value for v in policy.act_verdicts),
+        cfg.sweeper.include_orphans,
+        cfg.sweeper.force_forget,
+        pid,
+    )
+    logger.info(
+        "B5a heartbeat-substrate gate is ACTIVE: providers with no "
+        "shipped HeartbeatEndpoint satisfier emit HEARTBEAT_SUBSTRATE_MISSING "
+        "and are NEVER reaped. SkyPilot is the only such provider today; "
+        "B5b ships the satisfier when GPU quota lands. WARN-once-per-"
+        "(provider,instance_id) deduped."
+    )
+    logger.info(
+        "B7 cooperative session-claim probe is ACTIVE: entries whose "
+        "orchestrator holds provision:<id> emit "
+        'action="deferred-session-claim" and are skipped this pass; '
+        "the next sweep re-evaluates."
+    )
+
+    synthetic = Instance(
+        id=f"sweeper:{host}",
+        provider="_sweeper",
+        status="ready",
+        created_at=datetime.now().timestamp(),
+        cost_rate_usd_per_hr=0.0,
+    )
+    ledger.record(synthetic)
+    ledger.touch(f"sweeper:{host}", pid=pid)
+
+    stats = _SweeperStats()
+    loop = SweeperLoop(
+        store=store,
+        ledger=ledger,
+        registry_get_provider=registry.get_provider,
+        thresholds=thresholds,
+        interval_s=interval_s,
+        host=host,
+        policy=policy,
+        stats=stats,
+    )
+
+    exit_event = threading.Event()
+
+    def _handle_sigterm(_signum: int, _frame: FrameType | None) -> None:
+        exit_event.set()
+
+    def _handle_sighup(_signum: int, _frame: FrameType | None) -> None:
+        try:
+            new_cfg = load_config(cfg_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SIGHUP: cfg reload failed: %s", exc)
+            return
+        new_policy = sweeper_policy_from_cfg(new_cfg)
+        new_lc = new_cfg.lifecycle()
+        new_thresholds = {
+            "idle_timeout_s": float(new_lc.idle_timeout_s),
+            "max_lifetime_s": float(new_lc.max_lifetime_s),
+            "heartbeat_interval_s": (
+                float(new_lc.heartbeat_interval_s)
+                if new_lc.heartbeat_interval_s
+                else None
+            ),
+            "grace_after_session_s": float(new_lc.grace_after_session_s),
+        }
+        loop.reload(
+            policy=new_policy,
+            thresholds=new_thresholds,
+            interval_s=new_cfg.sweeper.interval_s,
+        )
+        logger.info("SIGHUP: cfg reloaded from %s", cfg_path)
+
+    def _handle_sigusr1(_signum: int, _frame: FrameType | None) -> None:
+        logger.info("sweeper stats: %s", stats.snapshot_for_log())
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGHUP, _handle_sighup)
+    signal.signal(signal.SIGUSR1, _handle_sigusr1)
+
+    loop.start()
+    exit_event.wait()
+    loop.stop()
+    return 0
+
+
+def _cmd_sweeper_stop(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: ARG001
+    """Layer W: send SIGTERM to the daemon owning this host's sweeper entry."""
+    import signal
+    import socket
+
+    cfg = ctx.cfg
+    if cfg is None:
+        sys.stderr.write("kinoforge sweeper stop: --config is required\n")
+        return 2
+    host = cfg.sweeper.host or socket.gethostname()
+    ledger = ctx.ledger()
+    entry = ledger.read(f"sweeper:{host}")
+    if entry is None:
+        sys.stderr.write(f"no sweeper running on host={host}\n")
+        return 1
+    pid = entry.get("pid")
+    try:
+        pid_int = int(pid) if pid is not None else 0
+    except (TypeError, ValueError):
+        pid_int = 0
+    if not pid_int:
+        sys.stderr.write(f"daemon liveness entry has no pid on host={host} (stale?)\n")
+        return 1
+    try:
+        os.kill(pid_int, signal.SIGTERM)
+    except ProcessLookupError:
+        sys.stderr.write(f"pid {pid_int} no longer alive on host={host}\n")
+        return 1
+    deadline = time.monotonic() + 30.0
+    last_tick = entry.get("heartbeat_thread_tick", 0.0)
+    stable_polls = 0
+    while time.monotonic() < deadline:
+        time.sleep(1.0)
+        entry = ledger.read(f"sweeper:{host}")
+        if entry is None:
+            return 0
+        tick = entry.get("heartbeat_thread_tick", 0.0)
+        if tick == last_tick:
+            stable_polls += 1
+            if stable_polls >= 2:
+                return 0
+        else:
+            stable_polls = 0
+            last_tick = tick
+    sys.stderr.write(f"sweeper on host={host} did not stop within 30s\n")
+    return 2
+
+
+def _cmd_sweeper_status(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Layer W: render sweeper liveness — human (default) or --json."""
+    import socket
+
+    from kinoforge.core.sweeper_metrics import (
+        render_status_human,
+        render_status_json,
+    )
+
+    cfg = ctx.cfg
+    if cfg is None:
+        sys.stderr.write("kinoforge sweeper status: --config is required\n")
+        return 2
+    host = cfg.sweeper.host or socket.gethostname()
+    ledger = ctx.ledger()
+    entry = ledger.read(f"sweeper:{host}")
+    now = datetime.now().timestamp()
+    if args.json:
+        sys.stdout.write(
+            render_status_json(
+                entry, host=host, interval_s=cfg.sweeper.interval_s, now=now
+            )
+            + "\n"
+        )
+    else:
+        sys.stdout.write(
+            render_status_human(
+                entry, host=host, interval_s=cfg.sweeper.interval_s, now=now
+            )
+        )
+    return 0
+
+
+def _cmd_sweeper_metrics(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Layer W: render Prom textfile-collector target."""
+    import socket
+
+    from kinoforge.core.sweeper_metrics import render_metrics_prom
+
+    if not args.prom:
+        sys.stderr.write("kinoforge sweeper metrics requires --prom\n")
+        return 2
+    cfg = ctx.cfg
+    if cfg is None:
+        sys.stderr.write("kinoforge sweeper metrics: --config is required\n")
+        return 2
+    host = cfg.sweeper.host or socket.gethostname()
+    ledger = ctx.ledger()
+    entry = ledger.read(f"sweeper:{host}")
+    sys.stdout.write(
+        render_metrics_prom(entry, host=host, interval_s=cfg.sweeper.interval_s)
+    )
+    return 0
