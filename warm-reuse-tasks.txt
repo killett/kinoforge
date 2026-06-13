@@ -173,12 +173,12 @@ destroying based on a known-no-op heartbeat source.
   mid-engine.provision; the new session has not yet called HeartbeatLoop.start(), so classify sees
   sentinel-stale and act_on_verdict destroys the pod the session is mid-boot on.
 
-    **Status:** design APPROVED 2026-06-12. Spec is the source of truth — this entry summarizes
-    the locked decisions and is intentionally lighter than the spec; for any conflict the spec
-    wins.
+    **Status:** CLOSED 2026-06-12, commit 8f1ee89 (and predecessors bd2d97b, 4d10da2, da644f6,
+    18cc469, d785b18). Spec is the source of truth — this entry summarizes the locked decisions
+    and is intentionally lighter than the spec; for any conflict the spec wins.
 
     Spec: docs/superpowers/specs/2026-06-12-b7-cooperative-session-claim-lock-design.md (commit
-    44a35ad).
+    44a35ad). Implementation plan: docs/superpowers/plans/2026-06-12-b7-cooperative-session-claim-lock.md.
 
     Interaction with B5a: B7's hold_until_first_tick releases on Ledger.touch
     heartbeat_thread_tick, which is unconditional in Layer U HeartbeatLoop regardless of B5a

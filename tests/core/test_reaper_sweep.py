@@ -36,6 +36,14 @@ class _FakeLock:
     def __exit__(self, *_: object) -> None:
         return None
 
+    def acquire(
+        self, *, blocking: bool = True, timeout_s: float | None = None
+    ) -> object | None:
+        return object()
+
+    def release(self, _token: object) -> None:
+        return None
+
 
 class _FakeLedger:
     def __init__(self, entries: list[dict[str, Any]]) -> None:
