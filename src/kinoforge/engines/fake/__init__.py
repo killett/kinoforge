@@ -271,17 +271,28 @@ class FakeEngine(GenerationEngine):
     def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
         """Return a deterministic stub RenderedProvision for tests.
 
+        Reads ``compute.image`` from cfg when present so live-cloud
+        smokes (e.g. B3 RunPod warm-attach) can pin a pullable image
+        instead of the unpullable ``fake:latest`` placeholder. Unit
+        tests that pass empty cfg still get the placeholder.
+
         Args:
-            cfg: Unused.
+            cfg: Loaded cfg dict; only ``compute.image`` is read.
 
         Returns:
-            A fixed RenderedProvision; tests assert on the values directly.
+            A RenderedProvision with the resolved image; tests assert
+            on the other fields directly.
         """
-        del cfg
+        compute = cfg.get("compute") if isinstance(cfg, dict) else None
+        image = "fake:latest"
+        if isinstance(compute, dict):
+            cfg_image = compute.get("image")
+            if isinstance(cfg_image, str) and cfg_image:
+                image = cfg_image
         return RenderedProvision(
             script="echo fake",
             run_cmd=["sleep", "infinity"],
-            image="fake:latest",
+            image=image,
             ports=["8000"],
             env_required=[],
         )
