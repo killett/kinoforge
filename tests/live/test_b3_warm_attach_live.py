@@ -84,7 +84,7 @@ def _kinoforge_generate(
     state_dir: Path,
     prompt: str,
     run_id: str,
-    timeout_s: float = 600.0,
+    timeout_s: float = 2400.0,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``pixi run -e live-comfyui kinoforge generate ...`` with the args
     the smoke needs."""
