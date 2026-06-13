@@ -1259,6 +1259,67 @@ def test_config_lifecycle_wires_grace_after_session_s() -> None:
 
 
 # ---------------------------------------------------------------------------
+# C26 — stall_* fields on LifecycleConfig
+# ---------------------------------------------------------------------------
+
+
+def test_lifecycle_config_stall_defaults() -> None:
+    """Spec §9 defaults: enabled True, window 600 s, gpu 5 %, cpu 20 %."""
+    from kinoforge.core.config import LifecycleConfig
+
+    cfg = LifecycleConfig(budget=1.0)
+    assert cfg.stall_reap_enabled is True
+    assert cfg.stall_window_s == 600.0
+    assert cfg.stall_gpu_threshold == 5.0
+    assert cfg.stall_cpu_threshold == 20.0
+
+
+def test_lifecycle_config_stall_window_rejects_negative() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import LifecycleConfig
+
+    with pytest.raises(ValidationError):
+        LifecycleConfig(budget=1.0, stall_window_s=-1.0)
+
+
+def test_lifecycle_config_stall_window_accepts_zero() -> None:
+    from kinoforge.core.config import LifecycleConfig
+
+    assert LifecycleConfig(budget=1.0, stall_window_s=0.0).stall_window_s == 0.0
+
+
+def test_lifecycle_config_stall_thresholds_reject_out_of_range() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import LifecycleConfig
+
+    with pytest.raises(ValidationError):
+        LifecycleConfig(budget=1.0, stall_gpu_threshold=-0.1)
+    with pytest.raises(ValidationError):
+        LifecycleConfig(budget=1.0, stall_cpu_threshold=100.1)
+
+
+def test_lifecycle_config_stall_round_trips() -> None:
+    from kinoforge.core.config import LifecycleConfig
+
+    raw = LifecycleConfig(
+        budget=1.0,
+        stall_reap_enabled=False,
+        stall_window_s=1800.0,
+        stall_gpu_threshold=2.5,
+        stall_cpu_threshold=15.0,
+    ).model_dump_json()
+    parsed = LifecycleConfig.model_validate_json(raw)
+    assert parsed.stall_reap_enabled is False
+    assert parsed.stall_window_s == 1800.0
+    assert parsed.stall_gpu_threshold == 2.5
+    assert parsed.stall_cpu_threshold == 15.0
+
+
+# ---------------------------------------------------------------------------
 # Layer 3 — BedrockVideoEngineConfig (pivot from Nova Reel to generic engine)
 # ---------------------------------------------------------------------------
 

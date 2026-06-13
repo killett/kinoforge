@@ -1,0 +1,119 @@
+{
+  "outcome": "PROVEN",
+  "captured_at": "2026-06-13T16:21:18.265504-07:00",
+  "pod_id": "gllx38v8dw6esq",
+  "offer_usd_per_hr": 0.13,
+  "interval_s": 10.0,
+  "stall_window_s": 60.0,
+  "stall_fired_at_s_since_loop_start": 76.62203200699878,
+  "counter_trail": [
+    0,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "tick_count": 8,
+  "forgotten": [
+    "gllx38v8dw6esq"
+  ],
+  "touches": [
+    {
+      "ts": "2026-06-13T16:20:01.726055-07:00",
+      "id": "gllx38v8dw6esq",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781392801.1014833,
+      "util_thread_tick": 1781392801.1014833,
+      "consecutive_low_util_count": 0
+    },
+    {
+      "ts": "2026-06-13T16:20:12.363031-07:00",
+      "id": "gllx38v8dw6esq",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781392811.7262704,
+      "util_thread_tick": 1781392811.7262704,
+      "consecutive_low_util_count": 0
+    },
+    {
+      "ts": "2026-06-13T16:20:22.780189-07:00",
+      "id": "gllx38v8dw6esq",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781392822.3633091,
+      "util_thread_tick": 1781392822.3633091,
+      "consecutive_low_util_count": 1,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -9
+    },
+    {
+      "ts": "2026-06-13T16:20:33.266406-07:00",
+      "id": "gllx38v8dw6esq",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781392832.7804785,
+      "util_thread_tick": 1781392832.7804785,
+      "consecutive_low_util_count": 2,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -9
+    },
+    {
+      "ts": "2026-06-13T16:20:43.803205-07:00",
+      "id": "gllx38v8dw6esq",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781392843.2665994,
+      "util_thread_tick": 1781392843.2665994,
+      "consecutive_low_util_count": 3,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -9
+    },
+    {
+      "ts": "2026-06-13T16:20:54.233573-07:00",
+      "id": "gllx38v8dw6esq",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781392853.8035126,
+      "util_thread_tick": 1781392853.8035126,
+      "consecutive_low_util_count": 4,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -5
+    },
+    {
+      "ts": "2026-06-13T16:21:04.690467-07:00",
+      "id": "gllx38v8dw6esq",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781392864.233881,
+      "util_thread_tick": 1781392864.233881,
+      "consecutive_low_util_count": 5,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -5
+    },
+    {
+      "ts": "2026-06-13T16:21:15.134324-07:00",
+      "id": "gllx38v8dw6esq",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781392874.6906443,
+      "util_thread_tick": 1781392874.6906443,
+      "consecutive_low_util_count": 6,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -5
+    }
+  ]
+}
