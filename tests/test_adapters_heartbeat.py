@@ -95,24 +95,24 @@ def test_skypilot_any_mode_other_than_none_raises_not_implemented() -> None:
 # C25 runtime guard tests ---------------------------------------------------
 
 
-def test_runpod_graphql_tag_refuses_unsafe_engine() -> None:
-    """C25 guard: comfyui uses provision_script via dockerArgs — pairing it
-    with graphql-tag heartbeat mode would overwrite the selfterm script on
-    every heartbeat tick.  The guard must fire BEFORE any pod is created."""
+def test_runpod_graphql_tag_allows_comfyui_engine_post_c25() -> None:
+    """C25 (post-fix): comfyui + graphql-tag heartbeat is safe because the
+    wire-level satisfier no longer collides with Phase 24's dockerArgs
+    selfterm injection. The pre-C25 guard at _RUNPOD_HEARTBEAT_SAFE_ENGINES
+    is deleted; this test asserts the endpoint is built without raising.
+    """
     cfg = _make_cfg(
         provider="runpod", heartbeat_mode="graphql-tag", engine_kind="comfyui"
     )
     creds = _StubCreds({"RUNPOD_API_KEY": "sk-fake"})
-    with pytest.raises(ValidationError) as exc_info:
-        build_heartbeat_endpoint_for(cfg, creds)
-    msg = str(exc_info.value)
-    assert "C25" in msg, f"Expected 'C25' in error message, got: {msg!r}"
-    assert "§9" in msg, f"Expected '§9' in error message, got: {msg!r}"
+    from kinoforge.providers.runpod.heartbeat import RunPodGraphQLHeartbeatEndpoint
+
+    got = build_heartbeat_endpoint_for(cfg, creds)
+    assert isinstance(got, RunPodGraphQLHeartbeatEndpoint)
 
 
 def test_runpod_graphql_tag_allows_safe_engine() -> None:
-    """C25 guard: engine.kind='fake' is in _RUNPOD_HEARTBEAT_SAFE_ENGINES and
-    does not inject a provision_script, so graphql-tag mode is permitted."""
+    """Post-C25: every engine kind is permitted with graphql-tag mode."""
     cfg = _make_cfg(provider="runpod", heartbeat_mode="graphql-tag", engine_kind="fake")
     creds = _StubCreds({"RUNPOD_API_KEY": "sk-fake"})
     from kinoforge.providers.runpod.heartbeat import RunPodGraphQLHeartbeatEndpoint

@@ -59,13 +59,6 @@ import kinoforge.stores.s3  # noqa: F401
 # provider modules — disallowed everywhere else in kinoforge.core).
 # --------------------------------------------------------------------------
 
-# C25: engines that do NOT inject a provision_script via Phase 24's
-# dockerArgs path can safely share the heartbeat carrier. As of B5a-ship,
-# only the test fake qualifies; ComfyUI / Diffusers / Fal / BedrockVideo
-# all use provision_script. Hosted engines (Replicate / Runway / Luma)
-# don't use RunPod at all so they're irrelevant.
-_RUNPOD_HEARTBEAT_SAFE_ENGINES: frozenset[str] = frozenset({"fake"})
-
 if TYPE_CHECKING:
     from kinoforge.core.balance_endpoints import BalanceEndpoint
     from kinoforge.core.config import Config
@@ -111,20 +104,6 @@ def build_heartbeat_endpoint_for(
     provider = cfg.compute.provider
     if provider == "runpod":
         if mode == "graphql-tag":
-            kind = cfg.engine.kind
-            if kind not in _RUNPOD_HEARTBEAT_SAFE_ENGINES:
-                raise ValidationError(
-                    f"compute.heartbeat_mode='graphql-tag' is not safe with"
-                    f" engine.kind={kind!r}: the heartbeat carrier (pod dockerArgs"
-                    f" field) is the same field Phase 24 selfterm injection writes."
-                    f" Enabling this combo would overwrite the in-pod self-terminator"
-                    f" on every pod restart, opening a cost-leak window. See"
-                    f" PROGRESS.md §C25 and"
-                    f" docs/superpowers/specs/2026-06-12-b5a-heartbeat-substrate-design.md"
-                    f" §9 for context and fix candidates. Workaround: set"
-                    f" compute.heartbeat_mode='none' until the C25 preserve-and-merge"
-                    f" wire path lands."
-                )
             api_key = creds.get("RUNPOD_API_KEY")
             if api_key is None:
                 raise AuthError(
