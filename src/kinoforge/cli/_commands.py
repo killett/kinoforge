@@ -325,6 +325,11 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         )
         return 2
     single = bool(getattr(args, "no_reuse", False))
+    auto_attach_cfg = (
+        getattr(cfg.compute, "warm_reuse_auto_attach", True)
+        if cfg.compute is not None
+        else False
+    )
 
     instance: Instance | None = None
     if getattr(args, "instance_id", None) is not None:
@@ -342,6 +347,15 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
             file=sys.stderr,
         )
         return 2
+    elif single:
+        logger.info(
+            "--no-reuse: skipping warm-reuse scan; cold create + destroy on exit"
+        )
+    elif auto_attach_cfg:
+        instance, report = _scan_warm_candidates(ctx, cfg)
+        summary = report.summarize()
+        if summary:
+            logger.info(summary)
 
     try:
         artifact, _ = _generate(
@@ -470,6 +484,11 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         )
         return 2
     single = bool(getattr(args, "no_reuse", False))
+    auto_attach_cfg = (
+        getattr(cfg.compute, "warm_reuse_auto_attach", True)
+        if cfg.compute is not None
+        else False
+    )
 
     instance: Instance | None = None
     if getattr(args, "instance_id", None) is not None:
@@ -487,6 +506,15 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
             file=sys.stderr,
         )
         return 2
+    elif single:
+        logger.info(
+            "--no-reuse: skipping warm-reuse scan; cold create + destroy on exit"
+        )
+    elif auto_attach_cfg:
+        instance, report = _scan_warm_candidates(ctx, cfg)
+        summary = report.summarize()
+        if summary:
+            logger.info(summary)
 
     try:
         result = batch_generate(
