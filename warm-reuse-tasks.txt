@@ -373,7 +373,7 @@ destroying based on a known-no-op heartbeat source.
 
 
 
-- **B2. Layer X — cost dashboard / metrics consumer.** Walks ledger, runs `classify` per entry, aggregates burning-$/hr + per-provider breakdown + LIVE/IDLE/HEARTBEAT_UNKNOWN counts + lifetime $/session. `kinoforge cost` subcommand; `--json` for Grafana/Prometheus. Pure read path; ledger already stores `cost_rate_usd_per_hr` (Layer V Task 1) + `created_at`. Lowest-risk of B1/B2/B3.
+- **B2. Layer X — cost dashboard / metrics consumer.** Walks ledger, runs `classify` per entry, aggregates burning-$/hr + per-provider breakdown + LIVE/IDLE/HEARTBEAT_UNKNOWN counts + lifetime $/session. Plus a provider-account balance readout via a `BalanceEndpoint` Protocol satisfier (RunPod ships in B2 first cut; other providers register a no-op satisfier and render `balance: N/A` until a follow-on micro-layer fills them in). `kinoforge cost` subcommand; `--json` for Grafana/Prometheus. Pure read path; ledger already stores `cost_rate_usd_per_hr` (Layer V Task 1) + `created_at`. Lowest-risk of B1/B2/B3.
 
   Interval-state visibility (B5a shipped, B5b not yet): SkyPilot-provider entries will
   classify as HEARTBEAT_UNKNOWN. B2's per-provider breakdown table MUST surface this
@@ -385,22 +385,136 @@ destroying based on a known-no-op heartbeat source.
 
   What it is. A read-only consumer that walks the ledger, runs classify over every entry,
   and emits aggregates: total $/hour currently burning, breakdown by provider, count of
-  LIVE vs IDLE vs HEARTBEAT_UNKNOWN, lifetime $ spent per session/batch_id. Probably a
-  kinoforge cost subcommand with --json for piping to Grafana/Prometheus and a default
-  human-readable table.
+  LIVE vs IDLE vs HEARTBEAT_UNKNOWN, lifetime $ spent per session/batch_id. Plus a
+  top-line provider-account balance + derived runway ("RunPod balance: $42.18; burn
+  $0.79/hr → ~53 h runway"). kinoforge cost subcommand with --json for piping to
+  Grafana/Prometheus and a default human-readable table.
 
   Why it might be next. Cost visibility is the operator's number-one ask after cost safety.
   Layer V tells you whether an instance should die; Layer X tells you how much it has cost
-  so far. The ledger already stores cost_rate_usd_per_hr (Layer V Task 1) and created_at,
-  so the math is just (now - created_at) * rate summed across LIVE verdicts.
+  so far; the balance readout closes the loop by telling you when to refill. The ledger
+  already stores cost_rate_usd_per_hr (Layer V Task 1) and created_at, so the burn math
+  is just (now - created_at) * rate summed across LIVE verdicts; the balance is one extra
+  GraphQL field on the RunPod side.
 
-  Surface area. New core/cost.py aggregator (pure, mirrors core/reaper.py purity split),
-  new CLI subcommand, optional Prometheus text-format output mode.
+  Balance-readout per-provider feasibility (verified 2026-06-12):
+
+  | Provider | Source | Verdict |
+  |---|---|---|
+  | RunPod   | `{ myself { clientBalance } }` GraphQL — one extra field on the existing `_LIST_PODS_QUERY` shape at `providers/runpod/__init__.py:774`. | SHIPS IN B2. ~150 ms, reliable, no new transport. |
+  | Replicate | No public balance endpoint (dashboard-only). Replicate engine already documents the < $5 soft-throttle at `engines/replicate/__init__.py:40`. | DOES NOT SHIP. Operator-set `KINOFORGE_REPLICATE_THROTTLE_AT_USD` env-var shim — B2 reads + warns when burn × hours crosses it. Cheap; no API needed. |
+  | Runway   | Generation surface only. | DOES NOT SHIP. Renders `balance: N/A`. |
+  | Luma     | Direct video API retired in 2026 (Phase 44). | DOES NOT SHIP. Renders `balance: N/A`. |
+  | Bedrock  | AWS Cost Explorer API — ~$0.01/req, ~24 h lag, requires `ce:GetCostAndUsage` IAM. | DEFERRED. Wrong shape for a live readout; track as follow-on layer when the per-prediction cost capture (PROGRESS B10) lands. |
+  | Vertex   | GCP Cloud Billing API — heavy IAM, comparable latency to Bedrock. | DEFERRED. Same reasoning as Bedrock. |
+  | SkyPilot | Pass-through to AWS / GCP / Azure billing. | DEFERRED. Same IAM + latency penalty as Bedrock / Vertex. |
+
+  Surface area. Two halves, mirroring B5a's substrate + per-provider satisfier split:
+
+  - Cost aggregator. New `core/cost.py` (pure, mirrors `core/reaper.py` purity split):
+    walks ledger entries, runs classify per entry, sums `cost_rate_usd_per_hr` across LIVE
+    verdicts, aggregates per-provider and per-session/batch_id, returns a frozen dataclass
+    consumed by the CLI renderer. No I/O inside the aggregator; ledger entries are passed
+    in. CLI `_cmd_cost` does the ledger read.
+  - Balance substrate. New `core/balance_endpoints.py` hosting a `BalanceEndpoint`
+    Protocol with one method `read(creds) -> Money | None` (where `Money` is a frozen
+    dataclass carrying `usd: float` + `as_of: datetime` + `source: str`). Transport
+    errors propagate as `TransportError` (mirrors B5a's contract); unknown / unsupported
+    providers register `NoBalanceEndpoint` which returns `None` immediately. A
+    `build_balance_endpoint_for(cfg, creds)` registry helper at `_adapters.py` dispatches
+    on `cfg.compute.provider` (or, for hosted engines, on `cfg.engine.kind`) the same way
+    `build_heartbeat_endpoint_for` does in B5a.
+  - RunPod satisfier. `providers/runpod/balance.py`. One method: builds the GraphQL
+    request body `"{ myself { clientBalance } }"`, POSTs to the existing
+    `https://api.runpod.io/graphql` endpoint via the existing `http_post_json` seam,
+    returns `Money(usd=resp["data"]["myself"]["clientBalance"], as_of=now(), source="runpod")`.
+    Transport / 5xx / shape errors → `TransportError` → CLI renders `balance: ?
+    (transport error)`. Self-registers under `"runpod"`.
+  - CLI surface. `kinoforge cost` subcommand. Default human-readable table:
+
+    ```
+    RunPod balance: $42.18 (as of 14:32:01 PST)
+    Burn rate:     $0.79/hr (1 LIVE pod, RunPod A5000)
+    Runway:        ~53 h at current burn
+
+    Per-provider:
+      runpod   LIVE=1  IDLE=0  UNKNOWN=0  spend(session)=$3.41
+      replicate              spend(session)=$1.20  ⚠ approaching $5 throttle (set KINOFORGE_REPLICATE_THROTTLE_AT_USD)
+      skypilot LIVE=0  IDLE=0  UNKNOWN=2  spend(session)=$0.00  (B5b pending — counts are upper-bound)
+    ```
+
+    `--json` emits the same data in a stable schema (sibling of `kinoforge status --json`
+    from Phase 33 follow-up E24). `--prom` emits Prometheus text exposition format
+    (gauges: `kinoforge_burn_rate_usd_per_hr`, `kinoforge_balance_usd{provider="..."}`,
+    `kinoforge_pod_count{provider="...", state="LIVE|IDLE|UNKNOWN"}`).
+  - YAML surface. Zero new fields. Reuses `cfg.compute.provider` and the existing
+    `EnvCredentialProvider` for `RUNPOD_API_KEY`.
+
+  Output-mode contract. `--json` is the authoritative shape; `--prom` is derived; the
+  human-readable table is a render of `--json`. Stable schema (per Phase 33 / E24
+  precedent): top-level `{"as_of": <iso>, "burn_rate_usd_per_hr": <float>, "balance":
+  {<provider>: {"usd": <float>, "as_of": <iso>, "source": <str>} | null},
+  "per_provider": [...], "per_session": [...], "heartbeat_partial_truth": [<provider>...]}`.
+  Future micro-layers extend by adding keys, never renaming.
+
+  Failure-mode contract for balance reads.
+  1. Transport failure (network down, 5xx, timeout) → `TransportError` caught at CLI;
+     table renders `balance: ? (transport error)`; `--json` renders `"balance": {"runpod":
+     null}` + an entry in a new top-level `"balance_errors": ["runpod: <message>"]` list.
+     Burn / runway lines still compute from ledger data.
+  2. Schema drift (provider returns an unexpected JSON shape) → same path as transport
+     failure; logged at WARNING with the raw body shape for forensics.
+  3. Credential missing → balance read short-circuits to `None`; renders `balance: ? (no
+     credential)`. No exception.
+  4. Provider returns negative balance (RunPod allows this on auto-debit accounts) →
+     rendered verbatim, no clamping; the negative-runway calculation shows `< 0 h`.
 
   Risk. Lower than the sweeper. No daemon, no signals, no shutdown semantics. Pure read
-  path.
+  path. Two concrete risks:
 
-  Effort estimate. ~4-6 tasks. The smallest of the three Group A options.
+  1. **Balance API shape drift.** RunPod GraphQL has changed schema before (Phase 47
+     proxy 404 was unrelated, but the GraphQL `myself` query did gain new fields between
+     Phase 24 and Phase 52). Mitigation: balance read is fully isolated from the
+     `_LIST_PODS_QUERY` path — schema drift on `clientBalance` cannot break find_offers
+     / create_instance / destroy_instance. Tests exercise the shape via injectable
+     `http_post_json` seam with snapshot fixtures.
+  2. **Per-prediction hosted spend not in the ledger.** Hosted engines bill per-prediction,
+     not per-pod-hour, and B10 (per-prediction cost capture) is not shipped. B2's spend
+     numbers cover compute-pod time only; hosted-engine spend appears in the ledger only
+     after B10 ships. Mitigation: explicit table header "compute spend (hosted spend
+     deferred to B10)" + a `"hosted_spend_pending": true` key in `--json`.
+
+  Effort estimate. ~7-10 tasks. Larger than the bare aggregator (~4-6) but smaller than
+  B1 / B3 because no daemon, no orchestrator hot path. Per-task shape:
+
+  a. `core/cost.py` aggregator (pure) + offline unit tests over fixture ledger entries
+     covering: LIVE+IDLE+UNKNOWN mix, per-provider sum, per-session sum, empty ledger,
+     classify-failed-on-entry isolation (one bad entry does not poison the aggregate).
+  b. `core/balance_endpoints.py` Protocol + `NoBalanceEndpoint` no-op + `Money` dataclass
+     + `TransportError` + offline unit tests with fake satisfiers.
+  c. RunPod satisfier (`providers/runpod/balance.py`) with injectable `http_post_json`
+     seam + offline tests: happy path, transport failure → TransportError, schema-drift
+     (missing `clientBalance` key) → TransportError, missing credential → returns None.
+  d. `_adapters.py` registry — `build_balance_endpoint_for(cfg, creds)` + dispatch on
+     `cfg.compute.provider` (or hosted engine kind) + integration test that every
+     known provider/engine resolves to either RunPod-satisfier or NoBalanceEndpoint.
+  e. CLI `_cmd_cost` + ledger walk + render. Three output modes: default table, `--json`,
+     `--prom`. Render unit tests over fixture aggregates (golden-output style, like
+     `_cmd_status` from Phase 33).
+  f. Replicate throttle warning: `KINOFORGE_REPLICATE_THROTTLE_AT_USD` env-var read at
+     `_cmd_cost` startup, surfaced as a per-provider footer when session spend exceeds
+     90% of the threshold. Offline test exercises the threshold gate.
+  g. SkyPilot HEARTBEAT_UNKNOWN footer + `--json` `"heartbeat_partial_truth": ["skypilot"]`
+     gate via `provider_heartbeat_supported` from B5a. Offline test asserts the footer
+     fires only when a SkyPilot-provider entry is in the ledger.
+  h. README + PROGRESS + warm-reuse-tasks.txt closeout. Strike B2 in PROGRESS §B with
+     commit sha; replace this entry's "design APPROVED" with "CLOSED commit <sha>";
+     amend Layer V spec §6 to point at B2 closing the Layer X gap.
+
+  Live spend: zero. The RunPod GraphQL `myself` query does not require an active pod —
+  authenticated request only. All testing offline via injected `http_post_json` seam.
+  (Operator can `curl` the GraphQL endpoint to capture a snapshot fixture for the
+  shape-lock test — no kinoforge code involved.)
 
 
 
@@ -541,7 +655,7 @@ Sequencing summary:
   B5a (RunPod heartbeat substrate, ~5-6 tasks, $0.05 live)
   → B7 (cooperative lock, ~4-5 tasks, no live spend)
   → B4 (CLI warm-reuse exposure, ~4-5 tasks, $0 or $0.05 live)
-  → B2 (cost dashboard, ~4-6 tasks, no live spend)
+  → B2 (cost dashboard + RunPod balance readout, ~7-10 tasks, no live spend)
   → B1 (sweeper daemon, ~6-8 tasks, optional live)
   → B3 (in-session warm-reuse retrofit, ~6-8 tasks, RunPod smoke ~$0.10)
   → [QUOTA GATE: A3 / A4 land]
