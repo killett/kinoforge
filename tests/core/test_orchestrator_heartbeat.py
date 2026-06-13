@@ -125,6 +125,23 @@ class _SpyHeartbeatLoop:
 
     def start(self) -> None:
         self.events.append("start")
+        # B7 — mimic real HeartbeatLoop: ensure the ledger entry exists
+        # and write a heartbeat_thread_tick so deploy_session's
+        # hold_until_first_tick polling phase observes a fresh tick.
+        # Without this the cooperative session-claim lock would
+        # FirstTickTimeout (boot_timeout_s + 2*interval) on every spy
+        # test that uses a positive interval.
+        self.ledger.record(
+            Instance(
+                id=self.instance_id,
+                provider="local",
+                status="ready",
+                created_at=0.0,
+                cost_rate_usd_per_hr=0.0,
+                tags={},
+            )
+        )
+        self.ledger.touch(self.instance_id, heartbeat_thread_tick=time.time())
 
     def stop(self) -> None:
         self.events.append("stop")
