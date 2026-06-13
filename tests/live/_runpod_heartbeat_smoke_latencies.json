@@ -1,0 +1,18 @@
+{
+  "p50_ms": 460.2,
+  "p99_ms": 583.1,
+  "samples": [
+    513.6,
+    355.6,
+    583.1,
+    406.7
+  ],
+  "rate_limit_hit": false,
+  "spend_cap_usd": 0.05,
+  "tick_count": 2,
+  "session_lifetime_s": 60.0,
+  "offer_id": "NVIDIA RTX A2000",
+  "cost_rate_usd_per_hr": 0.12,
+  "estimated_spend_usd": 0.002,
+  "instance_id": "j8wqz19kmjextc"
+}
