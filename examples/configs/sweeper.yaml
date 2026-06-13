@@ -1,0 +1,38 @@
+# kinoforge sweeper daemon example config.
+#
+# Run with:
+#   kinoforge sweeper start -c examples/configs/sweeper.yaml
+#
+# Typical systemd posture (Type=simple + Restart=on-failure):
+#   ExecStart=/usr/local/bin/kinoforge sweeper start -c /etc/kinoforge.yaml
+#   Restart=on-failure
+#
+# Textfile-collector cron for Prometheus:
+#   */30 * * * * kinoforge sweeper metrics --prom -c /etc/kinoforge.yaml \
+#                  > /var/lib/node_exporter/textfile/kinoforge_sweeper.prom
+
+compute:
+  provider: runpod
+  image: runpod/base:ubuntu22.04
+  lifecycle:
+    idle_timeout: 2h            # 2h idle → IDLE_REAP
+    max_lifetime: 8h            # 8h hard ceiling → OVERAGE_REAP
+    job_timeout: 1h             # per-job timeout
+    budget: 25.0                # USD budget guardrail
+    heartbeat_interval_s: 30    # Layer U heartbeat cadence; substrate gate
+    grace_after_session_s: 300  # 5min post-session warm-reuse window
+
+engine:
+  kind: fake                    # replace with your real engine kind
+  precision: fp16
+
+models:
+  - ref: hf:org/m
+    kind: base
+    target: checkpoints
+
+sweeper:
+  interval_s: 60                # cadence; default 60s — gentle on RunPod GraphQL
+  include_orphans: false        # opt-in: extend act_verdicts with ORPHAN_REAP
+  force_forget: false           # opt-in: extend act_verdicts with UNROUTABLE
+  host: null                    # null → socket.gethostname() at CLI level
