@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from kinoforge.core.clock import FakeClock
 from kinoforge.core.errors import AuthError, TeardownError, UnknownAdapter
 from kinoforge.core.interfaces import Instance
@@ -400,3 +402,155 @@ def test_act_on_verdict_swallows_teardown_error() -> None:
     assert result.reason is not None
     # Ledger.forget MUST NOT have been called — destroyer didn't confirm.
     assert ledger.forgotten == []
+
+
+# ---------------------------------------------------------------------------
+# B5a Task d — HEARTBEAT_SUBSTRATE_MISSING no-destroy + WARN-once arm
+# ---------------------------------------------------------------------------
+
+
+def test_act_on_verdict_substrate_missing_does_not_destroy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conservative-on-ignorance contract: operator cannot fix the
+    substrate by destroying the pod; sweeper must skip.
+
+    Bug catch: a forgotten case-arm could fall through to the destroy
+    branch and silently kill working SkyPilot pods during the
+    B5a-shipped-B5b-pending window.
+    """
+    from kinoforge.core.clock import FakeClock
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.reaper_actor import act_on_verdict
+
+    # Build fakes for store, ledger, provider — only the destroy and
+    # forget calls matter for this assertion.
+    class _DummyLock:
+        def __enter__(self) -> _DummyLock:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+    class _StubStore:
+        def acquire_lock(self, _key: str, ttl_s: float = 30.0) -> _DummyLock:
+            return _DummyLock()
+
+    destroy_calls: list[str] = []
+    forget_calls: list[str] = []
+
+    class _StubProvider:
+        def list_instances(self) -> list[Instance]:
+            return [
+                Instance(
+                    id="pod-x", provider="skypilot", created_at=1_000.0, status="ready"
+                )
+            ]
+
+        def destroy_instance(self, instance_id: str) -> None:
+            destroy_calls.append(instance_id)
+
+    class _StubLedger:
+        def forget(self, instance_id: str) -> None:
+            forget_calls.append(instance_id)
+
+    entry = {
+        "id": "pod-x",
+        "provider_kind": "skypilot",
+        "created_at": 1_000.0,
+        "heartbeat_thread_tick": None,
+        "last_heartbeat": None,
+    }
+    result = act_on_verdict(
+        store=_StubStore(),  # type: ignore[arg-type]
+        ledger=_StubLedger(),  # type: ignore[arg-type]
+        provider=_StubProvider(),  # type: ignore[arg-type]
+        entry=entry,
+        snapshot_verdict=Verdict.HEARTBEAT_SUBSTRATE_MISSING,
+        thresholds={
+            "idle_timeout_s": 600.0,
+            "max_lifetime_s": 18_000.0,
+            "heartbeat_interval_s": 30.0,
+            "grace_after_session_s": 300.0,
+        },
+        clock=FakeClock(start=2_000.0),
+    )
+    assert destroy_calls == []
+    assert forget_calls == []
+    assert result.action == "no_op"
+    assert result.applied_verdict == Verdict.HEARTBEAT_SUBSTRATE_MISSING
+
+
+def test_act_on_verdict_substrate_missing_warns_once_per_pair(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Across N sweeps over the same (provider_kind, instance_id) pair,
+    only the FIRST WARNING fires. Operators don't want 100 lines of
+    'skypilot has no substrate' per minute."""
+    import logging
+
+    from kinoforge.core.clock import FakeClock
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.reaper_actor import act_on_verdict, reset_warning_dedup
+
+    reset_warning_dedup()  # test-helper from reaper_actor
+
+    class _DummyLock:
+        def __enter__(self) -> _DummyLock:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+    class _StubStore:
+        def acquire_lock(self, _key: str, ttl_s: float = 30.0) -> _DummyLock:
+            return _DummyLock()
+
+    class _StubProvider:
+        def list_instances(self) -> list[Instance]:
+            return [
+                Instance(
+                    id="cluster-x",
+                    provider="skypilot",
+                    created_at=1_000.0,
+                    status="ready",
+                )
+            ]
+
+        def destroy_instance(self, _instance_id: str) -> None:
+            pass
+
+    class _StubLedger:
+        def forget(self, _instance_id: str) -> None:
+            pass
+
+    entry = {
+        "id": "cluster-x",
+        "provider_kind": "skypilot",
+        "created_at": 1_000.0,
+        "heartbeat_thread_tick": None,
+        "last_heartbeat": None,
+    }
+    caplog.set_level(logging.WARNING, logger="kinoforge.core.reaper_actor")
+
+    for _ in range(5):
+        act_on_verdict(
+            store=_StubStore(),  # type: ignore[arg-type]
+            ledger=_StubLedger(),  # type: ignore[arg-type]
+            provider=_StubProvider(),  # type: ignore[arg-type]
+            entry=entry,
+            snapshot_verdict=Verdict.HEARTBEAT_SUBSTRATE_MISSING,
+            thresholds={
+                "idle_timeout_s": 600.0,
+                "max_lifetime_s": 18_000.0,
+                "heartbeat_interval_s": 30.0,
+                "grace_after_session_s": 300.0,
+            },
+            clock=FakeClock(start=2_000.0),
+        )
+
+    # Only one WARNING log line per (provider_kind, instance_id)
+    relevant = [
+        r for r in caplog.records if "heartbeat substrate" in r.getMessage().lower()
+    ]
+    assert len(relevant) == 1
