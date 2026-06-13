@@ -251,7 +251,12 @@ def act_on_verdict(
                         instance_id,
                     )
                 action = "no_op"
-            elif v2 in {Verdict.IDLE_REAP, Verdict.OVERAGE_REAP, Verdict.ORPHAN_REAP}:
+            elif v2 in {
+                Verdict.IDLE_REAP,
+                Verdict.OVERAGE_REAP,
+                Verdict.ORPHAN_REAP,
+                Verdict.STALL_REAP,  # C26
+            }:
                 destroy_confirmed(provider, instance_id, sleep=lambda _: None)
                 ledger.forget(instance_id)
                 action = "destroyed_and_forgot"

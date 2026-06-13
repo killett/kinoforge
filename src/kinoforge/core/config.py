@@ -111,6 +111,10 @@ class LifecycleConfig(BaseModel):
     boot_timeout: float = 900.0
     heartbeat_interval_s: float | None = None
     grace_after_session_s: float = 300.0
+    stall_reap_enabled: bool = True
+    stall_window_s: float = 600.0
+    stall_gpu_threshold: float = 5.0
+    stall_cpu_threshold: float = 20.0
 
     @field_validator(
         "idle_timeout",
@@ -153,6 +157,22 @@ class LifecycleConfig(BaseModel):
         """
         if v < 0:
             raise ValueError(f"grace_after_session_s must be >= 0; got {v}")
+        return v
+
+    @field_validator("stall_window_s")
+    @classmethod
+    def _validate_stall_window_non_negative(cls, v: float) -> float:
+        """Reject negative stall_window_s at load time (C26)."""
+        if v < 0:
+            raise ValueError(f"stall_window_s must be >= 0; got {v}")
+        return v
+
+    @field_validator("stall_gpu_threshold", "stall_cpu_threshold")
+    @classmethod
+    def _validate_stall_threshold_range(cls, v: float) -> float:
+        """Reject util thresholds outside [0, 100] at load time (C26)."""
+        if v < 0 or v > 100:
+            raise ValueError(f"stall threshold must be in [0, 100]; got {v}")
         return v
 
 
@@ -884,6 +904,9 @@ class Config(BaseModel):
             boot_timeout_s=lc.boot_timeout,
             heartbeat_interval_s=lc.heartbeat_interval_s,
             grace_after_session_s=lc.grace_after_session_s,
+            stall_window_s=lc.stall_window_s if lc.stall_reap_enabled else None,
+            stall_gpu_threshold=lc.stall_gpu_threshold,
+            stall_cpu_threshold=lc.stall_cpu_threshold,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:

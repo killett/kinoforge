@@ -1,0 +1,130 @@
+{
+  "disk_field": null,
+  "captured_at": "2026-06-13T15:54:44.336544-07:00",
+  "tested_pod_id": "nbiwwjmtfo0ecv",
+  "envelopes": [
+    {
+      "label": "baseline.runtime.uptimeInSeconds",
+      "runtime_inner": "uptimeInSeconds",
+      "status": 200,
+      "body": {
+        "data": {
+          "pod": {
+            "id": "nbiwwjmtfo0ecv",
+            "runtime": null
+          }
+        }
+      }
+    },
+    {
+      "label": "baseline.runtime.gpus",
+      "runtime_inner": "uptimeInSeconds gpus { id gpuUtilPercent memoryUtilPercent }",
+      "status": 200,
+      "body": {
+        "data": {
+          "pod": {
+            "id": "nbiwwjmtfo0ecv",
+            "runtime": null
+          }
+        }
+      }
+    },
+    {
+      "label": "baseline.runtime.container",
+      "runtime_inner": "uptimeInSeconds container { cpuPercent memoryPercent }",
+      "status": 200,
+      "body": {
+        "data": {
+          "pod": {
+            "id": "nbiwwjmtfo0ecv",
+            "runtime": null
+          }
+        }
+      }
+    },
+    {
+      "label": "container.diskInfo.utilPercent",
+      "runtime_inner": "uptimeInSeconds container { cpuPercent memoryPercent diskInfo { utilPercent } }",
+      "status": 400,
+      "body": {
+        "errors": [
+          {
+            "message": "Cannot query field \"diskInfo\" on type \"PodRuntimeContainer\".",
+            "locations": [
+              {
+                "line": 4,
+                "column": 68
+              }
+            ],
+            "extensions": {
+              "code": "GRAPHQL_VALIDATION_FAILED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "label": "runtime.disk.utilPercent",
+      "runtime_inner": "uptimeInSeconds disk { utilPercent } container { cpuPercent memoryPercent }",
+      "status": 400,
+      "body": {
+        "errors": [
+          {
+            "message": "Cannot query field \"disk\" on type \"PodRuntime\".",
+            "locations": [
+              {
+                "line": 4,
+                "column": 31
+              }
+            ],
+            "extensions": {
+              "code": "GRAPHQL_VALIDATION_FAILED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "label": "container.storage.used+total",
+      "runtime_inner": "uptimeInSeconds container { cpuPercent memoryPercent storage { used total } }",
+      "status": 400,
+      "body": {
+        "errors": [
+          {
+            "message": "Cannot query field \"storage\" on type \"PodRuntimeContainer\".",
+            "locations": [
+              {
+                "line": 4,
+                "column": 68
+              }
+            ],
+            "extensions": {
+              "code": "GRAPHQL_VALIDATION_FAILED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "label": "container.diskPercent",
+      "runtime_inner": "uptimeInSeconds container { cpuPercent memoryPercent diskPercent }",
+      "status": 400,
+      "body": {
+        "errors": [
+          {
+            "message": "Cannot query field \"diskPercent\" on type \"PodRuntimeContainer\". Did you mean \"cpuPercent\"?",
+            "locations": [
+              {
+                "line": 4,
+                "column": 68
+              }
+            ],
+            "extensions": {
+              "code": "GRAPHQL_VALIDATION_FAILED"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

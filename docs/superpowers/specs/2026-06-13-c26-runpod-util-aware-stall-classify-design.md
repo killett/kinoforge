@@ -609,18 +609,33 @@ query GetRuntime($podId: String!) {
 `gpus[].memoryUtilPercent`, `container.cpuPercent`,
 `container.memoryPercent`.
 
-**Disk field — TBD by probe task.** RunPod introspection blocked
-(`__type` disabled). Probe in Task 1 — trial selection sets against a
-small test pod. Candidates to try in priority order:
+**Disk field — RESOLVED 2026-06-13 (Task 1 probe outcome): no field.**
+RunPod's `PodRuntimeContainer` GraphQL type exposes only `cpuPercent` and
+`memoryPercent`; `PodRuntime` exposes only `uptimeInSeconds`, `gpus`, and
+`container`. The probe tried four candidate selection sets and each was
+rejected with `GRAPHQL_VALIDATION_FAILED`:
 
-1. `container.diskInfo { utilPercent }`
-2. `runtime.disk { utilPercent percentUsed }`
-3. `container.storage { used total }` (then `disk_percent = used / total`)
+| Trial                                | Error message                                                              |
+|--------------------------------------|----------------------------------------------------------------------------|
+| `container.diskInfo { utilPercent }` | `Cannot query field "diskInfo" on type "PodRuntimeContainer".`             |
+| `runtime.disk { utilPercent }`       | `Cannot query field "disk" on type "PodRuntime".`                          |
+| `container.storage { used total }`   | `Cannot query field "storage" on type "PodRuntimeContainer".`              |
+| `container.diskPercent`              | `Cannot query field "diskPercent" on type "PodRuntimeContainer". Did you mean "cpuPercent"?` |
 
-Probe spend ~$0.001 on RTX A2000 (mirrors C25 Task a methodology).
-Sidecar: `tests/live/_runpod_util_disk_probe.json`. If no field exists,
-ship with `disk_percent = None` permanently; not in classify's threshold
-AND-clause regardless.
+Last row's "Did you mean cpuPercent?" suggestion confirms exhaustive
+container-level fields are visible to the typo-matcher — no disk axis
+exists. `RunPodGraphQLUtilEndpoint` ships with `disk_percent = None`
+permanently; classify's stall AND-clause is GPU + CPU only (the design
+already excluded disk from the AND-clause, so this is no functional loss).
+Sidecar: `tests/live/_runpod_util_disk_probe.json` (two-pod probe spend
+≈ $0.01 total on RTX 3070).
+
+**Secondary finding:** the baseline trials confirmed `runtime{}` is
+reachable on RunPod's `?api_key=`-authed GraphQL endpoint, but for a
+freshly-created pod whose `desiredStatus` has already turned `ready`,
+the `runtime` value can still be `null` for many seconds while the
+container finishes booting. The satisfier's existing `runtime is None →
+return None` branch (R12) is the correct response.
 
 ---
 
@@ -891,16 +906,72 @@ When C26 closes (PARTIAL or FULL):
 
 ## 16. Wire-discovery notes
 
-To capture during implementation:
+Captured during implementation:
 
-- Disk-util GraphQL field name (probe Task 1).
-- Empirical P50 / P99 latency of the new util query at 30s cadence
-  (Phase A smoke captures).
-- Real RunPod multi-GPU response shape: confirm `gpus` array structure
-  matches the spec query (single-GPU pods today; multi-GPU not exercised
-  until a real workload requests >1 GPU).
-- Whether `runtime` is `null` during early boot (first ~5s after pod
-  create); if yes, `read_util` returns UtilSnapshot with all-None fields
-  → counter starts at 0 → no premature STALL.
+- **Disk-util GraphQL field name — RESOLVED (Task 1, 2026-06-13).** No
+  field exists on either `PodRuntime` or `PodRuntimeContainer`. See §8
+  for trial table. `disk_percent` ships as `None` permanently. Sidecar
+  at `tests/live/_runpod_util_disk_probe.json`.
+- **Early-boot `runtime=null` confirmed (Task 1, 2026-06-13).** On a pod
+  whose RunPod-side `desiredStatus` already reads `ready`, the `runtime`
+  value can still be `null` while the container finishes booting. The
+  R12 design — `runtime is None → read_util returns None → counter
+  preserved at 0` — is exactly what's needed: counter only starts
+  ticking once util data lands, so the booting window doesn't
+  accidentally accumulate STALL signal.
 
-Update this section + §8 when probes resolve.
+Still to capture later:
+
+- Empirical P50 / P99 latency of the util query at 30 s cadence
+  (Phase A smoke ran at 10 s cadence; latency not isolated).
+- Real RunPod multi-GPU response shape (single-GPU pods today; multi-GPU
+  not exercised until a real workload requests >1 GPU).
+
+## 17. Closeout — Phase A + Phase B outcomes (2026-06-13)
+
+**Phase A — PROVEN.** Cheap RTX 3070 pod, alpine:latest, no workload.
+HeartbeatLoop with `interval_s=10`, `stall_window_s=60`, real
+RunPodGraphQLUtilEndpoint. Counter trail captured in
+`tests/live/_c26_phase_a_smoke_evidence.json`:
+
+```
+[0, 0, 1, 2, 3, 4, 5, 6]
+```
+
+Ticks 0-1 returned `runtime=null` (early boot — R12 satisfier branch
+preserves counter). Ticks 2-7 saw GPU=0%, CPU=0% (no workload), counter
+incremented each 10 s. At counter=6, 6 × 10 s = 60 s ≥ stall_window_s,
+STALL_REAP fired: `provider.destroy_instance` + `ledger.forget` +
+`cancel_token.set` + `loop._stop.set` all executed; pod absent from
+`list_instances()` within 60 s. Spend ~$0.003. The C26 substrate +
+classify + reaper path all work end-to-end on the real RunPod GraphQL
+runtime{} schema for the "steady low util" stall class.
+
+**Phase B — FAILED-DESIGN-HOLE.** Wan 14B + ComfyUI 2-CLI smoke
+entered a container restart loop. Per-tick util probe at kill:
+
+```
+gpu_util_percent: 0.0
+cpu_percent:     13.0   (< stall_cpu_threshold=20)
+uptime_seconds:   1     (container restarted within the last interval)
+```
+
+Both axes were continuously below threshold, but `_update_counter`'s
+uptime-decrease guard fires every tick (`prev_uptime` ≥ 1 → `curr_uptime`
+= 1 → reset to 0). After 480 s of unbroken low util, counter was still
+0 — STALL_REAP never fires. The shipped design's restart-blip guard,
+designed for one-shot RunPod migrations / spot reclaim, does not
+distinguish a single restart from a chronic restart loop. Sidecar
+`tests/live/_c26_phase_b_smoke_evidence.json` captures the ledger
+snapshot, live probe, and diagnosis.
+
+Phase B kill: ~$0.025 actual spend (well under $0.55 ceiling).
+
+**Net:** C26 ships PARTIAL. The Phase-A class of stall (steady low util)
+is fully protected end-to-end. The Phase-B class (chronic restart loop)
+is the original C25 Task 4 symptom and remains uncovered. Tracked as
+**C27** in PROGRESS §C — needs a sibling predicate (e.g.
+`uptime_seconds < threshold_uptime for K consecutive ticks`) alongside
+the existing low-util predicate. The C26 substrate (UtilSnapshotEndpoint
+Protocol, ledger fields, classify row 3' wiring, CLI flag, threshold
+threading) is the right foundation for C27.
