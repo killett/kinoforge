@@ -223,6 +223,9 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
                 idle_timeout_s=int(lc.idle_timeout_s),
                 max_age_s=int(lc.max_lifetime_s),
             )
+            override = getattr(args, "stall_window_override", None)
+            if override is not None:
+                ledger.touch(result.instance.id, stall_window_s=float(override))
 
     return 0
 
