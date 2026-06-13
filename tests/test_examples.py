@@ -36,6 +36,7 @@ EXAMPLE_CONFIGS = [
     "local-fake.yaml",
     "skypilot.yaml",
     "cost.yaml",
+    "sweeper.yaml",
 ]
 
 

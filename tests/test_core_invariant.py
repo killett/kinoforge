@@ -498,3 +498,45 @@ def test_core_auth_does_not_leak_sdk_imports() -> None:
         raise AssertionError(
             f"core.auth import leaked vendor SDK modules into sys.modules:\n  {offending}"
         )
+
+
+# ---------------------------------------------------------------------------
+# B1 — core/sweeper_metrics.py purity contract (Layer W)
+# ---------------------------------------------------------------------------
+
+_SWEEPER_METRICS_FORBIDDEN_IMPORTS: list[re.Pattern[str]] = [
+    re.compile(r"^\s*(import|from)\s+threading\b"),
+    re.compile(r"^\s*(import|from)\s+subprocess\b"),
+    re.compile(r"^\s*(import|from)\s+time\b"),
+    re.compile(r"^\s*(import|from)\s+pathlib\b"),
+    re.compile(r"^\s*(import|from)\s+urllib\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.core\.lifecycle\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.providers\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.sources\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.engines\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.stores\b"),
+    re.compile(r"^\s*(import|from)\s+kinoforge\.cli\b"),
+]
+
+
+def test_core_sweeper_metrics_module_is_pure() -> None:
+    """Layer W: core/sweeper_metrics.py is pure — no I/O, no ledger import.
+
+    The three renderers (human / JSON / Prom) take their input as a dict
+    argument; any I/O here would couple the dashboard's output format
+    to a specific storage backend. Architecturally enforced so a future
+    contributor cannot reach into ledger.json directly.
+    """
+    path = SRC_ROOT / "core" / "sweeper_metrics.py"
+    violations: list[str] = []
+    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+        for pattern in _SWEEPER_METRICS_FORBIDDEN_IMPORTS:
+            if pattern.match(line):
+                violations.append(f"{path}:{lineno}: {line.strip()}")
+                break
+    if violations:
+        detail = "\n  ".join(violations)
+        raise AssertionError(
+            "core/sweeper_metrics.py must be pure — forbidden import(s) found:\n  "
+            + detail
+        )

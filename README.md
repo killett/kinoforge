@@ -227,6 +227,54 @@ $ kinoforge forget --id ia66l3rlto5x66
 forgot: ia66l3rlto5x66
 ```
 
+## Sweeper daemon (B1 / Layer W)
+
+The sweeper is a long-running foreground daemon that calls the same
+`sweep()` substrate as `kinoforge reap` on a configurable cadence
+(default 60s). It closes the idle-pod cost-leak window between manual
+operator sweeps.
+
+Subcommands:
+
+```
+kinoforge sweeper start    # foreground; blocks until SIGTERM
+kinoforge sweeper stop     # SIGTERM the daemon owning sweeper:<host>
+kinoforge sweeper status   # human or --json output
+kinoforge sweeper metrics  # --prom textfile-collector target
+```
+
+YAML block (additive to existing config; defaults are safe):
+
+```yaml
+sweeper:
+  interval_s: 60
+  include_orphans: false   # extend default policy with ORPHAN_REAP
+  force_forget: false      # extend default policy with UNROUTABLE
+  host: null               # null → socket.gethostname()
+```
+
+Operator postures:
+
+- **systemd**: `Type=simple` + `Restart=on-failure`. `ExecStart=/usr/local/bin/kinoforge sweeper start -c /etc/kinoforge.yaml`.
+- **docker**: Run as PID 1; the daemon handles SIGTERM cleanly.
+- **textfile-collector cron**:
+  ```
+  */30 * * * * kinoforge sweeper metrics --prom -c /etc/kinoforge.yaml \
+                 > /var/lib/node_exporter/textfile/kinoforge_sweeper.prom
+  ```
+
+Signals:
+
+- `SIGTERM` → drain the in-flight sweep then exit 0.
+- `SIGHUP` → re-read the config file and swap policy / thresholds /
+  interval without restarting the thread.
+- `SIGUSR1` → log cumulative stats to stdout.
+
+The daemon's own liveness lives in a reserved synthetic ledger entry
+keyed `sweeper:<host>`. `sweep()` filters this prefix so the daemon
+cannot reap itself. Use `kinoforge sweeper status --json` to read the
+entry programmatically.
+
 ## Cost dashboard (B2 / Layer X)
 
 `kinoforge cost` reads the ledger, classifies each entry against the
