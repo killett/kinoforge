@@ -248,7 +248,7 @@ class RunPodGraphQLUtilEndpoint:
               uptimeInSeconds
               gpus { id gpuUtilPercent memoryUtilPercent }
               container { cpuPercent memoryPercent }
-              # disk field name TBD by probe task — see §9 wire-discovery
+              # disk field name TBD by probe task — see §16 wire-discovery
             }
           }
         }
@@ -392,9 +392,38 @@ compute:
     stall_cpu_threshold: 20.0
 ```
 
-When `stall_reap_enabled: false`, `_adapters.build_util_endpoint_for(cfg)`
-returns None → HeartbeatLoop skips util read entirely → ledger util fields
-never written → classify falls through to LIVE. Clean kill-switch.
+When `stall_reap_enabled: false`:
+
+1. `_adapters.build_util_endpoint_for(cfg)` returns None → HeartbeatLoop
+   skips util read entirely → ledger util fields never written.
+2. **Callers of `classify()` pass `stall_window_s=None` when
+   `cfg.compute.lifecycle.stall_reap_enabled is False`** — same pattern
+   the existing classify already uses for `heartbeat_interval_s=None`
+   when the heartbeat feature is disabled.
+3. classify() falls through to LIVE on the row 3' guard. Backward-
+   compatible.
+
+Caller pattern (CLI `_cmd_reap`, B3 `_resolve_warm_instance`,
+HeartbeatLoop self-classify):
+
+```python
+stall_window = (
+    cfg.compute.lifecycle.stall_window_s
+    if cfg.compute.lifecycle.stall_reap_enabled
+    else None
+)
+verdict = classify(
+    entry, live_ids, now,
+    ...,
+    stall_window_s=stall_window,
+    stall_gpu_threshold=cfg.compute.lifecycle.stall_gpu_threshold,
+    stall_cpu_threshold=cfg.compute.lifecycle.stall_cpu_threshold,
+)
+```
+
+Clean kill-switch — operator with workload that legitimately idles GPU
+for >stall_window_s sets `stall_reap_enabled: false` once, no further
+changes needed.
 
 ### 4.7 Extended — `src/kinoforge/core/heartbeat_loop.py`
 
@@ -695,14 +724,24 @@ Sidecar: `tests/live/_c26_phase_a_smoke_evidence.json`.
 Re-fires C25 Task 4 acceptance gate with C26 protections live. Two-CLI
 warm-reuse smoke per B3 pattern.
 
-Assert (with C26 protections in place):
+Two acceptable smoke outcomes (both count as Phase B PASS for C26
+acceptance criterion 8):
 
-1. **If Wan + ComfyUI completes cleanly:** gen 1 elapsed wall ≥ gen 2
-   elapsed wall × (1 / 0.7) ≈ 1.43. Cold-skip benefit > 30%.
-2. **If Wan + ComfyUI stalls (regression of C25 Task 4 symptom):**
-   STALL_REAP self-classify fires; pod destroyed; gen 2 forced to cold
-   create. Smoke output records the stall as PROVEN-PROTECTION rather
-   than acceptance failure — C26 succeeded at catching the stall.
+1. **CLEAN-PASS**: Wan + ComfyUI completes both gens; cold-skip
+   benefit > 30% (gen 2 elapsed wall × (1 / 0.7) ≤ gen 1 elapsed wall).
+   Closes C25 Task 4 deferred gate. `successful-generations.md` gets a
+   new entry per the durability rule.
+2. **PROVEN-PROTECTION**: Wan + ComfyUI regresses to the C25 Task 4
+   stall symptom; STALL_REAP self-classify fires within the cfg window;
+   pod destroyed; gen 2 forced to cold create. Phase B records outcome
+   as PROVEN-PROTECTION — C26 succeeded at catching the stall the
+   operator had to catch manually in C25.
+
+Either outcome is a Phase B PASS. The smoke test classifies via the
+ledger snapshot (consecutive_low_util_count + verdict trail) and the
+two-gen elapsed wall ratio. FAIL only if STALL_REAP fails to fire
+during a real stall (false-negative) OR fires during a clean run
+(false-positive).
 
 Sidecar: `tests/live/_c26_phase_b_smoke_evidence.json`.
 
