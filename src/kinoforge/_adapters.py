@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from kinoforge.core.config import Config
     from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
     from kinoforge.core.interfaces import CredentialProvider
+    from kinoforge.core.util_endpoints import UtilSnapshotEndpoint
 
 
 def build_heartbeat_endpoint_for(
@@ -164,3 +165,53 @@ def build_balance_endpoint_for(
 
         return RunPodBalanceEndpoint(api_key=creds.get("RUNPOD_API_KEY"))
     return NoBalanceEndpoint()
+
+
+def build_util_endpoint_for(
+    cfg: "Config",
+    creds: "CredentialProvider",
+) -> "UtilSnapshotEndpoint | None":
+    """Build the right :class:`UtilSnapshotEndpoint` for the configured provider.
+
+    Returns None when:
+      - cfg.compute is None (hosted-only path), OR
+      - cfg.compute.lifecycle.stall_reap_enabled is False (kill switch), OR
+      - provider_util_supported(cfg.compute.provider) is False
+        (e.g. SkyPilot pre-B5b; Bedrock).
+
+    Args:
+        cfg: The loaded kinoforge config.
+        creds: Credential provider; RunPod branch reads ``RUNPOD_API_KEY``.
+
+    Returns:
+        A :class:`UtilSnapshotEndpoint` instance, or ``None``.
+
+    Raises:
+        AuthError: RunPod branch requested but ``RUNPOD_API_KEY`` missing.
+    """
+    from kinoforge.core.errors import AuthError
+    from kinoforge.core.util_endpoints import provider_util_supported
+
+    if cfg.compute is None:
+        return None
+    lifecycle = cfg.compute.lifecycle
+    if lifecycle is not None and not lifecycle.stall_reap_enabled:
+        return None
+    provider = cfg.compute.provider
+    if not provider_util_supported(provider):
+        return None
+    if provider == "runpod":
+        api_key = creds.get("RUNPOD_API_KEY")
+        if api_key is None:
+            raise AuthError(
+                "RUNPOD_API_KEY must be set when "
+                "compute.lifecycle.stall_reap_enabled is true on runpod"
+            )
+        from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
+
+        return RunPodGraphQLUtilEndpoint(api_key=api_key)
+    if provider == "local":
+        from kinoforge.providers.local.util import LocalUtilEndpoint
+
+        return LocalUtilEndpoint()
+    return None
