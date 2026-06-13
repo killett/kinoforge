@@ -28,6 +28,11 @@ compute:
   provider: runpod
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: pod
+  # warm_reuse_auto_attach: true  # B3 default — scan ledger for warm pods
+  #                               # matching this cfg's capability_key and
+  #                               # attach transparently on every fresh shell.
+  #                               # Set to false per-project to disable;
+  #                               # --no-reuse on the CLI overrides per-call.
   requirements:
     min_vram_gb: 80
     min_cuda: "12.4"

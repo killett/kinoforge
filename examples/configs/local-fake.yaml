@@ -18,6 +18,7 @@ models:
 compute:
   provider: local
   image: "kinoforge/local:latest"
+  # warm_reuse_auto_attach: true  # B3 default — see wan.yaml for full description.
   lifecycle:
     idle_timeout: 1h
     job_timeout: 30m
