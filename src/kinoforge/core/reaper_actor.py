@@ -333,6 +333,12 @@ def sweep(
 
     for entry in entries:
         eid = str(entry["id"])
+        # Layer W: synthetic daemon-liveness entry written by SweeperLoop;
+        # not a reapable pod. Reserved prefix at substrate level — joins
+        # `_lifecycle` (run_id) and `_cost_cache` as the third reserved
+        # kinoforge namespace. See B1 spec §4.4.
+        if eid.startswith("sweeper:"):
+            continue
         provider = provider_for(entry, registry_get_provider, provider_cache)
         if provider is None:
             snapshot[eid] = (entry, Verdict.UNROUTABLE)

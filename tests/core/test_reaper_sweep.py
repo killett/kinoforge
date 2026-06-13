@@ -360,3 +360,62 @@ def test_sweep_force_forget_unroutable_with_policy_extension() -> None:
     assert ledger.forgotten == ["i-orphaned"]
     # Lock acquired for the force-forget.
     assert ("reaper/i-orphaned", 30.0) in store.acquires
+
+
+def test_sweep_filters_sweeper_prefix_synthetic_ids(tmp_path: Any) -> None:
+    """Layer W: sweep() must skip entries whose id starts with 'sweeper:'.
+
+    Bug guard: the daemon writes its own liveness entry as
+    'sweeper:<host>' with provider='_sweeper'. Without this filter,
+    sweep() would resolve the provider via the registry (which has no
+    '_sweeper' factory), demote the entry to UNROUTABLE, and operators
+    running --force-forget would nuke the daemon's own heartbeat — a
+    self-destruct race.
+    """
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(root=tmp_path)
+    ledger = Ledger(store=store)
+    clock = FakeClock(start=1000.0)
+    for entry_id in ("i-real-1", "i-real-2"):
+        ledger.record(
+            Instance(
+                id=entry_id,
+                provider="local",
+                status="ready",
+                created_at=clock.now(),
+                cost_rate_usd_per_hr=0.10,
+            )
+        )
+    ledger.record(
+        Instance(
+            id="sweeper:test-host",
+            provider="_sweeper",
+            status="ready",
+            created_at=clock.now(),
+            cost_rate_usd_per_hr=0.0,
+        )
+    )
+
+    factory_calls: list[str] = []
+
+    def registry_get_provider(name: str) -> Any:
+        factory_calls.append(name)
+        raise KeyError(name)  # would force UNROUTABLE if reached
+
+    report = sweep(
+        store=store,
+        ledger=ledger,
+        registry_get_provider=registry_get_provider,
+        thresholds={
+            "idle_timeout_s": 7200.0,
+            "max_lifetime_s": 28800.0,
+            "heartbeat_interval_s": 30.0,
+            "grace_after_session_s": 300.0,
+        },
+        clock=clock,
+    )
+
+    assert set(report.snapshot.keys()) == {"i-real-1", "i-real-2"}
+    assert "_sweeper" not in factory_calls
