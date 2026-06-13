@@ -32,7 +32,7 @@
     {
       "id": 13,
       "subject": "Task 5: Closeout docs",
-      "status": "in_progress",
+      "status": "completed",
       "blockedBy": [12],
       "description": "**Goal:** Document C25 closure in PROGRESS.md, B5a spec §9, this spec §16 closeout, and successful-generations.md entry #7.\n\n**Files:** PROGRESS.md; docs/superpowers/specs/2026-06-12-b5a-heartbeat-substrate-design.md; docs/superpowers/specs/2026-06-13-c25-runpod-heartbeat-preserve-and-merge-design.md; successful-generations.md.\n\n**Verify:** git log --oneline -1\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/superpowers/specs/2026-06-12-b5a-heartbeat-substrate-design.md\", \"docs/superpowers/specs/2026-06-13-c25-runpod-heartbeat-preserve-and-merge-design.md\", \"successful-generations.md\"], \"verifyCommand\": \"git log --oneline -1\", \"acceptanceCriteria\": [\"PROGRESS.md §C C25 struck-through with CLOSED-by-SHA\", \"B5a spec §9 amended with closure pointer\", \"C25 spec §16 closeout block appended\", \"successful-generations.md entry #7 added with full schema\", \"entry #6 production-limitation paragraph struck-through with pointer to #7\"]}\n```"
     }
