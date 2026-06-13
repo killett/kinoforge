@@ -694,3 +694,76 @@ def test_act_on_verdict_proceeds_after_provision_lock_released(
         clock=clock,
     )
     assert second.action == "destroyed_and_forgot"
+
+
+# ---------------------------------------------------------------------------
+# B3 Task h — reaper integration delta
+# ---------------------------------------------------------------------------
+
+
+def test_act_on_verdict_blocks_when_b3_no_reuse_destroy_holds_reaper_lock(
+    tmp_path: Any,
+) -> None:
+    """Bug: B1 not blocking on B3 --no-reuse's reaper:<id> would double-destroy
+    (race condition; second destroy raises on phantom pod)."""
+    import threading
+    import time as _time
+
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(tmp_path)
+    ledger = Ledger(store=store)
+    provider = _FakeProvider(live_ids={"pod-1"})
+    ledger.record(
+        Instance(
+            id="pod-1",
+            provider="fake",
+            status="ready",
+            created_at=0.0,
+            cost_rate_usd_per_hr=0.5,
+            tags={},
+        )
+    )
+
+    b1_done = threading.Event()
+    b1_result: dict[str, Any] = {}
+    b1_started = threading.Event()
+
+    def b1_worker() -> None:
+        try:
+            b1_started.set()
+            res = act_on_verdict(
+                store,
+                ledger,
+                provider,  # type: ignore[arg-type]
+                _entry(id_="pod-1"),
+                Verdict.IDLE_REAP,
+                thresholds=_THR,
+                clock=FakeClock(1000.0),
+            )
+            b1_result["action"] = res.action
+        finally:
+            b1_done.set()
+
+    # Main thread = "B3 --no-reuse" holding reaper:<id>.
+    with store.acquire_lock("reaper/pod-1", ttl_s=30.0):
+        t = threading.Thread(target=b1_worker, daemon=True)
+        t.start()
+        # Wait for B1 to start (and block at the lock acquire).
+        b1_started.wait(timeout=5.0)
+        _time.sleep(0.3)  # Give B1 time to attempt acquire + block on poll.
+        # While we hold the lock: B3 sim-destroys + forgets pod-1.
+        provider.destroy_instance("pod-1")
+        ledger.forget("pod-1")
+        # Confirm B1 has NOT yet completed (it's polling our lock).
+        assert not b1_done.is_set(), "B1 ran before --no-reuse released lock"
+    # Release: B1 acquires, re-classifies, finds live_ids empty → STALE_LEDGER.
+    t.join(timeout=10.0)
+    assert b1_done.is_set()
+
+    # No double-destroy: only B3's destroy is recorded.
+    assert provider.destroyed == ["pod-1"]
+    # B1 re-classified and saw STALE_LEDGER → forgot (no-op since already gone)
+    # OR drift skipped. Either way action is non-destructive.
+    assert b1_result.get("action") in {"forgot", "skipped"}
