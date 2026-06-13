@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
 from kinoforge.cli.context import SessionContext
@@ -31,8 +33,12 @@ from kinoforge.stores.base import ArtifactStore
 from kinoforge.stores.local import LocalArtifactStore
 
 if TYPE_CHECKING:
+    from kinoforge.core.balance_endpoints import BalanceEndpoint, ProviderBalance
+    from kinoforge.core.cost import CostSnapshot
     from kinoforge.core.interfaces import Lifecycle
     from kinoforge.core.reaper_actor import SweepReport
+
+logger = logging.getLogger(__name__)
 
 # Module-level clock seam preserved for test monkeypatching.
 _cli_clock: Clock = RealClock()
@@ -1265,3 +1271,345 @@ def _cmd_gc(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     print(f"gc: removed {removed} artifact(s)")
     return 0
+
+
+# --------------------------------------------------------------------
+# B2 / Layer X — `kinoforge cost` subcommand.
+# --------------------------------------------------------------------
+
+_COST_CACHE_RUN_ID = "_cost_cache"
+
+
+def cached_balance_read(
+    *,
+    store: ArtifactStore,
+    provider: str,
+    endpoint: BalanceEndpoint,
+    cache_ttl_s: float,
+    no_cache: bool,
+    now: datetime,
+) -> tuple[ProviderBalance | None, str | None]:
+    """TTL-gated balance read with stale-fallback.
+
+    Stubbed in Task 5; real implementation lands in Task 6 (B2 plan).
+    Today behaves as a thin no-cache passthrough so the CLI is wired
+    end-to-end and Task 6 only needs to swap the body.
+    """
+    from kinoforge.core.balance_endpoints import TransportError
+
+    try:
+        fresh = endpoint.read()
+    except TransportError as exc:
+        return None, f"transport: {exc}"
+    return fresh, None
+
+
+def _cmd_cost(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``cost`` subcommand: ledger walk + classify + balance dispatch + render.
+
+    Three output modes (mutually exclusive): default human table, ``--json``,
+    ``--prom``. Never raises from the render path — every failure
+    degrades the affected column per spec §12.
+
+    Args:
+        args: Parsed CLI arguments with fields ``json``, ``prom``,
+            ``no_cache``, ``cache_ttl``.
+        ctx: Per-invocation session context.
+
+    Returns:
+        Exit code 0 on success (including degraded balance / partial truth).
+    """
+    from kinoforge._adapters import build_balance_endpoint_for
+    from kinoforge.core import registry
+    from kinoforge.core.balance_endpoints import (
+        provider_balance_supported,
+    )
+    from kinoforge.core.cost import aggregate
+    from kinoforge.core.credentials import EnvCredentialProvider
+    from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
+    from kinoforge.core.reaper import Verdict, classify
+
+    cfg = ctx.cfg
+    ledger = ctx.ledger()
+    entries = list(ledger.entries())
+
+    now_dt = datetime.now()
+    now_ts = now_dt.timestamp()
+
+    providers_in_ledger = {str(e.get("provider", "unknown")) for e in entries}
+    live_pod_ids_by_provider: dict[str, frozenset[str]] = {}
+    for provider_kind in providers_in_ledger:
+        try:
+            prov_inst = registry.get_provider(provider_kind)()
+            ids = frozenset(str(i.id) for i in prov_inst.list_instances())
+            live_pod_ids_by_provider[provider_kind] = ids
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "cost: provider %s list_instances failed (%s); "
+                "assuming all ledger ids are up",
+                provider_kind,
+                exc.__class__.__name__,
+            )
+            fallback = frozenset(
+                str(e["id"])
+                for e in entries
+                if e.get("provider") == provider_kind and e.get("id") is not None
+            )
+            live_pod_ids_by_provider[provider_kind] = fallback
+
+    if cfg is not None:
+        lc = cfg.lifecycle()
+        idle_timeout_s = float(lc.idle_timeout_s)
+        max_lifetime_s = float(lc.max_lifetime_s)
+        heartbeat_interval_s = lc.heartbeat_interval_s
+        grace_after_session_s = float(lc.grace_after_session_s)
+    else:
+        idle_timeout_s = 600.0
+        max_lifetime_s = 3600.0
+        heartbeat_interval_s = None
+        grace_after_session_s = 300.0
+
+    verdicts_by_id: dict[str, Verdict] = {}
+    for entry in entries:
+        entry_id = entry.get("id")
+        if entry_id is None:
+            continue
+        provider_kind = str(entry.get("provider", "unknown"))
+        live_ids = live_pod_ids_by_provider.get(provider_kind, frozenset())
+        try:
+            verdicts_by_id[str(entry_id)] = classify(
+                entry,
+                live_ids,
+                now_ts,
+                idle_timeout_s=idle_timeout_s,
+                max_lifetime_s=max_lifetime_s,
+                heartbeat_interval_s=heartbeat_interval_s,
+                grace_after_session_s=grace_after_session_s,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "cost: classify failed on entry %s (%s); skipping",
+                entry_id,
+                exc.__class__.__name__,
+            )
+
+    balances: dict[str, ProviderBalance | None] = {}
+    balance_errors: dict[str, str] = {}
+    creds = EnvCredentialProvider()
+    store = ctx.store()
+    for provider_kind in providers_in_ledger:
+        if not provider_balance_supported(provider_kind):
+            balances[provider_kind] = None
+            continue
+        if cfg is None:
+            balances[provider_kind] = None
+            continue
+        endpoint = build_balance_endpoint_for(cfg, creds)
+        bal, err = cached_balance_read(
+            store=store,
+            provider=provider_kind,
+            endpoint=endpoint,
+            cache_ttl_s=args.cache_ttl,
+            no_cache=args.no_cache,
+            now=now_dt,
+        )
+        balances[provider_kind] = bal
+        if err is not None:
+            balance_errors[provider_kind] = err
+
+    heartbeat_partial_truth = tuple(
+        sorted(p for p in providers_in_ledger if not provider_heartbeat_supported(p))
+    )
+
+    try:
+        threshold = float(os.environ.get("KINOFORGE_REPLICATE_THROTTLE_AT_USD", "4.50"))
+    except ValueError:
+        threshold = 4.50
+    throttle_warnings: tuple[str, ...] = ()
+
+    snap = aggregate(
+        entries=entries,
+        verdicts_by_id=verdicts_by_id,
+        now=now_dt,
+        balances=balances,
+        balance_errors=balance_errors,
+        heartbeat_partial_truth=heartbeat_partial_truth,
+        throttle_warnings=throttle_warnings,
+    )
+
+    if args.json:
+        sys.stdout.write(_render_cost_json(snap))
+    elif args.prom:
+        sys.stdout.write(_render_cost_prom(snap, balance_errors))
+    else:
+        sys.stdout.write(_render_cost_human(snap, threshold_set=(threshold > 0)))
+    return 0
+
+
+def _render_cost_human(snap: CostSnapshot, *, threshold_set: bool) -> str:
+    """Human-readable cost table per spec §5."""
+    from kinoforge.core.reaper import Verdict
+
+    lines: list[str] = []
+    lines.append(f"As of {snap.as_of.isoformat(timespec='seconds')}")
+    lines.append(f"Burn rate: ${snap.burn_rate_usd_per_hr:.2f}/hr")
+    if not snap.per_provider:
+        lines.append("(no entries in ledger)")
+    else:
+        lines.append("")
+        lines.append("Per-provider:")
+        for p in snap.per_provider:
+            counts_str = " ".join(
+                f"{v.value}={p.pod_counts_by_verdict.get(v, 0)}"
+                for v in Verdict
+                if p.pod_counts_by_verdict.get(v, 0) > 0
+            )
+            bal = snap.balances.get(p.provider)
+            bal_err = snap.balance_errors.get(p.provider)
+            if bal is not None:
+                bal_str = f"balance ${bal.usd:.2f}"
+            elif bal_err is not None:
+                bal_str = f"balance ? ({bal_err})"
+            else:
+                bal_str = "balance N/A"
+            lines.append(
+                f"  {p.provider}: ${p.burn_rate_usd_per_hr:.2f}/hr  "
+                f"spend ${p.spend_usd_total:.2f}  {bal_str}  [{counts_str}]"
+            )
+    if snap.heartbeat_partial_truth:
+        lines.append("")
+        lines.append(
+            "WARNING: heartbeat substrate not yet shipped for "
+            f"{','.join(snap.heartbeat_partial_truth)} (B5b pending); "
+            "LIVE counts are upper-bound estimates."
+        )
+    if snap.hosted_spend_pending:
+        lines.append("compute spend only (hosted spend deferred to B10)")
+    if threshold_set:
+        lines.append("replicate spend tracking pending B10")
+    for w in snap.throttle_warnings:
+        lines.append(f"WARNING: {w}")
+    return "\n".join(lines) + "\n"
+
+
+def _render_cost_json(snap: CostSnapshot) -> str:
+    """Render the stable §10 JSON schema."""
+    from kinoforge.core.reaper import Verdict
+
+    out: dict[str, Any] = {
+        "as_of": snap.as_of.isoformat(),
+        "burn_rate_usd_per_hr": snap.burn_rate_usd_per_hr,
+        "per_provider": [
+            {
+                "provider": p.provider,
+                "burn_rate_usd_per_hr": p.burn_rate_usd_per_hr,
+                "spend_usd_total": p.spend_usd_total,
+                "pod_counts_by_verdict": {
+                    v.value: p.pod_counts_by_verdict.get(v, 0) for v in Verdict
+                },
+            }
+            for p in snap.per_provider
+        ],
+        "balance": {
+            provider: (
+                None
+                if bal is None
+                else {
+                    "usd": bal.usd,
+                    "as_of": bal.as_of.isoformat(),
+                    "source": bal.source,
+                    "currency": bal.currency,
+                    "cached_age_s": 0,
+                }
+            )
+            for provider, bal in snap.balances.items()
+        },
+        "balance_errors": dict(snap.balance_errors),
+        "heartbeat_partial_truth": list(snap.heartbeat_partial_truth),
+        "hosted_spend_pending": snap.hosted_spend_pending,
+        "throttle_warnings": list(snap.throttle_warnings),
+    }
+    return json.dumps(out, indent=2) + "\n"
+
+
+def _render_cost_prom(snap: CostSnapshot, balance_errors: dict[str, str]) -> str:
+    """Render Prometheus text exposition per spec §9. LF-only."""
+    from kinoforge.core.reaper import Verdict
+
+    lines: list[str] = []
+
+    def emit_help(metric: str, help_text: str, type_: str) -> None:
+        lines.append(f"# HELP {metric} {help_text}")
+        lines.append(f"# TYPE {metric} {type_}")
+
+    emit_help(
+        "kinoforge_burn_rate_usd_per_hr",
+        "Sum of cost_rate_usd_per_hr across pod-up verdicts.",
+        "gauge",
+    )
+    for p in snap.per_provider:
+        lines.append(
+            f'kinoforge_burn_rate_usd_per_hr{{provider="{p.provider}"}} '
+            f"{p.burn_rate_usd_per_hr}"
+        )
+
+    emit_help(
+        "kinoforge_balance_usd",
+        "Provider-account balance, when a balance endpoint ships.",
+        "gauge",
+    )
+    for provider, bal in snap.balances.items():
+        if bal is not None:
+            lines.append(f'kinoforge_balance_usd{{provider="{provider}"}} {bal.usd}')
+
+    emit_help(
+        "kinoforge_balance_as_of_seconds",
+        "Unix timestamp the balance was read (or cached).",
+        "gauge",
+    )
+    for provider, bal in snap.balances.items():
+        if bal is not None:
+            lines.append(
+                f'kinoforge_balance_as_of_seconds{{provider="{provider}"}} '
+                f"{int(bal.as_of.timestamp())}"
+            )
+
+    emit_help(
+        "kinoforge_pod_count",
+        "Pod count per provider per verdict.",
+        "gauge",
+    )
+    for p in snap.per_provider:
+        for v in Verdict:
+            count = p.pod_counts_by_verdict.get(v, 0)
+            lines.append(
+                f'kinoforge_pod_count{{provider="{p.provider}",'
+                f'verdict="{v.value}"}} {count}'
+            )
+
+    emit_help(
+        "kinoforge_spend_usd_total",
+        "Lifetime $ spent on currently-up pods this provider.",
+        "gauge",
+    )
+    for p in snap.per_provider:
+        lines.append(
+            f'kinoforge_spend_usd_total{{provider="{p.provider}"}} {p.spend_usd_total}'
+        )
+
+    emit_help(
+        "kinoforge_cost_scrape_errors_total",
+        "Failed balance reads since process start.",
+        "counter",
+    )
+    for p in snap.per_provider:
+        err = balance_errors.get(p.provider, "")
+        err_lower = err.lower()
+        for reason in ("transport", "schema", "cred"):
+            value = 1 if (reason in err_lower) else 0
+            lines.append(
+                f'kinoforge_cost_scrape_errors_total{{provider="{p.provider}",'
+                f'reason="{reason}"}} {value}'
+            )
+
+    return "\n".join(lines) + "\n"
