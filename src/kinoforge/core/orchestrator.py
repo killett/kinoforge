@@ -37,6 +37,7 @@ from kinoforge.core.errors import (
     ProfileNotCached,
     ProvisionFailed,
     ProvisionTimeout,
+    TeardownError,
     ValidationError,
 )
 from kinoforge.core.heartbeat_loop import HeartbeatLoop, HeartbeatLoopProtocol
@@ -59,7 +60,7 @@ from kinoforge.core.interfaces import (
     PipelineState,
     Stage,
 )
-from kinoforge.core.lifecycle import Ledger
+from kinoforge.core.lifecycle import Ledger, destroy_confirmed
 from kinoforge.core.logging import get_logger
 from kinoforge.core.pool import ConcurrentPool
 from kinoforge.core.profiles import JsonImageProfileCache, JsonProfileCache
@@ -607,6 +608,7 @@ def deploy_session(
     tags: dict[str, str] | None = None,
     heartbeat_loop_factory: Callable[..., HeartbeatLoopProtocol] | None = None,
     cancel_token: CancelToken | None = None,
+    single: bool = False,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -687,6 +689,13 @@ def deploy_session(
             timeout=30.0)`` so a wedged worker no longer blocks
             shutdown forever. ``None`` (the library default) preserves
             today's unbounded-wait behavior.
+        single: B3 ``--no-reuse`` knob. When ``True`` and a compute
+            instance was created (or supplied), ``__exit__`` runs
+            ``destroy_confirmed`` + ``Ledger.forget`` under the
+            ``reaper:<id>`` lock so the pod tears down immediately
+            after the yielded body returns. Hosted-engine paths and
+            ``instance is None`` paths skip the destroy. Default
+            ``False`` preserves warm-reuse-friendly behavior.
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -754,186 +763,214 @@ def deploy_session(
         claim_ttl=_claim_ttl,
     )
 
-    with claim_holder:
-        # --------------------------------------------------------------
-        # Step 4 — resolve profile; discover on miss
-        # --------------------------------------------------------------
-        backend: GenerationBackend | None = None
-        _just_discovered: bool = False
+    try:
+        with claim_holder:
+            # --------------------------------------------------------------
+            # Step 4 — resolve profile; discover on miss
+            # --------------------------------------------------------------
+            backend: GenerationBackend | None = None
+            _just_discovered: bool = False
 
-        try:
-            profile = profile_provider.resolve(key)
-            _log.debug("profile cache hit for key %s", key.derive()[:12])
-        except ProfileNotCached:
-            _log.debug(
-                "profile cache miss for key %s — running discover",
-                key.derive()[:12],
-            )
-            if resolved_engine.requires_compute:
-                if resolved_provider is None:
-                    raise CapacityError(
-                        "requires_compute is True but no provider was resolved"
-                    ) from None
-                if _caller_supplied_instance:
-                    # Caller pre-created the pod; marker-idempotent provision.
-                    claim_holder.install(instance)  # type: ignore[arg-type]
-                    resolved_engine.provision(instance, cfg_dict)
-                    backend = resolved_engine.backend(instance, cfg_dict)
-                else:
-                    instance, backend = _provision_instance_and_build_backend(
-                        resolved_engine=resolved_engine,
-                        resolved_provider=resolved_provider,
-                        cfg=cfg,
-                        run_id=run_id,
-                        key=key,
-                        creds=creds,
-                        store=store,
-                        state_dir=state_dir,
-                        for_discovery=True,
-                        tags=tags,
-                        on_instance_created=claim_holder.install,
-                    )
-            else:
-                backend = resolved_engine.backend(None, cfg_dict)
-
-            profile = profile_provider.discover(key, resolved_engine, backend)
-            _just_discovered = True
-
-        # --------------------------------------------------------------
-        # Step 7 — ensure we have a backend (cache-hit branch)
-        # --------------------------------------------------------------
-        if backend is None:
-            if resolved_engine.requires_compute:
-                if resolved_provider is None:
-                    raise CapacityError(
-                        "requires_compute is True but no provider was resolved"
-                    ) from None
-                if _caller_supplied_instance:
-                    claim_holder.install(instance)  # type: ignore[arg-type]
-                    resolved_engine.provision(instance, cfg_dict)
-                    backend = resolved_engine.backend(instance, cfg_dict)
-                else:
-                    instance, backend = _provision_instance_and_build_backend(
-                        resolved_engine=resolved_engine,
-                        resolved_provider=resolved_provider,
-                        cfg=cfg,
-                        run_id=run_id,
-                        key=key,
-                        creds=creds,
-                        store=store,
-                        state_dir=state_dir,
-                        for_discovery=False,
-                        tags=tags,
-                        on_instance_created=claim_holder.install,
-                    )
-            else:
-                backend = resolved_engine.backend(None, cfg_dict)
-
-        # --------------------------------------------------------------
-        # Step 8 — verify (skip when just-discovered).  Fail-hard teardown
-        # --------------------------------------------------------------
-        if not _just_discovered:
             try:
-                profile_provider.verify(
-                    profile, backend, engine=resolved_engine, key=key
+                profile = profile_provider.resolve(key)
+                _log.debug("profile cache hit for key %s", key.derive()[:12])
+            except ProfileNotCached:
+                _log.debug(
+                    "profile cache miss for key %s — running discover",
+                    key.derive()[:12],
                 )
-            except CapabilityMismatch:
-                _log.warning(
-                    "capability mismatch detected; tearing down instance before re-raising"
-                )
-                if (
-                    instance is not None
-                    and resolved_provider is not None
-                    and not _caller_supplied_instance
-                ):
-                    resolved_provider.destroy_instance(instance.id)
-                raise
+                if resolved_engine.requires_compute:
+                    if resolved_provider is None:
+                        raise CapacityError(
+                            "requires_compute is True but no provider was resolved"
+                        ) from None
+                    if _caller_supplied_instance:
+                        # Caller pre-created the pod; marker-idempotent provision.
+                        claim_holder.install(instance)  # type: ignore[arg-type]
+                        resolved_engine.provision(instance, cfg_dict)
+                        backend = resolved_engine.backend(instance, cfg_dict)
+                    else:
+                        instance, backend = _provision_instance_and_build_backend(
+                            resolved_engine=resolved_engine,
+                            resolved_provider=resolved_provider,
+                            cfg=cfg,
+                            run_id=run_id,
+                            key=key,
+                            creds=creds,
+                            store=store,
+                            state_dir=state_dir,
+                            for_discovery=True,
+                            tags=tags,
+                            on_instance_created=claim_holder.install,
+                        )
+                else:
+                    backend = resolved_engine.backend(None, cfg_dict)
 
-        # --------------------------------------------------------------
-        # Step 8.5 — build the shared pool + yield
-        # --------------------------------------------------------------
-        pool = ConcurrentPool()
-        pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)
-        session = DeploySession(
-            backend=backend,
-            profile=profile,
-            pool=pool,
-            instance=instance,
-            engine=resolved_engine,
-            provider=resolved_provider,
-        )
+                profile = profile_provider.discover(key, resolved_engine, backend)
+                _just_discovered = True
 
-        # Layer U — spawn a background HeartbeatLoop when configured.
-        # Gated on both (a) a positive interval AND (b) a compute instance
-        # to track. Hosted-engine sessions have no instance + no
-        # provider.heartbeat to call, so the loop would log exceptions
-        # every tick. The factory seam lets tests substitute a non-
-        # threaded spy.
-        hb_loop: HeartbeatLoopProtocol | None = None
-        interval = cfg.lifecycle().heartbeat_interval_s
-        if (
-            interval is not None
-            and interval > 0
-            and instance is not None
-            and resolved_provider is not None
-        ):
-            factory: Callable[..., HeartbeatLoopProtocol] = (
-                heartbeat_loop_factory or HeartbeatLoop
-            )
-            hb_loop = factory(
-                ledger=Ledger(store=store),
+            # --------------------------------------------------------------
+            # Step 7 — ensure we have a backend (cache-hit branch)
+            # --------------------------------------------------------------
+            if backend is None:
+                if resolved_engine.requires_compute:
+                    if resolved_provider is None:
+                        raise CapacityError(
+                            "requires_compute is True but no provider was resolved"
+                        ) from None
+                    if _caller_supplied_instance:
+                        claim_holder.install(instance)  # type: ignore[arg-type]
+                        resolved_engine.provision(instance, cfg_dict)
+                        backend = resolved_engine.backend(instance, cfg_dict)
+                    else:
+                        instance, backend = _provision_instance_and_build_backend(
+                            resolved_engine=resolved_engine,
+                            resolved_provider=resolved_provider,
+                            cfg=cfg,
+                            run_id=run_id,
+                            key=key,
+                            creds=creds,
+                            store=store,
+                            state_dir=state_dir,
+                            for_discovery=False,
+                            tags=tags,
+                            on_instance_created=claim_holder.install,
+                        )
+                else:
+                    backend = resolved_engine.backend(None, cfg_dict)
+
+            # --------------------------------------------------------------
+            # Step 8 — verify (skip when just-discovered).  Fail-hard teardown
+            # --------------------------------------------------------------
+            if not _just_discovered:
+                try:
+                    profile_provider.verify(
+                        profile, backend, engine=resolved_engine, key=key
+                    )
+                except CapabilityMismatch:
+                    _log.warning(
+                        "capability mismatch detected; tearing down instance before re-raising"
+                    )
+                    if (
+                        instance is not None
+                        and resolved_provider is not None
+                        and not _caller_supplied_instance
+                    ):
+                        resolved_provider.destroy_instance(instance.id)
+                    raise
+
+            # --------------------------------------------------------------
+            # Step 8.5 — build the shared pool + yield
+            # --------------------------------------------------------------
+            pool = ConcurrentPool()
+            pool.add(backend, max_in_flight=cfg.lifecycle().max_in_flight)
+            session = DeploySession(
+                backend=backend,
+                profile=profile,
+                pool=pool,
+                instance=instance,
+                engine=resolved_engine,
                 provider=resolved_provider,
-                instance_id=instance.id,
-                interval_s=interval,
             )
-            hb_loop.start()
-            # B3 — record session_start so concurrent scanners see this CLI's claim.
-            # Write AFTER hb_loop.start() so the heartbeat freshness gate trusts
-            # the marker. Touch failure is non-fatal — log + continue.
-            try:
-                Ledger(store=store).touch(instance.id, session_start=time.time())
-            except Exception as touch_exc:  # noqa: BLE001
-                _log.warning(
-                    "B3: ledger.touch(session_start) failed for %s: %s",
-                    instance.id,
-                    touch_exc,
+
+            # Layer U — spawn a background HeartbeatLoop when configured.
+            # Gated on both (a) a positive interval AND (b) a compute instance
+            # to track. Hosted-engine sessions have no instance + no
+            # provider.heartbeat to call, so the loop would log exceptions
+            # every tick. The factory seam lets tests substitute a non-
+            # threaded spy.
+            hb_loop: HeartbeatLoopProtocol | None = None
+            interval = cfg.lifecycle().heartbeat_interval_s
+            if (
+                interval is not None
+                and interval > 0
+                and instance is not None
+                and resolved_provider is not None
+            ):
+                factory: Callable[..., HeartbeatLoopProtocol] = (
+                    heartbeat_loop_factory or HeartbeatLoop
                 )
-        try:
-            yield session
-        finally:
-            if hb_loop is not None:
-                hb_loop.stop()
-            # Phase 50: when the caller requested cancellation, drain the
-            # pool with a bounded watchdog so a wedged worker no longer
-            # blocks shutdown forever. The token-unset path preserves
-            # today's unbounded-wait behavior so library callers without a
-            # token see no change. ``pool.close`` failures are logged at
-            # ERROR but do not swallow ``BaseException`` — a fresh
-            # KeyboardInterrupt during shutdown must still propagate so
-            # the operator can force-exit.
-            if cancel_token is not None and cancel_token.is_set():
+                hb_loop = factory(
+                    ledger=Ledger(store=store),
+                    provider=resolved_provider,
+                    instance_id=instance.id,
+                    interval_s=interval,
+                )
+                hb_loop.start()
+                # B3 — record session_start so concurrent scanners see this CLI's claim.
+                # Write AFTER hb_loop.start() so the heartbeat freshness gate trusts
+                # the marker. Touch failure is non-fatal — log + continue.
                 try:
-                    pool.close(cancel_pending=True, timeout=30.0)
-                except Exception as close_exc:
-                    _log.error(
-                        "pool.close failed during interrupt cleanup: %s", close_exc
-                    )
-            else:
-                pool.close()
-            # B3 — record session_end so future scanners auto-clear busy
-            # state. Write BEFORE any --no-reuse destroy (Task d) so the
-            # causal chain session_end-then-destroy is correct: a concurrent
-            # classify never sees STALE_LEDGER for an entry still flagged
-            # busy.
-            if instance is not None and resolved_provider is not None:
-                try:
-                    Ledger(store=store).touch(instance.id, session_end=time.time())
+                    Ledger(store=store).touch(instance.id, session_start=time.time())
                 except Exception as touch_exc:  # noqa: BLE001
                     _log.warning(
-                        "B3: ledger.touch(session_end) failed for %s: %s",
+                        "B3: ledger.touch(session_start) failed for %s: %s",
                         instance.id,
                         touch_exc,
                     )
+            try:
+                yield session
+            finally:
+                if hb_loop is not None:
+                    hb_loop.stop()
+                # Phase 50: when the caller requested cancellation, drain the
+                # pool with a bounded watchdog so a wedged worker no longer
+                # blocks shutdown forever. The token-unset path preserves
+                # today's unbounded-wait behavior so library callers without a
+                # token see no change. ``pool.close`` failures are logged at
+                # ERROR but do not swallow ``BaseException`` — a fresh
+                # KeyboardInterrupt during shutdown must still propagate so
+                # the operator can force-exit.
+                if cancel_token is not None and cancel_token.is_set():
+                    try:
+                        pool.close(cancel_pending=True, timeout=30.0)
+                    except Exception as close_exc:
+                        _log.error(
+                            "pool.close failed during interrupt cleanup: %s", close_exc
+                        )
+                else:
+                    pool.close()
+                # B3 — record session_end so future scanners auto-clear busy
+                # state. Write BEFORE any --no-reuse destroy (Task d) so the
+                # causal chain session_end-then-destroy is correct: a concurrent
+                # classify never sees STALE_LEDGER for an entry still flagged
+                # busy.
+                if instance is not None and resolved_provider is not None:
+                    try:
+                        Ledger(store=store).touch(instance.id, session_end=time.time())
+                    except Exception as touch_exc:  # noqa: BLE001
+                        _log.warning(
+                            "B3: ledger.touch(session_end) failed for %s: %s",
+                            instance.id,
+                            touch_exc,
+                        )
+    finally:
+        # B3 — --no-reuse destroy under reaper:<id> lock. Composes
+        # with --instance-id per D7 (operator wants attach + destroy).
+        # Reaper lock prevents concurrent B3 scanners from attaching
+        # mid-destroy. Runs AFTER the claim_holder exits so
+        # ``hold_until_first_tick`` sees the existing
+        # ``heartbeat_thread_tick`` (forgetting the ledger entry inside
+        # the holder would hang the first-tick poll until timeout).
+        if single and instance is not None and resolved_provider is not None:
+            try:
+                with store.acquire_lock(f"reaper/{instance.id}", ttl_s=30.0):
+                    destroy_confirmed(resolved_provider, instance.id, sleep=time.sleep)
+                    Ledger(store=store).forget(instance.id)
+                    _log.info("--no-reuse: destroyed + forgot pod %s", instance.id)
+            except TeardownError as destroy_exc:
+                _log.error(
+                    "--no-reuse destroy failed for %s: %s "
+                    "(use `kinoforge reap --apply` to recover)",
+                    instance.id,
+                    destroy_exc,
+                )
+            except Exception as destroy_exc:  # noqa: BLE001
+                _log.error(
+                    "--no-reuse destroy raised unexpected for %s: %s",
+                    instance.id,
+                    destroy_exc,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1109,6 +1146,7 @@ def generate(
     instance: Instance | None = None,
     tags: dict[str, str] | None = None,
     cancel_token: CancelToken | None = None,
+    single: bool = False,
 ) -> tuple[Artifact, Instance | None]:
     """Run the full generation pipeline for a single clip.
 
@@ -1172,6 +1210,10 @@ def generate(
             a single WARN names the surviving pod id + ``kinoforge
             reap`` recovery command. ``None`` (the library default)
             preserves the pre-Phase-50 uncancellable path.
+        single: B3 ``--no-reuse`` knob; threaded through to
+            :func:`deploy_session`. When ``True`` the pod is destroyed
+            + forgotten under the ``reaper:<id>`` lock at the end of
+            this call. Default ``False`` preserves warm-reuse.
 
     Returns:
         A ``(Artifact, Instance | None)`` tuple. The ``Artifact`` is the
@@ -1245,6 +1287,7 @@ def generate(
         instance=instance,
         tags=tags,
         cancel_token=cancel_token,
+        single=single,
     ) as session:
         _eph = EphemeralSession.current()
         if _eph is not None:

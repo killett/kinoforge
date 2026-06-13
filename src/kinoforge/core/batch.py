@@ -476,6 +476,7 @@ def batch_generate(
     tags: dict[str, str] | None = None,
     on_event: BatchEventCallback | None = None,
     cancel_token: CancelToken | None = None,
+    single: bool = False,
 ) -> BatchResult:
     """Run every entry in *manifest* on one shared deployed instance.
 
@@ -575,6 +576,11 @@ def batch_generate(
             unwind). The CLI's SIGINT handler sets this token on first
             Ctrl-C. ``None`` (the default) preserves library-caller
             behavior.
+        single: B3 ``--no-reuse`` knob; threaded through to
+            :func:`deploy_session`. When ``True`` the shared pod is
+            destroyed + forgotten under the ``reaper:<id>`` lock once
+            the entire batch finishes (not per row). Default ``False``
+            preserves warm-reuse across subsequent batches.
 
     Returns:
         A :class:`BatchResult` with one
@@ -669,6 +675,7 @@ def batch_generate(
             instance=instance,
             tags=tags,
             cancel_token=cancel_token,
+            single=single,
         ) as session:
             _eph = EphemeralSession.current()
             if _eph is not None:

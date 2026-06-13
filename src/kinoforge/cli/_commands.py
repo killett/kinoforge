@@ -315,7 +315,17 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         ts = datetime.fromtimestamp(_clock.now()).strftime("%Y%m%d-%H%M%S")
         run_id = f"run-{ts}"
 
-    # B4 — warm-attach precheck.
+    # B3 / B4 — warm-attach precedence chain.
+    if getattr(args, "no_reuse", False) and getattr(args, "force_attach", False):
+        print(
+            "error: --no-reuse and --force-attach are mutually exclusive "
+            "(--no-reuse forces cold create; --force-attach bypasses verdicts "
+            "for warm attach)",
+            file=sys.stderr,
+        )
+        return 2
+    single = bool(getattr(args, "no_reuse", False))
+
     instance: Instance | None = None
     if getattr(args, "instance_id", None) is not None:
         instance, rc = _resolve_warm_instance(
@@ -346,6 +356,7 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
             # in cli._main) propagates through every backend poll loop.
             cancel_token=ctx.cancel_token,
             instance=instance,
+            single=single,
         )
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
@@ -449,7 +460,17 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     else:
         print(header)
 
-    # B4 — warm-attach precheck (single Instance reused across every row).
+    # B3 / B4 — warm-attach precedence chain.
+    if getattr(args, "no_reuse", False) and getattr(args, "force_attach", False):
+        print(
+            "error: --no-reuse and --force-attach are mutually exclusive "
+            "(--no-reuse forces cold create; --force-attach bypasses verdicts "
+            "for warm attach)",
+            file=sys.stderr,
+        )
+        return 2
+    single = bool(getattr(args, "no_reuse", False))
+
     instance: Instance | None = None
     if getattr(args, "instance_id", None) is not None:
         instance, rc = _resolve_warm_instance(
@@ -482,6 +503,7 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
             # every per-entry GenerateClipStage.run() poll loop.
             cancel_token=ctx.cancel_token,
             instance=instance,
+            single=single,
         )
     except (BudgetExceeded, CapabilityMismatch, TeardownError) as exc:
         print(
