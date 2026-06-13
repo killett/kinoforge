@@ -1,0 +1,43 @@
+{
+  "task": "C26 Task 14 — Wan + ComfyUI 2-CLI cold-skip / PROVEN-PROTECTION",
+  "outcome": "FAILED-DESIGN-HOLE",
+  "captured_at": "2026-06-13T16:32:00-07:00",
+  "pod_id": "o4leekoaqru8cg",
+  "budget_cap_usd": 0.55,
+  "actual_spend_usd_estimate": 0.025,
+  "gen1_elapsed_s_at_kill": 480,
+  "gen2_elapsed_s": null,
+  "killed_by": "operator (background task interrupted ~8 min into gen1 after user observed stall)",
+  "ledger_snapshot_at_kill": {
+    "id": "o4leekoaqru8cg",
+    "provider": "runpod",
+    "created_at": 1781393077.899742,
+    "session_start": 1781393220.0757844,
+    "last_heartbeat": 1781393505.365294,
+    "heartbeat_thread_tick": 1781393537.2661517,
+    "util_thread_tick": 1781393537.2661517,
+    "consecutive_low_util_count": 0,
+    "last_gpu_util_percent": 0.0,
+    "last_cpu_percent": 13.0,
+    "last_uptime_seconds": 1
+  },
+  "live_util_probe_at_kill": {
+    "gpu_util_percent": 0.0,
+    "cpu_percent": 13.0,
+    "memory_percent": 0.0,
+    "disk_percent": null,
+    "uptime_seconds": 1
+  },
+  "diagnosis": {
+    "symptom": "Pod in container-restart loop. Every util tick reads uptime_seconds=1 — the container is restarting faster than the heartbeat_interval_s=30 cadence. Both axes (gpu_util_percent=0, cpu_percent=13) are below their stall thresholds (5/20), so the counter SHOULD increment, but _update_counter's uptime-decrease guard fires on every tick (prev_uptime 1+ → curr_uptime 1) and resets the counter to 0. After 480 s of unbroken low util, counter is still 0.",
+    "design_hole": "_update_counter's restart-blip guard was designed for 'container migration / spot reclaim' — a single restart event that should NOT count as workload stall. It was not designed for chronic restart loops where 'restart' is the stall itself. STALL_REAP never fires because the counter never accumulates.",
+    "not_c25": "C25 wire fix (preserve-and-merge dockerArgs) is orthogonal and verified — heartbeats tick, pod stays in ledger LIVE.",
+    "is_c26_partial": "C26 Phase A (FakeEngine + interval=10 s + steady low util) PROVEN at 76.6 s. Phase B (Wan + ComfyUI in a container restart loop) NOT PROTECTED by the shipped design."
+  },
+  "evidence_for_acceptance": [
+    "Phase A sidecar tests/live/_c26_phase_a_smoke_evidence.json — STALL_REAP fired at counter=6 (60 s of unbroken low util) ⇒ C26 substrate + classify + reaper path all work end-to-end.",
+    "Phase B ledger snapshot above — counter stuck at 0 after 480 s of low util because of the restart-loop interaction with the uptime-decrease guard in _update_counter.",
+    "Live runtime{} probe at kill confirmed gpu=0, cpu=13, uptime=1 → matches ledger snapshot."
+  ],
+  "deferred_to": "C27 — restart-loop stall detection. A separate predicate (e.g. uptime_seconds < threshold_uptime for K consecutive ticks) needed alongside the existing low-util predicate. C26 ships PARTIAL: substrate + Phase-A class of stall covered; restart-loop class not covered."
+}
