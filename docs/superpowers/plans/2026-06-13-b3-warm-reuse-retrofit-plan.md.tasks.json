@@ -84,7 +84,9 @@
     {
       "id": 19,
       "subject": "B3 Task j: Live RunPod smoke + PROGRESS + closeout",
-      "status": "pending",
+      "status": "completed",
+      "lastUpdated": "2026-06-13T11:16:26",
+      "commit": "3d5d229",
       "blockedBy": [18],
       "description": "**Goal:** Run preflight, fire live smoke (≤$2.50), capture timings, update spec §9 + PROGRESS.md + warm-reuse-tasks.txt + successful-generations.md with closeout commit.\n\n**Files:**\n- Modify: `docs/superpowers/specs/2026-06-13-b3-warm-reuse-retrofit-design.md`, `PROGRESS.md`, `warm-reuse-tasks.txt`, `successful-generations.md`\n\n**Verify:** `KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_b3_warm_attach_live.py -v` → 1 passed\n\n```json:metadata\n{\"files\":[\"docs/superpowers/specs/2026-06-13-b3-warm-reuse-retrofit-design.md\",\"PROGRESS.md\",\"warm-reuse-tasks.txt\",\"successful-generations.md\"],\"verifyCommand\":\"KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_b3_warm_attach_live.py -v\",\"acceptanceCriteria\":[\"preflight exits 0\",\"smoke 1 passed\",\"gen 2 < 70% gen 1\",\"spend ≤ $2.50\",\"spec §9.1 amended\",\"PROGRESS §B.B3 struck\",\"warm-reuse-tasks.txt closeout\",\"successful-generations.md entry\"]}\n```"
     }
