@@ -326,22 +326,49 @@ class TestComputePreflight:
         )
 
     def test_concurrent_generates_serialize_via_lock(self, tmp_path: Path) -> None:
-        """AC4: Two concurrent generate() threads serialize via
-        ``store.acquire_lock("provision:<instance_id>", ...)``; the provisioner
-        runs exactly once across both threads.
+        """AC4 (B7 update): Two concurrent generate() threads serialize via
+        the cooperative session-claim lock acquired in
+        ``deploy_session.__enter__``; ``provisioner.provision`` runs exactly
+        once across both threads.
 
-        Bug catch: without acquire_lock, both threads would see "no marker"
-        simultaneously, both enter provision, and ``provision_call_count``
-        would be 2.  The injected ``provision_delay_s=0.1`` widens the race
-        window so an unlocked path is reliably observable.
+        Pre-B7: an unconditional ``provision:<id>`` lock inside
+        ``_provision_compute_once`` provided this serialization. B7 lifted
+        that lock into ``hold_until_first_tick`` and gated it on
+        ``heartbeat_interval_s > 0`` — so this test now enables a heartbeat
+        and uses a recording provider so the real HeartbeatLoop can land
+        the first tick and release the claim.
+
+        Bug catch: without the claim lock, both threads would see "no
+        marker" simultaneously, both enter provision, and
+        ``provision_call_count`` would be 2. ``provision_delay_s=0.1``
+        widens the race window so an unlocked path is reliably observable.
         """
-        cfg = _cfg_fp16()
+        from kinoforge.core.lifecycle import Ledger
+
+        # B7 — heartbeat enabled so claim_ctx is hold_until_first_tick.
+        cfg = load_config(
+            _COMPUTE_YAML_FP16.replace(
+                "    budget: 1.0",
+                "    budget: 1.0\n    heartbeat_interval_s: 0.02",
+            )
+        )
         engine = CountingFakeEngine(
             probe_profile=_probe_profile(),
             provision_delay_s=0.1,
         )
-        provider = StableInstanceProvider()
         store = _LockingStore(tmp_path)
+        # Real HeartbeatLoop's touch() is strict — silently no-ops on an
+        # unknown id. Recording the instance on create_instance lets the
+        # background HB tick land the first heartbeat_thread_tick.
+        ledger = Ledger(store=store)
+
+        class _RecordingProvider(StableInstanceProvider):
+            def create_instance(self, spec: InstanceSpec) -> Instance:
+                inst = super().create_instance(spec)
+                ledger.record(inst)
+                return inst
+
+        provider = _RecordingProvider()
         request = GenerationRequest(prompt="a sunset", mode="t2v")
 
         errors: list[BaseException] = []
