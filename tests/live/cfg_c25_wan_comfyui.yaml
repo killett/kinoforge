@@ -56,7 +56,9 @@ compute:
     heartbeat_interval_s: 30
 
 spec:
-  graph_file: runpod-comfyui-wan-t2v.graph.json
+  # Relative to this cfg file's directory (tests/live/) → resolves to
+  # examples/configs/runpod-comfyui-wan-t2v.graph.json at the repo root.
+  graph_file: ../../examples/configs/runpod-comfyui-wan-t2v.graph.json
   asset_node_ids: {}
   prompt_node_ids:
     positive: "16"
