@@ -34,6 +34,10 @@ from kinoforge.cli._commands import (
     _cmd_reap,
     _cmd_status,
     _cmd_stop,
+    _cmd_sweeper_metrics,
+    _cmd_sweeper_start,
+    _cmd_sweeper_status,
+    _cmd_sweeper_stop,
 )
 from kinoforge.cli.context import SessionContext
 from kinoforge.cli.sidecar import SIDECAR_NAME
@@ -63,6 +67,24 @@ _READ_ONLY_CMDS: frozenset[str] = frozenset(
     {"list", "status", "stop", "destroy", "forget", "reap", "gc", "cost"}
 )
 
+
+def _dispatch_sweeper(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Route ``kinoforge sweeper <subcmd>`` to its handler."""
+    sub = getattr(args, "sweeper_cmd", None)
+    if sub == "start":
+        return _cmd_sweeper_start(args, ctx)
+    if sub == "stop":
+        return _cmd_sweeper_stop(args, ctx)
+    if sub == "status":
+        return _cmd_sweeper_status(args, ctx)
+    if sub == "metrics":
+        return _cmd_sweeper_metrics(args, ctx)
+    sys.stderr.write(
+        "kinoforge sweeper: missing subcommand (start|stop|status|metrics)\n"
+    )
+    return 2
+
+
 _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "deploy": _cmd_deploy,
     "provision": _cmd_provision,
@@ -76,6 +98,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "reap": _cmd_reap,
     "gc": _cmd_gc,
     "cost": _cmd_cost,
+    "sweeper": _dispatch_sweeper,
 }
 
 
@@ -445,6 +468,44 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         default=15.0,
         metavar="SECONDS",
         help="balance cache TTL (default 15s)",
+    )
+
+    # sweeper (Layer W)
+    p_sweeper = sub.add_parser("sweeper", help="Layer W: long-running reap daemon")
+    sw_sub = p_sweeper.add_subparsers(dest="sweeper_cmd", metavar="SUBCOMMAND")
+
+    p_sweeper_start = sw_sub.add_parser(
+        "start", help="run the sweeper daemon in the foreground"
+    )
+    p_sweeper_start.add_argument("-c", "--config", required=True, metavar="PATH")
+    p_sweeper_start.add_argument(
+        "--interval-s",
+        type=float,
+        default=None,
+        metavar="N",
+        help="override cfg.sweeper.interval_s for this run",
+    )
+
+    p_sweeper_stop = sw_sub.add_parser(
+        "stop", help="SIGTERM the daemon owning sweeper:<host>"
+    )
+    p_sweeper_stop.add_argument("-c", "--config", required=True, metavar="PATH")
+
+    p_sweeper_status = sw_sub.add_parser("status", help="read sweeper liveness")
+    p_sweeper_status.add_argument("-c", "--config", required=True, metavar="PATH")
+    p_sweeper_status.add_argument(
+        "--json", action="store_true", help="machine-readable JSON output"
+    )
+
+    p_sweeper_metrics = sw_sub.add_parser(
+        "metrics", help="Prometheus textfile-collector target"
+    )
+    p_sweeper_metrics.add_argument("-c", "--config", required=True, metavar="PATH")
+    p_sweeper_metrics.add_argument(
+        "--prom",
+        action="store_true",
+        required=True,
+        help="emit Prom text exposition",
     )
 
     # batch
