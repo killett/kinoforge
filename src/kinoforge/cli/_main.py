@@ -318,6 +318,26 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         action="store_true",
         help="disable user-facing publish; clips remain only in the store",
     )
+    p_generate.add_argument(
+        "--instance-id",
+        default=None,
+        metavar="ID",
+        help=(
+            "reuse an existing pod from the local ledger instead of cold-"
+            "creating (skip ComfyUI + Wan spin-up). Use `kinoforge list` to "
+            "find candidate ids."
+        ),
+    )
+    p_generate.add_argument(
+        "--force-attach",
+        action="store_true",
+        help=(
+            "override classify verdicts HEARTBEAT_UNKNOWN, IDLE_REAP, "
+            "ORPHAN_REAP for the supplied --instance-id. Has no effect "
+            "without --instance-id. Never bypasses STALE_LEDGER, "
+            "OVERAGE_REAP, UNROUTABLE, or capability_key mismatch."
+        ),
+    )
 
     # list
     sub.add_parser("list", help="list running instances from ledger")
