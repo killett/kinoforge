@@ -763,6 +763,30 @@ def deploy_session(
         claim_ttl=_claim_ttl,
     )
 
+    def _record_then_install(inst: Instance) -> None:
+        """Record + claim — chain on_instance_created callbacks.
+
+        B3 + B7 — record instance to ledger BEFORE entering
+        ``hold_until_first_tick``. Without an existing ledger entry,
+        :class:`HeartbeatLoop`'s ``ledger.touch`` no-ops (strict
+        update) and ``hold_until_first_tick`` polls forever waiting
+        for a sentinel that never lands.
+        """
+        try:
+            _ledger_for_claim.record(
+                inst,
+                idle_timeout_s=int(cfg.lifecycle().idle_timeout_s),
+                max_age_s=int(cfg.lifecycle().max_lifetime_s),
+            )
+        except Exception as record_exc:  # noqa: BLE001
+            _log.warning(
+                "B3/B7: ledger.record failed for %s: %s "
+                "(hold_until_first_tick may FirstTickTimeout)",
+                inst.id,
+                record_exc,
+            )
+        claim_holder.install(inst)
+
     try:
         with claim_holder:
             # --------------------------------------------------------------
@@ -801,7 +825,7 @@ def deploy_session(
                             state_dir=state_dir,
                             for_discovery=True,
                             tags=tags,
-                            on_instance_created=claim_holder.install,
+                            on_instance_created=_record_then_install,
                         )
                 else:
                     backend = resolved_engine.backend(None, cfg_dict)
@@ -834,7 +858,7 @@ def deploy_session(
                             state_dir=state_dir,
                             for_discovery=False,
                             tags=tags,
-                            on_instance_created=claim_holder.install,
+                            on_instance_created=_record_then_install,
                         )
                 else:
                     backend = resolved_engine.backend(None, cfg_dict)
