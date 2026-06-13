@@ -409,6 +409,16 @@ Inject `FakeRunPodHeartbeatEndpoint` into a `RunPodProvider`, wrap in `Heartbeat
 
 Budget ceiling per `feedback_autonomous_no_gates`: $0.05. Within session $20 envelope.
 
+**Measured (2026-06-12 live smoke, RunPod GraphQL, dockerArgs carrier):**
+- P50 round-trip: 460 ms
+- P99 round-trip: 583 ms
+- Rate-limit (429) observed within 60s @ 5s cadence: no
+- Pod spec: NVIDIA RTX A2000 @ $0.12/hr (cheapest available offer; RunPod has no CPU-only GraphQL surface — see Task f wire-discovery note below)
+- Estimated session spend: $0.002 USD (60s at $0.12/hr)
+- Sidecar: `tests/live/_runpod_heartbeat_smoke_latencies.json`
+
+**Wire-discovery note (Task f):** The B5a spec assumed `PodEditJobInput` has a `tags` field (`[{key, value}]`). Live API returned `BAD_USER_INPUT: Field "tags" is not defined by type "PodEditJobInput"`. The corrected carrier is `dockerArgs` (string), valid in both `podEditJob` (write) and `pod { dockerArgs }` (read). The heartbeat value is encoded as compact JSON: `{"_kinoforge_hb": "<ISO8601>"}`. The `HEARTBEAT_TAG_KEY` constant is preserved for reference; the wire key is `_kinoforge_hb` in `_HEARTBEAT_JSON_KEY`. Implementation updated in commit `0219a13` (heartbeat.py + wire-shape tests). The `dockerArgs` approach overwrites any genuine docker start command on the pod, which is acceptable for heartbeat-mode pods that have `provision_script=None`.
+
 ## 10. Task split
 
 | # | Task | Files | Live |
@@ -430,6 +440,8 @@ Five concrete risks (carried from warm-reuse-tasks.txt B5a section; mitigations 
 
 1. **Per-tick cost (RunPod side).** GraphQL `podEditJob` mutation ~150ms; at 30s `heartbeat_interval`, that's 0.5% wall-time consumed by tick. Acceptable. Argues for default `heartbeat_interval_s >= 30s` when heartbeat enabled. The Layer U field validator already rejects non-positive values; no separate min-clamp lands in B5a, but is documented as a substrate invariant.
 2. **RunPod GraphQL rate-limit (unknown).** Phase 24 didn't characterize this. If the mutation is rate-limited, the loop will throttle and Layer V will fire false-positive stale verdicts. **Mitigation:** B5a live smoke task f characterizes the actual rate-limit; if 429 surfaces within 30s of ticks, document the measured ceiling here as a substrate invariant and clamp the default interval upward. If 429 NEVER surfaces in 60s of ticks at 1s cadence, no clamp needed.
+
+   **Mitigation update (2026-06-12 live smoke):** RunPod GraphQL did NOT return 429 at 5s-cadence ticks over 60s. No clamp needed. Document "no rate-limit observed at 5s cadence within 60s" as the working baseline; revisit if a future B1 sweeper running multi-pod 30s sweeps trips throttling.
 3. **Substrate Protocol designed for one provider could miss SkyPilot quirks.** **Mitigation:** B5b Implementation Notes (§13 below) are committed INTO this spec as a top-level section, NOT as inline comments that decay. The Protocol code-review checklist explicitly verifies each B5b note is satisfied by the Protocol signature (datetime precision, failure modes, idempotency on double-write, read-of-never-written returns None).
 4. **B5b drift risk.** Months may pass between B5a and B5b while GPU quota lands. **Mitigation:** (a) §13 below carries B5b Implementation Notes verbatim. (b) `FakeSkyPilotHeartbeatEndpoint` ships in `tests/providers/conftest.py` during B5a task a and exercises the Protocol from the SkyPilot side (touch-then-stat semantics, second-precision mtime, cold-vs-warm latency simulation). When B5b implementation lands, the test double IS the contract; only the wire implementation is new.
 5. **Interval-state consumer dishonesty.** B1/B2/B3 ship during the B5a-shipped / B5b-not-shipped window. SkyPilot classify returns `HEARTBEAT_UNKNOWN` (pre-spec) or `HEARTBEAT_SUBSTRATE_MISSING` (post-spec); if B1 destroys on either, it destroys SkyPilot pods that are actively working. **Mitigation:** This spec introduces the dedicated `HEARTBEAT_SUBSTRATE_MISSING` verdict and the `provider_heartbeat_supported` helper. `act_on_verdict` has a hard-pin no-destroy + WARN-once arm for the new verdict. B5b flips one line in the helper; no consumer code change.
