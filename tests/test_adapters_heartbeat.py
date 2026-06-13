@@ -27,7 +27,7 @@ class _StubCreds(CredentialProvider):
         return self._mapping.get(key)
 
 
-def _make_cfg(provider: str, heartbeat_mode: str) -> Config:
+def _make_cfg(provider: str, heartbeat_mode: str, engine_kind: str = "fake") -> Config:
     from kinoforge.core.config import (
         ComputeConfig,
         Config,
@@ -43,7 +43,7 @@ def _make_cfg(provider: str, heartbeat_mode: str) -> Config:
             lifecycle=LifecycleConfig(budget=10.0),
             heartbeat_mode=heartbeat_mode,
         ),
-        engine=EngineConfig(kind="fake", precision="fp16"),
+        engine=EngineConfig(kind=engine_kind, precision="fp16"),
         models=[
             ModelEntry(
                 kind="base", ref="hf:fake/repo:weights.bin", target="checkpoints"
@@ -90,3 +90,32 @@ def test_skypilot_any_mode_other_than_none_raises_not_implemented() -> None:
     cfg = _make_cfg(provider="skypilot", heartbeat_mode="ssh-touch")
     with pytest.raises(ValidationError, match="B5b"):
         build_heartbeat_endpoint_for(cfg, _StubCreds())
+
+
+# C25 runtime guard tests ---------------------------------------------------
+
+
+def test_runpod_graphql_tag_refuses_unsafe_engine() -> None:
+    """C25 guard: comfyui uses provision_script via dockerArgs — pairing it
+    with graphql-tag heartbeat mode would overwrite the selfterm script on
+    every heartbeat tick.  The guard must fire BEFORE any pod is created."""
+    cfg = _make_cfg(
+        provider="runpod", heartbeat_mode="graphql-tag", engine_kind="comfyui"
+    )
+    creds = _StubCreds({"RUNPOD_API_KEY": "sk-fake"})
+    with pytest.raises(ValidationError) as exc_info:
+        build_heartbeat_endpoint_for(cfg, creds)
+    msg = str(exc_info.value)
+    assert "C25" in msg, f"Expected 'C25' in error message, got: {msg!r}"
+    assert "§9" in msg, f"Expected '§9' in error message, got: {msg!r}"
+
+
+def test_runpod_graphql_tag_allows_safe_engine() -> None:
+    """C25 guard: engine.kind='fake' is in _RUNPOD_HEARTBEAT_SAFE_ENGINES and
+    does not inject a provision_script, so graphql-tag mode is permitted."""
+    cfg = _make_cfg(provider="runpod", heartbeat_mode="graphql-tag", engine_kind="fake")
+    creds = _StubCreds({"RUNPOD_API_KEY": "sk-fake"})
+    from kinoforge.providers.runpod.heartbeat import RunPodGraphQLHeartbeatEndpoint
+
+    got = build_heartbeat_endpoint_for(cfg, creds)
+    assert isinstance(got, RunPodGraphQLHeartbeatEndpoint)

@@ -21,7 +21,10 @@ script into at pod creation. This satisfier is therefore SAFE only on
 pods created with ``provision_script=None`` (bare heartbeat-mode pods).
 Enabling ``compute.heartbeat_mode = "graphql-tag"`` on a real workload
 pod will silently overwrite the selfterm script — see PROGRESS.md §C25
-for the follow-up tracking entry and fix candidates.
+for the follow-up tracking entry and fix candidates. Construction of
+this class is gated by ``_adapters.build_heartbeat_endpoint_for``; that
+function raises ``ValidationError`` for unsafe ``(engine.kind, mode)``
+combinations before a pod is ever created — see PROGRESS §C25.
 """
 
 from __future__ import annotations
