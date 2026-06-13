@@ -914,11 +914,39 @@ def deploy_session(
                 factory: Callable[..., HeartbeatLoopProtocol] = (
                     heartbeat_loop_factory or HeartbeatLoop
                 )
+                # C26: build util-snapshot endpoint + thread stall thresholds.
+                # When build_util_endpoint_for returns None (kill switch or
+                # unsupported provider), HeartbeatLoop falls back to the B5a
+                # heartbeat-only path. Reading thresholds direct from cfg.compute
+                # avoids extending InterfaceLifecycle for a path that's only
+                # consumed here.
+                from kinoforge._adapters import build_util_endpoint_for
+
+                util_endpoint = (
+                    build_util_endpoint_for(cfg, creds) if creds is not None else None
+                )
+                stall_window_s: float | None = None
+                stall_gpu_threshold = 5.0
+                stall_cpu_threshold = 20.0
+                provider_kind: str | None = None
+                if cfg.compute is not None:
+                    provider_kind = cfg.compute.provider
+                    lc = cfg.compute.lifecycle
+                    if lc is not None and lc.stall_reap_enabled:
+                        stall_window_s = lc.stall_window_s
+                        stall_gpu_threshold = lc.stall_gpu_threshold
+                        stall_cpu_threshold = lc.stall_cpu_threshold
                 hb_loop = factory(
                     ledger=Ledger(store=store),
                     provider=resolved_provider,
                     instance_id=instance.id,
                     interval_s=interval,
+                    util_endpoint=util_endpoint,
+                    cancel_token=cancel_token,
+                    provider_kind=provider_kind,
+                    stall_window_s=stall_window_s,
+                    stall_gpu_threshold=stall_gpu_threshold,
+                    stall_cpu_threshold=stall_cpu_threshold,
                 )
                 hb_loop.start()
                 # B3 — record session_start so concurrent scanners see this CLI's claim.
