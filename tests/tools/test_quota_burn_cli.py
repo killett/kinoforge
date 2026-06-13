@@ -116,6 +116,58 @@ def test_cli_teardown_reads_manifest_then_deletes_it(
     assert mock_build_aws.call_args.kwargs["region"] == "eu-central-1"
 
 
+def test_cli_snapshot_tolerates_billing_export_not_ready(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Bug catch: when the GCP billing-export dataset/table is not yet
+    present (operator just enabled export, first export job has not run),
+    the CLI must NOT crash. It should print a partial report with AWS data
+    + a clear ``gcp_status`` field, exit 0, and warn on stderr so resume
+    sessions know the GCP figure is unavailable. A regression that
+    re-raises ``BillingExportNotReady`` (or the underlying ``NotFound``)
+    would break every Day-N snapshot retry during the 6-24h export-lag
+    window and defeat the daily-snapshot loop.
+    """
+    from tools.quota_burn_lib import BillingExportNotReady
+
+    with (
+        patch("tools.quota_burn.bigquery_client", create=True),
+        patch("tools.quota_burn.boto3_client", create=True),
+        patch(
+            "tools.quota_burn.gcp_mtd_spend",
+            side_effect=BillingExportNotReady(
+                "Dataset kinoforge-prod-0ddb375e:all_billing_data was not found"
+            ),
+        ),
+        patch(
+            "tools.quota_burn.aws_mtd_spend",
+            return_value={"Amazon Elastic Compute Cloud": 0.15},
+        ),
+        # Block real client construction at the import seams.
+        patch.dict(
+            "sys.modules",
+            {
+                "boto3": MagicMock(client=MagicMock(return_value=MagicMock())),
+            },
+        ),
+        patch("google.cloud.bigquery.Client", return_value=MagicMock(), create=True),
+    ):
+        rc = main(["snapshot", "--project-id", "kinoforge-prod-0ddb375e"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    # Parse stdout JSON; gcp_status must surface the export-not-ready signal
+    # so resume sessions can distinguish "export not ready" from "zero spend".
+    import json as _json
+
+    report = _json.loads(captured.out)
+    assert report["gcp_total"] == 0
+    assert report["aws_total"] == 0.15
+    assert "export-not-ready" in report["gcp_status"]
+    assert "all_billing_data" in report["gcp_status"]
+    # WARNING must hit stderr so cron / wakeup output captures the signal.
+    assert "BillingExportNotReady" in captured.err or "export" in captured.err.lower()
+
+
 def test_cli_root_does_not_import_cloud_sdks() -> None:
     """Bug catch: importing tools.quota_burn must not drag boto3 / google-cloud
     SDK subpackages into the env. They're lazy-imported on the branch that
