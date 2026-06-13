@@ -522,6 +522,26 @@ class Ledger:
         """
         return self._read_entries()
 
+    def read(self, instance_id: str) -> dict | None:  # type: ignore[type-arg]
+        """Return the ledger entry for ``instance_id``, or ``None`` when absent.
+
+        Read-only per-id mirror of :meth:`record` / :meth:`forget` / :meth:`touch`.
+        Does NOT acquire the ``ledger/<run_id>`` mutate lock — readers must not
+        contend with concurrent ``touch`` from :class:`HeartbeatLoop`.
+
+        Args:
+            instance_id: The instance id to look up.
+
+        Returns:
+            The matching entry dict (same shape as ``entries()`` elements), or
+            ``None`` when no entry exists for ``instance_id`` (including the
+            post-``forget`` state).
+        """
+        for entry in self._read_entries():
+            if entry.get("id") == instance_id:
+                return entry
+        return None
+
     def forget(self, instance_id: str) -> None:
         """Remove the entry for ``instance_id`` from the ledger.
 
