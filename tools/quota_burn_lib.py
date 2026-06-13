@@ -29,6 +29,17 @@ from urllib.parse import urlencode
 _log = logging.getLogger(__name__)
 
 
+class BillingExportNotReady(RuntimeError):
+    """GCP billing-export dataset or table is not present yet.
+
+    Raised by ``gcp_mtd_spend`` when the BigQuery query targets a dataset or
+    ``gcp_billing_export_v1_*`` table that does not exist — typically because
+    the operator enabled billing export less than ~6h ago, so the first
+    export job has not landed yet. Callers should treat this as a partial
+    snapshot (GCP MTD unavailable) rather than a hard failure.
+    """
+
+
 @dataclass(slots=True)
 class Manifest:
     """Tagged-resource manifest persisted between spinup and teardown."""
@@ -280,7 +291,23 @@ def gcp_mtd_spend(
         "GROUP BY service_description"
     )
     rows = client.query(query=sql)
-    return {r["service_description"]: float(r["cost_usd"]) for r in rows}
+    try:
+        materialized = list(rows)
+    except Exception as exc:
+        # google.api_core lazy-imported to keep this module import-light;
+        # only ``NotFound`` (dataset/table missing) is translated. Other
+        # google-api errors (auth, 503) and unrelated exceptions propagate.
+        from google.api_core import exceptions as _gerr
+
+        if isinstance(exc, _gerr.NotFound):
+            raise BillingExportNotReady(str(exc)) from exc
+        # BigQuery returns ``BadRequest 400 "<glob> does not match any table"``
+        # when the dataset exists but no ``gcp_billing_export_v1_*`` table has
+        # landed yet (export enabled <6h ago — discovered live 2026-06-13).
+        if isinstance(exc, _gerr.BadRequest) and "does not match any table" in str(exc):
+            raise BillingExportNotReady(str(exc)) from exc
+        raise
+    return {r["service_description"]: float(r["cost_usd"]) for r in materialized}
 
 
 # ---------------------------------------------------------------------------

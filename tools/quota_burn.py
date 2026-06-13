@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.quota_burn_lib import (
+    BillingExportNotReady,
     Manifest,
     aws_mtd_spend,
     aws_spin_up,
@@ -184,10 +185,17 @@ def _do_snapshot(args: argparse.Namespace) -> int:
 
     bq = bigquery.Client(project=args.project_id)
     ce = boto3.client("ce")
-    gcp = gcp_mtd_spend(bq, project_id=args.project_id)
+    gcp_status = "ok"
+    try:
+        gcp = gcp_mtd_spend(bq, project_id=args.project_id)
+    except BillingExportNotReady as exc:
+        gcp = {}
+        gcp_status = f"export-not-ready: {exc}"
+        print(f"WARNING: BillingExportNotReady — {exc}", file=sys.stderr)
     aws = aws_mtd_spend(ce, account_id="")
     report = {
         "as_of": datetime.now().isoformat(timespec="seconds"),
+        "gcp_status": gcp_status,
         "gcp_mtd_usd_by_service": gcp,
         "aws_mtd_usd_by_service": aws,
         "gcp_total": round(sum(gcp.values()), 2),
