@@ -1291,17 +1291,89 @@ def cached_balance_read(
 ) -> tuple[ProviderBalance | None, str | None]:
     """TTL-gated balance read with stale-fallback.
 
-    Stubbed in Task 5; real implementation lands in Task 6 (B2 plan).
-    Today behaves as a thin no-cache passthrough so the CLI is wired
-    end-to-end and Task 6 only needs to swap the body.
+    Reads ``<store>/_cost_cache/cost/balance_<provider>.json`` first; if
+    fresh (``now - cached_at < cache_ttl_s``) returns the cached value.
+    Otherwise hits ``endpoint.read()``; on success persists the result
+    and returns it. On :class:`TransportError` falls back to the cached
+    value when one exists (annotates the error string so the renderer
+    can flag it as stale).
+
+    Args:
+        store: ArtifactStore to read/write cache entries.
+        provider: Provider kind string (cache key axis).
+        endpoint: BalanceEndpoint to read fresh values from.
+        cache_ttl_s: Cache freshness window in seconds.
+        no_cache: When True, bypasses read AND write — used by ``--no-cache``.
+        now: Wall-clock for staleness math.
+
+    Returns:
+        ``(balance, error_message)``. Either may be ``None``. When the
+        cached entry is returned because the fresh fetch failed, both
+        are non-``None``: balance carries the cached value, error
+        explains why the fresh fetch fell back.
     """
     from kinoforge.core.balance_endpoints import TransportError
+
+    name = f"cost/balance_{provider}.json"
+    cached: dict[str, Any] | None = None
+    if not no_cache:
+        try:
+            uri = store.uri_for(_COST_CACHE_RUN_ID, name)
+            cached = store.get_json(uri)
+        except (FileNotFoundError, KeyError, json.JSONDecodeError):
+            cached = None
+        if cached is not None:
+            try:
+                cached_at = datetime.fromisoformat(cached["cached_at"])
+            except (KeyError, TypeError, ValueError):
+                cached = None
+            else:
+                age_s = (now - cached_at).total_seconds()
+                if age_s < cache_ttl_s:
+                    return _balance_from_cache(cached), None
 
     try:
         fresh = endpoint.read()
     except TransportError as exc:
+        if cached is not None:
+            return _balance_from_cache(cached), f"transport (using cache): {exc}"
         return None, f"transport: {exc}"
+
+    if fresh is None:
+        return None, None
+    if not no_cache:
+        try:
+            store.put_json(
+                _COST_CACHE_RUN_ID,
+                name,
+                {
+                    "usd": fresh.usd,
+                    "as_of": fresh.as_of.isoformat(),
+                    "source": fresh.source,
+                    "currency": fresh.currency,
+                    "cached_at": now.isoformat(),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "cost: cache write failed for %s: %s; "
+                "returning fresh value without cache",
+                provider,
+                exc,
+            )
     return fresh, None
+
+
+def _balance_from_cache(cached: dict[str, Any]) -> ProviderBalance:
+    """Reconstruct ProviderBalance from a cached JSON dict."""
+    from kinoforge.core.balance_endpoints import ProviderBalance
+
+    return ProviderBalance(
+        usd=float(cached["usd"]),
+        as_of=datetime.fromisoformat(cached["as_of"]),
+        source=str(cached["source"]),
+        currency=str(cached.get("currency", "USD")),
+    )
 
 
 def _cmd_cost(args: argparse.Namespace, ctx: SessionContext) -> int:
