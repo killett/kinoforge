@@ -374,7 +374,7 @@ destroying based on a known-no-op heartbeat source.
 
 
 - **B2. Layer X — cost dashboard / metrics consumer.**
-    **Status:** CLOSED 2026-06-12, commit `5b58bb2`.
+    **Status:** CLOSED 2026-06-12, commit `f7071c0`.
     Walks ledger, runs `classify` per entry, aggregates burning-$/hr + per-provider breakdown + LIVE/IDLE/HEARTBEAT_UNKNOWN counts + lifetime $/session. Plus a provider-account balance readout via a `BalanceEndpoint` Protocol satisfier (RunPod ships in B2 first cut; other providers register a no-op satisfier and render `balance: N/A` until a follow-on micro-layer fills them in). `kinoforge cost` subcommand; `--json` for Grafana/Prometheus. Pure read path; ledger already stores `cost_rate_usd_per_hr` (Layer V Task 1) + `created_at`. Lowest-risk of B1/B2/B3.
 
   Interval-state visibility (B5a shipped, B5b not yet): SkyPilot-provider entries will
