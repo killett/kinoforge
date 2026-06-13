@@ -59,7 +59,7 @@ def _gate_on_live_env() -> None:
         )
 
 
-def _build_query(disk_sub: str, placement: str) -> str:
+def _build_query(disk_sub: str, placement: str, pod_id: str) -> str:
     container_block = "container { cpuPercent memoryPercent"
     runtime_extra = ""
     if placement == "container":
@@ -68,8 +68,8 @@ def _build_query(disk_sub: str, placement: str) -> str:
         runtime_extra = f"      {disk_sub}\n"
     container_block += " }"
     return (
-        "query GetRuntime($podId: String!) {\n"
-        "  pod(input: {podId: $podId}) {\n"
+        "{\n"
+        f'  pod(input: {{ podId: "{pod_id}" }}) {{\n'
         "    id\n"
         "    runtime {\n"
         "      uptimeInSeconds\n"
@@ -137,11 +137,23 @@ def test_runpod_util_disk_field_probe() -> None:
             pytest.fail(f"pod {instance_id} never ready in {_SESSION_LIFETIME_S}s")
 
         for label, subsel, placement in _DISK_TRIALS:
-            query = _build_query(subsel, placement)
-            resp = provider._http_post(  # noqa: SLF001 — wire-level probe
-                provider._base_url,
-                {"query": query, "variables": {"podId": instance_id}},
-            )
+            query = _build_query(subsel, placement, instance_id)
+            try:
+                resp = provider._http_post(  # noqa: SLF001 — wire-level probe
+                    provider._base_url,
+                    {"query": query},
+                )
+            except Exception as exc:  # noqa: BLE001 — capture any wire fault
+                envelopes.append(
+                    {
+                        "label": label,
+                        "subsel": subsel,
+                        "placement": placement,
+                        "error": repr(exc),
+                    }
+                )
+                print(f"REJECTED: {label!r} → {exc!r}", file=sys.stderr)
+                continue
             envelopes.append(
                 {"label": label, "subsel": subsel, "placement": placement, "resp": resp}
             )
