@@ -58,7 +58,7 @@
     {
       "id": 15,
       "subject": "Task 7: Documentation closeout (PROGRESS + warm-reuse-tasks + Layer V spec)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         13,
         14
@@ -66,5 +66,5 @@
       "description": "**Goal:** Strike B7 in `PROGRESS.md \u00a7B`, flip `warm-reuse-tasks.txt` B7 status to CLOSED with commit SHA, amend Layer V spec \u00a75 Risk 3 + \u00a76.\n\n**Files:**\n- Modify: `PROGRESS.md`\n- Modify: `warm-reuse-tasks.txt`\n- Modify: `docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md`\n\n**Verify:** `rg 'CLOSED' PROGRESS.md warm-reuse-tasks.txt && rg 'B7 closure|deferred-session-claim' docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md`.\n\n**Steps:** see plan \u00a7Task 7 for substitutions.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"warm-reuse-tasks.txt\", \"docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md\"], \"verifyCommand\": \"rg 'CLOSED' PROGRESS.md warm-reuse-tasks.txt && rg 'B7 closure|deferred-session-claim' docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md\", \"acceptanceCriteria\": [\"PROGRESS.md \u00a7B B7 entry struck through with commit SHA\", \"warm-reuse-tasks.txt B7 status flipped to CLOSED\", \"Layer V spec \u00a75 Risk 3 appends B7 closure paragraph\", \"Layer V spec \u00a76 cooperative-lock bullet strikethrough\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-12T21:19:31-07:00"
+  "lastUpdated": "2026-06-12T21:21:52-07:00"
 }
