@@ -1,15 +1,27 @@
-"""RunPod GraphQL-tag heartbeat satisfier (B5a Task b).
+"""RunPod GraphQL-tag heartbeat satisfier (B5a Tasks b + f).
 
 Implements :class:`~kinoforge.core.heartbeat_endpoints.HeartbeatEndpoint`
-by reading/writing a well-known tag (``_kinoforge_last_heartbeat``) on
-the RunPod pod resource via the GraphQL ``podEditJob`` mutation and the
-``pod`` query. Both methods go through an injected ``http_post`` seam so
-tests can spy the precise wire payload without a real RunPod account.
+by writing a compact JSON heartbeat marker (``{"_kinoforge_hb": "<ISO>"}``)
+into the pod's ``dockerArgs`` field via the GraphQL ``podEditJob`` mutation
+and reading it back via the ``pod`` query. Both methods go through an
+injected ``http_post`` seam so tests can spy the precise wire payload
+without a real RunPod account.
 
-The tag survives across orchestrator process lifetimes; this is what
-makes the cross-session warm-reuse path (B3) workable on a fresh shell
-— the previous orchestrator's last write persists in RunPod's tag store
-and the next orchestrator reads it back without any local state.
+The wire-discovery on 2026-06-12 (Task f live smoke) showed that
+``PodEditJobInput`` has NO ``tags`` field; the B5a spec design assumed
+it did. ``dockerArgs`` is the only free-form string field that survives
+both write and read on the live API. The heartbeat marker survives
+across orchestrator process lifetimes, which is what makes the
+cross-session warm-reuse path (B3) workable on a fresh shell.
+
+**Production-safety constraint:** every heartbeat write OVERWRITES the
+pod's ``dockerArgs`` field, which is the same field Phase 24's
+:meth:`RunPodProvider._create_pod` injects the kinoforge in-pod selfterm
+script into at pod creation. This satisfier is therefore SAFE only on
+pods created with ``provision_script=None`` (bare heartbeat-mode pods).
+Enabling ``compute.heartbeat_mode = "graphql-tag"`` on a real workload
+pod will silently overwrite the selfterm script — see PROGRESS.md §C25
+for the follow-up tracking entry and fix candidates.
 """
 
 from __future__ import annotations
@@ -23,12 +35,15 @@ from typing import Any
 
 from kinoforge.core.errors import TransportError
 
-__all__ = ["HEARTBEAT_TAG_KEY", "RunPodGraphQLHeartbeatEndpoint"]
+__all__ = ["RunPodGraphQLHeartbeatEndpoint"]
 
-#: Tag key written to RunPod pods. Underscore prefix marks kinoforge-internal
-#: so operators reading tags in the RunPod console can recognise the
-#: namespace.
-HEARTBEAT_TAG_KEY: str = "_kinoforge_last_heartbeat"
+#: Historical name reserved for reference. Pre-Task-f the heartbeat was
+#: going to land as a RunPod tag with this key; the live API does not
+#: support a ``tags`` field on ``PodEditJobInput``, so the wire-level
+#: storage moved to ``dockerArgs`` and the JSON key in
+#: ``_HEARTBEAT_JSON_KEY`` below. Kept as a module-private constant for
+#: documentation cross-reference only.
+_HEARTBEAT_TAG_KEY_LEGACY: str = "_kinoforge_last_heartbeat"
 
 _DEFAULT_GRAPHQL_URL: str = "https://api.runpod.io/graphql"
 
