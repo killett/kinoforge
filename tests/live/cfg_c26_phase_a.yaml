@@ -1,0 +1,44 @@
+# C26 Phase A acceptance-smoke cfg — FakeEngine on RunPod with a tight
+# stall window so the in-pod "no GPU work" stall fires inside ~70 s.
+#
+# Compute: cheapest RunPod offer (RTX 3070 ~$0.13/hr ⇒ ≤ $0.05 for 240 s).
+# Engine:  FakeEngine — no model load, no inference; pure heartbeat + util.
+# Lifecycle:
+#   heartbeat_interval_s: 10  (tight, so 3 ticks within window)
+#   stall_reap_enabled:   true
+#   stall_window_s:       60   (2 × interval = STALL fires after 60 s of low util)
+#   stall_gpu_threshold:  5
+#   stall_cpu_threshold:  20
+# Live spend ceiling: $0.05.
+
+engine:
+  kind: fake
+
+models: []
+
+compute:
+  provider: runpod
+  image: "alpine:latest"
+  mode: pod
+  warm_reuse_auto_attach: false
+  heartbeat_mode: graphql-tag
+  requirements:
+    min_vram_gb: 0
+    min_cuda: "0.0"
+    max_usd_per_hr: 10.0
+    disk_gb: 0
+  lifecycle:
+    idle_timeout: 30m
+    job_timeout: 10m
+    time_buffer: 1m
+    max_lifetime: 15m
+    boot_timeout: 5m
+    budget: 1.0
+    heartbeat_interval_s: 10
+    stall_reap_enabled: true
+    stall_window_s: 60
+    stall_gpu_threshold: 5
+    stall_cpu_threshold: 20
+
+spec: {}
+params: {}
