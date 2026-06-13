@@ -1,0 +1,56 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-12-b7-cooperative-session-claim-lock.md",
+  "specPath": "docs/superpowers/specs/2026-06-12-b7-cooperative-session-claim-lock-design.md",
+  "tasks": [
+    {
+      "id": 9,
+      "subject": "Task 1: Ledger.read(instance_id) per-id lookup",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Add a per-id ledger read method mirroring the `record`/`forget`/`touch` per-id surface so callers don't have to scan `entries()` manually.\n\n**Files:**\n- Create: `tests/core/test_ledger_read.py`\n- Modify: `src/kinoforge/core/lifecycle.py` (add `read` method on `Ledger` class around line 525, between `entries` and `forget`)\n\n**Acceptance Criteria:**\n- Ledger.read('known-id') returns matching entry dict\n- Ledger.read('unknown-id') returns None\n- Ledger.read returns None after forget\n- Ledger.read does NOT acquire ledger/<run_id> mutate lock\n\n**Verify:** `pixi run pytest tests/core/test_ledger_read.py -v`\n\n**Steps:** see plan §Task 1 for full code blocks.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lifecycle.py\", \"tests/core/test_ledger_read.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_ledger_read.py -v\", \"acceptanceCriteria\": [\"Ledger.read('known-id') returns matching entry dict\", \"Ledger.read('unknown-id') returns None\", \"Ledger.read returns None after forget\", \"Ledger.read does NOT acquire ledger/<run_id> mutate lock\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 2: core/session_claim.py hold_until_first_tick helper",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Build the new substrate module exposing the context manager that acquires `provision:<id>` blocking, yields, polls `Ledger.read(id)['heartbeat_thread_tick']` until `>= start`, releases. Raises `FirstTickTimeout` on `timeout_s` exhaustion.\n\n**Files:**\n- Create: `src/kinoforge/core/session_claim.py`\n- Create: `tests/core/test_session_claim.py`\n\n**Verify:** `pixi run pytest tests/core/test_session_claim.py -v` → 7 passing tests.\n\n**Steps:** see plan §Task 2 for full code blocks.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/session_claim.py\", \"tests/core/test_session_claim.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_session_claim.py -v\", \"acceptanceCriteria\": [\"acquires lock, yields, polls, releases on tick >= start\", \"FirstTickTimeout on timeout exhaustion (including ledger.read returning None)\", \"yielded-block exception propagates unchanged; polling skipped; lock released\", \"second concurrent call blocks until first releases\", \"Clock injection used for start time\", \"poll_interval_s drives sleep cadence\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 3: Orchestrator wire-in + delete inner provision lock",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Wrap `deploy_session.__enter__`'s step 8 (verify) + step 8.5 (pool + HeartbeatLoop.start) region in `hold_until_first_tick`, gated to match HeartbeatLoop's spawn condition. Delete the inner `provision:<id>` lock at `_provision_compute_once`.\n\n**Files:**\n- Modify: `src/kinoforge/core/orchestrator.py`\n- Create: `tests/core/test_orchestrator_session_claim.py`\n\n**Verify:** `pixi run pytest tests/core/test_orchestrator.py tests/core/test_orchestrator_session_claim.py -v`\n\n**Steps:** see plan §Task 3 for full code blocks + structural shape.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator_session_claim.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator.py tests/core/test_orchestrator_session_claim.py -v\", \"acceptanceCriteria\": [\"_provision_compute_once no longer acquires provision:<id>\", \"deploy_session enters hold_until_first_tick when interval > 0 AND instance AND provider\", \"hosted path uses nullcontext()\", \"HB-disabled compute path uses nullcontext()\", \"TTL = boot_timeout_s + 2*heartbeat_interval_s\", \"existing CapabilityMismatch teardown still fires correctly\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 4: Reaper non-blocking probe + ActionResult docstring",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Grow `act_on_verdict` to non-blocking-probe `provision:<id>` immediately after entering `reaper/<id>`. On contention, return `ActionResult(action='deferred-session-claim', reason='held by pid <N>', ...)`. holder_pid lifts from the FileLock sidecar JSON.\n\n**Files:**\n- Modify: `src/kinoforge/core/reaper_actor.py`\n- Modify: `tests/core/test_reaper_actor.py`\n\n**SPEC DRIFT NOTE:** `action: str` (not Literal). No Literal widening. Just docstring update.\n\n**Verify:** `pixi run pytest tests/core/test_reaper_actor.py -v` → 11 existing + 2 new.\n\n**Steps:** see plan §Task 4 for full code blocks.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper_actor.py\", \"tests/core/test_reaper_actor.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_reaper_actor.py -v\", \"acceptanceCriteria\": [\"non-blocking probe of provision:<id> after entering reaper/<id>\", \"on contention returns ActionResult(action='deferred-session-claim', reason='held by pid <N>; ...')\", \"holder_pid read from FileLock sidecar when LocalArtifactStore\", \"probe-success releases immediately; existing flow continues\", \"INFO log emitted on defer with holder PID\", \"ActionResult docstring enumerates deferred-session-claim\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 5: Cross-process subprocess integration test",
+      "status": "pending",
+      "blockedBy": [11, 12],
+      "description": "**Goal:** End-to-end lockdown of the race B7 closes. Subprocess A enters `hold_until_first_tick` and holds for ~2.5s; subprocess B's `_probe_session_claim_holder` sees A's PID; after A releases, B's second probe sees the lock free.\n\n**Files:**\n- Create: `tests/core/test_orchestrator_session_claim_xprocess.py`\n\n**Verify:** `pixi run pytest tests/core/test_orchestrator_session_claim_xprocess.py -v` → 1 passing test.\n\n**Steps:** see plan §Task 5 for full code blocks. Mirror `test_ledger_touch::test_touch_visible_across_process_boundary` shape.\n\n```json:metadata\n{\"files\": [\"tests/core/test_orchestrator_session_claim_xprocess.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_session_claim_xprocess.py -v\", \"acceptanceCriteria\": [\"subprocess A enters hold_until_first_tick and holds for ~2.5s\", \"subprocess B's probe returns A's pid while A holds\", \"subprocess B's probe does not return None while A holds\", \"after A releases, B's second probe returns None\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 6: CLI render deferred + lock-contract delta",
+      "status": "pending",
+      "blockedBy": [12],
+      "description": "**Goal:** `_emit_reap_human` counts and prints `<N> deferred` in the summary line; `_emit_reap_jsonl` emits the new action literal. `tests/stores/test_acquire_lock_contract.py` grows one held-while-orchestrator-runs case.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py`\n- Modify: `tests/stores/test_acquire_lock_contract.py`\n- Modify or Create: `tests/cli/test_reap_b7.py`\n\n**Verify:** `pixi run pytest tests/cli/ tests/stores/test_acquire_lock_contract.py -v`.\n\n**Steps:** see plan §Task 6 for full code blocks.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/stores/test_acquire_lock_contract.py\", \"tests/cli/test_reap_b7.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/ tests/stores/test_acquire_lock_contract.py -v\", \"acceptanceCriteria\": [\"_emit_reap_human counts <N> deferred in summary line\", \"_emit_reap_jsonl emits deferred-session-claim literal\", \"held-while-orchestrator-runs test passes on LocalArtifactStore\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 7: Documentation closeout (PROGRESS + warm-reuse-tasks + Layer V spec)",
+      "status": "pending",
+      "blockedBy": [13, 14],
+      "description": "**Goal:** Strike B7 in `PROGRESS.md §B`, flip `warm-reuse-tasks.txt` B7 status to CLOSED with commit SHA, amend Layer V spec §5 Risk 3 + §6.\n\n**Files:**\n- Modify: `PROGRESS.md`\n- Modify: `warm-reuse-tasks.txt`\n- Modify: `docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md`\n\n**Verify:** `rg 'CLOSED' PROGRESS.md warm-reuse-tasks.txt && rg 'B7 closure|deferred-session-claim' docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md`.\n\n**Steps:** see plan §Task 7 for substitutions.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"warm-reuse-tasks.txt\", \"docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md\"], \"verifyCommand\": \"rg 'CLOSED' PROGRESS.md warm-reuse-tasks.txt && rg 'B7 closure|deferred-session-claim' docs/superpowers/specs/2026-06-06-layer-v-heartbeat-aware-reaper-design.md\", \"acceptanceCriteria\": [\"PROGRESS.md §B B7 entry struck through with commit SHA\", \"warm-reuse-tasks.txt B7 status flipped to CLOSED\", \"Layer V spec §5 Risk 3 appends B7 closure paragraph\", \"Layer V spec §6 cooperative-lock bullet strikethrough\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-12T00:00:00-07:00"
+}
