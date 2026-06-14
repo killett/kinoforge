@@ -305,9 +305,17 @@ class FakeEngine(GenerationEngine):
         sleep: Callable[[float], None],
         get_instance: Callable[[str], Instance],
         timeout_s: float,
+        cancel_token: CancelToken | None = None,
     ) -> None:
-        """No-op for the fake engine — used for orchestrator-wiring tests."""
+        """No-op for the fake engine — used for orchestrator-wiring tests.
+
+        Honors ``cancel_token`` for Protocol parity (C29): a pre-set token
+        raises ``Cancelled`` so orchestrator-level cancel-during-boot tests can
+        exercise the path without a real polling loop.
+        """
         del instance, http_get, sleep, get_instance, timeout_s
+        if cancel_token is not None:
+            cancel_token.raise_if_set()
 
     def extract_last_frame(self, artifact: Artifact) -> bytes:
         """Return deterministic bytes derived from the artifact's filename.
