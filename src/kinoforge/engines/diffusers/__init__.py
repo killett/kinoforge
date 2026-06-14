@@ -420,7 +420,13 @@ class DiffusersEngine(GenerationEngine):
         # time. ``None`` disables routing.
         self._prompt_body_key: str | None = "prompt"
 
-    def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, Any],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None:
         """Install pip deps and launch the headless diffusers inference server (local), or wait for a remote pod to be ready.
 
         For local instances (``instance is None`` or
@@ -437,6 +443,9 @@ class DiffusersEngine(GenerationEngine):
         Args:
             instance: The compute instance; ``None`` implies local.
             cfg: Runtime configuration dict.
+            cancel_token: C29 cooperative cancellation. Forwarded into the
+                remote-path :meth:`wait_for_ready` call. ``None`` preserves
+                pre-C29 behaviour.
         """
         if instance is None or instance.provider == "local":
             # Local body — unchanged.
@@ -471,6 +480,7 @@ class DiffusersEngine(GenerationEngine):
             sleep=self._sleep,
             get_instance=self._get_instance,
             timeout_s=boot_timeout_s,
+            cancel_token=cancel_token,
         )
 
     def render_provision(self, cfg: dict[str, Any]) -> RenderedProvision:

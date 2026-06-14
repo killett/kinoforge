@@ -981,7 +981,13 @@ class _PreflightHostedEngine(FakeEngine):
             probe=probe_profile, tracker=tracker
         )
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         self.provision_call_count += 1
         self.provision_call_order = self._tracker.tick()
         if self._provision_exception is not None:
@@ -1699,7 +1705,13 @@ class _CountingFakeEngine(FakeEngine):
         self.provision_calls: list[Instance | None] = []
         self.backend_calls: list[Instance | None] = []
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         self.provision_calls.append(instance)
         super().provision(instance, cfg)
 
@@ -2138,7 +2150,13 @@ class _ProvisionFailedFakeEngine(_CountingFakeEngine):
     on the caller-supplied-instance path.
     """
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         raise ProvisionFailed("synthetic boot crash")
 
 
@@ -2149,7 +2167,13 @@ class _ProvisionTimeoutFakeEngine(_CountingFakeEngine):
     on the caller-supplied-instance path.
     """
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         raise ProvisionTimeout("synthetic boot timeout")
 
 

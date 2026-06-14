@@ -198,13 +198,21 @@ class FakeEngine(GenerationEngine):
             required_spec_keys if required_spec_keys is not None else set()
         )
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None:
         """No-op — the fake engine requires no downloads or setup.
 
         Args:
             instance: Ignored.
             cfg: Ignored.
+            cancel_token: Ignored (Protocol parity for C29 boot-phase reap).
         """
+        del cancel_token
 
     def backend(self, instance: Instance | None, cfg: dict[str, object]) -> FakeBackend:
         """Create and return a ``FakeBackend`` wired to the injected probe.

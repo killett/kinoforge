@@ -207,16 +207,24 @@ class FalImageEngine(ImageEngine):
     requires_compute: bool = False
     requires_local_weights: bool = False
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         """Check FAL_KEY credential is present.
 
         Args:
             instance: Ignored — fal is a hosted API.
             cfg: Ignored at provision time.
+            cancel_token: Ignored (Protocol parity for C29 boot-phase reap).
 
         Raises:
             AuthError: ``FAL_KEY`` env var is absent.
         """
+        del cancel_token
         creds = EnvCredentialProvider()
         if not creds.get("FAL_KEY"):
             raise AuthError("FAL_KEY required for FalImageEngine")

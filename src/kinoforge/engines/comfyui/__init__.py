@@ -1090,7 +1090,13 @@ class ComfyUIEngine(GenerationEngine):
             get_instance if get_instance is not None else _default_get_instance
         )
 
-    def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, Any],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None:
         """Clone nodes, install requirements, route models, launch ComfyUI (local).
 
         For local instances (``instance is None`` or
@@ -1111,6 +1117,10 @@ class ComfyUIEngine(GenerationEngine):
                 triggers the local code path; any other provider triggers the
                 remote polling path.
             cfg: Runtime configuration dict.
+            cancel_token: C29 cooperative cancellation. Forwarded into the
+                remote-path :meth:`wait_for_ready` call so a boot-phase reap
+                raises ``Cancelled`` cleanly. ``None`` preserves pre-C29
+                behaviour.
         """
         if instance is None or instance.provider == "local":
             # ---- local path (unchanged from pre-Layer-Q) ----
@@ -1163,6 +1173,7 @@ class ComfyUIEngine(GenerationEngine):
             sleep=self._sleep,
             get_instance=self._get_instance,
             timeout_s=boot_timeout_s,
+            cancel_token=cancel_token,
         )
 
     def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
