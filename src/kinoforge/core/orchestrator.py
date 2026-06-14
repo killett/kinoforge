@@ -253,6 +253,7 @@ def _provision_compute_once(
     state_dir: Path,
     capability_key_hex: str,
     cfg_dict_override: dict[str, object] | None = None,
+    cancel_token: CancelToken | None = None,
 ) -> None:
     """Run ``provisioner.provision`` exactly once per ``(instance, capability_key)``.
 
@@ -284,6 +285,10 @@ def _provision_compute_once(
             of ``cfg.model_dump()``.  Callers that enrich ``cfg_dict`` (e.g.
             with a top-level ``"lifecycle"`` key) should pass it here so
             engines receive the augmented form.
+        cancel_token: C29 cooperative cancellation. Forwarded into
+            ``provisioner.provision`` → ``engine.provision`` →
+            ``engine.wait_for_ready`` so a boot-phase reap raises ``Cancelled``
+            cleanly. Default ``None`` preserves pre-C29 behaviour.
     """
     effective_creds: CredentialProvider = (
         creds if creds is not None else EnvCredentialProvider()
@@ -328,6 +333,7 @@ def _provision_compute_once(
         instance,
         creds=effective_creds,
         download_dir=state_dir / "weights",
+        cancel_token=cancel_token,
     )
     write_marker(
         marker,
@@ -475,6 +481,7 @@ def _provision_instance_and_build_backend(
     for_discovery: bool,
     tags: dict[str, str] | None = None,
     on_instance_created: Callable[[Instance], None] | None = None,
+    cancel_token: CancelToken | None = None,
 ) -> tuple[Instance, GenerationBackend]:
     """Provision a compute instance and build a backend for it.
 
@@ -500,6 +507,11 @@ def _provision_instance_and_build_backend(
             immediately after ``create_instance`` returns, with the
             freshly-created ``Instance``. B7 uses this seam to enter
             ``hold_until_first_tick`` before ``engine.provision`` runs.
+        cancel_token: C29 cooperative cancellation. Forwarded into
+            ``_provision_compute_once`` so a boot-phase reap raises
+            ``Cancelled`` from inside ``engine.wait_for_ready``. Task 5 adds
+            the matching ``except Cancelled`` clause that destroys the pod.
+            Default ``None`` preserves pre-C29 behaviour.
 
     Returns:
         ``(instance, backend)`` — instance polled to ``ready``, backend
@@ -616,6 +628,7 @@ def _provision_instance_and_build_backend(
             # See docs/superpowers/specs/2026-06-10-provision-marker-alias-keying-design.md.
             capability_key_hex=marker_key_for(cfg, default=key.derive()),
             cfg_dict_override=cfg_dict,
+            cancel_token=cancel_token,
         )
     except (ProvisionFailed, ProvisionTimeout, CapabilityMismatch, ValidationError):
         resolved_provider.destroy_instance(instance.id)

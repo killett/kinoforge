@@ -18,11 +18,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from kinoforge.core import registry
 from kinoforge.core.downloader import download_all
 from kinoforge.core.errors import ValidationError
+
+if TYPE_CHECKING:
+    from kinoforge.core.cancel import CancelToken
 from kinoforge.core.interfaces import (
     Artifact,
     CredentialProvider,
@@ -65,6 +68,7 @@ def provision(
     download_dir: Path,
     post_provision_hook: Callable[[Instance | None], None] | None = None,
     downloader: Callable[[list[Artifact], Path], list[Artifact]] = download_all,
+    cancel_token: CancelToken | None = None,
 ) -> None:
     """Orchestrate shared provisioning steps and delegate to *engine*.
 
@@ -100,6 +104,10 @@ def provision(
         downloader: Injectable callable with signature
             ``(artifacts: list[Artifact], dest: Path) -> list[Artifact]``.
             Defaults to :func:`~kinoforge.core.downloader.download_all`.
+        cancel_token: C29 cooperative cancellation. Forwarded into
+            ``engine.provision`` so a boot-phase heartbeat reap (or operator
+            Ctrl-C) raises ``Cancelled`` from inside the engine's
+            ``wait_for_ready`` poll. Default ``None`` preserves pre-C29 callers.
 
     Raises:
         UnknownAdapter: Propagated from ``registry.source_for_ref`` when no
@@ -155,4 +163,4 @@ def provision(
         cfg_for_engine = cfg.model_dump()
     else:
         cfg_for_engine = cfg
-    engine.provision(instance, cfg_for_engine)
+    engine.provision(instance, cfg_for_engine, cancel_token=cancel_token)

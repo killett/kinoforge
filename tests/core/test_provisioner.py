@@ -70,7 +70,9 @@ class _SpyEngine:
         self.requires_local_weights = requires_local_weights
         self._log = call_log
 
-    def provision(self, instance: Instance | None, cfg: Any) -> None:  # noqa: D102
+    def provision(
+        self, instance: Instance | None, cfg: Any, *, cancel_token: object | None = None
+    ) -> None:  # noqa: D102
         self._log.append("provision")
 
     # The remaining abstract methods are not exercised by provisioner tests.
@@ -382,7 +384,13 @@ def test_pydantic_cfg_is_dumped_to_dict_before_engine_provision(
     received_cfgs: list[Any] = []
 
     class _RecordingEngine(_SpyEngine):
-        def provision(self, instance: Instance | None, cfg: Any) -> None:  # noqa: D102
+        def provision(
+            self,
+            instance: Instance | None,
+            cfg: Any,
+            *,
+            cancel_token: object | None = None,
+        ) -> None:  # noqa: D102
             received_cfgs.append(cfg)
             super().provision(instance, cfg)
 
