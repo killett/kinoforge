@@ -114,3 +114,74 @@ def test_stall_reap_fires_with_per_entry_override_that_enables() -> None:
     entry = _entry(counter=12, util_tick=9.0, extra={"stall_window_s": 200.0})
     verdict = classify(entry, frozenset({"p1"}), now=10.0, **kw)
     assert verdict == Verdict.STALL_REAP
+
+
+# ---------------------------------------------------------------------------
+# C27 classify() row 3'' — RESTART_LOOP_REAP + tie-breaker
+# ---------------------------------------------------------------------------
+
+
+def _restart_loop_entry(
+    *,
+    eid: str = "p1",
+    created_at: float = 0.0,
+    last_hb: float = 9.0,
+    hb_tick: float = 9.0,
+    util_tick: float | None = 9.0,
+    low_util_counter: int = 0,
+    low_uptime_counter: int = 10,
+    provider: str = "runpod",
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    e: dict[str, Any] = {
+        "id": eid,
+        "created_at": created_at,
+        "last_heartbeat": last_hb,
+        "heartbeat_thread_tick": hb_tick,
+        "provider": provider,
+        "consecutive_low_util_count": low_util_counter,
+        "consecutive_low_uptime_count": low_uptime_counter,
+    }
+    if util_tick is not None:
+        e["util_thread_tick"] = util_tick
+    if extra:
+        e.update(extra)
+    return e
+
+
+_KW_C27: dict[str, Any] = {
+    **_KW,
+    "restart_loop_window_s": 180.0,
+    "restart_loop_uptime_threshold_s": 90.0,
+}
+
+
+def test_classify_only_restart_loop_predicate_fires_returns_restart_loop_reap() -> None:
+    """C27 row 3'': only restart-loop predicate matches → RESTART_LOOP_REAP."""
+    entry = _restart_loop_entry(low_util_counter=0, low_uptime_counter=10)
+    # counter*interval = 10*30 = 300 >= window 180 → fires.
+    verdict = classify(entry, frozenset({"p1"}), now=10.0, **_KW_C27)
+    assert verdict == Verdict.RESTART_LOOP_REAP
+
+
+def test_classify_only_stall_predicate_fires_returns_stall_reap() -> None:
+    """C26 row 3' still works: only stall predicate matches → STALL_REAP."""
+    entry = _restart_loop_entry(low_util_counter=20, low_uptime_counter=0)
+    # stall counter 20*30=600 >= window 300 → fires; restart counter 0 → no fire.
+    verdict = classify(entry, frozenset({"p1"}), now=10.0, **_KW_C27)
+    assert verdict == Verdict.STALL_REAP
+
+
+def test_classify_both_predicates_fire_stall_reap_wins_tiebreaker() -> None:
+    """C27 tie-breaker: STALL checked first, wins when both true."""
+    entry = _restart_loop_entry(low_util_counter=20, low_uptime_counter=20)
+    verdict = classify(entry, frozenset({"p1"}), now=10.0, **_KW_C27)
+    assert verdict == Verdict.STALL_REAP
+
+
+def test_classify_restart_loop_kill_switch_returns_live() -> None:
+    """C27 kill-switch: restart_loop_window_s=None → row 3'' never fires."""
+    entry = _restart_loop_entry(low_util_counter=0, low_uptime_counter=999)
+    kw = {**_KW_C27, "stall_window_s": None, "restart_loop_window_s": None}
+    verdict = classify(entry, frozenset({"p1"}), now=10.0, **kw)
+    assert verdict == Verdict.LIVE

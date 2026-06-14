@@ -254,6 +254,8 @@ def classify(
     stall_window_s: float | None = None,
     stall_gpu_threshold: float = 5.0,
     stall_cpu_threshold: float = 20.0,
+    restart_loop_window_s: float | None = None,
+    restart_loop_uptime_threshold_s: float = 90.0,
 ) -> Verdict:
     """Classify a single ledger entry against the current world state.
 
@@ -279,6 +281,13 @@ def classify(
             unused inside classify itself.
         stall_cpu_threshold: C26 cfg CPU % below which a tick counts as
             'low'. Sister of ``stall_gpu_threshold``.
+        restart_loop_window_s: C27 cfg threshold for util-aware restart-
+            loop reaping. ``None`` (default) = kill switch, no
+            RESTART_LOOP_REAP fires. Per-entry ``restart_loop_window_s``
+            key overrides at row 3''.
+        restart_loop_uptime_threshold_s: C27 cfg uptime-seconds strict-<
+            threshold for ``_update_uptime_counter``. Carried for
+            HeartbeatLoop and unused inside classify itself.
 
     Returns:
         One of the seven non-UNROUTABLE Verdict values:
@@ -346,6 +355,16 @@ def classify(
                 stall_window_s=stall_window_s,
             ):
                 return Verdict.STALL_REAP
+            # Row 3'' (C27): util-aware restart-loop reap interception.
+            # Checked after row 3' so simultaneous fires return STALL_REAP.
+            if _restart_loop_reap_predicate(
+                entry,
+                now=now,
+                sentinel_window=sentinel_window,
+                heartbeat_interval_s=heartbeat_interval_s,
+                restart_loop_window_s=restart_loop_window_s,
+            ):
+                return Verdict.RESTART_LOOP_REAP
             return Verdict.LIVE
         return Verdict.IDLE_REAP
 
