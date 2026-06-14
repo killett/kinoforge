@@ -1,0 +1,18 @@
+{
+  "outcome": "TIMEOUT",
+  "captured_at": "2026-06-14T13:45:12.246935-07:00",
+  "pod_id": "o0gz4urkrcgt5i",
+  "offer_usd_per_hr": 0.13,
+  "interval_s": 10.0,
+  "boot_window_s": 180.0,
+  "provision_sleep_ceiling_s": 120.0,
+  "status_check_at_s_since_status_ready": 60.0,
+  "markers_found": {
+    "id_marker": true,
+    "provider_marker": true,
+    "last_heartbeat_marker": false,
+    "provider_status_marker": true
+  },
+  "tick_count": 6,
+  "status_output_excerpt": "[instance overview]\n  o0gz4urkrcgt5i  age=0.0h  est_spend=$0.0022\naccrued_spend_usd=0.0022\nage_h=0.0\ncost_rate_usd_per_hr=0.1300\ncreated_at=2026-06-14T13:44:08-07:00\nendpoints=unknown (AttributeError)\nid=o0gz4urkrcgt5i\nidle_timeout_s=<not in ledger>\nmax_age_s=<not in ledger>\nprovider=runpod\nprovider_status=ready\nverdict=HEARTBEAT_UNKNOWN\nPixi task (kinoforge in default): python -m kinoforge --state-dir /tmp/kinoforge-c29-phase-c-54o94xtd status --id o0gz4urkrcgt5i\n2026-06-14 13:45:10,293 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/c28-restart-loop-prevention/.env (35 keys)\n"
+}
