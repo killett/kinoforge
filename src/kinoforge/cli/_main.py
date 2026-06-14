@@ -353,6 +353,17 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "ledger entry (≥ 0). Useful for known-slow-boot workloads."
         ),
     )
+    p_deploy.add_argument(
+        "--restart-loop-window-override",
+        type=_nonnegative_float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "C27: persist a per-entry restart_loop_window_s override "
+            "into the ledger entry (≥ 0). Useful for workloads with a "
+            "known-long first boot."
+        ),
+    )
 
     # provision
     p_provision = sub.add_parser("provision", help="provision an existing instance")

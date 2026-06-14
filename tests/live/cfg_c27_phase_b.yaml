@@ -1,0 +1,82 @@
+# C27 Phase B acceptance-smoke cfg — Wan 2.1 14B t2v on RunPod + ComfyUI
+# with C27 restart-loop protections enabled (alongside C26 stall protections).
+# Closes the C25 Task 4 / C26 Task 14 deferred gate (CLEAN-PASS gen2/gen1 < 0.7
+# OR PROVEN-PROTECTION via RESTART_LOOP_REAP).
+#
+# Mirrors cfg_c26_phase_b.yaml + adds the C27 restart_loop_* knobs:
+#   restart_loop_reap_enabled:        true
+#   restart_loop_window_s:            180  (3 min — the spec §5.1 default; gen1
+#                                            fires within this window if the
+#                                            container restart loop recurs)
+#   restart_loop_uptime_threshold_s:  90   (spec §5.1 default)
+# Live spend ceiling: $0.60 (gen1 cold + gen2 warm reuse, OR gen1 reaped fast).
+
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+    custom_nodes:
+      - git: "https://github.com/kijai/ComfyUI-WanVideoWrapper"
+        ref: "088128b224242e110d3906c6750e9a3a348a659b"
+      - git: "https://github.com/kijai/ComfyUI-KJNodes"
+        ref: "369c8aee9ad4641823d0ffd7035076bcd297b6f2"
+      - git: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+        ref: "4ee72c065db22c9d96c2427954dc69e7b908444b"
+
+models:
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1-T2V-14B_fp8_e4m3fn.safetensors"
+    kind: base
+    target: diffusion_models
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1_VAE_bf16.safetensors"
+    kind: vae
+    target: vae
+  - ref: "hf:Kijai/WanVideo_comfy:umt5-xxl-enc-fp8_e4m3fn.safetensors"
+    kind: text_encoder
+    target: text_encoders
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  warm_reuse_auto_attach: true
+  heartbeat_mode: graphql-tag
+  requirements:
+    min_vram_gb: 24
+    min_cuda: "12.4"
+    max_usd_per_hr: 0.50
+    gpu_preference:
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA RTX A5000"
+      - "NVIDIA GeForce RTX 3090"
+    disk_gb: 80
+  lifecycle:
+    idle_timeout: 25m
+    job_timeout: 15m
+    time_buffer: 5m
+    max_lifetime: 90m
+    boot_timeout: 30m
+    budget: 4.0
+    heartbeat_interval_s: 30
+    stall_reap_enabled: true
+    stall_window_s: 1200
+    stall_gpu_threshold: 5
+    stall_cpu_threshold: 20
+    restart_loop_reap_enabled: true
+    restart_loop_window_s: 180
+    restart_loop_uptime_threshold_s: 90
+
+spec:
+  graph_file: ../../examples/configs/runpod-comfyui-wan-t2v.graph.json
+  asset_node_ids: {}
+  prompt_node_ids:
+    positive: "16"
+  prompt_input_field: positive_prompt
+  node_overrides: {}
+
+params:
+  fps: 16
+  num_frames: 81
+  steps: 20
+  width: 480
+  height: 480
