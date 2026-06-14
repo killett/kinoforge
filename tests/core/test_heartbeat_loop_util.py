@@ -268,3 +268,94 @@ def test_loop_stop_is_set_after_stall_reap_fires() -> None:
     )
     loop._tick_once()  # noqa: SLF001
     assert loop._stop.is_set()  # noqa: SLF001 — internal stop event signalled
+
+
+# ---------------------------------------------------------------------------
+# C27 Task 7 — uptime counter persistence + state
+# ---------------------------------------------------------------------------
+
+
+def test_c27_loop_persists_uptime_counter_on_tick() -> None:
+    """C27: ledger.touch receives consecutive_low_uptime_count each tick."""
+    ledger = _SpyLedger()
+    provider = _SpyProvider()
+    ep = LocalUtilEndpoint(script=[_snap(gpu=0.0, cpu=13.0, uptime=1)])
+    loop = HeartbeatLoop(
+        ledger=ledger,
+        provider=provider,
+        instance_id="p1",
+        interval_s=30.0,
+        clock=_FakeClock(),
+        util_endpoint=ep,
+        provider_kind="runpod",
+        restart_loop_uptime_threshold_s=90.0,
+        # restart_loop_window_s left None — Task 7 does not fire; Task 8 wires it.
+    )
+    loop._tick_once()  # noqa: SLF001
+    rec = ledger.touches[0]
+    assert "consecutive_low_uptime_count" in rec
+    assert rec["consecutive_low_uptime_count"] == 1
+
+
+def test_c27_loop_uptime_counter_increments_across_ticks() -> None:
+    """C27: counter accumulates while uptime stays below threshold."""
+    ledger = _SpyLedger()
+    provider = _SpyProvider()
+    ep = LocalUtilEndpoint(
+        script=[_snap(gpu=0.0, cpu=13.0, uptime=1) for _ in range(5)]
+    )
+    loop = HeartbeatLoop(
+        ledger=ledger,
+        provider=provider,
+        instance_id="p1",
+        interval_s=30.0,
+        clock=_FakeClock(),
+        util_endpoint=ep,
+        provider_kind="runpod",
+        restart_loop_uptime_threshold_s=90.0,
+    )
+    for _ in range(5):
+        loop._tick_once()  # noqa: SLF001
+    uptime_counters = [t["consecutive_low_uptime_count"] for t in ledger.touches]
+    assert uptime_counters == [1, 2, 3, 4, 5]
+
+
+def test_c27_loop_uptime_counter_resets_when_uptime_above_threshold() -> None:
+    """C27: warm pod with uptime above threshold keeps counter at 0."""
+    ledger = _SpyLedger()
+    provider = _SpyProvider()
+    ep = LocalUtilEndpoint(
+        script=[_snap(gpu=0.0, cpu=13.0, uptime=200) for _ in range(3)]
+    )
+    loop = HeartbeatLoop(
+        ledger=ledger,
+        provider=provider,
+        instance_id="p1",
+        interval_s=30.0,
+        clock=_FakeClock(),
+        util_endpoint=ep,
+        provider_kind="runpod",
+        restart_loop_uptime_threshold_s=90.0,
+    )
+    for _ in range(3):
+        loop._tick_once()  # noqa: SLF001
+    uptime_counters = [t["consecutive_low_uptime_count"] for t in ledger.touches]
+    assert uptime_counters == [0, 0, 0]
+
+
+def test_c27_loop_without_util_endpoint_omits_uptime_counter_field() -> None:
+    """Backward-compat: no util endpoint → ledger touch lacks the new field."""
+    ledger = _SpyLedger()
+    provider = _SpyProvider(last_hb=42.0)
+    loop = HeartbeatLoop(
+        ledger=ledger,
+        provider=provider,
+        instance_id="p1",
+        interval_s=30.0,
+        clock=_FakeClock(),
+        util_endpoint=None,
+        provider_kind="runpod",
+    )
+    loop._tick_once()  # noqa: SLF001
+    rec = ledger.touches[0]
+    assert "consecutive_low_uptime_count" not in rec
