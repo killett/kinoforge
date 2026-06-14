@@ -68,8 +68,33 @@ def test_helper_authorization_via_indirect_expansion() -> None:
     # inside the helper via bash indirect expansion (`${!token_env}`) so no
     # plaintext token VALUE ever appears in the script body.
     assert "local token_env=${4:-}" in script
-    assert "${!token_env" in script
-    assert "Authorization: Bearer ${!token_env}" in script
+    assert 'token_val="${!token_env}"' in script
+    assert "Authorization: Bearer $token_val" in script
+
+
+def test_helper_uses_aria2c_when_available() -> None:
+    """Phase A v2 finding: single-stream curl capped Wan 14B download at ~2 MB/s.
+
+    aria2c -x16 -s16 takes the multi-segment fast path. Helper checks for
+    aria2c first, falls back to curl if missing.
+    """
+    script = _render()
+    assert "command -v aria2c" in script
+    assert "-x16 -s16" in script
+    assert "--allow-overwrite=true" in script
+    assert "--continue=true" in script
+
+
+def test_helper_aria2_checksum_arg_when_sha_present() -> None:
+    """aria2c verifies sha256 via `--checksum=sha-256=<hex>` natively."""
+    script = _render()
+    assert "--checksum=sha-256=" in script
+
+
+def test_script_pre_installs_aria2_before_model_loop() -> None:
+    """Pre-install aria2 unconditionally so the helper takes the fast path."""
+    script = _render()
+    assert "apt-get install -y -qq aria2" in script
 
 
 def test_helper_present_in_slim_mode_too() -> None:
