@@ -296,7 +296,7 @@ def main() -> int:
     key = cfg.capability_key()
 
     try:
-        instance, backend = _provision_instance_and_build_backend(
+        instance, backend, _hb = _provision_instance_and_build_backend(
             resolved_engine=engine,
             resolved_provider=provider,
             cfg=cfg,
