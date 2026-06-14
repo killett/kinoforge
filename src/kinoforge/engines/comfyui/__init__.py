@@ -1206,6 +1206,40 @@ class ComfyUIEngine(GenerationEngine):
         # + the model-download loop + `exec python main.py` still emit.
         slim_mode: bool = image.startswith("kinoforge/wan-comfyui:")
 
+        # C28 C1: pure-bash helper for resilient model downloads. 3-attempt
+        # retry, exponential backoff (5/10/15 s), partial-file cleanup
+        # between attempts, optional sha256 verify, optional HF_TOKEN
+        # bearer header. Defined unconditionally so EVERY download (model
+        # or future asset) gets the retry semantics — fixes the H3 curl
+        # flake without requiring image rebuilds.
+        kinoforge_download_helper: list[str] = [
+            "_kinoforge_download() {",
+            "  local url=$1; local out=$2; local expected_sha=${3:-}",
+            "  local attempt",
+            "  for attempt in 1 2 3; do",
+            '    rm -f "${out}.partial"',
+            "    if curl -L --fail --retry 0 -C - \\",
+            '         ${HF_TOKEN:+-H "Authorization: Bearer $HF_TOKEN"} \\',
+            '         "$url" -o "${out}.partial"; then',
+            '      if [ -n "$expected_sha" ]; then',
+            "        local actual",
+            "        actual=$(sha256sum \"${out}.partial\" | awk '{print $1}')",
+            '        if [ "$actual" != "$expected_sha" ]; then',
+            '          echo "sha mismatch attempt $attempt: '
+            '$actual vs $expected_sha" >&2',
+            "          sleep $((5 * attempt))",
+            "          continue",
+            "        fi",
+            "      fi",
+            '      mv "${out}.partial" "$out"',
+            "      return 0",
+            "    fi",
+            "    sleep $((5 * attempt))",
+            "  done",
+            "  return 1",
+            "}",
+        ]
+
         # C28 A2: diagnostic_mode prepends an EXIT trap that captures the boot
         # log + system snapshots and uploads to S3 on failure. Pure-additive —
         # when False/absent, the rendered script is byte-identical to the
@@ -1258,6 +1292,7 @@ class ComfyUIEngine(GenerationEngine):
             ".write(os.environ['KINOFORGE_SELFTERM_SCRIPT'])\" && "
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
+            *kinoforge_download_helper,
             "cd /workspace",
         ]
         if not slim_mode:
