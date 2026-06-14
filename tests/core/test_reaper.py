@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from kinoforge.core.reaper import (
     DEFAULT_APPLY_POLICY,
     DEFAULT_STRICT_VERDICTS,
     Policy,
     Verdict,
     _resolve,
+    _restart_loop_reap_predicate,
     classify,
     partition,
     policy_from_cli_flags,
@@ -76,14 +79,16 @@ def test_verdict_values_are_stable_strings() -> None:
         "HEARTBEAT_SUBSTRATE_MISSING",  # B5a
         "UNROUTABLE",
         "STALL_REAP",  # C26
+        "RESTART_LOOP_REAP",  # C27
     ]
 
 
 def test_default_apply_policy_contains_high_confidence_verdicts() -> None:
     """ORPHAN_REAP is NOT in the default — requires --include-orphans.
 
-    STALL_REAP was added in C26 as a high-confidence verdict (in-pod
-    workload measurably stalled; counter × interval ≥ window).
+    STALL_REAP added C26 (steady-low-util predicate); RESTART_LOOP_REAP
+    added C27 (chronic low-uptime predicate) — both high-confidence
+    enough to act on by default.
     """
     assert DEFAULT_APPLY_POLICY.act_verdicts == frozenset(
         {
@@ -91,6 +96,7 @@ def test_default_apply_policy_contains_high_confidence_verdicts() -> None:
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
         }
     )
 
@@ -104,6 +110,18 @@ def test_default_strict_verdicts_are_uncertain_only() -> None:
             Verdict.HEARTBEAT_SUBSTRATE_MISSING,  # B5a
         }
     )
+
+
+def test_restart_loop_reap_verdict_exists_after_stall_reap() -> None:
+    """C27: RESTART_LOOP_REAP appended after STALL_REAP, honouring insertion order."""
+    assert Verdict.RESTART_LOOP_REAP.value == "RESTART_LOOP_REAP"
+    members = list(Verdict)
+    assert members.index(Verdict.RESTART_LOOP_REAP) > members.index(Verdict.STALL_REAP)
+
+
+def test_default_apply_policy_contains_restart_loop_reap() -> None:
+    """C27: DEFAULT_APPLY_POLICY acts on RESTART_LOOP_REAP."""
+    assert Verdict.RESTART_LOOP_REAP in DEFAULT_APPLY_POLICY.act_verdicts
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +149,7 @@ def test_policy_from_flags_apply_include_orphans_adds_orphan_reap() -> None:
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.ORPHAN_REAP,
         }
     )
@@ -144,19 +163,20 @@ def test_policy_from_flags_apply_force_forget_adds_unroutable() -> None:
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.UNROUTABLE,
         }
     )
 
 
-def test_policy_from_flags_apply_all_flags_returns_six_element_set() -> None:
+def test_policy_from_flags_apply_all_flags_returns_seven_element_set() -> None:
     """`kinoforge reap --apply --include-orphans --force-forget` policy contract.
 
     Combined-flag invocation must produce DEFAULT_APPLY_POLICY ∪
-    {ORPHAN_REAP, UNROUTABLE} — six verdicts after C26 added STALL_REAP
-    to the default. Regression guard: a future merge that accidentally
-    drops a base verdict (e.g. STALE_LEDGER) under an opt-in would be
-    invisible to the single-flag tests above. This test catches it.
+    {ORPHAN_REAP, UNROUTABLE} — seven verdicts after C26 added STALL_REAP
+    and C27 added RESTART_LOOP_REAP to the default. Regression guard: a
+    future merge that accidentally drops a base verdict (e.g. STALE_LEDGER)
+    under an opt-in would be invisible to single-flag tests; this catches it.
     """
     p = policy_from_cli_flags(apply=True, include_orphans=True, force_forget=True)
     assert p.act_verdicts == frozenset(
@@ -165,6 +185,7 @@ def test_policy_from_flags_apply_all_flags_returns_six_element_set() -> None:
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.ORPHAN_REAP,
             Verdict.UNROUTABLE,
         }
@@ -548,3 +569,165 @@ def test_default_policy_does_not_act_on_substrate_missing() -> None:
     HEARTBEAT_SUBSTRATE_MISSING — operator cannot fix the substrate
     by destroying the pod."""
     assert Verdict.HEARTBEAT_SUBSTRATE_MISSING not in DEFAULT_APPLY_POLICY.act_verdicts
+
+
+# ---------------------------------------------------------------------------
+# _restart_loop_reap_predicate (C27)
+# ---------------------------------------------------------------------------
+
+
+class TestRestartLoopReapPredicate:
+    """C27: _restart_loop_reap_predicate decision table.
+
+    Twin of _stall_reap_predicate. Same defensive shape: corrupt types
+    fall through to False rather than raising. Per-entry override beats
+    cfg default. Kill-switch via None.
+    """
+
+    NOW = 1_000_000.0
+    INTERVAL = 30.0
+    SENTINEL_WINDOW = 3.0 * INTERVAL  # 90s
+
+    @pytest.mark.parametrize(
+        "name, entry, restart_loop_window_s, expected",
+        [
+            (
+                "feature off via None window",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 999,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                None,
+                False,
+            ),
+            (
+                "substrate-unsupported provider 'fal'",
+                {
+                    "id": "x",
+                    "provider": "fal",
+                    "consecutive_low_uptime_count": 999,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                10.0,
+                False,
+            ),
+            (
+                "substrate-unknown provider (legacy entry, no provider key)",
+                {
+                    "id": "x",
+                    "consecutive_low_uptime_count": 20,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                10.0,
+                True,
+            ),
+            (
+                "legacy entry no counter",
+                {"id": "x", "provider": "runpod", "util_thread_tick": 1_000_000.0},
+                10.0,
+                False,
+            ),
+            (
+                "legacy entry no util_tick",
+                {"id": "x", "provider": "runpod", "consecutive_low_uptime_count": 20},
+                10.0,
+                False,
+            ),
+            (
+                "stale util_tick (age > sentinel_window)",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 999,
+                    "util_thread_tick": 1_000_000.0 - 200.0,
+                },
+                10.0,
+                False,
+            ),
+            (
+                "just-under window: counter*interval = window-1",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 1,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                31.0,
+                False,
+            ),
+            (
+                "exactly at window: counter*interval == window (>=)",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 1,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                30.0,
+                True,
+            ),
+            (
+                "per-entry override beats cfg default",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 1,
+                    "util_thread_tick": 1_000_000.0,
+                    "restart_loop_window_s": 10.0,
+                },
+                999.0,
+                True,
+            ),
+            (
+                "corrupt per-entry override falls through to cfg",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 1,
+                    "util_thread_tick": 1_000_000.0,
+                    "restart_loop_window_s": "abc",
+                },
+                10.0,
+                True,
+            ),
+            (
+                "corrupt counter type",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": "abc",
+                    "util_thread_tick": 1_000_000.0,
+                },
+                10.0,
+                False,
+            ),
+            (
+                "corrupt util_tick type",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 5,
+                    "util_thread_tick": "bad",
+                },
+                10.0,
+                False,
+            ),
+        ],
+    )
+    def test_predicate_table(
+        self,
+        name: str,
+        entry: dict[str, Any],
+        restart_loop_window_s: float | None,
+        expected: bool,
+    ) -> None:
+        result = _restart_loop_reap_predicate(
+            entry,
+            now=self.NOW,
+            sentinel_window=self.SENTINEL_WINDOW,
+            heartbeat_interval_s=self.INTERVAL,
+            restart_loop_window_s=restart_loop_window_s,
+        )
+        assert result is expected, f"case={name!r} got {result} want {expected}"

@@ -1320,6 +1320,93 @@ def test_lifecycle_config_stall_round_trips() -> None:
 
 
 # ---------------------------------------------------------------------------
+# C27 — restart_loop_* fields on LifecycleConfig
+# ---------------------------------------------------------------------------
+
+
+def test_lifecycle_config_restart_loop_defaults() -> None:
+    """Spec §5.1 defaults: enabled True, window 180 s, uptime threshold 90 s."""
+    from kinoforge.core.config import LifecycleConfig
+
+    cfg = LifecycleConfig(budget=1.0)
+    assert cfg.restart_loop_reap_enabled is True
+    assert cfg.restart_loop_window_s == 180.0
+    assert cfg.restart_loop_uptime_threshold_s == 90.0
+
+
+def test_lifecycle_config_restart_loop_window_rejects_negative() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import LifecycleConfig
+
+    with pytest.raises(ValidationError, match="restart_loop_window_s must be >= 0"):
+        LifecycleConfig(budget=1.0, restart_loop_window_s=-1.0)
+
+
+def test_lifecycle_config_restart_loop_uptime_threshold_rejects_negative() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import LifecycleConfig
+
+    with pytest.raises(
+        ValidationError, match="restart_loop_uptime_threshold_s must be >= 0"
+    ):
+        LifecycleConfig(budget=1.0, restart_loop_uptime_threshold_s=-1.0)
+
+
+def test_lifecycle_config_restart_loop_round_trips() -> None:
+    from kinoforge.core.config import LifecycleConfig
+
+    raw = LifecycleConfig(
+        budget=1.0,
+        restart_loop_reap_enabled=False,
+        restart_loop_window_s=240.0,
+        restart_loop_uptime_threshold_s=120.0,
+    ).model_dump_json()
+    parsed = LifecycleConfig.model_validate_json(raw)
+    assert parsed.restart_loop_reap_enabled is False
+    assert parsed.restart_loop_window_s == 240.0
+    assert parsed.restart_loop_uptime_threshold_s == 120.0
+
+
+def test_lifecycle_collapse_restart_loop_disabled_yields_none() -> None:
+    """C27 collapse: restart_loop_reap_enabled=False → Lifecycle.restart_loop_window_s=None."""
+    cfg = load_config(
+        HOSTED.replace(
+            "budget: 25.0",
+            "budget: 25.0, restart_loop_reap_enabled: false, restart_loop_window_s: 180.0",
+        )
+    )
+    lc = cfg.lifecycle()
+    assert lc.restart_loop_window_s is None
+    # Threshold always passes through regardless of the enabled flag.
+    assert lc.restart_loop_uptime_threshold_s == 90.0
+
+
+def test_lifecycle_collapse_restart_loop_enabled_passes_window_through() -> None:
+    """C27 collapse: restart_loop_reap_enabled=True → window value passes through."""
+    cfg = load_config(
+        HOSTED.replace(
+            "budget: 25.0",
+            "budget: 25.0, restart_loop_window_s: 240.0, restart_loop_uptime_threshold_s: 120.0",
+        )
+    )
+    lc = cfg.lifecycle()
+    assert lc.restart_loop_window_s == 240.0
+    assert lc.restart_loop_uptime_threshold_s == 120.0
+
+
+def test_lifecycle_collapse_restart_loop_defaults_to_180() -> None:
+    """C27 collapse: bare config → 180.0 window, 90.0 threshold (spec §5.1 defaults)."""
+    cfg = load_config(HOSTED)
+    lc = cfg.lifecycle()
+    assert lc.restart_loop_window_s == 180.0
+    assert lc.restart_loop_uptime_threshold_s == 90.0
+
+
+# ---------------------------------------------------------------------------
 # Layer 3 — BedrockVideoEngineConfig (pivot from Nova Reel to generic engine)
 # ---------------------------------------------------------------------------
 

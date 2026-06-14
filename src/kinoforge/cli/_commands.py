@@ -226,6 +226,12 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
             override = getattr(args, "stall_window_override", None)
             if override is not None:
                 ledger.touch(result.instance.id, stall_window_s=float(override))
+            restart_loop_override = getattr(args, "restart_loop_window_override", None)
+            if restart_loop_override is not None:
+                ledger.touch(
+                    result.instance.id,
+                    restart_loop_window_s=float(restart_loop_override),
+                )
 
     return 0
 
@@ -736,6 +742,8 @@ def _classify_for_status(
         stall_window_s=lifecycle.stall_window_s,
         stall_gpu_threshold=lifecycle.stall_gpu_threshold,
         stall_cpu_threshold=lifecycle.stall_cpu_threshold,
+        restart_loop_window_s=lifecycle.restart_loop_window_s,
+        restart_loop_uptime_threshold_s=lifecycle.restart_loop_uptime_threshold_s,
     ).value
 
 
@@ -1020,6 +1028,8 @@ def _resolve_warm_instance(
         stall_window_s=lifecycle.stall_window_s,
         stall_gpu_threshold=lifecycle.stall_gpu_threshold,
         stall_cpu_threshold=lifecycle.stall_cpu_threshold,
+        restart_loop_window_s=lifecycle.restart_loop_window_s,
+        restart_loop_uptime_threshold_s=lifecycle.restart_loop_uptime_threshold_s,
     )
     v_name = verdict.value
     if v_name == "LIVE":
@@ -1354,6 +1364,8 @@ def _cmd_reap(args: argparse.Namespace, ctx: SessionContext) -> int:
         "stall_window_s": lifecycle.stall_window_s,
         "stall_gpu_threshold": lifecycle.stall_gpu_threshold,
         "stall_cpu_threshold": lifecycle.stall_cpu_threshold,
+        "restart_loop_window_s": lifecycle.restart_loop_window_s,
+        "restart_loop_uptime_threshold_s": lifecycle.restart_loop_uptime_threshold_s,
     }
 
     policy = policy_from_cli_flags(
@@ -1674,6 +1686,7 @@ def _cmd_cost(args: argparse.Namespace, ctx: SessionContext) -> int:
             live_pod_ids_by_provider[provider_kind] = fallback
 
     stall_window_s: float | None
+    restart_loop_window_s: float | None
     if cfg is not None:
         lc = cfg.lifecycle()
         idle_timeout_s = float(lc.idle_timeout_s)
@@ -1683,6 +1696,8 @@ def _cmd_cost(args: argparse.Namespace, ctx: SessionContext) -> int:
         stall_window_s = lc.stall_window_s
         stall_gpu_threshold = lc.stall_gpu_threshold
         stall_cpu_threshold = lc.stall_cpu_threshold
+        restart_loop_window_s = lc.restart_loop_window_s
+        restart_loop_uptime_threshold_s = lc.restart_loop_uptime_threshold_s
     else:
         idle_timeout_s = 600.0
         max_lifetime_s = 3600.0
@@ -1691,6 +1706,8 @@ def _cmd_cost(args: argparse.Namespace, ctx: SessionContext) -> int:
         stall_window_s = None
         stall_gpu_threshold = 5.0
         stall_cpu_threshold = 20.0
+        restart_loop_window_s = None
+        restart_loop_uptime_threshold_s = 90.0
 
     verdicts_by_id: dict[str, Verdict] = {}
     for entry in entries:
@@ -1711,6 +1728,8 @@ def _cmd_cost(args: argparse.Namespace, ctx: SessionContext) -> int:
                 stall_window_s=stall_window_s,
                 stall_gpu_threshold=stall_gpu_threshold,
                 stall_cpu_threshold=stall_cpu_threshold,
+                restart_loop_window_s=restart_loop_window_s,
+                restart_loop_uptime_threshold_s=restart_loop_uptime_threshold_s,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
