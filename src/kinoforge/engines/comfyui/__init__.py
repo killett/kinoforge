@@ -1199,6 +1199,12 @@ class ComfyUIEngine(GenerationEngine):
 
         image: str = comfyui_cfg.get("image", _DEFAULT_RUNPOD_IMAGE)
         models_raw: list[dict[str, Any]] = list(cfg_dict.get("models", []))
+        # C28 B2: any image whose name starts with kinoforge/wan-comfyui:
+        # is a pre-baked container with ComfyUI + all custom-node clones +
+        # all pip installs already laid down at build time. Skip those
+        # bootstrap steps; the image's CMD layer + the selfterm bootstrap
+        # + the model-download loop + `exec python main.py` still emit.
+        slim_mode: bool = image.startswith("kinoforge/wan-comfyui:")
 
         # C28 A2: diagnostic_mode prepends an EXIT trap that captures the boot
         # log + system snapshots and uploads to S3 on failure. Pure-additive —
@@ -1253,11 +1259,20 @@ class ComfyUIEngine(GenerationEngine):
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
             "cd /workspace",
-            f"[ ! -d ComfyUI ] && git clone --depth 1 --branch {branch} {repo} ComfyUI",
-            "cd ComfyUI && pip install -q -r requirements.txt",
         ]
+        if not slim_mode:
+            lines.append(
+                f"[ ! -d ComfyUI ] && git clone --depth 1 --branch "
+                f"{branch} {repo} ComfyUI",
+            )
+            lines.append("cd ComfyUI && pip install -q -r requirements.txt")
+        else:
+            # Pre-baked image already has /workspace/ComfyUI; ensure the
+            # working directory matches so the model-download loop's
+            # relative `models/<subdir>/<filename>` paths still resolve.
+            lines.append("cd /workspace/ComfyUI")
 
-        for node in custom_nodes:
+        for node in custom_nodes if not slim_mode else ():
             node_url: str = node["git"]
             node_name: str = node_url.rstrip("/").split("/")[-1]
             if node_name.endswith(".git"):
