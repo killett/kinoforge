@@ -1,0 +1,59 @@
+{
+  "captured_at": "2026-06-13T21:02:16.859766-07:00",
+  "method": "empirical-mutation-probe",
+  "introspection_disabled": true,
+  "restart_policy_supported": false,
+  "network_volume_supported": true,
+  "registry_auth_supported": false,
+  "raw_per_field": {
+    "restartPolicy": {
+      "errors": [
+        {
+          "message": "Field \"restartPolicy\" is not defined by type \"PodFindAndDeployOnDemandInput\".",
+          "locations": [
+            {
+              "line": 1,
+              "column": 46
+            }
+          ],
+          "extensions": {
+            "code": "GRAPHQL_VALIDATION_FAILED"
+          }
+        }
+      ]
+    },
+    "networkVolumeId": {
+      "errors": [
+        {
+          "message": "Network volume \"00000000-0000-0000-0000-000000000000\" not found",
+          "path": [
+            "podFindAndDeployOnDemand"
+          ],
+          "extensions": {
+            "code": "RUNPOD",
+            "networkVolumeId": "00000000-0000-0000-0000-000000000000"
+          }
+        }
+      ],
+      "data": {
+        "podFindAndDeployOnDemand": null
+      }
+    },
+    "registryAuthId": {
+      "errors": [
+        {
+          "message": "Field \"registryAuthId\" is not defined by type \"PodFindAndDeployOnDemandInput\".",
+          "locations": [
+            {
+              "line": 1,
+              "column": 46
+            }
+          ],
+          "extensions": {
+            "code": "GRAPHQL_VALIDATION_FAILED"
+          }
+        }
+      ]
+    }
+  }
+}
