@@ -568,6 +568,14 @@ class RunPodProvider(ComputeProvider):
         # Build env dict: user-supplied vars + self-terminator key + script.
         env: dict[str, str] = dict(spec.env)
 
+        # C28 A1.5: overlay diagnostic env (S3 bucket/prefix + AWS keys for the
+        # in-pod EXIT trap) without clobbering any explicit user env. The
+        # diagnostic overlay is opt-in via cfg.diagnostic_mode → orchestrator
+        # populates spec.diagnostic_env; outside that path the dict is empty
+        # and this loop is a no-op.
+        for diag_key, diag_value in spec.diagnostic_env.items():
+            env.setdefault(diag_key, diag_value)
+
         # Inject terminate-only key (scoped; NOT the main API key)
         if self._creds is not None:
             terminate_key = self._creds.get("RUNPOD_TERMINATE_KEY")
