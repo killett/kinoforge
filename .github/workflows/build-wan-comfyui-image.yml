@@ -1,0 +1,53 @@
+name: build-wan-comfyui-image
+
+# C28 B1 — manual-dispatch only. Image rebuilds are explicit operator
+# actions; pushing should never happen on a code-only branch update.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (e.g. v0.3.10-088128b2-cu124)"
+        required: true
+        default: "v0.3.10-088128b2-cu124"
+      comfyui_ref:
+        description: "ComfyUI git ref"
+        required: true
+        default: "v0.3.10"
+      kijai_wan_ref:
+        description: "Kijai Wan custom-node git ref (SHA)"
+        required: true
+        default: "088128b224242e110d3906c6750e9a3a348a659b"
+      kjnodes_ref:
+        description: "KJNodes custom-node git ref (SHA)"
+        required: true
+        default: "369c8aee9ad4641823d0ffd7035076bcd297b6f2"
+      vhs_ref:
+        description: "VideoHelperSuite custom-node git ref (SHA)"
+        required: true
+        default: "4ee72c065db22c9d96c2427954dc69e7b908444b"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker/wan-comfyui
+          push: true
+          tags: |
+            kinoforge/wan-comfyui:${{ inputs.tag }}
+            kinoforge/wan-comfyui:latest
+          build-args: |
+            COMFYUI_REF=${{ inputs.comfyui_ref }}
+            KIJAI_WAN_REF=${{ inputs.kijai_wan_ref }}
+            KJNODES_REF=${{ inputs.kjnodes_ref }}
+            VHS_REF=${{ inputs.vhs_ref }}
+            IMAGE_TAG=${{ inputs.tag }}
