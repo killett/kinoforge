@@ -1151,6 +1151,8 @@ git commit -m "live(c28): A4 Phase A PROVEN — diagnostic capture + A5 hypothes
 
 > **USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it "verified inline", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.
 
+> **Decision (recorded 2026-06-13):** `outcome=NO_REPRODUCTION`, `matched_hypothesis=Hn` (silent trap — pod reaped by C26/C27 before `aws s3 cp` PUT completed; likely `aws` CLI missing from `runpod/pytorch:2.4.0` base image). Per the table: **ship Phase B (Tasks 9-13) + Phase C (Tasks 14-16) unconditionally** — belt-and-suspenders against the unknown root cause. A follow-up task (pre-install `awscli` in trap pre-amble OR pivot to python+boto3 PUT) restores diagnostic capture for the next reproduction.
+
 **Goal:** Read the A5 sidecar and decide which downstream phases ship. Phase C (Task 14-16) is unconditional. Phase B (Tasks 9-13) ships when `matched_hypothesis` is one of H1, H2, H4, or `outcome == NO_REPRODUCTION`.
 
 **Files:**
