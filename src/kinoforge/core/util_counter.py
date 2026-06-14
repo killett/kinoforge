@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from kinoforge.core.util_endpoints import UtilSnapshot
 
-__all__ = ["_update_counter"]
+__all__ = ["_update_counter", "_update_uptime_counter"]
 
 
 def _update_counter(
@@ -51,5 +51,47 @@ def _update_counter(
     if gpu is None or cpu is None:
         return 0
     if gpu < gpu_threshold and cpu < cpu_threshold:
+        return prev_counter + 1
+    return 0
+
+
+def _update_uptime_counter(
+    prev_counter: int,
+    *,
+    snap: UtilSnapshot | None,
+    uptime_threshold_s: float,
+) -> int:
+    """Tick the consecutive-low-uptime counter (C27).
+
+    Pure function. No I/O, no side effects. Called from
+    HeartbeatLoop._tick_once each tick alongside _update_counter.
+
+    Semantics (spec §6):
+      - snap is None (transport hiccup): preserve prev_counter.
+      - snap.uptime_seconds is None: reset to 0 (provider not surfacing).
+      - snap.uptime_seconds < uptime_threshold_s: increment.
+      - else: reset to 0.
+
+    Differs from _update_counter (C26):
+      - No prev_uptime_s parameter — chronic restart loop IS the signal,
+        not a restart-blip the predicate is trying to filter out.
+      - Single-axis read of uptime_seconds (no gpu/cpu AND-clause).
+      - uptime_seconds=None resets (silence the predicate if the provider
+        stops surfacing uptime mid-loop) rather than preserve.
+
+    Args:
+        prev_counter: The previous tick's counter value.
+        snap: This tick's util snapshot, or None on transport failure.
+        uptime_threshold_s: Strictly-< threshold below which the tick
+            counts as 'low uptime'.
+
+    Returns:
+        The new counter value.
+    """
+    if snap is None:
+        return prev_counter
+    if snap.uptime_seconds is None:
+        return 0
+    if snap.uptime_seconds < uptime_threshold_s:
         return prev_counter + 1
     return 0
