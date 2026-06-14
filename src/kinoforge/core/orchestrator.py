@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
+from typing import Literal
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
@@ -554,6 +555,15 @@ def _provision_instance_and_build_backend(
         diagnostic_env: dict[str, str] = (
             _build_diagnostic_env(run_id) if cfg.diagnostic_mode else {}
         )
+        # C28 A3: diagnostic-mode runs request restart_policy=never so a
+        # crashed boot leaves the container in a STOPPED state instead of
+        # being auto-restarted by RunPod (which would obliterate the
+        # diagnostic snapshot the A2 trap is trying to upload). Effective only
+        # if the provider's input schema accepts the field; otherwise the
+        # RunPod provider warns + skips with no behaviour change.
+        restart_policy: Literal["always", "never"] = (
+            "never" if cfg.diagnostic_mode else "always"
+        )
         return InstanceSpec(
             image=rendered.image or image,
             offer=offer,
@@ -565,6 +575,7 @@ def _provision_instance_and_build_backend(
             provision_script=rendered.script,
             run_cmd=rendered.run_cmd,
             diagnostic_env=diagnostic_env,
+            restart_policy=restart_policy,
         )
 
     instance, _chosen_offer = _create_with_offer_retry(
