@@ -37,6 +37,7 @@ class Verdict(StrEnum):
     HEARTBEAT_SUBSTRATE_MISSING = "HEARTBEAT_SUBSTRATE_MISSING"  # B5a
     UNROUTABLE = "UNROUTABLE"
     STALL_REAP = "STALL_REAP"  # C26
+    RESTART_LOOP_REAP = "RESTART_LOOP_REAP"  # C27
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ DEFAULT_APPLY_POLICY = Policy(
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
         }
     )
 )

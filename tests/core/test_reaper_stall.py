@@ -46,8 +46,9 @@ _KW: dict[str, Any] = {
 
 
 def test_stall_reap_appended_at_end_of_verdict_enum() -> None:
+    """STALL_REAP follows UNROUTABLE; C27 appended RESTART_LOOP_REAP after it."""
     members = list(Verdict)
-    assert members[-1] == Verdict.STALL_REAP
+    assert members.index(Verdict.STALL_REAP) > members.index(Verdict.UNROUTABLE)
     assert Verdict.STALL_REAP.value == "STALL_REAP"
 
 
