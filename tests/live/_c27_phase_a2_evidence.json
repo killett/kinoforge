@@ -1,0 +1,127 @@
+{
+  "outcome": "PROVEN",
+  "captured_at": "2026-06-13T18:23:01.511264-07:00",
+  "pod_id": "q6cq0m4gm907lw",
+  "offer_usd_per_hr": 0.12,
+  "interval_s": 15.0,
+  "restart_loop_window_s": 90.0,
+  "restart_loop_uptime_threshold_s": 90.0,
+  "fired_at_s_since_loop_start": 96.41109289100132,
+  "uptime_counter_trail": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "uptime_seconds_trail": [
+    null,
+    0,
+    0,
+    -2,
+    -2,
+    -15,
+    -15
+  ],
+  "tick_count": 7,
+  "forgotten": [
+    "q6cq0m4gm907lw"
+  ],
+  "touches": [
+    {
+      "ts": "2026-06-13T18:21:25.015896-07:00",
+      "id": "q6cq0m4gm907lw",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781400084.3896072,
+      "util_thread_tick": 1781400084.3896072,
+      "consecutive_low_util_count": 0,
+      "consecutive_low_uptime_count": 0
+    },
+    {
+      "ts": "2026-06-13T18:21:40.772687-07:00",
+      "id": "q6cq0m4gm907lw",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781400100.016181,
+      "util_thread_tick": 1781400100.016181,
+      "consecutive_low_util_count": 1,
+      "consecutive_low_uptime_count": 1,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": 0
+    },
+    {
+      "ts": "2026-06-13T18:21:56.336183-07:00",
+      "id": "q6cq0m4gm907lw",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781400115.7728992,
+      "util_thread_tick": 1781400115.7728992,
+      "consecutive_low_util_count": 2,
+      "consecutive_low_uptime_count": 2,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": 0
+    },
+    {
+      "ts": "2026-06-13T18:22:11.865273-07:00",
+      "id": "q6cq0m4gm907lw",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781400131.3363683,
+      "util_thread_tick": 1781400131.3363683,
+      "consecutive_low_util_count": 0,
+      "consecutive_low_uptime_count": 3,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -2
+    },
+    {
+      "ts": "2026-06-13T18:22:27.489563-07:00",
+      "id": "q6cq0m4gm907lw",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781400146.8655121,
+      "util_thread_tick": 1781400146.8655121,
+      "consecutive_low_util_count": 1,
+      "consecutive_low_uptime_count": 4,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -2
+    },
+    {
+      "ts": "2026-06-13T18:22:43.045969-07:00",
+      "id": "q6cq0m4gm907lw",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781400162.4898322,
+      "util_thread_tick": 1781400162.4898322,
+      "consecutive_low_util_count": 0,
+      "consecutive_low_uptime_count": 5,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -15
+    },
+    {
+      "ts": "2026-06-13T18:22:58.598248-07:00",
+      "id": "q6cq0m4gm907lw",
+      "last_heartbeat": null,
+      "heartbeat_thread_tick": 1781400178.0462432,
+      "util_thread_tick": 1781400178.0462432,
+      "consecutive_low_util_count": 1,
+      "consecutive_low_uptime_count": 6,
+      "last_gpu_util_percent": 0.0,
+      "last_cpu_percent": 0.0,
+      "last_memory_percent": 0.0,
+      "last_disk_percent": null,
+      "last_uptime_seconds": -15
+    }
+  ]
+}
