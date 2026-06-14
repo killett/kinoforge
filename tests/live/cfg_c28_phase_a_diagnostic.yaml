@@ -57,11 +57,16 @@ compute:
     boot_timeout: 30m
     budget: 4.0
     heartbeat_interval_s: 30
-    stall_reap_enabled: true
+    # C28 Phase A diagnostic mode: BOTH reap predicates disabled so the
+    # in-pod EXIT trap can capture the FULL failure cycle without C26/C27
+    # cutting the observation short. boot_timeout (30 min) is the only
+    # ceiling — that gives the trap a full window to observe restart-loop
+    # behavior and upload the entire boot.log tail.
+    stall_reap_enabled: false
     stall_window_s: 1200
     stall_gpu_threshold: 5
     stall_cpu_threshold: 20
-    restart_loop_reap_enabled: true
+    restart_loop_reap_enabled: false
     restart_loop_window_s: 180
     restart_loop_uptime_threshold_s: 90
 
