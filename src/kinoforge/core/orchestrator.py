@@ -763,6 +763,25 @@ def _provision_instance_and_build_backend(
             hb_loop.stop()
         resolved_provider.destroy_instance(instance.id)
         raise
+    except Cancelled:
+        # C29: reap-during-boot OR operator-Ctrl-C path. When the heartbeat
+        # loop fires a reap predicate it has already destroyed the pod itself,
+        # so the re-destroy here is the no-op leg of an idempotent destroy.
+        # When the operator interrupts during boot, hb_loop has NOT destroyed
+        # — this clause IS the destroy. Provider failures (RunPod 404 on
+        # already-gone pod) are swallowed + logged so the Cancelled keeps
+        # propagating to the operator.
+        if hb_loop is not None:
+            hb_loop.stop()
+        try:
+            resolved_provider.destroy_instance(instance.id)
+        except Exception as destroy_exc:  # noqa: BLE001
+            _log.warning(
+                "C29: idempotent destroy after Cancelled raised %s for %s",
+                destroy_exc,
+                instance.id,
+            )
+        raise
 
     backend = resolved_engine.backend(instance, cfg_dict)
     return ProvisionResult(instance=instance, backend=backend, hb_loop=hb_loop)
