@@ -1,34 +1,18 @@
 {
   "outcome": "CAPTURED",
-  "captured_at": "2026-06-13T23:38:37.469676-07:00",
-  "run_id": "c28-phase-a-20260613T233730-a3",
-  "s3_key": "boot-logs/c28-phase-a-20260613T233730-a3/diag-20260614T063834Z.txt",
-  "rc_in_trap": "1",
-  "last_line": "[notice] To update, run: python -m pip install --upgrade pip",
+  "captured_at": "2026-06-13T23:46:45.877528-07:00",
+  "run_id": "c28-phase-a-20260613T234129-a1",
+  "s3_key": "boot-logs/c28-phase-a-20260613T234129-a1/diag-20260614T064348Z.txt",
+  "rc_in_trap": "0",
+  "last_line": "Cloning into 'ComfyUI'...",
   "attempts": [
     {
       "attempt": 1,
-      "run_id": "c28-phase-a-20260613T232412-a1",
+      "run_id": "c28-phase-a-20260613T234129-a1",
       "rc": 1,
-      "s3_key": null,
-      "outcome": "rc-nonzero-no-s3",
-      "stderr_tail": "pt\": graph}),\n            ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/engines/comfyui/__init__.py\", line 221, in _urllib_post_json\n    raise urllib.error.HTTPError(\n    ...<5 lines>...\n    ) from exc\nurllib.error.HTTPError: HTTP Error 400: Bad Request -- body: {\"error\": {\"type\": \"prompt_outputs_failed_validation\", \"message\": \"Prompt outputs failed validation\", \"details\": \"\", \"extra_info\": {}}, \"node_errors\": {\"22\": {\"errors\": [{\"type\": \"value_not_in_list\", \"message\": \"Value not in list\", \"details\": \"model: 'Wan2_1-T2V-14B_fp8_e4m3fn.safetensors' not in ['Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors']\", \"extra_info\": {\"input_name\": \"model\", \"input_config\": [[\"Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors\"], {\"tooltip\": \"These models are loaded from the 'ComfyUI/models/diffusion_models' -folder\"}], \"received_value\": \"Wan2_1-T2V-14B_fp8_e4m3fn.safetensors\"}}], \"dependent_outputs\": [\"30\"], \"class_type\": \"WanVideoModelLoader\"}}}\n"
-    },
-    {
-      "attempt": 2,
-      "run_id": "c28-phase-a-20260613T233056-a2",
-      "rc": 1,
-      "s3_key": null,
-      "outcome": "rc-nonzero-no-s3",
-      "stderr_tail": "pt\": graph}),\n            ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/engines/comfyui/__init__.py\", line 221, in _urllib_post_json\n    raise urllib.error.HTTPError(\n    ...<5 lines>...\n    ) from exc\nurllib.error.HTTPError: HTTP Error 400: Bad Request -- body: {\"error\": {\"type\": \"prompt_outputs_failed_validation\", \"message\": \"Prompt outputs failed validation\", \"details\": \"\", \"extra_info\": {}}, \"node_errors\": {\"22\": {\"errors\": [{\"type\": \"value_not_in_list\", \"message\": \"Value not in list\", \"details\": \"model: 'Wan2_1-T2V-14B_fp8_e4m3fn.safetensors' not in ['Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors']\", \"extra_info\": {\"input_name\": \"model\", \"input_config\": [[\"Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors\"], {\"tooltip\": \"These models are loaded from the 'ComfyUI/models/diffusion_models' -folder\"}], \"received_value\": \"Wan2_1-T2V-14B_fp8_e4m3fn.safetensors\"}}], \"dependent_outputs\": [\"30\"], \"class_type\": \"WanVideoModelLoader\"}}}\n"
-    },
-    {
-      "attempt": 3,
-      "run_id": "c28-phase-a-20260613T233730-a3",
-      "rc": 1,
-      "s3_key": "boot-logs/c28-phase-a-20260613T233730-a3/diag-20260614T063834Z.txt",
+      "s3_key": "boot-logs/c28-phase-a-20260613T234129-a1/diag-20260614T064348Z.txt",
       "outcome": "captured",
-      "stderr_tail": "^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/core/provisioner.py\", line 158, in provision\n    engine.provision(instance, cfg_for_engine)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/engines/comfyui/__init__.py\", line 1160, in provision\n    self.wait_for_ready(\n    ~~~~~~~~~~~~~~~~~~~^\n        instance,\n        ^^^^^^^^^\n    ...<3 lines>...\n        timeout_s=boot_timeout_s,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/engines/comfyui/__init__.py\", line 1480, in wait_for_ready\n    current = get_instance(instance.id)\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/providers/runpod/__init__.py\", line 374, in get_instance\n    raise KeyError(f\"no RunPod pod found: {instance_id!r}\")\nKeyError: \"no RunPod pod found: 'ncoe4f6ul1kndj'\"\n"
+      "stderr_tail": "loop-prevention/.pixi/envs/default/lib/python3.13/concurrent/futures/_base.py\", line 401, in __get_result\n    raise self._exception\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/.pixi/envs/default/lib/python3.13/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/core/pool.py\", line 339, in _run_one\n    return slot.backend.result(job_id, cancel_token=cancel_token)\n           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/engines/comfyui/__init__.py\", line 915, in result\n    token.raise_if_set()\n    ~~~~~~~~~~~~~~~~~~^^\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/src/kinoforge/core/cancel.py\", line 63, in raise_if_set\n    raise Cancelled(\"cancellation requested by operator\")\nkinoforge.core.errors.Cancelled: cancellation requested by operator\n"
     }
   ],
   "budget_cap_usd": 0.2
