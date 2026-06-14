@@ -1,0 +1,144 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-13-c28-restart-loop-prevention.md",
+  "lastUpdated": "2026-06-13T19:00:00-07:00",
+  "nativeTaskIdMap": {
+    "0": 8, "1": 9, "2": 10, "3": 11, "4": 12, "5": 13, "6": 14,
+    "7": 15, "8": 16, "9": 17, "10": 18, "11": 19, "12": 20,
+    "13": 21, "14": 22, "15": 23, "16": 24, "17": 25, "18": 26
+  },
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Pre-flight — operator credentials checklist",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "Verify RUNPOD_API_KEY, RUNPOD_TERMINATE_KEY, HF_TOKEN, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY present in env. Full body: see plan §Task 0 + native task #8.\n\n```json:metadata\n{\"files\":[\".env\"],\"verifyCommand\":\"pixi run python -c \\\"import os; required=['RUNPOD_API_KEY','RUNPOD_TERMINATE_KEY','HF_TOKEN','DOCKERHUB_USERNAME','DOCKERHUB_TOKEN','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY']; missing=[k for k in required if not os.environ.get(k)]; print('PASS' if not missing else f'FAIL: missing {missing}')\\\"\",\"acceptanceCriteria\":[\"all 7 creds in .env\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: A0 — RunPod GraphQL schema probe",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "GraphQL introspection probe for restartPolicy/networkVolumeId/registryAuthId on PodFindAndDeployOnDemandInput. $0. Full body: see plan §Task 1 + native task #9.\n\n```json:metadata\n{\"files\":[\"tests/live/test_c28_phase_a_schema_probe_live.py\",\"tests/live/_c28_runpod_input_schema_probe.json\"],\"verifyCommand\":\"KINOFORGE_LIVE_RUNPOD=1 pixi run pytest tests/live/test_c28_phase_a_schema_probe_live.py -v -s\",\"acceptanceCriteria\":[\"gated on KINOFORGE_LIVE_RUNPOD=1\",\"introspection query against PodFindAndDeployOnDemandInput\",\"sidecar with restart_policy_supported, network_volume_supported, registry_auth_supported bool fields\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: A1 — S3 ingest bucket + scoped IAM",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "Idempotent provisioner for kinoforge-pod-diagnostics bucket (us-west-2, 7-day lifecycle) + PutObject-only IAM policy attached to kinoforge-ci. Full body: see plan §Task 2 + native task #10.\n\n```json:metadata\n{\"files\":[\"tools/c28_provision_s3_diagnostics.py\",\"tests/tools/test_c28_provision_s3_diagnostics.py\"],\"verifyCommand\":\"pixi run pytest tests/tools/test_c28_provision_s3_diagnostics.py -v && pixi run -e live-skypilot aws s3 ls s3://kinoforge-pod-diagnostics/\",\"acceptanceCriteria\":[\"bucket us-west-2\",\"7-day lifecycle on boot-logs/\",\"PutObject-only policy attached to kinoforge-ci\",\"idempotent\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: A2 — render_provision EXIT trap pre-amble (diagnostic_mode gated)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "Prepend EXIT trap to render_provision when cfg.diagnostic_mode=true; capture stdout/stderr/rc + system snapshots; PUT to S3 via `aws s3 cp || true`. Full body: see plan §Task 3 + native task #11.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/engines/comfyui/__init__.py\",\"tests/engines/comfyui/test_render_provision_diagnostic_trap.py\"],\"verifyCommand\":\"pixi run pytest tests/engines/comfyui/test_render_provision_diagnostic_trap.py tests/engines/comfyui/ -v -k render_provision\",\"acceptanceCriteria\":[\"diagnostic_mode false byte-identical to baseline\",\"diagnostic_mode true: trap pre-amble prepended\",\"all 8 marker sections present\",\"no access-key vars in script body\",\"aws s3 cp wrapped in || true\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: A1.5 — Wire diagnostic env vars into _create_pod",
+      "status": "pending",
+      "blockedBy": [2, 3],
+      "description": "InstanceSpec.diagnostic_env dict field; _create_pod merges via setdefault (never overwrites user env); orchestrator populates from os.environ when cfg.diagnostic_mode=true; add Config.diagnostic_mode bool. Full body: see plan §Task 4 + native task #12.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/interfaces.py\",\"src/kinoforge/providers/runpod/__init__.py\",\"src/kinoforge/core/orchestrator.py\",\"src/kinoforge/core/config.py\",\"tests/providers/runpod/test_create_pod_diagnostic_env.py\"],\"verifyCommand\":\"pixi run pytest tests/providers/runpod/test_create_pod_diagnostic_env.py tests/providers/runpod/ -v\",\"acceptanceCriteria\":[\"InstanceSpec.diagnostic_env default empty\",\"setdefault merge preserves user env\",\"Config.diagnostic_mode added\",\"no secret values in tests\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: A3 — restart_policy field on InstanceSpec + _create_pod",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "InstanceSpec.restart_policy literal field; _create_pod reads A0 sidecar to decide wire emission; CLI --diagnostic-mode flag sets both diagnostic_mode + restart_policy=never. Full body: see plan §Task 5 + native task #13.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/interfaces.py\",\"src/kinoforge/providers/runpod/__init__.py\",\"src/kinoforge/cli/_commands.py\",\"src/kinoforge/core/config.py\",\"tests/providers/runpod/test_create_pod_restart_policy.py\"],\"verifyCommand\":\"pixi run pytest tests/providers/runpod/test_create_pod_restart_policy.py tests/providers/runpod/ -v\",\"acceptanceCriteria\":[\"restart_policy default = always\",\"never+supported -> on wire as NEVER\",\"never+unsupported -> warning + skip\",\"default unchanged\",\"CLI flag sets both knobs\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: A4 — Phase A live smoke RED scaffold",
+      "status": "pending",
+      "blockedBy": [3, 4, 5],
+      "description": "RED-committed scaffold (skipped without KINOFORGE_LIVE_RUNPOD=1) + cfg_c28_phase_a_diagnostic.yaml (mirror of cfg_c27_phase_b.yaml + diagnostic_mode: true). Budget cap $0.20 + retry policy. Full body: see plan §Task 6 + native task #14.\n\n```json:metadata\n{\"files\":[\"tests/live/cfg_c28_phase_a_diagnostic.yaml\",\"tests/live/test_c28_phase_a_diagnostic_capture_live.py\"],\"verifyCommand\":\"pixi run pytest tests/live/test_c28_phase_a_diagnostic_capture_live.py -v\",\"acceptanceCriteria\":[\"cfg mirrors cfg_c27_phase_b.yaml + diagnostic_mode\",\"test gated KINOFORGE_LIVE_RUNPOD=1\",\"budget cap $0.20\",\"retry 3 -> NO_REPRODUCTION fallback\",\"required markers asserted\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: A4 + A5 — Run Phase A live smoke + classify",
+      "status": "pending",
+      "blockedBy": [6, 2],
+      "description": "USER-ORDERED GATE — NON-SKIPPABLE. Preflight; run live smoke (real Wan + ComfyUI cold pod with diagnostic_mode); capture S3 boot-log; classify root cause per spec §3 table. Sidecar gets matched_hypothesis + evidence_lines. Full body: see plan §Task 7 + native task #15.\n\n```json:metadata\n{\"files\":[\"tests/live/test_c28_phase_a_diagnostic_capture_live.py\",\"tests/live/_c28_phase_a_evidence.json\"],\"verifyCommand\":\"jq -e '.outcome, .matched_hypothesis' tests/live/_c28_phase_a_evidence.json\",\"acceptanceCriteria\":[\"preflight exit 0\",\"outcome in {CAPTURED, NO_REPRODUCTION}\",\"matched_hypothesis populated\",\"evidence_lines cite specific log lines\",\"spend <= $0.20\"],\"userGate\":true,\"tags\":[\"user-gate\"],\"requireEvidenceTokens\":[[\"captured\",\"CAPTURED\",\"no-reproduction\",\"NO_REPRODUCTION\"],[\"matched-hypothesis\",\"H1\",\"H2\",\"H3\",\"H4\",\"H5\",\"H6\",\"Hn\"]]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: GATE — branch on A5 evidence",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "USER-ORDERED GATE — NON-SKIPPABLE. Read A5 sidecar; apply decision table (H1/H2/H4/NO_REPRODUCTION -> ship B+C, H3 -> ship C only, H5 -> selfterm refactor + C, H6 -> STOP). Decision recorded in plan markdown. Full body: see plan §Task 8 + native task #16.\n\n```json:metadata\n{\"files\":[\"tests/live/_c28_phase_a_evidence.json\",\"docs/superpowers/plans/2026-06-13-c28-restart-loop-prevention.md\"],\"verifyCommand\":\"pixi run python -c \\\"import json; d=json.load(open('tests/live/_c28_phase_a_evidence.json')); h=d['matched_hypothesis']; assert h in {'H1','H2','H3','H4','H5','H6','Hn','NO_REPRODUCTION'}, h; print(f'gate: {h}')\\\"\",\"acceptanceCriteria\":[\"matched_hypothesis in expected set\",\"decision applied per table\",\"decision recorded in plan markdown\"],\"userGate\":true,\"tags\":[\"user-gate\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: B0 — Dockerfile + local build smoke",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "docker/wan-comfyui/Dockerfile: FROM runpod/pytorch base + 4 pinned ARG refs (COMFYUI/KIJAI_WAN/KJNODES/VHS) + clone+pip per node + build-time `import comfy` smoke. Image <= 25 GB. Full body: see plan §Task 9 + native task #17.\n\n```json:metadata\n{\"files\":[\"docker/wan-comfyui/Dockerfile\",\"docker/wan-comfyui/README.md\",\"tests/tools/test_wan_comfyui_dockerfile_lint.py\"],\"verifyCommand\":\"pixi run pytest tests/tools/test_wan_comfyui_dockerfile_lint.py -v && docker build -t kinoforge/wan-comfyui:test docker/wan-comfyui/\",\"acceptanceCriteria\":[\"builds locally\",\"build-time import comfy smoke passes\",\"size <= 25 GB\",\"all 4 refs pinned via ARG\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: B1 — push pipeline (pixi task + GH Actions)",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "[tasks] build-image-wan-comfyui pixi task (build+login+push tagged+latest) + .github/workflows/build-wan-comfyui-image.yml workflow_dispatch only. DOCKERHUB_USERNAME/TOKEN secrets. Full body: see plan §Task 10 + native task #18.\n\n```json:metadata\n{\"files\":[\"pixi.toml\",\"pixi.lock\",\".github/workflows/build-wan-comfyui-image.yml\"],\"verifyCommand\":\"TAG=v0.3.10-088128b2-cu124 pixi run build-image-wan-comfyui\",\"acceptanceCriteria\":[\"pixi task builds + pushes\",\"tag scheme correct\",\"GH workflow workflow_dispatch only\",\"DOCKERHUB_* secrets used\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: B2 — render_provision slim-mode branch",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "When image starts with kinoforge/wan-comfyui:, skip ComfyUI clone + pip + custom-node clones. Pure-additive; other prefix unchanged. Selfterm + exec still emitted. Full body: see plan §Task 11 + native task #19.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/engines/comfyui/__init__.py\",\"tests/engines/comfyui/test_render_provision_slim_mode.py\"],\"verifyCommand\":\"pixi run pytest tests/engines/comfyui/test_render_provision_slim_mode.py tests/engines/comfyui/ -v -k render_provision\",\"acceptanceCriteria\":[\"prebake prefix skips comfyui clone + pip install\",\"prebake skips custom-node clones\",\"other prefix byte-identical\",\"selfterm + exec still emitted\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 12: B3 — Phase B cfg + RED scaffold",
+      "status": "pending",
+      "blockedBy": [10, 11],
+      "description": "tests/live/cfg_c28_phase_b_prebake.yaml (image = kinoforge/wan-comfyui:<tag>, restart_loop_reap_enabled keeps C27 predicate active) + RED scaffold test. $0.30 cap. Full body: see plan §Task 12 + native task #20.\n\n```json:metadata\n{\"files\":[\"tests/live/cfg_c28_phase_b_prebake.yaml\",\"tests/live/test_c28_phase_b_image_prebake_live.py\"],\"verifyCommand\":\"pixi run pytest tests/live/test_c28_phase_b_image_prebake_live.py -v\",\"acceptanceCriteria\":[\"cfg image = kinoforge/wan-comfyui:v0.3.10-088128b2-cu124\",\"restart_loop_reap_enabled true\",\"test gated KINOFORGE_LIVE_RUNPOD=1\",\"asserts wait_for_ready 200 + no RESTART_LOOP_REAP + asset\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 13: B4 — Run Phase B live smoke",
+      "status": "pending",
+      "blockedBy": [12],
+      "description": "USER-ORDERED GATE — NON-SKIPPABLE. Preflight; run prebake-image smoke; assert PROVEN, no RESTART_LOOP_REAP, no Cancelled, 1 asset. Full body: see plan §Task 13 + native task #21.\n\n```json:metadata\n{\"files\":[\"tests/live/test_c28_phase_b_image_prebake_live.py\",\"tests/live/_c28_phase_b_evidence.json\"],\"verifyCommand\":\"jq -e '.outcome == \\\"PROVEN\\\"' tests/live/_c28_phase_b_evidence.json\",\"acceptanceCriteria\":[\"preflight exit 0\",\"outcome PROVEN\",\"no RESTART_LOOP_REAP\",\"no Cancelled\",\"one asset\",\"spend <= $0.30\"],\"userGate\":true,\"tags\":[\"user-gate\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 14: C1 — _kinoforge_download helper + unit tests",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "Pure-bash helper rendered into provision script (unconditional). 3-attempt loop, 5/10/15 s backoff, sha verify, .partial cleanup, optional HF_TOKEN bearer. Full body: see plan §Task 14 + native task #22.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/engines/comfyui/__init__.py\",\"tests/engines/comfyui/test_render_provision_kinoforge_download.py\"],\"verifyCommand\":\"pixi run pytest tests/engines/comfyui/test_render_provision_kinoforge_download.py -v\",\"acceptanceCriteria\":[\"helper function defined unconditionally\",\"3-attempt loop\",\"5/10/15s backoff\",\"partial cleanup between attempts\",\"sha verify branch\",\"optional HF_TOKEN bearer\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 15: C2 — Replace inline curl with helper call",
+      "status": "pending",
+      "blockedBy": [14],
+      "description": "Model-download loop emits _kinoforge_download '<url>' '<out>' '<sha_or_empty>'. Drop unused auth_header. Existing render_provision fixture tests still green. Full body: see plan §Task 15 + native task #23.\n\n```json:metadata\n{\"files\":[\"src/kinoforge/engines/comfyui/__init__.py\",\"tests/engines/comfyui/test_render_provision_kinoforge_download.py\"],\"verifyCommand\":\"pixi run pytest tests/engines/comfyui/ -v -k 'render_provision or kinoforge_download'\",\"acceptanceCriteria\":[\"model loop uses _kinoforge_download\",\"sha threaded when present, empty when absent\",\"no curl -L --fail in rendered script\",\"existing tests green\"]}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 16: C3 — Phase C live smoke (curl-retry exercised)",
+      "status": "pending",
+      "blockedBy": [15, 13],
+      "description": "Slim cfg with guaranteed-404 model ref; live smoke forces retry helper; assert >=3 retry signals; outcome PROVEN. $0.05 cap. Full body: see plan §Task 16 + native task #24.\n\n```json:metadata\n{\"files\":[\"tests/live/cfg_c28_phase_c_curl_retry.yaml\",\"tests/live/test_c28_phase_c_curl_retry_live.py\",\"tests/live/_c28_phase_c_evidence.json\"],\"verifyCommand\":\"pixi run pytest tests/live/test_c28_phase_c_curl_retry_live.py -v && jq -e '.outcome == \\\"PROVEN\\\"' tests/live/_c28_phase_c_evidence.json\",\"acceptanceCriteria\":[\"test gated KINOFORGE_LIVE_RUNPOD=1\",\"404 forces retry path\",\">=3 retry signals\",\"sidecar PROVEN\",\"spend <= $0.05\"]}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 17: Spec-level acceptance — 3 cold boots + C27 PB re-fire",
+      "status": "pending",
+      "blockedBy": [13, 16],
+      "description": "USER-ORDERED GATE — NON-SKIPPABLE. Three sequential kinoforge generate runs on prebake cfg; C27 PB re-fire via cfg-override env. Flip C27 PB acceptance PROVEN-PROTECTION -> PROVEN, cold-skip ratio < 0.7. $0.30 cap. Full body: see plan §Task 17 + native task #25.\n\n```json:metadata\n{\"files\":[\"tests/live/test_c28_spec_acceptance_live.py\",\"tests/live/_c28_spec_acceptance_evidence.json\"],\"verifyCommand\":\"jq -e '.outcome == \\\"PROVEN\\\"' tests/live/_c28_spec_acceptance_evidence.json\",\"acceptanceCriteria\":[\"3 cold boots wait_for_ready 200\",\"consecutive_low_uptime_count stays 0\",\"C27 PB re-fire PROVEN with cold_skip_ratio < 0.7\",\"spend <= $0.30\"],\"userGate\":true,\"tags\":[\"user-gate\"],\"requireEvidenceTokens\":[[\"cold-boot-1\",\"boot-1\",\"first-boot\"],[\"cold-boot-2\",\"boot-2\",\"second-boot\"],[\"cold-boot-3\",\"boot-3\",\"third-boot\"],[\"c27-pb-refire\",\"refire\",\"PROVEN\"]]}\n```"
+    },
+    {
+      "id": 18,
+      "subject": "Task 18: D1-D4 — Closeout",
+      "status": "pending",
+      "blockedBy": [17],
+      "description": "PROGRESS.md §C C28 entry; C26 §17 backlink; C27 §13 backlink; successful-generations.md entry/See-also for (runpod, comfyui, wan-2.1-14b, t2v) tuple + new engine_variant prebake. Full body: see plan §Task 18 + native task #26.\n\n```json:metadata\n{\"files\":[\"PROGRESS.md\",\"docs/superpowers/specs/2026-06-13-c26-runpod-util-aware-stall-classify-design.md\",\"docs/superpowers/specs/2026-06-13-c27-restart-loop-stall-detection-design.md\",\"docs/successful-generations.md\"],\"verifyCommand\":\"rg -c 'C28' PROGRESS.md docs/superpowers/specs/2026-06-13-c26-runpod-util-aware-stall-classify-design.md docs/superpowers/specs/2026-06-13-c27-restart-loop-stall-detection-design.md\",\"acceptanceCriteria\":[\"PROGRESS.md C28 §C entry\",\"C26 §17 backlink\",\"C27 §13 backlink\",\"successful-generations.md updated\"]}\n```"
+    }
+  ]
+}
