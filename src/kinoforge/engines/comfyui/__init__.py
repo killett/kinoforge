@@ -1435,6 +1435,7 @@ class ComfyUIEngine(GenerationEngine):
         sleep: Callable[[float], None],
         get_instance: Callable[[str], Instance],
         timeout_s: float,
+        cancel_token: CancelToken | None = None,
     ) -> None:
         """Poll ``GET <comfyui>/system_stats`` until 200, status terminal, or timeout.
 
@@ -1447,10 +1448,15 @@ class ComfyUIEngine(GenerationEngine):
             sleep: Sleep seam used between polls.
             get_instance: Provider lookup for status checks between polls.
             timeout_s: Maximum total wait.
+            cancel_token: C29 cooperative cancellation. Checked at the top of
+                each poll iteration before any I/O so a boot-phase heartbeat
+                reap (or operator Ctrl-C) raises ``Cancelled`` cleanly.
+                Default ``None`` preserves pre-C29 behaviour.
 
         Raises:
             ProvisionFailed: Pod entered terminal status before ready.
             ProvisionTimeout: ``timeout_s`` elapsed without a successful ready check.
+            Cancelled: ``cancel_token`` was set during the wait.
         """
         if not instance.endpoints:
             raise ProvisionFailed(
@@ -1466,6 +1472,8 @@ class ComfyUIEngine(GenerationEngine):
 
         start = time.monotonic()
         while True:
+            if cancel_token is not None:
+                cancel_token.raise_if_set()
             now = time.monotonic()
             if now - start >= timeout_s:
                 raise ProvisionTimeout(
