@@ -64,7 +64,7 @@ compute:
     restart_loop_uptime_threshold_s: 90
 
 spec:
-  graph_file: ../../examples/configs/runpod-comfyui-wan-t2v.graph.json
+  graph_file: ../../examples/configs/runpod-comfyui-wan-t2v-1_3b.graph.json
   asset_node_ids: {}
   prompt_node_ids:
     positive: "16"
