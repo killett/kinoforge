@@ -81,10 +81,6 @@ class _SpyLedger:
         self.forgotten.append(instance_id)
 
 
-@pytest.mark.xfail(
-    reason="C29 RED scaffold — flip to expected-pass once live invocation succeeds",
-    strict=True,
-)
 def test_c29_phase_b_boot_restart_loop_reap_fires_during_provision() -> None:
     """Boot-phase RESTART_LOOP_REAP destroys a pod whose container restart-loops.
 
