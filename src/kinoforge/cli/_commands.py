@@ -226,6 +226,12 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
             override = getattr(args, "stall_window_override", None)
             if override is not None:
                 ledger.touch(result.instance.id, stall_window_s=float(override))
+            restart_loop_override = getattr(args, "restart_loop_window_override", None)
+            if restart_loop_override is not None:
+                ledger.touch(
+                    result.instance.id,
+                    restart_loop_window_s=float(restart_loop_override),
+                )
 
     return 0
 
