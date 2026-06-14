@@ -975,3 +975,15 @@ is the original C25 Task 4 symptom and remains uncovered. Tracked as
 the existing low-util predicate. The C26 substrate (UtilSnapshotEndpoint
 Protocol, ledger fields, classify row 3' wiring, CLI flag, threshold
 threading) is the right foundation for C27.
+
+---
+
+### Update 2026-06-13 — C27 closes the restart-loop gap
+
+C26 PARTIAL → **C27 CLOSED**. The sibling predicate
+`_restart_loop_reap_predicate` + `Verdict.RESTART_LOOP_REAP` shipped on
+this substrate without any wire path or ledger migration; Phase B
+re-fired and reached PROVEN-PROTECTION. See
+`2026-06-13-c27-restart-loop-stall-detection-design.md` §13 for the
+per-task SHA table and Phase A1 / A2 / B outcomes. The C25 Task 4 and
+C26 Task 14 deferred acceptance gates are both closed via that smoke.
