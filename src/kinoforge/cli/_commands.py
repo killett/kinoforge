@@ -187,6 +187,13 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
         raise RuntimeError("_cmd_deploy requires --config")
     cfg = ctx.cfg
 
+    # C28 A3: --diagnostic-mode is a per-invocation cfg override; rebuild the
+    # Config with the flag set so the orchestrator's _build_spec sees it and
+    # both wires diagnostic_env AND requests restart_policy=never. Operator
+    # opts out by simply not passing the flag.
+    if getattr(args, "diagnostic_mode", False):
+        cfg = cfg.model_copy(update={"diagnostic_mode": True})
+
     if not args.dry_run:
         # Check for duplicate instance in ledger
         ledger = ctx.ledger()

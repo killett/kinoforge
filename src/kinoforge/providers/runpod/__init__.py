@@ -26,11 +26,13 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import secrets
 import time
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from kinoforge.core import registry
@@ -66,6 +68,24 @@ _PROXY_URL_PATTERN: str = "https://{pod_id}-{port}.proxy.runpod.net"
 
 #: RunPod serverless run URL pattern.
 _SERVERLESS_RUN_URL: str = "https://api.runpod.ai/v2/{endpoint_id}/run"
+
+#: C28 A3: path to the A0 empirical-probe sidecar that records whether
+#: PodFindAndDeployOnDemandInput accepts ``restartPolicy``. Read at
+#: _create_pod time so a future RunPod schema change picks up automatically
+#: once the probe is re-run; absent or unsupported → conservative skip with
+#: a warning. Patchable via unittest.mock for unit tests.
+_RUNPOD_SCHEMA_SIDECAR: Path = Path(
+    "tests/live/_c28_runpod_input_schema_probe.json",
+)
+
+
+def _restart_policy_supported() -> bool:
+    """Read the A0 sidecar to decide whether to emit ``restartPolicy``."""
+    try:
+        payload = json.loads(_RUNPOD_SCHEMA_SIDECAR.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
+    return bool(payload.get("restart_policy_supported"))
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +669,25 @@ class RunPodProvider(ComputeProvider):
                 }
             },
         }
+
+        # C28 A3: opt-out of RunPod's auto-restart-on-failure when caller asks
+        # AND the input schema actually exposes the field. The A0 probe
+        # (2026-06-13) confirmed `restartPolicy` is NOT in
+        # PodFindAndDeployOnDemandInput at the time of this commit, so the
+        # `restart_policy="never"` path always warns + skips today. If RunPod
+        # ever exposes the field, re-running the A0 probe flips the sidecar
+        # and this branch starts emitting `restartPolicy: NEVER` with no code
+        # change required.
+        if spec.restart_policy == "never":
+            if _restart_policy_supported():
+                body["variables"]["input"]["restartPolicy"] = "NEVER"
+            else:
+                logging.getLogger(__name__).warning(
+                    "spec.restart_policy='never' requested but RunPod schema "
+                    "does not expose restartPolicy (per %s); falling back to "
+                    "the provider's default restart-on-failure behaviour",
+                    _RUNPOD_SCHEMA_SIDECAR,
+                )
 
         resp = self._http_post(self._base_url, body)
         if "errors" in resp:

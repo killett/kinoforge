@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
@@ -136,6 +136,12 @@ class InstanceSpec:
     # C28 A1.5: diagnostic env overlay merged into pod env via setdefault
     # (user-supplied `env` always wins). Default empty = no behavioural change.
     diagnostic_env: dict[str, str] = field(default_factory=dict)
+    # C28 A3: when "never" AND provider schema supports it, request the
+    # provider NOT to auto-restart this pod on container exit. Default
+    # "always" preserves pre-C28 behaviour. RunPod schema probed by the A0
+    # sidecar (tests/live/_c28_runpod_input_schema_probe.json); if the field
+    # is absent the provider warns + skips on the wire.
+    restart_policy: Literal["always", "never"] = "always"
 
 
 @dataclass
