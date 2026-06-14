@@ -76,14 +76,16 @@ def test_verdict_values_are_stable_strings() -> None:
         "HEARTBEAT_SUBSTRATE_MISSING",  # B5a
         "UNROUTABLE",
         "STALL_REAP",  # C26
+        "RESTART_LOOP_REAP",  # C27
     ]
 
 
 def test_default_apply_policy_contains_high_confidence_verdicts() -> None:
     """ORPHAN_REAP is NOT in the default — requires --include-orphans.
 
-    STALL_REAP was added in C26 as a high-confidence verdict (in-pod
-    workload measurably stalled; counter × interval ≥ window).
+    STALL_REAP added C26 (steady-low-util predicate); RESTART_LOOP_REAP
+    added C27 (chronic low-uptime predicate) — both high-confidence
+    enough to act on by default.
     """
     assert DEFAULT_APPLY_POLICY.act_verdicts == frozenset(
         {
@@ -91,6 +93,7 @@ def test_default_apply_policy_contains_high_confidence_verdicts() -> None:
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
         }
     )
 
@@ -104,6 +107,18 @@ def test_default_strict_verdicts_are_uncertain_only() -> None:
             Verdict.HEARTBEAT_SUBSTRATE_MISSING,  # B5a
         }
     )
+
+
+def test_restart_loop_reap_verdict_exists_after_stall_reap() -> None:
+    """C27: RESTART_LOOP_REAP appended after STALL_REAP, honouring insertion order."""
+    assert Verdict.RESTART_LOOP_REAP.value == "RESTART_LOOP_REAP"
+    members = list(Verdict)
+    assert members.index(Verdict.RESTART_LOOP_REAP) > members.index(Verdict.STALL_REAP)
+
+
+def test_default_apply_policy_contains_restart_loop_reap() -> None:
+    """C27: DEFAULT_APPLY_POLICY acts on RESTART_LOOP_REAP."""
+    assert Verdict.RESTART_LOOP_REAP in DEFAULT_APPLY_POLICY.act_verdicts
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +146,7 @@ def test_policy_from_flags_apply_include_orphans_adds_orphan_reap() -> None:
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.ORPHAN_REAP,
         }
     )
@@ -144,19 +160,20 @@ def test_policy_from_flags_apply_force_forget_adds_unroutable() -> None:
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.UNROUTABLE,
         }
     )
 
 
-def test_policy_from_flags_apply_all_flags_returns_six_element_set() -> None:
+def test_policy_from_flags_apply_all_flags_returns_seven_element_set() -> None:
     """`kinoforge reap --apply --include-orphans --force-forget` policy contract.
 
     Combined-flag invocation must produce DEFAULT_APPLY_POLICY ∪
-    {ORPHAN_REAP, UNROUTABLE} — six verdicts after C26 added STALL_REAP
-    to the default. Regression guard: a future merge that accidentally
-    drops a base verdict (e.g. STALE_LEDGER) under an opt-in would be
-    invisible to the single-flag tests above. This test catches it.
+    {ORPHAN_REAP, UNROUTABLE} — seven verdicts after C26 added STALL_REAP
+    and C27 added RESTART_LOOP_REAP to the default. Regression guard: a
+    future merge that accidentally drops a base verdict (e.g. STALE_LEDGER)
+    under an opt-in would be invisible to single-flag tests; this catches it.
     """
     p = policy_from_cli_flags(apply=True, include_orphans=True, force_forget=True)
     assert p.act_verdicts == frozenset(
@@ -165,6 +182,7 @@ def test_policy_from_flags_apply_all_flags_returns_six_element_set() -> None:
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.ORPHAN_REAP,
             Verdict.UNROUTABLE,
         }
