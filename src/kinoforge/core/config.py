@@ -115,6 +115,9 @@ class LifecycleConfig(BaseModel):
     stall_window_s: float = 600.0
     stall_gpu_threshold: float = 5.0
     stall_cpu_threshold: float = 20.0
+    restart_loop_reap_enabled: bool = True
+    restart_loop_window_s: float = 180.0
+    restart_loop_uptime_threshold_s: float = 90.0
 
     @field_validator(
         "idle_timeout",
@@ -173,6 +176,22 @@ class LifecycleConfig(BaseModel):
         """Reject util thresholds outside [0, 100] at load time (C26)."""
         if v < 0 or v > 100:
             raise ValueError(f"stall threshold must be in [0, 100]; got {v}")
+        return v
+
+    @field_validator("restart_loop_window_s")
+    @classmethod
+    def _validate_restart_loop_window_non_negative(cls, v: float) -> float:
+        """Reject negative restart_loop_window_s at load time (C27)."""
+        if v < 0:
+            raise ValueError(f"restart_loop_window_s must be >= 0; got {v}")
+        return v
+
+    @field_validator("restart_loop_uptime_threshold_s")
+    @classmethod
+    def _validate_restart_loop_uptime_threshold_non_negative(cls, v: float) -> float:
+        """Reject negative restart_loop_uptime_threshold_s at load time (C27)."""
+        if v < 0:
+            raise ValueError(f"restart_loop_uptime_threshold_s must be >= 0; got {v}")
         return v
 
 

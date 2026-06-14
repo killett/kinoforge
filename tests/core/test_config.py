@@ -1320,6 +1320,58 @@ def test_lifecycle_config_stall_round_trips() -> None:
 
 
 # ---------------------------------------------------------------------------
+# C27 — restart_loop_* fields on LifecycleConfig
+# ---------------------------------------------------------------------------
+
+
+def test_lifecycle_config_restart_loop_defaults() -> None:
+    """Spec §5.1 defaults: enabled True, window 180 s, uptime threshold 90 s."""
+    from kinoforge.core.config import LifecycleConfig
+
+    cfg = LifecycleConfig(budget=1.0)
+    assert cfg.restart_loop_reap_enabled is True
+    assert cfg.restart_loop_window_s == 180.0
+    assert cfg.restart_loop_uptime_threshold_s == 90.0
+
+
+def test_lifecycle_config_restart_loop_window_rejects_negative() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import LifecycleConfig
+
+    with pytest.raises(ValidationError, match="restart_loop_window_s must be >= 0"):
+        LifecycleConfig(budget=1.0, restart_loop_window_s=-1.0)
+
+
+def test_lifecycle_config_restart_loop_uptime_threshold_rejects_negative() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from kinoforge.core.config import LifecycleConfig
+
+    with pytest.raises(
+        ValidationError, match="restart_loop_uptime_threshold_s must be >= 0"
+    ):
+        LifecycleConfig(budget=1.0, restart_loop_uptime_threshold_s=-1.0)
+
+
+def test_lifecycle_config_restart_loop_round_trips() -> None:
+    from kinoforge.core.config import LifecycleConfig
+
+    raw = LifecycleConfig(
+        budget=1.0,
+        restart_loop_reap_enabled=False,
+        restart_loop_window_s=240.0,
+        restart_loop_uptime_threshold_s=120.0,
+    ).model_dump_json()
+    parsed = LifecycleConfig.model_validate_json(raw)
+    assert parsed.restart_loop_reap_enabled is False
+    assert parsed.restart_loop_window_s == 240.0
+    assert parsed.restart_loop_uptime_threshold_s == 120.0
+
+
+# ---------------------------------------------------------------------------
 # Layer 3 — BedrockVideoEngineConfig (pivot from Nova Reel to generic engine)
 # ---------------------------------------------------------------------------
 
