@@ -530,6 +530,7 @@ class DiffusersEngine(GenerationEngine):
         sleep: Callable[[float], None],
         get_instance: Callable[[str], Instance],
         timeout_s: float,
+        cancel_token: CancelToken | None = None,
     ) -> None:
         """Poll ``GET <base_url>/health`` until 200, terminal status, or timeout.
 
@@ -542,10 +543,14 @@ class DiffusersEngine(GenerationEngine):
             sleep: Sleep seam used between polls.
             get_instance: Provider lookup for status checks between polls.
             timeout_s: Maximum total wait.
+            cancel_token: C29 cooperative cancellation. Checked at the top of
+                each poll iteration before any I/O. Default ``None`` preserves
+                pre-C29 behaviour.
 
         Raises:
             ProvisionFailed: Pod entered terminal status before ready.
             ProvisionTimeout: ``timeout_s`` elapsed without a successful ready check.
+            Cancelled: ``cancel_token`` was set during the wait.
         """
         if not instance.endpoints:
             raise ProvisionFailed(
@@ -561,6 +566,8 @@ class DiffusersEngine(GenerationEngine):
 
         start = time.monotonic()
         while True:
+            if cancel_token is not None:
+                cancel_token.raise_if_set()
             now = time.monotonic()
             if now - start >= timeout_s:
                 raise ProvisionTimeout(
