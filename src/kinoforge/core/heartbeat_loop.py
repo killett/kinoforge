@@ -29,7 +29,11 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.errors import TransportError
-from kinoforge.core.reaper import _stall_reap_predicate
+from kinoforge.core.reaper import (
+    Verdict,
+    _restart_loop_reap_predicate,
+    _stall_reap_predicate,
+)
 from kinoforge.core.util_counter import _update_counter, _update_uptime_counter
 from kinoforge.core.util_endpoints import UtilSnapshot
 
@@ -264,7 +268,7 @@ class HeartbeatLoop:
                 **extra,
             )
             if self._util_endpoint is not None:
-                self._maybe_fire_stall_reap(now=now)
+                self._maybe_fire_reap(now=now)
         except Exception:  # noqa: BLE001 — single bad tick must not kill the loop
             self._logger.exception("heartbeat tick failed for %s", self._instance_id)
 
@@ -310,32 +314,53 @@ class HeartbeatLoop:
             "last_uptime_seconds": snap.uptime_seconds,
         }
 
-    def _maybe_fire_stall_reap(self, *, now: float) -> None:
-        """Self-classify the entry; on STALL_REAP destroy + cancel + stop."""
-        if self._stall_window_s is None:
+    def _maybe_fire_reap(self, *, now: float) -> None:
+        """Self-classify the entry; on STALL/RESTART_LOOP destroy + cancel + stop.
+
+        First-match-wins ordering: ``_stall_reap_predicate`` is checked
+        before ``_restart_loop_reap_predicate``, so simultaneous fires
+        return STALL_REAP — the tie-breaker mirrors ``classify`` row 3'
+        vs row 3'' precedence.
+        """
+        if self._stall_window_s is None and self._restart_loop_window_s is None:
             return
         sentinel_window = 3.0 * self._interval_s
         entry: dict[str, float | int | str | None] = {
             "id": self._instance_id,
             "consecutive_low_util_count": self._counter,
+            "consecutive_low_uptime_count": self._uptime_counter,
             "util_thread_tick": now,
         }
         if self._provider_kind is not None:
             entry["provider"] = self._provider_kind
-        fire = _stall_reap_predicate(
+        verdict: Verdict | None = None
+        if self._stall_window_s is not None and _stall_reap_predicate(
             entry,
             now=now,
             sentinel_window=sentinel_window,
             heartbeat_interval_s=self._interval_s,
             stall_window_s=self._stall_window_s,
-        )
-        if not fire:
+        ):
+            verdict = Verdict.STALL_REAP
+        elif self._restart_loop_window_s is not None and _restart_loop_reap_predicate(
+            entry,
+            now=now,
+            sentinel_window=sentinel_window,
+            heartbeat_interval_s=self._interval_s,
+            restart_loop_window_s=self._restart_loop_window_s,
+        ):
+            verdict = Verdict.RESTART_LOOP_REAP
+        if verdict is None:
             return
         self._logger.warning(
-            "STALL_REAP fired for %s (counter=%d, window=%.0fs)",
+            "%s fired for %s (util_counter=%d, uptime_counter=%d, "
+            "stall_window=%s, restart_loop_window=%s)",
+            verdict.value,
             self._instance_id,
             self._counter,
+            self._uptime_counter,
             self._stall_window_s,
+            self._restart_loop_window_s,
         )
         destroy = getattr(self._provider, "destroy_instance", None)
         if destroy is not None:
@@ -343,7 +368,7 @@ class HeartbeatLoop:
                 destroy(self._instance_id)
             except Exception:  # noqa: BLE001 — best-effort destroy
                 self._logger.exception(
-                    "STALL_REAP destroy failed for %s", self._instance_id
+                    "%s destroy failed for %s", verdict.value, self._instance_id
                 )
         forget = getattr(self._ledger, "forget", None)
         if forget is not None:
@@ -351,7 +376,9 @@ class HeartbeatLoop:
                 forget(self._instance_id)
             except Exception:  # noqa: BLE001
                 self._logger.exception(
-                    "STALL_REAP ledger.forget failed for %s", self._instance_id
+                    "%s ledger.forget failed for %s",
+                    verdict.value,
+                    self._instance_id,
                 )
         if self._cancel_token is not None:
             self._cancel_token.set()

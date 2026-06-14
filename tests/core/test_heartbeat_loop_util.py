@@ -359,3 +359,101 @@ def test_c27_loop_without_util_endpoint_omits_uptime_counter_field() -> None:
     loop._tick_once()  # noqa: SLF001
     rec = ledger.touches[0]
     assert "consecutive_low_uptime_count" not in rec
+
+
+# ---------------------------------------------------------------------------
+# C27 Task 8 — _maybe_fire_reap rename + both-routes wiring
+# ---------------------------------------------------------------------------
+
+
+def test_c27_loop_fires_restart_loop_reap_when_only_restart_loop_fires(
+    caplog: Any,
+) -> None:
+    """Uptime stays low; util is high → only RESTART_LOOP_REAP fires."""
+    import logging
+
+    ledger = _SpyLedger()
+    provider = _SpyProvider()
+    token = CancelToken()
+    # High GPU breaks the stall AND-clause; low uptime triggers C27.
+    ep = LocalUtilEndpoint(
+        script=[_snap(gpu=99.0, cpu=99.0, uptime=1) for _ in range(3)]
+    )
+    loop = HeartbeatLoop(
+        ledger=ledger,
+        provider=provider,
+        instance_id="p1",
+        interval_s=30.0,
+        clock=_FakeClock(),
+        util_endpoint=ep,
+        cancel_token=token,
+        provider_kind="runpod",
+        stall_window_s=600.0,  # window large → stall path inert
+        restart_loop_window_s=60.0,  # 30*2 = 60 → fires at counter=2
+        restart_loop_uptime_threshold_s=90.0,
+    )
+    caplog.set_level(logging.WARNING)
+    loop._tick_once()  # noqa: SLF001 — uptime_counter=1, 30 < 60 → no fire
+    assert provider.destroyed == []
+    loop._tick_once()  # noqa: SLF001 — uptime_counter=2, 60 >= 60 → fires
+    assert provider.destroyed == ["p1"]
+    assert "p1" in ledger.forgotten
+    assert token.is_set()
+    assert loop._stop.is_set()  # noqa: SLF001
+    assert any("RESTART_LOOP_REAP" in r.message for r in caplog.records)
+
+
+def test_c27_loop_stall_reap_wins_tiebreaker_when_both_predicates_fire(
+    caplog: Any,
+) -> None:
+    """Both axes low → STALL checked first → STALL_REAP wins logged + fired."""
+    import logging
+
+    ledger = _SpyLedger()
+    provider = _SpyProvider()
+    token = CancelToken()
+    # Low util + low uptime → both predicates fire at counter=2.
+    ep = LocalUtilEndpoint(script=[_snap(gpu=0.0, cpu=1.0, uptime=1) for _ in range(3)])
+    loop = HeartbeatLoop(
+        ledger=ledger,
+        provider=provider,
+        instance_id="p1",
+        interval_s=30.0,
+        clock=_FakeClock(),
+        util_endpoint=ep,
+        cancel_token=token,
+        provider_kind="runpod",
+        stall_window_s=60.0,
+        restart_loop_window_s=60.0,
+        restart_loop_uptime_threshold_s=90.0,
+    )
+    caplog.set_level(logging.WARNING)
+    loop._tick_once()  # noqa: SLF001 — counters=1,1, both 30 < 60 → no fire
+    loop._tick_once()  # noqa: SLF001 — counters=2,2 → STALL wins
+    assert provider.destroyed == ["p1"]
+    assert any("STALL_REAP" in r.message for r in caplog.records)
+    assert not any("RESTART_LOOP_REAP" in r.message for r in caplog.records)
+
+
+def test_c27_loop_no_fire_when_both_kill_switches_none() -> None:
+    """Both windows None → loop is reap-inert even with both counters high."""
+    ledger = _SpyLedger()
+    provider = _SpyProvider()
+    token = CancelToken()
+    ep = LocalUtilEndpoint(script=[_snap(gpu=0.0, cpu=1.0, uptime=1) for _ in range(5)])
+    loop = HeartbeatLoop(
+        ledger=ledger,
+        provider=provider,
+        instance_id="p1",
+        interval_s=30.0,
+        clock=_FakeClock(),
+        util_endpoint=ep,
+        cancel_token=token,
+        provider_kind="runpod",
+        stall_window_s=None,
+        restart_loop_window_s=None,
+    )
+    for _ in range(5):
+        loop._tick_once()  # noqa: SLF001
+    assert provider.destroyed == []
+    assert not token.is_set()
