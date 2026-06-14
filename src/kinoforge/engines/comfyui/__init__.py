@@ -1217,27 +1217,44 @@ class ComfyUIEngine(GenerationEngine):
             "  local url=$1; local out=$2",
             "  local expected_sha=${3:-}",
             "  local token_env=${4:-}",
-            "  local auth_args=()",
+            '  local token_val=""',
             '  if [ -n "$token_env" ] && [ -n "${!token_env:-}" ]; then',
-            '    auth_args=(-H "Authorization: Bearer ${!token_env}")',
+            '    token_val="${!token_env}"',
             "  fi",
+            "  local out_dir out_base",
+            '  out_dir=$(dirname "$out")',
+            '  out_base=$(basename "$out")',
             "  local attempt",
             "  for attempt in 1 2 3; do",
-            '    rm -f "${out}.partial"',
-            '    if curl -L --fail --retry 0 -C - "${auth_args[@]}" '
-            '"$url" -o "${out}.partial"; then',
-            '      if [ -n "$expected_sha" ]; then',
-            "        local actual",
-            "        actual=$(sha256sum \"${out}.partial\" | awk '{print $1}')",
-            '        if [ "$actual" != "$expected_sha" ]; then',
-            '          echo "sha mismatch attempt $attempt: '
-            '$actual vs $expected_sha" >&2',
-            "          sleep $((5 * attempt))",
-            "          continue",
-            "        fi",
+            "    if command -v aria2c >/dev/null 2>&1; then",
+            "      local ar_args=(-x16 -s16 --allow-overwrite=true "
+            "--continue=true --console-log-level=warn "
+            "--summary-interval=30)",
+            '      [ -n "$token_val" ] && ar_args+=('
+            '--header="Authorization: Bearer $token_val")',
+            '      [ -n "$expected_sha" ] && ar_args+=('
+            "--checksum=sha-256=$expected_sha)",
+            '      if aria2c "${ar_args[@]}" -d "$out_dir" -o "$out_base" "$url"; then',
+            "        return 0",
             "      fi",
-            '      mv "${out}.partial" "$out"',
-            "      return 0",
+            "    else",
+            '      rm -f "${out}.partial"',
+            "      local cu_args=()",
+            '      [ -n "$token_val" ] && cu_args+=('
+            '-H "Authorization: Bearer $token_val")',
+            '      if curl -L --fail --retry 0 -C - "${cu_args[@]}" '
+            '"$url" -o "${out}.partial"; then',
+            '        if [ -n "$expected_sha" ]; then',
+            "          local actual",
+            "          actual=$(sha256sum \"${out}.partial\" | awk '{print $1}')",
+            '          if [ "$actual" != "$expected_sha" ]; then',
+            "            sleep $((5 * attempt))",
+            "            continue",
+            "          fi",
+            "        fi",
+            '        mv "${out}.partial" "$out"',
+            "        return 0",
+            "      fi",
             "    fi",
             "    sleep $((5 * attempt))",
             "  done",
@@ -1265,6 +1282,14 @@ class ComfyUIEngine(GenerationEngine):
                 # blip here doesn't kill the actual generation work.
                 "command -v aws >/dev/null 2>&1 || "
                 "pip install -q awscli >/dev/null 2>&1 || true",
+                # Pre-install aria2 so _kinoforge_download takes the
+                # parallel-multi-segment path (root cause of Phase A v2
+                # 25-min Wan 14B stall — single-stream curl was capped at
+                # ~2 MB/s; aria2c -x16 -s16 typically pushes 20+ MB/s on
+                # the same HF endpoint).
+                "command -v aria2c >/dev/null 2>&1 || "
+                "(apt-get update -qq && apt-get install -y -qq aria2 "
+                ">/dev/null 2>&1) || true",
                 "exec > >(tee -a /tmp/boot.log) 2>&1",
                 "trap '_kinoforge_diag_capture $?' EXIT",
                 "_kinoforge_diag_capture() {",
@@ -1307,6 +1332,15 @@ class ComfyUIEngine(GenerationEngine):
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
             *kinoforge_download_helper,
+            # C28 C2 (Phase A v2 finding): ensure aria2 is installed BEFORE
+            # the model-download loop so _kinoforge_download takes the
+            # -x16 -s16 fast path (typical 10-20x speedup vs single-stream
+            # curl on the HF CDN). `|| true` so a network blip here does
+            # NOT kill the actual generation work — the helper has a
+            # curl fallback for that case.
+            "command -v aria2c >/dev/null 2>&1 || "
+            "(apt-get update -qq && apt-get install -y -qq aria2 "
+            ">/dev/null 2>&1) || true",
             "cd /workspace",
         ]
         if not slim_mode:
