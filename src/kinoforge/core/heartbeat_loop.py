@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.errors import TransportError
 from kinoforge.core.reaper import _stall_reap_predicate
-from kinoforge.core.util_counter import _update_counter
+from kinoforge.core.util_counter import _update_counter, _update_uptime_counter
 from kinoforge.core.util_endpoints import UtilSnapshot
 
 if TYPE_CHECKING:
@@ -130,6 +130,8 @@ class HeartbeatLoop:
         stall_window_s: float | None = None,
         stall_gpu_threshold: float = 5.0,
         stall_cpu_threshold: float = 20.0,
+        restart_loop_window_s: float | None = None,
+        restart_loop_uptime_threshold_s: float = 90.0,
     ) -> None:
         """Initialise the loop; the thread is not started until :meth:`start`.
 
@@ -154,6 +156,10 @@ class HeartbeatLoop:
                 ``_update_counter``.
             stall_cpu_threshold: CPU % strict-< threshold for
                 ``_update_counter``.
+            restart_loop_window_s: C27 cfg threshold (effective window
+                in seconds). ``None`` = kill switch — no RESTART fires.
+            restart_loop_uptime_threshold_s: uptime-seconds strict-<
+                threshold for ``_update_uptime_counter``.
         """
         if interval_s <= 0:
             raise ValueError(f"interval_s must be > 0; got {interval_s}")
@@ -170,7 +176,10 @@ class HeartbeatLoop:
         self._stall_window_s = stall_window_s
         self._stall_gpu_threshold = stall_gpu_threshold
         self._stall_cpu_threshold = stall_cpu_threshold
+        self._restart_loop_window_s = restart_loop_window_s
+        self._restart_loop_uptime_threshold_s = restart_loop_uptime_threshold_s
         self._counter = 0
+        self._uptime_counter = 0
         self._prev_uptime: int | None = None
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -234,10 +243,20 @@ class HeartbeatLoop:
                     gpu_threshold=self._stall_gpu_threshold,
                     cpu_threshold=self._stall_cpu_threshold,
                 )
+                self._uptime_counter = _update_uptime_counter(
+                    self._uptime_counter,
+                    snap=snap,
+                    uptime_threshold_s=self._restart_loop_uptime_threshold_s,
+                )
                 if snap is not None and snap.uptime_seconds is not None:
                     self._prev_uptime = snap.uptime_seconds
                 extra.update(
-                    self._build_util_extra(now=now, snap=snap, counter=self._counter)
+                    self._build_util_extra(
+                        now=now,
+                        snap=snap,
+                        counter=self._counter,
+                        uptime_counter=self._uptime_counter,
+                    )
                 )
             self._ledger.touch(
                 self._instance_id,
@@ -264,17 +283,26 @@ class HeartbeatLoop:
 
     @staticmethod
     def _build_util_extra(
-        *, now: float, snap: UtilSnapshot | None, counter: int
+        *,
+        now: float,
+        snap: UtilSnapshot | None,
+        counter: int,
+        uptime_counter: int,
     ) -> dict[str, float | int | str | None]:
-        """Build the 6 util-related ledger fields plus the tick timestamp."""
-        if snap is None:
-            return {
-                "util_thread_tick": now,
-                "consecutive_low_util_count": counter,
-            }
-        return {
+        """Build the util-related ledger fields plus the tick timestamp.
+
+        C27 adds ``consecutive_low_uptime_count`` alongside C26's
+        ``consecutive_low_util_count`` in both branches.
+        """
+        base: dict[str, float | int | str | None] = {
             "util_thread_tick": now,
             "consecutive_low_util_count": counter,
+            "consecutive_low_uptime_count": uptime_counter,
+        }
+        if snap is None:
+            return base
+        return {
+            **base,
             "last_gpu_util_percent": snap.gpu_util_percent,
             "last_cpu_percent": snap.cpu_percent,
             "last_memory_percent": snap.memory_percent,
