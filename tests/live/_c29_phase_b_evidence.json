@@ -1,0 +1,29 @@
+{
+  "outcome": "PROVEN",
+  "captured_at": "2026-06-14T13:39:44.149343-07:00",
+  "pod_id": "pmrex9fxwhof86",
+  "offer_usd_per_hr": 0.13,
+  "interval_s": 15.0,
+  "restart_loop_window_s": 60.0,
+  "restart_loop_uptime_threshold_s": 90.0,
+  "boot_window_s": 180.0,
+  "fired_at_s_since_status_ready": 64.42241370699776,
+  "uptime_counter_trail": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "uptime_seconds_trail": [
+    null,
+    -2,
+    -2,
+    0,
+    0
+  ],
+  "tick_count": 5,
+  "forgotten": [
+    "pmrex9fxwhof86"
+  ]
+}
