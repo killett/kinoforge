@@ -97,10 +97,6 @@ class _RealLedgerProxy:
         self._inner.forget(instance_id)
 
 
-@pytest.mark.xfail(
-    reason="C29 RED scaffold — flip to expected-pass once live invocation succeeds",
-    strict=True,
-)
 def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
     """`kinoforge status --id <pod>` returns 4 liveness markers during boot.
 
