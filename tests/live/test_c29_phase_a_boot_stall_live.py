@@ -54,10 +54,6 @@ def _gate_on_live_env() -> None:
         )
 
 
-@pytest.mark.xfail(
-    reason="C29 RED scaffold — flip to expected-pass once live invocation succeeds",
-    strict=True,
-)
 def test_c29_phase_a_boot_stall_reap_fires_during_provision() -> None:
     """Boot-phase STALL_REAP destroys a sleeping pod inside engine.provision.
 
