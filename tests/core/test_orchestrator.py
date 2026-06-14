@@ -1442,7 +1442,7 @@ def test_provision_instance_helper_retries_next_offer_on_capacity_error(
         "kinoforge.core.orchestrator._provision_compute_once",
         return_value=None,
     ):
-        instance, _backend = _provision_instance_and_build_backend(
+        instance, _backend, _hb = _provision_instance_and_build_backend(
             resolved_engine=engine,
             resolved_provider=provider,
             cfg=cfg,
