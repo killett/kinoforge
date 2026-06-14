@@ -90,7 +90,13 @@ def test_register_and_get_image_engine_round_trip() -> None:
         requires_compute = False
         requires_local_weights = False
 
-        def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+        def provision(
+            self,
+            instance: Instance | None,
+            cfg: dict[str, object],
+            *,
+            cancel_token: object | None = None,
+        ) -> None:
             return None
 
         def backend(

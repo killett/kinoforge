@@ -356,7 +356,13 @@ class ImageEngine(ABC):
     requires_local_weights: bool
 
     @abstractmethod
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None: ...  # noqa: D102
+    def provision(  # noqa: D102
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None: ...
 
     @abstractmethod
     def backend(  # noqa: D102
@@ -572,7 +578,13 @@ class GenerationEngine(ABC):
     requires_local_weights: bool
 
     @abstractmethod
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None: ...  # noqa: D102
+    def provision(  # noqa: D102
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None: ...
 
     @abstractmethod
     def backend(  # noqa: D102
