@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from kinoforge.core.reaper import (
     DEFAULT_APPLY_POLICY,
     DEFAULT_STRICT_VERDICTS,
     Policy,
     Verdict,
     _resolve,
+    _restart_loop_reap_predicate,
     classify,
     partition,
     policy_from_cli_flags,
@@ -566,3 +569,165 @@ def test_default_policy_does_not_act_on_substrate_missing() -> None:
     HEARTBEAT_SUBSTRATE_MISSING — operator cannot fix the substrate
     by destroying the pod."""
     assert Verdict.HEARTBEAT_SUBSTRATE_MISSING not in DEFAULT_APPLY_POLICY.act_verdicts
+
+
+# ---------------------------------------------------------------------------
+# _restart_loop_reap_predicate (C27)
+# ---------------------------------------------------------------------------
+
+
+class TestRestartLoopReapPredicate:
+    """C27: _restart_loop_reap_predicate decision table.
+
+    Twin of _stall_reap_predicate. Same defensive shape: corrupt types
+    fall through to False rather than raising. Per-entry override beats
+    cfg default. Kill-switch via None.
+    """
+
+    NOW = 1_000_000.0
+    INTERVAL = 30.0
+    SENTINEL_WINDOW = 3.0 * INTERVAL  # 90s
+
+    @pytest.mark.parametrize(
+        "name, entry, restart_loop_window_s, expected",
+        [
+            (
+                "feature off via None window",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 999,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                None,
+                False,
+            ),
+            (
+                "substrate-unsupported provider 'fal'",
+                {
+                    "id": "x",
+                    "provider": "fal",
+                    "consecutive_low_uptime_count": 999,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                10.0,
+                False,
+            ),
+            (
+                "substrate-unknown provider (legacy entry, no provider key)",
+                {
+                    "id": "x",
+                    "consecutive_low_uptime_count": 20,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                10.0,
+                True,
+            ),
+            (
+                "legacy entry no counter",
+                {"id": "x", "provider": "runpod", "util_thread_tick": 1_000_000.0},
+                10.0,
+                False,
+            ),
+            (
+                "legacy entry no util_tick",
+                {"id": "x", "provider": "runpod", "consecutive_low_uptime_count": 20},
+                10.0,
+                False,
+            ),
+            (
+                "stale util_tick (age > sentinel_window)",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 999,
+                    "util_thread_tick": 1_000_000.0 - 200.0,
+                },
+                10.0,
+                False,
+            ),
+            (
+                "just-under window: counter*interval = window-1",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 1,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                31.0,
+                False,
+            ),
+            (
+                "exactly at window: counter*interval == window (>=)",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 1,
+                    "util_thread_tick": 1_000_000.0,
+                },
+                30.0,
+                True,
+            ),
+            (
+                "per-entry override beats cfg default",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 1,
+                    "util_thread_tick": 1_000_000.0,
+                    "restart_loop_window_s": 10.0,
+                },
+                999.0,
+                True,
+            ),
+            (
+                "corrupt per-entry override falls through to cfg",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 1,
+                    "util_thread_tick": 1_000_000.0,
+                    "restart_loop_window_s": "abc",
+                },
+                10.0,
+                True,
+            ),
+            (
+                "corrupt counter type",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": "abc",
+                    "util_thread_tick": 1_000_000.0,
+                },
+                10.0,
+                False,
+            ),
+            (
+                "corrupt util_tick type",
+                {
+                    "id": "x",
+                    "provider": "runpod",
+                    "consecutive_low_uptime_count": 5,
+                    "util_thread_tick": "bad",
+                },
+                10.0,
+                False,
+            ),
+        ],
+    )
+    def test_predicate_table(
+        self,
+        name: str,
+        entry: dict[str, Any],
+        restart_loop_window_s: float | None,
+        expected: bool,
+    ) -> None:
+        result = _restart_loop_reap_predicate(
+            entry,
+            now=self.NOW,
+            sentinel_window=self.SENTINEL_WINDOW,
+            heartbeat_interval_s=self.INTERVAL,
+            restart_loop_window_s=restart_loop_window_s,
+        )
+        assert result is expected, f"case={name!r} got {result} want {expected}"
