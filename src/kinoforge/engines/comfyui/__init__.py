@@ -1256,6 +1256,15 @@ class ComfyUIEngine(GenerationEngine):
         if diagnostic_mode:
             trap_preamble = [
                 "set -euo pipefail",
+                # Pre-install awscli so the EXIT trap below can complete its
+                # `aws s3 cp` upload — the runpod/pytorch:2.4 base image does
+                # NOT ship the CLI. Phase A v1 silently failed PUT for this
+                # reason (sidecar Hn classification). Install runs in ~5-10s
+                # on first boot; subsequent boots are no-op when warm-reuse
+                # lands on a pod that already has it. `|| true` so a network
+                # blip here doesn't kill the actual generation work.
+                "command -v aws >/dev/null 2>&1 || "
+                "pip install -q awscli >/dev/null 2>&1 || true",
                 "exec > >(tee -a /tmp/boot.log) 2>&1",
                 "trap '_kinoforge_diag_capture $?' EXIT",
                 "_kinoforge_diag_capture() {",
