@@ -127,7 +127,15 @@ def test_render_provision_hf_model_with_auth_header_and_env_required(
     ]
     rp = _make_engine().render_provision(cfg)
     assert "HF_TOKEN" in rp.env_required
-    assert '-H "Authorization: Bearer $HF_TOKEN"' in rp.script
+    # C28 C2: the bearer header lives inside the _kinoforge_download helper
+    # via bash indirect expansion (`${!token_env}`). The model loop passes
+    # the env-var NAME as the 4th arg so the helper looks the value up at
+    # runtime. The literal `Bearer $HF_TOKEN` no longer appears in the
+    # script body — verifying the indirect-expansion shape + the call-site
+    # arg are equivalent assertions of "HF_TOKEN is wired".
+    assert "Authorization: Bearer ${!token_env}" in rp.script
+    assert "_kinoforge_download " in rp.script
+    assert rp.script.rstrip().count("'HF_TOKEN'") >= 1
     assert "[ ! -f models/checkpoints/wan2.1.safetensors ]" in rp.script
     assert "models/checkpoints/wan2.1.safetensors" in rp.script
 
@@ -197,7 +205,10 @@ def test_render_provision_civitai_model_stubs_resolved_url_and_token(
     ]
     rp = _make_engine().render_provision(cfg)
     assert "CIVITAI_TOKEN" in rp.env_required
-    assert '-H "Authorization: Bearer $CIVITAI_TOKEN"' in rp.script
+    # C28 C2: bearer header via `${!token_env}` inside the helper; the
+    # CIVITAI_TOKEN env var NAME is passed as the 4th arg of the call site.
+    assert "Authorization: Bearer ${!token_env}" in rp.script
+    assert rp.script.rstrip().count("'CIVITAI_TOKEN'") >= 1
     assert "models/checkpoints/civitai_model.safetensors" in rp.script
 
 
