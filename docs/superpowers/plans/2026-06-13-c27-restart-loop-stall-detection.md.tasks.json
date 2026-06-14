@@ -1,0 +1,107 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-13-c27-restart-loop-stall-detection.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "C27 Task 1: Verdict.RESTART_LOOP_REAP + DEFAULT_APPLY_POLICY",
+      "status": "pending",
+      "description": "**Goal:** Append RESTART_LOOP_REAP to Verdict StrEnum and add to DEFAULT_APPLY_POLICY. Pure additive.\n\n**Files:** Modify src/kinoforge/core/reaper.py; Test tests/test_reaper.py\n\n**Acceptance Criteria:** Verdict.RESTART_LOOP_REAP exists with value RESTART_LOOP_REAP; appended after STALL_REAP; in DEFAULT_APPLY_POLICY; existing tests still pass.\n\n**Verify:** pixi run -- pytest tests/test_reaper.py -v -k 'TestVerdict or TestDefault' → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper.py\", \"tests/test_reaper.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_reaper.py -v -k 'TestVerdict or TestDefault'\", \"acceptanceCriteria\": [\"Verdict.RESTART_LOOP_REAP exists with value RESTART_LOOP_REAP\", \"appended after STALL_REAP per insertion order\", \"DEFAULT_APPLY_POLICY contains the new Verdict\", \"existing tests still pass\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "C27 Task 2: _update_uptime_counter pure function",
+      "status": "pending",
+      "description": "**Goal:** Add sibling pure counter to util_counter.py with 8 table-driven tests.\n\n**Files:** Modify src/kinoforge/core/util_counter.py; Test tests/test_util_counter.py\n\n**Acceptance Criteria:** _update_uptime_counter exported; pure function no I/O; 8 table cases pass; _update_counter untouched.\n\n**Verify:** pixi run -- pytest tests/test_util_counter.py -v → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/util_counter.py\", \"tests/test_util_counter.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_util_counter.py -v\", \"acceptanceCriteria\": [\"_update_uptime_counter exported\", \"pure function no I/O\", \"8 table cases pass\", \"_update_counter untouched\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "C27 Task 3: _restart_loop_reap_predicate pure function",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Add sibling predicate to reaper.py. Same defensive shape as _stall_reap_predicate.\n\n**Files:** Modify src/kinoforge/core/reaper.py; Test tests/test_reaper.py\n\n**Acceptance Criteria:** _restart_loop_reap_predicate module-level; all 12 table cases pass; _stall_reap_predicate untouched.\n\n**Verify:** pixi run -- pytest tests/test_reaper.py::TestRestartLoopReapPredicate -v → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper.py\", \"tests/test_reaper.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_reaper.py::TestRestartLoopReapPredicate -v\", \"acceptanceCriteria\": [\"_restart_loop_reap_predicate module-level\", \"all 12 table cases pass\", \"_stall_reap_predicate untouched\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "C27 Task 4: classify() row 3'' wiring + tie-breaker",
+      "status": "pending",
+      "blockedBy": [1, 3],
+      "description": "**Goal:** Wire _restart_loop_reap_predicate into classify() at row 3''; STALL_REAP tie-breaker wins.\n\n**Files:** Modify src/kinoforge/core/reaper.py (classify); Test tests/test_reaper.py\n\n**Acceptance Criteria:** classify gains 2 new kwargs; row 3'' returns RESTART_LOOP_REAP when only restart-loop fires; tie-breaker STALL_REAP wins; kill-switch None never fires; no classify regression.\n\n**Verify:** pixi run -- pytest tests/test_reaper.py -v -k 'classify or row3' → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper.py\", \"tests/test_reaper.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_reaper.py -v -k 'classify or row3'\", \"acceptanceCriteria\": [\"classify signature gains 2 new kwargs\", \"row 3'' returns RESTART_LOOP_REAP when only restart-loop fires\", \"tie-breaker STALL_REAP wins\", \"kill-switch None never fires\", \"no classify regression\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "C27 Task 5: LifecycleConfig restart_loop_* fields + validators",
+      "status": "pending",
+      "description": "**Goal:** Add 3 fields to LifecycleConfig with 2 validators, mirroring C26 stall_* pattern.\n\n**Files:** Modify src/kinoforge/core/config.py; Test tests/test_config.py\n\n**Acceptance Criteria:** restart_loop_reap_enabled=True, window=180.0, threshold=90.0; negative window rejected; negative threshold rejected; YAML roundtrip preserves all 3.\n\n**Verify:** pixi run -- pytest tests/test_config.py -v -k 'LifecycleConfig and restart_loop' → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/test_config.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_config.py -v -k 'LifecycleConfig and restart_loop'\", \"acceptanceCriteria\": [\"3 new fields with defaults\", \"2 validators reject negatives\", \"YAML roundtrip preserves fields\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "C27 Task 6: interfaces.Lifecycle + Config.lifecycle() wiring",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** Add 2 fields to Lifecycle dataclass; Config.lifecycle() collapses enabled bool to window None.\n\n**Files:** Modify src/kinoforge/core/interfaces.py, src/kinoforge/core/config.py; Test tests/test_config.py\n\n**Acceptance Criteria:** Lifecycle gains restart_loop_window_s (None default) + restart_loop_uptime_threshold_s (90.0); Config.lifecycle() collapse: disabled → None, enabled → window value; threshold always passes through.\n\n**Verify:** pixi run -- pytest tests/test_config.py -v -k lifecycle_collapse → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/config.py\", \"tests/test_config.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_config.py -v -k lifecycle_collapse\", \"acceptanceCriteria\": [\"Lifecycle gains 2 fields\", \"Config.lifecycle() collapses bool to None when disabled\", \"threshold passes through always\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "C27 Task 7: HeartbeatLoop kwargs + state + ledger touch extensions",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Extend HeartbeatLoop.__init__ with 2 new kwargs, add _uptime_counter state, persist consecutive_low_uptime_count via _build_util_extra, run _update_uptime_counter each tick. Predicate routing follows in Task 8.\n\n**Files:** Modify src/kinoforge/core/heartbeat_loop.py; Test tests/test_heartbeat_loop.py\n\n**Acceptance Criteria:** 2 new __init__ kwargs (window=None, threshold=90.0); _uptime_counter initialised; _tick_once runs both counters; _build_util_extra persists new field both branches; backward-compat preserved.\n\n**Verify:** pixi run -- pytest tests/test_heartbeat_loop.py -v → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/heartbeat_loop.py\", \"tests/test_heartbeat_loop.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_heartbeat_loop.py -v\", \"acceptanceCriteria\": [\"__init__ gains 2 kwargs\", \"_uptime_counter state initialised\", \"_tick_once runs both counters\", \"_build_util_extra persists new field\", \"backward-compat preserved\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "C27 Task 8: HeartbeatLoop _maybe_fire_reap rename + both-routes wiring",
+      "status": "pending",
+      "blockedBy": [3, 7],
+      "description": "**Goal:** Rename _maybe_fire_stall_reap → _maybe_fire_reap; check both predicates first-match-wins (STALL_REAP tie-breaker); logging names Verdict + counters.\n\n**Files:** Modify src/kinoforge/core/heartbeat_loop.py; Test tests/test_heartbeat_loop.py\n\n**Acceptance Criteria:** method renamed; old name removed; STALL_REAP route fires + destroys; RESTART_LOOP_REAP route fires + destroys; tie-breaker STALL wins; kill-switch no-fire; log names Verdict + counters.\n\n**Verify:** pixi run -- pytest tests/test_heartbeat_loop.py -v → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/heartbeat_loop.py\", \"tests/test_heartbeat_loop.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_heartbeat_loop.py -v\", \"acceptanceCriteria\": [\"method renamed; old name removed\", \"STALL_REAP route fires + destroys\", \"RESTART_LOOP_REAP route fires + destroys\", \"tie-breaker STALL wins\", \"kill-switch no-fire\", \"log names Verdict + counters\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "C27 Task 9: CLI --restart-loop-window-override flag",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Add CLI flag to kinoforge deploy; persist override into ledger entry's restart_loop_window_s key.\n\n**Files:** Modify src/kinoforge/cli/_main.py (argparser), src/kinoforge/cli/_commands.py (deploy ~line 228); Test tests/test_cli.py\n\n**Acceptance Criteria:** flag accepted; ledger key persisted; negative rejected at argparse; --stall-window-override untouched.\n\n**Verify:** pixi run -- pytest tests/test_cli.py -v -k restart_loop_window → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/test_cli.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_cli.py -v -k restart_loop_window\", \"acceptanceCriteria\": [\"flag accepted\", \"ledger key persisted\", \"negative rejected at argparse\", \"stall override untouched\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "C27 Task 10: Cross-process callsite threading",
+      "status": "pending",
+      "blockedBy": [6, 7, 8],
+      "description": "**Goal:** Thread restart_loop_window_s + restart_loop_uptime_threshold_s through every HeartbeatLoop construction site and classify call site. Update _adapters.build_util_endpoint_for kill-switch gate.\n\n**Files:** Modify src/kinoforge/_adapters.py, src/kinoforge/cli/_commands.py (lines 736-738, 1020-1022, 1354-1356, 1683-1693, 1711-1713); Test tests/test_adapters.py, tests/test_cli.py\n\n**Acceptance Criteria:** build_util_endpoint_for gates on BOTH stall_reap_enabled OR restart_loop_reap_enabled false; all 5 HeartbeatLoop sites thread kwargs; all classify sites thread kwargs; rg hit count >= 5.\n\n**Verify:** pixi run -- pytest tests/test_adapters.py tests/test_cli.py -v → PASS\n\n```json:metadata\n{\"files\": [\"src/kinoforge/_adapters.py\", \"src/kinoforge/cli/_commands.py\", \"tests/test_adapters.py\", \"tests/test_cli.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_adapters.py tests/test_cli.py -v\", \"acceptanceCriteria\": [\"adapter gate considers both enabled flags\", \"all 5 HeartbeatLoop sites thread kwargs\", \"all classify sites thread kwargs\", \"rg hit count >= 5\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "C27 Task 11: FakeUtilEndpoint test helper",
+      "status": "pending",
+      "description": "**Goal:** Test helper producing fixed UtilSnapshot per read; Phase A1 forces uptime_seconds=1.\n\n**Files:** Create tests/live/_c27_fake_util_endpoint.py; Test tests/test_fake_util_endpoint.py\n\n**Acceptance Criteria:** constructible with snap; read_util returns snap; satisfies UtilSnapshotEndpoint Protocol.\n\n**Verify:** pixi run -- pytest tests/test_fake_util_endpoint.py -v → PASS\n\n```json:metadata\n{\"files\": [\"tests/live/_c27_fake_util_endpoint.py\", \"tests/test_fake_util_endpoint.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_fake_util_endpoint.py -v\", \"acceptanceCriteria\": [\"constructible with snap\", \"read_util returns snap\", \"satisfies Protocol structurally\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "C27 Task 12: Phase A1 live smoke — FakeUtilEndpoint uptime=1",
+      "status": "pending",
+      "blockedBy": [4, 8, 10, 11],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it 'verified inline', or by substituting a cheaper check. Close only after every item in acceptanceCriteria has been re-validated independently, with output captured.\n\n**Goal:** Cheapest-pod RunPod offer + FakeUtilEndpoint forcing uptime_seconds=1 drives C27 predicate end-to-end. Counter trail [1,2,3,4,5,6]; RESTART_LOOP_REAP fires at counter=6.\n\n**Files:** Create tests/live/test_c27_phase_a1_uptime_streak_live.py, tests/live/_c27_phase_a1_evidence.json (post-spend)\n\n**Acceptance Criteria:** RED scaffold committed BEFORE spend; preflight clean; cheapest-offer pod; counter trail [1,2,3,4,5,6]; RESTART_LOOP_REAP log line; pod destroyed; ledger forgotten; cancel-token set; spend ≤ $0.05; sidecar committed.\n\n**Verify:** KINOFORGE_LIVE=1 pixi run -- pytest tests/live/test_c27_phase_a1_uptime_streak_live.py -v -s && test -f tests/live/_c27_phase_a1_evidence.json\n\n```json:metadata\n{\"files\": [\"tests/live/test_c27_phase_a1_uptime_streak_live.py\", \"tests/live/_c27_phase_a1_evidence.json\"], \"verifyCommand\": \"KINOFORGE_LIVE=1 pixi run -- pytest tests/live/test_c27_phase_a1_uptime_streak_live.py -v -s && test -f tests/live/_c27_phase_a1_evidence.json\", \"acceptanceCriteria\": [\"RED scaffold committed BEFORE live spend\", \"preflight clean\", \"cheapest-offer pod provisioned\", \"counter trail [1,2,3,4,5,6] observed\", \"RESTART_LOOP_REAP log line observed\", \"pod destroyed post-fire\", \"ledger entry forgotten\", \"cancel-token set\", \"spend <= $0.05\", \"sidecar evidence committed\"], \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requireEvidenceTokens\": [[\"RED-scaffold\", \"pre-spend-commit\"], [\"PROVEN\", \"evidence-sidecar\"]]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "C27 Task 13: Phase A2 live smoke — alpine restart loop",
+      "status": "pending",
+      "blockedBy": [4, 8, 10],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it 'verified inline', or by substituting a cheaper check. Close only after every item in acceptanceCriteria has been re-validated independently, with output captured.\n\n**Goal:** Real RunPodGraphQLUtilEndpoint against real RunPod restart loop on alpine. Verifies wire path end-to-end at minimum cost.\n\n**Files:** Create tests/live/test_c27_phase_a2_alpine_restart_loop_live.py, tests/live/_c27_phase_a2_evidence.json (post-spend)\n\n**Acceptance Criteria:** RED scaffold committed BEFORE spend; preflight clean; alpine pod with dockerArgs 'sh -c \\\"sleep 5; exit 1\\\"'; uptime < 90 for ≥ 8 consecutive ticks at interval 15s; RESTART_LOOP_REAP log line; pod destroyed; spend ≤ $0.15; sidecar includes raw GraphQL runtime{} responses.\n\n**Verify:** KINOFORGE_LIVE=1 pixi run -- pytest tests/live/test_c27_phase_a2_alpine_restart_loop_live.py -v -s && test -f tests/live/_c27_phase_a2_evidence.json\n\n```json:metadata\n{\"files\": [\"tests/live/test_c27_phase_a2_alpine_restart_loop_live.py\", \"tests/live/_c27_phase_a2_evidence.json\"], \"verifyCommand\": \"KINOFORGE_LIVE=1 pixi run -- pytest tests/live/test_c27_phase_a2_alpine_restart_loop_live.py -v -s && test -f tests/live/_c27_phase_a2_evidence.json\", \"acceptanceCriteria\": [\"RED scaffold committed BEFORE live spend\", \"preflight clean\", \"alpine pod with restart-loop entrypoint provisioned\", \"uptime < 90 for >= 8 consecutive ticks\", \"RESTART_LOOP_REAP log line observed\", \"pod destroyed\", \"spend <= $0.15\", \"sidecar includes raw GraphQL responses\"], \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requireEvidenceTokens\": [[\"RED-scaffold\", \"pre-spend-commit\"], [\"PROVEN\", \"evidence-sidecar\"]]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "C27 Task 14: Phase B live smoke — Wan + ComfyUI re-fire (closes deferred gate)",
+      "status": "pending",
+      "blockedBy": [4, 8, 10, 12, 13],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it 'verified inline', or by substituting a cheaper check. Close only after every item in acceptanceCriteria has been re-validated independently, with output captured.\n\n**Goal:** Re-fire deferred C25 Task 4 / C26 Task 14 smoke with C27 cfg active. Two acceptance paths: CLEAN-PASS (Wan runs, gen2/gen1 < 0.7) OR PROVEN-PROTECTION (RESTART_LOOP_REAP fires within 180 s).\n\n**Files:** Create tests/live/test_c27_phase_b_wan_warm_reuse_live.py, tests/live/_c27_phase_b_evidence.json (post-spend); Conditionally modify successful-generations.md\n\n**Acceptance Criteria:** RED scaffold committed BEFORE spend; preflight clean; Wan + ComfyUI pod provisioned; CLEAN-PASS OR PROVEN-PROTECTION reached; sidecar records acceptance_path; spend ≤ $0.60; if CLEAN-PASS introduces new tuple, log to successful-generations.md per CLAUDE.md schema.\n\n**Verify:** KINOFORGE_LIVE=1 pixi run -- pytest tests/live/test_c27_phase_b_wan_warm_reuse_live.py -v -s && grep -q 'acceptance_path' tests/live/_c27_phase_b_evidence.json\n\n```json:metadata\n{\"files\": [\"tests/live/test_c27_phase_b_wan_warm_reuse_live.py\", \"tests/live/_c27_phase_b_evidence.json\", \"successful-generations.md\"], \"verifyCommand\": \"KINOFORGE_LIVE=1 pixi run -- pytest tests/live/test_c27_phase_b_wan_warm_reuse_live.py -v -s && grep -q 'acceptance_path' tests/live/_c27_phase_b_evidence.json\", \"acceptanceCriteria\": [\"RED scaffold committed BEFORE live spend\", \"preflight clean\", \"Wan + ComfyUI pod provisioned\", \"CLEAN-PASS OR PROVEN-PROTECTION reached\", \"sidecar records acceptance_path\", \"spend <= $0.60\", \"if CLEAN-PASS: successful-generations.md updated per CLAUDE.md schema\"], \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\", \"deferred-gate-closer\"], \"requireEvidenceTokens\": [[\"RED-scaffold\", \"pre-spend-commit\"], [\"CLEAN-PASS\", \"PROVEN-PROTECTION\"]]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "C27 Task 15: Closeout — PROGRESS.md + spec §13 + C26 §17 pointer",
+      "status": "pending",
+      "blockedBy": [12, 13, 14],
+      "description": "**Goal:** Append C27 CLOSED to PROGRESS.md §C; fill spec §13 closeout with Phase A1/A2/B outcomes; append C26 spec §17 cross-reference pointer.\n\n**Files:** Modify PROGRESS.md, docs/superpowers/specs/2026-06-13-c27-restart-loop-stall-detection-design.md (§13), docs/superpowers/specs/2026-06-13-c26-runpod-util-aware-stall-classify-design.md (§17)\n\n**Acceptance Criteria:** PROGRESS.md §C C27 CLOSED line with spec path + closure status; C27 spec §13 filled with SHAs + acceptance_path; C26 spec §17 pointer appended.\n\n**Verify:** git log --oneline -5 shows closeout commit on HEAD\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/superpowers/specs/2026-06-13-c27-restart-loop-stall-detection-design.md\", \"docs/superpowers/specs/2026-06-13-c26-runpod-util-aware-stall-classify-design.md\"], \"verifyCommand\": \"git log --oneline -5\", \"acceptanceCriteria\": [\"PROGRESS.md C27 CLOSED line\", \"C27 spec §13 filled with SHAs + acceptance_path\", \"C26 spec §17 cross-reference appended\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-13T17:00:00-07:00"
+}
