@@ -775,16 +775,88 @@ Rough preview; canonical split lives in the `/gsd-plan-phase` PLAN.md.
 
 ---
 
-## 13. Closeout (TBD on C27 ship)
+## 13. Closeout — Phase A1 + Phase A2 + Phase B outcomes (2026-06-13)
 
-Filled in at C27 close (mirrors C26 §17 shape):
+**C27 ships fully closed.** All three live smokes proven; the deferred
+C25 Task 4 / C26 Task 14 gate is closed via the Phase B PROVEN-PROTECTION
+path. Pure-additive on the C26 util substrate — zero new wire paths,
+zero ledger migrations.
 
-- Phase A1 outcome + sidecar SHA.
-- Phase A2 outcome + sidecar SHA.
-- Phase B outcome (CLEAN-PASS or PROVEN-PROTECTION) + sidecar SHA.
-- C25 Task 4 / C26 Task 14 deferred-gate closure note.
-- PROGRESS.md §C C27 status line.
-- C26 §17 cross-reference pointer.
+### Per-task commits
+
+| Task | Subject | SHA |
+| ---- | ------- | --- |
+| 1  | `Verdict.RESTART_LOOP_REAP` + `DEFAULT_APPLY_POLICY` entry | `19cffff` |
+| 2  | `_update_uptime_counter` pure state machine | `25a738d` |
+| 3  | `_restart_loop_reap_predicate` pure function | `71c8780` |
+| 4  | `classify()` row 3'' wiring + STALL_REAP tie-breaker | `d12f26a` |
+| 5  | `LifecycleConfig` `restart_loop_*` fields + validators | `16266a9` |
+| 6  | `interfaces.Lifecycle` + `Config.lifecycle()` collapse | `9397eb6` |
+| 7  | `HeartbeatLoop` kwargs + `_uptime_counter` state + ledger touch | `16ba622` |
+| 8  | `_maybe_fire_stall_reap` → `_maybe_fire_reap` + both-routes wiring | `2e3e6f5` |
+| 9  | `--restart-loop-window-override SECONDS` CLI flag | `f6fecda` |
+| 10 | Cross-process callsite threading (adapters + orchestrator + CLI) | `23dccaa` |
+| 11 | `FakeUtilEndpoint` test helper | `1d2296c` |
+| 12 | Phase A1 RED scaffold + PROVEN evidence | `34571f6` / `2f57931` |
+| 13 | Phase A2 RED scaffold + PROVEN evidence | `d698d3b` / `8faef91` |
+| 14 | Phase B RED scaffold + PROVEN-PROTECTION evidence | `39e64f8` / `ce4bd00` |
+| 15 | This closeout — PROGRESS §C + spec §13 + C26 §17 pointer | (this commit) |
+
+### Phase A1 — FakeUtilEndpoint uptime=1
+
+- **Outcome:** PROVEN — counter trail `[1, 2, 3, 4, 5, 6]`; fires at 52.3 s
+  (well under the 90 s ceiling).
+- **Sidecar:** `tests/live/_c27_phase_a1_evidence.json` (committed in
+  `2f57931`).
+- **Spend:** ~$0.002 (RTX A2000 @ $0.12/hr × 55 s).
+
+### Phase A2 — real alpine restart loop
+
+- **Outcome:** PROVEN — real `RunPodGraphQLUtilEndpoint` against alpine
+  pod with `provision_script="sleep 5; exit 1"`. Counter trail
+  `[0, 1, 2, 3, 4, 5, 6]`; uptime readings
+  `[None, 0, 0, -2, -2, -15, -15]` (RunPod's runtime{} surfaces 0 or
+  negative uptime during restart churn — all well below threshold 90 s).
+  Fires at 96.4 s.
+- **Sidecar:** `tests/live/_c27_phase_a2_evidence.json` (committed in
+  `8faef91`).
+- **Spend:** ~$0.003 (RTX A2000 @ $0.12/hr × 99 s).
+
+### Phase B — Wan + ComfyUI re-fire of deferred C25/C26 gate
+
+- **Acceptance path:** PROVEN-PROTECTION.
+- **Outcome:** real Wan 2.1 14B T2V cold-attach regressed into the same
+  container-restart-loop symptom that defeated C26 Phase B — but C27
+  caught it. The HeartbeatLoop's `_maybe_fire_reap` self-classified
+  `RESTART_LOOP_REAP`, destroyed the pod, set the `CancelToken`; gen1's
+  `ComfyUIBackend.result` poll observed `token.is_set()`, raised
+  `Cancelled` at 356.8 s, and the `kinoforge generate` subprocess exited
+  rc=1. The C25 Task 4 / C26 Task 14 deferred gate is closed via this
+  path.
+- **Sidecar:** `tests/live/_c27_phase_b_evidence.json` (committed in
+  `ce4bd00`).
+- **Spend:** ~$0.05 (gen1 only; predicate fired before gen2).
+
+### Total live spend
+
+~$0.06 across all three smokes (well under the $0.80 cumulative cap and
+under the $20 session budget).
+
+### Deferred-gate closure
+
+The C25 Task 4 acceptance gate (Wan + ComfyUI 2-CLI warm-reuse smoke),
+which C26 marked PARTIAL because the predicate did not cover the
+chronic-restart-loop class, is now closed. Phase B reproduced the
+symptom and demonstrated end-to-end protection.
+
+### PROGRESS.md / C26 §17 references
+
+- PROGRESS.md §C C27 line: appended in the Task 15 closeout commit
+  (this commit).
+- C26 §17 cross-reference pointer: appended at the end of the C26
+  spec in the same commit.
+
+---
 
 ---
 
