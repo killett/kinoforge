@@ -1214,13 +1214,18 @@ class ComfyUIEngine(GenerationEngine):
         # flake without requiring image rebuilds.
         kinoforge_download_helper: list[str] = [
             "_kinoforge_download() {",
-            "  local url=$1; local out=$2; local expected_sha=${3:-}",
+            "  local url=$1; local out=$2",
+            "  local expected_sha=${3:-}",
+            "  local token_env=${4:-}",
+            "  local auth_args=()",
+            '  if [ -n "$token_env" ] && [ -n "${!token_env:-}" ]; then',
+            '    auth_args=(-H "Authorization: Bearer ${!token_env}")',
+            "  fi",
             "  local attempt",
             "  for attempt in 1 2 3; do",
             '    rm -f "${out}.partial"',
-            "    if curl -L --fail --retry 0 -C - \\",
-            '         ${HF_TOKEN:+-H "Authorization: Bearer $HF_TOKEN"} \\',
-            '         "$url" -o "${out}.partial"; then',
+            '    if curl -L --fail --retry 0 -C - "${auth_args[@]}" '
+            '"$url" -o "${out}.partial"; then',
             '      if [ -n "$expected_sha" ]; then',
             "        local actual",
             "        actual=$(sha256sum \"${out}.partial\" | awk '{print $1}')",
@@ -1347,17 +1352,24 @@ class ComfyUIEngine(GenerationEngine):
             artifacts = source.resolve(src_ref, _NullCredProvider())
             artifact = artifacts[0]
             filename: str = entry.get("filename") or artifact.filename
-            auth_header = ""
+            # Surface the bearer-token env var requirement so the orchestrator
+            # validates it BEFORE pod boot. C28 C2: the bearer header is
+            # appended by _kinoforge_download via bash indirect expansion
+            # (`${!token_env}`) — pass the env var NAME as arg 4, not the
+            # value, so neither name nor value leaks into the script body.
+            token_env_name = ""
             for hk, hv in (artifact.headers or {}).items():
                 if hk.lower() == "authorization":
                     env_var = _extract_env_var(hv)
                     if env_var:
                         env_required.append(env_var)
-                        auth_header = f' -H "Authorization: Bearer ${env_var}"'
+                        token_env_name = env_var
             lines.append(f"mkdir -p {subdir}")
+            sha = artifact.sha256 or ""
             lines.append(
                 f"[ ! -f {subdir}/{filename} ] && "
-                f"curl -L --fail{auth_header} '{artifact.url}' -o {subdir}/{filename}"
+                f"_kinoforge_download '{artifact.url}' "
+                f"'{subdir}/{filename}' '{sha}' '{token_env_name}'"
             )
 
         port: str = _extract_port(launch_args_raw)
