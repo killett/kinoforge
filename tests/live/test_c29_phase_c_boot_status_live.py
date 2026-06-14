@@ -114,6 +114,7 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
     from kinoforge.core.heartbeat_loop import HeartbeatLoop
     from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec
     from kinoforge.providers.runpod import RunPodProvider
+    from kinoforge.providers.runpod.heartbeat import RunPodGraphQLHeartbeatEndpoint
     from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
     from kinoforge.stores.local import LocalArtifactStore
 
@@ -121,7 +122,10 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
     api_key = creds.get("RUNPOD_API_KEY")
     assert api_key, "RUNPOD_API_KEY must be set"
 
-    provider = RunPodProvider(creds=creds)
+    provider = RunPodProvider(
+        creds=creds,
+        heartbeat_endpoint=RunPodGraphQLHeartbeatEndpoint(api_key=api_key),
+    )
     reqs = HardwareRequirements(
         min_vram_gb=0, min_cuda="0.0", max_usd_per_hr=10.0, disk_gb=0
     )
@@ -149,7 +153,9 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
     print(f"C29 Phase C pod created: {instance_id!r}", file=sys.stderr)
 
     with tempfile.TemporaryDirectory(prefix="kinoforge-c29-phase-c-") as state_dir:
-        store = LocalArtifactStore(Path(state_dir) / "store")
+        # State dir layout must match what `kinoforge --state-dir DIR status`
+        # expects: LocalArtifactStore(state_dir) — no extra "store" subdir.
+        store = LocalArtifactStore(Path(state_dir))
         ledger_proxy = _RealLedgerProxy(store)
         ledger_proxy.record(instance)
 
@@ -192,15 +198,16 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
             # Sleep mid-provision; the heartbeat ticks throughout.
             time.sleep(_STATUS_CHECK_AT_S)
 
-            # Run `kinoforge status --id <pod>` via subprocess against the
+            # Run `kinoforge status --id <pod>` via subprocess pointed at the
             # same state dir so it reads the ledger the C29 hb_loop just wrote.
-            env = {**os.environ, "KINOFORGE_STATE_DIR": str(state_dir)}
             try:
                 result = subprocess.run(
                     [
                         "pixi",
                         "run",
                         "kinoforge",
+                        "--state-dir",
+                        state_dir,
                         "status",
                         "--id",
                         instance_id,
@@ -208,7 +215,7 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
                     capture_output=True,
                     text=True,
                     timeout=60,
-                    env=env,
+                    env=os.environ.copy(),
                     check=False,
                 )
                 status_output = result.stdout + result.stderr
