@@ -450,7 +450,13 @@ def test_diffusers_provision_receives_dict_cfg(tmp_path: Path) -> None:
     received_cfgs: list[Any] = []
     real_engine = DiffusersEngine()
 
-    def _capture_provision(instance: Instance | None, cfg: Any) -> None:
+    def _capture_provision(
+        instance: Instance | None,
+        cfg: Any,
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
+        del cancel_token
         received_cfgs.append(cfg)
         # Defensive: exercise the same access pattern the real engine uses,
         # so that a future regression to non-dict cfg also fails here.
@@ -506,7 +512,13 @@ def test_comfyui_provision_receives_dict_cfg(tmp_path: Path) -> None:
     received_cfgs: list[Any] = []
     real_engine = ComfyUIEngine()
 
-    def _capture_provision(instance: Instance | None, cfg: Any) -> None:
+    def _capture_provision(
+        instance: Instance | None,
+        cfg: Any,
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
+        del cancel_token
         received_cfgs.append(cfg)
         _ = cfg.get("engine", {}).get("comfyui", {})
         _ = cfg.get("models", [])

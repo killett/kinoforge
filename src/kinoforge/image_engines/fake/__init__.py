@@ -98,13 +98,21 @@ class FakeImageEngine(ImageEngine):
         default_factory=lambda: frozenset({"model"})
     )
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         """No-op provision for hosted engines.
 
         Args:
             instance: Unused; hosted engine needs no instance.
             cfg: Unused runtime config.
+            cancel_token: Ignored (Protocol parity for C29 boot-phase reap).
         """
+        del cancel_token
         return  # hosted no-op
 
     def backend(

@@ -73,7 +73,13 @@ class _FakeEngine(GenerationEngine):
     ) -> None:
         self._flags = flags_by_derive or {}
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:  # noqa: D102
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:  # noqa: D102
         pass
 
     def backend(  # noqa: D102

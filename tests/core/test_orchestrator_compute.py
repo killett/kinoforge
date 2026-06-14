@@ -129,7 +129,13 @@ class CountingFakeEngine(FakeEngine):
         # Share one backend across discover-path and pool-path calls.
         self._shared_backend = FakeBackend(probe=probe_profile)
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         # Sleep first, then increment, so two threads racing into provision
         # before either finishes are observable via the count.
         if self._provision_delay_s > 0:
