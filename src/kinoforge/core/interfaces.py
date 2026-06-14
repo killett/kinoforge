@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
@@ -81,6 +81,9 @@ class Lifecycle:
     stall_window_s: float | None = None
     stall_gpu_threshold: float = 5.0
     stall_cpu_threshold: float = 20.0
+    # C27 — sibling util-aware predicate (chronic container restart loop).
+    restart_loop_window_s: float | None = None
+    restart_loop_uptime_threshold_s: float = 90.0
     heartbeat_interval_s: float | None = None
     grace_after_session_s: float = 300.0
 
@@ -130,6 +133,15 @@ class InstanceSpec:
     provision_script: str | None = None
     run_cmd: list[str] | None = None
     spot: bool = False  # Request a spot/preemptible instance when True
+    # C28 A1.5: diagnostic env overlay merged into pod env via setdefault
+    # (user-supplied `env` always wins). Default empty = no behavioural change.
+    diagnostic_env: dict[str, str] = field(default_factory=dict)
+    # C28 A3: when "never" AND provider schema supports it, request the
+    # provider NOT to auto-restart this pod on container exit. Default
+    # "always" preserves pre-C28 behaviour. RunPod schema probed by the A0
+    # sidecar (tests/live/_c28_runpod_input_schema_probe.json); if the field
+    # is absent the provider warns + skips on the wire.
+    restart_policy: Literal["always", "never"] = "always"
 
 
 @dataclass
