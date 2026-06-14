@@ -928,6 +928,9 @@ def deploy_session(
                 stall_window_s: float | None = None
                 stall_gpu_threshold = 5.0
                 stall_cpu_threshold = 20.0
+                # C27: restart-loop predicate cfg knobs — None window = kill switch.
+                restart_loop_window_s: float | None = None
+                restart_loop_uptime_threshold_s = 90.0
                 provider_kind: str | None = None
                 if cfg.compute is not None:
                     provider_kind = cfg.compute.provider
@@ -936,6 +939,11 @@ def deploy_session(
                         stall_window_s = lc.stall_window_s
                         stall_gpu_threshold = lc.stall_gpu_threshold
                         stall_cpu_threshold = lc.stall_cpu_threshold
+                    if lc is not None and lc.restart_loop_reap_enabled:
+                        restart_loop_window_s = lc.restart_loop_window_s
+                        restart_loop_uptime_threshold_s = (
+                            lc.restart_loop_uptime_threshold_s
+                        )
                 hb_loop = factory(
                     ledger=Ledger(store=store),
                     provider=resolved_provider,
@@ -947,6 +955,8 @@ def deploy_session(
                     stall_window_s=stall_window_s,
                     stall_gpu_threshold=stall_gpu_threshold,
                     stall_cpu_threshold=stall_cpu_threshold,
+                    restart_loop_window_s=restart_loop_window_s,
+                    restart_loop_uptime_threshold_s=restart_loop_uptime_threshold_s,
                 )
                 hb_loop.start()
                 # B3 — record session_start so concurrent scanners see this CLI's claim.
