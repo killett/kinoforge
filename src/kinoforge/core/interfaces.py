@@ -133,6 +133,9 @@ class InstanceSpec:
     provision_script: str | None = None
     run_cmd: list[str] | None = None
     spot: bool = False  # Request a spot/preemptible instance when True
+    # C28 A1.5: diagnostic env overlay merged into pod env via setdefault
+    # (user-supplied `env` always wins). Default empty = no behavioural change.
+    diagnostic_env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
