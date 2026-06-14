@@ -1,0 +1,44 @@
+# C29 Phase C acceptance-smoke cfg — `kinoforge status --id` surfaces
+# liveness info DURING engine.provision because the C29 closure ticked the
+# heartbeat throughout the boot phase.
+#
+# Compute: cheapest RunPod offer (~$0.13/hr ⇒ ≤ $0.20 spend).
+# Engine:  FakeEngine — pure heartbeat; provision_script sleeps 120 s before
+#          letting the container exit cleanly.
+# Lifecycle:
+#   heartbeat_interval_s: 10
+#   stall_reap_enabled:   false  (Smoke C tests observability, not reap)
+#   restart_loop_reap_enabled: false
+#   boot_timeout:         5m     (no reap — we just want to observe the
+#                                 ticks via `kinoforge status`)
+# Live spend ceiling: $0.20.
+
+engine:
+  kind: fake
+
+models: []
+
+compute:
+  provider: runpod
+  image: "alpine:latest"
+  mode: pod
+  warm_reuse_auto_attach: false
+  heartbeat_mode: graphql-tag
+  requirements:
+    min_vram_gb: 0
+    min_cuda: "0.0"
+    max_usd_per_hr: 10.0
+    disk_gb: 0
+  lifecycle:
+    idle_timeout: 30m
+    job_timeout: 10m
+    time_buffer: 1m
+    max_lifetime: 15m
+    boot_timeout: 5m
+    budget: 1.0
+    heartbeat_interval_s: 10
+    stall_reap_enabled: false
+    restart_loop_reap_enabled: false
+
+spec: {}
+params: {}
