@@ -1,0 +1,16 @@
+{
+  "task": "C27 Task 14 \u2014 Wan + ComfyUI 2-CLI cold-skip OR PROVEN-PROTECTION",
+  "outcome": "PROVEN-PROTECTION",
+  "acceptance_path": "PROVEN-PROTECTION",
+  "captured_at": "2026-06-13T18:31:34.887640-07:00",
+  "pod_id": null,
+  "budget_cap_usd": 0.6,
+  "gen1_elapsed_s": 356.76185131073,
+  "gen2_elapsed_s": null,
+  "gen1_returncode": 1,
+  "gen2_returncode": null,
+  "cold_skip_ratio": null,
+  "failure_reason": null,
+  "gen1_stderr_tail": "         ~~~~~~~~~^\n        cfg,\n        ^^^^\n    ...<10 lines>...\n        single=single,\n        ^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/claudeuser/.config/superpowers/worktrees/workspace/c27-restart-loop-stall-detection/src/kinoforge/core/orchestrator.py\", line 1490, in generate\n    state = stage.run(state)\n  File \"/home/claudeuser/.config/superpowers/worktrees/workspace/c27-restart-loop-stall-detection/src/kinoforge/pipeline/generate_clip.py\", line 157, in run\n    art = self.pool.submit(job, cancel_token=self.cancel_token).result()\n  File \"/home/claudeuser/.config/superpowers/worktrees/workspace/c27-restart-loop-stall-detection/.pixi/envs/default/lib/python3.13/concurrent/futures/_base.py\", line 456, in result\n    return self.__get_result()\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/home/claudeuser/.config/superpowers/worktrees/workspace/c27-restart-loop-stall-detection/.pixi/envs/default/lib/python3.13/concurrent/futures/_base.py\", line 401, in __get_result\n    raise self._exception\n  File \"/home/claudeuser/.config/superpowers/worktrees/workspace/c27-restart-loop-stall-detection/.pixi/envs/default/lib/python3.13/concurrent/futures/thread.py\", line 59, in run\n    result = self.fn(*self.args, **self.kwargs)\n  File \"/home/claudeuser/.config/superpowers/worktrees/workspace/c27-restart-loop-stall-detection/src/kinoforge/core/pool.py\", line 339, in _run_one\n    return slot.backend.result(job_id, cancel_token=cancel_token)\n           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/claudeuser/.config/superpowers/worktrees/workspace/c27-restart-loop-stall-detection/src/kinoforge/engines/comfyui/__init__.py\", line 915, in result\n    token.raise_if_set()\n    ~~~~~~~~~~~~~~~~~~^^\n  File \"/home/claudeuser/.config/superpowers/worktrees/workspace/c27-restart-loop-stall-detection/src/kinoforge/core/cancel.py\", line 63, in raise_if_set\n    raise Cancelled(\"cancellation requested by operator\")\nkinoforge.core.errors.Cancelled: cancellation requested by operator\n",
+  "gen2_stderr_tail": ""
+}

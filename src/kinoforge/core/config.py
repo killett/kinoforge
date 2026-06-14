@@ -115,6 +115,9 @@ class LifecycleConfig(BaseModel):
     stall_window_s: float = 600.0
     stall_gpu_threshold: float = 5.0
     stall_cpu_threshold: float = 20.0
+    restart_loop_reap_enabled: bool = True
+    restart_loop_window_s: float = 180.0
+    restart_loop_uptime_threshold_s: float = 90.0
 
     @field_validator(
         "idle_timeout",
@@ -173,6 +176,22 @@ class LifecycleConfig(BaseModel):
         """Reject util thresholds outside [0, 100] at load time (C26)."""
         if v < 0 or v > 100:
             raise ValueError(f"stall threshold must be in [0, 100]; got {v}")
+        return v
+
+    @field_validator("restart_loop_window_s")
+    @classmethod
+    def _validate_restart_loop_window_non_negative(cls, v: float) -> float:
+        """Reject negative restart_loop_window_s at load time (C27)."""
+        if v < 0:
+            raise ValueError(f"restart_loop_window_s must be >= 0; got {v}")
+        return v
+
+    @field_validator("restart_loop_uptime_threshold_s")
+    @classmethod
+    def _validate_restart_loop_uptime_threshold_non_negative(cls, v: float) -> float:
+        """Reject negative restart_loop_uptime_threshold_s at load time (C27)."""
+        if v < 0:
+            raise ValueError(f"restart_loop_uptime_threshold_s must be >= 0; got {v}")
         return v
 
 
@@ -777,6 +796,12 @@ class Config(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     keyframe: KeyframeConfig | None = None
     sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
+    # C28 A1.5: opt-in diagnostic mode. When True the engine's render_provision
+    # prepends an EXIT trap that captures the boot log + system snapshot and
+    # uploads to S3, AND the orchestrator overlays AWS + KINOFORGE_DIAG_* env
+    # onto spec.diagnostic_env so the trap finds the bucket. Default False =
+    # zero behavioural change.
+    diagnostic_mode: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -907,6 +932,10 @@ class Config(BaseModel):
             stall_window_s=lc.stall_window_s if lc.stall_reap_enabled else None,
             stall_gpu_threshold=lc.stall_gpu_threshold,
             stall_cpu_threshold=lc.stall_cpu_threshold,
+            restart_loop_window_s=(
+                lc.restart_loop_window_s if lc.restart_loop_reap_enabled else None
+            ),
+            restart_loop_uptime_threshold_s=lc.restart_loop_uptime_threshold_s,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:

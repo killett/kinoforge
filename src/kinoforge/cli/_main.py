@@ -353,6 +353,26 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "ledger entry (≥ 0). Useful for known-slow-boot workloads."
         ),
     )
+    p_deploy.add_argument(
+        "--restart-loop-window-override",
+        type=_nonnegative_float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "C27: persist a per-entry restart_loop_window_s override "
+            "into the ledger entry (≥ 0). Useful for workloads with a "
+            "known-long first boot."
+        ),
+    )
+    p_deploy.add_argument(
+        "--diagnostic-mode",
+        action="store_true",
+        help=(
+            "C28: enable in-pod EXIT trap + S3 boot-log capture and request "
+            "restart_policy=never so a failed boot leaves the snapshot intact "
+            "(skipped silently if RunPod does not expose restartPolicy)."
+        ),
+    )
 
     # provision
     p_provision = sub.add_parser("provision", help="provision an existing instance")

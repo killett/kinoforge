@@ -175,7 +175,9 @@ def build_util_endpoint_for(
 
     Returns None when:
       - cfg.compute is None (hosted-only path), OR
-      - cfg.compute.lifecycle.stall_reap_enabled is False (kill switch), OR
+      - BOTH stall_reap_enabled AND restart_loop_reap_enabled are False
+        on cfg.compute.lifecycle (full kill switch — neither util-aware
+        predicate is active so the sampler has no consumer), OR
       - provider_util_supported(cfg.compute.provider) is False
         (e.g. SkyPilot pre-B5b; Bedrock).
 
@@ -195,7 +197,11 @@ def build_util_endpoint_for(
     if cfg.compute is None:
         return None
     lifecycle = cfg.compute.lifecycle
-    if lifecycle is not None and not lifecycle.stall_reap_enabled:
+    if (
+        lifecycle is not None
+        and not lifecycle.stall_reap_enabled
+        and not lifecycle.restart_loop_reap_enabled
+    ):
         return None
     provider = cfg.compute.provider
     if not provider_util_supported(provider):
@@ -204,8 +210,8 @@ def build_util_endpoint_for(
         api_key = creds.get("RUNPOD_API_KEY")
         if api_key is None:
             raise AuthError(
-                "RUNPOD_API_KEY must be set when "
-                "compute.lifecycle.stall_reap_enabled is true on runpod"
+                "RUNPOD_API_KEY must be set when stall_reap_enabled or "
+                "restart_loop_reap_enabled is true on runpod"
             )
         from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
 

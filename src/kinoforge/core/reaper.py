@@ -37,6 +37,7 @@ class Verdict(StrEnum):
     HEARTBEAT_SUBSTRATE_MISSING = "HEARTBEAT_SUBSTRATE_MISSING"  # B5a
     UNROUTABLE = "UNROUTABLE"
     STALL_REAP = "STALL_REAP"  # C26
+    RESTART_LOOP_REAP = "RESTART_LOOP_REAP"  # C27
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ DEFAULT_APPLY_POLICY = Policy(
             Verdict.OVERAGE_REAP,
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
+            Verdict.RESTART_LOOP_REAP,  # C27
         }
     )
 )
@@ -179,6 +181,67 @@ def _stall_reap_predicate(
     return counter_i * heartbeat_interval_s >= effective_window
 
 
+def _restart_loop_reap_predicate(
+    entry: Mapping[str, Any],
+    *,
+    now: float,
+    sentinel_window: float,
+    heartbeat_interval_s: float,
+    restart_loop_window_s: float | None,
+) -> bool:
+    """Return True iff the entry should fire RESTART_LOOP_REAP (C27 row 3'').
+
+    Twin of :func:`_stall_reap_predicate`. Same defensive shape: bad
+    types fall through to default rather than raising, because raising
+    inside ``classify`` would abort the whole sweep on one bad entry.
+
+    Args:
+        entry: The ledger entry being classified.
+        now: Wall-clock seconds.
+        sentinel_window: ``3 * heartbeat_interval_s`` — util-tick
+            freshness ceiling. A stale util tick means we cannot trust
+            the counter even if it's high.
+        heartbeat_interval_s: Cfg heartbeat cadence; counter × interval
+            gives cumulative low-uptime duration in seconds.
+        restart_loop_window_s: Cfg-level threshold; None = kill switch.
+
+    Returns:
+        True when:
+          1. Feature on (effective window is not None), AND
+          2. Provider has a util substrate (or provider unknown), AND
+          3. ``consecutive_low_uptime_count`` and ``util_thread_tick``
+             both present, AND
+          4. util_thread_tick fresh (age <= sentinel_window), AND
+          5. counter × heartbeat_interval_s >= effective window.
+        Per-entry ``restart_loop_window_s`` override beats the default.
+    """
+    override = entry.get("restart_loop_window_s")
+    if override is not None:
+        try:
+            effective_window: float | None = float(override)
+        except (TypeError, ValueError):
+            effective_window = restart_loop_window_s
+    else:
+        effective_window = restart_loop_window_s
+    if effective_window is None:
+        return False
+    provider_kind = entry.get("provider_kind") or entry.get("provider")
+    if provider_kind is not None and not provider_util_supported(str(provider_kind)):
+        return False
+    counter = entry.get("consecutive_low_uptime_count")
+    util_tick = entry.get("util_thread_tick")
+    if counter is None or util_tick is None:
+        return False
+    try:
+        counter_i = int(counter)
+        util_age = now - float(util_tick)
+    except (TypeError, ValueError):
+        return False
+    if util_age > sentinel_window:
+        return False
+    return counter_i * heartbeat_interval_s >= effective_window
+
+
 def classify(
     entry: Mapping[str, Any],
     live_pod_ids: frozenset[str] | set[str],
@@ -191,6 +254,8 @@ def classify(
     stall_window_s: float | None = None,
     stall_gpu_threshold: float = 5.0,
     stall_cpu_threshold: float = 20.0,
+    restart_loop_window_s: float | None = None,
+    restart_loop_uptime_threshold_s: float = 90.0,
 ) -> Verdict:
     """Classify a single ledger entry against the current world state.
 
@@ -216,6 +281,13 @@ def classify(
             unused inside classify itself.
         stall_cpu_threshold: C26 cfg CPU % below which a tick counts as
             'low'. Sister of ``stall_gpu_threshold``.
+        restart_loop_window_s: C27 cfg threshold for util-aware restart-
+            loop reaping. ``None`` (default) = kill switch, no
+            RESTART_LOOP_REAP fires. Per-entry ``restart_loop_window_s``
+            key overrides at row 3''.
+        restart_loop_uptime_threshold_s: C27 cfg uptime-seconds strict-<
+            threshold for ``_update_uptime_counter``. Carried for
+            HeartbeatLoop and unused inside classify itself.
 
     Returns:
         One of the seven non-UNROUTABLE Verdict values:
@@ -283,6 +355,16 @@ def classify(
                 stall_window_s=stall_window_s,
             ):
                 return Verdict.STALL_REAP
+            # Row 3'' (C27): util-aware restart-loop reap interception.
+            # Checked after row 3' so simultaneous fires return STALL_REAP.
+            if _restart_loop_reap_predicate(
+                entry,
+                now=now,
+                sentinel_window=sentinel_window,
+                heartbeat_interval_s=heartbeat_interval_s,
+                restart_loop_window_s=restart_loop_window_s,
+            ):
+                return Verdict.RESTART_LOOP_REAP
             return Verdict.LIVE
         return Verdict.IDLE_REAP
 

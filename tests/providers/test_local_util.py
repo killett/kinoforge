@@ -32,9 +32,15 @@ def _snap(
 
 
 def _build_runpod_cfg(
-    *, stall_reap_enabled: bool, provider: str = "runpod"
+    *,
+    stall_reap_enabled: bool,
+    restart_loop_reap_enabled: bool = True,
+    provider: str = "runpod",
 ) -> SimpleNamespace:
-    lifecycle = SimpleNamespace(stall_reap_enabled=stall_reap_enabled)
+    lifecycle = SimpleNamespace(
+        stall_reap_enabled=stall_reap_enabled,
+        restart_loop_reap_enabled=restart_loop_reap_enabled,
+    )
     compute = SimpleNamespace(provider=provider, lifecycle=lifecycle)
     return SimpleNamespace(compute=compute)
 
@@ -68,14 +74,39 @@ def test_build_util_endpoint_for_returns_none_when_compute_is_none() -> None:
     assert build_util_endpoint_for(cfg, _FakeCreds({})) is None  # type: ignore[arg-type]
 
 
-def test_build_util_endpoint_for_returns_none_when_stall_disabled() -> None:
+def test_build_util_endpoint_for_returns_none_when_both_features_disabled() -> None:
+    """C27: kill switch trips only when BOTH stall and restart-loop are off."""
     from kinoforge._adapters import build_util_endpoint_for
 
-    cfg = _build_runpod_cfg(stall_reap_enabled=False)
+    cfg = _build_runpod_cfg(stall_reap_enabled=False, restart_loop_reap_enabled=False)
     assert (
         build_util_endpoint_for(cfg, _FakeCreds({"RUNPOD_API_KEY": "k"}))  # type: ignore[arg-type]
         is None
     )
+
+
+def test_build_util_endpoint_for_builds_endpoint_when_only_stall_disabled() -> None:
+    """C27: stall disabled but restart-loop enabled → endpoint still built.
+
+    The util sampler powers BOTH predicates; turning off only one leaves
+    the other consumer needing the sampler.
+    """
+    from kinoforge._adapters import build_util_endpoint_for
+
+    cfg = _build_runpod_cfg(stall_reap_enabled=False, restart_loop_reap_enabled=True)
+    ep = build_util_endpoint_for(cfg, _FakeCreds({"RUNPOD_API_KEY": "k"}))  # type: ignore[arg-type]
+    assert ep is not None
+
+
+def test_build_util_endpoint_for_builds_endpoint_when_only_restart_loop_disabled() -> (
+    None
+):
+    """C27: restart-loop disabled but stall enabled → endpoint still built (C26 path)."""
+    from kinoforge._adapters import build_util_endpoint_for
+
+    cfg = _build_runpod_cfg(stall_reap_enabled=True, restart_loop_reap_enabled=False)
+    ep = build_util_endpoint_for(cfg, _FakeCreds({"RUNPOD_API_KEY": "k"}))  # type: ignore[arg-type]
+    assert ep is not None
 
 
 def test_build_util_endpoint_for_returns_none_for_unsupported_provider() -> None:
