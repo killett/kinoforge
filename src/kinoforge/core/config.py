@@ -926,6 +926,10 @@ class Config(BaseModel):
             stall_window_s=lc.stall_window_s if lc.stall_reap_enabled else None,
             stall_gpu_threshold=lc.stall_gpu_threshold,
             stall_cpu_threshold=lc.stall_cpu_threshold,
+            restart_loop_window_s=(
+                lc.restart_loop_window_s if lc.restart_loop_reap_enabled else None
+            ),
+            restart_loop_uptime_threshold_s=lc.restart_loop_uptime_threshold_s,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
