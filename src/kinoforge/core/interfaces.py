@@ -81,6 +81,9 @@ class Lifecycle:
     stall_window_s: float | None = None
     stall_gpu_threshold: float = 5.0
     stall_cpu_threshold: float = 20.0
+    # C27 — sibling util-aware predicate (chronic container restart loop).
+    restart_loop_window_s: float | None = None
+    restart_loop_uptime_threshold_s: float = 90.0
     heartbeat_interval_s: float | None = None
     grace_after_session_s: float = 300.0
 
