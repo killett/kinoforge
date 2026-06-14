@@ -1199,9 +1199,93 @@ class ComfyUIEngine(GenerationEngine):
 
         image: str = comfyui_cfg.get("image", _DEFAULT_RUNPOD_IMAGE)
         models_raw: list[dict[str, Any]] = list(cfg_dict.get("models", []))
+        # C28 B2: any image whose name starts with kinoforge/wan-comfyui:
+        # is a pre-baked container with ComfyUI + all custom-node clones +
+        # all pip installs already laid down at build time. Skip those
+        # bootstrap steps; the image's CMD layer + the selfterm bootstrap
+        # + the model-download loop + `exec python main.py` still emit.
+        slim_mode: bool = image.startswith("kinoforge/wan-comfyui:")
+
+        # C28 C1: pure-bash helper for resilient model downloads. 3-attempt
+        # retry, exponential backoff (5/10/15 s), partial-file cleanup
+        # between attempts, optional sha256 verify, optional HF_TOKEN
+        # bearer header. Defined unconditionally so EVERY download (model
+        # or future asset) gets the retry semantics — fixes the H3 curl
+        # flake without requiring image rebuilds.
+        kinoforge_download_helper: list[str] = [
+            "_kinoforge_download() {",
+            "  local url=$1; local out=$2",
+            "  local expected_sha=${3:-}",
+            "  local token_env=${4:-}",
+            "  local auth_args=()",
+            '  if [ -n "$token_env" ] && [ -n "${!token_env:-}" ]; then',
+            '    auth_args=(-H "Authorization: Bearer ${!token_env}")',
+            "  fi",
+            "  local attempt",
+            "  for attempt in 1 2 3; do",
+            '    rm -f "${out}.partial"',
+            '    if curl -L --fail --retry 0 -C - "${auth_args[@]}" '
+            '"$url" -o "${out}.partial"; then',
+            '      if [ -n "$expected_sha" ]; then',
+            "        local actual",
+            "        actual=$(sha256sum \"${out}.partial\" | awk '{print $1}')",
+            '        if [ "$actual" != "$expected_sha" ]; then',
+            '          echo "sha mismatch attempt $attempt: '
+            '$actual vs $expected_sha" >&2',
+            "          sleep $((5 * attempt))",
+            "          continue",
+            "        fi",
+            "      fi",
+            '      mv "${out}.partial" "$out"',
+            "      return 0",
+            "    fi",
+            "    sleep $((5 * attempt))",
+            "  done",
+            "  return 1",
+            "}",
+        ]
+
+        # C28 A2: diagnostic_mode prepends an EXIT trap that captures the boot
+        # log + system snapshots and uploads to S3 on failure. Pure-additive —
+        # when False/absent, the rendered script is byte-identical to the
+        # pre-C28 baseline. AWS creds are NEVER named in the script body; they
+        # ride on pod env (overlaid via spec.diagnostic_env, see C28 A1.5) and
+        # are consumed by `aws s3 cp` via the boto/CLI default chain.
+        diagnostic_mode: bool = bool(cfg_dict.get("diagnostic_mode", False))
+        trap_preamble: list[str] = []
+        if diagnostic_mode:
+            trap_preamble = [
+                "set -euo pipefail",
+                "exec > >(tee -a /tmp/boot.log) 2>&1",
+                "trap '_kinoforge_diag_capture $?' EXIT",
+                "_kinoforge_diag_capture() {",
+                "  local rc=$1",
+                "  local last_line",
+                "  last_line=$(tail -1 /tmp/boot.log 2>/dev/null || true)",
+                "  {",
+                "    echo '===== rc ====='; echo \"$rc\";",
+                "    echo '===== last_line ====='; echo \"$last_line\";",
+                "    echo '===== nvidia-smi ====='; nvidia-smi || true;",
+                "    echo '===== df -h ====='; df -h || true;",
+                "    echo '===== free -m ====='; free -m || true;",
+                "    echo '===== ls -la models/diffusion_models ====='; "
+                "ls -la /workspace/ComfyUI/models/diffusion_models 2>/dev/null"
+                " || true;",
+                "    echo '===== dpkg -l torch ====='; "
+                "dpkg -l 2>/dev/null | grep -iE 'torch|cuda' || true;",
+                "    echo '===== boot.log ====='; "
+                "tail -500 /tmp/boot.log 2>/dev/null || true;",
+                "  } > /tmp/diag.txt",
+                '  if [ -n "${KINOFORGE_DIAG_BUCKET:-}" ]; then',
+                "    aws s3 cp /tmp/diag.txt "
+                '"s3://${KINOFORGE_DIAG_BUCKET}/${KINOFORGE_DIAG_PREFIX}/'
+                'diag-$(date -u +%Y%m%dT%H%M%SZ).txt" || true',
+                "  fi",
+                "}",
+            ]
 
         lines: list[str] = [
-            "set -euo pipefail",
+            *(trap_preamble if trap_preamble else ["set -euo pipefail"]),
             # Selfterm watchdog — launch BEFORE bootstrap so the dead-man
             # window + max-lifetime cap fire even when the long clone / pip /
             # curl phase hangs. KINOFORGE_SELFTERM_SCRIPT is injected by
@@ -1213,12 +1297,22 @@ class ComfyUIEngine(GenerationEngine):
             ".write(os.environ['KINOFORGE_SELFTERM_SCRIPT'])\" && "
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
+            *kinoforge_download_helper,
             "cd /workspace",
-            f"[ ! -d ComfyUI ] && git clone --depth 1 --branch {branch} {repo} ComfyUI",
-            "cd ComfyUI && pip install -q -r requirements.txt",
         ]
+        if not slim_mode:
+            lines.append(
+                f"[ ! -d ComfyUI ] && git clone --depth 1 --branch "
+                f"{branch} {repo} ComfyUI",
+            )
+            lines.append("cd ComfyUI && pip install -q -r requirements.txt")
+        else:
+            # Pre-baked image already has /workspace/ComfyUI; ensure the
+            # working directory matches so the model-download loop's
+            # relative `models/<subdir>/<filename>` paths still resolve.
+            lines.append("cd /workspace/ComfyUI")
 
-        for node in custom_nodes:
+        for node in custom_nodes if not slim_mode else ():
             node_url: str = node["git"]
             node_name: str = node_url.rstrip("/").split("/")[-1]
             if node_name.endswith(".git"):
@@ -1258,17 +1352,24 @@ class ComfyUIEngine(GenerationEngine):
             artifacts = source.resolve(src_ref, _NullCredProvider())
             artifact = artifacts[0]
             filename: str = entry.get("filename") or artifact.filename
-            auth_header = ""
+            # Surface the bearer-token env var requirement so the orchestrator
+            # validates it BEFORE pod boot. C28 C2: the bearer header is
+            # appended by _kinoforge_download via bash indirect expansion
+            # (`${!token_env}`) — pass the env var NAME as arg 4, not the
+            # value, so neither name nor value leaks into the script body.
+            token_env_name = ""
             for hk, hv in (artifact.headers or {}).items():
                 if hk.lower() == "authorization":
                     env_var = _extract_env_var(hv)
                     if env_var:
                         env_required.append(env_var)
-                        auth_header = f' -H "Authorization: Bearer ${env_var}"'
+                        token_env_name = env_var
             lines.append(f"mkdir -p {subdir}")
+            sha = artifact.sha256 or ""
             lines.append(
                 f"[ ! -f {subdir}/{filename} ] && "
-                f"curl -L --fail{auth_header} '{artifact.url}' -o {subdir}/{filename}"
+                f"_kinoforge_download '{artifact.url}' "
+                f"'{subdir}/{filename}' '{sha}' '{token_env_name}'"
             )
 
         port: str = _extract_port(launch_args_raw)

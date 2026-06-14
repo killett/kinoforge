@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
+from typing import Literal
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
@@ -171,6 +173,62 @@ def _cfg_dict(cfg: Config) -> dict[str, object]:
         A plain ``dict`` (pydantic model_dump output).
     """
     return cfg.model_dump()
+
+
+_DIAG_BUCKET_DEFAULT = "kinoforge-pod-diagnostics"
+_DIAG_REGION_DEFAULT = "us-west-2"
+
+
+def _build_diagnostic_env(run_id: str) -> dict[str, str]:
+    """Build the C28 diagnostic env overlay for an InstanceSpec.
+
+    Reads ``KINOFORGE_DIAG_BUCKET`` (default ``kinoforge-pod-diagnostics``),
+    derives ``KINOFORGE_DIAG_PREFIX`` from ``run_id``, and resolves AWS
+    credentials via the boto3 default chain so the in-pod ``aws s3 cp`` call
+    in the EXIT trap can authenticate.
+
+    AWS keys are looked up through ``boto3.Session().get_credentials()``
+    rather than ``os.environ`` directly so the project's
+    ``AWS_SHARED_CREDENTIALS_FILE`` activation (per ``cloud_creds_workspace_local``)
+    is honoured. If the chain returns no credentials, the AWS keys are
+    omitted from the overlay; the in-pod ``aws s3 cp || true`` will then
+    fail silently and the trap reports rc + last_line without an upload.
+
+    Args:
+        run_id: Per-run identifier. Used as the ``boot-logs/<run_id>`` prefix
+            so each run's diagnostic snapshots land under a distinct path.
+
+    Returns:
+        Mapping of env-var name to value, ready to splat into
+        ``InstanceSpec.diagnostic_env``.
+    """
+    overlay: dict[str, str] = {
+        "KINOFORGE_DIAG_BUCKET": os.environ.get(
+            "KINOFORGE_DIAG_BUCKET",
+            _DIAG_BUCKET_DEFAULT,
+        ),
+        "KINOFORGE_DIAG_PREFIX": os.environ.get(
+            "KINOFORGE_DIAG_PREFIX",
+            f"boot-logs/{run_id}",
+        ),
+        "AWS_DEFAULT_REGION": os.environ.get(
+            "AWS_DEFAULT_REGION",
+            _DIAG_REGION_DEFAULT,
+        ),
+    }
+    try:
+        import boto3
+
+        creds = boto3.Session().get_credentials()
+    except (ImportError, Exception):  # pragma: no cover - boto3 always present
+        creds = None
+    if creds is not None:
+        frozen = creds.get_frozen_credentials()
+        overlay["AWS_ACCESS_KEY_ID"] = frozen.access_key
+        overlay["AWS_SECRET_ACCESS_KEY"] = frozen.secret_key
+        if frozen.token:
+            overlay["AWS_SESSION_TOKEN"] = frozen.token
+    return overlay
 
 
 def _key_hash(key: CapabilityKey) -> str:
@@ -494,6 +552,18 @@ def _provision_instance_and_build_backend(
         }
         if tags:
             merged_tags.update(tags)
+        diagnostic_env: dict[str, str] = (
+            _build_diagnostic_env(run_id) if cfg.diagnostic_mode else {}
+        )
+        # C28 A3: diagnostic-mode runs request restart_policy=never so a
+        # crashed boot leaves the container in a STOPPED state instead of
+        # being auto-restarted by RunPod (which would obliterate the
+        # diagnostic snapshot the A2 trap is trying to upload). Effective only
+        # if the provider's input schema accepts the field; otherwise the
+        # RunPod provider warns + skips with no behaviour change.
+        restart_policy: Literal["always", "never"] = (
+            "never" if cfg.diagnostic_mode else "always"
+        )
         return InstanceSpec(
             image=rendered.image or image,
             offer=offer,
@@ -504,6 +574,8 @@ def _provision_instance_and_build_backend(
             run_id=run_id,
             provision_script=rendered.script,
             run_cmd=rendered.run_cmd,
+            diagnostic_env=diagnostic_env,
+            restart_policy=restart_policy,
         )
 
     instance, _chosen_offer = _create_with_offer_retry(
@@ -928,6 +1000,9 @@ def deploy_session(
                 stall_window_s: float | None = None
                 stall_gpu_threshold = 5.0
                 stall_cpu_threshold = 20.0
+                # C27: restart-loop predicate cfg knobs — None window = kill switch.
+                restart_loop_window_s: float | None = None
+                restart_loop_uptime_threshold_s = 90.0
                 provider_kind: str | None = None
                 if cfg.compute is not None:
                     provider_kind = cfg.compute.provider
@@ -936,6 +1011,11 @@ def deploy_session(
                         stall_window_s = lc.stall_window_s
                         stall_gpu_threshold = lc.stall_gpu_threshold
                         stall_cpu_threshold = lc.stall_cpu_threshold
+                    if lc is not None and lc.restart_loop_reap_enabled:
+                        restart_loop_window_s = lc.restart_loop_window_s
+                        restart_loop_uptime_threshold_s = (
+                            lc.restart_loop_uptime_threshold_s
+                        )
                 hb_loop = factory(
                     ledger=Ledger(store=store),
                     provider=resolved_provider,
@@ -947,6 +1027,8 @@ def deploy_session(
                     stall_window_s=stall_window_s,
                     stall_gpu_threshold=stall_gpu_threshold,
                     stall_cpu_threshold=stall_cpu_threshold,
+                    restart_loop_window_s=restart_loop_window_s,
+                    restart_loop_uptime_threshold_s=restart_loop_uptime_threshold_s,
                 )
                 hb_loop.start()
                 # B3 — record session_start so concurrent scanners see this CLI's claim.
