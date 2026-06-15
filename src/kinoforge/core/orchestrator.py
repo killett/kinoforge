@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
@@ -82,6 +82,32 @@ from kinoforge.pipeline.keyframe import KeyframeStage
 from kinoforge.stores.base import ArtifactStore
 
 _log = get_logger("orchestrator")
+
+
+# ---------------------------------------------------------------------------
+# C29 — ProvisionResult NamedTuple
+# ---------------------------------------------------------------------------
+
+
+class ProvisionResult(NamedTuple):
+    """C29 — return shape of :func:`_provision_instance_and_build_backend`.
+
+    ``hb_loop`` is ``None`` when ``start_heartbeat`` was not supplied (hosted-
+    engine paths, ``heartbeat_interval_s <= 0``, callers that explicitly
+    opted out), or when the closure raised. NamedTuple supports field-access
+    and positional unpacking so callers that prefer ``instance, backend,
+    hb_loop = ...`` keep working.
+
+    Attributes:
+        instance: The polled-ready compute instance.
+        backend: The engine-built backend wired to ``instance``.
+        hb_loop: A running HeartbeatLoop (``start()`` already called), or
+            ``None`` when no closure was supplied (or it failed).
+    """
+
+    instance: Instance
+    backend: GenerationBackend
+    hb_loop: HeartbeatLoopProtocol | None
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +279,7 @@ def _provision_compute_once(
     state_dir: Path,
     capability_key_hex: str,
     cfg_dict_override: dict[str, object] | None = None,
+    cancel_token: CancelToken | None = None,
 ) -> None:
     """Run ``provisioner.provision`` exactly once per ``(instance, capability_key)``.
 
@@ -284,6 +311,10 @@ def _provision_compute_once(
             of ``cfg.model_dump()``.  Callers that enrich ``cfg_dict`` (e.g.
             with a top-level ``"lifecycle"`` key) should pass it here so
             engines receive the augmented form.
+        cancel_token: C29 cooperative cancellation. Forwarded into
+            ``provisioner.provision`` → ``engine.provision`` →
+            ``engine.wait_for_ready`` so a boot-phase reap raises ``Cancelled``
+            cleanly. Default ``None`` preserves pre-C29 behaviour.
     """
     effective_creds: CredentialProvider = (
         creds if creds is not None else EnvCredentialProvider()
@@ -328,6 +359,7 @@ def _provision_compute_once(
         instance,
         creds=effective_creds,
         download_dir=state_dir / "weights",
+        cancel_token=cancel_token,
     )
     write_marker(
         marker,
@@ -462,6 +494,75 @@ def _create_with_offer_retry(
     ) from last_capacity_exc
 
 
+def _build_start_heartbeat_closure(
+    *,
+    ledger: Ledger,
+    provider: ComputeProvider,
+    interval: float,
+    util_endpoint: object,
+    cancel_token: CancelToken | None,
+    provider_kind: str | None,
+    stall_window_s: float | None,
+    stall_gpu_threshold: float,
+    stall_cpu_threshold: float,
+    restart_loop_window_s: float | None,
+    restart_loop_uptime_threshold_s: float,
+    factory: Callable[..., HeartbeatLoopProtocol],
+) -> Callable[[Instance], HeartbeatLoopProtocol]:
+    """C29 — closure that builds + starts a HeartbeatLoop given an instance.
+
+    Captures every HeartbeatLoop kwarg except ``instance_id``. The closure is
+    passed into :func:`_provision_instance_and_build_backend` and invoked
+    right after the RunPod-status poll succeeds, so the loop ticks throughout
+    ``engine.provision`` / ``wait_for_ready`` rather than waiting until
+    ``deploy_session`` resumes after provision returns. Steady-state lifetime
+    and the matching ``stop()`` remain owned by ``deploy_session``'s finally
+    block.
+
+    Args:
+        ledger: Heartbeat ledger.
+        provider: ComputeProvider whose ``heartbeat`` callback the loop drives.
+        interval: Tick interval in seconds.
+        util_endpoint: Optional :class:`UtilSnapshotEndpoint`; ``None`` falls
+            back to the heartbeat-only path.
+        cancel_token: Shared cancel token; the loop ``raise_if_set``s before
+            each tick to support cooperative shutdown.
+        provider_kind: Friendly name forwarded into the loop's util adapter.
+        stall_window_s: Window over which the STALL_REAP predicate watches
+            GPU/CPU util; ``None`` disables the predicate.
+        stall_gpu_threshold: Below this GPU%, the window counts as low.
+        stall_cpu_threshold: Below this CPU%, the window counts as low.
+        restart_loop_window_s: Window over which RESTART_LOOP_REAP watches
+            container uptime; ``None`` disables the predicate.
+        restart_loop_uptime_threshold_s: Below this uptime, the window counts.
+        factory: HeartbeatLoop constructor (or test spy).
+
+    Returns:
+        A 1-arg closure ``(Instance) -> HeartbeatLoopProtocol`` that builds
+        and ``start()``-s a fresh loop bound to that instance's id.
+    """
+
+    def start_heartbeat(inst: Instance) -> HeartbeatLoopProtocol:
+        loop = factory(
+            ledger=ledger,
+            provider=provider,
+            instance_id=inst.id,
+            interval_s=interval,
+            util_endpoint=util_endpoint,
+            cancel_token=cancel_token,
+            provider_kind=provider_kind,
+            stall_window_s=stall_window_s,
+            stall_gpu_threshold=stall_gpu_threshold,
+            stall_cpu_threshold=stall_cpu_threshold,
+            restart_loop_window_s=restart_loop_window_s,
+            restart_loop_uptime_threshold_s=restart_loop_uptime_threshold_s,
+        )
+        loop.start()
+        return loop
+
+    return start_heartbeat
+
+
 def _provision_instance_and_build_backend(
     *,
     resolved_engine: GenerationEngine,
@@ -475,7 +576,9 @@ def _provision_instance_and_build_backend(
     for_discovery: bool,
     tags: dict[str, str] | None = None,
     on_instance_created: Callable[[Instance], None] | None = None,
-) -> tuple[Instance, GenerationBackend]:
+    cancel_token: CancelToken | None = None,
+    start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None,
+) -> ProvisionResult:
     """Provision a compute instance and build a backend for it.
 
     Shared by the cache-miss (discovery) and cache-hit (steady-state)
@@ -500,10 +603,25 @@ def _provision_instance_and_build_backend(
             immediately after ``create_instance`` returns, with the
             freshly-created ``Instance``. B7 uses this seam to enter
             ``hold_until_first_tick`` before ``engine.provision`` runs.
+        cancel_token: C29 cooperative cancellation. Forwarded into
+            ``_provision_compute_once`` so a boot-phase reap raises
+            ``Cancelled`` from inside ``engine.wait_for_ready``. Task 5 adds
+            the matching ``except Cancelled`` clause that destroys the pod.
+            Default ``None`` preserves pre-C29 behaviour.
+        start_heartbeat: C29 closure that constructs + starts a
+            ``HeartbeatLoop`` given the just-readied ``Instance``. Invoked
+            right after the RunPod status poll succeeds and BEFORE
+            ``engine.provision`` runs, so STALL_REAP / RESTART_LOOP_REAP
+            predicates tick throughout the boot phase. ``None`` skips the
+            invocation and the returned ``hb_loop`` is also ``None``; a
+            closure that raises also falls through to ``hb_loop=None``
+            (logged) — the late-start path in ``deploy_session`` handles the
+            caller-supplied warm-pod recovery.
 
     Returns:
-        ``(instance, backend)`` — instance polled to ``ready``, backend
-        constructed via ``engine.backend(instance, cfg_dict)``.
+        :class:`ProvisionResult` ``(instance, backend, hb_loop)`` —
+        instance polled to ``ready``, backend constructed via
+        ``engine.backend(instance, cfg_dict)``, hb_loop started or ``None``.
 
     Raises:
         CapacityError: ``find_offers`` returned an empty list.
@@ -598,6 +716,25 @@ def _provision_instance_and_build_backend(
         refreshed = resolved_provider.get_instance(instance.id)
         instance = dataclasses.replace(instance, status=refreshed.status)
 
+    # C29: start the heartbeat loop NOW — instance is RUNNING per the provider,
+    # so util_endpoint snapshots return real data and STALL/RESTART_LOOP
+    # predicates can fire throughout engine.provision + wait_for_ready instead
+    # of waiting until deploy_session resumes after provision returns. A
+    # closure failure falls through to hb_loop=None so a bug in the heartbeat
+    # construction path never blocks a fresh boot — the late-start path in
+    # deploy_session handles the caller-supplied warm-pod recovery.
+    hb_loop: HeartbeatLoopProtocol | None = None
+    if start_heartbeat is not None:
+        try:
+            hb_loop = start_heartbeat(instance)
+        except Exception:  # noqa: BLE001 — fall-through to late-start
+            _log.exception(
+                "C29: start_heartbeat closure failed for %s; falling through "
+                "to late-start hb_loop construction in deploy_session",
+                instance.id,
+            )
+            hb_loop = None
+
     # NEW — Layer Q: wire provider.get_instance onto engine before engine.provision
     resolved_engine.attach_get_instance(resolved_provider.get_instance)
 
@@ -616,13 +753,38 @@ def _provision_instance_and_build_backend(
             # See docs/superpowers/specs/2026-06-10-provision-marker-alias-keying-design.md.
             capability_key_hex=marker_key_for(cfg, default=key.derive()),
             cfg_dict_override=cfg_dict,
+            cancel_token=cancel_token,
         )
     except (ProvisionFailed, ProvisionTimeout, CapabilityMismatch, ValidationError):
+        # C29: stop the boot-phase heartbeat before destroying the pod so the
+        # next tick doesn't observe a missing pod and surface a spurious
+        # provider error.
+        if hb_loop is not None:
+            hb_loop.stop()
         resolved_provider.destroy_instance(instance.id)
+        raise
+    except Cancelled:
+        # C29: reap-during-boot OR operator-Ctrl-C path. When the heartbeat
+        # loop fires a reap predicate it has already destroyed the pod itself,
+        # so the re-destroy here is the no-op leg of an idempotent destroy.
+        # When the operator interrupts during boot, hb_loop has NOT destroyed
+        # — this clause IS the destroy. Provider failures (RunPod 404 on
+        # already-gone pod) are swallowed + logged so the Cancelled keeps
+        # propagating to the operator.
+        if hb_loop is not None:
+            hb_loop.stop()
+        try:
+            resolved_provider.destroy_instance(instance.id)
+        except Exception as destroy_exc:  # noqa: BLE001
+            _log.warning(
+                "C29: idempotent destroy after Cancelled raised %s for %s",
+                destroy_exc,
+                instance.id,
+            )
         raise
 
     backend = resolved_engine.backend(instance, cfg_dict)
-    return instance, backend
+    return ProvisionResult(instance=instance, backend=backend, hb_loop=hb_loop)
 
 
 # ---------------------------------------------------------------------------
@@ -859,6 +1021,74 @@ def deploy_session(
             )
         claim_holder.install(inst)
 
+    # ------------------------------------------------------------------
+    # C29 — build the start_heartbeat closure ONCE per deploy_session.
+    #
+    # The closure is invoked from inside _provision_instance_and_build_backend
+    # right after the RunPod-status poll succeeds (cold-start branches), so
+    # the HeartbeatLoop ticks throughout engine.provision / wait_for_ready
+    # instead of waiting until deploy_session resumes after provision returns.
+    # ``None`` for any of the following short-circuits the closure and the
+    # post-Step-8.5 fallback also stays inert:
+    #
+    #   - hosted engines (``requires_compute`` is False)
+    #   - heartbeat disabled (``heartbeat_interval_s`` is None or <= 0)
+    #   - no provider resolved (the helper would not be called either)
+    #
+    # The caller-supplied warm-pod branch reuses the same closure after Step
+    # 8.5 — it has no boot phase to protect but still wants steady-state ticks.
+    # ------------------------------------------------------------------
+    _start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None
+    if (
+        _hb_interval is not None
+        and _hb_interval > 0
+        and resolved_engine.requires_compute
+        and resolved_provider is not None
+    ):
+        from kinoforge._adapters import build_util_endpoint_for
+
+        _util_endpoint = (
+            build_util_endpoint_for(cfg, creds) if creds is not None else None
+        )
+        _stall_window_s: float | None = None
+        _stall_gpu_threshold = 5.0
+        _stall_cpu_threshold = 20.0
+        _restart_loop_window_s: float | None = None
+        _restart_loop_uptime_threshold_s = 90.0
+        _provider_kind: str | None = None
+        if cfg.compute is not None:
+            _provider_kind = cfg.compute.provider
+            _lc = cfg.compute.lifecycle
+            if _lc is not None and _lc.stall_reap_enabled:
+                _stall_window_s = _lc.stall_window_s
+                _stall_gpu_threshold = _lc.stall_gpu_threshold
+                _stall_cpu_threshold = _lc.stall_cpu_threshold
+            if _lc is not None and _lc.restart_loop_reap_enabled:
+                _restart_loop_window_s = _lc.restart_loop_window_s
+                _restart_loop_uptime_threshold_s = _lc.restart_loop_uptime_threshold_s
+        _factory: Callable[..., HeartbeatLoopProtocol] = (
+            heartbeat_loop_factory or HeartbeatLoop
+        )
+        _start_heartbeat = _build_start_heartbeat_closure(
+            ledger=Ledger(store=store),
+            provider=resolved_provider,
+            interval=_hb_interval,
+            util_endpoint=_util_endpoint,
+            cancel_token=cancel_token,
+            provider_kind=_provider_kind,
+            stall_window_s=_stall_window_s,
+            stall_gpu_threshold=_stall_gpu_threshold,
+            stall_cpu_threshold=_stall_cpu_threshold,
+            restart_loop_window_s=_restart_loop_window_s,
+            restart_loop_uptime_threshold_s=_restart_loop_uptime_threshold_s,
+            factory=_factory,
+        )
+
+    # C29 — hb_loop populated either by the cold-start closure invocation
+    # inside _provision_instance_and_build_backend or by the late-start
+    # fallback for caller-supplied warm pods after Step 8.5.
+    hb_loop: HeartbeatLoopProtocol | None = None
+
     try:
         with claim_holder:
             # --------------------------------------------------------------
@@ -883,10 +1113,12 @@ def deploy_session(
                     if _caller_supplied_instance:
                         # Caller pre-created the pod; marker-idempotent provision.
                         claim_holder.install(instance)  # type: ignore[arg-type]
-                        resolved_engine.provision(instance, cfg_dict)
+                        resolved_engine.provision(
+                            instance, cfg_dict, cancel_token=cancel_token
+                        )
                         backend = resolved_engine.backend(instance, cfg_dict)
                     else:
-                        instance, backend = _provision_instance_and_build_backend(
+                        _result = _provision_instance_and_build_backend(
                             resolved_engine=resolved_engine,
                             resolved_provider=resolved_provider,
                             cfg=cfg,
@@ -898,7 +1130,10 @@ def deploy_session(
                             for_discovery=True,
                             tags=tags,
                             on_instance_created=_record_then_install,
+                            cancel_token=cancel_token,
+                            start_heartbeat=_start_heartbeat,
                         )
+                        instance, backend, hb_loop = _result
                 else:
                     backend = resolved_engine.backend(None, cfg_dict)
 
@@ -916,10 +1151,12 @@ def deploy_session(
                         ) from None
                     if _caller_supplied_instance:
                         claim_holder.install(instance)  # type: ignore[arg-type]
-                        resolved_engine.provision(instance, cfg_dict)
+                        resolved_engine.provision(
+                            instance, cfg_dict, cancel_token=cancel_token
+                        )
                         backend = resolved_engine.backend(instance, cfg_dict)
                     else:
-                        instance, backend = _provision_instance_and_build_backend(
+                        _result = _provision_instance_and_build_backend(
                             resolved_engine=resolved_engine,
                             resolved_provider=resolved_provider,
                             cfg=cfg,
@@ -931,7 +1168,10 @@ def deploy_session(
                             for_discovery=False,
                             tags=tags,
                             on_instance_created=_record_then_install,
+                            cancel_token=cancel_token,
+                            start_heartbeat=_start_heartbeat,
                         )
+                        instance, backend, hb_loop = _result
                 else:
                     backend = resolved_engine.backend(None, cfg_dict)
 
@@ -969,68 +1209,29 @@ def deploy_session(
                 provider=resolved_provider,
             )
 
-            # Layer U — spawn a background HeartbeatLoop when configured.
-            # Gated on both (a) a positive interval AND (b) a compute instance
-            # to track. Hosted-engine sessions have no instance + no
-            # provider.heartbeat to call, so the loop would log exceptions
-            # every tick. The factory seam lets tests substitute a non-
-            # threaded spy.
-            hb_loop: HeartbeatLoopProtocol | None = None
-            interval = cfg.lifecycle().heartbeat_interval_s
+            # C29 — late-start HeartbeatLoop for the caller-supplied warm-pod
+            # branch. Cold-start branches above already populated ``hb_loop``
+            # by invoking ``_start_heartbeat`` inside
+            # ``_provision_instance_and_build_backend`` (right after the
+            # RunPod-status poll succeeded). Caller-supplied pods skipped that
+            # path — they have no boot phase to protect — so the loop is
+            # constructed here at the original pre-C29 location.
             if (
-                interval is not None
-                and interval > 0
+                hb_loop is None
+                and _start_heartbeat is not None
                 and instance is not None
-                and resolved_provider is not None
             ):
-                factory: Callable[..., HeartbeatLoopProtocol] = (
-                    heartbeat_loop_factory or HeartbeatLoop
-                )
-                # C26: build util-snapshot endpoint + thread stall thresholds.
-                # When build_util_endpoint_for returns None (kill switch or
-                # unsupported provider), HeartbeatLoop falls back to the B5a
-                # heartbeat-only path. Reading thresholds direct from cfg.compute
-                # avoids extending InterfaceLifecycle for a path that's only
-                # consumed here.
-                from kinoforge._adapters import build_util_endpoint_for
+                try:
+                    hb_loop = _start_heartbeat(instance)
+                except Exception:  # noqa: BLE001
+                    _log.exception(
+                        "C29: late-start hb_loop construction failed for "
+                        "caller-supplied %s",
+                        instance.id,
+                    )
+                    hb_loop = None
 
-                util_endpoint = (
-                    build_util_endpoint_for(cfg, creds) if creds is not None else None
-                )
-                stall_window_s: float | None = None
-                stall_gpu_threshold = 5.0
-                stall_cpu_threshold = 20.0
-                # C27: restart-loop predicate cfg knobs — None window = kill switch.
-                restart_loop_window_s: float | None = None
-                restart_loop_uptime_threshold_s = 90.0
-                provider_kind: str | None = None
-                if cfg.compute is not None:
-                    provider_kind = cfg.compute.provider
-                    lc = cfg.compute.lifecycle
-                    if lc is not None and lc.stall_reap_enabled:
-                        stall_window_s = lc.stall_window_s
-                        stall_gpu_threshold = lc.stall_gpu_threshold
-                        stall_cpu_threshold = lc.stall_cpu_threshold
-                    if lc is not None and lc.restart_loop_reap_enabled:
-                        restart_loop_window_s = lc.restart_loop_window_s
-                        restart_loop_uptime_threshold_s = (
-                            lc.restart_loop_uptime_threshold_s
-                        )
-                hb_loop = factory(
-                    ledger=Ledger(store=store),
-                    provider=resolved_provider,
-                    instance_id=instance.id,
-                    interval_s=interval,
-                    util_endpoint=util_endpoint,
-                    cancel_token=cancel_token,
-                    provider_kind=provider_kind,
-                    stall_window_s=stall_window_s,
-                    stall_gpu_threshold=stall_gpu_threshold,
-                    stall_cpu_threshold=stall_cpu_threshold,
-                    restart_loop_window_s=restart_loop_window_s,
-                    restart_loop_uptime_threshold_s=restart_loop_uptime_threshold_s,
-                )
-                hb_loop.start()
+            if hb_loop is not None and instance is not None:
                 # B3 — record session_start so concurrent scanners see this CLI's claim.
                 # Write AFTER hb_loop.start() so the heartbeat freshness gate trusts
                 # the marker. Touch failure is non-fatal — log + continue.

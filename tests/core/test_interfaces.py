@@ -114,8 +114,8 @@ def test_extract_last_frame_default_raises_with_engine_name() -> None:
         requires_compute: bool = False
         requires_local_weights: bool = False
 
-        def provision(self, instance, cfg):  # noqa: ANN001
-            pass
+        def provision(self, instance, cfg, *, cancel_token=None):  # noqa: ANN001
+            del cancel_token
 
         def backend(self, instance, cfg):  # noqa: ANN001
             raise NotImplementedError

@@ -22,7 +22,7 @@ engine:
         ref: "4ee72c065db22c9d96c2427954dc69e7b908444b"
 
 models:
-  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1-T2V-14B_fp8_e4m3fn.safetensors"
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors"
     kind: base
     target: diffusion_models
   - ref: "hf:Kijai/WanVideo_comfy:Wan2_1_VAE_bf16.safetensors"
@@ -64,7 +64,7 @@ compute:
     restart_loop_uptime_threshold_s: 90
 
 spec:
-  graph_file: ../../examples/configs/runpod-comfyui-wan-t2v.graph.json
+  graph_file: ../../examples/configs/runpod-comfyui-wan-t2v-1_3b.graph.json
   asset_node_ids: {}
   prompt_node_ids:
     positive: "16"

@@ -60,7 +60,13 @@ class _FakeImageEngine(ImageEngine):
     def __init__(self, p: ImageProfile) -> None:
         self.p = p
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         return
 
     def backend(

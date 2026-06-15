@@ -1,0 +1,44 @@
+# C29 Phase B acceptance-smoke cfg — boot-phase RESTART_LOOP_REAP fires
+# during engine.provision while the pod's container restart-loops.
+#
+# Compute: cheapest RunPod offer (~$0.13/hr ⇒ ≤ $0.20 spend).
+# Engine:  FakeEngine — pure heartbeat; provision_script forces a restart loop.
+# Lifecycle:
+#   heartbeat_interval_s:        15  (slower → richer trail before reap)
+#   restart_loop_reap_enabled:   true
+#   restart_loop_window_s:       60   (4 × interval = REAP fires after 60 s low-uptime)
+#   restart_loop_uptime_threshold_s: 90   (any uptime < 90 s counts as low)
+#   boot_timeout:                3m   (outer backstop — REAP fires well before this)
+# Live spend ceiling: $0.20.
+
+engine:
+  kind: fake
+
+models: []
+
+compute:
+  provider: runpod
+  image: "alpine:latest"
+  mode: pod
+  warm_reuse_auto_attach: false
+  heartbeat_mode: graphql-tag
+  requirements:
+    min_vram_gb: 0
+    min_cuda: "0.0"
+    max_usd_per_hr: 10.0
+    disk_gb: 0
+  lifecycle:
+    idle_timeout: 30m
+    job_timeout: 10m
+    time_buffer: 1m
+    max_lifetime: 15m
+    boot_timeout: 3m
+    budget: 1.0
+    heartbeat_interval_s: 15
+    stall_reap_enabled: false
+    restart_loop_reap_enabled: true
+    restart_loop_window_s: 60
+    restart_loop_uptime_threshold_s: 90
+
+spec: {}
+params: {}

@@ -18,10 +18,13 @@ Live spend ceiling: ~$0.20 (one cold boot ~$0.05 + retry headroom).
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -120,9 +123,66 @@ def _section_after(body: str, marker: str) -> str:
     return tail[1].strip() if len(tail) > 1 else ""
 
 
+_RUNPOD_GRAPHQL = "https://api.runpod.io/graphql"
+_RUNPOD_UA = "kinoforge-c28-test-cleanup/1.0"
+
+
+def _runpod_post(query: str) -> dict[str, Any]:
+    api_key = os.environ.get("RUNPOD_API_KEY", "")
+    body = json.dumps({"query": query}).encode()
+    req = urllib.request.Request(
+        _RUNPOD_GRAPHQL,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": _RUNPOD_UA,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+            return dict(json.loads(resp.read()))
+    except urllib.error.HTTPError as exc:
+        return {"errors": [{"message": exc.read()[:300].decode("ascii", "replace")}]}
+
+
+def _force_terminate(pod_id: str) -> None:
+    """Hit RunPod podTerminate directly — bypasses kinoforge's ledger path.
+
+    The kinoforge `destroy --id` CLI looks up the pod in the local ledger
+    first; on rc-nonzero attempts the ledger may be in a partial state and
+    the lookup silently fails (real bug surfaced 2026-06-13). Direct
+    GraphQL terminate is the budget-safety net.
+    """
+    _runpod_post(
+        'mutation { podTerminate(input: {podId: "' + pod_id + '"}) }',
+    )
+
+
+# Pods this process created — populated by the test as soon as the ledger
+# surfaces an id. The atexit hook below ONLY terminates pods in this set so
+# concurrent pytest invocations don't cannibalise each other.
+_OWNED_PODS: set[str] = set()
+
+
+def _terminate_owned_pods() -> None:
+    """Atexit safety net: tear down any pod THIS process created."""
+    for pod_id in list(_OWNED_PODS):
+        print(f"[atexit] terminating owned pod: {pod_id}")
+        _force_terminate(pod_id)
+
+
+atexit.register(_terminate_owned_pods)
+
+
 def _destroy_safely(state_dir: Path, pod_id: str | None) -> None:
+    """Belt-and-suspenders teardown: direct GraphQL terminate + best-effort
+    kinoforge destroy (the latter keeps the ledger in a clean state when
+    possible). Direct terminate is the authoritative call."""
     if pod_id is None:
         return
+    _force_terminate(pod_id)
     subprocess.run(  # noqa: S603
         [
             "pixi",
@@ -167,6 +227,8 @@ def test_c28_phase_a_diagnostic_capture_live(tmp_path: Path) -> None:
             run_id=run_id,
         )
         pod_id = _extract_pod_id_from_ledger(state_dir)
+        if pod_id:
+            _OWNED_PODS.add(pod_id)
 
         if proc.returncode == 0:
             succeeded += 1
