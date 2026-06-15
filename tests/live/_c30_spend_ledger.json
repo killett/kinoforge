@@ -1,4 +1,14 @@
 {
-  "cumulative_usd": 0.0,
-  "entries": []
+  "cumulative_usd": 0.022298,
+  "entries": [
+    {
+      "phase": "a1a",
+      "pod_id": "rpj1p5ygs5ko50",
+      "gpu_type_id": "NVIDIA GeForce RTX 3070",
+      "cents_per_hr": 13,
+      "start_ts": "2026-06-14T22:28:05.804189-07:00",
+      "end_ts": "2026-06-14T22:38:23.294739-07:00",
+      "est_spend_usd": 0.022298
+    }
+  ]
 }

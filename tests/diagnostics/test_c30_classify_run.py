@@ -38,6 +38,24 @@ def test_ambiguous_when_single_sample_and_no_fires() -> None:
     assert classify_run([(0.0, 30)], fire_count=0) is Verdict.AMBIGUOUS
 
 
+def test_restarted_when_any_uptime_negative() -> None:
+    """Non-physical negative uptime is a positive restart signal even with no fires.
+
+    Empirical: C30 A1a run c30-a1a-20260614T222804 returned uptimes like
+    ``[6, -2, -15, -11, 0, -4, ...]`` while the S3 EXIT trap never fired
+    (pod was killed before ``aws s3 cp`` completed). Negatives are
+    non-physical and unambiguously indicate the pod is actively cycling.
+    """
+    trail = [
+        (0.0, None),
+        (30.0, 6),
+        (60.0, -2),
+        (90.0, -15),
+        (120.0, -11),
+    ]
+    assert classify_run(trail, fire_count=0) is Verdict.RESTARTED
+
+
 def test_restarted_takes_precedence_over_monotonic_appearance() -> None:
     """Even if uptime later climbs again, >=3 fires means RESTARTED."""
     trail = [(0.0, 60), (30.0, 90), (60.0, 1), (90.0, 31)]
