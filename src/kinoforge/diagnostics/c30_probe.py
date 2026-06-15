@@ -9,6 +9,7 @@ All public helpers are documented in
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from botocore.exceptions import ClientError
+
+_LOG = logging.getLogger(__name__)
 
 _DIAG_KEY_PATTERN = re.compile(r"/diag-\d{8}T\d{6}Z\.txt$")
 
@@ -322,3 +325,46 @@ class PodStatusPoller:
             return None
         val = runtime.get("uptimeInSeconds")
         return int(val) if val is not None else None
+
+
+_TERMINATE_MUTATION = (
+    "mutation podTerminate($podId: String!) { podTerminate(input: { podId: $podId }) }"
+)
+_LIST_PODS_QUERY = "query { myself { pods { id } } }"
+
+
+def destroy_with_retry(
+    client: Any,  # noqa: ANN401 — injected GraphQL client; SDK-agnostic
+    *,
+    pod_id: str,
+    attempts: int = 5,
+    sleep_s: float = 3.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    """Issue ``podTerminate`` and verify the pod has actually left ``myself.pods``.
+
+    Args:
+        client: GraphQL client.
+        pod_id: Pod to terminate.
+        attempts: Maximum terminate calls before giving up. Default 5.
+        sleep_s: Sleep between polls. Default 3 s.
+        sleep: Injectable sleep callable.
+
+    Returns:
+        Number of terminate mutations issued.
+    """
+    n = 0
+    for _ in range(attempts):
+        n += 1
+        client.execute(_TERMINATE_MUTATION, {"podId": pod_id})
+        sleep(sleep_s)
+        listing = client.execute(_LIST_PODS_QUERY, {})
+        pods = (listing.get("data") or {}).get("myself", {}).get("pods") or []
+        if not any(p.get("id") == pod_id for p in pods):
+            return n
+    _LOG.warning(
+        "c30 destroy_with_retry: pod %s still present after %d attempts",
+        pod_id,
+        attempts,
+    )
+    return n
