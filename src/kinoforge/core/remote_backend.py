@@ -395,7 +395,13 @@ class RemoteSubmitPollEngine(GenerationEngine):
     # GenerationEngine interface
     # ------------------------------------------------------------------
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         """Verify creds; reject any non-None ``instance`` (no compute)."""
         if instance is not None:
             raise KinoforgeError(

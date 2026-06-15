@@ -70,7 +70,9 @@ class _SpyEngine:
         self.requires_local_weights = requires_local_weights
         self._log = call_log
 
-    def provision(self, instance: Instance | None, cfg: Any) -> None:  # noqa: D102
+    def provision(
+        self, instance: Instance | None, cfg: Any, *, cancel_token: object | None = None
+    ) -> None:  # noqa: D102
         self._log.append("provision")
 
     # The remaining abstract methods are not exercised by provisioner tests.
@@ -382,7 +384,13 @@ def test_pydantic_cfg_is_dumped_to_dict_before_engine_provision(
     received_cfgs: list[Any] = []
 
     class _RecordingEngine(_SpyEngine):
-        def provision(self, instance: Instance | None, cfg: Any) -> None:  # noqa: D102
+        def provision(
+            self,
+            instance: Instance | None,
+            cfg: Any,
+            *,
+            cancel_token: object | None = None,
+        ) -> None:  # noqa: D102
             received_cfgs.append(cfg)
             super().provision(instance, cfg)
 
@@ -450,7 +458,13 @@ def test_diffusers_provision_receives_dict_cfg(tmp_path: Path) -> None:
     received_cfgs: list[Any] = []
     real_engine = DiffusersEngine()
 
-    def _capture_provision(instance: Instance | None, cfg: Any) -> None:
+    def _capture_provision(
+        instance: Instance | None,
+        cfg: Any,
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
+        del cancel_token
         received_cfgs.append(cfg)
         # Defensive: exercise the same access pattern the real engine uses,
         # so that a future regression to non-dict cfg also fails here.
@@ -506,7 +520,13 @@ def test_comfyui_provision_receives_dict_cfg(tmp_path: Path) -> None:
     received_cfgs: list[Any] = []
     real_engine = ComfyUIEngine()
 
-    def _capture_provision(instance: Instance | None, cfg: Any) -> None:
+    def _capture_provision(
+        instance: Instance | None,
+        cfg: Any,
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
+        del cancel_token
         received_cfgs.append(cfg)
         _ = cfg.get("engine", {}).get("comfyui", {})
         _ = cfg.get("models", [])

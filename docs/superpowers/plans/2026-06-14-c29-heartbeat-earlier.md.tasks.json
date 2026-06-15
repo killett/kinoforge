@@ -1,0 +1,112 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-14-c29-heartbeat-earlier.md",
+  "specPath": "docs/superpowers/specs/2026-06-14-c29-heartbeat-earlier-design.md",
+  "lastUpdated": "2026-06-14",
+  "tasks": [
+    {
+      "id": 7,
+      "subject": "Task 0: Baseline + audit grep",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Lock in green baseline test count + surface call sites the spec missed.\n\n**Files:** read-only.\n\n**Verify:** `pixi run test 2>&1 | tail -10` → \"X passed\".\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run test 2>&1 | tail -10\", \"acceptanceCriteria\": [\"pixi run test exits 0\", \"rg audit shows no surprise call sites\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 1: Engine wait_for_ready — cancel_token kwarg (Protocol + 3 impls)",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "**Goal:** Add cancel_token kwarg to wait_for_ready Protocol + ComfyUI/Diffusers/Fake impls; raise_if_set() at top of poll loop.\n\n**Files:** interfaces.py, 3 engines, 3 new test files.\n\n**Verify:** new + existing wait_for_ready tests pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/engines/diffusers/__init__.py\", \"src/kinoforge/engines/fake/__init__.py\", \"tests/engines/test_comfyui_wait_for_ready_cancel.py\", \"tests/engines/test_diffusers_wait_for_ready_cancel.py\", \"tests/engines/test_fake_wait_for_ready_cancel.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui_wait_for_ready_cancel.py tests/engines/test_diffusers_wait_for_ready_cancel.py tests/engines/test_fake_wait_for_ready_cancel.py tests/engines/test_comfyui_wait_for_ready.py tests/engines/test_diffusers_wait_for_ready.py -v\", \"acceptanceCriteria\": [\"3 engine impls accept cancel_token kwarg\", \"raise_if_set() at top of poll loop\", \"Protocol decl updated\", \"3 new test files pass\", \"existing wait_for_ready tests pass unchanged\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 2: Engine provision() threads cancel_token",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** GenerationEngine.provision() accepts cancel_token + threads into wait_for_ready call.\n\n**Files:** interfaces.py + 3 engines.\n\n**Verify:** `pixi run pytest tests/engines/ -v` → all pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/engines/diffusers/__init__.py\", \"src/kinoforge/engines/fake/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/ -v 2>&1 | tail -10\", \"acceptanceCriteria\": [\"3 provision impls accept cancel_token kwarg\", \"wait_for_ready called with cancel_token in 2 impls\", \"Protocol decls updated\", \"existing provision-branch tests pass unchanged\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 3: _provision_compute_once threads cancel_token",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Orchestrator helper accepts + forwards cancel_token to engine.provision(). Also adds cancel_token to _provision_instance_and_build_backend signature as interim plumbing.\n\n**Verify:** orchestrator + session-claim + heartbeat tests pass unchanged.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_compute.py tests/core/test_orchestrator_session_claim.py tests/core/test_orchestrator_heartbeat.py -v\", \"acceptanceCriteria\": [\"_provision_compute_once accepts cancel_token kwarg\", \"engine.provision called with cancel_token\", \"_provision_instance_and_build_backend accepts cancel_token\", \"call sites compile\", \"existing tests pass unchanged\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 4: ProvisionResult NamedTuple + start_heartbeat closure",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Hoist hb_loop construction into a start_heartbeat closure invoked from _provision_instance_and_build_backend right after RunPod-status poll (orch:596). Returns ProvisionResult(instance, backend, hb_loop) NamedTuple.\n\n**Verify:** 5 new c29 unit tests + existing heartbeat tests pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator_c29_start_heartbeat.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_c29_start_heartbeat.py tests/core/test_orchestrator_compute.py tests/core/test_orchestrator_heartbeat.py -v\", \"acceptanceCriteria\": [\"ProvisionResult NamedTuple defined\", \"_build_start_heartbeat_closure helper added\", \"start_heartbeat kwarg on _provision_instance_and_build_backend\", \"closure invoked after status=ready before engine.provision\", \"returns ProvisionResult\", \"deploy_session wires closure to both call sites\", \"caller-supplied branch byte-identical\", \"5 new c29 unit tests pass\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 5: Cancelled handling in _provision_instance_and_build_backend",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "**Goal:** except Cancelled clause stops hb_loop + idempotent re-destroy pod. Operator-Ctrl-C-during-boot path destroys cleanly.\n\n**Verify:** 3 new cancel-during-boot tests pass.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator_c29_cancel_during_boot.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_c29_cancel_during_boot.py -v\", \"acceptanceCriteria\": [\"except Cancelled clause added\", \"hb_loop.stop() called before destroy\", \"idempotent destroy_instance under Cancelled\", \"Cancelled import added\", \"3 new cancel-during-boot tests pass\"]}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 6: Update modified existing tests",
+      "status": "pending",
+      "blockedBy": [12],
+      "description": "**Goal:** Bring 7+ existing test files (creds_default, batch_creds_default, orchestrator_heartbeat, provision_branch fakes, audit set) back to green.\n\n**Verify:** `pixi run pytest tests/core/ tests/engines/ -v` → all pass.\n\n```json:metadata\n{\"files\": [\"tests/core/test_orchestrator_heartbeat.py\", \"tests/core/test_orchestrator_creds_default.py\", \"tests/core/test_batch_creds_default.py\", \"tests/engines/test_comfyui_provision_branch.py\", \"tests/engines/test_diffusers_provision_branch.py\", \"tests/core/test_orchestrator_compute.py\", \"tests/core/test_orchestrator_no_reuse.py\", \"tests/core/test_orchestrator_session_claim.py\", \"tests/core/test_orchestrator_session_fields.py\"], \"verifyCommand\": \"pixi run pytest tests/core/ tests/engines/ -v 2>&1 | tail -15\", \"acceptanceCriteria\": [\"spy returns ProvisionResult\", \"fake wait_for_ready accepts cancel_token\", \"heartbeat timing assertions migrated\", \"auditor files pass\", \"no regressions in unchanged tests\"]}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 7: Full green sweep",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "**Goal:** Whole pixi run test green; lint + typecheck clean.\n\n**Verify:** `pixi run test 2>&1 | tail -10` → \"X passed\" with X ≥ baseline + ~13.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run test 2>&1 | tail -10\", \"acceptanceCriteria\": [\"pixi run test exits 0\", \"lint clean\", \"typecheck clean\", \"test count >= baseline + ~13\"]}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 8: RED-scaffold Smoke A (boot-phase STALL_REAP)",
+      "status": "pending",
+      "blockedBy": [14],
+      "description": "**Goal:** Committed RED smoke for boot-phase STALL_REAP. Lands BEFORE live spend per CLAUDE.md durability rule.\n\n**Verify:** `pixi run pytest tests/live/test_c29_phase_a_boot_stall_live.py --collect-only` → 1 test collected.\n\n```json:metadata\n{\"files\": [\"tests/live/test_c29_phase_a_boot_stall_live.py\", \"tests/live/_c29_phase_a_cfg.yaml\"], \"verifyCommand\": \"pixi run pytest tests/live/test_c29_phase_a_boot_stall_live.py --collect-only\", \"acceptanceCriteria\": [\"smoke file with xfail+live markers\", \"cfg with stall_window_s=60, sleep 600 provision\", \"committed RED\", \"1 test collected\"]}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 9: Live Smoke A execution",
+      "status": "pending",
+      "blockedBy": [15],
+      "description": "**Goal:** Run Smoke A against real RunPod; STALL_REAP fires; flip xfail → pass.\n\n**Verify:** `KINOFORGE_LIVE=1 pixi run pytest tests/live/test_c29_phase_a_boot_stall_live.py -v` → PASS.\n\n```json:metadata\n{\"files\": [\"tests/live/test_c29_phase_a_boot_stall_live.py\", \"tests/live/_c29_phase_a_evidence.json\"], \"verifyCommand\": \"KINOFORGE_LIVE=1 pixi run pytest tests/live/test_c29_phase_a_boot_stall_live.py -v 2>&1 | tail -10\", \"acceptanceCriteria\": [\"preflight clean\", \"STALL_REAP fired\", \"consecutive_low_util_count >= 6\", \"elapsed < 300s\", \"xfail removed\", \"spend <= $0.20\"]}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 10: RED-scaffold Smoke B (boot-phase RESTART_LOOP_REAP)",
+      "status": "pending",
+      "blockedBy": [16],
+      "description": "**Goal:** Committed RED smoke for boot-phase RESTART_LOOP_REAP.\n\n**Verify:** `pixi run pytest tests/live/test_c29_phase_b_boot_restart_loop_live.py --collect-only` → 1 test collected.\n\n```json:metadata\n{\"files\": [\"tests/live/test_c29_phase_b_boot_restart_loop_live.py\", \"tests/live/_c29_phase_b_cfg.yaml\"], \"verifyCommand\": \"pixi run pytest tests/live/test_c29_phase_b_boot_restart_loop_live.py --collect-only\", \"acceptanceCriteria\": [\"xfail+live markers\", \"restart_loop_window_s=60 cfg\", \"exit 1 provision with restart_policy=always\", \"committed RED\", \"1 test collected\"]}\n```"
+    },
+    {
+      "id": 18,
+      "subject": "Task 11: Live Smoke B execution",
+      "status": "pending",
+      "blockedBy": [17],
+      "description": "**Goal:** Run Smoke B; RESTART_LOOP_REAP fires; flip xfail → pass.\n\n**Verify:** `KINOFORGE_LIVE=1 pixi run pytest tests/live/test_c29_phase_b_boot_restart_loop_live.py -v` → PASS.\n\n```json:metadata\n{\"files\": [\"tests/live/test_c29_phase_b_boot_restart_loop_live.py\", \"tests/live/_c29_phase_b_evidence.json\"], \"verifyCommand\": \"KINOFORGE_LIVE=1 pixi run pytest tests/live/test_c29_phase_b_boot_restart_loop_live.py -v\", \"acceptanceCriteria\": [\"preflight clean\", \"RESTART_LOOP_REAP fired\", \"consecutive_low_uptime_count >= 6\", \"xfail removed\", \"spend <= $0.20\"]}\n```"
+    },
+    {
+      "id": 19,
+      "subject": "Task 12: RED-scaffold Smoke C (kinoforge status during boot)",
+      "status": "pending",
+      "blockedBy": [18],
+      "description": "**Goal:** Committed RED smoke proving kinoforge status returns liveness during boot.\n\n**Verify:** `pixi run pytest tests/live/test_c29_phase_c_boot_status_live.py --collect-only` → 1 test collected.\n\n```json:metadata\n{\"files\": [\"tests/live/test_c29_phase_c_boot_status_live.py\", \"tests/live/_c29_phase_c_cfg.yaml\"], \"verifyCommand\": \"pixi run pytest tests/live/test_c29_phase_c_boot_status_live.py --collect-only\", \"acceptanceCriteria\": [\"xfail+live markers\", \"sleep 120 cfg\", \"subprocess kinoforge status invocation\", \"4 marker assertions\", \"committed RED\", \"1 test collected\"]}\n```"
+    },
+    {
+      "id": 20,
+      "subject": "Task 13: Live Smoke C execution",
+      "status": "pending",
+      "blockedBy": [19],
+      "description": "**Goal:** Run Smoke C; 4 liveness markers in status output; flip xfail → pass.\n\n**Verify:** `KINOFORGE_LIVE=1 pixi run pytest tests/live/test_c29_phase_c_boot_status_live.py -v` → PASS.\n\n```json:metadata\n{\"files\": [\"tests/live/test_c29_phase_c_boot_status_live.py\", \"tests/live/_c29_phase_c_evidence.json\"], \"verifyCommand\": \"KINOFORGE_LIVE=1 pixi run pytest tests/live/test_c29_phase_c_boot_status_live.py -v\", \"acceptanceCriteria\": [\"preflight clean\", \"4 markers in status output\", \"xfail removed\", \"spend <= $0.20\"]}\n```"
+    },
+    {
+      "id": 21,
+      "subject": "Task 14: Close C29 — PROGRESS.md",
+      "status": "pending",
+      "blockedBy": [20],
+      "description": "**Goal:** PROGRESS.md C29 entry → CLOSED with three evidence paths cited.\n\n**Verify:** `rg -n 'C29' PROGRESS.md | head -10` → CLOSED + evidence paths.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'C29' PROGRESS.md | head -10\", \"acceptanceCriteria\": [\"PROGRESS.md shows C29 CLOSED\", \"three evidence paths cited\", \"final pixi run test green\"]}\n```"
+    }
+  ]
+}

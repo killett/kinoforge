@@ -987,3 +987,17 @@ re-fired and reached PROVEN-PROTECTION. See
 `2026-06-13-c27-restart-loop-stall-detection-design.md` §13 for the
 per-task SHA table and Phase A1 / A2 / B outcomes. The C25 Task 4 and
 C26 Task 14 deferred acceptance gates are both closed via that smoke.
+
+### Update 2026-06-13 — C28 ships the prevention layer
+
+C27's util-aware reap is a **detector** that protects against runaway
+cost when the restart loop manifests. **C28** addresses the
+prevention side: diagnostic capture (S3 EXIT-trap upload of in-pod
+boot logs) + pre-baked container image (moves ComfyUI + custom-node
+work to BUILD time) + curl-retry helper (3-attempt loop with sha
+verify and provider-agnostic bearer-token expansion). The Phase A
+diagnostic smoke landed as NO_REPRODUCTION + Hn (silent trap — `aws`
+CLI absent from the base image, now pre-installed in Phase B image);
+gate decision was to ship Phase B + Phase C unconditionally per spec
+table. See `2026-06-13-c28-restart-loop-prevention-design.md` for the
+diagnostic-first prevention design.

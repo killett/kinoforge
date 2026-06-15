@@ -356,7 +356,13 @@ class ImageEngine(ABC):
     requires_local_weights: bool
 
     @abstractmethod
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None: ...  # noqa: D102
+    def provision(  # noqa: D102
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None: ...
 
     @abstractmethod
     def backend(  # noqa: D102
@@ -572,7 +578,13 @@ class GenerationEngine(ABC):
     requires_local_weights: bool
 
     @abstractmethod
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None: ...  # noqa: D102
+    def provision(  # noqa: D102
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None: ...
 
     @abstractmethod
     def backend(  # noqa: D102
@@ -688,6 +700,7 @@ class GenerationEngine(ABC):
         sleep: Callable[[float], None],
         get_instance: Callable[[str], Instance],
         timeout_s: float,
+        cancel_token: CancelToken | None = None,
     ) -> None:
         """Poll until the engine reports ready, status flips terminal, or timeout.
 
@@ -701,12 +714,18 @@ class GenerationEngine(ABC):
             sleep: Injectable sleep used between polls.
             get_instance: Injectable provider lookup for status checks.
             timeout_s: Maximum total wait before raising ``ProvisionTimeout``.
+            cancel_token: C29 cooperative cancellation seam. Concrete impls
+                check ``cancel_token.raise_if_set()`` at the top of each poll
+                iteration so a boot-phase reap raises ``Cancelled`` cleanly.
+                Default ``None`` preserves pre-C29 callers.
 
         Raises:
             NotImplementedError: Subclass did not override.
             ProvisionFailed: Pod boot script crashed (status flipped terminal).
             ProvisionTimeout: Ready check never returned success within ``timeout_s``.
+            Cancelled: ``cancel_token`` was set during the wait.
         """
+        del cancel_token
         raise NotImplementedError(
             f"{type(self).__name__} does not support wait_for_ready"
         )
