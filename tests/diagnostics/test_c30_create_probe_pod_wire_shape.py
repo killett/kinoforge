@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from kinoforge.diagnostics.c30_probe import (
     _C28_TRAP_PREAMBLE_LINES,
+    GraphQLError,
     create_probe_pod,
 )
 
@@ -81,6 +84,59 @@ def test_a1c_listener_payload_has_http_server_in_args() -> None:
     )
     _, vars_ = client.payloads[0]
     assert "python3 -m http.server 8188" in vars_["input"]["dockerArgs"]
+
+
+class _ErrorClient:
+    """Returns the RunPod SUPPLY_CONSTRAINT-shaped GraphQL error response."""
+
+    def execute(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "errors": [
+                {
+                    "message": "There are no longer any instances available "
+                    "with the requested specifications.",
+                    "extensions": {"code": "SUPPLY_CONSTRAINT"},
+                }
+            ],
+            "data": {"podFindAndDeployOnDemand": None},
+        }
+
+
+def test_graphql_error_surfaces_with_code() -> None:
+    """Supply-constraint errors must surface as GraphQLError(code='SUPPLY_CONSTRAINT')."""
+    with pytest.raises(GraphQLError) as ei:
+        create_probe_pod(
+            _ErrorClient(),
+            image="x",
+            ports=None,
+            provision_script="sleep 1",
+            env={},
+            gpu_type_id="NVIDIA RTX A2000",
+            run_id="r",
+            diag_bucket="b",
+        )
+    assert ei.value.code == "SUPPLY_CONSTRAINT"
+    assert "instances available" in str(ei.value)
+
+
+def test_null_data_without_errors_still_raises() -> None:
+    """``data.podFindAndDeployOnDemand=None`` with no errors block also raises."""
+
+    class _NullData:
+        def execute(self, q: str, v: dict[str, Any]) -> dict[str, Any]:
+            return {"data": {"podFindAndDeployOnDemand": None}}
+
+    with pytest.raises(GraphQLError):
+        create_probe_pod(
+            _NullData(),
+            image="x",
+            ports=None,
+            provision_script="sleep 1",
+            env={},
+            gpu_type_id="g",
+            run_id="r",
+            diag_bucket="b",
+        )
 
 
 def test_diag_env_propagated_to_input() -> None:

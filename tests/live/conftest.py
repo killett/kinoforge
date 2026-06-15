@@ -50,8 +50,17 @@ C30_LEDGER = Path(__file__).parent / "_c30_spend_ledger.json"
 C30_DIAG_BUCKET = "kinoforge-pod-diagnostics"
 C30_HARD_CAP_USD = 1.50
 C30_PER_PROBE_CAP_USD = 0.10
-C30_GPU_TYPE_ID = "NVIDIA RTX A2000"
-C30_GPU_CENTS_PER_HR = 10
+# Ranked cheap-GPU candidates with on-demand cents/hr (community cloud).
+# create_probe_pod iterates until one succeeds; supply-constrained GPUs
+# (e.g. RTX A2000) are absent here intentionally. Pricing snapshot
+# 2026-06-14 from runpod.io GraphQL gpuTypes.lowestPrice; refresh if
+# upstream rates change.
+C30_GPU_CANDIDATES: tuple[tuple[str, int], ...] = (
+    ("NVIDIA GeForce RTX 3070", 13),
+    ("NVIDIA GeForce RTX 3080", 17),
+    ("NVIDIA GeForce RTX 3080 Ti", 18),
+    ("NVIDIA RTX 4000 Ada Generation", 20),
+)
 C30_GRAPHQL_URL = "https://api.runpod.io/graphql"
 
 
@@ -141,10 +150,14 @@ def c30_execute_phase(
     register destroy atexit → poll → S3 count → classify → ledger
     append → sidecar write → final destroy). Caller is responsible for
     the predecessor-sidecar gate decision BEFORE calling this.
+
+    Iterates over ``C30_GPU_CANDIDATES`` until a pod-create succeeds; if
+    every candidate hits ``SUPPLY_CONSTRAINT``, raises the last error.
     """
     import atexit
 
     from kinoforge.diagnostics.c30_probe import (
+        GraphQLError,
         PodStatusPoller,
         append_spend_entry,
         assert_under_cap,
@@ -157,16 +170,33 @@ def c30_execute_phase(
     assert_under_cap(C30_LEDGER, hard_cap_usd=C30_HARD_CAP_USD)
 
     run_id = c30_run_id(phase)
-    pod_id = create_probe_pod(
-        client,
-        image=image,
-        ports=ports,
-        provision_script=provision_script,
-        env=env,
-        gpu_type_id=C30_GPU_TYPE_ID,
-        run_id=run_id,
-        diag_bucket=C30_DIAG_BUCKET,
-    )
+    pod_id: str | None = None
+    gpu_type_id_used = ""
+    cents_per_hr_used = 0
+    last_err: GraphQLError | None = None
+    for candidate_id, candidate_cents in C30_GPU_CANDIDATES:
+        try:
+            pod_id = create_probe_pod(
+                client,
+                image=image,
+                ports=ports,
+                provision_script=provision_script,
+                env=env,
+                gpu_type_id=candidate_id,
+                run_id=run_id,
+                diag_bucket=C30_DIAG_BUCKET,
+            )
+        except GraphQLError as exc:
+            if exc.code == "SUPPLY_CONSTRAINT":
+                last_err = exc
+                continue
+            raise
+        gpu_type_id_used = candidate_id
+        cents_per_hr_used = candidate_cents
+        break
+    if pod_id is None:
+        assert last_err is not None
+        raise last_err
 
     def _safe_destroy() -> None:
         try:
@@ -190,15 +220,15 @@ def c30_execute_phase(
     verdict = classify_run(trail, fire_count)
 
     elapsed = end_t - start_t
-    spend = c30_estimate_spend(elapsed, C30_GPU_CENTS_PER_HR)
+    spend = c30_estimate_spend(elapsed, cents_per_hr_used)
 
     append_spend_entry(
         C30_LEDGER,
         {
             "phase": phase,
             "pod_id": pod_id,
-            "gpu_type_id": C30_GPU_TYPE_ID,
-            "cents_per_hr": C30_GPU_CENTS_PER_HR,
+            "gpu_type_id": gpu_type_id_used,
+            "cents_per_hr": cents_per_hr_used,
             "start_ts": start_iso,
             "end_ts": end_iso,
             "est_spend_usd": round(spend, 6),
@@ -213,6 +243,8 @@ def c30_execute_phase(
             "pod_id": pod_id,
             "image": image,
             "ports": ports,
+            "gpu_type_id": gpu_type_id_used,
+            "cents_per_hr": cents_per_hr_used,
             "s3_prefix": f"boot-logs/{run_id}/",
             "fire_count": fire_count,
             "poll_trail": trail,
