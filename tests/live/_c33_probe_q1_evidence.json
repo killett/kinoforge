@@ -1,0 +1,118 @@
+{
+  "phase": "q1",
+  "run_id": "c33-q1-20260615T092220",
+  "pod_id": "17pm8vxqtyoo7l",
+  "image": "ubuntu:22.04",
+  "gpu_type_id": "NVIDIA RTX A5000",
+  "cents_per_hr": 16,
+  "s3_prefix": "boot-logs/c33-q1-20260615T092220/",
+  "window_s": 300,
+  "interval_s": 30,
+  "samples": [
+    {
+      "sampled_at_utc": "2026-06-15T16:22:21.299214+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": null,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 0.212214
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:22:52.075992+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": -7,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 30.988992
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:23:22.899208+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 61.812208
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:23:53.618734+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 92.531734
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:24:24.166933+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 123.079933
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:24:54.754994+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 153.667994
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:25:25.378000+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 184.291
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:25:56.002499+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 214.915499
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:26:26.608684+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 245.521684
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:26:57.191005+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 276.104005
+    },
+    {
+      "sampled_at_utc": "2026-06-15T16:27:27.844410+00:00",
+      "desiredStatus": "RUNNING",
+      "lastStartedAt": "2026-06-15T16:22:21.087Z",
+      "runtime.uptimeInSeconds": 0,
+      "top.uptimeSeconds": 0,
+      "estimated_uptime_s_from_lastStartedAt": 306.75741
+    }
+  ],
+  "n_samples": 11,
+  "n_runtime_uptime_present": 10,
+  "n_runtime_uptime_negative": 1,
+  "n_top_uptime_present": 11,
+  "n_top_uptime_negative": 0,
+  "agreement_nested_vs_estimate": {
+    "compared": 10,
+    "max_abs_diff_s": 306.75741,
+    "mean_abs_diff_s": 169.6670459
+  },
+  "agreement_top_vs_estimate": {
+    "compared": 11,
+    "max_abs_diff_s": 306.75741,
+    "mean_abs_diff_s": 153.62569754545456
+  },
+  "est_spend_usd": 0.013652,
+  "captured_at": "2026-06-15T09:27:28.460477-07:00"
+}
