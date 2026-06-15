@@ -507,7 +507,7 @@ def c33_execute_p1(
     base_docker_args: str | None = None
     t0_uptime: int | None = None
     t0_last_started_at: str | None = None
-    deadline_t = start_t + 300
+    deadline_t = start_t + 600
     while _time.time() < deadline_t:
         _time.sleep(15)
         sample = PodStatusPollerExtended(
@@ -538,7 +538,7 @@ def c33_execute_p1(
             "cents_per_hr": cents_per_hr_used,
             "s3_prefix": f"boot-logs/{run_id}/",
             "verdict": "ambiguous",
-            "abort_reason": "pod_failed_to_stabilize_in_300s",
+            "abort_reason": "pod_failed_to_stabilize_in_600s",
             "est_spend_usd": round(
                 c30_estimate_spend(end_t - start_t, cents_per_hr_used), 6
             ),
