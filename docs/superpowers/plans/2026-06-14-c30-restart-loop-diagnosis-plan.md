@@ -1322,114 +1322,77 @@ git commit -m "feat(c30): destroy_with_retry inlining C31 verify-and-retry patte
 
 ---
 
-### Task 7: Write A2–A6 cfg files
+### Task 7: A2–A6 provision-script constants (PIVOT — direct-GraphQL)
 
-**Goal:** Five YAML cfgs for the provision walk-down. Each sets `diagnostic_mode: True`, both reap predicates OFF, uses cheapest GPU tier. Schema-validated by existing `Config.load_yaml` unit tests.
+**Pivot rationale (2026-06-14):** Original Task 7 assumed a flat cfg schema (`engine.kind` + `engine.provision_script`, top-level `lifecycle`) and a `Config.load_yaml` loader. Real schema is `compute.lifecycle.*` + `engine.comfyui.{repo, branch, custom_nodes[], image, launch_args}` + `models[]`, loaded via `load_config()` (src/kinoforge/core/config.py:1048). `ComfyUIEngine.render_provision` unconditionally renders the full clone→pip→nodes→download→exec pipeline; the only knob (`slim_mode`) is auto-derived from image prefix and not configurable. There is no `kinoforge deploy --diagnostic-mode` flag.
+
+**Pivot:** Drop the YAML approach. Author A2–A6 as `list[str]` bash constants in `c30_probe.py` that mirror successive rungs of `ComfyUIEngine.render_provision`. Each rung extends the previous by exactly the lines the engine would emit for that step. All live probes use `create_probe_pod` uniformly (Task 4) and pass these constants verbatim as `provision_script` (joined with `\n`). Rigorously honors spec §2 "zero production-code mutation" and gives crisper isolation than re-using the orchestrator pipeline. Lose the side-property that A2 tests selfterm — acceptable because selfterm is a *watchdog* not a *restarter*; the C30 bug is platform-side restart loop, not selfterm action.
 
 **Files:**
-- Create: `src/kinoforge/cfg/c30_phase_a2.yaml`
-- Create: `src/kinoforge/cfg/c30_phase_a3.yaml`
-- Create: `src/kinoforge/cfg/c30_phase_a4.yaml`
-- Create: `src/kinoforge/cfg/c30_phase_a5.yaml`
-- Create: `src/kinoforge/cfg/c30_phase_a6.yaml`
+- Modify: `src/kinoforge/diagnostics/c30_probe.py` (append constants + helper)
+- Create: `tests/diagnostics/test_c30_provision_walk_down.py`
+
+**Constants to define:**
+- `_KINOFORGE_DOWNLOAD_HELPER_LINES: list[str]` — verbatim inline of `kinoforge_download_helper` from `src/kinoforge/engines/comfyui/__init__.py:1226-1274`.
+- `_C28_PHASE_A_CUSTOM_NODES: tuple[tuple[str, str], ...]` — `(repo_url, ref_sha)` triples for Kijai/WanVideoWrapper, Kijai/KJNodes, Kosinkadink/VideoHelperSuite (from `tests/live/cfg_c28_phase_a_diagnostic.yaml`).
+- `_C28_PHASE_A_MODELS: tuple[tuple[str, str, str], ...]` — `(hf_path, target_subdir, filename)` triples for Wan2_1-T2V-1_3B_fp8, Wan2_1_VAE_bf16, umt5-xxl-enc-fp8.
+- `PROVISION_A2_LINES`, `PROVISION_A3_LINES`, `PROVISION_A4_LINES`, `PROVISION_A5_LINES`, `PROVISION_A6_LINES`.
+- `PROVISION_A2_LINES` = `["cd /workspace", "sleep 600"]` — stock pod, no work.
+- `PROVISION_A3_LINES` adds `[ ! -d ComfyUI ] && git clone --depth 1 --branch master https://github.com/comfyanonymous/ComfyUI ComfyUI`.
+- `PROVISION_A4_LINES` adds `cd ComfyUI && pip install -q -r requirements.txt` then `cd /workspace`.
+- `PROVISION_A5_LINES` adds `cd /workspace/ComfyUI` then the custom-node clone+pip lines for the three C28 Phase A nodes (mirrors engine line-shape at __init__.py:1369-1389).
+- `PROVISION_A6_LINES` adds the download helper, three model downloads using `_kinoforge_download '<url>' '<subdir>/<filename>' '' 'HF_TOKEN'`, and `exec python main.py --listen 0.0.0.0 --port 8188` (replacing the trailing `sleep 600`).
 
 **Acceptance Criteria:**
-- [ ] Each cfg loads without error via `Config.load_yaml`.
-- [ ] Each cfg has `diagnostic_mode: True`, `lifecycle.stall_reap_enabled: False`, `lifecycle.restart_loop_reap_enabled: False`.
-- [ ] `c30_phase_a6.yaml` is byte-identical to `src/kinoforge/cfg/c28_phase_a.yaml` except for the `name` and `provision_script` (mirrors C28 Phase A v5).
-- [ ] `c30_phase_a2.yaml` provision is just `echo c30-a2-baseline && sleep 600`.
-- [ ] `c30_phase_a3.yaml` provision adds `git clone https://github.com/comfyanonymous/ComfyUI /workspace/ComfyUI`.
-- [ ] `c30_phase_a4.yaml` provision adds `pip install -r /workspace/ComfyUI/requirements.txt`.
-- [ ] `c30_phase_a5.yaml` provision adds the Kijai/KJNodes clones + their `pip install` per the C28 Phase A reference.
+- [ ] Each `PROVISION_AN_LINES` is `list[str]` and non-empty.
+- [ ] A3 contains every line in A2 except the trailing `sleep 600` (monotonic walk-down).
+- [ ] A4 contains every non-`sleep` line in A3.
+- [ ] A5 contains every non-`sleep` line in A4 + Kijai + KJNodes + VideoHelperSuite clone lines.
+- [ ] A6 contains the `_kinoforge_download` helper definition and three model-download invocations and a final `exec python main.py` (no `sleep 600`).
+- [ ] A6 does NOT contain `sleep 600` as its terminal line.
+- [ ] `HF_TOKEN` appears in A6 (as the token-env-name arg to `_kinoforge_download`) so the live scaffold knows to inject the env var.
 
-**Verify:** `pixi run -- python -c "from kinoforge.core.config import Config; [Config.load_yaml(f'src/kinoforge/cfg/c30_phase_a{i}.yaml') for i in range(2,7)]; print('ok')"` → prints `ok`.
+**Verify:** `pixi run -- pytest tests/diagnostics/test_c30_provision_walk_down.py -v` → all pass.
 
 **Steps:**
 
-- [ ] **Step 1: Confirm reference cfg location.**
+- [ ] **Step 1: Confirm reference cfg.**
 
-Run: `ls src/kinoforge/cfg/c28_phase_a*.yaml`
-Expected: shows the C28 Phase A reference cfg(s). Note the exact filename.
+Run: `cat tests/live/cfg_c28_phase_a_diagnostic.yaml` (existing real C28 Phase A cfg — provides custom-node refs + model HF refs).
 
-- [ ] **Step 2: Read the C28 Phase A v5 cfg to mirror its non-provision settings.**
+- [ ] **Step 2: Inline `_KINOFORGE_DOWNLOAD_HELPER_LINES` verbatim from src/kinoforge/engines/comfyui/__init__.py:1226-1274.**
 
-Open `src/kinoforge/cfg/c28_phase_a*.yaml` (whichever C28 Phase A v5 used). Note the `gpu_type_id`, `image`, `lifecycle.*` blocks, `engine.*` blocks. Reuse identically in A6, and reuse the same `gpu_type_id` + `image` in A2-A5.
+Add a header comment citing the source line range so future drift is detectable. The plan §"Open question resolutions" item 3 already covers the inlining rationale.
 
-- [ ] **Step 3: Author A2.**
+- [ ] **Step 3: Define `_C28_PHASE_A_CUSTOM_NODES` and `_C28_PHASE_A_MODELS` tuples.**
 
-`src/kinoforge/cfg/c30_phase_a2.yaml`:
-```yaml
-# C30 Phase A2 — kinoforge orchestrator + empty provision.
-# Tests selfterm + render_provision pre-amble alone.
-name: c30-phase-a2-empty-provision
-diagnostic_mode: true
+Model HF URL pattern: `https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/<filename>`.
+Target subdirs (from cfg + comfyui/__init__.py TARGET_TO_SUBDIR): diffusion_models → `models/diffusion_models`, vae → `models/vae`, text_encoder → `models/text_encoders`.
 
-provider:
-  kind: runpod
-  gpu_type_id: <COPY FROM C28 PHASE A>
+- [ ] **Step 4: Define A2–A6 constants with a small helper.**
 
-image: <COPY FROM C28 PHASE A>
-
-lifecycle:
-  stall_reap_enabled: false
-  restart_loop_reap_enabled: false
-  idle_timeout_s: 1800
-  max_lifetime_s: 1800
-  job_timeout_s: 1500
-  time_buffer_s: 60
-
-engine:
-  kind: comfyui
-  provision_script: |
-    echo c30-a2-baseline
-    sleep 600
+```python
+def _provision_with_sleep(*pre_lines: str) -> list[str]:
+    return [*pre_lines, "sleep 600"]
 ```
 
-- [ ] **Step 4: Author A3 by extending A2's provision_script with a clone.**
+A2 = `_provision_with_sleep("cd /workspace")`
+A3 = `_provision_with_sleep("cd /workspace", "[ ! -d ComfyUI ] && git clone --depth 1 --branch master https://github.com/comfyanonymous/ComfyUI ComfyUI")`
+A4 = A3 minus final sleep + `["cd ComfyUI && pip install -q -r requirements.txt", "cd /workspace"]` + `sleep 600`
+A5 = A4 minus final sleep + `cd /workspace/ComfyUI` + for each `(url, ref)` in custom-nodes append the two clone+pip lines + `sleep 600`
+A6 = the helper + A5 minus final sleep + per-model `mkdir -p <subdir>` + `[ ! -f <subdir>/<filename> ] && _kinoforge_download '<url>' '<subdir>/<filename>' '' 'HF_TOKEN'` + `cd /workspace/ComfyUI && exec python main.py --listen 0.0.0.0 --port 8188`
 
-`src/kinoforge/cfg/c30_phase_a3.yaml` (copy A2, replace provision_script):
-```yaml
-engine:
-  kind: comfyui
-  provision_script: |
-    git clone https://github.com/comfyanonymous/ComfyUI /workspace/ComfyUI
-    sleep 600
-```
+- [ ] **Step 5: Write unit tests.**
 
-- [ ] **Step 5: Author A4 by extending A3 with pip install.**
+`tests/diagnostics/test_c30_provision_walk_down.py` — assertions per Acceptance Criteria. Use set-difference / `in` checks to verify cumulative property without over-specifying line order.
 
-```yaml
-engine:
-  kind: comfyui
-  provision_script: |
-    git clone https://github.com/comfyanonymous/ComfyUI /workspace/ComfyUI
-    cd /workspace/ComfyUI
-    pip install -r requirements.txt
-    sleep 600
-```
-
-- [ ] **Step 6: Author A5 with Kijai + KJNodes custom-node clones + their pip + `import comfy` smoke.**
-
-Refer to C28 Phase A v5 cfg for the exact node URLs and commit pins. Trailing line `python3 -c "import comfy" && sleep 600`.
-
-- [ ] **Step 7: Author A6 — byte-identical to C28 Phase A v5 cfg, except `name`.**
+- [ ] **Step 6: Run + commit.**
 
 ```bash
-cp src/kinoforge/cfg/c28_phase_a*.yaml src/kinoforge/cfg/c30_phase_a6.yaml
-# Then edit the name field to `c30-phase-a6-full-wan-control`.
-```
-
-- [ ] **Step 8: Schema-validate all five.**
-
-Run: `pixi run -- python -c "from kinoforge.core.config import Config; [Config.load_yaml(f'src/kinoforge/cfg/c30_phase_a{i}.yaml') for i in range(2,7)]; print('ok')"`
-Expected: `ok`.
-
-- [ ] **Step 9: Commit.**
-
-```bash
-pixi run pre-commit run --files src/kinoforge/cfg/c30_phase_a2.yaml src/kinoforge/cfg/c30_phase_a3.yaml src/kinoforge/cfg/c30_phase_a4.yaml src/kinoforge/cfg/c30_phase_a5.yaml src/kinoforge/cfg/c30_phase_a6.yaml
-git add src/kinoforge/cfg/c30_phase_a{2,3,4,5,6}.yaml
-git commit -m "feat(c30): A2-A6 provision walk-down cfgs (reaps off, diag mode on)"
+pixi run -- pytest tests/diagnostics/test_c30_provision_walk_down.py -v
+pixi run pre-commit run --files src/kinoforge/diagnostics/c30_probe.py tests/diagnostics/test_c30_provision_walk_down.py
+git add src/kinoforge/diagnostics/c30_probe.py tests/diagnostics/test_c30_provision_walk_down.py
+git commit -m "feat(c30): A2-A6 provision-line constants (direct-GraphQL walk-down pivot)"
 ```
 
 ---
@@ -1794,19 +1757,26 @@ def test_a1b_stock_pod_port_declared_sleep(c30_client, c30_s3) -> None:
 
 - [ ] **Step 4: Write A1c, A0', A2-A6 scaffolds — all follow the same template with phase-specific gating.**
 
-For each phase, copy the A1b template and change:
+**PIVOT (2026-06-14):** All A2-A6 scaffolds use `create_probe_pod` uniformly (was `kinoforge deploy --cfg ... --diagnostic-mode`, which doesn't exist). For each phase, copy the A1b template and change:
 - `PHASE` constant.
-- Predecessor sidecar name + expected verdict.
-- `image`, `ports`, `provision_script` for A1c/A0' (still use `create_probe_pod`).
-- For A2-A6: replace `create_probe_pod` call with a subprocess invocation of `kinoforge deploy --cfg src/kinoforge/cfg/c30_phase_a<N>.yaml --diagnostic-mode`, then read the resulting pod ID from kinoforge's ledger to feed into `PodStatusPoller` + `destroy_with_retry`. Refer to `tests/live/test_c28_phase_a_diagnostic_capture_live.py` for the kinoforge-deploy invocation pattern.
+- Predecessor sidecar name + expected verdict (gates below).
+- `image`, `ports`, `env` for A1c/A0'.
+- For A2-A6: pass `provision_script="\n".join(PROVISION_AN_LINES)` from the Task-7 constants. A6 additionally injects `env={"HF_TOKEN": os.environ["HF_TOKEN"]}` so `_kinoforge_download` resolves the bearer header. A6 sets `ports="8188/http"` so the final `exec python main.py --listen 0.0.0.0 --port 8188` has a port to bind. A2-A5 keep `ports=None`.
+
+Image: A2-A5 use stock `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` (matches A1*). A6 uses the same — slim_mode pre-baked image would short-circuit the walk-down's clone/pip rungs and defeat the experiment.
 
 Gates:
 - A1c skipped unless A1b RESTARTED.
 - A0' skipped unless A1a RESTARTED.
 - A2 skipped unless A1a SURVIVED AND A1b SURVIVED.
-- A3 skipped unless A2 SURVIVED. Etc.
+- A3 skipped unless A2 SURVIVED.
+- A4 skipped unless A3 SURVIVED.
+- A5 skipped unless A4 SURVIVED.
+- A6 skipped unless A5 SURVIVED.
 
-The full template is identical to A1b's body except for those four substitutions; do not abbreviate — copy the full body into each file so each test stands alone.
+The full template is identical to A1b's body except for those substitutions; do not abbreviate — copy the full body into each file so each test stands alone.
+
+**Conftest placement (PIVOT):** Original plan named the shared fixtures file `tests/live/conftest_c30.py` — but pytest only auto-loads `conftest.py`, so fixtures defined elsewhere never register. Append the C30 fixtures (`c30_preflight`, `c30_client`, `c30_s3`) and helper functions/constants directly to the existing `tests/live/conftest.py` (currently a 32-line env loader). Tests import constants and helper functions via `from .conftest import ...`; fixtures auto-resolve via pytest plugin discovery.
 
 - [ ] **Step 5: Confirm all 9 collect.**
 
@@ -1821,8 +1791,8 @@ Expected: 1 skipped with reason mentioning predecessor sidecar.
 - [ ] **Step 7: Commit RED scaffold.**
 
 ```bash
-pixi run pre-commit run --files tests/live/conftest_c30.py tests/live/test_c30_phase_*.py
-git add tests/live/conftest_c30.py tests/live/test_c30_phase_*.py
+pixi run pre-commit run --files tests/live/conftest.py tests/live/test_c30_phase_*.py
+git add tests/live/conftest.py tests/live/test_c30_phase_*.py
 git commit -m "test(c30): RED scaffold for 9-probe fault-isolation tree (gated on predecessor sidecars)"
 ```
 
