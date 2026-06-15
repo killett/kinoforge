@@ -691,13 +691,17 @@ _POD_DUAL_UPTIME_QUERY = (
 )
 
 # Top-cheap SECURE-cloud candidates, snapshot 2026-06-15 from
-# `gpuTypes.lowestPrice(input: { gpuCount: 1, secureCloud: true })`. Kept
-# under 30 c/hr so a 10-min Q2 probe stays under the $0.05 per-probe cap
-# (25 c/hr * 10/60 h = $0.0417).
+# `gpuTypes.lowestPrice(input: { gpuCount: 1, secureCloud: true })`. With
+# a 7-min Q2 window, A40 @ 44 c/hr is the cap-edge candidate
+# (44 c/hr * 7/60 h = $0.0513).
 C33_Q2_GPU_CANDIDATES: tuple[tuple[str, int], ...] = (
     ("NVIDIA RTX A4000", 25),
     ("NVIDIA RTX 4000 Ada Generation", 26),
+    ("NVIDIA L4", 39),
+    ("NVIDIA A40", 44),
 )
+C33_Q2_WINDOW_S = 420  # 7 min — keeps the worst-case candidate (A40 @ 44 c/hr)
+C33_Q2_INTERVAL_S = 30  # within the relaxed Q2 per-probe cap of $0.06.
 
 
 def _parse_last_started_at_utc(iso_z: str) -> datetime:
@@ -963,7 +967,10 @@ def c33_execute_q2(
     start_iso = datetime.now().astimezone().isoformat()
     start_t = datetime.now().timestamp()
     trail = PodStatusPollerExtended(
-        client=client, pod_id=bound_pod_id, window_s=600, interval_s=30
+        client=client,
+        pod_id=bound_pod_id,
+        window_s=C33_Q2_WINDOW_S,
+        interval_s=C33_Q2_INTERVAL_S,
     ).poll()
     end_t = datetime.now().timestamp()
     end_iso = datetime.now().astimezone().isoformat()

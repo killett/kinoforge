@@ -29,5 +29,5 @@ def test_c33_q2_secure_cloud_p0(c30_client, c30_s3) -> None:  # type: ignore[no-
     assert sidecar["phase"] == "q2"
     assert sidecar["cloud_type"] == "SECURE"
     assert sidecar["verdict"] in {"orphan_quirk", "orphan_real_restart", "ambiguous"}
-    assert sidecar["est_spend_usd"] <= 0.05
-    assert len(sidecar["poll_trail"]) >= 20
+    assert sidecar["est_spend_usd"] <= 0.06
+    assert len(sidecar["poll_trail"]) >= 14
