@@ -241,8 +241,20 @@ def create_probe_pod(
     gpu_type_id: str,
     run_id: str,
     diag_bucket: str,
+    cloud_type: str = "ALL",
+    container_disk_gb: int = 50,
+    volume_gb: int = 0,
+    volume_mount: str = "/workspace",
+    min_vcpu: int = 2,
+    min_memory_gb: int = 15,
+    gpu_count: int = 1,
 ) -> str:
     """Create a stock RunPod pod via direct GraphQL with the C28 trap.
+
+    Mirrors the input shape of
+    ``RunPodProvider.create_instance`` (src/kinoforge/providers/runpod/__init__.py)
+    so RunPod's GraphQL accepts the request and supply matching works
+    (``cloudType=ALL`` matches secure OR community).
 
     Args:
         client: Object with ``execute(query, variables) -> dict``.
@@ -254,11 +266,26 @@ def create_probe_pod(
         env: Additional pod env vars. ``KINOFORGE_DIAG_BUCKET`` and
             ``KINOFORGE_DIAG_PREFIX`` are added/overwritten here.
         gpu_type_id: RunPod GPU type ID string.
-        run_id: Per-probe identifier; becomes the S3 prefix suffix.
+        run_id: Per-probe identifier; becomes the S3 prefix suffix +
+            pod name.
         diag_bucket: Diagnostics S3 bucket name.
+        cloud_type: ``"ALL"``/``"SECURE"``/``"COMMUNITY"``. Defaults to
+            ``"ALL"`` to maximise supply.
+        container_disk_gb: Ephemeral container disk size.
+        volume_gb: Persistent volume size; 0 omits the field entirely.
+        volume_mount: Volume mount path (ignored when ``volume_gb == 0``).
+        min_vcpu: Minimum vCPU count requirement.
+        min_memory_gb: Minimum RAM requirement in GiB.
+        gpu_count: Number of GPUs per pod (default 1).
 
     Returns:
         Newly created pod ID.
+
+    Raises:
+        GraphQLError: When the response includes an ``errors`` array or
+            ``data.podFindAndDeployOnDemand`` is null. ``GraphQLError.code``
+            carries the ``extensions.code`` from the first error (e.g.
+            ``"SUPPLY_CONSTRAINT"``) when present.
     """
     merged_env = dict(env)
     merged_env["KINOFORGE_DIAG_BUCKET"] = diag_bucket
@@ -268,11 +295,20 @@ def create_probe_pod(
     docker_args = f'bash -c "{full_script}"'
 
     input_obj: dict[str, Any] = {
-        "imageName": image,
+        "cloudType": cloud_type,
+        "gpuCount": gpu_count,
+        "containerDiskInGb": container_disk_gb,
+        "minVcpuCount": min_vcpu,
+        "minMemoryInGb": min_memory_gb,
         "gpuTypeId": gpu_type_id,
+        "name": run_id,
+        "imageName": image,
         "dockerArgs": docker_args,
         "env": [{"key": k, "value": v} for k, v in merged_env.items()],
     }
+    if volume_gb > 0:
+        input_obj["volumeInGb"] = volume_gb
+        input_obj["volumeMountPath"] = volume_mount
     if ports is not None:
         input_obj["ports"] = ports
 
