@@ -24,24 +24,24 @@
     {
       "id": 23,
       "subject": "Task 3: P1 live probe — main hypothesis A/B (live spend ~$0.013, conditional)",
-      "status": "in_progress",
+      "status": "completed",
       "blockedBy": [22],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every item in acceptanceCriteria has been re-validated independently with output captured.\n\n**Goal:** Author RED-first P1 live test, commit scaffold, execute live probe ONLY if P0=orphan_quirk, commit sidecar.\n\n**Files:**\n- Create: tests/live/test_c33_p1_podeditjob_restart_ab_live.py\n- Create (runtime): tests/live/_c33_probe_p1_evidence.json\n- Modify (runtime): tests/live/_c30_spend_ledger.json\n\n**Acceptance Criteria:**\n- Reads P0 sidecar, short-circuits on non-orphan_quirk verdict\n- RED commit pre-spend\n- Exactly one PodEditJob mutation using B5a _merge_marker\n- Sidecar matches spec §4 P1 schema\n- Spend ≤ $0.05\n\n**Verify:** `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_c33_p1_podeditjob_restart_ab_live.py -v -s`\n\n```json:metadata\n{\"files\":[\"tests/live/test_c33_p1_podeditjob_restart_ab_live.py\",\"tests/live/_c33_probe_p1_evidence.json\",\"tests/live/_c30_spend_ledger.json\"],\"verifyCommand\":\"KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_c33_p1_podeditjob_restart_ab_live.py -v -s\",\"acceptanceCriteria\":[\"Reads P0 sidecar, short-circuits on non-orphan_quirk verdict\",\"RED commit pre-spend\",\"Exactly one PodEditJob mutation using B5a _merge_marker\",\"Sidecar matches spec §4 P1 schema\",\"Spend ≤ $0.05\"],\"userGate\":true,\"tags\":[\"user-gate\",\"live-spend\",\"conditional\"],\"requireEvidenceTokens\":[[\"pre-spend\",\"red-commit\"],[\"post-spend\",\"p1-verdict\"]]}\n```"
     },
     {
       "id": 24,
       "subject": "Task 4: Denial-branch read-only probes (conditional, zero spend)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [23],
       "description": "**Goal:** If P1 verdict == denied, run three zero-spend read-only probes from spec §4 P_alt_branch.\n\n**Files:**\n- Create: tools/c33_denial_branch.py\n- Create (runtime): tests/live/_c33_denial_branch_evidence.json\n\n**Acceptance Criteria:**\n- Skips unless P1=denied\n- All three checks emit falsified bool + evidence\n- Surviving lead identified or no-lead-remaining declared\n- Zero live spend\n\n**Verify:** `python tools/c33_denial_branch.py`\n\n```json:metadata\n{\"files\":[\"tools/c33_denial_branch.py\",\"tests/live/_c33_denial_branch_evidence.json\"],\"verifyCommand\":\"python tools/c33_denial_branch.py\",\"acceptanceCriteria\":[\"Skips unless P1=denied\",\"All three checks emit falsified bool + evidence\",\"Surviving lead identified or no-lead-remaining declared\",\"Zero live spend\"]}\n```"
     },
     {
       "id": 25,
       "subject": "Task 5: Closeout — PROGRESS.md C33 entry + decision-tree routing",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [24],
       "description": "**Goal:** Write PROGRESS.md C33 entry citing both sidecars + S3 prefixes + outcome; route follow-up phase per spec §8.\n\n**Files:**\n- Modify: PROGRESS.md\n\n**Acceptance Criteria:**\n- PROGRESS.md C33 entry has all required fields\n- Routing matches spec §8 row strictly\n- Closeout commit lands\n- No production code touched\n\n**Verify:** `git log --oneline -5 | grep c33 && grep -A 20 'C33 — podEditJob' PROGRESS.md`\n\n```json:metadata\n{\"files\":[\"PROGRESS.md\"],\"verifyCommand\":\"git log --oneline -5 | grep c33 && grep -A 20 'C33 — podEditJob' PROGRESS.md\",\"acceptanceCriteria\":[\"PROGRESS.md C33 entry has all required fields\",\"Routing matches spec §8 row strictly\",\"Closeout commit lands\",\"No production code touched\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-15T08:17:06-07:00"
+  "lastUpdated": "2026-06-15T09:04:20-07:00"
 }
