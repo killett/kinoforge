@@ -166,3 +166,101 @@ def append_spend_entry(path: Path, entry: dict[str, Any]) -> None:
         )
         + "\n"
     )
+
+
+# Inlined verbatim from src/kinoforge/engines/comfyui/__init__.py lines
+# 1285-1330 (the diagnostic_mode trap_preamble in ComfyUIEngine.render_provision).
+# Inlined rather than imported because C30 must not touch production code
+# (spec §2 non-goal). If the source diverges, sync this constant.
+_C28_TRAP_PREAMBLE_LINES: list[str] = [
+    "set -euo pipefail",
+    "command -v aws >/dev/null 2>&1 || pip install -q awscli >/dev/null 2>&1 || true",
+    "command -v aria2c >/dev/null 2>&1 || "
+    "(apt-get update -qq && apt-get install -y -qq aria2 "
+    ">/dev/null 2>&1) || true",
+    "exec > >(tee -a /tmp/boot.log) 2>&1",
+    "trap '_kinoforge_diag_capture $?' EXIT",
+    "_kinoforge_diag_capture() {",
+    "  local rc=$1",
+    "  local last_line",
+    "  last_line=$(tail -1 /tmp/boot.log 2>/dev/null || true)",
+    "  {",
+    "    echo '===== rc ====='; echo \"$rc\";",
+    "    echo '===== last_line ====='; echo \"$last_line\";",
+    "    echo '===== nvidia-smi ====='; nvidia-smi || true;",
+    "    echo '===== df -h ====='; df -h || true;",
+    "    echo '===== free -m ====='; free -m || true;",
+    "    echo '===== ls -la models/diffusion_models ====='; "
+    "ls -la /workspace/ComfyUI/models/diffusion_models 2>/dev/null"
+    " || true;",
+    "    echo '===== dpkg -l torch ====='; "
+    "dpkg -l 2>/dev/null | grep -iE 'torch|cuda' || true;",
+    "    echo '===== boot.log ====='; tail -500 /tmp/boot.log 2>/dev/null || true;",
+    "  } > /tmp/diag.txt",
+    '  if [ -n "${KINOFORGE_DIAG_BUCKET:-}" ]; then',
+    "    aws s3 cp /tmp/diag.txt "
+    '"s3://${KINOFORGE_DIAG_BUCKET}/${KINOFORGE_DIAG_PREFIX}/'
+    'diag-$(date -u +%Y%m%dT%H%M%SZ).txt" || true',
+    "  fi",
+    "}",
+]
+
+
+_CREATE_POD_MUTATION = """
+mutation podFindAndDeployOnDemand($input: PodFindAndDeployOnDemandInput!) {
+  podFindAndDeployOnDemand(input: $input) {
+    id
+    desiredStatus
+    imageName
+  }
+}
+""".strip()
+
+
+def create_probe_pod(
+    client: Any,  # noqa: ANN401 — injected GraphQL client; SDK-agnostic
+    *,
+    image: str,
+    ports: str | None,
+    provision_script: str,
+    env: dict[str, str],
+    gpu_type_id: str,
+    run_id: str,
+    diag_bucket: str,
+) -> str:
+    """Create a stock RunPod pod via direct GraphQL with the C28 trap.
+
+    Args:
+        client: Object with ``execute(query, variables) -> dict``.
+        image: Docker image reference.
+        ports: RunPod ``ports`` string (e.g. ``"8188/http"``) or ``None``
+            to omit declaration entirely.
+        provision_script: Bash to run AFTER the trap pre-amble — the
+            actual probe payload (e.g. ``"sleep 600"``).
+        env: Additional pod env vars. ``KINOFORGE_DIAG_BUCKET`` and
+            ``KINOFORGE_DIAG_PREFIX`` are added/overwritten here.
+        gpu_type_id: RunPod GPU type ID string.
+        run_id: Per-probe identifier; becomes the S3 prefix suffix.
+        diag_bucket: Diagnostics S3 bucket name.
+
+    Returns:
+        Newly created pod ID.
+    """
+    merged_env = dict(env)
+    merged_env["KINOFORGE_DIAG_BUCKET"] = diag_bucket
+    merged_env["KINOFORGE_DIAG_PREFIX"] = f"boot-logs/{run_id}"
+
+    full_script = "\n".join([*_C28_TRAP_PREAMBLE_LINES, provision_script])
+    docker_args = f'bash -c "{full_script}"'
+
+    input_obj: dict[str, Any] = {
+        "imageName": image,
+        "gpuTypeId": gpu_type_id,
+        "dockerArgs": docker_args,
+        "env": [{"key": k, "value": v} for k, v in merged_env.items()],
+    }
+    if ports is not None:
+        input_obj["ports"] = ports
+
+    result = client.execute(_CREATE_POD_MUTATION, {"input": input_obj})
+    return str(result["data"]["podFindAndDeployOnDemand"]["id"])
