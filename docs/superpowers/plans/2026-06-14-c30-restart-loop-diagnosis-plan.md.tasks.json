@@ -1,7 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-14-c30-restart-loop-diagnosis-plan.md",
-  "lastUpdated": "2026-06-14T00:30:00-07:00",
-  "status": "HALTED — Tasks 7-12 blocked on cfg-schema mismatch with codebase; awaiting replan",
+  "lastUpdated": "2026-06-14T01:30:00-07:00",
   "tasks": [
     {"id": "1", "subject": "Task 0: Scaffold diagnostics package + empty c30_probe.py", "status": "completed", "blockedBy": []},
     {"id": "2", "subject": "Task 1: classify_run verdict classifier", "status": "completed", "blockedBy": ["1"]},
@@ -10,35 +9,17 @@
     {"id": "5", "subject": "Task 4: _C28_TRAP_PREAMBLE_LINES + create_probe_pod", "status": "completed", "blockedBy": ["1"]},
     {"id": "6", "subject": "Task 5: PodStatusPoller", "status": "completed", "blockedBy": ["1"]},
     {"id": "7", "subject": "Task 6: destroy_with_retry", "status": "completed", "blockedBy": ["1"]},
-    {"id": "8", "subject": "Task 7: A2-A6 cfg files — HALTED, schema mismatch", "status": "pending", "blockedBy": ["1"]},
-    {"id": "9", "subject": "Task 8: RED scaffold for 9 live tests + conftest", "status": "pending", "blockedBy": ["2", "3", "4", "5", "6", "7", "8"]},
-    {"id": "10", "subject": "Task 9: Live A1a — root probe", "status": "pending", "blockedBy": ["9"]},
-    {"id": "11", "subject": "Task 10: Live A1b OR A0' — first branch", "status": "pending", "blockedBy": ["10"]},
+    {"id": "8", "subject": "Task 7: A2-A6 provision-line constants (direct-GraphQL pivot)", "status": "completed", "blockedBy": ["1"]},
+    {"id": "9", "subject": "Task 8: RED scaffold for 9 live tests + conftest", "status": "completed", "blockedBy": ["2", "3", "4", "5", "6", "7", "8"]},
+    {"id": "10", "subject": "Task 9: Live A1a — root probe (verdict=RESTARTED)", "status": "completed", "blockedBy": ["9"]},
+    {"id": "11", "subject": "Task 10: Live A0' (A1a=RESTARTED gate)", "status": "in_progress", "blockedBy": ["10"]},
     {"id": "12", "subject": "Task 11: Live inverse-control OR walk-down", "status": "pending", "blockedBy": ["11"]},
     {"id": "13", "subject": "Task 12: Close C30 — PROGRESS.md closeout", "status": "pending", "blockedBy": ["12"]}
   ],
-  "haltReason": {
-    "task": "Task 7 (A2-A6 cfg files)",
-    "evidence": {
-      "plan_assumed_schema": "engine.kind + engine.provision_script + flat lifecycle + Config.load_yaml",
-      "actual_schema_location": "src/kinoforge/core/config.py:759 (class Config)",
-      "actual_loader": "src/kinoforge/core/config.py:1048 (load_config)",
-      "engine_render": "src/kinoforge/engines/comfyui/__init__.py:1218,1357 — slim_mode auto-derived from image prefix, not a cfg knob; no provision_script override path",
-      "cfg_reference": "tests/live/cfg_c28_phase_a_diagnostic.yaml — real-world example of correct schema (compute.lifecycle, engine.comfyui.custom_nodes, models[])"
-    },
-    "downstream_impact": "Tasks 8/9/10/11 — live A2-A6 tests cannot invoke `kinoforge deploy --cfg ... --diagnostic-mode` as plan specifies; that flag doesn't exist and provision_script isn't injectable."
-  },
-  "completedArtifacts": {
-    "commits": [
-      "51885f5 feat(c30): scaffold diagnostics package for fault-isolation probes",
-      "81a8423 feat(c30): classify_run verdict classifier with monotonic-uptime rule",
-      "063fab6 feat(c30): count_trap_fires S3 lister with diag-key pattern",
-      "0c0451d feat(c30): spend ledger with hard-cap enforcement and monotonic-time guard",
-      "9bd5b99 feat(c30): create_probe_pod direct-GraphQL wrapper with inlined C28 trap pre-amble",
-      "61065b2 feat(c30): PodStatusPoller using pod.runtime.uptimeInSeconds",
-      "0b356bf feat(c30): destroy_with_retry inlining C31 verify-and-retry pattern"
-    ],
-    "unit_test_count": 32,
-    "all_passing": true
-  }
+  "findings": [
+    "A1a verdict=RESTARTED via negative-uptime rule (poll trail showed uptimes oscillating around 0 with multiple negative samples, S3 trap silenced by mid-bash kill)",
+    "Refutes H1 (port-healthcheck) at the root: stock pod with NO ports declared still restart-cycles",
+    "Next gate: A0' (ubuntu:22.04 alt image) to isolate image-vs-platform"
+  ],
+  "cumulative_spend_usd": 0.022
 }
