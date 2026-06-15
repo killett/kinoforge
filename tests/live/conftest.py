@@ -507,16 +507,32 @@ def c33_execute_p1(
     base_docker_args: str | None = None
     t0_uptime: int | None = None
     t0_last_started_at: str | None = None
+    pre_stabilize_trail: list[tuple[float, int | None, str | None, str | None]] = []
     deadline_t = start_t + 600
+    running_since_t: float | None = None
+    stable_reason: str | None = None
     while _time.time() < deadline_t:
         _time.sleep(15)
+        now_t = _time.time()
         sample = PodStatusPollerExtended(
             client=client, pod_id=bound_pod_id, window_s=0, interval_s=15
         ).poll()
-        _elapsed, uptime, last_started_at, _status = sample[0]
-        if uptime is not None and uptime >= 90:
+        _elapsed, uptime, last_started_at, status = sample[0]
+        pre_stabilize_trail.append((now_t - start_t, uptime, last_started_at, status))
+
+        uptime_gate = uptime is not None and uptime >= 90
+        if status == "RUNNING":
+            if running_since_t is None:
+                running_since_t = now_t
+            status_gate = (now_t - running_since_t) >= 90
+        else:
+            running_since_t = None
+            status_gate = False
+
+        if uptime_gate or status_gate:
             t0_uptime = uptime
             t0_last_started_at = last_started_at
+            stable_reason = "uptime>=90" if uptime_gate else "status=RUNNING for >=90s"
             q = (
                 f'query {{ pod(input: {{ podId: "{bound_pod_id}" }}) '
                 "{ dockerArgs } }"
@@ -526,7 +542,7 @@ def c33_execute_p1(
             base_docker_args = str(pod_data.get("dockerArgs") or "")
             break
 
-    if t0_uptime is None or base_docker_args is None:
+    if base_docker_args is None:
         end_iso = datetime.now().astimezone().isoformat()
         end_t = datetime.now().timestamp()
         sidecar_abort: dict[str, Any] = {
@@ -539,6 +555,7 @@ def c33_execute_p1(
             "s3_prefix": f"boot-logs/{run_id}/",
             "verdict": "ambiguous",
             "abort_reason": "pod_failed_to_stabilize_in_600s",
+            "pre_stabilize_trail": pre_stabilize_trail,
             "est_spend_usd": round(
                 c30_estimate_spend(end_t - start_t, cents_per_hr_used), 6
             ),
@@ -588,7 +605,11 @@ def c33_execute_p1(
         ),
         None,
     )
-    reset = any(t[1] is not None and t[1] < t0_uptime for t in post_trail)
+    reset = (
+        any(t[1] is not None and t[1] < t0_uptime for t in post_trail)
+        if t0_uptime is not None
+        else False
+    )
 
     non_null_uptimes = [t[1] for t in post_trail if t[1] is not None]
     monotonic = all(
@@ -609,6 +630,8 @@ def c33_execute_p1(
         "t0_last_started_at": t0_last_started_at,
         "t0_uptime": t0_uptime,
         "t0_snapshot_at": t0_snapshot_at_iso,
+        "stable_reason": stable_reason,
+        "pre_stabilize_trail": pre_stabilize_trail,
         "mutation_issued_at": mutation_issued_at_iso,
         "mutation_response": mutation_response,
         "post_mutation_trail": post_trail,
