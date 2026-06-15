@@ -187,9 +187,11 @@ def c30_execute_phase(
                 diag_bucket=C30_DIAG_BUCKET,
             )
         except GraphQLError as exc:
+            _msg = str(exc).lower()
             if (
                 exc.code == "SUPPLY_CONSTRAINT"
-                or "resources to deploy" in str(exc).lower()
+                or "resources to deploy" in _msg
+                or "instances available" in _msg
             ):
                 last_err = exc
                 continue
@@ -344,9 +346,11 @@ def c33_execute_p0(
                 diag_bucket=C30_DIAG_BUCKET,
             )
         except GraphQLError as exc:
+            _msg = str(exc).lower()
             if (
                 exc.code == "SUPPLY_CONSTRAINT"
-                or "resources to deploy" in str(exc).lower()
+                or "resources to deploy" in _msg
+                or "instances available" in _msg
             ):
                 last_err = exc
                 continue
@@ -467,9 +471,11 @@ def c33_execute_p1(
                 diag_bucket=C30_DIAG_BUCKET,
             )
         except GraphQLError as exc:
+            _msg = str(exc).lower()
             if (
                 exc.code == "SUPPLY_CONSTRAINT"
-                or "resources to deploy" in str(exc).lower()
+                or "resources to deploy" in _msg
+                or "instances available" in _msg
             ):
                 last_err = exc
                 continue
