@@ -8,8 +8,14 @@ All public helpers are documented in
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from enum import Enum
+from typing import Any
+
+from botocore.exceptions import ClientError
+
+_DIAG_KEY_PATTERN = re.compile(r"/diag-\d{8}T\d{6}Z\.txt$")
 
 
 class Verdict(Enum):
@@ -58,3 +64,43 @@ def classify_run(
         if curr <= prev:
             return Verdict.AMBIGUOUS
     return Verdict.SURVIVED
+
+
+def count_trap_fires(
+    s3_client: Any,  # noqa: ANN401 — injected boto3 S3 client; avoid SDK import in signature
+    bucket: str,
+    prefix: str,
+) -> int:
+    """Count ``diag-YYYYMMDDTHHMMSSZ.txt`` objects under ``bucket/prefix``.
+
+    Args:
+        s3_client: A boto3 S3 client (or anything with a compatible
+            ``list_objects_v2`` method).
+        bucket: S3 bucket name (no scheme).
+        prefix: Key prefix. Must include the trailing slash if the
+            prefix is a directory.
+
+    Returns:
+        Number of diag-pattern objects. Returns 0 on ``NoSuchKey``.
+    """
+    total = 0
+    continuation: str | None = None
+    try:
+        while True:
+            kw: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
+            if continuation is not None:
+                kw["ContinuationToken"] = continuation
+            page = s3_client.list_objects_v2(**kw)
+            for obj in page.get("Contents", []) or []:
+                key = obj.get("Key", "")
+                if _DIAG_KEY_PATTERN.search(key):
+                    total += 1
+            if not page.get("IsTruncated"):
+                return total
+            continuation = page.get("NextContinuationToken")
+            if continuation is None:
+                return total
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "NoSuchKey":
+            return 0
+        raise
