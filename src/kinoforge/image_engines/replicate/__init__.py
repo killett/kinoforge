@@ -192,7 +192,13 @@ class ReplicateImageEngine(ImageEngine):
         """
         self._auth = auth
 
-    def provision(self, instance: Instance | None, cfg: dict[str, object]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: object | None = None,
+    ) -> None:
         """Validate credentials; reject any non-None ``instance``."""
         if instance is not None:
             raise KinoforgeError(

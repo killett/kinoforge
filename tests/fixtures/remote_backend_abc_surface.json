@@ -27,9 +27,9 @@
     "key_base": "(self, cfg: 'dict[str, object]') -> 'str'",
     "model_identity": "(self, cfg: 'dict[str, object]') -> 'str'",
     "profile_for": "(self, key: 'CapabilityKey') -> 'ModelProfile'",
-    "provision": "(self, instance: 'Instance | None', cfg: 'dict[str, object]') -> 'None'",
+    "provision": "(self, instance: 'Instance | None', cfg: 'dict[str, object]', *, cancel_token: 'object | None' = None) -> 'None'",
     "render_provision": "(self, cfg: 'dict[str, object]') -> 'RenderedProvision'",
     "validate_spec": "(self, job: 'GenerationJob') -> 'None'",
-    "wait_for_ready": "(self, instance: 'Instance', *, http_get: 'Callable[[str], dict[str, Any]]', sleep: 'Callable[[float], None]', get_instance: 'Callable[[str], Instance]', timeout_s: 'float') -> 'None'"
+    "wait_for_ready": "(self, instance: 'Instance', *, http_get: 'Callable[[str], dict[str, Any]]', sleep: 'Callable[[float], None]', get_instance: 'Callable[[str], Instance]', timeout_s: 'float', cancel_token: 'CancelToken | None' = None) -> 'None'"
   }
 }

@@ -545,7 +545,13 @@ class HostedAPIEngine(GenerationEngine):
     # GenerationEngine interface
     # ------------------------------------------------------------------
 
-    def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, Any],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None:
         """Validate credentials and ping the health endpoint.
 
         Unlike compute engines, this method performs NO downloads and NO
@@ -566,6 +572,7 @@ class HostedAPIEngine(GenerationEngine):
             instance: Must be ``None``.  Non-None raises
                 :class:`~kinoforge.core.errors.KinoforgeError`.
             cfg: Runtime configuration dict.
+            cancel_token: Ignored (Protocol parity for C29 boot-phase reap).
 
         Raises:
             KinoforgeError: ``instance`` is not ``None``, or the health ping

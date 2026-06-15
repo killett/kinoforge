@@ -1,0 +1,11 @@
+{
+  "outcome": "PROVEN",
+  "captured_at": "2026-06-14T13:36:14.021781-07:00",
+  "pod_id": "1cba0n8mz63i87",
+  "offer_usd_per_hr": 0.13,
+  "interval_s": 10.0,
+  "stall_window_s": 60.0,
+  "stall_fired_at_s_since_provision_start": 66.00969011099369,
+  "boot_window_s": 300.0,
+  "provision_sleep_ceiling_s": 600.0
+}

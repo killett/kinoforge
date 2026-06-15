@@ -442,7 +442,13 @@ class FalEngine(GenerationEngine):
     # GenerationEngine interface
     # ------------------------------------------------------------------
 
-    def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, Any],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None:
         """Validate credentials and (optionally) probe the health endpoint.
 
         ``instance`` must be ``None`` — fal has no compute to configure.
@@ -455,6 +461,7 @@ class FalEngine(GenerationEngine):
         Args:
             instance: Must be ``None``.
             cfg: Runtime configuration dict.
+            cancel_token: Ignored (Protocol parity for C29 boot-phase reap).
 
         Raises:
             KinoforgeError: ``instance`` is not ``None`` or the health probe failed.

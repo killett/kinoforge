@@ -858,6 +858,29 @@ symptom and demonstrated end-to-end protection.
 
 ---
 
+## 13.1 C28 follow-up — prevention layer
+
+The C27 predicate is a **detector**: it spots the chronic restart
+loop and tears the pod down before cost runs away, but it does not
+prevent the loop from happening on the next cold boot. **C28**
+addresses the prevention side with three coupled fixes:
+
+* **Phase A (diagnostic):** opt-in `diagnostic_mode` flag wires an
+  in-pod EXIT trap that captures rc / last_line / system snapshot /
+  boot.log tail to S3 so a future regression names its own root
+  cause instead of being inferred from outside symptoms.
+* **Phase B (image pre-bake):** `kinoforge/wan-comfyui:<TAG>` moves
+  ComfyUI clone + custom-node clones + pip installs to BUILD time
+  so a broken combo fails `docker build` (loud) instead of pod boot
+  (silent + restart-loop).
+* **Phase C (curl retry):** `_kinoforge_download` pure-bash helper
+  with 3-attempt retry + exponential backoff + sha verify replaces
+  inline `curl -L --fail`, defending against the HF curl-flake
+  failure mode without any infrastructure dependency.
+
+Spec: `docs/superpowers/specs/2026-06-13-c28-restart-loop-prevention-design.md`.
+Plan: `docs/superpowers/plans/2026-06-13-c28-restart-loop-prevention.md`.
+
 ---
 
 ## 14. Wire-discovery notes (for plan phase)

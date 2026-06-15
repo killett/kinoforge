@@ -92,6 +92,21 @@ def test_trap_never_echoes_access_key_names(engine: ComfyUIEngine) -> None:
     assert "AWS_SECRET_ACCESS_KEY" not in out.script
 
 
+def test_trap_preamble_pre_installs_awscli(engine: ComfyUIEngine) -> None:
+    """`runpod/pytorch:2.4` base image lacks awscli; trap pre-installs it.
+
+    Without this, the `aws s3 cp` line in the trap silently fails with
+    `command not found` and `|| true` swallows ENOENT — leaving rc!=0
+    with NO sidecar object to classify against (Phase A v1 Hn outcome).
+    """
+    out = engine.render_provision({**_minimal_cfg(), "diagnostic_mode": True})
+    head_block = "\n".join(out.script.splitlines()[:6])
+    assert "command -v aws" in head_block, (
+        f"expected awscli presence-check in trap pre-amble head; head:\n{head_block}"
+    )
+    assert "pip install -q awscli" in head_block
+
+
 def test_trap_aws_cp_swallows_errors(engine: ComfyUIEngine) -> None:
     """A failed PUT must NOT propagate; otherwise it overrides the real rc."""
     out = engine.render_provision({**_minimal_cfg(), "diagnostic_mode": True})

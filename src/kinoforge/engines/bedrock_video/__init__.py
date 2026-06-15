@@ -318,7 +318,13 @@ class BedrockVideoEngine(GenerationEngine):
     # GenerationEngine interface
     # ------------------------------------------------------------------
 
-    def provision(self, instance: Instance | None, cfg: dict[str, Any]) -> None:
+    def provision(
+        self,
+        instance: Instance | None,
+        cfg: dict[str, Any],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None:
         """Build the bedrock-runtime client after health-checking credentials.
 
         ``instance`` must be ``None``; Bedrock video is a hosted API.
@@ -326,6 +332,7 @@ class BedrockVideoEngine(GenerationEngine):
         Args:
             instance: Must be ``None``; raises :class:`KinoforgeError` otherwise.
             cfg: Runtime config dict.
+            cancel_token: Ignored (Protocol parity for C29 boot-phase reap).
 
         Raises:
             KinoforgeError: ``instance`` is not ``None``.

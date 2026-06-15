@@ -70,8 +70,13 @@ def test_orchestrator_passes_boot_timeout_from_yaml_through_to_engine_provision(
 
     class _SpyEngine(FakeEngine):
         def provision(
-            self, instance: Instance | None, cfg_dict: dict[str, Any]
+            self,
+            instance: Instance | None,
+            cfg_dict: dict[str, Any],
+            *,
+            cancel_token: object | None = None,
         ) -> None:
+            del cancel_token
             captured_cfg.append(dict(cfg_dict))
 
         def render_provision(self, cfg_dict: dict[str, object]) -> RenderedProvision:

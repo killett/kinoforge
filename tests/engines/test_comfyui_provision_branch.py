@@ -93,7 +93,16 @@ def test_provision_remote_uses_boot_timeout_from_cfg_lifecycle() -> None:
     seen_timeout: list[float] = []
 
     class _SpyEngine(ComfyUIEngine):
-        def wait_for_ready(self, instance, *, http_get, sleep, get_instance, timeout_s):
+        def wait_for_ready(
+            self,
+            instance,
+            *,
+            http_get,
+            sleep,
+            get_instance,
+            timeout_s,
+            cancel_token=None,
+        ):
             seen_timeout.append(timeout_s)
 
     engine = _SpyEngine(probe_profile=None)  # type: ignore[arg-type]
@@ -114,7 +123,16 @@ def test_provision_remote_default_boot_timeout_when_cfg_absent() -> None:
     seen_timeout: list[float] = []
 
     class _SpyEngine(ComfyUIEngine):
-        def wait_for_ready(self, instance, *, http_get, sleep, get_instance, timeout_s):
+        def wait_for_ready(
+            self,
+            instance,
+            *,
+            http_get,
+            sleep,
+            get_instance,
+            timeout_s,
+            cancel_token=None,
+        ):
             seen_timeout.append(timeout_s)
 
     engine = _SpyEngine(probe_profile=None)  # type: ignore[arg-type]
@@ -139,7 +157,16 @@ def test_provision_remote_reads_boot_timeout_s_via_orchestrator_dict() -> None:
     seen_timeout: list[float] = []
 
     class _SpyEngine(ComfyUIEngine):
-        def wait_for_ready(self, instance, *, http_get, sleep, get_instance, timeout_s):  # noqa: ANN001
+        def wait_for_ready(
+            self,
+            instance,
+            *,
+            http_get,
+            sleep,
+            get_instance,
+            timeout_s,
+            cancel_token=None,
+        ):  # noqa: ANN001
             seen_timeout.append(timeout_s)
 
     engine = _SpyEngine(probe_profile=None)  # type: ignore[arg-type]

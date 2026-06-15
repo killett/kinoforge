@@ -1,50 +1,19 @@
 {
-  "outcome": "NO_REPRODUCTION",
-  "captured_at": "2026-06-13T21:52:03.080280-07:00",
-  "succeeded_runs": 0,
-  "matched_hypothesis": "Hn",
-  "matched_table_row": "(new) C26/C27 util-aware reap fires before EXIT trap completes S3 PUT — pod destroyed mid-trap; `aws s3 cp || true` swallows ENOENT when `aws` CLI absent from the runpod/pytorch:2.4.0 base image, leaving rc!=0 with NO sidecar object",
-  "evidence_lines": [
-    "attempt 1/2/3 stderr tail: `kinoforge.core.errors.Cancelled: cancellation requested by operator` (cancel token raised inside engines/comfyui/__init__.py:915 result())",
-    "kinoforge generate exit code: 1 (3/3 attempts)",
-    "S3 list_objects_v2 returned 0 Contents for every `boot-logs/c28-phase-a-*` prefix after 60 polls × 5s",
-    "wall-clock ≈ 10 min/attempt — consistent with reap window (90 s uptime threshold + 180 s reap window + ~5 min pod allocation/boot)"
-  ],
-  "spec_directive": "NO_REPRODUCTION → ship Phase B + Phase C unconditionally as belt-and-suspenders (per spec §3 gate table and Task 8 decision table)",
-  "phase_b_triggered": true,
-  "phase_c_triggered": true,
-  "trap_silent_root_cause_hypotheses": [
-    "(1, most likely) `aws` CLI absent from the runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel base image; `aws s3 cp` exits 127 (command not found); `|| true` swallows. FIX: prepend `command -v aws || pip install -q awscli` to the trap, OR pivot to a python+boto3 PUT body.",
-    "(2) RunPod terminate sends SIGKILL not SIGTERM after a short grace window; bash EXIT trap never runs. Less likely — SIGTERM is the conventional first signal.",
-    "(3) Diagnostic env vars not actually landing in pod env. UNLIKELY — Task 4 unit tests cover the merge path and the orchestrator override of cfg.diagnostic_mode via model_copy is on the generate path (deploy_session → _provision_instance_and_build_backend → _build_spec at orchestrator.py:567)."
-  ],
-  "followup": "C28 follow-up: patch render_provision A2 trap pre-amble to install awscli when absent. Defer to a small post-C28 task; does not block Phase B/C which the spec directs to ship regardless under NO_REPRODUCTION.",
+  "outcome": "CAPTURED",
+  "captured_at": "2026-06-14T00:29:36.471853-07:00",
+  "run_id": "c28-phase-a-20260613T235704-a1",
+  "s3_key": "boot-logs/c28-phase-a-20260613T235704-a1/diag-20260614T065923Z.txt",
+  "rc_in_trap": "0",
+  "last_line": "Cloning into 'ComfyUI'...",
   "attempts": [
     {
       "attempt": 1,
-      "run_id": "c28-phase-a-20260613T212229-a1",
+      "run_id": "c28-phase-a-20260613T235704-a1",
       "rc": 1,
-      "s3_key": null,
-      "outcome": "rc-nonzero-no-s3",
-      "stderr_tail_summary": "kinoforge.core.errors.Cancelled: cancellation requested by operator (cancel token raised by C26 STALL_REAP or C27 RESTART_LOOP_REAP via heartbeat predicate trip)"
-    },
-    {
-      "attempt": 2,
-      "run_id": "c28-phase-a-20260613T213206-a2",
-      "rc": 1,
-      "s3_key": null,
-      "outcome": "rc-nonzero-no-s3",
-      "stderr_tail_summary": "kinoforge.core.errors.Cancelled: cancellation requested by operator"
-    },
-    {
-      "attempt": 3,
-      "run_id": "c28-phase-a-20260613T214142-a3",
-      "rc": 1,
-      "s3_key": null,
-      "outcome": "rc-nonzero-no-s3",
-      "stderr_tail_summary": "kinoforge.core.errors.Cancelled: cancellation requested by operator"
+      "s3_key": "boot-logs/c28-phase-a-20260613T235704-a1/diag-20260614T065923Z.txt",
+      "outcome": "captured",
+      "stderr_tail": "8-restart-loop-prevention/.pixi/envs/default/lib/python3.13/urllib/request.py\", line 495, in open\n    response = meth(req, response)\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/.pixi/envs/default/lib/python3.13/urllib/request.py\", line 604, in http_response\n    response = self.parent.error(\n        'http', request, response, code, msg, hdrs)\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/.pixi/envs/default/lib/python3.13/urllib/request.py\", line 533, in error\n    return self._call_chain(*args)\n           ~~~~~~~~~~~~~~~~^^^^^^^\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/.pixi/envs/default/lib/python3.13/urllib/request.py\", line 466, in _call_chain\n    result = func(*args)\n  File \"/workspace/.claude/worktrees/c28-restart-loop-prevention/.pixi/envs/default/lib/python3.13/urllib/request.py\", line 613, in http_error_default\n    raise HTTPError(req.full_url, code, msg, hdrs, fp)\nurllib.error.HTTPError: HTTP Error 502: Bad Gateway\n"
     }
   ],
-  "budget_cap_usd": 0.2,
-  "spend_estimate_usd": "≤ 0.20 (3 partial boots, each reaped before reaching steady-state)"
+  "budget_cap_usd": 0.2
 }

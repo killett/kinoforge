@@ -327,7 +327,7 @@ def test_orchestrator_polling_loop_preserves_endpoints_when_get_instance_strips_
     key = MagicMock()
     key.derive.return_value = "deadbeef"
 
-    instance, _backend = _provision_instance_and_build_backend(
+    instance, _backend, _hb = _provision_instance_and_build_backend(
         resolved_engine=fake_engine,
         resolved_provider=provider,
         cfg=cfg,
