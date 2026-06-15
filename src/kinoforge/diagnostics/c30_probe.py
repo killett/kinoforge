@@ -60,11 +60,18 @@ def classify_run(
     """
     if fire_count >= 3:
         return Verdict.RESTARTED
+    raw = [u for _, u in poll_trail]
+    # Negative uptime is non-physical — it appeared in C30 A1a evidence
+    # (run c30-a1a-20260614T222804) on a pod that was actively restart-
+    # cycling. The S3 EXIT trap did NOT fire (pod was killed before
+    # `aws s3 cp` could complete), so fire_count alone underdetects the
+    # restart. Treat any non-None negative as a positive restart signal.
+    if any(u is not None and u < 0 for u in raw):
+        return Verdict.RESTARTED
     if fire_count >= 1:
         return Verdict.AMBIGUOUS
     if len(poll_trail) < 2:
         return Verdict.AMBIGUOUS
-    raw = [u for _, u in poll_trail]
     if any(u is None for u in raw):
         return Verdict.AMBIGUOUS
     uptimes: list[int] = [u for u in raw if u is not None]
