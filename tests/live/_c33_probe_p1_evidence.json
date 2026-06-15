@@ -1,0 +1,13 @@
+{
+  "phase": "p1",
+  "run_id": "c33-p1-20260615T084334",
+  "pod_id": "pt0tjr0v3eydr1",
+  "image": "ubuntu:22.04",
+  "gpu_type_id": "NVIDIA GeForce RTX 3080",
+  "cents_per_hr": 17,
+  "s3_prefix": "boot-logs/c33-p1-20260615T084334/",
+  "verdict": "ambiguous",
+  "abort_reason": "pod_failed_to_stabilize_in_600s",
+  "est_spend_usd": 0.028521,
+  "captured_at": "2026-06-15T08:53:40.190898-07:00"
+}
