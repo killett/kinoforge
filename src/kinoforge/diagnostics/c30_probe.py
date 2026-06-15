@@ -368,3 +368,199 @@ def destroy_with_retry(
         attempts,
     )
     return n
+
+
+# Inlined verbatim from src/kinoforge/engines/comfyui/__init__.py:1226-1274
+# (ComfyUIEngine.render_provision kinoforge_download_helper). C30 must not
+# touch production code (spec §2). If the source diverges, sync this constant.
+_KINOFORGE_DOWNLOAD_HELPER_LINES: list[str] = [
+    "_kinoforge_download() {",
+    "  local url=$1; local out=$2",
+    "  local expected_sha=${3:-}",
+    "  local token_env=${4:-}",
+    '  local token_val=""',
+    '  if [ -n "$token_env" ] && [ -n "${!token_env:-}" ]; then',
+    '    token_val="${!token_env}"',
+    "  fi",
+    "  local out_dir out_base",
+    '  out_dir=$(dirname "$out")',
+    '  out_base=$(basename "$out")',
+    "  local attempt",
+    "  for attempt in 1 2 3; do",
+    "    if command -v aria2c >/dev/null 2>&1; then",
+    "      local ar_args=(-x16 -s16 --allow-overwrite=true "
+    "--continue=true --console-log-level=warn "
+    "--summary-interval=30)",
+    '      [ -n "$token_val" ] && ar_args+=('
+    '--header="Authorization: Bearer $token_val")',
+    '      [ -n "$expected_sha" ] && ar_args+=(--checksum=sha-256=$expected_sha)',
+    '      if aria2c "${ar_args[@]}" -d "$out_dir" -o "$out_base" "$url"; then',
+    "        return 0",
+    "      fi",
+    "    else",
+    '      rm -f "${out}.partial"',
+    "      local cu_args=()",
+    '      [ -n "$token_val" ] && cu_args+=(-H "Authorization: Bearer $token_val")',
+    '      if curl -L --fail --retry 0 -C - "${cu_args[@]}" '
+    '"$url" -o "${out}.partial"; then',
+    '        if [ -n "$expected_sha" ]; then',
+    "          local actual",
+    "          actual=$(sha256sum \"${out}.partial\" | awk '{print $1}')",
+    '          if [ "$actual" != "$expected_sha" ]; then',
+    "            sleep $((5 * attempt))",
+    "            continue",
+    "          fi",
+    "        fi",
+    '        mv "${out}.partial" "$out"',
+    "        return 0",
+    "      fi",
+    "    fi",
+    "    sleep $((5 * attempt))",
+    "  done",
+    "  return 1",
+    "}",
+]
+
+
+# Sourced from tests/live/cfg_c28_phase_a_diagnostic.yaml — the C28 Phase A
+# v5 cfg. Tuples: (repo_url, ref_sha).
+_C28_PHASE_A_CUSTOM_NODES: tuple[tuple[str, str], ...] = (
+    (
+        "https://github.com/kijai/ComfyUI-WanVideoWrapper",
+        "088128b224242e110d3906c6750e9a3a348a659b",
+    ),
+    (
+        "https://github.com/kijai/ComfyUI-KJNodes",
+        "369c8aee9ad4641823d0ffd7035076bcd297b6f2",
+    ),
+    (
+        "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+        "4ee72c065db22c9d96c2427954dc69e7b908444b",
+    ),
+)
+
+
+# Sourced from tests/live/cfg_c28_phase_a_diagnostic.yaml `models:` block.
+# Resolved against Kijai/WanVideo_comfy HF repo. Targets per ComfyUI
+# TARGET_TO_SUBDIR mapping (engines/comfyui/__init__.py).
+# Tuples: (url, subdir_relative_to_ComfyUI, filename).
+_C28_PHASE_A_MODELS: tuple[tuple[str, str, str], ...] = (
+    (
+        "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/"
+        "Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors",
+        "models/diffusion_models",
+        "Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors",
+    ),
+    (
+        "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/"
+        "Wan2_1_VAE_bf16.safetensors",
+        "models/vae",
+        "Wan2_1_VAE_bf16.safetensors",
+    ),
+    (
+        "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/"
+        "umt5-xxl-enc-fp8_e4m3fn.safetensors",
+        "models/text_encoders",
+        "umt5-xxl-enc-fp8_e4m3fn.safetensors",
+    ),
+)
+
+
+def _custom_node_lines(url: str, ref: str) -> list[str]:
+    """Mirror engines/comfyui/__init__.py:1376-1389 for a single pinned node."""
+    name = url.rstrip("/").rsplit("/", 1)[-1]
+    if name.endswith(".git"):
+        name = name[: -len(".git")]
+    return [
+        f"[ ! -d custom_nodes/{name} ] && "
+        f"git clone {url} custom_nodes/{name} && "
+        f"cd custom_nodes/{name} && git checkout {ref} && cd ../..",
+        f"[ -f custom_nodes/{name}/requirements.txt ] && "
+        f"pip install -q -r custom_nodes/{name}/requirements.txt || true",
+    ]
+
+
+def _model_download_lines(url: str, subdir: str, filename: str) -> list[str]:
+    """Mirror engines/comfyui/__init__.py:1421-1427 for a single model entry.
+
+    No sha256 verification (HF redirects make it brittle); token env is
+    always ``HF_TOKEN`` for this repo. Empty third argument signals
+    no-sha to the helper.
+    """
+    return [
+        f"mkdir -p {subdir}",
+        f"[ ! -f {subdir}/{filename} ] && "
+        f"_kinoforge_download '{url}' '{subdir}/{filename}' '' 'HF_TOKEN'",
+    ]
+
+
+# A2: stock pod, cd, sleep — exercises selfterm-free pre-amble only.
+PROVISION_A2_LINES: list[str] = [
+    "cd /workspace",
+    "sleep 600",
+]
+
+
+# A3: A2 + ComfyUI clone (mirrors engines/comfyui/__init__.py:1358-1361).
+PROVISION_A3_LINES: list[str] = [
+    "cd /workspace",
+    "[ ! -d ComfyUI ] && git clone --depth 1 --branch master "
+    "https://github.com/comfyanonymous/ComfyUI ComfyUI",
+    "sleep 600",
+]
+
+
+# A4: A3 + ComfyUI requirements pip install (line 1362).
+PROVISION_A4_LINES: list[str] = [
+    "cd /workspace",
+    "[ ! -d ComfyUI ] && git clone --depth 1 --branch master "
+    "https://github.com/comfyanonymous/ComfyUI ComfyUI",
+    "cd ComfyUI && pip install -q -r requirements.txt",
+    "cd /workspace",
+    "sleep 600",
+]
+
+
+def _build_a5_lines() -> list[str]:
+    lines: list[str] = [
+        "cd /workspace",
+        "[ ! -d ComfyUI ] && git clone --depth 1 --branch master "
+        "https://github.com/comfyanonymous/ComfyUI ComfyUI",
+        "cd ComfyUI && pip install -q -r requirements.txt",
+        "cd /workspace",
+        "cd /workspace/ComfyUI",
+    ]
+    for url, ref in _C28_PHASE_A_CUSTOM_NODES:
+        lines.extend(_custom_node_lines(url, ref))
+    lines.append("sleep 600")
+    return lines
+
+
+# A5: A4 + three pinned C28-Phase-A custom-node clones + their pip installs.
+PROVISION_A5_LINES: list[str] = _build_a5_lines()
+
+
+def _build_a6_lines() -> list[str]:
+    lines: list[str] = list(_KINOFORGE_DOWNLOAD_HELPER_LINES)
+    lines.extend(
+        [
+            "cd /workspace",
+            "[ ! -d ComfyUI ] && git clone --depth 1 --branch master "
+            "https://github.com/comfyanonymous/ComfyUI ComfyUI",
+            "cd ComfyUI && pip install -q -r requirements.txt",
+            "cd /workspace",
+            "cd /workspace/ComfyUI",
+        ]
+    )
+    for url, ref in _C28_PHASE_A_CUSTOM_NODES:
+        lines.extend(_custom_node_lines(url, ref))
+    for url, subdir, filename in _C28_PHASE_A_MODELS:
+        lines.extend(_model_download_lines(url, subdir, filename))
+    lines.append(
+        "cd /workspace/ComfyUI && exec python main.py --listen 0.0.0.0 --port 8188"
+    )
+    return lines
+
+
+# A6: A5 minus sleep + download helper + three Wan models + ComfyUI exec.
+PROVISION_A6_LINES: list[str] = _build_a6_lines()
