@@ -1,4 +1,5 @@
 .claude-project-id
+.claude/worktrees/
 .sandbox_settings.json
 
 # Python bytecode
