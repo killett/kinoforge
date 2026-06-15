@@ -4,20 +4,20 @@
     {
       "id": 20,
       "subject": "Task 0: Extend c30_probe.py with C33 helpers + offline unit tests",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add three C33 helpers (snapshot_last_started_at, PodStatusPollerExtended, issue_single_pod_edit_job) plus two classifiers (_classify_p0, _classify_p1) to src/kinoforge/diagnostics/c30_probe.py with full offline unit-test coverage. No live spend.\n\n**Files:**\n- Modify: src/kinoforge/diagnostics/c30_probe.py\n- Create: tests/diagnostics/test_c33_helpers.py\n\n**Acceptance Criteria:**\n- snapshot_last_started_at returns ISO string or None\n- PodStatusPollerExtended returns 4-tuples (elapsed, uptime, lastStartedAt, desiredStatus)\n- issue_single_pod_edit_job raises GraphQLError on errors block\n- _classify_p0 covers all 4 spec §4 P0 rules\n- _classify_p1 covers all 3 spec §4 P1 rules\n- ruff + mypy + pre-commit clean\n\n**Verify:** `pixi run pytest tests/diagnostics/test_c33_helpers.py -v`\n\n```json:metadata\n{\"files\":[\"src/kinoforge/diagnostics/c30_probe.py\",\"tests/diagnostics/test_c33_helpers.py\"],\"verifyCommand\":\"pixi run pytest tests/diagnostics/test_c33_helpers.py -v\",\"acceptanceCriteria\":[\"snapshot_last_started_at returns ISO or None\",\"PodStatusPollerExtended returns 4-tuples\",\"issue_single_pod_edit_job raises GraphQLError on errors\",\"_classify_p0 covers all 4 spec rules\",\"_classify_p1 covers all 3 spec rules\",\"ruff+mypy+pre-commit clean\"]}\n```"
     },
     {
       "id": 21,
       "subject": "Task 1: Add C33 conftest fixtures + orchestrator helpers",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [20],
       "description": "**Goal:** Add C33-specific orchestrator helpers to tests/live/conftest.py. Reuse C30 fixtures.\n\n**Files:**\n- Modify: tests/live/conftest.py\n- Create: tests/diagnostics/test_c33_orchestrator.py\n\n**Acceptance Criteria:**\n- C33_HARD_CAP_USD = 5.00\n- c33_sidecar_path + c33_run_id helpers\n- c33_execute_p0 emits sidecar matching spec §4 P0 schema\n- c33_execute_p1 issues exactly one PodEditJob then polls 90s\n- Offline orchestrator tests cover happy + short-circuit branches\n\n**Verify:** `pixi run pytest tests/diagnostics/test_c33_orchestrator.py -v`\n\n```json:metadata\n{\"files\":[\"tests/live/conftest.py\",\"tests/diagnostics/test_c33_orchestrator.py\"],\"verifyCommand\":\"pixi run pytest tests/diagnostics/test_c33_orchestrator.py -v\",\"acceptanceCriteria\":[\"C33_HARD_CAP_USD=5.00\",\"c33_execute_p0 writes sidecar matching spec §4 schema\",\"c33_execute_p1 issues exactly one PodEditJob then polls 90s\",\"orchestrator tests cover happy + short-circuit branches\"]}\n```"
     },
     {
       "id": 22,
       "subject": "Task 2: P0 live probe — orphan disambiguation (live spend ~$0.022)",
-      "status": "pending",
+      "status": "in_progress",
       "blockedBy": [21],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every item in acceptanceCriteria has been re-validated independently with output captured.\n\n**Goal:** Author RED-first P0 live test, commit scaffold BEFORE spend, execute live probe, commit sidecar + ledger.\n\n**Files:**\n- Create: tests/live/test_c33_p0_orphan_disambig_live.py\n- Create (runtime): tests/live/_c33_probe_p0_evidence.json\n- Modify (runtime): tests/live/_c30_spend_ledger.json\n\n**Acceptance Criteria:**\n- RED scaffold committed pre-spend\n- preflight=0 + assert_under_cap before create\n- Exactly one pod created and destroyed\n- _c33_probe_p0_evidence.json matches spec §4 P0 schema\n- Ledger append monotonic\n- Spend ≤ $0.05\n\n**Verify:** `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_c33_p0_orphan_disambig_live.py -v -s`\n\n```json:metadata\n{\"files\":[\"tests/live/test_c33_p0_orphan_disambig_live.py\",\"tests/live/_c33_probe_p0_evidence.json\",\"tests/live/_c30_spend_ledger.json\"],\"verifyCommand\":\"KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_c33_p0_orphan_disambig_live.py -v -s\",\"acceptanceCriteria\":[\"RED scaffold committed pre-spend\",\"preflight=0 + assert_under_cap before create\",\"exactly one pod created and destroyed\",\"_c33_probe_p0_evidence.json matches spec §4 schema\",\"ledger append monotonic\",\"spend ≤ $0.05\"],\"userGate\":true,\"tags\":[\"user-gate\",\"live-spend\"],\"requireEvidenceTokens\":[[\"pre-spend\",\"red-commit\",\"scaffold-committed\"],[\"post-spend\",\"sidecar-committed\",\"p0-verdict\"]]}\n```"
     },
@@ -43,5 +43,5 @@
       "description": "**Goal:** Write PROGRESS.md C33 entry citing both sidecars + S3 prefixes + outcome; route follow-up phase per spec §8.\n\n**Files:**\n- Modify: PROGRESS.md\n\n**Acceptance Criteria:**\n- PROGRESS.md C33 entry has all required fields\n- Routing matches spec §8 row strictly\n- Closeout commit lands\n- No production code touched\n\n**Verify:** `git log --oneline -5 | grep c33 && grep -A 20 'C33 — podEditJob' PROGRESS.md`\n\n```json:metadata\n{\"files\":[\"PROGRESS.md\"],\"verifyCommand\":\"git log --oneline -5 | grep c33 && grep -A 20 'C33 — podEditJob' PROGRESS.md\",\"acceptanceCriteria\":[\"PROGRESS.md C33 entry has all required fields\",\"Routing matches spec §8 row strictly\",\"Closeout commit lands\",\"No production code touched\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-15T00:00:00-07:00"
+  "lastUpdated": "2026-06-15T08:17:06-07:00"
 }
