@@ -1,0 +1,101 @@
+{
+  "phase": "a1a",
+  "verdict": "restarted",
+  "run_id": "c30-a1a-20260614T222804",
+  "pod_id": "rpj1p5ygs5ko50",
+  "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+  "ports": null,
+  "gpu_type_id": "NVIDIA GeForce RTX 3070",
+  "cents_per_hr": 13,
+  "s3_prefix": "boot-logs/c30-a1a-20260614T222804/",
+  "fire_count": 0,
+  "poll_trail": [
+    [
+      0.0,
+      null
+    ],
+    [
+      30.519881686006556,
+      6
+    ],
+    [
+      60.98909063200699,
+      -2
+    ],
+    [
+      91.4688202959951,
+      -15
+    ],
+    [
+      121.964070875998,
+      -11
+    ],
+    [
+      152.4737447219959,
+      0
+    ],
+    [
+      182.88665933499578,
+      -4
+    ],
+    [
+      213.50758975499775,
+      null
+    ],
+    [
+      245.86487762900651,
+      null
+    ],
+    [
+      278.2314395739959,
+      null
+    ],
+    [
+      310.5930746649974,
+      -17
+    ],
+    [
+      341.15157063999504,
+      -10
+    ],
+    [
+      371.6167283990071,
+      -5
+    ],
+    [
+      402.40553370800626,
+      -18
+    ],
+    [
+      432.8560099580063,
+      -11
+    ],
+    [
+      463.3694686170056,
+      -8
+    ],
+    [
+      493.88607761899766,
+      -5
+    ],
+    [
+      525.4426541419962,
+      0
+    ],
+    [
+      555.9590449429961,
+      -15
+    ],
+    [
+      586.4339974049944,
+      -2
+    ],
+    [
+      616.9736931350053,
+      0
+    ]
+  ],
+  "est_spend_usd": 0.022298,
+  "captured_at": "2026-06-14T22:38:23.294739-07:00",
+  "notes": "Reclassified from 'ambiguous' to 'restarted' after classify_run gained negative-uptime rule. Original poll trail showed oscillating uptimes with multiple negative values (e.g. -2, -15, -11), non-physical and unambiguously indicating pod restart cycling. S3 EXIT trap did NOT fire because the pod was killed before aws s3 cp could complete (fire_count=0). This is the first decisive evidence in C30."
+}
