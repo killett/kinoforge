@@ -1,5 +1,5 @@
 {
-  "cumulative_usd": 0.13751,
+  "cumulative_usd": 0.190292,
   "entries": [
     {
       "phase": "a1a",
@@ -63,6 +63,15 @@
       "start_ts": "2026-06-15T09:22:21.299166-07:00",
       "end_ts": "2026-06-15T09:27:28.460477-07:00",
       "est_spend_usd": 0.013652
+    },
+    {
+      "phase": "q2",
+      "pod_id": "9lkjo0n760r0jl",
+      "gpu_type_id": "NVIDIA A40",
+      "cents_per_hr": 44,
+      "start_ts": "2026-06-15T09:30:10.551958-07:00",
+      "end_ts": "2026-06-15T09:37:22.400972-07:00",
+      "est_spend_usd": 0.052782
     }
   ]
 }
