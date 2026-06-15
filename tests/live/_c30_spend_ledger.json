@@ -1,5 +1,5 @@
 {
-  "cumulative_usd": 0.123858,
+  "cumulative_usd": 0.13751,
   "entries": [
     {
       "phase": "a1a",
@@ -54,6 +54,15 @@
       "start_ts": "2026-06-15T08:56:03.752198-07:00",
       "end_ts": "2026-06-15T08:59:27.939185-07:00",
       "est_spend_usd": 0.009642
+    },
+    {
+      "phase": "q1",
+      "pod_id": "17pm8vxqtyoo7l",
+      "gpu_type_id": "NVIDIA RTX A5000",
+      "cents_per_hr": 16,
+      "start_ts": "2026-06-15T09:22:21.299166-07:00",
+      "end_ts": "2026-06-15T09:27:28.460477-07:00",
+      "est_spend_usd": 0.013652
     }
   ]
 }
