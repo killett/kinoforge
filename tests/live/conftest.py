@@ -53,13 +53,17 @@ C30_PER_PROBE_CAP_USD = 0.10
 # Ranked cheap-GPU candidates with on-demand cents/hr (community cloud).
 # create_probe_pod iterates until one succeeds; supply-constrained GPUs
 # (e.g. RTX A2000) are absent here intentionally. Pricing snapshot
-# 2026-06-14 from runpod.io GraphQL gpuTypes.lowestPrice; refresh if
-# upstream rates change.
+# 2026-06-15 from runpod.io GraphQL gpuTypes.lowestPrice; refresh if
+# upstream rates change. All listed cents/hr ≤ 23 keeps a 10-min probe
+# under the C33 per-probe cap of $0.05.
 C30_GPU_CANDIDATES: tuple[tuple[str, int], ...] = (
-    ("NVIDIA GeForce RTX 3070", 13),
+    ("NVIDIA RTX A5000", 16),
     ("NVIDIA GeForce RTX 3080", 17),
-    ("NVIDIA GeForce RTX 3080 Ti", 18),
-    ("NVIDIA RTX 4000 Ada Generation", 20),
+    ("NVIDIA RTX A4000", 17),
+    ("NVIDIA GeForce RTX 4070 Ti", 19),
+    ("NVIDIA RTX A4500", 19),
+    ("NVIDIA GeForce RTX 3090", 22),
+    ("Tesla V100-SXM2-16GB", 23),
 )
 C30_GRAPHQL_URL = "https://api.runpod.io/graphql"
 
