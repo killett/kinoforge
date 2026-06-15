@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -652,6 +652,353 @@ def c33_execute_p1(
         "captured_at": end_iso,
     }
 
+    append_spend_entry(
+        C30_LEDGER,
+        {
+            "phase": phase,
+            "pod_id": bound_pod_id,
+            "gpu_type_id": gpu_type_id_used,
+            "cents_per_hr": cents_per_hr_used,
+            "start_ts": start_iso,
+            "end_ts": end_iso,
+            "est_spend_usd": sidecar["est_spend_usd"],
+        },
+    )
+    c33_sidecar_path(phase).write_text(json.dumps(sidecar, indent=2) + "\n")
+    destroy_with_retry(client, pod_id=bound_pod_id, attempts=5, sleep_s=3)
+    return sidecar
+
+
+# ---------------------------------------------------------------------------
+# C33 Q1 — top-level `uptimeSeconds` vs wall-clock estimate.
+# C33 Q2 — P0-style probe on cloudType=SECURE.
+#
+# Filed 2026-06-15 to substantiate (or refute) the C33 closeout claim that
+# `runtime.uptimeInSeconds` is "broken" on RunPod community cloud. Q1 tests
+# whether the top-level `Pod.uptimeSeconds` field (per RunPod GraphQL spec)
+# is reliable on the same tier, and whether `now_utc - lastStartedAt` makes
+# a sound fallback. Q2 tests whether the uptime-field weirdness is a
+# community-cloud quirk by repeating P0 on `cloudType=SECURE`.
+# ---------------------------------------------------------------------------
+
+C33_Q1_WINDOW_S = 300  # 5 min — Q1 is cheaper than P0 because we only need
+C33_Q1_INTERVAL_S = 30  # to test field agreement, not survival statistics.
+
+_POD_DUAL_UPTIME_QUERY = (
+    'query {{ pod(input: {{ podId: "{pod_id}" }}) '
+    "{{ id desiredStatus lastStartedAt uptimeSeconds "
+    "runtime {{ uptimeInSeconds }} }} }}"
+)
+
+# Top-cheap SECURE-cloud candidates, snapshot 2026-06-15 from
+# `gpuTypes.lowestPrice(input: { gpuCount: 1, secureCloud: true })`. Kept
+# under 30 c/hr so a 10-min Q2 probe stays under the $0.05 per-probe cap
+# (25 c/hr * 10/60 h = $0.0417).
+C33_Q2_GPU_CANDIDATES: tuple[tuple[str, int], ...] = (
+    ("NVIDIA RTX A4000", 25),
+    ("NVIDIA RTX 4000 Ada Generation", 26),
+)
+
+
+def _parse_last_started_at_utc(iso_z: str) -> datetime:
+    """Parse a RunPod ``lastStartedAt`` Z-suffixed ISO string to aware UTC."""
+
+    if iso_z.endswith("Z"):
+        iso_z = iso_z[:-1] + "+00:00"
+    return datetime.fromisoformat(iso_z).astimezone(UTC)
+
+
+def c33_execute_q1(
+    client: Any,  # noqa: ANN401
+    s3: Any,  # noqa: ANN401
+) -> dict[str, Any]:
+    """Run C33 Q1 dual-uptime probe end-to-end."""
+    import atexit
+    import time as _time
+
+    from kinoforge.diagnostics.c30_probe import (
+        GraphQLError,
+        append_spend_entry,
+        assert_under_cap,
+        create_probe_pod,
+        destroy_with_retry,
+    )
+
+    _ = s3  # unused — kept for fixture symmetry
+    assert_under_cap(C30_LEDGER, hard_cap_usd=C33_HARD_CAP_USD)
+
+    phase = "q1"
+    run_id = c33_run_id(phase)
+    pod_id: str | None = None
+    gpu_type_id_used = ""
+    cents_per_hr_used = 0
+    last_err: GraphQLError | None = None
+    for candidate_id, candidate_cents in C30_GPU_CANDIDATES:
+        try:
+            pod_id = create_probe_pod(
+                client,
+                image=C33_IMAGE,
+                ports=None,
+                provision_script="sleep 600",
+                env={},
+                gpu_type_id=candidate_id,
+                run_id=run_id,
+                diag_bucket=C30_DIAG_BUCKET,
+            )
+        except GraphQLError as exc:
+            _msg = str(exc).lower()
+            if (
+                exc.code == "SUPPLY_CONSTRAINT"
+                or "resources to deploy" in _msg
+                or "instances available" in _msg
+            ):
+                last_err = exc
+                continue
+            raise
+        gpu_type_id_used = candidate_id
+        cents_per_hr_used = candidate_cents
+        break
+    if pod_id is None:
+        assert last_err is not None
+        raise last_err
+
+    bound_pod_id: str = pod_id
+
+    def _safe_destroy() -> None:
+        try:
+            destroy_with_retry(client, pod_id=bound_pod_id, attempts=5, sleep_s=3)
+        except Exception:  # noqa: BLE001
+            pass
+
+    atexit.register(_safe_destroy)
+
+    start_iso = datetime.now().astimezone().isoformat()
+    start_t = datetime.now().timestamp()
+    n_intervals = C33_Q1_WINDOW_S // C33_Q1_INTERVAL_S
+    n_samples = n_intervals + 1
+    samples: list[dict[str, Any]] = []
+    for i in range(n_samples):
+        sampled_at_utc = datetime.now(UTC)
+        q = _POD_DUAL_UPTIME_QUERY.format(pod_id=bound_pod_id)
+        try:
+            r = client.execute(q, {})
+        except Exception as exc:  # noqa: BLE001
+            samples.append(
+                {
+                    "sampled_at_utc": sampled_at_utc.isoformat(),
+                    "error": str(exc),
+                }
+            )
+            if i < n_samples - 1:
+                _time.sleep(C33_Q1_INTERVAL_S)
+            continue
+        pod_data = (r.get("data") or {}).get("pod") or {}
+        nested = (pod_data.get("runtime") or {}).get("uptimeInSeconds")
+        top = pod_data.get("uptimeSeconds")
+        lsa = pod_data.get("lastStartedAt")
+        status = pod_data.get("desiredStatus")
+        estimated_s: float | None
+        if lsa is not None:
+            try:
+                lsa_utc = _parse_last_started_at_utc(str(lsa))
+                estimated_s = (sampled_at_utc - lsa_utc).total_seconds()
+            except (ValueError, TypeError):
+                estimated_s = None
+        else:
+            estimated_s = None
+        samples.append(
+            {
+                "sampled_at_utc": sampled_at_utc.isoformat(),
+                "desiredStatus": status,
+                "lastStartedAt": lsa,
+                "runtime.uptimeInSeconds": nested,
+                "top.uptimeSeconds": top,
+                "estimated_uptime_s_from_lastStartedAt": estimated_s,
+            }
+        )
+        if i < n_samples - 1:
+            _time.sleep(C33_Q1_INTERVAL_S)
+
+    def _agreement(field_key: str) -> dict[str, Any]:
+        diffs: list[float] = []
+        compared = 0
+        for s in samples:
+            v = s.get(field_key)
+            est = s.get("estimated_uptime_s_from_lastStartedAt")
+            if v is None or est is None:
+                continue
+            diffs.append(abs(float(v) - float(est)))
+            compared += 1
+        if not diffs:
+            return {"compared": 0, "max_abs_diff_s": None, "mean_abs_diff_s": None}
+        return {
+            "compared": compared,
+            "max_abs_diff_s": max(diffs),
+            "mean_abs_diff_s": sum(diffs) / len(diffs),
+        }
+
+    nested_agreement = _agreement("runtime.uptimeInSeconds")
+    top_agreement = _agreement("top.uptimeSeconds")
+    n_top_present = sum(1 for s in samples if s.get("top.uptimeSeconds") is not None)
+    n_nested_present = sum(
+        1 for s in samples if s.get("runtime.uptimeInSeconds") is not None
+    )
+    n_nested_negative = sum(
+        1
+        for s in samples
+        if (v := s.get("runtime.uptimeInSeconds")) is not None and v < 0
+    )
+    n_top_negative = sum(
+        1 for s in samples if (v := s.get("top.uptimeSeconds")) is not None and v < 0
+    )
+
+    end_t = datetime.now().timestamp()
+    end_iso = datetime.now().astimezone().isoformat()
+    sidecar: dict[str, Any] = {
+        "phase": phase,
+        "run_id": run_id,
+        "pod_id": bound_pod_id,
+        "image": C33_IMAGE,
+        "gpu_type_id": gpu_type_id_used,
+        "cents_per_hr": cents_per_hr_used,
+        "s3_prefix": f"boot-logs/{run_id}/",
+        "window_s": C33_Q1_WINDOW_S,
+        "interval_s": C33_Q1_INTERVAL_S,
+        "samples": samples,
+        "n_samples": len(samples),
+        "n_runtime_uptime_present": n_nested_present,
+        "n_runtime_uptime_negative": n_nested_negative,
+        "n_top_uptime_present": n_top_present,
+        "n_top_uptime_negative": n_top_negative,
+        "agreement_nested_vs_estimate": nested_agreement,
+        "agreement_top_vs_estimate": top_agreement,
+        "est_spend_usd": round(
+            c30_estimate_spend(end_t - start_t, cents_per_hr_used), 6
+        ),
+        "captured_at": end_iso,
+    }
+    append_spend_entry(
+        C30_LEDGER,
+        {
+            "phase": phase,
+            "pod_id": bound_pod_id,
+            "gpu_type_id": gpu_type_id_used,
+            "cents_per_hr": cents_per_hr_used,
+            "start_ts": start_iso,
+            "end_ts": end_iso,
+            "est_spend_usd": sidecar["est_spend_usd"],
+        },
+    )
+    c33_sidecar_path(phase).write_text(json.dumps(sidecar, indent=2) + "\n")
+    destroy_with_retry(client, pod_id=bound_pod_id, attempts=5, sleep_s=3)
+    return sidecar
+
+
+def c33_execute_q2(
+    client: Any,  # noqa: ANN401
+    s3: Any,  # noqa: ANN401
+) -> dict[str, Any]:
+    """Run C33 Q2 P0-style probe on cloudType=SECURE."""
+    import atexit
+
+    from kinoforge.diagnostics.c30_probe import (
+        GraphQLError,
+        PodStatusPollerExtended,
+        _classify_p0,
+        append_spend_entry,
+        assert_under_cap,
+        count_trap_fires,
+        create_probe_pod,
+        destroy_with_retry,
+    )
+
+    assert_under_cap(C30_LEDGER, hard_cap_usd=C33_HARD_CAP_USD)
+
+    phase = "q2"
+    run_id = c33_run_id(phase)
+    pod_id: str | None = None
+    gpu_type_id_used = ""
+    cents_per_hr_used = 0
+    last_err: GraphQLError | None = None
+    for candidate_id, candidate_cents in C33_Q2_GPU_CANDIDATES:
+        try:
+            pod_id = create_probe_pod(
+                client,
+                image=C33_IMAGE,
+                ports=None,
+                provision_script="sleep 600",
+                env={},
+                gpu_type_id=candidate_id,
+                run_id=run_id,
+                diag_bucket=C30_DIAG_BUCKET,
+                cloud_type="SECURE",
+            )
+        except GraphQLError as exc:
+            _msg = str(exc).lower()
+            if (
+                exc.code == "SUPPLY_CONSTRAINT"
+                or "resources to deploy" in _msg
+                or "instances available" in _msg
+            ):
+                last_err = exc
+                continue
+            raise
+        gpu_type_id_used = candidate_id
+        cents_per_hr_used = candidate_cents
+        break
+    if pod_id is None:
+        assert last_err is not None
+        raise last_err
+
+    bound_pod_id: str = pod_id
+
+    def _safe_destroy() -> None:
+        try:
+            destroy_with_retry(client, pod_id=bound_pod_id, attempts=5, sleep_s=3)
+        except Exception:  # noqa: BLE001
+            pass
+
+    atexit.register(_safe_destroy)
+
+    start_iso = datetime.now().astimezone().isoformat()
+    start_t = datetime.now().timestamp()
+    trail = PodStatusPollerExtended(
+        client=client, pod_id=bound_pod_id, window_s=600, interval_s=30
+    ).poll()
+    end_t = datetime.now().timestamp()
+    end_iso = datetime.now().astimezone().isoformat()
+
+    fire_count = count_trap_fires(s3, C30_DIAG_BUCKET, f"boot-logs/{run_id}/")
+    last_started_samples = [t[2] for t in trail]
+    uptime_samples = [t[1] for t in trail]
+    n_adv = _c33_count_advances(last_started_samples)
+    n_neg = _c33_count_negative_uptimes(uptime_samples)
+    n_null = _c33_count_null_uptimes(uptime_samples)
+    sidecar = {
+        "phase": phase,
+        "run_id": run_id,
+        "pod_id": bound_pod_id,
+        "image": C33_IMAGE,
+        "cloud_type": "SECURE",
+        "gpu_type_id": gpu_type_id_used,
+        "cents_per_hr": cents_per_hr_used,
+        "s3_prefix": f"boot-logs/{run_id}/",
+        "fire_count": fire_count,
+        "poll_trail": trail,
+        "n_last_started_at_advances": n_adv,
+        "n_negative_uptime_samples": n_neg,
+        "n_null_uptime_samples": n_null,
+        "verdict": _classify_p0(
+            {
+                "n_last_started_at_advances": n_adv,
+                "n_negative_uptime_samples": n_neg,
+            }
+        ).value,
+        "est_spend_usd": round(
+            c30_estimate_spend(end_t - start_t, cents_per_hr_used), 6
+        ),
+        "captured_at": end_iso,
+    }
     append_spend_entry(
         C30_LEDGER,
         {
