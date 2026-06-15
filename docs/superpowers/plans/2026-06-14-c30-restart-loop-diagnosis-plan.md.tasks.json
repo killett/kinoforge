@@ -1,0 +1,96 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-14-c30-restart-loop-diagnosis-plan.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Module scaffold + package marker",
+      "status": "pending",
+      "description": "**Goal:** Create `src/kinoforge/diagnostics/` package and empty `c30_probe.py` so subsequent tasks have an import target.\n\n**Files:** `src/kinoforge/diagnostics/__init__.py`, `src/kinoforge/diagnostics/c30_probe.py`, `tests/diagnostics/__init__.py`\n\n**Verify:** `pixi run -- python -c \"from kinoforge.diagnostics import c30_probe; print(c30_probe.__name__)\"` → prints `kinoforge.diagnostics.c30_probe`.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/diagnostics/__init__.py\", \"src/kinoforge/diagnostics/c30_probe.py\", \"tests/diagnostics/__init__.py\"], \"verifyCommand\": \"pixi run -- python -c 'from kinoforge.diagnostics import c30_probe; print(c30_probe.__name__)'\", \"acceptanceCriteria\": [\"import succeeds\", \"no other files touched\", \"pre-commit clean\"]}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Implement and test classify_run",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Verdict classifier maps `(poll_trail, fire_count)` to one of `SURVIVED / RESTARTED / AMBIGUOUS`.\n\n**Files:** `src/kinoforge/diagnostics/c30_probe.py`, `tests/diagnostics/test_c30_classify_run.py`\n\n**Verify:** `pixi run -- pytest tests/diagnostics/test_c30_classify_run.py -v` → 7 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/diagnostics/c30_probe.py\", \"tests/diagnostics/test_c30_classify_run.py\"], \"verifyCommand\": \"pixi run -- pytest tests/diagnostics/test_c30_classify_run.py -v\", \"acceptanceCriteria\": [\"7 tests pass\", \"100% coverage on classify_run\"]}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Implement and test count_trap_fires",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** S3 list helper returns count of `diag-*.txt` objects under bucket/prefix.\n\n**Files:** `src/kinoforge/diagnostics/c30_probe.py`, `tests/diagnostics/test_c30_count_trap_fires.py`\n\n**Verify:** `pixi run -- pytest tests/diagnostics/test_c30_count_trap_fires.py -v` → 5 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/diagnostics/c30_probe.py\", \"tests/diagnostics/test_c30_count_trap_fires.py\"], \"verifyCommand\": \"pixi run -- pytest tests/diagnostics/test_c30_count_trap_fires.py -v\", \"acceptanceCriteria\": [\"5 tests pass\", \"NoSuchKey returns 0\", \"pagination handled\"]}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Implement assert_under_cap + spend ledger",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Cumulative-spend hard cap enforcement + ledger file tracked from start.\n\n**Files:** `src/kinoforge/diagnostics/c30_probe.py`, `tests/diagnostics/test_c30_spend_ledger.py`, `tests/live/_c30_spend_ledger.json`\n\n**Verify:** `pixi run -- pytest tests/diagnostics/test_c30_spend_ledger.py -v` → 6 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/diagnostics/c30_probe.py\", \"tests/diagnostics/test_c30_spend_ledger.py\", \"tests/live/_c30_spend_ledger.json\"], \"verifyCommand\": \"pixi run -- pytest tests/diagnostics/test_c30_spend_ledger.py -v\", \"acceptanceCriteria\": [\"6 tests pass\", \"initial ledger seeded\", \"monotonic-time enforced\"]}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: _C28_TRAP_PREAMBLE_LINES + create_probe_pod",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** Direct GraphQL `podFindAndDeployOnDemand` wrapper with inlined C28 trap pre-amble.\n\n**Files:** `src/kinoforge/diagnostics/c30_probe.py`, `tests/diagnostics/test_c30_create_probe_pod_wire_shape.py`\n\n**Verify:** `pixi run -- pytest tests/diagnostics/test_c30_create_probe_pod_wire_shape.py -v` → 5 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/diagnostics/c30_probe.py\", \"tests/diagnostics/test_c30_create_probe_pod_wire_shape.py\"], \"verifyCommand\": \"pixi run -- pytest tests/diagnostics/test_c30_create_probe_pod_wire_shape.py -v\", \"acceptanceCriteria\": [\"5 tests pass\", \"preamble mirrors comfyui source\", \"ports None omitted from input\"]}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Implement PodStatusPoller",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Poll `pod(podId)` every interval_s for `runtime.uptimeInSeconds`, return trail.\n\n**Files:** `src/kinoforge/diagnostics/c30_probe.py`, `tests/diagnostics/test_c30_pod_status_poller.py`\n\n**Verify:** `pixi run -- pytest tests/diagnostics/test_c30_pod_status_poller.py -v` → 5 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/diagnostics/c30_probe.py\", \"tests/diagnostics/test_c30_pod_status_poller.py\"], \"verifyCommand\": \"pixi run -- pytest tests/diagnostics/test_c30_pod_status_poller.py -v\", \"acceptanceCriteria\": [\"5 tests pass\", \"uptimeInSeconds in query\", \"None handled gracefully\"]}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Implement destroy_with_retry",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** Issue podTerminate then poll myself.pods 3-5× at 3s; re-issue if pod still present.\n\n**Files:** `src/kinoforge/diagnostics/c30_probe.py`, `tests/diagnostics/test_c30_destroy_with_retry.py`\n\n**Verify:** `pixi run -- pytest tests/diagnostics/test_c30_destroy_with_retry.py -v` → 4 passed.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/diagnostics/c30_probe.py\", \"tests/diagnostics/test_c30_destroy_with_retry.py\"], \"verifyCommand\": \"pixi run -- pytest tests/diagnostics/test_c30_destroy_with_retry.py -v\", \"acceptanceCriteria\": [\"4 tests pass\", \"does not raise at max attempts\", \"does not terminate unrelated pods\"]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Write A2-A6 cfg files",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Five YAML cfgs for the provision walk-down (A2 empty → A6 full Wan).\n\n**Files:** `src/kinoforge/cfg/c30_phase_a{2,3,4,5,6}.yaml`\n\n**Verify:** `pixi run -- python -c \"from kinoforge.core.config import Config; [Config.load_yaml(f'src/kinoforge/cfg/c30_phase_a{i}.yaml') for i in range(2,7)]; print('ok')\"` → `ok`.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cfg/c30_phase_a2.yaml\", \"src/kinoforge/cfg/c30_phase_a3.yaml\", \"src/kinoforge/cfg/c30_phase_a4.yaml\", \"src/kinoforge/cfg/c30_phase_a5.yaml\", \"src/kinoforge/cfg/c30_phase_a6.yaml\"], \"verifyCommand\": \"pixi run -- python -c 'from kinoforge.core.config import Config; [Config.load_yaml(f\\\"src/kinoforge/cfg/c30_phase_a{i}.yaml\\\") for i in range(2,7)]; print(\\\"ok\\\")'\", \"acceptanceCriteria\": [\"all 5 schema-validate\", \"reaps off + diag mode on\", \"A6 mirrors C28 Phase A v5\"]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: RED scaffold for 9 live tests",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "**Goal:** Commit all 9 live test scaffolds + conftest before any live spend (durability rule).\n\n**Files:** `tests/live/conftest_c30.py` + `tests/live/test_c30_phase_*.py` × 9\n\n**Verify:** `pixi run -- pytest tests/live/test_c30_phase_*.py --co` → 9 collected, no errors.\n\n```json:metadata\n{\"files\": [\"tests/live/conftest_c30.py\", \"tests/live/test_c30_phase_a1a_sleep_no_port_live.py\", \"tests/live/test_c30_phase_a1b_sleep_port_declared_live.py\", \"tests/live/test_c30_phase_a1c_sleep_port_listener_live.py\", \"tests/live/test_c30_phase_a0prime_alt_image_live.py\", \"tests/live/test_c30_phase_a2_empty_provision_live.py\", \"tests/live/test_c30_phase_a3_clone_only_live.py\", \"tests/live/test_c30_phase_a4_clone_pip_live.py\", \"tests/live/test_c30_phase_a5_custom_nodes_live.py\", \"tests/live/test_c30_phase_a6_full_wan_control_live.py\"], \"verifyCommand\": \"pixi run -- pytest tests/live/test_c30_phase_*.py --co\", \"acceptanceCriteria\": [\"9 tests collected no errors\", \"all gating logic in place\"]}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Live A1a — root probe",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** Run A1a live probe. Sidecar committed regardless of verdict.\n\n**Files:** `tests/live/_c30_phase_a1a_evidence.json`, `tests/live/_c30_spend_ledger.json`\n\n**Verify:** `pixi run -- pytest tests/live/test_c30_phase_a1a_sleep_no_port_live.py -v` → 1 passed; sidecar present.\n\n```json:metadata\n{\"files\": [\"tests/live/_c30_phase_a1a_evidence.json\", \"tests/live/_c30_spend_ledger.json\"], \"verifyCommand\": \"pixi run -- pytest tests/live/test_c30_phase_a1a_sleep_no_port_live.py -v\", \"acceptanceCriteria\": [\"sidecar exists with verdict\", \"ledger increased\", \"no leaked pods\"]}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Live A1b OR A0' — first branch",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Run A1b (if A1a SURVIVED) or A0' (if A1a RESTARTED).\n\n**Files:** `tests/live/_c30_phase_a1b_evidence.json` OR `tests/live/_c30_phase_a0prime_evidence.json`, ledger.\n\n**Verify:** `pixi run -- pytest tests/live/test_c30_phase_a1b_sleep_port_declared_live.py tests/live/test_c30_phase_a0prime_alt_image_live.py -v` → 1 passed + 1 skipped.\n\n```json:metadata\n{\"files\": [\"tests/live/_c30_phase_a1b_evidence.json\", \"tests/live/_c30_phase_a0prime_evidence.json\", \"tests/live/_c30_spend_ledger.json\"], \"verifyCommand\": \"pixi run -- pytest tests/live/test_c30_phase_a1b_sleep_port_declared_live.py tests/live/test_c30_phase_a0prime_alt_image_live.py -v\", \"acceptanceCriteria\": [\"one sidecar created\", \"other test skipped\", \"no leaked pods\"]}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: Live inverse-control OR walk-down",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Run inverse control (if hypothesis matched) or next walk-down rung until decisive+inverse evidence committed.\n\n**Files:** next phase's sidecar, ledger.\n\n**Verify:** `pixi run -- pytest tests/live/test_c30_phase_*.py -v` — chosen probe passed, sidecar committed.\n\n```json:metadata\n{\"files\": [\"tests/live/_c30_phase_*_evidence.json\", \"tests/live/_c30_spend_ledger.json\"], \"verifyCommand\": \"pixi run -- pytest tests/live/test_c30_phase_*.py -v\", \"acceptanceCriteria\": [\"decisive+inverse both committed\", \"cumulative spend ≤ $2.00\"]}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 12: Close C30 — PROGRESS.md entry",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "**Goal:** Write C30 closeout entry to PROGRESS.md with named RCA, sidecars, S3 prefixes, total spend, follow-up phase identifier.\n\n**Files:** `PROGRESS.md`\n\n**Verify:** `git log -1 --format=%s PROGRESS.md` shows C30 closeout subject; `pixi run -- pytest tests/diagnostics/ -v` → all pass.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run -- pytest tests/diagnostics/ -v\", \"acceptanceCriteria\": [\"C30 entry rewritten CLOSED\", \"hypothesis named\", \"follow-up phase identified\", \"no leaked pods\", \"regression no new failures\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-14T12:00:00-07:00"
+}
