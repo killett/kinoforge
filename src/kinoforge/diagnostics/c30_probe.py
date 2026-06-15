@@ -222,6 +222,15 @@ mutation podFindAndDeployOnDemand($input: PodFindAndDeployOnDemandInput!) {
 """.strip()
 
 
+class GraphQLError(RuntimeError):
+    """Raised when a GraphQL response includes ``errors`` or null data."""
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        """Store the GraphQL ``extensions.code`` so callers can dispatch."""
+        super().__init__(message)
+        self.code = code
+
+
 def create_probe_pod(
     client: Any,  # noqa: ANN401 — injected GraphQL client; SDK-agnostic
     *,
@@ -268,7 +277,18 @@ def create_probe_pod(
         input_obj["ports"] = ports
 
     result = client.execute(_CREATE_POD_MUTATION, {"input": input_obj})
-    return str(result["data"]["podFindAndDeployOnDemand"]["id"])
+    errors = result.get("errors") or []
+    if errors:
+        first = errors[0]
+        code = (first.get("extensions") or {}).get("code")
+        raise GraphQLError(str(first.get("message", "GraphQL error")), code=code)
+    data = result.get("data") or {}
+    deployed = data.get("podFindAndDeployOnDemand")
+    if deployed is None:
+        raise GraphQLError(
+            "podFindAndDeployOnDemand returned null with no errors block"
+        )
+    return str(deployed["id"])
 
 
 _POD_STATUS_QUERY = (
