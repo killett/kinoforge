@@ -1,5 +1,5 @@
 {
-  "cumulative_usd": 0.085695,
+  "cumulative_usd": 0.114216,
   "entries": [
     {
       "phase": "a1a",
@@ -36,6 +36,15 @@
       "start_ts": "2026-06-15T08:36:21.316204-07:00",
       "end_ts": "2026-06-15T08:41:21.864702-07:00",
       "est_spend_usd": 0.014193
+    },
+    {
+      "phase": "p1",
+      "pod_id": "pt0tjr0v3eydr1",
+      "gpu_type_id": "NVIDIA GeForce RTX 3080",
+      "cents_per_hr": 17,
+      "start_ts": "2026-06-15T08:43:36.220453-07:00",
+      "end_ts": "2026-06-15T08:53:40.190898-07:00",
+      "est_spend_usd": 0.028521
     }
   ]
 }
