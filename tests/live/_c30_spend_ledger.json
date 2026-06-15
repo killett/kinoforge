@@ -1,0 +1,23 @@
+{
+  "cumulative_usd": 0.044348,
+  "entries": [
+    {
+      "phase": "a1a",
+      "pod_id": "rpj1p5ygs5ko50",
+      "gpu_type_id": "NVIDIA GeForce RTX 3070",
+      "cents_per_hr": 13,
+      "start_ts": "2026-06-14T22:28:05.804189-07:00",
+      "end_ts": "2026-06-14T22:38:23.294739-07:00",
+      "est_spend_usd": 0.022298
+    },
+    {
+      "phase": "a0prime",
+      "pod_id": "cvfe6pete23l7l",
+      "gpu_type_id": "NVIDIA GeForce RTX 3070",
+      "cents_per_hr": 13,
+      "start_ts": "2026-06-14T22:41:54.959742-07:00",
+      "end_ts": "2026-06-14T22:52:05.583593-07:00",
+      "est_spend_usd": 0.02205
+    }
+  ]
+}

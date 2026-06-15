@@ -1,0 +1,32 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-14-c30-restart-loop-diagnosis-plan.md",
+  "lastUpdated": "2026-06-14T02:00:00-07:00",
+  "status": "CLOSED (PARTIAL) — root narrowed to RunPod platform; full RCA escalated to RunPod support",
+  "tasks": [
+    {"id": "1", "subject": "Task 0: Scaffold diagnostics package + empty c30_probe.py", "status": "completed", "blockedBy": []},
+    {"id": "2", "subject": "Task 1: classify_run verdict classifier (+ negative-uptime rule)", "status": "completed", "blockedBy": ["1"]},
+    {"id": "3", "subject": "Task 2: count_trap_fires S3 lister", "status": "completed", "blockedBy": ["1"]},
+    {"id": "4", "subject": "Task 3: assert_under_cap + spend ledger", "status": "completed", "blockedBy": ["1"]},
+    {"id": "5", "subject": "Task 4: _C28_TRAP_PREAMBLE_LINES + create_probe_pod + GraphQLError", "status": "completed", "blockedBy": ["1"]},
+    {"id": "6", "subject": "Task 5: PodStatusPoller", "status": "completed", "blockedBy": ["1"]},
+    {"id": "7", "subject": "Task 6: destroy_with_retry", "status": "completed", "blockedBy": ["1"]},
+    {"id": "8", "subject": "Task 7: A2-A6 provision-line constants (direct-GraphQL pivot)", "status": "completed", "blockedBy": ["1"]},
+    {"id": "9", "subject": "Task 8: RED scaffold for 9 live tests + conftest", "status": "completed", "blockedBy": ["2", "3", "4", "5", "6", "7", "8"]},
+    {"id": "10", "subject": "Task 9: Live A1a — RESTARTED on runpod/pytorch (decisive)", "status": "completed", "blockedBy": ["9"]},
+    {"id": "11", "subject": "Task 10: Live A0' — RESTARTED on ubuntu:22.04 (inverse confirms NOT image-bound)", "status": "completed", "blockedBy": ["10"]},
+    {"id": "12", "subject": "Task 11: Walk-down (NOT NEEDED — decisive + inverse already in hand)", "status": "completed", "blockedBy": ["11"]},
+    {"id": "13", "subject": "Task 12: Close C30 — PROGRESS.md CLOSED (PARTIAL)", "status": "completed", "blockedBy": ["12"]}
+  ],
+  "outcome": {
+    "rca": "H_platform_restart_loop_community_cloud — RunPod community-cloud platform restart-cycles pods regardless of image/ports/listener/provisioning",
+    "decisive_sidecar": "tests/live/_c30_phase_a1a_evidence.json",
+    "decisive_s3": "boot-logs/c30-a1a-20260614T222804/",
+    "inverse_sidecar": "tests/live/_c30_phase_a0prime_evidence.json",
+    "inverse_s3": "boot-logs/c30-a0prime-20260614T224154/",
+    "cumulative_spend_usd": 0.044348,
+    "hard_cap_usd": 1.50,
+    "follow_up": "RunPod support ticket + optional SECURE-cloud / fresh-account probes outside C30 scope",
+    "unit_tests_passing": 42,
+    "leaked_pods": 0
+  }
+}
