@@ -8,9 +8,12 @@ All public helpers are documented in
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Sequence
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from botocore.exceptions import ClientError
@@ -104,3 +107,62 @@ def count_trap_fires(
         if exc.response.get("Error", {}).get("Code") == "NoSuchKey":
             return 0
         raise
+
+
+class BudgetCapExceeded(RuntimeError):
+    """Raised when cumulative spend would meet or exceed the hard cap."""
+
+
+def _read_ledger(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"cumulative_usd": 0.0, "entries": []}
+    try:
+        return json.loads(path.read_text())  # type: ignore[no-any-return]
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Malformed C30 spend ledger at {path}: {exc}") from exc
+
+
+def assert_under_cap(path: Path, hard_cap_usd: float) -> None:
+    """Raise ``BudgetCapExceeded`` if cumulative spend in ``path`` >= cap."""
+    payload = _read_ledger(path)
+    cumulative = float(payload.get("cumulative_usd", 0.0))
+    if cumulative >= hard_cap_usd:
+        raise BudgetCapExceeded(
+            f"Cumulative C30 spend ${cumulative:.4f} >= cap ${hard_cap_usd:.2f}"
+        )
+
+
+def append_spend_entry(path: Path, entry: dict[str, Any]) -> None:
+    """Append a spend entry and rewrite the ledger.
+
+    Args:
+        path: Ledger JSON path.
+        entry: Dict with keys ``phase``, ``pod_id``, ``gpu_type_id``,
+            ``cents_per_hr``, ``start_ts``, ``end_ts``, ``est_spend_usd``.
+            Timestamps must be ISO-8601 with offset.
+
+    Raises:
+        ValueError: If ``start_ts`` precedes the last existing entry's
+            ``end_ts``.
+    """
+    payload = _read_ledger(path)
+    entries = list(payload.get("entries", []))
+    if entries:
+        last_end = datetime.fromisoformat(str(entries[-1]["end_ts"]))
+        new_start = datetime.fromisoformat(str(entry["start_ts"]))
+        if new_start < last_end:
+            raise ValueError(
+                f"Entry start_ts {entry['start_ts']} is not monotonic vs "
+                f"prior entry end_ts {entries[-1]['end_ts']}"
+            )
+    entries.append(entry)
+    cumulative = float(payload.get("cumulative_usd", 0.0)) + float(
+        entry["est_spend_usd"]
+    )
+    path.write_text(
+        json.dumps(
+            {"cumulative_usd": round(cumulative, 6), "entries": entries},
+            indent=2,
+        )
+        + "\n"
+    )
