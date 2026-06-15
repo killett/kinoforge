@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -264,3 +266,59 @@ def create_probe_pod(
 
     result = client.execute(_CREATE_POD_MUTATION, {"input": input_obj})
     return str(result["data"]["podFindAndDeployOnDemand"]["id"])
+
+
+_POD_STATUS_QUERY = (
+    'query {{ pod(input: {{ podId: "{pod_id}" }}) '
+    "{{ id desiredStatus runtime {{ uptimeInSeconds }} }} }}"
+)
+
+
+@dataclass
+class PodStatusPoller:
+    """Poll ``pod(podId)`` for ``runtime.uptimeInSeconds`` over a window.
+
+    Args:
+        client: Object with ``execute(query, variables) -> dict``.
+        pod_id: Pod ID to probe.
+        window_s: Total polling duration.
+        interval_s: Sleep between samples.
+        sleep: Injectable sleep (default ``time.sleep``) — enables fast tests.
+        clock: Injectable monotonic clock returning seconds (default
+            ``time.monotonic``).
+    """
+
+    client: Any
+    pod_id: str
+    window_s: float
+    interval_s: float
+    sleep: Callable[[float], None] = field(default=time.sleep)
+    clock: Callable[[], float] = field(default=time.monotonic)
+
+    def poll(self) -> list[tuple[float, int | None]]:
+        """Run the poll loop. Returns trail of ``(elapsed_seconds, uptime)``."""
+        trail: list[tuple[float, int | None]] = []
+        n_intervals = int(self.window_s // self.interval_s)
+        n_samples = n_intervals + 1
+        start: float | None = None
+        for i in range(n_samples):
+            now = self.clock()
+            if start is None:
+                start = now
+            uptime = self._read_uptime()
+            trail.append((now - start, uptime))
+            if i < n_samples - 1:
+                self.sleep(self.interval_s)
+        return trail
+
+    def _read_uptime(self) -> int | None:
+        q = _POD_STATUS_QUERY.format(pod_id=self.pod_id)
+        result = self.client.execute(q, {})
+        pod = (result.get("data") or {}).get("pod")
+        if pod is None:
+            return None
+        runtime = pod.get("runtime")
+        if runtime is None:
+            return None
+        val = runtime.get("uptimeInSeconds")
+        return int(val) if val is not None else None
