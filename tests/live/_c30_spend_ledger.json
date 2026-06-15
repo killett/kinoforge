@@ -1,5 +1,5 @@
 {
-  "cumulative_usd": 0.071502,
+  "cumulative_usd": 0.085695,
   "entries": [
     {
       "phase": "a1a",
@@ -27,6 +27,15 @@
       "start_ts": "2026-06-15T08:24:05.442522-07:00",
       "end_ts": "2026-06-15T08:34:16.397879-07:00",
       "est_spend_usd": 0.027154
+    },
+    {
+      "phase": "p1",
+      "pod_id": "94015xy1jt03op",
+      "gpu_type_id": "NVIDIA RTX A4000",
+      "cents_per_hr": 17,
+      "start_ts": "2026-06-15T08:36:21.316204-07:00",
+      "end_ts": "2026-06-15T08:41:21.864702-07:00",
+      "est_spend_usd": 0.014193
     }
   ]
 }
