@@ -627,3 +627,151 @@ def _build_a6_lines() -> list[str]:
 
 # A6: A5 minus sleep + download helper + three Wan models + ComfyUI exec.
 PROVISION_A6_LINES: list[str] = _build_a6_lines()
+
+
+# ---------------------------------------------------------------------------
+# C33 additions — podEditJob-restart investigation (see
+# docs/superpowers/specs/2026-06-15-podeditjob-restart-investigation-design.md).
+# ---------------------------------------------------------------------------
+
+
+class Verdict_P0(Enum):
+    """Outcome classes for C33 P0 orphan disambiguation."""
+
+    ORPHAN_QUIRK = "orphan_quirk"
+    ORPHAN_REAL_RESTART = "orphan_real_restart"
+    AMBIGUOUS = "ambiguous"
+
+
+class Verdict_P1(Enum):
+    """Outcome classes for C33 P1 main hypothesis A/B."""
+
+    CONFIRMED = "confirmed"
+    DENIED = "denied"
+    AMBIGUOUS = "ambiguous"
+
+
+_POD_LAST_STARTED_AT_QUERY = (
+    'query {{ pod(input: {{ podId: "{pod_id}" }}) {{ id lastStartedAt }} }}'
+)
+
+_POD_STATUS_QUERY_EXTENDED = (
+    'query {{ pod(input: {{ podId: "{pod_id}" }}) '
+    "{{ id desiredStatus lastStartedAt runtime {{ uptimeInSeconds }} }} }}"
+)
+
+_POD_EDIT_JOB_MUTATION = (
+    "mutation PodEditJob($input: PodEditJobInput!) { podEditJob(input: $input) { id } }"
+)
+
+
+def snapshot_last_started_at(client: Any, pod_id: str) -> str | None:  # noqa: ANN401
+    """Return ``pod.lastStartedAt`` ISO string, or ``None`` if absent/gone.
+
+    Single GraphQL round-trip. Returns ``None`` when the pod has been
+    terminated (``data.pod == null``) or the field is missing from the
+    response (defensive against schema evolution).
+    """
+    q = _POD_LAST_STARTED_AT_QUERY.format(pod_id=pod_id)
+    result = client.execute(q, {})
+    pod = (result.get("data") or {}).get("pod")
+    if pod is None:
+        return None
+    val = pod.get("lastStartedAt")
+    return str(val) if val is not None else None
+
+
+@dataclass
+class PodStatusPollerExtended:
+    """Extended status poller with ``lastStartedAt`` + ``desiredStatus``.
+
+    Like :class:`PodStatusPoller` but also fetches ``lastStartedAt`` and
+    ``desiredStatus`` per sample. Returns
+    ``list[tuple[float, int | None, str | None, str | None]]`` —
+    ``(elapsed_seconds, uptime_in_seconds, last_started_at_iso, desired_status)``.
+    Used by C33 P0 + P1 probes.
+    """
+
+    client: Any
+    pod_id: str
+    window_s: float
+    interval_s: float
+    sleep: Callable[[float], None] = field(default=time.sleep)
+    clock: Callable[[], float] = field(default=time.monotonic)
+
+    def poll(self) -> list[tuple[float, int | None, str | None, str | None]]:
+        """Sample the pod every ``interval_s`` seconds across ``window_s``."""
+        trail: list[tuple[float, int | None, str | None, str | None]] = []
+        n_intervals = int(self.window_s // self.interval_s)
+        n_samples = n_intervals + 1
+        start: float | None = None
+        for i in range(n_samples):
+            now = self.clock()
+            if start is None:
+                start = now
+            uptime, last_started_at, status = self._read()
+            trail.append((now - start, uptime, last_started_at, status))
+            if i < n_samples - 1:
+                self.sleep(self.interval_s)
+        return trail
+
+    def _read(self) -> tuple[int | None, str | None, str | None]:
+        q = _POD_STATUS_QUERY_EXTENDED.format(pod_id=self.pod_id)
+        result = self.client.execute(q, {})
+        pod = (result.get("data") or {}).get("pod")
+        if pod is None:
+            return None, None, None
+        last_started_at = pod.get("lastStartedAt")
+        status = pod.get("desiredStatus")
+        runtime = pod.get("runtime")
+        if runtime is None:
+            return None, last_started_at, status
+        uptime = runtime.get("uptimeInSeconds")
+        return (int(uptime) if uptime is not None else None), last_started_at, status
+
+
+def issue_single_pod_edit_job(
+    client: Any,  # noqa: ANN401
+    *,
+    pod_id: str,
+    new_docker_args: str,
+) -> dict[str, Any]:
+    """Issue ONE ``podEditJob`` mutation updating ``dockerArgs``.
+
+    Raises :class:`GraphQLError` if the response contains an ``errors``
+    array. Returns the full response dict otherwise (caller can inspect
+    ``data.podEditJob.id``).
+    """
+    result: dict[str, Any] = client.execute(
+        _POD_EDIT_JOB_MUTATION,
+        {"input": {"podId": pod_id, "dockerArgs": new_docker_args}},
+    )
+    errors = result.get("errors") or []
+    if errors:
+        first = errors[0]
+        code = (first.get("extensions") or {}).get("code")
+        raise GraphQLError(str(first.get("message", "podEditJob error")), code=code)
+    return result
+
+
+def _classify_p0(sidecar: dict[str, Any]) -> Verdict_P0:
+    """Apply spec §4 P0 verdict rules to a candidate sidecar payload."""
+    advances = int(sidecar.get("n_last_started_at_advances", 0))
+    _ = int(sidecar.get("n_negative_uptime_samples", 0))
+    if advances >= 2:
+        return Verdict_P0.ORPHAN_REAL_RESTART
+    if advances == 1:
+        return Verdict_P0.AMBIGUOUS
+    return Verdict_P0.ORPHAN_QUIRK
+
+
+def _classify_p1(sidecar: dict[str, Any]) -> Verdict_P1:
+    """Apply spec §4 P1 verdict rules to a candidate sidecar payload."""
+    advanced = bool(sidecar.get("last_started_at_advanced", False))
+    reset = bool(sidecar.get("uptime_reset_observed", False))
+    monotonic = bool(sidecar.get("uptime_monotonic_for_90s", False))
+    if advanced and reset:
+        return Verdict_P1.CONFIRMED
+    if (not advanced) and monotonic:
+        return Verdict_P1.DENIED
+    return Verdict_P1.AMBIGUOUS
