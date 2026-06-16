@@ -27,6 +27,6 @@ def test_c33_q1_dual_uptime_fields(c30_client, c30_s3) -> None:  # type: ignore[
         pytest.skip("Q1 sidecar already present; idempotent skip")
     sidecar = c33_execute_q1(c30_client, c30_s3)
     assert sidecar["phase"] == "q1"
-    assert sidecar["image"] == "ubuntu:22.04"
+    assert sidecar["image"] == "mirror.gcr.io/library/ubuntu:22.04"
     assert sidecar["est_spend_usd"] <= 0.05
     assert sidecar["n_samples"] >= 10

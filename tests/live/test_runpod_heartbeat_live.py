@@ -113,7 +113,7 @@ def test_runpod_heartbeat_round_trip_against_live_pod() -> None:
 
     spec = InstanceSpec(
         offer=cheapest,
-        image="alpine:latest",
+        image="mirror.gcr.io/library/alpine:latest",
         env={},
         provision_script=None,
     )
