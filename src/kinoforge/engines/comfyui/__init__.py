@@ -1303,6 +1303,10 @@ class ComfyUIEngine(GenerationEngine):
                 ">/dev/null 2>&1) || true",
                 "exec > >(tee -a /tmp/boot.log) 2>&1",
                 "trap '_kinoforge_diag_capture $?' EXIT",
+                # Q5 diagnostic: trace every command so boot.log shows
+                # exactly which line is running when bash exits. Remove
+                # after the C28-restart-loop root cause is isolated.
+                "set -x",
                 "_kinoforge_diag_capture() {",
                 "  local rc=$1",
                 "  local last_line",
