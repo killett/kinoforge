@@ -20,7 +20,7 @@ models: []
 
 compute:
   provider: runpod
-  image: "alpine:latest"
+  image: "mirror.gcr.io/library/alpine:latest"
   mode: pod
   warm_reuse_auto_attach: false
   heartbeat_mode: graphql-tag

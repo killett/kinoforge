@@ -301,7 +301,7 @@ def test_skypilot_live_e2e_cpu_lifecycle_smoke() -> None:
         lifecycle = Lifecycle(idle_timeout_s=60, max_lifetime_s=1800)
         spec = InstanceSpec(
             run_id=cluster_name,
-            image="debian:12-slim",
+            image="mirror.gcr.io/library/debian:12-slim",
             env={},
             tags={"layer": "phase-31-smoke"},
             lifecycle=lifecycle,

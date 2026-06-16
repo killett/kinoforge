@@ -275,7 +275,7 @@ def c30_execute_phase(
 
 C33_HARD_CAP_USD = 5.00
 C33_PER_PROBE_CAP_USD = 0.05
-C33_IMAGE = "ubuntu:22.04"
+C33_IMAGE = "mirror.gcr.io/library/ubuntu:22.04"
 
 
 def c33_sidecar_path(phase: str) -> Path:

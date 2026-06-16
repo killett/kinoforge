@@ -20,7 +20,7 @@ from .conftest import (
 )
 
 PHASE = "a0prime"
-IMAGE = "ubuntu:22.04"
+IMAGE = "mirror.gcr.io/library/ubuntu:22.04"
 
 pytestmark = pytest.mark.skipif(
     os.getenv("KINOFORGE_LIVE_TESTS") != "1",

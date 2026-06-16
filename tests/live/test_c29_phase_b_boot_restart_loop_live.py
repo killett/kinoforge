@@ -124,7 +124,7 @@ def test_c29_phase_b_boot_restart_loop_reap_fires_during_provision() -> None:
     # auto-restart spins the container back up every ~5 s, so uptime stays
     # well below the 90 s threshold tick over tick.
     spec = InstanceSpec(
-        image="alpine:latest",
+        image="mirror.gcr.io/library/alpine:latest",
         offer=cheapest,
         env={},
         provision_script="sleep 5; exit 1",

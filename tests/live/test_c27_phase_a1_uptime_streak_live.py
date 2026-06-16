@@ -116,7 +116,10 @@ def test_c27_phase_a1_uptime_streak_live() -> None:
     )
 
     spec = InstanceSpec(
-        image="alpine:latest", offer=cheapest, env={}, provision_script=None
+        image="mirror.gcr.io/library/alpine:latest",
+        offer=cheapest,
+        env={},
+        provision_script=None,
     )
     instance = provider.create_instance(spec)
     instance_id = instance.id

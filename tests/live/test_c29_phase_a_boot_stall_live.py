@@ -98,7 +98,10 @@ def test_c29_phase_a_boot_stall_reap_fires_during_provision() -> None:
     )
 
     spec = InstanceSpec(
-        image="alpine:latest", offer=cheapest, env={}, provision_script=None
+        image="mirror.gcr.io/library/alpine:latest",
+        offer=cheapest,
+        env={},
+        provision_script=None,
     )
     instance = provider.create_instance(spec)
     instance_id = instance.id
