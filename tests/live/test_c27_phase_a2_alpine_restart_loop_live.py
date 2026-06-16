@@ -117,7 +117,7 @@ def test_c27_phase_a2_alpine_restart_loop_live() -> None:
     # /tmp/p.sh"'. Inside the script we sleep then exit 1, forcing the container
     # to terminate; RunPod's restart policy spins it back up immediately → loop.
     spec = InstanceSpec(
-        image="alpine:latest",
+        image="mirror.gcr.io/library/alpine:latest",
         offer=cheapest,
         env={},
         provision_script="sleep 5; exit 1",

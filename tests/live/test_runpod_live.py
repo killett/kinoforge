@@ -110,7 +110,7 @@ def test_runpod_live_e2e_pod_lifecycle_smoke() -> None:
         # 2. create_instance
         # ------------------------------------------------------------------
         spec = InstanceSpec(
-            image="alpine:latest",
+            image="mirror.gcr.io/library/alpine:latest",
             offer=offers[0],
             lifecycle=Lifecycle(idle_timeout_s=600),
             tags={"mode": "pod"},

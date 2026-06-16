@@ -29,5 +29,5 @@ def test_c33_p0_stock_ubuntu_no_mutation(c30_client, c30_s3) -> None:  # type: i
     assert sidecar["phase"] == "p0"
     assert sidecar["verdict"] in {"orphan_quirk", "orphan_real_restart", "ambiguous"}
     assert sidecar["est_spend_usd"] <= 0.05
-    assert sidecar["image"] == "ubuntu:22.04"
+    assert sidecar["image"] == "mirror.gcr.io/library/ubuntu:22.04"
     assert len(sidecar["poll_trail"]) >= 20

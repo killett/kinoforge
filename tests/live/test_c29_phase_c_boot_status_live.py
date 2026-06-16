@@ -142,7 +142,10 @@ def test_c29_phase_c_status_shows_liveness_during_boot() -> None:
     )
 
     spec = InstanceSpec(
-        image="alpine:latest", offer=cheapest, env={}, provision_script=None
+        image="mirror.gcr.io/library/alpine:latest",
+        offer=cheapest,
+        env={},
+        provision_script=None,
     )
     instance = provider.create_instance(spec)
     instance_id = instance.id
