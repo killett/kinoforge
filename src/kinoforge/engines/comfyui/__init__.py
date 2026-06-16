@@ -1327,6 +1327,12 @@ class ComfyUIEngine(GenerationEngine):
                 "dpkg -l 2>/dev/null | grep -iE 'torch|cuda' || true;",
                 "    echo '===== boot.log ====='; "
                 "tail -500 /tmp/boot.log 2>/dev/null || true;",
+                "    echo '===== p.sh wc/tail ====='; "
+                "wc -lc /tmp/p.sh 2>/dev/null || true; "
+                "tail -8 /tmp/p.sh 2>/dev/null || true;",
+                "    echo '===== selfterm.log ====='; "
+                "cat /tmp/selfterm.log 2>/dev/null || true;",
+                "    echo '===== ps ====='; ps auxf 2>/dev/null || true;",
                 "  } > /tmp/diag.txt",
                 '  if [ -n "${KINOFORGE_DIAG_BUCKET:-}" ]; then',
                 "    aws s3 cp /tmp/diag.txt "
