@@ -13,7 +13,58 @@ first unchecked task without redoing committed work.
 ## Active workstream
 **C33 ROOT CAUSE RESOLVED 2026-06-17 (autonomous overnight, $0.91 cumulative).** The T+15 s bash-exit / ~31 s container-restart cycle plaguing every Wan-on-RunPod cold-boot since C28 was the **C25 B5a `RunPodGraphQLHeartbeatEndpoint.write()`** issuing a `podEditJob` mutation every 30 s. RunPod treats any `dockerArgs` mutation as a container-reconcile event — destroys + recreates the container — and `pod.lastStartedAt` stays invariant (POD-level restart marker, not CONTAINER-level), which is why C33-P1's lastStartedAt-only classifier missed it entirely. Two-stage fix shipped: (1) `aacd49e` moved `start_heartbeat` AFTER `engine.provision` returns in `_provision_instance_and_build_backend` so provision finishes before the first tick; (2) `c2526ac` no-ops the RunPod heartbeat `write()` because the C33 (n) live confirmation showed post-provision ticks STILL restart the container — the satisfier itself is incompatible with the current RunPod API. Final live confirmation under ORIGINAL `cfg_c28_phase_a_diagnostic.yaml` (heartbeat_mode=graphql-tag): generate completed in 3:29 wall, artifact `f7173e92e31968c5.mp4`, pod destroyed cleanly, `C33-m: RunPod heartbeat write DISABLED` warning fired exactly once. Bisection commits (h–n) preserved verbatim in `tests/live/_c33_probe_{h,j,k,l,m,n}_evidence.json`. Closed follow-ups: ~~(h)~~ ~~(i)~~. Remaining open follow-ups (see C33 entry below): (f) trivial restart-policy warning string, (a) classify_run negative-uptime heuristic refinement, (d) unit test banning top-level `Pod.uptimeSeconds` reads, (g) `diagnostic_mode: "trace"` cfg opt-in. New durable spec hooks: **B5b** non-mutating heartbeat substitute (e.g. `selfterm-http` mode pinging an in-pod HTTP endpoint that touches a local file timestamp without mutating any RunPod resource); **B7 cross-CLI marker refresh** for new pods (current state: marker is set at create time only, write is a no-op, read still parses any pre-existing trailer). 18 local commits ahead of `origin/main`; not pushed.
 
-Previous workstream (closed): B2 Layer X (cost dashboard) shipped through closeout `f7071c0` + follow-ups `99704b5` (prom scrape_errors_total), `7045418` (balance disk cache TTL + stale-fallback), `39557d5` (closeout sha pin), `793c7eb` (cache put_json public-write). See §B for the next-candidate backlog (B1 sweeper, B3 orchestrator warm-reuse retrofit, B5b SkyPilot heartbeat satisfier, B6 per-entry heartbeat cadence, C25 RunPod heartbeat preserve-and-merge — currently blocked per C33 (i)).
+## Next session — resume target (single next action at top)
+
+**RESUME WITH (f) — restart-policy warning-string fix.** One-line edit in
+`src/kinoforge/providers/runpod/__init__.py` — Q9 evidence (PROGRESS C33
+entry) proved RunPod's docker restart policy is `always`, not the
+`restart-on-failure` the current WARNING string claims. Grep for
+`falling back to the provider's default restart-on-failure behaviour`
+and replace with `restart-always (verified C33 Q9, 2026-06-16)`. Land
+alongside a 1-test assertion that the literal `restart-on-failure`
+substring is gone. ~15 min, no live spend.
+
+After (f) lands, prioritised queue (do in order unless preferences shift):
+
+1. **(f) trivial — restart-policy warning string.** ↑ above. ~15 min.
+2. **(a) small — `classify_run` negative-uptime heuristic.** In
+   `src/kinoforge/diagnostics/c30_probe.py::classify_run`, require a
+   corroborating signal (S3 trap-fire count > 0 OR multi-sample negative
+   pattern) before flagging RESTARTED — single-sample negative during an
+   otherwise-monotonic trail should NOT trip the verdict. Q3 sweep (16-hour,
+   154 samples across 12 GPU types) proved single-sample negatives are
+   PLATFORM-INCIDENT noise, not restart signals. Unit-test only, no live
+   spend. ~30 min.
+3. **(d) small — banner test for top-level `Pod.uptimeSeconds`.** New
+   `tests/core/test_no_top_level_pod_uptime_reads.py` that greps `src/` for
+   any read of `Pod.uptimeSeconds` (top-level — the fully-broken-stub field
+   per Q1/Q3, 154/154 samples == 0). Audit per Q3 implication (d): no
+   production code currently reads it, only the Q1 probe explicitly tested
+   it. Lock in the absence. ~20 min, no live spend.
+4. **(g) medium — `diagnostic_mode: "trace"` cfg opt-in.** Bundle the
+   Q5-Q8 throwaway instrumentation (`set -x` + `PS4='[%T.%N]'` timestamps,
+   `/tmp/p.sh wc/tail` dump in trap, `selfterm.log` + `ps auxf` dumps,
+   `stdbuf -oL` flushing, `sync; sleep 0.5; sync` in trap) behind a single
+   cfg flag so future restart-loop debugging doesn't re-implement them.
+   Spec hook: `docs/superpowers/specs/<date>-cfg-diagnostic-trace-mode-design.md`.
+   ~2 hr, no live spend (the existing C28 phase-A cfg already exercises the
+   diagnostic trap path).
+5. **B5b — non-mutating heartbeat satisfier substitute.** Brainstorm
+   needed. Most likely path: `selfterm-http` mode pings an in-pod HTTP
+   endpoint that touches a local file timestamp without mutating any
+   RunPod resource. The in-pod selfterm Python script already runs a HTTP
+   loop for liveness; adding a `POST /heartbeat` handler that updates a
+   `/tmp/kinoforge-hb` file is straightforward. Orchestrator's
+   `heartbeat_mode: selfterm-http` already exists in the
+   `Config._validate_heartbeat_mode` enum but the satisfier isn't wired.
+   Live spend ~$0.05 (one re-confirmation run). ~1 day.
+6. **B7 cross-CLI marker refresh.** Once B5b lands, the
+   `_kinoforge_hb:<ISO>` trailer can be set via the new non-mutating
+   path and the C25 preserve-and-merge contract re-honoured. Until then,
+   B7's cross-CLI session-claim guarantee is degraded (read still works
+   for create-time markers). Stacks on B5b.
+
+Previous workstream (closed): B2 Layer X (cost dashboard) shipped through closeout `f7071c0` + follow-ups `99704b5` (prom scrape_errors_total), `7045418` (balance disk cache TTL + stale-fallback), `39557d5` (closeout sha pin), `793c7eb` (cache put_json public-write). See §B for the next-candidate backlog (B1 sweeper, B3 orchestrator warm-reuse retrofit, B5b SkyPilot heartbeat satisfier, B6 per-entry heartbeat cadence, C25 RunPod heartbeat preserve-and-merge — UNBLOCKED per C33 resolution; write disabled, B5b is the durable fix).
 
 ## Phase
 ALL 28 MVP tasks complete. All 9 phases complete. Post-MVP layers shipped through Phase 33 (Layer S — `kinoforge status` reads the ledger + `kinoforge forget` recovery subcommand), the warm-reuse trio (B5a heartbeat substrate `bade08c` + B7 cooperative session-claim lock `b2d5b8b` + B4 cross-CLI warm-reuse `54d2867`), and B2 Layer X cost dashboard (closeout `f7071c0`).
