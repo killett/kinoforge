@@ -1,0 +1,26 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-17-pytest-post-session-hang-diagnostic.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 0: Gitignore the local dump file",
+      "status": "pending",
+      "description": "**Goal:** `tests/_post_session_dump.txt` never reaches git.\n\n**Files:**\n- Modify: `.gitignore`\n\n**Acceptance Criteria:**\n- [ ] `.gitignore` contains `tests/_post_session_dump.txt`.\n- [ ] `git check-ignore tests/_post_session_dump.txt` exits 0.\n\n**Verify:** `git check-ignore -v tests/_post_session_dump.txt`\n\n```json:metadata\n{\"files\": [\".gitignore\"], \"verifyCommand\": \"git check-ignore -v tests/_post_session_dump.txt\", \"acceptanceCriteria\": [\"gitignore line present\", \"git check-ignore exits 0\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 1: Add pytest_sessionfinish thread-dump hook",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** pytest_sessionfinish hook in tests/conftest.py — dumps threading.enumerate() + sys._current_frames() on multi-thread sessions; single confirmation line otherwise.\n\n**Files:**\n- Modify: `tests/conftest.py`\n- Create: `tests/test_conftest_post_session_dump.py`\n\n**Acceptance Criteria:** hook defined; fast-path one-liner; slow-path banner+inventory+stacks; file mirror byte-for-byte; linux FD inventory; macOS skips FD; signature (session, exitstatus); never raises.\n\n**Verify:** `pixi run -- pytest tests/test_conftest_post_session_dump.py -v --no-header` → 4 passed.\n\n```json:metadata\n{\"files\": [\"tests/conftest.py\", \"tests/test_conftest_post_session_dump.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_conftest_post_session_dump.py -v --no-header\", \"acceptanceCriteria\": [\"hook defined\", \"fast path single line\", \"slow path banner+inventory+stacks\", \"file mirror byte-for-byte\", \"linux FD inventory\", \"macOS skips FD inventory\", \"signature (session, exitstatus)\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 2: Validate diagnostic in CI",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Goal:** Confirm next ubuntu CI run emits the banner + names a non-daemon non-main thread with a kinoforge stack frame.\n\n**Acceptance Criteria:** push succeeds; CI starts; ubuntu log has banner; non-daemon non-main thread named; stack in src/kinoforge/; macOS prints fast-path.\n\n**Verify:** `gh api .../jobs/$UBUNTU_JOB/logs | rg 'POST-SESSION THREAD DUMP' -A 40`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"gh api repos/killett/kinoforge/actions/jobs/$UBUNTU_JOB/logs | rg 'POST-SESSION THREAD DUMP' -A 40\", \"acceptanceCriteria\": [\"push succeeds\", \"CI run starts\", \"ubuntu log contains banner\", \"non-daemon non-main thread named\", \"stack points at src/kinoforge/\", \"macOS fast-path or skipped\"], \"modelTier\": \"standard\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"ubuntu\", \"linux\"], [\"macos\", \"darwin\"]]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-17T15:00:00-07:00"
+}
