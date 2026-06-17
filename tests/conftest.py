@@ -310,3 +310,76 @@ def http_server() -> Generator[HttpServerInfo, None, None]:
         finally:
             server.shutdown()
             thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# Post-session thread-dump diagnostic (spec
+# docs/superpowers/specs/2026-06-17-pytest-post-session-hang-diagnostic-design.md).
+#
+# Pytest finishes its test summary then returns from main(); if any
+# non-daemon thread is still alive at that point, threading._shutdown()
+# blocks the interpreter indefinitely (observed on ubuntu CI run
+# 27693732183 — 6 h job cancel; macOS exits cleanly so the leak is
+# linux-platform-primitive-bound). This hook surfaces the live-thread
+# inventory + stack frames so the next CI run names the leaker instead
+# of timing out at 6 h.
+# ---------------------------------------------------------------------------
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001
+    """Dump live threads + open FDs to stderr after the test summary line.
+
+    Args:
+        session: The pytest ``Session`` object. Unused — present to match the
+            documented hook signature.
+        exitstatus: The integer exit status pytest will return. Echoed in the
+            banner so a green vs. red session is distinguishable in CI logs.
+    """
+    import io  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    import threading  # noqa: PLC0415
+    import traceback  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    threads = threading.enumerate()
+    if len(threads) <= 1:
+        # Fast path: only MainThread alive → no leak.
+        sys.stderr.write("=== POST-SESSION THREAD DUMP === clean (1 thread)\n")
+        return
+
+    main_ident = threading.main_thread().ident
+    frames = sys._current_frames()
+
+    buf = io.StringIO()
+    buf.write(
+        f"=== POST-SESSION THREAD DUMP === pid={os.getpid()} "
+        f"exitstatus={exitstatus} n_threads={len(threads)}\n"
+    )
+    for t in threads:
+        marker = " (main)" if t.ident == main_ident else ""
+        buf.write(
+            f"  thread name={t.name!r} ident={t.ident} "
+            f"daemon={t.daemon} alive={t.is_alive()}{marker}\n"
+        )
+        frame = frames.get(t.ident) if t.ident is not None else None
+        if frame is None:
+            buf.write("    <no Python frame — likely in C extension>\n")
+            continue
+        for line in traceback.format_stack(frame):
+            buf.write("    " + line.rstrip() + "\n")
+
+    try:
+        fds = sorted(os.listdir("/proc/self/fd/"))
+        buf.write(f"  open fds: {len(fds)} → {fds}\n")
+    except OSError:
+        # macOS / non-linux — no /proc. Skip the FD inventory.
+        pass
+
+    payload = buf.getvalue()
+    sys.stderr.write(payload)
+    try:
+        Path("tests/_post_session_dump.txt").write_text(payload)
+    except OSError:
+        # cwd not writable (sandboxed CI step) — stderr is authoritative.
+        pass
