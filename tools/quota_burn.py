@@ -208,12 +208,12 @@ def _do_snapshot(args: argparse.Namespace) -> int:
 def _do_submit_quota(args: argparse.Namespace) -> int:
     """Submit GPU quota increases on both clouds; return non-zero on fallback."""
     import boto3
-    from google.cloud import quotas_v1beta  # type: ignore[attr-defined]
+    from google.cloud import cloudquotas_v1beta
 
     just_gcp = Path(args.justification_gcp).read_text()
     just_aws = Path(args.justification_aws).read_text()
 
-    gcp_client = quotas_v1beta.QuotaAdjusterClient()
+    gcp_client = cloudquotas_v1beta.CloudQuotasClient()
     gcp_result = gcp_submit_quota(
         gcp_client,
         project_id=args.project_id,

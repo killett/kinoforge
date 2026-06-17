@@ -260,6 +260,7 @@ their category.
   - `tests/live/_c29_phase_b_evidence.json` — Smoke B PROVEN: RESTART_LOOP_REAP fired at 64.4 s (window=60 s, uptime_counter=4, pod `pmrex9fxwhof86`, $0.0024 spend).
   - `tests/live/_c29_phase_c_evidence.json` — Smoke C PROVEN: 4/4 operator-facing markers (`id`, `provider`, `last_heartbeat=2026-06-14T13:48:51-07:00`, `provider_status=ready`) surfaced by `kinoforge status --id <pod>` 60 s into provision; tick_count=6; pod `at9n5itq5sqd1w`, $0.0023 spend.
   - Total C29 live spend: ~$0.0072. Final `pixi run test`: 2450 passed, 41 skipped (baseline 2436 + 14 C29 tests). Pre-existing concurrency flakes excluded (test_blocking_acquire_serializes_concurrent_calls, test_sighup_reloads_interval — pass in isolation).
+- **C29. `gcp_submit_quota` refit for `cloudquotas_v1beta.CloudQuotasClient`.** Lib's `client.create_quota_adjustment(parent=, metric=, location=, desired_value=, reason=)` doesn't match the current `google-cloud-quotas` SDK — new client uses `create_quota_preference(parent=, quota_preference=QuotaPreference(...))` with a different request shape. The broad `except Exception` in `gcp_submit_quota` currently catches the AttributeError and routes to the console-URL fallback (spec-sanctioned R3 path), so submission is operator-manual today. Refit when the next quota burn re-fires. Spec hook: `docs/superpowers/specs/<date>-gcp-cloudquotas-v1beta-refit.md`. Surfaced 2026-06-17 during Phase 52 Task 13 submission.
 - **C28. RunPod container-restart-loop prevention.** — **CLOSED (PARTIAL)** 2026-06-14. Spec: `docs/superpowers/specs/2026-06-13-c28-restart-loop-prevention-design.md`. Plan: `docs/superpowers/plans/2026-06-13-c28-restart-loop-prevention.md`. Diagnostic-first prevention layer for the chronic RunPod container-restart loop that C27 detects but does not fix. **Shipped (Tasks 0-12, 14, 15):** A0 empirical mutation probe for `PodFindAndDeployOnDemandInput` (RunPod's GraphQL gateway disables Apollo introspection, so the planned `__type` query 400s; the probe sends a one-field mutation per candidate and classifies on parser-validation errors); sidecar `tests/live/_c28_runpod_input_schema_probe.json` confirms `restartPolicy=false`, `networkVolumeId=true`, `registryAuthId=false` (`f394412`). A1 S3 diagnostics bucket `kinoforge-pod-diagnostics` (us-west-2, 7-day lifecycle on `boot-logs/`) + `kinoforge-c28-diag-put` IAM policy (PutObject-only, prefix-scoped) attached to `kinoforge-ci` via `tools/c28_provision_s3_diagnostics.py` (idempotent) (`02f7aee`). A2 `render_provision` EXIT trap pre-amble gated on `cfg.diagnostic_mode` — captures rc/last_line/nvidia-smi/df/free/models-dir/dpkg/boot.log tail, PUTs via `aws s3 cp || true`; byte-identical to baseline when knob off (`0827f32`). A1.5 `InstanceSpec.diagnostic_env: dict[str,str]` + `setdefault`-merge in `_create_pod` (user env always wins) + `Config.diagnostic_mode: bool = False` + `orchestrator._build_diagnostic_env(run_id)` reads AWS via boto3 default chain (honours `AWS_SHARED_CREDENTIALS_FILE`) (`8011c78`). A3 `InstanceSpec.restart_policy: Literal["always","never"] = "always"` + sidecar-gated wire branch (A0 says `restart_policy_supported=false` → warn+skip path is current production) + `kinoforge deploy --diagnostic-mode` CLI flag rebuilds cfg via `model_copy(diagnostic_mode=True)` (`b2e1b79`). Phase A RED scaffold + cfg (`a6adda4`); live smoke run **NO_REPRODUCTION** + matched_hypothesis Hn (`db023f4`) — 3 cold boots all reaped by C26/C27 predicate before EXIT trap could complete `aws s3 cp`; likely silent-trap root cause: `aws` CLI absent from `runpod/pytorch:2.4.0` base image. Gate Task 8: ship Phase B + C unconditionally per spec table (`e7862d5`). Phase B: `docker/wan-comfyui/Dockerfile` with 4 pinned ARG refs + build-time `import comfy` smoke + pre-installed awscli (closes the silent-trap root cause for future captures) + 7-test static lint suite (`522047c`); `pixi run build-image-wan-comfyui` + GH Actions `build-wan-comfyui-image.yml` workflow_dispatch pipeline (`a60f0b2`); `render_provision` slim-mode branch — image prefix `kinoforge/wan-comfyui:` skips ComfyUI clone + custom-node clones + pip installs (`28828e9`); Phase B cfg + RED scaffold (`7eb8823`). Phase C: `_kinoforge_download` pure-bash helper rendered unconditionally — 3-attempt loop, 5/10/15 s backoff, `${out}.partial` cleanup, optional sha256 verify, bash indirect expansion `${!token_env}` for bearer header (HF/CivitAI/etc.); 7 helper tests (`41c9625`). C2 model-loop refactor: every download emits `_kinoforge_download '<url>' '<out>' '<sha>' '<token_env_name>'`; inline curl gone; existing HF + CivitAI fixture tests updated to verify the new call-site shape (`a188903`). Worktree symlinks for `.env`/`.aws`/`.gcp` so the boto3 default chain finds credentials. Regression: 1535 tests across `tests/core` + `tests/providers` + `tests/engines` + `tests/cli` — all green. **Deferred (Tasks 13, 16, 17):** Phase B live smoke (B4), Phase C live smoke (C3), and spec-level acceptance (3 cold boots + C27 PB re-fire) all require `kinoforge/wan-comfyui:v0.3.10-088128b2-cu124` to be pushed to Docker Hub. No Docker in the container; operator must trigger the `build-wan-comfyui-image.yml` workflow_dispatch in GitHub Actions (DOCKERHUB_USERNAME + DOCKERHUB_TOKEN already in `.env`, need adding to repo Settings → Secrets). Live spend across C28 to date: ~$0.20 (Phase A only).
 - ~~**C27. Restart-loop stall detection.**~~ — **CLOSED** 2026-06-13. Spec: `docs/superpowers/specs/2026-06-13-c27-restart-loop-stall-detection-design.md`. Plan: `docs/superpowers/plans/2026-06-13-c27-restart-loop-stall-detection.md`. Pure-additive extension of the C26 util substrate. Shipped: `Verdict.RESTART_LOOP_REAP` appended after `STALL_REAP` + `DEFAULT_APPLY_POLICY` entry (`19cffff`). `_update_uptime_counter` pure state machine — twin of `_update_counter` on the uptime axis, no restart-blip filter (the chronic restart loop IS the signal) (`25a738d`). `_restart_loop_reap_predicate` pure function — same defensive shape as `_stall_reap_predicate`; per-entry `restart_loop_window_s` override (`71c8780`). `classify()` row 3'' wiring with STALL_REAP tie-breaker — both predicates can fire on the same tick; stall checked first wins (`d12f26a`). `LifecycleConfig.restart_loop_reap_enabled=True` / `restart_loop_window_s=180.0` / `restart_loop_uptime_threshold_s=90.0` + two non-negative validators (`16266a9`). `interfaces.Lifecycle` extension + `Config.lifecycle()` collapse on enabled bool (`9397eb6`). `HeartbeatLoop` extension — two new kwargs, `_uptime_counter` instance state, `consecutive_low_uptime_count` persisted into ledger touches both branches (`16ba622`). `_maybe_fire_stall_reap` renamed to `_maybe_fire_reap` with both-routes wiring; log line names verdict + both counters + both windows (`2e3e6f5`). `--restart-loop-window-override SECONDS` CLI flag on `kinoforge deploy` persists per-entry override (`f6fecda`). Cross-process callsite threading — `_adapters.build_util_endpoint_for` kill-switch now requires BOTH enabled flags off; orchestrator HeartbeatLoop construction + four CLI `classify()` callsites all thread the two new kwargs (`23dccaa`). `FakeUtilEndpoint` test helper for Phase A1 (`1d2296c`). Three live smokes all PROVEN: Phase A1 (`tests/live/test_c27_phase_a1_uptime_streak_live.py`) — FakeUtilEndpoint forcing `uptime_seconds=1` drives counter `[1,2,3,4,5,6]` end-to-end on RTX A2000 @ $0.12/hr; fires at 52.3 s; ~$0.002 (RED scaffold `34571f6`, evidence `2f57931`). Phase A2 (`tests/live/test_c27_phase_a2_alpine_restart_loop_live.py`) — real `RunPodGraphQLUtilEndpoint` against alpine pod with `provision_script="sleep 5; exit 1"` forcing real RunPod restart churn; counter `[0,1,2,3,4,5,6]`; uptime readings `[None, 0, 0, -2, -2, -15, -15]` (RunPod surfaces 0 / negative uptime during restart); fires at 96.4 s; ~$0.003 (RED `d698d3b`, evidence `8faef91`). Phase B (`tests/live/test_c27_phase_b_wan_warm_reuse_live.py`) — re-fires the deferred C25 Task 4 / C26 Task 14 gate on real Wan 2.1 14B T2V; gen1 regressed into the same restart-loop symptom that defeated C26 but C27 caught it: `RESTART_LOOP_REAP` self-fired, pod destroyed, CancelToken set, gen1's `ComfyUIBackend.result` raised `Cancelled` at 356.8 s; acceptance_path **PROVEN-PROTECTION**; ~$0.05 (RED `39e64f8`, evidence `ce4bd00`). Full regression: 208 unit tests across all C27-touched files green. Live spend across C27: ~$0.06 total. **Closes** the C25 Task 4 + C26 Task 14 deferred acceptance gate.
 - ~~**C26. RunPod util-aware stall classify.**~~ — **CLOSED (PARTIAL)** 2026-06-13. Spec: `docs/superpowers/specs/2026-06-13-c26-runpod-util-aware-stall-classify-design.md`. Plan: `docs/superpowers/plans/2026-06-13-c26-runpod-util-aware-stall-classify.md`. **Shipped (Tasks 1-13):** RunPod GraphQL disk-util probe (Task 1, sidecar `tests/live/_runpod_util_disk_probe.json` — no disk axis exists, `disk_percent` ships as None permanently). `core/util_endpoints.py` Protocol + `UtilSnapshot` dataclass + `provider_util_supported` gate (`{"local", "runpod"}`). `RunPodGraphQLUtilEndpoint` satisfier (Bearer auth + inlined podId, MAX across gpus). `LocalUtilEndpoint` test seam. `core/util_counter.py` pure `_update_counter` state machine. `LifecycleConfig` stall_reap_enabled / stall_window_s / stall_gpu_threshold / stall_cpu_threshold cfg knobs (`core/config.py`). `Verdict.STALL_REAP` appended (additive) + in `DEFAULT_APPLY_POLICY`. `classify()` row 3' inside sentinel-fresh + non-idle branch intercepts LIVE. HeartbeatLoop integration: per-tick util read → counter update → 7 ledger fields persisted → self-classify → on STALL_REAP destroy + ledger.forget + cancel_token.set + stop. Cross-process consumers (CLI `_resolve_warm_instance`, `_cmd_destroy`, cost-mode classify loop, `reaper_actor.act_on_verdict` + `sweep`, `sweeper.SweeperLoop`) thread three new kwargs; STALL_REAP outside `_FORCE_BYPASSABLE_VERDICTS` so `--force-attach` refuses stalled pods. `--stall-window-override SECONDS` CLI flag on `kinoforge deploy` persists per-entry override. Phase A live smoke (`tests/live/test_c26_phase_a_stall_detection_live.py`) **PROVEN** at 76.6 s — FakeEngine on cheapest RunPod offer (RTX 3070), counter trail `[0, 0, 1, 2, 3, 4, 5, 6]`, STALL_REAP fires at counter × interval = 60 s ≥ stall_window_s=60 s, pod destroyed, cancel_token set, ledger.forget invoked; spend ~$0.003. Sidecar `tests/live/_c26_phase_a_smoke_evidence.json`. Full regression: 419 unit tests across core + CLI suites green. **Partial (Task 14 Phase B):** Wan + ComfyUI 2-CLI smoke uncovered a design hole — the pod entered a container restart loop (RAM/disk/GPU near zero, uptime_seconds=1 on every tick). Both stall axes ARE below threshold (gpu=0, cpu=13 < 20), but `_update_counter`'s uptime-decrease guard fires every tick and resets the counter to 0, so STALL_REAP never fires. Sidecar `tests/live/_c26_phase_b_smoke_evidence.json` captures the diagnosis. The shipped design covers the "steady low util" stall class (Phase A) but NOT the "chronic restart loop" stall class (Phase B). C25 Task 4 deferred gate remains open. Follow-up tracked as **C27** (restart-loop stall detection): a sibling predicate, e.g. `uptime_seconds < threshold_uptime` for K consecutive ticks, alongside the existing low-util predicate. Live spend across C26: probe $0.01 (2 runs) + Phase A $0.003 + Phase B $0.025 ≈ $0.04 total.
@@ -2643,16 +2644,16 @@ Lib: `tools/quota_burn_lib.py` | CLI: `tools/quota_burn.py` (Task 8+)
 - [x] Task 8: CLI dispatcher — `tools/quota_burn.py` with 5 subcommands (`spin-up`, `tear-down`, `snapshot`, `scan-bigquery`, `submit-quota`); 108 tests green — commit `93fcbd9`
 - [x] Task 9: Justification draft templates + PROGRESS update — `docs/quota-justification-gcp.md` + `docs/quota-justification-aws.md`; Phase 52 prerequisites documented
 - [x] Task 10: Day 0 — live spinup — manifest at `.quota_burn/manifest.json`, both clouds live 2026-06-11 19:16 local
-- [ ] Task 11: Days 1–4 daily snapshot — Day 1 skipped (kernel-shutdown re-spin); Day 2 logged 2026-06-13 (BQ export not ready, partial); Days 3-4 pending
-- [ ] Task 12: Day 4 — populate justification drafts
-- [ ] Task 13: Day 5 — submit quotas + teardown + closeout
+- [x] Task 11: Days 1–4 daily snapshot — Day 1 skipped (kernel-shutdown re-spin); Day 2 logged 2026-06-13 (BQ export not ready, partial); Days 3-5 skipped (autonomous overnight C33 work consumed window); Day 6 final snapshot logged 2026-06-17 (see Task 13 closeout)
+- [x] Task 12: Day 6 — populated justification drafts with snapshot figures — commit `b18397b`
+- [x] Task 13: Day 6 — submit quotas + teardown + closeout — see closeout below
 
 #### Justification drafts
 
 - GCP: `docs/quota-justification-gcp.md`
 - AWS: `docs/quota-justification-aws.md`
 
-Both contain `$MTD_SPEND_USD$` placeholder; Task 12 substitutes the live value from `pixi run kinoforge snapshot` output before submission.
+Both populated 2026-06-17 with Day-6 snapshot figures (commit `b18397b`); placeholder substituted, repo URL filled (public).
 
 #### Task 10 prerequisites (operator — REQUIRED before live spinup)
 
@@ -2759,3 +2760,81 @@ unavailable):
 16. `_do_snapshot` blew up at GCP fetch when export not ready → commit `977fafa`
     translates `NotFound 404` + `BadRequest 400 "does not match any table"` to
     `BillingExportNotReady`, surfaces as `gcp_status` field on partial report.
+
+#### Task 13 closeout — 2026-06-17 (Day 6, 1 day over plan)
+
+**Final MTD snapshot** (`pixi run python -m tools.quota_burn snapshot`, as of
+`2026-06-17T06:49:53` local):
+
+- GCP `kinoforge-prod-0ddb375e`: **$2.58** total. Compute Engine $2.20,
+  Networking $0.36, Cloud KMS $0.02, Cloud Storage $0.00, BigQuery $0.00.
+  `gcp_status: ok` — BQ billing-export now live, no partial-report fallback.
+- AWS `009910375621`: **$1.76** total. VPC $0.57, EC2-compute $0.48,
+  EC2-other / EBS $0.37, KMS $0.33, Cost Explorer $0.01, S3 $0.00.
+- **Combined $4.34** — 22% of $20 cap, well below $10 pause threshold.
+
+**Steady-state delta vs Day-2 estimate:** actual GCP Compute $0.0157/hr (vs
+$0.0084 estimated; ~1.9× under-estimate); AWS dominated by VPC + KMS, not
+the t4g.nano compute line. Spec napkin math used the on-demand price sheet
+only and ignored the always-on networking + KMS-key floor that hit ~$0.90
+in non-compute over six days.
+
+**Quota submissions:**
+
+- AWS: real service-quotas request filed via boto3. Request ID
+  `ac4331ff4ef64f8c9ac80c6b2e62f75d9Z68FM0c` (quota code
+  `L-DB2E81BA` — All G & VT Spot Instance Requests, region `us-west-2`,
+  desired_value=4). Lib emitted WARNING `aws_submit_quota: no CaseId on
+  RequestedQuota response; justification not attached` — newer
+  service-quotas API doesn't return a CaseId on first call, so the
+  justification text from `docs/quota-justification-aws.md` was NOT
+  auto-attached to a support case. If AWS asks for context, paste the doc
+  contents into a manual case follow-up.
+- GCP: SDK fallback path (expected). New `google-cloud-quotas` SDK exposes
+  `cloudquotas_v1beta.CloudQuotasClient` with `create_quota_preference`,
+  not the old `quotas_v1beta.QuotaAdjusterClient.create_quota_adjustment`
+  shape the lib targets — the broad `except Exception` in
+  `gcp_submit_quota` catches the AttributeError and emits the pre-filled
+  console URL. **Operator action**: click
+  `https://console.cloud.google.com/iam-admin/quotas?project=kinoforge-prod-0ddb375e&filter=metric%3Acompute.googleapis.com%2FNVIDIA_T4_GPUS+OR+compute.googleapis.com%2Fgpus_all_regions`,
+  paste the body of `docs/quota-justification-gcp.md` into the request
+  reason, submit both global `gpus_all_regions=1` and regional
+  `nvidia_t4_gpus=1` (us-west1).
+
+**Teardown:** `pixi run python -m tools.quota_burn teardown --project-id
+kinoforge-prod-0ddb375e --zone us-west1-a` returned:
+
+- GCP deleted: VM `kinoforge-burn-upddv3`, bucket
+  `kinoforge-quota-burn-gcp-upddv3`, budget
+  `billingAccounts/01522C-EC9AA4-64A7D5/budgets/c3aeaec1-a1f9-410f-89a9-bebaecec238d`
+- AWS deleted: EC2 `i-0c61ecda9dd38fef8`, S3 bucket
+  `kinoforge-quota-burn-aws-at2e8a`
+
+**Post-teardown verification** (zero remaining):
+
+- `gcloud compute instances list --filter='labels.kinoforge-quota-burn:*'` → empty
+- `gcloud storage buckets list --filter='name:kinoforge-quota-burn-*'` → empty
+- `aws ec2 describe-instances --filters Name=tag:kinoforge-quota-burn,Values='*'` → empty
+- `aws s3api list-buckets --query 'Buckets[?starts_with(Name, ...)]'` → empty
+
+**Bug/perm catches during Day-6 (Task 13):**
+
+17. `google-cloud-quotas` PyPI dep missing → added via
+    `pixi add --pypi google-cloud-quotas>=0.1`.
+18. SDK package rename: `google.cloud.quotas_v1beta` →
+    `google.cloud.cloudquotas_v1beta`; client class
+    `QuotaAdjusterClient` → `CloudQuotasClient`. Updated import in
+    `tools/quota_burn.py:_do_submit_quota`. New client lacks
+    `create_quota_adjustment` method (now `create_quota_preference` with a
+    different request shape) — left lib unchanged because the broad
+    `except Exception` already routes to the console-URL fallback the
+    spec sanctions; rewriting `gcp_submit_quota` for the new SDK is
+    deferred until a future burn re-fires.
+
+**Phase 52 status: CLOSED.** Single follow-up: AWS quota request decision
+(SLA up to 4 business days); GCP request operator-side after console click.
+
+**Carry-forward:** `gcp_submit_quota` rewrite for new
+`CloudQuotasClient.create_quota_preference` shape — deferred. Spec hook:
+`docs/superpowers/specs/<date>-gcp-cloudquotas-v1beta-refit.md` when next
+burn re-fires.
