@@ -27,7 +27,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import secrets
 import time
 import urllib.request
@@ -604,19 +603,12 @@ class RunPodProvider(ComputeProvider):
                 env["RUNPOD_TERMINATE_KEY"] = terminate_key
 
         # Embed self-terminator script
-        # C33 (h) probe — TEMP — suppress selfterm injection when sentinel set
-        # so the in-pod bash guard `[ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]`
-        # short-circuits and `nohup python3 /tmp/selfterm.py` never starts.
-        # Revert with the rest of this commit once Q+15s mystery resolved.
-        if os.environ.get("KINOFORGE_DIAG_DISABLE_SELFTERM") == "1":
-            env["KINOFORGE_SELFTERM_SCRIPT"] = ""
-        else:
-            env["KINOFORGE_SELFTERM_SCRIPT"] = selfterm.RENDER(
-                idle_timeout=spec.lifecycle.idle_timeout_s,
-                max_lifetime=spec.lifecycle.max_lifetime_s,
-                job_timeout=spec.lifecycle.job_timeout_s,
-                time_buffer=spec.lifecycle.time_buffer_s,
-            )
+        env["KINOFORGE_SELFTERM_SCRIPT"] = selfterm.RENDER(
+            idle_timeout=spec.lifecycle.idle_timeout_s,
+            max_lifetime=spec.lifecycle.max_lifetime_s,
+            job_timeout=spec.lifecycle.job_timeout_s,
+            time_buffer=spec.lifecycle.time_buffer_s,
+        )
 
         # Safety: NEVER put the main API key in the pod env
         env.pop("RUNPOD_API_KEY", None)
