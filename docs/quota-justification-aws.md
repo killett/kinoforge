@@ -1,8 +1,7 @@
 # AWS GPU quota — justification
 
-> **Status (as of day 5 = 2026-06-15):** ready to submit. Placeholder
-> `$MTD_SPEND_USD$` is replaced by `tools/quota_burn.py snapshot` output
-> immediately before submission via the support-case follow-up.
+> **Status (as of day 6 = 2026-06-17):** ready to submit. MTD figures
+> populated from `tools/quota_burn.py snapshot` taken 2026-06-17T06:49:53.
 
 ## Workload
 
@@ -15,8 +14,10 @@ pattern. No persistent GPU fleet.
 
 ## Account context
 
-Active billing customer. Month-to-date spend across EC2, S3, EBS, and
-DynamoDB: **$MTD_SPEND_USD$**. Region preference: `us-west-2`.
+Active billing customer. Month-to-date spend across VPC ($0.57),
+EC2-compute ($0.48), EC2-other / EBS ($0.37), KMS ($0.33), Cost
+Explorer ($0.01), S3 ($0.00): **$1.76 total**. Region preference:
+`us-west-2`.
 
 ## Cost controls
 
@@ -27,4 +28,4 @@ DynamoDB: **$MTD_SPEND_USD$**. Region preference: `us-west-2`.
 
 ## Repository
 
-<add public repo URL here on day 4, or strike this line if repo is private>
+https://github.com/killett/kinoforge
