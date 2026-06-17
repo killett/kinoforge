@@ -86,3 +86,7 @@ tools/_snapshots/
 
 # Stray screenshots from operator desktop (never commit)
 *.png
+
+# Local-run output of the post-session thread dump (tests/conftest.py
+# pytest_sessionfinish hook). Diagnostics only — never committed.
+tests/_post_session_dump.txt
