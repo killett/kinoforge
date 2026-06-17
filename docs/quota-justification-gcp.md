@@ -1,8 +1,7 @@
 # GCP GPU quota — justification
 
-> **Status (as of day 5 = 2026-06-15):** ready to submit. Placeholder
-> `$MTD_SPEND_USD$` is replaced by `tools/quota_burn.py snapshot` output
-> immediately before submission.
+> **Status (as of day 6 = 2026-06-17):** ready to submit. MTD figures
+> populated from `tools/quota_burn.py snapshot` taken 2026-06-17T06:49:53.
 
 ## Workload
 
@@ -16,8 +15,9 @@ persistent. No production traffic.
 ## Account context
 
 Active pay-as-you-go customer since 2026-06-07. Month-to-date spend
-across Compute Engine, Cloud Storage, BigQuery, and other services on
-project `kinoforge-prod-0ddb375e`: **$MTD_SPEND_USD$**.
+across Compute Engine ($2.20), Networking ($0.36), Cloud KMS ($0.02),
+Cloud Storage ($0.00), BigQuery ($0.00), Cloud Logging ($0.00) on
+project `kinoforge-prod-0ddb375e`: **$2.58 total**.
 
 ## Cost controls
 
@@ -29,4 +29,4 @@ project `kinoforge-prod-0ddb375e`: **$MTD_SPEND_USD$**.
 
 ## Repository
 
-<add public repo URL here on day 4, or strike this line if repo is private>
+https://github.com/killett/kinoforge
