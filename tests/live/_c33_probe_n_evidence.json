@@ -1,0 +1,48 @@
+{
+  "probe": "C33 (n) — final live confirmation, original cfg + C33 fix",
+  "date_utc": "2026-06-17T07:39",
+  "date_local_pdt": "2026-06-17 00:39",
+  "scope": "End-to-end verify the C33 fix combo (commit aacd49e moves start_heartbeat AFTER engine.provision; commit c2526ac no-ops RunPod heartbeat write) by running the ORIGINAL Q4 cfg (cfg_c28_phase_a_diagnostic.yaml with heartbeat_mode=graphql-tag) and asserting kinoforge generate completes cleanly.",
+  "cfg": "tests/live/cfg_c28_phase_a_diagnostic.yaml (UNCHANGED Q4 cfg — heartbeat_mode=graphql-tag)",
+  "command": "timeout 720 pixi run kinoforge generate -c tests/live/cfg_c28_phase_a_diagnostic.yaml --prompt examples/configs/prompts/dawn-flight.md --mode t2v --no-reuse",
+  "result": "SUCCESS",
+  "exit_code": 0,
+  "pod_id": "hfq994pqtvgls5",
+  "gpu": "RTX 3090 community-cloud @ $0.22/hr (after RTX 4090 capacity-fallthrough)",
+  "warning_observed": "C33-m: RunPod heartbeat write DISABLED for hfq994pqtvgls5 — podEditJob triggers container restart. See tests/live/_c33_probe_m_evidence.json. Local-ledger heartbeat tracking only.",
+  "wall_breakdown": {
+    "kinoforge_start": "00:36:30",
+    "first_warning_c33m": "00:38:10 (T+1 m 40 s — first heartbeat tick after provision returns)",
+    "comfyui_first_poll_ready": "00:38:17 (T+1 m 47 s)",
+    "generate_completed": "00:39:52 (T+3 m 22 s — 95 s of compute)",
+    "pod_destroyed": "00:39:59 (T+3 m 29 s)"
+  },
+  "artifact_uri": "/workspace/.kinoforge/run-20260617-003630/f7173e92e31968c5.mp4",
+  "spend_usd": 0.067,
+  "comparison_with_q4_baseline": {
+    "Q4_pre_fix_same_cfg": {
+      "uploads": 29,
+      "approx_cycle_s": 31,
+      "outcome": "15 min timeout, no artifact"
+    },
+    "n_post_fix_same_cfg": {
+      "uploads": "0 (none — no cycles)",
+      "outcome": "SUCCESS, artifact produced in 3:29",
+      "c33_warning_fired_once": true,
+      "container_uptime_climbed_monotonically": true
+    }
+  },
+  "verdict": "C33 fix combo VERIFIED end-to-end. Original Q4 cfg (heartbeat_mode=graphql-tag — the failing config) now succeeds. The orchestrator's start_heartbeat-after-provision ordering + the RunPod heartbeat satisfier's write-disabled NO-OP combination eliminate both during-provision and post-provision container restart cycles caused by podEditJob mutation.",
+  "side_effects_observed_in_log": [
+    "Warning emitted exactly once per pod via the per-endpoint `_c33_warned_instances` cache.",
+    "No 404/502 from /history/<job_id> on the ComfyUI proxy (the (n2) ComfyUI poll succeeded after 95 s of compute, no transient HTTP errors observed in the steady-state poll loop)."
+  ],
+  "implications": [
+    "(C25) production heartbeat path: UNBLOCKED with the asterisk that 'heartbeat write' is now a no-op (read still works for create-time markers).",
+    "(B5a) heartbeat substrate: the marker-write contract is provisional pending a non-mutating substitute. xfail'd unit tests in tests/providers/runpod/test_heartbeat.py document the IDEAL behaviour.",
+    "(B7) cross-CLI cooperative session-claim lock: intra-CLI heartbeat semantics preserved (HeartbeatLoop still ticks the local ledger). Cross-CLI marker not refreshed — first session reads marker once, subsequent reads stale. Acceptable trade-off until a non-mutating signal lands.",
+    "(C28) diagnostic_mode trap + restart_loop_reap_enabled=false: still useful for any future image-entrypoint-side cycle but no longer needed for the heartbeat-induced cycle, which is now extinguished at the source."
+  ],
+  "cumulative_c33_spend_estimate_usd": 0.91,
+  "session_total_estimate_usd": 0.91
+}
