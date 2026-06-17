@@ -15,16 +15,29 @@ first unchecked task without redoing committed work.
 
 ## Next session — resume target (single next action at top)
 
-**RESUME WITH (f) — restart-policy warning-string fix.** One-line edit in
-`src/kinoforge/providers/runpod/__init__.py` — Q9 evidence (PROGRESS C33
-entry) proved RunPod's docker restart policy is `always`, not the
-`restart-on-failure` the current WARNING string claims. Grep for
-`falling back to the provider's default restart-on-failure behaviour`
-and replace with `restart-always (verified C33 Q9, 2026-06-16)`. Land
-alongside a 1-test assertion that the literal `restart-on-failure`
-substring is gone. ~15 min, no live spend.
+**RESUME WITH Phase 53 Stage C — kinoforge cfg surface for cloud
+pinning.** Sky→Lambda raw smoke proven (Stage B, A10 1x in us-east-1,
+~$0.07 spend). Today's `ComputeConfig` has no `cloud` field, so
+`SkyPilotProvider` factory passes no `clouds=` filter to `sky.launch` —
+sky considers all four Enabled clouds and Vast.ai always wins on price
+under `max_usd_per_hr: 1.00`. Required: (C1) add `compute.cloud: list[str]`
+to `ComputeConfig` at `src/kinoforge/core/config.py:513`; (C2) refactor
+the registry factory at `src/kinoforge/providers/skypilot/__init__.py:809`
+from `lambda: SkyPilotProvider()` to a cfg-aware variant that threads
+the cfg list into `SkyPilotProvider(clouds=...)`; (C3) update
+`examples/configs/skypilot-gpu.yaml` (or fork a `skypilot-lambda.yaml`)
+with `max_usd_per_hr: 2.00` (Lambda cheapest = A6000 $1.09/hr). See
+Phase 53 §Stage C for the full scope. ~2-3 hr work, no live spend.
 
-After (f) lands, prioritised queue (do in order unless preferences shift):
+After Stage C lands: Stage D (Vast.ai parity raw smoke, ~$0.05) and
+Stage E (end-to-end `kinoforge deploy` on Lambda, ~$0.15).
+
+C33 (f) restart-policy warning-string fix is **deprioritized** — still
+correct but no longer the bottleneck since the operator pivot away from
+RunPod-flavoured work. Reachable through the prioritized queue below
+once Phase 53 reaches a checkpoint.
+
+After Phase 53 reaches a checkpoint, the prior C33 queue (do in order unless preferences shift):
 
 1. **(f) trivial — restart-policy warning string.** ↑ above. ~15 min.
 2. **(a) small — `classify_run` negative-uptime heuristic.** In
@@ -2843,9 +2856,108 @@ GCP+AWS burn ($4.34 spend) produced zero quota grants.
 **Carry-forward:** none. C29 abandoned alongside the rest of the
 GCP+AWS workstream.
 
-### Phase 53 — vast.ai + Lambda SkyPilot integration (planning)
+### Phase 53 — vast.ai + Lambda SkyPilot integration
 
 Scope: wire `vast.ai` + `Lambda Cloud` into kinoforge's existing
 `SkyPilotProvider` so GPU compute lands on operator-owned accounts at
-those two providers instead of GCP/AWS. Plan + spec pending the two
-scoping questions raised at the end of Task 13.
+those two providers instead of GCP/AWS.
+
+**Operator scoping decisions (2026-06-17):**
+- Abandon mode: **stop new spend only**, no rip-out. Historical
+  Bedrock/Vertex engines + GCP/AWS extras + `tools/quota_burn*`
+  preserved as dead code; PROGRESS marks them ABANDONED. Reversible.
+- First live target: **Lambda first** (predictable single-vendor),
+  Vast.ai parity smoke queued.
+
+#### Stage A — extras + cred materialization (CLOSED 2026-06-17)
+
+- [x] **A1: pixi.toml extras** — `skypilot` extras grew
+  `gcp, aws` → `gcp, aws, vast, lambda` (commit `982c6c4`). `vast`
+  pulls `vastai-sdk`; `lambda` adds no transitive deps (pure HTTP).
+- [x] **A2: cred materialization script** — `tools/setup_sky_creds.sh`
+  reads `LAMBDA_API_KEY` → `$HOME/.lambda_cloud/lambda_keys` and
+  `VAST_API_KEY` → `$HOME/.config/vastai/vast_api_key`. Mode 600
+  files + mode 700 parents. Silent no-op when env vars unset
+  (commit `982c6c4`). Pixi 0.69 does **not** auto-source `.env`
+  before activation, so the script self-sources
+  `${PIXI_PROJECT_ROOT:-/workspace}/.env` first (commit `375409a`).
+- [x] **A3: activation wiring** — `[feature.live-skypilot.activation]`
+  `scripts = ["tools/setup_sky_creds.sh"]`. Self-heals after
+  container rebuilds because `/home/claudeuser` is overlay-only
+  except for the `.claude` bind-mount (commit `982c6c4`).
+- [x] **A4: .env.example** — `LAMBDA_API_KEY` + `VAST_API_KEY` blocks
+  added (commit `982c6c4`). GCP/AWS/Azure blocks preserved per
+  stop-new-spend scoping decision.
+- [x] **A5: `sky check` verification** — both clouds report
+  `enabled [compute]`. AWS still enabled too (preserved scaffolding);
+  GCP dropped because the kinoforge-runner SA auth cache aged out
+  after the project swap — irrelevant per abandonment.
+
+#### Stage B — raw `sky launch` capacity proof (CLOSED 2026-06-17)
+
+First-try result: **Lambda A6000 `gpu_1x_a6000` ($1.09/hr) returned
+`insufficient-capacity` in us-east-1**, the only region sky considered
+under the default `--infra lambda`. Retried with A10 `gpu_1x_a10`
+($1.29/hr) — provisioned cleanly in us-east-1, `nvidia-smi -L` reported
+`NVIDIA A10 (UUID: GPU-6b915775-...)`, `SMOKE_OK` echoed. Explicit
+teardown via `sky down -y` returned `Terminating cluster ...done.`;
+`sky status` confirms zero remaining clusters.
+
+Smoke spend: ~$0.07 (provision ~1 min + nvidia-smi ~5 s + teardown
+~30 s on $1.29/hr → ~$0.025; SkyPilot's launch path adds an extra
+~1-2 min idle billing window between launch-completes and
+job-start).
+
+**Key learnings:**
+
+- **No T4 / no CPU-only on Lambda.** Cheapest GPU available is
+  A6000 1x ($1.09/hr); A10 1x is the next tier ($1.29/hr).
+  The justifications written for Phase 52 Task 12 referenced T4 —
+  moot now per Phase 52 abandonment.
+- **Capacity is fluid.** A6000 was unavailable today, A10 worked.
+  Production runs must use `--retry-until-up` OR fall through to
+  Vast.ai as the redundant cloud. The kinoforge SkyPilotProvider
+  passes `clouds=` to `sky.launch` (line 569 of
+  `src/kinoforge/providers/skypilot/__init__.py`) so a list like
+  `["lambda", "vast"]` would let sky try both before failing —
+  but this requires Stage C cfg surface (see below).
+- **`sky show-gpus` is deprecated** — use `sky gpus list --infra <c>`
+  on this sky version (0.12.3.post1).
+
+#### Stage C — kinoforge cfg surface for cloud pinning (NOT STARTED)
+
+Today's `ComputeConfig` (`src/kinoforge/core/config.py:513`) has no
+`cloud` field. The `SkyPilotProvider` factory at
+`src/kinoforge/providers/skypilot/__init__.py:809` is
+`lambda: SkyPilotProvider()` — no kwargs — so `self._clouds` stays
+`None` and sky considers every enabled cloud (AWS+GCP+Lambda+Vast
+today). With `requirements.max_usd_per_hr: 1.00`, sky picks whichever
+of the four has a matching offer in capacity. Today that means
+**Vast.ai always wins on price** for any non-tiny GPU; Lambda only
+gets selected if Vast is also out of capacity AND there's a Lambda
+SKU under $1/hr (there isn't — cheapest is $1.09).
+
+**Required work:**
+
+- [ ] **C1**: Add `compute.cloud: list[str] | None = None` to
+  `ComputeConfig` (or a nested `compute.skypilot.clouds`). Pydantic
+  validator: each entry in `{"aws","gcp","azure","lambda","vast",...}`.
+- [ ] **C2**: Thread cfg value through `_adapters.build_provider_for`
+  (or wherever the factory is invoked) so `SkyPilotProvider(clouds=cfg.compute.cloud)`
+  fires. Today's `register_provider("skypilot", lambda: SkyPilotProvider())`
+  is zero-arg — refactor to read cfg at instantiation time.
+- [ ] **C3**: Update `examples/configs/skypilot-gpu.yaml` (or fork a
+  `skypilot-lambda.yaml` variant). Bump `max_usd_per_hr` to `2.00`
+  to accommodate Lambda A10 ($1.29/hr) and A6000 ($1.09/hr) when
+  Vast is capacity-constrained.
+
+#### Stage D — Vast.ai parity raw smoke (NOT STARTED)
+
+Cheap (~$0.05 expected) — Vast spot pricing for A4000/A5000 typically
+$0.10-0.30/hr. Confirms sky→Vast auth path before kinoforge wiring.
+
+#### Stage E — end-to-end `kinoforge deploy` on Lambda (NOT STARTED)
+
+After Stages C+D: a real FakeEngine deploy via
+`kinoforge deploy examples/configs/skypilot-lambda.yaml` to verify the
+full kinoforge → SkyPilotProvider → sky → Lambda path. ~$0.15 budget.
