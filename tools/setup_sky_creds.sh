@@ -9,6 +9,18 @@
 # IMPORTANT: this file is shell-sourced. Never `exit` — only `return`. Never
 # write to stdout when invoked at activation (pixi shows the output verbatim;
 # noise hides real errors).
+#
+# Pixi 0.69 does not auto-source .env before activation, so this script does
+# it itself (idempotent — re-sourcing a fully-loaded .env is a no-op).
+
+_kf_env_file="${PIXI_PROJECT_ROOT:-/workspace}/.env"
+if [ -f "$_kf_env_file" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$_kf_env_file"
+    set +a
+fi
+unset _kf_env_file
 
 _kf_write_lambda_key() {
     if [ -z "${LAMBDA_API_KEY:-}" ]; then
