@@ -1,0 +1,55 @@
+# kinoforge example: SkyPilot pinned to Lambda Cloud — Phase 53 Stage C
+#
+# Demonstrates the Stage C ComputeConfig.cloud knob that pins
+# sky.launch / sky.list_accelerators to a single cloud, bypassing the
+# default "consider every enabled cloud and pick by price" behaviour
+# that always lands GPU smokes on Vast.ai under the legacy
+# max_usd_per_hr: 1.00 ceiling.
+#
+# Use this template when:
+#   - You want predictable single-vendor billing (Lambda).
+#   - You want sky's --retry-until-up to loop within Lambda's
+#     capacity pool rather than spilling to Vast / AWS / GCP.
+#
+# Cheapest Lambda SKU today (verified 2026-06-17, Phase 53 Stage B):
+#   - gpu_1x_a6000  $1.09 / hr (24 GB VRAM)
+#   - gpu_1x_a10    $1.29 / hr (24 GB VRAM)
+# Capacity is fluid — A6000 was unavailable when A10 worked the same
+# minute. Pass `cloud: ["lambda", "vast"]` (multi-entry) once the sky
+# vast adapter regression against vastai-sdk ≥ 0.2 is resolved upstream
+# (Phase 53 Stage D).
+#
+# Cost envelope: ~$0.05–$0.20 per smoke run (5–10 min wall-clock).
+
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: skypilot
+  image: "skypilot/skypilot-gpu:latest"
+  mode: pod
+  # Phase 53 Stage C — pin sky to Lambda only. Threaded into
+  # SkyPilotProvider._clouds via kinoforge._adapters.build_provider_for.
+  cloud: ["lambda"]
+  requirements:
+    min_vram_gb: 24
+    min_cuda: "12.0"
+    # Bumped from the legacy 1.00 ceiling so Lambda A6000 ($1.09/hr)
+    # and A10 ($1.29/hr) clear filtering. Stage E live smoke holds the
+    # actual spend down via the lifecycle.budget envelope below.
+    max_usd_per_hr: 2.00
+    disk_gb: 100
+  lifecycle:
+    idle_timeout: 180
+    max_lifetime: 1800
+    job_timeout: 600
+    boot_timeout: 900
+    budget: 0.30

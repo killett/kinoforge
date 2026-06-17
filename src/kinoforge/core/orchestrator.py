@@ -175,7 +175,16 @@ def _resolve_provider(cfg: Config, provider: ComputeProvider | None) -> ComputeP
         raise ValueError(
             "cannot resolve provider: cfg.compute is None (hosted engine path)"
         )
-    p = registry.get_provider(cfg.compute.provider)()
+    from kinoforge._adapters import build_provider_for
+
+    p = build_provider_for(cfg)
+    if p is None:
+        # Unreachable: build_provider_for returns None only when cfg.compute
+        # is None, which the guard above already rejects. Belt-and-suspenders
+        # for the type narrowing.
+        raise RuntimeError(
+            "build_provider_for returned None despite cfg.compute being set"
+        )
     # B5a: install the heartbeat substrate endpoint when the operator
     # opted in via compute.heartbeat_mode. Lives here (not in the registry
     # factory) because the factory is zero-arg by ABC and the dispatch

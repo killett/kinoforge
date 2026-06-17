@@ -35,6 +35,7 @@ EXAMPLE_CONFIGS = [
     "hosted.yaml",
     "local-fake.yaml",
     "skypilot.yaml",
+    "skypilot-lambda.yaml",
     "cost.yaml",
     "sweeper.yaml",
 ]
@@ -66,6 +67,24 @@ def test_skypilot_example_parses() -> None:
     # idle_timeout_s == 60 maps to SkyPilot autostop=1 (minute) per spec §3.3.
     lc = cfg.lifecycle()
     assert lc.idle_timeout_s == 60
+
+
+def test_skypilot_lambda_example_pins_lambda_cloud() -> None:
+    """examples/configs/skypilot-lambda.yaml is the Phase 53 Stage C
+    operator template for Lambda-only sky launches.
+
+    Bug catches:
+      - cloud key missing → sky considers every enabled cloud and Vast.ai
+        wins on price (the bug Phase 53 Stage C exists to fix).
+      - max_usd_per_hr stays at the pre-Stage-C 1.00 → Lambda A6000
+        ($1.09/hr) is filtered out and the YAML fails at provision.
+    """
+    cfg = load_config(Path("examples/configs/skypilot-lambda.yaml"))
+    assert cfg.compute is not None
+    assert cfg.compute.provider == "skypilot"
+    assert cfg.compute.cloud == ["lambda"]
+    # Lambda A6000 = $1.09/hr, A10 = $1.29/hr — bump above 1.00 default.
+    assert cfg.compute.requirements.max_usd_per_hr >= 2.00
 
 
 def test_hosted_yaml_loads_under_new_validators() -> None:

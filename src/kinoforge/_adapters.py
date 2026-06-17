@@ -63,8 +63,52 @@ if TYPE_CHECKING:
     from kinoforge.core.balance_endpoints import BalanceEndpoint
     from kinoforge.core.config import Config
     from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
-    from kinoforge.core.interfaces import CredentialProvider
+    from kinoforge.core.interfaces import ComputeProvider, CredentialProvider
     from kinoforge.core.util_endpoints import UtilSnapshotEndpoint
+
+
+def build_provider_for(cfg: "Config") -> "ComputeProvider | None":
+    """Resolve cfg.compute.provider to a :class:`ComputeProvider`, cfg-aware.
+
+    Wraps :func:`kinoforge.core.registry.get_provider` and applies
+    provider-specific cfg injection that the zero-arg registry factory
+    cannot do on its own. Today the only such knob is
+    ``cfg.compute.cloud`` for skypilot (Phase 53 Stage C) — pinned onto
+    :attr:`SkyPilotProvider._clouds` so ``sky.list_accelerators`` /
+    ``sky.launch`` receive a ``clouds=`` filter and the operator's
+    Lambda/Vast/etc. pin is honoured.
+
+    Lives here (not in core) for the same reason as
+    :func:`build_heartbeat_endpoint_for`: it must import a concrete
+    provider class to satisfy ``isinstance`` / attribute assignment,
+    and ``kinoforge.core.*`` is forbidden from importing
+    ``kinoforge.providers.*`` per the core-import-ban invariant.
+
+    Args:
+        cfg: The loaded kinoforge config.
+
+    Returns:
+        A :class:`ComputeProvider` instance, or ``None`` when
+        ``cfg.compute is None`` (hosted-only path).
+
+    Raises:
+        UnknownAdapter: ``cfg.compute.provider`` is not registered.
+    """
+    from kinoforge.core import registry
+
+    if cfg.compute is None:
+        return None
+    provider = registry.get_provider(cfg.compute.provider)()
+    if cfg.compute.provider == "skypilot" and cfg.compute.cloud is not None:
+        from kinoforge.providers.skypilot import SkyPilotProvider
+
+        if not isinstance(provider, SkyPilotProvider):
+            raise TypeError(
+                f"registry returned {type(provider).__name__} for 'skypilot'; "
+                "cannot pin cfg.compute.cloud onto a non-SkyPilotProvider"
+            )
+        provider._clouds = list(cfg.compute.cloud)
+    return provider
 
 
 def build_heartbeat_endpoint_for(

@@ -1542,6 +1542,74 @@ def test_compute_config_heartbeat_mode_rejects_unknown() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 53 Stage C1: ComputeConfig.cloud validator tests
+# ---------------------------------------------------------------------------
+
+
+def test_compute_config_cloud_default_is_none() -> None:
+    """Backward compat: existing YAMLs without compute.cloud must load
+    unchanged with cloud=None (sky considers every enabled cloud)."""
+    from kinoforge.core.config import ComputeConfig
+
+    cfg = ComputeConfig(
+        provider="skypilot",
+        image="skypilot/skypilot-gpu:latest",
+    )
+    assert cfg.cloud is None
+
+
+@pytest.mark.parametrize(
+    "clouds",
+    [
+        ["lambda"],
+        ["vast"],
+        ["lambda", "vast"],
+        ["aws", "gcp", "azure", "lambda", "vast", "kubernetes", "runpod"],
+    ],
+)
+def test_compute_config_cloud_accepts_valid_literals(clouds: list[str]) -> None:
+    """All sky cloud names kinoforge supports load when listed."""
+    from kinoforge.core.config import ComputeConfig
+
+    cfg = ComputeConfig(
+        provider="skypilot",
+        image="skypilot/skypilot-gpu:latest",
+        cloud=clouds,
+    )
+    assert cfg.cloud == clouds
+
+
+def test_compute_config_cloud_rejects_unknown_entry() -> None:
+    """A typo or unsupported cloud name (e.g. 'lambdaa', 'aws-us-west-2')
+    fails loud at config-load, not later at sky.launch."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from kinoforge.core.config import ComputeConfig
+
+    with pytest.raises(PydanticValidationError, match="cloud"):
+        ComputeConfig(
+            provider="skypilot",
+            image="skypilot/skypilot-gpu:latest",
+            cloud=["lambdaa"],
+        )
+
+
+def test_compute_config_cloud_rejects_empty_list() -> None:
+    """An empty list is a bug — operator meant cloud=None or forgot to
+    populate it; either way sky would consider zero clouds and fail."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from kinoforge.core.config import ComputeConfig
+
+    with pytest.raises(PydanticValidationError, match="cloud"):
+        ComputeConfig(
+            provider="skypilot",
+            image="skypilot/skypilot-gpu:latest",
+            cloud=[],
+        )
+
+
+# ---------------------------------------------------------------------------
 # B1 — SweeperConfig + sweeper_policy_from_cfg
 # ---------------------------------------------------------------------------
 
