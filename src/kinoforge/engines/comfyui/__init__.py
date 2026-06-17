@@ -1301,24 +1301,10 @@ class ComfyUIEngine(GenerationEngine):
                 "command -v aria2c >/dev/null 2>&1 || "
                 "(apt-get update -qq && apt-get install -y -qq aria2 "
                 ">/dev/null 2>&1) || true",
-                # Q8 diagnostic: force tee to line-buffer so the last few
-                # seconds of script output land in /tmp/boot.log before the
-                # EXIT trap reads tail. Without stdbuf, tee block-buffers
-                # ~4KB and loses content if bash exits abruptly.
-                "exec > >(stdbuf -oL -eL tee -a /tmp/boot.log) 2>&1",
+                "exec > >(tee -a /tmp/boot.log) 2>&1",
                 "trap '_kinoforge_diag_capture $?' EXIT",
-                # Q5 diagnostic: trace every command with wall-clock timestamp
-                # so boot.log shows exactly when each line ran. Also force
-                # tee to flush via stdbuf so the last commands before exit
-                # land in /tmp/boot.log before the trap reads tail -500.
-                # Remove after the C28-restart-loop root cause is isolated.
-                "export PS4='+ [$(date +%T.%N)] '",
-                "set -x",
                 "_kinoforge_diag_capture() {",
                 "  local rc=$1",
-                # Q8: give tee a beat to flush any buffered output before
-                # we read tail. Cheap insurance against the buffering race.
-                "  sync; sleep 0.5; sync",
                 "  local last_line",
                 "  last_line=$(tail -1 /tmp/boot.log 2>/dev/null || true)",
                 "  {",
@@ -1334,12 +1320,6 @@ class ComfyUIEngine(GenerationEngine):
                 "dpkg -l 2>/dev/null | grep -iE 'torch|cuda' || true;",
                 "    echo '===== boot.log ====='; "
                 "tail -500 /tmp/boot.log 2>/dev/null || true;",
-                "    echo '===== p.sh wc/tail ====='; "
-                "wc -lc /tmp/p.sh 2>/dev/null || true; "
-                "tail -8 /tmp/p.sh 2>/dev/null || true;",
-                "    echo '===== selfterm.log ====='; "
-                "cat /tmp/selfterm.log 2>/dev/null || true;",
-                "    echo '===== ps ====='; ps auxf 2>/dev/null || true;",
                 "  } > /tmp/diag.txt",
                 '  if [ -n "${KINOFORGE_DIAG_BUCKET:-}" ]; then',
                 "    aws s3 cp /tmp/diag.txt "
