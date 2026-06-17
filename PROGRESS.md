@@ -37,6 +37,12 @@ correct but no longer the bottleneck since the operator pivot away from
 RunPod-flavoured work. Reachable through the prioritized queue below
 once Phase 53 reaches a checkpoint.
 
+Phase 53 Stage D (Vast.ai raw smoke) **BLOCKED on upstream sky bug**
+2026-06-17 — sky 0.12.3.post1's vast adapter expects
+`vastai_sdk.vast.vast().client.api_key` but vastai-sdk 0.2.5 refactored
+to a `VastAI`-class-only surface. Lambda alone is sole sky cloud for
+now. See Phase 53 §Stage D for full debug.
+
 After Phase 53 reaches a checkpoint, the prior C33 queue (do in order unless preferences shift):
 
 1. **(f) trivial — restart-policy warning string.** ↑ above. ~15 min.
@@ -2951,10 +2957,41 @@ SKU under $1/hr (there isn't — cheapest is $1.09).
   to accommodate Lambda A10 ($1.29/hr) and A6000 ($1.09/hr) when
   Vast is capacity-constrained.
 
-#### Stage D — Vast.ai parity raw smoke (NOT STARTED)
+#### Stage D — Vast.ai parity raw smoke (BLOCKED on upstream sky bug)
 
-Cheap (~$0.05 expected) — Vast spot pricing for A4000/A5000 typically
-$0.10-0.30/hr. Confirms sky→Vast auth path before kinoforge wiring.
+Attempted 2026-06-17 with `sky launch -y --infra vast --gpus RTX3060:1 -c
+kf-smoke-vast-001 ...`. Sky chose Vast (Ontario, CA, NA) at $0.16/hr,
+attempted provision, then died with
+`AttributeError: VastAI has no attribute client` at
+`sky/provision/vast/utils.py:204`.
+
+**Root cause:** sky 0.12.3.post1's vast adapter expects
+`vastai_sdk.vast.vast().client.api_key` (legacy factory-function +
+`.client` proxy). The current vastai-sdk 0.2.5 has refactored its
+public surface to a single `vastai_sdk.VastAI` class — no
+`vast.vast()` factory, no `.client` proxy. Sky's vast adapter has not
+caught up.
+
+**Workarounds:**
+
+- (a) Monkey-patch `sky/provision/vast/utils.py:204` to read the API key
+  directly from `~/.config/vastai/vast_api_key` (a file sky already
+  requires for `sky check` to enable vast). 1-line change, ~3 LOC with
+  imports. Brittle: any `pixi install` rerun on the live-skypilot env
+  wipes the patch.
+- (b) Pin vastai-sdk to a pre-refactor version (likely 0.1.x). Risk:
+  unknown other regressions in sky's vast paths against older SDKs.
+- (c) Upgrade sky once the upstream fix lands. Repo:
+  https://github.com/skypilot-org/skypilot
+- (d) Skip Vast entirely; rely on Lambda as the sole sky cloud. Loses
+  Vast as a fallback for Lambda capacity issues.
+
+**Decision 2026-06-17:** Path (d) — skip Vast, rely on Lambda only.
+Operator pivoted to vast+Lambda specifically to escape pain; debugging
+sky internals defeats the purpose. Revisit when sky ships a vast
+adapter compatible with vastai-sdk ≥ 0.2.
+
+Spend: $0.00 (provision failed before any compute billed).
 
 #### Stage E — end-to-end `kinoforge deploy` on Lambda (NOT STARTED)
 
