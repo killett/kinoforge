@@ -529,6 +529,12 @@ class ComputeConfig(BaseModel):
             fresh-shell invocation and attaches transparently. Set to
             ``False`` per-project to disable; ``--no-reuse`` on the CLI
             overrides this on a per-invocation basis.
+        cloud: Phase 53 Stage C — optional list of sky cloud names
+            (e.g. ``["lambda"]``, ``["lambda", "vast"]``) pinned onto
+            :class:`~kinoforge.providers.skypilot.SkyPilotProvider` at
+            instantiation time. ``None`` (default) preserves pre-Stage-C
+            behaviour — sky considers every enabled cloud and picks by
+            price. Ignored by non-skypilot providers.
     """
 
     provider: str
@@ -538,6 +544,44 @@ class ComputeConfig(BaseModel):
     lifecycle: LifecycleConfig | None = None
     heartbeat_mode: str = "none"
     warm_reuse_auto_attach: bool = True
+    cloud: list[str] | None = None
+
+    @field_validator("cloud")
+    @classmethod
+    def _validate_cloud(cls, v: list[str] | None) -> list[str] | None:
+        """Reject cloud entries outside the supported sky cloud set.
+
+        Skypilot supports a much broader set, but kinoforge only verifies
+        these. Adding a new entry here is the operator's affordance for
+        opting into a new sky-enabled cloud after a parity smoke.
+
+        An empty list is rejected — operator likely meant ``cloud: null``
+        or forgot to populate the entry; sky.launch with zero clouds
+        would fail at provision time rather than config-load.
+        """
+        if v is None:
+            return v
+        if not v:
+            raise ValueError(
+                "cloud must be a non-empty list of sky cloud names "
+                "or null; got an empty list"
+            )
+        allowed = {
+            "aws",
+            "gcp",
+            "azure",
+            "lambda",
+            "vast",
+            "kubernetes",
+            "runpod",
+        }
+        bad = [entry for entry in v if entry not in allowed]
+        if bad:
+            raise ValueError(
+                f"cloud entries must each be one of {sorted(allowed)}; "
+                f"got unsupported: {bad!r}"
+            )
+        return v
 
     @field_validator("heartbeat_mode")
     @classmethod
