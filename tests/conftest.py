@@ -343,9 +343,14 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001
     from pathlib import Path  # noqa: PLC0415
 
     threads = threading.enumerate()
-    if len(threads) <= 1:
-        # Fast path: only MainThread alive → no leak.
-        sys.stderr.write("=== POST-SESSION THREAD DUMP === clean (1 thread)\n")
+    main_thread = threading.main_thread()
+    non_daemon_extras = [t for t in threads if t is not main_thread and not t.daemon]
+    if not non_daemon_extras:
+        # Fast path: no non-daemon extras → no leak that can block shutdown.
+        sys.stderr.write(
+            f"=== POST-SESSION THREAD DUMP === clean ({len(threads)} threads, "
+            "no non-daemon extras)\n"
+        )
         return
 
     main_ident = threading.main_thread().ident
@@ -364,13 +369,13 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001
         )
         frame = frames.get(t.ident) if t.ident is not None else None
         if frame is None:
-            buf.write("    <no Python frame — likely in C extension>\n")
+            buf.write("    <no Python frame — thread exited or in C extension>\n")
             continue
         for line in traceback.format_stack(frame):
             buf.write("    " + line.rstrip() + "\n")
 
     try:
-        fds = sorted(os.listdir("/proc/self/fd/"))
+        fds = sorted(int(e) for e in os.listdir("/proc/self/fd/"))
         buf.write(f"  open fds: {len(fds)} → {fds}\n")
     except OSError:
         # macOS / non-linux — no /proc. Skip the FD inventory.
@@ -379,7 +384,7 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001
     payload = buf.getvalue()
     sys.stderr.write(payload)
     try:
-        Path("tests/_post_session_dump.txt").write_text(payload)
+        Path("tests/_post_session_dump.txt").write_text(payload, encoding="utf-8")
     except OSError:
         # cwd not writable (sandboxed CI step) — stderr is authoritative.
         pass
