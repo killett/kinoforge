@@ -2800,3 +2800,44 @@ def test_resolve_provider_injects_heartbeat_endpoint_when_mode_set(
     assert isinstance(resolved, RunPodProvider)
     assert resolved._heartbeat_endpoint is not None
     assert isinstance(resolved._heartbeat_endpoint, RunPodGraphQLHeartbeatEndpoint)
+
+
+# ---------------------------------------------------------------------------
+# Phase 53 Stage C2: _resolve_provider threads cfg.compute.cloud into skypilot
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_provider_threads_skypilot_cloud_pin() -> None:
+    """When cfg.compute.cloud is set and provider == 'skypilot',
+    _resolve_provider must return a SkyPilotProvider whose _clouds equals
+    the cfg list. Otherwise sky considers every enabled cloud and Vast.ai
+    wins on price — the entire reason Stage C exists.
+    """
+    import kinoforge.providers.skypilot  # noqa: F401  # registers skypilot
+    from kinoforge.core.config import (
+        ComputeConfig,
+        Config,
+        EngineConfig,
+        LifecycleConfig,
+        ModelEntry,
+    )
+    from kinoforge.core.orchestrator import _resolve_provider
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    cfg = Config(
+        compute=ComputeConfig(
+            provider="skypilot",
+            image="skypilot/skypilot-gpu:latest",
+            lifecycle=LifecycleConfig(budget=10.0),
+            cloud=["lambda"],
+        ),
+        engine=EngineConfig(kind="fake", precision="fp16"),
+        models=[
+            ModelEntry(
+                kind="base", ref="hf:fake/repo:weights.bin", target="checkpoints"
+            )
+        ],
+    )
+    resolved = _resolve_provider(cfg, provider=None)
+    assert isinstance(resolved, SkyPilotProvider)
+    assert resolved._clouds == ["lambda"]

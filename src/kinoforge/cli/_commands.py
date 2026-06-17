@@ -257,14 +257,16 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         raise RuntimeError("_cmd_provision requires --config")
     cfg = ctx.cfg
 
-    # Resolve provider and engine, then call provisioner
+    # Resolve provider and engine, then call provisioner.
+    # build_provider_for threads cfg.compute.cloud into SkyPilotProvider
+    # (Phase 53 Stage C) so manual `kinoforge provision` honours the same
+    # cloud-pin contract as `kinoforge deploy` / `generate`.
     try:
+        from kinoforge._adapters import build_provider_for
         from kinoforge.core import registry
 
         engine = registry.get_engine(cfg.engine.kind)()
-        provider = None
-        if cfg.compute is not None:
-            provider = registry.get_provider(cfg.compute.provider)()
+        provider = build_provider_for(cfg)
     except UnknownAdapter as exc:
         print(f"error: unknown adapter — {exc}", file=sys.stderr)
         return 1

@@ -15,22 +15,22 @@ first unchecked task without redoing committed work.
 
 ## Next session — resume target (single next action at top)
 
-**RESUME WITH Phase 53 Stage C — kinoforge cfg surface for cloud
-pinning.** Sky→Lambda raw smoke proven (Stage B, A10 1x in us-east-1,
-~$0.07 spend). Today's `ComputeConfig` has no `cloud` field, so
-`SkyPilotProvider` factory passes no `clouds=` filter to `sky.launch` —
-sky considers all four Enabled clouds and Vast.ai always wins on price
-under `max_usd_per_hr: 1.00`. Required: (C1) add `compute.cloud: list[str]`
-to `ComputeConfig` at `src/kinoforge/core/config.py:513`; (C2) refactor
-the registry factory at `src/kinoforge/providers/skypilot/__init__.py:809`
-from `lambda: SkyPilotProvider()` to a cfg-aware variant that threads
-the cfg list into `SkyPilotProvider(clouds=...)`; (C3) update
-`examples/configs/skypilot-gpu.yaml` (or fork a `skypilot-lambda.yaml`)
-with `max_usd_per_hr: 2.00` (Lambda cheapest = A6000 $1.09/hr). See
-Phase 53 §Stage C for the full scope. ~2-3 hr work, no live spend.
+**RESUME WITH Phase 53 Stage E — end-to-end `kinoforge deploy` on
+Lambda.** Stage C closed 2026-06-17 (see Phase 53 §Stage C below):
+`compute.cloud: list[str] | None` added to `ComputeConfig`,
+`kinoforge._adapters.build_provider_for(cfg)` threads it into
+`SkyPilotProvider._clouds`, `examples/configs/skypilot-lambda.yaml`
+ships with `cloud: ["lambda"]` + `max_usd_per_hr: 2.00`. 13 new tests
+green; full suite still green.
 
-After Stage C lands: Stage D (Vast.ai parity raw smoke, ~$0.05) and
-Stage E (end-to-end `kinoforge deploy` on Lambda, ~$0.15).
+Stage E: run `pixi run -e live-skypilot kinoforge deploy
+examples/configs/skypilot-lambda.yaml` to verify the full
+kinoforge → SkyPilotProvider → sky → Lambda path with a FakeEngine
+payload. Pre-spend: `pixi run preflight`. Budget envelope: ~$0.15
+(provision + idle window + teardown on $1.09/hr A6000 or $1.29/hr
+A10). Stage D (Vast.ai parity) remains BLOCKED on upstream sky vast
+adapter regression — Lambda is sole sky cloud until upstream ships
+the fix.
 
 C33 (f) restart-policy warning-string fix is **deprioritized** — still
 correct but no longer the bottleneck since the operator pivot away from
@@ -2930,32 +2930,44 @@ job-start).
 - **`sky show-gpus` is deprecated** — use `sky gpus list --infra <c>`
   on this sky version (0.12.3.post1).
 
-#### Stage C — kinoforge cfg surface for cloud pinning (NOT STARTED)
+#### Stage C — kinoforge cfg surface for cloud pinning (CLOSED 2026-06-17)
 
-Today's `ComputeConfig` (`src/kinoforge/core/config.py:513`) has no
+Today's `ComputeConfig` (`src/kinoforge/core/config.py:513`) had no
 `cloud` field. The `SkyPilotProvider` factory at
-`src/kinoforge/providers/skypilot/__init__.py:809` is
-`lambda: SkyPilotProvider()` — no kwargs — so `self._clouds` stays
-`None` and sky considers every enabled cloud (AWS+GCP+Lambda+Vast
-today). With `requirements.max_usd_per_hr: 1.00`, sky picks whichever
-of the four has a matching offer in capacity. Today that means
-**Vast.ai always wins on price** for any non-tiny GPU; Lambda only
-gets selected if Vast is also out of capacity AND there's a Lambda
-SKU under $1/hr (there isn't — cheapest is $1.09).
+`src/kinoforge/providers/skypilot/__init__.py:809` was
+`lambda: SkyPilotProvider()` — no kwargs — so `self._clouds` stayed
+`None` and sky considered every enabled cloud (AWS+GCP+Lambda+Vast).
+With `requirements.max_usd_per_hr: 1.00`, sky picked whichever of the
+four had a matching offer in capacity. That meant **Vast.ai always
+won on price** for any non-tiny GPU.
 
-**Required work:**
+**Closed work:**
 
-- [ ] **C1**: Add `compute.cloud: list[str] | None = None` to
-  `ComputeConfig` (or a nested `compute.skypilot.clouds`). Pydantic
-  validator: each entry in `{"aws","gcp","azure","lambda","vast",...}`.
-- [ ] **C2**: Thread cfg value through `_adapters.build_provider_for`
-  (or wherever the factory is invoked) so `SkyPilotProvider(clouds=cfg.compute.cloud)`
-  fires. Today's `register_provider("skypilot", lambda: SkyPilotProvider())`
-  is zero-arg — refactor to read cfg at instantiation time.
-- [ ] **C3**: Update `examples/configs/skypilot-gpu.yaml` (or fork a
-  `skypilot-lambda.yaml` variant). Bump `max_usd_per_hr` to `2.00`
-  to accommodate Lambda A10 ($1.29/hr) and A6000 ($1.09/hr) when
-  Vast is capacity-constrained.
+- [x] **C1**: Added `cloud: list[str] | None = None` to `ComputeConfig`
+  at `src/kinoforge/core/config.py:540`. Validator `_validate_cloud`
+  rejects unknown cloud names and empty lists; allowed set is
+  `{"aws","gcp","azure","lambda","vast","kubernetes","runpod"}`.
+  Six TDD tests in `tests/core/test_config.py` (default-none,
+  parametrized valid literals, unknown-rejection, empty-rejection).
+- [x] **C2**: Added `build_provider_for(cfg)` in `kinoforge._adapters`
+  (sister to `build_heartbeat_endpoint_for`). Threads
+  `cfg.compute.cloud` into `SkyPilotProvider._clouds` at instantiation
+  time. The zero-arg registry factory is unchanged — `build_provider_for`
+  wraps it. Six TDD tests in `tests/test_adapters_build_provider_for.py`
+  cover single-cloud, multi-cloud, none-preserves-legacy, non-skypilot
+  ignore, hosted-engine returns None, unknown-provider raise.
+  Call sites refit:
+    - `core/orchestrator.py:_resolve_provider` (the `kinoforge deploy`
+      / `kinoforge generate` chokepoint).
+    - `cli/_commands.py:_cmd_provision` (manual `kinoforge provision`).
+  Integration test
+  `tests/core/test_orchestrator.py::test_resolve_provider_threads_skypilot_cloud_pin`
+  locks in the orchestrator wiring.
+- [x] **C3**: New `examples/configs/skypilot-lambda.yaml` ships
+  `compute.cloud: ["lambda"]`, `max_usd_per_hr: 2.00`, idle/budget
+  envelope sized for Stage E live smoke. Lockdown test
+  `test_skypilot_lambda_example_pins_lambda_cloud` in
+  `tests/test_examples.py` guards against accidental cloud-key drops.
 
 #### Stage D — Vast.ai parity raw smoke (BLOCKED on upstream sky bug)
 
