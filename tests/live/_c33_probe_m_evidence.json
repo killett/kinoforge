@@ -1,0 +1,59 @@
+{
+  "probe": "C33 (m) — heartbeat_mode: none — DECISIVE ROOT CAUSE",
+  "date_utc": "2026-06-17",
+  "date_local_pdt": "2026-06-16",
+  "scope": "Test whether the kinoforge HeartbeatLoop's RunPod satisfier (podEditJob mutation appending `# _kinoforge_hb:<ISO>` to dockerArgs every 30 s, starting BEFORE engine.provision per C29 design) is the cause of the T+15 s bash-exit / ~31 s container-restart cycle observed in Q4, Q(h), and (l).",
+  "cfg": "tests/live/cfg_c33_m_heartbeat_disabled.yaml (copy of cfg_c28_phase_a_diagnostic.yaml with the SINGLE field change heartbeat_mode: graphql-tag → none)",
+  "command": "timeout 720 pixi run kinoforge generate -c tests/live/cfg_c33_m_heartbeat_disabled.yaml --prompt examples/configs/prompts/dawn-flight.md --mode t2v --no-reuse",
+  "result": "SUCCESS",
+  "exit_code": 0,
+  "pod_id": "vxjrpomouphapd",
+  "gpu": "NVIDIA GeForce RTX 3090 (community-cloud) @ $0.22/hr (after RTX 4090 capacity-fallthrough)",
+  "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+  "wall_breakdown": {
+    "kinoforge_start": "23:51:02",
+    "provisioner_provision_begin": "23:51:07 (T+5 s)",
+    "comfyui_first_poll_ready": "23:52:48 (T+1 m 41 s wall; provision + boot took ~100 s)",
+    "comfyui_poll_success": "23:54:23 (T+3 m 21 s; 94 s of compute)",
+    "pod_destroyed_cleanly": "23:54:25 (T+3 m 23 s)",
+    "total_wall_s": 203
+  },
+  "artifact_uri": "/workspace/.kinoforge/run-20260616-235102/cd433bc43e3fc3e2.mp4",
+  "s3_diag_uploads": 0,
+  "comparison_table": {
+    "Q4_baseline_graphql_tag_HB": {
+      "uploads": 29,
+      "approx_cycle_s": 31,
+      "outcome": "15 min timeout, no artifact"
+    },
+    "Q(h)_graphql_tag_HB_selfterm_disabled": {
+      "uploads": 27,
+      "approx_cycle_s": 32.5,
+      "outcome": "15 min timeout, no artifact"
+    },
+    "(l)_graphql_tag_HB_metric_watch": {
+      "uploads": 21,
+      "approx_cycle_s": 30,
+      "container_mem_percent_max": 0,
+      "container_cpu_percent_max": 14,
+      "outcome": "10 min timeout, no artifact, OOM ruled out"
+    },
+    "(m)_heartbeat_mode_none": {
+      "uploads": 0,
+      "outcome": "SUCCESS — artifact produced in 3:23 wall"
+    }
+  },
+  "verdict": "H_m CONFIRMED. The RunPod GraphQL `podEditJob` mutation issued by the heartbeat satisfier every 30 s during provision IS the kill mechanism. Each podEditJob (which appends a `# _kinoforge_hb:<ISO>` marker to the pod's dockerArgs field) triggers a container-level restart on the RunPod side. The orchestrator's C29 design (start heartbeat BEFORE engine.provision so stall/restart-loop predicates can fire during long provisions) directly conflicts with this server-side behavior: heartbeat fires once at T~0 (pod boot, before bash starts), and again at T~30 (mid-provision, bash is mid `pip install -q -r requirements.txt`), at which point the container is destroyed + recreated. Repeat every 30 s ad infinitum. Pod.lastStartedAt stays invariant throughout (it only updates on POD restart, not container restart), which is why C33-P1's `lastStartedAt invariant` classifier missed this restart class.",
+  "why_C33_P1_missed_this": "C33-P1 measured ONE `podEditJob` call against a stable `bash -c 'sleep 600'` pod with 90 s post-mutation observation. It checked `pod.lastStartedAt` (POD-level restart marker) — invariant. It did NOT check `runtime.uptimeInSeconds` (CONTAINER-level restart marker) — which DOES reset on container restart per Q3 evidence. P1's `_classify_p1` flagged the run AMBIGUOUS only due to the 08:00-09:30 PDT 2026-06-15 platform-incident-induced uptime noise, not because of any restart event. The substantive verdict needs CONTAINER-level restart detection, which lands here: podEditJob DOES trigger container restart during active provision (this probe), but DOES NOT trigger pod-level restart (consistent with P1's `lastStartedAt invariant` finding).",
+  "implications": [
+    "(C25) production heartbeat enable: BLOCKED on a fix. Current B5a + podEditJob satisfier crashes any active-provision workflow. Cannot ship as-is.",
+    "(C29) design intent (start heartbeat BEFORE engine.provision for stall detection) is what allowed this bug. Either heartbeat must start AFTER provision, or the satisfier must use a non-dockerArgs-mutating mechanism (selfterm-http, ssh-touch).",
+    "(B5a) RunPod satisfier's preserve-and-merge marker design (`# _kinoforge_hb:<ISO>` trailer) is FINE as a wire-level marker but the server-side semantics of `podEditJob` are NOT preserve-and-merge — every dockerArgs mutation triggers container restart.",
+    "(C33-P1) classifier needs to add CONTAINER-level restart detection (runtime.uptimeInSeconds reset between samples) alongside the pod-level lastStartedAt check.",
+    "(C33-h) selfterm REFUTED was correctly diagnosed but for a tangential reason; (h) probe disabled selfterm AND nothing else, and cycling persisted because heartbeat was still ON.",
+    "(C28) C27/C28 restart-loop reap predicates were trying to catch this exact failure mode but never fired in cfg_c28_phase_a_diagnostic.yaml because that cfg disables both predicates (stall_reap_enabled=false, restart_loop_reap_enabled=false)."
+  ],
+  "proposed_fix": "Delay HeartbeatLoop.start() until AFTER engine.provision() returns. Specifically, move the `start_heartbeat(instance)` call at src/kinoforge/core/orchestrator.py:719-736 from BEFORE `_provision_compute_once(...)` to AFTER it (or after wait_for_ready returns). Trade-off: stall + restart-loop predicates cannot fire during provision, but the cycle that prevents provision from EVER completing also disappears. Net: provisions actually complete; ComfyUI launches; generation runs. C25 production heartbeat enable unblocks.",
+  "spend_usd": 0.013,
+  "cumulative_c33_spend_estimate_usd": 0.84
+}
