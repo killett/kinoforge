@@ -161,37 +161,52 @@ class RunPodGraphQLHeartbeatEndpoint:
         return raw if isinstance(raw, str) else ""
 
     def write(self, instance_id: str, ts_local: datetime) -> None:
-        """Append the heartbeat marker to the pod's dockerArgs.
+        """NO-OP since C33-m (2026-06-17).
 
-        Reads current ``dockerArgs``, strips any prior heartbeat trailer,
-        appends ``# _kinoforge_hb:<ts_local.isoformat()>`` and writes
-        back via ``podEditJob``. No-op when the pod is gone.
+        ``podEditJob`` mutations against ``dockerArgs`` were proven to
+        trigger CONTAINER-level restart on the RunPod side regardless of
+        the pod's lifecycle stage. See C33 (m) probe evidence at
+        ``tests/live/_c33_probe_m_evidence.json`` (Wan t2v cold-boot
+        cycled every ~31 s = 30 s heartbeat interval + 1 s GraphQL
+        roundtrip until kinoforge timed out). C33 (n) live confirmation
+        with the orchestrator's start_heartbeat moved to AFTER provision
+        showed cycling resumed AFTER provision completed (ComfyUI
+        history endpoint cycled 404/502 with container uptime resetting
+        to ~10 s repeatedly across 5 min wall observation).
+
+        The marker contract (``# _kinoforge_hb:<ISO>`` trailer on
+        ``dockerArgs``) is therefore infeasible on the current RunPod
+        API. B5a + C25 need a non-mutating substitute (e.g. an in-pod
+        HTTP endpoint pinged by the orchestrator — ``selfterm-http``
+        mode in the heartbeat_mode enum — that touches a local file
+        timestamp instead of mutating any RunPod resource).
+
+        Until that lands, write() is a NO-OP that logs WARNING on
+        first call per instance, so the heartbeat loop ticks against
+        the local ledger without ever destroying the container.
 
         Args:
             instance_id: RunPod pod ID.
             ts_local: Heartbeat timestamp (tz-aware; local-TZ ISO emitted).
-
-        Raises:
-            TransportError: GraphQL ``errors``, HTTP non-2xx, JSON parse
-                failure, or any other transport-layer fault.
         """
-        base = self._read_dockerargs(instance_id)
-        if base is None:
-            # Pod gone; no-op write. Next tick or classify will surface it.
-            return
-        merged = _merge_marker(base, ts_local)
-        payload = {
-            "query": _POD_EDIT_JOB_MUTATION,
-            "variables": {"input": {"podId": instance_id, "dockerArgs": merged}},
-        }
-        try:
-            resp = self._http_post(self._graphql_url, payload)
-        except TransportError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise TransportError(f"RunPod podEditJob transport failure: {exc}") from exc
-        if "errors" in resp:
-            raise TransportError(f"RunPod podEditJob failed: {resp['errors']}")
+        del ts_local  # marker write disabled
+        # Log once per instance via a private cache; the heartbeat loop
+        # ticks every 30 s and we don't want to flood the controller log.
+        warned = getattr(self, "_c33_warned_instances", None)
+        if warned is None:
+            warned = set()
+            self._c33_warned_instances = warned
+        if instance_id not in warned:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "C33-m: RunPod heartbeat write DISABLED for %s — podEditJob "
+                "triggers container restart. See "
+                "tests/live/_c33_probe_m_evidence.json. Local-ledger "
+                "heartbeat tracking only.",
+                instance_id,
+            )
+            warned.add(instance_id)
 
     def read(self, instance_id: str) -> datetime | None:
         """Return the heartbeat timestamp from the pod's dockerArgs.
