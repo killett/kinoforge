@@ -1,11 +1,18 @@
-"""C29 — start_heartbeat closure fires after RunPod status-ready, before engine.provision.
+"""C29 — start_heartbeat closure fires after RunPod status-ready.
 
-These tests pin the new ``_provision_instance_and_build_backend`` contract:
+Pins the ``_provision_instance_and_build_backend`` contract:
 
 1. Returns a :class:`ProvisionResult` NamedTuple with
    ``(instance, backend, hb_loop)``.
 2. When a ``start_heartbeat`` closure is supplied, invokes it exactly once with
-   the polled-ready instance, BEFORE ``engine.provision`` runs.
+   the polled-ready instance. C33-m (2026-06-17,
+   ``tests/live/_c33_probe_m_evidence.json``) reverted the original C29
+   "BEFORE engine.provision" ordering — the closure now fires AFTER
+   ``engine.provision`` returns because the RunPod ``podEditJob`` heartbeat
+   mutation triggers a container-level restart, making provisions infinite
+   when heartbeat fires during them. See
+   ``tests/core/test_orchestrator_c33_start_heartbeat_after_provision.py``
+   for the authoritative ordering test.
 3. When the closure is ``None``, ``hb_loop`` in the result is ``None`` and no
    heartbeat artefacts are created.
 4. Closure failures fall through to ``hb_loop=None`` and log; the helper does
@@ -182,19 +189,26 @@ def test_provision_instance_and_build_backend_returns_provision_result(
 
 
 # ---------------------------------------------------------------------------
-# Test 3: closure invoked after status=ready, BEFORE engine.provision
+# Test 3: closure invoked exactly once with the polled-ready instance
+#
+# C33-m (2026-06-17) moved the closure call from BEFORE engine.provision
+# to AFTER engine.provision returns. The post-provision-ordering assertion
+# lives in test_orchestrator_c33_start_heartbeat_after_provision.py — this
+# test pins only that the closure runs exactly once with the correct
+# Instance arg.
 # ---------------------------------------------------------------------------
 
 
-def test_start_heartbeat_closure_invoked_after_status_ready_before_engine_provision(
+def test_start_heartbeat_closure_invoked_once_with_ready_instance(
     tmp_path: Path,
 ) -> None:
-    """Closure fires AFTER the RunPod status-poll loop returns ready, and
-    BEFORE engine.provision runs.
+    """Closure fires exactly once with the polled-ready instance.
 
-    Bug catch: if the closure fires before status flips to ready, the
-    heartbeat ticks against a half-booted pod; if it fires after
-    engine.provision returns, the boot-phase reap window stays unprotected.
+    Bug catch: closures firing zero times mean STALL/RESTART_LOOP predicates
+    never run. Closures firing more than once mean the HB loop is duplicated
+    (heartbeat-loop count drift). The Instance handed to the closure must
+    have status=="ready" so post-boot heartbeat ticks query a fully-booted
+    pod, not a half-booted one.
     """
     call_order: list[str] = []
 
@@ -230,16 +244,13 @@ def test_start_heartbeat_closure_invoked_after_status_ready_before_engine_provis
         start_heartbeat=_start_heartbeat,
     )
 
-    # Closure ran exactly once
+    # Closure ran exactly once.
     starts = [c for c in call_order if c.startswith("start_heartbeat")]
     assert len(starts) == 1, call_order
-    # Closure ran BEFORE engine.provision
-    assert call_order.index(starts[0]) < call_order.index("engine.provision"), (
-        call_order
-    )
-    # Instance passed in was status=ready (post-poll)
+    # Instance passed in was status=ready (post-poll). Authoritative
+    # before/after ordering vs engine.provision lives in the C33 test file.
     assert starts[0] == "start_heartbeat(inst-1,status=ready)"
-    # Returned hb_loop is the one the closure created
+    # Returned hb_loop is the one the closure created.
     assert result.hb_loop is created_loop
     assert created_loop.started is True
 

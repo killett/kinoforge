@@ -1,16 +1,22 @@
-"""C29 — Cancelled raised mid-boot destroys the pod (reap or Ctrl-C path).
+"""C29 — Cancelled raised mid-boot destroys the pod (operator Ctrl-C path).
 
-Pins the new ``except Cancelled`` clause in
+Pins the ``except Cancelled`` clause in
 ``_provision_instance_and_build_backend``:
 
 1. ``cancel_token`` set during ``engine.provision`` → ``Cancelled`` raised
    out of the helper → pod ``destroy_instance`` is called even though
    ``Cancelled`` isn't a ``ProvisionFailed``/``ProvisionTimeout``.
-2. The pre-existing ``except (ProvisionFailed, ...)`` clause also stops the
-   boot-phase ``hb_loop`` before destroying the pod.
-3. The boot-phase reap path (``hb_loop`` destroys the pod, then sets the
-   token) re-destroys idempotently — RunPod's repeated-destroy is a logged
-   no-op, so the second ``destroy_instance`` does not crash the helper.
+2. The pre-existing ``except (ProvisionFailed, ...)`` clause also destroys
+   the pod before re-raising.
+
+C33-m (2026-06-17, ``tests/live/_c33_probe_m_evidence.json``) moved the
+``start_heartbeat`` call to AFTER ``_provision_compute_once`` returns. As
+a result:
+   - During the engine.provision window, no heartbeat is running.
+   - Cancelled during engine.provision can only originate from operator
+     Ctrl-C; there is no boot-phase reap predicate to fire.
+   - The teardown paths for ProvisionFailed / Cancelled no longer touch
+     ``hb_loop`` (it's None at that point).
 """
 
 from __future__ import annotations
@@ -116,27 +122,36 @@ def _fake_key() -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_cancelled_during_engine_provision_destroys_pod_and_stops_hb_loop(
+def test_cancelled_during_engine_provision_destroys_pod(
     tmp_path: Path,
 ) -> None:
     """A Cancelled raised out of engine.provision is caught + the pod is destroyed.
 
     Bug catch: the pre-C29 except clause only listed ProvisionFailed,
     ProvisionTimeout, CapabilityMismatch, ValidationError. A Cancelled
-    raised from a boot-phase reap (or operator Ctrl-C) would have leaked
-    past — leaving a paid pod alive forever.
+    raised from operator Ctrl-C would have leaked past — leaving a paid
+    pod alive forever.
+
+    C33-m: heartbeat is NOT running during engine.provision (was C29's
+    BEFORE-provision ordering, reverted). The start_heartbeat closure must
+    NOT have been called when Cancelled raises out of provision.
     """
     engine = _fake_engine()
     provider = _fake_provider()
     loop = _FakeLoop()
+    hb_calls: list[str] = []
 
     def _broken_provision(
         instance: Instance | None, cfg: Any, *, cancel_token: object | None = None
     ) -> None:
         del cancel_token
-        raise Cancelled("simulated boot-phase reap")
+        raise Cancelled("simulated operator Ctrl-C")
 
     engine.provision.side_effect = _broken_provision
+
+    def _start_heartbeat(_inst: Instance) -> _FakeLoop:
+        hb_calls.append("start_heartbeat")
+        return loop
 
     with pytest.raises(Cancelled):
         orchestrator._provision_instance_and_build_backend(
@@ -150,11 +165,13 @@ def test_cancelled_during_engine_provision_destroys_pod_and_stops_hb_loop(
             state_dir=tmp_path,
             for_discovery=False,
             cancel_token=CancelToken(),
-            start_heartbeat=lambda _inst: loop,
+            start_heartbeat=_start_heartbeat,
         )
 
-    # hb_loop was stopped before destroy
-    assert loop.stopped is True
+    # C33-m: start_heartbeat was NEVER invoked — it's now after provision.
+    assert hb_calls == [], hb_calls
+    assert loop.started is False
+    assert loop.stopped is False
     # Pod was destroyed
     provider.destroy_instance.assert_called_once_with("inst-1")
 
@@ -164,11 +181,19 @@ def test_cancelled_during_engine_provision_destroys_pod_and_stops_hb_loop(
 # ---------------------------------------------------------------------------
 
 
-def test_provision_failed_path_stops_hb_loop_before_destroy(tmp_path: Path) -> None:
-    """ProvisionFailed during engine.provision → stop loop → destroy pod → re-raise."""
+def test_provision_failed_path_destroys_pod_without_starting_heartbeat(
+    tmp_path: Path,
+) -> None:
+    """ProvisionFailed during engine.provision → destroy pod → re-raise.
+
+    C33-m: heartbeat is not started during provision. The start_heartbeat
+    closure must NOT have been called by the time ProvisionFailed
+    propagates.
+    """
     engine = _fake_engine()
     provider = _fake_provider()
     loop = _FakeLoop()
+    hb_calls: list[str] = []
 
     def _broken_provision(
         instance: Instance | None, cfg: Any, *, cancel_token: object | None = None
@@ -177,6 +202,10 @@ def test_provision_failed_path_stops_hb_loop_before_destroy(tmp_path: Path) -> N
         raise ProvisionFailed("simulated boot crash")
 
     engine.provision.side_effect = _broken_provision
+
+    def _start_heartbeat(_inst: Instance) -> _FakeLoop:
+        hb_calls.append("start_heartbeat")
+        return loop
 
     with pytest.raises(ProvisionFailed):
         orchestrator._provision_instance_and_build_backend(
@@ -189,10 +218,13 @@ def test_provision_failed_path_stops_hb_loop_before_destroy(tmp_path: Path) -> N
             store=MagicMock(),
             state_dir=tmp_path,
             for_discovery=False,
-            start_heartbeat=lambda _inst: loop,
+            start_heartbeat=_start_heartbeat,
         )
 
-    assert loop.stopped is True
+    # C33-m: start_heartbeat was NEVER invoked.
+    assert hb_calls == [], hb_calls
+    assert loop.started is False
+    assert loop.stopped is False
     provider.destroy_instance.assert_called_once_with("inst-1")
 
 
