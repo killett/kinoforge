@@ -171,6 +171,13 @@ def append_spend_entry(path: Path, entry: dict[str, Any]) -> None:
     cumulative = float(payload.get("cumulative_usd", 0.0)) + float(
         entry["est_spend_usd"]
     )
+    # C30 spend ledger carries only metadata (phase, pod_id, gpu_type_id,
+    # cents_per_hr, ISO-8601 timestamps, est_spend_usd) — no prompt-derived
+    # bytes ever transit this file, so the AC7 store/sink wrapper isn't
+    # applicable. Sentinel on the immediately-preceding line exempts this
+    # call from the direct-write audit (test_no_unredacted_writes.py:_call_lines
+    # includes start-1).
+    # kinoforge:public-write
     path.write_text(
         json.dumps(
             {"cumulative_usd": round(cumulative, 6), "entries": entries},
