@@ -716,25 +716,6 @@ def _provision_instance_and_build_backend(
         refreshed = resolved_provider.get_instance(instance.id)
         instance = dataclasses.replace(instance, status=refreshed.status)
 
-    # C29: start the heartbeat loop NOW — instance is RUNNING per the provider,
-    # so util_endpoint snapshots return real data and STALL/RESTART_LOOP
-    # predicates can fire throughout engine.provision + wait_for_ready instead
-    # of waiting until deploy_session resumes after provision returns. A
-    # closure failure falls through to hb_loop=None so a bug in the heartbeat
-    # construction path never blocks a fresh boot — the late-start path in
-    # deploy_session handles the caller-supplied warm-pod recovery.
-    hb_loop: HeartbeatLoopProtocol | None = None
-    if start_heartbeat is not None:
-        try:
-            hb_loop = start_heartbeat(instance)
-        except Exception:  # noqa: BLE001 — fall-through to late-start
-            _log.exception(
-                "C29: start_heartbeat closure failed for %s; falling through "
-                "to late-start hb_loop construction in deploy_session",
-                instance.id,
-            )
-            hb_loop = None
-
     # NEW — Layer Q: wire provider.get_instance onto engine before engine.provision
     resolved_engine.attach_get_instance(resolved_provider.get_instance)
 
@@ -756,32 +737,50 @@ def _provision_instance_and_build_backend(
             cancel_token=cancel_token,
         )
     except (ProvisionFailed, ProvisionTimeout, CapabilityMismatch, ValidationError):
-        # C29: stop the boot-phase heartbeat before destroying the pod so the
-        # next tick doesn't observe a missing pod and surface a spurious
-        # provider error.
-        if hb_loop is not None:
-            hb_loop.stop()
         resolved_provider.destroy_instance(instance.id)
         raise
     except Cancelled:
-        # C29: reap-during-boot OR operator-Ctrl-C path. When the heartbeat
-        # loop fires a reap predicate it has already destroyed the pod itself,
-        # so the re-destroy here is the no-op leg of an idempotent destroy.
-        # When the operator interrupts during boot, hb_loop has NOT destroyed
-        # — this clause IS the destroy. Provider failures (RunPod 404 on
-        # already-gone pod) are swallowed + logged so the Cancelled keeps
-        # propagating to the operator.
-        if hb_loop is not None:
-            hb_loop.stop()
+        # C33-m moved heartbeat start to AFTER provision returns. Therefore
+        # during the provision window, Cancelled can only originate from
+        # operator Ctrl-C (no boot-phase heartbeat predicates can fire). The
+        # destroy_instance call is the idempotent cleanup leg; provider
+        # failures (RunPod 404 on an already-gone pod) are swallowed +
+        # logged so Cancelled keeps propagating to the operator.
         try:
             resolved_provider.destroy_instance(instance.id)
         except Exception as destroy_exc:  # noqa: BLE001
             _log.warning(
-                "C29: idempotent destroy after Cancelled raised %s for %s",
+                "C33-m: idempotent destroy after Cancelled raised %s for %s",
                 destroy_exc,
                 instance.id,
             )
         raise
+
+    # C33-m: start the heartbeat loop AFTER provision completes. C29's
+    # BEFORE-provision ordering was reverted on 2026-06-17 because the C25
+    # B5a RunPod satisfier's ``podEditJob`` mutation (issued every 30 s)
+    # triggers a container-level restart on the RunPod side, which makes
+    # provisions infinite (Wan cold-boot cycled every ~31 s under Q4/Q(h)/
+    # (l); succeeded under (m) with heartbeat_mode: none). See
+    # tests/live/_c33_probe_m_evidence.json.
+    #
+    # Trade-off: STALL_REAP / RESTART_LOOP_REAP predicates can no longer
+    # fire during provision (was C29's design intent). They still fire
+    # post-boot. A heartbeat that prevents provision from completing cannot
+    # help with stall detection during it. A closure failure falls through
+    # to hb_loop=None so a bug in the heartbeat construction path never
+    # blocks a fresh boot.
+    hb_loop: HeartbeatLoopProtocol | None = None
+    if start_heartbeat is not None:
+        try:
+            hb_loop = start_heartbeat(instance)
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "C33-m: start_heartbeat closure failed for %s; falling through "
+                "to late-start hb_loop construction in deploy_session",
+                instance.id,
+            )
+            hb_loop = None
 
     backend = resolved_engine.backend(instance, cfg_dict)
     return ProvisionResult(instance=instance, backend=backend, hb_loop=hb_loop)
