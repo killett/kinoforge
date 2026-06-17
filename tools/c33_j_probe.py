@@ -23,7 +23,6 @@ import json
 import os
 import sys
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
@@ -31,7 +30,6 @@ from pathlib import Path
 from typing import Any
 
 GRAPHQL_URL = "https://api.runpod.io/graphql"
-REST_URL = "https://rest.runpod.io/v1/pods"
 UA = "kinoforge/0.1 c33-j-probe"
 IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 
@@ -162,11 +160,11 @@ def _create_pod(gpu_type_id: str, docker_args: str, pod_name: str) -> str:
 def _get_pod(pod_id: str) -> dict[str, Any] | None:
     q = (
         '{ pod(input: {podId: "' + pod_id + '"}) '
-        "{ id desiredStatus lastStartedAt "
+        "{ id desiredStatus lastStartedAt uptimeSeconds "
         "runtime { uptimeInSeconds "
         "container { cpuPercent memoryPercent } "
         "gpus { id gpuUtilPercent memoryUtilPercent } "
-        "pod { uptimeInSeconds } } } }"
+        "} } }"
     )
     data = _graphql(q)
     pod = data.get("data", {}).get("pod")
@@ -176,26 +174,16 @@ def _get_pod(pod_id: str) -> dict[str, Any] | None:
 
 
 def _destroy_pod(pod_id: str) -> bool:
-    """REST DELETE with the terminate-scoped key."""
-    term_key = os.environ.get("RUNPOD_TERMINATE_KEY") or _api_key()
-    req = urllib.request.Request(  # noqa: S310
-        f"{REST_URL}/{pod_id}",
-        method="DELETE",
-        headers={
-            "Authorization": f"Bearer {term_key}",
-            "User-Agent": UA,
-        },
-    )
+    """GraphQL podTerminate mutation — proven path in kinoforge."""
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-            resp.read()
-        return True
-    except urllib.error.HTTPError as e:
-        sys.stderr.write(f"destroy_pod HTTPError: {e.code} {e.reason}\n")
-        return False
+        data = _graphql('mutation { podTerminate(input: { podId: "' + pod_id + '" }) }')
     except Exception as e:  # noqa: BLE001
         sys.stderr.write(f"destroy_pod error: {e}\n")
         return False
+    if data.get("errors"):
+        sys.stderr.write(f"destroy_pod errors: {data['errors']}\n")
+        return False
+    return True
 
 
 def _classify(samples: list[dict[str, Any]]) -> tuple[str, str]:
@@ -295,7 +283,6 @@ def _run_probe(
                 continue
             runtime = (pod or {}).get("runtime") or {}
             container = runtime.get("container") or {}
-            top_pod = runtime.get("pod") or {}
             gpus = runtime.get("gpus") or []
             gpu_util = gpus[0].get("gpuUtilPercent") if gpus else None
             samples.append(
@@ -305,7 +292,7 @@ def _run_probe(
                     "desiredStatus": (pod or {}).get("desiredStatus"),
                     "lastStartedAt": (pod or {}).get("lastStartedAt"),
                     "uptime_runtime": runtime.get("uptimeInSeconds"),
-                    "uptime_runtime_pod": top_pod.get("uptimeInSeconds"),
+                    "uptime_top": (pod or {}).get("uptimeSeconds"),
                     "cpu_percent": container.get("cpuPercent"),
                     "mem_percent": container.get("memoryPercent"),
                     "gpu_util_percent": gpu_util,
