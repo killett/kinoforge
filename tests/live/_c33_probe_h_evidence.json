@@ -1,0 +1,60 @@
+{
+  "probe": "C33 (h) — selfterm-disabled cold-boot of Wan 1.3B t2v on RunPod + ComfyUI",
+  "scope": "Isolate whether the in-pod selfterm watchdog is the source of the T+15s bash-exit/rc=0/restart-loop mystery seen in Q4. NULL result (cycle persists) rules selfterm out and points root cause at image entrypoint, docker daemon, or RunPod container manager.",
+  "date_utc": "2026-06-17",
+  "date_local_pdt": "2026-06-16",
+  "run_id": "run-20260616-171950",
+  "s3_prefix": "s3://kinoforge-pod-diagnostics/boot-logs/run-20260616-171950/",
+  "pod_id": "xbynlkmzil8k26",
+  "gpu": "NVIDIA GeForce RTX 3090 (community-cloud) @ $0.22/hr (RTX 4090 first-choice was out of capacity; fell through to A5000/3090 per cfg gpu_preference)",
+  "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+  "cfg": "tests/live/cfg_c28_phase_a_diagnostic.yaml (idle_timeout=25m, max_lifetime=90m, job_timeout=15m, time_buffer=5m → selfterm dead-man window = 50min)",
+  "intervention": {
+    "diag_commit": "e66ec99",
+    "mechanism": "RunPodProvider.create_instance() injects KINOFORGE_SELFTERM_SCRIPT=\"\" when KINOFORGE_DIAG_DISABLE_SELFTERM=1 is set in the operator shell env. The in-pod bash guard `if [ -n \"${KINOFORGE_SELFTERM_SCRIPT:-}\" ]; then ... fi` (asserted by tests/engines/test_comfyui_render_provision.py::test_render_provision_selfterm_launch_is_optional_when_env_unset) short-circuits, so `nohup python3 /tmp/selfterm.py` is never executed.",
+    "command": "KINOFORGE_DIAG_DISABLE_SELFTERM=1 timeout 900 pixi run kinoforge generate -c tests/live/cfg_c28_phase_a_diagnostic.yaml --prompt examples/configs/prompts/dawn-flight.md --mode t2v --no-reuse"
+  },
+  "observation_window_s": 900,
+  "exit_trap_uploads": {
+    "count": 27,
+    "span_s": 846.0,
+    "avg_cycle_s": 32.54,
+    "delta_min_s": 31.0,
+    "delta_max_s": 38.0,
+    "first": "2026-06-17T00:20:36+00:00",
+    "last": "2026-06-17T00:26:40+00:00 (and beyond — final 27th upload at run-end window)"
+  },
+  "q4_baseline": {
+    "count": 29,
+    "approx_cycle_s": 31,
+    "interpretation": "Q4 ran the same cfg + prompt with selfterm ENABLED. 29 EXIT-trap uploads in ~15 min wall, ~31s cycle. Same image, same provision script, same GPU class."
+  },
+  "delta_vs_q4": {
+    "uploads": "27 vs 29 (−2, within capacity-retry noise: 4090 capacity-fallthrough ate ~10s at probe start before A5000/3090 cold-booted)",
+    "cycle_s": "32.5s vs ~31s (statistically identical; difference < 5%)"
+  },
+  "sample_exit_trap_payload": {
+    "key": "boot-logs/run-20260616-171950/diag-20260617T002034Z.txt",
+    "rc": 0,
+    "last_line": "Cloning into 'ComfyUI'...",
+    "gpu_util_percent": 0,
+    "gpu_mem_mib": 1,
+    "interpretation": "Identical to Q4's failure-mode fingerprint: bash exits with rc=0 partway through provision (silent pip install -q phase, tee buffer's last visible line is the prior `Cloning into 'ComfyUI'...`), GPU 0%, no real workload yet. Container restart loop driven by RunPod's restart=always docker policy (Q9 verified)."
+  },
+  "verdict": "H_h REFUTED — selfterm is NOT the cause of the T+15s bash-exit. With selfterm fully disabled (`nohup python3 /tmp/selfterm.py` never launches; KINOFORGE_SELFTERM_SCRIPT env var empty), the Wan 1.3B t2v cold-boot still exhibits a ~32s restart-loop cycle with rc=0 mid-provision — statistically identical to Q4's selfterm-enabled baseline.",
+  "root_cause_funnel": [
+    "(1) RULED OUT — selfterm (this probe).",
+    "(2) RULED OUT — script truncation (Q7: /tmp/p.sh intact at 86 lines / 5373 bytes).",
+    "(3) RULED OUT — tee buffering (Q8: stdbuf -oL changed nothing).",
+    "(4) RULED OUT — documented selfterm timer conditions (Q5/Q6: dead-man 50min, max-lifetime 85min, neither hits at T+15s).",
+    "(5) REMAINING CANDIDATES — image entrypoint (runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04 may run its own SIGTERM under conditions we haven't characterised), docker daemon (OOM-killer, memory ceiling, exec resource limit), RunPod container manager (pod-side `dockerArgs` wrapper, side-process supervisor)."
+  ],
+  "next_steps_unblocked": [
+    "(h) NEXT — investigate image entrypoint: spin a $0.005 probe with `bash -c 'echo START; sleep 30; echo STILL_HERE; sleep 90; echo END'` as dockerArgs (no kinoforge provision script, no selfterm, no aws/git/pip) on the same image. If THIS bash exits at T+15s, the image entrypoint is killing it. If it survives 120s, the kill is triggered by something the provision script does in its first 15s (apt? pip? wget?).",
+    "(i) STILL BLOCKED — C25 production heartbeat enable. Until (h)-continuation isolates the kill source, Wan workloads cannot cold-boot regardless of whether `podEditJob` restarts containers."
+  ],
+  "spend_usd": 0.0604,
+  "cumulative_c33_spend_usd_estimate": "$0.0795 (P0+P1) + $0.043 (P1 aborts) + $0.0137 (Q1) + $0.0528 (Q2) + $0.3373 (Q3 sweep) + $0.06 (Q4) + ~$0.10 (Q5-Q9 throwaways) + $0.06 (this h) ≈ $0.77",
+  "commit_pre_spend": "e66ec99 (diag scaffold — to be reverted)",
+  "cleanup_followup": "Revert e66ec99 after evidence committed (Q5-Q8 throwaway pattern)."
+}
