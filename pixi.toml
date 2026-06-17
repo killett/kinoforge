@@ -173,7 +173,20 @@ pre-commit-all = "python -m pre_commit run --all-files"
 pre-commit-install = "python -m pre_commit install --install-hooks"
 
 [feature.live-skypilot.pypi-dependencies]
-skypilot = { version = "*", extras = ["gcp", "aws"] }
+# vast + lambda extras added 2026-06-17 (Phase 53 pivot from GCP/AWS).
+# vast extra pulls `vastai-sdk`; lambda extra has no extra deps (pure HTTP)
+# but listing it future-proofs against upstream additions.
+skypilot = { version = "*", extras = ["gcp", "aws", "vast", "lambda"] }
+
+# Materialize $HOME-rooted cred files (Lambda + Vast) from .env-supplied
+# LAMBDA_API_KEY + VAST_API_KEY on every live-skypilot env enter. Sky
+# refuses to read these creds from arbitrary paths so the activation
+# script bridges workspace-local secrets to sky's hard-coded locations.
+# Container rebuilds wipe $HOME except for the .claude bind-mount, so the
+# activation re-materialization is what makes this self-healing.
+[feature.live-skypilot.activation]
+scripts = ["tools/setup_sky_creds.sh"]
+
 # TODO: add "azure" to the extras above once the upstream packaging gap clears.
 # SkyPilot's [azure] extra transitively pulls azure-cli (>=2.73), which pins
 # `azure-batch >=15.0.0b1,<15.1.dev0` — a pre-release-only range. conda-forge
