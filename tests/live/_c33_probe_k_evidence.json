@@ -1,0 +1,465 @@
+{
+  "probe": "C33 (k) \u2014 provision-phase bisection (awscli / apt / clone / pip)",
+  "date_utc": "2026-06-17T06:29:50.104975+00:00",
+  "run_id": "c33-k-20260617T062344",
+  "s3_prefix": "boot-logs/c33-k-20260617T062344",
+  "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+  "gpu": {
+    "gpuTypeId": "NVIDIA RTX A5000",
+    "displayName": "RTX A5000",
+    "priceUsdPerHr": 0.16
+  },
+  "pod_id": "v8izix8zs6vmhf",
+  "observation_window_s": 360.0,
+  "samples": [
+    {
+      "wall_s": 0.5,
+      "ds": "RUNNING",
+      "ur": null,
+      "cpu": null,
+      "mem": null,
+      "gpu": null
+    },
+    {
+      "wall_s": 7.1,
+      "ds": "RUNNING",
+      "ur": null,
+      "cpu": null,
+      "mem": null,
+      "gpu": null
+    },
+    {
+      "wall_s": 13.8,
+      "ds": "RUNNING",
+      "ur": null,
+      "cpu": null,
+      "mem": null,
+      "gpu": null
+    },
+    {
+      "wall_s": 20.8,
+      "ds": "RUNNING",
+      "ur": 8,
+      "cpu": 14,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 27.2,
+      "ds": "RUNNING",
+      "ur": 8,
+      "cpu": 14,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 33.8,
+      "ds": "RUNNING",
+      "ur": 8,
+      "cpu": 14,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 40.3,
+      "ds": "RUNNING",
+      "ur": 8,
+      "cpu": 14,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 46.8,
+      "ds": "RUNNING",
+      "ur": 39,
+      "cpu": 14,
+      "mem": 1,
+      "gpu": 0
+    },
+    {
+      "wall_s": 53.7,
+      "ds": "RUNNING",
+      "ur": 39,
+      "cpu": 14,
+      "mem": 1,
+      "gpu": 0
+    },
+    {
+      "wall_s": 60.1,
+      "ds": "RUNNING",
+      "ur": 39,
+      "cpu": 14,
+      "mem": 1,
+      "gpu": 0
+    },
+    {
+      "wall_s": 66.5,
+      "ds": "RUNNING",
+      "ur": 39,
+      "cpu": 14,
+      "mem": 1,
+      "gpu": 0
+    },
+    {
+      "wall_s": 73.0,
+      "ds": "RUNNING",
+      "ur": 39,
+      "cpu": 14,
+      "mem": 1,
+      "gpu": 0
+    },
+    {
+      "wall_s": 79.4,
+      "ds": "RUNNING",
+      "ur": 68,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 85.9,
+      "ds": "RUNNING",
+      "ur": 68,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 92.3,
+      "ds": "RUNNING",
+      "ur": 68,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 98.8,
+      "ds": "RUNNING",
+      "ur": 68,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 105.3,
+      "ds": "RUNNING",
+      "ur": 99,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 112.0,
+      "ds": "RUNNING",
+      "ur": 99,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 118.5,
+      "ds": "RUNNING",
+      "ur": 99,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 124.9,
+      "ds": "RUNNING",
+      "ur": 99,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 131.4,
+      "ds": "RUNNING",
+      "ur": 99,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 138.2,
+      "ds": "RUNNING",
+      "ur": 128,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 145.5,
+      "ds": "RUNNING",
+      "ur": 128,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 152.0,
+      "ds": "RUNNING",
+      "ur": 128,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 158.4,
+      "ds": "RUNNING",
+      "ur": 128,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 164.9,
+      "ds": "RUNNING",
+      "ur": 159,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 171.3,
+      "ds": "RUNNING",
+      "ur": 159,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 177.8,
+      "ds": "RUNNING",
+      "ur": 159,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 184.6,
+      "ds": "RUNNING",
+      "ur": 159,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 191.1,
+      "ds": "RUNNING",
+      "ur": 159,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 198.6,
+      "ds": "RUNNING",
+      "ur": 188,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 205.1,
+      "ds": "RUNNING",
+      "ur": 188,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 211.8,
+      "ds": "RUNNING",
+      "ur": 188,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 223.2,
+      "ds": "RUNNING",
+      "ur": 188,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 229.7,
+      "ds": "RUNNING",
+      "ur": 219,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 236.1,
+      "ds": "RUNNING",
+      "ur": 219,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 242.6,
+      "ds": "RUNNING",
+      "ur": 219,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 249.0,
+      "ds": "RUNNING",
+      "ur": 219,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 255.6,
+      "ds": "RUNNING",
+      "ur": 248,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 262.2,
+      "ds": "RUNNING",
+      "ur": 248,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 268.6,
+      "ds": "RUNNING",
+      "ur": 248,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 275.0,
+      "ds": "RUNNING",
+      "ur": 248,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 281.5,
+      "ds": "RUNNING",
+      "ur": 248,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 288.1,
+      "ds": "RUNNING",
+      "ur": 279,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 294.6,
+      "ds": "RUNNING",
+      "ur": 279,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 301.2,
+      "ds": "RUNNING",
+      "ur": 279,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 307.8,
+      "ds": "RUNNING",
+      "ur": 279,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 314.4,
+      "ds": "RUNNING",
+      "ur": 308,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 323.0,
+      "ds": "RUNNING",
+      "ur": null,
+      "cpu": null,
+      "mem": null,
+      "gpu": null
+    },
+    {
+      "wall_s": 329.5,
+      "ds": "RUNNING",
+      "ur": 308,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 342.0,
+      "ds": "RUNNING",
+      "ur": 308,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 349.6,
+      "ds": "RUNNING",
+      "ur": 339,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    },
+    {
+      "wall_s": 356.3,
+      "ds": "RUNNING",
+      "ur": 339,
+      "cpu": 0,
+      "mem": 0,
+      "gpu": 0
+    }
+  ],
+  "n_uploads": 1,
+  "uploads": [
+    {
+      "key": "boot-logs/c33-k-20260617T062344/diag-20260617T062941-083467995.txt",
+      "last_modified": "2026-06-17T06:29:42+00:00",
+      "size": 4810,
+      "rc": "0",
+      "phases_in_recency_order": [
+        "T_SLEEP_BEGIN",
+        "T_PIP_DONE",
+        "T_PIP_BEGIN",
+        "T_CLONE_DONE",
+        "T_CLONE_BEGIN",
+        "T_APT_DONE",
+        "T_APT_BEGIN",
+        "T_AWSCLI_DONE",
+        "T_AWSCLI_BEGIN",
+        "T_START"
+      ],
+      "phases_count": 10,
+      "body_excerpt": "===== rc =====\n0\n===== UTC =====\n20260617T062941.070975128Z\n===== phases (touch order, ls -lct rev-chronological) =====\ntotal 40\n-rw-r--r-- 1 root root 21 Jun 17 06:24 T_SLEEP_BEGIN\n-rw-r--r-- 1 root root 21 Jun 17 06:24 T_PIP_DONE\n-rw-r--r-- 1 root root 21 Jun 17 06:24 T_PIP_BEGIN\n-rw-r--r-- 1 root root 21 Jun 17 06:24 T_CLONE_DONE\n-rw-r--r-- 1 root root 21 Jun 17 06:24 T_CLONE_BEGIN\n-rw-r--r-- 1 root root 21 Jun 17 06:24 T_APT_DONE\n-rw-r--r-- 1 root root 21 Jun 17 06:23 T_APT_BEGIN\n-rw-r--r-- 1 root root 21 Jun 17 06:23 T_AWSCLI_DONE\n-rw-r--r-- 1 root root 21 Jun 17 06:23 T_AWSCLI_BEGIN\n-rw-r--r-- 1 root root 21 Jun 17 06:23 T_START\n===== bash log tail =====\nPHASE_START_T0=1781677435.034940189\nBEGIN awscli at 1781677435\nDONE awscli at 1781677435\nBEGIN apt at 1781677435\nDONE apt at 1781677442\nBEGIN clone at 1781677442\nDONE clone at 1781677444\nBEGIN pip-req at 1781677444\nWARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n\n[notice] A new release of pip is available: 24.2 -> 26.1.2\n[notice] To update, run: python -m pip install --upgrade pip\nDONE pip-req at 1781677481\nSLEEP-BEGIN at 1781677481\nEND at 1781677781\n===== memlog tail (last 80s) =====\n1781677700 515601 77343 431785\n1781677701 515601 77355 431772\n1781677702 515601 77355 431772\n1781677703 515601 77322 431805\n1781677704 515601 77321 431806\n1781677705 515601 77364 431763\n1781677706 515601 77369 431758\n1781677707 515601 77380 431747\n1781677708 515601 77372 431755\n1781677709 515601 77366 431762\n1781677710 515601 77364 431763\n1781677711 515601 77322 431805\n1781677712 515601 77323 431804\n1781677713 515601 77325 431802\n1781677714 515601 77342 431785\n1781677715 515601 77343 431785\n1781677716 515601 77352 431775\n1781677717 515601 77353 431775\n1781677718 515601 77253 431874\n1781677719 515601 77245 431884\n1781677720 515601 75946 433191\n1781677721 515601 76159 432978\n1781677722 515601 76260 432877\n1781677723 515601 76237 432900\n1781677724 515601 76290 432847\n1781677725 515601 76335 432802\n1781677727 515601 76142 432995\n1781677728 515601 76372 432765\n1781677729 515601 76592 432545\n1781677730 515601 76412 432727\n1781677731 515601 76451 432686\n1781677732 515601 76515 432623\n1781677733 515601 76792 432337\n1781677734 515601 78339 430791\n1781677735 515601 78999 430131\n1781677736 515601 77045 432083\n1781677737 515601 77336 431791\n1781677738 515601 77383 431744\n1781677739 515601 77340 431787\n1781677740 515601 77343 431784\n1781677741 515601 77318 431809\n1781677742 515601 77325 431802\n1781677743 515601 77355 431772\n1781677744 515601 76079 433058\n1781677745 515601 76237 432900\n1781677746 515601 76273 432864\n1781677747 515601 76338 432800\n1781677748 515601 76374 432763\n1781677749 515601 76431 432706\n1781677750 515601 76493 432645\n1781677751 515601 76525 432612\n1781677752 515601 76536 432601\n1781677753 515601 76540 432597\n1781677754 515601 76540 432597\n1781677755 515601 76542 432595\n1781677756 515601 76536 432601\n1781677757 515601 76542 432595\n1781677758 515601 76552 432585\n1781677759 515601 76538 432599\n1781677760 515601 76529 432608\n1781677761 515601 76523 432614\n1781677762 515601 76528 432609\n1781677763 515601 76531 432606\n1781677764 515601 76528 432609\n1781677765 515601 76528 432609\n1781677766 515601 76796 432341\n1781677767 515601 76510 432627\n1781677768 515601 76517 432620\n1781677769 515601 76518 432619\n1781677770 515601 76547 432591\n1781677771 515601 76529 432608\n1781677772 515601 76528 432609\n1781677773 515601 76528 432609\n1781677774 515601 76528 432609\n1781677775 515601 76530 432607\n1781677776 515601 76529 432608\n1781677777 515601 76529 432608\n1781677778 515601 76538 432599\n1781677779 515601 76538 432599\n1781677780 515601 76534 432603\n===== pslog (last snapshot) =====\nUSER        "
+    }
+  ],
+  "verdict": "phase_identified",
+  "reasoning": "furthest phase across 1 cycles: {'T_SLEEP_BEGIN': 1} \u2014 most common: T_SLEEP_BEGIN (1/1)"
+}
