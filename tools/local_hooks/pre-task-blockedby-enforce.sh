@@ -102,7 +102,7 @@ if [[ -n "$ALL_BLOCKERS" ]]; then
             fi
         done | jq -s '.'
     )
-    MISSING_COUNT=$(echo "$MISSING_JSON" | jq -r 'length // 0' 2>/dev/null)
+    MISSING_COUNT=$(echo "$MISSING_JSON" | jq -r 'length // 0' 2>/dev/null || echo "0")
 fi
 
 trace "$TASK_ID" "scanned" "blockers=[$ALL_BLOCKERS] missing=$MISSING_COUNT subject='$TARGET_SUBJECT'"
