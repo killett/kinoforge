@@ -39,7 +39,7 @@ TRACE_LOG="${SUPERPOWERS_USERGATE_TRACE_LOG:-/tmp/claude-hooks/user-gate-trace.l
 mkdir -p "$(dirname "$TRACE_LOG")" 2>/dev/null || true
 trace() {
     local event="${1:-?}" reason="${2:-}"
-    printf '%s | stop-revalidate | session=%s | %s%s\n' \
+    printf '%s | stop-revalidate | session=%s | %s%s | variant=local\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${TRANSCRIPT_SHORT:-?}" "$event" \
         "${reason:+ | $reason}" >> "$TRACE_LOG" 2>/dev/null || true
 }

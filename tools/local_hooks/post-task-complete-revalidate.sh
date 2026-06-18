@@ -37,7 +37,7 @@ mkdir -p "$(dirname "$TRACE_LOG")" 2>/dev/null || true
 trace() {
     # Args: task_id event reason
     local tid="${1:-?}" event="${2:-?}" reason="${3:-}"
-    printf '%s | post-complete | task=%s | %s%s\n' \
+    printf '%s | post-complete | task=%s | %s%s | variant=local\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tid" "$event" \
         "${reason:+ | $reason}" >> "$TRACE_LOG" 2>/dev/null || true
 }
