@@ -207,3 +207,62 @@ def test_no_live_store_flag_forces_transcript_only(tmp_path: Path) -> None:
     assert rc == 0
     assert payload["source"] == "transcript-fallback"
     assert payload["in_progress_count"] == 0
+
+
+def test_empty_live_store_dir_reports_live_store_source(tmp_path: Path) -> None:
+    """When the live-store dir EXISTS but contains zero task JSON files,
+    the helper MUST report source='live-store' with an empty task list —
+    NOT fall through to transcript-fallback. The dir's existence is
+    authoritative.
+
+    Bug catch: a regression that conflates None (dir absent) with []
+    (dir present, no tasks) would lie about the source on a brand-new
+    session that hasn't called TaskCreate yet, and would silently
+    read a stale transcript instead of trusting the live store.
+    """
+    sid = "s-empty"
+    d = tmp_path / sid
+    d.mkdir()
+    # Dotfiles allowed; they should be filtered.
+    (d / ".lock").write_text("")
+    (d / ".highwatermark").write_text("1")
+    # Provide a transcript that WOULD say in_progress=1 to prove the
+    # empty live-store dir wins.
+    transcript = tmp_path / f"{sid}.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "TaskCreate",
+                            "input": {"subject": "X"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "name": "TaskUpdate",
+                            "input": {"taskId": "1", "status": "in_progress"},
+                        },
+                    ]
+                },
+            }
+        )
+    )
+    rc, payload, _ = _run(
+        [
+            "--session-id",
+            sid,
+            "--root",
+            str(tmp_path),
+            "--transcript",
+            str(transcript),
+        ]
+    )
+    assert rc == 0
+    assert payload["source"] == "live-store", (
+        f"empty dir should report live-store, got {payload['source']!r}"
+    )
+    assert payload["in_progress_count"] == 0
+    assert payload["tasks"] == []

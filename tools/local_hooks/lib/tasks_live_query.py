@@ -185,11 +185,14 @@ def main(argv: list[str]) -> int:
         return 0
 
     try:
+        if not args.session_id.strip():
+            raise ValueError("--session-id must be a non-empty string")
         root = Path(args.root)
         tasks: list[dict[str, Any]] | None = None
         if not args.no_live_store:
             tasks = _read_live_store(root, args.session_id)
-        if tasks is None or len(tasks) == 0:
+        if tasks is None:
+            # Live store dir absent — fall through to transcript fallback.
             if args.transcript:
                 fallback_tasks = _read_transcript_fallback(Path(args.transcript))
                 json.dump(
@@ -203,6 +206,7 @@ def main(argv: list[str]) -> int:
                 _empty_payload("transcript-fallback", args.session_id), sys.stdout
             )
             return 0
+        # Live store dir present (possibly empty list) — authoritative.
         json.dump(_build_payload("live-store", args.session_id, tasks), sys.stdout)
         return 0
     except Exception:  # noqa: BLE001 — fail-open is the contract
