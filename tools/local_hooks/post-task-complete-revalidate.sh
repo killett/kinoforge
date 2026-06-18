@@ -241,15 +241,16 @@ if [[ "$AB_REQUIRED" == "true" ]]; then
     AXES_COUNT=$(printf '%s' "$AB_AXES" | jq -r 'length // 0' 2>/dev/null || echo "0")
     for i in $(seq 0 $((AXES_COUNT - 1))); do
         AXIS_TOKENS=$(printf '%s' "$AB_AXES" | jq -c ".[$i]" 2>/dev/null || echo "[]")
-        TOKENS=$(printf '%s' "$AXIS_TOKENS" | jq -r '.[]' 2>/dev/null || echo "")
-        ESCAPED_TOKENS=$(printf '%s' "$TOKENS" | sed 's/[][\\/.+*?^$|(){}]/\\&/g')
-        PATTERN=$(printf '%s' "$ESCAPED_TOKENS" | tr '\n' '|' | sed 's/|$//')
-        if [[ -n "$PATTERN" ]]; then
-            if ! printf '%s' "$ALL_WINDOW_TEXT" | grep -qiE "\\b(${PATTERN})\\b"; then
-                AB_MISSING_JSON=$(printf '%s' "$AB_MISSING_JSON" | jq -c \
-                    --argjson idx "$i" --argjson tokens "$AXIS_TOKENS" \
-                    '. + [{"index": $idx, "tokens": $tokens}]' 2>/dev/null || echo "$AB_MISSING_JSON")
-            fi
+        TOKENS=$(printf '%s' "$AXIS_TOKENS" | jq -r '.[] // empty' 2>/dev/null | sed 's/[][\\/.+*?^$|(){}]/\\&/g' | grep -v '^$' || true)
+        PATTERN=$(printf '%s' "$TOKENS" | tr '\n' '|' | sed 's/|$//')
+        if [[ -z "$PATTERN" ]]; then
+            AB_MISSING_JSON=$(printf '%s' "$AB_MISSING_JSON" | jq -c \
+                --argjson idx "$i" --argjson tokens "$AXIS_TOKENS" \
+                '. + [{"index": $idx, "tokens": $tokens}]' 2>/dev/null || echo "$AB_MISSING_JSON")
+        elif ! printf '%s' "$ALL_WINDOW_TEXT" | grep -qiE "\\b(${PATTERN})\\b"; then
+            AB_MISSING_JSON=$(printf '%s' "$AB_MISSING_JSON" | jq -c \
+                --argjson idx "$i" --argjson tokens "$AXIS_TOKENS" \
+                '. + [{"index": $idx, "tokens": $tokens}]' 2>/dev/null || echo "$AB_MISSING_JSON")
         fi
     done
     AB_MISSING_COUNT=$(printf '%s' "$AB_MISSING_JSON" | jq -r 'length // 0' 2>/dev/null || echo "0")

@@ -8,12 +8,11 @@
 # session JSONL transcript. See:
 #   docs/superpowers/specs/2026-06-18-precommit-task-hook-livestore-design.md
 
-INPUT=$(cat)
 ALLOW='{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
-HELPER_ROOT="${KINOFORGE_LOCAL_HOOKS_DIR:-$HOME/.claude/hooks}"
-
 # Fail-open: unexpected errors (jq crash, python failure) must not block commits.
 trap 'echo "$ALLOW"; exit 0' ERR
+INPUT=$(cat)
+HELPER_ROOT="${KINOFORGE_LOCAL_HOOKS_DIR:-$HOME/.claude/hooks}"
 
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 [[ "$TOOL_NAME" != "Bash" ]] && echo "$ALLOW" && exit 0

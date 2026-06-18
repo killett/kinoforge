@@ -83,15 +83,16 @@ trace "$TASK_ID" "parsed" "axes=$AXES_COUNT subject='$SUBJECT'"
 MISSING_JSON="[]"
 for i in $(seq 0 $((AXES_COUNT - 1))); do
     AXIS_TOKENS=$(printf '%s' "$AXES_JSON" | jq -c ".[$i]" 2>/dev/null || echo "[]")
-    TOKENS=$(printf '%s' "$AXIS_TOKENS" | jq -r '.[]' 2>/dev/null || echo "")
-    ESCAPED_TOKENS=$(printf '%s' "$TOKENS" | sed 's/[][\\/.+*?^$|(){}]/\\&/g')
-    PATTERN=$(printf '%s' "$ESCAPED_TOKENS" | tr '\n' '|' | sed 's/|$//')
-    if [[ -n "$PATTERN" ]]; then
-        if ! printf '%s' "$RESPONSE" | grep -qiE "\\b(${PATTERN})\\b"; then
-            MISSING_JSON=$(printf '%s' "$MISSING_JSON" | jq -c \
-                --argjson idx "$i" --argjson tokens "$AXIS_TOKENS" \
-                '. + [{"index": $idx, "tokens": $tokens}]' 2>/dev/null || echo "$MISSING_JSON")
-        fi
+    TOKENS=$(printf '%s' "$AXIS_TOKENS" | jq -r '.[] // empty' 2>/dev/null | sed 's/[][\\/.+*?^$|(){}]/\\&/g' | grep -v '^$' || true)
+    PATTERN=$(printf '%s' "$TOKENS" | tr '\n' '|' | sed 's/|$//')
+    if [[ -z "$PATTERN" ]]; then
+        MISSING_JSON=$(printf '%s' "$MISSING_JSON" | jq -c \
+            --argjson idx "$i" --argjson tokens "$AXIS_TOKENS" \
+            '. + [{"index": $idx, "tokens": $tokens}]' 2>/dev/null || echo "$MISSING_JSON")
+    elif ! printf '%s' "$RESPONSE" | grep -qiE "\\b(${PATTERN})\\b"; then
+        MISSING_JSON=$(printf '%s' "$MISSING_JSON" | jq -c \
+            --argjson idx "$i" --argjson tokens "$AXIS_TOKENS" \
+            '. + [{"index": $idx, "tokens": $tokens}]' 2>/dev/null || echo "$MISSING_JSON")
     fi
 done
 
