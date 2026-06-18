@@ -75,8 +75,8 @@ RESULT=$(python3 "$HELPER_ROOT/lib/tasks_live_query.py" \
 [[ -z "$RESULT" ]] && { trace "$TASK_ID" "skip" "no-result"; exit 0; }
 
 CLOSED_TASK_ID="$TASK_ID"
-DESCRIPTION=$(echo "$RESULT" | jq -r ".tasks[] | select(.id == \"$CLOSED_TASK_ID\") | .description" 2>/dev/null)
-SUBJECT=$(echo "$RESULT" | jq -r ".tasks[] | select(.id == \"$CLOSED_TASK_ID\") | .subject" 2>/dev/null)
+DESCRIPTION=$(echo "$RESULT" | jq -r --arg tid "$CLOSED_TASK_ID" '.tasks[] | select(.id == $tid) | .description' 2>/dev/null)
+SUBJECT=$(echo "$RESULT" | jq -r --arg tid "$CLOSED_TASK_ID" '.tasks[] | select(.id == $tid) | .subject' 2>/dev/null)
 SUBJECT="${SUBJECT:-?}"
 
 # Parse the json:metadata code fence inside the task description.
@@ -153,7 +153,7 @@ IN_PROGRESS_LINE=$(jq -r --arg tid "$TASK_ID" '
 # We scan the raw JSONL for the pattern — approximate but sufficient.
 if [[ -n "$IN_PROGRESS_LINE" ]]; then
     SCAN_FROM_LINE=$(grep -n "\"in_progress\"" "$TRANSCRIPT_PATH" 2>/dev/null | \
-        grep "\"taskId\":\"${TASK_ID}\"\\|\"taskId\": \"${TASK_ID}\"" | \
+        grep -F "\"taskId\":\"${TASK_ID}\"" | \
         tail -1 | cut -d: -f1 || echo "0")
     SCAN_FROM_LINE="${SCAN_FROM_LINE:-0}"
 fi
@@ -222,8 +222,12 @@ if [[ -n "$EXTRA_KW" ]]; then
 fi
 
 ALL_WINDOW_TEXT=$(printf '%s\n%s' "$ASSISTANT_TEXTS" "$TOOL_RESULT_TEXTS")
-if printf '%s' "$ALL_WINDOW_TEXT" | grep -qiE "$ASSESS_PATTERN"; then
+GREP_RC=0
+printf '%s' "$ALL_WINDOW_TEXT" | grep -qiE "$ASSESS_PATTERN" || GREP_RC=$?
+if [[ $GREP_RC -eq 0 ]]; then
     AGENT_ASSESS="true"
+elif [[ $GREP_RC -gt 1 ]]; then
+    echo "post-task-complete-revalidate: SUPERPOWERS_USERGATE_KEYWORDS produced an invalid ERE pattern — keyword check skipped" >&2
 fi
 
 # Last agent text preview (first 240 chars of last assistant text).
@@ -237,7 +241,9 @@ if [[ "$AB_REQUIRED" == "true" ]]; then
     AXES_COUNT=$(printf '%s' "$AB_AXES" | jq -r 'length // 0' 2>/dev/null || echo "0")
     for i in $(seq 0 $((AXES_COUNT - 1))); do
         AXIS_TOKENS=$(printf '%s' "$AB_AXES" | jq -c ".[$i]" 2>/dev/null || echo "[]")
-        PATTERN=$(printf '%s' "$AXIS_TOKENS" | jq -r 'map(.) | join("|")' 2>/dev/null || echo "")
+        TOKENS=$(printf '%s' "$AXIS_TOKENS" | jq -r '.[]' 2>/dev/null || echo "")
+        ESCAPED_TOKENS=$(printf '%s' "$TOKENS" | sed 's/[][\\/.+*?^$|(){}]/\\&/g')
+        PATTERN=$(printf '%s' "$ESCAPED_TOKENS" | tr '\n' '|' | sed 's/|$//')
         if [[ -n "$PATTERN" ]]; then
             if ! printf '%s' "$ALL_WINDOW_TEXT" | grep -qiE "\\b(${PATTERN})\\b"; then
                 AB_MISSING_JSON=$(printf '%s' "$AB_MISSING_JSON" | jq -c \
