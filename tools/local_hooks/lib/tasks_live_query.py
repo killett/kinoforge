@@ -187,6 +187,7 @@ def main(argv: list[str]) -> int:
     try:
         if not args.session_id.strip():
             raise ValueError("--session-id must be a non-empty string")
+        args.session_id = args.session_id.strip()
         root = Path(args.root)
         tasks: list[dict[str, Any]] | None = None
         if not args.no_live_store:
