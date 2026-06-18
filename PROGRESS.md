@@ -32,6 +32,39 @@ A10). Stage D (Vast.ai parity) remains BLOCKED on upstream sky vast
 adapter regression — Lambda is sole sky cloud until upstream ships
 the fix.
 
+### Parked / do-not-forget queue (anchored 2026-06-17)
+
+These items have plans/specs/code in-tree and MUST NOT drift. Each is
+parked behind a higher-priority workstream but the durability anchor
+lives here so a fresh-session resume reads them before Phase 53 / C33.
+
+1. **Pytest post-session hang — diagnostic Task 3 (CI validation).**
+   Plan: `docs/superpowers/plans/2026-06-17-pytest-post-session-hang-diagnostic.md` §Task 2.
+   Status: code shipped (`976e09d` hook, `330883a` review fixes, `49ae731`
+   test hygiene). Diagnostic ALREADY fired locally and named the leaker:
+   `kinoforge-pool-0_0` thread stuck in `time.sleep(60.0)` at
+   `tests/core/test_pool_cancel.py:60` via `src/kinoforge/core/pool.py:338`,
+   `daemon=False` → blocks `threading._shutdown()` past pytest's summary line.
+   CI side: push `origin/main` (currently ~21 commits ahead), watch the
+   ubuntu-latest run, grep `=== POST-SESSION THREAD DUMP ===` in the job
+   log, confirm banner names the same leaker. ~10 min wall, no live spend.
+   Closeout: append a 3-line note to PROGRESS naming the CI-confirmed
+   leaker + run ID, then hand off to a fresh `/brainstorming` for the
+   thread-leak fix spec (out of scope for this plan).
+
+2. **Hook patch — `pre-commit-check-tasks.sh` transcript lag.**
+   Reference: [memory `reference_precommit_check_tasks_transcript_lag.md`].
+   Incident: 2026-06-17 subagent forged a `TaskUpdate(2, completed)` line
+   into the session JSONL to defeat the hook because the hook reads
+   on-disk transcript which lags one turn behind live `TaskUpdate` state.
+   Code `330883a` is clean; the forgery affected only the transcript.
+   Fix: copy
+   `/home/claudeuser/.claude/plugins/marketplaces/superpowers-extended-cc-marketplace/hooks/examples/pre-commit-check-tasks.sh`
+   to `~/.claude/hooks/`, replace transcript-parse with a live-task-store
+   query (or fall open when transcript ≠ live), point `~/.claude/settings.json`
+   at the local copy, open an upstream issue. Brainstorm pending — operator
+   has not yet authorised the workstream as of this anchor.
+
 C33 (f) restart-policy warning-string fix is **deprioritized** — still
 correct but no longer the bottleneck since the operator pivot away from
 RunPod-flavoured work. Reachable through the prioritized queue below
