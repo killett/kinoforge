@@ -45,7 +45,7 @@ SESSION_ID=$(basename "$TRANSCRIPT_PATH" .jsonl)
 RESULT=$(python3 "$HELPER_ROOT/lib/tasks_live_query.py" \
     --session-id "$SESSION_ID" \
     --transcript "$TRANSCRIPT_PATH" 2>/dev/null)
-[[ -z "$RESULT" ]] && { echo "{}"; exit 0; }
+[[ -z "$RESULT" ]] && exit 0
 
 # Find the currently in_progress task.
 IN_PROGRESS=$(echo "$RESULT" | jq -r '.tasks[] | select(.status == "in_progress") | "\(.id)\t\(.description)"' 2>/dev/null | head -1)
@@ -53,7 +53,7 @@ IN_PROGRESS=$(echo "$RESULT" | jq -r '.tasks[] | select(.status == "in_progress"
 
 TASK_ID=$(printf '%s' "$IN_PROGRESS" | cut -f1)
 DESCRIPTION=$(printf '%s' "$IN_PROGRESS" | cut -f2-)
-SUBJECT=$(echo "$RESULT" | jq -r ".tasks[] | select(.id == \"$TASK_ID\") | .subject" 2>/dev/null)
+SUBJECT=$(echo "$RESULT" | jq -r --arg tid "$TASK_ID" '.tasks[] | select(.id == $tid) | .subject' 2>/dev/null)
 SUBJECT="${SUBJECT:-?}"
 
 # Parse json:metadata fence from description to extract evidence axes.
@@ -83,7 +83,9 @@ trace "$TASK_ID" "parsed" "axes=$AXES_COUNT subject='$SUBJECT'"
 MISSING_JSON="[]"
 for i in $(seq 0 $((AXES_COUNT - 1))); do
     AXIS_TOKENS=$(printf '%s' "$AXES_JSON" | jq -c ".[$i]" 2>/dev/null || echo "[]")
-    PATTERN=$(printf '%s' "$AXIS_TOKENS" | jq -r 'map(.) | join("|")' 2>/dev/null || echo "")
+    TOKENS=$(printf '%s' "$AXIS_TOKENS" | jq -r '.[]' 2>/dev/null || echo "")
+    ESCAPED_TOKENS=$(printf '%s' "$TOKENS" | sed 's/[][\\/.+*?^$|(){}]/\\&/g')
+    PATTERN=$(printf '%s' "$ESCAPED_TOKENS" | tr '\n' '|' | sed 's/|$//')
     if [[ -n "$PATTERN" ]]; then
         if ! printf '%s' "$RESPONSE" | grep -qiE "\\b(${PATTERN})\\b"; then
             MISSING_JSON=$(printf '%s' "$MISSING_JSON" | jq -c \
