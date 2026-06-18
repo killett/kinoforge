@@ -165,7 +165,7 @@ while IFS=$'\t' read -r tid description; do
     fi
 
     if [[ "$PROOF_FOUND" != "true" ]]; then
-        GATE_SUBJECT=$(echo "$RESULT" | jq -r ".tasks[] | select(.id == \"$tid\") | .subject" 2>/dev/null)
+        GATE_SUBJECT=$(echo "$RESULT" | jq -r --arg tid "$tid" '.tasks[] | select(.id == $tid) | .subject' 2>/dev/null)
         GATE_SUBJECT="${GATE_SUBJECT:-?}"
         BLOCKED_GATES=$(printf '%s' "$BLOCKED_GATES" | jq -c \
             --arg id "$tid" --arg subject "$GATE_SUBJECT" \

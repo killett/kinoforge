@@ -79,7 +79,7 @@ RESULT=$(python3 "$HELPER_ROOT/lib/tasks_live_query.py" \
 STATUS_OF=$(echo "$RESULT" | jq -r '.tasks[] | "\(.id):\(.status)"' 2>/dev/null)
 BLOCKED_BY=$(echo "$RESULT" | jq -r '.blocked_by_lookup // {} | to_entries[] | "\(.key):\(.value | join(","))"' 2>/dev/null)
 
-TARGET_SUBJECT=$(echo "$RESULT" | jq -r ".tasks[] | select(.id == \"$TASK_ID\") | .subject" 2>/dev/null)
+TARGET_SUBJECT=$(echo "$RESULT" | jq -r --arg tid "$TASK_ID" '.tasks[] | select(.id == $tid) | .subject' 2>/dev/null)
 TARGET_SUBJECT="${TARGET_SUBJECT:-?}"
 
 # Find the blockedBy entries for TASK_ID.
@@ -94,10 +94,11 @@ if [[ -n "$ALL_BLOCKERS" ]]; then
             [[ -z "$bid" ]] && continue
             BSTATUS=$(echo "$STATUS_OF" | grep "^${bid}:" | sed "s/^${bid}://" | head -1)
             BSTATUS="${BSTATUS:-unknown}"
-            BSUBJECT=$(echo "$RESULT" | jq -r ".tasks[] | select(.id == \"$bid\") | .subject" 2>/dev/null)
+            BSUBJECT=$(echo "$RESULT" | jq -r --arg bid "$bid" '.tasks[] | select(.id == $bid) | .subject' 2>/dev/null)
             BSUBJECT="${BSUBJECT:-?}"
             if [[ "$BSTATUS" != "completed" ]]; then
-                printf '{"id":"%s","subject":"%s","status":"%s"}\n' "$bid" "$BSUBJECT" "$BSTATUS"
+                jq -n --arg id "$bid" --arg subject "$BSUBJECT" --arg status "$BSTATUS" \
+                    '{id:$id,subject:$subject,status:$status}'
             fi
         done | jq -s '.'
     )
