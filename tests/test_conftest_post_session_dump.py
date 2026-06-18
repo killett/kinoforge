@@ -53,6 +53,11 @@ def test_fast_path_single_thread_clean_line(
     )
     assert "no non-daemon extras" in captured.err
     assert captured.err.endswith(")\n")
+    # Pin the thread-count token so a future edit that drops it from the
+    # banner (e.g. switching to a generic "clean" with no count) regresses
+    # loudly — `enumerate` is patched to return exactly [main], so the
+    # banner must read "clean (1 threads,".
+    assert "clean (1 threads," in captured.err
 
 
 def test_fast_path_daemon_thread_alive_still_clean(
@@ -77,8 +82,12 @@ def test_fast_path_daemon_thread_alive_still_clean(
     daemon_t = threading.Thread(
         target=stop.wait, name="kf-test-daemon-noise", daemon=True
     )
-    daemon_t.start()
     try:
+        # Start AND assert under one try/finally so a failure between
+        # start() and the assertion still hits the join — daemon threads
+        # don't block shutdown, but leaking them past the test still
+        # contradicts the test's isolation goal.
+        daemon_t.start()
         main = threading.main_thread()
         # Patch enumerate to return exactly [main, daemon_t].
         monkeypatch.setattr(threading, "enumerate", lambda: [main, daemon_t])
@@ -90,7 +99,8 @@ def test_fast_path_daemon_thread_alive_still_clean(
         )
     finally:
         stop.set()
-        daemon_t.join(timeout=5.0)
+        if daemon_t.is_alive():
+            daemon_t.join(timeout=5.0)
 
 
 def test_slow_path_lists_every_live_thread(
