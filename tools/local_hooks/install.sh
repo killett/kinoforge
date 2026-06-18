@@ -23,6 +23,19 @@ DST="$HOME/.claude/hooks"
 SETTINGS="$HOME/.claude/settings.json"
 BACKUP="$HOME/.claude/settings.json.pre-hook-swap-2026-06-18.bak"
 
+cleanup_on_failure() {
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo "" >&2
+        echo "Install failed (exit $rc). Partial state may exist:" >&2
+        echo "  - Files copied to $DST may persist" >&2
+        echo "  - settings.json modification may have failed" >&2
+        echo "  - Backup at $BACKUP is intact; restore with:" >&2
+        echo "      cp \"$BACKUP\" \"$SETTINGS\"" >&2
+    fi
+}
+trap cleanup_on_failure EXIT
+
 HOOKS=(
     pre-commit-check-tasks.sh
     pre-task-blockedby-enforce.sh
@@ -76,7 +89,7 @@ home = os.environ["HOME"]
 hooks = os.environ["HOOKS"].split()
 data = json.loads(settings_path.read_text())
 
-marketplace_prefix = "/home/claudeuser/.claude/plugins/marketplaces/superpowers-extended-cc-marketplace/hooks/examples"
+marketplace_prefix = f"{home}/.claude/plugins/marketplaces/superpowers-extended-cc-marketplace/hooks/examples"
 
 def walk(node):
     if isinstance(node, dict):
