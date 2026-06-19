@@ -670,14 +670,20 @@ class RunPodProvider(ComputeProvider):
             },
         }
 
-        # C28 A3: opt-out of RunPod's auto-restart-on-failure when caller asks
-        # AND the input schema actually exposes the field. The A0 probe
+        # C28 A3: opt-out of RunPod's auto-restart-on-every-exit when caller
+        # asks AND the input schema actually exposes the field. The A0 probe
         # (2026-06-13) confirmed `restartPolicy` is NOT in
         # PodFindAndDeployOnDemandInput at the time of this commit, so the
         # `restart_policy="never"` path always warns + skips today. If RunPod
         # ever exposes the field, re-running the A0 probe flips the sidecar
         # and this branch starts emitting `restartPolicy: NEVER` with no code
         # change required.
+        #
+        # RunPod's default (no `restartPolicy` field emitted) is
+        # `RestartPolicy.ALWAYS` — the container is re-started on EVERY exit,
+        # success and failure alike. The C33 (f) warning rewrite makes this
+        # explicit so operators reading the log do not mis-read it as
+        # "restart-on-failure" (which would imply clean exits stay terminated).
         if spec.restart_policy == "never":
             if _restart_policy_supported():
                 body["variables"]["input"]["restartPolicy"] = "NEVER"
@@ -685,7 +691,8 @@ class RunPodProvider(ComputeProvider):
                 logging.getLogger(__name__).warning(
                     "spec.restart_policy='never' requested but RunPod schema "
                     "does not expose restartPolicy (per %s); falling back to "
-                    "the provider's default restart-on-failure behaviour",
+                    "RunPod's default always-restart-on-every-container-exit "
+                    "behaviour (success and failure alike)",
                     _RUNPOD_SCHEMA_SIDECAR,
                 )
 
