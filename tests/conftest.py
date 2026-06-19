@@ -313,6 +313,40 @@ def http_server() -> Generator[HttpServerInfo, None, None]:
 
 
 # ---------------------------------------------------------------------------
+# Faulthandler safety net for pytest hangs (spec
+# docs/superpowers/specs/2026-06-19-pytest-thread-leak-diagnostic-design.md).
+#
+# pytest_sessionfinish below names the thread once the hang manifests AFTER
+# the summary line. A hang that prevents the test session from REACHING
+# pytest_sessionfinish at all (a collection-phase deadlock, a fixture lock,
+# a non-yielding generator) would skip the hook entirely. Arming
+# faulthandler.dump_traceback_later(15) at pytest_configure gives us a
+# C-side safety net that dumps all thread stacks to stderr 15 s after
+# configure, bypassing the Python interpreter's lock state. The matching
+# cancel call sits at the top of pytest_sessionfinish so healthy runs
+# do NOT also dump from the timer.
+# ---------------------------------------------------------------------------
+
+
+def pytest_configure(config):  # noqa: ANN001
+    """Arm a 15 s faulthandler timer at configure-time.
+
+    Args:
+        config: pytest ``Config`` object. Unused — present to match the
+            documented hook signature.
+    """
+    import faulthandler  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    faulthandler.enable()
+    # repeat=False because pytest_sessionfinish cancels on the happy
+    # path; a hang therefore gets exactly one C-side dump 15 s later,
+    # not a noise storm. exit=False because we want to KEEP running so
+    # pytest can still emit its summary if it ever gets there.
+    faulthandler.dump_traceback_later(15, repeat=False, file=sys.stderr, exit=False)
+
+
+# ---------------------------------------------------------------------------
 # Post-session thread-dump diagnostic (spec
 # docs/superpowers/specs/2026-06-17-pytest-post-session-hang-diagnostic-design.md).
 #
@@ -335,6 +369,9 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001
         exitstatus: The integer exit status pytest will return. Echoed in the
             banner so a green vs. red session is distinguishable in CI logs.
     """
+    import faulthandler  # noqa: PLC0415
+
+    faulthandler.cancel_dump_traceback_later()
     import sys  # noqa: PLC0415
     import threading  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
