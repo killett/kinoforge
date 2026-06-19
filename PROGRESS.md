@@ -15,10 +15,42 @@ first unchecked task without redoing committed work.
 
 ## Next session — resume target (single next action at top)
 
-**CI RED on `origin/main` HEAD 2026-06-19 — 9 PRE-EXISTING FAILURES, address today.**
+**CI RED PRE-EXISTING FAILURES RESOLVED 2026-06-19 (autonomous).** Both families
+fixed + one bonus flake closed; **full FAIL-mode suite GREEN with zero ignores**:
+`2631 passed, 76 skipped, 6 xfailed in 123.98s`. The original L1 follow-up
+goal (PROGRESS line 100-104) — "extended-ignore collapses back to original
+2-file set" — is exceeded: even the 2-file set is no longer needed. L1
+thread-leak FIX policy is in fully load-bearing FAIL mode against the
+entire suite, no escape hatches.
+
+- Family 1 — heartbeat / supplied-instance regression (8 failures): commit `b1c8c7d`
+  adds `warm_reuse_auto_attach: false` to `_COMPUTE_YAML` in `tests/core/test_orchestrator.py`
+  + `tests/core/test_orchestrator_heartbeat.py`. Root cause: `HeartbeatIntervalRequiredCheck`
+  (new with the cfg-validation merge) auto-fixed `heartbeat_interval_s=None`→`30`
+  whenever a test cfg had a `lifecycle:` block AND `warm_reuse_auto_attach` defaulted
+  to True (config.py:546). Auto-fix silently spawned an HB loop the test scenarios
+  never set up to satisfy — surfaced as `FirstTickTimeout` on 6 supplied-instance tests
+  + `session_start written when HB disabled` on 1 + `loop spawned despite interval_s=None`
+  on 1. Production contract unchanged; only the test fixtures gain explicit semantics.
+- Family 2 — core layering invariant (1 failure): commit `f1b958d` replaces the two
+  direct `import kinoforge.providers.{runpod,skypilot}` calls in `src/kinoforge/core/config.py:1134-1135`
+  with a single `import kinoforge._adapters`. Routes provider-check registration via
+  the canonical adapter hub (the SOLE module permitted to import providers/). AC 1
+  subprocess-isolation still green — function-local import does not enter sys.modules
+  at core.config module-load time.
+- Bonus — race in `test_blocking_acquire_serializes_concurrent_calls` (commit
+  `345dcb2`). Plan A's single-run harvest missed this leaker because the race
+  went the lucky way that day. Under FAIL mode the race lost on first re-run;
+  `second`'s pre-acquire `ledger.touch(...200.5)` was clobbered by `first`'s
+  in-band `touch(...100.5)` so `second`'s poll loop never satisfied
+  `tick >= start=200.0` (FakeClock(start=200.0) never advances). Moved the
+  `200.5` write inside `second`'s with-block — same intent as `first`'s
+  in-band touch at line 181. 10x serial re-runs green.
+
+### Original failure list (now resolved)
 Most recent CI run `27838499829` (push `81ee758..1d83d1d`, branch `main`) failed on
 both ubuntu-latest + macos-latest. Failures are NOT caused by the thread-leak work
-(L1 is WARN mode, cannot fail tests). Two independent bug families:
+(L1 was WARN mode, could not fail tests). Two independent bug families:
 
 **Family 1: heartbeat / supplied-instance regression (8 failures).** Likely introduced
 by cfg-validation merge `70bcda3` or a sub-commit (`f3dd5d3`, `1df7aa8`, `3ba8369`,
