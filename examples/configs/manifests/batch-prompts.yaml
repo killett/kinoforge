@@ -1,5 +1,5 @@
 # Example batch manifest. Run with:
-#   kinoforge batch -c examples/configs/wan.yaml --manifest examples/configs/batch-prompts.yaml
+#   kinoforge batch -c examples/configs/wan.yaml --manifest examples/configs/manifests/batch-prompts.yaml
 #
 # All three entries share one deploy. Each entry's outputs land under
 # .kinoforge/<batch_id>/<run_id>/. The default batch_id is
@@ -9,13 +9,13 @@
   mode: t2v
   run_id: waves
 
-- prompt_file: prompts/forest.txt        # resolved relative to this manifest's dir
+- prompt_file: ../prompts/forest.txt      # resolved relative to this manifest's dir
   mode: t2v
   run_id: forest
   params:
     seed: 42                              # per-entry param overrides
 
-- prompt_file: prompts/dawn-flight.md
+- prompt_file: ../prompts/dawn-flight.md
   mode: i2v
   run_id: dawn
   assets:
