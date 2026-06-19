@@ -93,6 +93,16 @@ compute:
     # offer (~$0.16/hr × 30m = $0.08); the $2 cap is the
     # BudgetTracker's mid-run circuit breaker, not an estimate.
     budget: 2.0
+    # REQUIRED for cross-CLI warm-reuse — without it `HeartbeatLoop`
+    # never starts, no `heartbeat_thread_tick` lands in the ledger
+    # row, and the second invocation's classify chain returns
+    # `HEARTBEAT_UNKNOWN` → conservative-on-ignorance → cold create
+    # instead of attach. Empirically verified the failure mode in the
+    # 2026-06-18 first-attempt smoke (pods f2w4sqghw5udio +
+    # p3oj1qjmjioae1 ran simultaneously; both destroyed at ~$0.04
+    # combined). 30 s matches the cfg_b3_warm_attach.yaml smoke that
+    # established the B3 cross-CLI auto-discovery contract.
+    heartbeat_interval_s: 30
 
 spec:
   graph_file: runpod-comfyui-wan-t2v-1_3b.graph.json
