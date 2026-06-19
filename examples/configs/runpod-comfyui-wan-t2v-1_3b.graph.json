@@ -3,9 +3,9 @@
     "source_repo": "https://github.com/kijai/ComfyUI-WanVideoWrapper",
     "source_sha": "088128b224242e110d3906c6750e9a3a348a659b",
     "source_path": "derived from example_workflows/wanvideo_2_1_14B_I2V_example_03.json + wanvideo_2_1_14B_T2V_example_03.json (hand-merged for API form)",
-    "captured_at_local": "2026-06-09T00:00-07:00",
+    "captured_at_local": "2026-06-18T00:00-07:00",
     "format": "api",
-    "converter": "hand-authored from runpod-comfyui-wan.graph.json (i2v API form): dropped nodes 58/59/63/65/68 (LoadImage / CLIPVisionLoader / WanVideoImageToVideoEncode / WanVideoClipVisionEncode / ImageResizeKJv2); added node 80 (WanVideoEmptyEmbeds) for text-only image_embeds; rewired sampler.image_embeds 63->80; swapped model 22 I2V->T2V checkpoint"
+    "converter": "hand-authored from runpod-comfyui-wan-t2v.graph.json (14B T2V API form): swapped node 22 model 14B fp8 e4m3fn -> 1.3B fp8 e4m3fn checkpoint (Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors). Graph topology unchanged; same kijai workflow shape."
   },
   "11": {
     "inputs": {

@@ -1,0 +1,114 @@
+# Wan 2.1 1.3B t2v on RunPod + ComfyUI — sibling of runpod-comfyui-wan-t2v.yaml.
+#
+# Same kijai workflow shape as the 14B variant; only the diffusion
+# checkpoint differs (Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors, ~1.47 GB,
+# vs the 14B's 17 GB). VAE + T5 unchanged.
+#
+# On-disk total: ~1.5 GB diffusion + 0.5 GB VAE + 6.7 GB T5 = ~9 GB
+# (vs ~24 GB for 14B). VRAM requirement drops correspondingly, opening
+# up cheaper GPU offers in the RunPod marketplace.
+#
+# Intended use: CLI cross-invocation warm-reuse demonstration. Run two
+# identical `kinoforge generate` commands back-to-back; the second
+# attaches via the local ledger's capability_key lookup
+# (`_scan_warm_candidates`), no `--instance-id` required.
+#
+# Usage:
+#   export RUNPOD_API_KEY=...
+#   export RUNPOD_TERMINATE_KEY=...
+#   export HF_TOKEN=...                     # Wan weights are gated
+#   pixi run kinoforge generate \
+#     --config examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml \
+#     --prompt "first prompt" --mode t2v
+#   pixi run kinoforge generate \
+#     --config examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml \
+#     --prompt "second prompt" --mode t2v
+#
+# Cost guards (quadruple-locked):
+#   - max_usd_per_hr: 0.50  (filters expensive GPUs upstream)
+#   - budget: 2.00                    (BudgetTracker tears down mid-run)
+#   - idle_timeout: 15m + selfterm    (pod self-destructs after 15 min idle)
+#   - kinoforge destroy --id <id>     (operator-side cleanup post-smoke)
+
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+    custom_nodes:
+      - git: "https://github.com/kijai/ComfyUI-WanVideoWrapper"
+        ref: "088128b224242e110d3906c6750e9a3a348a659b"
+      - git: "https://github.com/kijai/ComfyUI-KJNodes"
+        ref: "369c8aee9ad4641823d0ffd7035076bcd297b6f2"
+      # VHS_VideoCombine — required by the kijai workflow's output node
+      # (graph node 30). Same pack used by the 14B + i2v configs.
+      - git: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+        ref: "4ee72c065db22c9d96c2427954dc69e7b908444b"
+
+models:
+  # 1.3B swap: T2V-14B → T2V-1.3B (same fp8 e4m3fn quant family).
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors"
+    kind: base
+    target: diffusion_models
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_1_VAE_bf16.safetensors"
+    kind: vae
+    target: vae
+  - ref: "hf:Kijai/WanVideo_comfy:umt5-xxl-enc-fp8_e4m3fn.safetensors"
+    kind: text_encoder
+    target: text_encoders
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  # warm_reuse_auto_attach is true by default; making it explicit here
+  # so the cfg is self-documenting for the cross-CLI demonstration.
+  warm_reuse_auto_attach: true
+  requirements:
+    # 1.3B fits comfortably in 12 GB; gate at 16 to give T5 + VAE
+    # headroom and still admit a broad GPU pool.
+    min_vram_gb: 16
+    min_cuda: "12.4"
+    max_usd_per_hr: 0.50
+    gpu_preference:
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA RTX A5000"
+      - "NVIDIA GeForce RTX 3090"
+    # Smaller disk than 14B (~9 GB total vs ~24 GB); 40 GB still
+    # leaves room for ComfyUI runtime + custom-node deps.
+    disk_gb: 40
+  lifecycle:
+    # idle_timeout sized to cover cold weight downloads (~9 GB total
+    # via render_provision curl). 15m gives ~3x headroom on a typical
+    # RunPod ingress.
+    idle_timeout: 15m
+    job_timeout: 10m
+    time_buffer: 3m
+    # max_lifetime sized for cold boot (5-10m) + gen 1 (3-5m) + gen 2
+    # (3-5m) = ~25m worst-case. 60m gives ~2.4x headroom for retry
+    # rounds on offer-retry / weight-pull hiccups.
+    max_lifetime: 60m
+    boot_timeout: 20m
+    # Budget cap sized for two generations on the cheapest A5000
+    # offer (~$0.16/hr × 30m = $0.08); the $2 cap is the
+    # BudgetTracker's mid-run circuit breaker, not an estimate.
+    budget: 2.0
+
+spec:
+  graph_file: runpod-comfyui-wan-t2v-1_3b.graph.json
+  # No init_image asset for t2v — text-only conditioning. The
+  # WanVideoEmptyEmbeds node (id 80 in the graph) provides the
+  # image_embeds slot WanVideoSampler requires.
+  asset_node_ids: {}
+  prompt_node_ids:
+    # Node 16 = WanVideoTextEncode; feeds node 27 (WanVideoSampler.text_embeds).
+    positive: "16"
+  prompt_input_field: positive_prompt
+  node_overrides: {}
+
+params:
+  fps: 16
+  num_frames: 81
+  steps: 20
+  width: 480
+  height: 480
