@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from kinoforge.core.config import Config, load_config
+from kinoforge.core.config import Config, _parse_cfg_raw
 from kinoforge.validation.checks.lifecycle import (
     GraceAfterSessionTooTightCheck,
     IdleTimeoutVsHeartbeatCheck,
@@ -46,14 +46,14 @@ def test_check_metadata(check: IdleTimeoutVsHeartbeatCheck) -> None:
 def test_does_not_apply_when_heartbeat_unset(
     check: IdleTimeoutVsHeartbeatCheck,
 ) -> None:
-    cfg = load_config(_cfg_yaml(idle="15m", hb_s=None))
+    cfg = _parse_cfg_raw(_cfg_yaml(idle="15m", hb_s=None))
     assert check.applies_to(cfg) is False
 
 
 def test_fails_when_idle_timeout_below_3x_heartbeat(
     check: IdleTimeoutVsHeartbeatCheck,
 ) -> None:
-    cfg = load_config(_cfg_yaml(idle="60s", hb_s=30))
+    cfg = _parse_cfg_raw(_cfg_yaml(idle="60s", hb_s=30))
     result = check.run(cfg)
     assert result.passed is False
     assert "dead-man" in result.message or "3 * heartbeat" in result.message
@@ -62,13 +62,13 @@ def test_fails_when_idle_timeout_below_3x_heartbeat(
 def test_passes_when_idle_timeout_at_3x_heartbeat(
     check: IdleTimeoutVsHeartbeatCheck,
 ) -> None:
-    cfg = load_config(_cfg_yaml(idle="90s", hb_s=30))
+    cfg = _parse_cfg_raw(_cfg_yaml(idle="90s", hb_s=30))
     result = check.run(cfg)
     assert result.passed is True
 
 
 def test_auto_fix_returns_none(check: IdleTimeoutVsHeartbeatCheck) -> None:
-    cfg = load_config(_cfg_yaml(idle="60s", hb_s=30))
+    cfg = _parse_cfg_raw(_cfg_yaml(idle="60s", hb_s=30))
     assert check.auto_fix(cfg) is None
 
 
@@ -89,7 +89,7 @@ compute:
     budget: 1.0
     grace_after_session_s: {grace_s}
 """
-    return load_config(yaml)
+    return _parse_cfg_raw(yaml)
 
 
 def test_grace_check_metadata() -> None:
@@ -116,7 +116,7 @@ def test_grace_passes_at_600s_floor() -> None:
 
 
 def test_grace_passes_at_default_1800s() -> None:
-    cfg = load_config("""\
+    cfg = _parse_cfg_raw("""\
 engine:
   kind: fake
   precision: fp16

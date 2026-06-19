@@ -24,8 +24,18 @@ class HeartbeatIntervalRequiredCheck:
     severity: Severity = Severity.ERROR
 
     def applies_to(self, cfg: Config) -> bool:
-        """Apply iff warm_reuse_auto_attach is enabled."""
-        if cfg.compute is None:
+        """Apply iff warm_reuse_auto_attach is on AND a lifecycle block exists.
+
+        Skipping cfgs with ``lifecycle is None`` preserves backward
+        compat: such cfgs already used interface defaults and silently
+        fell back to cold create — the operator never explicitly
+        opted into warm-reuse for that cfg. This check catches the
+        2026-06-18 smoke trap (operator added lifecycle + opted into
+        warm-reuse but forgot heartbeat_interval_s), which is the
+        narrowest interpretation that does not break every existing
+        cfg without an explicit lifecycle block.
+        """
+        if cfg.compute is None or cfg.compute.lifecycle is None:
             return False
         return cfg.compute.warm_reuse_auto_attach is True
 

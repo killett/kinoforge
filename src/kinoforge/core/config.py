@@ -1119,6 +1119,44 @@ def load_config(text_or_path: str | Path) -> Config:
     _resolve_spec_graph_file(raw, yaml_path)
 
     try:
+        cfg = Config.model_validate(raw)
+    except pydantic.ValidationError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    # Run the STATIC-only Check Registry pass (Task 10). NETWORK +
+    # PREFLIGHT categories deliberately do NOT fire here — they belong
+    # to `kinoforge generate` pre-flight and `kinoforge doctor`, which
+    # call validate_for_generate / validate_for_doctor respectively.
+    # Local import: kinoforge.validation imports kinoforge.core.errors,
+    # so a top-level import is safe — but built-in checks live under
+    # kinoforge.validation.checks and import kinoforge.core.config; the
+    # transitive cycle would deadlock module init without the lazy hop.
+    import kinoforge.providers.runpod  # noqa: F401 — self-register RunPod check
+    import kinoforge.providers.skypilot  # noqa: F401 — self-register SkyPilot check
+    import kinoforge.validation.checks  # noqa: F401 — self-register built-ins
+    from kinoforge.validation import validate_for_load
+
+    report = validate_for_load(cfg)
+    return report.cfg if isinstance(report.cfg, Config) else cfg
+
+
+def _parse_cfg_raw(text: str) -> Config:
+    """Parse the cfg via Pydantic only, without the Check Registry pass.
+
+    Used by `kinoforge doctor` so the full validation report can be
+    assembled instead of raising on the first STATIC error. Production
+    callers should use :func:`load_config` instead.
+    """
+    import pydantic
+
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"YAML parse error: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ConfigError("config must be a YAML mapping at the top level")
+    _resolve_spec_graph_file(raw, Path.cwd() / "<string>")
+    try:
         return Config.model_validate(raw)
     except pydantic.ValidationError as exc:
         raise ConfigError(str(exc)) from exc
