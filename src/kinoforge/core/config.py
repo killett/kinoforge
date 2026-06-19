@@ -1131,8 +1131,9 @@ def load_config(text_or_path: str | Path) -> Config:
     # so a top-level import is safe — but built-in checks live under
     # kinoforge.validation.checks and import kinoforge.core.config; the
     # transitive cycle would deadlock module init without the lazy hop.
-    import kinoforge.providers.runpod  # noqa: F401 — self-register RunPod check
-    import kinoforge.providers.skypilot  # noqa: F401 — self-register SkyPilot check
+    # Provider check registrations go through the canonical adapter hub
+    # so the `core/ → providers/` layering invariant stays intact.
+    import kinoforge._adapters  # noqa: F401 — self-register every adapter (incl. provider checks)
     import kinoforge.validation.checks  # noqa: F401 — self-register built-ins
     from kinoforge.validation import validate_for_load
 
