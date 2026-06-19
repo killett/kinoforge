@@ -172,7 +172,15 @@ now. See Phase 53 §Stage D for full debug.
 
 After Phase 53 reaches a checkpoint, the prior C33 queue (do in order unless preferences shift):
 
-1. **(f) trivial — restart-policy warning string.** ↑ above. ~15 min.
+1. **(f) ~~trivial — restart-policy warning string.~~ DONE 2026-06-18
+   commit `0685973`.** Warning at `RunPodProvider._create_pod` rewritten
+   to name RunPod's actual default (`RestartPolicy.ALWAYS` — restart
+   on every container exit, success + failure alike) instead of the
+   misleading "restart-on-failure". New fence test asserts the new
+   wording (must contain "always", must NOT contain "restart-on-
+   failure"). Matters in the C28 diagnostic-mode flow where
+   `restart_policy='never'` is requested precisely so a failed boot
+   leaves the snapshot intact.
 2. **(a) ~~small — `classify_run` negative-uptime heuristic.~~ DONE
    2026-06-18 commit `0ed4db5`.** `classify_run` now requires either
    ``fire_count >= 1`` OR ``negative_count >= 2`` before tripping
