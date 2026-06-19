@@ -807,3 +807,73 @@ class SkyPilotProvider(ComputeProvider):
 # ---------------------------------------------------------------------------
 
 registry.register_provider("skypilot", lambda: SkyPilotProvider())
+
+
+# ---------------------------------------------------------------------------
+# Validation Check — co-located with provider per the kinoforge.validation
+# Check Registry pattern. Migrated from the pydantic _validate_cloud
+# field_validator on ComputeConfig (Task 9 of the cfg-validation plan) so
+# the rejection shows up in `kinoforge doctor` output alongside every
+# other validation rule.
+# ---------------------------------------------------------------------------
+
+
+from kinoforge.validation.protocol import (  # noqa: E402
+    CheckCategory as _CC,
+)
+from kinoforge.validation.protocol import (  # noqa: E402
+    CheckResult as _CR,
+)
+from kinoforge.validation.protocol import (  # noqa: E402
+    Severity as _SEV,
+)
+from kinoforge.validation.registry import register as _register  # noqa: E402
+
+_SUPPORTED_CLOUDS = frozenset(
+    {"aws", "gcp", "azure", "lambda", "vast", "kubernetes", "runpod"}
+)
+
+
+class SkyPilotCloudPinSupportedCheck:
+    """STATIC ERROR — every compute.cloud entry must be in the supported set."""
+
+    name: str = "skypilot_cloud_pin_supported"
+    category: _CC = _CC.STATIC
+    severity: _SEV = _SEV.ERROR
+
+    def applies_to(self, cfg: Any) -> bool:  # noqa: ANN401 — Check Protocol
+        """Apply iff a compute block sets cloud to a non-null list."""
+        return cfg.compute is not None and cfg.compute.cloud is not None
+
+    def run(self, cfg: Any) -> _CR:  # noqa: ANN401 — Check Protocol
+        """Reject any cloud entry outside _SUPPORTED_CLOUDS."""
+        clouds = cfg.compute.cloud or []
+        bad = [c for c in clouds if c not in _SUPPORTED_CLOUDS]
+        if bad:
+            return _CR(
+                name=self.name,
+                passed=False,
+                severity=self.severity,
+                message=(
+                    f"compute.cloud has unsupported entr(ies): "
+                    f"{bad}; supported set is {sorted(_SUPPORTED_CLOUDS)}"
+                ),
+                fix_suggestion=(
+                    "remove the unsupported entries, or expand the "
+                    "SkyPilot provider's _SUPPORTED_CLOUDS set after "
+                    "a parity smoke"
+                ),
+            )
+        return _CR(
+            name=self.name,
+            passed=True,
+            severity=self.severity,
+            message=f"{len(clouds)} cloud(s) all supported",
+        )
+
+    def auto_fix(self, cfg: Any) -> Any | None:  # noqa: ANN401 — Check Protocol
+        """No safe auto-fix — operator's cloud choice is deliberate."""
+        return None
+
+
+_register(SkyPilotCloudPinSupportedCheck())

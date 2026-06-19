@@ -549,15 +549,16 @@ class ComputeConfig(BaseModel):
     @field_validator("cloud")
     @classmethod
     def _validate_cloud(cls, v: list[str] | None) -> list[str] | None:
-        """Reject cloud entries outside the supported sky cloud set.
+        """Reject empty-list cloud entries.
 
-        Skypilot supports a much broader set, but kinoforge only verifies
-        these. Adding a new entry here is the operator's affordance for
-        opting into a new sky-enabled cloud after a parity smoke.
+        Operator likely meant ``cloud: null`` or forgot to populate the
+        entry; sky.launch with zero clouds would silently fall back.
 
-        An empty list is rejected — operator likely meant ``cloud: null``
-        or forgot to populate the entry; sky.launch with zero clouds
-        would fail at provision time rather than config-load.
+        The membership check (each entry must be in the supported sky
+        cloud set) moved to ``SkyPilotCloudPinSupportedCheck`` in
+        ``kinoforge.providers.skypilot`` (Task 9 of the cfg-validation
+        Check Registry plan). It now shows up in ``kinoforge doctor``
+        output alongside every other validation rule.
         """
         if v is None:
             return v
@@ -565,21 +566,6 @@ class ComputeConfig(BaseModel):
             raise ValueError(
                 "cloud must be a non-empty list of sky cloud names "
                 "or null; got an empty list"
-            )
-        allowed = {
-            "aws",
-            "gcp",
-            "azure",
-            "lambda",
-            "vast",
-            "kubernetes",
-            "runpod",
-        }
-        bad = [entry for entry in v if entry not in allowed]
-        if bad:
-            raise ValueError(
-                f"cloud entries must each be one of {sorted(allowed)}; "
-                f"got unsupported: {bad!r}"
             )
         return v
 
