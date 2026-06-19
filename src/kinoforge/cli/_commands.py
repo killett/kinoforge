@@ -317,6 +317,29 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     if ctx.cfg is None:
         raise RuntimeError("_cmd_generate requires --config")
     cfg = ctx.cfg
+
+    # Pre-flight gate: run NETWORK + PREFLIGHT (STATIC already ran via
+    # load_config). --skip-preflight opts out for offline / pre-doctored
+    # workflows. Auto-fixes already applied; this is purely advisory at
+    # this point — any ERROR-severity result blocks the provider call
+    # with exit 2.
+    if getattr(args, "skip_preflight", False):
+        logger.warning(
+            "preflight skipped (--skip-preflight); cfg-time-only validation applied"
+        )
+    else:
+        import kinoforge.providers.runpod  # noqa: F401 — self-register
+        import kinoforge.providers.skypilot  # noqa: F401 — self-register
+        import kinoforge.validation.checks  # noqa: F401 — self-register
+        from kinoforge.core.errors import ValidationError
+        from kinoforge.validation import validate_for_generate
+
+        try:
+            validate_for_generate(cfg)
+        except ValidationError as exc:
+            print(f"error: cfg pre-flight failed\n{exc}", file=sys.stderr)
+            return 2
+
     store = ctx.store()
     sink = _build_sink(cfg, args)
     request = GenerationRequest(prompt=args.prompt, mode=args.mode)
@@ -2225,6 +2248,50 @@ def _cmd_sweeper_status(args: argparse.Namespace, ctx: SessionContext) -> int:
             )
         )
     return 0
+
+
+def _cmd_doctor(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Run the full cfg validation Check Registry and print a report.
+
+    Bypasses ``load_config``'s STATIC pass via ``_parse_cfg_raw`` so the
+    report surfaces every failing row instead of aborting at parse
+    time. Exit code = number of ERRORs (0 on a clean cfg). NETWORK and
+    PREFLIGHT categories DO run here.
+    """
+    import kinoforge.providers.runpod  # noqa: F401 — self-register RunPod check
+    import kinoforge.providers.skypilot  # noqa: F401 — self-register SkyPilot check
+    import kinoforge.validation.checks  # noqa: F401 — self-register built-ins
+    from kinoforge.core.config import _parse_cfg_raw
+    from kinoforge.core.errors import ConfigError
+    from kinoforge.validation import validate_for_doctor
+
+    cfg_path = Path(args.config).resolve()
+    try:
+        text = cfg_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        print(f"error: cfg not found: {exc}", file=sys.stderr)
+        return 1
+    try:
+        cfg = _parse_cfg_raw(text, yaml_path=cfg_path)
+    except ConfigError as exc:
+        # Pydantic parse error itself — surface as a single failing row.
+        print("doctor — cfg failed Pydantic parse, cannot run checks:")
+        print(f"  ✗ pydantic_parse: {exc}")
+        return 1
+
+    report = validate_for_doctor(cfg)
+    for r in report.results:
+        glyph = "✓" if r.passed else ("✗" if r.severity.value == "error" else "⚠")
+        print(f"{glyph} {r.name:35s} {r.message}")
+        if not r.passed and r.fix_suggestion:
+            label = "fix" if r.severity.value == "error" else "suggested"
+            print(f"  {label}: {r.fix_suggestion}")
+    if report.auto_fixes:
+        print()
+        print("auto-fixed:")
+        for af in report.auto_fixes:
+            print(f"  - {af.name}: {af.message}")
+    return len(report.errors)
 
 
 def _cmd_sweeper_metrics(args: argparse.Namespace, ctx: SessionContext) -> int:

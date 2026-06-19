@@ -935,3 +935,111 @@ def _default_factory() -> RunPodProvider:
 
 
 registry.register_provider("runpod", _default_factory)
+
+
+# ---------------------------------------------------------------------------
+# Validation Check — co-located with provider per the kinoforge.validation
+# Check Registry pattern.
+# ---------------------------------------------------------------------------
+
+from kinoforge.validation.protocol import (  # noqa: E402
+    CheckCategory as _CC,
+)
+from kinoforge.validation.protocol import (  # noqa: E402
+    CheckResult as _CR,
+)
+from kinoforge.validation.protocol import (  # noqa: E402
+    Severity as _SEV,
+)
+from kinoforge.validation.registry import register as _register  # noqa: E402
+
+_GPU_AVAILABILITY_QUERY = """
+query GpuAvailability($input: GpuTypesInput!) {
+  gpuTypes(input: $input) { id availableCount }
+}
+""".strip()
+
+
+def _default_capacity_http_post() -> Callable[[str, dict[str, Any]], dict[str, Any]]:
+    """Return an authenticated http_post for capacity probes."""
+    from kinoforge.core.credentials import EnvCredentialProvider
+
+    creds = EnvCredentialProvider()
+    api_key = creds.get("RUNPOD_API_KEY")
+    post, _ = _make_default_http_seams(api_key)
+    return post
+
+
+class RunPodCapacityHintCheck:
+    """PREFLIGHT WARN — at least one preferred GPU must have RunPod capacity."""
+
+    name: str = "runpod_capacity_hint"
+    category: _CC = _CC.PREFLIGHT
+    severity: _SEV = _SEV.WARN
+
+    def __init__(
+        self,
+        *,
+        http_post: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+        graphql_url: str = _DEFAULT_BASE_URL,
+    ) -> None:
+        """Wire injectable POST seam + GraphQL URL."""
+        self._http_post = (
+            http_post if http_post is not None else _default_capacity_http_post()
+        )
+        self._graphql_url = graphql_url
+
+    def applies_to(self, cfg: Any) -> bool:  # noqa: ANN401 — Check Protocol
+        """Apply iff provider is runpod and gpu_preference is non-empty."""
+        if cfg.compute is None or cfg.compute.provider != "runpod":
+            return False
+        reqs = cfg.compute.requirements
+        return bool(reqs and reqs.gpu_preference)
+
+    def run(self, cfg: Any) -> _CR:  # noqa: ANN401 — Check Protocol
+        """Query RunPod gpuTypes for current capacity on preferred GPUs."""
+        prefs = list(cfg.compute.requirements.gpu_preference)
+        try:
+            resp = self._http_post(
+                self._graphql_url,
+                {
+                    "query": _GPU_AVAILABILITY_QUERY,
+                    "variables": {"input": {"gpuTypes": prefs}},
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _CR(
+                name=self.name,
+                passed=True,
+                severity=_SEV.WARN,
+                message=f"capacity probe inconclusive: {exc}; not blocking",
+            )
+        types = (resp.get("data") or {}).get("gpuTypes", [])
+        any_available = any(int(t.get("availableCount", 0)) > 0 for t in types)
+        if any_available:
+            return _CR(
+                name=self.name,
+                passed=True,
+                severity=self.severity,
+                message="at least one preferred GPU has capacity",
+            )
+        return _CR(
+            name=self.name,
+            passed=False,
+            severity=self.severity,
+            message=(
+                "no current capacity on any preferred GPU "
+                f"({', '.join(prefs)}); offer-retry will exhaust"
+            ),
+            fix_suggestion=(
+                "either wait, add more entries to gpu_preference, "
+                "or raise max_usd_per_hr to admit more SKUs"
+            ),
+        )
+
+    def auto_fix(self, cfg: Any) -> Any | None:  # noqa: ANN401 — Check Protocol
+        """No safe auto-fix — capacity is provider-side state."""
+        return None
+
+
+_register(RunPodCapacityHintCheck())

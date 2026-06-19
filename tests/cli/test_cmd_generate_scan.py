@@ -59,6 +59,11 @@ def _make_args(
         no_reuse=no_reuse,
         output_dir=None,
         no_output_dir=True,
+        # Preflight default-on as of Task 12. These scan-dispatch tests
+        # cover routing semantics with stubbed network — opt out so the
+        # real ModelRefReachableCheck doesn't try to HEAD the fixture
+        # URL on every test run.
+        skip_preflight=True,
     )
 
 

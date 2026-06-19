@@ -95,6 +95,7 @@ compute:
     # over Layer Q's 900 s LifecycleConfig default.
     boot_timeout: 30m
     budget: 2.0
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true
 
 spec:
   graph_file: runpod-comfyui-wan.graph.json
