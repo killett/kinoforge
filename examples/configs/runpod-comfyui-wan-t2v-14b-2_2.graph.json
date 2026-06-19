@@ -40,7 +40,7 @@
     "inputs": {
       "model": "Wan2_2-I2V-A14B-HIGH_bf16.safetensors",
       "base_precision": "bf16",
-      "quantization": "fp8_e4m3fn",
+      "quantization": "disabled",
       "load_device": "offload_device",
       "attention_mode": "sdpa",
       "vram_management_args": null,
@@ -59,7 +59,7 @@
     "inputs": {
       "model": "Wan2_2-I2V-A14B-LOW_bf16.safetensors",
       "base_precision": "bf16",
-      "quantization": "fp8_e4m3fn",
+      "quantization": "disabled",
       "load_device": "offload_device",
       "attention_mode": "sdpa",
       "vram_management_args": null,
@@ -165,7 +165,7 @@
   },
   "39": {
     "inputs": {
-      "blocks_to_swap": 25,
+      "blocks_to_swap": 35,
       "offload_img_emb": false,
       "offload_txt_emb": false,
       "use_non_blocking": true,
