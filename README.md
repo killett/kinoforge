@@ -391,7 +391,7 @@ semantics:
 
 ```bash
 kinoforge batch -c examples/configs/wan.yaml \
-                --manifest examples/configs/batch-prompts.yaml
+                --manifest examples/configs/manifests/batch-prompts.yaml
 ```
 
 The manifest is a YAML list. Each entry sets exactly one of `prompt`
@@ -400,12 +400,12 @@ parent directory). Optional per-entry overrides: `params`, `spec`,
 `assets`, `run_id`.
 
 ```yaml
-# examples/configs/batch-prompts.yaml
+# examples/configs/manifests/batch-prompts.yaml
 - prompt: "waves crashing on basalt cliffs at dusk"
   mode: t2v
   run_id: waves
 
-- prompt_file: prompts/forest.txt
+- prompt_file: ../prompts/forest.txt
   mode: t2v
   run_id: forest
   params: { seed: 42 }

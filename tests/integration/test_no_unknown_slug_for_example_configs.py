@@ -20,10 +20,6 @@ from kinoforge.core.config import load_config
 _EXAMPLE_DIR = Path(__file__).resolve().parents[2] / "examples" / "configs"
 _SKIP_YAMLS = {
     "local-fake.yaml",  # intentional fake; identity doesn't matter.
-    # The following are *not* kinoforge run-configs — they are support files
-    # that happen to live alongside the run-configs:
-    "batch-prompts.yaml",  # prompt batch manifest (YAML list, not Config)
-    "runpod-comfyui-wan-manifest.yaml",  # i2v batch manifest (YAML list, not Config)
     # Future engine — nova_reel engine not yet registered; skip until Layer 3
     # completes and registers "nova_reel" in _adapters.py:
     "nova-reel.yaml",  # nova_reel engine kind unregistered (planned: Layer 3)
@@ -32,7 +28,9 @@ _SKIP_YAMLS = {
 
 def _collect_example_configs() -> list[Path]:
     return sorted(
-        p for p in _EXAMPLE_DIR.glob("**/*.yaml") if p.name not in _SKIP_YAMLS
+        p
+        for p in _EXAMPLE_DIR.glob("**/*.yaml")
+        if p.name not in _SKIP_YAMLS and "manifests" not in p.parts
     )
 
 

@@ -5,7 +5,11 @@ only (image registry, HF Hub, GitHub commit URLs). Validates that
 none of the example cfgs ship a placeholder image / unreachable
 model ref / archived custom-node SHA.
 
-The reference cfg surface lives at ``examples/configs/*.yaml``.
+The reference cfg surface lives at ``examples/configs/**/*.yaml``
+(excluding ``examples/configs/manifests/``). Manifest YAML files
+(top-level YAML lists, not Config mappings) live under
+``examples/configs/manifests/`` and are exercised by
+``tests/test_examples.py`` instead.
 """
 
 from __future__ import annotations
@@ -23,7 +27,11 @@ from kinoforge.validation import validate_for_doctor
 
 _LIVE = os.environ.get("KINOFORGE_LIVE_TESTS") == "1"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_EXAMPLES = sorted((_REPO_ROOT / "examples/configs").rglob("*.yaml"))
+_EXAMPLES = sorted(
+    p
+    for p in (_REPO_ROOT / "examples/configs").rglob("*.yaml")
+    if "manifests" not in p.parts
+)
 
 
 # Known-broken example cfgs with structural bugs unrelated to the
@@ -35,11 +43,6 @@ _KNOWN_BROKEN: dict[str, str] = {
     "examples/configs/nova-reel.yaml": (
         "engine.kind 'nova_reel' not in KNOWN_ENGINES; "
         "fix cfg or add to engine registry"
-    ),
-    # Batch-manifest format is not a flat Config YAML; needs its own loader.
-    "examples/configs/runpod-comfyui-wan-manifest.yaml": (
-        "manifest format — top-level is a list, not a Config mapping; "
-        "doctor needs a separate manifest-aware path"
     ),
     # Placeholder model URLs documented as such in cfg comments.
     "examples/configs/local-fake.yaml": (
@@ -61,7 +64,6 @@ _KNOWN_BROKEN: dict[str, str] = {
     "examples/configs/fal.yaml": "hosted-engine — model lookups via provider API, not URL",
     "examples/configs/hosted.yaml": "hosted-engine placeholder model ref",
     "examples/configs/cost.yaml": "placeholder model ref — cost demo cfg",
-    "examples/configs/batch-prompts.yaml": "placeholder model ref — batch demo cfg",
     "examples/configs/diffusers.yaml": "placeholder model ref",
 }
 
