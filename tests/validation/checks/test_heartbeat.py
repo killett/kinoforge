@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from kinoforge.core.config import Config, load_config
+from kinoforge.core.config import Config, _parse_cfg_raw
 from kinoforge.validation.checks.heartbeat import HeartbeatIntervalRequiredCheck
 from kinoforge.validation.protocol import CheckCategory, Severity
 
@@ -85,14 +85,14 @@ def test_check_metadata_is_static_error(
 def test_check_does_not_apply_when_warm_reuse_off(
     check: HeartbeatIntervalRequiredCheck,
 ) -> None:
-    cfg = load_config(_CFG_WARM_REUSE_OFF)
+    cfg = _parse_cfg_raw(_CFG_WARM_REUSE_OFF)
     assert check.applies_to(cfg) is False
 
 
 def test_check_fails_when_warm_reuse_on_and_heartbeat_unset(
     check: HeartbeatIntervalRequiredCheck,
 ) -> None:
-    cfg = load_config(_CFG_WITH_WARM_REUSE_NO_HEARTBEAT)
+    cfg = _parse_cfg_raw(_CFG_WITH_WARM_REUSE_NO_HEARTBEAT)
     assert check.applies_to(cfg) is True
     result = check.run(cfg)
     assert result.passed is False
@@ -104,7 +104,7 @@ def test_check_fails_when_warm_reuse_on_and_heartbeat_unset(
 def test_check_passes_when_heartbeat_set(
     check: HeartbeatIntervalRequiredCheck,
 ) -> None:
-    cfg = load_config(_CFG_WITH_WARM_REUSE_AND_HEARTBEAT)
+    cfg = _parse_cfg_raw(_CFG_WITH_WARM_REUSE_AND_HEARTBEAT)
     result = check.run(cfg)
     assert result.passed is True
 
@@ -112,7 +112,7 @@ def test_check_passes_when_heartbeat_set(
 def test_auto_fix_sets_heartbeat_to_30_without_mutating_input(
     check: HeartbeatIntervalRequiredCheck,
 ) -> None:
-    cfg_before = load_config(_CFG_WITH_WARM_REUSE_NO_HEARTBEAT)
+    cfg_before = _parse_cfg_raw(_CFG_WITH_WARM_REUSE_NO_HEARTBEAT)
     assert cfg_before.compute is not None
     assert cfg_before.compute.lifecycle is not None
     assert cfg_before.compute.lifecycle.heartbeat_interval_s is None
