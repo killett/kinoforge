@@ -26,6 +26,7 @@ from kinoforge.cli._commands import (
     _cmd_cost,
     _cmd_deploy,
     _cmd_destroy,
+    _cmd_doctor,
     _cmd_forget,
     _cmd_gc,
     _cmd_generate,
@@ -98,6 +99,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "reap": _cmd_reap,
     "gc": _cmd_gc,
     "cost": _cmd_cost,
+    "doctor": _cmd_doctor,
     "sweeper": _dispatch_sweeper,
 }
 
@@ -377,6 +379,16 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     # provision
     p_provision = sub.add_parser("provision", help="provision an existing instance")
     p_provision.add_argument("-c", "--config", required=True, metavar="PATH")
+
+    # doctor — run the full cfg validation Check Registry against a cfg
+    # and print a per-check report. Exit code = number of ERRORs. Bypasses
+    # SessionContext's auto-load so the report can include load-time
+    # validation errors instead of aborting at parse time (see main()).
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="run the cfg validation registry against a cfg and print a report",
+    )
+    p_doctor.add_argument("-c", "--config", required=True, metavar="PATH")
 
     # generate
     p_generate = sub.add_parser("generate", help="run a generation job")
@@ -698,7 +710,13 @@ def main(argv: list[str] | None = None) -> int:
     env_file = Path(args.env_file) if args.env_file is not None else None
     load_env_file(env_file)
 
-    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    # doctor reads + validates its own cfg via _parse_cfg_raw (bypassing
+    # load_config's STATIC check pass) so the report can surface errors
+    # instead of aborting at parse time.
+    if args.cmd == "doctor":
+        cfg_path = None
+    else:
+        cfg_path = Path(args.config) if getattr(args, "config", None) else None
     try:
         ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=cfg_path)
     except (SidecarMismatch, SidecarMigrationBlocked) as exc:
