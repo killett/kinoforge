@@ -1,0 +1,104 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-18-cfg-validation-check-registry.md",
+  "tasks": [
+    {
+      "id": 36,
+      "subject": "Task 0: Protocol + Registry foundation",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Establish the vocabulary (Check Protocol, CheckResult, CheckCategory, Severity) and the CheckRegistry. Everything downstream depends on this.\n\n**Files:**\n- Create: src/kinoforge/validation/__init__.py\n- Create: src/kinoforge/validation/protocol.py\n- Create: src/kinoforge/validation/registry.py\n- Test: tests/validation/test_protocol_registry.py\n\n**Verify:** pixi run test tests/validation/test_protocol_registry.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/__init__.py\",\"src/kinoforge/validation/protocol.py\",\"src/kinoforge/validation/registry.py\",\"tests/validation/test_protocol_registry.py\"],\"verifyCommand\":\"pixi run test tests/validation/test_protocol_registry.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 37,
+      "subject": "Task 1: Public API + ValidationReport",
+      "status": "pending",
+      "blockedBy": [36],
+      "description": "**Goal:** Expose validate_for_generate(cfg), validate_for_doctor(cfg), ValidationReport from kinoforge.validation.\n\n**Files:**\n- Modify: src/kinoforge/validation/__init__.py\n- Test: tests/validation/test_integration.py\n\n**Verify:** pixi run test tests/validation/test_integration.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/__init__.py\",\"tests/validation/test_integration.py\"],\"verifyCommand\":\"pixi run test tests/validation/test_integration.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 38,
+      "subject": "Task 2: HeartbeatIntervalRequiredCheck",
+      "status": "pending",
+      "blockedBy": [37],
+      "description": "**Goal:** Catch the warm_reuse_auto_attach=true + heartbeat_interval_s unset case. Auto-fix to 30.\n\n**Files:**\n- Create: src/kinoforge/validation/checks/__init__.py\n- Create: src/kinoforge/validation/checks/heartbeat.py\n- Test: tests/validation/checks/test_heartbeat.py\n\n**Verify:** pixi run test tests/validation/checks/test_heartbeat.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/checks/__init__.py\",\"src/kinoforge/validation/checks/heartbeat.py\",\"tests/validation/checks/test_heartbeat.py\"],\"verifyCommand\":\"pixi run test tests/validation/checks/test_heartbeat.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 39,
+      "subject": "Task 3: IdleTimeoutVsHeartbeatCheck",
+      "status": "pending",
+      "blockedBy": [38],
+      "description": "**Goal:** Assert idle_timeout_s >= 3 * heartbeat_interval_s.\n\n**Files:**\n- Create: src/kinoforge/validation/checks/lifecycle.py\n- Modify: src/kinoforge/validation/checks/__init__.py\n- Test: tests/validation/checks/test_lifecycle.py\n\n**Verify:** pixi run test tests/validation/checks/test_lifecycle.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/checks/lifecycle.py\",\"src/kinoforge/validation/checks/__init__.py\",\"tests/validation/checks/test_lifecycle.py\"],\"verifyCommand\":\"pixi run test tests/validation/checks/test_lifecycle.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 40,
+      "subject": "Task 4: ImageReachableCheck + http_head seam",
+      "status": "pending",
+      "blockedBy": [37],
+      "description": "**Goal:** HEAD-check cfg.compute.image against Docker Hub. Establish injectable http_head seam.\n\n**Files:**\n- Create: src/kinoforge/validation/checks/image.py\n- Modify: src/kinoforge/validation/checks/__init__.py\n- Test: tests/validation/checks/test_image.py\n\n**Verify:** pixi run test tests/validation/checks/test_image.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/checks/image.py\",\"src/kinoforge/validation/checks/__init__.py\",\"tests/validation/checks/test_image.py\"],\"verifyCommand\":\"pixi run test tests/validation/checks/test_image.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 41,
+      "subject": "Task 5: ModelRefReachableCheck",
+      "status": "pending",
+      "blockedBy": [40],
+      "description": "**Goal:** HEAD-check models[].ref hf:// + https:// schemes. Generate-mode subset (kind=base only); doctor-mode full.\n\n**Files:**\n- Create: src/kinoforge/validation/checks/models.py\n- Modify: src/kinoforge/validation/checks/__init__.py\n- Test: tests/validation/checks/test_models.py\n\n**Verify:** pixi run test tests/validation/checks/test_models.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/checks/models.py\",\"src/kinoforge/validation/checks/__init__.py\",\"tests/validation/checks/test_models.py\"],\"verifyCommand\":\"pixi run test tests/validation/checks/test_models.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 42,
+      "subject": "Task 6: CustomNodeSHAReachableCheck",
+      "status": "pending",
+      "blockedBy": [41],
+      "description": "**Goal:** HEAD-check ComfyUI custom-node git commits. WARN-only.\n\n**Files:**\n- Create: src/kinoforge/validation/checks/custom_nodes.py\n- Modify: src/kinoforge/validation/checks/__init__.py\n- Test: tests/validation/checks/test_custom_nodes.py\n\n**Verify:** pixi run test tests/validation/checks/test_custom_nodes.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/checks/custom_nodes.py\",\"src/kinoforge/validation/checks/__init__.py\",\"tests/validation/checks/test_custom_nodes.py\"],\"verifyCommand\":\"pixi run test tests/validation/checks/test_custom_nodes.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 43,
+      "subject": "Task 7: LedgerStaleRowsCheck",
+      "status": "pending",
+      "blockedBy": [37],
+      "description": "**Goal:** Detect stale ledger rows referencing pods the provider no longer has.\n\n**Files:**\n- Create: src/kinoforge/validation/checks/ledger.py\n- Modify: src/kinoforge/validation/checks/__init__.py\n- Test: tests/validation/checks/test_ledger.py\n\n**Verify:** pixi run test tests/validation/checks/test_ledger.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/checks/ledger.py\",\"src/kinoforge/validation/checks/__init__.py\",\"tests/validation/checks/test_ledger.py\"],\"verifyCommand\":\"pixi run test tests/validation/checks/test_ledger.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 44,
+      "subject": "Task 8: RunPodCapacityHintCheck",
+      "status": "pending",
+      "blockedBy": [37],
+      "description": "**Goal:** Provider-side check querying RunPod gpuTypes for current capacity on preferred GPUs.\n\n**Files:**\n- Modify: src/kinoforge/providers/runpod/__init__.py\n- Test: tests/providers/runpod/test_capacity_hint_check.py\n\n**Verify:** pixi run test tests/providers/runpod/test_capacity_hint_check.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/providers/runpod/__init__.py\",\"tests/providers/runpod/test_capacity_hint_check.py\"],\"verifyCommand\":\"pixi run test tests/providers/runpod/test_capacity_hint_check.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 45,
+      "subject": "Task 9: SkyPilotCloudPinSupportedCheck migration",
+      "status": "pending",
+      "blockedBy": [37],
+      "description": "**Goal:** Migrate the existing Pydantic field_validator on ComputeConfig.cloud into the Check Registry.\n\n**Files:**\n- Modify: src/kinoforge/core/config.py\n- Modify: src/kinoforge/providers/skypilot/__init__.py\n- Test: tests/providers/skypilot/test_cloud_pin_check.py\n- Update: tests/core/test_config.py\n\n**Verify:** pixi run test tests/providers/skypilot/test_cloud_pin_check.py tests/core/test_config.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/config.py\",\"src/kinoforge/providers/skypilot/__init__.py\",\"tests/providers/skypilot/test_cloud_pin_check.py\",\"tests/core/test_config.py\"],\"verifyCommand\":\"pixi run test tests/providers/skypilot/test_cloud_pin_check.py tests/core/test_config.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 46,
+      "subject": "Task 10: Wire validate_for_generate into load_config",
+      "status": "pending",
+      "blockedBy": [38, 39, 40, 41, 42, 43, 44, 45],
+      "description": "**Goal:** Every cfg load passes through the Check Registry.\n\n**Files:**\n- Modify: src/kinoforge/core/config.py\n- Test: tests/core/test_config_validation_integration.py\n\n**Verify:** pixi run test tests/core/test_config_validation_integration.py tests/core/test_config.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/core/config.py\",\"tests/core/test_config_validation_integration.py\"],\"verifyCommand\":\"pixi run test tests/core/test_config_validation_integration.py tests/core/test_config.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 47,
+      "subject": "Task 11: kinoforge doctor subcommand",
+      "status": "pending",
+      "blockedBy": [46],
+      "description": "**Goal:** `kinoforge doctor <cfg>` prints full validation report and exits with len(errors).\n\n**Files:**\n- Modify: src/kinoforge/cli/_main.py\n- Modify: src/kinoforge/cli/_commands.py\n- Modify: src/kinoforge/core/config.py (add _parse_cfg_raw)\n- Test: tests/cli/test_doctor_command.py\n\n**Verify:** pixi run test tests/cli/test_doctor_command.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/cli/_main.py\",\"src/kinoforge/cli/_commands.py\",\"src/kinoforge/core/config.py\",\"tests/cli/test_doctor_command.py\"],\"verifyCommand\":\"pixi run test tests/cli/test_doctor_command.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 48,
+      "subject": "Task 12: _cmd_generate preflight + --skip-preflight",
+      "status": "pending",
+      "blockedBy": [46],
+      "description": "**Goal:** kinoforge generate runs preflight before any pod call; --skip-preflight opt-out.\n\n**Files:**\n- Modify: src/kinoforge/cli/_main.py\n- Modify: src/kinoforge/cli/_commands.py\n- Test: tests/cli/test_generate_preflight.py\n\n**Verify:** pixi run test tests/cli/test_generate_preflight.py tests/cli/test_cmd_generate_scan.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/cli/_main.py\",\"src/kinoforge/cli/_commands.py\",\"tests/cli/test_generate_preflight.py\"],\"verifyCommand\":\"pixi run test tests/cli/test_generate_preflight.py tests/cli/test_cmd_generate_scan.py -v\",\"modelTier\":\"standard\"}\n```"
+    },
+    {
+      "id": 49,
+      "subject": "Task 13: Live doctor smoke against examples/configs/",
+      "status": "pending",
+      "blockedBy": [47, 48],
+      "description": "**Goal:** Live smoke proving every example cfg passes doctor. Zero pod spend.\n\n**Files:**\n- Create: tests/live/test_doctor_examples_live.py\n\n**Verify:** KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_doctor_examples_live.py -v\n\n```json:metadata\n{\"files\":[\"tests/live/test_doctor_examples_live.py\"],\"verifyCommand\":\"KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_doctor_examples_live.py -v\",\"modelTier\":\"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-18T22:55:00-07:00"
+}
