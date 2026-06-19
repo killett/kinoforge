@@ -45,3 +45,4 @@ compute:
     job_timeout: 600
     boot_timeout: 900
     budget: 0.10
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true

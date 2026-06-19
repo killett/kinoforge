@@ -2265,14 +2265,14 @@ def _cmd_doctor(args: argparse.Namespace, ctx: SessionContext) -> int:
     from kinoforge.core.errors import ConfigError
     from kinoforge.validation import validate_for_doctor
 
-    cfg_path = Path(args.config)
+    cfg_path = Path(args.config).resolve()
     try:
         text = cfg_path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         print(f"error: cfg not found: {exc}", file=sys.stderr)
         return 1
     try:
-        cfg = _parse_cfg_raw(text)
+        cfg = _parse_cfg_raw(text, yaml_path=cfg_path)
     except ConfigError as exc:
         # Pydantic parse error itself — surface as a single failing row.
         print("doctor — cfg failed Pydantic parse, cannot run checks:")

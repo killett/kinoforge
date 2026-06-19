@@ -50,6 +50,7 @@ compute:
     # Per-run ceiling; the layer-wide $0.50 envelope is enforced
     # externally by the smoke harness.
     budget: 0.50
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true
 
 # Engine-on-SkyPilot smoke is deferred (spec §7) — these blocks are
 # kept minimal so the example parses end-to-end without claiming a
