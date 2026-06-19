@@ -459,11 +459,15 @@ def test_ledger_round_trip_against_fake_gcs() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_lifecycle_grace_after_session_s_default_is_300() -> None:
-    """Layer V: default 5-minute post-session warm-reuse grace window."""
+def test_lifecycle_grace_after_session_s_default_is_1800() -> None:
+    """Layer V: default 30-minute post-session warm-reuse grace window.
+
+    Bumped from 300 s on 2026-06-18 (commit ad84e2b) after the Wan 14B
+    warm-reuse smoke caught operator-typing-pace crossing the boundary.
+    """
     from kinoforge.core.interfaces import Lifecycle
 
-    assert Lifecycle().grace_after_session_s == 300.0
+    assert Lifecycle().grace_after_session_s == 1800.0
 
 
 def test_lifecycle_grace_after_session_s_round_trips() -> None:
