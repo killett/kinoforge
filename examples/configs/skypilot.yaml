@@ -19,7 +19,7 @@ engine:
     version: "0.3.10"
 
 models:
-  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors"
     kind: base
     target: checkpoints
 
@@ -50,7 +50,7 @@ compute:
     # Per-run ceiling; the layer-wide $0.50 envelope is enforced
     # externally by the smoke harness.
     budget: 0.50
-    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true
+    heartbeat_interval_s: 20  # required when warm_reuse_auto_attach=true; 3*heartbeat must fit within idle_timeout=60s
 
 # Engine-on-SkyPilot smoke is deferred (spec §7) — these blocks are
 # kept minimal so the example parses end-to-end without claiming a

@@ -21,7 +21,7 @@ engine:
     version: "0.3.10"
 
 models:
-  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors"
     kind: base
     target: checkpoints
 
