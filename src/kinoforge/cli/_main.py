@@ -440,6 +440,17 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "Composes with --instance-id (attach to that pod, then destroy at end)."
         ),
     )
+    p_generate.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        dest="skip_preflight",
+        help=(
+            "skip the cfg validation pre-flight (NETWORK + PREFLIGHT "
+            "categories). STATIC validation always runs via load_config. "
+            "Use only when you have already run `kinoforge doctor` and "
+            "confirmed cleanliness, or when running offline."
+        ),
+    )
 
     # list
     sub.add_parser("list", help="list running instances from ledger")
