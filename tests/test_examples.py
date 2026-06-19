@@ -419,7 +419,7 @@ def test_runpod_comfyui_wan_yaml_loads() -> None:
 
 
 def test_runpod_comfyui_wan_manifest_yaml_loads() -> None:
-    """examples/configs/runpod-comfyui-wan-manifest.yaml loads via load_manifest.
+    """examples/configs/manifests/runpod-comfyui-wan-manifest.yaml loads via load_manifest.
 
     Verifies the single i2v entry with an assets block is schema-valid and
     that load_manifest collapses run_id correctly.
