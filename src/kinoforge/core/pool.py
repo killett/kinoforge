@@ -25,6 +25,61 @@ from kinoforge.core.interfaces import (
 _log = logging.getLogger(__name__)
 
 
+class _DaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
+    """ThreadPoolExecutor that marks every worker daemon=True at creation.
+
+    Plan A's L1 thread-leak harvest (commit 1d83d1d) showed the
+    ConcurrentPool's ThreadPoolExecutor workers leak non-daemon across
+    1845 distinct test nodeids -- concurrent.futures defaults workers to
+    daemon=False on Python 3.13, so any test that submits a job and does
+    not also call ``pool.close()`` in teardown leaks the worker past
+    process exit (blocking pytest's interpreter shutdown).
+
+    The obvious-looking fix -- passing an ``initializer`` callback that
+    sets ``threading.current_thread().daemon = True`` -- does NOT work:
+    the initializer runs inside the worker AFTER it has started, and
+    ``Thread.daemon`` setter raises ``RuntimeError("cannot set daemon
+    status of active thread")`` on a live thread. The daemon flag must
+    be set BEFORE ``Thread.start()``, which is what this subclass does
+    by overriding the private ``_adjust_thread_count`` hook.
+
+    Graceful shutdown is unchanged because ``executor.shutdown(wait=True)``
+    still joins each worker; on ungraceful exit the workers now die with
+    the process instead of blocking pytest's interpreter shutdown.
+    """
+
+    def _adjust_thread_count(self) -> None:  # noqa: D401, D102
+        # Stdlib's _adjust_thread_count spawns a single Thread per call when
+        # the pool has spare capacity. We rebuild the same logic here so we
+        # can flip daemon=True before start() -- the only effective moment.
+        import weakref
+        from concurrent.futures.thread import (
+            _threads_queues,
+            _worker,
+        )
+
+        def _weakref_cb(_: object, q: object = self._work_queue) -> None:
+            q.put(None)  # type: ignore[attr-defined]
+
+        num_threads = len(self._threads)
+        if num_threads < self._max_workers:
+            thread_name = f"{self._thread_name_prefix or self}_{num_threads}"
+            t = threading.Thread(
+                name=thread_name,
+                target=_worker,
+                args=(
+                    weakref.ref(self, _weakref_cb),
+                    self._work_queue,
+                    self._initializer,
+                    self._initargs,
+                ),
+                daemon=True,
+            )
+            t.start()
+            self._threads.add(t)  # type: ignore[attr-defined]
+            _threads_queues[t] = self._work_queue  # type: ignore[index]
+
+
 class SequentialPool(BackendPool):
     """Trivial single-backend pool that runs jobs inline.
 
@@ -208,7 +263,7 @@ class ConcurrentPool(BackendPool):
         """
         if max_in_flight < 1:
             raise ValueError(f"max_in_flight must be >= 1, got {max_in_flight}")
-        executor = concurrent.futures.ThreadPoolExecutor(
+        executor = _DaemonThreadPoolExecutor(
             max_workers=max_in_flight,
             thread_name_prefix=f"kinoforge-pool-{len(self._slots)}",
         )
