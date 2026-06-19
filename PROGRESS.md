@@ -194,20 +194,30 @@ After Phase 53 reaches a checkpoint, the prior C33 queue (do in order unless pre
    Spec hook: `docs/superpowers/specs/<date>-cfg-diagnostic-trace-mode-design.md`.
    ~2 hr, no live spend (the existing C28 phase-A cfg already exercises the
    diagnostic trap path).
-5. **B5b — non-mutating heartbeat satisfier substitute.** Brainstorm
-   needed. Most likely path: `selfterm-http` mode pings an in-pod HTTP
-   endpoint that touches a local file timestamp without mutating any
-   RunPod resource. The in-pod selfterm Python script already runs a HTTP
-   loop for liveness; adding a `POST /heartbeat` handler that updates a
-   `/tmp/kinoforge-hb` file is straightforward. Orchestrator's
-   `heartbeat_mode: selfterm-http` already exists in the
-   `Config._validate_heartbeat_mode` enum but the satisfier isn't wired.
-   Live spend ~$0.05 (one re-confirmation run). ~1 day.
-6. **B7 cross-CLI marker refresh.** Once B5b lands, the
-   `_kinoforge_hb:<ISO>` trailer can be set via the new non-mutating
-   path and the C25 preserve-and-merge contract re-honoured. Until then,
-   B7's cross-CLI session-claim guarantee is degraded (read still works
-   for create-time markers). Stacks on B5b.
+5. **~~B5b — non-mutating heartbeat satisfier substitute.~~ DEFERRED
+   2026-06-18 commit `12f6304`.** Brainstormed with Dr. Twinklebrane
+   and landed on indefinite deferral under same-host single-operator
+   scope — local `.kinoforge/` ledger already delivers every property
+   the wire-level substrate was meant to provide (per-tick freshness,
+   single-writer ordering via the `ledger/{run_id}` lock, cross-CLI
+   contention via B7's `provision:<id>` lock, warm-reuse via B4's
+   ledger lookup). Spec:
+   `docs/superpowers/specs/2026-06-18-b5b-deferred-design.md`
+   documents the decision, four concrete resumption criteria (second-
+   host contention, ledger durability incidents, new provider whose
+   semantics don't transfer, new feature requiring the marker
+   contract), and the asymmetric `read`-functional / `write`-disabled
+   state of `RunPodGraphQLHeartbeatEndpoint` as the documented
+   post-C33 mode. Two in-code docstring updates ship alongside (no
+   registry/Protocol/test changes).
+6. **B7 cross-CLI marker refresh — superseded by B5b deferral.**
+   B7's cross-CLI session-claim guarantee was flagged "degraded" while
+   B5b was assumed to be pending. Under the now-shipped B5b deferral,
+   the cross-CLI guarantee is upheld by the local ledger's `last_heartbeat`
+   field + B7's `provision:<id>` lock — the dockerArgs marker is no
+   longer load-bearing for same-host operation. Resumption of B5b (per
+   the spec's §5 triggers) would re-open B7 marker refresh as a
+   follow-on workstream.
 
 Previous workstream (closed): B2 Layer X (cost dashboard) shipped through closeout `f7071c0` + follow-ups `99704b5` (prom scrape_errors_total), `7045418` (balance disk cache TTL + stale-fallback), `39557d5` (closeout sha pin), `793c7eb` (cache put_json public-write). See §B for the next-candidate backlog (B1 sweeper, B3 orchestrator warm-reuse retrofit, B5b SkyPilot heartbeat satisfier, B6 per-entry heartbeat cadence, C25 RunPod heartbeat preserve-and-merge — UNBLOCKED per C33 resolution; write disabled, B5b is the durable fix).
 
