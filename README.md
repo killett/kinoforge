@@ -914,7 +914,7 @@ pixi run preflight --check-hosted
 pixi run -e live-hosted python -m kinoforge \
     --state-dir /tmp/kf-runway generate \
     -c examples/configs/comparison/runway-t2v.yaml \
-    --prompt "$(cat prompt-field-realistic.txt)" \
+    --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
     --mode t2v --run-id live-runway
 ```
 

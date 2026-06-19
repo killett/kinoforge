@@ -7,7 +7,7 @@
 # Live smoke: `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_nova_reel_live.py -v`
 #
 # The prompt body is loaded at smoke-test runtime from
-# /workspace/prompt-field-realistic.txt per the project's standard-prompt
+# /workspace/examples/configs/prompts/field-realistic.txt per the project's standard-prompt
 # directive (see PROGRESS.md "Standard prompt for all video-generation live
 # smokes").
 
@@ -32,6 +32,6 @@ lifecycle:
   budget: 5.0
 
 spec:
-  prompt: ""  # filled at runtime from /workspace/prompt-field-realistic.txt
+  prompt: ""  # filled at runtime from /workspace/examples/configs/prompts/field-realistic.txt
 
 params: {}
