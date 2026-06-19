@@ -9,6 +9,7 @@ from kinoforge.validation.checks import (  # noqa: F401 — self-register
     custom_nodes,
     heartbeat,
     image,
+    ledger,
     lifecycle,
     models,
 )
