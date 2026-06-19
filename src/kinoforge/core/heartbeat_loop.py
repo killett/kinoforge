@@ -235,6 +235,22 @@ class HeartbeatLoop:
         try:
             self._provider.heartbeat(self._instance_id)
             last_hb = self._provider.last_heartbeat(self._instance_id)
+            # Fallback to the orchestrator's clock when the provider's
+            # wire-level read substrate has nothing to surface — e.g.
+            # RunPod post-C33, where ``RunPodGraphQLHeartbeatEndpoint.write``
+            # is permanently disabled and ``read`` consequently returns
+            # ``None`` on every tick. Per the B5b deferral spec, the local
+            # ledger is the same-host substrate and the orchestrator is the
+            # source of truth for "this pod is being actively driven";
+            # ``self._clock.now()`` at tick time is therefore the correct
+            # ``last_heartbeat`` value. Without this fallback, ``Ledger.touch``
+            # SKIPS writing the field (lifecycle.py:651), the row stays
+            # without ``last_heartbeat``, and ``reaper.classify``
+            # (reaper.py:334) returns ``HEARTBEAT_UNKNOWN`` — defeating
+            # cross-CLI warm-reuse. Empirically caught 2026-06-18 against
+            # Wan 1.3B on RunPod.
+            if last_hb is None:
+                last_hb = now
             extra: dict[str, float | int | str | None] = {
                 "heartbeat_thread_tick": now,
             }
