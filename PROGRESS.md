@@ -94,12 +94,30 @@ main at time of writing). Five edits unblocked all 12 entries:
      `examples/configs/manifests/`).
 
 Filed follow-ups (anchored 2026-06-19, do NOT drift):
-- `tests/live/test_nova_reel_live.py:121` hardcodes
-  `Path("tests/engines/fixtures/nova_reel")`. The directory does not
-  exist and the name is inconsistent with the now-canonical
-  `bedrock_video` engine. Rename the fixtures dir (or skip writing
-  to it) before the next Nova Reel live smoke fires under
-  `KINOFORGE_SAVE_FIXTURES=1`.
+- `tests/live/test_nova_reel_live.py:121` — TWO bugs in one line:
+  (a) `Path("tests/engines/fixtures/nova_reel")` is a relative path,
+      so it resolves correctly only when pytest is invoked from the
+      repo root. Any other cwd silently writes to the wrong dir;
+      fix with `Path(__file__).resolve().parents[2] / "tests/engines/fixtures/<name>"`.
+  (b) The `nova_reel` segment is inconsistent with the now-canonical
+      `bedrock_video` engine name. Rename the fixtures dir (or skip
+      writing to it) before the next Nova Reel live smoke fires
+      under `KINOFORGE_SAVE_FIXTURES=1`.
+- Stale `wan2.2_14b.safetensors` refs still present in
+  `examples/configs/fal.yaml:20`, `examples/configs/hosted.yaml:29`,
+  `tests/test_examples.py:161,182`, and
+  `successful-generations.md:74`. The cfgs do NOT break doctor (Task
+  1's `_NON_FETCHING_ENGINES` filter skips `fal` + `hosted`), but the
+  refs contradict the canonical comment shipped in
+  `examples/configs/wan.yaml:14-22`. Bulk-repoint to
+  `hf:Wan-AI/Wan2.2-T2V-A14B:high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors`
+  for consistency.
+- `src/kinoforge/engines/hosted/__init__.py:808` — `_HOSTED_DEFAULT_KEY`
+  hardcodes the old `wan2.2_14b.safetensors` filename. Used to seed
+  `_DEFAULT_DECLARED_FLAGS_MAP`, so any capability-cache lookup that
+  hashes the new canonical ref against this key will miss and surface
+  a runtime cache-miss warning. Repoint to the new canonical ref to
+  match.
 
 **RESUME TARGET:** pick the next workstream from the queue below.
 Likely candidates: (1) the parked thread-leak brainstorm in
