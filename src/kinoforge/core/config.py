@@ -110,7 +110,7 @@ class LifecycleConfig(BaseModel):
     max_in_flight: int = 1
     boot_timeout: float = 900.0
     heartbeat_interval_s: float | None = None
-    grace_after_session_s: float = 300.0
+    grace_after_session_s: float = 1800.0
     stall_reap_enabled: bool = True
     stall_window_s: float = 600.0
     stall_gpu_threshold: float = 5.0

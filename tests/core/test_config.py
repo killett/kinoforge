@@ -1204,11 +1204,11 @@ def test_config_keyframe_absent_defaults_none(tmp_path) -> None:  # type: ignore
 # ---------------------------------------------------------------------------
 
 
-def test_lifecycle_config_grace_after_session_s_default_is_300() -> None:
-    """Default surfaces through pydantic load too."""
+def test_lifecycle_config_grace_after_session_s_default_is_1800() -> None:
+    """Default surfaces through pydantic load too (300 → 1800, ad84e2b)."""
     from kinoforge.core.config import LifecycleConfig
 
-    assert LifecycleConfig(budget=1.0).grace_after_session_s == 300.0
+    assert LifecycleConfig(budget=1.0).grace_after_session_s == 1800.0
 
 
 def test_lifecycle_config_grace_after_session_s_round_trips() -> None:
