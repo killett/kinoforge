@@ -9,4 +9,5 @@ from kinoforge.validation.checks import (  # noqa: F401 — self-register
     heartbeat,
     image,
     lifecycle,
+    models,
 )
