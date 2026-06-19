@@ -11,7 +11,20 @@ Single-writer invariant: B7's ``provision:<id>`` cooperative lock
 guarantees only the holding orchestrator writes a pod's wire state
 during a session; intra-orchestrator HeartbeatLoop is single-threaded.
 
-Spec: docs/superpowers/specs/2026-06-13-c25-runpod-heartbeat-preserve-and-merge-design.md
+**Asymmetric state since C33-m (2026-06-17, commit ``c2526ac``):**
+``write()`` is a permanent no-op — ``podEditJob`` mutations against
+``dockerArgs`` were proven to trigger CONTAINER-level restarts, fatal
+to every Wan-on-RunPod cold-boot. ``read()`` remains functional and
+parses any pre-existing marker. This asymmetry is the documented
+post-C33 state, not a temporary patch — see B5b deferral spec for
+the rationale (under same-host single-operator scope, the local
+``Ledger`` substitutes for the wire-level substrate and no
+replacement satisfier needs to ship). Resumption criteria for B5b
+are enumerated in the deferral spec.
+
+Specs:
+  - docs/superpowers/specs/2026-06-13-c25-runpod-heartbeat-preserve-and-merge-design.md
+  - docs/superpowers/specs/2026-06-18-b5b-deferred-design.md
 """
 
 from __future__ import annotations
@@ -111,13 +124,22 @@ def _merge_marker(base: str, ts_local: datetime) -> str:
 
 
 class RunPodGraphQLHeartbeatEndpoint:
-    """dockerArgs preserve-and-merge satisfier.
+    """dockerArgs preserve-and-merge satisfier — asymmetric since C33-m.
 
-    Write path: read current dockerArgs → strip any prior heartbeat
-    marker → append fresh ``# _kinoforge_hb:<ISO>`` trailer → mutate.
-    Two GraphQL round-trips per tick.
+    Write path: PERMANENTLY DISABLED no-op since C33-m (commit
+    ``c2526ac``, 2026-06-17). ``podEditJob`` mutations against
+    ``dockerArgs`` were proven to trigger CONTAINER-level restarts on
+    every Wan-on-RunPod cold-boot. The original two-GraphQL-round-trip
+    preserve-and-merge contract is preserved in code as a write-method
+    docstring but the method body is a no-op. Under same-host single-
+    operator scope (the B5b deferral spec's documented operating mode),
+    the local :class:`~kinoforge.core.lifecycle.Ledger` substitutes for
+    the wire-level write substrate.
 
-    Read path: query dockerArgs → regex-extract trailing marker.
+    Read path: query dockerArgs → regex-extract trailing marker. Still
+    functional, parses any pre-existing marker from pre-C33 pods or
+    from a future B5b satisfier that re-establishes the marker
+    contract via a non-mutating substrate.
     """
 
     def __init__(
