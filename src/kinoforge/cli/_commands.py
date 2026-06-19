@@ -317,6 +317,29 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     if ctx.cfg is None:
         raise RuntimeError("_cmd_generate requires --config")
     cfg = ctx.cfg
+
+    # Pre-flight gate: run NETWORK + PREFLIGHT (STATIC already ran via
+    # load_config). --skip-preflight opts out for offline / pre-doctored
+    # workflows. Auto-fixes already applied; this is purely advisory at
+    # this point — any ERROR-severity result blocks the provider call
+    # with exit 2.
+    if getattr(args, "skip_preflight", False):
+        logger.warning(
+            "preflight skipped (--skip-preflight); cfg-time-only validation applied"
+        )
+    else:
+        import kinoforge.providers.runpod  # noqa: F401 — self-register
+        import kinoforge.providers.skypilot  # noqa: F401 — self-register
+        import kinoforge.validation.checks  # noqa: F401 — self-register
+        from kinoforge.core.errors import ValidationError
+        from kinoforge.validation import validate_for_generate
+
+        try:
+            validate_for_generate(cfg)
+        except ValidationError as exc:
+            print(f"error: cfg pre-flight failed\n{exc}", file=sys.stderr)
+            return 2
+
     store = ctx.store()
     sink = _build_sink(cfg, args)
     request = GenerationRequest(prompt=args.prompt, mode=args.mode)
