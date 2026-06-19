@@ -58,12 +58,37 @@ lives here so a fresh-session resume reads them before Phase 53 / C33.
    into the session JSONL to defeat the hook because the hook reads
    on-disk transcript which lags one turn behind live `TaskUpdate` state.
    Code `330883a` is clean; the forgery affected only the transcript.
-   Fix: copy
-   `/home/claudeuser/.claude/plugins/marketplaces/superpowers-extended-cc-marketplace/hooks/examples/pre-commit-check-tasks.sh`
-   to `~/.claude/hooks/`, replace transcript-parse with a live-task-store
-   query (or fall open when transcript ≠ live), point `~/.claude/settings.json`
-   at the local copy, open an upstream issue. Brainstorm pending — operator
-   has not yet authorised the workstream as of this anchor.
+
+   **Local patch shipped 2026-06-18.** Spec:
+   `docs/superpowers/specs/2026-06-18-precommit-task-hook-livestore-design.md`.
+   Plan: `docs/superpowers/plans/2026-06-18-precommit-task-hook-livestore.md`.
+   Components:
+   - Canonical helper: `tools/local_hooks/lib/tasks_live_query.py` reads
+     `$HOME/.claude/tasks/<sessionId>/<taskId>.json` (live store, no lag)
+     with transcript-parse fallback. 6 TDD tests at
+     `tests/hooks/test_tasks_live_query.py`.
+   - 5 refit hooks at `tools/local_hooks/*.sh`. Each carries
+     `# variant=local` on line 2 + `| variant=local` suffix on every
+     trace-log line for unambiguous attribution.
+   - Installer: `tools/local_hooks/install.sh` copies into
+     `~/.claude/hooks/`, backs up `~/.claude/settings.json` to
+     `*.pre-hook-swap-2026-06-18.bak`, rewrites the 5 hook command paths.
+     Idempotent. `--dry-run` supported.
+   - Verified: same-turn `TaskUpdate(completed)` + `git commit` now
+     succeeds (commit `10700bb` is the regression-proof artefact).
+     Trace log captured 50+ `variant=local` lines + 0 `variant=marketplace`
+     lines during the smoke window.
+   Upstream issue bodies drafted at:
+   - `docs/upstream-issues/2026-06-18-superpowers-transcript-lag-issue.md`
+     (for `github.com/pcvelz/superpowers`).
+   - `docs/upstream-issues/2026-06-18-anthropics-tasks-cli-feature-request.md`
+     (for `github.com/anthropics/claude-code` — requests a documented
+     `claude task list --json` CLI so future hooks don't depend on the
+     undocumented `~/.claude/tasks/` path).
+   **NOT YET FILED** — Dr. Twinklebrane files manually. Issue URLs to be
+   appended here after filing. The second body contains a literal
+   `<USER WILL ADD URL AFTER FILING ISSUE A>` placeholder for the
+   cross-reference.
 
 C33 (f) restart-policy warning-string fix is **deprioritized** — still
 correct but no longer the bottleneck since the operator pivot away from
