@@ -60,3 +60,44 @@ def test_restarted_takes_precedence_over_monotonic_appearance() -> None:
     """Even if uptime later climbs again, >=3 fires means RESTARTED."""
     trail = [(0.0, 60), (30.0, 90), (60.0, 1), (90.0, 31)]
     assert classify_run(trail, fire_count=5) is Verdict.RESTARTED
+
+
+def test_single_negative_in_monotonic_trail_is_not_restarted() -> None:
+    """C33 (a) refinement — a single isolated negative-uptime sample in an
+    otherwise-monotonic trail with zero fires is platform-incident noise,
+    not a restart signal.
+
+    C33 Q3 sweep (16-hour window, 154 samples across 12 GPU types,
+    2026-06-13) proved single-sample negatives are platform-incident
+    noise. The pre-refinement rule flagged RESTARTED on ANY negative —
+    which in production means healthy pods that hit one transient
+    negative get reaped, forced cold-boot, and the operator pays the
+    setup spend again. Require a corroborating signal (fire_count >= 1
+    OR negative_count >= 2) before tripping RESTARTED.
+    """
+    # Trail otherwise strictly monotonic; one isolated negative at t=60.
+    trail = [
+        (0.0, 5),
+        (30.0, 35),
+        (60.0, -1),  # the single platform-incident negative
+        (90.0, 95),
+        (120.0, 125),
+    ]
+    assert classify_run(trail, fire_count=0) is Verdict.AMBIGUOUS
+
+
+def test_two_negatives_no_fires_is_restarted() -> None:
+    """C33 (a) refinement — two negatives WITHOUT any S3 fires is the
+    multi-sample corroborator that trips RESTARTED. Boundary guard.
+
+    A naive over-cautious refinement that required ``fire_count >= 1 OR
+    negative_count >= 3`` would mis-classify this trail as AMBIGUOUS. The
+    spec'd threshold is ``negative_count >= 2``.
+    """
+    trail = [
+        (0.0, 5),
+        (30.0, -2),
+        (60.0, -5),
+        (90.0, 5),
+    ]
+    assert classify_run(trail, fire_count=0) is Verdict.RESTARTED

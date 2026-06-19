@@ -65,8 +65,18 @@ def classify_run(
     # (run c30-a1a-20260614T222804) on a pod that was actively restart-
     # cycling. The S3 EXIT trap did NOT fire (pod was killed before
     # `aws s3 cp` could complete), so fire_count alone underdetects the
-    # restart. Treat any non-None negative as a positive restart signal.
-    if any(u is not None and u < 0 for u in raw):
+    # restart.
+    #
+    # C33 (a) refinement (Q3 sweep 2026-06-13, 16 hours, 154 samples,
+    # 12 GPU types): single-sample negatives are platform-incident noise,
+    # NOT restart signals. Require a corroborating signal before flagging
+    # RESTARTED — either at least one S3 trap fire OR two-or-more negatives
+    # (the "multi-sample negative pattern" from the C33 spec). An isolated
+    # negative falls through to the monotonicity check and lands on
+    # AMBIGUOUS, which is the right outcome — operator either reruns the
+    # probe or escalates manually rather than nuking a healthy pod.
+    negative_count = sum(1 for u in raw if u is not None and u < 0)
+    if negative_count >= 1 and (fire_count >= 1 or negative_count >= 2):
         return Verdict.RESTARTED
     if fire_count >= 1:
         return Verdict.AMBIGUOUS
