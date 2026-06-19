@@ -366,12 +366,12 @@ from kinoforge.core.batch import load_manifest  # noqa: E402
 
 
 def test_batch_prompts_example_loads() -> None:
-    """examples/configs/batch-prompts.yaml must parse cleanly.
+    """examples/configs/manifests/batch-prompts.yaml must parse cleanly.
 
     Bug catch: an example that rots silently (missing prompt file,
     pydantic schema drift) breaks the documented quickstart.
     """
-    path = EXAMPLES_DIR / "batch-prompts.yaml"
+    path = EXAMPLES_DIR / "manifests" / "batch-prompts.yaml"
     m = load_manifest(path)
     assert len(m.entries) == 3
     for entry in m.entries:
@@ -386,7 +386,7 @@ def test_batch_prompts_example_uses_valid_modes() -> None:
     Bug catch: a typo'd mode (e.g. "t2vv") would silently fail at
     request validation, not at load time.
     """
-    path = EXAMPLES_DIR / "batch-prompts.yaml"
+    path = EXAMPLES_DIR / "manifests" / "batch-prompts.yaml"
     m = load_manifest(path)
     for entry in m.entries:
         assert entry.mode in {"t2v", "i2v", "flf2v"}, (
@@ -419,12 +419,12 @@ def test_runpod_comfyui_wan_yaml_loads() -> None:
 
 
 def test_runpod_comfyui_wan_manifest_yaml_loads() -> None:
-    """examples/configs/runpod-comfyui-wan-manifest.yaml loads via load_manifest.
+    """examples/configs/manifests/runpod-comfyui-wan-manifest.yaml loads via load_manifest.
 
     Verifies the single i2v entry with an assets block is schema-valid and
     that load_manifest collapses run_id correctly.
     """
-    path = EXAMPLES_DIR / "runpod-comfyui-wan-manifest.yaml"
+    path = EXAMPLES_DIR / "manifests" / "runpod-comfyui-wan-manifest.yaml"
     assert path.exists(), f"manifest not found: {path}"
     m = load_manifest(path)
     assert len(m.entries) == 1

@@ -11,8 +11,17 @@ engine:
   comfyui:
     version: "0.3.10"
 
+# Wan-AI/Wan2.2-T2V-A14B ships as a sharded diffusers model:
+#   high_noise_model/diffusion_pytorch_model-{00001..00006}-of-00006.safetensors
+#   low_noise_model/diffusion_pytorch_model-{00001..00006}-of-00006.safetensors
+# The ref below points at the first high-noise shard as the
+# reachability anchor for cfg validation (HEAD probe). Loading the
+# full model is engine-side: configure the engine + container image
+# to fetch every shard from the same HF repo. Do NOT shorten the
+# ref to bare `wan2.2_14b.safetensors` — that filename does not
+# exist on the Hub.
 models:
-  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors"
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors"
     kind: base
     target: checkpoints
 
@@ -47,12 +56,12 @@ compute:
     time_buffer: 30m
     max_lifetime: 5h
     budget: 25.0
-    # Layer U — heartbeat persistence. Uncomment to enable a background
-    # thread that pings provider.heartbeat() and persists the timestamp
-    # to the ledger every N seconds. Operator-visible via
-    # `kinoforge status --id <id>` ("last_heartbeat=<ISO>"). Default null
-    # (disabled). Recommended >= 10s to avoid lock contention at scale.
-    # heartbeat_interval_s: 30
+    # Layer U — heartbeat persistence. Background thread that pings
+    # provider.heartbeat() and persists the timestamp to the ledger
+    # every N seconds. Operator-visible via
+    # `kinoforge status --id <id>` ("last_heartbeat=<ISO>").
+    # Required when warm_reuse_auto_attach=true (the default).
+    heartbeat_interval_s: 30
     # Layer V — post-session warm-reuse grace window. Sentinel-stale
     # entries within this window are classified LIVE (not ORPHAN_REAP).
     # grace_after_session_s: 300
