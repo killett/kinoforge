@@ -173,14 +173,13 @@ now. See Phase 53 §Stage D for full debug.
 After Phase 53 reaches a checkpoint, the prior C33 queue (do in order unless preferences shift):
 
 1. **(f) trivial — restart-policy warning string.** ↑ above. ~15 min.
-2. **(a) small — `classify_run` negative-uptime heuristic.** In
-   `src/kinoforge/diagnostics/c30_probe.py::classify_run`, require a
-   corroborating signal (S3 trap-fire count > 0 OR multi-sample negative
-   pattern) before flagging RESTARTED — single-sample negative during an
-   otherwise-monotonic trail should NOT trip the verdict. Q3 sweep (16-hour,
-   154 samples across 12 GPU types) proved single-sample negatives are
-   PLATFORM-INCIDENT noise, not restart signals. Unit-test only, no live
-   spend. ~30 min.
+2. **(a) ~~small — `classify_run` negative-uptime heuristic.~~ DONE
+   2026-06-18 commit `0ed4db5`.** `classify_run` now requires either
+   ``fire_count >= 1`` OR ``negative_count >= 2`` before tripping
+   RESTARTED on a negative-uptime sample. Isolated single negatives
+   fall through to the monotonicity check and land on AMBIGUOUS. Two
+   new fence tests; existing 4-negative test still trips RESTARTED.
+   Full diagnostics suite 66/66 green.
 3. **(d) ~~small — banner test for top-level `Pod.uptimeSeconds`.~~ DONE
    2026-06-18 commit `48f012d`.** `tests/core/test_no_top_level_pod_uptime_reads.py`
    recursively scans every `*.py` under `src/` for the substring
