@@ -1579,19 +1579,22 @@ def test_compute_config_cloud_accepts_valid_literals(clouds: list[str]) -> None:
     assert cfg.cloud == clouds
 
 
-def test_compute_config_cloud_rejects_unknown_entry() -> None:
-    """A typo or unsupported cloud name (e.g. 'lambdaa', 'aws-us-west-2')
-    fails loud at config-load, not later at sky.launch."""
-    from pydantic import ValidationError as PydanticValidationError
+def test_compute_config_cloud_accepts_unknown_entry_at_pydantic_layer() -> None:
+    """Membership moved to SkyPilotCloudPinSupportedCheck (Task 9 plan).
 
+    Pydantic now only enforces the empty-list invariant. The "unknown
+    cloud entry" rejection lives on the Check Registry's static-error
+    SkyPilotCloudPinSupportedCheck — verified in
+    tests/providers/skypilot/test_cloud_pin_check.py.
+    """
     from kinoforge.core.config import ComputeConfig
 
-    with pytest.raises(PydanticValidationError, match="cloud"):
-        ComputeConfig(
-            provider="skypilot",
-            image="skypilot/skypilot-gpu:latest",
-            cloud=["lambdaa"],
-        )
+    cfg = ComputeConfig(
+        provider="skypilot",
+        image="skypilot/skypilot-gpu:latest",
+        cloud=["lambdaa"],
+    )
+    assert cfg.cloud == ["lambdaa"]
 
 
 def test_compute_config_cloud_rejects_empty_list() -> None:
