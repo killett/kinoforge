@@ -68,8 +68,21 @@ class ModelRefReachableCheck:
         self._http_head = http_head or _default_http_head
         self._full = full
 
+    _NON_FETCHING_ENGINES: frozenset[str] = frozenset(
+        {"hosted", "fal", "replicate", "runway", "bedrock_video", "fake"}
+    )
+
     def applies_to(self, cfg: Config) -> bool:
-        """Apply iff at least one model ref carries a network scheme."""
+        """Apply iff the engine fetches the ref and at least one ref carries a network scheme.
+
+        Non-fetching engines (hosted shim, fal queue, Replicate / Runway
+        Bearer providers, Bedrock video, fake) do not HEAD-resolve the
+        ref — their wire identifier lives on ``spec.model`` or the
+        engine sub-block. Skip them to avoid flagging informational
+        placeholders.
+        """
+        if cfg.engine.kind in self._NON_FETCHING_ENGINES:
+            return False
         if not cfg.models:
             return False
         return any(m.ref.startswith(("hf:", "https://", "http://")) for m in cfg.models)
