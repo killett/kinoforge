@@ -46,7 +46,7 @@ def _git_sha() -> str:
 def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     """End-to-end: load cfg → submit → MP4 in S3 → bytes start with ftyp."""
 
-    # _adapters import first so nova_reel registers itself
+    # _adapters import first so bedrock_video registers itself
     import kinoforge._adapters  # noqa: F401
     from kinoforge.core.config import load_config
     from kinoforge.core.interfaces import GenerationJob, Segment
@@ -74,7 +74,7 @@ def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     # Load config
     cfg = load_config("examples/configs/nova-reel.yaml")
     # Verify shape
-    assert cfg.engine.kind == "nova_reel"
+    assert cfg.engine.kind == "bedrock_video"
 
     # Load prompt from the canonical file (project directive).
     prompt = Path("/workspace/prompt-field-realistic.txt").read_text().strip()
@@ -84,7 +84,7 @@ def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     import yaml
 
     cfg_dict = yaml.safe_load(Path("examples/configs/nova-reel.yaml").read_text())
-    engine_factory = get_engine("nova_reel")
+    engine_factory = get_engine("bedrock_video")
     engine = engine_factory()
     engine.provision(None, cfg_dict)
     backend = engine.backend(None, cfg_dict)

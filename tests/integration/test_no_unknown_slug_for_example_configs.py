@@ -20,9 +20,6 @@ from kinoforge.core.config import load_config
 _EXAMPLE_DIR = Path(__file__).resolve().parents[2] / "examples" / "configs"
 _SKIP_YAMLS = {
     "local-fake.yaml",  # intentional fake; identity doesn't matter.
-    # Future engine — nova_reel engine not yet registered; skip until Layer 3
-    # completes and registers "nova_reel" in _adapters.py:
-    "nova-reel.yaml",  # nova_reel engine kind unregistered (planned: Layer 3)
 }
 
 
