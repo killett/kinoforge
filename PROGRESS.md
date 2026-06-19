@@ -15,6 +15,33 @@ first unchecked task without redoing committed work.
 
 ## Next session — resume target (single next action at top)
 
+**Pytest thread-leak diagnostic (layered) SHIPPED 2026-06-19 (autonomous).**
+Plan `docs/superpowers/plans/2026-06-19-pytest-thread-leak-diagnostic.md`
+landed on `main` in two commits:
+- `0f02e34` extracted the inline `pytest_sessionfinish` dump body into
+  pure helper `tests/_thread_dump_helper.py::_build_dump(threads,
+  exitstatus) -> str` + 3 unit tests (`tests/test_post_session_dump.py`)
+  pinning name/daemon/n_threads, the C-extension fallback marker, and
+  the linux `/proc/self/fd` inventory.
+- `a9929a0` layered a C-side safety net: `pytest_configure` arms
+  `faulthandler.dump_traceback_later(15, repeat=False, file=sys.stderr,
+  exit=False)`; `pytest_sessionfinish` prepends
+  `faulthandler.cancel_dump_traceback_later()` so healthy runs do NOT
+  also dump from the timer. `tests/test_post_session_dump_e2e.py`
+  spawns pytest as a subprocess on a temp leaky-thread module and
+  asserts banner + `daemon=False` + `e2e_leaker` in stderr.
+
+Two plan-discovered deltas (documented in `a9929a0`):
+- subprocess gets PYTHONPATH=tmp:project/src:project (cwd=tmp_path
+  skips the project pyproject's pythonpath=["src"] config).
+- Leaked non-daemon thread blocks subprocess past summary, so e2e
+  uses Popen + communicate(timeout=10) + TimeoutExpired to capture
+  pre-stall stderr then kill the runaway.
+
+Native task IDs 1–2 of this run completed; .tasks.json synced.
+All 9 thread-dump tests pass (3 unit + 1 e2e + 5 existing hook tests)
+in 10s.
+
 **Cfg validation Check Registry SHIPPED 2026-06-19 (autonomous).**
 All 14 tasks of plan `docs/superpowers/plans/2026-06-18-cfg-validation-check-registry.md`
 landed on branch `worktree-cfg-validation-check-registry`. New package
