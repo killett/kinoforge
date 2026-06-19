@@ -72,9 +72,20 @@ class HeartbeatEndpoint(Protocol):
         ...
 
 
-# B5a-shipped set. B5b adds "skypilot". Downstream consumers consult this
-# via provider_heartbeat_supported() before treating HEARTBEAT_UNKNOWN as
-# actionable on cloud providers.
+# B5a-shipped set. Membership means "a heartbeat substrate is available
+# for this provider", not "a wire-level write satisfier ships for this
+# provider". Specifically for ``"runpod"``: post-C33 the wire-level
+# write substrate (RunPodGraphQLHeartbeatEndpoint.write) is a no-op,
+# and the local Ledger serves as the same-host substrate per the B5b
+# deferral spec (docs/superpowers/specs/2026-06-18-b5b-deferred-design.md).
+# Downstream consumers consult this via provider_heartbeat_supported()
+# before treating HEARTBEAT_UNKNOWN as actionable on cloud providers;
+# removing ``"runpod"`` would cascade into HEARTBEAT_SUBSTRATE_MISSING
+# verdicts from reaper.classify for every RunPod pod — a behaviour
+# regression with no compensating safety win.
+#
+# Future B5b resumption (cross-machine scope) would add ``"skypilot"``
+# here once a satisfier ships.
 _HEARTBEAT_SUPPORTED: frozenset[str] = frozenset({"local", "runpod"})
 
 
