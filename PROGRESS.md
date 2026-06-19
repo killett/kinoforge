@@ -54,12 +54,60 @@ xfail is a follow-up:
 
 Native task IDs 36–49 all completed; .tasks.json synced.
 
+**12 xfailed example cfgs CLOSED 2026-06-19 (autonomous).**
+Plan `docs/superpowers/plans/2026-06-19-doctor-smoke-xfail-cleanup.md`
+landed on branch `doctor-smoke-xfail-cleanup` (not yet merged to
+main at time of writing). Five edits unblocked all 12 entries:
+
+  1. `ModelRefReachableCheck.applies_to` filters non-fetching engine
+     kinds (hosted / fal / replicate / runway / bedrock_video / fake)
+     so their cfgs can ship informational refs without breaking
+     doctor (commit `b9c1bd0`).
+  2. Batch manifests moved to `examples/configs/manifests/`; doctor
+     glob switched to a `"manifests" not in p.parts` filter so the
+     subdir is excluded while `comparison/` stays in scope (commit
+     `9771b18`; docstring follow-up `677f59f`).
+  3. Wan2.2 refs repointed to a real sharded HF file
+     (`high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors`)
+     in all four cfgs (`wan.yaml`, `skypilot.yaml`, `skypilot-gpu.yaml`,
+     `skypilot-lambda.yaml`). Plus `skypilot.yaml` `heartbeat_interval_s`
+     lowered 30 → 20 to satisfy the cfg-validation Check Registry's
+     `idle_timeout_vs_heartbeat` rule (3 * heartbeat must fit within
+     the 60 s idle_timeout). Commit `a013277`; comment softening
+     follow-up `e41ca88`.
+  4. `nova-reel.yaml` collapsed onto the registered `bedrock_video`
+     engine (no new engine module). The `nova_reel:` sub-block was
+     replaced with `bedrock_video.model_input_template` carrying
+     the real Bedrock Nova Reel API shape (`taskType`,
+     `textToVideoParams.text: "${PROMPT}"`, `videoGenerationConfig`).
+     Live smoke + integration-skip entry updated. Commit `9bef7cd`.
+  5. `_KNOWN_BROKEN` dict deleted from
+     `tests/live/test_doctor_examples_live.py`. In-task discoveries:
+     `cost.yaml` + `diffusers.yaml` STATIC validation tripped on
+     missing `heartbeat_interval_s` once their xfail markers were
+     gone; both cfgs received `heartbeat_interval_s: 30` (cost is
+     RunPod, diffusers is RunPod serverless — both warm-reuse-attach
+     default true). Live doctor smoke
+     (`KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_doctor_examples_live.py -v`)
+     reports **19 PASSED, 0 XFAIL / XPASS / FAIL** in ~24 s
+     (21 cfgs recursive minus 2 manifests rehomed under
+     `examples/configs/manifests/`).
+
+Filed follow-ups (anchored 2026-06-19, do NOT drift):
+- `tests/live/test_nova_reel_live.py:121` hardcodes
+  `Path("tests/engines/fixtures/nova_reel")`. The directory does not
+  exist and the name is inconsistent with the now-canonical
+  `bedrock_video` engine. Rename the fixtures dir (or skip writing
+  to it) before the next Nova Reel live smoke fires under
+  `KINOFORGE_SAVE_FIXTURES=1`.
+
 **RESUME TARGET:** pick the next workstream from the queue below.
-Likely candidates: (1) fix the 12 xfailed example cfgs (replace
-placeholder refs, correct HF Wan2.2 filenames, add `nova_reel` to
-engine registry or remove the cfg, route batch-manifest through its
-own loader), or (2) the parked thread-leak brainstorm in
-`core/pool.py` (still elevated priority).
+Likely candidates: (1) the parked thread-leak brainstorm in
+`core/pool.py` (still elevated priority — symptom observed again
+during this workstream: ~50 zombie `pixi`/`pytest` pairs piled up
+from subagent-dispatched test runs); (2) merge
+`doctor-smoke-xfail-cleanup` into main; (3) one of the Stage E
+ledger-row follow-ups below (skypilot age / cost / capability_key).
 
 ---
 
