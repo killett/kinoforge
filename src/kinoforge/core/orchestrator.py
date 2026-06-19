@@ -1437,8 +1437,20 @@ def deploy(
     try:
         # Poll until ready (LocalProvider returns ready immediately; cloud providers
         # may require polling — this handles both).
+        #
+        # Only ``status`` is refreshed from the polled response. ``created_at``,
+        # ``tags``, and ``cost_rate_usd_per_hr`` are authoritative on the
+        # ``create_instance`` return because providers (notably SkyPilot and
+        # RunPod) cannot reliably recover those fields from their list/status
+        # APIs — see ``_cluster_record_to_instance`` and ``_pod_to_instance``,
+        # both of which hard-code ``created_at=0.0`` and drop tags / cost rate.
+        # Reassigning ``instance`` here would clobber the rich create-time
+        # fields and surface as ``age=~56y``, ``est_spend=$0.00``, and
+        # ``capability_key=<unknown>`` in the ledger (Stage E live smoke
+        # 2026-06-18 regression).
         while instance.status != "ready":
-            instance = resolved_provider.get_instance(instance.id)
+            polled = resolved_provider.get_instance(instance.id)
+            instance.status = polled.status
 
         endpoints = resolved_provider.endpoints(instance)
         _log.info(
