@@ -44,18 +44,27 @@ engine:
 models:
   # Wan 2.2 14B dual-diffusion HIGH+LOW pair. Kijai's I2V-A14B
   # weights run in T2V mode via WanVideoEmptyEmbeds.
+  #
+  # Order matters: text encoder + VAE FIRST so the small files complete
+  # before the ~56 GB HIGH+LOW pulls trigger HF Hub rate-limiting.
+  # First v3 attempt (commit 26cb52a) put T5 last and got a consistent
+  # 0-byte T5 file after the HIGH+LOW downloads completed — bootstrap's
+  # curl --fail path didn't catch the zero-length write because no
+  # sha256 was supplied on the ref. Switched T5 to the canonical bf16
+  # variant (12.6 GB, native un-quantized) to dodge whatever the fp8
+  # variant tripped at xet-bridge.
+  - ref: "hf:Kijai/WanVideo_comfy:umt5-xxl-enc-bf16.safetensors"
+    kind: text_encoder
+    target: text_encoders
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_2_VAE_bf16.safetensors"
+    kind: vae
+    target: vae
   - ref: "hf:Kijai/WanVideo_comfy:Wan2_2-I2V-A14B-HIGH_bf16.safetensors"
     kind: base
     target: diffusion_models
   - ref: "hf:Kijai/WanVideo_comfy:Wan2_2-I2V-A14B-LOW_bf16.safetensors"
     kind: base
     target: diffusion_models
-  - ref: "hf:Kijai/WanVideo_comfy:Wan2_2_VAE_bf16.safetensors"
-    kind: vae
-    target: vae
-  - ref: "hf:Kijai/WanVideo_comfy:umt5-xxl-enc-fp8_e4m3fn.safetensors"
-    kind: text_encoder
-    target: text_encoders
 
 compute:
   provider: runpod
