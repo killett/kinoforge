@@ -71,6 +71,7 @@ models:
 compute:
   provider: local
   image: fake:latest
+  warm_reuse_auto_attach: false
   lifecycle:
     budget: 1.0
 """
