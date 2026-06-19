@@ -181,12 +181,12 @@ After Phase 53 reaches a checkpoint, the prior C33 queue (do in order unless pre
    154 samples across 12 GPU types) proved single-sample negatives are
    PLATFORM-INCIDENT noise, not restart signals. Unit-test only, no live
    spend. ~30 min.
-3. **(d) small — banner test for top-level `Pod.uptimeSeconds`.** New
-   `tests/core/test_no_top_level_pod_uptime_reads.py` that greps `src/` for
-   any read of `Pod.uptimeSeconds` (top-level — the fully-broken-stub field
-   per Q1/Q3, 154/154 samples == 0). Audit per Q3 implication (d): no
-   production code currently reads it, only the Q1 probe explicitly tested
-   it. Lock in the absence. ~20 min, no live spend.
+3. **(d) ~~small — banner test for top-level `Pod.uptimeSeconds`.~~ DONE
+   2026-06-18 commit `48f012d`.** `tests/core/test_no_top_level_pod_uptime_reads.py`
+   recursively scans every `*.py` under `src/` for the substring
+   `uptimeSeconds`, asserts zero matches, dumps every offending
+   `file:line: snippet` on failure. Locks the C33 Q3 audit baseline
+   (broken stub returns 0 in 154/154 samples).
 4. **(g) medium — `diagnostic_mode: "trace"` cfg opt-in.** Bundle the
    Q5-Q8 throwaway instrumentation (`set -x` + `PS4='[%T.%N]'` timestamps,
    `/tmp/p.sh wc/tail` dump in trap, `selfterm.log` + `ps auxf` dumps,
