@@ -15,6 +15,68 @@ first unchecked task without redoing committed work.
 
 ## Next session — resume target (single next action at top)
 
+**CI RED on `origin/main` HEAD 2026-06-19 — 9 PRE-EXISTING FAILURES, address today.**
+Most recent CI run `27838499829` (push `81ee758..1d83d1d`, branch `main`) failed on
+both ubuntu-latest + macos-latest. Failures are NOT caused by the thread-leak work
+(L1 is WARN mode, cannot fail tests). Two independent bug families:
+
+**Family 1: heartbeat / supplied-instance regression (8 failures).** Likely introduced
+by cfg-validation merge `70bcda3` or a sub-commit (`f3dd5d3`, `1df7aa8`, `3ba8369`,
+`2d96a3d` touch validation+orchestrator pathways).
+
+| Test | Failure |
+|---|---|
+| `tests/core/test_batch_generate.py::test_batch_generate_with_supplied_instance_skips_create` | `FirstTickTimeout: no heartbeat tick for 'pod-premade-7b2' within 960.0s` |
+| `tests/core/test_orchestrator.py::test_deploy_session_with_supplied_instance_skips_create_and_find_offers` | same `FirstTickTimeout` |
+| `tests/core/test_orchestrator.py::test_deploy_session_with_supplied_instance_runs_discover_on_cache_miss` | same |
+| `tests/core/test_orchestrator.py::test_deploy_session_supplied_instance_calls_engine_provision` | same |
+| `tests/core/test_orchestrator.py::test_generate_threads_instance_kwarg_to_deploy_session` | same |
+| `tests/core/test_orchestrator.py::test_deploy_session_tags_ignored_when_instance_supplied` | same |
+| `tests/core/test_orchestrator_heartbeat.py::test_deploy_session_with_interval_none_does_not_spawn_loop` | loop spawned despite `interval_s=None` — restart-loop registry contains one unwanted entry |
+| `tests/core/test_orchestrator_session_fields.py::test_deploy_session_session_start_absent_when_hb_disabled` | `session_start` written when heartbeat disabled (e.g. `1781893998.325463 is not None`) |
+
+**Family 2: core layering invariant (1 failure).**
+
+| Test | Failure |
+|---|---|
+| `tests/test_core_invariant.py::test_no_adapter_imports_in_core` | `src/kinoforge/core/config.py:1134-1135` self-registers `import kinoforge.providers.runpod` + `import kinoforge.providers.skypilot` at module load — violates `core/` cannot import `providers/` |
+
+**Related but orthogonal:** the FileLock hang in `src/kinoforge/stores/local_lock.py`
+caused Plan A's harvest to `--ignore=tests/core/test_orchestrator.py
+--ignore=tests/core/test_batch_generate.py` (lock held past
+`_make_premade_instance` teardown blocks the next call with `timeout_s=None`).
+The 6 `FirstTickTimeout` failures above are downstream of either the heartbeat
+regression OR this lock contention — investigate both vectors.
+
+Last green CI: `a5ee765` (~14h ago). 30+ commits since spanning the cfg-validation
+merge (`70bcda3`), doctor-smoke xfail cleanup (`d8e5941`), and the thread-leak work
+(`d38d565..1d83d1d`).
+
+**Plan B written 2026-06-19** at `docs/superpowers/plans/2026-06-19-pytest-thread-leak-fix-policy-plan-b.md`
+(commit `c5399e4`) — 2 tasks: fix `kinoforge-pool-0_0` ThreadPoolExecutor leaker
++ flip L1 WARN→FAIL. Resume via `/superpowers-extended-cc:executing-plans
+docs/superpowers/plans/2026-06-19-pytest-thread-leak-fix-policy-plan-b.md`
+after CI red is addressed (or in parallel — Plan B is orthogonal to the CI failures).
+
+---
+
+**Pytest thread-leak FIX policy Plan A SHIPPED 2026-06-19 (autonomous, pushed).**
+Plan `docs/superpowers/plans/2026-06-19-pytest-thread-leak-fix-policy-plan-a.md`
+landed on `main` in 4 commits + 2 doc commits:
+- `d38d565` — spec (3-layer defense)
+- `b13b201` — plan
+- `3508835` — Task 1: `managed_thread` fixture + 4 unit tests
+- `ec12d0f` — Task 2: L1 `pytest_runtest_makereport` hookwrapper in WARN mode + 8 unit tests
+- `45d7e4d` — Task 3: shared subprocess helper + L1 e2e smoke
+- `1d83d1d` — Task 4: harvest run, frozen inventory doc
+
+Harvest result: **ONE leaker** — `kinoforge-pool-0_0` (non-daemon), 1845 distinct
+test nodeids (5532 raw lines). Source: `src/kinoforge/core/pool.py:211-214`
+ThreadPoolExecutor workers default to non-daemon on Python 3.13. Plan B trivially
+scoped to that single fix + WARN→FAIL flip.
+
+---
+
 **Pytest thread-leak diagnostic (layered) SHIPPED 2026-06-19 (autonomous).**
 Plan `docs/superpowers/plans/2026-06-19-pytest-thread-leak-diagnostic.md`
 landed on `main` in two commits:
