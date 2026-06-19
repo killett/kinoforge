@@ -91,3 +91,7 @@ tools/_snapshots/
 # Local-run output of the post-session thread dump (tests/conftest.py
 # pytest_sessionfinish hook). Diagnostics only — never committed.
 tests/_post_session_dump.txt
+
+# Local-run output of the L1 thread-leak policy hook in WARN mode
+# (tests/conftest.py pytest_runtest_makereport). Raw harvest — never committed.
+tests/_l1_leakers_inventory.txt

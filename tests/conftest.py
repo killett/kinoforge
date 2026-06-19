@@ -6,6 +6,7 @@ Provides ``http_server``: a Range-aware loopback HTTP server for downloader test
 from __future__ import annotations
 
 import re
+import sys
 import tempfile
 import threading
 from collections.abc import Callable, Generator, Iterator, Mapping
@@ -413,6 +414,108 @@ def managed_thread() -> Iterator[_ManagedThreadRegistrar]:
                 f"did not join within 2.0s: {names}",
                 pytrace=False,
             )
+
+
+# ---------------------------------------------------------------------------
+# L1 thread-leak policy (spec
+# docs/superpowers/specs/2026-06-19-pytest-thread-leak-fix-policy-design.md).
+#
+# Per-test enforcement. Fires at pytest_runtest_makereport(when="teardown")
+# AFTER fixture finalizers have run, so managed_thread-registered threads
+# have already been joined and only unregistered leakers remain. Cross-phase
+# silence-on-already-failed is implemented via the call-phase stash hop.
+# ---------------------------------------------------------------------------
+
+
+_KNOWN_PYTEST_THREADS: frozenset[str] = frozenset({"MainThread", "execnetMain"})
+
+# WARN: append one line per (test, leaker) to tests/_l1_leakers_inventory.txt;
+#       leave the test outcome unchanged. Used during Phase 2 harvest.
+# FAIL: flip the teardown-phase report's outcome to failed; set longrepr with
+#       the leaker inventory + fix recipe.
+_L1_MODE: Literal["warn", "fail"] = "warn"
+
+_L1_CALL_REPORT_KEY: pytest.StashKey[pytest.TestReport] = pytest.StashKey()
+
+
+def _l1_collect_leakers() -> list[threading.Thread]:
+    """Enumerate non-daemon non-main non-known threads currently alive."""
+    main = threading.main_thread()
+    return [
+        t
+        for t in threading.enumerate()
+        if t is not main
+        and not t.daemon
+        and t.is_alive()
+        and t.name not in _KNOWN_PYTEST_THREADS
+    ]
+
+
+def _l1_append_warn(nodeid: str, leakers: list[threading.Thread]) -> None:
+    """Append one tab-separated line per leaker to the inventory file.
+
+    Format pinned for downstream Phase 2 sort+uniq grep:
+        <nodeid>\\tname=<thread name>\\tdaemon=<bool>\\tident=<int>\\n
+    """
+    inventory = Path("tests/_l1_leakers_inventory.txt")
+    lines = [
+        f"{nodeid}\tname={t.name}\tdaemon={t.daemon}\tident={t.ident}\n"
+        for t in leakers
+    ]
+    try:
+        inventory.parent.mkdir(parents=True, exist_ok=True)
+        with inventory.open("a", encoding="utf-8") as fp:
+            fp.writelines(lines)
+    except OSError as exc:
+        sys.stderr.write(f"L1 inventory write failed: {exc}\n")
+
+
+def _l1_build_longrepr(nodeid: str, leakers: list[threading.Thread]) -> str:
+    """Compose the FAIL-mode longrepr text."""
+    lines = "\n".join(
+        f"  • name={t.name!r} ident={t.ident} daemon={t.daemon} alive={t.is_alive()}"
+        for t in leakers
+    )
+    return (
+        f"L1 thread-leak policy: test {nodeid!r} exited with "
+        f"{len(leakers)} non-daemon non-main non-managed thread(s) still alive.\n"
+        f"{lines}\n"
+        f"Fix: spawn via `managed_thread.spawn(target, name=...)` or pass "
+        f"`daemon=True`. See "
+        f"docs/superpowers/specs/2026-06-19-pytest-thread-leak-fix-policy-design.md."
+    )
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_makereport(item, call):  # noqa: ANN001
+    """L1 per-test enforcement; see module-level block comment for contract."""
+    outcome = yield
+    if call.when == "call":
+        # Stash the call-phase report so the teardown pass can cross-reference
+        # it for silent-on-already-failed semantics. No mutation here.
+        item.stash[_L1_CALL_REPORT_KEY] = outcome.get_result()
+        return
+    if call.when != "teardown":
+        return  # setup phase is fully no-op
+
+    teardown_rep = outcome.get_result()
+    if teardown_rep.outcome == "failed":
+        return  # managed_thread fixture already failed loudly
+    call_rep = item.stash.get(_L1_CALL_REPORT_KEY, None)
+    if call_rep is not None and call_rep.outcome == "failed":
+        return  # genuine assert failure surfaces first
+
+    leakers = _l1_collect_leakers()
+    if not leakers:
+        return
+
+    if _L1_MODE == "warn":
+        _l1_append_warn(item.nodeid, leakers)
+        return
+
+    # _L1_MODE == "fail"
+    teardown_rep.outcome = "failed"
+    teardown_rep.longrepr = _l1_build_longrepr(item.nodeid, leakers)
 
 
 # ---------------------------------------------------------------------------
