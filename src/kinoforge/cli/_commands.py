@@ -2227,6 +2227,50 @@ def _cmd_sweeper_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+def _cmd_doctor(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Run the full cfg validation Check Registry and print a report.
+
+    Bypasses ``load_config``'s STATIC pass via ``_parse_cfg_raw`` so the
+    report surfaces every failing row instead of aborting at parse
+    time. Exit code = number of ERRORs (0 on a clean cfg). NETWORK and
+    PREFLIGHT categories DO run here.
+    """
+    import kinoforge.providers.runpod  # noqa: F401 — self-register RunPod check
+    import kinoforge.providers.skypilot  # noqa: F401 — self-register SkyPilot check
+    import kinoforge.validation.checks  # noqa: F401 — self-register built-ins
+    from kinoforge.core.config import _parse_cfg_raw
+    from kinoforge.core.errors import ConfigError
+    from kinoforge.validation import validate_for_doctor
+
+    cfg_path = Path(args.config)
+    try:
+        text = cfg_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        print(f"error: cfg not found: {exc}", file=sys.stderr)
+        return 1
+    try:
+        cfg = _parse_cfg_raw(text)
+    except ConfigError as exc:
+        # Pydantic parse error itself — surface as a single failing row.
+        print("doctor — cfg failed Pydantic parse, cannot run checks:")
+        print(f"  ✗ pydantic_parse: {exc}")
+        return 1
+
+    report = validate_for_doctor(cfg)
+    for r in report.results:
+        glyph = "✓" if r.passed else ("✗" if r.severity.value == "error" else "⚠")
+        print(f"{glyph} {r.name:35s} {r.message}")
+        if not r.passed and r.fix_suggestion:
+            label = "fix" if r.severity.value == "error" else "suggested"
+            print(f"  {label}: {r.fix_suggestion}")
+    if report.auto_fixes:
+        print()
+        print("auto-fixed:")
+        for af in report.auto_fixes:
+            print(f"  - {af.name}: {af.message}")
+    return len(report.errors)
+
+
 def _cmd_sweeper_metrics(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Layer W: render Prom textfile-collector target."""
     import socket
