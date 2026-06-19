@@ -81,6 +81,15 @@ compute:
     # per generation; the cap is the BudgetTracker's mid-run circuit
     # breaker, not an estimate.
     budget: 4.0
+    # REQUIRED for cross-CLI warm-reuse — without it `HeartbeatLoop`
+    # never starts, no `heartbeat_thread_tick` lands in the ledger
+    # row, and the second invocation's classify chain returns
+    # `HEARTBEAT_UNKNOWN` → conservative-on-ignorance → cold create
+    # instead of attach. Empirically caught against the sibling 1.3B
+    # cfg in commit `7b93725` (2026-06-18 Wan 1.3B smoke); applied
+    # here for symmetry so the 14B cfg ships with the same warm-reuse
+    # guarantee.
+    heartbeat_interval_s: 30
 
 spec:
   graph_file: runpod-comfyui-wan-t2v.graph.json
