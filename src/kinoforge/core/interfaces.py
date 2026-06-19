@@ -63,10 +63,16 @@ class Lifecycle:
             Operator guidance: values < 10 risk lock contention at scale.
         grace_after_session_s: Layer V — post-session warm-reuse window
             within which a sentinel-stale, pod-up entry is treated as
-            LIVE rather than ORPHAN_REAP. Default 300 (5 minutes).
+            LIVE rather than ORPHAN_REAP. Default 1800 (30 minutes).
             Prevents the reaper from racing a legitimate session start
             on a warm-reused pod whose first HeartbeatLoop tick has not
-            yet fired.
+            yet fired. Default was 300 s before 2026-06-18 when the Wan
+            14B warm-reuse smoke caught the trap: operator-typing-pace
+            (~5 min between cmd 1 finish and cmd 2 start) was crossing
+            the boundary and forcing cold create. 1800 matches typical
+            "fire two related commands while skim-reading the output"
+            cadence with headroom for follow-up `kinoforge list` /
+            `kinoforge status` interludes.
     """
 
     idle_timeout_s: float = 2 * 3600
@@ -85,7 +91,7 @@ class Lifecycle:
     restart_loop_window_s: float | None = None
     restart_loop_uptime_threshold_s: float = 90.0
     heartbeat_interval_s: float | None = None
-    grace_after_session_s: float = 300.0
+    grace_after_session_s: float = 1800.0
 
 
 @dataclass(frozen=True)
