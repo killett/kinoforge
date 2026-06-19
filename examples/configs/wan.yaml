@@ -15,10 +15,11 @@ engine:
 #   high_noise_model/diffusion_pytorch_model-{00001..00006}-of-00006.safetensors
 #   low_noise_model/diffusion_pytorch_model-{00001..00006}-of-00006.safetensors
 # The ref below points at the first high-noise shard as the
-# reachability anchor; the engine downloads the full set via the
-# per-folder safetensors.index.json. Do NOT shorten the ref to
-# bare `wan2.2_14b.safetensors` — that filename does not exist on
-# the Hub.
+# reachability anchor for cfg validation (HEAD probe). Loading the
+# full model is engine-side: configure the engine + container image
+# to fetch every shard from the same HF repo. Do NOT shorten the
+# ref to bare `wan2.2_14b.safetensors` — that filename does not
+# exist on the Hub.
 models:
   - ref: "hf:Wan-AI/Wan2.2-T2V-A14B:high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors"
     kind: base
