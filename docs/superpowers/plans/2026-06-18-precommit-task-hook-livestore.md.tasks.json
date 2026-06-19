@@ -4,41 +4,41 @@
     {
       "id": 4,
       "subject": "Task 0: Helper + tests (TDD)",
-      "status": "pending",
+      "status": "completed",
       "description": "tools/local_hooks/lib/tasks_live_query.py + tests/hooks/test_tasks_live_query.py — 5 TDD tests covering live-store read, dotfile exclusion, transcript fallback, malformed-JSON skip, --no-live-store flag.\n\n```json:metadata\n{\"files\": [\"tools/local_hooks/lib/tasks_live_query.py\", \"tests/hooks/__init__.py\", \"tests/hooks/test_tasks_live_query.py\"], \"verifyCommand\": \"pixi run -- pytest tests/hooks/test_tasks_live_query.py -v --no-header\", \"acceptanceCriteria\": [\"helper --help exits 0\", \"5 tests pass\", \"ruff+mypy clean\", \"fail-open contract holds\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 5,
       "subject": "Task 1: Refit all 5 marketplace hooks",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "tools/local_hooks/{pre-commit-check-tasks,pre-task-blockedby-enforce,post-task-complete-revalidate,post-agent-return-validate,stop-revalidate-user-gates}.sh — 5 refit hooks that shell out to tasks_live_query.py.\n\n```json:metadata\n{\"files\": [\"tools/local_hooks/pre-commit-check-tasks.sh\", \"tools/local_hooks/pre-task-blockedby-enforce.sh\", \"tools/local_hooks/post-task-complete-revalidate.sh\", \"tools/local_hooks/post-agent-return-validate.sh\", \"tools/local_hooks/stop-revalidate-user-gates.sh\"], \"verifyCommand\": \"for f in tools/local_hooks/*.sh; do bash -n \\\"$f\\\" || exit 1; done\", \"acceptanceCriteria\": [\"5 scripts with variant=local marker\", \"no inline python3 -c task parsing\", \"bash -n clean\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 6,
       "subject": "Task 2: Install script + execute install",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5],
       "description": "tools/local_hooks/install.sh + README; runs install; backs up settings.json; swaps 5 hook paths.\n\n```json:metadata\n{\"files\": [\"tools/local_hooks/install.sh\", \"tools/local_hooks/README.md\", \"/home/claudeuser/.claude/settings.json\"], \"verifyCommand\": \"bash tools/local_hooks/install.sh --dry-run && bash tools/local_hooks/install.sh\", \"acceptanceCriteria\": [\"dry-run no-op\", \"live install exits 0\", \"backup matches pre-install\", \"settings.json still valid\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 7,
       "subject": "Task 3: Smoke-verify each hook fires the local variant",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "USER-ORDERED GATE — NON-SKIPPABLE. Trigger each of 5 hooks; capture variant=local trace lines; confirm no variant=marketplace.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"tail -500 /tmp/claude-hooks/user-gate-trace.log | grep -c variant=local\", \"acceptanceCriteria\": [\"5 variant=local lines (1/hook)\", \"same-turn commit unblocked\", \"0 variant=marketplace lines\"], \"modelTier\": \"standard\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"variant=local\"], [\"no-marketplace\"]]}\n```"
     },
     {
       "id": 8,
       "subject": "Task 4: File Issue A (superpowers marketplace)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "docs/upstream-issues/2026-06-18-superpowers-transcript-lag-issue.md + gh issue create at pcvelz/superpowers.\n\n```json:metadata\n{\"files\": [\"docs/upstream-issues/2026-06-18-superpowers-transcript-lag-issue.md\"], \"verifyCommand\": \"gh issue list -R pcvelz/superpowers --author @me --search transcript --json url,title\", \"acceptanceCriteria\": [\"body file exists\", \"all 8 sections present\", \"issue filed\", \"URL captured\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 9,
       "subject": "Task 5: File Issue B (anthropics/claude-code feature request)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8],
       "description": "docs/upstream-issues/2026-06-18-anthropics-tasks-cli-feature-request.md + gh issue create at anthropics/claude-code, referencing Issue A URL.\n\n```json:metadata\n{\"files\": [\"docs/upstream-issues/2026-06-18-anthropics-tasks-cli-feature-request.md\"], \"verifyCommand\": \"gh issue list -R anthropics/claude-code --author @me --search 'task list' --json url,title\", \"acceptanceCriteria\": [\"body exists\", \"5 sections present\", \"issue filed\", \"URL captured\", \"Issue A URL referenced\"], \"modelTier\": \"standard\"}\n```"
     },
