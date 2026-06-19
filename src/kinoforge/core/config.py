@@ -1140,12 +1140,18 @@ def load_config(text_or_path: str | Path) -> Config:
     return report.cfg if isinstance(report.cfg, Config) else cfg
 
 
-def _parse_cfg_raw(text: str) -> Config:
+def _parse_cfg_raw(text: str, *, yaml_path: Path | None = None) -> Config:
     """Parse the cfg via Pydantic only, without the Check Registry pass.
 
-    Used by `kinoforge doctor` so the full validation report can be
+    Used by ``kinoforge doctor`` so the full validation report can be
     assembled instead of raising on the first STATIC error. Production
     callers should use :func:`load_config` instead.
+
+    Args:
+        text: YAML text body.
+        yaml_path: Optional resolved path the YAML came from; needed so
+            ``spec.graph_file`` relative references resolve against the
+            cfg's directory rather than ``<string>``.
     """
     import pydantic
 
@@ -1155,7 +1161,7 @@ def _parse_cfg_raw(text: str) -> Config:
         raise ConfigError(f"YAML parse error: {exc}") from exc
     if not isinstance(raw, dict):
         raise ConfigError("config must be a YAML mapping at the top level")
-    _resolve_spec_graph_file(raw, Path.cwd() / "<string>")
+    _resolve_spec_graph_file(raw, yaml_path or Path.cwd() / "<string>")
     try:
         return Config.model_validate(raw)
     except pydantic.ValidationError as exc:
