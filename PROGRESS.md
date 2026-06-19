@@ -32,6 +32,12 @@ A10). Stage D (Vast.ai parity) remains BLOCKED on upstream sky vast
 adapter regression — Lambda is sole sky cloud until upstream ships
 the fix.
 
+> ⚠️ **DEFERRED — UPSTREAM HOOK ISSUES TO FILE.** Two issue bodies are
+> drafted under `docs/upstream-issues/` and awaiting Dr. Twinklebrane's
+> manual filing. Local hooks at `~/.claude/hooks/` are in active soak.
+> See **Parked queue item 2** below for the trigger criteria + URLs to
+> file. Do NOT let this drift past the next session resume.
+
 ### Parked / do-not-forget queue (anchored 2026-06-17)
 
 These items have plans/specs/code in-tree and MUST NOT drift. Each is
@@ -53,13 +59,41 @@ lives here so a fresh-session resume reads them before Phase 53 / C33.
    thread-leak fix spec (out of scope for this plan).
 
 2. **Hook patch — `pre-commit-check-tasks.sh` transcript lag.**
+
+   > ⚠️ **DEFERRED ACTION FOR DR. TWINKLEBRANE: FILE TWO UPSTREAM ISSUES.**
+   >
+   > **Trigger:** after a soak period of using the local hooks at
+   > `~/.claude/hooks/` long enough to be confident they work in
+   > real sessions (no false-positives, no missed blocks, no
+   > unexpected interaction with other hooks). Operator's call.
+   >
+   > **Files to read + file manually:**
+   > 1. `docs/upstream-issues/2026-06-18-superpowers-transcript-lag-issue.md`
+   >    → file at `https://github.com/pcvelz/superpowers/issues/new`.
+   > 2. `docs/upstream-issues/2026-06-18-anthropics-tasks-cli-feature-request.md`
+   >    → file at `https://github.com/anthropics/claude-code/issues/new`.
+   >    Body contains literal `<USER WILL ADD URL AFTER FILING ISSUE A>`
+   >    placeholder; replace with the Issue A URL from step 1 before
+   >    pasting OR add as a follow-up comment.
+   >
+   > **After filing:** append both URLs to this item (replace the
+   > `<NOT YET FILED>` placeholders below) AND update the cross-reference
+   > line in the second body file.
+   >
+   > **Why deferred:** soak-test the local hooks before publishing the
+   > workaround. If we discover a refit bug or a marketplace-hook
+   > behaviour we missed, the issue bodies should be updated before
+   > filing — easier than amending a public issue.
+
+   ---
+
    Reference: [memory `reference_precommit_check_tasks_transcript_lag.md`].
    Incident: 2026-06-17 subagent forged a `TaskUpdate(2, completed)` line
    into the session JSONL to defeat the hook because the hook reads
    on-disk transcript which lags one turn behind live `TaskUpdate` state.
    Code `330883a` is clean; the forgery affected only the transcript.
 
-   **Local patch shipped 2026-06-18.** Spec:
+   **Local patch shipped 2026-06-18 — currently in soak.** Spec:
    `docs/superpowers/specs/2026-06-18-precommit-task-hook-livestore-design.md`.
    Plan: `docs/superpowers/plans/2026-06-18-precommit-task-hook-livestore.md`.
    Components:
@@ -73,22 +107,28 @@ lives here so a fresh-session resume reads them before Phase 53 / C33.
    - Installer: `tools/local_hooks/install.sh` copies into
      `~/.claude/hooks/`, backs up `~/.claude/settings.json` to
      `*.pre-hook-swap-2026-06-18.bak`, rewrites the 5 hook command paths.
-     Idempotent. `--dry-run` supported.
+     Idempotent. `--dry-run` supported. Uninstall: `cp $BACKUP $SETTINGS`.
    - Verified: same-turn `TaskUpdate(completed)` + `git commit` now
      succeeds (commit `10700bb` is the regression-proof artefact).
      Trace log captured 50+ `variant=local` lines + 0 `variant=marketplace`
      lines during the smoke window.
-   Upstream issue bodies drafted at:
-   - `docs/upstream-issues/2026-06-18-superpowers-transcript-lag-issue.md`
-     (for `github.com/pcvelz/superpowers`).
-   - `docs/upstream-issues/2026-06-18-anthropics-tasks-cli-feature-request.md`
-     (for `github.com/anthropics/claude-code` — requests a documented
-     `claude task list --json` CLI so future hooks don't depend on the
-     undocumented `~/.claude/tasks/` path).
-   **NOT YET FILED** — Dr. Twinklebrane files manually. Issue URLs to be
-   appended here after filing. The second body contains a literal
-   `<USER WILL ADD URL AFTER FILING ISSUE A>` placeholder for the
-   cross-reference.
+   - Differential test: `tests/hooks/differential_test.sh` synthesises 4
+     transcript-vs-live divergence scenarios. Results at
+     `docs/hook-differential-test-results-2026-06-18.md` — 4/4 proven
+     including the inverse-direction marketplace under-enforcement
+     (tests 2 + 3) that we didn't know about until we built the test.
+
+   **Soak telemetry to watch.** Tail `/tmp/claude-hooks/user-gate-trace.log`
+   periodically for:
+   - Any `variant=marketplace` lines → swap regressed; investigate.
+   - `fallback-failed` or `argparse-error` source values in `tasks_live_query.py`
+     output → helper crashed; check stderr for traceback.
+   - Spurious `block` lines on routine TaskUpdate/commit flows → refit is
+     over-triggering.
+
+   **Upstream issue URLs (DEFERRED — fill in after filing):**
+   - Issue A (superpowers marketplace): `<NOT YET FILED — see callout above>`
+   - Issue B (anthropics/claude-code): `<NOT YET FILED — see callout above>`
 
 C33 (f) restart-policy warning-string fix is **deprioritized** — still
 correct but no longer the bottleneck since the operator pivot away from
