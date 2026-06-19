@@ -1,0 +1,162 @@
+{
+  "_meta": {
+    "source_repo": "https://github.com/kijai/ComfyUI-WanVideoWrapper",
+    "source_sha": "088128b224242e110d3906c6750e9a3a348a659b",
+    "source_path": "derived from example_workflows/wanvideo_2_2_5B_T2V_controlnet_example.json",
+    "captured_at_local": "2026-06-19T15:00-07:00",
+    "format": "api",
+    "converter": "hand-authored T2V API form for Wan 2.2 5B FastWan: stripped controlnet path (WanVideoControlnet/Loader, MiDaS-DepthMapPreprocessor, VHS_LoadVideo, ImageResizeKJv2 x2, INTConstant x3) and experimental settings (WanVideoExperimentalArgs, WanVideoSLG, WanVideoEasyCache, WanVideoEnhanceAVideo, WanVideoTorchCompileSettings). Node 22 model -> Wan2_2-TI2V-5B-FastWanFullAttn_bf16.safetensors. Node 38 VAE -> Wan2_2_VAE_bf16.safetensors. Node 27 scheduler -> flowmatch_pusa (FastWan distillation contract). base_precision='bf16' (avoid fp16_fast since Ampere A5000/A3090 fallbacks lack CUDA cap >= 8.9). attention_mode='sdpa' (no sageattention dep). Skipped BlockSwap nodes — 5B fits in 16 GB with offload."
+  },
+  "11": {
+    "inputs": {
+      "model_name": "umt5-xxl-enc-fp8_e4m3fn.safetensors",
+      "precision": "bf16",
+      "load_device": "offload_device",
+      "quantization": "disabled"
+    },
+    "class_type": "LoadWanVideoT5TextEncoder",
+    "_meta": {
+      "title": "WanVideo T5 Text Encoder Loader"
+    }
+  },
+  "16": {
+    "inputs": {
+      "positive_prompt": "an old man is stroking his beard thoughtfully",
+      "negative_prompt": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards",
+      "force_offload": true,
+      "use_disk_cache": false,
+      "device": "gpu",
+      "t5": [
+        "11",
+        0
+      ],
+      "model_to_offload": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "WanVideoTextEncode",
+    "_meta": {
+      "title": "WanVideo TextEncode"
+    }
+  },
+  "22": {
+    "inputs": {
+      "model": "Wan2_2-TI2V-5B-FastWanFullAttn_bf16.safetensors",
+      "base_precision": "bf16",
+      "quantization": "disabled",
+      "load_device": "offload_device",
+      "attention_mode": "sdpa",
+      "vram_management_args": null,
+      "extra_model": null,
+      "fantasytalking_model": null,
+      "multitalk_model": null,
+      "fantasyportrait_model": null,
+      "rms_norm_function": "default"
+    },
+    "class_type": "WanVideoModelLoader",
+    "_meta": {
+      "title": "WanVideo Model Loader (5B FastWan)"
+    }
+  },
+  "27": {
+    "inputs": {
+      "steps": 20,
+      "cfg": 5.0,
+      "shift": 8.0,
+      "seed": 1057359483639287,
+      "force_offload": true,
+      "scheduler": "flowmatch_pusa",
+      "riflex_freq_index": 0,
+      "denoise_strength": 1,
+      "batched_cfg": "",
+      "rope_function": "comfy",
+      "start_step": 0,
+      "end_step": -1,
+      "add_noise_to_samples": false,
+      "model": [
+        "22",
+        0
+      ],
+      "image_embeds": [
+        "80",
+        0
+      ],
+      "text_embeds": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "WanVideoSampler",
+    "_meta": {
+      "title": "WanVideo Sampler"
+    }
+  },
+  "28": {
+    "inputs": {
+      "enable_vae_tiling": false,
+      "tile_x": 272,
+      "tile_y": 272,
+      "tile_stride_x": 144,
+      "tile_stride_y": 128,
+      "normalization": "default",
+      "vae": [
+        "38",
+        0
+      ],
+      "samples": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "WanVideoDecode",
+    "_meta": {
+      "title": "WanVideo Decode"
+    }
+  },
+  "30": {
+    "inputs": {
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "WanVideoWrapper_22_5B_T2V",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "28",
+        0
+      ],
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine"
+    }
+  },
+  "38": {
+    "inputs": {
+      "model_name": "Wan2_2_VAE_bf16.safetensors",
+      "precision": "bf16",
+      "use_cpu_cache": false,
+      "verbose": false
+    },
+    "class_type": "WanVideoVAELoader",
+    "_meta": {
+      "title": "WanVideo VAE Loader (2.2)"
+    }
+  },
+  "80": {
+    "inputs": {
+      "width": 480,
+      "height": 480,
+      "num_frames": 81
+    },
+    "class_type": "WanVideoEmptyEmbeds",
+    "_meta": {
+      "title": "WanVideo Empty Embeds (text-only image_embeds)"
+    }
+  }
+}
