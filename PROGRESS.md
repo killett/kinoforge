@@ -72,19 +72,19 @@ These items have plans/specs/code in-tree and MUST NOT drift. Each is
 parked behind a higher-priority workstream but the durability anchor
 lives here so a fresh-session resume reads them before Phase 53 / C33.
 
-1. **Pytest post-session hang — diagnostic Task 3 (CI validation).**
+1. **Pytest post-session hang — diagnostic Task 3 (CI validation). CLOSED 2026-06-18.**
    Plan: `docs/superpowers/plans/2026-06-17-pytest-post-session-hang-diagnostic.md` §Task 2.
-   Status: code shipped (`976e09d` hook, `330883a` review fixes, `49ae731`
-   test hygiene). Diagnostic ALREADY fired locally and named the leaker:
-   `kinoforge-pool-0_0` thread stuck in `time.sleep(60.0)` at
-   `tests/core/test_pool_cancel.py:60` via `src/kinoforge/core/pool.py:338`,
-   `daemon=False` → blocks `threading._shutdown()` past pytest's summary line.
-   CI side: push `origin/main` (currently ~21 commits ahead), watch the
-   ubuntu-latest run, grep `=== POST-SESSION THREAD DUMP ===` in the job
-   log, confirm banner names the same leaker. ~10 min wall, no live spend.
-   Closeout: append a 3-line note to PROGRESS naming the CI-confirmed
-   leaker + run ID, then hand off to a fresh `/brainstorming` for the
-   thread-leak fix spec (out of scope for this plan).
+   Code shipped (`976e09d` hook, `330883a` review fixes, `49ae731` test hygiene).
+   CI banner CONFIRMED on ubuntu-latest run **27801123512** (sha `9a6b9a3`,
+   `pid=2490 exitstatus=0 n_threads=7`) — same leaker as local diagnostic:
+   `kinoforge-pool-0_0` non-daemon thread stuck in `time.sleep(60.0)` at
+   `tests/core/test_pool_cancel.py:60` via `src/kinoforge/core/pool.py:338`.
+   CI also surfaced a secondary blocker `kinoforge-pool-shutdown-*` daemon
+   thread blocked in `slot.executor.shutdown(wait=True)` at `pool.py:421`
+   waiting on the same non-daemon worker. **Handoff:** fresh
+   `/brainstorming` for the thread-leak fix spec (out of scope for the
+   diagnostic plan) — proposal entry-point is `src/kinoforge/core/pool.py`
+   submit/cancel/shutdown contract.
 
 2. **Hook patch — `pre-commit-check-tasks.sh` transcript lag.**
 
