@@ -335,11 +335,8 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001
         exitstatus: The integer exit status pytest will return. Echoed in the
             banner so a green vs. red session is distinguishable in CI logs.
     """
-    import io  # noqa: PLC0415
-    import os  # noqa: PLC0415
     import sys  # noqa: PLC0415
     import threading  # noqa: PLC0415
-    import traceback  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
     threads = threading.enumerate()
@@ -353,35 +350,12 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ANN001
         )
         return
 
-    main_ident = threading.main_thread().ident
-    frames = sys._current_frames()
+    # Delegate dump-string construction to the pure helper so the format
+    # can be unit-tested without spawning pytest. The fast-path filter
+    # above (non_daemon_extras) handles the no-leak case.
+    from tests._thread_dump_helper import _build_dump  # noqa: PLC0415
 
-    buf = io.StringIO()
-    buf.write(
-        f"=== POST-SESSION THREAD DUMP === pid={os.getpid()} "
-        f"exitstatus={exitstatus} n_threads={len(threads)}\n"
-    )
-    for t in threads:
-        marker = " (main)" if t.ident == main_ident else ""
-        buf.write(
-            f"  thread name={t.name!r} ident={t.ident} "
-            f"daemon={t.daemon} alive={t.is_alive()}{marker}\n"
-        )
-        frame = frames.get(t.ident) if t.ident is not None else None
-        if frame is None:
-            buf.write("    <no Python frame — thread exited or in C extension>\n")
-            continue
-        for line in traceback.format_stack(frame):
-            buf.write("    " + line.rstrip() + "\n")
-
-    try:
-        fds = sorted(int(e) for e in os.listdir("/proc/self/fd/"))
-        buf.write(f"  open fds: {len(fds)} → {fds}\n")
-    except OSError:
-        # macOS / non-linux — no /proc. Skip the FD inventory.
-        pass
-
-    payload = buf.getvalue()
+    payload = _build_dump(threads, exitstatus)
     sys.stderr.write(payload)
     try:
         Path("tests/_post_session_dump.txt").write_text(payload, encoding="utf-8")
