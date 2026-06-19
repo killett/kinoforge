@@ -210,15 +210,60 @@ def test_zero_base_models_rejected():
         load_config(bad)
 
 
-def test_multiple_base_models_rejected():
+def test_three_or_more_base_models_rejected():
     # Bug this catches: silently using the LAST base entry — the CapabilityKey is
     # then a function of declaration order in a way the user can't see.
+    # 1 base = single-diffusion (Wan 2.1), 2 bases = dual-diffusion (Wan 2.2 14B
+    # HIGH + LOW). 3+ has no architectural meaning in any model we ship; reject.
     bad = WAN.replace(
         '  - {ref: "civitai:1234@5678", kind: lora, target: loras}',
-        '  - {ref: "hf:other/base", kind: base, target: diffusion_models}',
+        '  - {ref: "hf:other/base-A", kind: base, target: diffusion_models}\n'
+        '  - {ref: "hf:other/base-B", kind: base, target: diffusion_models}',
     )
-    with pytest.raises(ConfigError, match="base"):
+    with pytest.raises(ConfigError, match="1 or 2 entries with kind: base"):
         load_config(bad)
+
+
+def test_dual_base_models_accepted_for_dual_diffusion():
+    # Bug this catches: rejecting Wan 2.2 14B HIGH + LOW pair at load time
+    # because the validator naively required exactly one base. Dual-diffusion
+    # architectures need two base entries pointing at the same target.
+    good = WAN.replace(
+        '  - {ref: "civitai:1234@5678", kind: lora, target: loras}',
+        '  - {ref: "hf:Kijai/W:HIGH.safetensors", kind: base, target: diffusion_models}',
+    )
+    cfg = load_config(good)
+    base_refs = [m.ref for m in cfg.models if m.kind == "base"]
+    assert len(base_refs) == 2, base_refs
+
+
+def test_capability_key_concat_dual_bases_sorted_order_invariant():
+    # Bug this catches: declaration-order-dependent capability key — if the
+    # user reorders HIGH/LOW lines they'd get a different key and break warm
+    # reuse against an already-running pod. Sorted concat fixes the order.
+    yaml_high_first = WAN.replace(
+        '  - {ref: "hf:Wan-AI/Wan2.2-T2V-A14B", kind: base, target: diffusion_models}\n'
+        '  - {ref: "civitai:1234@5678", kind: lora, target: loras}',
+        '  - {ref: "hf:Kijai/W:HIGH.safetensors", kind: base, target: diffusion_models}\n'
+        '  - {ref: "hf:Kijai/W:LOW.safetensors", kind: base, target: diffusion_models}',
+    )
+    yaml_low_first = WAN.replace(
+        '  - {ref: "hf:Wan-AI/Wan2.2-T2V-A14B", kind: base, target: diffusion_models}\n'
+        '  - {ref: "civitai:1234@5678", kind: lora, target: loras}',
+        '  - {ref: "hf:Kijai/W:LOW.safetensors", kind: base, target: diffusion_models}\n'
+        '  - {ref: "hf:Kijai/W:HIGH.safetensors", kind: base, target: diffusion_models}',
+    )
+    key_a = load_config(yaml_high_first).capability_key()
+    key_b = load_config(yaml_low_first).capability_key()
+    assert key_a == key_b
+    # Sanity: dual-base keys differ from a single-base key on either ref alone.
+    yaml_high_only = WAN.replace(
+        '  - {ref: "hf:Wan-AI/Wan2.2-T2V-A14B", kind: base, target: diffusion_models}\n'
+        '  - {ref: "civitai:1234@5678", kind: lora, target: loras}',
+        '  - {ref: "hf:Kijai/W:HIGH.safetensors", kind: base, target: diffusion_models}',
+    )
+    key_single = load_config(yaml_high_only).capability_key()
+    assert key_a != key_single
 
 
 def test_splitter_defaults_to_heuristic_when_block_absent():

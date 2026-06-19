@@ -865,16 +865,19 @@ class Config(BaseModel):
                     f"allowed targets for {entry.kind!r}: {sorted(allowed)}"
                 )
 
-        # Exactly one base model — the CapabilityKey is undefined otherwise, and
-        # silently picking the last would be a footgun the user can't see.
+        # Base count: 1 (single-diffusion, e.g. Wan 2.1) or 2 (dual-diffusion,
+        # e.g. Wan 2.2 14B HIGH + LOW stages). CapabilityKey concatenates both
+        # refs in sorted order when 2 are present (see capability_key()).
         base_count = sum(1 for e in self.models if e.kind == "base")
         if base_count == 0:
             raise ValueError(
-                "models: must contain exactly one entry with kind: base (found 0)"
+                "models: must contain at least one entry with kind: base (found 0)"
             )
-        if base_count > 1:
+        if base_count > 2:
             raise ValueError(
-                f"models: must contain exactly one entry with kind: base (found {base_count})"
+                f"models: must contain 1 or 2 entries with kind: base "
+                f"(found {base_count}); dual-diffusion architectures use 2, "
+                f"single-diffusion uses 1"
             )
 
         # Validate lifecycle timing constraints
@@ -907,7 +910,10 @@ class Config(BaseModel):
         """Derive a CapabilityKey from the config for cache lookup.
 
         VAE entries are excluded from the key (they don't affect generation capability).
-        LoRA entries are included in declaration order.
+        LoRA entries are included in declaration order. When two ``kind: base``
+        entries are present (dual-diffusion, e.g. Wan 2.2 14B HIGH + LOW),
+        their refs are concatenated in sorted order with a ``|`` separator
+        so the fingerprint is stable regardless of declaration order.
 
         Returns:
             A CapabilityKey with base_model, loras, engine, and precision.
@@ -915,20 +921,23 @@ class Config(BaseModel):
         Raises:
             ConfigError: If no base model is found in the models list.
         """
-        base_ref: str | None = None
+        base_refs: list[str] = []
         loras: list[str] = []
         for entry in self.models:
             if entry.kind == "base":
-                base_ref = entry.ref
+                base_refs.append(entry.ref)
             elif entry.kind == "lora":
                 loras.append(entry.ref)
             # vae: skip entirely
 
-        if base_ref is None:
+        if not base_refs:
             raise ConfigError("no model entry with kind: base found in config")
 
+        base_model = (
+            base_refs[0] if len(base_refs) == 1 else "|".join(sorted(base_refs))
+        )
         return CapabilityKey(
-            base_model=base_ref,
+            base_model=base_model,
             loras=tuple(loras),
             engine=self.engine.kind,
             precision=self.engine.precision,
