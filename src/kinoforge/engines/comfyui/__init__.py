@@ -943,6 +943,31 @@ class ComfyUIBackend(GenerationBackend):
                 queue_pos,
                 exec_node,
             )
+            # Phase 54: when ComfyUI reports status=error, surface the
+            # actual error payload from /history once so the operator
+            # doesn't have to manually curl the dying pod. Logged exactly
+            # at the transition into "error" — subsequent error polls
+            # stay quiet to avoid log spam.
+            if last_status == "error" and not getattr(
+                self, "_logged_error_once", False
+            ):
+                self._logged_error_once = True
+                entry = data.get(job_id, data)
+                status_block = (
+                    entry.get("status", {}) if isinstance(entry, dict) else {}
+                )
+                messages = (
+                    status_block.get("messages", [])
+                    if isinstance(status_block, dict)
+                    else []
+                )
+                _log.error(
+                    "[comfyui.result] status=error from /history job=%s elapsed=%.1fs "
+                    "messages=%s",
+                    job_id,
+                    elapsed,
+                    messages,
+                )
             # Envelope shape varies: ComfyUI's real ``/history/{id}`` is
             # keyed by ``prompt_id`` at the top with ``{"outputs": ...}``
             # one level down; some test fixtures (and the timeout/log
