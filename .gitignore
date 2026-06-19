@@ -1,5 +1,6 @@
 .claude-project-id
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 .worktrees/
 .sandbox_settings.json
 
