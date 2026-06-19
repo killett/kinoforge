@@ -67,6 +67,73 @@ the fix.
 > See **Parked queue item 2** below for the trigger criteria + URLs to
 > file. Do NOT let this drift past the next session resume.
 
+### Elevated priority — thread-leak fix brainstorm (`core/pool.py`)
+
+**Why this jumped the queue (compelling practical reasons, anchored
+2026-06-18 from live evidence):**
+
+1. **TDD friction observed this session.** The full `pixi run test`
+   regression suite finished its test session in 89 s (`2542 passed,
+   1 failed, 57 skipped, 6 xfailed`) but then hung for ~24 additional
+   minutes waiting for the leaked non-daemon threads to exit. Only
+   SIGTERM recovered the prompt, which also discarded the
+   end-of-session diagnostic output. The current local workaround is
+   cherry-picking subsets that exclude `tests/core/test_pool_cancel.py`
+   — REACTIVE (catches only the known leaker, misses any new one) and
+   only viable because the leaker is named. Every TDD cycle that wants
+   full-suite confidence either takes 25 + min wall, terminates
+   early, or relies on subset discipline that may silently exclude a
+   newly-introduced regression in `core/pool.py`-adjacent code.
+
+2. **Confidence erosion compounds.** Subset runs miss the "did I
+   break something far away" guarantee a full suite provides. The
+   longer the leaker stays unfixed, the more contributors learn to
+   skip the full suite locally, the more bugs in distant modules
+   land between green-subset runs and CI catching them.
+
+3. **Plausible production risk path.** `src/kinoforge/core/pool.py`
+   is the production submit / cancel / shutdown contract used by
+   `kinoforge generate`'s concurrent-jobs path. The leaker thread
+   (`kinoforge-pool-0_0`, non-daemon, stuck in
+   `time.sleep(60.0)` at `tests/core/test_pool_cancel.py:60` via
+   `src/kinoforge/core/pool.py:338`) exposes the same shutdown
+   contract used in real generate flows. If a production cancel /
+   shutdown path hits the same shape — non-daemon worker waiting on
+   `slot.executor.shutdown(wait=True)` at `pool.py:421` while the
+   worker itself is wedged — the kinoforge CLI process would fail to
+   exit cleanly AFTER the artifact has been written. Operator's
+   natural Ctrl-C would orphan the pod (ledger entry persists, no
+   clean `destroy_instance` on exit, RunPod / Lambda spend bleeds
+   until selfterm or autostop fires). This path has not yet been
+   reproduced in production but the bug shape is the same.
+
+4. **Compounding maintenance cost.** Every new test against the
+   pool's contract risks landing the same leak. Reluctance to touch
+   `core/pool.py` entrenches the bug and slows down adjacent feature
+   work (e.g. C26 stall classify, B1 sweeper).
+
+5. **Investigation is already done — only the brainstorm + fix
+   remain.** The CI banner on run `27801123512` named both threads
+   (`kinoforge-pool-0_0` non-daemon and `kinoforge-pool-shutdown-*`
+   daemon blocked in `slot.executor.shutdown(wait=True)` at
+   `pool.py:421`). No additional diagnostic work needed — the
+   brainstorm just designs the submit / cancel / shutdown contract
+   fix from a known repro.
+
+6. **Cross-cutting unblock.** Fixing this also clears the path for
+   ambient pytest hygiene improvements (`pytest-timeout` dev dep,
+   per-test timeout default) that would proactively catch the NEXT
+   leaker without requiring a fresh diagnostic round.
+
+**Concrete next action.** Fresh `/brainstorming` session targeting
+the `core/pool.py` submit / cancel / shutdown contract. Entry-point
+artefacts: `src/kinoforge/core/pool.py` (line 338 submit path,
+line 421 shutdown(wait=True) join), `tests/core/test_pool_cancel.py`
+(the repro fixture), and the CI banner output at run
+[27801123512](https://github.com/killett/kinoforge/actions/runs/27801123512)
+(`pid=2490 exitstatus=0 n_threads=7`). Out of scope: any change to
+the diagnostic hook (closed via Parked queue item 1).
+
 ### Parked / do-not-forget queue (anchored 2026-06-17)
 
 These items have plans/specs/code in-tree and MUST NOT drift. Each is
