@@ -183,7 +183,6 @@ def test_blocking_acquire_serializes_concurrent_calls(tmp_path: Path) -> None:
 
     def second() -> None:
         first_started.wait(timeout=5.0)
-        ledger.touch("i-serial", heartbeat_thread_tick=200.5)
         clock_local = FakeClock(start=200.0)
         with hold_until_first_tick(
             store=store,
@@ -195,6 +194,7 @@ def test_blocking_acquire_serializes_concurrent_calls(tmp_path: Path) -> None:
             clock=clock_local,
         ):
             sequence.append("second-entered")
+            ledger.touch("i-serial", heartbeat_thread_tick=200.5)
         sequence.append("second-released")
 
     t1 = threading.Thread(target=first)
