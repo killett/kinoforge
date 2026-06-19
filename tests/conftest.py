@@ -6,7 +6,6 @@ Provides ``http_server``: a Range-aware loopback HTTP server for downloader test
 from __future__ import annotations
 
 import re
-import sys
 import tempfile
 import threading
 from collections.abc import Callable, Generator, Iterator, Mapping
@@ -429,11 +428,10 @@ def managed_thread() -> Iterator[_ManagedThreadRegistrar]:
 
 _KNOWN_PYTEST_THREADS: frozenset[str] = frozenset({"MainThread", "execnetMain"})
 
-# WARN: append one line per (test, leaker) to tests/_l1_leakers_inventory.txt;
-#       leave the test outcome unchanged. Used during Phase 2 harvest.
 # FAIL: flip the teardown-phase report's outcome to failed; set longrepr with
-#       the leaker inventory + fix recipe.
-_L1_MODE: Literal["warn", "fail"] = "warn"
+#       the leaker inventory + fix recipe. The WARN-mode harvest path that
+#       wrote tests/_l1_leakers_inventory.txt is gone (Plan B Task 2 cutover).
+_L1_MODE: Literal["warn", "fail"] = "fail"
 
 _L1_CALL_REPORT_KEY: pytest.StashKey[pytest.TestReport] = pytest.StashKey()
 
@@ -449,25 +447,6 @@ def _l1_collect_leakers() -> list[threading.Thread]:
         and t.is_alive()
         and t.name not in _KNOWN_PYTEST_THREADS
     ]
-
-
-def _l1_append_warn(nodeid: str, leakers: list[threading.Thread]) -> None:
-    """Append one tab-separated line per leaker to the inventory file.
-
-    Format pinned for downstream Phase 2 sort+uniq grep:
-        <nodeid>\\tname=<thread name>\\tdaemon=<bool>\\tident=<int>\\n
-    """
-    inventory = Path("tests/_l1_leakers_inventory.txt")
-    lines = [
-        f"{nodeid}\tname={t.name}\tdaemon={t.daemon}\tident={t.ident}\n"
-        for t in leakers
-    ]
-    try:
-        inventory.parent.mkdir(parents=True, exist_ok=True)
-        with inventory.open("a", encoding="utf-8") as fp:
-            fp.writelines(lines)
-    except OSError as exc:
-        sys.stderr.write(f"L1 inventory write failed: {exc}\n")
 
 
 def _l1_build_longrepr(nodeid: str, leakers: list[threading.Thread]) -> str:
@@ -509,11 +488,6 @@ def pytest_runtest_makereport(item, call):  # noqa: ANN001
     if not leakers:
         return
 
-    if _L1_MODE == "warn":
-        _l1_append_warn(item.nodeid, leakers)
-        return
-
-    # _L1_MODE == "fail"
     teardown_rep.outcome = "failed"
     teardown_rep.longrepr = _l1_build_longrepr(item.nodeid, leakers)
 

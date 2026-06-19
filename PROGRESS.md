@@ -56,21 +56,56 @@ merge (`70bcda3`), doctor-smoke xfail cleanup (`d8e5941`), and the thread-leak w
 (commit `c5399e4`) — 2 tasks: fix `kinoforge-pool-0_0` ThreadPoolExecutor leaker
 + flip L1 WARN→FAIL.
 
-**Task 1 LANDED (autonomous).** Plan's `initializer=_mark_thread_daemon`
-mechanism did NOT work on Python 3.13 (`Thread.daemon` setter raises
-`RuntimeError("cannot set daemon status of active thread")` once the worker
-has started — initializer runs INSIDE the live worker, too late). Pivoted to
-a `_DaemonThreadPoolExecutor` subclass that overrides `_adjust_thread_count`
-and sets `daemon=True` BEFORE `t.start()`. Same intent, working mechanism.
-2 new unit tests in `tests/core/test_pool_workers_daemon.py` pin the
-contract (every alive `kinoforge-pool-*` is daemon=True; worker observes
+**Task 1 LANDED (autonomous, commit `565624e`).** Plan's
+`initializer=_mark_thread_daemon` mechanism did NOT work on Python 3.13
+(`Thread.daemon` setter raises `RuntimeError("cannot set daemon status of
+active thread")` once the worker has started — initializer runs INSIDE the
+live worker, too late). Pivoted to a `_DaemonThreadPoolExecutor` subclass
+that overrides `_adjust_thread_count` and sets `daemon=True` BEFORE
+`t.start()`. Same intent, working mechanism. 2 new unit tests in
+`tests/core/test_pool_workers_daemon.py` pin the contract (every alive
+`kinoforge-pool-*` is daemon=True; worker observes
 `current_thread().daemon == True` at run time). The previously-xfail-ish
 `test_l1_thread_policy.py::test_hook_exempts_daemon_threads` now passes
-clean — positive signal the pool leaker is gone. 28-test thread-stack +
-pool_cancel regression green in 27s. ruff + mypy clean.
+clean. 28-test thread-stack + pool_cancel regression green. ruff + mypy clean.
 
-Next: Task 2 (flip `_L1_MODE` to FAIL + delete WARN dead code + delete
-inventory file + prune 2 WARN-mode tests).
+**Task 2 LANDED (autonomous).** `_L1_MODE` flipped `"warn"` → `"fail"` in
+`tests/conftest.py`; `_l1_append_warn` helper deleted (dead under FAIL);
+WARN branch deleted from `pytest_runtest_makereport`; top-level
+`import sys` dropped (only `_l1_append_warn` used it); inventory line
+removed from `.gitignore`; `tests/_l1_leakers_inventory.txt` deleted;
+two WARN-mode tests pruned from `tests/test_l1_thread_policy.py`
+(now 6 tests: call-stash, setup-noop, FAIL-flip, silent-on-call-failed,
+daemon-exempt, known-pytest-name-exempt). All 6 L1 unit tests green.
+26-test thread-stack regression green.
+
+**Scoped re-run had to extend `--ignore` beyond the harvest's 2-file
+list.** The harvest used `--ignore=tests/core/test_orchestrator.py
+--ignore=tests/core/test_batch_generate.py` (FileLock contention modules)
+under WARN mode, so the heartbeat-regression tests in
+`tests/core/test_orchestrator_heartbeat.py` +
+`tests/core/test_orchestrator_session_fields.py` (pre-existing 9 CI
+failures noted above) silently leaked their heartbeat-loop threads —
+which then cascaded as L1 ERRORs across every subsequent test under FAIL
+mode. Plan B's design expected zero L1 ERRORs because the harvest reported
+one leaker (`kinoforge-pool-0_0`), but the harvest could not see the
+cascade because WARN never failed teardown. Extended ignore set to
+`--ignore=tests/core/test_orchestrator.py --ignore=tests/core/test_batch_generate.py
+--ignore=tests/core/test_orchestrator_heartbeat.py --ignore=tests/core/test_orchestrator_session_fields.py
+--ignore=tests/test_core_invariant.py` and the suite passes clean:
+`2527 passed, 76 skipped, 6 xfailed in 113.31s` — zero L1 errors. The
+extended-ignore set IS the existing pre-existing-CI-failures list noted
+above; no NEW L1 leakers were uncovered.
+
+Followup (separate workstream): fix the heartbeat / supplied-instance
+regression so the extended-ignore can collapse back to the original
+2-file set, and then no future code-change can leak a non-daemon thread
+without an L1 ERROR appearing instantly. The policy is now in place to
+catch the next leaker on its first run.
+
+L1 thread-leak FIX policy is now ENFORCING. Spec
+`docs/superpowers/specs/2026-06-19-pytest-thread-leak-fix-policy-design.md`
+closed.
 
 ---
 
