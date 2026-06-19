@@ -54,9 +54,23 @@ merge (`70bcda3`), doctor-smoke xfail cleanup (`d8e5941`), and the thread-leak w
 
 **Plan B written 2026-06-19** at `docs/superpowers/plans/2026-06-19-pytest-thread-leak-fix-policy-plan-b.md`
 (commit `c5399e4`) — 2 tasks: fix `kinoforge-pool-0_0` ThreadPoolExecutor leaker
-+ flip L1 WARN→FAIL. Resume via `/superpowers-extended-cc:executing-plans
-docs/superpowers/plans/2026-06-19-pytest-thread-leak-fix-policy-plan-b.md`
-after CI red is addressed (or in parallel — Plan B is orthogonal to the CI failures).
++ flip L1 WARN→FAIL.
+
+**Task 1 LANDED (autonomous).** Plan's `initializer=_mark_thread_daemon`
+mechanism did NOT work on Python 3.13 (`Thread.daemon` setter raises
+`RuntimeError("cannot set daemon status of active thread")` once the worker
+has started — initializer runs INSIDE the live worker, too late). Pivoted to
+a `_DaemonThreadPoolExecutor` subclass that overrides `_adjust_thread_count`
+and sets `daemon=True` BEFORE `t.start()`. Same intent, working mechanism.
+2 new unit tests in `tests/core/test_pool_workers_daemon.py` pin the
+contract (every alive `kinoforge-pool-*` is daemon=True; worker observes
+`current_thread().daemon == True` at run time). The previously-xfail-ish
+`test_l1_thread_policy.py::test_hook_exempts_daemon_threads` now passes
+clean — positive signal the pool leaker is gone. 28-test thread-stack +
+pool_cancel regression green in 27s. ruff + mypy clean.
+
+Next: Task 2 (flip `_L1_MODE` to FAIL + delete WARN dead code + delete
+inventory file + prune 2 WARN-mode tests).
 
 ---
 
