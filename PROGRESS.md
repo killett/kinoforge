@@ -53,12 +53,13 @@ the fix.
   Commit `05fc93d` scope-limited the fix to `skypilot-lambda.yaml`.
   Apply the same swap (or document the operator-supplied image
   expectation) to the other two cfgs before either is used live.
-- **Stale RunPod ghost ledger entries.** `kinoforge list` carried 7
-  RunPod rows aging 43–51 h with cumulative ~$73 estimated spend.
-  RunPod preflight confirmed 0 active pods — these are pre-existing
-  ghost rows from earlier C33 / Phase 47 / Phase 52 sessions that
-  were never reconciled. `kinoforge forget --id <id>` (or a bulk
-  reaper) is the path. Not Stage-E-caused; flagged for visibility.
+- **Stale RunPod ghost ledger entries. CLOSED 2026-06-18.**
+  Seven RunPod rows aging 43–51 h with cumulative ~$73 phantom
+  estimated spend. Preflight confirmed 0 active pods on RunPod side
+  — purely ledger-side state from earlier C33 / Phase 47 / Phase 52
+  sessions that were never reconciled. Swept via
+  `for id in <7 ids>; do pixi run kinoforge forget --id "$id"; done`.
+  `kinoforge list` now reports `No instances recorded in ledger.`
 
 > ⚠️ **DEFERRED — UPSTREAM HOOK ISSUES TO FILE.** Two issue bodies are
 > drafted under `docs/upstream-issues/` and awaiting Dr. Twinklebrane's
