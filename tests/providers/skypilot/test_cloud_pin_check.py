@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kinoforge.core.config import Config, load_config
+from kinoforge.core.config import Config, _parse_cfg_raw
 from kinoforge.providers.skypilot import SkyPilotCloudPinSupportedCheck
 from kinoforge.validation.protocol import CheckCategory, Severity
 
@@ -25,7 +25,7 @@ compute:
   lifecycle:
     budget: 1.0
 """
-    return load_config(yaml)
+    return _parse_cfg_raw(yaml)
 
 
 def test_check_metadata() -> None:

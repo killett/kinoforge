@@ -36,6 +36,7 @@ __all__ = [
     "ValidationReport",
     "validate_for_doctor",
     "validate_for_generate",
+    "validate_for_load",
 ]
 
 _log = logging.getLogger(__name__)
@@ -165,6 +166,47 @@ def validate_for_generate(
 
     for check in reg.applicable(cfg, categories=frozenset({CheckCategory.NETWORK})):
         results.append(check.run(cfg))
+
+    auto_fixes, errors, warnings = _categorise(results)
+    report = ValidationReport(
+        cfg=cfg,
+        results=results,
+        auto_fixes=auto_fixes,
+        errors=errors,
+        warnings=warnings,
+    )
+
+    for af in auto_fixes:
+        _log.info("auto-fixed: %s — %s", af.name, af.message)
+    for w in warnings:
+        _log.warning("%s: %s", w.name, w.message)
+
+    if errors:
+        raise ValidationError(f"cfg validation failed\n{report.format()}")
+    return report
+
+
+def validate_for_load(
+    cfg: object, *, registry: CheckRegistry | None = None
+) -> ValidationReport:
+    """Validate cfg in the ``load_config`` context — STATIC only.
+
+    Backward-compat policy: every cfg that loaded green before the
+    Check Registry shipped must still load green. NETWORK + PREFLIGHT
+    categories deliberately do NOT run here — they fire in
+    ``kinoforge generate`` pre-flight (via ``validate_for_generate``)
+    and ``kinoforge doctor`` (via ``validate_for_doctor``).
+
+    Auto-fixes for STATIC failures run with one retry; ERROR-severity
+    results that survive auto-fix raise ``ValidationError`` carrying
+    the formatted report.
+    """
+    reg = registry or default_registry()
+    results: list[CheckResult] = []
+
+    for check in reg.applicable(cfg, categories=frozenset({CheckCategory.STATIC})):
+        result, cfg = _run_with_autofix(check, cfg)
+        results.append(result)
 
     auto_fixes, errors, warnings = _categorise(results)
     report = ValidationReport(
