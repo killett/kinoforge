@@ -251,18 +251,25 @@ test by stack-trace correlation and patches the teardown.
 
 Each test names a concrete bug it catches (per `test-design` skill):
 
-1. `test_build_dump_includes_thread_metadata` — construct a
-   `threading.Thread` with `name='leaker'`, `daemon=False`, start it
-   blocked on a `time.sleep(60)`; assert `_build_dump([t], 0)`
-   contains substrings `name='leaker'`, `daemon=False`,
-   `n_threads=1`. **Catches:** accidental swap of `daemon=True`↔`daemon=False`
-   in formatter, accidental drop of `name=` or `n_threads=` fields.
-2. `test_build_dump_no_frame_falls_back_to_extension_marker` —
-   construct a fake thread-like object whose `ident` is not in
-   `sys._current_frames()`; assert the literal
-   `"<no Python frame — likely in C extension>"` appears.
-   **Catches:** accidental `KeyError`/`AttributeError` on missing
-   frame, accidental change of fallback string.
+1. `test_build_dump_includes_thread_metadata` — construct a real
+   `threading.Thread(name='leaker', daemon=False)` whose target is
+   `lambda: stop_event.wait()`, `.start()` it, pass `[t]` to
+   `_build_dump([t], 0)`, then `stop_event.set()` + `t.join(1.0)` in
+   the test teardown (no leaked thread). Assert output contains the
+   substrings `name='leaker'`, `daemon=False`, `n_threads=1`, AND
+   contains the literal callable filename (i.e. a Python stack frame
+   was found and formatted). **Catches:** accidental swap of
+   `daemon=True`↔`daemon=False` in formatter, accidental drop of
+   `name=` or `n_threads=` fields, accidental skip of the stack-format
+   block on the happy path.
+2. `test_build_dump_no_frame_falls_back_to_extension_marker` — pass
+   a `types.SimpleNamespace(name='ghost', ident=999_999_999,
+   daemon=False, is_alive=lambda: True)` (with `ident` chosen above
+   any plausible OS thread id so `sys._current_frames()` cannot
+   contain it); assert the literal
+   `"<no Python frame — likely in C extension>"` appears in the
+   output. **Catches:** accidental `KeyError`/`AttributeError` on
+   missing frame, accidental change of fallback string.
 3. `test_build_dump_includes_fd_count_on_linux` — skip on
    `sys.platform == "darwin"`; assert output matches regex
    `r"open fds: \d+ →"`. **Catches:** accidental swallow of the
