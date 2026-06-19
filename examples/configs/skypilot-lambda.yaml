@@ -34,7 +34,13 @@ models:
 
 compute:
   provider: skypilot
-  image: "skypilot/skypilot-gpu:latest"
+  # Public CUDA-base image. The `skypilot/skypilot-gpu:latest` placeholder
+  # the Stage-C template shipped with does NOT exist on Docker Hub —
+  # `docker pull` 404s and sky surfaces it as "Failed to set up SkyPilot
+  # runtime on cluster" (Stage-E live smoke 2026-06-18). Pinning a real
+  # public image keeps the cfg deploy-able as-is. Swap for a ComfyUI /
+  # PyTorch image when running real generations.
+  image: "nvidia/cuda:12.2.0-base-ubuntu22.04"
   mode: pod
   # Phase 53 Stage C — pin sky to Lambda only. Threaded into
   # SkyPilotProvider._clouds via kinoforge._adapters.build_provider_for.
