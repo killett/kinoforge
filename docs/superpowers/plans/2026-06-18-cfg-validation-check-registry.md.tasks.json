@@ -11,14 +11,14 @@
     {
       "id": 37,
       "subject": "Task 1: Public API + ValidationReport",
-      "status": "in_progress",
+      "status": "completed",
       "blockedBy": [36],
       "description": "**Goal:** Expose validate_for_generate(cfg), validate_for_doctor(cfg), ValidationReport from kinoforge.validation.\n\n**Files:**\n- Modify: src/kinoforge/validation/__init__.py\n- Test: tests/validation/test_integration.py\n\n**Verify:** pixi run test tests/validation/test_integration.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/__init__.py\",\"tests/validation/test_integration.py\"],\"verifyCommand\":\"pixi run test tests/validation/test_integration.py -v\",\"modelTier\":\"standard\"}\n```"
     },
     {
       "id": 38,
       "subject": "Task 2: HeartbeatIntervalRequiredCheck",
-      "status": "pending",
+      "status": "in_progress",
       "blockedBy": [37],
       "description": "**Goal:** Catch the warm_reuse_auto_attach=true + heartbeat_interval_s unset case. Auto-fix to 30.\n\n**Files:**\n- Create: src/kinoforge/validation/checks/__init__.py\n- Create: src/kinoforge/validation/checks/heartbeat.py\n- Test: tests/validation/checks/test_heartbeat.py\n\n**Verify:** pixi run test tests/validation/checks/test_heartbeat.py -v\n\n```json:metadata\n{\"files\":[\"src/kinoforge/validation/checks/__init__.py\",\"src/kinoforge/validation/checks/heartbeat.py\",\"tests/validation/checks/test_heartbeat.py\"],\"verifyCommand\":\"pixi run test tests/validation/checks/test_heartbeat.py -v\",\"modelTier\":\"standard\"}\n```"
     },

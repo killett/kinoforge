@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 class CheckCategory(Enum):
@@ -83,16 +83,20 @@ class Check(Protocol):
     category: CheckCategory
     severity: Severity
 
-    def applies_to(self, cfg: object) -> bool:
+    def applies_to(self, cfg: Any) -> bool:  # noqa: ANN401 — see class docstring
         """Cheap guard. Return True iff this check applies to the cfg.
 
         Must NOT perform I/O. The registry calls ``applies_to`` to
         skip ``run`` entirely on checks that don't apply, which is
         what keeps fast paths fast.
+
+        ``cfg`` is typed ``Any`` so implementations can specialise to
+        ``kinoforge.core.config.Config`` without violating Protocol
+        parameter contravariance.
         """
         ...
 
-    def run(self, cfg: object) -> CheckResult:
+    def run(self, cfg: Any) -> CheckResult:  # noqa: ANN401 — see class docstring
         """Execute the check.
 
         May do I/O if the category is NETWORK or PREFLIGHT. Must
@@ -101,7 +105,7 @@ class Check(Protocol):
         """
         ...
 
-    def auto_fix(self, cfg: object) -> object | None:
+    def auto_fix(self, cfg: Any) -> Any | None:  # noqa: ANN401 — see class docstring
         """Return a NEW cfg with the issue auto-fixed, or None.
 
         ``None`` signals the check has no safe default. Honoured only
