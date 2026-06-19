@@ -29,7 +29,7 @@
 | `src/kinoforge/validation/registry.py` | NEW | `CheckRegistry` (registration + filtering) |
 | `src/kinoforge/validation/checks/__init__.py` | NEW | Import-side-effect: self-registers built-in checks |
 | `src/kinoforge/validation/checks/heartbeat.py` | NEW | `HeartbeatIntervalRequiredCheck` (STATIC ERROR + auto-fix) |
-| `src/kinoforge/validation/checks/lifecycle.py` | NEW | `IdleTimeoutVsHeartbeatCheck` (STATIC ERROR) |
+| `src/kinoforge/validation/checks/lifecycle.py` | NEW | `IdleTimeoutVsHeartbeatCheck` (STATIC ERROR) + `GraceAfterSessionTooTightCheck` (STATIC WARN) |
 | `src/kinoforge/validation/checks/image.py` | NEW | `ImageReachableCheck` (NETWORK ERROR) |
 | `src/kinoforge/validation/checks/models.py` | NEW | `ModelRefReachableCheck` (NETWORK ERROR) |
 | `src/kinoforge/validation/checks/custom_nodes.py` | NEW | `CustomNodeSHAReachableCheck` (NETWORK WARN) |
@@ -1078,23 +1078,32 @@ git commit -m "feat(validation): HeartbeatIntervalRequiredCheck — STATIC ERROR
 
 ---
 
-## Task 3: IdleTimeoutVsHeartbeatCheck (STATIC ERROR, no auto-fix)
+## Task 3: IdleTimeoutVsHeartbeatCheck + GraceAfterSessionTooTightCheck
 
-**Goal:** Assert `idle_timeout_s >= 3 * heartbeat_interval_s` so the reaper's dead-man window (`heartbeat_interval_s * 3`) doesn't exceed the pod's idle-timeout reaping window. Catches operators who set a heartbeat interval larger than 1/3 of idle_timeout.
+**Goal:** Two STATIC consistency checks shipping together in `lifecycle.py`:
+1. `IdleTimeoutVsHeartbeatCheck` (ERROR) — `idle_timeout_s >= 3 * heartbeat_interval_s` so the reaper's dead-man window doesn't exceed the pod's idle-timeout reaping window.
+2. `GraceAfterSessionTooTightCheck` (WARN) — `grace_after_session_s >= 600` (10-min minimum for operator-typing-pace). Caught 2026-06-18 Wan 14B smoke: 300-s default + 5-min operator gap blew the boundary → ORPHAN_REAP → cold create. Default already bumped to 1800 in `interfaces.py:88`; this check guards against operators explicitly setting a smaller value.
 
 **Files:**
 - Create: `src/kinoforge/validation/checks/lifecycle.py`
 - Modify: `src/kinoforge/validation/checks/__init__.py`
 - Test: `tests/validation/checks/test_lifecycle.py`
 
-**Acceptance Criteria:**
+**Acceptance Criteria — IdleTimeoutVsHeartbeatCheck:**
 - [ ] `applies_to(cfg)` returns True iff `lifecycle.heartbeat_interval_s is not None`.
 - [ ] `run(cfg)` fails when `idle_timeout_s < 3 * heartbeat_interval_s`.
 - [ ] `run(cfg)` passes when `idle_timeout_s >= 3 * heartbeat_interval_s`.
-- [ ] `auto_fix` returns `None` (operator-set knobs; we don't pick).
+- [ ] `auto_fix` returns `None`.
 - [ ] Registered at import time.
 
-**Verify:** `pixi run test tests/validation/checks/test_lifecycle.py -v` → 4 passing tests.
+**Acceptance Criteria — GraceAfterSessionTooTightCheck:**
+- [ ] `applies_to(cfg)` returns True iff `cfg.compute is not None and cfg.compute.lifecycle is not None`.
+- [ ] `run(cfg)` returns `passed=False, severity=WARN` when `lifecycle.grace_after_session_s < 600`.
+- [ ] `run(cfg)` returns `passed=True` when `lifecycle.grace_after_session_s >= 600`.
+- [ ] `auto_fix` returns `None` — operator's explicit lower value is preserved, just warned.
+- [ ] Registered at import time.
+
+**Verify:** `pixi run test tests/validation/checks/test_lifecycle.py -v` → 8 passing tests (4 per check).
 
 **Steps:**
 
@@ -1268,11 +1277,166 @@ pixi run test tests/validation/checks/test_lifecycle.py -v
 
 Expected: 5 passed.
 
-- [ ] **Step 6: Commit.**
+- [ ] **Step 6: Commit IdleTimeoutVsHeartbeatCheck.**
 
 ```bash
 git add src/kinoforge/validation/checks/lifecycle.py src/kinoforge/validation/checks/__init__.py tests/validation/checks/test_lifecycle.py
 git commit -m "feat(validation): IdleTimeoutVsHeartbeatCheck — STATIC ERROR"
+```
+
+- [ ] **Step 7: Append failing tests for GraceAfterSessionTooTightCheck.**
+
+```python
+# Append to tests/validation/checks/test_lifecycle.py
+from kinoforge.validation.checks.lifecycle import GraceAfterSessionTooTightCheck
+
+
+def _cfg_with_grace(grace_s: int) -> object:
+    yaml = f"""\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: diffusion_models
+compute:
+  provider: runpod
+  image: "runpod/pytorch:latest"
+  mode: pod
+  lifecycle:
+    budget: 1.0
+    grace_after_session_s: {grace_s}
+"""
+    return load_config(yaml)
+
+
+def test_grace_check_metadata() -> None:
+    check = GraceAfterSessionTooTightCheck()
+    assert check.name == "grace_after_session_too_tight"
+    assert check.category == CheckCategory.STATIC
+    assert check.severity == Severity.WARN
+
+
+def test_grace_warns_when_below_600s() -> None:
+    cfg = _cfg_with_grace(300)
+    check = GraceAfterSessionTooTightCheck()
+    result = check.run(cfg)
+    assert result.passed is False
+    assert result.severity == Severity.WARN
+    assert "operator-typing-pace" in result.message or "300" in result.message
+
+
+def test_grace_passes_at_600s_floor() -> None:
+    cfg = _cfg_with_grace(600)
+    check = GraceAfterSessionTooTightCheck()
+    result = check.run(cfg)
+    assert result.passed is True
+
+
+def test_grace_passes_at_default_1800s() -> None:
+    # Cfg without explicit grace_after_session_s gets the dataclass
+    # default (1800 since interfaces.py:88 patch).
+    cfg = load_config("""\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: diffusion_models
+compute:
+  provider: runpod
+  image: "runpod/pytorch:latest"
+  mode: pod
+  lifecycle:
+    budget: 1.0
+""")
+    check = GraceAfterSessionTooTightCheck()
+    result = check.run(cfg)
+    assert result.passed is True
+```
+
+- [ ] **Step 8: Run tests — expect 4 new failures.**
+
+```bash
+pixi run test tests/validation/checks/test_lifecycle.py -v
+```
+
+Expected: `ImportError: cannot import name 'GraceAfterSessionTooTightCheck'`.
+
+- [ ] **Step 9: Append GraceAfterSessionTooTightCheck to `src/kinoforge/validation/checks/lifecycle.py`.**
+
+```python
+# Append to lifecycle.py
+class GraceAfterSessionTooTightCheck:
+    """STATIC WARN — grace_after_session_s below 600 s blows the
+    operator-typing-pace window between two `kinoforge generate`
+    invocations. Caught 2026-06-18 Wan 14B smoke (300-s default +
+    5-min operator gap → ORPHAN_REAP → cold create). Default already
+    bumped to 1800 in interfaces.py:88; this check guards against
+    operators explicitly setting a smaller value.
+    """
+
+    name: str = "grace_after_session_too_tight"
+    category: CheckCategory = CheckCategory.STATIC
+    severity: Severity = Severity.WARN
+
+    _FLOOR_S: int = 600
+
+    def applies_to(self, cfg: Config) -> bool:
+        return cfg.compute is not None and cfg.compute.lifecycle is not None
+
+    def run(self, cfg: Config) -> CheckResult:
+        assert cfg.compute is not None and cfg.compute.lifecycle is not None
+        # Read from the effective Lifecycle dataclass so we get the
+        # post-default value, not the raw YAML field.
+        grace = cfg.lifecycle().grace_after_session_s
+        if grace < self._FLOOR_S:
+            return CheckResult(
+                name=self.name,
+                passed=False,
+                severity=self.severity,
+                message=(
+                    f"compute.lifecycle.grace_after_session_s={grace}s is "
+                    f"below the {self._FLOOR_S}s operator-typing-pace "
+                    f"floor; cmd 2's classify chain risks ORPHAN_REAP "
+                    f"before the operator has time to type it"
+                ),
+                fix_suggestion=(
+                    f"raise compute.lifecycle.grace_after_session_s to "
+                    f"at least {self._FLOOR_S}s (default is 1800s); "
+                    "or accept that quick-fire CLI sequences may cold-create"
+                ),
+            )
+        return CheckResult(
+            name=self.name,
+            passed=True,
+            severity=self.severity,
+            message=f"grace_after_session_s={grace}s >= {self._FLOOR_S}s",
+        )
+
+    def auto_fix(self, cfg: Config) -> Config | None:
+        # Operator's explicit choice — warn, don't override.
+        return None
+
+
+register(GraceAfterSessionTooTightCheck())
+```
+
+- [ ] **Step 10: Run tests to verify GREEN.**
+
+```bash
+pixi run test tests/validation/checks/test_lifecycle.py -v
+```
+
+Expected: 8 passed (4 per check).
+
+- [ ] **Step 11: Commit GraceAfterSessionTooTightCheck.**
+
+```bash
+git add src/kinoforge/validation/checks/lifecycle.py tests/validation/checks/test_lifecycle.py
+git commit -m "feat(validation): GraceAfterSessionTooTightCheck — STATIC WARN"
 ```
 
 ---
