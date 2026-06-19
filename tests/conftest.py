@@ -8,12 +8,12 @@ from __future__ import annotations
 import re
 import tempfile
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -310,6 +310,109 @@ def http_server() -> Generator[HttpServerInfo, None, None]:
         finally:
             server.shutdown()
             thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# managed_thread fixture (spec
+# docs/superpowers/specs/2026-06-19-pytest-thread-leak-fix-policy-design.md).
+#
+# Sanctioned escape hatch for non-daemon test threads. Threads registered
+# here are joined (with timeout) in fixture teardown BEFORE the L1
+# pytest_runtest_makereport(when="teardown") hook enumerates leakers, so
+# registered threads never appear as L1 leakers on the happy path. A
+# registered thread that does not join within the timeout fails the
+# test loudly via pytest.fail.
+# ---------------------------------------------------------------------------
+
+
+class _ManagedThreadRegistrar:
+    """Registry of threads owned by the current test, joined at teardown."""
+
+    def __init__(self) -> None:
+        self._threads: list[threading.Thread] = []
+
+    def spawn(
+        self,
+        target: Callable[..., Any],
+        *,
+        name: str,
+        daemon: bool = False,
+        args: tuple[Any, ...] = (),
+        kwargs: Mapping[str, Any] | None = None,
+    ) -> threading.Thread:
+        """Construct, start, and register a thread in one call.
+
+        Args:
+            target: The callable the thread will run.
+            name: Human-readable thread name. Required keyword-only so an
+                anonymous leaker is impossible to ship.
+            daemon: Default ``False`` — opting into this fixture means
+                opting into non-daemon by default. Override allowed.
+            args: Positional args for ``target``.
+            kwargs: Keyword args for ``target``.
+
+        Returns:
+            The started ``threading.Thread`` instance.
+        """
+        t = threading.Thread(
+            target=target,
+            name=name,
+            daemon=daemon,
+            args=args,
+            kwargs=dict(kwargs or {}),
+        )
+        t.start()
+        self._threads.append(t)
+        return t
+
+    def register(self, thread: threading.Thread) -> threading.Thread:
+        """Register a pre-started thread for managed teardown.
+
+        Use when a library / SDK constructs the thread and hands it back
+        to test code — ``.spawn`` is the right surface only when the test
+        owns the construction.
+
+        Args:
+            thread: A ``threading.Thread`` that has already been started.
+
+        Returns:
+            The same ``thread`` for fluent chaining
+            (``t = managed_thread.register(threading.Thread(...))``).
+        """
+        self._threads.append(thread)
+        return thread
+
+    def _teardown(self, join_timeout: float = 2.0) -> list[threading.Thread]:
+        """Join every registered thread; return any still alive."""
+        still_alive: list[threading.Thread] = []
+        for t in self._threads:
+            t.join(timeout=join_timeout)
+            if t.is_alive():
+                still_alive.append(t)
+        return still_alive
+
+
+@pytest.fixture
+def managed_thread() -> Iterator[_ManagedThreadRegistrar]:
+    """Function-scoped registrar for non-daemon test threads.
+
+    Yields:
+        ``_ManagedThreadRegistrar`` instance. Teardown joins every
+        registered thread with a 2.0 s timeout; any thread still alive
+        triggers ``pytest.fail`` with a terse message naming it.
+    """
+    registrar = _ManagedThreadRegistrar()
+    try:
+        yield registrar
+    finally:
+        still_alive = registrar._teardown(join_timeout=2.0)
+        if still_alive:
+            names = ", ".join(f"{t.name!r}(ident={t.ident})" for t in still_alive)
+            pytest.fail(
+                f"managed_thread: {len(still_alive)} registered thread(s) "
+                f"did not join within 2.0s: {names}",
+                pytrace=False,
+            )
 
 
 # ---------------------------------------------------------------------------
