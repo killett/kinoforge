@@ -110,7 +110,7 @@ class LifecycleConfig(BaseModel):
     max_in_flight: int = 1
     boot_timeout: float = 900.0
     heartbeat_interval_s: float | None = None
-    grace_after_session_s: float = 300.0
+    grace_after_session_s: float = 1800.0
     stall_reap_enabled: bool = True
     stall_window_s: float = 600.0
     stall_gpu_threshold: float = 5.0
@@ -549,15 +549,16 @@ class ComputeConfig(BaseModel):
     @field_validator("cloud")
     @classmethod
     def _validate_cloud(cls, v: list[str] | None) -> list[str] | None:
-        """Reject cloud entries outside the supported sky cloud set.
+        """Reject empty-list cloud entries.
 
-        Skypilot supports a much broader set, but kinoforge only verifies
-        these. Adding a new entry here is the operator's affordance for
-        opting into a new sky-enabled cloud after a parity smoke.
+        Operator likely meant ``cloud: null`` or forgot to populate the
+        entry; sky.launch with zero clouds would silently fall back.
 
-        An empty list is rejected — operator likely meant ``cloud: null``
-        or forgot to populate the entry; sky.launch with zero clouds
-        would fail at provision time rather than config-load.
+        The membership check (each entry must be in the supported sky
+        cloud set) moved to ``SkyPilotCloudPinSupportedCheck`` in
+        ``kinoforge.providers.skypilot`` (Task 9 of the cfg-validation
+        Check Registry plan). It now shows up in ``kinoforge doctor``
+        output alongside every other validation rule.
         """
         if v is None:
             return v
@@ -565,21 +566,6 @@ class ComputeConfig(BaseModel):
             raise ValueError(
                 "cloud must be a non-empty list of sky cloud names "
                 "or null; got an empty list"
-            )
-        allowed = {
-            "aws",
-            "gcp",
-            "azure",
-            "lambda",
-            "vast",
-            "kubernetes",
-            "runpod",
-        }
-        bad = [entry for entry in v if entry not in allowed]
-        if bad:
-            raise ValueError(
-                f"cloud entries must each be one of {sorted(allowed)}; "
-                f"got unsupported: {bad!r}"
             )
         return v
 
@@ -1132,6 +1118,50 @@ def load_config(text_or_path: str | Path) -> Config:
     # Inline spec.graph_file before schema validation so the model sees spec.graph.
     _resolve_spec_graph_file(raw, yaml_path)
 
+    try:
+        cfg = Config.model_validate(raw)
+    except pydantic.ValidationError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    # Run the STATIC-only Check Registry pass (Task 10). NETWORK +
+    # PREFLIGHT categories deliberately do NOT fire here — they belong
+    # to `kinoforge generate` pre-flight and `kinoforge doctor`, which
+    # call validate_for_generate / validate_for_doctor respectively.
+    # Local import: kinoforge.validation imports kinoforge.core.errors,
+    # so a top-level import is safe — but built-in checks live under
+    # kinoforge.validation.checks and import kinoforge.core.config; the
+    # transitive cycle would deadlock module init without the lazy hop.
+    import kinoforge.providers.runpod  # noqa: F401 — self-register RunPod check
+    import kinoforge.providers.skypilot  # noqa: F401 — self-register SkyPilot check
+    import kinoforge.validation.checks  # noqa: F401 — self-register built-ins
+    from kinoforge.validation import validate_for_load
+
+    report = validate_for_load(cfg)
+    return report.cfg if isinstance(report.cfg, Config) else cfg
+
+
+def _parse_cfg_raw(text: str, *, yaml_path: Path | None = None) -> Config:
+    """Parse the cfg via Pydantic only, without the Check Registry pass.
+
+    Used by ``kinoforge doctor`` so the full validation report can be
+    assembled instead of raising on the first STATIC error. Production
+    callers should use :func:`load_config` instead.
+
+    Args:
+        text: YAML text body.
+        yaml_path: Optional resolved path the YAML came from; needed so
+            ``spec.graph_file`` relative references resolve against the
+            cfg's directory rather than ``<string>``.
+    """
+    import pydantic
+
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"YAML parse error: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ConfigError("config must be a YAML mapping at the top level")
+    _resolve_spec_graph_file(raw, yaml_path or Path.cwd() / "<string>")
     try:
         return Config.model_validate(raw)
     except pydantic.ValidationError as exc:

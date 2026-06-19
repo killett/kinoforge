@@ -15,6 +15,54 @@ first unchecked task without redoing committed work.
 
 ## Next session — resume target (single next action at top)
 
+**Cfg validation Check Registry SHIPPED 2026-06-19 (autonomous).**
+All 14 tasks of plan `docs/superpowers/plans/2026-06-18-cfg-validation-check-registry.md`
+landed on branch `worktree-cfg-validation-check-registry`. New package
+`kinoforge.validation` (Check Protocol + plugin Registry + 9 built-in
+checks across STATIC / NETWORK / PREFLIGHT categories); load_config
+runs the STATIC pass with single-retry auto-fix (deviation from plan —
+deferred NETWORK + PREFLIGHT to CLI wrappers to preserve backward compat
+with cfgs using `https://example.com/...` placeholders); new
+`kinoforge doctor <cfg>` subcommand prints the full report with exit
+code = error count; `kinoforge generate` runs pre-flight before any
+provider call (opt-out via `--skip-preflight`).
+
+**Live doctor smoke (`tests/live/test_doctor_examples_live.py`,
+gated by `KINOFORGE_LIVE_TESTS=1`)** ran end-to-end against the 21
+example cfgs: **9 clean, 12 xfailed** with documented reasons. Each
+xfail is a follow-up:
+- 7 cfgs got the heartbeat fix inline (local-fake, wan, diffusers,
+  skypilot×3, runpod-comfyui-wan).
+- 4 cfgs ship placeholder `https://example.com/...` model refs that
+  404 (local-fake, cost, batch-prompts, diffusers, hosted, fal).
+- 4 cfgs (skypilot×3, wan) point at `hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors`
+  which 404s on HF Hub — actual filename likely differs.
+- `nova-reel.yaml` engine kind not in `KNOWN_ENGINES`; either fix
+  the cfg or add `nova_reel` to the engine registry.
+- `runpod-comfyui-wan-manifest.yaml` is a batch manifest (top-level
+  list), not a Config mapping — doctor needs a manifest-aware path
+  or the file should be moved out of `examples/configs/`.
+
+**Plan deviations (committed + explained in commit messages):**
+- Task 3 precursor: bumped `LifecycleConfig.grace_after_session_s`
+  default 300→1800 (commit `ad84e2b` only bumped the dataclass; this
+  completes it).
+- Task 10: introduced `validate_for_load` (STATIC only) for
+  load_config instead of `validate_for_generate` (all categories).
+  Rationale captured in commit body — every cfg that loaded green
+  before the registry must still load green.
+
+Native task IDs 36–49 all completed; .tasks.json synced.
+
+**RESUME TARGET:** pick the next workstream from the queue below.
+Likely candidates: (1) fix the 12 xfailed example cfgs (replace
+placeholder refs, correct HF Wan2.2 filenames, add `nova_reel` to
+engine registry or remove the cfg, route batch-manifest through its
+own loader), or (2) the parked thread-leak brainstorm in
+`core/pool.py` (still elevated priority).
+
+---
+
 **Phase 53 Stage E CLOSED 2026-06-18 — end-to-end path verified on
 Lambda.** Live smoke ran twice:
 - Run 1 (19:14:25 → 19:21, ~7 min, ~$0.15): instance came up; sky
