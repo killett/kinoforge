@@ -9,6 +9,7 @@ accessors.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import os
@@ -1087,6 +1088,48 @@ def _resolve_warm_instance(
             file=sys.stderr,
         )
         return (None, 2)
+
+    # 8. Re-hydrate endpoints + tags from the ledger entry.
+    #
+    # ``provider.get_instance`` impoverishes the Instance because the
+    # underlying list/status APIs strip the create-time fields (RunPod's
+    # ``Pod`` GraphQL query only returns id/desiredStatus/imageName; same
+    # gap latent in SkyPilot's ``_cluster_record_to_instance``). Without
+    # rehydration, ``Instance.endpoints`` stays empty and the next engine
+    # call (e.g. ``ComfyUIEngine.wait_for_ready`` at
+    # ``engines/comfyui/__init__.py:1472``) raises
+    # ``ProvisionFailed("pod ... has no endpoints — cannot construct
+    # ready URL")``.
+    #
+    # The local ledger is authoritative for create-time fields under the
+    # same-host scope (see the B5b deferral spec). Merge ledger tags
+    # under the provider's tags so e.g. ``"mode": "pod"`` from the live
+    # query takes precedence over any stale tag-side state, then ask
+    # the provider to build the endpoints dict — providers compute
+    # endpoints deterministically from instance fields (e.g. RunPod's
+    # ``{pod_id}-{port}.proxy.runpod.net`` pattern) so the call is
+    # cheap, network-free, and idempotent.
+    #
+    # Empirically caught 2026-06-18 against Wan 1.3B on RunPod, pod
+    # ``di506yuuczuhht``: warm-reuse classify cleared LIVE, attach
+    # succeeded, generation aborted immediately on the empty endpoints
+    # field.
+    entry_tags = entry.get("tags", {}) or {}
+    merged_tags: dict[str, str] = {**entry_tags, **instance.tags}
+    instance = dataclasses.replace(instance, tags=merged_tags)
+    endpoints_dict: dict[str, str] = {}
+    if hasattr(provider, "endpoints"):
+        try:
+            endpoints_dict = provider.endpoints(instance)
+        except Exception as exc:  # noqa: BLE001 — best-effort enrichment
+            print(
+                f"warning: warm-attach endpoint reconstruction failed for "
+                f"{instance_id}: {type(exc).__name__}: {exc}. Downstream "
+                f"engine may not be able to construct the ready URL.",
+                file=sys.stderr,
+            )
+    if endpoints_dict:
+        instance = dataclasses.replace(instance, endpoints=endpoints_dict)
 
     return (instance, None)
 
