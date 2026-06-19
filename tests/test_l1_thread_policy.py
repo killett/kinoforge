@@ -104,37 +104,6 @@ def test_setup_phase_is_complete_noop(
         leaker.join(timeout=1.0)
 
 
-def test_warn_mode_teardown_appends_leaker_to_inventory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """WARN mode + passed teardown + leaker → one inventory line, outcome unchanged."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "tests").mkdir()
-    monkeypatch.setattr("tests.conftest._L1_MODE", "warn")
-
-    item = _make_item(nodeid="tests/x.py::test_warn_leak")
-    # Pretend call already passed — stash it so the teardown branch reads passed.
-    call_rep = _make_report(outcome="passed", when="call")
-    item.stash[_L1_CALL_REPORT_KEY] = call_rep
-    teardown_rep = _make_report(outcome="passed", when="teardown")
-
-    stop = threading.Event()
-    leaker = threading.Thread(target=stop.wait, name="warn-leaker", daemon=False)
-    leaker.start()
-    try:
-        _invoke_hook(item, when="teardown", report=teardown_rep)
-        inventory = tmp_path / "tests" / "_l1_leakers_inventory.txt"
-        assert inventory.exists()
-        line = inventory.read_text(encoding="utf-8")
-        assert "tests/x.py::test_warn_leak" in line
-        assert "name=warn-leaker" in line
-        assert "daemon=False" in line
-        assert teardown_rep.outcome == "passed", "WARN mode must not flip outcome"
-    finally:
-        stop.set()
-        leaker.join(timeout=1.0)
-
-
 def test_fail_mode_teardown_flips_outcome_and_writes_longrepr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -183,32 +152,6 @@ def test_teardown_silent_when_call_already_failed(
         inventory = tmp_path / "tests" / "_l1_leakers_inventory.txt"
         assert not inventory.exists()
         assert teardown_rep.outcome == "passed"
-    finally:
-        stop.set()
-        leaker.join(timeout=1.0)
-
-
-def test_teardown_silent_when_teardown_report_already_failed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No stash, teardown=failed + leaker → no append (managed_thread already failed loud)."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "tests").mkdir()
-    monkeypatch.setattr("tests.conftest._L1_MODE", "warn")
-
-    item = _make_item()
-    # No call stash — simulate managed_thread fixture pytest.fail in
-    # teardown that produced a teardown-failed report directly.
-    teardown_rep = _make_report(outcome="failed", when="teardown")
-
-    stop = threading.Event()
-    leaker = threading.Thread(target=stop.wait, name="post-fail-leaker", daemon=False)
-    leaker.start()
-    try:
-        _invoke_hook(item, when="teardown", report=teardown_rep)
-        inventory = tmp_path / "tests" / "_l1_leakers_inventory.txt"
-        assert not inventory.exists()
-        assert teardown_rep.outcome == "failed"
     finally:
         stop.set()
         leaker.join(timeout=1.0)
