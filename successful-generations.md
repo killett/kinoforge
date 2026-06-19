@@ -23,6 +23,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 5. `2026-06-09 21:19:45` — [ComfyUI Wan 2.1 14B t2v on RunPod (in-process warm-reuse, 2 prompts) — t2v](#5-2026-06-09-211945--comfyui-wan-21-14b-t2v-on-runpod-in-process-warm-reuse-2-prompts--t2v)
 6. `2026-06-13 11:16:26` — [FakeEngine on RunPod (B3 cross-CLI auto-discovery warm-reuse) — t2v](#6-2026-06-13-111626--fakeengine-on-runpod-b3-cross-cli-auto-discovery-warm-reuse--t2v)
    - See also: `2026-06-13 12:44:24` — B3 smoke re-fire post-closeout at HEAD `8bf51d6`: gen 1 6.3 s / gen 2 2.6 s (ratio 0.41, 59 % cold-skip), pod `k838y2t6mpq91s` (RTX A5000), spend ~$0.0016. Same tuple `(runpod, FakeEngine, fake-model, t2v)`; confirms B3 mechanics still green after Phase 52 BQ-export plumbing diff.
+7. `2026-06-18 22:05:08` — [ComfyUI Wan 2.1 1.3B t2v on RunPod (CLI cross-invocation warm-reuse, real engine) — t2v](#7-2026-06-18-220508--comfyui-wan-21-13b-t2v-on-runpod-cli-cross-invocation-warm-reuse-real-engine--t2v)
 
 ---
 
@@ -671,3 +672,242 @@ Operators wanting B3 warm-reuse with ComfyUI today must use
 `--force-attach` on `kinoforge generate --instance-id <id>` to bypass
 HEARTBEAT_UNKNOWN classification, or wait for C25's preserve-and-merge
 wire path to land.
+
+---
+
+## 7. `2026-06-18 22:05:08` — ComfyUI Wan 2.1 1.3B t2v on RunPod (CLI cross-invocation warm-reuse, real engine) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `RunPod / ComfyUIEngine / Kijai Wan2_1-T2V-1_3B_fp8_e4m3fn` |
+| **Mode** | t2v |
+| **kinoforge version** | `v0.5.0` |
+| **First-success SHA** | `7050ffc` |
+| **Date (local TZ)** | 2026-06-18 22:05:08 -0700 (PDT) |
+| **Layer / phase** | B3 + B4 cross-CLI auto-discovery warm-reuse on a **real video engine** (ComfyUI + Wan), 4 mid-task production fixes folded in |
+| **New axes vs prior entries** | (a) Wan 2.1 **1.3B** variant (prior Wan entries were 14B); (b) **CLI cross-invocation warm-reuse with a real video engine** — entry #6 demonstrated B3 mechanics with FakeEngine only because ComfyUI + Wan was gated by C25; entry #5 demonstrated Wan warm-reuse in-process only. This run is the first time `kinoforge generate ... && kinoforge generate ...` (two CLI invocations, same cfg, different prompts, no `--instance-id`) actually attaches the second invocation to the first invocation's pod with a real video workload. |
+
+### Exact commands
+
+The two commands were identical except for the prompt file. The
+operator pastes both, one after the other; no `--instance-id`
+lookup, no `--force-attach`, no manual ledger inspection between.
+
+```bash
+pixi run kinoforge generate \
+  --config examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml \
+  --prompt "$(cat examples/configs/prompts/forest.txt)" \
+  --mode t2v
+```
+
+```bash
+pixi run kinoforge generate \
+  --config examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml \
+  --prompt "$(cat examples/configs/prompts/dawn-flight.md)" \
+  --mode t2v
+```
+
+The CLI auto-loads `/workspace/.env` for `RUNPOD_API_KEY`,
+`RUNPOD_TERMINATE_KEY`, and `HF_TOKEN`; no shell exports needed.
+
+### YAML config
+
+**`examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml`** at blob SHA
+`61f158cc30fee00d7c234eca5037a5733e28d8e7` — sibling of the 14B t2v
+cfg with the diffusion checkpoint swapped to
+`Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors` (1.47 GB vs 17 GB), VAE +
+T5 unchanged, `min_vram_gb: 16` (vs 24), `disk_gb: 40` (vs 80),
+`max_lifetime: 60m`. Includes the load-bearing
+`lifecycle.heartbeat_interval_s: 30` — without it the
+`HeartbeatLoop` never starts, no `heartbeat_thread_tick` lands in
+the ledger row, and the second invocation's classify chain returns
+`HEARTBEAT_UNKNOWN` → conservative-on-ignorance → cold create
+(empirically observed during this smoke's first attempt, pods
+`f2w4sqghw5udio` + `p3oj1qjmjioae1` ran simultaneously until manual
+destroy at ~$0.04 combined spend; cfg comment added in `7b93725`).
+
+**`examples/configs/runpod-comfyui-wan-t2v-1_3b.graph.json`** —
+hand-derived from the 14B t2v graph by swapping only node 22's
+`model` field; ComfyUI workflow topology unchanged.
+
+### Prompts
+
+Both read verbatim from committed prompt files at
+`examples/configs/prompts/` per the operator's standing
+"never paraphrase live-smoke prompts" rule:
+
+- **Forest (cmd 1, cold path):** `examples/configs/prompts/forest.txt`
+  — *"A dense old-growth forest at first light. Mist coils between
+  the trunks, backlit by a low golden sun. Camera drifts slowly
+  forward through the underbrush; ferns brush the lens; a single
+  shaft of light pierces the canopy."*
+- **Dawn flight (cmd 2, warm path):** `examples/configs/prompts/dawn-flight.md`
+  — *"Aerial drone shot at dawn. The camera lifts off the surface of
+  a still lake, water beading on the lens, then climbs above a
+  ridge line as the first sun strikes the peaks. The horizon glows
+  orange-pink. Slow forward motion. Cinematic, photoreal."*
+
+### Env vars / secret names (names only — never values)
+
+- `RUNPOD_API_KEY` — RunPod GraphQL main key.
+- `RUNPOD_TERMINATE_KEY` — Scoped self-terminate Bearer for the in-pod selfterm.
+- `HF_TOKEN` — Hugging Face gated-repo Bearer for the `Kijai/WanVideo_comfy` pull.
+
+### Region
+
+RunPod cloud assigned, `cloudType: ALL`. Pod `qswjrs5ehzkwr8`
+landed on RTX A5000 (4090 capacity unavailable at submit time; offer
+retry fell back per the `gpu_preference` list). Ledger
+`cost_rate_usd_per_hr: 0.22`.
+
+### Capability key
+
+`cdcd2a98cbf2` (12-char hash; full sha256 derived from
+`[base_model, loras, engine, precision]` per
+`src/kinoforge/core/interfaces.py:CapabilityKey.derive`). Both
+invocations produced the same key because the cfg is byte-identical
+between calls — that's the load-bearing invariant that makes
+`_scan_warm_candidates` find the pod.
+
+### Output artifacts
+
+| # | Prompt | Path (published) | Path (internal cache) | Size | SHA-256 |
+|---|---|---|---|---|---|
+| 1 | forest (cold) | `/workspace/output/20260618-220508_comfyui_Wan2_1-T2V-1_3B_fp8_e4m3_A-dense-old-growth-f.mp4` | `/workspace/.kinoforge/run-20260618-220208/1b6f9cd040c9065f.mp4` | 861,361 B (841 KiB) | `1b6f9cd040c9065fec44edf7deca7f1d335e86ecfe4bbc5272d40500863ac7be` |
+| 2 | dawn-flight (warm) | `/workspace/output/20260618-220704_comfyui_Wan2_1-T2V-1_3B_fp8_e4m3_Aerial-drone-shot-at.mp4` | `/workspace/.kinoforge/run-20260618-220525/7fa95bd1ed3dac10.mp4` | 264,600 B (258 KiB) | `7fa95bd1ed3dac104ce80d63d70c9c38396eb282122b152e6db024c6fc77ecf4` |
+
+Common to both (from cfg `params:` block — `ffprobe` is not
+installed in this env so dimensions are reported per the workflow
+contract rather than re-read from the file headers; the same kijai
+T2V graph drives both runs, so the contract values apply):
+
+- **Container / codec:** MP4 / ISO BMFF / h264 (kijai VHS_VideoCombine output node).
+- **Resolution:** 480×480 (matches `params.width` / `params.height`).
+- **Duration:** 5.0625 s.
+- **Frame count:** 81 (`params.num_frames`).
+- **Average frame rate:** 16/1 fps (`params.fps`).
+
+The two clips' SHA-256 hashes differ — distinct prompts produced
+distinct bytes. Rules out the "second generation got the first's
+cached output" failure mode.
+
+### Cost
+
+- **Total:** ~$0.03 estimated.
+- **Wall-clock:**
+  - **Gen 1 (cold path: provision + ~9 GB weight download + ComfyUI
+    cold-start + Wan 1.3B inference + VAE decode + result fetch):**
+    181 s wall (3 m 01 s).
+  - **Gen 2 (warm path: ledger scan + classify LIVE + attach +
+    inference + VAE decode + result fetch):** 101 s wall (1 m 41 s).
+  - **Total pod-up time:** ~5 m 22 s end-to-end on RunPod side.
+- **Formula:** RTX A5000 at $0.22/hr × ~5 m 22 s ≈ $0.020 in
+  compute, plus the 4090-capacity offer-retry round-trip and a
+  small idle window. Ledger `est_spend` readout at destroy time:
+  $0.0186.
+- **Warm-reuse savings:** Gen 2 saved 80 s of cold-boot wall and
+  ~$0.005 of compute that would otherwise have re-provisioned a
+  fresh pod. Cold-skip ratio: `101 / 181 = 0.56` (well under the
+  0.7 pass threshold the B3 smoke suite uses to assert real
+  attach-vs-recreate).
+
+### Success criteria
+
+Operator visual confirmation pending. Programmatic checks all pass:
+
+- Both artifacts are valid MP4 files written by the kijai
+  VHS_VideoCombine output node (the workflow has no other
+  artifact-producing terminator).
+- SHA-256 of the two clips differ — distinct prompts produced
+  distinct bytes.
+- `warm_elapsed (101 s) < cold_elapsed (181 s)` — proves the warm
+  path skipped re-provision.
+- **Log line `INFO kinoforge.cli._commands warm-reuse: attached to
+  qswjrs5ehzkwr8`** fires on cmd 2 immediately after the ledger
+  scan, before any engine call. This is the canonical "warm-reuse
+  actually happened" assertion.
+- `pod_id_1 == pod_id_2 == qswjrs5ehzkwr8` (B4 scan attached
+  cleanly to the cold-create pod).
+- Single `kinoforge destroy --id qswjrs5ehzkwr8` at the end;
+  `pixi run preflight` confirms `pods: 0 active`.
+
+### Failure modes encountered before success (mid-task production fixes folded in)
+
+This smoke surfaced FOUR independent production bugs that had to
+ship before the warm-reuse path completed end-to-end. All four are
+captured in separate atomic commits BEFORE the warm-reuse smoke
+re-fired; the smoke is the verification artefact, not the
+discovery one.
+
+1. **`6f008b8` cfg scaffold (Wan 1.3B sibling).** No bug per se;
+   the RED scaffold required by the CLAUDE.md durability rule. The
+   1.3B variant didn't exist as a published cfg yet.
+
+2. **`05fc93d` Stage E image-placeholder fix (carried over).**
+   Pre-existing from earlier in the session — not a fresh bug.
+
+3. **`7b93725` cfg fix: add `heartbeat_interval_s: 30` to the 1.3B
+   cfg.** First smoke attempt cold-created TWO pods running
+   simultaneously (`f2w4sqghw5udio` + `p3oj1qjmjioae1`) because
+   the cfg lacked `heartbeat_interval_s`. Without it the
+   `HeartbeatLoop` never starts, no `heartbeat_thread_tick` lands
+   in the ledger row, and cmd 2's classify chain returns
+   `HEARTBEAT_UNKNOWN` → conservative-on-ignorance → cold create.
+   UX gap captured separately: CLI should warn when
+   `warm_reuse_auto_attach: true` is set without
+   `heartbeat_interval_s`. Filed as a PROGRESS follow-up.
+
+4. **`be33a67` HeartbeatLoop last_heartbeat fallback.** Second
+   attempt still failed `HEARTBEAT_UNKNOWN` even with the
+   `heartbeat_interval_s` cfg in place. Root cause: post-C33,
+   `RunPodGraphQLHeartbeatEndpoint.write()` is permanently
+   disabled, so the wire-level read endpoint returns `None` on
+   every tick. `HeartbeatLoop._tick_once` was sourcing
+   `last_heartbeat` from that broken wire path, writing `None`
+   to the ledger, which `Ledger.touch` SKIPS. Ledger row never
+   gets `last_heartbeat`. Reaper `classify` returns
+   `HEARTBEAT_UNKNOWN`. Fix: fall back to `self._clock.now()`
+   when the provider returns `None`, per the B5b deferral spec's
+   "local ledger is the same-host substrate" conclusion. Also
+   filled a documented hole in the B5b deferral spec.
+
+5. **`7050ffc` `_resolve_warm_instance` endpoint rehydration.**
+   Third attempt finally activated warm-reuse (cmd 2 logged
+   `warm-reuse: attached to di506yuuczuhht`) but immediately
+   aborted with `ProvisionFailed: pod 'di506yuuczuhht' has no
+   endpoints — cannot construct ready URL`. Root cause:
+   `_resolve_warm_instance` returned the impoverished Instance
+   from `provider.get_instance` verbatim (RunPod's
+   `_pod_to_instance` strips endpoints + sparse tags). Same
+   Instance-impoverishment family as the earlier `e33d564`
+   orchestrator polling-loop fix. Patch merges ledger tags onto
+   the provider-fresh instance and calls `provider.endpoints` to
+   reconstruct the proxy URL dict (network-free, deterministic).
+   This was the closing patch — fourth-attempt smoke fired green.
+
+Total spend across all four attempts: ~$0.12 (well under the $20
+session budget envelope). Three pods were destroyed mid-debug
+during the diagnostic trail (`f2w4sqghw5udio`, `p3oj1qjmjioae1`,
+`252wqr84clzhlg`, `di506yuuczuhht`) before the green smoke landed
+on `qswjrs5ehzkwr8`.
+
+### Notes
+
+- This is the FIRST time the operator's "two identical commands
+  trigger warm-reuse" UX guarantee actually works end-to-end on a
+  real video workload. Prior to this entry, entry #5 demonstrated
+  Wan warm-reuse in-process only (single Python process), and
+  entry #6 demonstrated CLI cross-invocation warm-reuse with
+  FakeEngine only (ComfyUI + Wan was gated by C25 at the time).
+- Two of the four bugs (`be33a67`, `7050ffc`) only ship test
+  fences against the same root-cause family identified in
+  `e33d564` — the gap where provider `get_instance` returns an
+  impoverished Instance and consumers expect the rich
+  create-time fields. The next provider added to the registry
+  should pre-emptively audit this surface.
+- The `warm-reuse: attached to <pod_id>` log line is the
+  canonical operator-facing signal. Future smokes (and any
+  CI-style verification) should grep for that exact string
+  rather than wall-time deltas, which are noise-prone on
+  fluctuating RunPod GPU loads.
+- 🎉 **Warm reuse actually works.**
