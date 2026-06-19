@@ -1,12 +1,42 @@
 # Pytest thread-leak diagnostic (layered)
 
-**Status:** brainstormed, not implemented
+**Status:** brainstormed, partially implemented (see "Existing state")
 **Author:** Dr. Twinklebrane (via Claude Code)
 **Date:** 2026-06-19
 **Scope:** diagnose only — fix is out of scope for this spec
 **Supersedes:** `2026-06-17-pytest-post-session-hang-diagnostic-design.md`
 (reused symptom analysis, extended to layered trigger + pure-function unit
 tests)
+
+## Existing state (discovered post-self-review, 2026-06-19)
+
+`tests/conftest.py:329-390` already implements a `pytest_sessionfinish`
+hook from the 2026-06-17 spec lineage. The hook:
+
+- Enumerates `threading.enumerate()` at session end.
+- Fast-paths via `non_daemon_extras = [t for t in threads if t is not main_thread and not t.daemon]`
+  — this is **smarter than what was specified above** (which used
+  `len(threads) == 1`). Daemon threads cannot block
+  `threading._shutdown()`, so filtering them out reduces false-positive
+  dumps. The plan adopts this filter; spec is amended.
+- Inlines dump construction (no extractable helper).
+- Writes stderr + `tests/_post_session_dump.txt` (already gitignored).
+- Has NO `pytest_configure` hook and NO `faulthandler.dump_traceback_later`
+  arming.
+
+The gap-to-this-spec is therefore:
+
+1. Extract the inline dump body into a pure `_build_dump(threads, exitstatus) -> str`
+   helper in a new `tests/_thread_dump_helper.py` module, behaviour-preserving.
+2. Add the three unit tests (per "Test plan") against the extracted helper.
+3. Add `pytest_configure(config)` hook arming `faulthandler.dump_traceback_later(15, ...)`.
+4. Add `faulthandler.cancel_dump_traceback_later()` call at the top of
+   `pytest_sessionfinish`.
+5. Add the end-to-end smoke (per "Test plan").
+
+The fast-path-filter line in the "Components" section below should be
+read as "preserve the existing `non_daemon_extras` filter" — do not
+regress it to `len(threads) == 1` during refactor.
 
 ## Problem
 
