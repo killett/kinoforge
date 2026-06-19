@@ -71,8 +71,8 @@ _MP4_FTYP_PREFIXES: tuple[bytes, ...] = (
     b"ftypmp42",
 )
 
-_PROMPT_REALISTIC_PATH = Path("/workspace/prompt-field-realistic.txt")
-_PROMPT_DREAMLIKE_PATH = Path("/workspace/prompt-field-dreamlike.txt")
+_PROMPT_REALISTIC_PATH = Path("/workspace/examples/configs/prompts/field-realistic.txt")
+_PROMPT_DREAMLIKE_PATH = Path("/workspace/examples/configs/prompts/field-dreamlike.txt")
 
 
 def _git_sha() -> str:
