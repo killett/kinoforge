@@ -45,7 +45,7 @@
     {
       "id": 10,
       "subject": "Task 6: PROGRESS.md closeout",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "Update PROGRESS.md Parked queue item 2 with the two issue URLs and the shipped-confirmation.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"grep -c 'Local patch shipped 2026-06-18' PROGRESS.md\", \"acceptanceCriteria\": [\"Brainstorm pending gone\", \"shipped line present\", \"both URLs present\"], \"modelTier\": \"mechanical\"}\n```"
     }
