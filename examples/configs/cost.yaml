@@ -30,6 +30,7 @@ compute:
     idle_timeout: 600
     max_lifetime: 14400
     budget: 10.0
+    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true (default)
 
 store:
   kind: local
