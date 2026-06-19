@@ -15,22 +15,50 @@ first unchecked task without redoing committed work.
 
 ## Next session — resume target (single next action at top)
 
-**RESUME WITH Phase 53 Stage E — end-to-end `kinoforge deploy` on
-Lambda.** Stage C closed 2026-06-17 (see Phase 53 §Stage C below):
-`compute.cloud: list[str] | None` added to `ComputeConfig`,
-`kinoforge._adapters.build_provider_for(cfg)` threads it into
-`SkyPilotProvider._clouds`, `examples/configs/skypilot-lambda.yaml`
-ships with `cloud: ["lambda"]` + `max_usd_per_hr: 2.00`. 13 new tests
-green; full suite still green.
+**Phase 53 Stage E CLOSED 2026-06-18 — end-to-end path verified on
+Lambda.** Live smoke ran twice:
+- Run 1 (19:14:25 → 19:21, ~7 min, ~$0.15): instance came up; sky
+  failed at `sudo docker pull skypilot/skypilot-gpu:latest` because
+  that namespace 404s on Docker Hub — Stage-C cfg shipped a
+  placeholder image that was never verified. Cluster torn down via
+  `sky down -y skypilot-cluster`.
+- Run 2 (19:25:39 → 19:33:55, ~8 min 16 s, ~$0.18) after `05fc93d`
+  swapped the image to `nvidia/cuda:12.2.0-base-ubuntu22.04`:
+  Lambda A10 (us-east-1) chosen → `Instance is up` → `Docker
+  container is up` → `Cluster launched` → orchestrator returned
+  `deployed instance 'skypilot-cluster' via 'skypilot'
+  (status=ready)`. Full kinoforge → SkyPilotProvider → sky →
+  Lambda contract verified. Cluster torn down via `sky down -y
+  skypilot-cluster`. Total Stage E spend ≈ $0.34 against the
+  ~$0.15 envelope — overage attributable to Run 1's image-pull
+  failure.
 
-Stage E: run `pixi run -e live-skypilot kinoforge deploy
-examples/configs/skypilot-lambda.yaml` to verify the full
-kinoforge → SkyPilotProvider → sky → Lambda path with a FakeEngine
-payload. Pre-spend: `pixi run preflight`. Budget envelope: ~$0.15
-(provision + idle window + teardown on $1.09/hr A6000 or $1.29/hr
-A10). Stage D (Vast.ai parity) remains BLOCKED on upstream sky vast
+**RESUME TARGET:** pick the next workstream from the queue below.
+Stage D (Vast.ai parity) remains BLOCKED on upstream sky vast
 adapter regression — Lambda is sole sky cloud until upstream ships
 the fix.
+
+### Stage E follow-ups (filed 2026-06-18)
+- **Bogus skypilot ledger fields.** The Run-2 ledger entry came out
+  as `skypilot-cluster  age=494954.6h  est_spend=$0.0000  capability_key=<unknown>`
+  via `kinoforge list`. Three independent bugs surfaced by the first
+  real skypilot ledger row: (a) age computation reads a non-existent
+  or zero `created_at`, (b) cost computation gives up silently for
+  skypilot rows, (c) capability_key isn't persisted onto the ledger
+  for skypilot. None blocked teardown — `kinoforge forget --id
+  skypilot-cluster` cleared the row cleanly. File as a Layer-S
+  follow-up before any next skypilot deploy that needs operator-
+  facing list/cost UX.
+- **Same image placeholder in `skypilot.yaml` + `skypilot-gpu.yaml`.**
+  Commit `05fc93d` scope-limited the fix to `skypilot-lambda.yaml`.
+  Apply the same swap (or document the operator-supplied image
+  expectation) to the other two cfgs before either is used live.
+- **Stale RunPod ghost ledger entries.** `kinoforge list` carried 7
+  RunPod rows aging 43–51 h with cumulative ~$73 estimated spend.
+  RunPod preflight confirmed 0 active pods — these are pre-existing
+  ghost rows from earlier C33 / Phase 47 / Phase 52 sessions that
+  were never reconciled. `kinoforge forget --id <id>` (or a bulk
+  reaper) is the path. Not Stage-E-caused; flagged for visibility.
 
 > ⚠️ **DEFERRED — UPSTREAM HOOK ISSUES TO FILE.** Two issue bodies are
 > drafted under `docs/upstream-issues/` and awaiting Dr. Twinklebrane's
