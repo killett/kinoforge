@@ -396,8 +396,12 @@ def warm_reuse_or_create(
 # out of its ``**extra`` payload so a future Layer V consumer cannot
 # accidentally clobber an instance's identity by passing them through.
 _PROTECTED_LEDGER_KEYS: frozenset[str] = frozenset(
-    {"id", "provider", "tags", "created_at", "cost_rate_usd_per_hr"}
+    {"id", "provider", "tags", "created_at"}
 )
+# ``cost_rate_usd_per_hr`` is intentionally NOT in this set: ``kinoforge status``
+# refreshes it from the live provider value (e.g. RunPod's ``pod.costPerHr``)
+# so accrued-spend, the cost dashboard, and budget-ceiling math reflect the
+# rate actually billed instead of the catalog rate snapshotted at provision.
 
 
 class Ledger:
@@ -621,11 +625,12 @@ class Ledger:
             **extra: Forward-compat seam for additional fields the touch
                 consumer wants to thread through (e.g. the sentinel
                 ``heartbeat_thread_tick`` written by
-                :class:`kinoforge.core.heartbeat_loop.HeartbeatLoop`).
-                Keys in the protected set
-                ``{"id", "provider", "tags", "created_at", "cost_rate_usd_per_hr"}``
-                are silently filtered so a future caller cannot rewrite
-                ``record``-owned fields. ``None`` values are skipped.
+                :class:`kinoforge.core.heartbeat_loop.HeartbeatLoop`, or
+                the live ``cost_rate_usd_per_hr`` refreshed from the
+                provider by ``kinoforge status``).  Keys in the protected
+                set ``{"id", "provider", "tags", "created_at"}`` are
+                silently filtered so a future caller cannot rewrite the
+                instance identity. ``None`` values are skipped.
 
         Returns:
             ``True`` iff a disk write happened.  ``False`` on unknown id,

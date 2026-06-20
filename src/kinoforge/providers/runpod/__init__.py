@@ -845,7 +845,7 @@ _GPU_TYPES_QUERY: str = (
     "{ minimumBidPrice uninterruptablePrice } } }"
 )
 
-_LIST_PODS_QUERY: str = "{ myself { pods { id desiredStatus imageName } } }"
+_LIST_PODS_QUERY: str = "{ myself { pods { id desiredStatus imageName costPerHr } } }"
 
 _CREATE_POD_MUTATION: str = (
     "mutation($input: PodFindAndDeployOnDemandInput!) "
@@ -866,7 +866,10 @@ def _get_pod_query(pod_id: str) -> str:
     Returns:
         A GraphQL query string.
     """
-    return f'{{ pod(input: {{ podId: "{pod_id}" }}) {{ id desiredStatus imageName }} }}'
+    return (
+        f'{{ pod(input: {{ podId: "{pod_id}" }}) '
+        "{ id desiredStatus imageName costPerHr } }"
+    )
 
 
 def _stop_pod_mutation(pod_id: str) -> str:
@@ -920,20 +923,31 @@ def _runpod_status_to_kinoforge(desired_status: str) -> str:
 def _pod_to_instance(pod: dict[str, Any]) -> Instance:
     """Convert a RunPod pod dict from the API to an :class:`~kinoforge.core.interfaces.Instance`.
 
+    ``cost_rate_usd_per_hr`` is populated from the live ``pod.costPerHr``
+    field so :func:`kinoforge.cli._commands._cmd_status` can refresh the
+    ledger and reflect post-substitution / spot-price rates accurately.
+    Missing or ``None`` values (early-boot responses, partial GraphQL
+    selection sets) fall back to ``0.0`` rather than raising so the
+    status surface stays observable while a pod is still spinning up.
+
     Args:
-        pod: A dict with ``id``, ``desiredStatus``, and ``imageName`` keys.
+        pod: A dict with ``id``, ``desiredStatus``, ``imageName`` and
+            (optionally) ``costPerHr`` keys.
 
     Returns:
         An :class:`~kinoforge.core.interfaces.Instance` representing the pod.
     """
     pod_id: str = str(pod.get("id", ""))
     desired_status: str = str(pod.get("desiredStatus", ""))
+    raw_cost = pod.get("costPerHr")
+    cost_rate: float = float(raw_cost) if raw_cost is not None else 0.0
     return Instance(
         id=pod_id,
         provider="runpod",
         status=_runpod_status_to_kinoforge(desired_status),
         created_at=0.0,  # RunPod list API does not return creation time
         tags={"mode": "pod"},
+        cost_rate_usd_per_hr=cost_rate,
     )
 
 

@@ -364,6 +364,76 @@ def test_cmd_status_verdict_heartbeat_unknown_on_list_instances_failure(
     assert "verdict=HEARTBEAT_UNKNOWN" in out
 
 
+def test_cmd_status_refreshes_ledger_cost_rate_from_live_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """status persists provider.get_instance(id).cost_rate_usd_per_hr to the ledger.
+
+    Catches the bug logged 2026-06-19: ``kinoforge status --id <pod>``
+    surfaced the offer-catalog rate captured at provision time
+    (e.g. $0.35/hr) instead of the live RunPod $0.45/hr, leaving every
+    ``accrued_spend_usd`` figure, the ``cost`` dashboard total, and the
+    budget-ceiling guard systematically biased low.  The fix:
+    after a successful ``provider.get_instance(id)``, write the live
+    rate back to the ledger and rebuild the printed block from the
+    refreshed entry.
+    """
+    import time as _t
+
+    from kinoforge.cli import _commands
+    from kinoforge.cli.context import SessionContext
+    from kinoforge.core.interfaces import Instance
+    from kinoforge.providers.local import LocalProvider
+
+    state_dir = tmp_path / "state"
+    ctx = SessionContext.from_args(state_dir=state_dir, cfg_path=None)
+    ledger = ctx.ledger()
+    now = _t.time()
+    stale = Instance(
+        id="i-rate",
+        provider="local",
+        created_at=now,
+        status="ready",
+        cost_rate_usd_per_hr=0.35,
+        tags={},
+    )
+    ledger.record(stale)
+    pre = ledger.read("i-rate")
+    assert pre is not None and pre["cost_rate_usd_per_hr"] == 0.35
+
+    # Live provider reports the post-substitution true rate.
+    live = Instance(
+        id="i-rate",
+        provider="local",
+        created_at=now,
+        status="ready",
+        cost_rate_usd_per_hr=0.45,
+        tags={},
+    )
+    fake_provider = LocalProvider()
+    fake_provider._instances = {"i-rate": live}
+    monkeypatch.setattr(
+        "kinoforge.core.registry.get_provider", lambda _name: lambda: fake_provider
+    )
+
+    args = argparse.Namespace(id="i-rate", config=None)
+    code = _commands._cmd_status(args, ctx)
+    out = capsys.readouterr().out
+
+    assert code == 0
+    post = ledger.read("i-rate")
+    assert post is not None
+    assert post["cost_rate_usd_per_hr"] == 0.45, (
+        "ledger was not refreshed from live provider.get_instance().cost_rate_usd_per_hr"
+    )
+    assert "cost_rate_usd_per_hr=0.4500" in out, (
+        f"status output still shows the stale catalog rate; full output:\n{out}"
+    )
+    assert "cost_rate_usd_per_hr=0.3500" not in out
+
+
 # ---------------------------------------------------------------------------
 # B4 — _cmd_list capability_key column
 # ---------------------------------------------------------------------------

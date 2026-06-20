@@ -194,11 +194,16 @@ def test_touch_with_all_none_kwargs_is_noop_no_lock_acquired(
 
 
 def test_touch_filters_protected_keys(tmp_path: Path) -> None:
-    """Protected keys (id/provider/tags/created_at/cost_rate_usd_per_hr) cannot be overwritten via **extra.
+    """Protected keys (id/provider/tags/created_at) cannot be overwritten via **extra.
 
     Defends against accidental clobber by a future Layer V consumer that
     grows touch's payload. Without this guard, a caller could rewrite
     instance.id from inside touch and corrupt the ledger.
+
+    NOTE: cost_rate_usd_per_hr was removed from the protected set so
+    ``kinoforge status`` can refresh the ledger rate from the live
+    provider value (RunPod's GraphQL ``pod.costPerHr``).  See
+    :func:`test_touch_updates_cost_rate_usd_per_hr` for the new contract.
     """
     store = LocalArtifactStore(tmp_path)
     ledger = Ledger(store=store, run_id="_touch_protected")
@@ -215,7 +220,6 @@ def test_touch_filters_protected_keys(tmp_path: Path) -> None:
         "provider": "evil",
         "id": "hijacked",
         "created_at": 0.0,
-        "cost_rate_usd_per_hr": 99.99,
         "tags": {"x": "y"},
     }
     changed = ledger.touch("i-1", last_heartbeat=1.0, **protected_extra)
@@ -228,6 +232,37 @@ def test_touch_filters_protected_keys(tmp_path: Path) -> None:
     assert entry["cost_rate_usd_per_hr"] == 0.25
     assert entry["tags"] == {}
     assert entry["last_heartbeat"] == 1.0
+
+
+def test_touch_updates_cost_rate_usd_per_hr(tmp_path: Path) -> None:
+    """touch(id, cost_rate_usd_per_hr=X) replaces the recorded rate.
+
+    Catches the bug where the field was frozen in ``_PROTECTED_LEDGER_KEYS``,
+    so ``kinoforge status`` could not persist the live RunPod
+    ``pod.costPerHr`` (e.g. $0.45/hr) back to the ledger and kept showing
+    the catalog rate captured at provision time (e.g. $0.35/hr).  Every
+    ``accrued_spend_usd`` figure, the ``cost`` dashboard total, and the
+    budget-ceiling guard were biased low by the same factor until the
+    refresh path was unlocked.
+    """
+    store = LocalArtifactStore(tmp_path)
+    ledger = Ledger(store=store, run_id="_touch_cost_rate")
+    ledger.record(
+        _make_instance(
+            "i-rate", provider="runpod", created_at=10.0, cost_rate_usd_per_hr=0.35
+        )
+    )
+
+    changed = ledger.touch("i-rate", cost_rate_usd_per_hr=0.45)
+
+    assert changed is True
+    [entry] = ledger.entries()
+    assert entry["cost_rate_usd_per_hr"] == 0.45
+    # touch must not corrupt the other record-owned fields when threading
+    # the refreshed rate through.
+    assert entry["id"] == "i-rate"
+    assert entry["provider"] == "runpod"
+    assert entry["created_at"] == 10.0
 
 
 # ---------------------------------------------------------------------------
