@@ -57,7 +57,11 @@ expensive base-model bytes stay put across the swap.
 - **Ledger schema additions.** New fields on `PodEntry`:
   `warm_attach_key`, `lora_inventory: list[LoraInventoryEntry]`,
   `loras_dir_free_bytes`, `loras_dir_free_bytes_observed_at_local`.
-  Lazy-derived for pre-feature entries — no migration script.
+  Migration strategy for pre-feature entries finalised at plan-phase
+  (see §6.3): preferred path is lazy self-healing derivation from
+  whatever existing fields carry `(base_model, engine, precision)`;
+  fallback is a one-time migration script if the existing ledger
+  carries only the `capability_key_hex` digest.
 - **Ephemeral integration.** Existing `ledger_record` gate covers the
   new fields for free — payload routes to `session.in_memory_ledger`
   under strict policy. New `_register_observed_lora_refs` helper
@@ -75,12 +79,12 @@ expensive base-model bytes stay put across the swap.
 
 ### Out of scope (this spec)
 
-See §9 for the full deferral table with promotion triggers. High-level:
+See §15 for the full deferral table with promotion triggers. High-level:
 
 - ComfyUI engine LoRA-flexible warm-reuse (gated on existing C23
   follow-up).
-- Cold-boot fallback on swap failure (Option B / §7); half-state
-  recovery (Option C / §7) — both layered on top of v1's fail-loud
+- Cold-boot fallback on swap failure (Option B / §11); half-state
+  recovery (Option C / §11) — both layered on top of v1's fail-loud
   baseline.
 - Concurrent jobs on the same warm pod (lift the per-pod lock).
 - Cross-process pod-lock coordination (folds into Layer H whenever
@@ -89,8 +93,8 @@ See §9 for the full deferral table with promotion triggers. High-level:
 - Smart eviction (size-weighted instead of pure LRU).
 - Persistent matcher-decision log.
 - Smart prefetch.
-- Pod-side post-session LoRA scrub under `--ephemeral` (§5.4 documents
-  the residual threat vector; mitigations partially in place).
+- Pod-side post-session LoRA scrub under `--ephemeral` (§3 + §10.4
+  document the residual threat vector; mitigations partially in place).
 
 ### Public-by-design surfaces unchanged
 
@@ -282,20 +286,33 @@ regression test against a golden hash table.
 
 ### 6.3 Ledger migration strategy
 
-Pre-feature pod entries lack `warm_attach_key`. Strategy:
-self-healing lazy derivation. When the matcher reads an entry without
-`warm_attach_key`, it derives one from the entry's existing
-`capability_key` payload (which already carries the full
-`(base_model, engine, precision, loras)` tuple in canonical-JSON form
-per the existing `derive()`), then writes it back via `Ledger.touch`.
-One self-healing pass per pre-feature pod. No migration script. No
-data loss. Worst-case cost: one extra ledger write per pre-feature
-pod on its first post-feature matcher call.
+Pre-feature pod entries lack `warm_attach_key`. Two strategy options;
+plan-phase picks based on the actual ledger payload shape:
 
-`lora_inventory` defaults to `[]` for pre-feature entries — matcher
-treats the empty list as "unknown, re-probe via `GET /lora/inventory`
-before deciding." Re-probe populates the field; future matcher calls
-skip the round-trip.
+**Strategy A — lazy self-healing (preferred).** Requires that
+pre-feature pod entries already carry the structured
+`(base_model, engine, precision)` fields somewhere. When the matcher
+reads an entry without `warm_attach_key`, it derives one from the
+existing fields, then writes it back via `Ledger.touch`. One
+self-healing pass per pre-feature pod. No migration script.
+
+**Strategy B — one-time migration script (fallback).** Required if
+the existing ledger entries only carry the `capability_key_hex` digest
+without the structured tuple (a digest cannot be inverted back to
+its components). Migration script reads the cfg that produced each
+pod (recoverable from the matching profile cache entry or from the
+original cfg file path the pod was provisioned with) and back-fills
+`warm_attach_key` + the structured fields.
+
+Plan-phase verification step: inspect the actual `PodEntry` Pydantic
+model to determine which strategy applies. The brainstorm assumed
+Strategy A but the verification was not completed; first plan task is
+to confirm.
+
+`lora_inventory` defaults to `[]` for pre-feature entries regardless
+of strategy — matcher treats the empty list as "unknown, re-probe via
+`GET /lora/inventory` before deciding." Re-probe populates the field;
+future matcher calls skip the round-trip.
 
 ## 7. Pod-side server changes
 
@@ -391,11 +408,11 @@ Order matters — `set_adapters` applies in list order, mirroring
 For Wan 2.2's MoE high+low pair, both tensors load as separate
 adapters on the same pipeline; the pipeline routes each tensor to its
 matching transformer internally. Assumption to verify in live smoke
-(documented in §8 and §11).
+(§13.3); regression coverage in `tests/engines/test_wan_t2v_server_set_stack.py`.
 
 VRAM-OOM at `set_adapters` triggers a rollback: handler reloads the
-previous adapter set, returns 200 with `swap_rejected` populated
-(§9.4 / failure mode 7.4).
+previous adapter set, returns 200 with `swap_rejected` populated. Full
+contract for this case in §11 (LoraSwapVramOomError row).
 
 ### 7.5 Cold-boot path
 
@@ -598,12 +615,14 @@ destroyed (existing reaper or operator `kinoforge destroy`).
 
 Documented in §3. Mitigation already partially in place via
 `pod_name_includes_alias=False` under strict policy. Opt-in pod-side
-post-session scrub deferred to §11.
+post-session scrub deferred to §15.
 
 ## 11. Failure modes
 
-See §7 of the brainstorm transcript for the discussion narrative.
-This section captures the locked-in contract.
+Six failure modes. Each gets an explicit error class + caller
+behavior. This section captures the locked-in contract; the dialog
+narrative tracing each option to its decision lives in the brainstorm
+transcript (commit history for this spec file).
 
 ### 11.1 Error classes
 
@@ -731,12 +750,22 @@ eviction, cold-boot fallthrough, ephemeral cross-session preservation.
 ### 13.3 Live smoke (the green gate)
 
 Single end-to-end smoke at `tests/live/test_wan22_lora_warm_reuse.py`.
-Four generations on the same RunPod A100 80GB pod, ~$2 spend cap:
+Four generations on the same RunPod A100 80GB pod, ~$2 spend cap. The
+smoke uses only the README default Arcane Style pair
+(`civitai:2197303@2474081` high-noise + `civitai:2197303@2474073`
+low-noise) so v1 has no external-LoRA sourcing requirement; each step
+exercises a different code path:
 
-1. Cold-boot with 0 LoRAs.
-2. Warm-attach with 2 LoRAs (Arcane high + low pair per README default).
-3. Warm-attach with different 2 LoRAs (TBD — pick one additional public Wan 2.2 LoRA + a tensor from Arcane).
-4. Warm-attach back to 0 LoRAs (full evict).
+1. **Cold-boot with 0 LoRAs.** Provisions a Wan 2.2 pod; inventory empty.
+2. **Warm-attach to [high, low] (full pair).** Exercises pure-download path; inventory becomes [high, low].
+3. **Warm-attach to [low] only.** Exercises pure-eviction path: evicts `high`, keeps `low` cached. Inventory becomes [low].
+4. **Warm-attach to [] (no LoRAs).** Exercises full-evict path: evicts `low`. Inventory empty again.
+
+The combinatorial matrix (evict + download + overlap in a single
+swap) is covered by the offline integration tests
+(`tests/integration/test_warm_reuse_lora_overlap.py` +
+`test_warm_reuse_lora_lru_eviction.py`); the live smoke validates the
+basic swap mechanism on real GPU with real network/disk dynamics.
 
 Asserts each generation produces a valid mp4; ledger inventory matches
 pod's `/lora/inventory` at every step; cost stays under cap; `kinoforge
