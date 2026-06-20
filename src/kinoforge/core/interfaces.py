@@ -256,8 +256,51 @@ class ModelSource(ABC):
 
 
 @dataclass(frozen=True)
+class WarmAttachKey:
+    """The slow-to-rebuild part of a pod's identity.
+
+    Carries (base_model, engine, precision) — the expensive bytes that
+    a warm pod has already paid for and which a new generation job
+    should NOT trigger re-download for. See
+    docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md.
+
+    Attributes:
+        base_model: Base-model vendor-neutral ref (e.g. "hf:org/m").
+        engine: Engine name (capability is engine-specific).
+        precision: Precision/quantization (e.g. "fp16", "gguf-q8").
+    """
+
+    base_model: str
+    engine: str = ""
+    precision: str = ""
+
+    def derive(self) -> str:
+        """Stable sha256 over (base_model, engine, precision)."""
+        payload = json.dumps(
+            [self.base_model, self.engine, self.precision], ensure_ascii=False
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class LoraStack:
+    """The cheap-to-swap part of a pod's identity. Ordered.
+
+    Order matters: LoraStack(refs=("a","b")) != LoraStack(refs=("b","a")).
+    The order participates in CapabilityKey identity and in pipeline
+    adapter ordering (set_adapters([...]) applies in list order).
+    """
+
+    refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class CapabilityKey:
     """Full identity a ModelProfile depends on. derive() is the stable cache key.
+
+    Composite over WarmAttachKey + LoraStack. derive() produces the
+    same byte-equal hash as the pre-split CapabilityKey for backward
+    compatibility with every existing ledger entry.
 
     Attributes:
         base_model: Base-model vendor-neutral ref (e.g. "hf:org/m").
@@ -272,12 +315,25 @@ class CapabilityKey:
     precision: str = ""
 
     def derive(self) -> str:
-        """Stable, order-sensitive sha256 over all fields (VAE excluded by design)."""
+        """Stable, order-sensitive sha256 over all fields (VAE excluded by design).
+
+        Byte-identical to the pre-split CapabilityKey.derive() output.
+        """
         payload = json.dumps(
             [self.base_model, list(self.loras), self.engine, self.precision],
             ensure_ascii=False,
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def warm_attach_key(self) -> WarmAttachKey:
+        """Return the WarmAttachKey factor (base + engine + precision)."""
+        return WarmAttachKey(
+            base_model=self.base_model, engine=self.engine, precision=self.precision
+        )
+
+    def lora_stack(self) -> LoraStack:
+        """Return the LoraStack factor (ordered LoRA refs)."""
+        return LoraStack(refs=self.loras)
 
 
 @dataclass

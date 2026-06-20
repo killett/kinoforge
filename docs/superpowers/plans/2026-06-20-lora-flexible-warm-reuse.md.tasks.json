@@ -1,13 +1,13 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
   "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
-  "lastUpdated": "2026-06-20T16:28:44-07:00",
+  "lastUpdated": "2026-06-20T17:35:00-07:00",
   "tasks": [
     {
       "id": 10,
       "planTaskNumber": 1,
       "subject": "Task 1: Split CapabilityKey into WarmAttachKey + LoraStack",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": []
     },
     {
