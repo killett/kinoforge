@@ -72,14 +72,16 @@ def test_render_provision_port_parsed_from_base_url() -> None:
     cfg = _minimal_cfg()
     cfg["engine"]["diffusers"]["base_url"] = "http://localhost:9999"
     rp = _make_engine().render_provision(cfg)
-    assert rp.ports == ["9999"]
+    # The main server port is followed by the 8001 log-server port.
+    assert rp.ports == ["9999", "8001"]
 
 
 def test_render_provision_port_defaults_to_8000_when_base_url_missing() -> None:
     cfg = _minimal_cfg()
     cfg["engine"]["diffusers"]["base_url"] = ""
     rp = _make_engine().render_provision(cfg)
-    assert rp.ports == ["8000"]
+    # The 8000 default is followed by the 8001 log-server port.
+    assert rp.ports == ["8000", "8001"]
 
 
 def test_render_provision_env_required_is_empty() -> None:
@@ -184,6 +186,71 @@ def test_render_provision_pip_install_quotes_version_specifiers(
         f"  expected: {['install', '-q', *pip_deps]}\n"
         f"  actual:   {args}\n"
         f"  raw line: {pip_lines[0]!r}"
+    )
+
+
+def test_render_provision_redirects_stdout_stderr_to_bootstrap_log() -> None:
+    """Bootstrap script captures all stdout+stderr to /tmp/bootstrap.log.
+
+    Bug it catches: Task 8 attempts #2 and #3 both restart-looped on a
+    crash inside wan_t2v_server.py startup. Without log capture on the
+    pod, the controlling agent could not see the actual error message
+    — uptime cycled, GPU/CPU stayed flat, but the *reason* required
+    SSH or a separate logging surface. Bake the capture into the
+    bootstrap so a sidecar HTTP server can serve it back via the
+    RunPod port proxy.
+
+    Locks in: ``exec > /tmp/bootstrap.log 2>&1`` is the second
+    statement in the script (after ``set -euo pipefail``).
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    lines = [ln.strip() for ln in rp.script.split("\n") if ln.strip()]
+    assert lines[0] == "set -euo pipefail"
+    assert lines[1] == "exec > /tmp/bootstrap.log 2>&1", (
+        f"expected log redirect as line 2; got: {lines[1]!r}"
+    )
+
+
+def test_render_provision_starts_log_http_server_on_port_8001() -> None:
+    """A sidecar HTTP server serves /tmp/bootstrap.log over port 8001.
+
+    The line uses python3's stdlib http.server with --directory /tmp
+    so the entire /tmp dir is browseable. Backgrounded with nohup so
+    it survives the main server's ``exec``; its own stdout/stderr is
+    sunk to /dev/null so it never pollutes the log it serves.
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    expected = "nohup python3 -m http.server 8001 --directory /tmp >/dev/null 2>&1 &"
+    assert expected in rp.script, (
+        f"expected log-server bind line; not found in rendered script:\n{rp.script}"
+    )
+
+
+def test_render_provision_log_server_launches_before_main_exec() -> None:
+    """The log server must be up before the main server forks/execs.
+
+    If the order were reversed, a crash inside ``exec python -m
+    kinoforge...`` would kill the shell before the log server bound
+    its port — defeating the entire point of the surface.
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    script = rp.script
+    log_idx = script.index("python3 -m http.server 8001")
+    exec_idx = script.index("exec python -m diffusers_server")
+    assert log_idx < exec_idx, (
+        "log server must be launched before the main exec; "
+        f"got log_idx={log_idx} exec_idx={exec_idx}"
+    )
+
+
+def test_render_provision_ports_include_8001_log_server_port() -> None:
+    """``RenderedProvision.ports`` advertises 8001 so the provider exposes
+    it as a proxy. Without this, the orchestrator's log-fetch CLI would
+    have no proxy URL to hit.
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    assert "8001" in rp.ports, (
+        f"expected port '8001' in RenderedProvision.ports; got {rp.ports!r}"
     )
 
 
