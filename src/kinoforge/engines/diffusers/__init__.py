@@ -814,12 +814,25 @@ class DiffusersEngine(GenerationEngine):
         Returns:
             A :class:`DiffusersBackend` ready to accept jobs.
         """
-        del instance
         engine_block = cfg.get("engine", {})
         diffusers_cfg: dict[str, Any] = (
             engine_block.get("diffusers", {}) if isinstance(engine_block, dict) else {}
         )
-        base_url: str = str(diffusers_cfg.get("base_url", _DEFAULT_BASE_URL))
+        # Remote pod: use the proxy URL from instance.endpoints, not the
+        # cfg's base_url. cfg.base_url ("http://localhost:8000") is only
+        # valid when DiffusersEngine runs LOCAL (provider=local). For
+        # remote pods, the proxy URL was set on instance.endpoints by
+        # the provider at create_instance time. Task 8 attempt #24
+        # surfaced this gap with a Connection refused error on
+        # http://localhost:8000/generate from the workspace container.
+        cfg_base_url: str = str(diffusers_cfg.get("base_url", _DEFAULT_BASE_URL))
+        if instance is not None and instance.provider != "local" and instance.endpoints:
+            port = _extract_port_from_base_url(cfg_base_url)
+            base_url = instance.endpoints.get(port) or instance.endpoints.get(
+                "8000", cfg_base_url
+            )
+        else:
+            base_url = cfg_base_url
         asset_paths_raw = diffusers_cfg.get("asset_paths", {})
         asset_paths: dict[str, str] = (
             {str(k): str(v) for k, v in asset_paths_raw.items()}
