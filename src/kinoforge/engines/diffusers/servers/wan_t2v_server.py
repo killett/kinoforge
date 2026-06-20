@@ -98,14 +98,27 @@ class GenerateRequest(BaseModel):
 def _load_pipeline() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no public TypeAlias.
     """Construct and return the WanPipeline.
 
+    Loads weights with ``device_map="cuda"`` so each component streams
+    DIRECTLY to GPU memory and is never held in CPU RAM. The Wan 2.2
+    MoE has two 14B transformers plus an 11 GB UMT5-XXL text encoder
+    — staging all of that in CPU first OOM-kills any pod with less
+    than ~80 GB CPU RAM (Task 8 attempts #17 / #19 / #21 — pod CPU
+    RAM allocation varies machine-to-machine even with the same
+    ``minMemoryInGb`` filter). Streaming straight to the 80 GB A100
+    sidesteps the variable-RAM problem entirely.
+
     Separated out so tests can patch this seam without importing
     diffusers (which would otherwise pull torch + CUDA at test time).
     """
     import torch
     from diffusers import WanPipeline
 
-    pipe_obj = WanPipeline.from_pretrained(MODEL_ID, torch_dtype=torch.bfloat16)
-    return pipe_obj.to("cuda")
+    pipe_obj = WanPipeline.from_pretrained(
+        MODEL_ID,
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+    )
+    return pipe_obj
 
 
 def _seed_to_generator(seed: int | None) -> Any:  # noqa: ANN401 — torch.Generator opaque here.
