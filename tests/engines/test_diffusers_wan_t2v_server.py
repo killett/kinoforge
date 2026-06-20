@@ -100,7 +100,10 @@ class TestHealth:
         import kinoforge.engines.diffusers.servers.wan_t2v_server as srv
 
         importlib.reload(srv)
-        assert srv.MODEL_ID == "Wan-AI/Wan2.2-T2V-A14B"
+        # Default model id points at the diffusers-format repo, NOT
+        # the native Wan-AI checkpoint layout. See plan amendment
+        # 2026-06-19, Task 8 attempt #7.
+        assert srv.MODEL_ID == "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
 
 
 class TestGenerate:

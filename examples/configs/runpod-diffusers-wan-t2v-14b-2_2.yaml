@@ -54,12 +54,18 @@ engine:
 models:
   # Bare-repo ref — HuggingFaceSource enumerates files for capability
   # key derivation. Actual download is at server startup via
-  # diffusers.WanPipeline.from_pretrained() (handles 12 sharded
-  # safetensors files via huggingface_hub.snapshot_download).
-  # The bootstrap script's _kinoforge_download is NOT called for
-  # this ref because DiffusersEngine.render_provision does not loop
-  # over models[] the way ComfyUIEngine does.
-  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B"
+  # diffusers.WanPipeline.from_pretrained().
+  #
+  # NOTE: the `-Diffusers` variant of the repo, NOT the bare `Wan-AI/
+  # Wan2.2-T2V-A14B`. The bare repo is the native Wan-AI checkpoint
+  # layout (Wan2.1_VAE.pth, models_t5_..., high_noise_model/,
+  # low_noise_model/, configuration.json) and does NOT have the
+  # diffusers `model_index.json` at root — `from_pretrained` 404s
+  # against it. The `-Diffusers` variant is the official converted
+  # format with `model_index.json` + vae/, scheduler/, tokenizer/,
+  # text_encoder/, transformer/, transformer_2/ subfolders. Discovered
+  # during Task 8 attempt #7 via the bootstrap.log surface.
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
     kind: base
     target: checkpoints  # informational only; diffusers manages HF cache
 
