@@ -66,7 +66,11 @@ def test_render_provision_run_cmd_matches_server_cmd() -> None:
 
 def test_render_provision_default_image_is_stock_runpod_pytorch() -> None:
     rp = _make_engine().render_provision(_minimal_cfg())
-    assert rp.image == "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    # Default bumped to torch 2.8 after Task 8 attempt #5 surfaced the
+    # torch 2.4 infer_schema bug on diffusers' Wan VAE module.
+    assert rp.image == (
+        "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    )
 
 
 def test_render_provision_image_override_from_cfg() -> None:

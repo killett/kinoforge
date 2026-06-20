@@ -52,8 +52,14 @@ _MAX_POLL = 60
 #: Default server base URL.
 _DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
-#: Default container image for remote provisioning.
-_DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+#: Default container image for remote provisioning. Pinned to torch 2.8
+#: so ``torch.library.custom_op`` can resolve stringified ``'torch.Tensor'``
+#: annotations — the torch 2.4 image tripped ``infer_schema`` inside
+#: ``diffusers.models.autoencoders.autoencoder_kl_wan`` during the
+#: Task 8 attempt #5 smoke (see commit 2eeb1d4 era log evidence).
+_DEFAULT_RUNPOD_IMAGE: str = (
+    "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+)
 
 #: Seconds between readiness polls in :meth:`DiffusersEngine.wait_for_ready`.
 _READY_POLL_INTERVAL_S: float = 5.0
