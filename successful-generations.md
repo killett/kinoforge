@@ -25,6 +25,13 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
    - See also: `2026-06-13 12:44:24` — B3 smoke re-fire post-closeout at HEAD `8bf51d6`: gen 1 6.3 s / gen 2 2.6 s (ratio 0.41, 59 % cold-skip), pod `k838y2t6mpq91s` (RTX A5000), spend ~$0.0016. Same tuple `(runpod, FakeEngine, fake-model, t2v)`; confirms B3 mechanics still green after Phase 52 BQ-export plumbing diff.
 7. `2026-06-18 22:05:08` — [ComfyUI Wan 2.1 1.3B t2v on RunPod (CLI cross-invocation warm-reuse, real engine) — t2v](#7-2026-06-18-220508--comfyui-wan-21-13b-t2v-on-runpod-cli-cross-invocation-warm-reuse-real-engine--t2v)
 8. `2026-06-20 05:58:23` — [Diffusers WanPipeline Wan 2.2 T2V-A14B on RunPod (A100 80GB) — t2v](#8-2026-06-20-055823--diffusers-wanpipeline-wan-22-t2v-a14b-on-runpod-a100-80gb--t2v)
+   - See also: `2026-06-20 12:24:49` — 4-prompt warm-reuse re-fire at HEAD `085781e` (test `tests/live/test_diffusers_wan_t2v_4prompt_live.py`): 1 cold + 3 warm-reuse on the SAME pod, one per file in `examples/configs/prompts/`. Pod `87geau1jcpxr0z` (NVIDIA A100 80GB PCIe), total wall-clock 33 m 19 s, spend ~$0.66. All 4 MP4s ffprobe-verified h264 / yuv420p / 480×480 / 81 frames / 16 fps; 4 distinct sha256s; legs 2/3/4 all `warm-reuse: attached to 87geau1jcpxr0z`. Same tuple `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`. Stable evidence copies at `.kinoforge/wan22_4prompt_evidence/`. Per-leg table:
+     | # | Prompt file | Wall-clock from cold start | Published path | Size | SHA-256 |
+     |---|---|---|---|---|---|
+     | 0 (cold)  | `field-realistic.txt` | 23 m 02 s | `output/20260620-121432_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` | 1,367,301 B (1.30 MiB) | `50ac05975a13702633bcc35f7012bfee66788c9bdf9d556f9120e3448acb8d40` |
+     | 1 (warm1) | `field-dreamlike.txt` | +3 m 26 s | `output/20260620-121758_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-yet-d.mp4` | 1,736,159 B (1.66 MiB) | `36d34431276713e0d20f069759fbffc26aebf0def396674c746d586b43c57a1b` |
+     | 2 (warm2) | `forest.txt`          | +3 m 26 s | `output/20260620-122124_diffusers_Wan2.2-T2V-A14B-Diffuser_A-dense-old-growth-f.mp4`   | 798,293 B (0.76 MiB)   | `7b2836285ebd0b64c8a6662fea13ae21e5bac2349b81c3de5c705b309b5b6a94` |
+     | 3 (warm3) | `dawn-flight.md`      | +3 m 25 s | `output/20260620-122449_diffusers_Wan2.2-T2V-A14B-Diffuser_Aerial-drone-shot-at.mp4`   | 403,909 B (0.39 MiB)   | `d11c1c194d47a70399838b095f63ea4a3d4dc2e24a99ef2279df8146af46f4f5` |
 
 ---
 
