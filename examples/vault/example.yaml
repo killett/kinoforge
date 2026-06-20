@@ -24,9 +24,16 @@ positive_prompt: |
 negative_prompt: |
   REPLACE THIS with your negative prompt body, or remove the field entirely.
 
+# Default test LoRA pair (Arcane Style [WAN 2.2 T2V] v1.0, CivitAI model
+# 2197303). The pair below is the canonical Wan-2.2 full-effect test
+# default — one tensor per MoE transformer, high-noise first then
+# low-noise. Replace with your own LoRAs in real use; this file is a
+# template. See README.md → "Default test LoRA (Wan 2.2 T2V)" for the
+# full write-up.
 loras:
-  - ref: civitai:0000@0000
-    label: example-style
-  - ref: hf:org/lora:foo.safetensors
+  - ref: civitai:2197303@2474081
+    label: arcane-style-wan22-high
+  - ref: civitai:2197303@2474073
+    label: arcane-style-wan22-low
 
 # alias: my-stable-id    # optional explicit override; default is sha256-derived
