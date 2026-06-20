@@ -651,7 +651,18 @@ class RunPodProvider(ComputeProvider):
                     # blanket bump.
                     "containerDiskInGb": 250,
                     "minVcpuCount": 2,
-                    "minMemoryInGb": 15,
+                    # Was 15 GB — Task 8 attempt #17 OOM-killed the
+                    # diffusers Wan 2.2 14B loader at rc=137 with CPU
+                    # mem 99% just before pipe.to("cuda"). The 14B
+                    # model in bf16 + UMT5-XXL T5 encoder + VAE +
+                    # diffusers/torch runtime overhead easily blows
+                    # past 15 GB during shard-load. 64 GB gives
+                    # comfortable headroom. TODO: thread
+                    # cfg.compute.requirements.min_ram_gb through
+                    # InstanceSpec.min_memory_gb instead of this
+                    # blanket bump (sibling of the containerDiskInGb
+                    # TODO above).
+                    "minMemoryInGb": 64,
                     "gpuTypeId": gpu_type_id,
                     "name": pod_name,
                     "imageName": spec.image,
