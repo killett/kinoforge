@@ -156,7 +156,9 @@ def test_embed_does_not_break_selfterm_or_pip_order() -> None:
     embed_idx = script.index("/tmp/kfsrv/kinoforge")
     # Post-Task-8-attempt-2 fix: pip deps are shlex-quoted so bash does not
     # parse `>=` as a stdout redirect. Match the quoted form.
-    pip_idx = script.index("pip install -q 'fastapi>=0.115'")
+    # Post-Task-8-attempt-15: pip line includes --extra-index-url
+    # before deps. Match the bare prefix instead.
+    pip_idx = script.index("pip install -q")
     # Post-Task-8-attempt-4 fix: main server is no longer `exec`'d so
     # bash retains PID 1 and its EXIT trap can fire on crash. Match the
     # non-exec form.

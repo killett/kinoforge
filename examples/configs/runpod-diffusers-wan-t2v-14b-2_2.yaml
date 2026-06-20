@@ -20,18 +20,30 @@ engine:
   kind: diffusers
   precision: bf16
   diffusers:
-    # Explicit image pin at the engine layer. DiffusersEngine.render_provision
-    # reads `engine.diffusers.image` (NOT `compute.image`) when assembling
-    # the pod-create payload. Task 8 attempt #6 surfaced this gap: the
-    # cfg's `compute.image` was a no-op for the pod and torch 2.4 was
-    # still used. With this key set, the pod gets torch 2.8 and
-    # diffusers' Wan VAE imports successfully.
-    image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    # Image pin at the engine layer. DiffusersEngine.render_provision
+    # reads `engine.diffusers.image` (NOT `compute.image`) when
+    # assembling the pod-create payload.
+    #
+    # Pinned to torch 2.4: the runpod/pytorch:2.4 tag is the most
+    # widely-cached image across RunPod's pool. Task 8 attempts #13-15
+    # all stalled on the torch 2.8 cudnn-devel tag (9.5 GB compressed,
+    # not cached on most machines — 28+ min image pulls per pod, $0.06-
+    # 0.17 of waste each attempt). torch itself is pip-upgraded in the
+    # bootstrap above the cfg deps (DiffusersEngine.render_provision
+    # appends `--extra-index-url https://download.pytorch.org/whl/cu124`
+    # to the pip line) so the in-pod runtime is torch 2.6+ regardless
+    # of the image's pre-installed 2.4. That side-steps the
+    # ``infer_schema`` bug torch 2.4 has with diffusers' Wan VAE
+    # custom_op registration.
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
     server_cmd:
       - "python"
       - "-m"
       - "kinoforge.engines.diffusers.servers.wan_t2v_server"
     pip:
+      # torch 2.6+ to fix the infer_schema bug. Resolved from the
+      # cu124 wheel index via render_provision's --extra-index-url.
+      - "torch>=2.6,<2.9"
       - "diffusers>=0.32"
       - "transformers>=4.45"
       - "accelerate>=1.0"

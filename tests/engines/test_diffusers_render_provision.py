@@ -43,7 +43,13 @@ def test_render_provision_script_runs_pip_install_for_each_dep() -> None:
         "accelerate",
     ]
     rp = _make_engine().render_provision(cfg)
-    assert "pip install -q diffusers==0.27.0 transformers accelerate" in rp.script
+    # Post-Task-8-attempt-15: pip line now starts with
+    # `pip install -q --extra-index-url ...` so torch can resolve
+    # against the cu124 wheel index.
+    assert (
+        "pip install -q --extra-index-url https://download.pytorch.org/whl/cu124 "
+        "diffusers==0.27.0 transformers accelerate" in rp.script
+    )
 
 
 def test_render_provision_script_ends_with_server_cmd_no_exec() -> None:
@@ -66,10 +72,31 @@ def test_render_provision_run_cmd_matches_server_cmd() -> None:
 
 def test_render_provision_default_image_is_stock_runpod_pytorch() -> None:
     rp = _make_engine().render_provision(_minimal_cfg())
-    # Default bumped to torch 2.8 after Task 8 attempt #5 surfaced the
-    # torch 2.4 infer_schema bug on diffusers' Wan VAE module.
-    assert rp.image == (
-        "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    # Default reverted to torch 2.4 after Task 8 attempts #13-15
+    # showed the torch 2.8 cudnn-devel tag stalls on image pull (~3
+    # consecutive failures, $0.06-0.17 wasted each). torch itself is
+    # pip-upgraded by the bootstrap via --extra-index-url against the
+    # cu124 wheel index, so the in-pod runtime is still torch 2.6+.
+    assert rp.image == ("runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04")
+
+
+def test_render_provision_pip_install_includes_pytorch_extra_index_url() -> None:
+    """The pip-install line must include the PyTorch cu124 wheel index.
+
+    Without this, ``torch>=2.6`` resolves against PyPI which doesn't
+    ship cu-tagged wheels for newer torch versions — the pod ends up
+    with the image's pre-installed torch 2.4, which trips
+    ``infer_schema`` inside diffusers' Wan VAE custom_op decorator
+    (Task 8 attempt #5).
+    """
+    cfg = _minimal_cfg()
+    cfg["engine"]["diffusers"]["pip"] = ["torch>=2.6,<2.9", "diffusers>=0.32"]
+    rp = _make_engine().render_provision(cfg)
+    pip_line = next(
+        ln for ln in rp.script.split("\n") if ln.startswith("pip install -q")
+    )
+    assert "--extra-index-url https://download.pytorch.org/whl/cu124" in pip_line, (
+        f"missing PyTorch extra-index-url in pip line: {pip_line!r}"
     )
 
 
@@ -124,7 +151,11 @@ def test_render_provision_launches_selfterm_watchdog_before_pip_install() -> Non
     assert "open('/tmp/selfterm.py','w')" in script
     assert "nohup python3 /tmp/selfterm.py" in script
     selfterm_idx = script.index("nohup python3 /tmp/selfterm.py")
-    pip_idx = script.index("pip install -q torch")
+    # Post-Task-8-attempt-15: the pip line now begins with
+    # `pip install -q --extra-index-url ...` so `pip install -q torch`
+    # is no longer a direct prefix. Index on the bare `pip install -q`
+    # token instead.
+    pip_idx = script.index("pip install -q")
     assert selfterm_idx < pip_idx, (
         "selfterm watchdog must launch before pip install — pip can hang"
     )
@@ -202,9 +233,19 @@ def test_render_provision_pip_install_quotes_version_specifiers(
         f"bash failed: rc={proc.returncode} stderr={proc.stderr!r}"
     )
     args = proc.stdout.strip().split("\n")
-    assert args == ["install", "-q", *pip_deps], (
+    # Post-Task-8-attempt-15: the pip line now begins with
+    # `--extra-index-url <url>` so torch can resolve from the PyTorch
+    # cu124 wheel index. Match that prefix then the deps.
+    expected = [
+        "install",
+        "-q",
+        "--extra-index-url",
+        "https://download.pytorch.org/whl/cu124",
+        *pip_deps,
+    ]
+    assert args == expected, (
         f"pip args do not survive bash parsing:\n"
-        f"  expected: {['install', '-q', *pip_deps]}\n"
+        f"  expected: {expected}\n"
         f"  actual:   {args}\n"
         f"  raw line: {pip_lines[0]!r}"
     )
