@@ -1041,12 +1041,41 @@ cold-creates a fresh pod for the 5B cfg rather than warm-reusing the
 
 ### Output artifact
 
-`/workspace/output/20260620-055823_diffusers_unknown_Photorealistic-cinem.mp4`
-(1.1 MB H.264 / yuv420p, 81 frames at 16 fps = 5.06 s clip; 480×480).
+**Original 28-attempt smoke (commit `365ab00`, 2026-06-20 05:58:23):**
+all three artifacts were DELETED immediately after the merge — the
+operator's `git worktree remove` (Step 6 of
+`finishing-a-development-branch`) wiped the worktree's `output/` dir
+before the bytes were copied to a stable path. Programmatic
+assertions on those bytes (h264 ftyp magic, size ≥ 100 KB, pairwise
+sha256 distinctness) passed at smoke time per the pytest log; bytes
+themselves are unrecoverable. The deleted paths were:
 
-Warm-reuse output:
-`/workspace/output/20260620-060158_diffusers_unknown_Photorealistic-yet-d.mp4`
-(1.9 MB).
+- `/workspace/.claude/worktrees/wan22-native-t2v-a14b/output/20260620-055823_diffusers_unknown_Photorealistic-cinem.mp4` (14B cold, field-realistic, 1.1 MB)
+- `/workspace/.claude/worktrees/wan22-native-t2v-a14b/output/20260620-060158_diffusers_unknown_Photorealistic-yet-d.mp4` (14B warm reuse, field-dreamlike, 1.9 MB)
+- `/workspace/.claude/worktrees/wan22-native-t2v-a14b/output/20260620-060729_comfyui_Wan2_2-TI2V-5B-FastWanFu_Photorealistic-cinem.mp4` (5B cross-cap-key cold, field-realistic, 1.3 MB)
+
+The slug `_unknown_` on the two 14B clips comes from a missing
+`spec.model` key in the cfg at smoke time (fixed in commit
+`57c5f3b` — the cfg now sets `model: "Wan2.2-T2V-A14B-Diffusers"`).
+
+**Surviving evidence for the same `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)` tuple
+comes from the 2026-06-20 12:24:49 4-prompt warm-reuse re-fire** at
+HEAD `085781e` (commit `90e588f` "See also" entry above). Four MP4s
+land in `/workspace/output/` AND in `/workspace/.kinoforge/wan22_4prompt_evidence/`
+(stable evidence dir, copied by the test harness before teardown so
+the bytes survive any future `git clean` / worktree removal). Each
+ffprobe-verified h264 / yuv420p / 480×480 / 81 frames / 16 fps /
+5.0625 s. Per-prompt sha256 + size in the See-also table above.
+
+**5B cross-cap-key leg from the original smoke is NOT re-verified
+visually.** The pytest assertion that the 5B leg cold-created pod
+`ldcejjob13kh9z` with cap_key `c72657314e92` (distinct from the 14B
+cap_key `5dff86b4f44e`) and that no warm-reuse log fired on the 5B
+invocation both passed — proving the cross-cap-key isolation
+mechanism — but the 5B MP4 bytes themselves are gone. The 5B cfg
+(`runpod-comfyui-wan-t2v-5b.yaml`) is the Kijai/ComfyUI path
+(separate engine from this entry's DiffusersEngine path) and any
+future re-fire would land under its own entry.
 
 ### Cost
 
