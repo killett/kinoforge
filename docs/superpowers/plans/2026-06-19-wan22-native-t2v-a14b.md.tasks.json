@@ -64,18 +64,18 @@
     },
     {
       "id": 23,
-      "subject": "Task 8: Live smoke — cold + warm + cross-cap-key (USER GATE) — scaffold landed; first attempt 2026-06-19 aborted on download-waste finding; awaits Task 7.5 fix",
-      "status": "in_progress",
+      "subject": "Task 8: Live smoke — cold + warm + cross-cap-key (USER GATE) — GREEN 2026-06-20 (28 attempts, ~$10 spend); 16 layered fixes landed",
+      "status": "completed",
       "blockedBy": [17, 22, 25],
-      "description": "Goal: tests/live/test_diffusers_wan_t2v_live.py runs 3 subprocess generate calls: 14B cold (realistic), 14B warm (dreamlike), 5B cold (cross-cap-key). Final destroy both pods. USER-ORDERED GATE — user authorized re-fire after Task 7.5 lands."
+      "description": "Goal: tests/live/test_diffusers_wan_t2v_live.py runs 3 subprocess generate calls: 14B cold (realistic), 14B warm (dreamlike), 5B cold (cross-cap-key). Final destroy both pods. PASSED on attempt #28 at commit 365ab00. Three MP4s landed in output/. See successful-generations.md entry #8 for the layered-bug trail."
     },
     {
       "id": 24,
-      "subject": "Task 9: Post-smoke docs + Kijai 14B DEAD marker",
-      "status": "pending",
+      "subject": "Task 9: Post-smoke docs + Kijai 14B DEAD marker — landed 2026-06-20",
+      "status": "completed",
       "blockedBy": [23],
-      "description": "Goal: New successful-generations.md entry; PROGRESS.md resume pointer update; mark runpod-comfyui-wan-t2v-14b-2_2.yaml DEAD with sibling pointer."
+      "description": "successful-generations.md entry #8 added; PROGRESS.md resume pointer updated; runpod-comfyui-wan-t2v-14b-2_2.yaml header now reads DEAD with a sibling pointer to runpod-diffusers-wan-t2v-14b-2_2.yaml."
     }
   ],
-  "lastUpdated": "2026-06-19T21:35:00-07:00"
+  "lastUpdated": "2026-06-20T06:10:00-07:00"
 }
