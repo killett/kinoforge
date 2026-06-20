@@ -1,0 +1,176 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
+  "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
+  "lastUpdated": "2026-06-20T16:28:44-07:00",
+  "tasks": [
+    {
+      "id": 10,
+      "planTaskNumber": 1,
+      "subject": "Task 1: Split CapabilityKey into WarmAttachKey + LoraStack",
+      "status": "pending",
+      "blockedBy": []
+    },
+    {
+      "id": 11,
+      "planTaskNumber": 2,
+      "subject": "Task 2: PodLockRegistry — per-pod threading.Lock serialization",
+      "status": "pending",
+      "blockedBy": []
+    },
+    {
+      "id": 12,
+      "planTaskNumber": 3,
+      "subject": "Task 3: LoraSwapError base + 5 subclasses",
+      "status": "pending",
+      "blockedBy": []
+    },
+    {
+      "id": 13,
+      "planTaskNumber": 4,
+      "subject": "Task 4: Cold-boot LoRA loading in wan_t2v_server.py",
+      "status": "pending",
+      "blockedBy": []
+    },
+    {
+      "id": 14,
+      "planTaskNumber": 5,
+      "subject": "Task 5: Pod-side LoRA helpers (_evict_one, _reload_pipeline_loras, _pick_lru_evict, _disk_free_bytes)",
+      "status": "pending",
+      "blockedBy": [13]
+    },
+    {
+      "id": 15,
+      "planTaskNumber": 6,
+      "subject": "Task 6: POST /lora/set_stack endpoint (happy path)",
+      "status": "pending",
+      "blockedBy": [13, 14]
+    },
+    {
+      "id": 16,
+      "planTaskNumber": 7,
+      "subject": "Task 7: GET /lora/inventory endpoint",
+      "status": "pending",
+      "blockedBy": [15]
+    },
+    {
+      "id": 17,
+      "planTaskNumber": 8,
+      "subject": "Task 8: Pod-side /lora/set_stack failure paths",
+      "status": "pending",
+      "blockedBy": [15]
+    },
+    {
+      "id": 18,
+      "planTaskNumber": 9,
+      "subject": "Task 9: Widen Ledger.touch type signature for lora_inventory + warm_attach_key + loras_dir_free_bytes + status",
+      "status": "pending",
+      "blockedBy": []
+    },
+    {
+      "id": 19,
+      "planTaskNumber": 10,
+      "subject": "Task 10: Ledger.find_pods_by_warm_attach_key + lazy backfill plan",
+      "status": "pending",
+      "blockedBy": [10, 18]
+    },
+    {
+      "id": 20,
+      "planTaskNumber": 11,
+      "subject": "Task 11: DiffusersBackend.set_lora_stack + LoraSwapError mapping",
+      "status": "pending",
+      "blockedBy": [12, 17]
+    },
+    {
+      "id": 21,
+      "planTaskNumber": 12,
+      "subject": "Task 12: Reaper recognizes status=degraded as reap-eligible",
+      "status": "pending",
+      "blockedBy": [18]
+    },
+    {
+      "id": 22,
+      "planTaskNumber": 13,
+      "subject": "Task 13: warm_reuse/redaction.py — _register_observed_lora_refs helper",
+      "status": "pending",
+      "blockedBy": []
+    },
+    {
+      "id": 23,
+      "planTaskNumber": 14,
+      "subject": "Task 14: warm_reuse/matcher.py — find_warm_attach_candidate",
+      "status": "pending",
+      "blockedBy": [10, 11, 19, 22]
+    },
+    {
+      "id": 24,
+      "planTaskNumber": 15,
+      "subject": "Task 15: Orchestrator integration — route warm-attach via matcher + hold pod lock + post-swap ledger update",
+      "status": "pending",
+      "blockedBy": [11, 12, 18, 20, 23]
+    },
+    {
+      "id": 25,
+      "planTaskNumber": 16,
+      "subject": "Task 16: kinoforge status --id renders LoRA section",
+      "status": "pending",
+      "blockedBy": [18]
+    },
+    {
+      "id": 26,
+      "planTaskNumber": 17,
+      "subject": "Task 17: kinoforge generate/batch --dry-run-swap flag",
+      "status": "pending",
+      "blockedBy": [23]
+    },
+    {
+      "id": 27,
+      "planTaskNumber": 18,
+      "subject": "Task 18: kinoforge pod lora ls subcommand",
+      "status": "pending",
+      "blockedBy": [16, 25]
+    },
+    {
+      "id": 28,
+      "planTaskNumber": 19,
+      "subject": "Task 19: compute.lifecycle.lora_swap_re_probe_after_s cfg field",
+      "status": "pending",
+      "blockedBy": [23]
+    },
+    {
+      "id": 29,
+      "planTaskNumber": 20,
+      "subject": "Task 20: AST-scan invariants (2 new rules) in tests/test_no_unredacted_writes.py",
+      "status": "pending",
+      "blockedBy": [22, 24, 25, 27]
+    },
+    {
+      "id": 30,
+      "planTaskNumber": 21,
+      "subject": "Task 21: Integration tests (5 scenarios)",
+      "status": "pending",
+      "blockedBy": [23, 24]
+    },
+    {
+      "id": 31,
+      "planTaskNumber": 22,
+      "subject": "Task 22: Live smoke — Wan 2.2 + Arcane LoRA pair on RunPod A100 (4-step matrix)",
+      "status": "pending",
+      "blockedBy": [29, 30],
+      "userGate": true,
+      "tags": ["user-gate", "live-spend"],
+      "requireEvidenceTokens": [
+        ["step-1", "cold-boot", "0-loras"],
+        ["step-2", "warm-attach", "high-low"],
+        ["step-3", "warm-attach", "low-only"],
+        ["step-4", "warm-attach", "empty"]
+      ]
+    },
+    {
+      "id": 32,
+      "planTaskNumber": 23,
+      "subject": "Task 23: README + PROGRESS + successful-generations close-out",
+      "status": "pending",
+      "blockedBy": [31]
+    }
+  ]
+}
