@@ -1,3 +1,22 @@
+# DEAD — DO NOT USE.
+#
+# Kept as historical reference for the layered-fix trail in
+# successful-generations.md entry #8.
+#
+# This cfg attempted Wan 2.2 14B T2V via Kijai's I2V-A14B HIGH/LOW pair
+# run in T2V mode. The approach failed at the patch_embedding layer
+# (36-vs-16 channel mismatch — Wan 2.2 14B I2V has image conditioning
+# baked into the convolution shape). The actual T2V-A14B model is
+# published in sharded form by Wan-AI; only diffusers.WanPipeline (via
+# huggingface_hub) handles sharded loading correctly.
+#
+# >>> Use sibling `runpod-diffusers-wan-t2v-14b-2_2.yaml` instead. <<<
+# That cfg is the green path: DiffusersEngine + custom wan_t2v_server.py +
+# A100 80GB. First green smoke 2026-06-20 (entry #8 in
+# /workspace/successful-generations.md).
+#
+# --- Original cfg below (kept for historical reference) ---
+#
 # Wan 2.2 14B T2V on RunPod + ComfyUI — dual-diffusion (HIGH + LOW) via
 # Kijai's I2V-A14B HIGH/LOW pair run in T2V mode.
 #
