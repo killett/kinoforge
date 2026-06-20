@@ -641,7 +641,15 @@ class RunPodProvider(ComputeProvider):
                     "cloudType": "ALL",
                     "gpuCount": 1,
                     "volumeInGb": spec.volume_gb,
-                    "containerDiskInGb": 50,
+                    # Container disk sized to fit large-model downloads
+                    # (Wan 2.2 14B diffusers shards = ~70 GB + cache
+                    # overhead). Was hardcoded 50 GB — caused
+                    # `Not enough free disk space` warnings on Task 8
+                    # attempt #10 once shards started landing. TODO:
+                    # thread `cfg.compute.requirements.disk_gb` through
+                    # InstanceSpec.container_disk_gb instead of this
+                    # blanket bump.
+                    "containerDiskInGb": 250,
                     "minVcpuCount": 2,
                     "minMemoryInGb": 15,
                     "gpuTypeId": gpu_type_id,
