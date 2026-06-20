@@ -103,6 +103,56 @@ pixi run -e live-skypilot gcloud config list account --format='value(core.accoun
 pixi run -e live-skypilot aws sts get-caller-identity
 ```
 
+## Live smoke monitoring (poll, don't wait)
+
+When running a live smoke test against remote compute (RunPod pod,
+SkyPilot cluster, hosted Bearer endpoint), **periodically poll the
+remote's resource utilisation** while the test runs. Do not wait for
+the test's own timeout to discover the pod is dead.
+
+The failure mode this rule exists to prevent: a 40-minute wall-clock
+wait on a pod that died early (OOM, image-pull failure, model-weight
+fetch hang, worker thread crashed), with the operator only learning
+this once the per-test timeout fires. That's wasted money and wasted
+session time.
+
+Concrete cadence:
+
+- **RunPod**: every 60–90 s during a live smoke, query the pod's
+  `runtime.gpus[].gpuUtilPercent`, `runtime.container.cpuPercent`,
+  `runtime.container.memoryPercent`, and `costPerHr`. The kinoforge
+  RunPod provider exposes the GraphQL probe; do NOT shell out to ad
+  hoc curl unless that path is broken.
+- **SkyPilot (Lambda / Vast)**: `sky logs --status <cluster>` + tail
+  the per-job log every 60–90 s. If `sky exec` is cheap on this
+  provider, also probe `nvidia-smi --query-gpu=utilization.gpu`.
+- **Hosted Bearer providers (Replicate / Runway / Luma)**: poll the
+  job status endpoint at the SDK-recommended cadence; surface the
+  `status` field every poll.
+
+What "take action" looks like when the probe shows the pod is idle
+when it should be busy:
+
+- **GPU at 0% for ≥3 consecutive probes** while the smoke believes a
+  generation is in flight → assume the worker died. Pull the latest
+  server log, capture the last 100 lines, then destroy the pod (or
+  cluster) and fail the smoke fast.
+- **CPU at 0% AND memory not rising** while a model load is supposedly
+  in progress → assume the image-pull / weight-fetch stalled. Same
+  action: capture logs, kill, fail.
+- **`costPerHr` drifting upward** without compute matching → flag the
+  cost-cache regression, but do not kill (smoke may still be valid).
+
+Idle pods are not "patience" — they are silent failures burning the
+session budget. The kinoforge providers were built for this; use them
+proactively rather than waiting for the per-test timeout to surface
+what a 10-line probe would have caught at minute 3.
+
+This rule applies to every live smoke, not just Wan / video gen.
+Encode the polling loop inside the smoke harness when possible so it
+runs automatically; when that's not possible, drive it from the
+controlling agent loop.
+
 ## Workspace scaffolding
 
 This project has already been scaffolded. The following files
