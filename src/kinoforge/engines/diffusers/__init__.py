@@ -72,6 +72,13 @@ _PYTORCH_EXTRA_INDEX_URL: str = "https://download.pytorch.org/whl/cu124"
 #: Seconds between readiness polls in :meth:`DiffusersEngine.wait_for_ready`.
 _READY_POLL_INTERVAL_S: float = 5.0
 
+#: User-Agent for outbound HTTP from this engine. Cloudflare (RunPod's
+#: proxy edge) returns 403 to the default ``Python-urllib/3.13`` UA —
+#: Task 8 attempt #22 stranded wait_for_ready in a 403-swallowing
+#: retry loop for ~12 minutes against a live, healthy pod. Sending a
+#: plain ``kinoforge`` tag clears the gate.
+_KINOFORGE_USER_AGENT: str = "kinoforge-diffusers/0.1"
+
 
 def _render_embed_lines(modules: list[str]) -> list[str]:
     """Return bash lines that recreate ``modules``' package trees under /tmp/kfsrv/.
@@ -187,7 +194,18 @@ def _urllib_post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
     """
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            # Cloudflare (RunPod's proxy fronting) returns 403 to the
+            # default ``Python-urllib/X.Y`` User-Agent — Task 8 attempt
+            # #22 hung wait_for_ready in a 403-swallowing retry loop
+            # for ~12 minutes against a live, healthy pod. Sending a
+            # plain UA tag clears the gate.
+            "User-Agent": _KINOFORGE_USER_AGENT,
+        },
+        method="POST",
     )
     with urllib.request.urlopen(req) as resp:  # noqa: S310
         return dict(json.loads(resp.read().decode("utf-8")))
@@ -202,7 +220,11 @@ def _urllib_get_json(url: str) -> dict[str, Any]:
     Returns:
         Decoded JSON response as a Python dict.
     """
-    with urllib.request.urlopen(url) as resp:  # noqa: S310
+    # Same Cloudflare-403 dodge as _urllib_post_json — see comment there.
+    req = urllib.request.Request(  # noqa: S310
+        url, headers={"User-Agent": _KINOFORGE_USER_AGENT}
+    )
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
         return dict(json.loads(resp.read().decode("utf-8")))
 
 
@@ -215,7 +237,11 @@ def _urllib_get_bytes(url: str) -> bytes:
     Returns:
         Response body as bytes.
     """
-    with urllib.request.urlopen(url) as resp:  # noqa: S310
+    # Same Cloudflare-403 dodge as _urllib_post_json — see comment there.
+    req = urllib.request.Request(  # noqa: S310
+        url, headers={"User-Agent": _KINOFORGE_USER_AGENT}
+    )
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
         return bytes(resp.read())
 
 
