@@ -1,0 +1,74 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-19-wan22-native-t2v-a14b.md",
+  "tasks": [
+    {
+      "id": 15,
+      "subject": "Task 0: Scaffold servers package marker",
+      "status": "pending",
+      "description": "Goal: Create src/kinoforge/engines/diffusers/servers/__init__.py package marker so the test imports resolve. Verify: pixi run python -c 'import kinoforge.engines.diffusers.servers; print(\"ok\")'."
+    },
+    {
+      "id": 16,
+      "subject": "Task 1: _video_io.write_mp4 helper + tests",
+      "status": "pending",
+      "blockedBy": [15],
+      "description": "Goal: Pure write_mp4(frames, fps, path) helper. 6 round-trip tests via ffprobe. Files: src/kinoforge/engines/diffusers/servers/_video_io.py + tests/engines/test_diffusers_video_io.py."
+    },
+    {
+      "id": 17,
+      "subject": "Task 2: GenerationError + DiffusersBackend.result() status=error short-circuit",
+      "status": "pending",
+      "description": "Goal: Add GenerationError; short-circuit DiffusersBackend.result() on status=error; lock down wait_for_ready 404 regression. Files: src/kinoforge/core/errors.py, src/kinoforge/engines/diffusers/__init__.py, tests/engines/test_diffusers_backend_error_handling.py."
+    },
+    {
+      "id": 18,
+      "subject": "Task 3: NOOP — wait_for_ready 404 audit",
+      "status": "pending",
+      "blockedBy": [17],
+      "description": "No-op task — audit-gap E.2 was already correct in code; regression test landed in Task 2."
+    },
+    {
+      "id": 19,
+      "subject": "Task 4: wan_t2v_server.py /health + startup pipeline loading",
+      "status": "pending",
+      "blockedBy": [15, 16],
+      "description": "Goal: FastAPI app skeleton, MODEL_ID env-var, startup event loading WanPipeline via patchable _load_pipeline seam, /health endpoint. 3 health tests."
+    },
+    {
+      "id": 20,
+      "subject": "Task 5: wan_t2v_server.py /generate + /status + worker thread",
+      "status": "pending",
+      "blockedBy": [19],
+      "description": "Goal: JobState dataclass, GenerateRequest pydantic, queue + worker thread, /generate POST, /status/{id} GET. 6 generate tests."
+    },
+    {
+      "id": 21,
+      "subject": "Task 6: wan_t2v_server.py /artifacts endpoint",
+      "status": "pending",
+      "blockedBy": [20],
+      "description": "Goal: /artifacts/{filename} FileResponse + path-traversal guard. 3 artifact tests."
+    },
+    {
+      "id": 22,
+      "subject": "Task 7: Wan 2.2 native cfg + lockdown test",
+      "status": "pending",
+      "blockedBy": [21],
+      "description": "Goal: examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml + 2 lockdown tests (server_cmd pin, cap-key differs from 5B)."
+    },
+    {
+      "id": 23,
+      "subject": "Task 8: Live smoke — cold + warm + cross-cap-key (USER GATE)",
+      "status": "pending",
+      "blockedBy": [17, 22],
+      "description": "Goal: tests/live/test_diffusers_wan_t2v_live.py runs 3 subprocess generate calls: 14B cold (realistic), 14B warm (dreamlike), 5B cold (cross-cap-key). Final destroy both pods. USER-ORDERED GATE — non-skippable."
+    },
+    {
+      "id": 24,
+      "subject": "Task 9: Post-smoke docs + Kijai 14B DEAD marker",
+      "status": "pending",
+      "blockedBy": [23],
+      "description": "Goal: New successful-generations.md entry; PROGRESS.md resume pointer update; mark runpod-comfyui-wan-t2v-14b-2_2.yaml DEAD with sibling pointer."
+    }
+  ],
+  "lastUpdated": "2026-06-19T16:55:00-07:00"
+}
