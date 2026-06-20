@@ -89,6 +89,16 @@ class ProvisionTimeout(KinoforgeError):
     """Ready check never returned success within ``boot_timeout_s``."""
 
 
+class GenerationError(KinoforgeError):
+    """Raised when a generation backend reports failure of an in-flight job.
+
+    Wraps the backend-supplied error message so the orchestrator can surface
+    it to the operator unchanged. Distinguished from ProvisionFailed (which
+    is for pod-lifecycle errors before any generation runs) and from
+    TimeoutError (which is for polling exhaustion without explicit failure).
+    """
+
+
 class SidecarMismatch(KinoforgeError):
     """cfg.store differs from sidecar on disk.
 

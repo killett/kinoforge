@@ -312,14 +312,24 @@ class DiffusersBackend(GenerationBackend):
                 within the poll limit.
         """
         del cancel_token  # ABC parity; full honoring deferred to a future task.
+        from kinoforge.core.errors import GenerationError  # local — avoid circular
+
         url = f"{self._base_url}/status/{job_id}"
         for _ in range(_MAX_POLL):
             data = self._http_get(url)
-            if data.get("status") == "done":
+            status = data.get("status")
+            if status == "done":
                 filename = str(data.get("filename", ""))
                 artifact_url = str(data.get("url", ""))
                 return Artifact(
                     filename=filename, url=artifact_url, meta={"job_id": job_id}
+                )
+            if status == "error":
+                err_msg = str(
+                    data.get("error", "<server reported error with no message>")
+                )
+                raise GenerationError(
+                    f"diffusers server reported error for job {job_id!r}: {err_msg}"
                 )
             self._sleep(1.0)
         raise TimeoutError(
