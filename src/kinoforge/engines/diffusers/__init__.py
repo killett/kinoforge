@@ -9,6 +9,8 @@ the ``"diffusers"`` key so that ``registry.get_engine("diffusers")()`` works.
 
 from __future__ import annotations
 
+import base64
+import importlib.resources
 import json
 import re
 import subprocess
@@ -54,6 +56,57 @@ _DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubunt
 
 #: Seconds between readiness polls in :meth:`DiffusersEngine.wait_for_ready`.
 _READY_POLL_INTERVAL_S: float = 5.0
+
+
+def _render_embed_lines(modules: list[str]) -> list[str]:
+    """Return bash lines that recreate ``modules``' package trees under /tmp/kfsrv/.
+
+    For each dotted package name, walks the package's directory files,
+    base64-encodes each .py file, and emits an ``echo '<b64>' | base64 -d
+    > /tmp/kfsrv/<rel>`` line. Also ensures every ancestor namespace
+    has an ``__init__.py`` (touched empty for parents whose source dir
+    might not ship one). Designed so the pod can run
+    ``python -m <module>`` without kinoforge installed via pip.
+
+    Args:
+        modules: List of dotted package names, e.g.
+            ``["kinoforge.engines.diffusers.servers"]``.
+
+    Returns:
+        Ordered bash lines: mkdir + base64-write + touch __init__.py.
+    """
+    # /tmp/kfsrv runs only on the freshly-provisioned single-tenant pod
+    # (selfterm-bounded lifetime), not on a shared multi-user host —
+    # ruff S108 suppressed accordingly.
+    kfsrv = "/tmp/kfsrv"  # noqa: S108
+    lines: list[str] = [f"mkdir -p {kfsrv}"]
+    written_dirs: set[str] = set()
+    written_inits: set[str] = set()
+    for mod_name in modules:
+        # Touch __init__.py at every ancestor namespace level so
+        # `python -m <mod_name>...` can resolve the chain.
+        parts = mod_name.split(".")
+        for i in range(1, len(parts) + 1):
+            ancestor_dir = f"{kfsrv}/" + "/".join(parts[:i])
+            if ancestor_dir not in written_dirs:
+                lines.append(f"mkdir -p {ancestor_dir}")
+                written_dirs.add(ancestor_dir)
+            init_path = f"{ancestor_dir}/__init__.py"
+            if init_path not in written_inits:
+                lines.append(f"touch {init_path}")
+                written_inits.add(init_path)
+
+        # Walk the package and emit base64 writes for each .py file.
+        pkg_root = importlib.resources.files(mod_name)
+        for resource in pkg_root.iterdir():
+            if not resource.is_file() or not resource.name.endswith(".py"):
+                continue
+            rel = mod_name.replace(".", "/") + "/" + resource.name
+            target = f"{kfsrv}/{rel}"
+            content = resource.read_bytes()
+            encoded = base64.b64encode(content).decode("ascii")
+            lines.append(f"echo '{encoded}' | base64 -d > {target}")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +569,7 @@ class DiffusersEngine(GenerationEngine):
         server_cmd: list[str] = list(diffusers_cfg.get("server_cmd", []))
         base_url: str = str(diffusers_cfg.get("base_url", ""))
         image: str = str(diffusers_cfg.get("image", _DEFAULT_RUNPOD_IMAGE))
+        embed_modules: list[str] = list(diffusers_cfg.get("embed_modules", []))
 
         lines: list[str] = [
             "set -euo pipefail",
@@ -528,6 +582,9 @@ class DiffusersEngine(GenerationEngine):
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
         ]
+        if embed_modules:
+            lines.extend(_render_embed_lines(embed_modules))
+            lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
         if pip_deps:
             lines.append("pip install -q " + " ".join(pip_deps))
         if server_cmd:

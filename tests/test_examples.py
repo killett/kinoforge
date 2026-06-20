@@ -596,6 +596,10 @@ def test_diffusers_wan_t2v_14b_cfg_pins_server_module() -> None:
     assert cfg.engine.diffusers.server_cmd[-1] == (
         "kinoforge.engines.diffusers.servers.wan_t2v_server"
     )
+    # embed_modules MUST list the server package so the bootstrap can
+    # ship the source to the pod; the stock pytorch image has no
+    # kinoforge install.
+    assert cfg.engine.diffusers.embed_modules == ["kinoforge.engines.diffusers.servers"]
     base_refs = [m.ref for m in cfg.models if m.kind == "base"]
     assert base_refs == ["hf:Wan-AI/Wan2.2-T2V-A14B"]
 
