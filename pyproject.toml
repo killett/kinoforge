@@ -62,6 +62,10 @@ ignore_missing_imports = true
 module = ["replicate.*", "runwayml.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]  # Wan 2.2 server: torch + diffusers loaded on-pod only, no local stubs.
+module = ["torch", "torch.*", "diffusers", "diffusers.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]  # Tests often have untyped functions and use dynamic features, so relax mypy rules for them.
 module = ["tests.*"]
 strict = false
