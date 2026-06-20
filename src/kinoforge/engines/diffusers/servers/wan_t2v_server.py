@@ -1,0 +1,261 @@
+"""FastAPI inference server for Wan 2.2 T2V-A14B.
+
+Runs on the GPU pod. Exposes the DiffusersBackend HTTP contract:
+
+  GET  /health                  -> {"ready": bool, "model": str}
+  POST /generate                -> {"job_id": str}
+  GET  /status/{job_id}         -> {"status": ..., ...}
+  GET  /artifacts/{filename}    -> MP4 bytes (added in Task 6)
+
+Model loaded once at startup, persists across requests.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import queue
+import threading
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+# Force-disable huggingface_hub's xet transport before any HF import.
+# Task 8 attempt #8 surfaced a hard xet failure:
+#   RuntimeError: Task error: File reconstruction error:
+#   Internal Writer Error: Background writer channel closed
+# during from_pretrained(MODEL_ID) on the freshly-provisioned pod.
+# xet is HF's newer content-addressed transport; the legacy HTTP
+# transport is reliable and the 70 GB cost of "less efficient" is a
+# rounding error compared to the smoke budget. Set BEFORE any
+# huggingface_hub import so the global xet kill-switch is honored.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+# Pin HF cache onto the /workspace volume so the 70 GB shard download
+# does not exhaust the 50 GB container disk. /workspace is the RunPod
+# volume mount (volumeInGb in the cfg's requirements.disk_gb).
+os.environ.setdefault("HF_HOME", "/workspace/.hf_cache")
+
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+
+from kinoforge.engines.diffusers.servers._video_io import write_mp4  # noqa: E402
+
+_log = logging.getLogger("kinoforge.diffusers.wan_t2v_server")
+
+MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
+ARTIFACT_DIR: Path = Path("/workspace/artifacts")
+
+_DEFAULT_NEGATIVE_PROMPT = (
+    "Bright tones, overexposed, static, blurred details, subtitles, "
+    "style, works, paintings, images, static, overall gray, worst "
+    "quality, low quality, JPEG compression residue, ugly, incomplete, "
+    "extra fingers, poorly drawn hands, poorly drawn faces, deformed, "
+    "disfigured, misshapen limbs, fused fingers, still picture, messy "
+    "background, three legs, many people in the background, walking "
+    "backwards"
+)
+
+app = FastAPI(title="kinoforge wan-t2v server", version="0.1.0")
+ready: threading.Event = threading.Event()
+pipe: Any = None  # set in _startup
+jobs: dict[str, JobState] = {}
+_q: queue.Queue[str] = queue.Queue()
+_worker_thread: threading.Thread | None = None
+
+
+@dataclass
+class JobState:
+    """In-process job record updated by the worker thread."""
+
+    job_id: str
+    status: Literal["queued", "running", "done", "error"]
+    prompt: str
+    params: dict[str, Any]
+    progress: float = 0.0
+    filename: str | None = None
+    error: str | None = None
+    created_at: float = field(default_factory=time.time)
+    started_at: float | None = None
+    finished_at: float | None = None
+
+
+class GenerateRequest(BaseModel):
+    """JSON body for ``POST /generate``."""
+
+    prompt: str
+    negative_prompt: str | None = None
+    width: int = Field(480, ge=8, le=2048)
+    height: int = Field(480, ge=8, le=2048)
+    num_frames: int = Field(81, ge=1, le=1024)
+    fps: int = Field(16, ge=1, le=120)
+    num_inference_steps: int = Field(20, ge=1, le=200)
+    guidance_scale: float = Field(6.0, ge=0.0, le=20.0)
+    seed: int | None = None
+
+
+def _load_pipeline() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no public TypeAlias.
+    """Construct and return the WanPipeline.
+
+    Loads weights with ``device_map="cuda"`` so each component streams
+    DIRECTLY to GPU memory and is never held in CPU RAM. The Wan 2.2
+    MoE has two 14B transformers plus an 11 GB UMT5-XXL text encoder
+    — staging all of that in CPU first OOM-kills any pod with less
+    than ~80 GB CPU RAM (Task 8 attempts #17 / #19 / #21 — pod CPU
+    RAM allocation varies machine-to-machine even with the same
+    ``minMemoryInGb`` filter). Streaming straight to the 80 GB A100
+    sidesteps the variable-RAM problem entirely.
+
+    Separated out so tests can patch this seam without importing
+    diffusers (which would otherwise pull torch + CUDA at test time).
+    """
+    import torch
+    from diffusers import WanPipeline
+
+    pipe_obj = WanPipeline.from_pretrained(
+        MODEL_ID,
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+    )
+    return pipe_obj
+
+
+def _seed_to_generator(seed: int | None) -> Any:  # noqa: ANN401 — torch.Generator opaque here.
+    if seed is None:
+        return None
+    import torch
+
+    g = torch.Generator(device="cuda")
+    g.manual_seed(seed)
+    return g
+
+
+def _worker_loop() -> None:
+    """Drain the job queue, running pipeline + writing MP4 per job.
+
+    Belt-and-braces try/except keeps the thread alive on any exception
+    so one broken job does not block the queue.
+    """
+    import numpy as np
+
+    while True:
+        job_id = _q.get()
+        state = jobs.get(job_id)
+        if state is None:
+            _log.warning("worker: job %s vanished from registry", job_id)
+            continue
+        state.status = "running"
+        state.started_at = time.time()
+        try:
+            output = pipe(
+                prompt=state.prompt,
+                negative_prompt=state.params.get("negative_prompt")
+                or _DEFAULT_NEGATIVE_PROMPT,
+                height=state.params["height"],
+                width=state.params["width"],
+                num_frames=state.params["num_frames"],
+                num_inference_steps=state.params["num_inference_steps"],
+                guidance_scale=state.params["guidance_scale"],
+                generator=_seed_to_generator(state.params.get("seed")),
+            )
+            frames = output.frames[0]
+            # diffusers returns either a list of PIL images or a numpy
+            # array depending on output_type. Coerce to (T, H, W, 3) uint8.
+            if hasattr(frames, "shape"):
+                arr = np.asarray(frames)
+                if arr.dtype != np.uint8:
+                    arr = (arr * 255).clip(0, 255).astype(np.uint8)
+            else:
+                arr = np.stack([np.asarray(im) for im in frames], axis=0)
+                if arr.dtype != np.uint8:
+                    arr = (arr * 255).clip(0, 255).astype(np.uint8)
+            filename = f"{job_id}.mp4"
+            ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+            write_mp4(arr, fps=state.params["fps"], path=ARTIFACT_DIR / filename)
+            state.filename = filename
+            state.status = "done"
+        except Exception as e:  # noqa: BLE001
+            _log.exception("worker: job %s failed", job_id)
+            state.error = f"{type(e).__name__}: {e}"
+            state.status = "error"
+        finally:
+            state.finished_at = time.time()
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    """Load the pipeline, spawn worker, mark server ready."""
+    global pipe, _worker_thread
+    _log.info("startup: loading pipeline %s", MODEL_ID)
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    pipe = _load_pipeline()
+    _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
+    _worker_thread.start()
+    ready.set()
+    _log.info("startup: pipeline loaded + worker spawned, server ready")
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    """Return readiness + model identity."""
+    return {"ready": ready.is_set(), "model": MODEL_ID}
+
+
+@app.post("/generate")
+def generate(req: GenerateRequest) -> dict[str, str]:
+    """Enqueue a job; return its server-assigned id."""
+    if not ready.is_set():
+        raise HTTPException(status_code=503, detail="model loading")
+    job_id = uuid.uuid4().hex
+    state = JobState(
+        job_id=job_id,
+        status="queued",
+        prompt=req.prompt,
+        params=req.model_dump(),
+    )
+    jobs[job_id] = state
+    _q.put(job_id)
+    return {"job_id": job_id}
+
+
+@app.get("/status/{job_id}")
+def status(job_id: str) -> dict[str, Any]:
+    """Return the current state of ``job_id``; 404 if unknown."""
+    state = jobs.get(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="unknown job_id")
+    out: dict[str, Any] = {
+        "status": state.status,
+        "progress": state.progress,
+    }
+    if state.status == "done" and state.filename is not None:
+        out["filename"] = state.filename
+        out["url"] = f"http://localhost:8000/artifacts/{state.filename}"
+    elif state.status == "error" and state.error is not None:
+        out["error"] = state.error
+    return out
+
+
+@app.get("/artifacts/{filename}")
+def artifact(filename: str) -> Any:  # noqa: ANN401 — returns FileResponse, opaque here.
+    """Serve a generated MP4 by filename with path-traversal guard."""
+    from fastapi.responses import FileResponse
+
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="invalid filename")
+    target = (ARTIFACT_DIR / filename).resolve()
+    artifact_dir_resolved = ARTIFACT_DIR.resolve()
+    try:
+        target.relative_to(artifact_dir_resolved)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="path escapes artifact dir") from e
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found")
+    return FileResponse(str(target), media_type="video/mp4", filename=filename)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)  # noqa: S104

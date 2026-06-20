@@ -683,3 +683,178 @@ def test_phase30_t5_multi_artifact_without_entry_sha256_passes(tmp_path: Path) -
     assert len(downloaded[0]) == 2
     # Source-provided sha256 preserved verbatim — guard did not interfere.
     assert {a.sha256 for a in downloaded[0]} == {"src-a", "src-b"}
+
+
+# ---------------------------------------------------------------------------
+# Task 7.5 (plan amendment 2026-06-19): refs_to_stage engine method
+#
+# The provisioner must consult engine.refs_to_stage(merged) when present and
+# treat its return value as the canonical staging list — superseding the
+# legacy ``requires_local_weights`` boolean. This lets engines like Diffusers
+# (whose pods self-fetch via ``from_pretrained``) skip the workspace-side
+# download_all() without retiring the boolean across the whole codebase.
+# ---------------------------------------------------------------------------
+
+
+class _RefsToStageSpyEngine(_SpyEngine):
+    """SpyEngine that also implements refs_to_stage with an injected return value."""
+
+    def __init__(
+        self,
+        call_log: list[str],
+        *,
+        requires_local_weights: bool,
+        refs_to_stage_return: list[Artifact] | None,
+    ) -> None:
+        super().__init__(call_log, requires_local_weights=requires_local_weights)
+        self._refs_to_stage_return = refs_to_stage_return
+        self.refs_to_stage_calls: list[list[Artifact]] = []
+
+    def refs_to_stage(self, merged: list[Artifact]) -> list[Artifact]:
+        self.refs_to_stage_calls.append(list(merged))
+        if self._refs_to_stage_return is None:
+            return list(merged)
+        return list(self._refs_to_stage_return)
+
+
+def test_refs_to_stage_empty_blocks_downloader_even_when_legacy_flag_true(
+    tmp_path: Path,
+) -> None:
+    """RED for Task 7.5 Step 3.
+
+    With ``requires_local_weights=True`` (legacy flag asks to stage) BUT
+    ``refs_to_stage`` returning ``[]`` (engine says nothing to stage),
+    the downloader must NOT be called. This proves the new method
+    supersedes the legacy boolean — the exact behavior DiffusersEngine
+    needs to skip its 70 GB workspace-side waste while keeping the
+    boolean intact for other call sites.
+    """
+    scheme = "task75_step3a"
+    source = _FakeSourceBase(scheme)
+    registry.register_source(source)  # type: ignore[arg-type]
+
+    entries = [_ModelEntry(ref=f"{scheme}:foo", target="checkpoints")]
+    cfg = _FakeCfg(entries)
+
+    call_log: list[str] = []
+    engine = _RefsToStageSpyEngine(
+        call_log,
+        requires_local_weights=True,
+        refs_to_stage_return=[],
+    )
+
+    downloader_calls: list[int] = []
+
+    def _downloader(arts: list[Artifact], dest: Path) -> list[Artifact]:
+        downloader_calls.append(len(arts))
+        return arts
+
+    provision(
+        engine,  # type: ignore[arg-type]
+        cfg,  # type: ignore[arg-type]
+        _make_instance(),
+        creds=_NullCreds(),
+        download_dir=tmp_path,
+        downloader=_downloader,
+    )
+
+    # refs_to_stage must have been consulted — once, with the merged list.
+    assert len(engine.refs_to_stage_calls) == 1
+    assert [a.filename for a in engine.refs_to_stage_calls[0]] == ["foo"]
+    # Downloader must NOT have been called.
+    assert downloader_calls == [], (
+        "downloader was called despite refs_to_stage returning []"
+    )
+    # engine.provision must still have been called.
+    assert "provision" in call_log
+
+
+def test_refs_to_stage_subset_filters_download_input(tmp_path: Path) -> None:
+    """RED for Task 7.5 Step 3.
+
+    When ``refs_to_stage`` returns a strict subset of merged, the downloader
+    is called with exactly that subset — not the full merged list.
+    """
+    scheme = "task75_step3b"
+    source = _FakeSourceBase(scheme)
+    registry.register_source(source)  # type: ignore[arg-type]
+
+    entries = [
+        _ModelEntry(ref=f"{scheme}:keep", target="t1"),
+        _ModelEntry(ref=f"{scheme}:drop", target="t2"),
+    ]
+    cfg = _FakeCfg(entries)
+
+    # Build the artifact the engine will retain — must match what the
+    # provisioner produces during merge (filename derived from ref).
+    keep_artifact = Artifact(filename="keep", url=f"{scheme}:keep")
+
+    call_log: list[str] = []
+    engine = _RefsToStageSpyEngine(
+        call_log,
+        requires_local_weights=True,
+        refs_to_stage_return=[keep_artifact],
+    )
+
+    downloader_received: list[list[Artifact]] = []
+
+    def _downloader(arts: list[Artifact], dest: Path) -> list[Artifact]:
+        downloader_received.append(list(arts))
+        return arts
+
+    provision(
+        engine,  # type: ignore[arg-type]
+        cfg,  # type: ignore[arg-type]
+        _make_instance(),
+        creds=_NullCreds(),
+        download_dir=tmp_path,
+        downloader=_downloader,
+    )
+
+    assert len(downloader_received) == 1, (
+        f"expected exactly one downloader call, got {len(downloader_received)}"
+    )
+    received_filenames = [a.filename for a in downloader_received[0]]
+    assert received_filenames == ["keep"], (
+        f"downloader received the wrong subset: {received_filenames}"
+    )
+
+
+def test_refs_to_stage_absent_falls_back_to_legacy_boolean(tmp_path: Path) -> None:
+    """Back-compat: engines without ``refs_to_stage`` keep using the legacy boolean.
+
+    The provisioner must not crash on engines that haven't grown the new
+    method — they fall back to the pre-Task-7.5 behavior. This locks in
+    that the refactor is non-breaking for the 8+ engine implementations
+    that don't override refs_to_stage in this commit.
+    """
+    scheme = "task75_step3c"
+    source = _FakeSourceBase(scheme)
+    registry.register_source(source)  # type: ignore[arg-type]
+
+    entries = [_ModelEntry(ref=f"{scheme}:legacy", target="checkpoints")]
+    cfg = _FakeCfg(entries)
+
+    # _SpyEngine has no refs_to_stage method — legacy boolean only.
+    call_log: list[str] = []
+    engine = _SpyEngine(call_log, requires_local_weights=True)
+    assert not hasattr(engine, "refs_to_stage")
+
+    downloader_calls: list[list[Artifact]] = []
+
+    def _downloader(arts: list[Artifact], dest: Path) -> list[Artifact]:
+        downloader_calls.append(list(arts))
+        return arts
+
+    provision(
+        engine,  # type: ignore[arg-type]
+        cfg,  # type: ignore[arg-type]
+        _make_instance(),
+        creds=_NullCreds(),
+        download_dir=tmp_path,
+        downloader=_downloader,
+    )
+
+    # Legacy boolean True → downloader called with full merged list.
+    assert len(downloader_calls) == 1
+    assert [a.filename for a in downloader_calls[0]] == ["legacy"]

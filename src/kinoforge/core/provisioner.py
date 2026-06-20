@@ -141,10 +141,27 @@ def provision(
             merged.append(merged_art)
 
     # ------------------------------------------------------------------
-    # Step 2 — download only when the engine requires local weights
+    # Step 2 — download only the subset the engine wants staged locally
+    #
+    # Task 7.5 (plan amendment 2026-06-19): engines may expose
+    # ``refs_to_stage(merged) -> list[Artifact]`` to filter the merged
+    # list down to just what they want pre-staged on the workspace. The
+    # method supersedes the legacy ``requires_local_weights`` boolean
+    # — used by e.g. DiffusersEngine, whose pod self-fetches via
+    # ``from_pretrained`` and therefore needs nothing staged locally.
+    #
+    # Engines that haven't grown the new method (the back-compat path)
+    # fall back to the legacy boolean exactly as before.
     # ------------------------------------------------------------------
-    if engine.requires_local_weights:
-        downloader(merged, download_dir)
+    refs_to_stage = getattr(engine, "refs_to_stage", None)
+    if refs_to_stage is not None:
+        to_stage = list(refs_to_stage(merged))
+    elif engine.requires_local_weights:
+        to_stage = list(merged)
+    else:
+        to_stage = []
+    if to_stage:
+        downloader(to_stage, download_dir)
 
     # ------------------------------------------------------------------
     # Step 3 — optional hook

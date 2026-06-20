@@ -9,8 +9,11 @@ the ``"diffusers"`` key so that ``registry.get_engine("diffusers")()`` works.
 
 from __future__ import annotations
 
+import base64
+import importlib.resources
 import json
 import re
+import shlex
 import subprocess
 import time
 import urllib.request
@@ -43,17 +46,95 @@ from kinoforge.core.interfaces import (
 # Constants
 # ---------------------------------------------------------------------------
 
-#: Maximum poll iterations in :meth:`DiffusersBackend.result`.
-_MAX_POLL = 60
+#: Maximum poll iterations in :meth:`DiffusersBackend.result`. Each
+#: iteration sleeps 1 s, so this is the total seconds the backend
+#: will wait for a single job to complete. Bumped from 60 (which fit
+#: small image-gen jobs but timed out Task 8 attempt #25's 14B Wan
+#: video at ~30s into the run) to 1800 (30 min) — covers a worst-case
+#: 81-frame, 480x480, 20-step Wan 2.2 generation on an A100 80GB
+#: (~5-10 min nominal, ~25 min if the GPU is unexpectedly slow).
+_MAX_POLL = 1800
 
 #: Default server base URL.
 _DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
-#: Default container image for remote provisioning.
+#: Default container image for remote provisioning. The torch 2.4
+#: image is the most widely-cached runpod/pytorch tag — Task 8
+#: attempts #13-15 hit 3 consecutive image-pull stalls on the
+#: torch 2.8 cudnn-devel tag (RunPod machines without that 9.5 GB
+#: image cached), each wasting $0.06-0.17 of idle pod time. Torch
+#: itself is pip-upgraded above the cfg deps via ``--extra-index-url``
+#: so the in-pod runtime is torch 2.6+ regardless. See
+#: ``_PYTORCH_EXTRA_INDEX_URL`` below.
 _DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+
+#: PyTorch wheel index — used by the bootstrap's pip install line so
+#: ``torch>=2.6`` resolves against cu124 wheels (cuda 12.4 = the
+#: runpod/pytorch:2.4 image's CUDA). ``--extra-index-url`` (not
+#: ``--index-url``) keeps PyPI as the primary index so other deps
+#: like ``diffusers`` still resolve.
+_PYTORCH_EXTRA_INDEX_URL: str = "https://download.pytorch.org/whl/cu124"
 
 #: Seconds between readiness polls in :meth:`DiffusersEngine.wait_for_ready`.
 _READY_POLL_INTERVAL_S: float = 5.0
+
+#: User-Agent for outbound HTTP from this engine. Cloudflare (RunPod's
+#: proxy edge) returns 403 to the default ``Python-urllib/3.13`` UA —
+#: Task 8 attempt #22 stranded wait_for_ready in a 403-swallowing
+#: retry loop for ~12 minutes against a live, healthy pod. Sending a
+#: plain ``kinoforge`` tag clears the gate.
+_KINOFORGE_USER_AGENT: str = "kinoforge-diffusers/0.1"
+
+
+def _render_embed_lines(modules: list[str]) -> list[str]:
+    """Return bash lines that recreate ``modules``' package trees under /tmp/kfsrv/.
+
+    For each dotted package name, walks the package's directory files,
+    base64-encodes each .py file, and emits an ``echo '<b64>' | base64 -d
+    > /tmp/kfsrv/<rel>`` line. Also ensures every ancestor namespace
+    has an ``__init__.py`` (touched empty for parents whose source dir
+    might not ship one). Designed so the pod can run
+    ``python -m <module>`` without kinoforge installed via pip.
+
+    Args:
+        modules: List of dotted package names, e.g.
+            ``["kinoforge.engines.diffusers.servers"]``.
+
+    Returns:
+        Ordered bash lines: mkdir + base64-write + touch __init__.py.
+    """
+    # /tmp/kfsrv runs only on the freshly-provisioned single-tenant pod
+    # (selfterm-bounded lifetime), not on a shared multi-user host —
+    # ruff S108 suppressed accordingly.
+    kfsrv = "/tmp/kfsrv"  # noqa: S108
+    lines: list[str] = [f"mkdir -p {kfsrv}"]
+    written_dirs: set[str] = set()
+    written_inits: set[str] = set()
+    for mod_name in modules:
+        # Touch __init__.py at every ancestor namespace level so
+        # `python -m <mod_name>...` can resolve the chain.
+        parts = mod_name.split(".")
+        for i in range(1, len(parts) + 1):
+            ancestor_dir = f"{kfsrv}/" + "/".join(parts[:i])
+            if ancestor_dir not in written_dirs:
+                lines.append(f"mkdir -p {ancestor_dir}")
+                written_dirs.add(ancestor_dir)
+            init_path = f"{ancestor_dir}/__init__.py"
+            if init_path not in written_inits:
+                lines.append(f"touch {init_path}")
+                written_inits.add(init_path)
+
+        # Walk the package and emit base64 writes for each .py file.
+        pkg_root = importlib.resources.files(mod_name)
+        for resource in pkg_root.iterdir():
+            if not resource.is_file() or not resource.name.endswith(".py"):
+                continue
+            rel = mod_name.replace(".", "/") + "/" + resource.name
+            target = f"{kfsrv}/{rel}"
+            content = resource.read_bytes()
+            encoded = base64.b64encode(content).decode("ascii")
+            lines.append(f"echo '{encoded}' | base64 -d > {target}")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +200,18 @@ def _urllib_post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
     """
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            # Cloudflare (RunPod's proxy fronting) returns 403 to the
+            # default ``Python-urllib/X.Y`` User-Agent — Task 8 attempt
+            # #22 hung wait_for_ready in a 403-swallowing retry loop
+            # for ~12 minutes against a live, healthy pod. Sending a
+            # plain UA tag clears the gate.
+            "User-Agent": _KINOFORGE_USER_AGENT,
+        },
+        method="POST",
     )
     with urllib.request.urlopen(req) as resp:  # noqa: S310
         return dict(json.loads(resp.read().decode("utf-8")))
@@ -134,7 +226,11 @@ def _urllib_get_json(url: str) -> dict[str, Any]:
     Returns:
         Decoded JSON response as a Python dict.
     """
-    with urllib.request.urlopen(url) as resp:  # noqa: S310
+    # Same Cloudflare-403 dodge as _urllib_post_json — see comment there.
+    req = urllib.request.Request(  # noqa: S310
+        url, headers={"User-Agent": _KINOFORGE_USER_AGENT}
+    )
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
         return dict(json.loads(resp.read().decode("utf-8")))
 
 
@@ -147,7 +243,11 @@ def _urllib_get_bytes(url: str) -> bytes:
     Returns:
         Response body as bytes.
     """
-    with urllib.request.urlopen(url) as resp:  # noqa: S310
+    # Same Cloudflare-403 dodge as _urllib_post_json — see comment there.
+    req = urllib.request.Request(  # noqa: S310
+        url, headers={"User-Agent": _KINOFORGE_USER_AGENT}
+    )
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
         return bytes(resp.read())
 
 
@@ -312,14 +412,32 @@ class DiffusersBackend(GenerationBackend):
                 within the poll limit.
         """
         del cancel_token  # ABC parity; full honoring deferred to a future task.
+        from kinoforge.core.errors import GenerationError  # local — avoid circular
+
         url = f"{self._base_url}/status/{job_id}"
         for _ in range(_MAX_POLL):
             data = self._http_get(url)
-            if data.get("status") == "done":
+            status = data.get("status")
+            if status == "done":
                 filename = str(data.get("filename", ""))
-                artifact_url = str(data.get("url", ""))
+                # Ignore the server-supplied ``url`` (wan_t2v_server hardcodes
+                # ``http://localhost:8000/artifacts/{filename}``, which the
+                # workspace container cannot reach). Build the URL from this
+                # backend's base_url so remote pods resolve through the
+                # RunPod proxy. Task 8 attempt #27 ran the full generation
+                # successfully and then died at artifact-fetch:
+                #   urllib.error.URLError: Connection refused
+                # against localhost:8000 from the workspace.
+                artifact_url = f"{self._base_url.rstrip('/')}/artifacts/{filename}"
                 return Artifact(
                     filename=filename, url=artifact_url, meta={"job_id": job_id}
+                )
+            if status == "error":
+                err_msg = str(
+                    data.get("error", "<server reported error with no message>")
+                )
+                raise GenerationError(
+                    f"diffusers server reported error for job {job_id!r}: {err_msg}"
                 )
             self._sleep(1.0)
         raise TimeoutError(
@@ -420,6 +538,32 @@ class DiffusersEngine(GenerationEngine):
         # time. ``None`` disables routing.
         self._prompt_body_key: str | None = "prompt"
 
+    def refs_to_stage(self, merged: list[Artifact]) -> list[Artifact]:
+        """Return the artifacts the provisioner should download to the workspace.
+
+        The DiffusersEngine pod self-fetches model weights at server-start
+        time via ``diffusers.WanPipeline.from_pretrained(MODEL_ID)`` (or
+        the equivalent ``from_pretrained`` call in any other diffusers
+        serving module). The workspace-side ``download_all`` path runs
+        before ``render_provision`` ships the bootstrap script, and
+        ``render_provision`` does NOT transfer those local bytes to the
+        pod — meaning every byte downloaded locally is wasted.
+
+        Returning ``[]`` skips the workspace download entirely. The pod's
+        HF cache is the single source of truth for weights.
+
+        See plan amendment 2026-06-19, Task 7.5 for the original finding.
+
+        Args:
+            merged: The merged artifact list the provisioner produced; ignored
+                here because the engine never needs workspace-side staging.
+
+        Returns:
+            An empty list — no artifacts to stage locally.
+        """
+        del merged
+        return []
+
     def provision(
         self,
         instance: Instance | None,
@@ -506,30 +650,101 @@ class DiffusersEngine(GenerationEngine):
         server_cmd: list[str] = list(diffusers_cfg.get("server_cmd", []))
         base_url: str = str(diffusers_cfg.get("base_url", ""))
         image: str = str(diffusers_cfg.get("image", _DEFAULT_RUNPOD_IMAGE))
+        embed_modules: list[str] = list(diffusers_cfg.get("embed_modules", []))
 
         lines: list[str] = [
             "set -euo pipefail",
-            # Selfterm watchdog — launch BEFORE pip-install so the dead-man
-            # window + max-lifetime cap fire even when pip hangs. Mirrors
-            # the ComfyUI engine's selfterm-launch pattern.
+            # Capture all bootstrap stdout/stderr into a file the sidecar
+            # log server (below) serves. Without this surface, Task 8
+            # attempt #2/#3 restart-looped opaque to the orchestrator:
+            # uptime cycled, GPU/CPU stayed flat, but the actual error
+            # required SSH to retrieve. After this redirect every line
+            # (pip install, embed decode noise, wan_t2v_server startup,
+            # from_pretrained warnings) lands in /tmp/bootstrap.log.
+            "exec > /tmp/bootstrap.log 2>&1",
+            # Keep-alive trap. Without this, ANY bash exit (set -e abort,
+            # pip-install failure, python crash after the main server
+            # runs) terminates PID 1, the container dies, RunPod restarts
+            # it, and the sidecar log server dies before it can serve
+            # back the cause-of-death. ``sleep infinity`` parks bash
+            # forever so the log server stays bound; selfterm's
+            # dead-man window and ``max_lifetime`` caps still fire on
+            # schedule, so this is NOT a runaway-cost risk. Registered
+            # as the FIRST executable statement so even an http.server
+            # bind failure (port collision, missing python3) is captured
+            # before it can kill the container.
+            'trap \'echo "[bootstrap-trap] rc=$? at $(date -u +%FT%TZ)";'
+            " sleep infinity' EXIT",
+            # Sidecar HTTP log server — serves /tmp/bootstrap.log (and
+            # anything else under /tmp) over port 8001. Backgrounded
+            # with nohup so it survives the main server's exit; own
+            # stdout/stderr sunk to /dev/null so it never feeds back
+            # into the log it serves. RunPod proxies port 8001 via the
+            # pod's endpoints[] map.
+            "nohup python3 -m http.server 8001 --directory /tmp >/dev/null 2>&1 &",
+            # Selfterm watchdog — launch BEFORE pip-install so the
+            # dead-man window + max-lifetime cap fire even when pip
+            # hangs. Mirrors the ComfyUI engine's selfterm-launch
+            # pattern.
             'if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]; then '
             "python3 -c \"import os; open('/tmp/selfterm.py','w')"
             ".write(os.environ['KINOFORGE_SELFTERM_SCRIPT'])\" && "
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
         ]
+        if embed_modules:
+            lines.extend(_render_embed_lines(embed_modules))
+            lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
         if pip_deps:
-            lines.append("pip install -q " + " ".join(pip_deps))
+            # shlex.quote each dep — pip version specifiers like
+            # ``diffusers>=0.32`` contain a bare ``>=`` which bash
+            # parses as a stdout redirect under ``set -euo pipefail``
+            # (silently creating ``=0.32`` files and stripping the pin
+            # from pip's argv). The fix burned ~$0.11 of pod-idle time
+            # across a restart loop before being caught; see plan
+            # amendment 2026-06-19 Task 8 attempt #2 post-mortem.
+            quoted = " ".join(shlex.quote(d) for d in pip_deps)
+            # ``--extra-index-url`` (not ``--index-url``) layers the
+            # PyTorch wheel index alongside PyPI so ``torch>=2.6`` (or
+            # similar) resolves to cu124 wheels while ``diffusers``,
+            # ``transformers``, etc. still come from PyPI. Letting the
+            # bootstrap upgrade torch in-place avoids the torch 2.8
+            # cudnn image-pull stalls (Task 8 attempts #13-15) while
+            # keeping the in-pod torch new enough to handle stringified
+            # annotations in ``infer_schema`` (the diffusers Wan VAE
+            # custom_op decorator). The flag is safe for cfgs that
+            # don't upgrade torch — pip just ignores it for deps
+            # already satisfied.
+            lines.append(
+                f"pip install -q --extra-index-url {_PYTORCH_EXTRA_INDEX_URL} {quoted}"
+            )
         if server_cmd:
-            lines.append("exec " + " ".join(server_cmd))
+            # NOTE: NO `exec` prefix. Bash must remain PID 1 so the
+            # EXIT trap can fire when the main server crashes (or
+            # exits cleanly). Replacing bash with python via ``exec``
+            # would strand the trap and the container would die at
+            # the first python error.
+            lines.append(" ".join(server_cmd))
 
         port = _extract_port_from_base_url(base_url)
+        # 8001 is the sidecar log-server port; emitted alongside the main
+        # server port so the provider exposes both via its proxy URLs.
+        ports = [port, "8001"] if port != "8001" else [port]
         return RenderedProvision(
             script="\n".join(lines),
             run_cmd=server_cmd,
             image=image,
-            ports=[port],
-            env_required=[],
+            ports=ports,
+            # HF_TOKEN is required because huggingface_hub's anonymous
+            # rate-limit kills mid-download for large repos. Task 8
+            # attempt #9 surfaced this: ``Fetching 41 files`` stuck at
+            # 3/41 for 4+ minutes with the "set a HF_TOKEN to enable
+            # higher rate limits and faster downloads" warning. The
+            # orchestrator lifts HF_TOKEN from creds (the .env file
+            # under workspace) and the RunPod provider injects it as
+            # a pod env var so wan_t2v_server.py's from_pretrained
+            # uses the authenticated transport.
+            env_required=["HF_TOKEN"],
         )
 
     def wait_for_ready(
@@ -613,12 +828,25 @@ class DiffusersEngine(GenerationEngine):
         Returns:
             A :class:`DiffusersBackend` ready to accept jobs.
         """
-        del instance
         engine_block = cfg.get("engine", {})
         diffusers_cfg: dict[str, Any] = (
             engine_block.get("diffusers", {}) if isinstance(engine_block, dict) else {}
         )
-        base_url: str = str(diffusers_cfg.get("base_url", _DEFAULT_BASE_URL))
+        # Remote pod: use the proxy URL from instance.endpoints, not the
+        # cfg's base_url. cfg.base_url ("http://localhost:8000") is only
+        # valid when DiffusersEngine runs LOCAL (provider=local). For
+        # remote pods, the proxy URL was set on instance.endpoints by
+        # the provider at create_instance time. Task 8 attempt #24
+        # surfaced this gap with a Connection refused error on
+        # http://localhost:8000/generate from the workspace container.
+        cfg_base_url: str = str(diffusers_cfg.get("base_url", _DEFAULT_BASE_URL))
+        if instance is not None and instance.provider != "local" and instance.endpoints:
+            port = _extract_port_from_base_url(cfg_base_url)
+            base_url = instance.endpoints.get(port) or instance.endpoints.get(
+                "8000", cfg_base_url
+            )
+        else:
+            base_url = cfg_base_url
         asset_paths_raw = diffusers_cfg.get("asset_paths", {})
         asset_paths: dict[str, str] = (
             {str(k): str(v) for k, v in asset_paths_raw.items()}

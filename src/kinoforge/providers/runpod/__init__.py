@@ -641,9 +641,29 @@ class RunPodProvider(ComputeProvider):
                     "cloudType": "ALL",
                     "gpuCount": 1,
                     "volumeInGb": spec.volume_gb,
-                    "containerDiskInGb": 50,
+                    # Container disk sized to fit large-model downloads
+                    # (Wan 2.2 14B diffusers shards = ~70 GB + cache
+                    # overhead). Was hardcoded 50 GB — caused
+                    # `Not enough free disk space` warnings on Task 8
+                    # attempt #10 once shards started landing. TODO:
+                    # thread `cfg.compute.requirements.disk_gb` through
+                    # InstanceSpec.container_disk_gb instead of this
+                    # blanket bump.
+                    "containerDiskInGb": 250,
                     "minVcpuCount": 2,
-                    "minMemoryInGb": 15,
+                    # Was 15 GB — Task 8 attempt #17 OOM-killed the
+                    # diffusers Wan 2.2 14B loader at rc=137 with CPU
+                    # mem 99%. Task 8 attempt #18 then hit a different
+                    # wall: 64 GB filtered out all A40 offers ("no
+                    # instances available with the requested
+                    # specifications"). 32 GB is the sweet spot — most
+                    # A40 / A6000 / L40S RunPod machines ship with at
+                    # least 32 GB CPU RAM, and the marginal headroom
+                    # vs 15 GB is enough to clear shard-load. TODO:
+                    # thread cfg.compute.requirements.min_ram_gb
+                    # through InstanceSpec.min_memory_gb (sibling of
+                    # the containerDiskInGb TODO above).
+                    "minMemoryInGb": 32,
                     "gpuTypeId": gpu_type_id,
                     "name": pod_name,
                     "imageName": spec.image,

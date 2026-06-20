@@ -575,3 +575,52 @@ def test_keyframe_examples_have_no_compute() -> None:
     for name in ("keyframe-fal-i2v.yaml", "keyframe-fal-flf2v.yaml"):
         cfg = load_config(f"examples/configs/{name}")
         assert cfg.compute is None, f"{name}: expected compute=null"
+
+
+def test_diffusers_wan_t2v_14b_cfg_pins_server_module() -> None:
+    """Pin the diffusers Wan 2.2 14B cfg's load-bearing fields.
+
+    The cfg's server_cmd must point at our maintained server module
+    so doctor / live smoke / warm-reuse all hit the right HTTP shape.
+    The base ref must be the Wan-AI native repo (not Kijai's I2V pair,
+    which has a 36-channel patch_embedding incompatible with T2V).
+    """
+    from pathlib import Path
+
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(Path("examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml"))
+    assert cfg.engine.kind == "diffusers"
+    assert cfg.engine.precision == "bf16"
+    assert cfg.engine.diffusers is not None
+    assert cfg.engine.diffusers.server_cmd[-1] == (
+        "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    )
+    # embed_modules MUST list the server package so the bootstrap can
+    # ship the source to the pod; the stock pytorch image has no
+    # kinoforge install.
+    assert cfg.engine.diffusers.embed_modules == ["kinoforge.engines.diffusers.servers"]
+    base_refs = [m.ref for m in cfg.models if m.kind == "base"]
+    # The diffusers cfg must point at the `-Diffusers` variant — the
+    # bare Wan-AI/Wan2.2-T2V-A14B repo is native checkpoint layout and
+    # diffusers `from_pretrained` 404s against it (no model_index.json
+    # at root). See plan amendment 2026-06-19, Task 8 attempt #7.
+    assert base_refs == ["hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"]
+
+
+def test_diffusers_wan_t2v_14b_cap_key_differs_from_kijai_5b() -> None:
+    """Cross-engine + cross-model capability_key isolation invariant.
+
+    The new diffusers Wan 2.2 14B cfg MUST derive a different
+    capability_key from the Kijai 5B cfg so a kinoforge generate
+    invocation never accidentally warm-reuses across them.
+    """
+    from pathlib import Path
+
+    from kinoforge.core.config import load_config
+
+    cfg_14b = load_config(
+        Path("examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml")
+    )
+    cfg_5b = load_config(Path("examples/configs/runpod-comfyui-wan-t2v-5b.yaml"))
+    assert cfg_14b.capability_key().derive() != cfg_5b.capability_key().derive()

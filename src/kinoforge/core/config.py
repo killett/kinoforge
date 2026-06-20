@@ -348,6 +348,7 @@ class DiffusersEngineConfig(BaseModel):
     server_cmd: list[str] = Field(default_factory=list)
     asset_paths: dict[str, str] = Field(default_factory=dict)
     prompt_body_key: str | None = "prompt"
+    embed_modules: list[str] = Field(default_factory=list)
 
 
 class FalEngineConfig(BaseModel):
