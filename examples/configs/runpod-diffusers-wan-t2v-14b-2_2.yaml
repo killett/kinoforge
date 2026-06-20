@@ -139,6 +139,14 @@ compute:
     heartbeat_interval_s: 30
 
 spec:
+  # DiffusersEngine.validate_spec requires `pipeline` and `scheduler`
+  # keys to exist on job.spec. The wan_t2v_server has both baked in
+  # (loaded at startup via WanPipeline.from_pretrained), so these
+  # values are purely informational — the engine never reads them at
+  # generation time. Present here only to satisfy the validator
+  # (Task 8 attempt #23 surfaced this gap).
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
   # Dimensions only — sampler defaults (steps, cfg, shift, scheduler,
   # negative_prompt) are baked into wan_t2v_server.py.
   width: 480
