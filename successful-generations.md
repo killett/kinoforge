@@ -24,6 +24,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 6. `2026-06-13 11:16:26` — [FakeEngine on RunPod (B3 cross-CLI auto-discovery warm-reuse) — t2v](#6-2026-06-13-111626--fakeengine-on-runpod-b3-cross-cli-auto-discovery-warm-reuse--t2v)
    - See also: `2026-06-13 12:44:24` — B3 smoke re-fire post-closeout at HEAD `8bf51d6`: gen 1 6.3 s / gen 2 2.6 s (ratio 0.41, 59 % cold-skip), pod `k838y2t6mpq91s` (RTX A5000), spend ~$0.0016. Same tuple `(runpod, FakeEngine, fake-model, t2v)`; confirms B3 mechanics still green after Phase 52 BQ-export plumbing diff.
 7. `2026-06-18 22:05:08` — [ComfyUI Wan 2.1 1.3B t2v on RunPod (CLI cross-invocation warm-reuse, real engine) — t2v](#7-2026-06-18-220508--comfyui-wan-21-13b-t2v-on-runpod-cli-cross-invocation-warm-reuse-real-engine--t2v)
+8. `2026-06-20 05:58:23` — [Diffusers WanPipeline Wan 2.2 T2V-A14B on RunPod (A100 80GB) — t2v](#8-2026-06-20-055823--diffusers-wanpipeline-wan-22-t2v-a14b-on-runpod-a100-80gb--t2v)
 
 ---
 
@@ -911,3 +912,272 @@ on `qswjrs5ehzkwr8`.
   rather than wall-time deltas, which are noise-prone on
   fluctuating RunPod GPU loads.
 - 🎉 **Warm reuse actually works.**
+
+---
+
+## 8. `2026-06-20 05:58:23` — Diffusers WanPipeline Wan 2.2 T2V-A14B on RunPod (A100 80GB) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / DiffusersEngine / Wan-AI/Wan2.2-T2V-A14B-Diffusers` |
+| **Mode** | t2v |
+| **kinoforge version** | branch `worktree-wan22-native-t2v-a14b` |
+| **First-success SHA** | `365ab00ad1f3e10c80d52e7ae4d3793116c1ed94` |
+| **Date (local TZ)** | 2026-06-20 05:58:23 -0700 (PDT) |
+| **Layer / phase** | Wan 2.2 native T2V-A14B (plan: `docs/superpowers/plans/2026-06-19-wan22-native-t2v-a14b.md`, Task 8) |
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run pytest \
+  tests/live/test_diffusers_wan_t2v_live.py -v -s
+```
+
+The pytest harness runs three sequential `pixi run kinoforge generate`
+invocations (14B cold, 14B warm reuse, 5B cross-cap-key) — the first
+two land entry #8; the 5B leg is the Kijai ComfyUI 5B already
+documented under entry #5 lineage.
+
+### YAML config
+
+**`examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml`** at SHA `365ab00`:
+
+```yaml
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: runpod
+  mode: pod
+  warm_reuse_auto_attach: true
+  requirements:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 3.00
+    gpu_preference:
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
+    disk_gb: 150
+  lifecycle:
+    idle_timeout: 60m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 180m
+    boot_timeout: 60m
+    budget: 5.0
+    heartbeat_interval_s: 30
+
+spec:
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
+  width: 480
+  height: 480
+  num_frames: 81
+  fps: 16
+```
+
+### Prompts
+
+- Cold (Leg 1): `examples/configs/prompts/field-realistic.txt`
+- Warm reuse (Leg 2): `examples/configs/prompts/field-dreamlike.txt`
+
+### Env vars
+
+`HF_TOKEN` required (declared in `DiffusersEngine.render_provision`'s
+`env_required` so the orchestrator lifts it from `.env` and the
+RunPod provider injects it into the pod's env). Without it, the
+unauthenticated HF Hub rate-limit stalled downloads at 3/41 files in
+attempt #9.
+
+### Region
+
+RunPod auto-select (no explicit cloud-region pin in the cfg). Both
+green pods (`7o0p1pyvbfpbr8` for 14B, `ldcejjob13kh9z` for 5B) were
+A100 80GB PCIe machines.
+
+### Capability key
+
+`5dff86b4f44e` (14B, derived from
+`hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers` + DiffusersEngine + t2v mode).
+Different from the Kijai 5B comfyui cfg's cap_key `c72657314e92`,
+which is what the cross-cap-key leg 3 verifies — the orchestrator
+cold-creates a fresh pod for the 5B cfg rather than warm-reusing the
+14B pod.
+
+### Output artifact
+
+`/workspace/output/20260620-055823_diffusers_unknown_Photorealistic-cinem.mp4`
+(1.1 MB H.264 / yuv420p, 81 frames at 16 fps = 5.06 s clip; 480×480).
+
+Warm-reuse output:
+`/workspace/output/20260620-060158_diffusers_unknown_Photorealistic-yet-d.mp4`
+(1.9 MB).
+
+### Cost
+
+Green-attempt pod spend:
+- 14B pod `7o0p1pyvbfpbr8` (A100 80GB PCIe, ~$1.39/hr): $0.47 (~20 min cold boot + ~3.5 min × 2 generations).
+- 5B pod `ldcejjob13kh9z`: $0.02 (~1 min — already-cached image + tiny model).
+
+Total green run: **~$0.49**.
+
+Debug trail (28 attempts before green): ~$10 across pods burned on
+the bugs enumerated in the Notes section. All within the user's
+pre-authorized $20 session ceiling.
+
+### Success criterion
+
+`pytest` exit 0 — all three legs (14B cold, 14B warm reuse, 5B
+cross-cap-key) produced MP4s; the warm-reuse leg's pod_id matched
+the cold leg's; the 5B leg's pod_id differed; the 14B cold/warm
+output sha256s differ (distinct prompts → distinct bytes).
+
+### Failure modes
+
+Each of these is hardwired into a commit on the worktree branch.
+Future regression of any of them would fail tests on the same line.
+
+- **Local-download waste** (refs_to_stage refactor, commit `ecbaa5b`).
+  DiffusersEngine's `requires_local_weights = True` triggered a
+  ~70 GB workspace-side aria2c download for the bare-repo HF ref —
+  but `render_provision` never shipped those bytes to the pod, so
+  the pod's `wan_t2v_server` re-downloaded everything. Net waste:
+  ~$0.50-0.85 of pod-idle/leg. Fixed by adding
+  `engine.refs_to_stage(merged) -> list[Artifact]` to both ABCs,
+  defaulting to honor the legacy boolean. DiffusersEngine overrides
+  to return `[]`.
+- **pip arg redirect bug** (commit `6ad3bfa`). The bootstrap rendered
+  `pip install -q diffusers>=0.32 transformers>=4.45 ...` unquoted.
+  Bash with `set -euo pipefail` parsed each `>=` as a stdout redirect
+  to a file named `=0.32` etc, silently stripping every version pin.
+  Fixed by `shlex.quote`-ing each dep.
+- **Log surface absence** (commits `2eeb1d4` + `b86bf4f`). On a boot
+  failure the container died before any error message left the pod.
+  Fixed by (1) redirecting bootstrap stdout/stderr to
+  `/tmp/bootstrap.log`, (2) backgrounding `python3 -m http.server
+  8001 --directory /tmp` so the file is reachable via the RunPod
+  port-8001 proxy, (3) installing an EXIT trap that runs `sleep
+  infinity` so PID 1 (bash) stays alive on failure — selfterm and
+  the `max_lifetime` cap still fire.
+- **HF repo layout** (commit `34ef018`). Pointed at the bare
+  `Wan-AI/Wan2.2-T2V-A14B` repo — native Wan-AI checkpoint layout,
+  no `model_index.json` at root, `from_pretrained` 404s. Switched
+  to the `-Diffusers` variant.
+- **HF xet transport bug** (commit `299b587`). xet's "Background
+  writer channel closed" error during the 70 GB shard download.
+  Fixed by `HF_HUB_DISABLE_XET=1` + `HF_HOME=/workspace/.hf_cache`
+  set at the top of `wan_t2v_server.py` before any HF import.
+- **HF anonymous rate-limit** (commit `7d1d271`). Without
+  `HF_TOKEN`, the download stalled at 3/41 files. Fixed by adding
+  `HF_TOKEN` to `env_required` so the orchestrator lifts it from
+  creds and the RunPod provider injects it into the pod env.
+- **Container disk too small** (commit `898e4ad`). 50 GB hardcoded
+  `containerDiskInGb` ran out at the 18th shard. Bumped to 250 GB.
+- **Boot timeout too short** (commit `ab96ecc`). 25m
+  `boot_timeout` truncated the ~30-minute download. Bumped to 60m.
+- **Subprocess timeout < boot_timeout** (commit `21bcd7a`). Test's
+  2400s subprocess SIGKILL fired before the 60m orchestrator
+  timeout could surface a real failure. Bumped to 3900s.
+- **GPU too small** (commit `f54c64d`). Wan 2.2 MoE has TWO 14B
+  transformers (high_noise + low_noise) + 11 GB UMT5-XXL. Total
+  ~70 GB which doesn't fit on a 48 GB A40/A6000/L40S. Switched
+  gpu_preference to A100 80GB / H100 80GB.
+- **CPU RAM OOM at shard load** (commit `d0c1cd1`). Even with 80 GB
+  GPU, diffusers' default loader staged all shards in CPU RAM
+  before moving to GPU — pod CPU RAM (variable 15-50 GB per
+  machine) OOM-killed at 8/12 shards. Fixed by
+  `WanPipeline.from_pretrained(..., device_map="cuda")` so weights
+  stream directly to GPU and skip CPU.
+- **Cloudflare 403 against urllib UA** (commit `2e07fe5`). RunPod's
+  Cloudflare edge returned 403 to `Python-urllib/3.13`. Fixed by
+  setting `User-Agent: kinoforge-diffusers/0.1` on every
+  `urllib.request.Request` in the engine.
+- **validate_spec required-keys gap** (commit `19e08ca`).
+  DiffusersEngine.validate_spec required `pipeline` and `scheduler`
+  on `job.spec` but the cfg's spec block didn't set them. Added as
+  placeholder strings.
+- **Backend base_url localhost** (commit `4d6d3df`).
+  `DiffusersEngine.backend` discarded its `instance` argument and
+  always used `cfg.engine.diffusers.base_url`
+  (`http://localhost:8000`). For remote pods, that pointed at the
+  workspace container. Fixed by deriving base_url from
+  `instance.endpoints[port]` when remote.
+- **_MAX_POLL too small for video** (commit `7bee919`). 60 polls × 1 s
+  = 60 seconds of patience, ~5-10 min Wan generation. Bumped to
+  1800.
+- **Artifact URL hardcoded localhost** (commit `a8841d5`). Server's
+  `/status` returned `url: http://localhost:8000/artifacts/X.mp4`.
+  Fixed by ignoring the server-supplied URL and rebuilding from
+  `self._base_url` in `DiffusersBackend.result`.
+- **Teardown skipped on failure** (commit `365ab00`). `_run_generate`
+  raised on subprocess rc != 0 before the test's `pod_14b` /
+  `pod_5b` assignments ran, leaking pods to the next preflight.
+  Fixed by re-extracting pod_ids from per-leg log files in
+  `finally`.
+
+### Notes
+
+- This is the first kinoforge integration with the `diffusers`
+  Python library directly — prior diffusers-shaped work all ran
+  through `ComfyUIEngine` (entries #4, #5, #7) which talks to the
+  ComfyUI HTTP API. This entry uses
+  `diffusers.WanPipeline.from_pretrained` inline inside a
+  custom `wan_t2v_server.py` FastAPI app embedded into the pod's
+  bootstrap.
+- Two transformers (high_noise_model, low_noise_model) loaded by
+  `WanPipeline` form the MoE that gives Wan 2.2 14B its quality
+  bump over Wan 2.1 14B at the same parameter count per expert.
+  This is why the 80 GB GPU requirement is non-negotiable in bf16.
+- Switching the cfg to `image: runpod/pytorch:2.4` + pip-installing
+  `torch==2.6.0` (cu124 wheels) is the recommended pattern for any
+  future kinoforge cfg that needs a torch version newer than what
+  RunPod's stock images ship — RunPod's newer-torch images (e.g.
+  `2.8.0-cudnn-devel`) have unreliable distribution across the
+  machine pool (3 consecutive image-pull stalls during this debug).
+- The `device_map="cuda"` knob is the canonical mechanism for
+  streaming weights to GPU without staging through CPU RAM. Future
+  large-model diffusers cfgs (Cosmos, HunyuanVideo, etc.) should
+  use the same pattern.
+- The `--extra-index-url https://download.pytorch.org/whl/cu124`
+  pattern in `DiffusersEngine.render_provision` is generic: any
+  diffusers cfg that needs a specific torch version can pin it in
+  `engine.diffusers.pip` and the bootstrap will resolve from the
+  PyTorch wheel index.
+- The `kinoforge logs --id <pod>` CLI command is deferred — for now
+  the manual incantation
+  `curl https://<pod_id>-8001.proxy.runpod.net/bootstrap.log` works
+  and turned the smoke debug from a guessing game into a tractable
+  fix sequence.
+- 28 attempts to reach this entry. Each surfaced exactly one new
+  bug; each bug was fixed with a focused commit + at least one
+  test. The Wan 2.2 MoE was always going to be the most brittle
+  large-model integration in kinoforge; the layered fixes now form
+  the standard playbook for the next one.

@@ -3536,3 +3536,37 @@ staleness.
 **Until fixed:** treat all reported `est_spend` numbers as a lower
 bound. Cross-check against RunPod's UI before approving long-running
 or high-budget pods.
+
+---
+
+## Wan 2.2 native T2V-A14B via DiffusersEngine (CLOSED 2026-06-20)
+
+Plan: `docs/superpowers/plans/2026-06-19-wan22-native-t2v-a14b.md`
+(includes amendment for Task 7.5).
+Spec: `docs/superpowers/specs/2026-06-19-wan22-native-t2v-a14b-design.md`.
+
+Goal: ship a green live smoke for Wan 2.2 T2V-A14B running via
+`diffusers.WanPipeline` on a RunPod A100 80GB pod, with warm-reuse
+across two prompts and cross-cap-key isolation against the Kijai
+5B ComfyUI cfg.
+
+**Status: GREEN.** 1 passed in 0:24:04 on 2026-06-20 ~06:08 local
+(commit `365ab00`). Three MP4s landed in `output/`:
+- `20260620-055823_diffusers_unknown_Photorealistic-cinem.mp4` (14B cold, 1.1 MB)
+- `20260620-060158_diffusers_unknown_Photorealistic-yet-d.mp4` (14B warm reuse, 1.9 MB)
+- `20260620-060729_comfyui_Wan2_2-TI2V-5B-FastWanFu_Photorealistic-cinem.mp4` (5B cross-cap-key, 1.3 MB)
+
+See `successful-generations.md` entry #8 for the full schema +
+failure-modes recap. Total session spend ~$10 across 28 attempts
+(layered-bug debug) + ~$0.49 on the green pod.
+
+### Resume pointer
+
+This worktree (`worktree-wan22-native-t2v-a14b`) is ready to merge
+back to `main`. Pending: superpowers' finishing-a-development-branch
+workflow (open PR / squash / merge — operator's choice).
+
+Sibling `runpod-comfyui-wan-t2v-14b-2_2.yaml` is now marked DEAD
+with a comment header pointing at the diffusers cfg. The
+`hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers` ref + DiffusersEngine path is
+the canonical Wan 2.2 14B integration.
