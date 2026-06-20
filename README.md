@@ -538,6 +538,73 @@ Browse ready-to-use examples in [`examples/configs/`](examples/configs/):
 | [`hosted.yaml`](examples/configs/hosted.yaml) | Hosted API | fal.ai | Zero-infra hosted |
 | [`local-fake.yaml`](examples/configs/local-fake.yaml) | Fake | Local | Offline / CI smoke test |
 
+## Default test LoRA (Wan 2.2 T2V)
+
+This repo's canonical LoRA-pair test default is **Arcane Style [WAN 2.2 T2V] v1.0**
+(CivitAI model `2197303`). Wan 2.2 ships as a Mixture-of-Experts model with two
+transformers — a **high-noise** transformer for the early sampling steps and a
+**low-noise** transformer for the later steps — so a full-effect Wan 2.2 LoRA
+ships as a *pair*, one tensor file per transformer. Both refs are listed below
+so an operator cloning the repo has a known-good, reproducible LoRA stack to
+test against.
+
+| Role | CivitAI page | Model ID | Version ID | kinoforge ref |
+|---|---|---|---|---|
+| High noise | <https://civitai.com/models/2197303/arcane-style-wan-22-t2v?modelVersionId=2474081> | 2197303 | 2474081 | `civitai:2197303@2474081` |
+| Low noise  | <https://civitai.com/models/2197303/arcane-style-wan-22-t2v?modelVersionId=2474073> | 2197303 | 2474073 | `civitai:2197303@2474073` |
+
+### What this default exercises
+
+- **Both noise stages of Wan 2.2.** The pair is the canonical "full-effect on
+  Wan 2.2" configuration. Mounting only the high-noise tensor or only the
+  low-noise tensor IS technically supported by Wan 2.2 and will yield a
+  partial-effect render — but that is NOT what this default is designed to
+  demonstrate.
+- **Multi-LoRA `CapabilityKey` identity.** Order of `loras:` entries is part
+  of the cache key (see `compute_profile_alias` in `src/kinoforge/core/vault.py`
+  and `CapabilityKey.derive()` in `src/kinoforge/core/profiles.py`). Always
+  list high-noise first, then low-noise, for stable cache hits across runs.
+
+### Not exercised by this default
+
+- **Wan 2.1 LoRA used as a Wan 2.2 low-noise LoRA.** Wan 2.1 single-stage LoRAs
+  can be mounted as the low-noise tensor in a Wan 2.2 stack (matched
+  transformer shape). The Arcane Style v1.0 pair above ships native Wan 2.2
+  high+low tensors, so this fallback path is not what we test here.
+- **Single-tensor (high-only or low-only) Wan 2.2 runs.** Supported by Wan 2.2,
+  not the focus of this default.
+
+### How to use it
+
+The recommended path is to put the pair in your vault file (`--vault PATH` or
+`KINOFORGE_VAULT`), in the order shown above:
+
+```yaml
+# in your vault YAML — outside the repo, chmod 600
+loras:
+  - ref: civitai:2197303@2474081     # high-noise
+    label: arcane-style-wan22-high
+  - ref: civitai:2197303@2474073     # low-noise
+    label: arcane-style-wan22-low
+```
+
+The same pair is committed (commented-out, behind the placeholder discussion)
+in [`examples/configs/wan.yaml`](examples/configs/wan.yaml) and
+[`examples/vault/example.yaml`](examples/vault/example.yaml) so a fresh clone
+has the canonical refs locally.
+
+Both resolves go through `CivitAISource`, which requires `CIVITAI_TOKEN` in
+the `.env` file (see [Credentials → Known keys](#known-keys)).
+
+> **Status caveat (PROGRESS C23).** Neither of the committed Wan ComfyUI graph
+> JSONs (`runpod-comfyui-wan.graph.json`, `runpod-comfyui-wan-t2v.graph.json`)
+> currently includes a `WanVideoLoraSelect` node wired into
+> `WanVideoSampler.lora`. The refs above are the *specified* default for when
+> the C23 graph-wiring follow-up lands; until then, mounting them via the
+> ComfyUI engine is a no-op at sampler time. The Diffusers engine path
+> (`engines/diffusers/`) follows the same canonical pair when its LoRA-load
+> hook ships.
+
 ### Concurrency
 
 By default kinoforge runs one generation job at a time (sequential). Add
