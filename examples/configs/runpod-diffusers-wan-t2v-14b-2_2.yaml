@@ -145,6 +145,12 @@ spec:
   # values are purely informational — the engine never reads them at
   # generation time. Present here only to satisfy the validator
   # (Task 8 attempt #23 surfaced this gap).
+  # DiffusersEngine.model_identity reads `spec.model` to build the
+  # output filename slug. Without this the live smoke's clips landed
+  # as `..._unknown_...` (see attempt #28 output filenames). The
+  # `test_example_config_produces_non_empty_model_identity` lockdown
+  # also requires this field.
+  model: "Wan2.2-T2V-A14B-Diffusers"
   pipeline: "WanPipeline"
   scheduler: "UniPCMultistepScheduler"
   # Dimensions only — sampler defaults (steps, cfg, shift, scheduler,
