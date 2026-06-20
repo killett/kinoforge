@@ -33,6 +33,16 @@ engine:
       - "imageio[ffmpeg]>=2.34"
     base_url: "http://localhost:8000"
     prompt_body_key: "prompt"
+    # Embed the server module tree into the bootstrap script.
+    # Live smoke 2026-06-19 Leg 1 burned $0.27 because the stock
+    # runpod/pytorch image has no kinoforge package — the bootstrap's
+    # `python -m kinoforge.engines.diffusers.servers.wan_t2v_server`
+    # ModuleNotFoundError'd instantly and the server never bound 8000.
+    # With embed_modules, render_provision base64-encodes the package's
+    # .py files into the script; the pod decodes them into /tmp/kfsrv/
+    # and PYTHONPATH-prepends that path before `exec`.
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
 
 models:
   # Bare-repo ref — HuggingFaceSource enumerates files for capability
