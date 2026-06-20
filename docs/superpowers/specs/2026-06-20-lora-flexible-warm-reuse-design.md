@@ -756,10 +756,35 @@ smoke uses only the README default Arcane Style pair
 low-noise) so v1 has no external-LoRA sourcing requirement; each step
 exercises a different code path:
 
-1. **Cold-boot with 0 LoRAs.** Provisions a Wan 2.2 pod; inventory empty.
-2. **Warm-attach to [high, low] (full pair).** Exercises pure-download path; inventory becomes [high, low].
-3. **Warm-attach to [low] only.** Exercises pure-eviction path: evicts `high`, keeps `low` cached. Inventory becomes [low].
-4. **Warm-attach to [] (no LoRAs).** Exercises full-evict path: evicts `low`. Inventory empty again.
+| # | LoRA stack | Code path | Prompt | Sampler steps |
+|---|---|---|---|---|
+| 1 | `[]` | Cold-boot, 0 LoRAs | `field-realistic.txt` verbatim | default |
+| 2 | `[high, low]` | Warm-attach + pure-download (2 new LoRAs, 0 evicted) | `ArcaneStyle ` + `field-realistic.txt` | low-noise ≥ 6 |
+| 3 | `[low]` | Warm-attach + pure-evict (evict `high`, keep `low` cached) | `ArcaneStyle ` + `field-realistic.txt` | low-noise ≥ 6 |
+| 4 | `[]` | Warm-attach + full-evict (evict `low`) | `field-realistic.txt` verbatim | default |
+
+**Prompt composition** (operator-supplied manually for v1, not
+automated; documented here so the smoke is reproducible):
+
+- Steps 1 + 4 (no LoRA): standard test prompt
+  `/workspace/examples/configs/prompts/field-realistic.txt` verbatim
+  per the user-scope cross-model comparison rule.
+- Steps 2 + 3 (Arcane resident): same standard prompt with the trigger
+  word `ArcaneStyle ` (with trailing space) prepended. Trigger word is
+  the same for both Arcane versions (high + low) per the CivitAI page;
+  needs to be present any time at least one Arcane tensor is loaded.
+
+**LoRA strength + sampler tuning** (per CivitAI guidance for this
+LoRA, captured here for plan-phase implementation):
+
+- LoRA strength 1.0 to 1.2 (use the diffusers `cross_attention_kwargs`
+  `scale` parameter or per-adapter weight passed to
+  `pipe.set_adapters([...], adapter_weights=[...])`; v1 picks 1.0
+  unless live results call for the higher end).
+- Steps 2 + 3 use at least 6 low-noise sampler steps (combined Wan 2.2
+  schedule). Plan-phase fills in the exact step + scheduler config.
+- Steps 1 + 4 use the existing Wan 2.2 default schedule from the
+  green-smoke cfg — no Arcane-specific tuning.
 
 The combinatorial matrix (evict + download + overlap in a single
 swap) is covered by the offline integration tests
