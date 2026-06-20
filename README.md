@@ -553,6 +553,20 @@ test against.
 | High noise | <https://civitai.com/models/2197303/arcane-style-wan-22-t2v?modelVersionId=2474081> | 2197303 | 2474081 | `civitai:2197303@2474081` |
 | Low noise  | <https://civitai.com/models/2197303/arcane-style-wan-22-t2v?modelVersionId=2474073> | 2197303 | 2474073 | `civitai:2197303@2474073` |
 
+### Activation: trigger word + strength
+
+Both versions use the same activation keyword and recommended strength
+per the CivitAI page:
+
+- **Trigger word:** `ArcaneStyle` — prepend (with trailing space) to
+  any prompt where at least one of the two Arcane tensors is loaded.
+  Without the trigger word, the LoRA's style does not activate.
+- **LoRA strength:** 1.0 to 1.2 (per-adapter weight via
+  `pipe.set_adapters([...], adapter_weights=[1.0, 1.0])` for the
+  Diffusers path).
+- **Sampler steps:** at least 6 low-noise steps recommended when the
+  low-noise tensor is loaded.
+
 ### What this default exercises
 
 - **Both noise stages of Wan 2.2.** The pair is the canonical "full-effect on
