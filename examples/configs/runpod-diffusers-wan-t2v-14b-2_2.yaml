@@ -1,0 +1,89 @@
+# Wan 2.2 T2V-A14B (native) on RunPod via DiffusersEngine
+# inference server (kinoforge.engines.diffusers.servers.wan_t2v_server).
+#
+# Why this cfg exists:
+#   The earlier runpod-comfyui-wan-t2v-14b-2_2.yaml tried to run
+#   Kijai's I2V-A14B HIGH+LOW pair as T2V via WanVideoEmptyEmbeds and
+#   failed at the patch_embedding layer with a 36-vs-16 channel
+#   mismatch — Wan 2.2 14B I2V has image conditioning baked into its
+#   convolution shape. The actual T2V-A14B model is published in
+#   sharded form by Wan-AI; only diffusers.WanPipeline (via
+#   huggingface_hub) handles sharded loading correctly.
+#
+# Usage:
+#   pixi run kinoforge generate \
+#     --config examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --mode t2v
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+
+models:
+  # Bare-repo ref — HuggingFaceSource enumerates files for capability
+  # key derivation. Actual download is at server startup via
+  # diffusers.WanPipeline.from_pretrained() (handles 12 sharded
+  # safetensors files via huggingface_hub.snapshot_download).
+  # The bootstrap script's _kinoforge_download is NOT called for
+  # this ref because DiffusersEngine.render_provision does not loop
+  # over models[] the way ComfyUIEngine does.
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B"
+    kind: base
+    target: checkpoints  # informational only; diffusers manages HF cache
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  warm_reuse_auto_attach: true
+  requirements:
+    # 48 GB minimum so the model loads with no diffusers offload knob.
+    # A40 ($0.39/hr) is the cheapest fit; A6000 + L40S are fallbacks.
+    min_vram_gb: 48
+    min_cuda: "12.4"
+    max_usd_per_hr: 1.00
+    gpu_preference:
+      - "NVIDIA A40"
+      - "NVIDIA RTX A6000"
+      - "NVIDIA L40S"
+    # ~63 GB of weights + HF cache overhead + ComfyUI runtime not
+    # installed (this cfg is diffusers-only).
+    disk_gb: 150
+  lifecycle:
+    # Cold boot timeline:
+    #   pip install ~30s
+    #   from_pretrained snapshot_download ~5-15m (12 shards * ~10GB)
+    #   pipe.to("cuda") ~2-3m
+    # idle_timeout sized to cover the worst case + headroom.
+    idle_timeout: 25m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 90m
+    boot_timeout: 25m
+    budget: 3.0
+    # Required for cross-CLI warm-reuse (same invariant as the
+    # Wan 2.1 1.3B cfg's load-bearing comment).
+    heartbeat_interval_s: 30
+
+spec:
+  # Dimensions only — sampler defaults (steps, cfg, shift, scheduler,
+  # negative_prompt) are baked into wan_t2v_server.py.
+  width: 480
+  height: 480
+  num_frames: 81
+  fps: 16
