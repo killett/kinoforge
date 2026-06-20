@@ -209,6 +209,24 @@ def status(job_id: str) -> dict[str, Any]:
     return out
 
 
+@app.get("/artifacts/{filename}")
+def artifact(filename: str) -> Any:  # noqa: ANN401 — returns FileResponse, opaque here.
+    """Serve a generated MP4 by filename with path-traversal guard."""
+    from fastapi.responses import FileResponse
+
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="invalid filename")
+    target = (ARTIFACT_DIR / filename).resolve()
+    artifact_dir_resolved = ARTIFACT_DIR.resolve()
+    try:
+        target.relative_to(artifact_dir_resolved)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="path escapes artifact dir") from e
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found")
+    return FileResponse(str(target), media_type="video/mp4", filename=filename)
+
+
 if __name__ == "__main__":
     import uvicorn
 
