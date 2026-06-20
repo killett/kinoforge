@@ -674,7 +674,16 @@ class DiffusersEngine(GenerationEngine):
             run_cmd=server_cmd,
             image=image,
             ports=ports,
-            env_required=[],
+            # HF_TOKEN is required because huggingface_hub's anonymous
+            # rate-limit kills mid-download for large repos. Task 8
+            # attempt #9 surfaced this: ``Fetching 41 files`` stuck at
+            # 3/41 for 4+ minutes with the "set a HF_TOKEN to enable
+            # higher rate limits and faster downloads" warning. The
+            # orchestrator lifts HF_TOKEN from creds (the .env file
+            # under workspace) and the RunPod provider injects it as
+            # a pod env var so wan_t2v_server.py's from_pretrained
+            # uses the authenticated transport.
+            env_required=["HF_TOKEN"],
         )
 
     def wait_for_ready(
