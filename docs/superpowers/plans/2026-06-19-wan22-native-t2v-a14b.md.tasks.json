@@ -4,63 +4,70 @@
     {
       "id": 15,
       "subject": "Task 0: Scaffold servers package marker",
-      "status": "pending",
+      "status": "completed",
       "description": "Goal: Create src/kinoforge/engines/diffusers/servers/__init__.py package marker so the test imports resolve. Verify: pixi run python -c 'import kinoforge.engines.diffusers.servers; print(\"ok\")'."
     },
     {
       "id": 16,
       "subject": "Task 1: _video_io.write_mp4 helper + tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [15],
       "description": "Goal: Pure write_mp4(frames, fps, path) helper. 6 round-trip tests via ffprobe. Files: src/kinoforge/engines/diffusers/servers/_video_io.py + tests/engines/test_diffusers_video_io.py."
     },
     {
       "id": 17,
       "subject": "Task 2: GenerationError + DiffusersBackend.result() status=error short-circuit",
-      "status": "pending",
+      "status": "completed",
       "description": "Goal: Add GenerationError; short-circuit DiffusersBackend.result() on status=error; lock down wait_for_ready 404 regression. Files: src/kinoforge/core/errors.py, src/kinoforge/engines/diffusers/__init__.py, tests/engines/test_diffusers_backend_error_handling.py."
     },
     {
       "id": 18,
       "subject": "Task 3: NOOP — wait_for_ready 404 audit",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [17],
       "description": "No-op task — audit-gap E.2 was already correct in code; regression test landed in Task 2."
     },
     {
       "id": 19,
       "subject": "Task 4: wan_t2v_server.py /health + startup pipeline loading",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [15, 16],
       "description": "Goal: FastAPI app skeleton, MODEL_ID env-var, startup event loading WanPipeline via patchable _load_pipeline seam, /health endpoint. 3 health tests."
     },
     {
       "id": 20,
       "subject": "Task 5: wan_t2v_server.py /generate + /status + worker thread",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [19],
       "description": "Goal: JobState dataclass, GenerateRequest pydantic, queue + worker thread, /generate POST, /status/{id} GET. 6 generate tests."
     },
     {
       "id": 21,
       "subject": "Task 6: wan_t2v_server.py /artifacts endpoint",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [20],
       "description": "Goal: /artifacts/{filename} FileResponse + path-traversal guard. 3 artifact tests."
     },
     {
       "id": 22,
       "subject": "Task 7: Wan 2.2 native cfg + lockdown test",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [21],
       "description": "Goal: examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml + 2 lockdown tests (server_cmd pin, cap-key differs from 5B)."
     },
     {
+      "id": 25,
+      "subject": "Task 7.5: Replace requires_local_weights boolean with refs_to_stage engine method (plan amendment 2026-06-19)",
+      "status": "in_progress",
+      "blockedBy": [22],
+      "description": "Goal: Foundational fix for the local-download waste discovered during the first Task 8 live-smoke attempt (commit 020be40 era). Replaces the coarse per-engine `requires_local_weights: bool` knob with a method-based per-artifact filter so engines that self-fetch on the pod (Diffusers via from_pretrained, ComfyUI via _kinoforge_download) skip the workspace-side download_all() that was wasting ~$0.50-0.85/leg of pod-idle time. Steps: (1) RED test: engine.refs_to_stage([]) blocks downloader even when legacy requires_local_weights=True. (2) GREEN: provisioner.py consults getattr(engine, 'refs_to_stage', None) first; falls back to legacy boolean. (3) RED test: subset filtering works. (4) GREEN: same provisioner change covers. (5) RED+GREEN: DiffusersEngine overrides refs_to_stage to return []. Files: src/kinoforge/core/interfaces.py (ABC method), src/kinoforge/core/provisioner.py (call site), src/kinoforge/engines/diffusers/__init__.py (override), tests/core/test_provisioner.py (new tests)."
+    },
+    {
       "id": 23,
-      "subject": "Task 8: Live smoke — cold + warm + cross-cap-key (USER GATE)",
-      "status": "pending",
-      "blockedBy": [17, 22],
-      "description": "Goal: tests/live/test_diffusers_wan_t2v_live.py runs 3 subprocess generate calls: 14B cold (realistic), 14B warm (dreamlike), 5B cold (cross-cap-key). Final destroy both pods. USER-ORDERED GATE — non-skippable."
+      "subject": "Task 8: Live smoke — cold + warm + cross-cap-key (USER GATE) — scaffold landed; first attempt 2026-06-19 aborted on download-waste finding; awaits Task 7.5 fix",
+      "status": "in_progress",
+      "blockedBy": [17, 22, 25],
+      "description": "Goal: tests/live/test_diffusers_wan_t2v_live.py runs 3 subprocess generate calls: 14B cold (realistic), 14B warm (dreamlike), 5B cold (cross-cap-key). Final destroy both pods. USER-ORDERED GATE — user authorized re-fire after Task 7.5 lands."
     },
     {
       "id": 24,
@@ -70,5 +77,5 @@
       "description": "Goal: New successful-generations.md entry; PROGRESS.md resume pointer update; mark runpod-comfyui-wan-t2v-14b-2_2.yaml DEAD with sibling pointer."
     }
   ],
-  "lastUpdated": "2026-06-19T16:55:00-07:00"
+  "lastUpdated": "2026-06-19T21:25:00-07:00"
 }
