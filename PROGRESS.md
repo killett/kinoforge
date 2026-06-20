@@ -3505,3 +3505,34 @@ Spend: $0.00 (provision failed before any compute billed).
 After Stages C+D: a real FakeEngine deploy via
 `kinoforge deploy examples/configs/skypilot-lambda.yaml` to verify the
 full kinoforge → SkyPilotProvider → sky → Lambda path. ~$0.15 budget.
+
+---
+
+## TODO: `cost_rate_usd_per_hr` is inaccurate — fix needed (2026-06-19)
+
+`kinoforge status --id <pod>` reports `cost_rate_usd_per_hr=0.35` for
+a RunPod pod whose live RunPod console bills `$0.45/hr`. Confirmed
+during the Wan 2.2 native T2V-A14B Phase 1 live smoke against pod
+`hpxzx441nwhiqv`. Discrepancy = ~28% understatement of burn.
+
+**Impact:** every `est_spend` figure, the `cost` dashboard total, and
+budget-ceiling enforcement are all wrong by the same factor. Live
+spend appears safer than it is; budgets may silently overshoot before
+the cap fires.
+
+**Suspected source:** the field is populated at provision time from
+the offer's listed rate (e.g. an A40 entry's catalog price), not from
+the actual GPU selected by RunPod when A40 isn't available and A6000
+or L40S gets substituted. The cached value never refreshes against
+RunPod's live billing.
+
+**Fix shape (TBD):** either (a) refresh `cost_rate_usd_per_hr` per
+status poll from the live pod's `costPerHr` GraphQL field, or
+(b) propagate the actually-selected GPU type from the createPod
+response and re-derive the rate from the offer catalog at that
+point. Lean toward (a) — single source of truth, no offer-catalog
+staleness.
+
+**Until fixed:** treat all reported `est_spend` numbers as a lower
+bound. Cross-check against RunPod's UI before approving long-running
+or high-budget pods.
