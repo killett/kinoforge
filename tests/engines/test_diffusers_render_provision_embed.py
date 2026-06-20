@@ -137,7 +137,10 @@ def test_embed_prepends_pythonpath_before_exec() -> None:
     script = rp.script
     assert "export PYTHONPATH=/tmp/kfsrv" in script
     pp_idx = script.index("export PYTHONPATH=/tmp/kfsrv")
-    exec_idx = script.index("exec python -m")
+    # Post-Task-8-attempt-4 fix: main server is no longer `exec`'d so
+    # bash retains PID 1 and its EXIT trap can fire on crash. Match the
+    # non-exec form.
+    exec_idx = script.rindex("python -m")
     assert pp_idx < exec_idx, "PYTHONPATH must be set before exec"
 
 
@@ -154,7 +157,10 @@ def test_embed_does_not_break_selfterm_or_pip_order() -> None:
     # Post-Task-8-attempt-2 fix: pip deps are shlex-quoted so bash does not
     # parse `>=` as a stdout redirect. Match the quoted form.
     pip_idx = script.index("pip install -q 'fastapi>=0.115'")
-    exec_idx = script.index("exec python -m")
+    # Post-Task-8-attempt-4 fix: main server is no longer `exec`'d so
+    # bash retains PID 1 and its EXIT trap can fire on crash. Match the
+    # non-exec form.
+    exec_idx = script.rindex("python -m")
     assert selfterm_idx < embed_idx
     assert selfterm_idx < pip_idx
     assert embed_idx < exec_idx

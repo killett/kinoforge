@@ -46,9 +46,17 @@ def test_render_provision_script_runs_pip_install_for_each_dep() -> None:
     assert "pip install -q diffusers==0.27.0 transformers accelerate" in rp.script
 
 
-def test_render_provision_script_ends_with_exec_server_cmd() -> None:
+def test_render_provision_script_ends_with_server_cmd_no_exec() -> None:
+    """Post-trap-fix: bash must stay PID 1 to honor its EXIT trap, so the
+    main server runs WITHOUT ``exec``. The script ends with the raw
+    command.
+    """
     rp = _make_engine().render_provision(_minimal_cfg())
-    assert rp.script.rstrip().endswith("exec python -m diffusers_server")
+    assert rp.script.rstrip().endswith("python -m diffusers_server")
+    # Belt-and-braces: assert the absence of an `exec ` prefix on the
+    # final line, since `python -m diffusers_server` is a substring of
+    # `exec python -m diffusers_server`.
+    assert not rp.script.rstrip().endswith("exec python -m diffusers_server")
 
 
 def test_render_provision_run_cmd_matches_server_cmd() -> None:
@@ -226,20 +234,20 @@ def test_render_provision_starts_log_http_server_on_port_8001() -> None:
     )
 
 
-def test_render_provision_log_server_launches_before_main_exec() -> None:
-    """The log server must be up before the main server forks/execs.
+def test_render_provision_log_server_launches_before_main_server() -> None:
+    """The log server must be up before the main server runs.
 
-    If the order were reversed, a crash inside ``exec python -m
-    kinoforge...`` would kill the shell before the log server bound
-    its port — defeating the entire point of the surface.
+    If the order were reversed, a crash inside the main server would
+    fire the EXIT trap (which keeps bash alive) but the log server
+    might not yet be bound — losing the cause-of-death log.
     """
     rp = _make_engine().render_provision(_minimal_cfg())
     script = rp.script
     log_idx = script.index("python3 -m http.server 8001")
-    exec_idx = script.index("exec python -m diffusers_server")
-    assert log_idx < exec_idx, (
-        "log server must be launched before the main exec; "
-        f"got log_idx={log_idx} exec_idx={exec_idx}"
+    main_idx = script.rindex("python -m diffusers_server")
+    assert log_idx < main_idx, (
+        "log server must be launched before the main server; "
+        f"got log_idx={log_idx} main_idx={main_idx}"
     )
 
 
@@ -251,6 +259,77 @@ def test_render_provision_ports_include_8001_log_server_port() -> None:
     rp = _make_engine().render_provision(_minimal_cfg())
     assert "8001" in rp.ports, (
         f"expected port '8001' in RenderedProvision.ports; got {rp.ports!r}"
+    )
+
+
+def test_render_provision_installs_keep_alive_trap_on_exit() -> None:
+    """A trap on EXIT keeps the container alive after the bootstrap dies.
+
+    Bug it catches: Task 8 attempt #4 (after the log-fetch surface
+    shipped). The container restart loop was so tight that the sidecar
+    http.server on port 8001 never bound before PID 1 died, so logs
+    were unfetchable. Without a way to see the actual crash, every
+    further fix is a guess.
+
+    The trap fires on any bash exit (success, ``set -e`` abort,
+    SIGTERM, SIGINT) and runs ``sleep infinity`` so PID 1 — and the
+    backgrounded log server with it — stays alive long enough for the
+    orchestrator to fetch ``/tmp/bootstrap.log``. Selfterm's
+    ``KINOFORGE_SELFTERM_DEAD_MAN_S`` / ``max_lifetime`` caps still
+    fire, so this is not a runaway-cost risk.
+
+    Locks in: the trap line exists, fires on EXIT, runs sleep
+    infinity, and lands before any line that can fail (i.e. before
+    pip install and before the main server).
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    script = rp.script
+    expected_trap_substring = "sleep infinity"
+    assert "trap" in script, "no trap line in rendered script"
+    trap_lines = [ln for ln in script.split("\n") if ln.lstrip().startswith("trap ")]
+    assert len(trap_lines) >= 1, f"no trap line found; script:\n{script}"
+    trap_line = trap_lines[0]
+    assert expected_trap_substring in trap_line, (
+        f"trap line does not invoke sleep infinity: {trap_line!r}"
+    )
+    assert " EXIT" in trap_line, f"trap line does not trigger on EXIT: {trap_line!r}"
+
+
+def test_render_provision_main_server_is_not_exec_for_trap_to_fire() -> None:
+    """The main server line must NOT begin with ``exec``.
+
+    With ``exec``, the python process replaces bash and bash's EXIT
+    trap is lost — so a python crash terminates PID 1 immediately and
+    the log server with it. Dropping the ``exec`` keeps bash as PID 1;
+    when python exits (clean or crash), the trap runs and sleeps
+    forever so the log surface stays up.
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    last_python_line = next(
+        ln
+        for ln in reversed(rp.script.split("\n"))
+        if ln.strip().endswith("diffusers_server")
+    )
+    assert not last_python_line.lstrip().startswith("exec "), (
+        f"main server invocation must not be exec'd or the EXIT trap is "
+        f"lost on python crash. Line: {last_python_line!r}"
+    )
+
+
+def test_render_provision_trap_registered_before_log_server_bind() -> None:
+    """Trap must be registered before any failable line, including the
+    log-server bind. If the http.server bind itself failed (port
+    collision, missing python3, etc.), bash would exit without ever
+    reaching the trap declaration; the container would terminate and
+    the (un-bound) log server with it.
+    """
+    rp = _make_engine().render_provision(_minimal_cfg())
+    script = rp.script
+    trap_idx = script.index("trap ")
+    http_idx = script.index("python3 -m http.server 8001")
+    assert trap_idx < http_idx, (
+        f"trap (idx={trap_idx}) must come before log-server bind "
+        f"(idx={http_idx}); script:\n{script}"
     )
 
 
