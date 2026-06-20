@@ -58,14 +58,21 @@ models:
 
 compute:
   provider: runpod
-  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  # torch 2.8.0 + cuda 12.8.1. The previous torch 2.4 image tripped
+  # ``infer_schema`` inside diffusers.models.autoencoders.autoencoder_kl_wan
+  # — torch 2.4's torch.library.custom_op cannot resolve stringified
+  # ``'torch.Tensor'`` annotations (used by diffusers' ``from __future__
+  # import annotations`` + flash-attn-3 op registration). torch 2.5+
+  # fixed infer_schema to handle stringified annotations; the 2.8.0
+  # image is the newest runpod/pytorch tag at smoke time (2026-06-19).
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
   warm_reuse_auto_attach: true
   requirements:
     # 48 GB minimum so the model loads with no diffusers offload knob.
     # A40 ($0.39/hr) is the cheapest fit; A6000 + L40S are fallbacks.
     min_vram_gb: 48
-    min_cuda: "12.4"
+    min_cuda: "12.8"
     max_usd_per_hr: 1.00
     gpu_preference:
       - "NVIDIA A40"
