@@ -3505,3 +3505,68 @@ Spend: $0.00 (provision failed before any compute billed).
 After Stages C+D: a real FakeEngine deploy via
 `kinoforge deploy examples/configs/skypilot-lambda.yaml` to verify the
 full kinoforge → SkyPilotProvider → sky → Lambda path. ~$0.15 budget.
+
+---
+
+## TODO: `cost_rate_usd_per_hr` is inaccurate — fix needed (2026-06-19)
+
+`kinoforge status --id <pod>` reports `cost_rate_usd_per_hr=0.35` for
+a RunPod pod whose live RunPod console bills `$0.45/hr`. Confirmed
+during the Wan 2.2 native T2V-A14B Phase 1 live smoke against pod
+`hpxzx441nwhiqv`. Discrepancy = ~28% understatement of burn.
+
+**Impact:** every `est_spend` figure, the `cost` dashboard total, and
+budget-ceiling enforcement are all wrong by the same factor. Live
+spend appears safer than it is; budgets may silently overshoot before
+the cap fires.
+
+**Suspected source:** the field is populated at provision time from
+the offer's listed rate (e.g. an A40 entry's catalog price), not from
+the actual GPU selected by RunPod when A40 isn't available and A6000
+or L40S gets substituted. The cached value never refreshes against
+RunPod's live billing.
+
+**Fix shape (TBD):** either (a) refresh `cost_rate_usd_per_hr` per
+status poll from the live pod's `costPerHr` GraphQL field, or
+(b) propagate the actually-selected GPU type from the createPod
+response and re-derive the rate from the offer catalog at that
+point. Lean toward (a) — single source of truth, no offer-catalog
+staleness.
+
+**Until fixed:** treat all reported `est_spend` numbers as a lower
+bound. Cross-check against RunPod's UI before approving long-running
+or high-budget pods.
+
+---
+
+## Wan 2.2 native T2V-A14B via DiffusersEngine (CLOSED 2026-06-20)
+
+Plan: `docs/superpowers/plans/2026-06-19-wan22-native-t2v-a14b.md`
+(includes amendment for Task 7.5).
+Spec: `docs/superpowers/specs/2026-06-19-wan22-native-t2v-a14b-design.md`.
+
+Goal: ship a green live smoke for Wan 2.2 T2V-A14B running via
+`diffusers.WanPipeline` on a RunPod A100 80GB pod, with warm-reuse
+across two prompts and cross-cap-key isolation against the Kijai
+5B ComfyUI cfg.
+
+**Status: GREEN.** 1 passed in 0:24:04 on 2026-06-20 ~06:08 local
+(commit `365ab00`). Three MP4s landed in `output/`:
+- `20260620-055823_diffusers_unknown_Photorealistic-cinem.mp4` (14B cold, 1.1 MB)
+- `20260620-060158_diffusers_unknown_Photorealistic-yet-d.mp4` (14B warm reuse, 1.9 MB)
+- `20260620-060729_comfyui_Wan2_2-TI2V-5B-FastWanFu_Photorealistic-cinem.mp4` (5B cross-cap-key, 1.3 MB)
+
+See `successful-generations.md` entry #8 for the full schema +
+failure-modes recap. Total session spend ~$10 across 28 attempts
+(layered-bug debug) + ~$0.49 on the green pod.
+
+### Resume pointer
+
+This worktree (`worktree-wan22-native-t2v-a14b`) is ready to merge
+back to `main`. Pending: superpowers' finishing-a-development-branch
+workflow (open PR / squash / merge — operator's choice).
+
+Sibling `runpod-comfyui-wan-t2v-14b-2_2.yaml` is now marked DEAD
+with a comment header pointing at the diffusers cfg. The
+`hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers` ref + DiffusersEngine path is
+the canonical Wan 2.2 14B integration.
