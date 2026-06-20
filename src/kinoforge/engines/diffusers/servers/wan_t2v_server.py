@@ -22,10 +22,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+# Force-disable huggingface_hub's xet transport before any HF import.
+# Task 8 attempt #8 surfaced a hard xet failure:
+#   RuntimeError: Task error: File reconstruction error:
+#   Internal Writer Error: Background writer channel closed
+# during from_pretrained(MODEL_ID) on the freshly-provisioned pod.
+# xet is HF's newer content-addressed transport; the legacy HTTP
+# transport is reliable and the 70 GB cost of "less efficient" is a
+# rounding error compared to the smoke budget. Set BEFORE any
+# huggingface_hub import so the global xet kill-switch is honored.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+# Pin HF cache onto the /workspace volume so the 70 GB shard download
+# does not exhaust the 50 GB container disk. /workspace is the RunPod
+# volume mount (volumeInGb in the cfg's requirements.disk_gb).
+os.environ.setdefault("HF_HOME", "/workspace/.hf_cache")
 
-from kinoforge.engines.diffusers.servers._video_io import write_mp4
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+
+from kinoforge.engines.diffusers.servers._video_io import write_mp4  # noqa: E402
 
 _log = logging.getLogger("kinoforge.diffusers.wan_t2v_server")
 
