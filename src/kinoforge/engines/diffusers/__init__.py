@@ -420,7 +420,15 @@ class DiffusersBackend(GenerationBackend):
             status = data.get("status")
             if status == "done":
                 filename = str(data.get("filename", ""))
-                artifact_url = str(data.get("url", ""))
+                # Ignore the server-supplied ``url`` (wan_t2v_server hardcodes
+                # ``http://localhost:8000/artifacts/{filename}``, which the
+                # workspace container cannot reach). Build the URL from this
+                # backend's base_url so remote pods resolve through the
+                # RunPod proxy. Task 8 attempt #27 ran the full generation
+                # successfully and then died at artifact-fetch:
+                #   urllib.error.URLError: Connection refused
+                # against localhost:8000 from the workspace.
+                artifact_url = f"{self._base_url.rstrip('/')}/artifacts/{filename}"
                 return Artifact(
                     filename=filename, url=artifact_url, meta={"job_id": job_id}
                 )
