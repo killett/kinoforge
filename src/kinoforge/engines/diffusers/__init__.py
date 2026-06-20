@@ -46,8 +46,14 @@ from kinoforge.core.interfaces import (
 # Constants
 # ---------------------------------------------------------------------------
 
-#: Maximum poll iterations in :meth:`DiffusersBackend.result`.
-_MAX_POLL = 60
+#: Maximum poll iterations in :meth:`DiffusersBackend.result`. Each
+#: iteration sleeps 1 s, so this is the total seconds the backend
+#: will wait for a single job to complete. Bumped from 60 (which fit
+#: small image-gen jobs but timed out Task 8 attempt #25's 14B Wan
+#: video at ~30s into the run) to 1800 (30 min) — covers a worst-case
+#: 81-frame, 480x480, 20-step Wan 2.2 generation on an A100 80GB
+#: (~5-10 min nominal, ~25 min if the GPU is unexpectedly slow).
+_MAX_POLL = 1800
 
 #: Default server base URL.
 _DEFAULT_BASE_URL = "http://127.0.0.1:8000"
