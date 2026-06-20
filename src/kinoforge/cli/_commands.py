@@ -1265,6 +1265,20 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
         return 2
 
+    # Refresh the ledger rate from the live provider value so accrued
+    # spend, the cost dashboard, and the budget-ceiling guard use the
+    # rate the provider is actually billing — not the catalog rate
+    # snapshotted at provision time.  A 0.0 reading (partial response,
+    # early boot, providers that don't surface a per-instance rate) is
+    # treated as "no fresh signal" and the stored rate is preserved.
+    live_rate = instance.cost_rate_usd_per_hr
+    if live_rate > 0 and live_rate != float(entry.get("cost_rate_usd_per_hr", 0.0)):
+        ledger.touch(args.id, cost_rate_usd_per_hr=live_rate)
+        refreshed = ledger.read(args.id)
+        if refreshed is not None:
+            entry = refreshed
+            ledger_block = _build_ledger_block(entry, cfg=cfg, now=now)
+
     provider_block = {"provider_status": instance.status}
     try:
         provider_block["endpoints"] = json.dumps(provider.endpoints(args.id))

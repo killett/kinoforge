@@ -811,6 +811,139 @@ def test_list_instances_empty_when_no_pods() -> None:
 
 
 # ---------------------------------------------------------------------------
+# AC6c: live costPerHr → Instance.cost_rate_usd_per_hr refresh path
+# (fixes the offer-catalog staleness TODO logged 2026-06-19).
+# ---------------------------------------------------------------------------
+
+
+def test_get_instance_populates_cost_rate_from_cost_per_hr() -> None:
+    """get_instance threads pod['costPerHr'] into Instance.cost_rate_usd_per_hr.
+
+    Catches the bug where ``_pod_to_instance`` left the field at its 0.0
+    default regardless of the live pod rate, so ``kinoforge status`` kept
+    showing the catalog rate (e.g. $0.35/hr A40 entry) even after RunPod
+    actually billed a substituted GPU at $0.45/hr.
+    """
+    get_response: dict[str, Any] = {
+        "data": {
+            "pod": {
+                "id": "pod-rate",
+                "desiredStatus": "RUNNING",
+                "imageName": "img:1",
+                "costPerHr": 0.45,
+            }
+        }
+    }
+    http_post = HttpPostSpy(response=get_response)
+    provider = RunPodProvider(http_post=http_post)
+
+    inst = provider.get_instance("pod-rate")
+
+    assert inst.cost_rate_usd_per_hr == 0.45
+
+
+def test_get_instance_falls_back_to_zero_when_cost_per_hr_missing() -> None:
+    """Missing/None costPerHr (early boot, partial response) maps to 0.0, no crash.
+
+    Without the .get() fallback, a fix that does ``pod["costPerHr"]``
+    would KeyError on first-tick responses and break the whole status
+    surface for any pod still spinning up.
+    """
+    get_response: dict[str, Any] = {
+        "data": {
+            "pod": {
+                "id": "pod-boot",
+                "desiredStatus": "STARTING",
+                "imageName": "img:1",
+            }
+        }
+    }
+    http_post = HttpPostSpy(response=get_response)
+    provider = RunPodProvider(http_post=http_post)
+
+    inst = provider.get_instance("pod-boot")
+
+    assert inst.cost_rate_usd_per_hr == 0.0
+
+
+def test_get_instance_query_selects_cost_per_hr_field() -> None:
+    """GraphQL pod() selection set must include costPerHr.
+
+    Catches the regression where a correct ``_pod_to_instance`` read of
+    ``pod["costPerHr"]`` silently sees ``None`` because the query string
+    only asked for ``id desiredStatus imageName``.
+    """
+    http_post = HttpPostSpy(
+        response={"data": {"pod": {"id": "pod-q", "desiredStatus": "RUNNING"}}}
+    )
+    provider = RunPodProvider(http_post=http_post)
+
+    provider.get_instance("pod-q")
+
+    assert len(http_post.calls) == 1
+    query = http_post.calls[0][1]["query"]
+    assert "costPerHr" in query, (
+        f"GraphQL pod() query missing costPerHr field; got: {query!r}"
+    )
+
+
+def test_list_instances_query_selects_cost_per_hr_field() -> None:
+    """myself.pods selection set must include costPerHr.
+
+    Same bug family as :func:`test_get_instance_query_selects_cost_per_hr_field`
+    — the multi-pod listing path (used by ``kinoforge cost`` and the
+    Layer V verdict computation) was also blind to costPerHr.
+    """
+    http_post = HttpPostSpy(response={"data": {"myself": {"pods": []}}})
+    provider = RunPodProvider(http_post=http_post)
+
+    provider.list_instances()
+
+    assert len(http_post.calls) == 1
+    query = http_post.calls[0][1]["query"]
+    assert "costPerHr" in query, (
+        f"GraphQL myself.pods query missing costPerHr field; got: {query!r}"
+    )
+
+
+def test_list_instances_populates_cost_rate_from_cost_per_hr() -> None:
+    """list_instances threads each pod's costPerHr through to Instance.
+
+    Bug: ``_pod_to_instance`` ignored ``costPerHr`` so the cost-dashboard
+    sum-over-pods reported $0/hr even for live pods, hiding burn from the
+    operator.
+    """
+    list_response: dict[str, Any] = {
+        "data": {
+            "myself": {
+                "pods": [
+                    {
+                        "id": "pod-1",
+                        "desiredStatus": "RUNNING",
+                        "imageName": "img:1",
+                        "costPerHr": 0.45,
+                    },
+                    {
+                        "id": "pod-2",
+                        "desiredStatus": "RUNNING",
+                        "imageName": "img:2",
+                        "costPerHr": 1.89,
+                    },
+                ]
+            }
+        }
+    }
+    http_post = HttpPostSpy(response=list_response)
+    provider = RunPodProvider(http_post=http_post)
+
+    instances = provider.list_instances()
+
+    by_id = {i.id: i for i in instances}
+    assert by_id["pod-1"].cost_rate_usd_per_hr == 0.45
+    assert by_id["pod-2"].cost_rate_usd_per_hr == 1.89
+
+
+# ---------------------------------------------------------------------------
 # AC7: cred safety — returned Instance carries no credentials
 # ---------------------------------------------------------------------------
 
