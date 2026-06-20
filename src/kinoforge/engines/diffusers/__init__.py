@@ -605,40 +605,59 @@ class DiffusersEngine(GenerationEngine):
             # attempt #2/#3 restart-looped opaque to the orchestrator:
             # uptime cycled, GPU/CPU stayed flat, but the actual error
             # required SSH to retrieve. After this redirect every line
-            # (pip install, embed decode, exec, wan_t2v_server startup,
+            # (pip install, embed decode noise, wan_t2v_server startup,
             # from_pretrained warnings) lands in /tmp/bootstrap.log.
             "exec > /tmp/bootstrap.log 2>&1",
-            # Selfterm watchdog — launch BEFORE pip-install so the dead-man
-            # window + max-lifetime cap fire even when pip hangs. Mirrors
-            # the ComfyUI engine's selfterm-launch pattern.
+            # Keep-alive trap. Without this, ANY bash exit (set -e abort,
+            # pip-install failure, python crash after the main server
+            # runs) terminates PID 1, the container dies, RunPod restarts
+            # it, and the sidecar log server dies before it can serve
+            # back the cause-of-death. ``sleep infinity`` parks bash
+            # forever so the log server stays bound; selfterm's
+            # dead-man window and ``max_lifetime`` caps still fire on
+            # schedule, so this is NOT a runaway-cost risk. Registered
+            # as the FIRST executable statement so even an http.server
+            # bind failure (port collision, missing python3) is captured
+            # before it can kill the container.
+            'trap \'echo "[bootstrap-trap] rc=$? at $(date -u +%FT%TZ)";'
+            " sleep infinity' EXIT",
+            # Sidecar HTTP log server — serves /tmp/bootstrap.log (and
+            # anything else under /tmp) over port 8001. Backgrounded
+            # with nohup so it survives the main server's exit; own
+            # stdout/stderr sunk to /dev/null so it never feeds back
+            # into the log it serves. RunPod proxies port 8001 via the
+            # pod's endpoints[] map.
+            "nohup python3 -m http.server 8001 --directory /tmp >/dev/null 2>&1 &",
+            # Selfterm watchdog — launch BEFORE pip-install so the
+            # dead-man window + max-lifetime cap fire even when pip
+            # hangs. Mirrors the ComfyUI engine's selfterm-launch
+            # pattern.
             'if [ -n "${KINOFORGE_SELFTERM_SCRIPT:-}" ]; then '
             "python3 -c \"import os; open('/tmp/selfterm.py','w')"
             ".write(os.environ['KINOFORGE_SELFTERM_SCRIPT'])\" && "
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
-            # Sidecar HTTP log server — serves /tmp/bootstrap.log (and
-            # anything else under /tmp) over port 8001. Backgrounded with
-            # nohup so it survives the main server's exec; own stdout/stderr
-            # sunk to /dev/null so it never feeds back into the log it serves.
-            # RunPod proxies port 8001 via the pod's endpoints[] map; the
-            # `kinoforge logs --id <pod>` CLI fetches the file by that URL.
-            "nohup python3 -m http.server 8001 --directory /tmp >/dev/null 2>&1 &",
         ]
         if embed_modules:
             lines.extend(_render_embed_lines(embed_modules))
             lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
         if pip_deps:
             # shlex.quote each dep — pip version specifiers like
-            # ``diffusers>=0.32`` contain a bare ``>=`` which bash parses
-            # as a stdout redirect under ``set -euo pipefail`` (silently
-            # creating ``=0.32`` files and stripping the pin from pip's
-            # argv). The fix burned ~$0.11 of pod-idle time across a
-            # restart loop before being caught; see plan amendment
-            # 2026-06-19 Task 8 attempt #2 post-mortem.
+            # ``diffusers>=0.32`` contain a bare ``>=`` which bash
+            # parses as a stdout redirect under ``set -euo pipefail``
+            # (silently creating ``=0.32`` files and stripping the pin
+            # from pip's argv). The fix burned ~$0.11 of pod-idle time
+            # across a restart loop before being caught; see plan
+            # amendment 2026-06-19 Task 8 attempt #2 post-mortem.
             quoted = " ".join(shlex.quote(d) for d in pip_deps)
             lines.append(f"pip install -q {quoted}")
         if server_cmd:
-            lines.append("exec " + " ".join(server_cmd))
+            # NOTE: NO `exec` prefix. Bash must remain PID 1 so the
+            # EXIT trap can fire when the main server crashes (or
+            # exits cleanly). Replacing bash with python via ``exec``
+            # would strand the trap and the container would die at
+            # the first python error.
+            lines.append(" ".join(server_cmd))
 
         port = _extract_port_from_base_url(base_url)
         # 8001 is the sidecar log-server port; emitted alongside the main
