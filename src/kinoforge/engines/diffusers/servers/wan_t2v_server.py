@@ -29,7 +29,7 @@ from kinoforge.engines.diffusers.servers._video_io import write_mp4
 
 _log = logging.getLogger("kinoforge.diffusers.wan_t2v_server")
 
-MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "Wan-AI/Wan2.2-T2V-A14B")
+MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
 ARTIFACT_DIR: Path = Path("/workspace/artifacts")
 
 _DEFAULT_NEGATIVE_PROMPT = (

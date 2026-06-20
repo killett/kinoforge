@@ -601,7 +601,11 @@ def test_diffusers_wan_t2v_14b_cfg_pins_server_module() -> None:
     # kinoforge install.
     assert cfg.engine.diffusers.embed_modules == ["kinoforge.engines.diffusers.servers"]
     base_refs = [m.ref for m in cfg.models if m.kind == "base"]
-    assert base_refs == ["hf:Wan-AI/Wan2.2-T2V-A14B"]
+    # The diffusers cfg must point at the `-Diffusers` variant — the
+    # bare Wan-AI/Wan2.2-T2V-A14B repo is native checkpoint layout and
+    # diffusers `from_pretrained` 404s against it (no model_index.json
+    # at root). See plan amendment 2026-06-19, Task 8 attempt #7.
+    assert base_refs == ["hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"]
 
 
 def test_diffusers_wan_t2v_14b_cap_key_differs_from_kijai_5b() -> None:
