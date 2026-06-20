@@ -3508,34 +3508,49 @@ full kinoforge → SkyPilotProvider → sky → Lambda path. ~$0.15 budget.
 
 ---
 
-## TODO: `cost_rate_usd_per_hr` is inaccurate — fix needed (2026-06-19)
+## `cost_rate_usd_per_hr` accuracy fix (CLOSED 2026-06-20, commit `88b4d68`)
 
-`kinoforge status --id <pod>` reports `cost_rate_usd_per_hr=0.35` for
-a RunPod pod whose live RunPod console bills `$0.45/hr`. Confirmed
-during the Wan 2.2 native T2V-A14B Phase 1 live smoke against pod
-`hpxzx441nwhiqv`. Discrepancy = ~28% understatement of burn.
+**Was:** `kinoforge status --id <pod>` reported
+`cost_rate_usd_per_hr=0.35` for a RunPod pod whose live console bills
+`$0.45/hr` — ~28% understatement of burn confirmed on the Wan 2.2
+native T2V-A14B Phase 1 live smoke (pod `hpxzx441nwhiqv`,
+2026-06-19).  Same staleness biased every `est_spend` figure, the
+`cost` dashboard total, and the budget-ceiling guard.
 
-**Impact:** every `est_spend` figure, the `cost` dashboard total, and
-budget-ceiling enforcement are all wrong by the same factor. Live
-spend appears safer than it is; budgets may silently overshoot before
-the cap fires.
+**Root cause:** `cost_rate_usd_per_hr` was written once from
+`spec.offer.cost_rate_usd_per_hr` at `create_instance` time (the
+`gpuTypes.lowestPrice.uninterruptablePrice` of the cheapest matching
+GPU type at offer-discovery), then frozen into the ledger by
+`Lifecycle.record` and by `_PROTECTED_LEDGER_KEYS`.  Neither
+`_get_pod_query` nor `_LIST_PODS_QUERY` selected `costPerHr`, and
+`_pod_to_instance` did not populate the field — so even readers that
+called `provider.get_instance(id)` saw only the catalog snapshot.
+When RunPod substituted a different GPU during `createPod` (A40
+unavailable → A6000 / L40S), or when the listed price moved, the
+ledger never caught up.
 
-**Suspected source:** the field is populated at provision time from
-the offer's listed rate (e.g. an A40 entry's catalog price), not from
-the actual GPU selected by RunPod when A40 isn't available and A6000
-or L40S gets substituted. The cached value never refreshes against
-RunPod's live billing.
+**Fix (option a — refresh per status poll from live `costPerHr`):**
+- Extended both RunPod GraphQL selection sets to include `costPerHr`;
+  `_pod_to_instance` now reads `pod.get("costPerHr")` into
+  `Instance.cost_rate_usd_per_hr` with a 0.0 fallback for early-boot
+  partial responses.
+- Dropped `cost_rate_usd_per_hr` from `_PROTECTED_LEDGER_KEYS` so the
+  refresh path can persist it; `Lifecycle.touch` docstring updated.
+- `_cmd_status`, after a successful `provider.get_instance(id)`,
+  writes the live rate back to the ledger (skipping 0.0 readings so a
+  partial response cannot zero out a known good rate) and rebuilds
+  the printed block from the refreshed entry.
 
-**Fix shape (TBD):** either (a) refresh `cost_rate_usd_per_hr` per
-status poll from the live pod's `costPerHr` GraphQL field, or
-(b) propagate the actually-selected GPU type from the createPod
-response and re-derive the rate from the offer catalog at that
-point. Lean toward (a) — single source of truth, no offer-catalog
-staleness.
+**Tests:** 7 new (5 provider, 1 touch, 1 `_cmd_status`); existing
+`test_touch_filters_protected_keys` updated to drop `cost_rate` from
+the protected payload now that the refresh path owns it.  Full suite
+green (2688 passed).
 
-**Until fixed:** treat all reported `est_spend` numbers as a lower
-bound. Cross-check against RunPod's UI before approving long-running
-or high-budget pods.
+**Carry-forward — Layer 5 / Bearer-provider cost capture is still
+open.** Hosted Bearer engines (Replicate / Runway / Luma) bill
+per-prediction, not per-second, so the ledger-rate refresh does not
+cover them — see the "Hosted-engine per-prediction cost capture"
+follow-up in the Layer 4 section above.
 
 ---
 
