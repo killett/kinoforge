@@ -20,6 +20,13 @@ engine:
   kind: diffusers
   precision: bf16
   diffusers:
+    # Explicit image pin at the engine layer. DiffusersEngine.render_provision
+    # reads `engine.diffusers.image` (NOT `compute.image`) when assembling
+    # the pod-create payload. Task 8 attempt #6 surfaced this gap: the
+    # cfg's `compute.image` was a no-op for the pod and torch 2.4 was
+    # still used. With this key set, the pod gets torch 2.8 and
+    # diffusers' Wan VAE imports successfully.
+    image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
     server_cmd:
       - "python"
       - "-m"
