@@ -174,6 +174,27 @@ def test_wan22_native_t2v_a14b_cold_then_warm_then_cross_cap_key(
             "5B unexpectedly logged warm-reuse"
         )
     finally:
+        # If a leg's _run_generate raised on subprocess.run rc != 0, the
+        # caller's `pod_14b` / `pod_5b` were never assigned because the
+        # exception fired BEFORE _extract_pod_id ran. Recover the IDs by
+        # re-reading the per-leg log files. This makes the teardown
+        # idempotent across failure modes and prevents pod leaks
+        # discovered by Task 8 attempts #25-27.
+        for log_name, pod_var in (
+            ("14b-cold.log", "pod_14b"),
+            ("5b-cross.log", "pod_5b"),
+        ):
+            log_path = tmp_path / log_name
+            if not log_path.exists():
+                continue
+            try:
+                pod_id = _extract_pod_id(log_path.read_text())
+            except AssertionError:
+                continue
+            if pod_var == "pod_14b" and not pod_14b:
+                pod_14b = pod_id
+            elif pod_var == "pod_5b" and not pod_5b:
+                pod_5b = pod_id
         if pod_14b:
             _destroy(pod_14b)
         if pod_5b:
