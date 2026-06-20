@@ -83,6 +83,7 @@ google-cloud-bigquery = ">=3.11"
 google-cloud-billing = ">=1.13"
 google-cloud-billing-budgets = ">=1.16"
 google-cloud-quotas = ">=0.1"
+imageio = { version = ">=2.34", extras = ["ffmpeg"] }
 
 # Conda deps that only resolve on linux-64 (e.g. ocrmypdf, which pulls
 # pngquant — no osx-arm64 build available). Empty section is valid TOML
