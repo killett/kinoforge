@@ -52,14 +52,22 @@ _MAX_POLL = 60
 #: Default server base URL.
 _DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
-#: Default container image for remote provisioning. Pinned to torch 2.8
-#: so ``torch.library.custom_op`` can resolve stringified ``'torch.Tensor'``
-#: annotations — the torch 2.4 image tripped ``infer_schema`` inside
-#: ``diffusers.models.autoencoders.autoencoder_kl_wan`` during the
-#: Task 8 attempt #5 smoke (see commit 2eeb1d4 era log evidence).
-_DEFAULT_RUNPOD_IMAGE: str = (
-    "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
-)
+#: Default container image for remote provisioning. The torch 2.4
+#: image is the most widely-cached runpod/pytorch tag — Task 8
+#: attempts #13-15 hit 3 consecutive image-pull stalls on the
+#: torch 2.8 cudnn-devel tag (RunPod machines without that 9.5 GB
+#: image cached), each wasting $0.06-0.17 of idle pod time. Torch
+#: itself is pip-upgraded above the cfg deps via ``--extra-index-url``
+#: so the in-pod runtime is torch 2.6+ regardless. See
+#: ``_PYTORCH_EXTRA_INDEX_URL`` below.
+_DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+
+#: PyTorch wheel index — used by the bootstrap's pip install line so
+#: ``torch>=2.6`` resolves against cu124 wheels (cuda 12.4 = the
+#: runpod/pytorch:2.4 image's CUDA). ``--extra-index-url`` (not
+#: ``--index-url``) keeps PyPI as the primary index so other deps
+#: like ``diffusers`` still resolve.
+_PYTORCH_EXTRA_INDEX_URL: str = "https://download.pytorch.org/whl/cu124"
 
 #: Seconds between readiness polls in :meth:`DiffusersEngine.wait_for_ready`.
 _READY_POLL_INTERVAL_S: float = 5.0
@@ -656,7 +664,20 @@ class DiffusersEngine(GenerationEngine):
             # across a restart loop before being caught; see plan
             # amendment 2026-06-19 Task 8 attempt #2 post-mortem.
             quoted = " ".join(shlex.quote(d) for d in pip_deps)
-            lines.append(f"pip install -q {quoted}")
+            # ``--extra-index-url`` (not ``--index-url``) layers the
+            # PyTorch wheel index alongside PyPI so ``torch>=2.6`` (or
+            # similar) resolves to cu124 wheels while ``diffusers``,
+            # ``transformers``, etc. still come from PyPI. Letting the
+            # bootstrap upgrade torch in-place avoids the torch 2.8
+            # cudnn image-pull stalls (Task 8 attempts #13-15) while
+            # keeping the in-pod torch new enough to handle stringified
+            # annotations in ``infer_schema`` (the diffusers Wan VAE
+            # custom_op decorator). The flag is safe for cfgs that
+            # don't upgrade torch — pip just ignores it for deps
+            # already satisfied.
+            lines.append(
+                f"pip install -q --extra-index-url {_PYTORCH_EXTRA_INDEX_URL} {quoted}"
+            )
         if server_cmd:
             # NOTE: NO `exec` prefix. Bash must remain PID 1 so the
             # EXIT trap can fire when the main server crashes (or
