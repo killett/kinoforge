@@ -64,7 +64,14 @@ def _run_generate(cfg: Path, prompt_path: Path, log_path: Path) -> str:
             cwd=str(REPO),
             stdout=logf,
             stderr=subprocess.STDOUT,
-            timeout=2400,
+            # 65 min per leg: headroom over the cfg's 60m boot_timeout
+            # so a slow HF Hub day doesn't truncate the subprocess
+            # before the orchestrator gets to surface ProvisionTimeout.
+            # Task 8 attempt #11 timed out at the orchestrator's 25m
+            # boot_timeout while the download was 28/41 files in;
+            # attempt #12 timing assumes 60m boot_timeout + 5m
+            # generation + ~25m model load.
+            timeout=3900,
         )
     log_text = log_path.read_text()
     assert proc.returncode == 0, (
