@@ -483,6 +483,32 @@ class DiffusersEngine(GenerationEngine):
         # time. ``None`` disables routing.
         self._prompt_body_key: str | None = "prompt"
 
+    def refs_to_stage(self, merged: list[Artifact]) -> list[Artifact]:
+        """Return the artifacts the provisioner should download to the workspace.
+
+        The DiffusersEngine pod self-fetches model weights at server-start
+        time via ``diffusers.WanPipeline.from_pretrained(MODEL_ID)`` (or
+        the equivalent ``from_pretrained`` call in any other diffusers
+        serving module). The workspace-side ``download_all`` path runs
+        before ``render_provision`` ships the bootstrap script, and
+        ``render_provision`` does NOT transfer those local bytes to the
+        pod — meaning every byte downloaded locally is wasted.
+
+        Returning ``[]`` skips the workspace download entirely. The pod's
+        HF cache is the single source of truth for weights.
+
+        See plan amendment 2026-06-19, Task 7.5 for the original finding.
+
+        Args:
+            merged: The merged artifact list the provisioner produced; ignored
+                here because the engine never needs workspace-side staging.
+
+        Returns:
+            An empty list — no artifacts to stage locally.
+        """
+        del merged
+        return []
+
     def provision(
         self,
         instance: Instance | None,
