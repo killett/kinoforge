@@ -41,9 +41,17 @@ engine:
       - "-m"
       - "kinoforge.engines.diffusers.servers.wan_t2v_server"
     pip:
-      # torch 2.6+ to fix the infer_schema bug. Resolved from the
-      # cu124 wheel index via render_provision's --extra-index-url.
-      - "torch>=2.6,<2.9"
+      # torch 2.6 fixes the infer_schema stringified-annotation bug
+      # (Task 8 attempt #5). torchvision + torchaudio MUST be pinned
+      # in lockstep — Task 8 attempt #16 hit:
+      #   RuntimeError: operator torchvision::nms does not exist
+      # because the torch 2.4 image's pre-installed torchvision 0.19
+      # was built against torch 2.4's ABI and broke when torch
+      # upgraded to 2.8 alone. Pinning all three to torch 2.6.x
+      # series resolves consistently from the cu124 wheel index.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
       - "diffusers>=0.32"
       - "transformers>=4.45"
       - "accelerate>=1.0"
