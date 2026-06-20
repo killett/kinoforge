@@ -95,17 +95,21 @@ compute:
     # installed (this cfg is diffusers-only).
     disk_gb: 150
   lifecycle:
-    # Cold boot timeline:
-    #   pip install ~30s
-    #   from_pretrained snapshot_download ~5-15m (12 shards * ~10GB)
+    # Cold boot timeline (observed Task 8 attempt #11):
+    #   pip install + image pull ~2-3m
+    #   snapshot_download ~25-30m (41 files; HF auth-paginated; observed
+    #     18/41 at 10min, 28/41 at 21min, ETA 6m more)
     #   pipe.to("cuda") ~2-3m
-    # idle_timeout sized to cover the worst case + headroom.
-    idle_timeout: 25m
+    # boot_timeout extended to 60m to comfortably hold a slow HF Hub
+    # day. idle_timeout matches so warm-reuse doesn't fire selfterm
+    # mid-load. max_lifetime grown to 180m so a full smoke run (cold +
+    # warm + cross-cap-key) fits.
+    idle_timeout: 60m
     job_timeout: 15m
     time_buffer: 3m
-    max_lifetime: 90m
-    boot_timeout: 25m
-    budget: 3.0
+    max_lifetime: 180m
+    boot_timeout: 60m
+    budget: 5.0
     # Required for cross-CLI warm-reuse (same invariant as the
     # Wan 2.1 1.3B cfg's load-bearing comment).
     heartbeat_interval_s: 30
