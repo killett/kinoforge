@@ -305,3 +305,54 @@ class TestGenerate:
                     break
                 time.sleep(0.05)
             assert body2["status"] == "done", body2
+
+
+class TestArtifacts:
+    def test_artifact_endpoint_returns_mp4(self, fresh_server: Any) -> None:
+        # Bug caught: /artifacts not registered, or wrong media_type,
+        # or wrong file path.
+        _srv, client = fresh_server
+        job_id = client.post(
+            "/generate",
+            json={
+                "prompt": "x",
+                "width": 8,
+                "height": 8,
+                "num_frames": 3,
+                "fps": 24,
+            },
+        ).json()["job_id"]
+        body: dict[str, Any] = {}
+        for _ in range(100):
+            body = client.get(f"/status/{job_id}").json()
+            if body["status"] == "done":
+                break
+            time.sleep(0.05)
+        assert body["status"] == "done"
+        r = client.get(f"/artifacts/{body['filename']}")
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "video/mp4"
+        assert len(r.content) > 0
+        # ISO-BMFF magic bytes 4-7 == 'ftyp'
+        assert r.content[4:8] == b"ftyp"
+
+    def test_artifact_404_for_unknown_filename(self, fresh_server: Any) -> None:
+        _srv, client = fresh_server
+        r = client.get("/artifacts/does-not-exist.mp4")
+        assert r.status_code == 404
+
+    def test_artifact_rejects_path_traversal(
+        self, fresh_server: Any, tmp_path: Any
+    ) -> None:
+        # Bug caught: unsanitised filename lets a caller read arbitrary
+        # files on the pod (e.g. /etc/passwd) via /artifacts/../../etc/passwd.
+        _srv, client = fresh_server
+        sentinel = tmp_path / "secret.txt"
+        sentinel.write_text("DO NOT LEAK")
+        r = client.get("/artifacts/../secret.txt")
+        # FastAPI normalises the path before the handler, so the path
+        # becomes /artifacts/secret.txt → 404. Either 400 or 404 OK;
+        # NOT acceptable is 200 with the bytes.
+        assert r.status_code in (400, 404)
+        r = client.get("/artifacts/%2E%2E%2Fsecret.txt")
+        assert r.status_code in (400, 404)
