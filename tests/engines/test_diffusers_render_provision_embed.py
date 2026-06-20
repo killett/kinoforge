@@ -151,7 +151,9 @@ def test_embed_does_not_break_selfterm_or_pip_order() -> None:
     script = rp.script
     selfterm_idx = script.index("nohup python3 /tmp/selfterm.py")
     embed_idx = script.index("/tmp/kfsrv/kinoforge")
-    pip_idx = script.index("pip install -q fastapi>=0.115")
+    # Post-Task-8-attempt-2 fix: pip deps are shlex-quoted so bash does not
+    # parse `>=` as a stdout redirect. Match the quoted form.
+    pip_idx = script.index("pip install -q 'fastapi>=0.115'")
     exec_idx = script.index("exec python -m")
     assert selfterm_idx < embed_idx
     assert selfterm_idx < pip_idx

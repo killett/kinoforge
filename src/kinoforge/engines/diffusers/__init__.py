@@ -13,6 +13,7 @@ import base64
 import importlib.resources
 import json
 import re
+import shlex
 import subprocess
 import time
 import urllib.request
@@ -612,7 +613,15 @@ class DiffusersEngine(GenerationEngine):
             lines.extend(_render_embed_lines(embed_modules))
             lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
         if pip_deps:
-            lines.append("pip install -q " + " ".join(pip_deps))
+            # shlex.quote each dep — pip version specifiers like
+            # ``diffusers>=0.32`` contain a bare ``>=`` which bash parses
+            # as a stdout redirect under ``set -euo pipefail`` (silently
+            # creating ``=0.32`` files and stripping the pin from pip's
+            # argv). The fix burned ~$0.11 of pod-idle time across a
+            # restart loop before being caught; see plan amendment
+            # 2026-06-19 Task 8 attempt #2 post-mortem.
+            quoted = " ".join(shlex.quote(d) for d in pip_deps)
+            lines.append(f"pip install -q {quoted}")
         if server_cmd:
             lines.append("exec " + " ".join(server_cmd))
 
