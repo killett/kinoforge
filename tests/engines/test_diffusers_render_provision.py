@@ -96,9 +96,18 @@ def test_render_provision_port_defaults_to_8000_when_base_url_missing() -> None:
     assert rp.ports == ["8000", "8001"]
 
 
-def test_render_provision_env_required_is_empty() -> None:
+def test_render_provision_env_required_includes_hf_token() -> None:
+    """HF_TOKEN must be declared as required.
+
+    huggingface_hub falls back to anonymous rate-limited downloads
+    when HF_TOKEN is unset — Task 8 attempt #9 stalled at 3/41 files
+    for the Wan 2.2 14B repo because of this. Declaring the var in
+    env_required makes the orchestrator fail loud (AuthError) when
+    creds are missing, and otherwise lift the value into the pod
+    env.
+    """
     rp = _make_engine().render_provision(_minimal_cfg())
-    assert rp.env_required == []
+    assert "HF_TOKEN" in rp.env_required
 
 
 def test_render_provision_launches_selfterm_watchdog_before_pip_install() -> None:
