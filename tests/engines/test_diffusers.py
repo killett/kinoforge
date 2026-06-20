@@ -474,23 +474,28 @@ class TestClassAttributes:
 # ---------------------------------------------------------------------------
 
 
-def test_result_passes_url_from_server_response() -> None:
-    """DiffusersBackend.result() reads 'url' from the polled response body.
+def test_result_builds_artifact_url_from_backend_base_url() -> None:
+    """DiffusersBackend.result() builds the artifact URL from self._base_url.
 
-    Bug this catches: backend ignores the new field, leaving extract_last_frame
-    with nothing to fetch.
+    Post-Task-8-attempt-27 (commit a8841d5): the server-supplied url field
+    was always ``http://localhost:8000/artifacts/<filename>`` (the pod's
+    own localhost), unreachable from the workspace container. The backend
+    now ignores the server's url and constructs ``<base_url>/artifacts/<filename>``
+    from its own base_url (which the engine wires to the RunPod proxy URL
+    for remote pods).
     """
     from kinoforge.engines.diffusers import DiffusersBackend
 
     payload = {
         "status": "done",
         "filename": "clip.mp4",
-        "url": "http://127.0.0.1:8000/file/clip.mp4",
+        # Server's hardcoded localhost URL — backend MUST ignore this.
+        "url": "http://localhost:8000/artifacts/clip.mp4",
     }
     backend = DiffusersBackend(
         http_post=lambda url, body: {"job_id": "JOB"},
         http_get=lambda url: payload,
-        base_url="http://127.0.0.1:8000",
+        base_url="https://abc-8000.proxy.runpod.net",
         probe_profile=_DEFAULT_PROBE,
         sleep=lambda s: None,
     )
@@ -498,17 +503,16 @@ def test_result_passes_url_from_server_response() -> None:
     artifact = backend.result("JOB")
 
     assert artifact.filename == "clip.mp4"
-    assert artifact.url == "http://127.0.0.1:8000/file/clip.mp4"
+    # URL built from backend.base_url + /artifacts/<filename> — NOT the
+    # server-supplied localhost value.
+    assert artifact.url == "https://abc-8000.proxy.runpod.net/artifacts/clip.mp4"
 
 
-def test_result_defaults_url_to_empty_string_when_server_omits_field() -> None:
-    """A server that doesn't return 'url' leaves Artifact.url == ''.
+def test_result_url_ignores_server_url_field_when_absent() -> None:
+    """Even when the server omits ``url``, the backend builds one from
+    base_url + filename. extract_last_frame thus always sees a fetchable URL.
 
-    extract_last_frame will then raise FrameExtractionError with a clear
-    message — preferable to a corrupt download.
-
-    Bug this catches: backend crashes with KeyError, leaking server-shape
-    details into engine-layer code.
+    Post-Task-8-attempt-27 (commit a8841d5).
     """
     from kinoforge.engines.diffusers import DiffusersBackend
 
@@ -522,7 +526,7 @@ def test_result_defaults_url_to_empty_string_when_server_omits_field() -> None:
 
     artifact = backend.result("JOB")
 
-    assert artifact.url == ""
+    assert artifact.url == "http://127.0.0.1:8000/artifacts/clip.mp4"
 
 
 def test_extract_last_frame_fetches_url_and_calls_ffmpeg() -> None:
