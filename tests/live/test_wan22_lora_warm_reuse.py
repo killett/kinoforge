@@ -88,16 +88,16 @@ def _extract_pod_id(log_text: str) -> str:
 
 
 def _resolve_pod_proxy_url(pod_id: str) -> str:
-    """Look up the pod's proxy URL for port 8000 via the RunPod provider."""
-    from kinoforge.core import registry as kf_registry
-    from kinoforge.providers import runpod  # noqa: F401 — self-register
+    """Return the RunPod proxy URL for port 8000 on ``pod_id``.
 
-    provider = kf_registry.get_provider("runpod")()
-    instance = provider.get_instance(pod_id)
-    endpoints = provider.endpoints(instance)
-    base = endpoints.get("8000") or next(iter(endpoints.values()))
-    assert base, f"no proxy URL for pod {pod_id}"
-    return base.rstrip("/")
+    RunPod's pod proxy follows a stable host pattern
+    ``https://{pod_id}-{port}.proxy.runpod.net``; constructing the URL
+    directly avoids a stale-tag round-trip that returned an empty port
+    map immediately after a fresh ``kinoforge generate`` cycle (the
+    provider's ``get_instance`` doesn't re-hydrate ``tags["ports"]``
+    after the orchestrator's post-job ledger refresh).
+    """
+    return f"https://{pod_id}-8000.proxy.runpod.net"
 
 
 def _civitai_artifact(ref: str) -> Any:
