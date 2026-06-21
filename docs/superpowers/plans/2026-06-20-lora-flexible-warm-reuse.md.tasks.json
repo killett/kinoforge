@@ -249,10 +249,11 @@
       "id": 32,
       "planTaskNumber": 23,
       "subject": "Task 23: README + PROGRESS + successful-generations close-out",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         31
-      ]
+      ],
+      "lastUpdated": "2026-06-20T23:50:00-07:00"
     }
   ]
 }
