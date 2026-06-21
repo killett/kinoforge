@@ -455,6 +455,115 @@ class DiffusersBackend(GenerationBackend):
             "status": f"{self._base_url}/status",
         }
 
+    def set_lora_stack(
+        self,
+        *,
+        pod_id: str,
+        target_refs: list[str],
+        download_specs: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        """POST /lora/set_stack — declarative LoRA swap on the pod.
+
+        Maps pod-side structured failure bodies to the LoraSwapError
+        hierarchy so the matcher + orchestrator can branch on the exact
+        failure mode without parsing free-form strings.
+
+        Args:
+            pod_id: Pod identifier; surfaced in every raised exception so
+                operators get a copy-paste-able recovery command.
+            target_refs: Ordered target LoRA stack.
+            download_specs: Map of ref → {url, headers, filename,
+                size_hint?}; covers every ref in ``target_refs`` that is
+                not already on the pod.
+
+        Returns:
+            The parsed response body: ``{inventory, free_bytes,
+            swap_rejected}``. Successful HTTP 200 cases — including those
+            where the pod added a ``swap_rejected: null`` field.
+
+        Raises:
+            LoraSwapVramOomError: HTTP 200 but body's ``swap_rejected``
+                has ``reason="vram_oom"`` — pod rolled back, healthy.
+            LoraSwapDownloadError: HTTP 502 with empty
+                ``evict_completed`` — pod inventory unchanged.
+            LoraSwapDegradedPodError: HTTP 502 with non-empty
+                ``evict_completed`` — pod is in half-state.
+            LoraSwapDiskFullError: HTTP 507.
+            LoraSwapPodUnreachableError: Transport error past the proxy
+                retry budget.
+        """
+        from kinoforge.core.errors import (
+            LoraSwapPodUnreachableError,
+            LoraSwapVramOomError,
+        )
+
+        url = f"{self._base_url}/lora/set_stack"
+        body: dict[str, Any] = {
+            "target_refs": target_refs,
+            "download_specs": download_specs,
+        }
+        try:
+            resp = self._http_post(url, body)
+        except Exception as e:
+            status = getattr(e, "status", None)
+            body_attr = getattr(e, "body", None)
+            if status is not None and isinstance(body_attr, dict):
+                self._raise_lora_swap_error(int(status), body_attr, pod_id)
+            raise LoraSwapPodUnreachableError(pod_id=pod_id, underlying=str(e)) from e
+
+        sr = resp.get("swap_rejected") if isinstance(resp, dict) else None
+        if isinstance(sr, dict) and sr.get("reason") == "vram_oom":
+            raise LoraSwapVramOomError(
+                pod_id=pod_id,
+                dropped_refs=list(sr.get("target_refs_dropped", [])),
+            )
+        return resp
+
+    def _raise_lora_swap_error(
+        self, status: int, body: dict[str, Any], pod_id: str
+    ) -> None:
+        """Translate a /lora/set_stack failure body into the matching exception.
+
+        Args:
+            status: HTTP status code from the pod-side response.
+            body: Structured error body from the pod.
+            pod_id: Pod identifier for the raised exception.
+
+        Raises:
+            LoraSwapDiskFullError: For 507 or ``error="disk_full"``.
+            LoraSwapDegradedPodError: For 502 + ``lora_download_failed`` with
+                non-empty ``evict_completed``.
+            LoraSwapDownloadError: For 502 + ``lora_download_failed`` with no
+                eviction in progress.
+            RuntimeError: For an unrecognised body shape.
+        """
+        from kinoforge.core.errors import (
+            LoraSwapDegradedPodError,
+            LoraSwapDiskFullError,
+            LoraSwapDownloadError,
+        )
+
+        err = body.get("error")
+        evict = list(body.get("evict_completed", []))
+        failed = body.get("download_failed", "") or ""
+        underlying = body.get("underlying", "") or ""
+        if status == 507 or err == "disk_full":
+            raise LoraSwapDiskFullError(
+                pod_id=pod_id, evict_completed=evict, download_failed=failed
+            )
+        if status == 502 and err == "lora_download_failed":
+            if evict:
+                raise LoraSwapDegradedPodError(
+                    pod_id=pod_id,
+                    evict_completed=evict,
+                    download_failed=failed,
+                    underlying=underlying,
+                )
+            raise LoraSwapDownloadError(
+                pod_id=pod_id, ref=failed, underlying=underlying
+            )
+        raise RuntimeError(f"unknown /lora/set_stack error body: {body}")
+
 
 # ---------------------------------------------------------------------------
 # Engine

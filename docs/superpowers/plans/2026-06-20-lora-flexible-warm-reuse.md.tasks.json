@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
   "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
-  "lastUpdated": "2026-06-20T20:33:58-07:00",
+  "lastUpdated": "2026-06-20T20:36:13-07:00",
   "tasks": [
     {
       "id": 10,
@@ -93,11 +93,12 @@
       "id": 20,
       "planTaskNumber": 11,
       "subject": "Task 11: DiffusersBackend.set_lora_stack + LoraSwapError mapping",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         12,
         17
-      ]
+      ],
+      "lastUpdated": "2026-06-20T20:36:13-07:00"
     },
     {
       "id": 21,
