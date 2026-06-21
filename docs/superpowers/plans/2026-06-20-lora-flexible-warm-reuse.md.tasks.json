@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
   "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
-  "lastUpdated": "2026-06-20T20:36:13-07:00",
+  "lastUpdated": "2026-06-20T20:39:50-07:00",
   "tasks": [
     {
       "id": 10,
@@ -120,13 +120,14 @@
       "id": 23,
       "planTaskNumber": 14,
       "subject": "Task 14: warm_reuse/matcher.py — find_warm_attach_candidate",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         10,
         11,
         19,
         22
-      ]
+      ],
+      "lastUpdated": "2026-06-20T20:39:50-07:00"
     },
     {
       "id": 24,
