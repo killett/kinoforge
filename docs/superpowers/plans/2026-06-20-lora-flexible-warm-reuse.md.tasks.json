@@ -84,7 +84,7 @@
       "id": 21,
       "planTaskNumber": 12,
       "subject": "Task 12: Reaper recognizes status=degraded as reap-eligible",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [18]
     },
     {
