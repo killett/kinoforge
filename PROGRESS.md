@@ -94,6 +94,44 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
+**Phase 53 Stage E follow-ups CLOSED 2026-06-21 (autonomous).** Both
+Stage-E follow-ups from the 2026-06-18 PROGRESS entry are now resolved
+on `main`:
+
+- **Follow-up A — bogus skypilot ledger fields (age=494954.6h /
+  est_spend=$0.00 / capability_key=`<unknown>`)** was already shipped
+  in commit `e33d564` ("preserve create-time Instance fields across
+  poll loop", 2026-06-18 20:13). The `deploy()` polling loop now
+  mutates only `instance.status` from `provider.get_instance()`
+  instead of reassigning the whole Instance — preserving `created_at`,
+  `tags`, and `cost_rate_usd_per_hr` from `create_instance()`. Two
+  fence tests in
+  `tests/core/test_deploy_polling_preserves_instance_fields.py` lock
+  in the contract. PROGRESS's "Stage E follow-ups (filed 2026-06-18)"
+  section never received the close marker.
+- **Follow-up B — image placeholder swap in `skypilot.yaml` +
+  `skypilot-gpu.yaml`** landed in commit `2e03ad4` ("swap broken
+  Docker Hub image placeholders in 2 skypilot cfgs"). Both cfgs now
+  pin pullable images (CPU → `ubuntu:22.04`, GPU →
+  `nvidia/cuda:12.2.0-base-ubuntu22.04`) matching the Lambda sibling.
+  Two lockdown tests in `tests/test_examples.py`
+  (`test_skypilot_example_uses_pullable_image` +
+  `test_skypilot_gpu_example_uses_pullable_image`) mirror the
+  existing `test_skypilot_lambda_example_pins_lambda_cloud` shape.
+  `skypilot-gpu.yaml` is also now in `EXAMPLE_CONFIGS` so the
+  parse-check covers it.
+
+Cumulative spend this push: $0.00 (no live cloud calls).
+
+**RESUME TARGET:** open menu of remaining workstreams — Layer 5
+Bearer per-prediction cost capture (Replicate / Runway / Luma);
+C26 util-aware stall classify (extends RunPod heartbeat tick with
+`gpuUtilPercent` + new STALL_REAP verdict); doctor xfail follow-ups
+(12 example cfgs with bad refs / manifest path / nova_reel engine
+kind); the parked thread-leak fix brainstorm in `core/pool.py`.
+
+---
+
 **CI RED PRE-EXISTING FAILURES RESOLVED 2026-06-19 (autonomous).** Both families
 fixed + one bonus flake closed; **full FAIL-mode suite GREEN with zero ignores**:
 `2631 passed, 76 skipped, 6 xfailed in 123.98s`. The original L1 follow-up
