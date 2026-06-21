@@ -35,6 +35,7 @@ EXAMPLE_CONFIGS = [
     "hosted.yaml",
     "local-fake.yaml",
     "skypilot.yaml",
+    "skypilot-gpu.yaml",
     "skypilot-lambda.yaml",
     "cost.yaml",
     "sweeper.yaml",
@@ -67,6 +68,44 @@ def test_skypilot_example_parses() -> None:
     # idle_timeout_s == 60 maps to SkyPilot autostop=1 (minute) per spec §3.3.
     lc = cfg.lifecycle()
     assert lc.idle_timeout_s == 60
+
+
+def test_skypilot_example_uses_pullable_image() -> None:
+    """examples/configs/skypilot.yaml must reference an image that exists
+    on Docker Hub.
+
+    Stage-E live smoke 2026-06-18 surfaced that the template's original
+    placeholder ``skypilot/skypilot:latest`` 404s on ``docker pull``;
+    sky reports it as ``Failed to set up SkyPilot runtime on cluster``
+    only after the cluster provisions, so the operator pays for an
+    unusable VM before the failure shows up. Commit ``05fc93d`` swapped
+    the lambda sibling; this lockdown forces the same swap to land on
+    the CPU sibling so a follow-up live smoke does not relearn the
+    same lesson.
+
+    Bug catch: a future edit reintroduces the ``skypilot/skypilot*``
+    placeholder (or any other Docker-Hub-404 string).
+    """
+    cfg = load_config(Path("examples/configs/skypilot.yaml"))
+    assert cfg.compute is not None
+    assert cfg.compute.image == "ubuntu:22.04"
+
+
+def test_skypilot_gpu_example_uses_pullable_image() -> None:
+    """examples/configs/skypilot-gpu.yaml must reference an image that
+    exists on Docker Hub.
+
+    Same Stage-E lesson as the CPU sibling: the original
+    ``skypilot/skypilot-gpu:latest`` placeholder 404s on ``docker pull``.
+    Pin to the same nvidia/cuda base the Lambda sibling uses for
+    consistency across the GPU templates.
+
+    Bug catch: a future edit reintroduces the ``skypilot/skypilot-gpu``
+    placeholder (or any other Docker-Hub-404 string).
+    """
+    cfg = load_config(Path("examples/configs/skypilot-gpu.yaml"))
+    assert cfg.compute is not None
+    assert cfg.compute.image == "nvidia/cuda:12.2.0-base-ubuntu22.04"
 
 
 def test_skypilot_lambda_example_pins_lambda_cloud() -> None:
