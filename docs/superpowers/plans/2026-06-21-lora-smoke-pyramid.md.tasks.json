@@ -21,7 +21,7 @@
       "id": 8,
       "planTaskNumber": 3,
       "subject": "P3: _smoke_harness/runpod_lifecycle.py — proxy URL + leak sweep + stat poller",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6]
     },
     {
