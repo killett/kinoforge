@@ -63,7 +63,7 @@
       "id": 14,
       "planTaskNumber": 9,
       "subject": "P9: Tier-1 happy + error matrix tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7, 10, 12, 13]
     },
     {
