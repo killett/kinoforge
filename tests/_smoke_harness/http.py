@@ -34,13 +34,30 @@ def _append_api_key(url: str) -> str:
 
 
 def _open_with_retry(req: urllib.request.Request, timeout: int) -> bytes:
-    """urlopen with URLError retry budget; HTTPError propagates immediately."""
+    """urlopen with URLError retry budget; HTTPError propagates immediately.
+
+    Before re-raising an ``HTTPError`` the response body is read into the
+    exception's ``response_body`` attribute AND appended to its message
+    so post-mortem doesn't require a live pod. urllib's default
+    ``str(HTTPError)`` is ``"HTTP Error <code>: <reason>"`` which throws
+    away the JSON body that the wan_t2v_server uses to carry the actual
+    cause (e.g. ``{"error":"lora_download_failed","underlying":"..."}``).
+    """
     last_exc: urllib.error.URLError | None = None
     for backoff in (*_RETRY_BACKOFFS_S, None):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
                 return bytes(resp.read())
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as exc:
+            try:
+                body_bytes = exc.read() if exc.fp is not None else b""
+            except Exception:  # noqa: BLE001
+                body_bytes = b""
+            body_text = body_bytes.decode("utf-8", errors="replace")[:2000]
+            exc.response_body = body_text  # type: ignore[attr-defined]
+            # Rebuild the args so str(exc) carries the body.
+            if body_text:
+                exc.msg = f"{exc.reason} :: body={body_text!r}"
             raise
         except urllib.error.URLError as exc:
             last_exc = exc

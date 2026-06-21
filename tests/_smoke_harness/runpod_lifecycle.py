@@ -74,9 +74,17 @@ def destroy_all_active_pods(*, tag_filter: str | None = None) -> list[str]:
 
 
 def _build_util_endpoint() -> Any:
-    """Test-seam — overridden in unit tests."""
+    """Test-seam — overridden in unit tests.
+
+    Loads `.env` first via kinoforge's loader because the PodStatPoller
+    runs in a daemon thread spawned from pytest's main process, where
+    `RUNPOD_API_KEY` may not yet be in os.environ when the test
+    imports/runs (the pytest CLI doesn't auto-load `.env`).
+    """
+    from kinoforge.core.dotenv_loader import load_env_file
     from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
 
+    load_env_file()
     return RunPodGraphQLUtilEndpoint(api_key=os.environ["RUNPOD_API_KEY"])
 
 
