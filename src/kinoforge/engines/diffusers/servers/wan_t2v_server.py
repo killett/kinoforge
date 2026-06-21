@@ -233,7 +233,12 @@ def _download_one(spec: ArtifactDownloadSpec, dest_dir: Path) -> tuple[str, int]
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = dest_dir / spec.filename
     tmp = dest_dir / f"{spec.filename}.partial"
-    req = urllib.request.Request(spec.url, headers=spec.headers)  # noqa: S310 — vendor-resolved URL
+    # Civitai (and other Cloudflare-fronted vendors) 403 the default
+    # Python-urllib UA. Inject kinoforge-pod-download UA unless the
+    # caller's spec.headers already pins one explicitly. Same class
+    # of fix as src/kinoforge/sources/civitai (commit 53a1e6e).
+    download_headers = {"User-Agent": "kinoforge-pod-download/0.1", **spec.headers}
+    req = urllib.request.Request(spec.url, headers=download_headers)  # noqa: S310 — vendor-resolved URL
     bytes_written = 0
     try:
         with urllib.request.urlopen(req) as resp, tmp.open("wb") as out:  # noqa: S310
@@ -633,6 +638,11 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
                     },
                 ) from e
             except Exception as e:
+                # Log before raising so the bootstrap sidecar log carries
+                # the failure cause (raised HTTPException only travels in
+                # the response body which the harness's HTTPError catch
+                # path discards by default).
+                _log.warning("set_stack download failed for ref=%s: %r", ref, e)
                 raise HTTPException(
                     status_code=502,
                     detail={
