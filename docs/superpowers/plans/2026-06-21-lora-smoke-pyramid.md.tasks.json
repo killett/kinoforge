@@ -84,7 +84,7 @@
       "id": 17,
       "planTaskNumber": 12,
       "subject": "P12: Tier-4 — move existing T22 smoke to release-gate scaffold",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7, 8, 9, 10]
     },
     {
