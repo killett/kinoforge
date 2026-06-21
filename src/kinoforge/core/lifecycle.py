@@ -588,6 +588,35 @@ class Ledger:
                 return entry
         return None
 
+    def find_pods_by_warm_attach_key(self, wak_hex: str) -> list[dict]:  # type: ignore[type-arg]
+        """Return ledger entries whose ``warm_attach_key`` matches ``wak_hex``.
+
+        Read-only — does NOT acquire the cross-process mutate lock so it
+        cannot contend with active heartbeat ``touch`` calls. Entries
+        missing ``warm_attach_key`` (pre-feature pods) are silently skipped
+        and logged at DEBUG; lazy backfill from a recoverable cfg snapshot
+        is a deferred enhancement.
+
+        Args:
+            wak_hex: The WarmAttachKey hex string to filter by.
+
+        Returns:
+            List of matching entry dicts in their on-disk order. Empty
+            list when nothing matches (never ``None``).
+        """
+        matches: list[dict] = []  # type: ignore[type-arg]
+        for entry in self._read_entries():
+            wak = entry.get("warm_attach_key")
+            if wak is None:
+                _log.debug(
+                    "skipping pre-feature ledger entry %s (no warm_attach_key)",
+                    entry.get("id", "?"),
+                )
+                continue
+            if wak == wak_hex:
+                matches.append(entry)
+        return matches
+
     def forget(self, instance_id: str) -> None:
         """Remove the entry for ``instance_id`` from the ledger.
 
@@ -610,7 +639,7 @@ class Ledger:
         instance_id: str,
         *,
         last_heartbeat: float | None = None,
-        **extra: float | int | str | None,
+        **extra: float | int | str | list | dict | None,  # type: ignore[type-arg]
     ) -> bool:
         """Update fields on an existing ledger entry in place (strict update).
 
@@ -652,7 +681,7 @@ class Ledger:
         treat ``last_heartbeat`` as untrustworthy — the writer thread
         may have crashed.  See Layer U spec §3.4 for the rationale.
         """
-        proposed: dict[str, float | int | str] = {}
+        proposed: dict[str, float | int | str | list | dict] = {}  # type: ignore[type-arg]
         if last_heartbeat is not None:
             proposed["last_heartbeat"] = float(last_heartbeat)
         for key, value in extra.items():

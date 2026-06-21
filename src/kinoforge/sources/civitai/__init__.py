@@ -45,7 +45,10 @@ def _urllib_fetch_json(url: str, headers: dict[str, str]) -> dict[str, Any]:
         AuthError: The server returned HTTP 401.
         KinoforgeError: Any other non-2xx HTTP error or network failure.
     """
-    req = Request(url, headers=headers)  # noqa: S310
+    # Civitai is Cloudflare-fronted; the default Python-urllib UA gets a 403.
+    # Mirror the kinoforge-smoke pattern from tests/_smoke_harness/http.py.
+    request_headers = {"User-Agent": "kinoforge-smoke/0.1", **headers}
+    req = Request(url, headers=request_headers)  # noqa: S310
     try:
         with urlopen(req) as resp:  # noqa: S310 — only civitai.com HTTPS URLs used
             body: bytes = resp.read()

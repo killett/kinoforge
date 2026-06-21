@@ -304,6 +304,66 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+class _NullPodLockRegistry:
+    """Stub registry for ``--dry-run-swap``: never holds state.
+
+    ``acquire`` always returns True so the matcher reports the cheapest
+    eligible candidate; ``__contains__`` always False so no pod is
+    treated as busy. ``release`` is a no-op.
+    """
+
+    def acquire(
+        self, pod_id: str, *, blocking: bool = False, timeout: float | None = None
+    ) -> bool:
+        return True
+
+    def release(self, pod_id: str) -> None:
+        return None
+
+    def __contains__(self, pod_id: str) -> bool:
+        return False
+
+
+def _dry_run_swap_preview(ctx: SessionContext) -> int:
+    """Render the matcher decision for the active cfg without side effects.
+
+    Imports the matcher lazily so the dry-run path stays fast and
+    independent of provider/orchestrator init. No HTTP, no pod lock,
+    no validate_for_generate — the early return upstream of those
+    side-effects is part of the contract (see
+    tests/cli/test_dry_run_swap.py).
+
+    Returns:
+        Always 0.
+    """
+    from kinoforge.core.warm_reuse.matcher import find_warm_attach_candidate
+
+    cfg = ctx.cfg
+    ledger = ctx.ledger()
+    lc = cfg.lifecycle() if cfg is not None else None
+    threshold = float(
+        getattr(lc, "lora_swap_re_probe_after_s", 300.0) if lc is not None else 300.0
+    )
+
+    match = find_warm_attach_candidate(
+        cfg,
+        ledger,
+        pod_lock_registry=_NullPodLockRegistry(),
+        re_probe=None,
+        re_probe_threshold_s=threshold,
+        download_specs={},
+    )
+    if match is None:
+        print("matcher: no warm candidate, would cold-boot")
+        return 0
+    plan = match.swap_plan
+    print(f"matcher: selected pod {match.pod_id}")
+    print(f"  evict:    {plan.evict}")
+    print(f"  download: {plan.download}")
+    print(f"  cost:     {plan.estimated_cost_seconds:.1f}s")
+    return 0
+
+
 def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``generate`` subcommand.
 
@@ -317,6 +377,9 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     if ctx.cfg is None:
         raise RuntimeError("_cmd_generate requires --config")
     cfg = ctx.cfg
+
+    if getattr(args, "dry_run_swap", False):
+        return _dry_run_swap_preview(ctx)
 
     # Pre-flight gate: run NETWORK + PREFLIGHT (STATIC already ran via
     # load_config). --skip-preflight opts out for offline / pre-doctored
@@ -475,6 +538,9 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     if ctx.cfg is None:
         raise RuntimeError("_cmd_batch requires --config")
     cfg = ctx.cfg
+
+    if getattr(args, "dry_run_swap", False):
+        return _dry_run_swap_preview(ctx)
 
     if args.env_file is not None:
         from kinoforge.core.dotenv_loader import load_env_file
@@ -722,6 +788,7 @@ def _print_status_block(
     provider_block: dict[str, str],
     *,
     advisory: str | None = None,
+    lora_section: str | None = None,
 ) -> None:
     """Print a merged + alphabetically sorted ``key=value`` block to stdout.
 
@@ -729,13 +796,81 @@ def _print_status_block(
         ledger_block: Output of :func:`_build_ledger_block`.
         provider_block: Provider-derived fields (``provider_status`` and
             optionally ``endpoints``).
-        advisory: Optional advisory line; printed AFTER the sorted block when set.
+        advisory: Optional advisory line; printed AFTER the sorted block.
+        lora_section: Optional pre-rendered LoRA inventory block (from
+            :func:`_render_lora_inventory_section`); printed after the
+            sorted block but before the advisory when set.
     """
     merged = {**ledger_block, **provider_block}
     for key in sorted(merged):
         print(f"{key}={merged[key]}")
+    if lora_section is not None:
+        print(lora_section)
     if advisory is not None:
         print(advisory)
+
+
+def _human_bytes(n: int | float) -> str:
+    """Format ``n`` as B/KB/MB/GB with one decimal place above KB."""
+    if n is None:
+        return "?"
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024.0 or unit == "TB":
+            if unit == "B":
+                return f"{int(n)} B"
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} TB"
+
+
+def _render_lora_inventory_section(
+    inventory: list[dict] | None,  # type: ignore[type-arg]
+    *,
+    free_bytes: int | None,
+) -> str | None:
+    """Render the LoRA inventory block for ``kinoforge status`` / ``pod lora ls``.
+
+    Sorts rows newest-last-used first so the operator sees the LoRAs the
+    matcher is most likely to keep at the top of the list. Refs flow
+    through :class:`RedactionRegistry` so vault-registered + observed
+    refs appear as their placeholder token.
+
+    Args:
+        inventory: List of inventory entry dicts as written by
+            :meth:`Ledger.touch` (or returned from
+            ``/lora/inventory`` / ``/lora/set_stack``). Falsy → no section.
+        free_bytes: Pod-side ``shutil.disk_usage(LORAS_DIR).free`` snapshot.
+            ``None`` → free disk is omitted from the header.
+
+    Returns:
+        Multi-line string ready for ``print``, or ``None`` when the
+        inventory is empty.
+    """
+    if not inventory:
+        return None
+    from kinoforge.core.redaction import RedactionRegistry
+    from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
+
+    _register_observed_lora_refs({"inventory": inventory})
+    registry = RedactionRegistry.instance()
+    total_bytes = sum(int(e.get("size_bytes", 0) or 0) for e in inventory)
+    header = f"  loras ({len(inventory)} resident, {_human_bytes(total_bytes)} used"
+    if free_bytes is not None:
+        header += f", {_human_bytes(free_bytes)} free):"
+    else:
+        header += "):"
+    rows: list[str] = [header]
+    ordered = sorted(
+        inventory, key=lambda e: e.get("last_used_at_local") or "", reverse=True
+    )
+    for e in ordered:
+        ref = registry.redact(str(e.get("ref", "?")))
+        size = _human_bytes(int(e.get("size_bytes", 0) or 0))
+        last_used = str(e.get("last_used_at_local", "?"))
+        adapter = str(e.get("adapter_name", "?"))
+        rows.append(f"    {ref}  {size}  last_used {last_used}  adapter {adapter}")
+    return "\n".join(rows)
 
 
 def _classify_for_status(
@@ -1295,7 +1430,123 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     except Exception:  # noqa: BLE001 — honest "I can't tell" verdict
         provider_block["verdict"] = "HEARTBEAT_UNKNOWN"
 
-    _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
+    lora_section = _render_lora_inventory_section(
+        entry.get("lora_inventory"),
+        free_bytes=entry.get("loras_dir_free_bytes"),
+    )
+    _print_status_block(
+        ledger_block,
+        provider_block,
+        advisory=heartbeat_advisory,
+        lora_section=lora_section,
+    )
+    return 0
+
+
+def _http_get_json(url: str) -> dict[str, Any]:
+    """GET ``url`` and return the parsed JSON body.
+
+    Module-level seam for tests to monkey-patch — keeps the network call
+    out of the unit-test pass path without dragging an httpx dependency
+    into the CLI handler signature.
+
+    Args:
+        url: The URL to fetch.
+
+    Returns:
+        Parsed JSON dict on HTTP 2xx.
+
+    Raises:
+        ConnectionError / urllib.error.URLError: Transport-level failure.
+        json.JSONDecodeError: Response body not valid JSON.
+    """
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(  # noqa: S310 — operator-supplied pod URL
+        url, headers={"Accept": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — operator-supplied
+        raw = resp.read()
+    return dict(json.loads(raw))
+
+
+def _cmd_pod_lora_ls(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``kinoforge pod lora ls <pod_id>``.
+
+    Queries the pod's ``GET /lora/inventory`` endpoint directly and
+    renders the same section as ``kinoforge status``. Ledger is consulted
+    only to resolve the pod's provider; the inventory snapshot is taken
+    live from the pod (never from ledger cache) so the operator sees the
+    current resident set even under ``--ephemeral``.
+
+    Args:
+        args: Parsed CLI arguments; uses ``args.pod_id``.
+        ctx: Per-invocation session context.
+
+    Returns:
+        Exit code: 0 on success, 1 when the pod is absent from the
+        ledger, 2 on pod unreachable / transport error.
+    """
+    from kinoforge.core import registry
+
+    ledger = ctx.ledger()
+    entry = next((e for e in ledger.entries() if e.get("id") == args.pod_id), None)
+    if entry is None:
+        print(f"pod {args.pod_id!r} not found in ledger", file=sys.stderr)
+        return 1
+
+    provider_name = str(entry.get("provider", "local"))
+    try:
+        provider = registry.get_provider(provider_name)()
+    except UnknownAdapter:
+        print(f"pod lora ls: unknown provider {provider_name!r}", file=sys.stderr)
+        return 2
+
+    try:
+        instance = provider.get_instance(args.pod_id)
+    except Exception as exc:  # noqa: BLE001 — surface as unreachable
+        print(
+            f"pod lora ls: pod {args.pod_id} unreachable "
+            f"({exc.__class__.__name__}: {exc})",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        endpoints_map = provider.endpoints(instance)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"pod lora ls: endpoint resolution failed "
+            f"({exc.__class__.__name__}: {exc})",
+            file=sys.stderr,
+        )
+        return 2
+
+    base_url = endpoints_map.get("8000") or next(iter(endpoints_map.values()), None)
+    if base_url is None:
+        print(
+            f"pod lora ls: no endpoint URL for pod {args.pod_id}",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        payload = _http_get_json(f"{base_url.rstrip('/')}/lora/inventory")
+    except Exception as exc:  # noqa: BLE001 — clean exit code on any I/O error
+        print(
+            f"pod lora ls: pod unreachable ({exc.__class__.__name__}: {exc})",
+            file=sys.stderr,
+        )
+        return 2
+
+    section = _render_lora_inventory_section(
+        payload.get("inventory"), free_bytes=payload.get("free_bytes")
+    )
+    if section is None:
+        print(f"pod {args.pod_id}: no LoRAs loaded")
+    else:
+        print(section)
     return 0
 
 

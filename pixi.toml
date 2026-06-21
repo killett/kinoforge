@@ -176,6 +176,14 @@ pre-commit = "python -m pre_commit"
 pre-commit-all = "python -m pre_commit run --all-files"
 pre-commit-install = "python -m pre_commit install --install-hooks"
 
+# LoRA smoke-test pyramid (docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md).
+# Tier 1 free local smoke (every PR, on demand); Tiers 3/4 live (cron / release-gate);
+# leak-sweep is the Layer-3 watchdog.
+smoke-local = "python -m pytest tests/smoke/local_cpu/ tests/_smoke_harness/ tests/tools/test_smoke_leak_sweep.py -v"
+smoke-21b-live = { cmd = "python -m pytest tests/smoke/live_wan21/ -v -s", env = { KINOFORGE_LIVE_TESTS = "1" } }
+smoke-wan22-live = { cmd = "python -m pytest tests/smoke/release_wan22/ -v -s", env = { KINOFORGE_LIVE_TESTS = "1" } }
+smoke-leak-sweep = "python tools/smoke_leak_sweep.py"
+
 [feature.live-skypilot.pypi-dependencies]
 # vast + lambda extras added 2026-06-17 (Phase 53 pivot from GCP/AWS).
 # vast extra pulls `vastai-sdk`; lambda extra has no extra deps (pure HTTP)

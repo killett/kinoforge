@@ -36,3 +36,6 @@ jobs:
 
       - name: Test
         run: pixi run test
+
+      - name: LoRA smoke pyramid Tier 1 (smoke-local)
+        run: pixi run smoke-local
