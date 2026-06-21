@@ -1,13 +1,13 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-21-lora-smoke-pyramid.md",
   "specPath": "docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md",
-  "lastUpdated": "2026-06-21T00:30:00-07:00",
+  "lastUpdated": "2026-06-21T08:45:00-07:00",
   "tasks": [
     {
       "id": 6,
       "planTaskNumber": 1,
       "subject": "P1: Harness package skeleton + README",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": []
     },
     {
