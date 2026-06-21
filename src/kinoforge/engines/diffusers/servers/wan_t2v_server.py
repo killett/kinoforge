@@ -56,7 +56,9 @@ logging.basicConfig(
 )
 
 MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
-ARTIFACT_DIR: Path = Path("/workspace/artifacts")
+ARTIFACT_DIR: Path = Path(
+    os.environ.get("KINOFORGE_ARTIFACT_DIR", "/workspace/artifacts")
+)
 LORAS_DIR: Path = Path(os.environ.get("KINOFORGE_LORAS_DIR", "/workspace/loras"))
 
 _DEFAULT_NEGATIVE_PROMPT = (

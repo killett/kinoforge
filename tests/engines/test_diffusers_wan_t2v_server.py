@@ -60,6 +60,7 @@ def fresh_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
 
     monkeypatch.setattr(srv, "_load_pipeline", lambda: FakePipe())
     monkeypatch.setattr(srv, "ARTIFACT_DIR", tmp_path / "artifacts")
+    monkeypatch.setattr(srv, "LORAS_DIR", tmp_path / "loras")
 
     with TestClient(srv.app) as client:
         for _ in range(50):

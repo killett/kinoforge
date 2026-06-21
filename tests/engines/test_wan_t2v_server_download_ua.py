@@ -40,7 +40,7 @@ def test_download_one_sends_kinoforge_pod_ua(tmp_path: Path) -> None:
     """
     captured: dict[str, Any] = {}
 
-    def _fake_urlopen(req: Any) -> _FakeResp:
+    def _fake_urlopen(req: Any, timeout: int | None = None) -> _FakeResp:  # noqa: ARG001
         captured["ua"] = req.get_header("User-agent")
         captured["auth"] = req.get_header("Authorization")
         return _FakeResp(b"weights")
@@ -65,7 +65,7 @@ def test_download_one_does_not_override_caller_user_agent(tmp_path: Path) -> Non
     """
     captured: dict[str, Any] = {}
 
-    def _fake_urlopen(req: Any) -> _FakeResp:
+    def _fake_urlopen(req: Any, timeout: int | None = None) -> _FakeResp:  # noqa: ARG001
         captured["ua"] = req.get_header("User-agent")
         return _FakeResp(b"")
 
