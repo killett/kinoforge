@@ -183,7 +183,28 @@ def _diffusers_load() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no p
     Separated from ``_load_pipeline`` so tests can patch this seam
     without importing diffusers (which would otherwise pull torch +
     CUDA at test time).
+
+    Test seam: when ``KINOFORGE_DIFFUSERS_LOAD_STUB`` env is set to a
+    dotted path (``pkg.mod.callable``), imports + calls that callable
+    instead of ``WanPipeline.from_pretrained``. The Tier-1 local CPU
+    smoke uses this to swap in a faithful in-memory stub that
+    exercises the LoRA-swap HTTP contract without CUDA.
     """
+    import importlib
+
+    stub_path = os.environ.get("KINOFORGE_DIFFUSERS_LOAD_STUB", "")
+    if stub_path:
+        try:
+            module_name, _, attr = stub_path.rpartition(".")
+            if not module_name:
+                raise ImportError(f"invalid dotted path: {stub_path!r}")
+            mod = importlib.import_module(module_name)
+            return getattr(mod, attr)()
+        except (ImportError, AttributeError) as exc:
+            raise ImportError(
+                f"KINOFORGE_DIFFUSERS_LOAD_STUB={stub_path!r}: {exc}"
+            ) from exc
+
     import torch
     from diffusers import WanPipeline
 
