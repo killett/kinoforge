@@ -270,6 +270,24 @@ See `docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md`
 for the full design + `docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md`
 for the implementation plan.
 
+### Smoke test pyramid
+
+Three tiers + a watchdog (full design:
+`docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md`):
+
+| Tier | Trigger | What it tests | Cost |
+|---|---|---|---|
+| 1 — `pixi run smoke-local` | Every PR (CI) + on demand | HTTP contract, eviction, disk math, VRAM-OOM rollback against a stub pipe over real uvicorn | $0 |
+| 3 — `pixi run smoke-21b-live` | Weekly Mon 04:00 PT + on demand | Real-diffusers semantics, real CUDA, real RunPod proxy + Cloudflare path on Wan 2.1 1.3B + 2 single LoRAs | ~$0.20 |
+| 4 — `pixi run smoke-wan22-live` | Manual, pre-release | Full Wan 2.2 14B + Arcane Style pair end-to-end on A100 80GB | ~$1-2 |
+
+A separate `pixi run smoke-leak-sweep` cron runs every 30 min to reap
+any tier-tagged pod older than its ceiling (Tier 3: 45 min, Tier 4:
+90 min) and post a GitHub issue per reap. All four tiers share
+`tests/_smoke_harness/` so the kinoforge-internal HTTP patterns
+(UA + `?api_key=` + URLError retry + leak sweep) are inherited by
+import, not by rediscovery.
+
 ## Reaping orphan pods
 
 `kinoforge reap` classifies every ledger entry and (optionally)

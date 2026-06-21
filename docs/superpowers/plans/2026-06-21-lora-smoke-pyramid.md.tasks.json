@@ -105,7 +105,7 @@
       "id": 20,
       "planTaskNumber": 15,
       "subject": "P15: CI smoke-local gate + README + PROGRESS + RELEASE-CHECKLIST",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [14, 17, 19]
     },
     {
