@@ -48,6 +48,10 @@ htmlcov/
 # Layer O — user-facing output directory (configurable per-run via --output-dir)
 output/
 
+# Per-run artifact scratch (mp4 dumps from ad-hoc smokes; canonical
+# artifact paths live under successful-generations.md + the artifact store)
+artifacts/
+
 # Superpowers brainstorming session state (PIDs, logs, transient HTML)
 .superpowers/
 *.log

@@ -157,10 +157,11 @@
       "id": 26,
       "planTaskNumber": 17,
       "subject": "Task 17: kinoforge generate/batch --dry-run-swap flag",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         23
-      ]
+      ],
+      "lastUpdated": "2026-06-20T22:00:00-07:00"
     },
     {
       "id": 27,
@@ -187,23 +188,25 @@
       "id": 29,
       "planTaskNumber": 20,
       "subject": "Task 20: AST-scan invariants (2 new rules) in tests/test_no_unredacted_writes.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         22,
         24,
         25,
         27
-      ]
+      ],
+      "lastUpdated": "2026-06-20T22:20:00-07:00"
     },
     {
       "id": 30,
       "planTaskNumber": 21,
       "subject": "Task 21: Integration tests (5 scenarios)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         23,
         24
-      ]
+      ],
+      "lastUpdated": "2026-06-20T22:40:00-07:00"
     },
     {
       "id": 31,
