@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
   "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
-  "lastUpdated": "2026-06-20T17:34:52-07:00",
+  "lastUpdated": "2026-06-20T17:39:40-07:00",
   "tasks": [
     {
       "id": 10,
@@ -55,10 +55,11 @@
       "id": 16,
       "planTaskNumber": 7,
       "subject": "Task 7: GET /lora/inventory endpoint",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         15
-      ]
+      ],
+      "lastUpdated": "2026-06-20T17:39:40-07:00"
     },
     {
       "id": 17,
