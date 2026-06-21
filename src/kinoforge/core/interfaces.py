@@ -92,6 +92,9 @@ class Lifecycle:
     restart_loop_uptime_threshold_s: float = 90.0
     heartbeat_interval_s: float | None = None
     grace_after_session_s: float = 1800.0
+    # LoRA-flexible warm-reuse: staleness threshold for the matcher's
+    # pod-side free-disk + inventory snapshot. 0 disables the stale check.
+    lora_swap_re_probe_after_s: float = 300.0
 
 
 @dataclass(frozen=True)

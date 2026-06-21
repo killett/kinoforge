@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
   "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
-  "lastUpdated": "2026-06-20T20:46:33-07:00",
+  "lastUpdated": "2026-06-20T20:49:30-07:00",
   "tasks": [
     {
       "id": 10,
@@ -176,10 +176,11 @@
       "id": 28,
       "planTaskNumber": 19,
       "subject": "Task 19: compute.lifecycle.lora_swap_re_probe_after_s cfg field",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         23
-      ]
+      ],
+      "lastUpdated": "2026-06-20T20:49:30-07:00"
     },
     {
       "id": 29,
