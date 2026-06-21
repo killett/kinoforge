@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import time
+import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,44 @@ def _sha256(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
+def _wait_for_inventory_convergence(
+    *,
+    pod_proxy_url: str,
+    target: list[str],
+    deadline_s: float,
+    step_name: str,
+) -> list[str]:
+    """Poll /lora/inventory until refs match ``target`` (or deadline).
+
+    Called from run_matrix when /lora/set_stack returns a proxy 502 —
+    the upstream wan server may still be processing the download. We
+    poll every 10s for up to ``deadline_s`` and return the converged
+    inventory; if convergence never happens, raise AssertionError with
+    the last observed state so the caller's matrix step fails with
+    actionable signal.
+    """
+    target_sorted = sorted(target)
+    deadline = time.monotonic() + deadline_s
+    last_observed: list[str] = []
+    while time.monotonic() < deadline:
+        time.sleep(10.0)
+        try:
+            resp = http.get_json(
+                f"{pod_proxy_url.rstrip('/')}/lora/inventory",
+                timeout=30,
+            )
+        except urllib.error.URLError:
+            # Treat transient probe failures as "still working".
+            continue
+        last_observed = sorted(e["ref"] for e in resp.get("inventory", []))
+        if last_observed == target_sorted:
+            return last_observed
+    raise AssertionError(
+        f"{step_name}: set_stack 502 + inventory did not converge to "
+        f"{target_sorted} within {deadline_s}s — last observed {last_observed}"
+    )
+
+
 def run_matrix(
     *,
     cfg_path: Path,
@@ -118,15 +157,32 @@ def run_matrix(
     for step in steps:
         t0 = time.monotonic()
         sliced = {ref: download_specs[ref] for ref in step.target_stack}
-        resp = http.post_json(
-            f"{pod_proxy_url.rstrip('/')}/lora/set_stack",
-            {
-                "target_refs": step.target_stack,
-                "download_specs": sliced,
-            },
-            timeout=900,
-        )
-        observed = sorted(e["ref"] for e in resp.get("inventory", []))
+        try:
+            resp = http.post_json(
+                f"{pod_proxy_url.rstrip('/')}/lora/set_stack",
+                {
+                    "target_refs": step.target_stack,
+                    "download_specs": sliced,
+                },
+                timeout=900,
+            )
+            observed = sorted(e["ref"] for e in resp.get("inventory", []))
+        except urllib.error.HTTPError as exc:
+            # RunPod proxy 502s long downloads (~100s ceiling) even
+            # when the upstream wan server is still streaming bytes.
+            # Recover by polling /lora/inventory until it converges to
+            # the target stack (or we give up). Treats proxy timeout
+            # as a soft failure — the actual set_stack handler keeps
+            # running pod-side until _download_one returns or the
+            # in-handler 600s timeout fires.
+            if exc.code != 502:
+                raise
+            observed = _wait_for_inventory_convergence(
+                pod_proxy_url=pod_proxy_url,
+                target=step.target_stack,
+                deadline_s=600.0,
+                step_name=step.name,
+            )
         assert observed == sorted(step.expected_inventory), (
             f"{step.name}: inventory mismatch — "
             f"expected {sorted(step.expected_inventory)}, got {observed}"
