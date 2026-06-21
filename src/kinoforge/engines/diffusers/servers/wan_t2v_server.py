@@ -17,8 +17,10 @@ import os
 import queue
 import threading
 import time
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -46,6 +48,7 @@ _log = logging.getLogger("kinoforge.diffusers.wan_t2v_server")
 
 MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
 ARTIFACT_DIR: Path = Path("/workspace/artifacts")
+LORAS_DIR: Path = Path(os.environ.get("KINOFORGE_LORAS_DIR", "/workspace/loras"))
 
 _DEFAULT_NEGATIVE_PROMPT = (
     "Bright tones, overexposed, static, blurred details, subtitles, "
@@ -63,6 +66,27 @@ pipe: Any = None  # set in _startup
 jobs: dict[str, JobState] = {}
 _q: queue.Queue[str] = queue.Queue()
 _worker_thread: threading.Thread | None = None
+
+# LoRA-flexible warm-reuse: pod-side inventory of loaded LoRA weights.
+# Entries are keyed by vendor-neutral ref (e.g. "civitai:2197303@2474081").
+# Populated cold-boot in _load_pipeline; mutated by future /lora/set_stack
+# endpoint additions in Tasks 5-8.
+_inventory: dict[str, dict[str, Any]] = {}
+
+
+class ArtifactDownloadSpec(BaseModel):
+    """Pre-resolved LoRA download instruction sent by the orchestrator.
+
+    The orchestrator resolves vendor-specific download URLs + headers
+    (CivitAI bearer tokens, HF auth, etc.) on its side and ships an
+    opaque spec to the pod. The pod fetches the bytes verbatim with
+    no vendor-specific code paths.
+    """
+
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    filename: str
+    size_hint: int | None = None
 
 
 @dataclass
@@ -95,8 +119,8 @@ class GenerateRequest(BaseModel):
     seed: int | None = None
 
 
-def _load_pipeline() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no public TypeAlias.
-    """Construct and return the WanPipeline.
+def _diffusers_load() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no public TypeAlias.
+    """Construct and return the bare WanPipeline.
 
     Loads weights with ``device_map="cuda"`` so each component streams
     DIRECTLY to GPU memory and is never held in CPU RAM. The Wan 2.2
@@ -107,8 +131,9 @@ def _load_pipeline() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no pu
     ``minMemoryInGb`` filter). Streaming straight to the 80 GB A100
     sidesteps the variable-RAM problem entirely.
 
-    Separated out so tests can patch this seam without importing
-    diffusers (which would otherwise pull torch + CUDA at test time).
+    Separated from ``_load_pipeline`` so tests can patch this seam
+    without importing diffusers (which would otherwise pull torch +
+    CUDA at test time).
     """
     import torch
     from diffusers import WanPipeline
@@ -118,6 +143,80 @@ def _load_pipeline() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no pu
         torch_dtype=torch.bfloat16,
         device_map="cuda",
     )
+    return pipe_obj
+
+
+def _download_one(spec: ArtifactDownloadSpec, dest_dir: Path) -> tuple[str, int]:
+    """Download one LoRA spec to dest_dir.
+
+    Streams to a temp ``.partial`` file and renames on success so partial
+    downloads never present as complete LoRA files. Raises ``RuntimeError``
+    on any HTTP / IO error after cleaning up the partial.
+
+    Args:
+        spec: Vendor-resolved download instruction.
+        dest_dir: Directory to land the file in (created if missing).
+
+    Returns:
+        Tuple of (absolute path on disk, actual bytes written).
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target = dest_dir / spec.filename
+    tmp = dest_dir / f"{spec.filename}.partial"
+    req = urllib.request.Request(spec.url, headers=spec.headers)  # noqa: S310 — vendor-resolved URL
+    bytes_written = 0
+    try:
+        with urllib.request.urlopen(req) as resp, tmp.open("wb") as out:  # noqa: S310
+            while True:
+                chunk = resp.read(64 * 1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                bytes_written += len(chunk)
+        tmp.replace(target)
+        return str(target), bytes_written
+    except Exception:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+        raise
+
+
+def _load_pipeline(
+    initial_lora_stack: list[tuple[str, ArtifactDownloadSpec]] | None = None,
+) -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no public TypeAlias.
+    """Load the Wan pipeline + optionally cold-boot a LoRA stack.
+
+    Args:
+        initial_lora_stack: Optional list of (ref, download_spec) tuples
+            to download + load before the first /generate. Order matters —
+            adapter names are assigned positionally as ``lora_{i}``.
+
+    Returns:
+        The constructed pipeline with any initial LoRAs already attached.
+    """
+    pipe_obj = _diffusers_load()
+    if initial_lora_stack:
+        adapter_names: list[str] = []
+        for i, (ref, spec) in enumerate(initial_lora_stack):
+            try:
+                path, actual_bytes = _download_one(spec, LORAS_DIR)
+            except Exception as e:
+                raise RuntimeError(f"failed to download LoRA {ref}: {e}") from e
+            adapter_name = f"lora_{i}"
+            pipe_obj.load_lora_weights(path, adapter_name=adapter_name)
+            adapter_names.append(adapter_name)
+            now = datetime.now().isoformat()
+            _inventory[ref] = {
+                "ref": ref,
+                "filename": spec.filename,
+                "size_bytes": actual_bytes,
+                "loras_dir_path": path,
+                "downloaded_at_local": now,
+                "last_used_at_local": now,
+                "adapter_name": adapter_name,
+            }
+        if adapter_names:
+            pipe_obj.set_adapters(adapter_names)
     return pipe_obj
 
 
@@ -185,11 +284,28 @@ def _worker_loop() -> None:
 
 @app.on_event("startup")
 def _startup() -> None:
-    """Load the pipeline, spawn worker, mark server ready."""
+    """Load the pipeline, spawn worker, mark server ready.
+
+    If ``KINOFORGE_INITIAL_LORA_STACK_JSON`` points to a readable JSON
+    file shaped ``[[ref, {spec...}], ...]``, those LoRAs are downloaded
+    + loaded before the server reports ready.
+    """
     global pipe, _worker_thread
     _log.info("startup: loading pipeline %s", MODEL_ID)
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    pipe = _load_pipeline()
+    LORAS_DIR.mkdir(parents=True, exist_ok=True)
+    stack_path = os.environ.get("KINOFORGE_INITIAL_LORA_STACK_JSON")
+    if stack_path and Path(stack_path).exists():
+        import json
+
+        raw = json.loads(Path(stack_path).read_text())
+        initial: list[tuple[str, ArtifactDownloadSpec]] = [
+            (ref, ArtifactDownloadSpec(**spec_dict)) for ref, spec_dict in raw
+        ]
+        _log.info("startup: cold-boot LoRA stack size=%d", len(initial))
+        pipe = _load_pipeline(initial_lora_stack=initial)
+    else:
+        pipe = _load_pipeline()
     _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
     _worker_thread.start()
     ready.set()
