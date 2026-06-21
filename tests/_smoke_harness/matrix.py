@@ -76,6 +76,36 @@ def _sha256(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
+def _warmup_proxy(pod_proxy_url: str, *, deadline_s: float = 60.0) -> None:
+    """Probe /health until 200 before issuing any /lora/* POST.
+
+    Defends against a recurring RunPod-edge-proxy bug observed across
+    Tier-3 fires #5-#7: the FIRST POST after a freshly-created pod
+    intermittently returns "Waiting for service to respond" (HTTP 502)
+    even though uvicorn is listening. A preceding /health GET warms
+    the proxy's upstream connection — subsequent /lora/set_stack calls
+    then succeed in seconds (diag run 2026-06-21 confirmed: 200 in 8.1s).
+
+    Args:
+        pod_proxy_url: ``https://{pod_id}-{port}.proxy.runpod.net``
+            base.
+        deadline_s: How long to keep retrying before raising.
+    """
+    deadline = time.monotonic() + deadline_s
+    last_exc: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            http.get_json(f"{pod_proxy_url.rstrip('/')}/health", timeout=10)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            time.sleep(2.0)
+    raise RuntimeError(
+        f"proxy warmup failed: /health never returned 200 within "
+        f"{deadline_s}s — last error {last_exc!r}"
+    )
+
+
 def _wait_for_inventory_convergence(
     *,
     pod_proxy_url: str,
@@ -152,6 +182,7 @@ def run_matrix(
             not equal ``MatrixStep.expected_inventory``, OR (with
             distinct-sha) two adjacent mp4s hash identically.
     """
+    _warmup_proxy(pod_proxy_url)
     results: list[StepResult] = []
     prev_sha: str | None = None
     for step in steps:
