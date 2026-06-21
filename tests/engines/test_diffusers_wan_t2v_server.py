@@ -137,6 +137,7 @@ class TestGenerate:
 
         importlib.reload(srv)
         monkeypatch.setattr(srv, "ARTIFACT_DIR", tmp_path / "artifacts")
+        monkeypatch.setattr(srv, "LORAS_DIR", tmp_path / "loras")
         load_event = threading.Event()
         monkeypatch.setattr(srv, "_load_pipeline", lambda: load_event.wait() or None)
 
@@ -205,6 +206,7 @@ class TestGenerate:
 
         importlib.reload(srv)
         monkeypatch.setattr(srv, "ARTIFACT_DIR", tmp_path / "artifacts")
+        monkeypatch.setattr(srv, "LORAS_DIR", tmp_path / "loras")
 
         class BoomPipe:
             def __call__(self, **kwargs: Any) -> Any:
@@ -250,6 +252,7 @@ class TestGenerate:
 
         importlib.reload(srv)
         monkeypatch.setattr(srv, "ARTIFACT_DIR", tmp_path / "artifacts")
+        monkeypatch.setattr(srv, "LORAS_DIR", tmp_path / "loras")
 
         attempts = {"count": 0}
         good_frames = np.zeros((3, 8, 8, 3), dtype=np.uint8)
