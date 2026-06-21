@@ -41,13 +41,18 @@ def _await_health(base_url: str, *, timeout_s: float = 30.0) -> None:
 
 
 @pytest.fixture
-def uvicorn_server() -> Iterator[str]:
+def uvicorn_server(tmp_path: Path) -> Iterator[str]:
     """Spawn wan_t2v_server on localhost with the stub pipe; yield base URL."""
     port = _pick_free_port()
     env = dict(os.environ)
     env["KINOFORGE_DIFFUSERS_LOAD_STUB"] = (
         "tests.smoke.local_cpu.stub_pipe._stub_diffusers_load"
     )
+    # Wan server's startup mkdir's ARTIFACT_DIR + LORAS_DIR. Defaults
+    # to /workspace/{artifacts,loras} which doesn't exist on CI runners.
+    # Point at per-test tmp_path so the subprocess uvicorn can boot.
+    env["KINOFORGE_ARTIFACT_DIR"] = str(tmp_path / "artifacts")
+    env["KINOFORGE_LORAS_DIR"] = str(tmp_path / "loras")
     # Subprocess needs the workspace on sys.path to import the dotted
     # stub callable.
     repo_root = str(Path(__file__).resolve().parents[3])
