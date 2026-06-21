@@ -672,6 +672,55 @@ Browse ready-to-use examples in [`examples/configs/`](examples/configs/):
 | [`hosted.yaml`](examples/configs/hosted.yaml) | Hosted API | fal.ai | Zero-infra hosted |
 | [`local-fake.yaml`](examples/configs/local-fake.yaml) | Fake | Local | Offline / CI smoke test |
 
+## Default test LoRAs (Wan 2.1 1.3B T2V)
+
+This repo's canonical LoRA-pair test default for **Wan 2.1 T2V-1.3B** (the cheap
+weekly Tier-3 smoke target, `examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`)
+is two single-LoRA refs picked for cross-style coverage. Both ship explicitly
+on the **Wan Video 1.3B t2v** base so they're guaranteed compatible. Wan 2.1
+is single-transformer, so each ref is a single tensor (no high/low pair).
+
+| Slot | Name | CivitAI page | Model ID | Version ID | kinoforge ref |
+|---|---|---|---|---|---|
+| A | wan2.1 1.3b static rotation | <https://civitai.com/models/1479320/wan21-13b-static-rotation?modelVersionId=1673265> | 1479320 | 1673265 | `civitai:1479320@1673265` |
+| B | Pokemon Sprite Animation Video LoRA | <https://civitai.com/models/1595383/pokemon-sprite-animation-video-lora?modelVersionId=1805395> | 1595383 | 1805395 | `civitai:1595383@1805395` |
+
+### Activation: trigger word + strength
+
+- **Slot A (static rotation):** trigger word `sttcrttn` — prepend to any
+  prompt where the LoRA should activate (camera-rotation motion effect).
+  Recommended strength: 1.0 (default).
+- **Slot B (Pokemon sprite):** no trigger word — the model card explicitly
+  states no trained text token. Style activates by load alone. Recommended
+  output resolution per the model card: 768×768 for optimal sprite-art motion.
+  Recommended strength: 1.0 (default).
+
+### What this default exercises
+
+- **Cross-style mp4 distinctness.** The two LoRAs produce visually very
+  different outputs (camera-rotation motion vs Gen-5 Pokemon sprite art),
+  so the matrix runner's `sha_distinct_required=True` post-condition fails
+  loudly if a swap silently did nothing.
+- **The full 4-step Wan 2.1 1.3B LoRA-swap matrix** in
+  `tests/smoke/live_wan21/test_lora_swap_matrix.py`:
+  cold-boot → load [A] → swap to [B] → clear to []. Total bounded by
+  `BudgetTracker(cap_usd=0.30)` per fire.
+
+### How to use it
+
+The pair is committed in
+[`examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`](examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml)
+under the `smoke:` block:
+
+```yaml
+smoke:
+  lora_a: "civitai:1479320@1673265"   # wan2.1 1.3b static rotation
+  lora_b: "civitai:1595383@1805395"   # Pokemon Sprite Animation
+```
+
+Both resolve through `CivitAISource`, which requires `CIVITAI_TOKEN` in the
+`.env` file (see [Credentials → Known keys](#known-keys)).
+
 ## Default test LoRA (Wan 2.2 T2V)
 
 This repo's canonical LoRA-pair test default is **Arcane Style [WAN 2.2 T2V] v1.0**
