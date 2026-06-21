@@ -466,6 +466,17 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "confirmed cleanliness, or when running offline."
         ),
     )
+    p_generate.add_argument(
+        "--dry-run-swap",
+        action="store_true",
+        dest="dry_run_swap",
+        help=(
+            "preview the warm-attach matcher decision without acquiring "
+            "the pod lock, issuing HTTP, or running validate_for_generate. "
+            "Prints the chosen pod + swap plan (evict/download) or the "
+            "cold-boot fall-through reason. Exits 0."
+        ),
+    )
 
     # list
     sub.add_parser("list", help="list running instances from ledger")
@@ -670,6 +681,17 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         help=(
             "force cold create_instance + destroy after the whole batch "
             "completes. Mutex with --force-attach."
+        ),
+    )
+    p_batch.add_argument(
+        "--dry-run-swap",
+        action="store_true",
+        dest="dry_run_swap",
+        help=(
+            "preview the warm-attach matcher decision without acquiring "
+            "the pod lock, issuing HTTP, or loading the manifest. Prints "
+            "the chosen pod + swap plan (evict/download) or the cold-boot "
+            "fall-through reason. Exits 0."
         ),
     )
 
