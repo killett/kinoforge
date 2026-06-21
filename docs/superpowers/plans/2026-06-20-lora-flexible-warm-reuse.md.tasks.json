@@ -63,7 +63,7 @@
       "id": 18,
       "planTaskNumber": 9,
       "subject": "Task 9: Widen Ledger.touch type signature for lora_inventory + warm_attach_key + loras_dir_free_bytes + status",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": []
     },
     {
