@@ -91,7 +91,7 @@
       "id": 18,
       "planTaskNumber": 13,
       "subject": "P13: tools/smoke_leak_sweep.py — Layer-3 watchdog",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8]
     },
     {
