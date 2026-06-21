@@ -14,7 +14,7 @@
       "id": 7,
       "planTaskNumber": 2,
       "subject": "P2: _smoke_harness/http.py — UA + api_key + URLError retry",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6]
     },
     {
