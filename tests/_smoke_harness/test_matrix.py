@@ -104,6 +104,92 @@ def test_run_matrix_raises_on_inventory_mismatch(
         )
 
 
+def test_run_matrix_recovers_from_proxy_502_via_inventory_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: a proxy 502 on /lora/set_stack aborts the matrix even when
+    the upstream wan server is still processing the download. Runner
+    must catch 502 + poll /lora/inventory until it matches the target.
+    """
+    import email.message
+    import urllib.error
+
+    set_stack_calls: list[int] = []
+    inventory_calls: list[int] = []
+    inventory_response_idx = iter(
+        [
+            {"inventory": [], "free_bytes": 9},  # 1st poll: still downloading
+            {
+                "inventory": [{"ref": "civitai:A@1"}],
+                "free_bytes": 9,
+            },  # 2nd: converged
+        ]
+    )
+
+    def _post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        set_stack_calls.append(1)
+        raise urllib.error.HTTPError(
+            url, 502, "Bad Gateway", email.message.Message(), None
+        )
+
+    def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        inventory_calls.append(1)
+        return next(inventory_response_idx)
+
+    monkeypatch.setattr(f"{_HTTP}.post_json", _post)
+    monkeypatch.setattr(f"{_HTTP}.get_json", _get)
+    # Compress the poll interval so the test stays fast.
+    monkeypatch.setattr("tests._smoke_harness.matrix.time.sleep", lambda s: None)
+    report = matrix.run_matrix(
+        cfg_path=Path("/x"),
+        pod_proxy_url="http://stub",
+        steps=[
+            matrix.MatrixStep(
+                name="step-1-load-a",
+                target_stack=["civitai:A@1"],
+                expected_inventory=["civitai:A@1"],
+            ),
+        ],
+        download_specs={"civitai:A@1": _spec("a")},
+        generate_per_step=False,
+    )
+    assert len(report.steps) == 1
+    assert report.steps[0].inventory_after == ["civitai:A@1"]
+    assert len(set_stack_calls) == 1
+    assert len(inventory_calls) == 2
+
+
+def test_run_matrix_propagates_non_502_http_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: 502-recovery accidentally swallows 4xx (e.g. 403 auth failure)
+    that should fail loud immediately."""
+    import email.message
+    import urllib.error
+
+    def _post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        raise urllib.error.HTTPError(
+            url, 403, "Forbidden", email.message.Message(), None
+        )
+
+    monkeypatch.setattr(f"{_HTTP}.post_json", _post)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        matrix.run_matrix(
+            cfg_path=Path("/x"),
+            pod_proxy_url="http://stub",
+            steps=[
+                matrix.MatrixStep(
+                    name="step",
+                    target_stack=["civitai:A@1"],
+                    expected_inventory=["civitai:A@1"],
+                ),
+            ],
+            download_specs={"civitai:A@1": _spec("a")},
+            generate_per_step=False,
+        )
+    assert exc.value.code == 403
+
+
 def test_run_matrix_distinct_sha_assertion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

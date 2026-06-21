@@ -25,10 +25,16 @@ def resolve_proxy_url(pod_id: str, *, port: int = 8000) -> str:
 
 
 def _get_runpod_provider() -> Any:
-    """Test-seam — overridden in unit tests."""
+    """Test-seam — overridden in unit tests.
+
+    Loads `.env` first because pytest CLI doesn't auto-load it and the
+    RunPod provider 403s without RUNPOD_API_KEY in os.environ.
+    """
     from kinoforge.core import registry as kf_registry
+    from kinoforge.core.dotenv_loader import load_env_file
     from kinoforge.providers import runpod  # noqa: F401
 
+    load_env_file()
     return kf_registry.get_provider("runpod")()
 
 

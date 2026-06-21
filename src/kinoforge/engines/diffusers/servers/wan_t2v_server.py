@@ -240,8 +240,11 @@ def _download_one(spec: ArtifactDownloadSpec, dest_dir: Path) -> tuple[str, int]
     download_headers = {"User-Agent": "kinoforge-pod-download/0.1", **spec.headers}
     req = urllib.request.Request(spec.url, headers=download_headers)  # noqa: S310 — vendor-resolved URL
     bytes_written = 0
+    # 600s timeout guards against indefinite hangs on vendor stalls;
+    # urlopen's default is socket._GLOBAL_DEFAULT_TIMEOUT (None) which
+    # blocks forever and burns the smoke's wall-clock + budget.
     try:
-        with urllib.request.urlopen(req) as resp, tmp.open("wb") as out:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=600) as resp, tmp.open("wb") as out:  # noqa: S310
             while True:
                 chunk = resp.read(64 * 1024 * 1024)
                 if not chunk:
