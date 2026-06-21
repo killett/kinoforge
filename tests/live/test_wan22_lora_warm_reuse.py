@@ -56,6 +56,14 @@ TRIGGER = "ArcaneStyle"
 POD_STAT_POLL_INTERVAL_S = 90.0
 MAX_SPEND_USD = 2.00
 
+# RunPod's pod proxy at *.proxy.runpod.net is fronted by Cloudflare which
+# returns HTTP 403 to the default ``Python-urllib/X.Y`` User-Agent. The
+# diffusers engine clears the gate with a plain UA tag — see
+# src/kinoforge/engines/diffusers/__init__.py:207-212. Reuse the same
+# string here so the smoke's direct /lora/* calls don't hit the same
+# Cloudflare wall (caught 2026-06-20 attempt 5).
+_PROXY_UA = "kinoforge-smoke/0.1"
+
 
 def _run_cli(*args: str, log_path: Path, timeout: int = 3900) -> str:
     """Invoke ``pixi run kinoforge <args>``; return captured combined log."""
@@ -131,7 +139,7 @@ def _post_lora_set_stack(
     req = urllib.request.Request(  # noqa: S310 — kinoforge-managed pod URL
         f"{base_url}/lora/set_stack{_auth_suffix()}",
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "User-Agent": _PROXY_UA},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=600) as resp:  # noqa: S310
@@ -141,7 +149,7 @@ def _post_lora_set_stack(
 def _get_lora_inventory(base_url: str) -> dict[str, Any]:
     req = urllib.request.Request(  # noqa: S310 — kinoforge-managed pod URL
         f"{base_url}/lora/inventory{_auth_suffix()}",
-        headers={"Accept": "application/json"},
+        headers={"Accept": "application/json", "User-Agent": _PROXY_UA},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
         return dict(json.loads(resp.read()))
