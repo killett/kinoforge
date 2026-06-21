@@ -1225,82 +1225,225 @@ Future regression of any of them would fail tests on the same line.
 
 ## 9. `2026-06-21 05:11:18` — Diffusers WanPipeline Wan 2.1 T2V-1.3B + single-LoRA matrix on RunPod (RTX A5000 24GB) — t2v
 
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / DiffusersEngine / Wan-AI/Wan2.1-T2V-1.3B-Diffusers` |
+| **Mode** | t2v |
+| **kinoforge version** | branch `main` |
+| **First-success SHA** | `53d5777` (`fix(harness): warmup /health before first /lora/set_stack`) |
+| **Date (local TZ)** | 2026-06-21 05:11:18 -0700 (PDT) |
+| **Layer / phase** | LoRA smoke-test pyramid Tier 3 (plan `docs/superpowers/plans/2026-06-21-lora-smoke-pyramid.md`, Task 11) |
+
 First green Tier-3 fire of the LoRA smoke-test pyramid
 (`docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md`).
 Drives the 4-step single-LoRA swap matrix on Wan 2.1 1.3B via the
 shared `tests/_smoke_harness/` module — proves the warm-reuse
 `POST /lora/set_stack` path against a real-diffusers backend at
-~$0.10 / fire (vs ~$2 / fire for the Tier-4 Wan 2.2 14B counterpart).
+~$0.10 / fire (vs ~$0.86 / fire for the Tier-4 Wan 2.2 14B counterpart
+in entry #10).
 
-### Recipe
+### Exact command
 
-- **Model:** `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` (3GB; single transformer).
-- **Engine / cfg:** Diffusers / `examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`.
-- **LoRAs:** repo-canonical pair for Wan 2.1 1.3B (see README "Default test LoRAs (Wan 2.1 1.3B T2V)"):
-  - `civitai:1479320@1673265` — wan2.1 1.3b static rotation
-    (trigger `sttcrttn`, base "Wan Video 1.3B t2v", 350MB)
-  - `civitai:1595383@1805395` — Pokemon Sprite Animation Video LoRA
-    (no trigger word, base "Wan Video 1.3B t2v", 88MB)
-- **Provider:** RunPod pod, NVIDIA RTX A5000 24GB (~$0.34/hr).
-- **Test:** `tests/smoke/live_wan21/test_lora_swap_matrix.py`,
-  `pixi run smoke-21b-live`.
-- **Wall-clock:** 15 m 48 s.
-- **Spend:** ~$0.10 (pod `2nik609jv7smsj`).
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run smoke-21b-live
+# alias for:
+KINOFORGE_LIVE_TESTS=1 pixi run python -m pytest \
+  tests/smoke/live_wan21/ -v -s
+```
 
-### 4-step matrix outcome
+The smoke driver (`tests/smoke/live_wan21/test_lora_swap_matrix.py`)
+runs one `pixi run kinoforge generate` for the step-1 cold-boot,
+then drives steps 2-4 via `tests/_smoke_harness/matrix.run_matrix`
+which does `POST /lora/set_stack` → `kinoforge generate
+--instance-id <pod>` per step against the same warm pod.
 
-| Step | Target stack | Artifact | Size | SHA-256 |
+### YAML config
+
+`examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`
+(committed at HEAD `53d5777`). Salient knobs:
+
+```yaml
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd: ["python", "-m", "kinoforge.engines.diffusers.servers.wan_t2v_server"]
+    pip:
+      - "torch==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "peft>=0.13"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+models:
+  - ref: "hf:Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+    kind: base
+compute:
+  provider: runpod
+  requirements:
+    min_vram_gb: 24
+    gpu_preference: ["NVIDIA RTX A5000", "NVIDIA RTX 4090", "NVIDIA L4"]
+    max_usd_per_hr: 0.40
+  lifecycle:
+    max_lifetime: 60m
+    boot_timeout: 30m
+    budget: 0.50
+spec:
+  width: 480
+  height: 480
+  num_frames: 33
+  fps: 16
+smoke:
+  lora_a: "civitai:1479320@1673265"   # wan2.1 1.3b static rotation
+  lora_b: "civitai:1595383@1805395"   # Pokemon Sprite Animation Video LoRA
+```
+
+### Prompt
+
+All 4 steps used the same source prompt from
+`examples/configs/prompts/field-realistic.txt` (the canonical
+test prompt per the `standard-test-prompt-for-video-smokes` memory
+— no per-test override, enables cross-model comparison). No
+trigger-word prefix prepended (the Wan 2.1 1.3B LoRAs activate by
+load alone for Pokemon; `sttcrttn` is a motion effect that does not
+require prompt prefix to demonstrate the swap).
+
+### Env vars / secret names (names only — never values)
+
+- `RUNPOD_API_KEY` — pod create/destroy + GraphQL util probe.
+- `RUNPOD_TERMINATE_KEY` — preflight assertion + leak-sweep destroy.
+- `CIVITAI_TOKEN` — Bearer auth on CivitAI `/api/v1/model-versions/{id}`
+  + the actual `/api/download/models/{id}` file fetch from the pod.
+- `HF_TOKEN` — Wan 2.1 1.3B `from_pretrained` (declared as
+  `env_required` by `DiffusersEngine.render_provision`).
+
+### Region
+
+RunPod auto-select (no explicit cloud-region pin in cfg). Green pod
+`2nik609jv7smsj` was an RTX A5000 24GB machine.
+
+### Capability key
+
+`0aaf4ee6e6c0` (derived from `hf:Wan-AI/Wan2.1-T2V-1.3B-Diffusers`
++ DiffusersEngine + t2v mode). Distinct from the Wan 2.2 14B
+cap_key `5dff86b4f44e` (entry #10) so warm-reuse cannot cross the
+two — appropriate isolation since the model dimensions differ.
+
+### LoRA refs (repo-canonical for Wan 2.1 1.3B)
+
+See README "Default test LoRAs (Wan 2.1 1.3B T2V)" — operator-pinned
+2026-06-21:
+
+| Slot | CivitAI page | Ref | Base | Trigger | Size on disk |
+|---|---|---|---|---|---|
+| A | <https://civitai.com/models/1479320?modelVersionId=1673265> | `civitai:1479320@1673265` | Wan Video 1.3B t2v | `sttcrttn` | 350,068,312 B |
+| B | <https://civitai.com/models/1595383?modelVersionId=1805395> | `civitai:1595383@1805395` | Wan Video 1.3B t2v | (none — style activates by load) | 87,593,744 B |
+
+### Output artifact
+
+All 4 mp4s landed in `/workspace/output/`. Each is h264 / yuv420p /
+480×480 / 33 frames / 16 fps / 2.0625 s (ffprobe-verified). All 4
+sha256s distinct → matrix runner's `sha_distinct_required=True`
+post-condition green.
+
+| Step | Target stack | Path | Size | SHA-256 |
 |---|---|---|---|---|
 | 1 (cold-boot, 0 LoRAs) | `[]` | `output/20260621-051118_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4` | 347,293 B | `a6f810c4193d7c045fb9f92c2c9eda3cd51732458949d87d4ca39a7141f90dd7` |
-| 2 (warm-attach [A]) | `[sttcrttn]` | `output/20260621-051515_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4` | 662,031 B | `4024eeec5b072a314d93ffa357bc81957539ea8df0d0c209646688eeeae90280` |
-| 3 (swap to [B]) | `[pokemon]` | `output/20260621-051604_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4` | 215,183 B | `6788e2175f928830b11490a110c309d4977cb65d25e54df386eff2f1eb982d70` |
+| 2 (warm-attach `[A]`) | `[civitai:1479320@1673265]` | `output/20260621-051515_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4` | 662,031 B | `4024eeec5b072a314d93ffa357bc81957539ea8df0d0c209646688eeeae90280` |
+| 3 (swap to `[B]`) | `[civitai:1595383@1805395]` | `output/20260621-051604_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4` | 215,183 B | `6788e2175f928830b11490a110c309d4977cb65d25e54df386eff2f1eb982d70` |
 | 4 (clear all) | `[]` | `output/20260621-051637_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4` | 369,137 B | `bcf9fcd2f5d16ac0b5bf9d4e88319ae8c356ec7b7d4ef4993fb9d5892529b9f6` |
 
-All 4 mp4 sha256s distinct → LoRA swap demonstrably affects output
-(matrix runner's `sha_distinct_required=True` post-condition green).
+### Cost
 
-### What this surfaced (8 fires + fixes)
+Green pod `2nik609jv7smsj` (NVIDIA RTX A5000 24GB, ~$0.34/hr):
+- Cold-boot (pip install + 3 GB HF weights + first `/generate`):
+  ~8 m to step-1 mp4.
+- Steps 2-4 (download 350 MB + 88 MB LoRAs, swap, generate × 3):
+  ~7 m wall-clock + 600 s harness inventory-convergence poll on the
+  step-2 proxy 502.
+- Total wall-clock 15 m 48 s, pod spend ~$0.10 (BudgetTracker
+  `cap_usd=0.30` passed, `lifecycle.budget=0.50` ceiling never
+  approached).
+
+Debug trail across 7 prior Tier-3 fires (#1-#7) that surfaced the
+8 bugs listed in Failure modes below: ~$0.48 cumulative across pods.
+Plus diagnostic pod ($0.03). Total Tier-3 cost to green:
+**~$0.61**.
+
+### Success criterion
+
+`pytest` exit 0 (single test
+`tests/smoke/live_wan21/test_lora_swap_matrix.py::test_lora_swap_matrix_wan21`)
+in 948.23 s (15 m 48 s). The runner enforces, in order:
+- preflight green (env keys + zero active pods + clean tree),
+- cold-boot `kinoforge generate` rc=0 + mp4 published,
+- `_warmup_proxy` /health 200,
+- per-step `set_stack` 200 or 502+inventory-convergence,
+- per-step inventory == target_stack,
+- per-step `kinoforge generate --instance-id <pod>` rc=0 + mp4,
+- adjacent step mp4 sha256s distinct,
+- final `BudgetTracker(cap_usd=0.30, pod_id=...).assert_under_cap()`
+  passes,
+- finally `runpod_lifecycle.destroy_all_active_pods()` returns the
+  pod id (no leak).
+
+### Failure modes encountered before success (8 fires)
 
 The smoke harness landed in 16 plan tasks (`docs/superpowers/plans/2026-06-21-lora-smoke-pyramid.md`)
 but the first 7 Tier-3 fires each exposed a different bug that the
-existing Tier-1 stub didn't catch. Each bug was root-caused, fixed
-with a focused commit, and pinned by a unit test:
+existing Tier-1 stub didn't catch. Each was root-caused, fixed with
+a focused commit, and pinned by a unit test:
 
-- `0f8bec8` — `WAN_MODEL_ID` propagation: `wan_t2v_server.py` defaults
-  to Wan 2.2 14B; cfg.models[0].ref must inject into the server env
-  via `DiffusersEngine.render_provision`. Otherwise a Wan 2.1 1.3B
-  cfg silently OOM-attempts 63GB on a 24GB A5000.
-- `d27429f` — `kinoforge-pod-download/0.1` UA in pod-side
-  `_download_one` (Civitai Cloudflare 403s the default Python UA;
-  same class of fix as commit `53a1e6e` on the orchestrator-side
-  CivitAISource).
-- `7242739` — `peft>=0.13` in Wan cfg pip lists (diffusers'
-  `unload_lora_weights` / `set_adapters` raise `ValueError(PEFT
-  backend required)` without it).
-- `7242739` — harness `http.py` captures HTTPError response body
-  into `exc.response_body` + appends to `exc.msg` so 5xx failures
-  carry the underlying cause instead of "HTTP Error 502".
-- `810f2f4` — wan-server async-blocking fix: `_download_one` + the
-  diffusers ops in `_reload_pipeline_loras` were called inline from
-  `async def set_stack`, blocking the FastAPI event loop. `/health`
-  hung, RunPod proxy 502'd. Wrapped both in `asyncio.to_thread`.
-- `5659f82` — harness 502-recovery: catch proxy 502s on
-  `/lora/set_stack`, poll `/lora/inventory` for up to 600s; if
-  inventory converges, the server-side download eventually succeeded
-  despite the proxy give-up.
-- `5b07afd` — `logging.basicConfig` at wan_t2v_server module init
-  (module `_log.warning` calls were silently dropped because uvicorn
-  wires its own logger but not the module's).
-- `53d5777` — harness `_warmup_proxy()`: GET /health before the
-  first /lora/set_stack POST. The RunPod edge proxy 502s the first
-  POST after a freshly-created pod until a probing GET warms the
-  upstream connection. Diagnostic 2026-06-21 confirmed set_stack
-  succeeds in 8s when preceded by /health.
+- Fire #1-#2 abort ($0.03 + $0.05): cfg used operator-not-yet-vetted
+  LoRA pair; aborted before set_stack work to refit. Closed by
+  user-gate Task 16 supplying the canonical pair.
+- Fire #3 commit `0f8bec8` — `WAN_MODEL_ID` propagation:
+  `wan_t2v_server.py` defaults to Wan 2.2 14B; `cfg.models[0].ref`
+  must inject into the server env via
+  `DiffusersEngine.render_provision`. Otherwise a Wan 2.1 1.3B cfg
+  silently OOM-attempts 63 GB on a 24 GB A5000 → ProvisionTimeout
+  at 900 s.
+- Fire #4 commit `d27429f` — `kinoforge-pod-download/0.1` UA in
+  pod-side `_download_one`. CivitAI is Cloudflare-fronted and 403s
+  the default `Python-urllib/X.Y` UA. Same class as commit `53a1e6e`
+  on orchestrator-side `CivitAISource`.
+- Fire #4 commit `7242739` — `peft>=0.13` in Wan cfg pip lists.
+  diffusers' `LoraBaseMixin.unload_lora_weights` /
+  `set_adapters` raise `ValueError("PEFT backend is required for
+  this method.")` without it.
+- Fire #4 commit `7242739` — harness `tests/_smoke_harness/http.py`
+  reads HTTPError response body into `exc.response_body` AND
+  appends to `exc.msg` so 5xx failures carry the underlying cause
+  instead of opaque "HTTP Error 502: Bad Gateway".
+- Fire #5-#7 commit `810f2f4` — wan-server async-blocking fix:
+  `_download_one` and the diffusers ops in `_reload_pipeline_loras`
+  were called inline from `async def set_stack`, blocking the
+  FastAPI event loop. `/health` hung, RunPod's edge proxy returned
+  "Waiting for service to respond" HTML (HTTP 502) even though
+  uvicorn was alive. Wrapped both in `await asyncio.to_thread(...)`.
+- Fire #6-#7 commit `5659f82` — harness 502-recovery: catch proxy
+  502s on `/lora/set_stack` and poll `/lora/inventory` every 10 s
+  for up to 600 s. The server-side download often completes despite
+  the proxy giving up.
+- Fire #6 commit `5b07afd` — `logging.basicConfig(level=INFO, ...)`
+  at wan_t2v_server module init. Module `_log.warning` calls were
+  silently dropped because uvicorn wires its own logger but not the
+  module's. Without this, no signal from the handler about which
+  ref was downloading or where it failed.
+- Fire #8 commit `53d5777` — harness `_warmup_proxy()`: GET /health
+  before the first `/lora/set_stack` POST. The RunPod edge proxy
+  502s the first POST after a freshly-created pod until a probing
+  GET warms the upstream connection. Diagnostic against a same-pod
+  manual call (after the warmup) confirmed set_stack succeeds in
+  8.1 s.
 
-### Notes for future agents
+### Notes
 
 - The harness fix landscape generalises: the four patterns
-  (kinoforge-smoke UA, ?api_key=, URLError retry, leak-sweep) plus
+  (kinoforge-smoke UA, `?api_key=`, URLError retry, leak-sweep) plus
   the new four (WAN_MODEL_ID inject, asyncio.to_thread,
   502-recovery via inventory poll, /health warmup) are now all in
   `tests/_smoke_harness/`. Future engine smokes (C23 ComfyUI, Wan
@@ -1313,7 +1456,7 @@ with a focused commit, and pinned by a unit test:
   shas in the matrix.
 - `pixi run smoke-21b-live` is the operator entrypoint; the weekly
   GH Actions cron at `.github/workflows/smoke-wan21-weekly.yml`
-  (Mon 04:00 PT) automates it. The leak-sweep cron
+  (Mon 04:00 PT = 12:00 UTC) automates it. The leak-sweep cron
   (`.github/workflows/leak-sweep.yml`, every 30 min) backstops any
   tier-3 pod older than 45 min.
 
@@ -1321,68 +1464,244 @@ with a focused commit, and pinned by a unit test:
 
 ## 10. `2026-06-21 05:37:14` — Diffusers WanPipeline Wan 2.2 T2V-A14B + Arcane LoRA pair warm-reuse matrix on RunPod (A100 80GB) — t2v
 
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / DiffusersEngine / Wan-AI/Wan2.2-T2V-A14B-Diffusers` (with `civitai:2197303@2474081` + `civitai:2197303@2474073` adapters) |
+| **Mode** | t2v |
+| **kinoforge version** | branch `main` |
+| **First-success SHA** | `53d5777` (`fix(harness): warmup /health before first /lora/set_stack`) — same HEAD as entry #9; no commits between Tier-3 pass and Tier-4 fire |
+| **Date (local TZ)** | 2026-06-21 05:37:14 -0700 (PDT) |
+| **Layer / phase** | LoRA smoke-test pyramid Tier 4 (plan `docs/superpowers/plans/2026-06-21-lora-smoke-pyramid.md`, Task 12). Closes the T22 partial-state from entry #8 "See also" of 2026-06-20 23:33:36. |
+
 **T22 ARCANE LoRA-SWAP MATRIX FINALLY GREEN.** Picks up exactly where
-the 2026-06-20 attempt sequence stopped (entry #8 "See also" of
-2026-06-20 23:33:36): the full 4-step warm-reuse matrix on Wan 2.2 14B
-+ the canonical Arcane Style LoRA pair (`civitai:2197303@2474081` high
-+ `civitai:2197303@2474073` low). Same engine + model + provider as
-entry #8, but now exercises the LoRA-swap path that was deferred —
-graduating it from "See also" to its own capability axis.
+the 2026-06-20 attempt sequence stopped: the full 4-step warm-reuse
+matrix on Wan 2.2 14B + the canonical Arcane Style LoRA pair
+(`civitai:2197303@2474081` high + `civitai:2197303@2474073` low).
+Same engine + model + provider as entry #8, but now exercises the
+LoRA-swap path that was deferred — graduating from "See also" to its
+own capability axis.
 
-### Recipe
+### Exact command
 
-- **Model:** `Wan-AI/Wan2.2-T2V-A14B-Diffusers` (MoE, 63GB; two
-  transformers high_noise + low_noise).
-- **Engine / cfg:** Diffusers / `examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml`.
-- **LoRAs:** Arcane Style v1.0 pair (repo canonical for Wan 2.2 14B;
-  see README "Default test LoRA (Wan 2.2 T2V)"):
-  - `civitai:2197303@2474081` — high-noise tensor (~720MB)
-  - `civitai:2197303@2474073` — low-noise tensor (~720MB)
-  - Trigger: `ArcaneStyle` (prepended to step-2/3 prompts).
-- **Provider:** RunPod pod, NVIDIA A100 80GB (~$1.79/hr).
-- **Test:** `tests/smoke/release_wan22/test_lora_swap_matrix.py`,
-  `pixi run smoke-wan22-live`.
-- **Wall-clock:** 34 m 13 s.
-- **Spend:** ~$0.86 (pod `eoisesybsq5wbg`), `BudgetTracker(cap_usd=2.00)` passed.
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run smoke-wan22-live
+# alias for:
+KINOFORGE_LIVE_TESTS=1 pixi run python -m pytest \
+  tests/smoke/release_wan22/ -v -s
+```
 
-### 5-mp4 outcome
+The smoke driver (`tests/smoke/release_wan22/test_lora_swap_matrix.py`)
+runs `_run_cli("generate", ...)` for the step-1 cold-boot, then
+`matrix.run_matrix(...)` for steps 2-3 (and matrix-step-4 set-to-[]),
+then a final `_run_cli("generate", ..., "--instance-id", pod)` with
+the plain (no-ArcaneStyle) prompt to capture a 5th post-swap-empty
+mp4. Manual release gate — no automated cron trigger.
 
-| Step | Target stack | Artifact | Size | SHA-256 |
+### YAML config
+
+`examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml`
+(committed at HEAD `53d5777`). Salient knobs:
+
+```yaml
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "torch==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "peft>=0.13"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    kind: base
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  warm_reuse_auto_attach: true
+  tags:
+    smoke_tier: "kinoforge-smoke-tier-4"
+  requirements:
+    min_vram_gb: 80
+    max_usd_per_hr: 3.00
+    gpu_preference:
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
+    disk_gb: 150
+  lifecycle:
+    max_lifetime: 150m
+    boot_timeout: 60m
+    budget: 5.0
+    heartbeat_interval_s: 30
+    lora_swap_re_probe_after_s: 300
+spec:
+  width: 480
+  height: 480
+  num_frames: 81
+  fps: 16
+```
+
+LoRA refs are hardcoded in the smoke driver
+(`tests/smoke/release_wan22/test_lora_swap_matrix.py`) — not in the
+cfg — because the Wan 2.2 14B pair is the canonical operator default
+documented under README "Default test LoRA (Wan 2.2 T2V)" rather
+than a cfg-specified knob.
+
+### Prompt
+
+- Steps 1 + 4-bare: plain prompt from `examples/configs/prompts/field-realistic.txt`.
+- Steps 2 + 3 + matrix-step-4: same prompt with `ArcaneStyle `
+  prepended (trigger word for the Arcane LoRA pair, per the
+  CivitAI model card).
+
+The plain-vs-styled distinction is what surfaces visible Arcane
+styling in the mid-matrix mp4s vs the bare regen at the end. Same
+canonical prompt across the whole run per the
+`standard-test-prompt-for-video-smokes` memory.
+
+### Env vars / secret names (names only — never values)
+
+- `RUNPOD_API_KEY` — pod create/destroy + GraphQL util probe.
+- `RUNPOD_TERMINATE_KEY` — preflight assertion + leak-sweep destroy.
+- `CIVITAI_TOKEN` — Bearer auth on CivitAI model-version metadata
+  + the actual file fetch from inside the pod for both Arcane
+  tensors.
+- `HF_TOKEN` — Wan 2.2 14B `from_pretrained` (declared as
+  `env_required` by `DiffusersEngine.render_provision`).
+
+### Region
+
+RunPod auto-select (no explicit cloud-region pin in cfg). Green pod
+`eoisesybsq5wbg` was an NVIDIA A100 80GB machine; same physical
+machine class as entry #8's `7o0p1pyvbfpbr8` and the 4-prompt
+warm-reuse `87geau1jcpxr0z`.
+
+### Capability key
+
+`5dff86b4f44e` (derived from `hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers`
++ DiffusersEngine + t2v mode). **Identical to entry #8's cap_key** —
+warm-reuse would attach to entry #8's pod if it were alive at fire
+time. The pod was already destroyed long before this fire so the
+matcher cold-created. The Arcane LoRAs do not factor into the
+capability key (per the LoRA-flexible warm-reuse design: LoRA stack
+is a swap-time delta, not a key factor).
+
+### LoRA refs (repo-canonical Arcane Style v1.0 for Wan 2.2 T2V)
+
+Operator-pinned long before this entry; see README
+"Default test LoRA (Wan 2.2 T2V)" for activation guidance.
+
+| Role | CivitAI page | Ref | Size on disk | Adapter name |
+|---|---|---|---|---|
+| High noise | <https://civitai.com/models/2197303?modelVersionId=2474081> | `civitai:2197303@2474081` | ~720 MB | `lora_0` after warm-attach `[high, low]` |
+| Low noise | <https://civitai.com/models/2197303?modelVersionId=2474073> | `civitai:2197303@2474073` | ~720 MB | `lora_1` after warm-attach `[high, low]`; `lora_0` after swap to `[low]` only |
+
+Trigger word: `ArcaneStyle` — prepended to the prompt where the
+LoRA's style should activate. Recommended strength per the CivitAI
+page: 1.0–1.2 (the smoke uses the diffusers default of 1.0;
+operator-facing weight overrides are not exercised here).
+
+### Output artifact
+
+All 5 mp4s landed in `/workspace/output/`. Each is h264 / yuv420p /
+480×480 / 81 frames / 16 fps / 5.0625 s (ffprobe-verified). All 5
+sha256s distinct → LoRA-swap demonstrably changes output;
+matrix runner's `sha_distinct_required=True` post-condition green.
+`swap_rejected` is `null` for every transition (no VRAM-OOM rollback
+needed at 80 GB).
+
+| Step | Target stack | Path | Size | SHA-256 |
 |---|---|---|---|---|
 | 1 (cold-boot, 0 LoRAs) | `[]` | `output/20260621-053714_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` | 1,299,080 B | `2b8eef0644ee49f31463741088790ab9e81fc7a32346b097a32afe64882fb29f` |
-| 2 (warm-attach [high+low]) | `[high, low]` | `output/20260621-054108_diffusers_Wan2.2-T2V-A14B-Diffuser_ArcaneStyle-Photorea.mp4` | 1,173,069 B | `9774c9c0ab03aeb396f706bd361de8138b71b9d3c50ea123700558c8904736c3` |
-| 3 (swap to [low] only) | `[low]` | `output/20260621-054450_diffusers_Wan2.2-T2V-A14B-Diffuser_ArcaneStyle-Photorea.mp4` | 1,628,999 B | `13a351bc0d358fef2cd6e05f2ec88bdabb5749923af6f73e55c2d2fb9535b552` |
-| 4-matrix (clear via set_stack []) | `[]` | `output/20260621-054827_diffusers_Wan2.2-T2V-A14B-Diffuser_ArcaneStyle-Photorea.mp4` | 1,851,359 B | `3faec26d4a1b27f16fc09074703a94a8b645a62abc424a573963880a7d1526fa` |
-| 4-bare (`_run_cli` plain regen post-swap) | `[]` | `output/20260621-055203_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` | 1,864,878 B | `6875284cb464ed87943ed57a530db1b28236768981e9327d9de196ab3f0c8581` |
+| 2 (warm-attach `[high, low]`) | `[civitai:2197303@2474081, civitai:2197303@2474073]` | `output/20260621-054108_diffusers_Wan2.2-T2V-A14B-Diffuser_ArcaneStyle-Photorea.mp4` | 1,173,069 B | `9774c9c0ab03aeb396f706bd361de8138b71b9d3c50ea123700558c8904736c3` |
+| 3 (swap to `[low]` only) | `[civitai:2197303@2474073]` | `output/20260621-054450_diffusers_Wan2.2-T2V-A14B-Diffuser_ArcaneStyle-Photorea.mp4` | 1,628,999 B | `13a351bc0d358fef2cd6e05f2ec88bdabb5749923af6f73e55c2d2fb9535b552` |
+| 4-matrix (clear via `set_stack []`) | `[]` | `output/20260621-054827_diffusers_Wan2.2-T2V-A14B-Diffuser_ArcaneStyle-Photorea.mp4` | 1,851,359 B | `3faec26d4a1b27f16fc09074703a94a8b645a62abc424a573963880a7d1526fa` |
+| 4-bare (`_run_cli` plain regen, post-swap empty) | `[]` | `output/20260621-055203_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` | 1,864,878 B | `6875284cb464ed87943ed57a530db1b28236768981e9327d9de196ab3f0c8581` |
 
-All 5 mp4 shas distinct → LoRA-swap demonstrably changes output.
-Step-2 + step-3 use the `ArcaneStyle` trigger; step-4-bare uses the
-plain prompt to confirm the empty target_refs swap actually cleared
-adapters server-side. `swap_rejected` is `null` for every transition
-(no VRAM-OOM rollback needed at 80 GB).
+### Cost
 
-### Why this entry exists separately from #8
+Green pod `eoisesybsq5wbg` (NVIDIA A100 80GB, ~$1.79/hr):
+- Cold-boot (pip install + 63 GB Wan 2.2 14B HF weights + first
+  `/generate`): ~20 m to step-1 mp4 (large MoE weight download is
+  the dominant term).
+- Steps 2-4 + 4-bare regen (download 2× 720 MB Arcane tensors, swap
+  to [low], clear, regen): ~14 m wall-clock.
+- Total wall-clock 34 m 13 s, pod spend ~$0.86. `BudgetTracker(
+  cap_usd=2.00)` passed; `lifecycle.budget=5.0` never approached;
+  `max_lifetime=150m` never approached.
 
-Entry #8 records the Wan 2.2 14B Diffusers cold-boot path that was
-green 2026-06-20 but only generated PLAIN (no-LoRA) mp4s — the 2026-06-20
-T22 attempts hit a different smoke-harness bug on every fire and never
-executed steps 2-4. The 2026-06-21 smoke-pyramid workstream landed 8
-focused commits (`0f8bec8`, `d27429f`, `7242739`, `810f2f4`, `5659f82`,
-`5b07afd`, `53d5777`, plus `53a1e6e` on the source side) that closed
-each of those gaps. The capability axis introduced HERE is:
-- The orchestrator-driven `POST /lora/set_stack` warm-reuse path
-  (not just cold-boot generates), exercised end-to-end against a
-  real-diffusers Wan 2.2 MoE on real Cloudflare-fronted RunPod
-  proxy, with the Arcane high+low pair.
+No debug trail at Tier-4 — every bug surfaced at Tier-3 (entry #9)
+where the per-fire cost is ~$0.10. **Total Tier-4 cost to green:
+~$0.86 first fire.** This is the whole point of the smoke pyramid
+(`docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md`):
+cheap-tier debugging followed by a clean expensive-tier release
+gate.
 
-### Notes for future agents
+### Success criterion
+
+`pytest` exit 0 (single test
+`tests/smoke/release_wan22/test_lora_swap_matrix.py::test_wan22_lora_warm_reuse_4_step_matrix`)
+in 2053.38 s (34 m 13 s). The driver enforces, in order:
+- preflight green,
+- step-1 `kinoforge generate` rc=0 + mp4 published + pod_id captured
+  via `_extract_pod_id`,
+- `_warmup_proxy` /health 200,
+- per-matrix-step `set_stack` 200 or 502+inventory-convergence,
+- per-matrix-step inventory == target,
+- per-matrix-step `kinoforge generate --instance-id <pod>` rc=0 + mp4,
+- adjacent step mp4 sha256s distinct,
+- step-4-bare `_run_cli` rc=0 + 5th mp4 produced,
+- final `BudgetTracker(cap_usd=2.00, pod_id=...).assert_under_cap()`
+  passes,
+- finally `runpod_lifecycle.destroy_all_active_pods()` returns the
+  pod id (no leak).
+
+### Failure modes encountered before success
+
+**None at Tier-4.** Every bug that could have surfaced here was
+caught + fixed at the $0.10/fire Tier-3 (entry #9). The 8 commits
+that closed the gaps:
+- `53a1e6e` — civitai-source UA (kinoforge-side resolve path).
+- `0f8bec8` — `WAN_MODEL_ID` propagation from cfg.models[0].ref.
+- `d27429f` — `kinoforge-pod-download/0.1` UA in pod-side
+  `_download_one`.
+- `7242739` — `peft>=0.13` in cfg pip list; harness HTTPError body
+  capture.
+- `810f2f4` — `asyncio.to_thread` wrapping of `_download_one` +
+  `_reload_pipeline_loras` (critical for 720 MB Arcane tensors —
+  blocking the event loop on a 720 MB sync download would have
+  triggered the "Waiting for service to respond" path immediately
+  here).
+- `5659f82` — harness 502-recovery via `/lora/inventory` polling.
+- `5b07afd` — `logging.basicConfig` at wan_t2v_server module init.
+- `53d5777` — harness `_warmup_proxy()` GET /health before first
+  `set_stack` POST.
+
+See entry #9 "Failure modes" for the per-bug detail of how each was
+surfaced. T22's 2026-06-20 cumulative spend of $2.15 across 5 attempts
+(documented in entry #8 "See also") was driven by these same bugs
+hitting at Wan 2.2 14B prices — the pyramid investment paid for itself
+on this fire.
+
+### Notes
 
 - The full 8-commit fix sequence is documented inline in entry #9
   (the Tier-3 Wan 2.1 1.3B counterpart, which surfaced + fixed every
   bug at $0.10/fire before any of them touched A100 prices).
 - The wan_t2v_server's `async def set_stack` MUST keep wrapping
   `_download_one` and `_reload_pipeline_loras` in `asyncio.to_thread`.
-  Without that, the event loop blocks while a 720MB Arcane tensor
+  Without that, the event loop blocks while a 720 MB Arcane tensor
   downloads, /health stops responding, and RunPod's edge proxy
   returns its "Waiting for service to respond" page. The Tier-1
   CPU smoke doesn't catch this because the stub pipe is
@@ -1390,10 +1709,10 @@ each of those gaps. The capability axis introduced HERE is:
 - The harness's `_warmup_proxy` is necessary even on a warm pod —
   the FIRST POST against a freshly-created pod 502s consistently
   until a probing GET completes. Don't remove it.
-- 720MB tensor downloads from Civitai (per Wan 2.2 LoRA half) push
+- 720 MB tensor downloads from Civitai (per Wan 2.2 LoRA half) push
   RunPod's edge proxy timeout. The 502-recovery via inventory poll
   is what carries the harness across when the proxy gives up — the
-  server-side `_download_one` keeps streaming for up to its 600s
+  server-side `_download_one` keeps streaming for up to its 600 s
   internal urlopen timeout and the harness eventually sees the
   inventory converge.
 - The release-gate workflow is `pixi run smoke-wan22-live` (manual;
