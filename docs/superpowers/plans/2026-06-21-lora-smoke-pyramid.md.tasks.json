@@ -35,7 +35,7 @@
       "id": 10,
       "planTaskNumber": 5,
       "subject": "P5: _smoke_harness/matrix.py — engine-agnostic 4-step runner",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6, 7]
     },
     {
