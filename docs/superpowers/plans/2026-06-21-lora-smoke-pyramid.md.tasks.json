@@ -56,7 +56,7 @@
       "id": 13,
       "planTaskNumber": 8,
       "subject": "P8: Tier-1 uvicorn subprocess fixture",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11, 12]
     },
     {
