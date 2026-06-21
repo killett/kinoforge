@@ -28,7 +28,7 @@
       "id": 9,
       "planTaskNumber": 4,
       "subject": "P4: _smoke_harness/civitai.py + budget.py — small helpers",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6]
     },
     {
