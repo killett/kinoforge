@@ -70,10 +70,17 @@ spec:
   num_frames: 33
   fps: 16
 
-# OPERATOR INPUT REQUIRED — Task 16 / spec open item #2:
-# Supply two Wan 2.1 1.3B-compatible single-LoRA refs (Civitai or HF)
-# with trigger word + strength recorded in README per
-# fetch-lora-metadata-not-just-ids memory.
+# Two Wan 2.1 1.3B-compatible single LoRAs picked for cross-style
+# matrix coverage (mp4 shas guaranteed to differ across steps).
+# Metadata per fetch-lora-metadata-not-just-ids memory:
+#
+# - LoRA A: "Wan-LoRA-Arcane-Jinx-v1" — Arcane character style.
+#     base: Wan Video (1.3B), triggers: csetiarcane, Nfj1nx, blue hair,
+#     recommended strength: 1.0 (default; no explicit override in
+#     model description).
+# - LoRA B: "Ghibli Wan 1.3B" — Studio Ghibli style.
+#     base: Wan Video (1.3B), trigger: "Studio Ghibli Style.",
+#     recommended strength: 1.0 (default).
 smoke:
-  lora_a: "<TODO-operator-supplied — Wan 2.1 1.3B-compatible single LoRA>"
-  lora_b: "<TODO-operator-supplied — Wan 2.1 1.3B-compatible single LoRA>"
+  lora_a: "civitai:1332383@1679582"
+  lora_b: "civitai:1474964@1668351"
