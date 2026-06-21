@@ -1375,6 +1375,113 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+def _http_get_json(url: str) -> dict[str, Any]:
+    """GET ``url`` and return the parsed JSON body.
+
+    Module-level seam for tests to monkey-patch — keeps the network call
+    out of the unit-test pass path without dragging an httpx dependency
+    into the CLI handler signature.
+
+    Args:
+        url: The URL to fetch.
+
+    Returns:
+        Parsed JSON dict on HTTP 2xx.
+
+    Raises:
+        ConnectionError / urllib.error.URLError: Transport-level failure.
+        json.JSONDecodeError: Response body not valid JSON.
+    """
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(  # noqa: S310 — operator-supplied pod URL
+        url, headers={"Accept": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — operator-supplied
+        raw = resp.read()
+    return dict(json.loads(raw))
+
+
+def _cmd_pod_lora_ls(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``kinoforge pod lora ls <pod_id>``.
+
+    Queries the pod's ``GET /lora/inventory`` endpoint directly and
+    renders the same section as ``kinoforge status``. Ledger is consulted
+    only to resolve the pod's provider; the inventory snapshot is taken
+    live from the pod (never from ledger cache) so the operator sees the
+    current resident set even under ``--ephemeral``.
+
+    Args:
+        args: Parsed CLI arguments; uses ``args.pod_id``.
+        ctx: Per-invocation session context.
+
+    Returns:
+        Exit code: 0 on success, 1 when the pod is absent from the
+        ledger, 2 on pod unreachable / transport error.
+    """
+    from kinoforge.core import registry
+
+    ledger = ctx.ledger()
+    entry = next((e for e in ledger.entries() if e.get("id") == args.pod_id), None)
+    if entry is None:
+        print(f"pod {args.pod_id!r} not found in ledger", file=sys.stderr)
+        return 1
+
+    provider_name = str(entry.get("provider", "local"))
+    try:
+        provider = registry.get_provider(provider_name)()
+    except UnknownAdapter:
+        print(f"pod lora ls: unknown provider {provider_name!r}", file=sys.stderr)
+        return 2
+
+    try:
+        instance = provider.get_instance(args.pod_id)
+    except Exception as exc:  # noqa: BLE001 — surface as unreachable
+        print(
+            f"pod lora ls: pod {args.pod_id} unreachable "
+            f"({exc.__class__.__name__}: {exc})",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        endpoints_map = provider.endpoints(instance)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"pod lora ls: endpoint resolution failed "
+            f"({exc.__class__.__name__}: {exc})",
+            file=sys.stderr,
+        )
+        return 2
+
+    base_url = endpoints_map.get("8000") or next(iter(endpoints_map.values()), None)
+    if base_url is None:
+        print(
+            f"pod lora ls: no endpoint URL for pod {args.pod_id}",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        payload = _http_get_json(f"{base_url.rstrip('/')}/lora/inventory")
+    except Exception as exc:  # noqa: BLE001 — clean exit code on any I/O error
+        print(
+            f"pod lora ls: pod unreachable ({exc.__class__.__name__}: {exc})",
+            file=sys.stderr,
+        )
+        return 2
+
+    section = _render_lora_inventory_section(
+        payload.get("inventory"), free_bytes=payload.get("free_bytes")
+    )
+    if section is None:
+        print(f"pod {args.pod_id}: no LoRAs loaded")
+    else:
+        print(section)
+    return 0
+
+
 def _cmd_stop(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``stop`` subcommand.
 

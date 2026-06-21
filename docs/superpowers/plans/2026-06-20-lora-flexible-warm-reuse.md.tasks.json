@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
   "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
-  "lastUpdated": "2026-06-20T20:49:30-07:00",
+  "lastUpdated": "2026-06-20T21:14:24-07:00",
   "tasks": [
     {
       "id": 10,
@@ -166,11 +166,12 @@
       "id": 27,
       "planTaskNumber": 18,
       "subject": "Task 18: kinoforge pod lora ls subcommand",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         16,
         25
-      ]
+      ],
+      "lastUpdated": "2026-06-20T21:14:24-07:00"
     },
     {
       "id": 28,
