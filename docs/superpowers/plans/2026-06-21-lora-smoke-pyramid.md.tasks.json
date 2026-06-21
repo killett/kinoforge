@@ -77,7 +77,7 @@
       "id": 16,
       "planTaskNumber": 11,
       "subject": "P11: Tier-3 live smoke driver (RED scaffold)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7, 8, 9, 10, 15]
     },
     {
