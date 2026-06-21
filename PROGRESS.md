@@ -57,6 +57,20 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 - **C23 still open.** Diffusers engine is wired; ComfyUI's
   graph-tagged LoRA loading still needs the `WanVideoLoraSelect →
   WanVideoSampler.lora` graph variants per the original C23 scope.
+- **2026-06-21 follow-up: lora-smoke-pyramid SHIPPED.** Replaces the
+  single expensive Wan 2.2 14B live tier with a 3-tier + watchdog
+  pyramid (spec `docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md`
+  + plan `docs/superpowers/plans/2026-06-21-lora-smoke-pyramid.md`).
+  Tier 1 (free local CPU on every PR via `pixi run smoke-local`) +
+  Tier 3 (weekly Wan 2.1 1.3B cron, ~$0.20) + Tier 4 (manual Wan 2.2
+  14B release-gate, ~$1-2) all share `tests/_smoke_harness/` so the
+  4 kinoforge-internal HTTP patterns that ate 2026-06-20's $2.15 are
+  inherited by import, not by rediscovery. T22 partial-state is
+  absorbed into Tier 4's release-gate scaffold (`tests/smoke/release_wan22/`).
+  Layer-3 watchdog (`tools/smoke_leak_sweep.py` + every-30-min
+  `.github/workflows/leak-sweep.yml`) caps tier-3 pods at 45 min,
+  tier-4 at 90 min, posts a GitHub issue per reap. Operator gate
+  Task 16 (Wan 2.1 LoRA refs + GH secrets) outstanding.
 
 ---
 
