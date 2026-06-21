@@ -14,7 +14,7 @@
       "id": 11,
       "planTaskNumber": 2,
       "subject": "Task 2: PodLockRegistry — per-pod threading.Lock serialization",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": []
     },
     {
