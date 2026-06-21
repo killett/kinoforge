@@ -90,14 +90,24 @@ def _extract_pod_id(log_text: str) -> str:
 def _resolve_pod_proxy_url(pod_id: str) -> str:
     """Return the RunPod proxy URL for port 8000 on ``pod_id``.
 
-    RunPod's pod proxy follows a stable host pattern
-    ``https://{pod_id}-{port}.proxy.runpod.net``; constructing the URL
-    directly avoids a stale-tag round-trip that returned an empty port
-    map immediately after a fresh ``kinoforge generate`` cycle (the
-    provider's ``get_instance`` doesn't re-hydrate ``tags["ports"]``
-    after the orchestrator's post-job ledger refresh).
+    RunPod's pod proxy follows ``https://{pod_id}-{port}.proxy.runpod.net``
+    and requires ``?api_key=<RUNPOD_API_KEY>`` on every request — the
+    proxy returns HTTP 403 to unauthenticated calls even for proxies
+    pointed at pods the operator owns (observed 2026-06-20 attempt 4
+    on /lora/inventory). The api_key is appended at the call sites,
+    not here, so the bare host URL can still be logged without
+    leaking the credential into the smoke output.
     """
     return f"https://{pod_id}-8000.proxy.runpod.net"
+
+
+def _auth_suffix() -> str:
+    """``?api_key=<RUNPOD_API_KEY>`` suffix for proxy URLs."""
+    from urllib.parse import quote
+
+    key = os.environ.get("RUNPOD_API_KEY", "")
+    assert key, "RUNPOD_API_KEY must be set for live RunPod proxy calls"
+    return f"?api_key={quote(key, safe='')}"
 
 
 def _civitai_artifact(ref: str) -> Any:
@@ -119,7 +129,7 @@ def _post_lora_set_stack(
         {"target_refs": target_refs, "download_specs": download_specs}
     ).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310 — kinoforge-managed pod URL
-        f"{base_url}/lora/set_stack",
+        f"{base_url}/lora/set_stack{_auth_suffix()}",
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -130,7 +140,8 @@ def _post_lora_set_stack(
 
 def _get_lora_inventory(base_url: str) -> dict[str, Any]:
     req = urllib.request.Request(  # noqa: S310 — kinoforge-managed pod URL
-        f"{base_url}/lora/inventory", headers={"Accept": "application/json"}
+        f"{base_url}/lora/inventory{_auth_suffix()}",
+        headers={"Accept": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
         return dict(json.loads(resp.read()))
