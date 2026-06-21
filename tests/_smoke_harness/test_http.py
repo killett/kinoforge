@@ -157,6 +157,40 @@ def test_http_error_propagates_immediately(
     assert len(calls) == 1
 
 
+def test_http_error_message_includes_response_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: raw urllib.error.HTTPError discards response body on str(e),
+    so a 502 from /lora/set_stack surfaces as opaque 'HTTP Error 502:
+    Bad Gateway' with the actual cause (e.g. 'lora_download_failed:
+    Cloudflare 403') buried in an unreadable fp. The harness wrapper
+    must read+attach the body so post-mortem doesn't require a live pod.
+    """
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    import io as _io
+
+    err_body = b'{"error":"lora_download_failed","underlying":"403 Forbidden"}'
+
+    def _http_502(req: Any, timeout: int | None = None) -> _FakeResponse:  # noqa: ARG001
+        raise urllib.error.HTTPError(
+            req.full_url,
+            502,
+            "Bad Gateway",
+            email.message.Message(),
+            _io.BytesIO(err_body),
+        )
+
+    monkeypatch.setattr(http, "_sleep", lambda s: None)
+    with patch("urllib.request.urlopen", _http_502):
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            http.get_json("http://x/y", timeout=5)
+    # Harness must expose the body somewhere on the exception so the
+    # error message + traceback carry actionable signal.
+    err = exc_info.value
+    body_str = getattr(err, "response_body", "") or str(err)
+    assert "lora_download_failed" in body_str
+
+
 def test_post_json_serialises_body_and_returns_dict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

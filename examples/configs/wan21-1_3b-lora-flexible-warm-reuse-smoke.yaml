@@ -23,6 +23,7 @@ engine:
       - "diffusers>=0.32"
       - "transformers>=4.45"
       - "accelerate>=1.0"
+      - "peft>=0.13"      # required by diffusers' LoRA loaders (set_adapters, unload_lora_weights)
       - "fastapi>=0.115"
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
