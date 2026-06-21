@@ -41,6 +41,7 @@ def test_run_matrix_happy_path_inventory_only(
     """Bug: runner forgets /lora/set_stack response → can't catch a pod
     that ack'd set_stack but didn't actually load."""
     set_stack_calls: list[dict[str, Any]] = []
+    health_calls: list[str] = []
 
     def _post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
         set_stack_calls.append(body)
@@ -50,6 +51,9 @@ def test_run_matrix_happy_path_inventory_only(
         }
 
     def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        if "/health" in url:
+            health_calls.append(url)
+            return {"ready": True, "model": "stub"}
         return {"inventory": [], "free_bytes": 9}
 
     monkeypatch.setattr(f"{_HTTP}.post_json", _post)
@@ -75,6 +79,8 @@ def test_run_matrix_happy_path_inventory_only(
     ]
     assert list(set_stack_calls[0]["download_specs"].keys()) == ["civitai:A@1"]
     assert list(set_stack_calls[1]["download_specs"].keys()) == ["civitai:B@2"]
+    # Warmup must have probed /health at least once before any set_stack.
+    assert len(health_calls) >= 1
 
 
 def test_run_matrix_raises_on_inventory_mismatch(
@@ -172,7 +178,11 @@ def test_run_matrix_propagates_non_502_http_errors(
             url, 403, "Forbidden", email.message.Message(), None
         )
 
+    def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        return {"ready": True}  # satisfies the warmup /health probe
+
     monkeypatch.setattr(f"{_HTTP}.post_json", _post)
+    monkeypatch.setattr(f"{_HTTP}.get_json", _get)
     with pytest.raises(urllib.error.HTTPError) as exc:
         matrix.run_matrix(
             cfg_path=Path("/x"),
@@ -207,7 +217,11 @@ def test_run_matrix_distinct_sha_assertion(
     def _generate(cfg: Path, pod_id: str, prompt: str) -> Path:  # noqa: ARG001
         return fixed_mp4
 
+    def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        return {"ready": True}
+
     monkeypatch.setattr(f"{_HTTP}.post_json", _post)
+    monkeypatch.setattr(f"{_HTTP}.get_json", _get)
     monkeypatch.setattr(matrix, "_run_generate", _generate)
     with pytest.raises(AssertionError, match="sha"):
         matrix.run_matrix(
