@@ -91,7 +91,7 @@
       "id": 22,
       "planTaskNumber": 13,
       "subject": "Task 13: warm_reuse/redaction.py — _register_observed_lora_refs helper",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": []
     },
     {
