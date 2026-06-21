@@ -70,17 +70,20 @@ spec:
   num_frames: 33
   fps: 16
 
-# Two Wan 2.1 1.3B-compatible single LoRAs picked for cross-style
-# matrix coverage (mp4 shas guaranteed to differ across steps).
-# Metadata per fetch-lora-metadata-not-just-ids memory:
+# Official Wan 2.1 1.3B T2V test LoRA pair. Operator-specified
+# (2026-06-21). Both ship on the "Wan Video 1.3B t2v" base so 1.3B
+# compatibility is explicit, not inferred. Picked for cross-style
+# mp4-sha distinctness across the 4-step swap matrix.
+# Full metadata + activation guidance in README.md
+# "Default test LoRAs (Wan 2.1 1.3B T2V)".
 #
-# - LoRA A: "Wan-LoRA-Arcane-Jinx-v1" — Arcane character style.
-#     base: Wan Video (1.3B), triggers: csetiarcane, Nfj1nx, blue hair,
-#     recommended strength: 1.0 (default; no explicit override in
-#     model description).
-# - LoRA B: "Ghibli Wan 1.3B" — Studio Ghibli style.
-#     base: Wan Video (1.3B), trigger: "Studio Ghibli Style.",
-#     recommended strength: 1.0 (default).
+# - lora_a: wan2.1 1.3b static rotation (camera-rotation motion)
+#     trigger: "sttcrttn", strength: 1.0
+#     https://civitai.com/models/1479320?modelVersionId=1673265
+# - lora_b: Pokemon Sprite Animation Video LoRA (Gen-5 sprite art)
+#     no trigger word (activates by load); recommended 768x768
+#     output; strength: 1.0
+#     https://civitai.com/models/1595383?modelVersionId=1805395
 smoke:
-  lora_a: "civitai:1332383@1679582"
-  lora_b: "civitai:1474964@1668351"
+  lora_a: "civitai:1479320@1673265"
+  lora_b: "civitai:1595383@1805395"
