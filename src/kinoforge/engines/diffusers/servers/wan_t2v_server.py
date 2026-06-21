@@ -316,12 +316,18 @@ async def _evict_one(ref: str) -> None:
     _inventory.pop(ref, None)
 
 
-async def _reload_pipeline_loras(target_refs: list[str]) -> None:
+def _reload_pipeline_loras(target_refs: list[str]) -> None:
     """Replace the active pipeline adapter stack with ``target_refs`` in order.
 
     Calls ``unload_lora_weights()`` first to clear any active adapters,
     then re-loads each target ref as ``lora_{i}``, then ``set_adapters``
     with the positional list. Empty ``target_refs`` → unload only.
+
+    Synchronous: callers must wrap in ``asyncio.to_thread(...)`` when
+    invoked from an async FastAPI handler. ``pipe.load_lora_weights``
+    blocks on disk IO + CUDA work and would otherwise stall the event
+    loop, causing /health probes to time out and the RunPod edge proxy
+    to return "Waiting for service to respond" (HTTP 502).
     """
     pipe.unload_lora_weights()
     if not target_refs:
@@ -615,7 +621,16 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
         for ref in to_download_refs:
             spec = req.download_specs[ref]
             try:
-                path, actual_bytes = _download_one(spec, LORAS_DIR)
+                # asyncio.to_thread: _download_one is sync urllib +
+                # blocking file IO. Running it inline blocks the FastAPI
+                # event loop for the duration of the download, causing
+                # /health requests to time out and RunPod's edge proxy
+                # to return "Waiting for service to respond" (HTTP 502)
+                # even though uvicorn is alive. Offloading to a thread
+                # keeps the event loop responsive.
+                path, actual_bytes = await asyncio.to_thread(
+                    _download_one, spec, LORAS_DIR
+                )
             except OSError as e:
                 if e.errno == 28:  # ENOSPC
                     raise HTTPException(
@@ -670,7 +685,7 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             download_completed.append(ref)
 
         try:
-            await _reload_pipeline_loras(req.target_refs)
+            await asyncio.to_thread(_reload_pipeline_loras, req.target_refs)
         except RuntimeError as e:
             msg = str(e).lower()
             if "out of memory" in msg or "oom" in msg:
@@ -683,7 +698,7 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
                             (LORAS_DIR / dropped_spec.filename).unlink(missing_ok=True)
                         except OSError:
                             pass
-                await _reload_pipeline_loras(previous_refs)
+                await asyncio.to_thread(_reload_pipeline_loras, previous_refs)
                 return SetStackResponse(
                     inventory=_inventory_snapshot(),
                     free_bytes=_disk_free_bytes(LORAS_DIR),
