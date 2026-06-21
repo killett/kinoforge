@@ -304,6 +304,66 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+class _NullPodLockRegistry:
+    """Stub registry for ``--dry-run-swap``: never holds state.
+
+    ``acquire`` always returns True so the matcher reports the cheapest
+    eligible candidate; ``__contains__`` always False so no pod is
+    treated as busy. ``release`` is a no-op.
+    """
+
+    def acquire(
+        self, pod_id: str, *, blocking: bool = False, timeout: float | None = None
+    ) -> bool:
+        return True
+
+    def release(self, pod_id: str) -> None:
+        return None
+
+    def __contains__(self, pod_id: str) -> bool:
+        return False
+
+
+def _dry_run_swap_preview(ctx: SessionContext) -> int:
+    """Render the matcher decision for the active cfg without side effects.
+
+    Imports the matcher lazily so the dry-run path stays fast and
+    independent of provider/orchestrator init. No HTTP, no pod lock,
+    no validate_for_generate — the early return upstream of those
+    side-effects is part of the contract (see
+    tests/cli/test_dry_run_swap.py).
+
+    Returns:
+        Always 0.
+    """
+    from kinoforge.core.warm_reuse.matcher import find_warm_attach_candidate
+
+    cfg = ctx.cfg
+    ledger = ctx.ledger()
+    lc = cfg.lifecycle() if cfg is not None else None
+    threshold = float(
+        getattr(lc, "lora_swap_re_probe_after_s", 300.0) if lc is not None else 300.0
+    )
+
+    match = find_warm_attach_candidate(
+        cfg,
+        ledger,
+        pod_lock_registry=_NullPodLockRegistry(),
+        re_probe=None,
+        re_probe_threshold_s=threshold,
+        download_specs={},
+    )
+    if match is None:
+        print("matcher: no warm candidate, would cold-boot")
+        return 0
+    plan = match.swap_plan
+    print(f"matcher: selected pod {match.pod_id}")
+    print(f"  evict:    {plan.evict}")
+    print(f"  download: {plan.download}")
+    print(f"  cost:     {plan.estimated_cost_seconds:.1f}s")
+    return 0
+
+
 def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``generate`` subcommand.
 
@@ -317,6 +377,9 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     if ctx.cfg is None:
         raise RuntimeError("_cmd_generate requires --config")
     cfg = ctx.cfg
+
+    if getattr(args, "dry_run_swap", False):
+        return _dry_run_swap_preview(ctx)
 
     # Pre-flight gate: run NETWORK + PREFLIGHT (STATIC already ran via
     # load_config). --skip-preflight opts out for offline / pre-doctored
@@ -475,6 +538,9 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     if ctx.cfg is None:
         raise RuntimeError("_cmd_batch requires --config")
     cfg = ctx.cfg
+
+    if getattr(args, "dry_run_swap", False):
+        return _dry_run_swap_preview(ctx)
 
     if args.env_file is not None:
         from kinoforge.core.dotenv_loader import load_env_file
