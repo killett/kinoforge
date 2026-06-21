@@ -36,6 +36,7 @@ from kinoforge.core.warm_reuse.matcher import (
     WarmAttachMatch,
     find_warm_attach_candidate,
 )
+from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
 
 
 def try_warm_attach_with_swap(
@@ -108,6 +109,7 @@ def try_warm_attach_with_swap(
                 download_specs={ref: specs[ref] for ref in plan.download},
             )
             inventory = resp.get("inventory", []) if isinstance(resp, dict) else []
+            _register_observed_lora_refs({"inventory": inventory})
             inventory_dicts = [_entry_to_dict(e) for e in inventory]
             free_bytes = resp.get("free_bytes") if isinstance(resp, dict) else None
             ledger.touch(
