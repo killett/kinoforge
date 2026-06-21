@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
   "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
-  "lastUpdated": "2026-06-20T17:39:40-07:00",
+  "lastUpdated": "2026-06-20T20:31:30-07:00",
   "tasks": [
     {
       "id": 10,
@@ -65,10 +65,11 @@
       "id": 17,
       "planTaskNumber": 8,
       "subject": "Task 8: Pod-side /lora/set_stack failure paths",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         15
-      ]
+      ],
+      "lastUpdated": "2026-06-20T20:31:30-07:00"
     },
     {
       "id": 18,

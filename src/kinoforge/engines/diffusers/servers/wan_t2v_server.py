@@ -544,45 +544,85 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
     async with _swap_lock:
         target_set = set(req.target_refs)
         current_set = set(_inventory.keys())
-        # Declarative semantic: anything in current but not in target must
-        # be evicted regardless of disk pressure. The matcher is what decides
-        # which currents to preserve (by including them in target_refs).
         mandatory_evict = current_set - target_set
-        to_download = target_set - current_set
+        to_download_refs = [r for r in req.target_refs if r not in current_set]
 
         initial_free = _disk_free_bytes(LORAS_DIR)
         target_dl_bytes = sum(
-            (req.download_specs[r].size_hint or 0) for r in to_download
+            (req.download_specs[r].size_hint or 0) for r in to_download_refs
         )
-        # Bytes freed by mandatory eviction count toward the post-evict free
-        # budget so we don't double-evict; computed in-memory to avoid the
-        # raciness of stat'ing the filesystem mid-unlink.
         mandatory_freed = sum(_inventory[r]["size_bytes"] for r in mandatory_evict)
+        # Snapshot pre-swap state for VRAM-OOM rollback.
+        previous_refs = list(_inventory.keys())
+
         for ref in mandatory_evict:
             await _evict_one(ref)
 
         post_mandatory_free = initial_free + mandatory_freed
+        evict_completed: list[str] = list(mandatory_evict)
         if target_dl_bytes > post_mandatory_free:
-            # Mandatory eviction was not enough; LRU-evict additional held
-            # refs (which can only be entries that ARE in the target stack,
-            # so this path means the target itself does not fit on disk —
-            # raise so the matcher's math gets exposed).
             picked = _pick_lru_evict(
                 set(_inventory.keys()) - target_set,
                 _inventory,
                 need=target_dl_bytes - post_mandatory_free,
             )
             if picked is None:
-                raise RuntimeError(
-                    f"insufficient disk for swap even after full eviction: need "
-                    f"{target_dl_bytes - post_mandatory_free} bytes"
+                raise HTTPException(
+                    status_code=507,
+                    detail={
+                        "error": "disk_full",
+                        "phase": "plan",
+                        "evict_completed": evict_completed,
+                        "download_completed": [],
+                        "download_failed": None,
+                        "underlying": "insufficient disk even after full eviction",
+                    },
                 )
             for ref in picked:
                 await _evict_one(ref)
+                evict_completed.append(ref)
 
-        for ref in to_download:
+        download_completed: list[str] = []
+        for ref in to_download_refs:
             spec = req.download_specs[ref]
-            path, actual_bytes = _download_one(spec, LORAS_DIR)
+            try:
+                path, actual_bytes = _download_one(spec, LORAS_DIR)
+            except OSError as e:
+                if e.errno == 28:  # ENOSPC
+                    raise HTTPException(
+                        status_code=507,
+                        detail={
+                            "error": "disk_full",
+                            "phase": "download",
+                            "evict_completed": evict_completed,
+                            "download_completed": download_completed,
+                            "download_failed": ref,
+                            "underlying": str(e),
+                        },
+                    ) from e
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "lora_download_failed",
+                        "phase": "download",
+                        "evict_completed": evict_completed,
+                        "download_completed": download_completed,
+                        "download_failed": ref,
+                        "underlying": str(e),
+                    },
+                ) from e
+            except Exception as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "lora_download_failed",
+                        "phase": "download",
+                        "evict_completed": evict_completed,
+                        "download_completed": download_completed,
+                        "download_failed": ref,
+                        "underlying": str(e),
+                    },
+                ) from e
             now = datetime.now().isoformat()
             _inventory[ref] = {
                 "ref": ref,
@@ -591,10 +631,33 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
                 "loras_dir_path": path,
                 "downloaded_at_local": now,
                 "last_used_at_local": now,
-                "adapter_name": f"lora_{len(_inventory)}",
+                "adapter_name": f"lora_pending_{ref}",
             }
+            download_completed.append(ref)
 
-        await _reload_pipeline_loras(req.target_refs)
+        try:
+            await _reload_pipeline_loras(req.target_refs)
+        except RuntimeError as e:
+            msg = str(e).lower()
+            if "out of memory" in msg or "oom" in msg:
+                dropped = [r for r in req.target_refs if r not in previous_refs]
+                for ref in dropped:
+                    _inventory.pop(ref, None)
+                    dropped_spec = req.download_specs.get(ref)
+                    if dropped_spec is not None:
+                        try:
+                            (LORAS_DIR / dropped_spec.filename).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                await _reload_pipeline_loras(previous_refs)
+                return SetStackResponse(
+                    inventory=_inventory_snapshot(),
+                    free_bytes=_disk_free_bytes(LORAS_DIR),
+                    swap_rejected=SwapRejectedDetails(
+                        reason="vram_oom", target_refs_dropped=dropped
+                    ),
+                )
+            raise
 
         return SetStackResponse(
             inventory=_inventory_snapshot(),
