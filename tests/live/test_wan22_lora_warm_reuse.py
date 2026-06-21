@@ -182,6 +182,31 @@ def _destroy(pod_id: str) -> None:
     )
 
 
+def _destroy_all_active_pods() -> list[str]:
+    """Belt-and-suspenders sweep: destroy every active RunPod pod.
+
+    Required because ``_run_cli`` can crash mid-cold-boot (transient
+    RunPod GraphQL URLError observed 2026-06-20 attempt 2) before
+    ``_extract_pod_id`` runs — leaving the local ``pod_id`` variable
+    None, the finally block's per-id destroy a no-op, and a fresh
+    A100 80GB pod billing $1.39/hr indefinitely. The orchestrator
+    records the pod to the ledger BEFORE wait_for_ready, so this
+    list-and-sweep pattern is the canonical recovery path.
+    """
+    destroyed: list[str] = []
+    try:
+        from kinoforge.core import registry as kf_registry
+        from kinoforge.providers import runpod  # noqa: F401 — self-register
+
+        provider = kf_registry.get_provider("runpod")()
+        for inst in provider.list_instances():
+            _destroy(inst.id)
+            destroyed.append(inst.id)
+    except Exception:  # noqa: BLE001 — diagnostic sweep, do not raise
+        pass
+    return destroyed
+
+
 def _sha256(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
@@ -393,3 +418,7 @@ def test_wan22_lora_warm_reuse_4_step_matrix(tmp_path: Path) -> None:
             poller.join(timeout=2.0)
         if pod_id is not None:
             _destroy(pod_id)
+        # Belt-and-suspenders sweep — catches pods the orchestrator
+        # created before the in-test pod_id capture (e.g. mid-cold-boot
+        # subprocess crash).
+        _destroy_all_active_pods()
