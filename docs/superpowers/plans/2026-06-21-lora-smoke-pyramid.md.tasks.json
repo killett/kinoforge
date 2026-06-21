@@ -49,7 +49,7 @@
       "id": 12,
       "planTaskNumber": 7,
       "subject": "P7: Tier-1 _FaithfulStubPipe + _stub_diffusers_load",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6, 11]
     },
     {
