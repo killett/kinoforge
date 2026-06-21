@@ -497,6 +497,27 @@ def artifact(filename: str) -> Any:  # noqa: ANN401 — returns FileResponse, op
     return FileResponse(str(target), media_type="video/mp4", filename=filename)
 
 
+class InventoryResponse(BaseModel):
+    """Read-only snapshot of the pod's LoRA inventory + free disk bytes."""
+
+    inventory: list[LoraInventoryEntry]
+    free_bytes: int
+
+
+@app.get("/lora/inventory")
+async def inventory() -> InventoryResponse:
+    """Return the pod's current LoRA inventory + free disk under the swap lock.
+
+    Holding ``_swap_lock`` for the read guarantees the snapshot cannot race a
+    concurrent ``/lora/set_stack`` mid-mutation.
+    """
+    async with _swap_lock:
+        return InventoryResponse(
+            inventory=_inventory_snapshot(),
+            free_bytes=_disk_free_bytes(LORAS_DIR),
+        )
+
+
 @app.post("/lora/set_stack")
 async def set_stack(req: SetStackRequest) -> SetStackResponse:
     """Apply ``req.target_refs`` as the pod's active LoRA stack.
