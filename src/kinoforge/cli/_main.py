@@ -31,6 +31,7 @@ from kinoforge.cli._commands import (
     _cmd_gc,
     _cmd_generate,
     _cmd_list,
+    _cmd_pod_lora_ls,
     _cmd_provision,
     _cmd_reap,
     _cmd_status,
@@ -65,8 +66,21 @@ _INTERRUPTIBLE_CMDS: frozenset[str] = frozenset({"generate", "batch"})
 # Subcommands that never trigger orchestration. ``--ephemeral`` is a no-op
 # for them; emit a one-line stderr note rather than running pre-flight.
 _READ_ONLY_CMDS: frozenset[str] = frozenset(
-    {"list", "status", "stop", "destroy", "forget", "reap", "gc", "cost"}
+    {"list", "status", "stop", "destroy", "forget", "reap", "gc", "cost", "pod"}
 )
+
+
+def _dispatch_pod(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Route ``kinoforge pod <subcmd>`` to its handler."""
+    sub = getattr(args, "pod_cmd", None)
+    if sub == "lora":
+        lora_sub = getattr(args, "pod_lora_cmd", None)
+        if lora_sub == "ls":
+            return _cmd_pod_lora_ls(args, ctx)
+        sys.stderr.write("kinoforge pod lora: missing subcommand (ls)\n")
+        return 2
+    sys.stderr.write("kinoforge pod: missing subcommand (lora)\n")
+    return 2
 
 
 def _dispatch_sweeper(args: argparse.Namespace, ctx: SessionContext) -> int:
@@ -101,6 +115,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "cost": _cmd_cost,
     "doctor": _cmd_doctor,
     "sweeper": _dispatch_sweeper,
+    "pod": _dispatch_pod,
 }
 
 
@@ -451,6 +466,17 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "confirmed cleanliness, or when running offline."
         ),
     )
+    p_generate.add_argument(
+        "--dry-run-swap",
+        action="store_true",
+        dest="dry_run_swap",
+        help=(
+            "preview the warm-attach matcher decision without acquiring "
+            "the pod lock, issuing HTTP, or running validate_for_generate. "
+            "Prints the chosen pod + swap plan (evict/download) or the "
+            "cold-boot fall-through reason. Exits 0."
+        ),
+    )
 
     # list
     sub.add_parser("list", help="list running instances from ledger")
@@ -558,6 +584,16 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         help="balance cache TTL (default 15s)",
     )
 
+    # pod (LoRA-flexible warm-reuse — direct pod-side queries)
+    p_pod = sub.add_parser("pod", help="direct pod-side queries (no orchestration)")
+    pod_sub = p_pod.add_subparsers(dest="pod_cmd", metavar="SUBCOMMAND")
+    p_pod_lora = pod_sub.add_parser("lora", help="LoRA inventory queries")
+    pod_lora_sub = p_pod_lora.add_subparsers(dest="pod_lora_cmd", metavar="SUBCOMMAND")
+    p_pod_lora_ls = pod_lora_sub.add_parser(
+        "ls", help="list the pod's resident LoRAs (GET /lora/inventory)"
+    )
+    p_pod_lora_ls.add_argument("pod_id", metavar="POD_ID")
+
     # sweeper (Layer W)
     p_sweeper = sub.add_parser("sweeper", help="Layer W: long-running reap daemon")
     sw_sub = p_sweeper.add_subparsers(dest="sweeper_cmd", metavar="SUBCOMMAND")
@@ -645,6 +681,17 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         help=(
             "force cold create_instance + destroy after the whole batch "
             "completes. Mutex with --force-attach."
+        ),
+    )
+    p_batch.add_argument(
+        "--dry-run-swap",
+        action="store_true",
+        dest="dry_run_swap",
+        help=(
+            "preview the warm-attach matcher decision without acquiring "
+            "the pod lock, issuing HTTP, or loading the manifest. Prints "
+            "the chosen pod + swap plan (evict/download) or the cold-boot "
+            "fall-through reason. Exits 0."
         ),
     )
 

@@ -239,3 +239,135 @@ class EphemeralStoreCleanupFailedError(EphemeralError):
             "\n"
             "(kinoforge exited 1 because ephemeral requires a clean scrub.)"
         )
+
+
+# --- LoRA-flexible warm-reuse: swap error hierarchy ------------------------
+
+
+class LoraSwapError(KinoforgeError):
+    """Base for all LoRA-swap failures on a warm pod.
+
+    All subclasses carry the pod_id of the affected pod and a
+    ``manual_cleanup_command()`` method returning a copy-paste-able shell
+    command the operator can run to recover by hand if needed.
+    """
+
+    def __init__(self, *, pod_id: str) -> None:
+        """Record the affected pod_id."""
+        super().__init__()
+        self.pod_id = pod_id
+
+    def manual_cleanup_command(self) -> str:
+        """Return the operator-runnable command to destroy the affected pod."""
+        return f"kinoforge destroy --id {self.pod_id}"
+
+
+class LoraSwapDownloadError(LoraSwapError):
+    """Download failed BEFORE any eviction. Pod inventory unchanged."""
+
+    def __init__(self, *, pod_id: str, ref: str, underlying: str) -> None:
+        """Carry the failed ref + underlying transport cause."""
+        super().__init__(pod_id=pod_id)
+        self.ref = ref
+        self.underlying = underlying
+
+    def __str__(self) -> str:
+        """Render with ref + underlying cause + safe-to-retry note."""
+        return (
+            f"LoRA download failed on pod {self.pod_id}: ref {self.ref} "
+            f"({self.underlying}); pod inventory unchanged, retry is safe."
+        )
+
+
+class LoraSwapDegradedPodError(LoraSwapError):
+    """Download failed AFTER eviction started.
+
+    Pod left in half-state, marked degraded; matcher will route the next
+    retry elsewhere or cold-boot.
+    """
+
+    def __init__(
+        self,
+        *,
+        pod_id: str,
+        evict_completed: list[str],
+        download_failed: str,
+        underlying: str,
+    ) -> None:
+        """Carry what was evicted, what failed to download, and the cause."""
+        super().__init__(pod_id=pod_id)
+        self.evict_completed = list(evict_completed)
+        self.download_failed = download_failed
+        self.underlying = underlying
+
+    def __str__(self) -> str:
+        """Render the half-state + retry-elsewhere guidance."""
+        evicted = ", ".join(self.evict_completed) or "(none)"
+        return (
+            f"LoRA swap on pod {self.pod_id} failed in the eviction-required "
+            f"phase: evicted [{evicted}], failed to download "
+            f"{self.download_failed} ({self.underlying}). Pod is now in a "
+            f"degraded state and has been marked for reap. Retry your "
+            f"generate; the matcher will route elsewhere or cold-boot."
+        )
+
+
+class LoraSwapPodUnreachableError(LoraSwapError):
+    """Pod proxy returned past retry budget. Marked degraded."""
+
+    def __init__(self, *, pod_id: str, underlying: str) -> None:
+        """Carry the underlying transport-error description."""
+        super().__init__(pod_id=pod_id)
+        self.underlying = underlying
+
+    def __str__(self) -> str:
+        """Render the unreachable-past-retry-budget message."""
+        return (
+            f"Pod {self.pod_id} unreachable past the proxy-retry budget: "
+            f"{self.underlying}. Pod marked degraded."
+        )
+
+
+class LoraSwapVramOomError(LoraSwapError):
+    """set_adapters OOM at swap time; rollback to previous adapter set succeeded.
+
+    Pod is healthy at the previous LoRA stack — NOT marked degraded.
+    """
+
+    def __init__(self, *, pod_id: str, dropped_refs: list[str]) -> None:
+        """Carry the refs that were dropped from the target stack."""
+        super().__init__(pod_id=pod_id)
+        self.dropped_refs = list(dropped_refs)
+
+    def __str__(self) -> str:
+        """Render the rollback-succeeded-pod-healthy message."""
+        dropped = ", ".join(self.dropped_refs)
+        return (
+            f"VRAM OOM during set_adapters on pod {self.pod_id}: target stack "
+            f"included {dropped}; pod rolled back to its previous LoRA stack "
+            f"and remains healthy. Try a smaller stack or a different pod."
+        )
+
+
+class LoraSwapDiskFullError(LoraSwapError):
+    """Mid-download disk full. Marked degraded."""
+
+    def __init__(
+        self,
+        *,
+        pod_id: str,
+        evict_completed: list[str],
+        download_failed: str,
+    ) -> None:
+        """Carry evicted refs + the ref whose download triggered ENOSPC."""
+        super().__init__(pod_id=pod_id)
+        self.evict_completed = list(evict_completed)
+        self.download_failed = download_failed
+
+    def __str__(self) -> str:
+        """Render evicted + failed-download list."""
+        evicted = ", ".join(self.evict_completed) or "(none)"
+        return (
+            f"Pod {self.pod_id} disk full mid-download: evicted [{evicted}], "
+            f"failed to download {self.download_failed}. Pod marked degraded."
+        )
