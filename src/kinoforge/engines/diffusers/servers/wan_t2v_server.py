@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import shutil
 import threading
 import time
 import urllib.request
@@ -179,6 +180,83 @@ def _download_one(spec: ArtifactDownloadSpec, dest_dir: Path) -> tuple[str, int]
         if tmp.exists():
             tmp.unlink(missing_ok=True)
         raise
+
+
+def _disk_free_bytes(path: Path) -> int:
+    """Return free bytes on the filesystem containing ``path``."""
+    return shutil.disk_usage(path).free
+
+
+def _pick_lru_evict(
+    candidates: set[str], inventory: dict[str, dict[str, Any]], need: int
+) -> list[str] | None:
+    """Return refs to evict in LRU order, popping until cumulative size ≥ need.
+
+    Args:
+        candidates: Refs eligible for eviction (i.e. not in target stack).
+        inventory: Current ``_inventory`` snapshot.
+        need: Bytes that must be freed. ``<= 0`` → no eviction needed.
+
+    Returns:
+        List of refs in LRU-ascending order, or ``None`` if even evicting
+        every candidate would not free ``need`` bytes. Returns ``[]`` when
+        ``need <= 0``.
+    """
+    if need <= 0:
+        return []
+    ordered = sorted(
+        (ref for ref in candidates if ref in inventory),
+        key=lambda r: inventory[r]["last_used_at_local"],
+    )
+    freed = 0
+    plan: list[str] = []
+    for ref in ordered:
+        plan.append(ref)
+        freed += inventory[ref]["size_bytes"]
+        if freed >= need:
+            return plan
+    return None
+
+
+async def _evict_one(ref: str) -> None:
+    """Unload one LoRA from the pipeline + remove its file + drop inventory.
+
+    Best-effort: filesystem unlink errors are swallowed because the
+    inventory is the source of truth for future swap decisions; a leaked
+    file gets cleaned up by the next disk-pressure eviction or by the
+    reaper.
+    """
+    entry = _inventory.get(ref)
+    if entry is None:
+        return
+    adapter = entry["adapter_name"]
+    if hasattr(pipe, "delete_adapters"):
+        pipe.delete_adapters([adapter])
+    try:
+        Path(entry["loras_dir_path"]).unlink(missing_ok=True)
+    except OSError:
+        pass
+    _inventory.pop(ref, None)
+
+
+async def _reload_pipeline_loras(target_refs: list[str]) -> None:
+    """Replace the active pipeline adapter stack with ``target_refs`` in order.
+
+    Calls ``unload_lora_weights()`` first to clear any active adapters,
+    then re-loads each target ref as ``lora_{i}``, then ``set_adapters``
+    with the positional list. Empty ``target_refs`` → unload only.
+    """
+    pipe.unload_lora_weights()
+    if not target_refs:
+        return
+    names: list[str] = []
+    for i, ref in enumerate(target_refs):
+        entry = _inventory[ref]
+        name = f"lora_{i}"
+        pipe.load_lora_weights(entry["loras_dir_path"], adapter_name=name)
+        names.append(name)
+        entry["adapter_name"] = name
+    pipe.set_adapters(names)
 
 
 def _load_pipeline(
