@@ -46,6 +46,29 @@ def test_empty_inventory_noop() -> None:
     assert "civitai:A@1" in out
 
 
+def test_short_ref_is_skipped_not_raised() -> None:
+    """Refs shorter than the registry's MIN_TOKEN_LEN (4) silently skip.
+
+    Bug: helper forwards a 1-3 char ref straight to RedactionRegistry.add
+    which raises ``ValueError: redaction token must be at least 4 chars``.
+    A malformed pod response (or fixture data) then crashes the matcher
+    + integration helper instead of degrading.
+    """
+    snap = {
+        "inventory": [
+            {"ref": "A"},
+            {"ref": "civitai:long@1"},
+            {"ref": "BC"},
+        ]
+    }
+    _register_observed_lora_refs(snap)
+    out = RedactionRegistry.instance().redact("civitai:long@1 A BC")
+    assert "civitai:long@1" not in out
+    # Short refs pass through unchanged — registry never tokenised them.
+    assert "A" in out
+    assert "BC" in out
+
+
 def test_accepts_object_attribute_shape() -> None:
     """Bug: helper only handles dict-shaped snapshots, breaking when the
     /lora/inventory response object is passed in directly (it has a

@@ -49,7 +49,10 @@ def _register_observed_lora_refs(snapshot: Any) -> None:  # noqa: ANN401 — dua
     pairs: list[tuple[str, str]] = []
     for entry in inventory:
         ref = _extract_ref(entry)
-        if ref:
+        # Skip refs shorter than the registry's MIN_TOKEN_LEN — a 1-3 char
+        # ref is either fixture data or an upstream malformation; either
+        # way it does not need (and cannot get) a redaction placeholder.
+        if ref and len(ref) >= 4:
             pairs.append((ref, "lora:ref"))
     if pairs:
         RedactionRegistry.instance().add_many(pairs)
