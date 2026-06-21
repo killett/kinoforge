@@ -47,6 +47,13 @@ from pydantic import BaseModel, Field  # noqa: E402
 from kinoforge.engines.diffusers.servers._video_io import write_mp4  # noqa: E402
 
 _log = logging.getLogger("kinoforge.diffusers.wan_t2v_server")
+# Wire root logging so module _log.info/warning calls actually appear
+# in bootstrap.log (uvicorn configures its own logger but not ours).
+# Idempotent: basicConfig is a no-op when root already has handlers.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 MODEL_ID: str = os.environ.get("WAN_MODEL_ID", "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
 ARTIFACT_DIR: Path = Path("/workspace/artifacts")
@@ -618,8 +625,21 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
                 evict_completed.append(ref)
 
         download_completed: list[str] = []
+        _log.info(
+            "set_stack handler: target=%s evict=%s download=%s",
+            req.target_refs,
+            list(mandatory_evict),
+            to_download_refs,
+        )
         for ref in to_download_refs:
             spec = req.download_specs[ref]
+            _log.info(
+                "set_stack download starting: ref=%s url=%s filename=%s size_hint=%s",
+                ref,
+                spec.url[:80],
+                spec.filename,
+                spec.size_hint,
+            )
             try:
                 # asyncio.to_thread: _download_one is sync urllib +
                 # blocking file IO. Running it inline blocks the FastAPI
