@@ -28,7 +28,7 @@
       "id": 13,
       "planTaskNumber": 4,
       "subject": "Task 4: Cold-boot LoRA loading in wan_t2v_server.py",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": []
     },
     {
