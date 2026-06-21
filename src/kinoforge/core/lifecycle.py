@@ -610,7 +610,7 @@ class Ledger:
         instance_id: str,
         *,
         last_heartbeat: float | None = None,
-        **extra: float | int | str | None,
+        **extra: float | int | str | list | dict | None,  # type: ignore[type-arg]
     ) -> bool:
         """Update fields on an existing ledger entry in place (strict update).
 
@@ -652,7 +652,7 @@ class Ledger:
         treat ``last_heartbeat`` as untrustworthy — the writer thread
         may have crashed.  See Layer U spec §3.4 for the rationale.
         """
-        proposed: dict[str, float | int | str] = {}
+        proposed: dict[str, float | int | str | list | dict] = {}  # type: ignore[type-arg]
         if last_heartbeat is not None:
             proposed["last_heartbeat"] = float(last_heartbeat)
         for key, value in extra.items():
