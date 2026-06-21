@@ -1,10 +1,15 @@
-# Wan 2.2 T2V-A14B + LoRA-flexible warm-reuse smoke cfg
+# Wan 2.2 T2V-A14B + LoRA-flexible warm-reuse release-gate cfg (Tier 4)
 #
 # Cold-boots a single A100 80GB pod with the diffusers Wan T2V server
-# and NO initial LoRA stack. The smoke (tests/live/test_wan22_lora_warm_reuse.py)
-# drives POST /lora/set_stack directly to add/swap the Arcane Style LoRA
+# and NO initial LoRA stack. The smoke
+# (tests/smoke/release_wan22/test_lora_swap_matrix.py) drives
+# POST /lora/set_stack directly to add/swap the Arcane Style LoRA
 # pair (civitai:2197303@2474081 + civitai:2197303@2474073) across the
 # 4-step matrix in docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md §13.3.
+#
+# Tier 4 of the LoRA smoke pyramid (docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md).
+# Manual release gate — fired only via `pixi run smoke-wan22-live` from
+# the release checklist; no automated cron trigger.
 #
 # Total budget cap: $5 (covers ~2.5h of A100 80GB at $1.79/hr; the
 # smoke targets ~$2 of spend, with the rest of the budget as a safety
@@ -46,6 +51,8 @@ compute:
   image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
   warm_reuse_auto_attach: true
+  tags:
+    smoke_tier: "kinoforge-smoke-tier-4"
   requirements:
     min_vram_gb: 80
     min_cuda: "12.4"
