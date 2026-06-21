@@ -118,6 +118,12 @@ class LifecycleConfig(BaseModel):
     restart_loop_reap_enabled: bool = True
     restart_loop_window_s: float = 180.0
     restart_loop_uptime_threshold_s: float = 90.0
+    # LoRA-flexible warm-reuse — staleness threshold for the matcher's
+    # pod-side free-disk + inventory snapshot. ``0`` disables the
+    # stale-check entirely (matcher trusts the ledger snapshot
+    # indefinitely). Default 300 s matches typical inter-job spacing
+    # for warm-reuse workflows.
+    lora_swap_re_probe_after_s: float = 300.0
 
     @field_validator(
         "idle_timeout",
@@ -168,6 +174,14 @@ class LifecycleConfig(BaseModel):
         """Reject negative stall_window_s at load time (C26)."""
         if v < 0:
             raise ValueError(f"stall_window_s must be >= 0; got {v}")
+        return v
+
+    @field_validator("lora_swap_re_probe_after_s")
+    @classmethod
+    def _validate_lora_swap_re_probe_non_negative(cls, v: float) -> float:
+        """Reject negative lora_swap_re_probe_after_s at load time."""
+        if v < 0:
+            raise ValueError(f"lora_swap_re_probe_after_s must be >= 0; got {v}")
         return v
 
     @field_validator("stall_gpu_threshold", "stall_cpu_threshold")
@@ -976,6 +990,7 @@ class Config(BaseModel):
                 lc.restart_loop_window_s if lc.restart_loop_reap_enabled else None
             ),
             restart_loop_uptime_threshold_s=lc.restart_loop_uptime_threshold_s,
+            lora_swap_re_probe_after_s=lc.lora_swap_re_probe_after_s,
         )
 
     def hardware_requirements(self) -> InterfaceHardwareRequirements:

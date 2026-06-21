@@ -38,6 +38,7 @@ class Verdict(StrEnum):
     UNROUTABLE = "UNROUTABLE"
     STALL_REAP = "STALL_REAP"  # C26
     RESTART_LOOP_REAP = "RESTART_LOOP_REAP"  # C27
+    DEGRADED_REAP = "DEGRADED_REAP"  # Layer LoRA — pod self-marked degraded
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ DEFAULT_APPLY_POLICY = Policy(
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
+            Verdict.DEGRADED_REAP,  # Layer LoRA
         }
     )
 )
@@ -305,6 +307,14 @@ def classify(
     # Row 1
     if not pod_up:
         return Verdict.STALE_LEDGER
+
+    # Layer LoRA: a pod self-marked status="degraded" (e.g. via the
+    # /lora/set_stack failure paths in Task 8) is reap-eligible even if
+    # its heartbeat is fresh and it has not yet hit max_lifetime — the
+    # matcher has already routed traffic elsewhere and the operator
+    # only owes it a teardown.
+    if entry.get("status") == "degraded":
+        return Verdict.DEGRADED_REAP
 
     idle = _resolve(entry, "idle_timeout_s", idle_timeout_s)
     max_age = _resolve(entry, "max_lifetime_s", max_lifetime_s)

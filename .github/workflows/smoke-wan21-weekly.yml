@@ -1,0 +1,29 @@
+name: smoke-wan21-weekly
+on:
+  schedule:
+    - cron: '0 12 * * 1'   # Monday 04:00 PT = 12:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # post issue on test failure
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+      RUNPOD_TERMINATE_KEY: ${{ secrets.RUNPOD_TERMINATE_KEY }}
+      CIVITAI_TOKEN: ${{ secrets.CIVITAI_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      KINOFORGE_LIVE_TESTS: "1"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.8.1
+      - name: Run Tier-3 live smoke
+        run: pixi run smoke-21b-live
+      - name: Belt-and-suspenders sweep (always)
+        if: always()
+        run: pixi run smoke-leak-sweep

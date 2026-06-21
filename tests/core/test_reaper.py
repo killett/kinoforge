@@ -80,6 +80,7 @@ def test_verdict_values_are_stable_strings() -> None:
         "UNROUTABLE",
         "STALL_REAP",  # C26
         "RESTART_LOOP_REAP",  # C27
+        "DEGRADED_REAP",  # Layer LoRA
     ]
 
 
@@ -97,6 +98,7 @@ def test_default_apply_policy_contains_high_confidence_verdicts() -> None:
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
+            Verdict.DEGRADED_REAP,  # Layer LoRA
         }
     )
 
@@ -150,6 +152,7 @@ def test_policy_from_flags_apply_include_orphans_adds_orphan_reap() -> None:
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
+            Verdict.DEGRADED_REAP,  # Layer LoRA
             Verdict.ORPHAN_REAP,
         }
     )
@@ -164,6 +167,7 @@ def test_policy_from_flags_apply_force_forget_adds_unroutable() -> None:
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
+            Verdict.DEGRADED_REAP,  # Layer LoRA
             Verdict.UNROUTABLE,
         }
     )
@@ -173,10 +177,11 @@ def test_policy_from_flags_apply_all_flags_returns_seven_element_set() -> None:
     """`kinoforge reap --apply --include-orphans --force-forget` policy contract.
 
     Combined-flag invocation must produce DEFAULT_APPLY_POLICY ∪
-    {ORPHAN_REAP, UNROUTABLE} — seven verdicts after C26 added STALL_REAP
-    and C27 added RESTART_LOOP_REAP to the default. Regression guard: a
-    future merge that accidentally drops a base verdict (e.g. STALE_LEDGER)
-    under an opt-in would be invisible to single-flag tests; this catches it.
+    {ORPHAN_REAP, UNROUTABLE} — now eight verdicts after Layer LoRA added
+    DEGRADED_REAP to the default (C26+C27 already raised it to seven).
+    Regression guard: a future merge that accidentally drops a base
+    verdict (e.g. STALE_LEDGER) under an opt-in would be invisible to
+    single-flag tests; this catches it.
     """
     p = policy_from_cli_flags(apply=True, include_orphans=True, force_forget=True)
     assert p.act_verdicts == frozenset(
@@ -186,6 +191,7 @@ def test_policy_from_flags_apply_all_flags_returns_seven_element_set() -> None:
             Verdict.STALE_LEDGER,
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
+            Verdict.DEGRADED_REAP,  # Layer LoRA
             Verdict.ORPHAN_REAP,
             Verdict.UNROUTABLE,
         }

@@ -154,6 +154,140 @@ Exit codes:
   destroyed between classify and attach / `--force-attach` passed
   without `--instance-id`).
 
+## LoRA-flexible warm-reuse (Wan 2.2 + Diffusers)
+
+The B4 warm-reuse path above keys on the full `CapabilityKey`
+(base + LoRAs + engine + precision), so a pod loaded with LoRA set
+`[A, B]` never warm-attaches a job that wants `[A, C]`. The
+LoRA-flexible warm-reuse feature splits the key into two factors so
+a single Wan 2.2 pod can serve many LoRA stacks in sequence without
+paying the cold-boot cost again:
+
+- **`WarmAttachKey(base_model, engine, precision)`** — the slow-to-rebuild
+  identity that drives matcher lookup. A warm pod is a candidate iff
+  this factor matches the requested cfg.
+- **`LoraStack(refs)`** — the cheap-to-swap delta. When the matcher
+  finds a `WarmAttachKey` match whose `LoraStack` differs, it POSTs
+  the target stack to the pod's `/lora/set_stack` endpoint; the pod
+  evicts what it has to, downloads what's missing, and rebuilds the
+  diffusers adapter set in place.
+
+`CapabilityKey.derive()` is byte-identical to the pre-split version
+so every pre-feature ledger entry stays valid.
+
+### Eviction policy
+
+When the target LoRA stack needs more disk than the pod has free,
+the pod-side helper picks the LRU-oldest evictable refs (those NOT
+in the target stack, ordered by `last_used_at_local` ascending) and
+evicts them in order until enough disk is freed. The matcher returns
+`None` (cold-boot fall-through) if even evicting every candidate
+would not free the needed bytes.
+
+### Per-pod swap lock
+
+A process-wide `PodLockRegistry` serializes concurrent
+swap-then-generate attempts on the same pod, so two parallel jobs
+that both want to attach to pod X cannot race the LoRA state. The
+lock is non-blocking — a contended pod is skipped and the matcher
+considers the next candidate. Multi-process kinoforge instances do
+NOT share the lock; that's a documented deferral (Layer H follow-up).
+
+### `kinoforge generate --dry-run-swap` — preview without spend
+
+```bash
+kinoforge generate --config cfg.yaml --prompt P --mode t2v --dry-run-swap
+# matcher: selected pod {pod-id}
+#   evict:    ['civitai:foo@1']
+#   download: ['civitai:bar@2']
+#   cost:     8.4s
+```
+
+No pod lock acquired. No HTTP traffic to the pod. No
+`validate_for_generate`. Use it before a paid run to verify the
+matcher will reuse the pod you expect. Also works on `kinoforge
+batch --dry-run-swap`.
+
+### `kinoforge pod lora ls <pod_id>` — direct pod-side inventory
+
+Reads `GET /lora/inventory` straight from the pod (not from the
+ledger snapshot) so you see the LIVE resident LoRA set, even when
+the ledger is stale (matcher's last update was minutes ago) or
+when the ledger is in-memory-only (`--ephemeral`). Exits 2 on
+unreachable pod.
+
+```bash
+kinoforge pod lora ls <pod-id>
+#   loras (2 resident, 1.4GB used, 18.6GB free):
+#     civitai:2197303@2474081  720MB  last_used 2026-06-20T22:18  adapter lora_0
+#     civitai:2197303@2474073  720MB  last_used 2026-06-20T22:18  adapter lora_1
+```
+
+### Failure modes (operator one-liners)
+
+| Failure | Pod state | Operator next step |
+|---|---|---|
+| `LoraSwapDownloadError` | unchanged (download failed pre-eviction) | retry safely; same pod is still a candidate |
+| `LoraSwapDegradedPodError` | half-state, ledger marked `status=degraded` | reaper will destroy on next sweep; matcher routes elsewhere or cold-boots |
+| `LoraSwapPodUnreachableError` | proxy timed out past retry budget | check pod via `kinoforge status --id`; ledger marked degraded |
+| `LoraSwapVramOomError` | rolled back to previous adapter set; HEALTHY | try a smaller LoRA stack or a different pod — pod itself is fine |
+| `LoraSwapDiskFullError` | disk full mid-download, ledger marked degraded | same recovery as degraded |
+
+Every error class exposes `.manual_cleanup_command()` returning a
+copy-paste `kinoforge destroy --id <pod-id>` string for hand-recovery
+when the automated reaper is unavailable.
+
+### Configuration knob
+
+```yaml
+compute:
+  lifecycle:
+    # Seconds the matcher trusts the ledger's loras_dir_free_bytes
+    # snapshot before re-probing the pod's /lora/inventory. 0 disables
+    # the stale-check. Default: 300.
+    lora_swap_re_probe_after_s: 300
+```
+
+### Deferred / known limitations
+
+- **Engine scope = Diffusers only.** ComfyUI uses graph-tagged LoRA
+  loading; integrating the matcher there is the C23 follow-up.
+- **`deploy_session` integration is deferred.** The matcher + swap
+  endpoints + helpers are all shipped + tested; the orchestrator-side
+  wiring through `deploy_session` is staged behind a separate task.
+  Operators can drive the matcher manually via the standalone
+  `kinoforge.core.warm_reuse.integration.try_warm_attach_with_swap`
+  helper in the meantime.
+- **Cross-process lock not shared.** Two `kinoforge` invocations on
+  the same machine each maintain their own `PodLockRegistry`.
+- **No hot-swap UX.** A swap blocks the calling generate; there is
+  no progress stream surfaced to the operator beyond the existing
+  generate log line.
+- **No LoRA pinning.** The matcher's LRU never reserves a ref against
+  eviction.
+
+See `docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md`
+for the full design + `docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md`
+for the implementation plan.
+
+### Smoke test pyramid
+
+Three tiers + a watchdog (full design:
+`docs/superpowers/specs/2026-06-21-lora-smoke-pyramid-design.md`):
+
+| Tier | Trigger | What it tests | Cost |
+|---|---|---|---|
+| 1 — `pixi run smoke-local` | Every PR (CI) + on demand | HTTP contract, eviction, disk math, VRAM-OOM rollback against a stub pipe over real uvicorn | $0 |
+| 3 — `pixi run smoke-21b-live` | Weekly Mon 04:00 PT + on demand | Real-diffusers semantics, real CUDA, real RunPod proxy + Cloudflare path on Wan 2.1 1.3B + 2 single LoRAs | ~$0.20 |
+| 4 — `pixi run smoke-wan22-live` | Manual, pre-release | Full Wan 2.2 14B + Arcane Style pair end-to-end on A100 80GB | ~$1-2 |
+
+A separate `pixi run smoke-leak-sweep` cron runs every 30 min to reap
+any tier-tagged pod older than its ceiling (Tier 3: 45 min, Tier 4:
+90 min) and post a GitHub issue per reap. All four tiers share
+`tests/_smoke_harness/` so the kinoforge-internal HTTP patterns
+(UA + `?api_key=` + URLError retry + leak sweep) are inherited by
+import, not by rediscovery.
+
 ## Reaping orphan pods
 
 `kinoforge reap` classifies every ledger entry and (optionally)
