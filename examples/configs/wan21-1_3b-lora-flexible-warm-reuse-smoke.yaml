@@ -55,8 +55,8 @@ compute:
     idle_timeout: 10m
     job_timeout: 5m
     time_buffer: 2m
-    max_lifetime: 30m
-    boot_timeout: 15m
+    max_lifetime: 60m
+    boot_timeout: 30m
     budget: 0.50
     heartbeat_interval_s: 30
     lora_swap_re_probe_after_s: 300

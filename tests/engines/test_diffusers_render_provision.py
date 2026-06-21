@@ -30,6 +30,49 @@ def test_render_provision_returns_rendered_provision() -> None:
     assert isinstance(rp, RenderedProvision)
 
 
+def test_render_provision_exports_wan_model_id_from_first_base_model() -> None:
+    """Bug: server defaults MODEL_ID to Wan 2.2 14B; a Wan 2.1 1.3B cfg
+    must propagate its hf: repo through WAN_MODEL_ID env or the pod
+    OOM-loads the 63GB 14B on a 24GB A5000.
+    """
+    cfg = _minimal_cfg()
+    cfg["models"] = [
+        {"ref": "hf:Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "kind": "base"},
+    ]
+    rp = _make_engine().render_provision(cfg)
+    assert "export WAN_MODEL_ID=Wan-AI/Wan2.1-T2V-1.3B-Diffusers" in rp.script, (
+        rp.script
+    )
+    # Must appear BEFORE server_cmd so the launching shell exports it.
+    idx_export = rp.script.find("export WAN_MODEL_ID=")
+    idx_server = rp.script.find("python -m diffusers_server")
+    assert 0 < idx_export < idx_server
+
+
+def test_render_provision_skips_wan_model_id_when_no_hf_base() -> None:
+    """Bug: helper hallucinates an empty export when no hf: base ref
+    is declared, breaking shells that treat `export X=` as a syntax error
+    in strict mode.
+    """
+    cfg = _minimal_cfg()
+    cfg["models"] = [{"ref": "civitai:1234@5678", "kind": "lora"}]
+    rp = _make_engine().render_provision(cfg)
+    assert "export WAN_MODEL_ID=" not in rp.script
+
+
+def test_render_provision_picks_first_kind_base_not_first_overall() -> None:
+    """Bug: helper picks models[0] regardless of kind, so a vault entry
+    listing a LoRA first would override the base model id.
+    """
+    cfg = _minimal_cfg()
+    cfg["models"] = [
+        {"ref": "civitai:1@2", "kind": "lora"},
+        {"ref": "hf:Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "kind": "base"},
+    ]
+    rp = _make_engine().render_provision(cfg)
+    assert "export WAN_MODEL_ID=Wan-AI/Wan2.1-T2V-1.3B-Diffusers" in rp.script
+
+
 def test_render_provision_script_starts_with_set_euo_pipefail() -> None:
     rp = _make_engine().render_provision(_minimal_cfg())
     assert rp.script.startswith("set -euo pipefail")

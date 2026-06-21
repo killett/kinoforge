@@ -760,6 +760,21 @@ class DiffusersEngine(GenerationEngine):
         base_url: str = str(diffusers_cfg.get("base_url", ""))
         image: str = str(diffusers_cfg.get("image", _DEFAULT_RUNPOD_IMAGE))
         embed_modules: list[str] = list(diffusers_cfg.get("embed_modules", []))
+        # Derive WAN_MODEL_ID from cfg.models[<first-base>].ref so the
+        # wan_t2v_server loads the actual cfg-declared repo rather than
+        # its hardcoded 14B fallback. Without this, a Wan 2.1 1.3B cfg
+        # silently provisions a 63GB Wan 2.2 14B load against a 24GB
+        # A5000 and times out after ~15min during ``from_pretrained``.
+        wan_model_id: str | None = None
+        for model in cfg.get("models", []):
+            if not isinstance(model, dict):
+                continue
+            if model.get("kind") != "base":
+                continue
+            ref = str(model.get("ref", ""))
+            if ref.startswith("hf:"):
+                wan_model_id = ref[len("hf:") :]
+                break
 
         lines: list[str] = [
             "set -euo pipefail",
@@ -827,6 +842,11 @@ class DiffusersEngine(GenerationEngine):
             lines.append(
                 f"pip install -q --extra-index-url {_PYTORCH_EXTRA_INDEX_URL} {quoted}"
             )
+        if wan_model_id and server_cmd:
+            # Exported BEFORE server_cmd so the launching shell carries
+            # it into the wan_t2v_server process. See wan_t2v_server.py
+            # MODEL_ID = os.environ.get("WAN_MODEL_ID", "<14B-default>").
+            lines.append(f"export WAN_MODEL_ID={shlex.quote(wan_model_id)}")
         if server_cmd:
             # NOTE: NO `exec` prefix. Bash must remain PID 1 so the
             # EXIT trap can fire when the main server crashes (or
