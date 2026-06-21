@@ -850,7 +850,9 @@ def _render_lora_inventory_section(
     if not inventory:
         return None
     from kinoforge.core.redaction import RedactionRegistry
+    from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
 
+    _register_observed_lora_refs({"inventory": inventory})
     registry = RedactionRegistry.instance()
     total_bytes = sum(int(e.get("size_bytes", 0) or 0) for e in inventory)
     header = f"  loras ({len(inventory)} resident, {_human_bytes(total_bytes)} used"

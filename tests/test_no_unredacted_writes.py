@@ -7,6 +7,7 @@ the ``RedactionRegistry`` + ``EphemeralSession`` pattern.
 Exemption tags (line-level comments on the offending call):
   ``# kinoforge:public-write``   — opt out of AC1 / AC7 for a specific call
   ``# kinoforge:public-name``    — opt out of AC2 for a specific put_bytes call
+  ``# kinoforge:lora-redact-exempt`` — opt out of AC8 (observed LoRA refs)
 
 Canonical reference: ``core/lifecycle.py::Ledger.record`` for the
 write-pattern shape; ``core/opaque_names.py::opaque_store_name`` for
@@ -22,6 +23,7 @@ from typing import TypeGuard
 SRC = pathlib.Path(__file__).parent.parent / "src" / "kinoforge"
 EXEMPT_WRITE = "# kinoforge:public-write"
 EXEMPT_NAME = "# kinoforge:public-name"
+EXEMPT_LORA = "# kinoforge:lora-redact-exempt"
 REFERENCE = "see core/lifecycle.py::Ledger.record for the canonical shape"
 
 
@@ -399,6 +401,153 @@ def _is_write_call(node: ast.AST) -> TypeGuard[ast.Call]:
     ):
         return True
     return False
+
+
+def _reads_lora_inventory(tree: ast.AST) -> bool:
+    """True when this module observes a pod LoRA inventory in any form.
+
+    Inventory-observer signals (any one is enough):
+        - ``Attribute(attr='inventory')`` access (``snapshot.inventory``,
+          ``resp.inventory``).
+        - Literal ``.get('inventory'...)`` or ``.get('lora_inventory'...)``
+          call.
+        - Literal subscript ``["inventory"]`` or ``["lora_inventory"]``.
+
+    A single signal is enough. The matcher's ref-consumption shim
+    iterates entries by index, so requiring a separate ``.ref`` signal
+    would let the matcher silently drop the redaction-registration call
+    without tripping the invariant.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "inventory":
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value in {"inventory", "lora_inventory"}
+        ):
+            return True
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value in {"inventory", "lora_inventory"}
+        ):
+            return True
+    return False
+
+
+def test_ac8_inventory_readers_register_observed_refs() -> None:
+    """Every module that reads pod LoRA inventory + iterates refs must register them.
+
+    Bug: a new CLI handler, sweeper, or status renderer pulls
+    ``/lora/inventory`` (directly or via the ledger snapshot), reads each
+    entry's ``ref``, and ships the prompt-laden refs into a log line or
+    output sink WITHOUT first registering them with
+    ``RedactionRegistry``. The redacting log filter then passes the refs
+    through unchanged because they were never tokenised.
+
+    Each offending module must contain
+    ``_register_observed_lora_refs(`` somewhere in its source, OR carry
+    the ``# kinoforge:lora-redact-exempt`` tag on one of its lines.
+
+    Exempt by virtue of being the helper / contract itself:
+        - ``core/warm_reuse/redaction.py`` (defines the helper)
+    """
+    helper_owner = SRC / "core" / "warm_reuse" / "redaction.py"
+    violations: list[str] = []
+    for path in _all_py_files():
+        if path == helper_owner:
+            continue
+        source = path.read_text()
+        tree = ast.parse(source)
+        if not _reads_lora_inventory(tree):
+            continue
+        if "_register_observed_lora_refs(" in source:
+            continue
+        if EXEMPT_LORA in source:
+            continue
+        violations.append(
+            f"{path.relative_to(SRC.parent.parent)}: module reads LoRA "
+            f"inventory + ref fields without _register_observed_lora_refs(...) "
+            f"and without a '{EXEMPT_LORA}' tag"
+        )
+    assert not violations, (
+        "Observed LoRA-ref registration violations:\n"
+        + "\n".join(f"  {v}" for v in violations)
+        + "\n\nAdd _register_observed_lora_refs({'inventory': inventory}) "
+        + f"before refs are rendered/logged, or '{EXEMPT_LORA}' on the line "
+        + "that justifies the bypass (e.g. fixture-only path)."
+    )
+
+
+def test_ac9_lora_inventory_writes_route_through_ledger_touch() -> None:
+    """``put_json`` callers must NOT carry a literal ``"lora_inventory"`` key.
+
+    Bug: a new code path writes the inventory snapshot directly into the
+    artifact store via ``store.put_json({..., "lora_inventory": [...]})``,
+    bypassing ``Ledger.touch`` — which is the single chokepoint where
+    the AC1 RedactionRegistry + EphemeralSession.policy gate runs. The
+    raw refs land in the store unredacted.
+
+    Allowed: ``ledger.touch(pod_id, lora_inventory=...)`` (kwarg path
+    through the canonical writer).
+    """
+    violations: list[str] = []
+    for path in _all_py_files():
+        source = path.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not _is_call_to_method(node, "put_json"):
+                continue
+            extent = _call_lines(source, node.lineno, node.end_lineno)
+            if EXEMPT_LORA in extent:
+                continue
+            for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                if not isinstance(arg, ast.Dict):
+                    continue
+                for k in arg.keys:
+                    if (
+                        isinstance(k, ast.Constant)
+                        and isinstance(k.value, str)
+                        and k.value == "lora_inventory"
+                    ):
+                        violations.append(
+                            f"{path.relative_to(SRC.parent.parent)}:{node.lineno}: "
+                            f"put_json carries literal 'lora_inventory' key — "
+                            f"use Ledger.touch(..., lora_inventory=...) instead"
+                        )
+    assert not violations, (
+        "Direct lora_inventory put_json violations:\n"
+        + "\n".join(f"  {v}" for v in violations)
+        + "\n\nRoute lora_inventory updates through Ledger.touch so the "
+        + "canonical RedactionRegistry + EphemeralSession.policy gate runs."
+    )
+
+
+def test_ac8_exempt_tag_count_is_audit_friendly() -> None:
+    """The lora-redact-exempt tag must be rare so future uses are reviewable.
+
+    Bug: a refactor sprinkles the exempt tag across many files to
+    silence the AC8 invariant rather than wiring the helper at the
+    right level — making future audits impossible.
+
+    Allowed: the tag string literal in this invariant test file
+    itself (the audit point) and at most ONE additional
+    legitimate exemption elsewhere in the tree (e.g. a
+    fixture-only path that has documented its bypass).
+    """
+    src_hits = 0
+    for path in _all_py_files():
+        if EXEMPT_LORA in path.read_text():
+            src_hits += 1
+    assert src_hits <= 1, (
+        f"'{EXEMPT_LORA}' appears in {src_hits} src/kinoforge/ files — "
+        "audit-friendliness budget is 1. Refactor to share the registration "
+        "helper at a higher level instead of bypassing the invariant."
+    )
 
 
 def test_ac7_no_path_write_outside_store_and_sink() -> None:
