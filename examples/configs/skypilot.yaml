@@ -30,7 +30,13 @@ compute:
   # (us-central1) is enforced by the smoke test itself, not by this
   # YAML — ComputeConfig has no region field today.
   provider: skypilot
-  image: "skypilot/skypilot:latest"
+  # Public Ubuntu base. The original `skypilot/skypilot:latest` placeholder
+  # the Phase-31 template shipped with does NOT exist on Docker Hub —
+  # `docker pull` 404s and sky surfaces it as "Failed to set up SkyPilot
+  # runtime on cluster" (Stage-E live smoke 2026-06-18). Pinning a real
+  # public image keeps the cfg deploy-able as-is. Swap for a workload
+  # image when running real generations.
+  image: "ubuntu:22.04"
   mode: pod
   requirements:
     min_vram_gb: 0

@@ -32,7 +32,13 @@ compute:
   # excluded). The smoke test pins region us-central1 explicitly; this
   # YAML does not (ComputeConfig has no region field today).
   provider: skypilot
-  image: "skypilot/skypilot-gpu:latest"
+  # Public CUDA-base image. The original `skypilot/skypilot-gpu:latest`
+  # placeholder the Layer W+β template shipped with does NOT exist on
+  # Docker Hub — `docker pull` 404s and sky surfaces it as "Failed to
+  # set up SkyPilot runtime on cluster" (Stage-E live smoke 2026-06-18).
+  # Pinning a real public image keeps the cfg deploy-able as-is. Swap
+  # for a ComfyUI / PyTorch image when running real generations.
+  image: "nvidia/cuda:12.2.0-base-ubuntu22.04"
   mode: pod
   requirements:
     min_vram_gb: 8
