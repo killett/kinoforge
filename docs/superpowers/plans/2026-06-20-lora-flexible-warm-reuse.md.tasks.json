@@ -35,7 +35,7 @@
       "id": 14,
       "planTaskNumber": 5,
       "subject": "Task 5: Pod-side LoRA helpers (_evict_one, _reload_pipeline_loras, _pick_lru_evict, _disk_free_bytes)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [13]
     },
     {
