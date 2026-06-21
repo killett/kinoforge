@@ -330,7 +330,7 @@ def test_loop_sentinel_thread_tick_advances_monotonically(tmp_path: Path) -> Non
             instance_id: str,
             *,
             last_heartbeat: float | None = None,
-            **extra: float | int | str | None,
+            **extra: float | int | str | list | dict | None,  # type: ignore[type-arg]
         ) -> bool:
             tick = extra.get("heartbeat_thread_tick")
             if isinstance(tick, (int, float)):
