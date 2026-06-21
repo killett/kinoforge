@@ -12,6 +12,7 @@ Model loaded once at startup, persists across requests.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import queue
@@ -70,9 +71,13 @@ _worker_thread: threading.Thread | None = None
 
 # LoRA-flexible warm-reuse: pod-side inventory of loaded LoRA weights.
 # Entries are keyed by vendor-neutral ref (e.g. "civitai:2197303@2474081").
-# Populated cold-boot in _load_pipeline; mutated by future /lora/set_stack
-# endpoint additions in Tasks 5-8.
+# Populated cold-boot in _load_pipeline; mutated by /lora/set_stack.
 _inventory: dict[str, dict[str, Any]] = {}
+
+# Serializes /lora/set_stack handler invocations so two concurrent swaps
+# cannot fight over _inventory + pipeline adapter state. Acquired for the
+# duration of (diff + evict + download + reload).
+_swap_lock: asyncio.Lock = asyncio.Lock()
 
 
 class ArtifactDownloadSpec(BaseModel):
@@ -104,6 +109,49 @@ class JobState:
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
+
+
+class LoraInventoryEntry(BaseModel):
+    """One row of the pod's LoRA inventory exposed over HTTP."""
+
+    ref: str
+    filename: str
+    size_bytes: int
+    downloaded_at_local: str
+    last_used_at_local: str
+    adapter_name: str
+
+
+class SwapRejectedDetails(BaseModel):
+    """Why a /lora/set_stack call could not be honored as requested."""
+
+    reason: str
+    target_refs_dropped: list[str]
+
+
+class SetStackRequest(BaseModel):
+    """Declarative target LoRA stack for the pod.
+
+    Order of ``target_refs`` defines pipeline adapter ordering. Every ref in
+    ``target_refs`` that is not already in the pod's inventory must have a
+    matching entry in ``download_specs``.
+    """
+
+    target_refs: list[str]
+    download_specs: dict[str, ArtifactDownloadSpec]
+
+
+class SetStackResponse(BaseModel):
+    """Post-swap pod inventory + free disk + optional rejection details."""
+
+    inventory: list[LoraInventoryEntry]
+    free_bytes: int
+    swap_rejected: SwapRejectedDetails | None = None
+
+
+def _inventory_snapshot() -> list[LoraInventoryEntry]:
+    """Return a Pydantic snapshot of ``_inventory`` in current dict order."""
+    return [LoraInventoryEntry(**v) for v in _inventory.values()]
 
 
 class GenerateRequest(BaseModel):
@@ -447,6 +495,91 @@ def artifact(filename: str) -> Any:  # noqa: ANN401 — returns FileResponse, op
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="artifact not found")
     return FileResponse(str(target), media_type="video/mp4", filename=filename)
+
+
+@app.post("/lora/set_stack")
+async def set_stack(req: SetStackRequest) -> SetStackResponse:
+    """Apply ``req.target_refs`` as the pod's active LoRA stack.
+
+    Idempotent in the no-op case (target == current). On a partial-overlap
+    request the handler downloads only the new refs, optionally evicting
+    LRU losers first if free disk is insufficient, then reloads the
+    pipeline so ``set_adapters`` matches ``req.target_refs`` order.
+
+    Args:
+        req: Declarative target stack + per-new-ref download specs.
+
+    Returns:
+        Post-swap inventory snapshot + free disk bytes. ``swap_rejected``
+        stays ``None`` on the happy path; failure-path subclasses set it in
+        Task 8.
+
+    Raises:
+        RuntimeError: When even evicting every eligible candidate would not
+            free enough disk for the requested downloads. The matcher is
+            expected to catch this upstream; reaching it here indicates a
+            matcher / pod inventory drift.
+    """
+    async with _swap_lock:
+        target_set = set(req.target_refs)
+        current_set = set(_inventory.keys())
+        # Declarative semantic: anything in current but not in target must
+        # be evicted regardless of disk pressure. The matcher is what decides
+        # which currents to preserve (by including them in target_refs).
+        mandatory_evict = current_set - target_set
+        to_download = target_set - current_set
+
+        initial_free = _disk_free_bytes(LORAS_DIR)
+        target_dl_bytes = sum(
+            (req.download_specs[r].size_hint or 0) for r in to_download
+        )
+        # Bytes freed by mandatory eviction count toward the post-evict free
+        # budget so we don't double-evict; computed in-memory to avoid the
+        # raciness of stat'ing the filesystem mid-unlink.
+        mandatory_freed = sum(_inventory[r]["size_bytes"] for r in mandatory_evict)
+        for ref in mandatory_evict:
+            await _evict_one(ref)
+
+        post_mandatory_free = initial_free + mandatory_freed
+        if target_dl_bytes > post_mandatory_free:
+            # Mandatory eviction was not enough; LRU-evict additional held
+            # refs (which can only be entries that ARE in the target stack,
+            # so this path means the target itself does not fit on disk —
+            # raise so the matcher's math gets exposed).
+            picked = _pick_lru_evict(
+                set(_inventory.keys()) - target_set,
+                _inventory,
+                need=target_dl_bytes - post_mandatory_free,
+            )
+            if picked is None:
+                raise RuntimeError(
+                    f"insufficient disk for swap even after full eviction: need "
+                    f"{target_dl_bytes - post_mandatory_free} bytes"
+                )
+            for ref in picked:
+                await _evict_one(ref)
+
+        for ref in to_download:
+            spec = req.download_specs[ref]
+            path, actual_bytes = _download_one(spec, LORAS_DIR)
+            now = datetime.now().isoformat()
+            _inventory[ref] = {
+                "ref": ref,
+                "filename": spec.filename,
+                "size_bytes": actual_bytes,
+                "loras_dir_path": path,
+                "downloaded_at_local": now,
+                "last_used_at_local": now,
+                "adapter_name": f"lora_{len(_inventory)}",
+            }
+
+        await _reload_pipeline_loras(req.target_refs)
+
+        return SetStackResponse(
+            inventory=_inventory_snapshot(),
+            free_bytes=_disk_free_bytes(LORAS_DIR),
+            swap_rejected=None,
+        )
 
 
 if __name__ == "__main__":
