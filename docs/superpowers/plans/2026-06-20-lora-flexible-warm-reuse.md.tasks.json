@@ -1,7 +1,7 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-20-lora-flexible-warm-reuse.md",
   "specPath": "docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md",
-  "lastUpdated": "2026-06-20T20:31:30-07:00",
+  "lastUpdated": "2026-06-20T20:33:58-07:00",
   "tasks": [
     {
       "id": 10,
@@ -82,11 +82,12 @@
       "id": 19,
       "planTaskNumber": 10,
       "subject": "Task 10: Ledger.find_pods_by_warm_attach_key + lazy backfill plan",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         10,
         18
-      ]
+      ],
+      "lastUpdated": "2026-06-20T20:33:58-07:00"
     },
     {
       "id": 20,

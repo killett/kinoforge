@@ -588,6 +588,35 @@ class Ledger:
                 return entry
         return None
 
+    def find_pods_by_warm_attach_key(self, wak_hex: str) -> list[dict]:  # type: ignore[type-arg]
+        """Return ledger entries whose ``warm_attach_key`` matches ``wak_hex``.
+
+        Read-only — does NOT acquire the cross-process mutate lock so it
+        cannot contend with active heartbeat ``touch`` calls. Entries
+        missing ``warm_attach_key`` (pre-feature pods) are silently skipped
+        and logged at DEBUG; lazy backfill from a recoverable cfg snapshot
+        is a deferred enhancement.
+
+        Args:
+            wak_hex: The WarmAttachKey hex string to filter by.
+
+        Returns:
+            List of matching entry dicts in their on-disk order. Empty
+            list when nothing matches (never ``None``).
+        """
+        matches: list[dict] = []  # type: ignore[type-arg]
+        for entry in self._read_entries():
+            wak = entry.get("warm_attach_key")
+            if wak is None:
+                _log.debug(
+                    "skipping pre-feature ledger entry %s (no warm_attach_key)",
+                    entry.get("id", "?"),
+                )
+                continue
+            if wak == wak_hex:
+                matches.append(entry)
+        return matches
+
     def forget(self, instance_id: str) -> None:
         """Remove the entry for ``instance_id`` from the ledger.
 
