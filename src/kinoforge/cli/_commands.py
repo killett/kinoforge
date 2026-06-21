@@ -722,6 +722,7 @@ def _print_status_block(
     provider_block: dict[str, str],
     *,
     advisory: str | None = None,
+    lora_section: str | None = None,
 ) -> None:
     """Print a merged + alphabetically sorted ``key=value`` block to stdout.
 
@@ -729,13 +730,79 @@ def _print_status_block(
         ledger_block: Output of :func:`_build_ledger_block`.
         provider_block: Provider-derived fields (``provider_status`` and
             optionally ``endpoints``).
-        advisory: Optional advisory line; printed AFTER the sorted block when set.
+        advisory: Optional advisory line; printed AFTER the sorted block.
+        lora_section: Optional pre-rendered LoRA inventory block (from
+            :func:`_render_lora_inventory_section`); printed after the
+            sorted block but before the advisory when set.
     """
     merged = {**ledger_block, **provider_block}
     for key in sorted(merged):
         print(f"{key}={merged[key]}")
+    if lora_section is not None:
+        print(lora_section)
     if advisory is not None:
         print(advisory)
+
+
+def _human_bytes(n: int | float) -> str:
+    """Format ``n`` as B/KB/MB/GB with one decimal place above KB."""
+    if n is None:
+        return "?"
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024.0 or unit == "TB":
+            if unit == "B":
+                return f"{int(n)} B"
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} TB"
+
+
+def _render_lora_inventory_section(
+    inventory: list[dict] | None,  # type: ignore[type-arg]
+    *,
+    free_bytes: int | None,
+) -> str | None:
+    """Render the LoRA inventory block for ``kinoforge status`` / ``pod lora ls``.
+
+    Sorts rows newest-last-used first so the operator sees the LoRAs the
+    matcher is most likely to keep at the top of the list. Refs flow
+    through :class:`RedactionRegistry` so vault-registered + observed
+    refs appear as their placeholder token.
+
+    Args:
+        inventory: List of inventory entry dicts as written by
+            :meth:`Ledger.touch` (or returned from
+            ``/lora/inventory`` / ``/lora/set_stack``). Falsy → no section.
+        free_bytes: Pod-side ``shutil.disk_usage(LORAS_DIR).free`` snapshot.
+            ``None`` → free disk is omitted from the header.
+
+    Returns:
+        Multi-line string ready for ``print``, or ``None`` when the
+        inventory is empty.
+    """
+    if not inventory:
+        return None
+    from kinoforge.core.redaction import RedactionRegistry
+
+    registry = RedactionRegistry.instance()
+    total_bytes = sum(int(e.get("size_bytes", 0) or 0) for e in inventory)
+    header = f"  loras ({len(inventory)} resident, {_human_bytes(total_bytes)} used"
+    if free_bytes is not None:
+        header += f", {_human_bytes(free_bytes)} free):"
+    else:
+        header += "):"
+    rows: list[str] = [header]
+    ordered = sorted(
+        inventory, key=lambda e: e.get("last_used_at_local") or "", reverse=True
+    )
+    for e in ordered:
+        ref = registry.redact(str(e.get("ref", "?")))
+        size = _human_bytes(int(e.get("size_bytes", 0) or 0))
+        last_used = str(e.get("last_used_at_local", "?"))
+        adapter = str(e.get("adapter_name", "?"))
+        rows.append(f"    {ref}  {size}  last_used {last_used}  adapter {adapter}")
+    return "\n".join(rows)
 
 
 def _classify_for_status(
@@ -1295,7 +1362,16 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
     except Exception:  # noqa: BLE001 — honest "I can't tell" verdict
         provider_block["verdict"] = "HEARTBEAT_UNKNOWN"
 
-    _print_status_block(ledger_block, provider_block, advisory=heartbeat_advisory)
+    lora_section = _render_lora_inventory_section(
+        entry.get("lora_inventory"),
+        free_bytes=entry.get("loras_dir_free_bytes"),
+    )
+    _print_status_block(
+        ledger_block,
+        provider_block,
+        advisory=heartbeat_advisory,
+        lora_section=lora_section,
+    )
     return 0
 
 
