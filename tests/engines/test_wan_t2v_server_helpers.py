@@ -99,7 +99,7 @@ def test_reload_pipeline_loras_unloads_then_reloads(
     s._inventory["B"] = _inv_entry("B", 1, "x")
     s._inventory["B"]["loras_dir_path"] = "/loras/B"
 
-    asyncio.run(s._reload_pipeline_loras(["A", "B"]))
+    s._reload_pipeline_loras(["A", "B"])
 
     assert calls[0] == ("unload",)
     assert calls[1] == ("load", "/loras/A", "lora_0")
@@ -127,7 +127,7 @@ def test_reload_pipeline_loras_empty_unloads_no_reload(
             calls.append(("set_adapters",))
 
     monkeypatch.setattr(s, "pipe", _Stub())
-    asyncio.run(s._reload_pipeline_loras([]))
+    s._reload_pipeline_loras([])
 
     assert calls == [("unload",)]
 
