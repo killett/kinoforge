@@ -112,7 +112,7 @@
       "id": 21,
       "planTaskNumber": 16,
       "subject": "P16: USER-GATE — Wan 2.1 LoRA refs + HF repo + GH secrets",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [15, 16, 19],
       "userGate": true,
       "tags": ["user-gate", "operator-input"],
