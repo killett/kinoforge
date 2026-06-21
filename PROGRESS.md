@@ -71,6 +71,22 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
   `.github/workflows/leak-sweep.yml`) caps tier-3 pods at 45 min,
   tier-4 at 90 min, posts a GitHub issue per reap. Operator gate
   Task 16 (Wan 2.1 LoRA refs + GH secrets) outstanding.
+- **2026-06-21 follow-up: Tier-3 + Tier-4 BOTH GREEN END-TO-END.**
+  Eight Tier-3 fires + 1 Tier-4 fire shipped 8 root-cause commits
+  (`0f8bec8` WAN_MODEL_ID propagation, `d27429f` pod-download UA,
+  `7242739` peft + HTTPError body capture, `810f2f4` asyncio.to_thread,
+  `5659f82` harness 502-recovery, `5b07afd` server logging.basicConfig,
+  `53d5777` /health warmup, plus `53a1e6e` source UA shim) — every
+  one pinned by a unit test in `tests/_smoke_harness/` or
+  `tests/engines/`. Tier-3 green at $0.10/fire on Wan 2.1 1.3B with
+  the operator-specified static-rotation + Pokemon LoRA pair; Tier-4
+  green at $0.86/fire on Wan 2.2 14B with the canonical Arcane Style
+  high+low pair (matrix + bare regen = 5 distinct mp4 shas, all under
+  BudgetTracker $2 cap). Recipes + sha256s logged in
+  `successful-generations.md` §9 (Wan 2.1 1.3B) and §10 (Wan 2.2 14B).
+  T22 LoRA-swap matrix is officially graduated from "See also" to its
+  own capability axis. Cumulative spend this push ~$1.44; user's
+  $20 session authorization intact.
 
 ---
 
