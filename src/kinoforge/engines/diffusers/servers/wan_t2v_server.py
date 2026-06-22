@@ -214,6 +214,19 @@ class SetStackResponse(BaseModel):
     swap_rejected: SwapRejectedDetails | None = None
 
 
+def _snapshot_inventory_as_targets() -> list[LoraTarget]:
+    """Return the current inventory as an ordered ``LoraTarget`` list.
+
+    Used by ``set_stack``'s VRAM-OOM rollback path: snapshots both refs
+    AND ``last_strength`` values so the rollback restores the full prior
+    state. Missing ``last_strength`` (pre-P1 entry) defaults to 1.0.
+    """
+    return [
+        LoraTarget(ref=v["ref"], strength=v.get("last_strength") or 1.0)
+        for v in _inventory.values()
+    ]
+
+
 def _inventory_snapshot() -> list[LoraInventoryEntry]:
     """Return a Pydantic snapshot of ``_inventory`` in current dict order."""
     return [LoraInventoryEntry(**v) for v in _inventory.values()]
@@ -413,17 +426,6 @@ def _replace_adapter_stack(target: list[LoraTarget]) -> None:
         entry["adapter_name"] = name
         entry["last_strength"] = t.strength
     pipe.set_adapters(names, adapter_weights=weights)
-
-
-def _reload_pipeline_loras(target_refs: list[str]) -> None:
-    """Legacy alias; rolls each ref forward at strength=1.0.
-
-    Bridge for the OOM rollback path until Task 5 lands the snapshot.
-    Strength is intentionally lossy under this shim — Task 5 swaps the
-    rollback to ``_replace_adapter_stack(previous_state)`` so refs AND
-    strengths restore together.
-    """
-    _replace_adapter_stack([LoraTarget(ref=r, strength=1.0) for r in target_refs])
 
 
 def _load_pipeline(
@@ -682,8 +684,10 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             (req.download_specs[r].size_hint or 0) for r in to_download_refs
         )
         mandatory_freed = sum(_inventory[r]["size_bytes"] for r in mandatory_evict)
-        # Snapshot pre-swap state for VRAM-OOM rollback.
-        previous_refs = list(_inventory.keys())
+        # Snapshot pre-swap state for VRAM-OOM rollback (P1: refs AND
+        # strengths so rollback is fully reversible).
+        previous_state = _snapshot_inventory_as_targets()
+        previous_refs = [t.ref for t in previous_state]
 
         for ref in mandatory_evict:
             await _evict_one(ref)
@@ -794,27 +798,45 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
 
         try:
             await asyncio.to_thread(_replace_adapter_stack, req.target)
-        except RuntimeError as e:
+        except (RuntimeError, ValueError) as e:
             msg = str(e).lower()
-            if "out of memory" in msg or "oom" in msg:
-                dropped = [r for r in target_refs_list if r not in previous_refs]
-                for ref in dropped:
-                    _inventory.pop(ref, None)
-                    dropped_spec = req.download_specs.get(ref)
-                    if dropped_spec is not None:
-                        try:
-                            (LORAS_DIR / dropped_spec.filename).unlink(missing_ok=True)
-                        except OSError:
-                            pass
-                await asyncio.to_thread(_reload_pipeline_loras, previous_refs)
-                return SetStackResponse(
-                    inventory=_inventory_snapshot(),
-                    free_bytes=_disk_free_bytes(LORAS_DIR),
-                    swap_rejected=SwapRejectedDetails(
-                        reason="vram_oom", target_refs_dropped=dropped
-                    ),
-                )
-            raise
+            is_oom = "out of memory" in msg or "oom" in msg
+            is_value = isinstance(e, ValueError)
+            if not (is_oom or is_value):
+                raise
+            dropped = [r for r in target_refs_list if r not in previous_refs]
+            for ref in dropped:
+                _inventory.pop(ref, None)
+                dropped_spec = req.download_specs.get(ref)
+                if dropped_spec is not None:
+                    try:
+                        (LORAS_DIR / dropped_spec.filename).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            try:
+                await asyncio.to_thread(_replace_adapter_stack, previous_state)
+            except Exception as rb_err:  # noqa: BLE001
+                # Rollback ITSELF failed — pod state unknown. Surface
+                # explicitly so the orchestrator destroys + cold-boots
+                # rather than trusting an inventory we can't validate.
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": "rollback_failed",
+                        "phase": "rollback",
+                        "rollback_failed": True,
+                        "underlying": str(e),
+                        "rollback_error": str(rb_err),
+                    },
+                ) from rb_err
+            return SetStackResponse(
+                inventory=_inventory_snapshot(),
+                free_bytes=_disk_free_bytes(LORAS_DIR),
+                swap_rejected=SwapRejectedDetails(
+                    reason="vram_oom" if is_oom else "set_adapters_value_error",
+                    target_refs_dropped=dropped,
+                ),
+            )
 
         return SetStackResponse(
             inventory=_inventory_snapshot(),

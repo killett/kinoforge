@@ -73,7 +73,7 @@ def test_pick_lru_evict_empty_plan_when_need_zero() -> None:
     assert s._pick_lru_evict({"A"}, inventory, need=-5) == []
 
 
-def test_reload_pipeline_loras_unloads_then_reloads(
+def test_replace_adapter_stack_unloads_then_reloads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bug: helper forgets unload_lora_weights() before reloading, leaving
@@ -92,9 +92,9 @@ def test_reload_pipeline_loras_unloads_then_reloads(
         def set_adapters(
             self,
             names: list[str],
-            adapter_weights: list[float] | None = None,  # noqa: ARG002
+            adapter_weights: list[float] | None = None,
         ) -> None:
-            calls.append(("set_adapters", list(names)))
+            calls.append(("set_adapters", list(names), list(adapter_weights or [])))
 
     monkeypatch.setattr(s, "pipe", _Stub())
     s._inventory.clear()
@@ -103,15 +103,20 @@ def test_reload_pipeline_loras_unloads_then_reloads(
     s._inventory["B"] = _inv_entry("B", 1, "x")
     s._inventory["B"]["loras_dir_path"] = "/loras/B"
 
-    s._reload_pipeline_loras(["A", "B"])
+    s._replace_adapter_stack(
+        [
+            s.LoraTarget(ref="A", strength=0.5),
+            s.LoraTarget(ref="B", strength=1.2),
+        ]
+    )
 
     assert calls[0] == ("unload",)
     assert calls[1] == ("load", "/loras/A", "lora_0")
     assert calls[2] == ("load", "/loras/B", "lora_1")
-    assert calls[3] == ("set_adapters", ["lora_0", "lora_1"])
+    assert calls[3] == ("set_adapters", ["lora_0", "lora_1"], [0.5, 1.2])
 
 
-def test_reload_pipeline_loras_empty_unloads_no_reload(
+def test_replace_adapter_stack_empty_unloads_no_reload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bug: empty target stack accidentally calls set_adapters([]) and
@@ -131,7 +136,7 @@ def test_reload_pipeline_loras_empty_unloads_no_reload(
             calls.append(("set_adapters",))
 
     monkeypatch.setattr(s, "pipe", _Stub())
-    s._reload_pipeline_loras([])
+    s._replace_adapter_stack([])
 
     assert calls == [("unload",)]
 
