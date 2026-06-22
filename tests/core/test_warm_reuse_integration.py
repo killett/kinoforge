@@ -31,6 +31,15 @@ class _StubCfg:
     def capability_key(self) -> CapabilityKey:
         return self.cap_key
 
+    @property
+    def loras(self) -> list[Any]:
+        # P1 (2026-06-21): integration.py reads cfg.loras for the active
+        # stack; mirror the capability_key's refs into cfg.loras so the
+        # stub stays consistent.
+        from kinoforge.core.lora import LoraEntry
+
+        return [LoraEntry(ref=r) for r in self.cap_key.loras]
+
 
 class _FakeLedger:
     def __init__(self, entries: list[dict[str, Any]]) -> None:
@@ -87,13 +96,17 @@ class _FakeBackend:
         self,
         *,
         pod_id: str,
-        target_refs: list[str],
+        active_stack: list[Any],
         download_specs: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
+        # P1 (2026-06-21): signature took target_refs: list[str]; now
+        # takes active_stack: list[LoraEntry] so strength reaches the
+        # pod via target: [{ref, strength}, ...] on the wire.
         self.calls.append(
             {
                 "pod_id": pod_id,
-                "target_refs": list(target_refs),
+                "active_stack": list(active_stack),
+                "target_refs": [e.ref for e in active_stack],
                 "download_specs": dict(download_specs),
             }
         )
