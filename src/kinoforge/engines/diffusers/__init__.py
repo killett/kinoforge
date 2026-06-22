@@ -12,10 +12,12 @@ from __future__ import annotations
 import base64
 import importlib.resources
 import json
+import logging
 import re
 import shlex
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -42,6 +44,8 @@ from kinoforge.core.interfaces import (
     RenderedProvision,
 )
 from kinoforge.core.lora import LoraEntry
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -296,6 +300,8 @@ class DiffusersBackend(GenerationBackend):
         sleep: Callable[[float], None] = time.sleep,
         asset_paths: dict[str, str] | None = None,
         prompt_body_key: str | None = "prompt",
+        poll_timeout_s: float = 1800.0,
+        poll_interval_s: float = 1.0,
     ) -> None:
         """Initialise the backend with injected transport callables.
 
@@ -315,6 +321,11 @@ class DiffusersBackend(GenerationBackend):
             prompt_body_key: Top-level body key written from
                 ``resolve_prompt(job)`` when no explicit ``spec["prompt"]``
                 is provided. ``None`` / empty disables routing entirely.
+            poll_timeout_s: Wall-clock cap on ``result()`` polling.
+                Default ``1800.0`` matches the legacy
+                ``_MAX_POLL * 1.0s`` effective bound.
+            poll_interval_s: Sleep between successive ``/status`` polls.
+                Default ``1.0`` matches today's hard-coded value.
         """
         self._http_post = http_post
         self._http_get = http_get
@@ -323,6 +334,8 @@ class DiffusersBackend(GenerationBackend):
         self._sleep = sleep
         self._asset_paths: dict[str, str] = dict(asset_paths or {})
         self._prompt_body_key: str | None = prompt_body_key
+        self._poll_timeout_s = poll_timeout_s
+        self._poll_interval_s = poll_interval_s
 
     def capabilities(self) -> ModelProfile:
         """Return the injected probe profile.
@@ -395,40 +408,98 @@ class DiffusersBackend(GenerationBackend):
     ) -> Artifact:
         """Poll ``/status/{job_id}`` until ``status == "done"``.
 
-        Polls at most :data:`_MAX_POLL` times, sleeping between iterations
-        using the injected *sleep* callable.
+        Honors *cancel_token* both at the top of every iteration and
+        across the inter-poll wait. Absorbs transient HTTPError codes
+        and transport-class exceptions (URLError, OSError) via
+        :func:`retry_proxy_call`. On wall-clock timeout, re-raises the
+        last absorbed transient in preference to a bare TimeoutError so
+        operators see the underlying proxy failure.
 
         Args:
             job_id: The job ID returned by a prior ``submit`` call.
-            cancel_token: Accepted for :class:`GenerationBackend` ABC
-                parity; ignored at this layer. Full cooperative honoring
-                of the poll loop is added by a follow-up layer.
+            cancel_token: Cooperative cancellation token. ``None``
+                (or default) means cancellation is not honored.
 
         Returns:
-            An ``Artifact`` whose ``filename`` comes from the server response
-            and whose ``meta`` contains ``{"job_id": job_id}``.
+            An ``Artifact`` whose ``filename`` comes from the server
+            response and whose ``meta`` contains ``{"job_id": job_id}``.
+            The ``url`` is built from this backend's ``base_url`` so
+            remote pods resolve through the RunPod proxy (the
+            server-supplied ``localhost:8000`` URL is ignored).
 
         Raises:
-            TimeoutError: The server did not return ``status == "done"``
-                within the poll limit.
+            TimeoutError: Wall-clock or iteration-count exceeded with
+                no sustained transient to surface.
+            urllib.error.HTTPError: Re-raised when a sustained transient
+                caused the timeout (preferred over TimeoutError).
+            urllib.error.URLError | OSError: Same as above for
+                transport-class transients.
+            kinoforge.core.errors.Cancelled: ``cancel_token`` fired.
+            GenerationError: Server reported ``status == "error"``.
         """
-        del cancel_token  # ABC parity; full honoring deferred to a future task.
-        from kinoforge.core.errors import GenerationError  # local — avoid circular
+        from kinoforge.core.cancel import _NULL_TOKEN
+        from kinoforge.core.errors import GenerationError
+        from kinoforge.engines._proxy_retry import (
+            RUNPOD_PROXY_POLICY,
+            interpoll_wait,
+            retry_proxy_call,
+        )
 
+        token = cancel_token if cancel_token is not None else _NULL_TOKEN
         url = f"{self._base_url}/status/{job_id}"
-        for _ in range(_MAX_POLL):
-            data = self._http_get(url)
+        start = time.monotonic()
+        last_transient: BaseException | None = None
+        poll_idx = 0
+        while True:
+            token.raise_if_set()
+            elapsed = time.monotonic() - start
+            if poll_idx >= _MAX_POLL or elapsed > self._poll_timeout_s:
+                if last_transient is not None:
+                    raise last_transient
+                raise TimeoutError(
+                    f"diffusers poll timed out after {elapsed:.1f}s "
+                    f"(job={job_id}, polls={poll_idx})"
+                )
+            try:
+                data = retry_proxy_call(
+                    "diffusers.result",
+                    url,
+                    lambda: self._http_get(url),
+                    self._sleep,
+                    RUNPOD_PROXY_POLICY,
+                )
+            except urllib.error.HTTPError as exc:
+                if exc.code in RUNPOD_PROXY_POLICY.transient_codes:
+                    _log.warning(
+                        "[diffusers.result] transient HTTPError exhausted "
+                        "elapsed=%.1fs job=%s code=%d",
+                        elapsed,
+                        job_id,
+                        exc.code,
+                    )
+                    last_transient = exc
+                    poll_idx += 1
+                    if interpoll_wait(self._poll_interval_s, cancel_token, self._sleep):
+                        token.raise_if_set()
+                    continue
+                raise
+            except RUNPOD_PROXY_POLICY.catch_classes as exc:
+                _log.warning(
+                    "[diffusers.result] transient transport-error exhausted "
+                    "elapsed=%.1fs job=%s type=%s",
+                    elapsed,
+                    job_id,
+                    type(exc).__name__,
+                )
+                last_transient = exc
+                poll_idx += 1
+                if interpoll_wait(self._poll_interval_s, cancel_token, self._sleep):
+                    token.raise_if_set()
+                continue
+
             status = data.get("status")
             if status == "done":
                 filename = str(data.get("filename", ""))
-                # Ignore the server-supplied ``url`` (wan_t2v_server hardcodes
-                # ``http://localhost:8000/artifacts/{filename}``, which the
-                # workspace container cannot reach). Build the URL from this
-                # backend's base_url so remote pods resolve through the
-                # RunPod proxy. Task 8 attempt #27 ran the full generation
-                # successfully and then died at artifact-fetch:
-                #   urllib.error.URLError: Connection refused
-                # against localhost:8000 from the workspace.
                 artifact_url = f"{self._base_url.rstrip('/')}/artifacts/{filename}"
                 return Artifact(
                     filename=filename, url=artifact_url, meta={"job_id": job_id}
@@ -440,10 +511,9 @@ class DiffusersBackend(GenerationBackend):
                 raise GenerationError(
                     f"diffusers server reported error for job {job_id!r}: {err_msg}"
                 )
-            self._sleep(1.0)
-        raise TimeoutError(
-            f"Diffusers server did not complete job {job_id!r} within {_MAX_POLL} polls"
-        )
+            poll_idx += 1
+            if interpoll_wait(self._poll_interval_s, cancel_token, self._sleep):
+                token.raise_if_set()
 
     def endpoints(self) -> dict[str, str]:
         """Return the diffusers server endpoint map.
@@ -1009,6 +1079,8 @@ class DiffusersEngine(GenerationEngine):
             sleep=self._sleep,
             asset_paths=asset_paths,
             prompt_body_key=prompt_body_key,
+            poll_timeout_s=float(diffusers_cfg.get("poll_timeout_s", 1800.0)),
+            poll_interval_s=float(diffusers_cfg.get("poll_interval_s", 1.0)),
         )
 
     def profile_for(self, key: CapabilityKey) -> ModelProfile:
