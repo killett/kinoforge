@@ -854,16 +854,21 @@ def test_validate_spec_rejects_role_without_node_id_mapping() -> None:
 
 
 def test_submit_raises_AssetFetchError_on_upload_failure(tmp_path: Any) -> None:
-    """Upload-side URLError surfaces as AssetFetchError, not the raw urllib
-    exception.
+    """Upload-side URLError retries then surfaces as AssetFetchError.
 
     Bug catch: callers expecting the typed kinoforge error get an
-    unrelated network exception instead.
+    unrelated network exception instead. The shared retry helper
+    (retry_proxy_call) exhausts RUNPOD_PROXY_POLICY backoffs (7 total
+    attempts) before the outer except wraps the last URLError as
+    AssetFetchError.
     """
     asset_path = tmp_path / "seed.png"
     asset_path.write_bytes(b"X")
 
+    attempts: dict[str, int] = {"n": 0}
+
     def raising_post_file(url: str, **kw: Any) -> str:
+        attempts["n"] += 1
         raise urllib.error.URLError("upload 500")
 
     backend = ComfyUIBackend(
@@ -873,6 +878,7 @@ def test_submit_raises_AssetFetchError_on_upload_failure(tmp_path: Any) -> None:
         http_post_file=raising_post_file,
         base_url="http://comfy:8188",
         probe=_DEFAULT_PROBE,
+        sleep=lambda s: None,
     )
     asset = ConditioningAsset(
         kind="image",
@@ -889,6 +895,9 @@ def test_submit_raises_AssetFetchError_on_upload_failure(tmp_path: Any) -> None:
     )
     with pytest.raises(AssetFetchError, match="upload"):
         backend.submit(job)
+    # Proves retry_proxy_call actually retried before AssetFetchError surfaced.
+    # RUNPOD_PROXY_POLICY.backoffs has 6 entries → 7 total attempts.
+    assert attempts["n"] == 7
 
 
 def test_submit_raises_AssetFetchError_on_fetch_failure() -> None:
@@ -1780,7 +1789,9 @@ def test_result_retries_on_transient_404_then_returns(
         sleep=lambda s: None,
     )
 
-    with caplog.at_level(_stdlib_logging.WARNING, logger="kinoforge.comfyui"):
+    with caplog.at_level(
+        _stdlib_logging.WARNING, logger="kinoforge.engines._proxy_retry"
+    ):
         artifact = backend.result(_PROMPT_ID)
 
     assert isinstance(artifact, Artifact)
@@ -1788,7 +1799,8 @@ def test_result_retries_on_transient_404_then_returns(
     warnings = [
         r
         for r in caplog.records
-        if r.name == "kinoforge.comfyui" and r.levelno >= _stdlib_logging.WARNING
+        if r.name == "kinoforge.engines._proxy_retry"
+        and r.levelno >= _stdlib_logging.WARNING
     ]
     assert len(warnings) >= 2, "expected diagnostic WARNING per 404"
     msg = warnings[0].getMessage()
@@ -1813,7 +1825,9 @@ def test_result_raises_after_persistent_404(
         sleep=lambda s: None,
     )
 
-    with caplog.at_level(_stdlib_logging.WARNING, logger="kinoforge.comfyui"):
+    with caplog.at_level(
+        _stdlib_logging.WARNING, logger="kinoforge.engines._proxy_retry"
+    ):
         with pytest.raises(urllib.error.HTTPError) as exc:
             backend.result(_PROMPT_ID)
 

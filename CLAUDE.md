@@ -153,6 +153,62 @@ Encode the polling loop inside the smoke harness when possible so it
 runs automatically; when that's not possible, drive it from the
 controlling agent loop.
 
+## Live smoke teardown (pass `--no-reuse`, verify post-run)
+
+`kinoforge generate` defaults to **warm-reuse**: the pod survives at
+end of generation so the next call can attach without paying the
+10+-minute cold-boot tax again. That's correct for benchmarking and
+multi-run sessions; it is a money leak for one-shot validation runs.
+
+**Hard rule.** For any one-shot live smoke, validation run,
+spec-confirm, or ad-hoc test — i.e. anything that is NOT part of a
+deliberate multi-run warm-reuse benchmark — pass `--no-reuse`:
+
+```bash
+pixi run kinoforge generate \
+  --config <cfg> --mode <mode> --prompt "<text>" \
+  --no-reuse
+```
+
+The flag makes the pod auto-destroy as soon as generation finishes.
+
+**Equally hard rule — verification.** Mid-run log lines like
+`[instance overview] No running instances.` or
+`generate completed — artifact uri=...` are **not** proof the pod is
+gone. Those messages can fire between orchestration phases while the
+pod is still alive. After the orchestrator exits, always confirm with:
+
+```bash
+pixi run kinoforge list
+```
+
+Expected: `[instance overview] No running instances.` AND
+`No instances recorded in ledger.` together. If either line shows a
+pod, destroy it explicitly:
+
+```bash
+pixi run kinoforge destroy --id <pod-id>
+```
+
+The failure mode this rule exists to prevent: 2026-06-22 Phase-P1
+live validation ran without `--no-reuse`; the operator read a
+mid-orchestration "No running instances" line as "pod destroyed" and
+reported the smoke clean. The pod `t73xw2apqnfk4q` was actually still
+running and bled ~$0.40 over 10 minutes before being caught manually.
+Composes with the polling rule above — poll DURING the run, verify
+ledger state AFTER it.
+
+**Safety-net alternative for unsupervised runs.** Start the sweeper
+daemon at session begin:
+
+```bash
+pixi run kinoforge sweeper start &
+```
+
+It classifies idle pods and reaps them per `Lifecycle()` defaults.
+Useful when running multiple back-to-back smokes where you might
+forget the per-run teardown check.
+
 ## Workspace scaffolding
 
 This project has already been scaffolded. The following files
