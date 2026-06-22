@@ -34,13 +34,13 @@ htmlcov/
 .env.*
 # The .env.example template stays tracked
 !.env.example
-# Cloud creds dirs: ignore contents by default, re-include tracked operator
-# docs and policy bytes (no secrets). Layer W+α adds the scoped IAM policy
-# JSON and the operator README that explains how to attach it.
+# Cloud creds dirs: ignore contents fully. .gcp/ READMEs are no longer
+# tracked (operator identity leak risk — see 2026-06-22 scrub). .aws/
+# and .azure/ READMEs + .aws/policies/ remain tracked (no operator
+# email surface there).
 .gcp/*
 .aws/*
 .azure/*
-!.gcp/README.md
 !.aws/README.md
 !.azure/README.md
 !.aws/policies/
