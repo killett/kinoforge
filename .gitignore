@@ -34,13 +34,13 @@ htmlcov/
 .env.*
 # The .env.example template stays tracked
 !.env.example
-# Cloud creds dirs: ignore contents fully. .gcp/ READMEs are no longer
-# tracked (operator identity leak risk — see 2026-06-22 scrub). .aws/
-# and .azure/ READMEs + .aws/policies/ remain tracked (no operator
-# email surface there).
+# Cloud creds dirs: ignore contents by default; allow tracked operator
+# README (placeholders only — no concrete IDs, emails, billing accounts,
+# bucket names; see 2026-06-22 scrub) + scoped IAM policy bytes.
 .gcp/*
 .aws/*
 .azure/*
+!.gcp/README.md
 !.aws/README.md
 !.azure/README.md
 !.aws/policies/
