@@ -94,13 +94,19 @@ def test_submit_exhaustion_reraises_last_http_error() -> None:
     a successful empty job_id.
     """
 
+    attempts = {"n": 0}
+
     def http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        attempts["n"] += 1
         raise _http_error(503)
 
     backend = _make_backend(http_post)
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         backend.submit(_job())
     assert exc_info.value.code == 503
+    # 7 attempts = 1 initial + 6 retries (RUNPOD_PROXY_POLICY.backoffs).
+    # Locked to the policy structure so a calibration change breaks loudly.
+    assert attempts["n"] == 7
 
 
 def test_submit_non_transient_400_raises_immediately() -> None:
