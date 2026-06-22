@@ -9,6 +9,8 @@ diffusers import cost.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -84,3 +86,162 @@ def test_lora_target_construct_with_defaults() -> None:
     miss."""
     t = LoraTarget(ref="x")
     assert t.strength == 1.0
+
+
+# -- Task 4 ------------------------------------------------------------------
+
+
+def test_set_stack_passes_adapter_weights_to_set_adapters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: a future edit drops the adapter_weights kwarg → every LoRA
+    silently loads at strength=1.0 regardless of the request."""
+    from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+    calls: list[dict[str, Any]] = []
+
+    class _FakePipe:
+        def __init__(self) -> None:
+            self._loaded: list[tuple[str, str]] = []
+
+        def unload_lora_weights(self) -> None:
+            self._loaded.clear()
+
+        def load_lora_weights(self, path: str, *, adapter_name: str) -> None:
+            self._loaded.append((path, adapter_name))
+
+        def set_adapters(
+            self,
+            names: list[str],
+            adapter_weights: list[float] | None = None,
+        ) -> None:
+            calls.append({"names": list(names), "weights": list(adapter_weights or [])})
+
+    monkeypatch.setattr(srv, "pipe", _FakePipe())
+    monkeypatch.setitem(
+        srv._inventory,
+        "civitai:1@2",
+        {
+            "ref": "civitai:1@2",
+            "filename": "a.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/tmp/a",
+            "downloaded_at_local": "x",
+            "last_used_at_local": "x",
+            "adapter_name": "lora_0",
+        },
+    )
+    monkeypatch.setitem(
+        srv._inventory,
+        "civitai:3@4",
+        {
+            "ref": "civitai:3@4",
+            "filename": "b.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/tmp/b",
+            "downloaded_at_local": "x",
+            "last_used_at_local": "x",
+            "adapter_name": "lora_1",
+        },
+    )
+
+    target = [
+        srv.LoraTarget(ref="civitai:1@2", strength=0.5),
+        srv.LoraTarget(ref="civitai:3@4", strength=1.2),
+    ]
+    srv._replace_adapter_stack(target)
+
+    assert len(calls) == 1
+    assert calls[0]["weights"] == [0.5, 1.2]
+    assert calls[0]["names"] == ["lora_0", "lora_1"]
+
+
+def test_set_stack_persists_last_strength_on_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: a future edit forgets to write last_strength → matcher's
+    same-refs / different-strength path always sees None → constant
+    set_stack re-issues even when nothing changed."""
+    from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+    class _NoopPipe:
+        def unload_lora_weights(self) -> None:
+            pass
+
+        def load_lora_weights(self, *a: Any, **kw: Any) -> None:
+            pass
+
+        def set_adapters(self, *a: Any, **kw: Any) -> None:
+            pass
+
+    monkeypatch.setattr(srv, "pipe", _NoopPipe())
+    monkeypatch.setitem(
+        srv._inventory,
+        "civitai:1@2",
+        {
+            "ref": "civitai:1@2",
+            "filename": "a.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/tmp/a",
+            "downloaded_at_local": "x",
+            "last_used_at_local": "x",
+            "adapter_name": "lora_0",
+        },
+    )
+    srv._replace_adapter_stack([srv.LoraTarget(ref="civitai:1@2", strength=0.7)])
+    assert srv._inventory["civitai:1@2"]["last_strength"] == 0.7
+
+
+def test_inventory_snapshot_surfaces_last_strength(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: a future edit forgets to expose last_strength on the
+    LoraInventoryEntry → /lora/inventory still returns ref+filename
+    but drops the strength dimension."""
+    from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+    monkeypatch.setitem(
+        srv._inventory,
+        "civitai:1@2",
+        {
+            "ref": "civitai:1@2",
+            "filename": "a.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/tmp/a",
+            "downloaded_at_local": "x",
+            "last_used_at_local": "x",
+            "adapter_name": "lora_0",
+            "last_strength": 1.2,
+        },
+    )
+    snap = srv._inventory_snapshot()
+    matches = [e for e in snap if e.ref == "civitai:1@2"]
+    assert matches
+    assert matches[0].last_strength == 1.2
+
+
+def test_inventory_entry_without_last_strength_renders_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: a pre-P1 inventory entry has no ``last_strength`` key. The
+    snapshot MUST default the field to None rather than raise — pods
+    rolling P0 → P1 must not crash /lora/inventory."""
+    from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+    monkeypatch.setitem(
+        srv._inventory,
+        "civitai:9@9",
+        {
+            "ref": "civitai:9@9",
+            "filename": "z.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/tmp/z",
+            "downloaded_at_local": "x",
+            "last_used_at_local": "x",
+            "adapter_name": "lora_pending_civitai:9@9",
+        },
+    )
+    snap = srv._inventory_snapshot()
+    matches = [e for e in snap if e.ref == "civitai:9@9"]
+    assert len(matches) == 1
+    assert matches[0].last_strength is None

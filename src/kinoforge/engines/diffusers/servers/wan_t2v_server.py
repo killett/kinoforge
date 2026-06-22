@@ -129,6 +129,10 @@ class LoraInventoryEntry(BaseModel):
     downloaded_at_local: str
     last_used_at_local: str
     adapter_name: str
+    # P1 (2026-06-21): per-adapter set_adapters weight active on the
+    # pod. ``None`` for pre-P1 entries (never activated under the new
+    # set_adapters(adapter_weights=) path).
+    last_strength: float | None = None
 
 
 class SwapRejectedDetails(BaseModel):
@@ -377,12 +381,17 @@ async def _evict_one(ref: str) -> None:
     _inventory.pop(ref, None)
 
 
-def _reload_pipeline_loras(target_refs: list[str]) -> None:
-    """Replace the active pipeline adapter stack with ``target_refs`` in order.
+def _replace_adapter_stack(target: list[LoraTarget]) -> None:
+    """Replace the active pipeline adapter stack with ``target`` in order.
 
     Calls ``unload_lora_weights()`` first to clear any active adapters,
     then re-loads each target ref as ``lora_{i}``, then ``set_adapters``
-    with the positional list. Empty ``target_refs`` → unload only.
+    with paired ``adapter_weights=[t.strength for t in target]``. Empty
+    ``target`` → unload only.
+
+    Persists ``last_strength`` onto each inventory entry so the warm-
+    attach matcher's same-refs / different-strength path observes the
+    current state.
 
     Synchronous: callers must wrap in ``asyncio.to_thread(...)`` when
     invoked from an async FastAPI handler. ``pipe.load_lora_weights``
@@ -391,16 +400,30 @@ def _reload_pipeline_loras(target_refs: list[str]) -> None:
     to return "Waiting for service to respond" (HTTP 502).
     """
     pipe.unload_lora_weights()
-    if not target_refs:
+    if not target:
         return
     names: list[str] = []
-    for i, ref in enumerate(target_refs):
-        entry = _inventory[ref]
+    weights: list[float] = []
+    for i, t in enumerate(target):
+        entry = _inventory[t.ref]
         name = f"lora_{i}"
         pipe.load_lora_weights(entry["loras_dir_path"], adapter_name=name)
         names.append(name)
+        weights.append(t.strength)
         entry["adapter_name"] = name
-    pipe.set_adapters(names)
+        entry["last_strength"] = t.strength
+    pipe.set_adapters(names, adapter_weights=weights)
+
+
+def _reload_pipeline_loras(target_refs: list[str]) -> None:
+    """Legacy alias; rolls each ref forward at strength=1.0.
+
+    Bridge for the OOM rollback path until Task 5 lands the snapshot.
+    Strength is intentionally lossy under this shim — Task 5 swaps the
+    rollback to ``_replace_adapter_stack(previous_state)`` so refs AND
+    strengths restore together.
+    """
+    _replace_adapter_stack([LoraTarget(ref=r, strength=1.0) for r in target_refs])
 
 
 def _load_pipeline(
@@ -419,6 +442,7 @@ def _load_pipeline(
     pipe_obj = _diffusers_load()
     if initial_lora_stack:
         adapter_names: list[str] = []
+        adapter_weights: list[float] = []
         for i, (ref, spec) in enumerate(initial_lora_stack):
             try:
                 path, actual_bytes = _download_one(spec, LORAS_DIR)
@@ -427,6 +451,12 @@ def _load_pipeline(
             adapter_name = f"lora_{i}"
             pipe_obj.load_lora_weights(path, adapter_name=adapter_name)
             adapter_names.append(adapter_name)
+            # P1 (2026-06-21): cold-boot defaults strength=1.0 until the
+            # KINOFORGE_INITIAL_LORA_STACK_JSON env shape is extended to
+            # carry strength (deferred to Task 8 / DiffusersEngine
+            # integration). Inventory carries last_strength so the
+            # matcher reads consistent state.
+            adapter_weights.append(1.0)
             now = datetime.now().isoformat()
             _inventory[ref] = {
                 "ref": ref,
@@ -436,9 +466,10 @@ def _load_pipeline(
                 "downloaded_at_local": now,
                 "last_used_at_local": now,
                 "adapter_name": adapter_name,
+                "last_strength": 1.0,
             }
         if adapter_names:
-            pipe_obj.set_adapters(adapter_names)
+            pipe_obj.set_adapters(adapter_names, adapter_weights=adapter_weights)
     return pipe_obj
 
 
@@ -762,7 +793,7 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             download_completed.append(ref)
 
         try:
-            await asyncio.to_thread(_reload_pipeline_loras, target_refs_list)
+            await asyncio.to_thread(_replace_adapter_stack, req.target)
         except RuntimeError as e:
             msg = str(e).lower()
             if "out of memory" in msg or "oom" in msg:

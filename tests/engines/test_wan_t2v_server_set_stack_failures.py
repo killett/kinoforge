@@ -35,7 +35,11 @@ def server_with_stubs(
         def load_lora_weights(self, path: str, adapter_name: str) -> None:
             self.loaded.append((path, adapter_name))
 
-        def set_adapters(self, names: list[str]) -> None:
+        def set_adapters(
+            self,
+            names: list[str],
+            adapter_weights: list[float] | None = None,  # noqa: ARG002
+        ) -> None:
             self.adapters = list(names)
 
         def delete_adapters(self, names: list[str]) -> None:
@@ -143,7 +147,11 @@ def test_vram_oom_rollback_200_with_swap_rejected(
     monkeypatch.setattr(s, "_download_one", _fake_dl)
     call_count = {"n": 0}
 
-    def _oom_then_ok(self: Any, names: list[str]) -> None:
+    def _oom_then_ok(
+        self: Any,
+        names: list[str],
+        adapter_weights: list[float] | None = None,  # noqa: ARG001
+    ) -> None:
         call_count["n"] += 1
         if call_count["n"] == 1:
             raise RuntimeError("CUDA out of memory")

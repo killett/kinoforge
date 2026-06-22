@@ -26,9 +26,15 @@ def mock_pipeline(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
             """Record the call so the test can pin ordering."""
             calls["load_lora"].append((path, adapter_name))
 
-        def set_adapters(self, names: list[str]) -> None:
-            """Record the adapter-name list passed to set_adapters."""
-            calls["set_adapters"].append(list(names))
+        def set_adapters(
+            self,
+            names: list[str],
+            adapter_weights: list[float] | None = None,
+        ) -> None:
+            """Record the adapter-name list + paired weights."""
+            calls["set_adapters"].append(
+                {"names": list(names), "weights": list(adapter_weights or [])}
+            )
 
         def to(self, *args: Any, **kwargs: Any) -> _StubPipe:
             """Pretend-move the stub pipeline; returns self for chaining."""
@@ -107,7 +113,12 @@ def test_load_pipeline_two_lora_stack(
     assert len(mock_pipeline["load_lora"]) == 2
     assert mock_pipeline["load_lora"][0][1] == "lora_0"
     assert mock_pipeline["load_lora"][1][1] == "lora_1"
-    assert mock_pipeline["set_adapters"] == [["lora_0", "lora_1"]]
+    # P1: mock now records dict with names + weights; cold-boot defaults
+    # strength=1.0 per LoRA until KINOFORGE_INITIAL_LORA_STACK_JSON
+    # extends the env shape to carry strength.
+    assert mock_pipeline["set_adapters"] == [
+        {"names": ["lora_0", "lora_1"], "weights": [1.0, 1.0]}
+    ]
     assert "civitai:A@1" in s._inventory
     assert s._inventory["civitai:A@1"]["size_bytes"] == 1024
     assert s._inventory["civitai:A@1"]["adapter_name"] == "lora_0"
