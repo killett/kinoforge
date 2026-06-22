@@ -397,7 +397,18 @@ class DiffusersBackend(GenerationBackend):
                 continue
             set_by_dot_path(body, dot_path, asset.ref.uri)
         url = f"{self._base_url}/generate"
-        response = self._http_post(url, body)
+        from kinoforge.engines._proxy_retry import (
+            RUNPOD_PROXY_POLICY,
+            retry_proxy_call,
+        )
+
+        response = retry_proxy_call(
+            "diffusers.submit",
+            url,
+            lambda: self._http_post(url, body),
+            self._sleep,
+            RUNPOD_PROXY_POLICY,
+        )
         return str(response["job_id"])
 
     def result(
@@ -581,8 +592,19 @@ class DiffusersBackend(GenerationBackend):
             "target": [{"ref": e.ref, "strength": e.strength} for e in active_stack],
             "download_specs": download_specs,
         }
+        from kinoforge.engines._proxy_retry import (
+            RUNPOD_PROXY_POLICY,
+            retry_proxy_call,
+        )
+
         try:
-            resp = self._http_post(url, body)
+            resp = retry_proxy_call(
+                "diffusers.lora.set_stack",
+                url,
+                lambda: self._http_post(url, body),
+                self._sleep,
+                RUNPOD_PROXY_POLICY,
+            )
         except Exception as e:
             status = getattr(e, "status", None)
             body_attr = getattr(e, "body", None)
@@ -1181,8 +1203,19 @@ class DiffusersEngine(GenerationEngine):
                 f"{type(self).__name__}: artifact.url is empty; "
                 "cannot fetch video bytes"
             )
+        from kinoforge.engines._proxy_retry import (
+            RUNPOD_PROXY_POLICY,
+            retry_proxy_call,
+        )
+
         try:
-            video_bytes = self._http_get_bytes(artifact.url)
+            video_bytes = retry_proxy_call(
+                "diffusers.artifact",
+                artifact.url,
+                lambda: self._http_get_bytes(artifact.url),
+                self._sleep,
+                RUNPOD_PROXY_POLICY,
+            )
         except Exception as exc:
             raise FrameExtractionError(
                 f"{type(self).__name__}: fetch from {artifact.url!r} failed: {exc}"
