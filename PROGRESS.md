@@ -94,6 +94,72 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
+**P1 server per-LoRA strength weights CODE-COMPLETE 2026-06-21
+(autonomous).** Spec
+`docs/superpowers/specs/2026-06-21-server-lora-strength-design.md`
++ plan `docs/superpowers/plans/2026-06-21-server-lora-strength.md`.
+Branch `worktree-feat-p1-server-lora-strength` (worktree under
+`.claude/worktrees/`); 13 commits ahead of local `main`. Strength
+ships end-to-end: `LoraEntry` (cfg + vault) → `LoraTarget` (wire) →
+`set_adapters(adapter_weights=...)` (pipeline) → `last_strength`
+(inventory) → matcher `is_stack_match` (warm-reuse equality).
+Strength is mutable per-run; explicitly OUT of `capability_key`
+hash (same refs / diff strength reuse the warm pod).
+
+- **Tasks shipped (commit hashes):**
+  - Task 0 `c96078e` — `LoraEntry` + `VaultLoRA(LoraEntry)` + `LoraTarget` + parity lockdown.
+  - Task 1 `344470f` — `Config.loras` block + legacy `kind=lora` promoter + `ModelEntry.kind` narrowing.
+  - Task 2 `f78cc26` — `capability_key` strength-invariance tests
+    (code half folded into Task 1 commit because the regression bridge was load-bearing).
+  - Task 3 `3d4c2b3` — `SetStackRequest.target: list[LoraTarget]` + legacy `target_refs` migrator (both-keys ValueError).
+  - Task 4 `a8aab16` — `set_adapters(adapter_weights=)` wiring + `LoraInventoryEntry.last_strength`.
+  - Task 5 `0466a3b` — VRAM-OOM rollback restores refs AND strengths; broadened to `ValueError`; rollback-itself-fails → HTTP 500.
+  - Task 6 `f19e554` — `resolve_active_lora_stack` + `LoraStackConflict` + `SetStackRequestRejected`.
+  - Task 7 `1a65825` — `build_set_stack_request` adapter helper.
+  - Task 8 `21c4cc8` — `DiffusersBackend.set_lora_stack(active_stack: list[LoraEntry])` + integration.py resolves vault precedence.
+  - Task 9 `2d32228` — `is_stack_match` (refs + `math.isclose` strength) in matcher.
+  - Task 10 `9d3469e` — ac8 AST scan also flags `LoraInventoryEntry` param-shape signal.
+  - Task 11 `17a0a72` — `examples/configs/wan.yaml` swept to top-level `loras:` block.
+  - Task 12 `2019679` — Tier-3 RED scaffold `tests/smoke/live_wan21/test_lora_strength_variation.py`.
+  - Task 14 `eeecf84` — Tier-4 RED scaffold `tests/smoke/release_wan22/test_lora_strength_variation.py`.
+
+- **Live smokes DEFERRED.** Tasks 13 + 15 (live execution of the
+  Tier-3 + Tier-4 strength-variation smokes; $0.30 + $1.50, both
+  pre-authorized) deferred to a dedicated session because:
+  (1) the strength-variation success criterion is perceptual — a
+  human visual diff between strength={0.5, 1.0, 1.5} outputs at
+  the same (prompt, seed, LoRA) tuple — and is best run in a
+  session focused on that single eval; (2) the RED scaffolds are
+  on disk (Tasks 12 + 14) so the next session has a stable
+  surface to green out; (3) wall-clock budget for the
+  orchestration session shouldn't include ~10 min Wan 2.1 1.3B
+  + ~30 min Wan 2.2 14B cold-boot + generation. Both budgets
+  remain pre-authorized.
+
+- **Plan deviations (load-bearing, ALL committed):**
+  - Task 2's capability_key change folded into Task 1's commit
+    (`344470f`) — necessary because Task 1's `ModelEntry.kind`
+    narrowing strips legacy `kind=lora` entries from `self.models`,
+    which broke the existing
+    `test_capability_key_derivation_orders_loras_and_excludes_vae`
+    test. The Task 2 commit `f78cc26` lands just the strength-
+    invariant tests on top of Task 1's code.
+  - Task 4's `_reload_pipeline_loras` retained as a thin shim
+    in `a8aab16` (Task 4) and DELETED in `0466a3b` (Task 5). The
+    delete is correct — Task 5's rollback-via-snapshot path is
+    the last caller of the old refs-only function.
+
+- **Single next action:** fire the deferred Tier-3 live smoke
+  (`KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/live_wan21/test_lora_strength_variation.py`).
+  Live impl must be written first — the file is currently
+  `pytest.xfail("RED scaffold")`. Per
+  `tests/_smoke_harness/matrix.py`'s legacy `target_refs` literal:
+  matrix harness ITSELF needs P1 update OR the smoke bypasses
+  matrix and hits `/lora/set_stack` with `target: [{ref, strength}]`
+  directly via `urllib`. Either is fine.
+
+---
+
 **Phase 53 Stage E follow-ups CLOSED 2026-06-21 (autonomous).** Both
 Stage-E follow-ups from the 2026-06-18 PROGRESS entry are now resolved
 on `main`:
