@@ -42,7 +42,11 @@ def server_with_stubs(
         def load_lora_weights(self, path: str, adapter_name: str) -> None:
             self.loaded.append((path, adapter_name))
 
-        def set_adapters(self, names: list[str]) -> None:
+        def set_adapters(
+            self,
+            names: list[str],
+            adapter_weights: list[float] | None = None,  # noqa: ARG002
+        ) -> None:
             self.adapters = list(names)
 
         def delete_adapters(self, names: list[str]) -> None:

@@ -89,7 +89,11 @@ def test_reload_pipeline_loras_unloads_then_reloads(
         def load_lora_weights(self, path: str, adapter_name: str) -> None:
             calls.append(("load", path, adapter_name))
 
-        def set_adapters(self, names: list[str]) -> None:
+        def set_adapters(
+            self,
+            names: list[str],
+            adapter_weights: list[float] | None = None,  # noqa: ARG002
+        ) -> None:
             calls.append(("set_adapters", list(names)))
 
     monkeypatch.setattr(s, "pipe", _Stub())
