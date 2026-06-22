@@ -130,6 +130,57 @@ C26 util-aware stall classify (extends RunPod heartbeat tick with
 (12 example cfgs with bad refs / manifest path / nova_reel engine
 kind); the parked thread-leak fix brainstorm in `core/pool.py`.
 
+### CLI `--loras` arg — sub-project decomposition (anchored 2026-06-21)
+
+The user's proposed `--loras` heredoc shape (see brainstorming
+session 2026-06-21) — e.g.
+
+    --loras "$(cat <<'EOF'
+    1.0 1111:2222 h
+    1.2 3333:4444 l
+    EOF
+    )"
+
+decomposes into THREE independent sub-projects in dependency order.
+Brainstorming session 2026-06-21 chose to design **P1 first**;
+**P2 and P3 are deferred high-priority** until P1 ships.
+
+- **P1 — Server per-LoRA strength weights (BRAINSTORM IN PROGRESS).**
+  Wan T2V server (`src/kinoforge/engines/diffusers/servers/
+  wan_t2v_server.py`) currently calls `pipe.set_adapters(names)`
+  with no weights, so every active LoRA is effectively
+  strength=1.0. Add strength to `SetStackRequest`, plumb to
+  `set_adapters(adapter_weights=[...])`. Cfg schema extension
+  on `ModelEntry` decided during P1 brainstorm. Required by P3.
+  Independent of P2.
+
+- **P2 — Wan 2.2 dual-transformer h/l routing (DEFERRED, HIGH).**
+  Wan 2.2 14B is a two-transformer MoE (`transformer` =
+  high-noise stage; `transformer_2` = low-noise stage). Today's
+  server loads LoRAs only into the single active transformer the
+  pipeline exposes. h/l suffix in the proposed CLI shape requires
+  branching `load_lora_weights` against the explicit transformer
+  target so high-noise LoRAs only patch `transformer` and
+  low-noise LoRAs only patch `transformer_2`. Touches the Wan 2.2
+  pipeline-build path. Independent of P1. Required by P3.
+
+- **P3 — CLI `--loras` arg surface (DEFERRED, HIGH).**
+  Adds `--loras` to `kinoforge generate`. Parser consumes the
+  heredoc shape (one LoRA per line, columns = strength / ref /
+  branch), expands shorthand `<modelId>:<versionId>` →
+  `civitai:<modelId>@<versionId>`, validates strength range,
+  validates branch ∈ {h, l, auto}, threads down through
+  orchestrator → set_stack request → P1 weights + P2 transformer
+  routing. CLI semantics (override-vs-append against
+  `cfg.models[].kind=lora`, interaction with warm-reuse
+  capability_key derivation, error shapes for invalid lines) are
+  the brainstorm-worthy unknowns. Depends on P1 + P2.
+
+Civitai ref scheme today is `civitai:<modelId>@<versionId>` per
+`src/kinoforge/sources/civitai/__init__.py:67`. HF refs are
+`hf:Org/Repo[:filename]` (not numeric). Both should be acceptable
+in the CLI shape.
+
 ---
 
 **CI RED PRE-EXISTING FAILURES RESOLVED 2026-06-19 (autonomous).** Both families
