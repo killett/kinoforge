@@ -64,7 +64,12 @@ if TYPE_CHECKING:
     from kinoforge.core.config import Config
     from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
     from kinoforge.core.interfaces import ComputeProvider, CredentialProvider
+    from kinoforge.core.lora import LoraEntry
     from kinoforge.core.util_endpoints import UtilSnapshotEndpoint
+    from kinoforge.engines.diffusers.servers.wan_t2v_server import (
+        ArtifactDownloadSpec,
+        SetStackRequest,
+    )
 
 
 def build_provider_for(cfg: "Config") -> "ComputeProvider | None":
@@ -265,3 +270,39 @@ def build_util_endpoint_for(
 
         return LocalUtilEndpoint()
     return None
+
+
+def build_set_stack_request(
+    active_stack: "list[LoraEntry]",
+    *,
+    download_specs: "dict[str, ArtifactDownloadSpec]",
+) -> "SetStackRequest":
+    """Adapt a resolved LoRA stack to the server's request schema.
+
+    Bridges the :mod:`kinoforge.core.lora` schema (``LoraEntry``) and
+    the pod-side server schema (``LoraTarget``). Two distinct Pydantic
+    models on purpose (P1 spec §6.3): server runs in a slim pod env
+    without ``kinoforge.core`` available, so the wire format is its own
+    contract.
+
+    See docs/superpowers/specs/2026-06-21-server-lora-strength-design.md §9.2.
+
+    Args:
+        active_stack: Ordered LoRA list resolved by
+            :func:`kinoforge.core.lora.resolve_active_lora_stack`.
+        download_specs: Per-ref download metadata for any ref the pod
+            does not yet have on disk. Empty when every ref is already
+            in the pod's inventory.
+
+    Returns:
+        A :class:`SetStackRequest` ready to POST to ``/lora/set_stack``.
+    """
+    from kinoforge.engines.diffusers.servers.wan_t2v_server import (
+        LoraTarget,
+        SetStackRequest,
+    )
+
+    return SetStackRequest(
+        target=[LoraTarget(ref=lo.ref, strength=lo.strength) for lo in active_stack],
+        download_specs=download_specs,
+    )
