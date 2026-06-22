@@ -468,10 +468,64 @@ the fix.
 > See **Parked queue item 2** below for the trigger criteria + URLs to
 > file. Do NOT let this drift past the next session resume.
 
-### Elevated priority — thread-leak fix brainstorm (`core/pool.py`)
+### Elevated priority — thread-leak fix brainstorm (`core/pool.py`) — CLOSED-OBSOLETE 2026-06-21
 
-**Why this jumped the queue (compelling practical reasons, anchored
-2026-06-18 from live evidence):**
+The original framing ("non-daemon `kinoforge-pool-0_0` leaker /
+production cancel-shutdown contract / TDD friction from 25-min
+post-session hangs") is **superseded by already-shipped work** that
+landed AFTER the brainstorm entry was anchored:
+
+- **`_DaemonThreadPoolExecutor`** (`src/kinoforge/core/pool.py:28`,
+  shipped in commit `565624e` as Plan B Task 1) — every
+  `ConcurrentPool` worker is `daemon=True` at creation, set BEFORE
+  `Thread.start()` via the private `_adjust_thread_count` override
+  (the `initializer=` mechanism the original plan called for does
+  not work on Python 3.13 — daemon flag rejected on live thread).
+  Wedged workers no longer block interpreter shutdown.
+- **`_shutdown_slot` watchdog** (`pool.py:438`) — opt-in `timeout`
+  kwarg drains each slot's executor in a daemon watchdog thread and
+  WARN-logs `"worker still running after %.1fs; abandoning slot"`
+  on expiry. Daemon worker dies with the process; pool.close()
+  returns within bound.
+- **Phase 50 cancel cascade** —
+  `_install_sigint_handler` (`cli/_main.py:233`) flips a shared
+  `CancelToken` on 1st Ctrl-C and restores `signal.SIG_DFL` on 2nd
+  press (force-exit). `deploy_session.__exit__`
+  (`orchestrator.py:1267`) calls
+  `pool.close(cancel_pending=True, timeout=30.0)` when the token is
+  set. Operator's natural Ctrl-C path now drains within 30 s
+  whether the worker honors the cancel token or not.
+- **L1 thread-leak FIX policy** (Plan B Task 2,
+  `tests/conftest.py::_L1_MODE = "fail"`) — full FAIL-mode regression
+  is GREEN with zero ignores (`2631 passed, 76 skipped, 6 xfailed in
+  123.98s` per the 2026-06-19 close-out). Any future non-daemon
+  leaker fails the test it leaked from on first run.
+
+Remaining theoretical gaps (deferred as cheap follow-ups, not a
+brainstorm-worthy spec):
+
+- Natural-exit `pool.close()` (token-unset path,
+  `orchestrator.py:1275`) is still unbounded. Daemon workers mean
+  the process exits cleanly, but the in-process cleanup chain
+  (ledger `session_end` write, optional `destroy_instance`) can
+  block if a worker is wedged. Low-risk because the token-set path
+  is what fires on operator Ctrl-C; the unbounded path is the
+  library-caller / clean-cfg-completion path.
+- `_DaemonThreadPoolExecutor._adjust_thread_count` re-implements
+  stdlib internals (`concurrent.futures.thread._threads_queues`,
+  `_worker`). Fragile against Py 3.14+ refactors. Worth a
+  watch-only ticket against the cpython upstream.
+- `HeartbeatLoop` thread lifecycle is managed outside the pool;
+  not covered by the pool watchdog. Audit separately if a wedged
+  heartbeat thread is ever observed in CI.
+
+**Action taken 2026-06-21:** brainstorm dropped, no spec written.
+PROGRESS resume target rewinds to the standard menu — Layer 5 / C26
+/ doctor xfails / etc.
+
+---
+
+### (HISTORICAL) Why this jumped the queue (anchored 2026-06-18)
 
 1. **TDD friction observed this session.** The full `pixi run test`
    regression suite finished its test session in 89 s (`2542 passed,
