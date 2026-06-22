@@ -412,6 +412,13 @@ def _reads_lora_inventory(tree: ast.AST) -> bool:
         - Literal ``.get('inventory'...)`` or ``.get('lora_inventory'...)``
           call.
         - Literal subscript ``["inventory"]`` or ``["lora_inventory"]``.
+        - **P1 (2026-06-21):** any function whose signature carries a
+          ``LoraInventoryEntry`` annotation. The matcher's
+          ``is_stack_match(active: list[LoraInventoryEntry], ...)``
+          receives the inventory directly from the caller — without
+          this signal a new helper taking ``LoraInventoryEntry``
+          could read ``.ref`` / ``.last_strength`` without tripping
+          the ac8 scan.
 
     A single signal is enough. The matcher's ref-consumption shim
     iterates entries by index, so requiring a separate ``.ref`` signal
@@ -436,6 +443,13 @@ def _reads_lora_inventory(tree: ast.AST) -> bool:
             and node.slice.value in {"inventory", "lora_inventory"}
         ):
             return True
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            params = list(node.args.args) + list(node.args.kwonlyargs)
+            for arg in params:
+                if arg.annotation is None:
+                    continue
+                if "LoraInventoryEntry" in ast.unparse(arg.annotation):
+                    return True
     return False
 
 
@@ -525,6 +539,43 @@ def test_ac9_lora_inventory_writes_route_through_ledger_touch() -> None:
         + "\n\nRoute lora_inventory updates through Ledger.touch so the "
         + "canonical RedactionRegistry + EphemeralSession.policy gate runs."
     )
+
+
+def test_ac8_lora_inventory_entry_param_trips_scan() -> None:
+    """P1 (2026-06-21) extension: a function whose signature carries a
+    ``LoraInventoryEntry`` parameter is treated as reading the pod
+    inventory.
+
+    Bug this catches: a future helper takes ``list[LoraInventoryEntry]``
+    directly (matcher's ``is_stack_match`` shape) and reads ``.ref``
+    inside without registering. Pre-P1 the ac8 scan only fired on
+    ``.inventory`` attribute / subscript / ``.get('inventory')`` signals
+    so the new helper would slip through.
+    """
+    # Module-pretend AST: imports the type + receives it as a param.
+    fixture = (
+        "from typing import Iterable\n"
+        "from kinoforge.engines.diffusers.servers.wan_t2v_server "
+        "import LoraInventoryEntry\n"
+        "\n"
+        "def silently_logs_refs(entries: list[LoraInventoryEntry]) -> None:\n"
+        "    for e in entries:\n"
+        "        print(e.ref)\n"
+    )
+    tree = ast.parse(fixture)
+    assert _reads_lora_inventory(tree) is True, (
+        "Scan must detect functions taking LoraInventoryEntry as a "
+        "parameter; otherwise a new helper accessing .ref bypasses "
+        "the ac8 redaction invariant."
+    )
+
+    # Negative control: same fixture without the LoraInventoryEntry type.
+    plain = (
+        "def safe_helper(refs: list[str]) -> None:\n"
+        "    for r in refs:\n"
+        "        print(r)\n"
+    )
+    assert _reads_lora_inventory(ast.parse(plain)) is False
 
 
 def test_ac8_exempt_tag_count_is_audit_friendly() -> None:
