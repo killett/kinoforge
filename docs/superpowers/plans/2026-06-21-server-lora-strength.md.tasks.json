@@ -1,107 +1,23 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-21-server-lora-strength.md",
   "tasks": [
-    {
-      "id": 21,
-      "subject": "Task 0: LoraEntry + VaultLoRA + LoraTarget + schema parity lockdown",
-      "status": "pending"
-    },
-    {
-      "id": 22,
-      "subject": "Task 1: Config.loras block + legacy promoter validator + ModelEntry.kind narrowing",
-      "status": "pending",
-      "blockedBy": [21]
-    },
-    {
-      "id": 23,
-      "subject": "Task 2: capability_key reads Config.loras and excludes strength",
-      "status": "pending",
-      "blockedBy": [22]
-    },
-    {
-      "id": 24,
-      "subject": "Task 3: SetStackRequest accepts target: list[LoraTarget] + legacy migrator",
-      "status": "pending",
-      "blockedBy": [21]
-    },
-    {
-      "id": 25,
-      "subject": "Task 4: set_adapters(adapter_weights=) wiring + LoraInventoryEntry.last_strength",
-      "status": "pending",
-      "blockedBy": [24]
-    },
-    {
-      "id": 26,
-      "subject": "Task 5: VRAM-OOM rollback restores refs AND strengths; broaden to ValueError",
-      "status": "pending",
-      "blockedBy": [25]
-    },
-    {
-      "id": 27,
-      "subject": "Task 6: resolve_active_lora_stack + LoraStackConflict + SetStackRequestRejected",
-      "status": "pending",
-      "blockedBy": [21, 22]
-    },
-    {
-      "id": 28,
-      "subject": "Task 7: build_set_stack_request adapter helper",
-      "status": "pending",
-      "blockedBy": [21, 24]
-    },
-    {
-      "id": 29,
-      "subject": "Task 8: DiffusersEngine uses build_set_stack_request + resolve_active_lora_stack",
-      "status": "pending",
-      "blockedBy": [27, 28]
-    },
-    {
-      "id": 30,
-      "subject": "Task 9: warm-attach matcher checks refs AND strength via math.isclose",
-      "status": "pending",
-      "blockedBy": [25]
-    },
-    {
-      "id": 31,
-      "subject": "Task 10: Extend test_no_unredacted_writes AST scan with P1 write-site coverage",
-      "status": "pending",
-      "blockedBy": [27, 28, 30]
-    },
-    {
-      "id": 32,
-      "subject": "Task 11: Sweep example cfgs to top-level loras: block",
-      "status": "pending",
-      "blockedBy": [22, 23]
-    },
-    {
-      "id": 33,
-      "subject": "Task 12: Tier-3 live smoke RED scaffold — Wan 2.1 1.3B strength variation",
-      "status": "pending",
-      "blockedBy": [26, 29, 30, 32]
-    },
-    {
-      "id": 34,
-      "subject": "Task 13: Execute Tier-3 live smoke + verify GREEN",
-      "status": "pending",
-      "blockedBy": [33]
-    },
-    {
-      "id": 35,
-      "subject": "Task 14: Tier-4 live smoke RED scaffold — Wan 2.2 14B strength variation",
-      "status": "pending",
-      "blockedBy": [34]
-    },
-    {
-      "id": 36,
-      "subject": "Task 15: Execute Tier-4 live smoke + verify GREEN",
-      "status": "pending",
-      "blockedBy": [35]
-    },
-    {
-      "id": 37,
-      "subject": "Task 16: PROGRESS.md close-out + push",
-      "status": "pending",
-      "blockedBy": [36]
-    }
+    {"id": 1, "subject": "Task 0: LoraEntry + VaultLoRA(LoraEntry) + LoraTarget + schema parity lockdown", "status": "completed", "commit": "c96078e"},
+    {"id": 2, "subject": "Task 1: Config.loras block + legacy promoter + ModelEntry.kind narrowing", "status": "completed", "commit": "344470f", "note": "Task 2 code half also lands here (capability_key reads self.loras) — necessary regression bridge."},
+    {"id": 3, "subject": "Task 2: capability_key strength-invariant tests", "status": "completed", "commit": "f78cc26"},
+    {"id": 4, "subject": "Task 3: SetStackRequest.target tagged-object shape + legacy target_refs migrator", "status": "completed", "commit": "3d4c2b3"},
+    {"id": 5, "subject": "Task 4: set_adapters(adapter_weights=) wiring + LoraInventoryEntry.last_strength", "status": "completed", "commit": "a8aab16"},
+    {"id": 6, "subject": "Task 5: VRAM-OOM rollback restores refs + strengths; broaden to ValueError", "status": "completed", "commit": "0466a3b"},
+    {"id": 7, "subject": "Task 6: resolve_active_lora_stack + LoraStackConflict + SetStackRequestRejected", "status": "completed", "commit": "f19e554"},
+    {"id": 8, "subject": "Task 7: build_set_stack_request adapter helper", "status": "completed", "commit": "1a65825"},
+    {"id": 9, "subject": "Task 8: DiffusersBackend.set_lora_stack(active_stack=...) + integration resolves vault", "status": "completed", "commit": "21c4cc8"},
+    {"id": 10, "subject": "Task 9: warm-attach matcher is_stack_match checks refs + math.isclose strength", "status": "completed", "commit": "2d32228"},
+    {"id": 11, "subject": "Task 10: ac8 AST scan flags LoraInventoryEntry param-shape signal", "status": "completed", "commit": "9d3469e"},
+    {"id": 12, "subject": "Task 11: examples/configs/wan.yaml swept to top-level loras: block", "status": "completed", "commit": "17a0a72"},
+    {"id": 13, "subject": "Task 12: Tier-3 live smoke RED scaffold — Wan 2.1 1.3B strength variation", "status": "completed", "commit": "2019679"},
+    {"id": 14, "subject": "Task 13: Execute Tier-3 live smoke + verify GREEN", "status": "deferred", "reason": "perceptual visual eval; deferred to dedicated live-spend session; $0.30 pre-authorized"},
+    {"id": 15, "subject": "Task 14: Tier-4 live smoke RED scaffold — Wan 2.2 14B strength variation", "status": "completed", "commit": "eeecf84"},
+    {"id": 16, "subject": "Task 15: Execute Tier-4 live smoke + verify GREEN", "status": "deferred", "reason": "perceptual visual eval; deferred to dedicated live-spend session; $1.50 pre-authorized"},
+    {"id": 17, "subject": "Task 16: PROGRESS.md close-out + push", "status": "in_progress"}
   ],
   "lastUpdated": "2026-06-21"
 }
