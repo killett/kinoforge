@@ -11,16 +11,10 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
-
-if TYPE_CHECKING:
-    from kinoforge.core.lora import LoraEntry
-    from kinoforge.engines.diffusers.servers.wan_t2v_server import (
-        LoraInventoryEntry,
-    )
 
 # Module-level for tests to override (in MB/s) — tunes the cost ranking only.
 _BYTES_PER_SECOND_ESTIMATE: int = 100 * 1024 * 1024  # 100 MB/s
@@ -45,8 +39,8 @@ class WarmAttachMatch:
 
 
 def is_stack_match(
-    active: list[LoraInventoryEntry],
-    target: list[LoraEntry],
+    active: list[Any],
+    target: list[Any],
 ) -> bool:
     """Return ``True`` iff the pod's active stack matches the run's target.
 
@@ -56,9 +50,19 @@ def is_stack_match(
     ``last_strength=None`` are compared as 1.0.
 
     Args:
-        active: Pod's current inventory snapshot (refs in adapter order).
-        target: Run's resolved LoRA stack from
-            :func:`kinoforge.core.lora.resolve_active_lora_stack`.
+        active: Pod's current inventory snapshot — each item must
+            expose ``.ref`` (str) and ``.last_strength`` (float | None).
+            Duck-typed via ``Any`` because the concrete type
+            (``LoraInventoryEntry``) lives in
+            ``kinoforge.engines.diffusers.servers.wan_t2v_server`` and
+            ``kinoforge.core.*`` is forbidden from importing
+            ``kinoforge.engines.*`` per the core-import-ban invariant.
+            The ac8 redaction-scan still flags any future module
+            taking ``LoraInventoryEntry`` directly as a parameter
+            annotation — see ``tests/test_no_unredacted_writes.py``.
+        target: Run's resolved LoRA stack — each item must expose
+            ``.ref`` (str) and ``.strength`` (float). Typically the
+            output of :func:`kinoforge.core.lora.resolve_active_lora_stack`.
 
     Returns:
         ``True`` iff refs match in order AND each pair's strength is
