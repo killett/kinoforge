@@ -23,6 +23,7 @@ from kinoforge.core.interfaces import (
     HardwareRequirements as InterfaceHardwareRequirements,
 )
 from kinoforge.core.interfaces import Lifecycle as InterfaceLifecycle
+from kinoforge.core.lora import LoraEntry
 from kinoforge.core.reaper import DEFAULT_APPLY_POLICY, Policy, Verdict
 
 # ---------------------------------------------------------------------------
@@ -496,13 +497,16 @@ class ModelEntry(BaseModel):
 
     Attributes:
         ref: Vendor-neutral model reference (e.g. "hf:org/m").
-        kind: One of "base", "lora", "vae", "text_encoder", "clip_vision".
+        kind: One of "base", "vae", "text_encoder", "clip_vision".
+            ``"lora"`` was removed in P1 (2026-06-21); LoRAs live under
+            the top-level ``Config.loras`` block. Legacy cfgs are
+            auto-promoted by ``Config._promote_legacy_kind_lora_to_loras_block``.
         target: Download target directory name.
         sha256: Optional content hash for integrity verification.
     """
 
     ref: str
-    kind: Literal["base", "lora", "vae", "text_encoder", "clip_vision"]
+    kind: Literal["base", "vae", "text_encoder", "clip_vision"]
     target: str
     sha256: str | None = None
 
@@ -832,6 +836,7 @@ class Config(BaseModel):
     prompt: str | None = None
     engine: EngineConfig
     models: list[ModelEntry]
+    loras: list[LoraEntry] = []
     compute: ComputeConfig | None = None
     lifecycle_cfg: LifecycleConfig | None = Field(default=None, alias="lifecycle")
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
@@ -849,6 +854,52 @@ class Config(BaseModel):
     diagnostic_mode: bool = False
 
     model_config = {"populate_by_name": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _promote_legacy_kind_lora_to_loras_block(cls, data: Any) -> Any:  # noqa: ANN401
+        """Auto-migrate legacy cfgs that put LoRAs under ``models:``.
+
+        Reads ``models: [{kind: lora, ...}, ...]``, moves each LoRA
+        entry into a new top-level ``loras:`` block (with default
+        ``strength=1.0``), removes them from ``models:``. Existing
+        explicit ``loras:`` entries win on ordering — they come first
+        in the resulting list.
+
+        Emits a ``DeprecationWarning`` when promotion fires so
+        operators see which cfgs still ship the legacy shape.
+
+        See docs/superpowers/specs/2026-06-21-server-lora-strength-design.md §6.4.
+        """
+        if not isinstance(data, dict):
+            return data
+        models = data.get("models") or []
+        legacy_loras = [
+            m for m in models if isinstance(m, dict) and m.get("kind") == "lora"
+        ]
+        if not legacy_loras:
+            return data
+        non_lora_models = [
+            m for m in models if not (isinstance(m, dict) and m.get("kind") == "lora")
+        ]
+        promoted: list[dict[str, Any]] = []
+        for m in legacy_loras:
+            entry: dict[str, Any] = {"ref": m["ref"]}
+            if m.get("sha256") is not None:
+                entry["sha256"] = m["sha256"]
+            promoted.append(entry)
+        data["models"] = non_lora_models
+        data["loras"] = list(data.get("loras") or []) + promoted
+        import warnings
+
+        warnings.warn(
+            f"cfg uses legacy `models: [{{kind: lora}}, ...]` shape; "
+            f"promoted {len(promoted)} entries to top-level `loras:` "
+            f"block. Update the cfg to the new shape.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return data
 
     @model_validator(mode="after")
     def _validate_cross_fields(self) -> Self:
@@ -936,14 +987,17 @@ class Config(BaseModel):
         Raises:
             ConfigError: If no base model is found in the models list.
         """
+        # P1 (2026-06-21): LoRA refs source from self.loras (new top-level
+        # block). Strength is deliberately excluded — mutable per-run
+        # parameter applied via /lora/set_stack on warm-attach, not part
+        # of the identity hash. Same-refs / different-strength runs
+        # reuse the warm pod. See spec §7.
         base_refs: list[str] = []
-        loras: list[str] = []
+        loras: list[str] = [lo.ref for lo in self.loras]
         for entry in self.models:
             if entry.kind == "base":
                 base_refs.append(entry.ref)
-            elif entry.kind == "lora":
-                loras.append(entry.ref)
-            # vae: skip entirely
+            # vae / text_encoder / clip_vision: skip entirely
 
         if not base_refs:
             raise ConfigError("no model entry with kind: base found in config")
