@@ -245,3 +245,97 @@ def test_inventory_entry_without_last_strength_renders_none(
     matches = [e for e in snap if e.ref == "civitai:9@9"]
     assert len(matches) == 1
     assert matches[0].last_strength is None
+
+
+# -- Task 5 ------------------------------------------------------------------
+
+
+def test_snapshot_inventory_as_targets_defaults_missing_last_strength_to_1_0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: a pre-P1 entry with no last_strength field crashes the
+    snapshot → server can't roll back at all because it can't capture
+    state."""
+    from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+    monkeypatch.setitem(
+        srv._inventory,
+        "civitai:9@9",
+        {
+            "ref": "civitai:9@9",
+            "filename": "z.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/tmp/z",
+            "downloaded_at_local": "x",
+            "last_used_at_local": "x",
+            "adapter_name": "lora_pending_9",
+            # NOTE: no last_strength key — pre-P1 entry shape.
+        },
+    )
+    snap = srv._snapshot_inventory_as_targets()
+    matches = [t for t in snap if t.ref == "civitai:9@9"]
+    assert matches
+    assert matches[0].strength == 1.0
+
+
+def test_snapshot_inventory_as_targets_preserves_strength(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: snapshot reads only the ref → strength is silently lost on
+    rollback even when the entry carried last_strength."""
+    from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+    monkeypatch.setitem(
+        srv._inventory,
+        "civitai:prev@1",
+        {
+            "ref": "civitai:prev@1",
+            "filename": "p.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/tmp/p",
+            "downloaded_at_local": "x",
+            "last_used_at_local": "x",
+            "adapter_name": "lora_0",
+            "last_strength": 0.7,
+        },
+    )
+    snap = srv._snapshot_inventory_as_targets()
+    matches = [t for t in snap if t.ref == "civitai:prev@1"]
+    assert matches
+    assert matches[0].strength == 0.7
+
+
+def test_value_error_from_set_adapters_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: a future edit catches ValueError silently inside
+    _replace_adapter_stack rather than propagating — the handler's
+    rollback path never fires because the helper swallows the failure."""
+    from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+    class _AlwaysFailPipe:
+        def unload_lora_weights(self) -> None:
+            pass
+
+        def load_lora_weights(self, *a: Any, **kw: Any) -> None:
+            pass
+
+        def set_adapters(self, *a: Any, **kw: Any) -> None:
+            raise ValueError("unknown adapter name lora_0")
+
+    monkeypatch.setattr(srv, "pipe", _AlwaysFailPipe())
+    monkeypatch.setitem(
+        srv._inventory,
+        "civitai:x@1",
+        {
+            "ref": "civitai:x@1",
+            "filename": "x.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/tmp/x",
+            "downloaded_at_local": "x",
+            "last_used_at_local": "x",
+            "adapter_name": "lora_pending_x",
+        },
+    )
+    with pytest.raises(ValueError):
+        srv._replace_adapter_stack([srv.LoraTarget(ref="civitai:x@1", strength=0.5)])
