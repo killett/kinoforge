@@ -2,14 +2,14 @@
 
 This directory holds AWS credentials for kinoforge's real-cloud S3 tests.
 
-Gitignored. Never commit. Do not paste contents into chat with Claude.
+Gitignored. Never commit. Do not paste contents into any chat tool.
 
 ## What lives here
 
 | File          | Purpose                                                          |
 |---------------|------------------------------------------------------------------|
 | `credentials` | `[default]` profile with access key + secret. Type in directly.  |
-| `config`      | `[default]` profile region (us-east-1) + output format (json).   |
+| `config`      | `[default]` profile region (us-west-2) + output format (json).   |
 | `README.md`   | This file.                                                       |
 
 `pixi.toml` sets `AWS_SHARED_CREDENTIALS_FILE=$PIXI_PROJECT_ROOT/.aws/credentials`
@@ -24,20 +24,20 @@ and `AWS_CONFIG_FILE=$PIXI_PROJECT_ROOT/.aws/config` in `[activation.env]`, so
 2. Open the new user → **Security credentials** → **Create access key**
    - Use case: **Command Line Interface (CLI)**
    - Confirm + Next + Create.
-3. Open `/workspace/.aws/credentials` in this workspace's editor (NOT chat).
+3. Open `/workspace/.aws/credentials` in your editor (not any chat tool).
 4. Paste `Access key ID` after `aws_access_key_id =`
 5. Paste `Secret access key` after `aws_secret_access_key =`
 6. Save. Done.
 
-After paste, ask Claude to verify with `pixi run python -c "import boto3;
+After paste, verify with `pixi run python -c "import boto3;
 print(boto3.client('sts').get_caller_identity())"` — should print the
-`kinoforge-ci` ARN. If it does, Claude takes over: creates the test bucket,
-sets lifecycle, attaches a scoped IAM policy, runs the S3 store smoke.
+`kinoforge-ci` ARN. From there, the test bucket creation, lifecycle,
+scoped IAM policy attach, and S3 store smoke run automatically.
 
 ## Scoped IAM policy (optional follow-up)
 
 `AmazonS3FullAccess` is broad. Once the test bucket name is known, swap it for
-this scoped policy (Claude can create + attach it via the bootstrap access
+this scoped policy (can be created + attached via the bootstrap access
 key):
 
 ```json
@@ -62,7 +62,7 @@ key):
         "s3:GetBucketLifecycleConfiguration",
         "s3:GetBucketVersioning"
       ],
-      "Resource": "arn:aws:s3:::<GCS_KMS_KEYRING>-*"
+      "Resource": "arn:aws:s3:::<S3_BUCKET_PREFIX>-*"
     },
     {
       "Sid": "TestBucketObjects",
@@ -77,26 +77,26 @@ key):
         "s3:ListBucketMultipartUploads"
       ],
       "Resource": [
-        "arn:aws:s3:::<GCS_KMS_KEYRING>-*",
-        "arn:aws:s3:::<GCS_KMS_KEYRING>-*/*"
+        "arn:aws:s3:::<S3_BUCKET_PREFIX>-*",
+        "arn:aws:s3:::<S3_BUCKET_PREFIX>-*/*"
       ]
     }
   ]
 }
 ```
 
-## SkyPilot policy — apply instructions (Layer W+α T2)
+## SkyPilot policy — apply instructions
 
 The scoped IAM policy doc lives at
 `.aws/policies/skypilot-minimal.json` (tracked, not secret). It covers
 EC2 lifecycle + IAM PassRole on `skypilot-*` roles + ServiceQuotas +
-S3 access scoped to `<GCS_KMS_KEYRING>-*` and `skypilot-*`
-prefixes + KMS access scoped to the existing Layer W key
-(`alias/<GCS_KMS_KEYRING>`).
+S3 access scoped to `<S3_BUCKET_PREFIX>-*` and `skypilot-*`
+prefixes + KMS access scoped to the existing CMEK key
+(`alias/<KMS_ALIAS>`).
 
 To attach it to the existing `kinoforge-ci` IAM user:
 
-1. Open the [AWS IAM Console → Users](https://us-east-1.console.aws.amazon.com/iam/home#/users) — account `<AWS_ACCOUNT>`.
+1. Open the [AWS IAM Console → Users](https://us-west-2.console.aws.amazon.com/iam/home#/users) — account `<AWS_ACCOUNT>`.
 2. Click `kinoforge-ci`.
 3. Permissions tab → **Add permissions** → **Create inline policy**
    (or **Attach policies directly → Create policy**).
@@ -106,14 +106,13 @@ To attach it to the existing `kinoforge-ci` IAM user:
 6. Confirm the policy is now attached to `kinoforge-ci`.
 
 Leave `AmazonS3FullAccess` attached until `pixi run cloud:perms-probe`
-exits 0 against AWS (Layer W+α T3). Once green, detach
-`AmazonS3FullAccess`:
+exits 0 against AWS. Once green, detach `AmazonS3FullAccess`:
 
 > Users → `kinoforge-ci` → Permissions → checkbox `AmazonS3FullAccess` →
 > Remove.
 
 The scoped policy covers all S3 operations kinoforge needs against the
-`<GCS_KMS_KEYRING>-*` and `skypilot-*` prefixes; broader S3
+`<S3_BUCKET_PREFIX>-*` and `skypilot-*` prefixes; broader S3
 access is no longer required.
 
 ## Rotation
