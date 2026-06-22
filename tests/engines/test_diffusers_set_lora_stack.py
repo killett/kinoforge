@@ -15,6 +15,7 @@ from kinoforge.core.errors import (
     LoraSwapVramOomError,
 )
 from kinoforge.core.interfaces import ModelProfile
+from kinoforge.core.lora import LoraEntry
 from kinoforge.engines.diffusers import DiffusersBackend
 
 
@@ -76,7 +77,7 @@ def test_set_lora_stack_happy_path_returns_response() -> None:
     backend = _backend(_post)
     resp = backend.set_lora_stack(
         pod_id="pod-7b2",
-        target_refs=["civitai:A@1"],
+        active_stack=[LoraEntry(ref="civitai:A@1", strength=0.8)],
         download_specs={
             "civitai:A@1": {
                 "url": "https://x/a",
@@ -87,7 +88,10 @@ def test_set_lora_stack_happy_path_returns_response() -> None:
         },
     )
     assert captured["url"] == "http://pod/lora/set_stack"
-    assert captured["body"]["target_refs"] == ["civitai:A@1"]
+    # P1 (2026-06-21): wire shape is `target: [{ref, strength}, ...]`,
+    # not the legacy `target_refs: [...]`.
+    assert captured["body"]["target"] == [{"ref": "civitai:A@1", "strength": 0.8}]
+    assert "target_refs" not in captured["body"]
     assert resp["free_bytes"] == 5000
     assert resp["inventory"][0]["ref"] == "civitai:A@1"
 
@@ -114,7 +118,7 @@ def test_set_lora_stack_502_no_eviction_raises_download_error() -> None:
     with pytest.raises(LoraSwapDownloadError) as ei:
         backend.set_lora_stack(
             pod_id="pod-7b2",
-            target_refs=["civitai:B@2"],
+            active_stack=[LoraEntry(ref="civitai:B@2")],
             download_specs={
                 "civitai:B@2": {"url": "x", "headers": {}, "filename": "b.s"}
             },
@@ -144,7 +148,9 @@ def test_set_lora_stack_502_with_eviction_raises_degraded_error() -> None:
     backend = _backend(_post)
     with pytest.raises(LoraSwapDegradedPodError) as ei:
         backend.set_lora_stack(
-            pod_id="pod-7b2", target_refs=["civitai:B@2"], download_specs={}
+            pod_id="pod-7b2",
+            active_stack=[LoraEntry(ref="civitai:B@2")],
+            download_specs={},
         )
     assert ei.value.evict_completed == ["civitai:X@1"]
 
@@ -168,7 +174,7 @@ def test_set_lora_stack_507_raises_disk_full() -> None:
 
     backend = _backend(_post)
     with pytest.raises(LoraSwapDiskFullError):
-        backend.set_lora_stack(pod_id="pod-7b2", target_refs=[], download_specs={})
+        backend.set_lora_stack(pod_id="pod-7b2", active_stack=[], download_specs={})
 
 
 def test_set_lora_stack_200_swap_rejected_raises_vram_oom() -> None:
@@ -190,7 +196,7 @@ def test_set_lora_stack_200_swap_rejected_raises_vram_oom() -> None:
 
     backend = _backend(_post)
     with pytest.raises(LoraSwapVramOomError) as ei:
-        backend.set_lora_stack(pod_id="pod-7b2", target_refs=[], download_specs={})
+        backend.set_lora_stack(pod_id="pod-7b2", active_stack=[], download_specs={})
     assert ei.value.dropped_refs == ["civitai:big@1"]
 
 
@@ -206,5 +212,5 @@ def test_set_lora_stack_transport_error_raises_pod_unreachable() -> None:
 
     backend = _backend(_post)
     with pytest.raises(LoraSwapPodUnreachableError) as ei:
-        backend.set_lora_stack(pod_id="pod-7b2", target_refs=[], download_specs={})
+        backend.set_lora_stack(pod_id="pod-7b2", active_stack=[], download_specs={})
     assert "ConnectionResetError" in ei.value.underlying

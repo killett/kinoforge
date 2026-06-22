@@ -22,6 +22,12 @@ from kinoforge.stores.local import LocalArtifactStore
 class _StubCfg:
     def __init__(self, key: CapabilityKey) -> None:
         self._key = key
+        # P1 (2026-06-21): integration.py reads cfg.loras for the active
+        # stack; mirror the capability_key's refs into cfg.loras so the
+        # stub stays consistent.
+        from kinoforge.core.lora import LoraEntry
+
+        self.loras = [LoraEntry(ref=r) for r in key.loras]
 
     def capability_key(self) -> CapabilityKey:
         return self._key
@@ -119,5 +125,5 @@ def test_tight_disk_picks_lru_oldest_first(tmp_path: Path) -> None:
     assert match.swap_plan.evict == ["civitai:A@1", "civitai:B@2"]
     assert match.swap_plan.download == ["civitai:D@4"]
 
-    assert backend.calls[0]["target_refs"] == ["civitai:D@4"]
+    assert [e.ref for e in backend.calls[0]["active_stack"]] == ["civitai:D@4"]
     assert list(backend.calls[0]["download_specs"].keys()) == ["civitai:D@4"]

@@ -21,6 +21,14 @@ from kinoforge.stores.local import LocalArtifactStore
 class _StubCfg:
     def __init__(self, key: CapabilityKey) -> None:
         self._key = key
+        # P1 (2026-06-21): integration.py resolves active LoRA stack
+        # via resolve_active_lora_stack(cfg, vault) — sourcing strength
+        # from cfg.loras (not capability_key().lora_stack()). Mirror
+        # the capability_key's refs into cfg.loras so the stub stays
+        # consistent across the two access paths.
+        from kinoforge.core.lora import LoraEntry
+
+        self.loras = [LoraEntry(ref=r) for r in key.loras]
 
     def capability_key(self) -> CapabilityKey:
         return self._key
@@ -116,7 +124,12 @@ def test_overlap_evicts_b_downloads_c_and_updates_ledger(tmp_path: Path) -> None
     assert len(backend.calls) == 1
     call = backend.calls[0]
     assert call["pod_id"] == "pod-overlap-1"
-    assert call["target_refs"] == ["civitai:A@1", "civitai:C@3"]
+    # P1 (2026-06-21): backend.set_lora_stack now takes active_stack:
+    # list[LoraEntry] (ref + strength) instead of target_refs: list[str].
+    assert [e.ref for e in call["active_stack"]] == [
+        "civitai:A@1",
+        "civitai:C@3",
+    ]
     assert list(call["download_specs"].keys()) == ["civitai:C@3"]
 
     persisted = ledger.read("pod-overlap-1")
