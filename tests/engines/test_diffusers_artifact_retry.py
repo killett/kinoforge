@@ -94,7 +94,10 @@ def test_artifact_exhaustion_raises_frame_extraction_error() -> None:
     of extract_last_frame — callers expecting FrameExtractionError miss it.
     """
 
+    attempts = {"n": 0}
+
     def http_get_bytes(url: str) -> bytes:
+        attempts["n"] += 1
         raise urllib.error.URLError("dns resolution failed")
 
     engine = _make_engine(http_get_bytes)
@@ -103,6 +106,8 @@ def test_artifact_exhaustion_raises_frame_extraction_error() -> None:
     # The error message must mention the artifact URL so operators know
     # which pod/file the download was attempted from.
     assert "http://pod.example/output.mp4" in str(exc_info.value)
+    # 7 attempts = 1 initial + 6 retries (RUNPOD_PROXY_POLICY.backoffs).
+    assert attempts["n"] == 7
 
 
 def test_artifact_non_transient_410_raises_immediately_as_frame_extraction_error() -> (

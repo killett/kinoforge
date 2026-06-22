@@ -120,7 +120,10 @@ def test_lora_exhaustion_raises_pod_unreachable() -> None:
     falls through to `raise LoraSwapPodUnreachableError(...)`.
     """
 
+    attempts = {"n": 0}
+
     def http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        attempts["n"] += 1
         raise _http_error(503)
 
     backend = _make_backend(http_post)
@@ -131,6 +134,8 @@ def test_lora_exhaustion_raises_pod_unreachable() -> None:
             download_specs={},
         )
     assert exc_info.value.pod_id == "pod-abc"
+    # 7 attempts = 1 initial + 6 retries (RUNPOD_PROXY_POLICY.backoffs).
+    assert attempts["n"] == 7
 
 
 def test_lora_tls_reset_recovers() -> None:
