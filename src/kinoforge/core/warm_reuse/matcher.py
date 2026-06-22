@@ -7,13 +7,20 @@ Output: ``WarmAttachMatch | None``.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
+
+if TYPE_CHECKING:
+    from kinoforge.core.lora import LoraEntry
+    from kinoforge.engines.diffusers.servers.wan_t2v_server import (
+        LoraInventoryEntry,
+    )
 
 # Module-level for tests to override (in MB/s) — tunes the cost ranking only.
 _BYTES_PER_SECOND_ESTIMATE: int = 100 * 1024 * 1024  # 100 MB/s
@@ -35,6 +42,40 @@ class WarmAttachMatch:
     pod_id: str
     pod_entry: dict[str, Any]
     swap_plan: SwapPlan
+
+
+def is_stack_match(
+    active: list[LoraInventoryEntry],
+    target: list[LoraEntry],
+) -> bool:
+    """Return ``True`` iff the pod's active stack matches the run's target.
+
+    P1 (2026-06-21): equality requires BOTH the ref-order list AND the
+    per-LoRA strength to agree. ``math.isclose(rel_tol=1e-6)`` swallows
+    JSON round-trip float drift. Pre-P1 inventory entries with
+    ``last_strength=None`` are compared as 1.0.
+
+    Args:
+        active: Pod's current inventory snapshot (refs in adapter order).
+        target: Run's resolved LoRA stack from
+            :func:`kinoforge.core.lora.resolve_active_lora_stack`.
+
+    Returns:
+        ``True`` iff refs match in order AND each pair's strength is
+        close enough for ``math.isclose(rel_tol=1e-6)``.
+    """
+    if len(active) != len(target):
+        return False
+    if [a.ref for a in active] != [t.ref for t in target]:
+        return False
+    return all(
+        math.isclose(
+            a.last_strength if a.last_strength is not None else 1.0,
+            t.strength,
+            rel_tol=1e-6,
+        )
+        for a, t in zip(active, target, strict=True)
+    )
 
 
 def _estimate_seconds(
