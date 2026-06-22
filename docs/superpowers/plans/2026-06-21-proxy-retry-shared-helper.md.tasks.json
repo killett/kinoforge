@@ -1,0 +1,68 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-21-proxy-retry-shared-helper.md",
+  "tasks": [
+    {
+      "id": 18,
+      "subject": "Create engines/_proxy_retry.py module",
+      "status": "pending",
+      "description": "**Goal:** Ship the shared retry primitive used by both diffusers and comfyui.\n\n**Files:**\n- Create: `src/kinoforge/engines/_proxy_retry.py`\n\n**Acceptance Criteria:** RetryPolicy frozen dataclass; RUNPOD_PROXY_POLICY constant with Phase 47 calibration; retry_proxy_call generic helper with HTTPError-before-URLError dispatch; interpoll_wait module-level helper; mypy + ruff clean.\n\n**Verify:** `pixi run mypy src/kinoforge/engines/_proxy_retry.py && pixi run ruff check src/kinoforge/engines/_proxy_retry.py`\n\nFull steps + code in plan doc Task 18.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/_proxy_retry.py\"], \"verifyCommand\": \"pixi run mypy src/kinoforge/engines/_proxy_retry.py && pixi run ruff check src/kinoforge/engines/_proxy_retry.py\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 19,
+      "subject": "Write tests/engines/test_proxy_retry.py",
+      "status": "pending",
+      "blockedBy": [18],
+      "description": "**Goal:** 12 helper tests with bug-catching docstrings.\n\n**Files:**\n- Modify: `tests/engines/test_proxy_retry.py`\n- Modify: `tests/engines/conftest.py` (fast_policy fixture)\n\n**Verify:** `pixi run pytest tests/engines/test_proxy_retry.py -v` → 12 PASS\n\nFull steps + code in plan doc Task 19.\n\n```json:metadata\n{\"files\": [\"tests/engines/test_proxy_retry.py\", \"tests/engines/conftest.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_proxy_retry.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 20,
+      "subject": "Restructure diffusers result() with full comfyui parity",
+      "status": "pending",
+      "blockedBy": [18],
+      "description": "**Goal:** while-True loop with cancel_token, wall-clock timeout, retry_proxy_call wrap, last_transient preference.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/__init__.py`\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers.py tests/engines/test_diffusers_backend_error_handling.py tests/engines/test_diffusers_wait_for_ready.py -v`\n\nFull steps + code in plan doc Task 20.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\"], \"verifyCommand\": \"pixi run mypy src/kinoforge/engines/diffusers/__init__.py\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 21,
+      "subject": "Write tests/engines/test_diffusers_result_loop.py",
+      "status": "pending",
+      "blockedBy": [20],
+      "description": "**Goal:** 8 tests covering cancel-before-IO, cancel-during-wait, wall-clock-timeout, max-poll-fallback, last_transient-preference, TLS-reset-recovery, status-done-url-build, status-error-raises-generation-error.\n\n**Files:**\n- Create: `tests/engines/test_diffusers_result_loop.py`\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers_result_loop.py -v` → 8 PASS\n\nFull code in plan doc Task 21.\n\n```json:metadata\n{\"files\": [\"tests/engines/test_diffusers_result_loop.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers_result_loop.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 22,
+      "subject": "Wrap diffusers submit/lora/artifact call sites with retry_proxy_call",
+      "status": "pending",
+      "blockedBy": [20],
+      "description": "**Goal:** Symmetric retry across all 4 diffusers HTTP transits.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/__init__.py`\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers.py tests/engines/test_diffusers_set_lora_stack.py tests/engines/test_diffusers_video_io.py -v`\n\nFull code in plan doc Task 22.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers.py tests/engines/test_diffusers_set_lora_stack.py tests/engines/test_diffusers_video_io.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 23,
+      "subject": "Write diffusers submit/lora/artifact retry tests",
+      "status": "pending",
+      "blockedBy": [22],
+      "description": "**Goal:** Cover 3 wrap sites; lora test asserts _translate_error_response path preserved.\n\n**Files:**\n- Create: `tests/engines/test_diffusers_submit_retry.py`\n- Create: `tests/engines/test_diffusers_lora_retry.py`\n- Create: `tests/engines/test_diffusers_artifact_retry.py`\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers_submit_retry.py tests/engines/test_diffusers_lora_retry.py tests/engines/test_diffusers_artifact_retry.py -v`\n\nFull code in plan doc Task 23.\n\n```json:metadata\n{\"files\": [\"tests/engines/test_diffusers_submit_retry.py\", \"tests/engines/test_diffusers_lora_retry.py\", \"tests/engines/test_diffusers_artifact_retry.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers_submit_retry.py tests/engines/test_diffusers_lora_retry.py tests/engines/test_diffusers_artifact_retry.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 24,
+      "subject": "Migrate comfyui to shared retry helper",
+      "status": "pending",
+      "blockedBy": [18],
+      "description": "**Goal:** Comfyui consumes engines._proxy_retry; URLError catch_classes branch added in result(); latent bug closed.\n\n**Files:**\n- Modify: `src/kinoforge/engines/comfyui/__init__.py`\n\n**Verify:** `pixi run mypy src/kinoforge/engines/comfyui/__init__.py && pixi run ruff check src/kinoforge/engines/comfyui/__init__.py`\n\nFull steps + code in plan doc Task 24.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\"], \"verifyCommand\": \"pixi run mypy src/kinoforge/engines/comfyui/__init__.py\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 25,
+      "subject": "Update comfyui tests for shared helper + new URLError absorption",
+      "status": "pending",
+      "blockedBy": [24],
+      "description": "**Goal:** Submit.upload URLError test asserts retries-before-AssetFetchError; new test_comfyui_result_absorbs_url_error added.\n\n**Files:**\n- Modify: `tests/engines/test_comfyui.py`\n- Create: `tests/engines/test_comfyui_result_url_error.py`\n\n**Verify:** `pixi run pytest tests/engines/test_comfyui.py tests/engines/test_comfyui_result_url_error.py -v`\n\nFull code in plan doc Task 25.\n\n```json:metadata\n{\"files\": [\"tests/engines/test_comfyui.py\", \"tests/engines/test_comfyui_result_url_error.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_comfyui.py tests/engines/test_comfyui_result_url_error.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 26,
+      "subject": "Live-pod validation against warm pod q37c8bzlkppk4u",
+      "status": "pending",
+      "blockedBy": [21, 23, 25],
+      "description": "**Goal:** Confirm fix path against real RunPod proxy hiccups.\n\n**Files:** None (operational).\n\n**Verify:** Successful MP4 output written; no URLError exit.\n\nFull steps in plan doc Task 26. Pre-authorized per memory feedback_autonomous_no_gates; up to $20 session budget.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run python -m kinoforge generate --config examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml --mode t2v --prompt \\\"$(cat /workspace/examples/configs/prompts/field-realistic.txt)\\\"\", \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-21T17:30:00"
+}
