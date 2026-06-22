@@ -102,10 +102,18 @@ def try_warm_attach_with_swap(
     swap_needed = bool(plan.evict or plan.download)
     try:
         if swap_needed:
-            target_refs = list(cfg.capability_key().lora_stack().refs)
+            # P1 (2026-06-21): resolve cfg.loras vs vault.loras precedence
+            # so vault-owned LoRAs (with their strengths) drive the wire
+            # payload — same precedence rules as the cold-boot path.
+            from kinoforge.core.ephemeral import EphemeralSession
+            from kinoforge.core.lora import resolve_active_lora_stack
+
+            _session = EphemeralSession.current()
+            _vault = _session.vault if _session is not None else None
+            active_stack = resolve_active_lora_stack(cfg, _vault)
             resp = backend.set_lora_stack(
                 pod_id=match.pod_id,
-                target_refs=target_refs,
+                active_stack=active_stack,
                 download_specs={ref: specs[ref] for ref in plan.download},
             )
             inventory = resp.get("inventory", []) if isinstance(resp, dict) else []

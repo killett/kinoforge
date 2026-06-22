@@ -41,6 +41,7 @@ from kinoforge.core.interfaces import (
     ModelProfile,
     RenderedProvision,
 )
+from kinoforge.core.lora import LoraEntry
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -459,7 +460,7 @@ class DiffusersBackend(GenerationBackend):
         self,
         *,
         pod_id: str,
-        target_refs: list[str],
+        active_stack: list[LoraEntry],
         download_specs: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
         """POST /lora/set_stack — declarative LoRA swap on the pod.
@@ -471,10 +472,13 @@ class DiffusersBackend(GenerationBackend):
         Args:
             pod_id: Pod identifier; surfaced in every raised exception so
                 operators get a copy-paste-able recovery command.
-            target_refs: Ordered target LoRA stack.
+            active_stack: Ordered list of :class:`LoraEntry` (ref +
+                strength). Each entry maps to one ``LoraTarget`` on the
+                wire; ``strength`` reaches ``set_adapters(adapter_weights=)``
+                server-side. P1 (2026-06-21) — see spec §6.3.
             download_specs: Map of ref → {url, headers, filename,
-                size_hint?}; covers every ref in ``target_refs`` that is
-                not already on the pod.
+                size_hint?}; covers every ref in ``active_stack`` that
+                is not already on the pod.
 
         Returns:
             The parsed response body: ``{inventory, free_bytes,
@@ -498,8 +502,13 @@ class DiffusersBackend(GenerationBackend):
         )
 
         url = f"{self._base_url}/lora/set_stack"
+        # P1 (2026-06-21): wire shape is tagged objects
+        # ``target: [{ref, strength}, ...]`` — pod-side migrator promotes
+        # legacy ``target_refs`` to default strength=1.0 if present,
+        # but no kinoforge.engines.diffusers.* call site ships the
+        # legacy shape any more.
         body: dict[str, Any] = {
-            "target_refs": target_refs,
+            "target": [{"ref": e.ref, "strength": e.strength} for e in active_stack],
             "download_specs": download_specs,
         }
         try:
