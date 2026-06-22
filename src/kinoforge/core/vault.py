@@ -27,6 +27,7 @@ from kinoforge.core.errors import (
     VaultPathError,
     VaultUnderRepoError,
 )
+from kinoforge.core.lora import LoraEntry
 from kinoforge.core.redaction import RedactionRegistry
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,14 @@ class VaultSegment(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
-class VaultLoRA(BaseModel):
-    """A LoRA reference carried by the vault."""
+class VaultLoRA(LoraEntry):
+    """Vault-side LoRA entry: ``LoraEntry`` + optional vault-only label.
 
-    model_config = ConfigDict(extra="forbid")
+    ``label`` is vault-internal — never persisted, never logged, never
+    sent over the wire (stripped on upcast to ``LoraEntry`` inside
+    ``resolve_active_lora_stack``).
+    """
 
-    ref: str = Field(min_length=1)
     label: str | None = None
 
 

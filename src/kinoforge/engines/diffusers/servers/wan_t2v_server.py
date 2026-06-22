@@ -42,7 +42,7 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HOME", "/workspace/.hf_cache")
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
 
 from kinoforge.engines.diffusers.servers._video_io import write_mp4  # noqa: E402
 
@@ -136,6 +136,24 @@ class SwapRejectedDetails(BaseModel):
 
     reason: str
     target_refs_dropped: list[str]
+
+
+class LoraTarget(BaseModel):
+    """One entry in ``/lora/set_stack`` target list.
+
+    Schema-equivalent to :class:`kinoforge.core.lora.LoraEntry` but
+    defined in the server module so the server has no import-time
+    dependency on ``kinoforge.core.lora`` (server runs on the pod with
+    a minimal dependency set). The lockstep invariant is locked by
+    ``tests/test_lora_schema_parity.py``.
+
+    See docs/superpowers/specs/2026-06-21-server-lora-strength-design.md §6.3.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ref: str = Field(min_length=1)
+    strength: float = Field(default=1.0, ge=-2.0, le=2.0)
 
 
 class SetStackRequest(BaseModel):
