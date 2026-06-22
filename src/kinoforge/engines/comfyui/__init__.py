@@ -47,6 +47,11 @@ from kinoforge.core.interfaces import (
     ModelProfile,
     RenderedProvision,
 )
+from kinoforge.engines._proxy_retry import (
+    RUNPOD_PROXY_POLICY,
+    interpoll_wait,
+    retry_proxy_call,
+)
 from kinoforge.engines.comfyui.nodes import clone_and_install
 
 # ---------------------------------------------------------------------------
@@ -77,20 +82,6 @@ _DEFAULT_COMFYUI_ROOT = "ComfyUI"
 
 #: Module-level logger; named so callers can filter via ``kinoforge.comfyui``.
 _log = logging.getLogger("kinoforge.comfyui")
-
-#: HTTP status codes treated as transient RunPod-proxy startup-window failures.
-#: Phase 46 Task 7 root cause: live probe of pod xawdweboxapubz showed
-#: ``/system_stats`` returning 200 (so wait_for_ready succeeds) while POST
-#: ``/upload/image`` and parameterised paths like ``/history/{prompt_id}``
-#: returned 404 for the first ~minute of pod lifetime, then 200 indefinitely
-#: (50/50 sequential warm probes). 502/503/504 added defensively for normal
-#: edge-layer transient failures.
-_PROXY_TRANSIENT_CODES: frozenset[int] = frozenset({404, 502, 503, 504})
-
-#: Backoff schedule for the ``submit()`` retry helper.  Caps total wait at
-#: ~60 s — well under ``boot_timeout`` and large enough to cover the
-#: startup-window race observed in live probes.
-_SUBMIT_RETRY_BACKOFFS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0, 16.0)
 
 #: Stock container image used when cfg does not specify one.
 _DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
@@ -517,66 +508,6 @@ def _entry_matches(entry: object, job_id: str) -> bool:
     return False
 
 
-def _retry_proxy_call[T](
-    label: str,
-    url: str,
-    fn: Callable[[], T],
-    sleep: Callable[[float], None],
-) -> T:
-    """Run *fn* with bounded retry on RunPod-proxy transient HTTP codes.
-
-    Each transient failure (codes in :data:`_PROXY_TRANSIENT_CODES`) logs a
-    WARNING and sleeps per :data:`_SUBMIT_RETRY_BACKOFFS`. Non-transient
-    HTTPError and non-HTTPError exceptions propagate immediately. After the
-    backoff schedule exhausts, the final transient HTTPError is re-raised.
-
-    Args:
-        label: Short tag for log lines (e.g. ``"submit.upload"``).
-        url: URL passed to *fn*; included in WARNING messages.
-        fn: Zero-arg callable performing the HTTP request.
-        sleep: Injected sleep seam; receives backoff seconds.
-
-    Returns:
-        The successful return value of *fn*.
-
-    Raises:
-        urllib.error.HTTPError: The last transient HTTPError after the
-            backoff schedule exhausts, or a non-transient HTTPError on
-            any attempt.
-    """
-    last_exc: urllib.error.HTTPError | None = None
-    attempts = 1 + len(_SUBMIT_RETRY_BACKOFFS)
-    for attempt_idx, delay in enumerate((0.0,) + _SUBMIT_RETRY_BACKOFFS):
-        if delay > 0:
-            sleep(delay)
-        try:
-            return fn()
-        except urllib.error.HTTPError as exc:
-            if exc.code not in _PROXY_TRANSIENT_CODES:
-                raise
-            _log.warning(
-                "[comfyui.%s] transient HTTPError url=%s code=%d "
-                "attempt=%d/%d next_backoff=%.1fs",
-                label,
-                url,
-                exc.code,
-                attempt_idx + 1,
-                attempts,
-                _SUBMIT_RETRY_BACKOFFS[attempt_idx]
-                if attempt_idx < len(_SUBMIT_RETRY_BACKOFFS)
-                else 0.0,
-            )
-            last_exc = exc
-    # last_exc is always set after the first transient-codes branch above,
-    # but mypy needs the explicit guard. A non-transient path returns or
-    # raises directly inside the loop.
-    if last_exc is None:  # pragma: no cover — unreachable
-        raise RuntimeError(
-            "_retry_proxy_call exited loop without recording an HTTPError"
-        )
-    raise last_exc
-
-
 class ComfyUIBackend(GenerationBackend):
     """Live backend that communicates with a running ComfyUI server.
 
@@ -613,7 +544,7 @@ class ComfyUIBackend(GenerationBackend):
                 ``"http://localhost:8188"``.  No trailing slash.
             probe: ``ModelProfile`` returned by ``inspect_capabilities``.
             sleep: Callable invoked between poll iterations in ``result``.
-                Retained for the ``_retry_proxy_call`` backoff path
+                Retained for the ``retry_proxy_call`` backoff path
                 (Phase 47 startup-window 404 retries); the inter-poll
                 wait in :meth:`result` uses ``cancel_token.wait`` so
                 cooperative cancellation is honored promptly.
@@ -698,7 +629,7 @@ class ComfyUIBackend(GenerationBackend):
                 raises :class:`Cancelled` instead of charging an asset
                 upload + prompt enqueue. In-flight ``/upload/image``
                 retries are not interruptible (each call is bounded by
-                ``_SUBMIT_RETRY_BACKOFFS`` and runs in the calling
+                ``RUNPOD_PROXY_POLICY.backoffs`` and runs in the calling
                 thread); :meth:`result` is where cooperative cancel
                 buys the operator their shell back.
 
@@ -743,11 +674,12 @@ class ComfyUIBackend(GenerationBackend):
                 )
 
             try:
-                uploaded_name = _retry_proxy_call(
-                    "submit.upload",
+                uploaded_name = retry_proxy_call(
+                    "comfyui.submit.upload",
                     upload_url,
                     _upload,
                     self._sleep,
+                    RUNPOD_PROXY_POLICY,
                 )
             except (urllib.error.URLError, OSError) as e:
                 raise AssetFetchError(
@@ -790,11 +722,12 @@ class ComfyUIBackend(GenerationBackend):
             else:
                 graph[node_id] = copy.deepcopy(node_patch)
         url = f"{self._base_url}/prompt"
-        response = _retry_proxy_call(
-            "submit.prompt",
+        response = retry_proxy_call(
+            "comfyui.submit.prompt",
             url,
             lambda: self._http_post(url, {"prompt": graph}),
             self._sleep,
+            RUNPOD_PROXY_POLICY,
         )
         return str(response["prompt_id"])
 
@@ -841,25 +774,13 @@ class ComfyUIBackend(GenerationBackend):
 
         token = cancel_token if cancel_token is not None else _NULL_TOKEN
 
-        # Token-aware wait: when a real token is supplied, use Event.wait
-        # so a mid-wait set() returns promptly. When the caller passes no
-        # token (legacy callers + the existing unit-test suite that
-        # injects ``sleep=lambda s: None`` to stop the loop from blocking
-        # on real time), fall back to the injected sleep so test ticks
-        # stay instant.
-        def _interpoll_wait(seconds: float) -> bool:
-            if cancel_token is None:
-                self._sleep(seconds)
-                return False
-            return token.wait(seconds)
-
         url = f"{self._base_url}/history/{job_id}"
         queue_url = f"{self._base_url}/queue"
         start = time.monotonic()
         last_status: str = "unknown"
         queue_pos: int | None = None
         exec_node: str | None = None
-        last_transient: urllib.error.HTTPError | None = None
+        last_transient: BaseException | None = None
         poll_idx = 0
         while True:
             token.raise_if_set()
@@ -883,24 +804,25 @@ class ComfyUIBackend(GenerationBackend):
                     f"exec_node={exec_node!r})"
                 )
             try:
-                # Preserve Phase 47 _retry_proxy_call wrapping so a
+                # Preserve Phase 47 retry_proxy_call wrapping so a
                 # RunPod proxy startup-window 404 keeps polling rather
                 # than raising. Token + timeout checks live OUTSIDE the
                 # retry wrapper (above) so cancellation cannot be
                 # swallowed by a transient-retry storm.
-                data = _retry_proxy_call(
-                    "result.history",
+                data = retry_proxy_call(
+                    "comfyui.result.history",
                     url,
                     lambda: self._http_get(url),
                     self._sleep,
+                    RUNPOD_PROXY_POLICY,
                 )
             except urllib.error.HTTPError as exc:
                 # Non-transient HTTPError: log + propagate (today's
                 # behavior). Transient codes are absorbed by
-                # _retry_proxy_call itself; if it exhausted its backoff
+                # retry_proxy_call itself; if it exhausted its backoff
                 # schedule it re-raises the final transient — record
                 # and continue polling within poll_timeout_s.
-                if exc.code in _PROXY_TRANSIENT_CODES:
+                if exc.code in RUNPOD_PROXY_POLICY.transient_codes:
                     _log.warning(
                         "[comfyui.result] transient HTTPError exhausted "
                         "elapsed=%.1fs url=/history/%s code=%d reason=%s",
@@ -911,7 +833,7 @@ class ComfyUIBackend(GenerationBackend):
                     )
                     last_transient = exc
                     poll_idx += 1
-                    if _interpoll_wait(self._poll_interval_s):
+                    if interpoll_wait(self._poll_interval_s, cancel_token, self._sleep):
                         token.raise_if_set()
                     continue
                 _log.warning(
@@ -922,6 +844,20 @@ class ComfyUIBackend(GenerationBackend):
                     str(exc.reason)[:200],
                 )
                 raise
+            except RUNPOD_PROXY_POLICY.catch_classes as exc:
+                _log.warning(
+                    "[comfyui.result] transient transport-error exhausted "
+                    "elapsed=%.1fs url=/history/%s type=%s reason=%s",
+                    elapsed,
+                    job_id,
+                    type(exc).__name__,
+                    str(exc)[:200],
+                )
+                last_transient = exc
+                poll_idx += 1
+                if interpoll_wait(self._poll_interval_s, cancel_token, self._sleep):
+                    token.raise_if_set()
+                continue
             last_status, queue_pos, exec_node = _extract_poll_fields(data, job_id)
             # Phase 51: also probe /queue when status is "unknown". Real
             # ComfyUI returns ``{}`` from /history while the job is queued
@@ -994,7 +930,7 @@ class ComfyUIBackend(GenerationBackend):
             # returns True promptly on set(); without one, the injected
             # sleep keeps the legacy test contract (sleep=lambda s: None
             # → instant tick).
-            if _interpoll_wait(self._poll_interval_s):
+            if interpoll_wait(self._poll_interval_s, cancel_token, self._sleep):
                 token.raise_if_set()
 
     def endpoints(self) -> dict[str, str]:
