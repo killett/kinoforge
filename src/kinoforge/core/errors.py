@@ -371,3 +371,21 @@ class LoraSwapDiskFullError(LoraSwapError):
             f"Pod {self.pod_id} disk full mid-download: evicted [{evicted}], "
             f"failed to download {self.download_failed}. Pod marked degraded."
         )
+
+
+class LoraStackConflict(KinoforgeError):
+    """``cfg.loras`` and ``vault.loras`` both populated with diverging refs.
+
+    Resolution: remove ``cfg.loras`` and use ``vault.loras`` as sole
+    source per ephemeral spec D2's "vault is the canonical confidential
+    source" rule.
+    """
+
+
+class SetStackRequestRejected(KinoforgeError):
+    """Pod's ``/lora/set_stack`` endpoint returned 4xx — usually request shape.
+
+    Defense-in-depth: client validation should have caught the same
+    Pydantic bounds, so this firing indicates a contract drift between
+    client and server schemas.
+    """
