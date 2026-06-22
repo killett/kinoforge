@@ -25,32 +25,35 @@ models:
     kind: base
     target: checkpoints
 
-  # Default test LoRA pair — Arcane Style [WAN 2.2 T2V] v1.0
-  # (CivitAI model 2197303). Wan 2.2 is MoE w/ two transformers, so
-  # the full-effect LoRA ships as a pair: one tensor per transformer.
-  # Order matters — high-noise first, then low-noise — because the
-  # ordered loras list is part of CapabilityKey identity. See the
-  # "Default test LoRA (Wan 2.2 T2V)" section in README.md for the
-  # canonical write-up, including the Wan 2.1-as-low-noise fallback
-  # and high-only / low-only single-tensor variants this pair does
-  # NOT exercise.
-  #
-  # NOTE (PROGRESS C23): the wan ComfyUI graph JSONs do not yet have
-  # a WanVideoLoraSelect node wired into WanVideoSampler.lora, so
-  # mounting these refs via the ComfyUI engine is a no-op at sampler
-  # time until C23 ships. Refs left in place so the canonical pair
-  # is committed in the repo.
-  - ref: "civitai:2197303@2474081"     # high-noise transformer
-    kind: lora
-    target: loras
-
-  - ref: "civitai:2197303@2474073"     # low-noise transformer
-    kind: lora
-    target: loras
-
   - ref: "https://cdn.example.com/vae/wan2-vae-fp16.safetensors"
     kind: vae
     target: vae
+
+# Default test LoRA pair — Arcane Style [WAN 2.2 T2V] v1.0
+# (CivitAI model 2197303). Wan 2.2 is MoE w/ two transformers, so
+# the full-effect LoRA ships as a pair: one tensor per transformer.
+# Order matters — high-noise first, then low-noise — because the
+# ordered loras list is part of CapabilityKey identity. See the
+# "Default test LoRA (Wan 2.2 T2V)" section in README.md for the
+# canonical write-up, including the Wan 2.1-as-low-noise fallback
+# and high-only / low-only single-tensor variants this pair does
+# NOT exercise.
+#
+# P1 (2026-06-21): LoRA entries live under the top-level `loras:`
+# block (was previously under `models:` with legacy LoRA kind).
+# `strength` defaults to 1.0; set explicit values to tune per-LoRA
+# weight.
+#
+# NOTE (PROGRESS C23): the wan ComfyUI graph JSONs do not yet have
+# a WanVideoLoraSelect node wired into WanVideoSampler.lora, so
+# mounting these refs via the ComfyUI engine is a no-op at sampler
+# time until C23 ships. Refs left in place so the canonical pair
+# is committed in the repo.
+loras:
+  - ref: "civitai:2197303@2474081"     # high-noise transformer
+    strength: 1.0
+  - ref: "civitai:2197303@2474073"     # low-noise transformer
+    strength: 1.0
 
 compute:
   provider: runpod
