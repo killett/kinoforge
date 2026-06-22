@@ -42,7 +42,7 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HOME", "/workspace/.hf_cache")
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
-from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
+from pydantic import BaseModel, ConfigDict, Field, model_validator  # noqa: E402
 
 from kinoforge.engines.diffusers.servers._video_io import write_mp4  # noqa: E402
 
@@ -159,13 +159,47 @@ class LoraTarget(BaseModel):
 class SetStackRequest(BaseModel):
     """Declarative target LoRA stack for the pod.
 
-    Order of ``target_refs`` defines pipeline adapter ordering. Every ref in
-    ``target_refs`` that is not already in the pod's inventory must have a
+    Order of ``target`` defines pipeline adapter ordering. Every ref in
+    ``target`` that is not already in the pod's inventory must have a
     matching entry in ``download_specs``.
+
+    Each :class:`LoraTarget` carries its own ``strength`` which is
+    plumbed to ``set_adapters(adapter_weights=...)`` server-side
+    (P1, 2026-06-21).
+
+    Migration: ``model_validator(mode="before")`` auto-promotes legacy
+    ``target_refs: list[str]`` payloads (every promoted entry gets
+    ``strength=1.0``) during a one-window transition. Removed in the
+    release after every in-flight pod has rolled to a P1+ image. See
+    spec §12.10 for removal criteria.
     """
 
-    target_refs: list[str]
+    model_config = ConfigDict(extra="forbid")
+
+    target: list[LoraTarget]
     download_specs: dict[str, ArtifactDownloadSpec]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_target_refs(cls, data: Any) -> Any:  # noqa: ANN401
+        """Auto-migrate legacy ``target_refs: list[str]`` payloads.
+
+        Both keys present in the same request is a client bug — refuse
+        rather than guess intent.
+        """
+        if not isinstance(data, dict):
+            return data
+        has_legacy = "target_refs" in data
+        has_new = "target" in data
+        if has_legacy and has_new:
+            raise ValueError(
+                "set_stack request carries BOTH legacy `target_refs` AND "
+                "new `target` keys; specify exactly one"
+            )
+        if has_legacy:
+            data["target"] = [{"ref": r, "strength": 1.0} for r in data["target_refs"]]
+            del data["target_refs"]
+        return data
 
 
 class SetStackResponse(BaseModel):
@@ -582,12 +616,12 @@ async def inventory() -> InventoryResponse:
 
 @app.post("/lora/set_stack")
 async def set_stack(req: SetStackRequest) -> SetStackResponse:
-    """Apply ``req.target_refs`` as the pod's active LoRA stack.
+    """Apply ``req.target`` as the pod's active LoRA stack.
 
     Idempotent in the no-op case (target == current). On a partial-overlap
     request the handler downloads only the new refs, optionally evicting
     LRU losers first if free disk is insufficient, then reloads the
-    pipeline so ``set_adapters`` matches ``req.target_refs`` order.
+    pipeline so ``set_adapters`` matches ``req.target`` order.
 
     Args:
         req: Declarative target stack + per-new-ref download specs.
@@ -604,10 +638,13 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             matcher / pod inventory drift.
     """
     async with _swap_lock:
-        target_set = set(req.target_refs)
+        # P1 shim: compute refs once; Task 4 rewrites _reload_pipeline_loras
+        # to take LoraTarget directly so strength reaches set_adapters.
+        target_refs_list = [t.ref for t in req.target]
+        target_set = set(target_refs_list)
         current_set = set(_inventory.keys())
         mandatory_evict = current_set - target_set
-        to_download_refs = [r for r in req.target_refs if r not in current_set]
+        to_download_refs = [r for r in target_refs_list if r not in current_set]
 
         initial_free = _disk_free_bytes(LORAS_DIR)
         target_dl_bytes = sum(
@@ -647,7 +684,7 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
         download_completed: list[str] = []
         _log.info(
             "set_stack handler: target=%s evict=%s download=%s",
-            req.target_refs,
+            target_refs_list,
             list(mandatory_evict),
             to_download_refs,
         )
@@ -725,11 +762,11 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             download_completed.append(ref)
 
         try:
-            await asyncio.to_thread(_reload_pipeline_loras, req.target_refs)
+            await asyncio.to_thread(_reload_pipeline_loras, target_refs_list)
         except RuntimeError as e:
             msg = str(e).lower()
             if "out of memory" in msg or "oom" in msg:
-                dropped = [r for r in req.target_refs if r not in previous_refs]
+                dropped = [r for r in target_refs_list if r not in previous_refs]
                 for ref in dropped:
                     _inventory.pop(ref, None)
                     dropped_spec = req.download_specs.get(ref)
