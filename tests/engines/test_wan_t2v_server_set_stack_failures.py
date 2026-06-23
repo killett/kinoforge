@@ -89,14 +89,15 @@ def test_download_fail_after_eviction_502(
     """Bug: evict_completed list omitted from the body, so the orchestrator
     cannot distinguish degraded from clean-fail."""
     s, _ = server_with_stubs
-    s._inventory["X"] = {
+    s._inventory[("X", "auto")] = {
         "ref": "X",
         "filename": "x.s",
         "size_bytes": 100,
         "loras_dir_path": "/loras/x.s",
         "downloaded_at_local": "old",
         "last_used_at_local": "old",
-        "adapter_name": "lora_0",
+        "adapter_name": "lora_0_a",
+        "branch": "auto",
     }
 
     def _fail_new(spec: Any, dest_dir: Any) -> tuple[str, int]:
@@ -159,14 +160,15 @@ def test_vram_oom_rollback_200_with_swap_rejected(
 
     stub.set_adapters = types.MethodType(_oom_then_ok, stub)
 
-    s._inventory["A"] = {
+    s._inventory[("A", "auto")] = {
         "ref": "A",
         "filename": "a.s",
         "size_bytes": 100,
         "loras_dir_path": "/loras/a.s",
         "downloaded_at_local": "x",
         "last_used_at_local": "x",
-        "adapter_name": "lora_0",
+        "adapter_name": "lora_0_a",
+        "branch": "auto",
     }
     req = s.SetStackRequest(
         target_refs=["A", "B"],

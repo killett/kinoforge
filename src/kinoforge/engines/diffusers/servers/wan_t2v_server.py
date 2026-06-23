@@ -85,9 +85,14 @@ _q: queue.Queue[str] = queue.Queue()
 _worker_thread: threading.Thread | None = None
 
 # LoRA-flexible warm-reuse: pod-side inventory of loaded LoRA weights.
-# Entries are keyed by vendor-neutral ref (e.g. "civitai:2197303@2474081").
+# P2 (2026-06-22): keyed by composite ``(ref, branch)`` so the same ref
+# can co-exist in two transformer branches on a Wan-2.2-style MoE pipe
+# (Q6 Option 1 — spec §3.2). Pre-P2 was ``dict[str, ...]`` keyed by ref.
+# Each entry value carries ``"branch"`` alongside the existing fields so
+# the rollback snapshot + matcher have the routing instruction without a
+# second lookup.
 # Populated cold-boot in _load_pipeline; mutated by /lora/set_stack.
-_inventory: dict[str, dict[str, Any]] = {}
+_inventory: dict[tuple[str, str], dict[str, Any]] = {}
 
 # Serializes /lora/set_stack handler invocations so two concurrent swaps
 # cannot fight over _inventory + pipeline adapter state. Acquired for the
@@ -189,6 +194,23 @@ def _resolve_transformer(pipe_obj: Any, branch: str) -> Any:  # noqa: ANN401
     if branch == "low_noise":
         return pipe_obj.transformer_2
     raise BranchUnknown(branch=branch)
+
+
+_BRANCH_SHORT: dict[str, str] = {
+    "high_noise": "h",
+    "low_noise": "l",
+    "auto": "a",
+}
+
+
+def _adapter_name(position: int, branch: str) -> str:
+    """Build a unique adapter name from ``(position, branch)``.
+
+    Position prefix preserves activation order; branch suffix avoids
+    collisions when the same ref is loaded into both transformer branches
+    (Q6 Option 1 composite identity). Returns ``"lora_{i}_{h|l|a}"``.
+    """
+    return f"lora_{position}_{_BRANCH_SHORT[branch]}"
 
 
 class ArtifactDownloadSpec(BaseModel):
@@ -335,12 +357,18 @@ class SetStackResponse(BaseModel):
 def _snapshot_inventory_as_targets() -> list[LoraTarget]:
     """Return the current inventory as an ordered ``LoraTarget`` list.
 
-    Used by ``set_stack``'s VRAM-OOM rollback path: snapshots both refs
-    AND ``last_strength`` values so the rollback restores the full prior
-    state. Missing ``last_strength`` (pre-P1 entry) defaults to 1.0.
+    Used by ``set_stack``'s VRAM-OOM rollback path: snapshots refs,
+    ``last_strength``, AND ``branch`` (P2 §6.4) so the rollback restores
+    the full prior state including per-transformer routing. Missing
+    ``last_strength`` (pre-P1 entry) defaults to 1.0. Missing ``branch``
+    (pre-P2 entry) defaults to ``"auto"``.
     """
     return [
-        LoraTarget(ref=v["ref"], strength=v.get("last_strength") or 1.0)
+        LoraTarget(
+            ref=v["ref"],
+            strength=v.get("last_strength") or 1.0,
+            branch=v.get("branch", "auto"),
+        )
         for v in _inventory.values()
     ]
 
@@ -461,55 +489,69 @@ def _disk_free_bytes(path: Path) -> int:
 
 
 def _pick_lru_evict(
-    candidates: set[str], inventory: dict[str, dict[str, Any]], need: int
-) -> list[str] | None:
-    """Return refs to evict in LRU order, popping until cumulative size ≥ need.
+    candidates: set[tuple[str, str]],
+    inventory: dict[tuple[str, str], dict[str, Any]],
+    need: int,
+) -> list[tuple[str, str]] | None:
+    """Return ``(ref, branch)`` keys to evict in LRU order, until ≥ ``need``.
 
     Args:
-        candidates: Refs eligible for eviction (i.e. not in target stack).
-        inventory: Current ``_inventory`` snapshot.
+        candidates: Composite keys eligible for eviction (i.e. not in
+            target stack).
+        inventory: Current ``_inventory`` snapshot (P2 composite-key
+            shape).
         need: Bytes that must be freed. ``<= 0`` → no eviction needed.
 
     Returns:
-        List of refs in LRU-ascending order, or ``None`` if even evicting
-        every candidate would not free ``need`` bytes. Returns ``[]`` when
-        ``need <= 0``.
+        List of ``(ref, branch)`` keys in LRU-ascending order, or
+        ``None`` if even evicting every candidate would not free
+        ``need`` bytes. Returns ``[]`` when ``need <= 0``.
     """
     if need <= 0:
         return []
     ordered = sorted(
-        (ref for ref in candidates if ref in inventory),
-        key=lambda r: inventory[r]["last_used_at_local"],
+        (key for key in candidates if key in inventory),
+        key=lambda k: inventory[k]["last_used_at_local"],
     )
     freed = 0
-    plan: list[str] = []
-    for ref in ordered:
-        plan.append(ref)
-        freed += inventory[ref]["size_bytes"]
+    plan: list[tuple[str, str]] = []
+    for key in ordered:
+        plan.append(key)
+        freed += inventory[key]["size_bytes"]
         if freed >= need:
             return plan
     return None
 
 
-async def _evict_one(ref: str) -> None:
+async def _evict_one(ref: str, branch: str) -> None:
     """Unload one LoRA from the pipeline + remove its file + drop inventory.
+
+    P2 (2026-06-22): takes composite ``(ref, branch)`` key so the same
+    ref can be evicted out of one branch while staying loaded in the
+    other (Q6 Option 1 composite identity).
 
     Best-effort: filesystem unlink errors are swallowed because the
     inventory is the source of truth for future swap decisions; a leaked
     file gets cleaned up by the next disk-pressure eviction or by the
     reaper.
     """
-    entry = _inventory.get(ref)
+    key = (ref, branch)
+    entry = _inventory.get(key)
     if entry is None:
         return
     adapter = entry["adapter_name"]
     if hasattr(pipe, "delete_adapters"):
+        # diffusers' LoraBaseMixin.delete_adapters auto-iterates
+        # ``_lora_loadable_modules`` (=transformer + transformer_2 on Wan
+        # 2.2) and no-ops on adapter names that don't exist in a given
+        # transformer's peft_config — Task 0 Q3. No per-transformer
+        # dispatch needed at our level.
         pipe.delete_adapters([adapter])
     try:
         Path(entry["loras_dir_path"]).unlink(missing_ok=True)
     except OSError:
         pass
-    _inventory.pop(ref, None)
+    _inventory.pop(key, None)
 
 
 def _replace_adapter_stack(target: list[LoraTarget]) -> None:
@@ -536,13 +578,14 @@ def _replace_adapter_stack(target: list[LoraTarget]) -> None:
     names: list[str] = []
     weights: list[float] = []
     for i, t in enumerate(target):
-        entry = _inventory[t.ref]
-        name = f"lora_{i}"
+        entry = _inventory[(t.ref, t.branch)]
+        name = _adapter_name(i, t.branch)
         pipe.load_lora_weights(entry["loras_dir_path"], adapter_name=name)
         names.append(name)
         weights.append(t.strength)
         entry["adapter_name"] = name
         entry["last_strength"] = t.strength
+        entry["branch"] = t.branch
     pipe.set_adapters(names, adapter_weights=weights)
 
 
@@ -563,12 +606,18 @@ def _load_pipeline(
     if initial_lora_stack:
         adapter_names: list[str] = []
         adapter_weights: list[float] = []
+        # P2 (2026-06-22): legacy tuple env shape defaults branch="auto"
+        # — every cold-boot entry pre-Task 7 lands in inventory keyed by
+        # ``(ref, "auto")`` so the single-transformer behavior matches
+        # pre-P2 semantics. Task 7 extends the env shape to carry an
+        # explicit branch + per-arity validation.
+        cold_boot_branch = "auto"
         for i, (ref, spec) in enumerate(initial_lora_stack):
             try:
                 path, actual_bytes = _download_one(spec, LORAS_DIR)
             except Exception as e:
                 raise RuntimeError(f"failed to download LoRA {ref}: {e}") from e
-            adapter_name = f"lora_{i}"
+            adapter_name = _adapter_name(i, cold_boot_branch)
             pipe_obj.load_lora_weights(path, adapter_name=adapter_name)
             adapter_names.append(adapter_name)
             # P1 (2026-06-21): cold-boot defaults strength=1.0 until the
@@ -578,7 +627,7 @@ def _load_pipeline(
             # matcher reads consistent state.
             adapter_weights.append(1.0)
             now = datetime.now().isoformat()
-            _inventory[ref] = {
+            _inventory[(ref, cold_boot_branch)] = {
                 "ref": ref,
                 "filename": spec.filename,
                 "size_bytes": actual_bytes,
@@ -587,6 +636,7 @@ def _load_pipeline(
                 "last_used_at_local": now,
                 "adapter_name": adapter_name,
                 "last_strength": 1.0,
+                "branch": cold_boot_branch,
             }
         if adapter_names:
             pipe_obj.set_adapters(adapter_names, adapter_weights=adapter_weights)
@@ -789,32 +839,43 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             matcher / pod inventory drift.
     """
     async with _swap_lock:
-        # P1 shim: compute refs once; Task 4 rewrites _reload_pipeline_loras
-        # to take LoraTarget directly so strength reaches set_adapters.
-        target_refs_list = [t.ref for t in req.target]
-        target_set = set(target_refs_list)
-        current_set = set(_inventory.keys())
-        mandatory_evict = current_set - target_set
-        to_download_refs = [r for r in target_refs_list if r not in current_set]
+        # P2 (2026-06-22): inventory is keyed by composite (ref, branch);
+        # so are every diff/eviction set. The download_specs map stays
+        # keyed by ref (one download serves multiple branches of the same
+        # ref) — we dedup downloads by ref but track inventory entries
+        # by composite key.
+        target_keys_list = [(t.ref, t.branch) for t in req.target]
+        target_keys = set(target_keys_list)
+        current_keys = set(_inventory.keys())
+        mandatory_evict = current_keys - target_keys
+        already_downloaded_refs = {ref for (ref, _br) in current_keys}
+        to_download_refs: list[str] = []
+        _seen_dl: set[str] = set()
+        for ref, _br in target_keys_list:
+            if ref in already_downloaded_refs or ref in _seen_dl:
+                continue
+            to_download_refs.append(ref)
+            _seen_dl.add(ref)
 
         initial_free = _disk_free_bytes(LORAS_DIR)
         target_dl_bytes = sum(
             (req.download_specs[r].size_hint or 0) for r in to_download_refs
         )
-        mandatory_freed = sum(_inventory[r]["size_bytes"] for r in mandatory_evict)
+        mandatory_freed = sum(_inventory[k]["size_bytes"] for k in mandatory_evict)
         # Snapshot pre-swap state for VRAM-OOM rollback (P1: refs AND
-        # strengths so rollback is fully reversible).
+        # strengths; P2: AND branch — _snapshot_inventory_as_targets emits
+        # full LoraTarget triples so rollback is fully reversible).
         previous_state = _snapshot_inventory_as_targets()
-        previous_refs = [t.ref for t in previous_state]
+        previous_keys = {(t.ref, t.branch) for t in previous_state}
 
-        for ref in mandatory_evict:
-            await _evict_one(ref)
+        for key in mandatory_evict:
+            await _evict_one(key[0], key[1])
 
         post_mandatory_free = initial_free + mandatory_freed
-        evict_completed: list[str] = list(mandatory_evict)
+        evict_completed: list[str] = [ref for (ref, _br) in mandatory_evict]
         if target_dl_bytes > post_mandatory_free:
             picked = _pick_lru_evict(
-                set(_inventory.keys()) - target_set,
+                set(_inventory.keys()) - target_keys,
                 _inventory,
                 need=target_dl_bytes - post_mandatory_free,
             )
@@ -830,14 +891,14 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
                         "underlying": "insufficient disk even after full eviction",
                     },
                 )
-            for ref in picked:
-                await _evict_one(ref)
-                evict_completed.append(ref)
+            for key in picked:
+                await _evict_one(key[0], key[1])
+                evict_completed.append(key[0])
 
         download_completed: list[str] = []
         _log.info(
             "set_stack handler: target=%s evict=%s download=%s",
-            target_refs_list,
+            target_keys_list,
             list(mandatory_evict),
             to_download_refs,
         )
@@ -903,15 +964,26 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
                     },
                 ) from e
             now = datetime.now().isoformat()
-            _inventory[ref] = {
-                "ref": ref,
-                "filename": spec.filename,
-                "size_bytes": actual_bytes,
-                "loras_dir_path": path,
-                "downloaded_at_local": now,
-                "last_used_at_local": now,
-                "adapter_name": f"lora_pending_{ref}",
-            }
+            # P2: write one inventory entry per (ref, branch) that the
+            # target stack asks for. ``branch`` is stamped with the
+            # target's value; ``_replace_adapter_stack`` will overwrite
+            # ``adapter_name`` + ``last_strength`` + ``branch`` once the
+            # actual load runs.
+            for tref, tbranch in target_keys_list:
+                if tref != ref:
+                    continue
+                if (tref, tbranch) in _inventory:
+                    continue
+                _inventory[(tref, tbranch)] = {
+                    "ref": tref,
+                    "filename": spec.filename,
+                    "size_bytes": actual_bytes,
+                    "loras_dir_path": path,
+                    "downloaded_at_local": now,
+                    "last_used_at_local": now,
+                    "adapter_name": f"lora_pending_{tref}_{_BRANCH_SHORT[tbranch]}",
+                    "branch": tbranch,
+                }
             download_completed.append(ref)
 
         try:
@@ -922,9 +994,17 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             is_value = isinstance(e, ValueError)
             if not (is_oom or is_value):
                 raise
-            dropped = [r for r in target_refs_list if r not in previous_refs]
-            for ref in dropped:
-                _inventory.pop(ref, None)
+            dropped_keys = [k for k in target_keys_list if k not in previous_keys]
+            dropped = [ref for (ref, _br) in dropped_keys]
+            for key in dropped_keys:
+                _inventory.pop(key, None)
+            # Files are keyed by ref (one download serves multiple branch
+            # entries). Only unlink each ref's file once, after every
+            # branch entry that referenced it has been popped.
+            dropped_refs_unique = {ref for (ref, _br) in dropped_keys}
+            for ref in dropped_refs_unique:
+                if any(k[0] == ref for k in _inventory):
+                    continue  # another branch still references the file
                 dropped_spec = req.download_specs.get(ref)
                 if dropped_spec is not None:
                     try:

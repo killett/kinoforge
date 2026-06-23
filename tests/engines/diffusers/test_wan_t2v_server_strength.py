@@ -120,7 +120,7 @@ def test_set_stack_passes_adapter_weights_to_set_adapters(
     monkeypatch.setattr(srv, "pipe", _FakePipe())
     monkeypatch.setitem(
         srv._inventory,
-        "civitai:1@2",
+        ("civitai:1@2", "auto"),
         {
             "ref": "civitai:1@2",
             "filename": "a.safetensors",
@@ -128,12 +128,13 @@ def test_set_stack_passes_adapter_weights_to_set_adapters(
             "loras_dir_path": "/tmp/a",
             "downloaded_at_local": "x",
             "last_used_at_local": "x",
-            "adapter_name": "lora_0",
+            "adapter_name": "lora_0_a",
+            "branch": "auto",
         },
     )
     monkeypatch.setitem(
         srv._inventory,
-        "civitai:3@4",
+        ("civitai:3@4", "auto"),
         {
             "ref": "civitai:3@4",
             "filename": "b.safetensors",
@@ -141,7 +142,8 @@ def test_set_stack_passes_adapter_weights_to_set_adapters(
             "loras_dir_path": "/tmp/b",
             "downloaded_at_local": "x",
             "last_used_at_local": "x",
-            "adapter_name": "lora_1",
+            "adapter_name": "lora_1_a",
+            "branch": "auto",
         },
     )
 
@@ -153,7 +155,7 @@ def test_set_stack_passes_adapter_weights_to_set_adapters(
 
     assert len(calls) == 1
     assert calls[0]["weights"] == [0.5, 1.2]
-    assert calls[0]["names"] == ["lora_0", "lora_1"]
+    assert calls[0]["names"] == ["lora_0_a", "lora_1_a"]
 
 
 def test_set_stack_persists_last_strength_on_inventory(
@@ -177,7 +179,7 @@ def test_set_stack_persists_last_strength_on_inventory(
     monkeypatch.setattr(srv, "pipe", _NoopPipe())
     monkeypatch.setitem(
         srv._inventory,
-        "civitai:1@2",
+        ("civitai:1@2", "auto"),
         {
             "ref": "civitai:1@2",
             "filename": "a.safetensors",
@@ -185,11 +187,12 @@ def test_set_stack_persists_last_strength_on_inventory(
             "loras_dir_path": "/tmp/a",
             "downloaded_at_local": "x",
             "last_used_at_local": "x",
-            "adapter_name": "lora_0",
+            "adapter_name": "lora_0_a",
+            "branch": "auto",
         },
     )
     srv._replace_adapter_stack([srv.LoraTarget(ref="civitai:1@2", strength=0.7)])
-    assert srv._inventory["civitai:1@2"]["last_strength"] == 0.7
+    assert srv._inventory[("civitai:1@2", "auto")]["last_strength"] == 0.7
 
 
 def test_inventory_snapshot_surfaces_last_strength(
@@ -202,7 +205,7 @@ def test_inventory_snapshot_surfaces_last_strength(
 
     monkeypatch.setitem(
         srv._inventory,
-        "civitai:1@2",
+        ("civitai:1@2", "auto"),
         {
             "ref": "civitai:1@2",
             "filename": "a.safetensors",
@@ -210,7 +213,8 @@ def test_inventory_snapshot_surfaces_last_strength(
             "loras_dir_path": "/tmp/a",
             "downloaded_at_local": "x",
             "last_used_at_local": "x",
-            "adapter_name": "lora_0",
+            "adapter_name": "lora_0_a",
+            "branch": "auto",
             "last_strength": 1.2,
         },
     )
@@ -230,7 +234,7 @@ def test_inventory_entry_without_last_strength_renders_none(
 
     monkeypatch.setitem(
         srv._inventory,
-        "civitai:9@9",
+        ("civitai:9@9", "auto"),
         {
             "ref": "civitai:9@9",
             "filename": "z.safetensors",
@@ -239,6 +243,7 @@ def test_inventory_entry_without_last_strength_renders_none(
             "downloaded_at_local": "x",
             "last_used_at_local": "x",
             "adapter_name": "lora_pending_civitai:9@9",
+            "branch": "auto",
         },
     )
     snap = srv._inventory_snapshot()
@@ -260,7 +265,7 @@ def test_snapshot_inventory_as_targets_defaults_missing_last_strength_to_1_0(
 
     monkeypatch.setitem(
         srv._inventory,
-        "civitai:9@9",
+        ("civitai:9@9", "auto"),
         {
             "ref": "civitai:9@9",
             "filename": "z.safetensors",
@@ -269,6 +274,7 @@ def test_snapshot_inventory_as_targets_defaults_missing_last_strength_to_1_0(
             "downloaded_at_local": "x",
             "last_used_at_local": "x",
             "adapter_name": "lora_pending_9",
+            "branch": "auto",
             # NOTE: no last_strength key — pre-P1 entry shape.
         },
     )
@@ -287,7 +293,7 @@ def test_snapshot_inventory_as_targets_preserves_strength(
 
     monkeypatch.setitem(
         srv._inventory,
-        "civitai:prev@1",
+        ("civitai:prev@1", "auto"),
         {
             "ref": "civitai:prev@1",
             "filename": "p.safetensors",
@@ -295,7 +301,8 @@ def test_snapshot_inventory_as_targets_preserves_strength(
             "loras_dir_path": "/tmp/p",
             "downloaded_at_local": "x",
             "last_used_at_local": "x",
-            "adapter_name": "lora_0",
+            "adapter_name": "lora_0_a",
+            "branch": "auto",
             "last_strength": 0.7,
         },
     )
@@ -326,7 +333,7 @@ def test_value_error_from_set_adapters_propagates(
     monkeypatch.setattr(srv, "pipe", _AlwaysFailPipe())
     monkeypatch.setitem(
         srv._inventory,
-        "civitai:x@1",
+        ("civitai:x@1", "auto"),
         {
             "ref": "civitai:x@1",
             "filename": "x.safetensors",
@@ -335,6 +342,7 @@ def test_value_error_from_set_adapters_propagates(
             "downloaded_at_local": "x",
             "last_used_at_local": "x",
             "adapter_name": "lora_pending_x",
+            "branch": "auto",
         },
     )
     with pytest.raises(ValueError):

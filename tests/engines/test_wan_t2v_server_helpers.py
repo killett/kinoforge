@@ -27,13 +27,13 @@ def test_pick_lru_evict_chooses_oldest_first() -> None:
     import kinoforge.engines.diffusers.servers.wan_t2v_server as s
 
     inventory = {
-        "A": _inv_entry("A", size=100, last_used="2026-06-20T10:00:00-07:00"),
-        "B": _inv_entry("B", size=100, last_used="2026-06-20T09:00:00-07:00"),
-        "C": _inv_entry("C", size=100, last_used="2026-06-20T11:00:00-07:00"),
+        ("A", "auto"): _inv_entry("A", size=100, last_used="2026-06-20T10:00:00-07:00"),
+        ("B", "auto"): _inv_entry("B", size=100, last_used="2026-06-20T09:00:00-07:00"),
+        ("C", "auto"): _inv_entry("C", size=100, last_used="2026-06-20T11:00:00-07:00"),
     }
-    candidates = {"A", "B", "C"}
+    candidates = {("A", "auto"), ("B", "auto"), ("C", "auto")}
     plan = s._pick_lru_evict(candidates, inventory, need=100)
-    assert plan == ["B"]
+    assert plan == [("B", "auto")]
 
 
 def test_pick_lru_evict_pops_until_enough_room() -> None:
@@ -42,12 +42,14 @@ def test_pick_lru_evict_pops_until_enough_room() -> None:
     import kinoforge.engines.diffusers.servers.wan_t2v_server as s
 
     inventory = {
-        "A": _inv_entry("A", size=50, last_used="2026-06-20T09:00:00-07:00"),
-        "B": _inv_entry("B", size=50, last_used="2026-06-20T10:00:00-07:00"),
-        "C": _inv_entry("C", size=50, last_used="2026-06-20T11:00:00-07:00"),
+        ("A", "auto"): _inv_entry("A", size=50, last_used="2026-06-20T09:00:00-07:00"),
+        ("B", "auto"): _inv_entry("B", size=50, last_used="2026-06-20T10:00:00-07:00"),
+        ("C", "auto"): _inv_entry("C", size=50, last_used="2026-06-20T11:00:00-07:00"),
     }
-    plan = s._pick_lru_evict({"A", "B", "C"}, inventory, need=120)
-    assert plan == ["A", "B", "C"]
+    plan = s._pick_lru_evict(
+        {("A", "auto"), ("B", "auto"), ("C", "auto")}, inventory, need=120
+    )
+    assert plan == [("A", "auto"), ("B", "auto"), ("C", "auto")]
 
 
 def test_pick_lru_evict_returns_none_if_insufficient() -> None:
@@ -56,9 +58,9 @@ def test_pick_lru_evict_returns_none_if_insufficient() -> None:
     import kinoforge.engines.diffusers.servers.wan_t2v_server as s
 
     inventory = {
-        "A": _inv_entry("A", size=50, last_used="2026-06-20T09:00:00-07:00"),
+        ("A", "auto"): _inv_entry("A", size=50, last_used="2026-06-20T09:00:00-07:00"),
     }
-    assert s._pick_lru_evict({"A"}, inventory, need=999) is None
+    assert s._pick_lru_evict({("A", "auto")}, inventory, need=999) is None
 
 
 def test_pick_lru_evict_empty_plan_when_need_zero() -> None:
@@ -67,10 +69,10 @@ def test_pick_lru_evict_empty_plan_when_need_zero() -> None:
     import kinoforge.engines.diffusers.servers.wan_t2v_server as s
 
     inventory = {
-        "A": _inv_entry("A", size=50, last_used="2026-06-20T09:00:00-07:00"),
+        ("A", "auto"): _inv_entry("A", size=50, last_used="2026-06-20T09:00:00-07:00"),
     }
-    assert s._pick_lru_evict({"A"}, inventory, need=0) == []
-    assert s._pick_lru_evict({"A"}, inventory, need=-5) == []
+    assert s._pick_lru_evict({("A", "auto")}, inventory, need=0) == []
+    assert s._pick_lru_evict({("A", "auto")}, inventory, need=-5) == []
 
 
 def test_replace_adapter_stack_unloads_then_reloads(
@@ -98,10 +100,12 @@ def test_replace_adapter_stack_unloads_then_reloads(
 
     monkeypatch.setattr(s, "pipe", _Stub())
     s._inventory.clear()
-    s._inventory["A"] = _inv_entry("A", 1, "x")
-    s._inventory["A"]["loras_dir_path"] = "/loras/A"
-    s._inventory["B"] = _inv_entry("B", 1, "x")
-    s._inventory["B"]["loras_dir_path"] = "/loras/B"
+    s._inventory[("A", "auto")] = _inv_entry("A", 1, "x")
+    s._inventory[("A", "auto")]["loras_dir_path"] = "/loras/A"
+    s._inventory[("A", "auto")]["branch"] = "auto"
+    s._inventory[("B", "auto")] = _inv_entry("B", 1, "x")
+    s._inventory[("B", "auto")]["loras_dir_path"] = "/loras/B"
+    s._inventory[("B", "auto")]["branch"] = "auto"
 
     s._replace_adapter_stack(
         [
@@ -111,9 +115,9 @@ def test_replace_adapter_stack_unloads_then_reloads(
     )
 
     assert calls[0] == ("unload",)
-    assert calls[1] == ("load", "/loras/A", "lora_0")
-    assert calls[2] == ("load", "/loras/B", "lora_1")
-    assert calls[3] == ("set_adapters", ["lora_0", "lora_1"], [0.5, 1.2])
+    assert calls[1] == ("load", "/loras/A", "lora_0_a")
+    assert calls[2] == ("load", "/loras/B", "lora_1_a")
+    assert calls[3] == ("set_adapters", ["lora_0_a", "lora_1_a"], [0.5, 1.2])
 
 
 def test_replace_adapter_stack_empty_unloads_no_reload(
@@ -161,7 +165,7 @@ def test_evict_one_removes_inventory_and_unloads(
     stub = _Stub()
     monkeypatch.setattr(s, "pipe", stub)
     s._inventory.clear()
-    s._inventory["A"] = {
+    s._inventory[("A", "auto")] = {
         "ref": "A",
         "filename": "secret.safetensors",
         "size_bytes": 100,
@@ -169,10 +173,11 @@ def test_evict_one_removes_inventory_and_unloads(
         "downloaded_at_local": "x",
         "last_used_at_local": "x",
         "adapter_name": "lora_3",
+        "branch": "auto",
     }
 
-    asyncio.run(s._evict_one("A"))
+    asyncio.run(s._evict_one("A", "auto"))
 
-    assert "A" not in s._inventory
+    assert ("A", "auto") not in s._inventory
     assert not lora_file.exists()
     assert stub.unloaded == ["lora_3"]

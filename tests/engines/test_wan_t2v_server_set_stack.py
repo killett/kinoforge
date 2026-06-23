@@ -79,7 +79,7 @@ def test_set_stack_from_empty_downloads_all(
     resp = asyncio.run(s.set_stack(req))
     assert sorted(download_log) == ["a.s", "b.s"]
     assert {e.ref for e in resp.inventory} == {"A", "B"}
-    assert stub.adapters == ["lora_0", "lora_1"]
+    assert stub.adapters == ["lora_0_a", "lora_1_a"]
     assert resp.swap_rejected is None
 
 
@@ -91,14 +91,15 @@ def test_set_stack_to_empty_evicts_all(
     Bug: target_refs=[] is treated as 'no-op'; existing adapters stay.
     """
     s, _, stub = server_with_stubs
-    s._inventory["A"] = {
+    s._inventory[("A", "auto")] = {
         "ref": "A",
         "filename": "a.s",
         "size_bytes": 100,
         "loras_dir_path": "/loras/a.s",
         "downloaded_at_local": "x",
         "last_used_at_local": "x",
-        "adapter_name": "lora_0",
+        "adapter_name": "lora_0_a",
+        "branch": "auto",
     }
     req = s.SetStackRequest(target_refs=[], download_specs={})
     resp = asyncio.run(s.set_stack(req))
@@ -120,7 +121,7 @@ def test_set_stack_idempotent_on_same_stack(
     stub.loaded.clear()
     asyncio.run(s.set_stack(req))
     assert download_log == []
-    assert stub.adapters == ["lora_0"]
+    assert stub.adapters == ["lora_0_a"]
 
 
 def test_set_stack_overlap_downloads_only_new(
@@ -131,14 +132,15 @@ def test_set_stack_overlap_downloads_only_new(
     Bug: server downloads both, re-fetching A wastefully.
     """
     s, download_log, stub = server_with_stubs
-    s._inventory["A"] = {
+    s._inventory[("A", "auto")] = {
         "ref": "A",
         "filename": "a.s",
         "size_bytes": 100,
         "loras_dir_path": "/loras/a.s",
         "downloaded_at_local": "x",
         "last_used_at_local": "x",
-        "adapter_name": "lora_0",
+        "adapter_name": "lora_0_a",
+        "branch": "auto",
     }
     req = s.SetStackRequest(
         target_refs=["A", "B"],
@@ -146,8 +148,8 @@ def test_set_stack_overlap_downloads_only_new(
     )
     asyncio.run(s.set_stack(req))
     assert download_log == ["b.s"]
-    assert set(s._inventory.keys()) == {"A", "B"}
-    assert stub.adapters == ["lora_0", "lora_1"]
+    assert set(s._inventory.keys()) == {("A", "auto"), ("B", "auto")}
+    assert stub.adapters == ["lora_0_a", "lora_1_a"]
 
 
 def test_set_stack_tight_disk_evicts_lru(
@@ -161,20 +163,21 @@ def test_set_stack_tight_disk_evicts_lru(
     """
     s, download_log, _ = server_with_stubs
     monkeypatch.setattr(s, "_disk_free_bytes", lambda _: 50)
-    s._inventory["A"] = {
+    s._inventory[("A", "auto")] = {
         "ref": "A",
         "filename": "a.s",
         "size_bytes": 100,
         "loras_dir_path": "/loras/a.s",
         "downloaded_at_local": "2026-06-20T09:00:00-07:00",
         "last_used_at_local": "2026-06-20T09:00:00-07:00",
-        "adapter_name": "lora_0",
+        "adapter_name": "lora_0_a",
+        "branch": "auto",
     }
     req = s.SetStackRequest(
         target_refs=["B"],
         download_specs={"B": _spec("b.s", size_hint=100)},
     )
     asyncio.run(s.set_stack(req))
-    assert "A" not in s._inventory
-    assert "B" in s._inventory
+    assert ("A", "auto") not in s._inventory
+    assert ("B", "auto") in s._inventory
     assert download_log == ["b.s"]
