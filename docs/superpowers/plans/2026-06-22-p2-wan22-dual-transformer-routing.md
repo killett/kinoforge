@@ -17,6 +17,23 @@
 - Q6 same ref in multiple branches = YES; `(ref, branch)` composite identity through inventory + matcher + adapter naming.
 - Q7 routing dispatch = Approach 1 primary + Approach 3 fallback + Task 0 selects.
 
+**Task 0 research outcome (2026-06-22) — LOCKED:**
+- Q1 kwarg: `load_into_transformer_2: bool` (default `False`) exists on
+  `WanLoraLoaderMixin.load_lora_weights` at
+  `diffusers/loaders/lora_pipeline.py:4078` (v0.36.0).
+  **Approach 1 PRIMARY** selected; **Approach 3 FALLBACK DROPPED**.
+- Q2 activation: `LoraBaseMixin.set_adapters` passes ALL names to each
+  transformer; peft raises on unknown adapter — **per-transformer
+  activation loop (spec §5.4) selected** over single pipe-level
+  `pipe.set_adapters` call.
+- Q3 eviction: `LoraBaseMixin.delete_adapters` auto-iterates
+  `_lora_loadable_modules` — `_evict_one` stays simple (one
+  `pipe.delete_adapters([name])` call).
+- Q4 peft floor: `peft >= 0.13.0` (enforced by diffusers itself + already
+  pinned in pod cfg).
+- Full research note:
+  `docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md`.
+
 ---
 
 ## File Structure
@@ -1112,13 +1129,20 @@ def test_valid_moe_pair_routes_to_correct_transformers(moe_pipe):
         LoraTarget(ref="y", strength=0.8, branch="low_noise"),
     ]
     _replace_adapter_stack(target)
-    # Inspect load_lora_weights call arguments to verify per-transformer dispatch.
-    # NOTE: exact assertion depends on Task 0 outcome:
-    #   Approach 1: assert kwargs include load_into_transformer=<correct attr>
-    #   Approach 3: assert pipe.transformer was rebound during the high-noise call
-    # This test gets updated in-place to match the chosen approach.
+    # Inspect load_lora_weights call kwargs (Task 0 LOCKED Approach 1):
+    #   high_noise → load_into_transformer_2=False
+    #   low_noise  → load_into_transformer_2=True
+    # Per-transformer activation (Task 0 Q2) means moe_pipe.set_adapters
+    # is NOT called; pipe.transformer.set_adapters and
+    # pipe.transformer_2.set_adapters are called instead with disjoint
+    # adapter name lists.
     assert moe_pipe.load_lora_weights.call_count == 2
-    assert moe_pipe.set_adapters.called
+    high_call = moe_pipe.load_lora_weights.call_args_list[0]
+    low_call = moe_pipe.load_lora_weights.call_args_list[1]
+    assert high_call.kwargs["load_into_transformer_2"] is False
+    assert low_call.kwargs["load_into_transformer_2"] is True
+    moe_pipe.transformer.set_adapters.assert_called_once()
+    moe_pipe.transformer_2.set_adapters.assert_called_once()
 
 
 def test_partial_failure_mid_load_does_not_corrupt_inventory(moe_pipe):
@@ -1146,15 +1170,19 @@ Expected: 4/4 FAIL.
 
 - [ ] **Step 3: Rewrite `_replace_adapter_stack` body.**
 
-Replace the existing body in `wan_t2v_server.py` (lines around 397-428):
+Replace the existing body in `wan_t2v_server.py` (lines around 397-428).
 
-> **PICK ONE BASED ON TASK 0:**
->
-> If Task 0 picked **Approach 1** (diffusers kwarg works), use the PRIMARY block.
-> If Task 0 picked **Approach 3** (rebind fallback), use the FALLBACK block.
-> The other block stays in the spec for historical reference but the chosen one ships.
+> **Task 0 LOCKED choice (2026-06-22):** Approach 1 PRIMARY +
+> per-transformer activation loop. Approach 3 FALLBACK is DROPPED — Q1
+> confirmed `load_into_transformer_2: bool` exists on `WanLoraLoaderMixin`
+> at `diffusers/loaders/lora_pipeline.py:4078` (v0.36.0). Q2 confirmed
+> the pipe-level `set_adapters` passes ALL adapter names to each
+> transformer and peft raises on unknown names, so activation MUST be
+> dispatched per-transformer using only the names actually loaded into
+> that transformer. Full research note:
+> `docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md`.
 
-PRIMARY (Approach 1):
+PRIMARY (Approach 1 — Task 0 LOCKED):
 
 ```python
 def _replace_adapter_stack(target: list[LoraTarget]) -> None:
@@ -1163,9 +1191,13 @@ def _replace_adapter_stack(target: list[LoraTarget]) -> None:
     Pre-load validation pass walks every entry and raises before any
     ``unload_lora_weights`` so a rejected request leaves inventory + pipeline
     untouched. Each entry routes to its target transformer via
-    ``_resolve_transformer``. See spec §3.3, §6.3.
+    ``_resolve_transformer`` and the boolean ``load_into_transformer_2``
+    kwarg on ``WanLoraLoaderMixin.load_lora_weights`` (Task 0 Q1).
+    Activation is dispatched per-transformer (Task 0 Q2 — peft raises
+    on unknown adapter names if we used the pipe-level helper).
+    See spec §3.3, §5.4, §6.3.
     """
-    # Pre-load validation gate.
+    # Pre-load validation gate — raises BEFORE any state mutation.
     resolved: list[tuple[LoraTarget, Any]] = []
     for t in target:
         target_transformer = _resolve_transformer(pipe, t.branch)
@@ -1175,65 +1207,42 @@ def _replace_adapter_stack(target: list[LoraTarget]) -> None:
     if not target:
         return
 
-    names: list[str] = []
-    weights: list[float] = []
+    # Per-transformer activation buckets (Task 0 Q2). Keyed by attribute
+    # name on `pipe`, since arity may be > 2 in future MoE variants —
+    # though the v0.36.0 surface is "transformer" + "transformer_2".
+    per_transformer_names: dict[str, list[str]] = {}
+    per_transformer_weights: dict[str, list[float]] = {}
+
     for i, (t, target_transformer) in enumerate(resolved):
         entry = _inventory[(t.ref, t.branch)]
         name = _adapter_name(i, t.branch)
-        # PRIMARY (Task 0 Approach 1) — per-transformer kwarg.
+        # Approach 1 (Task 0 Q1) — boolean kwarg on the diffusers loader.
+        # transformer  → load_into_transformer_2=False  (Wan 2.2 high-noise stage; Wan 2.1 single stage)
+        # transformer_2 → load_into_transformer_2=True  (Wan 2.2 low-noise stage)
+        target_attr = "transformer_2" if target_transformer is getattr(pipe, "transformer_2", None) else "transformer"
         pipe.load_lora_weights(
             entry["loras_dir_path"],
             adapter_name=name,
-            load_into_transformer=target_transformer,  # exact kwarg from Task 0
+            load_into_transformer_2=(target_attr == "transformer_2"),
         )
-        names.append(name)
-        weights.append(t.strength)
+        per_transformer_names.setdefault(target_attr, []).append(name)
+        per_transformer_weights.setdefault(target_attr, []).append(t.strength)
         entry["adapter_name"] = name
         entry["last_strength"] = t.strength
         entry["branch"] = t.branch
 
-    # Activation strategy — picked by Task 0 Question 2.
-    # If single set_adapters activates both transformers, this single call works.
-    # Otherwise replace with per-transformer activation loop (spec §5.4).
-    pipe.set_adapters(names, adapter_weights=weights)
+    # Per-transformer activation (Task 0 Q2 — spec §5.4). Each transformer's
+    # peft layer ONLY sees the adapter names that were actually loaded into
+    # it, so peft never raises an "unknown adapter" KeyError.
+    for attr, names in per_transformer_names.items():
+        model = getattr(pipe, attr, None)
+        if model is None or not names:
+            continue
+        model.set_adapters(names, per_transformer_weights[attr])
 ```
 
-FALLBACK (Approach 3):
-
-```python
-def _replace_adapter_stack(target: list[LoraTarget]) -> None:
-    """[same docstring]"""
-    resolved: list[tuple[LoraTarget, Any]] = []
-    for t in target:
-        target_transformer = _resolve_transformer(pipe, t.branch)
-        resolved.append((t, target_transformer))
-
-    pipe.unload_lora_weights()
-    if not target:
-        return
-
-    names: list[str] = []
-    weights: list[float] = []
-    for i, (t, target_transformer) in enumerate(resolved):
-        entry = _inventory[(t.ref, t.branch)]
-        name = _adapter_name(i, t.branch)
-        # FALLBACK (Task 0 Approach 3) — temporary attribute rebind.
-        original_transformer = pipe.transformer
-        try:
-            pipe.transformer = target_transformer
-            pipe.load_lora_weights(entry["loras_dir_path"], adapter_name=name)
-        finally:
-            pipe.transformer = original_transformer
-        names.append(name)
-        weights.append(t.strength)
-        entry["adapter_name"] = name
-        entry["last_strength"] = t.strength
-        entry["branch"] = t.branch
-
-    pipe.set_adapters(names, adapter_weights=weights)
-```
-
-(If Task 0 Question 2 finds activation needs per-transformer loop, replace the final `pipe.set_adapters(names, adapter_weights=weights)` with the loop from spec §5.4.)
+(Approach 3 rebind FALLBACK has been removed — Task 0 Q1 confirmed
+Approach 1 is shippable. Historical reference preserved in spec §5.5.)
 
 - [ ] **Step 4: Run tests — verify 4/4 PASS.**
 
@@ -1442,8 +1451,8 @@ def _load_pipeline() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no pu
     for entry in initial_stack:
         _ = _resolve_transformer(pipe_obj, entry["branch"])  # raises on mismatch
 
-    adapter_names: list[str] = []
-    adapter_weights: list[float] = []
+    per_transformer_names: dict[str, list[str]] = {}
+    per_transformer_weights: dict[str, list[float]] = {}
     for i, entry in enumerate(initial_stack):
         ref = entry["ref"]
         branch = entry["branch"]
@@ -1454,15 +1463,16 @@ def _load_pipeline() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no pu
         except Exception as e:
             raise RuntimeError(f"failed to download LoRA {ref}: {e}") from e
         adapter_name = _adapter_name(i, branch)
-        # Routing dispatch — PRIMARY or FALLBACK per Task 0.
+        # Routing dispatch — Task 0 LOCKED: Approach 1, boolean kwarg.
         # (Same code shape as _replace_adapter_stack — Task 6.)
         target_transformer = _resolve_transformer(pipe_obj, branch)
+        target_attr = "transformer_2" if target_transformer is getattr(pipe_obj, "transformer_2", None) else "transformer"
         pipe_obj.load_lora_weights(
             path, adapter_name=adapter_name,
-            load_into_transformer=target_transformer,  # PRIMARY
+            load_into_transformer_2=(target_attr == "transformer_2"),
         )
-        adapter_names.append(adapter_name)
-        adapter_weights.append(strength)
+        per_transformer_names.setdefault(target_attr, []).append(adapter_name)
+        per_transformer_weights.setdefault(target_attr, []).append(strength)
         now = datetime.now().isoformat()
         _inventory[(ref, branch)] = {
             "ref": ref,
@@ -1475,8 +1485,13 @@ def _load_pipeline() -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no pu
             "last_strength": strength,
             "branch": branch,
         }
-    if adapter_names:
-        pipe_obj.set_adapters(adapter_names, adapter_weights=adapter_weights)
+    # Per-transformer activation (Task 0 Q2). Skipped if no entries
+    # landed in a given transformer.
+    for attr, names in per_transformer_names.items():
+        model = getattr(pipe_obj, attr, None)
+        if model is None or not names:
+            continue
+        model.set_adapters(names, per_transformer_weights[attr])
     return pipe_obj
 ```
 
@@ -1632,8 +1647,8 @@ def _rollback_to_snapshot(snapshot: list[tuple[str, float, str]]) -> None:
     pipe.unload_lora_weights()
     if not snapshot:
         return
-    names: list[str] = []
-    weights: list[float] = []
+    per_transformer_names: dict[str, list[str]] = {}
+    per_transformer_weights: dict[str, list[float]] = {}
     try:
         for i, (ref, strength, branch) in enumerate(snapshot):
             entry = _inventory.get((ref, branch))
@@ -1642,17 +1657,24 @@ def _rollback_to_snapshot(snapshot: list[tuple[str, float, str]]) -> None:
                     f"rollback target ({ref}, {branch}) missing from inventory"
                 )
             target_transformer = _resolve_transformer(pipe, branch)
+            target_attr = "transformer_2" if target_transformer is getattr(pipe, "transformer_2", None) else "transformer"
             name = _adapter_name(i, branch)
+            # Task 0 LOCKED: Approach 1 boolean kwarg.
             pipe.load_lora_weights(
                 entry["loras_dir_path"], adapter_name=name,
-                load_into_transformer=target_transformer,  # PRIMARY (or FALLBACK)
+                load_into_transformer_2=(target_attr == "transformer_2"),
             )
-            names.append(name)
-            weights.append(strength)
+            per_transformer_names.setdefault(target_attr, []).append(name)
+            per_transformer_weights.setdefault(target_attr, []).append(strength)
             entry["adapter_name"] = name
             entry["last_strength"] = strength
             entry["branch"] = branch
-        pipe.set_adapters(names, adapter_weights=weights)
+        # Per-transformer activation (Task 0 Q2).
+        for attr, names in per_transformer_names.items():
+            model = getattr(pipe, attr, None)
+            if model is None or not names:
+                continue
+            model.set_adapters(names, per_transformer_weights[attr])
     except Exception as e:
         raise VRAMRollbackFailure(f"rollback re-load failed: {e}") from e
 ```
