@@ -87,7 +87,7 @@
     {
       "id": 30,
       "subject": "P2 Task 12: AC8 AST scan covers branch; Tier-1 stub moe knob",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [19],
       "description": "**Goal:** Extend AC8 AST scan in tests/test_no_unredacted_writes.py to flag new branch field. Add moe: bool = False knob to Tier-1 diffusers-load stub.\n\n**Files:**\n- Modify: `tests/test_no_unredacted_writes.py`\n- Modify: `tests/_smoke_harness/` (Tier-1 stub source)\n\n**Acceptance Criteria:** AC8 detects branch / stub exposes moe knob.\n\n**Verify:** `pixi run pytest tests/test_no_unredacted_writes.py tests/_smoke_harness/ -v` → all PASS.\n\nFull steps in plan doc Task 12.\n\n```json:metadata\n{\"files\": [\"tests/test_no_unredacted_writes.py\", \"tests/_smoke_harness/\"], \"verifyCommand\": \"pixi run pytest tests/test_no_unredacted_writes.py tests/_smoke_harness/ -v\", \"acceptanceCriteria\": [\"AC8 detects branch field\", \"stub exposes moe knob\"], \"modelTier\": \"mechanical\"}\n```"
     },
