@@ -94,6 +94,88 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
+**P2 Wan 2.2 dual-transformer routing CODE-COMPLETE 2026-06-23 (16 of 17
+tasks shipped autonomously, ~$0 cumulative spend so far).** Spec
+`docs/superpowers/specs/2026-06-22-p2-wan22-dual-transformer-routing-design.md`
++ plan `docs/superpowers/plans/2026-06-22-p2-wan22-dual-transformer-routing.md`.
+Branch field threads end-to-end: `LoraEntry.branch` (cfg + vault) →
+`LoraTarget.branch` (wire) → server-side `_resolve_transformer` →
+boolean `load_into_transformer_2` kwarg on
+`WanLoraLoaderMixin.load_lora_weights` (Task-0 LOCKED Approach 1,
+diffusers v0.36 `lora_pipeline.py:4078`) → per-transformer activation
+loop → composite `(ref, branch)` inventory → matcher tuple comparison.
+`capability_key` stays branch-invariant so a single warm pod serves
+every branch combination via `/lora/set_stack` swap.
+
+- **Tasks shipped (commit hashes):**
+  - Task 0 (research) `2e6af1f` + `003ab6c` — diffusers Wan API
+    research note + plan lock-in.
+  - Task 1 `cc89d76` — `LoraEntry.branch` field + h/l alias validator.
+  - Task 2 `5bd099e` — `LoraTarget` parity (server-side schema).
+  - Task 3 `10f5ab9` — schema-parity invariant test extended.
+  - Task 4 `80eede8` — `_detect_moe_arity` + `_resolve_transformer` +
+    three exception classes (`BranchAutoNotAllowedOnMoE`,
+    `BranchUnsupportedOnSingleTransformer`, `BranchUnknown`).
+  - Task 5 `e63ec6f` — inventory composite `(ref, branch)` key +
+    `_adapter_name` helper (`lora_{i}_{h|l|a}`).
+  - Task 6 `7e0ef8d` — `_replace_adapter_stack` pre-load gate +
+    per-transformer dispatch (boolean kwarg + per-transformer
+    activation loop).
+  - Task 7 `bdb739d` — cold-boot env shape (`{ref, download_spec,
+    strength, branch}`) + legacy tuple auto-promotion + per-arity
+    validation refuses to set `ready`.
+  - Task 8 `3618f95` — VRAM rollback snapshot carries `branch`;
+    dedicated `VRAMRollbackFailure` exception class.
+  - Task 9 `f9be132` — HTTP surface: `LoraInventoryEntry.branch` field,
+    `/lora/set_stack` 400 on branch mismatch.
+  - Task 10 `9dbebcb` — `DiffusersBackend.set_lora_stack` threads
+    `branch` onto the wire body.
+  - Task 11 `2e6edfa` — `is_stack_match` compares
+    `(ref, strength, branch)`; `capability_key` branch-invariance
+    regression test.
+  - Task 12 `32d3608` — AC8 AST scan covers `LoraInventoryEntry.branch`
+    consumers; Tier-1 stub `KINOFORGE_STUB_MOE=1` knob.
+  - Task 13 `5004cf2` — canonical `wan.yaml` Arcane Style pair
+    declares `branch: high_noise / low_noise`.
+  - Task 14 `e7c4f1e` — Tier-3 (Wan 2.1) + Tier-4 (Wan 2.2 7-case
+    matrix) RED scaffolds, both `pytest.mark.xfail(strict=True)`.
+
+- **Engine + core suites GREEN** at every task commit (no regressions).
+  Last full-suite count: 2984 passed, 83 skipped, 6 xfailed (excludes
+  the new live-smoke RED scaffolds in `tests/smoke/live_wan21/` +
+  `tests/smoke/release_wan22/`).
+
+- **Task 16 (live fire) PENDING explicit operator authorization.**
+  Two scaffolds in `tests/smoke/live_wan21/test_branch_routing.py`
+  (2 cases, ~$0.20 Wan 2.1 1.3B) +
+  `tests/smoke/release_wan22/test_dual_transformer_routing.py`
+  (7 cases, ~$1.50 Wan 2.2 14B) are RED-strict with structured xfail
+  reasons. To fire:
+    1. Replace each test's `raise NotImplementedError(...)` body with a
+       `matrix.run_matrix(...)` call shaped like
+       `tests/smoke/live_wan21/test_lora_swap_matrix.py` (cold-boot
+       via subprocess `pixi run kinoforge generate`, then drive
+       per-step `/lora/set_stack` via shared harness, sha-distinct
+       capture per matrix step).
+    2. Fire:
+       `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/live_wan21/test_branch_routing.py tests/smoke/release_wan22/test_dual_transformer_routing.py -v`
+    3. Verify clean teardown: `pixi run kinoforge list` must show
+       `No running instances.` + `No instances recorded in ledger.`
+    4. Capture each generated mp4 sha256 in
+       `successful-generations.md` (new §11 for branch routing);
+       wrong-routing sha (Tier-4 case 5) MUST differ from canonical
+       sha (Tier-4 case 4).
+    5. Flip every `pytest.mark.xfail(strict=True)` → green
+       (delete the decorator).
+    6. Update this PROGRESS.md block.
+
+- **Plan + research artifacts:**
+  - Research note: `docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md`
+  - Plan: `docs/superpowers/plans/2026-06-22-p2-wan22-dual-transformer-routing.md`
+  - `.tasks.json` mirrors completed state for cross-session resume.
+
+---
+
 **P1 server per-LoRA strength weights CODE-COMPLETE 2026-06-21
 (autonomous).** Spec
 `docs/superpowers/specs/2026-06-21-server-lora-strength-design.md`
