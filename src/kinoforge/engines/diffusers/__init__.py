@@ -588,8 +588,16 @@ class DiffusersBackend(GenerationBackend):
         # legacy ``target_refs`` to default strength=1.0 if present,
         # but no kinoforge.engines.diffusers.* call site ships the
         # legacy shape any more.
+        # P2 (2026-06-22): wire shape carries ``branch`` per entry so the
+        # pod-side ``LoraTarget`` routes per-LoRA to the right transformer.
+        # ``LoraEntry.branch`` is always one of ``"high_noise"`` /
+        # ``"low_noise"`` / ``"auto"`` (canonical form — h/l aliases are
+        # already normalized at LoraEntry validation time).
         body: dict[str, Any] = {
-            "target": [{"ref": e.ref, "strength": e.strength} for e in active_stack],
+            "target": [
+                {"ref": e.ref, "strength": e.strength, "branch": e.branch}
+                for e in active_stack
+            ],
             "download_specs": download_specs,
         }
         from kinoforge.engines._proxy_retry import (
