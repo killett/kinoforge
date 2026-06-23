@@ -24,7 +24,7 @@
     {
       "id": 21,
       "subject": "P2 Task 3: Parity test extension covers branch field",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [19, 20],
       "description": "**Goal:** Extend tests/test_lora_schema_parity.py to verify both classes carry branch with identical Literal annotation AND both _normalize_branch_alias validators map h→high_noise, l→low_noise identically.\n\n**Files:**\n- Modify: `tests/test_lora_schema_parity.py`\n\n**Acceptance Criteria:** branch field on both / Literal args match / h alias normalizes on both / l alias normalizes on both / defaults match.\n\n**Verify:** `pixi run pytest tests/test_lora_schema_parity.py -v` → all PASS.\n\nFull steps in plan doc Task 3.\n\n```json:metadata\n{\"files\": [\"tests/test_lora_schema_parity.py\"], \"verifyCommand\": \"pixi run pytest tests/test_lora_schema_parity.py -v\", \"acceptanceCriteria\": [\"branch field present on both\", \"Literal args match\", \"h alias normalizes on both\", \"l alias normalizes on both\", \"default matches\"], \"modelTier\": \"mechanical\"}\n```"
     },
