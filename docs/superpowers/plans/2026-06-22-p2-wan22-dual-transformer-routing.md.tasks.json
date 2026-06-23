@@ -1,0 +1,124 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-22-p2-wan22-dual-transformer-routing.md",
+  "tasks": [
+    {
+      "id": 18,
+      "subject": "P2 Task 0: Research diffusers Wan API per-transformer routing",
+      "status": "pending",
+      "description": "**Goal:** Resolve 4 open questions in spec §8.3 BEFORE any implementation lands, so Tasks 6+9+10 know which code path (Approach 1 kwarg vs Approach 3 rebind) is correct.\n\n**Files:**\n- Create: `docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md`\n- Probe scripts (ephemeral, no commit): `/tmp/p2_q{1,2,3}.py`\n\n**Acceptance Criteria:**\n- Q1: exact kwarg name (or absence) on WanPipeline.load_lora_weights cited with file:line\n- Q2: set_adapters activation behavior across split transformers documented\n- Q3: delete_adapters per-transformer dispatch necessity documented\n- Q4: peft version floor pinned\n- Research note committed\n- Plan .md updated to lock primary vs fallback paths\n\n**Verify:** `cat docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md` shows all 4 questions resolved with code citations.\n\n```json:metadata\n{\"files\": [\"docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md\"], \"verifyCommand\": \"test -f docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md && rg -q 'Decision:' docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md\", \"acceptanceCriteria\": [\"Q1 kwarg name (or absence) cited with file:line\", \"Q2 activation behavior documented\", \"Q3 delete dispatch necessity documented\", \"Q4 peft floor pinned\", \"plan .md updated to lock primary vs fallback paths\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 19,
+      "subject": "P2 Task 1: LoraEntry — add branch field + alias validator",
+      "status": "pending",
+      "blockedBy": [18],
+      "description": "**Goal:** Extend canonical LoraEntry Pydantic schema with `branch: Literal[\"high_noise\", \"low_noise\", \"auto\"]` (default `\"auto\"`) and `_normalize_branch_alias` mode=\"before\" validator mapping h→high_noise, l→low_noise.\n\n**Files:**\n- Modify: `src/kinoforge/core/lora.py`\n- Create: `tests/engines/test_lora_entry_branch.py`\n\n**Acceptance Criteria:** branch defaults to auto / h+l aliases normalize / unknown values raise / extra='forbid' blocks typos / model_dump emits canonical form / mypy+ruff clean.\n\n**Verify:** `pixi run pytest tests/engines/test_lora_entry_branch.py -v` → 6/6 PASS.\n\nFull steps in plan doc Task 1.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lora.py\", \"tests/engines/test_lora_entry_branch.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_lora_entry_branch.py -v && pixi run mypy src/kinoforge/core/lora.py && pixi run ruff check src/kinoforge/core/lora.py\", \"acceptanceCriteria\": [\"branch defaults to auto\", \"h alias normalizes to high_noise\", \"l alias normalizes to low_noise\", \"unknown values rejected\", \"extra=forbid blocks typos\", \"model_dump emits canonical form\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 20,
+      "subject": "P2 Task 2: LoraTarget parity — same field + same alias validator",
+      "status": "pending",
+      "blockedBy": [19],
+      "description": "**Goal:** Add same branch field + same alias validator to server-side LoraTarget Pydantic model. Keep LoraEntry ↔ LoraTarget parity invariant load-bearing.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py:145-161`\n\n**Acceptance Criteria:** LoraTarget defaults branch to auto / h/l aliases normalize identically / extra='forbid' enforced / mypy+ruff clean.\n\n**Verify:** `pixi run python -c 'from kinoforge.engines.diffusers.servers.wan_t2v_server import LoraTarget; assert LoraTarget(ref=\"x\", branch=\"h\").branch == \"high_noise\"'`\n\nFull steps in plan doc Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\"], \"verifyCommand\": \"pixi run python -c 'from kinoforge.engines.diffusers.servers.wan_t2v_server import LoraTarget; assert LoraTarget(ref=\\\"x\\\", branch=\\\"h\\\").branch == \\\"high_noise\\\"' && pixi run mypy src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"acceptanceCriteria\": [\"LoraTarget defaults branch to auto\", \"h/l aliases normalize identically to LoraEntry\", \"extra=forbid enforced\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 21,
+      "subject": "P2 Task 3: Parity test extension covers branch field",
+      "status": "pending",
+      "blockedBy": [19, 20],
+      "description": "**Goal:** Extend tests/test_lora_schema_parity.py to verify both classes carry branch with identical Literal annotation AND both _normalize_branch_alias validators map h→high_noise, l→low_noise identically.\n\n**Files:**\n- Modify: `tests/test_lora_schema_parity.py`\n\n**Acceptance Criteria:** branch field on both / Literal args match / h alias normalizes on both / l alias normalizes on both / defaults match.\n\n**Verify:** `pixi run pytest tests/test_lora_schema_parity.py -v` → all PASS.\n\nFull steps in plan doc Task 3.\n\n```json:metadata\n{\"files\": [\"tests/test_lora_schema_parity.py\"], \"verifyCommand\": \"pixi run pytest tests/test_lora_schema_parity.py -v\", \"acceptanceCriteria\": [\"branch field present on both\", \"Literal args match\", \"h alias normalizes on both\", \"l alias normalizes on both\", \"default matches\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 22,
+      "subject": "P2 Task 4: _detect_moe_arity + _resolve_transformer + branch exceptions",
+      "status": "pending",
+      "blockedBy": [20],
+      "description": "**Goal:** Add MoE detection helper, single-dispatch routing helper, and 3 exception classes. Pure functions/types — testable in isolation against stub pipelines.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n- Create: `tests/engines/test_resolve_transformer.py`\n\n**Acceptance Criteria:** arity detection on stubs / auto routes on arity=1 / h/l routes on arity=2 / auto-on-MoE raises / explicit-on-arity=1 raises / off-Literal value raises defensively.\n\n**Verify:** `pixi run pytest tests/engines/test_resolve_transformer.py -v` → 8/8 PASS.\n\nFull steps in plan doc Task 4.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/test_resolve_transformer.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_resolve_transformer.py -v\", \"acceptanceCriteria\": [\"arity detection works on stub pipelines\", \"auto routes correctly on arity=1\", \"h/l routes correctly on arity=2\", \"auto on MoE raises\", \"explicit branch on arity=1 raises\", \"off-Literal value raises defensively\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 23,
+      "subject": "P2 Task 5: Inventory composite (ref, branch) key + _adapter_name helper",
+      "status": "pending",
+      "blockedBy": [22],
+      "description": "**Goal:** Change _inventory from dict[str, ...] keyed by ref to dict[tuple[str, str], ...] keyed by (ref, branch). Adapter naming from lora_{i} to lora_{i}_{branch_short} (branch_short ∈ {h, l, a}).\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n\n**Acceptance Criteria:** _inventory keyed by tuple / _adapter_name helper / every callsite updated / no engine test regressions / mypy clean.\n\n**Verify:** `pixi run pytest tests/engines/ -v` → existing tests pass.\n\nFull steps in plan doc Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/ -v && pixi run mypy src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"acceptanceCriteria\": [\"_inventory keyed by tuple\", \"_adapter_name produces lora_i_branchshort\", \"every callsite updated\", \"no engine test regressions\", \"mypy clean\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 24,
+      "subject": "P2 Task 6: _replace_adapter_stack pre-load gate + per-transformer dispatch",
+      "status": "pending",
+      "blockedBy": [18, 22, 23],
+      "description": "**Goal:** Wire per-transformer routing into _replace_adapter_stack. Pre-load validation pass walks target and raises before any state mutation. Loading uses path Task 0 picked (Approach 1 PRIMARY or Approach 3 FALLBACK).\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n- Create: `tests/engines/test_replace_adapter_stack_routing.py`\n\n**Acceptance Criteria:** pre-load gate atomic / valid stack routes correctly / partial-failure impossible.\n\n**Verify:** `pixi run pytest tests/engines/test_replace_adapter_stack_routing.py -v` → 4+ PASS.\n\nFull steps + both PRIMARY/FALLBACK code blocks in plan doc Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/test_replace_adapter_stack_routing.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_replace_adapter_stack_routing.py -v\", \"acceptanceCriteria\": [\"pre-load gate atomic on auto/MoE mismatch\", \"pre-load gate atomic on explicit branch/single-transformer mismatch\", \"valid stack routes to correct transformers\", \"partial-failure mid-load impossible\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 25,
+      "subject": "P2 Task 7: Cold-boot env shape with strength+branch; pre-load validation",
+      "status": "pending",
+      "blockedBy": [22, 23, 24],
+      "description": "**Goal:** Update KINOFORGE_INITIAL_LORA_STACK_JSON from list of (ref, ArtifactDownloadSpec) tuples to list of dicts with strength + branch. Validate every initial entry's branch against pipeline arity BEFORE serving any request.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n- Create: `tests/engines/test_cold_boot_branch_validation.py`\n\n**Acceptance Criteria:** dict-form parses / legacy tuple auto-promoted / MoE+auto rejected at boot / single-transformer+explicit rejected at boot.\n\n**Verify:** `pixi run pytest tests/engines/test_cold_boot_branch_validation.py -v` → 4/4 PASS.\n\nFull steps in plan doc Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/test_cold_boot_branch_validation.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_cold_boot_branch_validation.py -v\", \"acceptanceCriteria\": [\"dict-form env parses\", \"legacy tuple promoted to strength=1, branch=auto\", \"MoE+auto rejected at boot\", \"single-transformer+explicit branch rejected at boot\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 26,
+      "subject": "P2 Task 8: VRAM rollback snapshot includes branch; restore via _resolve_transformer",
+      "status": "pending",
+      "blockedBy": [23, 24],
+      "description": "**Goal:** Extend P1's VRAM-OOM rollback snapshot from [(ref, strength), ...] to [(ref, strength, branch), ...]. Rollback uses _resolve_transformer (single source of truth).\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n- Create: `tests/engines/test_vram_rollback_branch.py`\n\n**Acceptance Criteria:** snapshot stores 3-tuples / rollback uses _resolve_transformer / VRAMRollbackFailure raised on rollback failure.\n\n**Verify:** `pixi run pytest tests/engines/test_vram_rollback_branch.py -v` → 3/3 PASS.\n\nFull steps in plan doc Task 8.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/test_vram_rollback_branch.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_vram_rollback_branch.py -v\", \"acceptanceCriteria\": [\"snapshot stores (ref, strength, branch)\", \"rollback uses _resolve_transformer\", \"VRAMRollbackFailure raised on rollback failure\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 27,
+      "subject": "P2 Task 9: HTTP surface — branch in inventory + 400 on mismatch",
+      "status": "pending",
+      "blockedBy": [24, 25, 26],
+      "description": "**Goal:** Surface branch in /lora/inventory HTTP response. Update _evict_one signature to take composite key. Wire branch-related exceptions into /lora/set_stack handler to return 400 with structured bodies.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n\n**Acceptance Criteria:** LoraInventoryEntry.branch field / /lora/inventory returns branch / _evict_one(ref, branch) / 400 on auto-MoE / 400 on explicit-on-arity=1 / 500 on VRAMRollbackFailure.\n\n**Verify:** `pixi run pytest tests/engines/ -v` → all PASS.\n\nFull steps in plan doc Task 9.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/ -v\", \"acceptanceCriteria\": [\"LoraInventoryEntry has branch\", \"/lora/inventory returns branch\", \"_evict_one takes (ref, branch)\", \"BranchAutoNotAllowedOnMoE→400\", \"BranchUnsupportedOnSingleTransformer→400\", \"VRAMRollbackFailure→500\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 28,
+      "subject": "P2 Task 10: Orchestrator emits initial-stack env in dict shape with branch",
+      "status": "pending",
+      "blockedBy": [19],
+      "description": "**Goal:** Update orchestrator's serialization of initial LoRA stack to emit new dict shape ({\"ref\", \"download_spec\", \"strength\", \"branch\"}) instead of legacy tuples.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/__init__.py`\n\n**Acceptance Criteria:** initial-stack JSON in dict shape / branch threaded from LoraEntry / canonical form emitted / no test regressions.\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers.py tests/engines/test_diffusers_set_lora_stack.py -v` → all PASS.\n\nFull steps in plan doc Task 10.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers.py tests/engines/test_diffusers_set_lora_stack.py -v\", \"acceptanceCriteria\": [\"initial-stack JSON in dict shape\", \"branch threaded from LoraEntry\", \"canonical form (no h/l) emitted\", \"no test regressions\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 29,
+      "subject": "P2 Task 11: is_stack_match (ref, strength, branch) + capability_key branch-invariance",
+      "status": "pending",
+      "blockedBy": [19, 27],
+      "description": "**Goal:** Extend matcher to compare (ref, strength, branch) tuples in order. Add regression test asserting capability_key is invariant under branch differences.\n\n**Files:**\n- Modify: `src/kinoforge/core/warm_reuse/matcher.py` (path verified during exploration)\n- Create: `tests/core/test_is_stack_match_branch.py`\n- Create: `tests/core/test_capability_key_branch_invariance.py`\n\n**Acceptance Criteria:** matches identical / rejects branch differences / matches duplicate-ref composite / rejects transposed branches / capability_key invariant under branch.\n\n**Verify:** `pixi run pytest tests/core/test_is_stack_match_branch.py tests/core/test_capability_key_branch_invariance.py -v` → all PASS.\n\nFull steps in plan doc Task 11.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/warm_reuse/matcher.py\", \"tests/core/test_is_stack_match_branch.py\", \"tests/core/test_capability_key_branch_invariance.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_is_stack_match_branch.py tests/core/test_capability_key_branch_invariance.py -v\", \"acceptanceCriteria\": [\"matches identical stacks\", \"rejects branch differences\", \"matches duplicate ref composite\", \"rejects transposed branches\", \"capability_key invariant under branch\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 30,
+      "subject": "P2 Task 12: AC8 AST scan covers branch; Tier-1 stub moe knob",
+      "status": "pending",
+      "blockedBy": [19],
+      "description": "**Goal:** Extend AC8 AST scan in tests/test_no_unredacted_writes.py to flag new branch field. Add moe: bool = False knob to Tier-1 diffusers-load stub.\n\n**Files:**\n- Modify: `tests/test_no_unredacted_writes.py`\n- Modify: `tests/_smoke_harness/` (Tier-1 stub source)\n\n**Acceptance Criteria:** AC8 detects branch / stub exposes moe knob.\n\n**Verify:** `pixi run pytest tests/test_no_unredacted_writes.py tests/_smoke_harness/ -v` → all PASS.\n\nFull steps in plan doc Task 12.\n\n```json:metadata\n{\"files\": [\"tests/test_no_unredacted_writes.py\", \"tests/_smoke_harness/\"], \"verifyCommand\": \"pixi run pytest tests/test_no_unredacted_writes.py tests/_smoke_harness/ -v\", \"acceptanceCriteria\": [\"AC8 detects branch field\", \"stub exposes moe knob\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 31,
+      "subject": "P2 Task 13: canonical wan.yaml declares branch on Arcane Style pair",
+      "status": "pending",
+      "blockedBy": [19],
+      "description": "**Goal:** Update canonical Wan 2.2 LoRA cfg to declare branch: high_noise / low_noise on Arcane Style pair.\n\n**Files:**\n- Modify: `examples/configs/wan.yaml`\n\n**Acceptance Criteria:** wan.yaml loads / branch threaded / Arcane high/low explicit.\n\n**Verify:** `pixi run pytest tests/test_examples.py -v` + `pixi run python -c \"from kinoforge.core.config import Config; print(Config.load('examples/configs/wan.yaml'))\"`.\n\nFull steps in plan doc Task 13.\n\n```json:metadata\n{\"files\": [\"examples/configs/wan.yaml\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v\", \"acceptanceCriteria\": [\"wan.yaml loads\", \"branch threaded per LoRA\", \"Arcane high/low explicit\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 32,
+      "subject": "P2 Task 14: Tier-3 RED scaffold — Wan 2.1 branch-routing smoke",
+      "status": "pending",
+      "blockedBy": [27],
+      "description": "**Goal:** Commit RED scaffold for Tier-3 live smoke verifying branch=auto works on Wan 2.1 and explicit branch=high_noise is rejected.\n\n**Files:**\n- Create: `tests/smoke/live_wan21/test_branch_routing.py`\n\n**Acceptance Criteria:** file commits as RED scaffold / 2 test bodies fully written / KINOFORGE_LIVE_TESTS guard.\n\n**Verify:** `pixi run pytest tests/smoke/live_wan21/test_branch_routing.py -v` → 2/2 XFAIL.\n\nFull steps in plan doc Task 14.\n\n```json:metadata\n{\"files\": [\"tests/smoke/live_wan21/test_branch_routing.py\"], \"verifyCommand\": \"pixi run pytest tests/smoke/live_wan21/test_branch_routing.py -v\", \"acceptanceCriteria\": [\"file commits as RED scaffold\", \"2 test bodies fully written\", \"KINOFORGE_LIVE_TESTS guard in place\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 33,
+      "subject": "P2 Task 15: Tier-4 RED scaffold — Wan 2.2 dual-transformer routing matrix",
+      "status": "pending",
+      "blockedBy": [27],
+      "description": "**Goal:** Commit RED scaffold for Tier-4 live smoke matrix (7 cases per spec §7.1).\n\n**Files:**\n- Create: `tests/smoke/release_wan22/test_dual_transformer_routing.py`\n\n**Acceptance Criteria:** all 7 matrix cases scaffolded / RED xfail marker / KINOFORGE_LIVE_TESTS guard.\n\n**Verify:** `pixi run pytest tests/smoke/release_wan22/test_dual_transformer_routing.py -v` → 7/7 XFAIL.\n\nFull steps in plan doc Task 15.\n\n```json:metadata\n{\"files\": [\"tests/smoke/release_wan22/test_dual_transformer_routing.py\"], \"verifyCommand\": \"pixi run pytest tests/smoke/release_wan22/test_dual_transformer_routing.py -v\", \"acceptanceCriteria\": [\"all 7 matrix cases scaffolded\", \"RED xfail marker present\", \"KINOFORGE_LIVE_TESTS guard in place\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 34,
+      "subject": "P2 Task 16: Live-smoke fire — Tier-3 + Tier-4 + PROGRESS close-out",
+      "status": "pending",
+      "blockedBy": [29, 30, 31, 32, 33],
+      "description": "**Goal:** Operator-authorized live spend. Tier-3 Wan 2.1 1.3B (~$0.20) + Tier-4 Wan 2.2 14B (~$1.50). Flip xfail → green; capture sha256s in successful-generations.md; update PROGRESS.md.\n\n**Files:**\n- Modify: `tests/smoke/live_wan21/test_branch_routing.py`\n- Modify: `tests/smoke/release_wan22/test_dual_transformer_routing.py`\n- Modify: `successful-generations.md`\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:** Tier-3 2/2 PASS / Tier-4 7/7 PASS / wrong-routing sha != canonical sha / kinoforge list clean teardown / successful-generations.md updated / PROGRESS.md updated.\n\n**Verify (Tier-3):** `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/live_wan21/test_branch_routing.py -v`\n**Verify (Tier-4):** `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/release_wan22/test_dual_transformer_routing.py -v`\n\nFull steps in plan doc Task 16. Multi-case smoke — --reuse warm pod across matrix cases; destroy explicitly via `kinoforge destroy --id <pod-id>` and verify via `kinoforge list` after.\n\n```json:metadata\n{\"files\": [\"tests/smoke/live_wan21/test_branch_routing.py\", \"tests/smoke/release_wan22/test_dual_transformer_routing.py\", \"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/live_wan21/test_branch_routing.py tests/smoke/release_wan22/test_dual_transformer_routing.py -v && pixi run kinoforge list\", \"acceptanceCriteria\": [\"Tier-3 2/2 PASS\", \"Tier-4 7/7 PASS\", \"wrong-routing sha != canonical sha\", \"kinoforge list shows clean teardown\", \"successful-generations.md updated\", \"PROGRESS.md updated\"], \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-22T07:55:00"
+}
