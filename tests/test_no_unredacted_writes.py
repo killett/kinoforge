@@ -578,6 +578,36 @@ def test_ac8_lora_inventory_entry_param_trips_scan() -> None:
     assert _reads_lora_inventory(ast.parse(plain)) is False
 
 
+def test_ac8_lora_inventory_entry_branch_field_param_trips_scan() -> None:
+    """P2 (2026-06-22) extension: a function whose signature carries a
+    ``LoraInventoryEntry`` parameter is still treated as reading the
+    pod inventory even when the helper consumes the new ``.branch``
+    field instead of ``.ref``.
+
+    Bug this catches: a future helper reads ``entry.branch`` (P2's
+    per-LoRA routing instruction — low-entropy enum but still part of
+    the inventory surface) AND ``entry.ref``, ships both into a
+    structured log line WITHOUT registering refs, and silently leaks
+    prompt-laden refs through the redaction filter. Pinning the
+    signature-level trigger means the P2 branch field doesn't carve
+    out an inventory-consuming code path that bypasses the ac8
+    invariant.
+    """
+    fixture = (
+        "from kinoforge.engines.diffusers.servers.wan_t2v_server "
+        "import LoraInventoryEntry\n"
+        "\n"
+        "def routing_audit_log(entries: list[LoraInventoryEntry]) -> None:\n"
+        "    for e in entries:\n"
+        "        print({'ref': e.ref, 'branch': e.branch})\n"
+    )
+    tree = ast.parse(fixture)
+    assert _reads_lora_inventory(tree) is True, (
+        "Scan must detect functions taking LoraInventoryEntry as a "
+        "parameter even when they consume .branch (P2) alongside .ref."
+    )
+
+
 def test_ac8_exempt_tag_count_is_audit_friendly() -> None:
     """The lora-redact-exempt tag must be rare so future uses are reviewable.
 
