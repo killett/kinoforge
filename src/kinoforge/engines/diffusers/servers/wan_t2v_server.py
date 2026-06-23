@@ -95,6 +95,102 @@ _inventory: dict[str, dict[str, Any]] = {}
 _swap_lock: asyncio.Lock = asyncio.Lock()
 
 
+# ---------------------------------------------------------------------------
+# P2 — pipeline arity detection + per-transformer LoRA routing.
+#
+# See docs/superpowers/specs/2026-06-22-p2-wan22-dual-transformer-routing-design.md
+# §3 (`_resolve_transformer` single dispatch point) and §5.2.
+# ---------------------------------------------------------------------------
+
+
+class BranchAutoNotAllowedOnMoE(Exception):
+    """Raised when /lora/set_stack receives ``branch="auto"`` on a MoE pipe.
+
+    HTTP 400 surface body:
+    ``{"reason": "branch_auto_disallowed_on_moe", ...}``. Spec §6.1.
+    """
+
+    def __init__(self, arity: int) -> None:
+        """Capture pipeline arity for the HTTP 400 surface body."""
+        super().__init__(f"pipeline has {arity} transformers; branch=auto disallowed")
+        self.arity = arity
+
+
+class BranchUnsupportedOnSingleTransformer(Exception):
+    """Raised on explicit branch against a non-MoE pipeline.
+
+    HTTP 400 surface body:
+    ``{"reason": "branch_unsupported_single_transformer", ...}``.
+    """
+
+    def __init__(self, branch: str, arity: int) -> None:
+        """Capture branch + arity for the HTTP 400 surface body."""
+        super().__init__(
+            f"pipeline has {arity} transformer(s); branch={branch} not applicable"
+        )
+        self.branch = branch
+        self.arity = arity
+
+
+class BranchUnknown(Exception):
+    """Defensive — Pydantic Literal should make this unreachable from HTTP."""
+
+    def __init__(self, branch: str) -> None:
+        """Capture the off-Literal branch value for the 500 surface body."""
+        super().__init__(f"unknown branch value: {branch!r}")
+        self.branch = branch
+
+
+def _detect_moe_arity(pipe_obj: Any) -> int:  # noqa: ANN401
+    """Count ``transformer*`` attrs on the pipeline.
+
+    Returns 1 for non-MoE (Wan 2.1, etc.), 2 for Wan 2.2 dual-transformer,
+    N for any future N-expert pipeline. Generalizes the routing decision
+    without a hardcoded list of stage names.
+    """
+    return sum(
+        1
+        for attr in dir(pipe_obj)
+        if attr == "transformer" or attr.startswith("transformer_")
+    )
+
+
+# Module-level arity cache populated during ``_load_pipeline`` before
+# ``ready.set()``. Tests monkeypatch this directly. Default ``1`` so a
+# Wan-2.1-style pipeline routes correctly even if the cold-boot path
+# forgets to refresh it (defensive — a Wan 2.2 boot path that forgets
+# this would surface as an attribute miss on ``transformer_2``).
+_pipe_arity: int = 1
+
+
+def _resolve_transformer(pipe_obj: Any, branch: str) -> Any:  # noqa: ANN401
+    """Map ``(pipe_obj, branch)`` to the target transformer attribute.
+
+    Single dispatch point — every LoRA-load call site (``/lora/set_stack``
+    handler, cold-boot loop, VRAM-OOM rollback) routes through this
+    helper. No branch-aware duck typing scattered elsewhere.
+
+    Raises:
+        BranchAutoNotAllowedOnMoE: ``branch="auto"`` on a MoE pipe.
+        BranchUnsupportedOnSingleTransformer: explicit branch on a
+            single-transformer pipe.
+        BranchUnknown: off-Literal value reached the resolver
+            (defensive — Pydantic should reject these earlier).
+    """
+    arity = _pipe_arity
+    if arity == 1:
+        if branch == "auto":
+            return pipe_obj.transformer
+        raise BranchUnsupportedOnSingleTransformer(branch=branch, arity=arity)
+    if branch == "auto":
+        raise BranchAutoNotAllowedOnMoE(arity=arity)
+    if branch == "high_noise":
+        return pipe_obj.transformer
+    if branch == "low_noise":
+        return pipe_obj.transformer_2
+    raise BranchUnknown(branch=branch)
+
+
 class ArtifactDownloadSpec(BaseModel):
     """Pre-resolved LoRA download instruction sent by the orchestrator.
 
