@@ -59,7 +59,7 @@
     {
       "id": 26,
       "subject": "P2 Task 8: VRAM rollback snapshot includes branch; restore via _resolve_transformer",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [23, 24],
       "description": "**Goal:** Extend P1's VRAM-OOM rollback snapshot from [(ref, strength), ...] to [(ref, strength, branch), ...]. Rollback uses _resolve_transformer (single source of truth).\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n- Create: `tests/engines/test_vram_rollback_branch.py`\n\n**Acceptance Criteria:** snapshot stores 3-tuples / rollback uses _resolve_transformer / VRAMRollbackFailure raised on rollback failure.\n\n**Verify:** `pixi run pytest tests/engines/test_vram_rollback_branch.py -v` → 3/3 PASS.\n\nFull steps in plan doc Task 8.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/test_vram_rollback_branch.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_vram_rollback_branch.py -v\", \"acceptanceCriteria\": [\"snapshot stores (ref, strength, branch)\", \"rollback uses _resolve_transformer\", \"VRAMRollbackFailure raised on rollback failure\"], \"modelTier\": \"standard\"}\n```"
     },

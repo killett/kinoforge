@@ -146,6 +146,16 @@ class BranchUnknown(Exception):
         self.branch = branch
 
 
+class VRAMRollbackFailure(Exception):
+    """Raised when the VRAM-OOM rollback re-load itself fails.
+
+    Distinct from the in-band swap exception so the HTTP handler can
+    map this specifically to a ``rollback_failed`` 500 body (with
+    ``rollback_failed: true``) and the orchestrator destroys the pod
+    instead of trusting an inventory it can't validate.
+    """
+
+
 def _detect_moe_arity(pipe_obj: Any) -> int:  # noqa: ANN401
     """Count ``transformer*`` attrs on the pipeline.
 
