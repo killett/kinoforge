@@ -45,7 +45,7 @@
     {
       "id": 24,
       "subject": "P2 Task 6: _replace_adapter_stack pre-load gate + per-transformer dispatch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [18, 22, 23],
       "description": "**Goal:** Wire per-transformer routing into _replace_adapter_stack. Pre-load validation pass walks target and raises before any state mutation. Loading uses path Task 0 picked (Approach 1 PRIMARY or Approach 3 FALLBACK).\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n- Create: `tests/engines/test_replace_adapter_stack_routing.py`\n\n**Acceptance Criteria:** pre-load gate atomic / valid stack routes correctly / partial-failure impossible.\n\n**Verify:** `pixi run pytest tests/engines/test_replace_adapter_stack_routing.py -v` → 4+ PASS.\n\nFull steps + both PRIMARY/FALLBACK code blocks in plan doc Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/test_replace_adapter_stack_routing.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_replace_adapter_stack_routing.py -v\", \"acceptanceCriteria\": [\"pre-load gate atomic on auto/MoE mismatch\", \"pre-load gate atomic on explicit branch/single-transformer mismatch\", \"valid stack routes to correct transformers\", \"partial-failure mid-load impossible\"], \"modelTier\": \"standard\"}\n```"
     },

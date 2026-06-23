@@ -35,11 +35,21 @@ def server_with_stubs(
             self.loaded: list[tuple[str, str]] = []
             self.adapters: list[str] = []
             self.deleted: list[str] = []
+            # P2 (2026-06-22): per-transformer activation routes through
+            # ``pipe.transformer.set_adapters`` (Wan-2.1 shape, arity=1).
+            # Aliasing ``transformer`` to ``self`` keeps the existing
+            # ``stub.adapters`` capture working.
+            self.transformer = self
 
         def unload_lora_weights(self) -> None:
             self.unloaded = True
 
-        def load_lora_weights(self, path: str, adapter_name: str) -> None:
+        def load_lora_weights(
+            self,
+            path: str,
+            adapter_name: str,
+            load_into_transformer_2: bool = False,  # noqa: ARG002 — P2 kwarg consumed; routing assertions live in test_replace_adapter_stack_routing.py
+        ) -> None:
             self.loaded.append((path, adapter_name))
 
         def set_adapters(
@@ -54,6 +64,7 @@ def server_with_stubs(
 
     stub = _Stub()
     monkeypatch.setattr(s, "pipe", stub)
+    monkeypatch.setattr(s, "_pipe_arity", 1)
     return s, download_log, stub
 
 

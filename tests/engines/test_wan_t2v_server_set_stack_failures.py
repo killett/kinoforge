@@ -28,11 +28,20 @@ def server_with_stubs(
             self.unloaded: bool = False
             self.loaded: list[tuple[str, str]] = []
             self.adapters: list[str] = []
+            # P2: per-transformer activation routes through
+            # pipe.transformer.set_adapters. Aliasing transformer to self
+            # keeps the existing capture working under arity=1.
+            self.transformer = self
 
         def unload_lora_weights(self) -> None:
             self.unloaded = True
 
-        def load_lora_weights(self, path: str, adapter_name: str) -> None:
+        def load_lora_weights(
+            self,
+            path: str,
+            adapter_name: str,
+            load_into_transformer_2: bool = False,  # noqa: ARG002
+        ) -> None:
             self.loaded.append((path, adapter_name))
 
         def set_adapters(
@@ -47,6 +56,7 @@ def server_with_stubs(
 
     stub = _Stub()
     monkeypatch.setattr(s, "pipe", stub)
+    monkeypatch.setattr(s, "_pipe_arity", 1)
     return s, stub
 
 

@@ -572,21 +572,52 @@ def _replace_adapter_stack(target: list[LoraTarget]) -> None:
     loop, causing /health probes to time out and the RunPod edge proxy
     to return "Waiting for service to respond" (HTTP 502).
     """
+    # P2 Task 6: pre-load validation gate. Walk every entry through
+    # `_resolve_transformer` BEFORE any state mutation so an invalid
+    # branch leaves inventory + pipeline untouched.
+    resolved: list[tuple[LoraTarget, Any, str]] = []
+    for t in target:
+        target_transformer = _resolve_transformer(pipe, t.branch)
+        target_attr = (
+            "transformer_2"
+            if target_transformer is getattr(pipe, "transformer_2", None)
+            else "transformer"
+        )
+        resolved.append((t, target_transformer, target_attr))
+
     pipe.unload_lora_weights()
     if not target:
         return
-    names: list[str] = []
-    weights: list[float] = []
-    for i, t in enumerate(target):
+
+    # Per-transformer activation buckets (Task 0 Q2 — peft raises on
+    # unknown adapter names when the pipe-level set_adapters helper passes
+    # the full name list to each transformer, so we activate per-
+    # transformer with only the names that actually landed there).
+    per_transformer_names: dict[str, list[str]] = {}
+    per_transformer_weights: dict[str, list[float]] = {}
+
+    for i, (t, _target_transformer, target_attr) in enumerate(resolved):
         entry = _inventory[(t.ref, t.branch)]
         name = _adapter_name(i, t.branch)
-        pipe.load_lora_weights(entry["loras_dir_path"], adapter_name=name)
-        names.append(name)
-        weights.append(t.strength)
+        # Task 0 Q1 LOCKED: boolean ``load_into_transformer_2`` kwarg on
+        # WanLoraLoaderMixin.load_lora_weights (diffusers v0.36
+        # lora_pipeline.py:4078).
+        pipe.load_lora_weights(
+            entry["loras_dir_path"],
+            adapter_name=name,
+            load_into_transformer_2=(target_attr == "transformer_2"),
+        )
+        per_transformer_names.setdefault(target_attr, []).append(name)
+        per_transformer_weights.setdefault(target_attr, []).append(t.strength)
         entry["adapter_name"] = name
         entry["last_strength"] = t.strength
         entry["branch"] = t.branch
-    pipe.set_adapters(names, adapter_weights=weights)
+
+    for attr, names in per_transformer_names.items():
+        model = getattr(pipe, attr, None)
+        if model is None or not names:
+            continue
+        model.set_adapters(names, per_transformer_weights[attr])
 
 
 def _load_pipeline(

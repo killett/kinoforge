@@ -85,10 +85,22 @@ def test_replace_adapter_stack_unloads_then_reloads(
     calls: list[tuple[Any, ...]] = []
 
     class _Stub:
+        def __init__(self) -> None:
+            # P2 (2026-06-22): per-transformer activation routes through
+            # ``pipe.transformer.set_adapters`` (Wan-2.1 shape, arity=1).
+            # Alias ``transformer`` to self so existing calls capture
+            # both load_lora_weights and set_adapters.
+            self.transformer = self
+
         def unload_lora_weights(self) -> None:
             calls.append(("unload",))
 
-        def load_lora_weights(self, path: str, adapter_name: str) -> None:
+        def load_lora_weights(
+            self,
+            path: str,
+            adapter_name: str,
+            load_into_transformer_2: bool = False,  # noqa: ARG002
+        ) -> None:
             calls.append(("load", path, adapter_name))
 
         def set_adapters(
@@ -99,6 +111,7 @@ def test_replace_adapter_stack_unloads_then_reloads(
             calls.append(("set_adapters", list(names), list(adapter_weights or [])))
 
     monkeypatch.setattr(s, "pipe", _Stub())
+    monkeypatch.setattr(s, "_pipe_arity", 1)
     s._inventory.clear()
     s._inventory[("A", "auto")] = _inv_entry("A", 1, "x")
     s._inventory[("A", "auto")]["loras_dir_path"] = "/loras/A"
