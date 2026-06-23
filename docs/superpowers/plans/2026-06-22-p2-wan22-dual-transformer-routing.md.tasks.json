@@ -101,14 +101,14 @@
     {
       "id": 32,
       "subject": "P2 Task 14: Tier-3 RED scaffold — Wan 2.1 branch-routing smoke",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [27],
       "description": "**Goal:** Commit RED scaffold for Tier-3 live smoke verifying branch=auto works on Wan 2.1 and explicit branch=high_noise is rejected.\n\n**Files:**\n- Create: `tests/smoke/live_wan21/test_branch_routing.py`\n\n**Acceptance Criteria:** file commits as RED scaffold / 2 test bodies fully written / KINOFORGE_LIVE_TESTS guard.\n\n**Verify:** `pixi run pytest tests/smoke/live_wan21/test_branch_routing.py -v` → 2/2 XFAIL.\n\nFull steps in plan doc Task 14.\n\n```json:metadata\n{\"files\": [\"tests/smoke/live_wan21/test_branch_routing.py\"], \"verifyCommand\": \"pixi run pytest tests/smoke/live_wan21/test_branch_routing.py -v\", \"acceptanceCriteria\": [\"file commits as RED scaffold\", \"2 test bodies fully written\", \"KINOFORGE_LIVE_TESTS guard in place\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 33,
       "subject": "P2 Task 15: Tier-4 RED scaffold — Wan 2.2 dual-transformer routing matrix",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [27],
       "description": "**Goal:** Commit RED scaffold for Tier-4 live smoke matrix (7 cases per spec §7.1).\n\n**Files:**\n- Create: `tests/smoke/release_wan22/test_dual_transformer_routing.py`\n\n**Acceptance Criteria:** all 7 matrix cases scaffolded / RED xfail marker / KINOFORGE_LIVE_TESTS guard.\n\n**Verify:** `pixi run pytest tests/smoke/release_wan22/test_dual_transformer_routing.py -v` → 7/7 XFAIL.\n\nFull steps in plan doc Task 15.\n\n```json:metadata\n{\"files\": [\"tests/smoke/release_wan22/test_dual_transformer_routing.py\"], \"verifyCommand\": \"pixi run pytest tests/smoke/release_wan22/test_dual_transformer_routing.py -v\", \"acceptanceCriteria\": [\"all 7 matrix cases scaffolded\", \"RED xfail marker present\", \"KINOFORGE_LIVE_TESTS guard in place\"], \"modelTier\": \"mechanical\"}\n```"
     },
