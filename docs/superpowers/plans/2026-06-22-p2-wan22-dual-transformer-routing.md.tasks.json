@@ -80,7 +80,7 @@
     {
       "id": 29,
       "subject": "P2 Task 11: is_stack_match (ref, strength, branch) + capability_key branch-invariance",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [19, 27],
       "description": "**Goal:** Extend matcher to compare (ref, strength, branch) tuples in order. Add regression test asserting capability_key is invariant under branch differences.\n\n**Files:**\n- Modify: `src/kinoforge/core/warm_reuse/matcher.py` (path verified during exploration)\n- Create: `tests/core/test_is_stack_match_branch.py`\n- Create: `tests/core/test_capability_key_branch_invariance.py`\n\n**Acceptance Criteria:** matches identical / rejects branch differences / matches duplicate-ref composite / rejects transposed branches / capability_key invariant under branch.\n\n**Verify:** `pixi run pytest tests/core/test_is_stack_match_branch.py tests/core/test_capability_key_branch_invariance.py -v` → all PASS.\n\nFull steps in plan doc Task 11.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/warm_reuse/matcher.py\", \"tests/core/test_is_stack_match_branch.py\", \"tests/core/test_capability_key_branch_invariance.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_is_stack_match_branch.py tests/core/test_capability_key_branch_invariance.py -v\", \"acceptanceCriteria\": [\"matches identical stacks\", \"rejects branch differences\", \"matches duplicate ref composite\", \"rejects transposed branches\", \"capability_key invariant under branch\"], \"modelTier\": \"standard\"}\n```"
     },
