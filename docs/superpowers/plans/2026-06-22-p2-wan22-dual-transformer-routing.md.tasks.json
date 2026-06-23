@@ -52,7 +52,7 @@
     {
       "id": 25,
       "subject": "P2 Task 7: Cold-boot env shape with strength+branch; pre-load validation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [22, 23, 24],
       "description": "**Goal:** Update KINOFORGE_INITIAL_LORA_STACK_JSON from list of (ref, ArtifactDownloadSpec) tuples to list of dicts with strength + branch. Validate every initial entry's branch against pipeline arity BEFORE serving any request.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n- Create: `tests/engines/test_cold_boot_branch_validation.py`\n\n**Acceptance Criteria:** dict-form parses / legacy tuple auto-promoted / MoE+auto rejected at boot / single-transformer+explicit rejected at boot.\n\n**Verify:** `pixi run pytest tests/engines/test_cold_boot_branch_validation.py -v` → 4/4 PASS.\n\nFull steps in plan doc Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/test_cold_boot_branch_validation.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_cold_boot_branch_validation.py -v\", \"acceptanceCriteria\": [\"dict-form env parses\", \"legacy tuple promoted to strength=1, branch=auto\", \"MoE+auto rejected at boot\", \"single-transformer+explicit branch rejected at boot\"], \"modelTier\": \"standard\"}\n```"
     },
