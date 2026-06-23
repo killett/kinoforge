@@ -42,7 +42,13 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HOME", "/workspace/.hf_cache")
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
-from pydantic import BaseModel, ConfigDict, Field, model_validator  # noqa: E402
+from pydantic import (  # noqa: E402
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from kinoforge.engines.diffusers.servers._video_io import write_mp4  # noqa: E402
 
@@ -151,13 +157,29 @@ class LoraTarget(BaseModel):
     a minimal dependency set). The lockstep invariant is locked by
     ``tests/test_lora_schema_parity.py``.
 
-    See docs/superpowers/specs/2026-06-21-server-lora-strength-design.md §6.3.
+    See docs/superpowers/specs/2026-06-21-server-lora-strength-design.md §6.3
+    and docs/superpowers/specs/2026-06-22-p2-wan22-dual-transformer-routing-design.md §2.3.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     ref: str = Field(min_length=1)
     strength: float = Field(default=1.0, ge=-2.0, le=2.0)
+    branch: Literal["high_noise", "low_noise", "auto"] = Field(default="auto")
+
+    @field_validator("branch", mode="before")
+    @classmethod
+    def _normalize_branch_alias(cls, v: Any) -> Any:  # noqa: ANN401
+        """Mirror of ``LoraEntry._normalize_branch_alias`` in core/lora.py.
+
+        Parity is load-bearing — ``tests/test_lora_schema_parity.py``
+        asserts both classes normalize identically. DO NOT diverge.
+        """
+        if v == "h":
+            return "high_noise"
+        if v == "l":
+            return "low_noise"
+        return v
 
 
 class SetStackRequest(BaseModel):
