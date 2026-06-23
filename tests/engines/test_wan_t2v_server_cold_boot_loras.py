@@ -111,17 +111,19 @@ def test_load_pipeline_two_lora_stack(
         initial_lora_stack=[("civitai:A@1", spec_a), ("civitai:B@2", spec_b)]
     )
     assert len(mock_pipeline["load_lora"]) == 2
-    assert mock_pipeline["load_lora"][0][1] == "lora_0"
-    assert mock_pipeline["load_lora"][1][1] == "lora_1"
+    assert mock_pipeline["load_lora"][0][1] == "lora_0_a"
+    assert mock_pipeline["load_lora"][1][1] == "lora_1_a"
     # P1: mock now records dict with names + weights; cold-boot defaults
     # strength=1.0 per LoRA until KINOFORGE_INITIAL_LORA_STACK_JSON
     # extends the env shape to carry strength.
+    # P2: adapter names carry branch suffix; legacy tuple env shape
+    # promotes every entry to branch="auto" (suffix "a").
     assert mock_pipeline["set_adapters"] == [
-        {"names": ["lora_0", "lora_1"], "weights": [1.0, 1.0]}
+        {"names": ["lora_0_a", "lora_1_a"], "weights": [1.0, 1.0]}
     ]
-    assert "civitai:A@1" in s._inventory
-    assert s._inventory["civitai:A@1"]["size_bytes"] == 1024
-    assert s._inventory["civitai:A@1"]["adapter_name"] == "lora_0"
+    assert ("civitai:A@1", "auto") in s._inventory
+    assert s._inventory[("civitai:A@1", "auto")]["size_bytes"] == 1024
+    assert s._inventory[("civitai:A@1", "auto")]["adapter_name"] == "lora_0_a"
 
 
 def test_load_pipeline_download_failure_bubbles(
