@@ -17,7 +17,7 @@
     {
       "id": 20,
       "subject": "P2 Task 2: LoraTarget parity — same field + same alias validator",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [19],
       "description": "**Goal:** Add same branch field + same alias validator to server-side LoraTarget Pydantic model. Keep LoraEntry ↔ LoraTarget parity invariant load-bearing.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py:145-161`\n\n**Acceptance Criteria:** LoraTarget defaults branch to auto / h/l aliases normalize identically / extra='forbid' enforced / mypy+ruff clean.\n\n**Verify:** `pixi run python -c 'from kinoforge.engines.diffusers.servers.wan_t2v_server import LoraTarget; assert LoraTarget(ref=\"x\", branch=\"h\").branch == \"high_noise\"'`\n\nFull steps in plan doc Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\"], \"verifyCommand\": \"pixi run python -c 'from kinoforge.engines.diffusers.servers.wan_t2v_server import LoraTarget; assert LoraTarget(ref=\\\"x\\\", branch=\\\"h\\\").branch == \\\"high_noise\\\"' && pixi run mypy src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"acceptanceCriteria\": [\"LoraTarget defaults branch to auto\", \"h/l aliases normalize identically to LoraEntry\", \"extra=forbid enforced\"], \"modelTier\": \"mechanical\"}\n```"
     },
