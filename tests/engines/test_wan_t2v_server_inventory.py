@@ -29,20 +29,21 @@ def test_inventory_with_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     contains the on-disk path) instead of the BaseModel projection.
     """
     s._inventory.clear()
-    s._inventory["A"] = {
+    s._inventory[("A", "auto")] = {
         "ref": "A",
         "filename": "a.s",
         "size_bytes": 100,
         "loras_dir_path": "/loras/a.s",
         "downloaded_at_local": "x",
         "last_used_at_local": "x",
-        "adapter_name": "lora_0",
+        "adapter_name": "lora_0_a",
+        "branch": "auto",
     }
     monkeypatch.setattr(s, "_disk_free_bytes", lambda _: 5000)
     resp = asyncio.run(s.inventory())
     assert len(resp.inventory) == 1
     assert resp.inventory[0].ref == "A"
-    assert resp.inventory[0].adapter_name == "lora_0"
+    assert resp.inventory[0].adapter_name == "lora_0_a"
     assert resp.free_bytes == 5000
     # loras_dir_path must NOT leak — LoraInventoryEntry does not declare it.
     assert not hasattr(resp.inventory[0], "loras_dir_path")
@@ -57,14 +58,15 @@ def test_inventory_response_shape_matches_set_stack(
     the orchestrator's response parsing breaks for half the warm pods.
     """
     s._inventory.clear()
-    s._inventory["A"] = {
+    s._inventory[("A", "auto")] = {
         "ref": "A",
         "filename": "a.s",
         "size_bytes": 1,
         "loras_dir_path": "/loras/a.s",
         "downloaded_at_local": "x",
         "last_used_at_local": "x",
-        "adapter_name": "lora_0",
+        "adapter_name": "lora_0_a",
+        "branch": "auto",
     }
     monkeypatch.setattr(s, "_disk_free_bytes", lambda _: 1)
     inv_resp = asyncio.run(s.inventory())

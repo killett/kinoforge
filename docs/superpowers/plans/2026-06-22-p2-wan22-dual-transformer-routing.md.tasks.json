@@ -38,7 +38,7 @@
     {
       "id": 23,
       "subject": "P2 Task 5: Inventory composite (ref, branch) key + _adapter_name helper",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [22],
       "description": "**Goal:** Change _inventory from dict[str, ...] keyed by ref to dict[tuple[str, str], ...] keyed by (ref, branch). Adapter naming from lora_{i} to lora_{i}_{branch_short} (branch_short ∈ {h, l, a}).\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n\n**Acceptance Criteria:** _inventory keyed by tuple / _adapter_name helper / every callsite updated / no engine test regressions / mypy clean.\n\n**Verify:** `pixi run pytest tests/engines/ -v` → existing tests pass.\n\nFull steps in plan doc Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/ -v && pixi run mypy src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"acceptanceCriteria\": [\"_inventory keyed by tuple\", \"_adapter_name produces lora_i_branchshort\", \"every callsite updated\", \"no engine test regressions\", \"mypy clean\"], \"modelTier\": \"standard\"}\n```"
     },
