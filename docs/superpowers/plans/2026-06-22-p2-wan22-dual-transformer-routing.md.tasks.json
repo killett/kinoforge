@@ -31,7 +31,7 @@
     {
       "id": 22,
       "subject": "P2 Task 4: _detect_moe_arity + _resolve_transformer + branch exceptions",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [20],
       "description": "**Goal:** Add MoE detection helper, single-dispatch routing helper, and 3 exception classes. Pure functions/types — testable in isolation against stub pipelines.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n- Create: `tests/engines/test_resolve_transformer.py`\n\n**Acceptance Criteria:** arity detection on stubs / auto routes on arity=1 / h/l routes on arity=2 / auto-on-MoE raises / explicit-on-arity=1 raises / off-Literal value raises defensively.\n\n**Verify:** `pixi run pytest tests/engines/test_resolve_transformer.py -v` → 8/8 PASS.\n\nFull steps in plan doc Task 4.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/test_resolve_transformer.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_resolve_transformer.py -v\", \"acceptanceCriteria\": [\"arity detection works on stub pipelines\", \"auto routes correctly on arity=1\", \"h/l routes correctly on arity=2\", \"auto on MoE raises\", \"explicit branch on arity=1 raises\", \"off-Literal value raises defensively\"], \"modelTier\": \"standard\"}\n```"
     },
