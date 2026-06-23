@@ -22,7 +22,18 @@ def mock_pipeline(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     calls: dict[str, list[Any]] = {"load_lora": [], "set_adapters": []}
 
     class _StubPipe:
-        def load_lora_weights(self, path: str, adapter_name: str) -> None:
+        def __init__(self) -> None:
+            # P2: Wan-2.1 shape — single ``transformer`` attribute so
+            # ``_detect_moe_arity`` returns 1 and per-transformer
+            # activation routes through ``self.transformer.set_adapters``.
+            self.transformer = self
+
+        def load_lora_weights(
+            self,
+            path: str,
+            adapter_name: str,
+            load_into_transformer_2: bool = False,  # noqa: ARG002
+        ) -> None:
             """Record the call so the test can pin ordering."""
             calls["load_lora"].append((path, adapter_name))
 
