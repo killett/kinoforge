@@ -620,57 +620,125 @@ def _replace_adapter_stack(target: list[LoraTarget]) -> None:
         model.set_adapters(names, per_transformer_weights[attr])
 
 
+def _normalize_initial_stack_entry(entry: Any) -> dict[str, Any]:  # noqa: ANN401
+    """Normalize one cold-boot stack entry into canonical dict form.
+
+    Canonical (P2): ``{"ref": str, "download_spec": dict|ArtifactDownloadSpec,
+    "strength": float, "branch": str}``.
+
+    Legacy (pre-P2): ``(ref, ArtifactDownloadSpec)`` tuple auto-promoted
+    with ``strength=1.0, branch="auto"`` so a pod cfg pre-dating the dict
+    shape keeps booting through the same code path.
+    """
+    if isinstance(entry, dict):
+        return {
+            "ref": entry["ref"],
+            "download_spec": entry["download_spec"],
+            "strength": float(entry.get("strength", 1.0)),
+            "branch": entry.get("branch", "auto"),
+        }
+    ref, spec = entry  # legacy tuple — raises TypeError if 2-arity mismatch
+    return {"ref": ref, "download_spec": spec, "strength": 1.0, "branch": "auto"}
+
+
 def _load_pipeline(
-    initial_lora_stack: list[tuple[str, ArtifactDownloadSpec]] | None = None,
+    initial_lora_stack: list[Any] | None = None,
 ) -> Any:  # noqa: ANN401 — diffusers.WanPipeline has no public TypeAlias.
     """Load the Wan pipeline + optionally cold-boot a LoRA stack.
 
     Args:
-        initial_lora_stack: Optional list of (ref, download_spec) tuples
-            to download + load before the first /generate. Order matters —
-            adapter names are assigned positionally as ``lora_{i}``.
+        initial_lora_stack: Optional list of cold-boot stack entries.
+            Canonical dict form
+            ``{"ref": str, "download_spec": ..., "strength": float, "branch": str}``
+            (P2). Legacy tuple form ``(ref, ArtifactDownloadSpec)`` is
+            auto-promoted to ``strength=1.0, branch="auto"``. Order matters —
+            adapter names are assigned positionally via
+            :func:`_adapter_name`.
 
     Returns:
         The constructed pipeline with any initial LoRAs already attached.
+
+    Raises:
+        BranchAutoNotAllowedOnMoE: An entry carries ``branch="auto"`` and
+            the pipeline is multi-transformer (Wan 2.2). Server NEVER
+            reports ready in this case — orchestrator treats the pod as
+            failed.
+        BranchUnsupportedOnSingleTransformer: An entry carries an explicit
+            ``h``/``l`` branch and the pipeline is single-transformer
+            (Wan 2.1).
+        RuntimeError: A LoRA download itself failed.
     """
+    global _pipe_arity
     pipe_obj = _diffusers_load()
-    if initial_lora_stack:
-        adapter_names: list[str] = []
-        adapter_weights: list[float] = []
-        # P2 (2026-06-22): legacy tuple env shape defaults branch="auto"
-        # — every cold-boot entry pre-Task 7 lands in inventory keyed by
-        # ``(ref, "auto")`` so the single-transformer behavior matches
-        # pre-P2 semantics. Task 7 extends the env shape to carry an
-        # explicit branch + per-arity validation.
-        cold_boot_branch = "auto"
-        for i, (ref, spec) in enumerate(initial_lora_stack):
-            try:
-                path, actual_bytes = _download_one(spec, LORAS_DIR)
-            except Exception as e:
-                raise RuntimeError(f"failed to download LoRA {ref}: {e}") from e
-            adapter_name = _adapter_name(i, cold_boot_branch)
-            pipe_obj.load_lora_weights(path, adapter_name=adapter_name)
-            adapter_names.append(adapter_name)
-            # P1 (2026-06-21): cold-boot defaults strength=1.0 until the
-            # KINOFORGE_INITIAL_LORA_STACK_JSON env shape is extended to
-            # carry strength (deferred to Task 8 / DiffusersEngine
-            # integration). Inventory carries last_strength so the
-            # matcher reads consistent state.
-            adapter_weights.append(1.0)
-            now = datetime.now().isoformat()
-            _inventory[(ref, cold_boot_branch)] = {
-                "ref": ref,
-                "filename": spec.filename,
-                "size_bytes": actual_bytes,
-                "loras_dir_path": path,
-                "downloaded_at_local": now,
-                "last_used_at_local": now,
-                "adapter_name": adapter_name,
-                "last_strength": 1.0,
-                "branch": cold_boot_branch,
-            }
-        if adapter_names:
-            pipe_obj.set_adapters(adapter_names, adapter_weights=adapter_weights)
+    # P2: refresh module-level arity cache so every load site routes
+    # through the same arity decision. Must happen BEFORE the validation
+    # pass below.
+    _pipe_arity = _detect_moe_arity(pipe_obj)
+
+    if not initial_lora_stack:
+        return pipe_obj
+
+    normalized = [_normalize_initial_stack_entry(e) for e in initial_lora_stack]
+
+    # Pre-load validation gate (mirrors _replace_adapter_stack — single
+    # source of truth in _resolve_transformer). Raise BEFORE downloading
+    # any LoRA bytes so a misconfigured cfg fails fast instead of burning
+    # disk + bandwidth on a stack the pod cannot serve.
+    for entry in normalized:
+        _resolve_transformer(pipe_obj, entry["branch"])
+
+    per_transformer_names: dict[str, list[str]] = {}
+    per_transformer_weights: dict[str, list[float]] = {}
+    for i, entry in enumerate(normalized):
+        ref = entry["ref"]
+        branch = entry["branch"]
+        strength = entry["strength"]
+        raw_spec = entry["download_spec"]
+        spec = (
+            raw_spec
+            if isinstance(raw_spec, ArtifactDownloadSpec)
+            else ArtifactDownloadSpec.model_validate(raw_spec)
+        )
+        try:
+            path, actual_bytes = _download_one(spec, LORAS_DIR)
+        except Exception as e:
+            raise RuntimeError(f"failed to download LoRA {ref}: {e}") from e
+        adapter_name = _adapter_name(i, branch)
+        # Task 0 Q1 LOCKED: boolean kwarg on diffusers WanLoraLoaderMixin.
+        target_transformer = _resolve_transformer(pipe_obj, branch)
+        target_attr = (
+            "transformer_2"
+            if target_transformer is getattr(pipe_obj, "transformer_2", None)
+            else "transformer"
+        )
+        pipe_obj.load_lora_weights(
+            path,
+            adapter_name=adapter_name,
+            load_into_transformer_2=(target_attr == "transformer_2"),
+        )
+        per_transformer_names.setdefault(target_attr, []).append(adapter_name)
+        per_transformer_weights.setdefault(target_attr, []).append(strength)
+        now = datetime.now().isoformat()
+        _inventory[(ref, branch)] = {
+            "ref": ref,
+            "filename": spec.filename,
+            "size_bytes": actual_bytes,
+            "loras_dir_path": path,
+            "downloaded_at_local": now,
+            "last_used_at_local": now,
+            "adapter_name": adapter_name,
+            "last_strength": strength,
+            "branch": branch,
+        }
+
+    # Per-transformer activation (Task 0 Q2 — see _replace_adapter_stack
+    # for the same pattern).
+    for attr, names in per_transformer_names.items():
+        model = getattr(pipe_obj, attr, None)
+        if model is None or not names:
+            continue
+        model.set_adapters(names, per_transformer_weights[attr])
+
     return pipe_obj
 
 
@@ -753,11 +821,12 @@ def _startup() -> None:
         import json
 
         raw = json.loads(Path(stack_path).read_text())
-        initial: list[tuple[str, ArtifactDownloadSpec]] = [
-            (ref, ArtifactDownloadSpec(**spec_dict)) for ref, spec_dict in raw
-        ]
-        _log.info("startup: cold-boot LoRA stack size=%d", len(initial))
-        pipe = _load_pipeline(initial_lora_stack=initial)
+        # P2: env file may carry either the canonical dict shape
+        # (``{"ref":..., "download_spec":..., "strength":..., "branch":...}``)
+        # or the legacy ``[ref, {spec}]`` tuple shape; ``_load_pipeline``
+        # normalizes both into the same internal form.
+        _log.info("startup: cold-boot LoRA stack size=%d", len(raw))
+        pipe = _load_pipeline(initial_lora_stack=raw)
     else:
         pipe = _load_pipeline()
     _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
