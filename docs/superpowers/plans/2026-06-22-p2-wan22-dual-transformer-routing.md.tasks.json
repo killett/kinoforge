@@ -66,7 +66,7 @@
     {
       "id": 27,
       "subject": "P2 Task 9: HTTP surface — branch in inventory + 400 on mismatch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [24, 25, 26],
       "description": "**Goal:** Surface branch in /lora/inventory HTTP response. Update _evict_one signature to take composite key. Wire branch-related exceptions into /lora/set_stack handler to return 400 with structured bodies.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`\n\n**Acceptance Criteria:** LoraInventoryEntry.branch field / /lora/inventory returns branch / _evict_one(ref, branch) / 400 on auto-MoE / 400 on explicit-on-arity=1 / 500 on VRAMRollbackFailure.\n\n**Verify:** `pixi run pytest tests/engines/ -v` → all PASS.\n\nFull steps in plan doc Task 9.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/ -v\", \"acceptanceCriteria\": [\"LoraInventoryEntry has branch\", \"/lora/inventory returns branch\", \"_evict_one takes (ref, branch)\", \"BranchAutoNotAllowedOnMoE→400\", \"BranchUnsupportedOnSingleTransformer→400\", \"VRAMRollbackFailure→500\"], \"modelTier\": \"standard\"}\n```"
     },
