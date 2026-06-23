@@ -50,10 +50,19 @@ models:
 # time until C23 ships. Refs left in place so the canonical pair
 # is committed in the repo.
 loras:
-  - ref: "civitai:2197303@2474081"     # high-noise transformer
+  # P2 (2026-06-22): explicit `branch:` routes each LoRA tensor to the
+  # correct Wan 2.2 transformer (high_noise → pipe.transformer,
+  # low_noise → pipe.transformer_2). Wan-2.1 deployments leave the
+  # field as default `auto` so the same cfg portable; MoE pipelines
+  # reject `auto` at boot, single-transformer pipelines reject explicit
+  # h/l — both via the per-arity validation gate. Accepts shortcuts
+  # `h` / `l` (normalized at LoraEntry validation time).
+  - ref: "civitai:2197303@2474081"     # Arcane Style — high-noise tensor
     strength: 1.0
-  - ref: "civitai:2197303@2474073"     # low-noise transformer
+    branch: high_noise
+  - ref: "civitai:2197303@2474073"     # Arcane Style — low-noise tensor
     strength: 1.0
+    branch: low_noise
 
 compute:
   provider: runpod
