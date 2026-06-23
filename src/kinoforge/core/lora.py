@@ -13,18 +13,19 @@ Privacy classification (P1):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 if TYPE_CHECKING:
     pass
 
 
 class LoraEntry(BaseModel):
-    """One LoRA entry: ref + strength + optional sha256.
+    """One LoRA entry: ref + strength + optional sha256 + branch.
 
-    See docs/superpowers/specs/2026-06-21-server-lora-strength-design.md §6.1.
+    See docs/superpowers/specs/2026-06-21-server-lora-strength-design.md §6.1
+    and docs/superpowers/specs/2026-06-22-p2-wan22-dual-transformer-routing-design.md §2.
 
     Attributes:
         ref: Vendor-neutral model reference (e.g. ``"civitai:1234@5678"``
@@ -37,6 +38,15 @@ class LoraEntry(BaseModel):
         sha256: Optional content hash for integrity verification.
             64-char lowercase hex OR empty string. Derived hash is
             sensitive per ephemeral spec D4.
+        branch: Per-LoRA routing instruction for multi-transformer
+            pipelines (Wan 2.2 high-noise/low-noise MoE). Canonical
+            values: ``"high_noise"`` / ``"low_noise"`` / ``"auto"``.
+            Accepts shortcuts ``"h"`` / ``"l"`` normalized at validation
+            time so storage + wire share the canonical token. ``"auto"``
+            is single-transformer-only; MoE pipelines reject ``"auto"``
+            and require explicit branch (see server-side
+            ``_resolve_transformer`` for the dispatch). NON-SENSITIVE
+            (low-entropy enum; same posture as ``strength``).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -44,6 +54,23 @@ class LoraEntry(BaseModel):
     ref: str = Field(min_length=1)
     strength: float = Field(default=1.0, ge=-2.0, le=2.0)
     sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$|^$")
+    branch: Literal["high_noise", "low_noise", "auto"] = Field(default="auto")
+
+    @field_validator("branch", mode="before")
+    @classmethod
+    def _normalize_branch_alias(cls, v: Any) -> Any:  # noqa: ANN401
+        """Normalize ``h`` / ``l`` shortcuts to canonical form.
+
+        Runs ``mode="before"`` so the Literal constraint sees the
+        canonical token. Mirror of ``LoraTarget._normalize_branch_alias``
+        in ``kinoforge.engines.diffusers.servers.wan_t2v_server`` — parity
+        is locked by ``tests/test_lora_schema_parity.py``. DO NOT diverge.
+        """
+        if v == "h":
+            return "high_noise"
+        if v == "l":
+            return "low_noise"
+        return v
 
 
 def resolve_active_lora_stack(
