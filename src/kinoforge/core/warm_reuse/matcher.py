@@ -49,11 +49,17 @@ def is_stack_match(
     JSON round-trip float drift. Pre-P1 inventory entries with
     ``last_strength=None`` are compared as 1.0.
 
+    P2 (2026-06-22): comparison now extends to ``branch`` per entry, so
+    the same ``(ref, strength)`` shipped to two different transformer
+    branches no longer counts as a match. Pre-P2 inventory entries with
+    no ``branch`` attribute are compared as ``"auto"``.
+
     Args:
         active: Pod's current inventory snapshot — each item must
-            expose ``.ref`` (str) and ``.last_strength`` (float | None).
-            Duck-typed via ``Any`` because the concrete type
-            (``LoraInventoryEntry``) lives in
+            expose ``.ref`` (str), ``.last_strength`` (float | None),
+            and ``.branch`` (str — pre-P2 entries: defaults to
+            ``"auto"``). Duck-typed via ``Any`` because the concrete
+            type (``LoraInventoryEntry``) lives in
             ``kinoforge.engines.diffusers.servers.wan_t2v_server`` and
             ``kinoforge.core.*`` is forbidden from importing
             ``kinoforge.engines.*`` per the core-import-ban invariant.
@@ -61,16 +67,19 @@ def is_stack_match(
             taking ``LoraInventoryEntry`` directly as a parameter
             annotation — see ``tests/test_no_unredacted_writes.py``.
         target: Run's resolved LoRA stack — each item must expose
-            ``.ref`` (str) and ``.strength`` (float). Typically the
-            output of :func:`kinoforge.core.lora.resolve_active_lora_stack`.
+            ``.ref`` (str), ``.strength`` (float), and ``.branch``
+            (str). Typically the output of
+            :func:`kinoforge.core.lora.resolve_active_lora_stack`.
 
     Returns:
-        ``True`` iff refs match in order AND each pair's strength is
-        close enough for ``math.isclose(rel_tol=1e-6)``.
+        ``True`` iff ``(ref, strength, branch)`` tuples match in order,
+        with strengths compared via ``math.isclose(rel_tol=1e-6)``.
     """
     if len(active) != len(target):
         return False
     if [a.ref for a in active] != [t.ref for t in target]:
+        return False
+    if [getattr(a, "branch", "auto") for a in active] != [t.branch for t in target]:
         return False
     return all(
         math.isclose(
