@@ -94,7 +94,7 @@
     {
       "id": 31,
       "subject": "P2 Task 13: canonical wan.yaml declares branch on Arcane Style pair",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [19],
       "description": "**Goal:** Update canonical Wan 2.2 LoRA cfg to declare branch: high_noise / low_noise on Arcane Style pair.\n\n**Files:**\n- Modify: `examples/configs/wan.yaml`\n\n**Acceptance Criteria:** wan.yaml loads / branch threaded / Arcane high/low explicit.\n\n**Verify:** `pixi run pytest tests/test_examples.py -v` + `pixi run python -c \"from kinoforge.core.config import Config; print(Config.load('examples/configs/wan.yaml'))\"`.\n\nFull steps in plan doc Task 13.\n\n```json:metadata\n{\"files\": [\"examples/configs/wan.yaml\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v\", \"acceptanceCriteria\": [\"wan.yaml loads\", \"branch threaded per LoRA\", \"Arcane high/low explicit\"], \"modelTier\": \"mechanical\"}\n```"
     },
