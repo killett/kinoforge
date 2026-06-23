@@ -73,7 +73,7 @@
     {
       "id": 28,
       "subject": "P2 Task 10: Orchestrator emits initial-stack env in dict shape with branch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [19],
       "description": "**Goal:** Update orchestrator's serialization of initial LoRA stack to emit new dict shape ({\"ref\", \"download_spec\", \"strength\", \"branch\"}) instead of legacy tuples.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/__init__.py`\n\n**Acceptance Criteria:** initial-stack JSON in dict shape / branch threaded from LoraEntry / canonical form emitted / no test regressions.\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers.py tests/engines/test_diffusers_set_lora_stack.py -v` → all PASS.\n\nFull steps in plan doc Task 10.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers.py tests/engines/test_diffusers_set_lora_stack.py -v\", \"acceptanceCriteria\": [\"initial-stack JSON in dict shape\", \"branch threaded from LoraEntry\", \"canonical form (no h/l) emitted\", \"no test regressions\"], \"modelTier\": \"standard\"}\n```"
     },

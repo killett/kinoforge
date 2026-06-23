@@ -48,6 +48,33 @@ def _backend(
     )
 
 
+def test_set_lora_stack_threads_explicit_branch_to_wire() -> None:
+    """Bug: orchestrator strips ``branch`` from the wire body, defeating
+    the pod-side per-transformer routing. The Arcane Style Wan-2.2 pair
+    in canonical cfg specifies ``branch=high_noise`` / ``branch=low_noise``;
+    a missing field on the wire would silently route both into
+    ``transformer`` only."""
+    captured: dict[str, Any] = {}
+
+    def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        captured["body"] = body
+        return {"inventory": [], "free_bytes": 0, "swap_rejected": None}
+
+    backend = _backend(_post)
+    backend.set_lora_stack(
+        pod_id="pod-7b2",
+        active_stack=[
+            LoraEntry(ref="civitai:1@1", strength=1.0, branch="high_noise"),
+            LoraEntry(ref="civitai:2@2", strength=0.8, branch="low_noise"),
+        ],
+        download_specs={},
+    )
+    assert captured["body"]["target"] == [
+        {"ref": "civitai:1@1", "strength": 1.0, "branch": "high_noise"},
+        {"ref": "civitai:2@2", "strength": 0.8, "branch": "low_noise"},
+    ]
+
+
 def test_set_lora_stack_happy_path_returns_response() -> None:
     """Happy 200 returns the parsed response body intact.
 
@@ -90,7 +117,11 @@ def test_set_lora_stack_happy_path_returns_response() -> None:
     assert captured["url"] == "http://pod/lora/set_stack"
     # P1 (2026-06-21): wire shape is `target: [{ref, strength}, ...]`,
     # not the legacy `target_refs: [...]`.
-    assert captured["body"]["target"] == [{"ref": "civitai:A@1", "strength": 0.8}]
+    # P2 (2026-06-22): each entry carries ``branch`` (default ``"auto"``
+    # — server-side LoraTarget reads it for per-transformer routing).
+    assert captured["body"]["target"] == [
+        {"ref": "civitai:A@1", "strength": 0.8, "branch": "auto"}
+    ]
     assert "target_refs" not in captured["body"]
     assert resp["free_bytes"] == 5000
     assert resp["inventory"][0]["ref"] == "civitai:A@1"
