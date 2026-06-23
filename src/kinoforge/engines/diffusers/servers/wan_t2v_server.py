@@ -267,6 +267,12 @@ class LoraInventoryEntry(BaseModel):
     # pod. ``None`` for pre-P1 entries (never activated under the new
     # set_adapters(adapter_weights=) path).
     last_strength: float | None = None
+    # P2 (2026-06-22): per-LoRA routing branch. ``"auto"`` for pre-P2
+    # entries + every entry on a single-transformer pipe (Wan 2.1);
+    # ``"high_noise"`` / ``"low_noise"`` for explicit MoE routing on
+    # Wan 2.2. The orchestrator's matcher reads this field as part of
+    # the ``(ref, strength, branch)`` tuple comparison.
+    branch: str = "auto"
 
 
 class SwapRejectedDetails(BaseModel):
@@ -1098,6 +1104,38 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
 
         try:
             await asyncio.to_thread(_replace_adapter_stack, req.target)
+        except BranchAutoNotAllowedOnMoE as e:
+            # Pre-load gate atomic-reject. _replace_adapter_stack raised
+            # BEFORE any unload/load fired, so inventory + pipeline are
+            # untouched and no rollback is needed.
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "branch_routing",
+                    "reason": "branch_auto_disallowed_on_moe",
+                    "arity": e.arity,
+                },
+            ) from e
+        except BranchUnsupportedOnSingleTransformer as e:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "branch_routing",
+                    "reason": "branch_unsupported_single_transformer",
+                    "branch": e.branch,
+                    "arity": e.arity,
+                },
+            ) from e
+        except BranchUnknown as e:
+            # Defensive — Pydantic Literal should make this unreachable.
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "branch_routing",
+                    "reason": "branch_unknown",
+                    "branch": e.branch,
+                },
+            ) from e
         except (RuntimeError, ValueError) as e:
             msg = str(e).lower()
             is_oom = "out of memory" in msg or "oom" in msg
