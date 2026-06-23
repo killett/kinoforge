@@ -103,11 +103,21 @@ def test_set_stack_passes_adapter_weights_to_set_adapters(
     class _FakePipe:
         def __init__(self) -> None:
             self._loaded: list[tuple[str, str]] = []
+            # P2: per-transformer activation calls
+            # pipe.transformer.set_adapters; alias to self for Wan-2.1
+            # arity-1 path.
+            self.transformer = self
 
         def unload_lora_weights(self) -> None:
             self._loaded.clear()
 
-        def load_lora_weights(self, path: str, *, adapter_name: str) -> None:
+        def load_lora_weights(
+            self,
+            path: str,
+            *,
+            adapter_name: str,
+            load_into_transformer_2: bool = False,  # noqa: ARG002
+        ) -> None:
             self._loaded.append((path, adapter_name))
 
         def set_adapters(
@@ -118,6 +128,7 @@ def test_set_stack_passes_adapter_weights_to_set_adapters(
             calls.append({"names": list(names), "weights": list(adapter_weights or [])})
 
     monkeypatch.setattr(srv, "pipe", _FakePipe())
+    monkeypatch.setattr(srv, "_pipe_arity", 1)
     monkeypatch.setitem(
         srv._inventory,
         ("civitai:1@2", "auto"),
@@ -167,6 +178,9 @@ def test_set_stack_persists_last_strength_on_inventory(
     from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
 
     class _NoopPipe:
+        def __init__(self) -> None:
+            self.transformer = self  # P2 per-transformer activation alias
+
         def unload_lora_weights(self) -> None:
             pass
 
@@ -321,6 +335,9 @@ def test_value_error_from_set_adapters_propagates(
     from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
 
     class _AlwaysFailPipe:
+        def __init__(self) -> None:
+            self.transformer = self  # P2 per-transformer activation alias
+
         def unload_lora_weights(self) -> None:
             pass
 
