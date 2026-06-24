@@ -1348,6 +1348,40 @@ See `docs/hygiene-notes.md`. Reviewer checks before re-flagging.
 
 ## Single next action
 
+**P2 server-side swap-gap fix (Tier-4 case_5 + case_7).** 2026-06-23
+Tier-4 closed 5/7 PASS (commit `bc7ec14`); two `/lora/set_stack`
+paths in `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`
+raise unmapped exceptions surfacing as HTTP 500:
+
+  - case_5 `wrong_routing`: re-post canonical-pair refs with branches
+    SWAPPED after canonical pair already loaded → 500. Likely the
+    `_replace_adapter_stack` unload-then-reload-with-different-branch
+    branch path.
+  - case_7 `same_ref_in_both_branches`: same ref under two distinct
+    branches (composite key `(ref, branch)`) → 500. Likely peft's
+    `load_lora_weights` rejecting the same tensor under two adapter
+    names, OR the `_adapter_name` collision-suffix breaking on
+    same-ref.
+
+Next-session protocol:
+
+  1. Reproduce both 500s against a Tier-3 stub
+     (`KINOFORGE_STUB_MOE=1` per Task 12 commit `32d3608`) — free,
+     local, fast iteration.
+  2. Add unit-test coverage that pins the structured 4xx (or 200)
+     contract the server SHOULD return for both shapes.
+  3. Fix `wan_t2v_server._replace_adapter_stack`.
+  4. Re-fire ONLY cases 5 + 7 of
+     `tests/smoke/release_wan22/test_dual_transformer_routing.py`
+     on real Wan 2.2 14B (~$0.40 + ~25 min cold-boot). Use
+     `KINOFORGE_LIVE_TESTS=1 pixi run pytest <path> -k 'case_5 or case_7'`.
+  5. Append to `successful-generations.md §11` ("See also" line) —
+     no new section needed; same capability axis.
+
+Then resume from the menu below (C26 / Layer-5 Bearer cost / etc.).
+
+---
+
 **C26 — RunPod util-aware stall classify CLOSED (PARTIAL) 2026-06-13.**
 Phase A end-to-end PROVEN on cheap RunPod pod (sha `8406b0a`). Phase B
 on Wan + ComfyUI exposed a design hole — chronic container-restart
