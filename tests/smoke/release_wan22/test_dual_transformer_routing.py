@@ -58,7 +58,11 @@ ARCANE_HIGH = "civitai:2197303@2474081"
 ARCANE_LOW = "civitai:2197303@2474073"
 
 _TAG = "kinoforge-smoke-tier-4"
-_BUDGET_CAP = 2.0
+# Bumped from 2.0 to 4.0 for the 2026-06-23 swap-gap re-fire per
+# operator $4 budget override. Revert to 2.0 after the re-fire lands
+# Tier-4 7/7 GREEN — single-SXM fires run ~$0.80 each (fire #3 baseline),
+# so the standing cap is intentionally tight.
+_BUDGET_CAP = 4.0
 
 # Cross-test sha cache. Tests run in file order; later cases assert
 # against earlier shas via this dict.
