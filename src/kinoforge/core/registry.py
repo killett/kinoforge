@@ -45,6 +45,16 @@ def register_provider(name: str, factory: Callable[[], ComputeProvider]) -> None
     _providers[name] = factory
 
 
+def provider_names() -> list[str]:
+    """Return the names of every currently-registered compute provider.
+
+    Used by surfaces that need to probe every backend (e.g.
+    ``kinoforge destroy --id`` on an orphan pod whose source provider
+    is not recorded in the local ledger).
+    """
+    return list(_providers.keys())
+
+
 def get_provider(name: str) -> Callable[[], ComputeProvider]:
     """Return the provider factory for ``name`` or raise ``UnknownAdapter``.
 

@@ -117,11 +117,117 @@ def test_cmd_stop_unknown_id_returns_1(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_destroy_unknown_id_returns_1(tmp_path: Path) -> None:
-    """_cmd_destroy returns 1 when the id is absent from the ledger."""
+def test_cmd_destroy_unknown_id_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_cmd_destroy returns 1 when the id is absent from the ledger AND
+    no registered provider can find it.
+
+    Bug catch: a regression where the orphan-fallback path silently
+    treats truly-unknown ids as success. The contract must stay
+    "exit 1 means we don't know what this is".
+    """
+    from kinoforge.core import registry
+
+    monkeypatch.setattr(registry, "provider_names", lambda: [])
     ctx = _ctx_no_cfg(tmp_path)
     args = _ns(id="i-absent")
     assert _commands._cmd_destroy(args, ctx) == 1
+
+
+def test_cmd_destroy_falls_back_to_provider_lookup_for_orphan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """_cmd_destroy reaps a pod that exists at a registered provider
+    even when the local ledger has no entry — the 2026-06-23 smoke
+    fallback failure mode.
+
+    Bug catch: pre-fix, an orphan pod_id (pod alive at RunPod but not
+    in the local ledger) exits 1 silently. The smoke harness's
+    ``subprocess.run(..., check=False)`` then swallowed the exit code,
+    leaving the pod alive at ~$1/hr.
+    """
+    from kinoforge.core import registry
+    from kinoforge.core.interfaces import Instance
+
+    pod_id = "orph-1"
+    destroy_calls: list[str] = []
+
+    class _FakeProvider:
+        def get_instance(self, queried_id: str) -> Instance:
+            assert queried_id == pod_id
+            return Instance(
+                id=pod_id,
+                provider="fake-cloud",
+                status="ready",
+                tags={},
+                created_at=0.0,
+                cost_rate_usd_per_hr=0.0,
+            )
+
+        def destroy_instance(self, queried_id: str) -> None:
+            destroy_calls.append(queried_id)
+
+        def list_instances(self) -> list[Instance]:
+            # destroy_confirmed polls list_instances to confirm gone;
+            # return empty so a single destroy + single poll confirms.
+            return []
+
+    monkeypatch.setattr(registry, "provider_names", lambda: ["fake-cloud"])
+    monkeypatch.setattr(registry, "get_provider", lambda _name: _FakeProvider)
+    ctx = _ctx_no_cfg(tmp_path)
+    args = _ns(id=pod_id)
+    assert _commands._cmd_destroy(args, ctx) == 0
+    # destroy_confirmed must have hit our provider exactly once.
+    assert destroy_calls == [pod_id]
+    out = capsys.readouterr().out
+    # Operator-facing string must declare orphan-source destruction so
+    # the operator can correlate against "no ledger entry but pod gone".
+    assert "orphan" in out.lower()
+    assert pod_id in out
+
+
+def test_cmd_destroy_orphan_path_surfaces_destroy_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Bug catch: orphan path that swallows TeardownError on the
+    underlying destroy call would silently leak the pod a second
+    time. The fix surfaces the error to stderr + exits 1."""
+    from kinoforge.core import registry
+    from kinoforge.core.errors import TeardownError
+    from kinoforge.core.interfaces import Instance
+
+    pod_id = "orph-flaky"
+
+    class _FlakyProvider:
+        def get_instance(self, queried_id: str) -> Instance:
+            return Instance(
+                id=queried_id,
+                provider="fake-cloud",
+                status="ready",
+                tags={},
+                created_at=0.0,
+                cost_rate_usd_per_hr=0.0,
+            )
+
+        def destroy_instance(self, _id: str) -> None:
+            raise TeardownError("simulated GraphQL 502")
+
+        def list_instances(self) -> list[Instance]:
+            return []
+
+    monkeypatch.setattr(registry, "provider_names", lambda: ["fake-cloud"])
+    monkeypatch.setattr(registry, "get_provider", lambda _name: _FlakyProvider)
+    ctx = _ctx_no_cfg(tmp_path)
+    args = _ns(id=pod_id)
+    assert _commands._cmd_destroy(args, ctx) == 1
+    err = capsys.readouterr().err
+    assert "simulated GraphQL 502" in err
+    assert pod_id in err
 
 
 # ---------------------------------------------------------------------------
