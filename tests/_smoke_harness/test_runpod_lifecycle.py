@@ -44,7 +44,8 @@ def test_destroy_all_active_pods_reaps_everything_when_no_filter(
 
     monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
     out = runpod_lifecycle.destroy_all_active_pods()
-    assert sorted(out) == ["a", "b"]
+    assert sorted(out.destroyed) == ["a", "b"]
+    assert out.failures == {}
     assert sorted(destroyed) == ["a", "b"]
 
 
@@ -67,15 +68,24 @@ def test_destroy_all_active_pods_honors_tag_filter(
 
     monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
     out = runpod_lifecycle.destroy_all_active_pods(tag_filter="kinoforge-smoke-tier-3")
-    assert out == ["t3"]
+    assert out.destroyed == ["t3"]
+    assert out.failures == {}
     assert destroyed == ["t3"]
 
 
-def test_destroy_swallows_per_pod_exception(
+def test_destroy_all_active_pods_reports_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bug: one destroy failure aborts sweep → other pods leak."""
+    """Bug: one destroy failure was logged at WARNING and dropped from
+    the return — no programmatic channel for the caller to detect a
+    leak. This is the 2026-06-23 money-leak vector.
+
+    Verifies the new SweepResult contract: ``destroyed`` carries the
+    pods that left cleanly, ``failures`` maps every pod_id whose
+    destroy raised to the actual exception so the caller can react.
+    """
     destroyed: list[str] = []
+    bad_exc = RuntimeError("transient RunPod 502")
 
     class _Provider:
         def list_instances(self) -> list[_FakeInstance]:
@@ -87,13 +97,33 @@ def test_destroy_swallows_per_pod_exception(
 
         def destroy_instance(self, pod_id: str) -> None:
             if pod_id == "bad":
-                raise RuntimeError("transient")
+                raise bad_exc
             destroyed.append(pod_id)
 
     monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
     out = runpod_lifecycle.destroy_all_active_pods()
-    assert sorted(destroyed) == ["good-1", "good-2"]
-    assert "bad" not in out
+    assert sorted(out.destroyed) == ["good-1", "good-2"]
+    assert list(out.failures.keys()) == ["bad"]
+    # Exception object reference preserved so callers can re-raise or log
+    # the original cause, not a lossy str() of it.
+    assert out.failures["bad"] is bad_exc
+
+
+def test_sweepresult_contains_delegates_to_destroyed() -> None:
+    """Bug: a SweepResult that loses ``__contains__`` would silently
+    flip the smoke fixtures' ``if pod_id not in reaped:`` to
+    always-true, firing the subprocess fallback on every run and
+    masking the real failure mode the fallback is supposed to expose.
+    """
+    result = runpod_lifecycle.SweepResult(
+        destroyed=["a", "b"], failures={"c": RuntimeError()}
+    )
+    assert "a" in result
+    assert "b" in result
+    # Pods in the failures dict are NOT "in" the result — the smoke
+    # fixture must treat them as not-yet-reaped.
+    assert "c" not in result
+    assert "missing" not in result
 
 
 def test_stat_poller_writes_per_tick(
