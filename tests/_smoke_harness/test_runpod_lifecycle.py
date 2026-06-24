@@ -74,16 +74,18 @@ def test_destroy_all_active_pods_honors_tag_filter(
 
 
 def test_destroy_all_active_pods_reports_failures(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Bug: one destroy failure was logged at WARNING and dropped from
     the return — no programmatic channel for the caller to detect a
     leak. This is the 2026-06-23 money-leak vector.
 
-    Verifies the new SweepResult contract: ``destroyed`` carries the
-    pods that left cleanly, ``failures`` maps every pod_id whose
-    destroy raised to the actual exception so the caller can react.
+    Verifies the new SweepResult contract AND the operator-surface
+    WARNING log is preserved (defence in depth — the smoke-tier
+    conftest's ``log_cli`` flip relies on this WARNING being emitted).
     """
+    import logging
+
     destroyed: list[str] = []
     bad_exc = RuntimeError("transient RunPod 502")
 
@@ -101,12 +103,23 @@ def test_destroy_all_active_pods_reports_failures(
             destroyed.append(pod_id)
 
     monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
-    out = runpod_lifecycle.destroy_all_active_pods()
+    with caplog.at_level(
+        logging.WARNING, logger="tests._smoke_harness.runpod_lifecycle"
+    ):
+        out = runpod_lifecycle.destroy_all_active_pods()
     assert sorted(out.destroyed) == ["good-1", "good-2"]
     assert list(out.failures.keys()) == ["bad"]
     # Exception object reference preserved so callers can re-raise or log
     # the original cause, not a lossy str() of it.
     assert out.failures["bad"] is bad_exc
+    # The WARNING log on the failed reap is the *defence-in-depth*
+    # surface — if SweepResult.failures inspection regresses, the
+    # smoke-tier ``log_cli`` flip still prints this to the terminal.
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("bad" in r.getMessage() for r in warning_records), (
+        f"expected a WARNING mentioning the failed pod_id; got "
+        f"{[r.getMessage() for r in warning_records]!r}"
+    )
 
 
 def test_sweepresult_contains_delegates_to_destroyed() -> None:
