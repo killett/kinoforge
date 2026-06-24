@@ -161,21 +161,45 @@ _TRANSFORMER_ATTR_PAT = re.compile(r"^transformer(?:_\d+)?$")
 
 
 def _detect_moe_arity(pipe_obj: Any) -> int:  # noqa: ANN401
-    """Count ``transformer*`` attrs on the pipeline.
+    """Count non-None ``transformer*`` slots on the pipeline.
 
-    Returns 1 for non-MoE (Wan 2.1, etc.), 2 for Wan 2.2 dual-transformer,
-    N for any future N-expert pipeline. Generalizes the routing decision
-    without a hardcoded list of stage names.
+    Returns 1 for non-MoE (Wan 2.1 — ``transformer`` populated,
+    ``transformer_2`` is None on the class), 2 for Wan 2.2 dual-
+    transformer (both populated), N for any future N-expert pipeline.
 
-    Matches ONLY ``transformer`` and ``transformer_<digit(s)>`` — does
-    NOT count diffusers class attributes like ``transformer_name``
-    (``WanLoraLoaderMixin.transformer_name`` is a string constant) or
-    any other attribute that happens to start with ``transformer_``.
-    The Tier-3 live fire (2026-06-23) surfaced the over-count bug:
-    Wan 2.1 1.3B's ``WanPipeline`` reported arity=3 because
-    ``transformer_name`` matched the old startswith pattern.
+    Diffusers ``WanLoraLoaderMixin`` declares
+    ``_lora_loadable_modules = ["transformer", "transformer_2"]`` as
+    its canonical loadable surface — that list is consulted first.
+    Each module is then probed via ``getattr`` and counted only if the
+    actual attribute value is not ``None``. This sidesteps two over-
+    count failure modes the Tier-3 live fire (2026-06-23) surfaced:
+
+      1. Wan 2.1 ``WanPipeline`` carries ``transformer_2 = None`` as a
+         class default (so the slot can be populated by future MoE
+         subclasses). The naive ``startswith`` / regex-match-only
+         scan saw arity=2 and rejected every ``branch="auto"`` request
+         with ``branch_auto_disallowed_on_moe``.
+      2. Same scan also matched ``transformer_name`` (a string
+         constant on the loader mixin) and reported arity=3.
+
+    Fallback for test stubs that don't declare ``_lora_loadable_modules``:
+    pattern-match attribute names (``transformer`` exact /
+    ``transformer_<digits>``) and require the value to be not None.
     """
-    return sum(1 for attr in dir(pipe_obj) if _TRANSFORMER_ATTR_PAT.match(attr))
+    modules = getattr(pipe_obj, "_lora_loadable_modules", None)
+    if modules:
+        return sum(
+            1
+            for name in modules
+            if _TRANSFORMER_ATTR_PAT.match(name)
+            and getattr(pipe_obj, name, None) is not None
+        )
+    return sum(
+        1
+        for attr in dir(pipe_obj)
+        if _TRANSFORMER_ATTR_PAT.match(attr)
+        and getattr(pipe_obj, attr, None) is not None
+    )
 
 
 # Module-level arity cache populated during ``_load_pipeline`` before
