@@ -67,10 +67,16 @@ compute:
     # LoRAs (~600 MB each) + scratch.
     disk_gb: 150
   lifecycle:
-    idle_timeout: 30m
+    # 2026-06-23 P2 Tier-4 dual-transformer routing smoke runs 7 cases on
+    # one warm pod (~45-60 min wall clock); previous 30m idle_timeout
+    # tripped mid-matrix even with GPU at 100% (8h91rjnslmzwab died at
+    # ~30 min uptime during case-1 generate). Bumped to give matrix
+    # headroom — does not affect the 4-step swap-matrix smoke which
+    # completes well within the old window.
+    idle_timeout: 90m
     job_timeout: 15m
     time_buffer: 3m
-    max_lifetime: 150m
+    max_lifetime: 180m
     boot_timeout: 60m
     budget: 5.0
     heartbeat_interval_s: 30

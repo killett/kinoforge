@@ -71,8 +71,17 @@ def _extract_pod_id(log_text: str) -> str:
     return m.group(1)
 
 
-def _cold_boot(prompt: str, log_path: Path) -> str:
-    """Run cold-boot ``kinoforge generate``; return pod_id."""
+def _cold_boot(prompt: str, log_path: Path) -> tuple[str, Path]:
+    """Run cold-boot ``kinoforge generate``; return (pod_id, mp4_path).
+
+    The cold-boot's generated mp4 IS the baseline (no LoRAs loaded),
+    so case-1 reuses it via ``_shas["baseline"]`` rather than spending
+    another generate-cycle to recompute the same shape. This also
+    removes back-to-back generate pressure on the warm pod immediately
+    after cold-boot (case-1's redundant generate stalled
+    `8h91rjnslmzwab` on 2026-06-23 at ~30 min pod uptime even with
+    GPU 100% — see PROGRESS Task 16 failure history).
+    """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w") as f:
         proc = subprocess.run(  # noqa: S603
@@ -98,7 +107,18 @@ def _cold_boot(prompt: str, log_path: Path) -> str:
         )
     text = log_path.read_text()
     assert proc.returncode == 0, f"cold-boot failed:\n{text[-3000:]}"
-    return _extract_pod_id(text)
+    pod_id = _extract_pod_id(text)
+    mp4_path: Path | None = None
+    for line in reversed(text.splitlines()):
+        if line.startswith("generated: uri="):
+            uri = line.split("=", 1)[1].strip().strip("'\"")
+            mp4_path = Path(uri)
+            break
+    assert mp4_path is not None, (
+        f"cold-boot succeeded but no 'generated: uri=' line found:\n{text[-3000:]}"
+    )
+    assert mp4_path.exists(), f"cold-boot mp4 {mp4_path} not on disk"
+    return pod_id, mp4_path
 
 
 def _generate_and_sha(pod_id: str, prompt: str, label: str) -> str:
@@ -166,11 +186,15 @@ def _warm_wan22_pod(
 
     tmp_dir = tmp_path_factory.mktemp("dual_transformer_routing_tier4")
     prompt = PROMPT_FILE.read_text().strip()
-    pod_id = _cold_boot(prompt, tmp_dir / "cold-boot.log")
+    pod_id, cold_boot_mp4 = _cold_boot(prompt, tmp_dir / "cold-boot.log")
     base_url = runpod_lifecycle.resolve_proxy_url(pod_id)
     poller = runpod_lifecycle.PodStatPoller(pod_id, tmp_dir / "pod-stats.log")
     poller.start()
     tracker = budget.BudgetTracker(cap_usd=_BUDGET_CAP, pod_id=pod_id)
+    # Cold-boot mp4 IS the baseline (no LoRAs); cache its sha so case-1
+    # only validates set_stack(empty) shape without burning another
+    # generate cycle.
+    _shas["baseline"] = hashlib.sha256(cold_boot_mp4.read_bytes()).hexdigest()
     try:
         from tests._smoke_harness.matrix import _warmup_proxy
 
@@ -199,7 +223,9 @@ def _warm_wan22_pod(
 def test_case_1_baseline_no_lora(_warm_wan22_pod: dict[str, str]) -> None:
     """Bug catch: cold-boot of empty LoRA stack regresses on Wan 2.2 —
     the routing path adds spurious arity validation that rejects an
-    empty stack."""
+    empty stack. The baseline sha is captured directly from the
+    fixture's cold-boot mp4; this case only proves the empty-target
+    HTTP path returns 200 + empty inventory on the warm pod."""
     base_url = _warm_wan22_pod["base_url"]
     resp = http.post_json(
         f"{base_url.rstrip('/')}/lora/set_stack",
@@ -207,10 +233,7 @@ def test_case_1_baseline_no_lora(_warm_wan22_pod: dict[str, str]) -> None:
         timeout=900,
     )
     assert resp["inventory"] == [], f"expected empty inventory, got {resp['inventory']}"
-    sha = _generate_and_sha(
-        _warm_wan22_pod["pod_id"], _warm_wan22_pod["prompt"], "baseline"
-    )
-    _shas["baseline"] = sha
+    assert "baseline" in _shas, "fixture failed to seed cold-boot baseline sha"
 
 
 def test_case_2_arcane_high_noise_only(_warm_wan22_pod: dict[str, str]) -> None:
