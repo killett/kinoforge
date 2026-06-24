@@ -150,4 +150,4 @@ def test_lora_swap_matrix_wan21(tmp_path: Path) -> None:
         # (preflight asserts 0 active pods at start), so unconditional
         # sweep is safe. Tracked as separate cleanup; the leak-sweep
         # cron still catches anything this misses within 45 min.
-        runpod_lifecycle.destroy_all_active_pods()
+        runpod_lifecycle.teardown_pod_or_raise(pod_id)

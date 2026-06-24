@@ -126,6 +126,150 @@ def test_sweepresult_contains_delegates_to_destroyed() -> None:
     assert "missing" not in result
 
 
+class _FakeCompletedProcess:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _fake_instance_class(status: str) -> Any:
+    class _I:
+        def __init__(self, id: str) -> None:  # noqa: A002
+            self.id = id
+            self.status = status
+
+    return _I
+
+
+def test_teardown_pod_or_raise_raises_when_post_condition_pod_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: subprocess fallback ``check=False`` + no stderr inspection
+    swallows non-zero exit silently. The 2026-06-23 money-leak vector.
+
+    The new helper performs a post-condition probe via
+    ``provider.get_instance(pod_id)``; if the pod is still alive,
+    raise with the full breadcrumb (sweep failures + fallback output)
+    embedded in the message.
+    """
+    pod_id = "leaked-pod-1"
+
+    class _Provider:
+        def list_instances(self) -> list[_FakeInstance]:
+            return [_FakeInstance(pod_id)]
+
+        def destroy_instance(self, _pod_id: str) -> None:
+            raise RuntimeError("graphql 502")
+
+        def get_instance(self, queried_id: str) -> Any:
+            assert queried_id == pod_id
+            return _fake_instance_class("ready")(pod_id)
+
+    monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
+    monkeypatch.setattr(
+        runpod_lifecycle,
+        "_kinoforge_destroy_subprocess",
+        lambda _pid, _repo: _FakeCompletedProcess(
+            returncode=1, stderr="instance 'leaked-pod-1' not found in ledger\n"
+        ),
+    )
+    with pytest.raises(AssertionError) as excinfo:
+        runpod_lifecycle.teardown_pod_or_raise(pod_id)
+    msg = str(excinfo.value)
+    # Pin three breadcrumb fragments: pod id, sweep failure cause, and
+    # fallback exit code — each must reach the operator on failure.
+    assert pod_id in msg
+    assert "graphql 502" in msg
+    assert "exit=1" in msg or "returncode=1" in msg
+
+
+def test_teardown_pod_or_raise_no_raise_when_pod_confirmed_gone_via_keyerror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: an over-eager helper that raises on the happy path would
+    fail every green smoke run and obscure real failures."""
+    pod_id = "gone-pod"
+
+    class _Provider:
+        def list_instances(self) -> list[_FakeInstance]:
+            return []
+
+        def destroy_instance(self, _pod_id: str) -> None: ...
+
+        def get_instance(self, _pid: str) -> Any:
+            raise KeyError(_pid)
+
+    monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
+    runpod_lifecycle.teardown_pod_or_raise(pod_id)
+
+
+def test_teardown_pod_or_raise_runs_subprocess_fallback_when_sweep_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: a sweep that reports the pod in ``failures`` but no
+    subprocess fallback fires leaves the pod alive silently.
+
+    Pins that the fallback is invoked exactly once with the requested
+    pod id, and post-condition KeyError → no raise.
+    """
+    pod_id = "transient-fail-pod"
+    fallback_calls: list[tuple[str, Path]] = []
+
+    class _Provider:
+        def list_instances(self) -> list[_FakeInstance]:
+            return [_FakeInstance(pod_id)]
+
+        def destroy_instance(self, _pid: str) -> None:
+            raise RuntimeError("transient")
+
+        def get_instance(self, _pid: str) -> Any:
+            raise KeyError(_pid)  # pod gone after fallback
+
+    monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
+
+    def _spy_subprocess(pid: str, repo: Path) -> Any:
+        fallback_calls.append((pid, repo))
+        return _FakeCompletedProcess(returncode=0, stdout="destroyed: " + pid)
+
+    monkeypatch.setattr(
+        runpod_lifecycle, "_kinoforge_destroy_subprocess", _spy_subprocess
+    )
+    runpod_lifecycle.teardown_pod_or_raise(pod_id)
+    assert len(fallback_calls) == 1
+    assert fallback_calls[0][0] == pod_id
+
+
+def test_teardown_pod_or_raise_skips_fallback_when_sweep_reaped_pod(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: an always-fire fallback wastes a 60-120 s subprocess call
+    on every clean smoke (doubles the per-test budget cap)."""
+    pod_id = "clean-pod"
+    fallback_calls: list[Any] = []
+
+    class _Provider:
+        def list_instances(self) -> list[_FakeInstance]:
+            return [_FakeInstance(pod_id)]
+
+        def destroy_instance(self, _pid: str) -> None: ...
+
+        def get_instance(self, _pid: str) -> Any:
+            raise KeyError(_pid)
+
+    monkeypatch.setattr(runpod_lifecycle, "_get_runpod_provider", lambda: _Provider())
+
+    def _spy_subprocess(pid: str, repo: Path) -> Any:
+        fallback_calls.append((pid, repo))
+        return _FakeCompletedProcess(returncode=0)
+
+    monkeypatch.setattr(
+        runpod_lifecycle, "_kinoforge_destroy_subprocess", _spy_subprocess
+    )
+    runpod_lifecycle.teardown_pod_or_raise(pod_id)
+    assert fallback_calls == []
+
+
 def test_stat_poller_writes_per_tick(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
