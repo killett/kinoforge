@@ -5,10 +5,43 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SweepResult:
+    """Outcome of a :func:`destroy_all_active_pods` sweep.
+
+    Pre-2026-06-24 the helper returned ``list[str]`` (IDs that left
+    cleanly) and *silently* dropped per-pod exceptions to
+    ``_log.warning(...)``.  pytest's default capture suppresses
+    everything below ERROR, so a failed destroy was invisible to the
+    caller — the load-bearing channel gap behind the
+    destroy-on-teardown money leak.
+
+    The ``failures`` channel surfaces per-pod exceptions to the smoke
+    harness so the fixture's teardown path can either retry, escalate
+    via a subprocess fallback, or fail the test loudly.
+
+    ``__contains__`` is delegated to :attr:`destroyed` so existing
+    call sites that do ``if pod_id in result:`` keep working without
+    edits — a pod that raised is NOT considered destroyed for that
+    membership check.
+    """
+
+    destroyed: list[str] = field(default_factory=list)
+    failures: dict[str, BaseException] = field(default_factory=dict)
+
+    def __contains__(self, item: object) -> bool:
+        return item in self.destroyed
+
+    def __iter__(self) -> Any:
+        return iter(self.destroyed)
+
 
 _PROXY_URL_PATTERN = "https://{pod_id}-{port}.proxy.runpod.net"
 
@@ -38,8 +71,8 @@ def _get_runpod_provider() -> Any:
     return kf_registry.get_provider("runpod")()
 
 
-def destroy_all_active_pods(*, tag_filter: str | None = None) -> list[str]:
-    """Belt-and-suspenders sweep. Returns IDs of pods successfully destroyed.
+def destroy_all_active_pods(*, tag_filter: str | None = None) -> SweepResult:
+    """Belt-and-suspenders sweep.
 
     Defends against the T22 attempt-2 failure mode: a smoke that crashes
     mid-cold-boot before its in-test ``pod_id`` variable is captured
@@ -55,11 +88,16 @@ def destroy_all_active_pods(*, tag_filter: str | None = None) -> list[str]:
             exclusively.
 
     Returns:
-        IDs of pods that were destroyed without raising. Pods that
-        raised during destroy are logged + omitted (the sweep does
-        not abort on first failure).
+        :class:`SweepResult` whose ``destroyed`` list carries the IDs
+        of pods that left cleanly and whose ``failures`` dict maps
+        every pod_id whose destroy raised to the actual exception.
+        Callers MUST inspect ``failures`` — pre-2026-06-24 the helper
+        log-warned and dropped failures silently, which was the
+        load-bearing channel gap behind the destroy-on-teardown money
+        leak.
     """
     destroyed: list[str] = []
+    failures: dict[str, BaseException] = {}
     try:
         provider = _get_runpod_provider()
         for inst in provider.list_instances():
@@ -74,9 +112,13 @@ def destroy_all_active_pods(*, tag_filter: str | None = None) -> list[str]:
                     inst.id,
                     exc,
                 )
+                failures[inst.id] = exc
     except Exception as exc:  # noqa: BLE001
         _log.warning("destroy_all_active_pods: sweep aborted: %r", exc)
-    return destroyed
+        # No per-pod attribution available — surface under sentinel key
+        # so the caller can still tell something went wrong.
+        failures["<sweep>"] = exc
+    return SweepResult(destroyed=destroyed, failures=failures)
 
 
 def _build_util_endpoint() -> Any:
