@@ -772,6 +772,158 @@ def test_destroy_raises_teardown_error_after_max_polls() -> None:
 
 
 # ---------------------------------------------------------------------------
+# AC5+: GraphQL-error parsing (destroy-on-teardown fix 2026-06-24)
+# ---------------------------------------------------------------------------
+
+
+def test_unwrap_graphql_response_returns_data_when_no_errors() -> None:
+    """Helper returns the ``data`` payload on a clean GraphQL response.
+
+    Bug catch: an over-broad fix that raises on every response would
+    break every consumer; this pins the happy path.
+    """
+    from kinoforge.providers.runpod import _unwrap_graphql_response
+
+    resp = {"data": {"pod": {"id": "pod-X"}}}
+    assert _unwrap_graphql_response(resp, context="get pod-X") == {
+        "pod": {"id": "pod-X"}
+    }
+
+
+def test_unwrap_graphql_response_raises_on_nonempty_errors() -> None:
+    """Helper raises ``RunPodGraphQLError`` when ``errors`` is non-empty,
+    even if ``data`` is also present (partial-failure response).
+
+    Bug catch: a check that only fires when ``data is None`` would let
+    a partial-failure response slip through and downstream code would
+    treat partial data as success.
+    """
+    from kinoforge.providers.runpod import (
+        RunPodGraphQLError,
+        _unwrap_graphql_response,
+    )
+
+    resp: dict[str, Any] = {
+        "errors": [{"message": "Unauthorized"}],
+        "data": {"pod": {"id": "pod-X"}},
+    }
+    with pytest.raises(RunPodGraphQLError) as excinfo:
+        _unwrap_graphql_response(resp, context="terminate pod-X")
+    # Pin both the context string and the GraphQL message in the args
+    # so an unparseable bare ``RunPodGraphQLError`` regression fails loudly.
+    msg = str(excinfo.value)
+    assert "terminate pod-X" in msg
+    assert "Unauthorized" in msg
+
+
+def test_unwrap_graphql_response_treats_empty_errors_list_as_success() -> None:
+    """``errors: []`` is success — RunPod sometimes returns the key with
+    an empty list on full-success responses.
+
+    Bug catch: ``if "errors" in resp:`` (presence check) would
+    misclassify an empty-list response as failure.
+    """
+    from kinoforge.providers.runpod import _unwrap_graphql_response
+
+    resp: dict[str, Any] = {"data": {"pod": None}, "errors": []}
+    assert _unwrap_graphql_response(resp, context="get pod-X") == {"pod": None}
+
+
+def test_unwrap_graphql_response_is_subclass_of_transport_error() -> None:
+    """``RunPodGraphQLError`` extends ``TransportError`` so existing
+    broad-catch sites (e.g. ``HeartbeatLoop``) keep working without edits.
+
+    Bug catch: a fresh exception class with no ancestor in ``TransportError``
+    would silently change which catch sites still catch the new failure.
+    """
+    from kinoforge.core.errors import TransportError
+    from kinoforge.providers.runpod import RunPodGraphQLError
+
+    assert issubclass(RunPodGraphQLError, TransportError)
+
+
+# ---------------------------------------------------------------------------
+# AC5++: destroy_instance refuses to claim success on GraphQL errors
+# ---------------------------------------------------------------------------
+
+
+def test_destroy_instance_raises_on_terminate_graphql_errors() -> None:
+    """Terminate mutation returns ``{"errors": [...], "data": null}`` →
+    destroy_instance must raise ``RunPodGraphQLError`` BEFORE entering
+    the poll loop.
+
+    Bug catch: the load-bearing case for the money-leak. Pre-fix code
+    never inspects the terminate response and would silently advance
+    to the poll loop, where ``resp.get("data", {}).get("pod")`` returns
+    ``None`` on the errors-shaped response and the function falsely
+    reports the pod as destroyed. The downstream smoke harness then
+    skips its subprocess fallback and the pod is left alive at
+    ~$1/hr.
+    """
+    from kinoforge.providers.runpod import RunPodGraphQLError
+
+    sleep = SleepSpy()
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            {"errors": [{"message": "Unauthorized"}], "data": None},  # terminate
+        ]
+    )
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
+    with pytest.raises(RunPodGraphQLError) as excinfo:
+        provider.destroy_instance("pod-abc123")
+    # Pin terminate-not-TeardownError so the test pins the *new* contract:
+    # we must surface the GraphQL failure, not mask it as a poll timeout.
+    assert "terminate" in str(excinfo.value).lower()
+    # Only one POST should have happened — no polling on a failed terminate.
+    assert len(http_post.calls) == 1, (
+        f"expected 1 POST (terminate only), got {len(http_post.calls)} "
+        f"(polls fired after failed terminate)"
+    )
+
+
+def test_destroy_instance_raises_when_poll_response_has_errors() -> None:
+    """Terminate OK; first poll returns errors-only response → raise
+    instead of treating ``data: null`` as confirmed-gone.
+
+    Bug catch: pre-fix, ``resp.get("data", {}).get("pod")`` returns
+    ``None`` for BOTH "pod gone" and "errors response", so the
+    function falsely reports success.
+    """
+    from kinoforge.providers.runpod import RunPodGraphQLError
+
+    sleep = SleepSpy()
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            {},  # terminate — empty success
+            {"errors": [{"message": "internal server error"}], "data": None},
+        ]
+    )
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
+    with pytest.raises(RunPodGraphQLError):
+        provider.destroy_instance("pod-abc123")
+
+
+def test_destroy_instance_succeeds_when_data_pod_is_explicit_null() -> None:
+    """Regression guard for the GraphQL-error fix: a real "pod gone"
+    response is ``{"data": {"pod": null}}`` (errors absent), and that
+    must continue to short-circuit as confirmed-gone.
+
+    Bug catch: an overzealous fix that treats ``{"data": {"pod": null}}``
+    (with no ``errors`` key at all) as ambiguous would break the happy
+    path and break ``test_destroy_idempotent_on_immediate_404``.
+    """
+    sleep = SleepSpy()
+    http_post = MultiResponseHttpPostSpy(
+        responses=[
+            {},  # terminate
+            {"data": {"pod": None}},  # poll — explicit null pod, no errors
+        ]
+    )
+    provider = RunPodProvider(http_post=http_post, sleep=sleep)
+    provider.destroy_instance("pod-abc123")  # must not raise
+
+
+# ---------------------------------------------------------------------------
 # AC6: list_instances
 # ---------------------------------------------------------------------------
 
