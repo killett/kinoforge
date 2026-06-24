@@ -119,7 +119,8 @@ def _warm_wan21_pod(
         poller.stop()
         poller.join(timeout=2.0)
         budget.BudgetTracker(cap_usd=_BUDGET_CAP, pod_id=pod_id).assert_under_cap()
-        runpod_lifecycle.destroy_all_active_pods()
+        # See test_dual_transformer_routing for the post-condition rationale.
+        runpod_lifecycle.teardown_pod_or_raise(pod_id)
 
 
 def test_auto_branch_succeeds_on_wan21(
