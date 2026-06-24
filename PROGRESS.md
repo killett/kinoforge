@@ -94,6 +94,29 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
+**🔴 SINGLE NEXT ACTION — HIGHEST PRIORITY: fix Tier-4 destroy-on-teardown
+bug.** `runpod_lifecycle.destroy_all_active_pods()` AND the smoke
+harness's explicit `subprocess.run(["pixi","run","kinoforge","destroy",...])`
+fallback BOTH failed to reap pod `2k0gonzmeqw7xj` on Tier-4 fixture
+teardown 2026-06-23 23:07 PT. Pod left alive at $1.49/hr; caught only
+because Claude ran `kinoforge list` per CLAUDE.md teardown rule, then
+fired manual `kinoforge destroy --id 2k0gonzmeqw7xj`. Same teardown
+bug surfaced on 2026-06-23 Tier-3 fires (PROGRESS line 234-237 — also
+not yet diagnosed). This is a **money-leak bug**: every Tier-3 / Tier-4
+fire bleeds spend until manually caught. Must root-cause before any
+further live smokes. Investigation surface: (1) why
+`destroy_all_active_pods()` returns success but leaves the pod alive
+(stale ledger? GraphQL race? wrong tag filter?); (2) why the
+harness's `subprocess.run(...)` fallback also no-ops — does it succeed
+silently against a non-matching pod ID, or does it raise + get
+swallowed by `check=False`? Test surface: unit test against
+`runpod_lifecycle.destroy_all_active_pods` mocking the GraphQL layer
+to assert behavior under each failure mode; integration test that
+spins up a single low-cost pod, calls the function, then asserts via
+real RunPod query that the pod is gone.
+
+---
+
 **P2 swap-gap fix FULL_GREEN 2026-06-23 (all 9 tasks shipped, cumulative
 spend $0.80 on the live re-fire).** Tier-4 7-case matrix:
 **7/7 PASSED** in 32:26 wall on pod `2k0gonzmeqw7xj`
@@ -125,27 +148,13 @@ T-B was GREEN pre-fix (confirms case_7 live 500 was state-cascade
 from case_5 mid-flight crash, not fresh-state bug). Full
 engine+core+harness suite: 1636 passed, 0 failed.
 
-**Open follow-ups (carry-forward):**
-
-- Revert `_BUDGET_CAP = 4.0 → 2.0` in
-  `tests/smoke/release_wan22/test_dual_transformer_routing.py`. The
-  bump (commit `9799657`) was per the operator $4 override for this
-  re-fire only; single-SXM fires are ~$0.80 so the standing $2 ceiling
-  is right.
-- `runpod_lifecycle.destroy_all_active_pods()` AGAIN failed to reap the
-  Tier-4 pod on fixture teardown (same bug noted on 2026-06-23 Tier-3
-  fires, PROGRESS line 234-237). The smoke harness's explicit-destroy
-  `subprocess.run(...)` fallback ALSO did not reach the pod (visible
-  because `kinoforge list` immediately after pytest exit still showed
-  the pod alive). Manual `pixi run kinoforge destroy --id 2k0gonzmeqw7xj`
-  reaped cleanly. Track as a separate P2 follow-up — not blocking.
-
-**Single next action:** open menu of remaining workstreams — Layer 5
-Bearer per-prediction cost capture (Replicate / Runway / Luma);
-C26 util-aware stall classify (extends RunPod heartbeat tick with
-`gpuUtilPercent` + new STALL_REAP verdict); the destroy-on-teardown
-bug above; doctor xfail follow-ups; the parked thread-leak fix
-brainstorm in `core/pool.py`.
+**Single next action for THIS workstream:** addressed at top of
+PROGRESS (destroy-on-teardown bug). Other deferred workstreams (open
+menu): Layer 5 Bearer per-prediction cost capture (Replicate /
+Runway / Luma); C26 util-aware stall classify (extends RunPod
+heartbeat tick with `gpuUtilPercent` + new STALL_REAP verdict);
+doctor xfail follow-ups; the parked thread-leak fix brainstorm in
+`core/pool.py`.
 
 ---
 
