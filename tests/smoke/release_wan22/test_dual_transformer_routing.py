@@ -20,9 +20,7 @@ Cases (per spec §7.1):
   7. Same ref in two branches (composite key) — both load + generate
      succeeds.
 
-Gated by ``KINOFORGE_LIVE_TESTS=1``.  RED scaffold for live spend
-keeps ``@pytest.mark.xfail(strict=True)``; the fire-session strips
-the markers and runs the matrix.
+Gated by ``KINOFORGE_LIVE_TESTS=1``.
 """
 
 from __future__ import annotations
@@ -198,13 +196,6 @@ def _warm_wan22_pod(
                 )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED scaffold — flips GREEN when Task 16 live-fire confirms an "
-        "empty-LoRA cold-boot succeeds against the real Wan 2.2 14B pod."
-    ),
-)
 def test_case_1_baseline_no_lora(_warm_wan22_pod: dict[str, str]) -> None:
     """Bug catch: cold-boot of empty LoRA stack regresses on Wan 2.2 —
     the routing path adds spurious arity validation that rejects an
@@ -222,13 +213,6 @@ def test_case_1_baseline_no_lora(_warm_wan22_pod: dict[str, str]) -> None:
     _shas["baseline"] = sha
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED scaffold — flips GREEN when Task 16 confirms high-noise-only "
-        "stack lands the LoRA into ``pipe.transformer`` (and only there)."
-    ),
-)
 def test_case_2_arcane_high_noise_only(_warm_wan22_pod: dict[str, str]) -> None:
     """Bug catch: ``branch=high_noise`` silently lands into
     ``transformer_2`` (or both), defeating per-stage routing.
@@ -261,13 +245,6 @@ def test_case_2_arcane_high_noise_only(_warm_wan22_pod: dict[str, str]) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED scaffold — flips GREEN when Task 16 confirms low-noise-only "
-        "stack lands the LoRA into ``pipe.transformer_2`` (and only there)."
-    ),
-)
 def test_case_3_arcane_low_noise_only(_warm_wan22_pod: dict[str, str]) -> None:
     """Bug catch: ``branch=low_noise`` silently lands into the bare
     ``transformer`` because ``load_into_transformer_2`` kwarg was dropped
@@ -304,14 +281,6 @@ def test_case_3_arcane_low_noise_only(_warm_wan22_pod: dict[str, str]) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED scaffold — flips GREEN when Task 16 confirms the Arcane h+l "
-        "canonical pair generates a stable, distinct sha (per-transformer "
-        "routing actually composes)."
-    ),
-)
 def test_case_4_arcane_pair_canonical_high_plus_low(
     _warm_wan22_pod: dict[str, str],
 ) -> None:
@@ -351,14 +320,6 @@ def test_case_4_arcane_pair_canonical_high_plus_low(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED scaffold — flips GREEN when Task 16 confirms wrong-routing "
-        "produces a DIFFERENT mp4 sha than the canonical pair (proof "
-        "routing matters)."
-    ),
-)
 def test_case_5_wrong_routing_h_into_low_and_l_into_high(
     _warm_wan22_pod: dict[str, str],
 ) -> None:
@@ -400,14 +361,6 @@ def test_case_5_wrong_routing_h_into_low_and_l_into_high(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED scaffold — flips GREEN when Task 16 confirms the Wan-2.2 "
-        "pod returns HTTP 400 with reason "
-        "``branch_auto_disallowed_on_moe`` for branch=auto requests."
-    ),
-)
 def test_case_6_moe_with_auto_branch_returns_400(
     _warm_wan22_pod: dict[str, str],
 ) -> None:
@@ -437,14 +390,6 @@ def test_case_6_moe_with_auto_branch_returns_400(
     assert detail["arity"] == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RED scaffold — flips GREEN when Task 16 confirms same ref in "
-        "two branches loads as two composite-keyed inventory entries "
-        "AND generation succeeds (Q6 Option 1 composite identity)."
-    ),
-)
 def test_case_7_same_ref_in_both_branches_composite_key(
     _warm_wan22_pod: dict[str, str],
 ) -> None:
