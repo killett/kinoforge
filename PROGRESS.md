@@ -94,6 +94,31 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
+**P2 swap-gap fix CODE-COMPLETE 2026-06-23 (commits `0dec40d`+`305b832`+`fdac5ab`,
+6 of 9 tasks shipped). Single next action: ONE Tier-4 live re-fire of the
+full 7-case matrix at $4 cap to confirm case_5 + case_7 flip to GREEN.**
+Spec `docs/superpowers/specs/2026-06-23-p2-swap-gap-design.md` + plan
+`docs/superpowers/plans/2026-06-23-p2-swap-gap.md`. Root cause both
+500s: `_replace_adapter_stack` raised `KeyError` outside the handler's
+`(RuntimeError, ValueError)` catch list because `_evict_one`
+unconditionally unlinked the shared on-disk file AND the download-step
+pending-entry loop never ran when every ref was already downloaded.
+Two compounded fixes shipped: (1) `_evict_one` skips the file unlink
+when any surviving `(ref, *)` sibling inventory entry remains; (2)
+set_stack handler pre-seeds pending inventory entries for every
+target `(ref, branch)` whose ref already has any on-disk row BEFORE
+computing `mandatory_evict`, so the surviving-sibling check in
+`_evict_one` correctly anchors the file. `mandatory_freed` accounting
+guarded against double-counting. Three Tier-1 unit tests fence the
+contracts forever (T-A two-ref swap, T-B composite identity, T-C
+single-ref swap minimum reproducer); T-A + T-C flipped RED → GREEN,
+T-B was GREEN pre-fix (confirms case_7 live 500 was state-cascade
+from case_5 mid-flight crash, not fresh-state bug). Full
+engine+core+harness suite: 1636 passed, 0 failed. Live re-fire is
+the remaining validation step.
+
+---
+
 **P2 Wan 2.2 dual-transformer routing CODE-COMPLETE + Tier-4 PARTIAL_GREEN
 2026-06-23 (17 of 17 tasks shipped autonomously, $2.79 cumulative spend).**
 Tier-4 7-case matrix: 5 PASS (case_1 baseline, case_2 high-noise-only,
