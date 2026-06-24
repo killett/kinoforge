@@ -145,29 +145,53 @@ every branch combination via `/lora/set_stack` swap.
   the new live-smoke RED scaffolds in `tests/smoke/live_wan21/` +
   `tests/smoke/release_wan22/`).
 
-- **Task 16 (live fire) PENDING explicit operator authorization.**
-  Two scaffolds in `tests/smoke/live_wan21/test_branch_routing.py`
-  (2 cases, ~$0.20 Wan 2.1 1.3B) +
-  `tests/smoke/release_wan22/test_dual_transformer_routing.py`
-  (7 cases, ~$1.50 Wan 2.2 14B) are RED-strict with structured xfail
-  reasons. To fire:
-    1. Replace each test's `raise NotImplementedError(...)` body with a
-       `matrix.run_matrix(...)` call shaped like
-       `tests/smoke/live_wan21/test_lora_swap_matrix.py` (cold-boot
-       via subprocess `pixi run kinoforge generate`, then drive
-       per-step `/lora/set_stack` via shared harness, sha-distinct
-       capture per matrix step).
-    2. Fire:
-       `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/live_wan21/test_branch_routing.py tests/smoke/release_wan22/test_dual_transformer_routing.py -v`
-    3. Verify clean teardown: `pixi run kinoforge list` must show
-       `No running instances.` + `No instances recorded in ledger.`
-    4. Capture each generated mp4 sha256 in
-       `successful-generations.md` (new §11 for branch routing);
-       wrong-routing sha (Tier-4 case 5) MUST differ from canonical
-       sha (Tier-4 case 4).
-    5. Flip every `pytest.mark.xfail(strict=True)` → green
-       (delete the decorator).
-    6. Update this PROGRESS.md block.
+- **Task 16 PARTIAL — Tier-3 GREEN; Tier-4 deferred.**
+  - **Tier-3 GREEN** (2026-06-23, 3 fires, cumulative $0.13).
+    `tests/smoke/live_wan21/test_branch_routing.py` 2/2 PASSED in
+    352.9 s wall on pod `44xs7kgyz1nxhy` (RTX A5000 24GB). Pins
+    `branch="auto"` accepted on Wan 2.1 (200 + inventory carries
+    `branch="auto"`) AND `branch="high_noise"` rejected (HTTP 400,
+    body `{"error":"branch_routing","reason":"branch_unsupported_single_transformer","branch":"high_noise","arity":1}`).
+    Recipe + sha in `successful-generations.md` §9 "See also". Two
+    `_detect_moe_arity` over-count bugs surfaced + fixed via the live
+    fires (commits `66a158c` for `transformer_name` class-attr match,
+    `14ed527` for Wan 2.1 class-default `transformer_2 = None`); the
+    fix routes through `_lora_loadable_modules` + value-not-None
+    filter so future N-expert diffusers pipelines (or stubs without
+    the loadable-module declaration) generalize cleanly.
+  - **Tier-4 (Wan 2.2 7-case matrix) DEFERRED.** RED scaffold
+    `tests/smoke/release_wan22/test_dual_transformer_routing.py`
+    remains `pytest.mark.xfail(strict=True)` with
+    `NotImplementedError` bodies. To fire (operator decision):
+      1. Replace each `raise NotImplementedError(...)` body with a
+         direct `http.post_json` call sequence shaped like the Tier-3
+         body in `tests/smoke/live_wan21/test_branch_routing.py`
+         (cold-boot once via session fixture, then per-case
+         `/lora/set_stack` + `/generate` against the same warm pod).
+         The 7 cases need disjoint stack assertions per spec §7.1
+         (baseline, h-only, l-only, h+l canonical, wrong-routing,
+         auto-on-MoE 400, same-ref-two-branches composite).
+      2. Fire:
+         `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/release_wan22/test_dual_transformer_routing.py -v`
+         (~$1.50 spend; Wan 2.2 14B cold-boot is ~25-35 min based on
+         the P1 history in §10).
+      3. Verify clean teardown: `pixi run kinoforge list` must show
+         `No running instances.` + `No instances recorded in ledger.`
+      4. Append a new §11 to `successful-generations.md` (Wan 2.2
+         dual-transformer routing IS a new capability axis vs §10).
+         Capture each case's mp4 sha256; assert wrong-routing sha !=
+         canonical sha.
+      5. Flip every `pytest.mark.xfail(strict=True)` → green.
+      6. Update this PROGRESS block to mark Task 16 fully GREEN.
+  - **Lessons from Tier-3 fires (2026-06-23):**
+      a. `_detect_moe_arity` MUST consult diffusers' canonical
+         `_lora_loadable_modules` declaration + verify value-not-None.
+         Naive prefix-match scans over-count (class constants like
+         `transformer_name`, class defaults like `transformer_2 = None`).
+      b. `runpod_lifecycle.destroy_all_active_pods()` failed to reap
+         two Tier-3 pods on fixture teardown (cause not yet diagnosed
+         — explicit `kinoforge destroy --id <pod>` worked every time).
+         Track as a separate follow-up; not P2 scope.
 
 - **Plan + research artifacts:**
   - Research note: `docs/superpowers/research/2026-06-22-p2-task-0-diffusers-routing.md`
