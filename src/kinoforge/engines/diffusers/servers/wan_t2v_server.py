@@ -578,6 +578,13 @@ async def _evict_one(ref: str, branch: str) -> None:
     ref can be evicted out of one branch while staying loaded in the
     other (Q6 Option 1 composite identity).
 
+    File-aware unlink (2026-06-23, swap-gap fix): the on-disk
+    safetensors file is shared across every ``(ref, *)`` inventory row;
+    only unlink it after the LAST surviving sibling is popped. Without
+    this guard, a same-ref branch swap evicts ``(ref, old_branch)``,
+    unlinks the file, then ``_replace_adapter_stack`` tries to load
+    ``(ref, new_branch)`` from a now-missing path.
+
     Best-effort: filesystem unlink errors are swallowed because the
     inventory is the source of truth for future swap decisions; a leaked
     file gets cleaned up by the next disk-pressure eviction or by the
@@ -595,11 +602,14 @@ async def _evict_one(ref: str, branch: str) -> None:
         # transformer's peft_config — Task 0 Q3. No per-transformer
         # dispatch needed at our level.
         pipe.delete_adapters([adapter])
-    try:
-        Path(entry["loras_dir_path"]).unlink(missing_ok=True)
-    except OSError:
-        pass
+    file_path = entry["loras_dir_path"]
     _inventory.pop(key, None)
+    sibling_survives = any(other_ref == ref for other_ref, _ in _inventory)
+    if not sibling_survives:
+        try:
+            Path(file_path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _replace_adapter_stack(target: list[LoraTarget]) -> None:
@@ -994,6 +1004,35 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
         # by composite key.
         target_keys_list = [(t.ref, t.branch) for t in req.target]
         target_keys = set(target_keys_list)
+
+        # Swap-gap fix (2026-06-23): seed pending inventory entries for
+        # every target (ref, branch) whose ref already has any (ref, *)
+        # entry on disk, BEFORE computing mandatory_evict. This anchors
+        # the on-disk file via a surviving sibling so the file-aware
+        # unlink in `_evict_one` does NOT delete artifacts the new
+        # branches still need. See
+        # docs/superpowers/specs/2026-06-23-p2-swap-gap-design.md §3.3.
+        on_disk_by_ref: dict[str, dict[str, Any]] = {}
+        for (ref, _br), entry in _inventory.items():
+            on_disk_by_ref.setdefault(ref, entry)
+        for tref, tbranch in target_keys_list:
+            if (tref, tbranch) in _inventory:
+                continue
+            source = on_disk_by_ref.get(tref)
+            if source is None:
+                continue
+            now = datetime.now().isoformat()
+            _inventory[(tref, tbranch)] = {
+                "ref": tref,
+                "filename": source["filename"],
+                "size_bytes": source["size_bytes"],
+                "loras_dir_path": source["loras_dir_path"],
+                "downloaded_at_local": source["downloaded_at_local"],
+                "last_used_at_local": now,
+                "adapter_name": f"lora_pending_{tref}_{_BRANCH_SHORT[tbranch]}",
+                "branch": tbranch,
+            }
+
         current_keys = set(_inventory.keys())
         mandatory_evict = current_keys - target_keys
         already_downloaded_refs = {ref for (ref, _br) in current_keys}
@@ -1009,7 +1048,18 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
         target_dl_bytes = sum(
             (req.download_specs[r].size_hint or 0) for r in to_download_refs
         )
-        mandatory_freed = sum(_inventory[k]["size_bytes"] for k in mandatory_evict)
+        # mandatory_freed only counts bytes that are actually reclaimable
+        # — i.e. evicted (ref, branch) entries whose ref will NOT survive
+        # in any other inventory key (target-seeded sibling or current
+        # non-evicted key). Without this guard, a same-ref branch swap
+        # would double-count the shared file's size as freed even though
+        # `_evict_one`'s file-aware unlink correctly keeps it on disk.
+        post_evict_keys = (current_keys - mandatory_evict) | target_keys
+        mandatory_freed = sum(
+            _inventory[k]["size_bytes"]
+            for k in mandatory_evict
+            if not any(other_ref == k[0] for other_ref, _ in post_evict_keys)
+        )
         # Snapshot pre-swap state for VRAM-OOM rollback (P1: refs AND
         # strengths; P2: AND branch — _snapshot_inventory_as_targets emits
         # full LoraTarget triples so rollback is fully reversible).
