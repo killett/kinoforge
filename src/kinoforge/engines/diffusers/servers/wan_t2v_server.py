@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import queue
+import re
 import shutil
 import threading
 import time
@@ -156,18 +157,25 @@ class VRAMRollbackFailure(Exception):
     """
 
 
+_TRANSFORMER_ATTR_PAT = re.compile(r"^transformer(?:_\d+)?$")
+
+
 def _detect_moe_arity(pipe_obj: Any) -> int:  # noqa: ANN401
     """Count ``transformer*`` attrs on the pipeline.
 
     Returns 1 for non-MoE (Wan 2.1, etc.), 2 for Wan 2.2 dual-transformer,
     N for any future N-expert pipeline. Generalizes the routing decision
     without a hardcoded list of stage names.
+
+    Matches ONLY ``transformer`` and ``transformer_<digit(s)>`` — does
+    NOT count diffusers class attributes like ``transformer_name``
+    (``WanLoraLoaderMixin.transformer_name`` is a string constant) or
+    any other attribute that happens to start with ``transformer_``.
+    The Tier-3 live fire (2026-06-23) surfaced the over-count bug:
+    Wan 2.1 1.3B's ``WanPipeline`` reported arity=3 because
+    ``transformer_name`` matched the old startswith pattern.
     """
-    return sum(
-        1
-        for attr in dir(pipe_obj)
-        if attr == "transformer" or attr.startswith("transformer_")
-    )
+    return sum(1 for attr in dir(pipe_obj) if _TRANSFORMER_ATTR_PAT.match(attr))
 
 
 # Module-level arity cache populated during ``_load_pipeline`` before
