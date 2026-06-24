@@ -94,28 +94,58 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
-**P2 swap-gap fix CODE-COMPLETE 2026-06-23 (commits `0dec40d`+`305b832`+`fdac5ab`,
-6 of 9 tasks shipped). Single next action: ONE Tier-4 live re-fire of the
-full 7-case matrix at $4 cap to confirm case_5 + case_7 flip to GREEN.**
+**P2 swap-gap fix FULL_GREEN 2026-06-23 (all 9 tasks shipped, cumulative
+spend $0.80 on the live re-fire).** Tier-4 7-case matrix:
+**7/7 PASSED** in 32:26 wall on pod `2k0gonzmeqw7xj`
+(NVIDIA A100-SXM4-80GB) at HEAD `9799657` after the swap-gap fix
+landed (commits `0dec40d` design+plan, `305b832` RED scaffolds,
+`fdac5ab` `_evict_one` + handler patch, `9799657` budget cap bump).
+Per-case sha256s + recipe in `successful-generations.md §11` follow-up
+subsection. All 6 mp4 shas distinct; case_5 `wrong_routing` sha
+`2b68…af65` ≠ case_4 canonical-pair sha `2b49…4945` — confirms
+per-transformer routing actually routes (the prior PARTIAL_GREEN
+entry could not validate this since case_5 never produced an mp4).
 Spec `docs/superpowers/specs/2026-06-23-p2-swap-gap-design.md` + plan
-`docs/superpowers/plans/2026-06-23-p2-swap-gap.md`. Root cause both
-500s: `_replace_adapter_stack` raised `KeyError` outside the handler's
-`(RuntimeError, ValueError)` catch list because `_evict_one`
-unconditionally unlinked the shared on-disk file AND the download-step
-pending-entry loop never ran when every ref was already downloaded.
-Two compounded fixes shipped: (1) `_evict_one` skips the file unlink
-when any surviving `(ref, *)` sibling inventory entry remains; (2)
-set_stack handler pre-seeds pending inventory entries for every
-target `(ref, branch)` whose ref already has any on-disk row BEFORE
-computing `mandatory_evict`, so the surviving-sibling check in
+`docs/superpowers/plans/2026-06-23-p2-swap-gap.md`.
+
+Root cause both prior 500s: `_replace_adapter_stack` raised `KeyError`
+outside the handler's `(RuntimeError, ValueError)` catch list because
+`_evict_one` unconditionally unlinked the shared on-disk file AND the
+download-step pending-entry loop never ran when every ref was already
+downloaded. Two compounded fixes shipped: (1) `_evict_one` skips the
+file unlink when any surviving `(ref, *)` sibling inventory entry
+remains; (2) `set_stack` handler pre-seeds pending inventory entries
+for every target `(ref, branch)` whose ref already has any on-disk row
+BEFORE computing `mandatory_evict`, so the surviving-sibling check in
 `_evict_one` correctly anchors the file. `mandatory_freed` accounting
 guarded against double-counting. Three Tier-1 unit tests fence the
 contracts forever (T-A two-ref swap, T-B composite identity, T-C
 single-ref swap minimum reproducer); T-A + T-C flipped RED → GREEN,
 T-B was GREEN pre-fix (confirms case_7 live 500 was state-cascade
 from case_5 mid-flight crash, not fresh-state bug). Full
-engine+core+harness suite: 1636 passed, 0 failed. Live re-fire is
-the remaining validation step.
+engine+core+harness suite: 1636 passed, 0 failed.
+
+**Open follow-ups (carry-forward):**
+
+- Revert `_BUDGET_CAP = 4.0 → 2.0` in
+  `tests/smoke/release_wan22/test_dual_transformer_routing.py`. The
+  bump (commit `9799657`) was per the operator $4 override for this
+  re-fire only; single-SXM fires are ~$0.80 so the standing $2 ceiling
+  is right.
+- `runpod_lifecycle.destroy_all_active_pods()` AGAIN failed to reap the
+  Tier-4 pod on fixture teardown (same bug noted on 2026-06-23 Tier-3
+  fires, PROGRESS line 234-237). The smoke harness's explicit-destroy
+  `subprocess.run(...)` fallback ALSO did not reach the pod (visible
+  because `kinoforge list` immediately after pytest exit still showed
+  the pod alive). Manual `pixi run kinoforge destroy --id 2k0gonzmeqw7xj`
+  reaped cleanly. Track as a separate P2 follow-up — not blocking.
+
+**Single next action:** open menu of remaining workstreams — Layer 5
+Bearer per-prediction cost capture (Replicate / Runway / Luma);
+C26 util-aware stall classify (extends RunPod heartbeat tick with
+`gpuUtilPercent` + new STALL_REAP verdict); the destroy-on-teardown
+bug above; doctor xfail follow-ups; the parked thread-leak fix
+brainstorm in `core/pool.py`.
 
 ---
 
