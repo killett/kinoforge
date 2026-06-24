@@ -159,30 +159,148 @@ every branch combination via `/lora/set_stack` swap.
     fix routes through `_lora_loadable_modules` + value-not-None
     filter so future N-expert diffusers pipelines (or stubs without
     the loadable-module declaration) generalize cleanly.
-  - **Tier-4 (Wan 2.2 7-case matrix) DEFERRED.** RED scaffold
-    `tests/smoke/release_wan22/test_dual_transformer_routing.py`
-    remains `pytest.mark.xfail(strict=True)` with
-    `NotImplementedError` bodies. To fire (operator decision):
-      1. Replace each `raise NotImplementedError(...)` body with a
-         direct `http.post_json` call sequence shaped like the Tier-3
-         body in `tests/smoke/live_wan21/test_branch_routing.py`
-         (cold-boot once via session fixture, then per-case
-         `/lora/set_stack` + `/generate` against the same warm pod).
-         The 7 cases need disjoint stack assertions per spec §7.1
-         (baseline, h-only, l-only, h+l canonical, wrong-routing,
-         auto-on-MoE 400, same-ref-two-branches composite).
-      2. Fire:
-         `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/release_wan22/test_dual_transformer_routing.py -v`
-         (~$1.50 spend; Wan 2.2 14B cold-boot is ~25-35 min based on
-         the P1 history in §10).
-      3. Verify clean teardown: `pixi run kinoforge list` must show
-         `No running instances.` + `No instances recorded in ledger.`
-      4. Append a new §11 to `successful-generations.md` (Wan 2.2
-         dual-transformer routing IS a new capability axis vs §10).
-         Capture each case's mp4 sha256; assert wrong-routing sha !=
-         canonical sha.
-      5. Flip every `pytest.mark.xfail(strict=True)` → green.
-      6. Update this PROGRESS block to mark Task 16 fully GREEN.
+  - **Tier-4 (Wan 2.2 7-case matrix) DEFERRED — explicit fire
+    instructions below.**
+
+    **Files to touch:**
+    - `tests/smoke/release_wan22/test_dual_transformer_routing.py` —
+      7 `pytest.mark.xfail(strict=True)` tests with
+      `raise NotImplementedError(...)` bodies. Replace each body.
+    - `examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml`
+      — already declares `branch: high_noise` / `branch: low_noise`
+      on the Arcane Style pair (Task 13 `5004cf2`). Cold-boot env
+      will pre-load both — Task 7 (`bdb739d`) wired arity validation
+      against the populated pipe.
+
+    **Step 1: Write per-case test bodies.** Use the Tier-3 body
+    `tests/smoke/live_wan21/test_branch_routing.py` as the canonical
+    shape. Pattern per case:
+    1. Module-scoped `_warm_wan22_pod` fixture: preflight check,
+       cold-boot via `pixi run kinoforge generate --config <Tier-4 cfg>
+       --prompt <PROMPT_FILE> --mode t2v --run-id smoke-22b-branch-cold-boot`.
+       Extract pod_id via the same regex
+       `r"running provisioner\.provision for instance (\w+)"`. Start
+       `runpod_lifecycle.PodStatPoller`. Warm proxy via
+       `matrix._warmup_proxy(base_url)`. `yield {pod_id, base_url}`;
+       teardown stops poller + asserts `BudgetTracker(cap_usd=2.0)` +
+       `runpod_lifecycle.destroy_all_active_pods()` — AND ALSO
+       fallback `kinoforge destroy --id <pod>` because Tier-3 fires
+       showed destroy_all_active_pods unreliable.
+    2. Per case: `http.post_json(f"{base_url}/lora/set_stack",
+       {"target": [...], "download_specs": civitai.resolve_each(...)})`
+       with the case's stack shape. For 200-cases also do
+       `subprocess.run(["pixi", "run", "kinoforge", "generate",
+       "--config", str(CFG), "--prompt", prompt, "--mode", "t2v",
+       "--instance-id", pod_id])` to capture mp4 + sha256.
+    3. The 7 cases per spec §7.1:
+       - **case_1_baseline_no_lora**: post `target=[]` → expect 200
+         + empty inventory. Generate. Capture sha as `baseline_sha`.
+       - **case_2_arcane_high_noise_only**: post
+         `target=[{"ref":arcane_h,"strength":1.0,"branch":"high_noise"}]`
+         → 200 + inventory[0].branch=="high_noise". Generate.
+         Capture sha. Assert `sha != baseline_sha`.
+       - **case_3_arcane_low_noise_only**: same with `low_noise`.
+         Assert `sha != baseline_sha AND sha != case_2_sha`.
+       - **case_4_arcane_pair_canonical**: post both `(h, low_noise)`
+         and `(l, high_noise)` paired correctly. Generate.
+         `canonical_pair_sha` — should match the Tier-4 baseline in
+         `successful-generations.md §10` if available.
+       - **case_5_wrong_routing**: post the two refs SWAPPED
+         (high-noise ref tagged low_noise, low-noise ref tagged
+         high_noise). 200, generate. Assert
+         `wrong_routing_sha != canonical_pair_sha` (proof routing
+         matters).
+       - **case_6_moe_with_auto_branch**: post
+         `target=[{"ref":arcane_h,"strength":1.0,"branch":"auto"}]`.
+         Wrap in `pytest.raises(urllib.error.HTTPError)`; assert
+         `exc.code == 400`, body
+         `{"error":"branch_routing","reason":"branch_auto_disallowed_on_moe","arity":2}`.
+       - **case_7_same_ref_in_both_branches**: post
+         `target=[{"ref":arcane_h,"strength":1.0,"branch":"high_noise"},
+         {"ref":arcane_h,"strength":0.8,"branch":"low_noise"}]`. 200,
+         inventory carries 2 rows with the same ref + distinct
+         branches. Generate.
+    4. Pin canonical Arcane refs as module constants — read from the
+       Tier-4 cfg via `yaml.safe_load(CFG.read_text())["loras"]`.
+    5. Cases share a single warm pod (module-scoped fixture). Pytest
+       execution order = file order — write the dependent cases in
+       order: baseline first (defines baseline_sha), then h-only,
+       l-only, canonical, wrong-routing, then the 400 case, then
+       the composite-key case. Wire shared shas via a module-level
+       `_shas: dict[str, str]` keyed by case name.
+
+    **Step 2: Pre-spend preflight + RED-commit.** Commit the
+    fleshed-out scaffold WITH the xfail markers still strict BEFORE
+    firing — durability rule. `pixi run preflight` must PASS.
+
+    **Step 3: Fire.**
+    ```bash
+    pixi run preflight  # must PASS
+    KINOFORGE_LIVE_TESTS=1 pixi run pytest \
+      tests/smoke/release_wan22/test_dual_transformer_routing.py \
+      --no-cov -v --runxfail 2>&1 | tee /tmp/tier4_fire.log
+    ```
+    Spend cap $2 (BudgetTracker enforces). Wan 2.2 14B cold-boot
+    historically 25-35 min (P1 §10); 7 cases at ~1 min each = ~45-50
+    min total wall clock.
+
+    **Step 4: Poll during fire.** Per CLAUDE.md "Live smoke
+    monitoring": every 60-90 s, check
+    `pixi run kinoforge list` AND `pixi run kinoforge status --id <pod>`.
+    GPU at 0 % for ≥3 consecutive probes during a `/generate` →
+    pod likely dead; capture log + destroy fast.
+
+    **Step 5: Verify teardown.** After pytest exits:
+    ```bash
+    pixi run kinoforge list  # MUST show both "No running instances."
+                             # AND "No instances recorded in ledger."
+    ```
+    If a pod remains: `pixi run kinoforge destroy --id <pod>` and
+    track as a follow-up (destroy_all_active_pods reliability bug
+    surfaced during Tier-3).
+
+    **Step 6: Capture in successful-generations.md.** Wan 2.2 dual-
+    transformer routing IS a new capability axis vs §10 (P1's pair
+    was branch-unaware). Add a NEW `## 11. <date> — Diffusers
+    WanPipeline Wan 2.2 T2V-A14B + per-transformer branch routing on
+    RunPod (A100 80GB) — t2v` section using the §9/§10 schema.
+    Include: stack triple, kinoforge SHA, layer/phase, exact command,
+    per-case sha256 table (baseline / h-only / l-only / canonical /
+    wrong-routing / composite-key), assertion that
+    `wrong_routing_sha != canonical_pair_sha`. Add a TOC entry.
+
+    **Step 7: Flip xfail markers green.** Delete the
+    `@pytest.mark.xfail(strict=True, reason=...)` decorator on each
+    of the 7 tests.
+
+    **Step 8: Close out.**
+    ```bash
+    git add -A
+    git commit -m "test(p2): Tier-4 live body + GREEN matrix — Wan 2.2 routing"
+    ```
+    Update THIS PROGRESS.md block: change "Task 16 PARTIAL" header to
+    "Task 16 GREEN", delete the Tier-4 deferred subsection, set
+    Task #17 (.tasks.json id 34) status to `completed`, mark all 17
+    native tasks completed via TaskUpdate, and bump
+    `lastUpdated` in
+    `docs/superpowers/plans/2026-06-22-p2-wan22-dual-transformer-routing.md.tasks.json`.
+
+    **Failure-mode debug history (this session, 2026-06-23):**
+    Tier-3 needed 3 fires because `_detect_moe_arity` had two
+    over-count bugs that ONLY surfaced against real diffusers
+    `WanPipeline` (not against stubs):
+      - Fire #1 (`lzzv2jccv6fchg`, $0.05): old `startswith("transformer_")`
+        matched `transformer_name` class constant → arity=3 reported.
+        Fix `66a158c`: tighten regex to `^transformer(?:_\d+)?$`.
+      - Fire #2 (`ndbvogufj1qhuq`, $0.08): regex matched
+        `transformer_2` even on Wan 2.1 (class default `None`) →
+        arity=2 reported. Fix `14ed527`: consult
+        `_lora_loadable_modules` + filter values that are `None`.
+      - Fire #3 (`44xs7kgyz1nxhy`, $0.024): 2/2 PASSED.
+    Tier-4 may surface analogous diffusers-internal kin attrs. If
+    arity comes back wrong, instrument with a one-off
+    `_lora_loadable_modules` + `dir(pipe)` log dump from `_startup`
+    BEFORE another fire (saves $0.50+ of debug cold-boot tax).
   - **Lessons from Tier-3 fires (2026-06-23):**
       a. `_detect_moe_arity` MUST consult diffusers' canonical
          `_lora_loadable_modules` declaration + verify value-not-None.
