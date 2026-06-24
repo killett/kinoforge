@@ -37,7 +37,7 @@ from typing import Any
 
 from kinoforge.core import registry
 from kinoforge.core.ephemeral import EphemeralSession
-from kinoforge.core.errors import CapacityError, TeardownError
+from kinoforge.core.errors import CapacityError, TeardownError, TransportError
 from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
 from kinoforge.core.interfaces import (
     ComputeProvider,
@@ -122,6 +122,53 @@ def _urllib_get_json(url: str) -> dict[str, Any]:
     """
     with urllib.request.urlopen(url) as resp:  # noqa: S310
         return dict(json.loads(resp.read().decode("utf-8")))
+
+
+class RunPodGraphQLError(TransportError):
+    """GraphQL endpoint returned a non-empty ``errors`` field.
+
+    Distinguishes a server-acknowledged failure (HTTP 200 but
+    ``{"errors": [...]}`` body) from a transport-level error.  Extends
+    :class:`~kinoforge.core.errors.TransportError` so existing broad-catch
+    sites (e.g. :class:`~kinoforge.core.heartbeat.HeartbeatLoop`) keep
+    catching the new failure without code changes.
+    """
+
+
+def _unwrap_graphql_response(resp: dict[str, Any], *, context: str) -> dict[str, Any]:
+    """Return ``resp["data"]`` or raise :class:`RunPodGraphQLError`.
+
+    RunPod's legacy GraphQL endpoint returns HTTP 200 even when the
+    request semantically fails — the failure is signalled by a
+    non-empty ``errors`` array in the response body.  Treating
+    ``data: null`` as success in that case is the load-bearing bug
+    behind the 2026-06-23 destroy-on-teardown money leak: a failed
+    terminate mutation is followed by a get-pod query whose
+    errors-only response is misread as "pod confirmed gone".
+
+    An empty ``errors`` list is treated as success (RunPod sometimes
+    returns the key with an empty list even on a clean response).
+
+    Args:
+        resp: The decoded JSON body of a RunPod GraphQL response.
+        context: A short operator-facing string describing the call
+            site (e.g. ``"terminate pod-X"``, ``"get pod-X"``).  Joined
+            into the exception message so a failed call surfaces a
+            useful breadcrumb.
+
+    Returns:
+        The ``resp["data"]`` payload (``{}`` if the key is absent).
+
+    Raises:
+        RunPodGraphQLError: ``resp["errors"]`` is a non-empty list.
+    """
+    errors = resp.get("errors")
+    if errors:
+        raise RunPodGraphQLError(f"RunPod GraphQL {context} failed: {errors}")
+    data = resp.get("data") or {}
+    if not isinstance(data, dict):
+        return {}
+    return data
 
 
 def _make_default_http_seams(
@@ -447,20 +494,31 @@ class RunPodProvider(ComputeProvider):
             instance_id: The pod ID to destroy.
 
         Raises:
+            RunPodGraphQLError: The terminate mutation or any poll
+                returned a non-empty ``errors`` field.  This must
+                surface to callers instead of being misread as
+                ``data.pod is None`` → "confirmed gone" — the
+                load-bearing case for the 2026-06-23 destroy-on-teardown
+                money leak.
             TeardownError: The pod was not confirmed gone within
-                :data:`_MAX_DESTROY_POLLS` attempts.
+                :data:`_MAX_DESTROY_POLLS` attempts (terminate +
+                polls all returned a populated pod).
         """
-        # Terminate (best-effort; pod might already be gone)
-        self._http_post(
+        # Terminate — if the GraphQL endpoint replies with errors, raise
+        # immediately; do NOT enter the poll loop where errors-only responses
+        # are indistinguishable from "pod gone".
+        terminate_resp = self._http_post(
             self._base_url,
             {"query": _terminate_pod_mutation(instance_id)},
         )
-        # Poll until gone or cap exceeded
+        _unwrap_graphql_response(terminate_resp, context=f"terminate {instance_id}")
+        # Poll until gone or cap exceeded.
         for _ in range(_MAX_DESTROY_POLLS):
             resp = self._http_post(
                 self._base_url, {"query": _get_pod_query(instance_id)}
             )
-            pod = resp.get("data", {}).get("pod")
+            data = _unwrap_graphql_response(resp, context=f"get pod {instance_id}")
+            pod = data.get("pod")
             if not pod:
                 self._created_instances.pop(instance_id, None)
                 return  # confirmed gone
