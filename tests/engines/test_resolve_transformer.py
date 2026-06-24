@@ -62,6 +62,36 @@ def test_detect_moe_arity_dual_transformer_returns_2() -> None:
     assert wan_t2v_server._detect_moe_arity(_MoEStub()) == 2
 
 
+def test_detect_moe_arity_wan21_class_default_transformer_2_is_none() -> None:
+    """Bug: Wan 2.1's ``WanPipeline`` inherits
+    ``_lora_loadable_modules = ["transformer", "transformer_2"]`` from
+    ``WanLoraLoaderMixin`` AND carries ``transformer_2 = None`` as a
+    class default (so MoE subclasses can override). The naive
+    "attribute exists" scan reported arity=2 on Wan 2.1 and rejected
+    every ``branch="auto"`` cold-boot with ``branch_auto_disallowed_on_moe``
+    — Tier-3 live fire #2 (2026-06-23). Fix: skip modules whose value
+    is ``None`` so the slot must actually be populated to count."""
+
+    class _Wan21Shape:
+        _lora_loadable_modules = ("transformer", "transformer_2")
+        transformer = object()
+        transformer_2 = None
+
+    assert wan_t2v_server._detect_moe_arity(_Wan21Shape()) == 1
+
+
+def test_detect_moe_arity_wan22_both_transformer_slots_populated() -> None:
+    """Bug as above, MoE shape — both slots must be non-None and
+    return arity=2."""
+
+    class _Wan22Shape:
+        _lora_loadable_modules = ("transformer", "transformer_2")
+        transformer = object()
+        transformer_2 = object()
+
+    assert wan_t2v_server._detect_moe_arity(_Wan22Shape()) == 2
+
+
 def test_detect_moe_arity_ignores_transformer_name_and_other_kin() -> None:
     """Bug: detector counts ANY attr matching the bare prefix
     ``transformer_*``, so a diffusers pipeline carrying
