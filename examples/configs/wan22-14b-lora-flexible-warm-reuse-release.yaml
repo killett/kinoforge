@@ -58,9 +58,13 @@ compute:
     min_vram_gb: 80
     min_cuda: "12.4"
     max_usd_per_hr: 3.00
+    # 2026-06-23: SXM first because A100 80GB PCIe stockStatus=Low caused
+    # back-to-back cold-boot pod-deaths (8h91rjnslmzwab, 9e2dsucq33zron)
+    # during this session's Tier-4 fire. SXM is stockStatus=High at
+    # +$0.10/hr — a worthwhile reliability tradeoff for the release gate.
     gpu_preference:
-      - "NVIDIA A100 80GB PCIe"
       - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA A100 80GB PCIe"
       - "NVIDIA H100 80GB HBM3"
       - "NVIDIA H100 PCIe"
     # ~63 GB base weights + HF cache overhead + room for 2 Arcane
