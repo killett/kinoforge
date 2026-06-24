@@ -26,7 +26,7 @@ import kinoforge._adapters  # noqa: F401 — triggers self-registrations
 from kinoforge.cli.context import SessionContext
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
-from kinoforge.core.errors import UnknownAdapter
+from kinoforge.core.errors import TeardownError, UnknownAdapter
 from kinoforge.core.interfaces import GenerationRequest, Instance
 from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.orchestrator import generate
@@ -1590,25 +1590,72 @@ def _cmd_destroy(args: argparse.Namespace, ctx: SessionContext) -> int:
     Returns:
         Exit code (0 on success, 1 on error).
     """
+    from kinoforge.core import registry
+
     ledger = ctx.ledger()
     entries = ledger.entries()
     entry = next((e for e in entries if e.get("id") == args.id), None)
-    if entry is None:
+    if entry is not None:
+        provider_name = entry.get("provider", "local")
+        try:
+            provider = registry.get_provider(str(provider_name))()
+            destroy_confirmed(provider, args.id, sleep=lambda _: None)
+            ledger.forget(args.id)
+            print(f"destroyed: {args.id}")
+            return 0
+        except (UnknownAdapter, KeyError) as exc:
+            print(f"error destroying {args.id!r}: {exc}", file=sys.stderr)
+            return 1
+
+    # No ledger entry — probe every registered provider for the orphan.
+    # This is the 2026-06-23 destroy-on-teardown fallback path: the
+    # smoke harness's subprocess `kinoforge destroy --id` had no way
+    # to reach a pod whose ledger entry the orchestrator had already
+    # forgotten (e.g. after a partial cleanup or a cross-process
+    # workspace).  KeyError on a probe means "this provider doesn't
+    # know that id"; any other exception means we couldn't tell, so
+    # skip and try the next provider — the probe is exploratory.
+    orphan_provider = None
+    orphan_name: str | None = None
+    for name in registry.provider_names():
+        try:
+            provider = registry.get_provider(name)()
+        except UnknownAdapter:
+            continue
+        try:
+            provider.get_instance(args.id)
+        except KeyError:
+            continue
+        except Exception as exc:  # noqa: BLE001, S112
+            # Probe failed for network / auth / GraphQL reasons.  Be
+            # conservative and try the next provider; don't claim
+            # ownership of an id we couldn't actually confirm.  Log
+            # to stderr so the operator sees why a provider was
+            # skipped — silent skip masked the 2026-06-23 bug.
+            print(
+                f"_cmd_destroy: skipping orphan probe via {name!r}: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        orphan_provider = provider
+        orphan_name = name
+        break
+
+    if orphan_provider is None:
         print(f"instance {args.id!r} not found in ledger", file=sys.stderr)
         return 1
 
-    provider_name = entry.get("provider", "local")
     try:
-        from kinoforge.core import registry
-
-        provider = registry.get_provider(str(provider_name))()
-        destroy_confirmed(provider, args.id, sleep=lambda _: None)
-        ledger.forget(args.id)
-        print(f"destroyed: {args.id}")
-        return 0
-    except (UnknownAdapter, KeyError) as exc:
-        print(f"error destroying {args.id!r}: {exc}", file=sys.stderr)
+        destroy_confirmed(orphan_provider, args.id, sleep=lambda _: None)
+    except (UnknownAdapter, KeyError, TeardownError) as exc:
+        print(
+            f"error destroying orphan {args.id!r} via {orphan_name}: {exc}",
+            file=sys.stderr,
+        )
         return 1
+    print(f"destroyed orphan: {args.id} (no ledger entry, provider={orphan_name})")
+    return 0
 
 
 def _cmd_forget(args: argparse.Namespace, ctx: SessionContext) -> int:
