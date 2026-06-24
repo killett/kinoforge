@@ -62,6 +62,39 @@ def test_detect_moe_arity_dual_transformer_returns_2() -> None:
     assert wan_t2v_server._detect_moe_arity(_MoEStub()) == 2
 
 
+def test_detect_moe_arity_ignores_transformer_name_and_other_kin() -> None:
+    """Bug: detector counts ANY attr matching the bare prefix
+    ``transformer_*``, so a diffusers pipeline carrying
+    ``transformer_name`` (string class constant on
+    ``WanLoraLoaderMixin``) reports arity 2 on Wan 2.1 — auto-on-MoE
+    rejection then misfires for every Wan-2.1-shape pipeline.
+
+    The Tier-3 live fire (2026-06-23) surfaced this on a real
+    ``WanPipeline`` reporting arity=3. Pattern fix only accepts
+    ``transformer`` exact and ``transformer_<digits>``."""
+
+    class _PipeWithKinAttrs:
+        transformer = object()
+        transformer_name = "transformer"
+        transformer_blocks = 42
+        transformer_2_name = "transformer_2"
+
+    assert wan_t2v_server._detect_moe_arity(_PipeWithKinAttrs()) == 1
+
+
+def test_detect_moe_arity_counts_transformer_2_but_not_transformer_2_name() -> None:
+    """Bug as above, MoE shape — detector must count ``transformer`` and
+    ``transformer_2`` (arity=2) but ignore ``transformer_name`` and
+    other off-spec siblings."""
+
+    class _MoEWithKinAttrs:
+        transformer = object()
+        transformer_2 = object()
+        transformer_name = "transformer"
+
+    assert wan_t2v_server._detect_moe_arity(_MoEWithKinAttrs()) == 2
+
+
 def test_resolve_auto_on_single_transformer_returns_transformer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
