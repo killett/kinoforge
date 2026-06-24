@@ -94,26 +94,80 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
-**🔴 SINGLE NEXT ACTION — HIGHEST PRIORITY: fix Tier-4 destroy-on-teardown
-bug.** `runpod_lifecycle.destroy_all_active_pods()` AND the smoke
-harness's explicit `subprocess.run(["pixi","run","kinoforge","destroy",...])`
-fallback BOTH failed to reap pod `2k0gonzmeqw7xj` on Tier-4 fixture
-teardown 2026-06-23 23:07 PT. Pod left alive at $1.49/hr; caught only
-because Claude ran `kinoforge list` per CLAUDE.md teardown rule, then
-fired manual `kinoforge destroy --id 2k0gonzmeqw7xj`. Same teardown
-bug surfaced on 2026-06-23 Tier-3 fires (PROGRESS line 234-237 — also
-not yet diagnosed). This is a **money-leak bug**: every Tier-3 / Tier-4
-fire bleeds spend until manually caught. Must root-cause before any
-further live smokes. Investigation surface: (1) why
-`destroy_all_active_pods()` returns success but leaves the pod alive
-(stale ledger? GraphQL race? wrong tag filter?); (2) why the
-harness's `subprocess.run(...)` fallback also no-ops — does it succeed
-silently against a non-matching pod ID, or does it raise + get
-swallowed by `check=False`? Test surface: unit test against
-`runpod_lifecycle.destroy_all_active_pods` mocking the GraphQL layer
-to assert behavior under each failure mode; integration test that
-spins up a single low-cost pod, calls the function, then asserts via
-real RunPod query that the pod is gone.
+**🔴 SINGLE NEXT ACTION — Layer 5 Bearer per-prediction cost capture
+(Replicate / Runway / Luma).** Now that the destroy-on-teardown
+money-leak vector is closed (see "destroy-on-teardown fix" entry
+below), Layer 5 is the highest-value deferred workstream. Goal: for
+every hosted-Bearer generation, capture per-prediction cost from the
+provider's response (or compute it from elapsed time + published
+rate) and persist alongside the artifact in
+`successful-generations.md`, plus surface the running total via
+`kinoforge balance` (or a sibling). Investigation surface: (1)
+Replicate's `prediction.metrics.predict_time` + per-model
+$0.000xxx/sec rate sheet; (2) Runway's response payload (likely
+includes credits-charged or a usage-event ID); (3) Luma keyframe
+endpoint cost format (UNI-1 image-only post-platform retirement —
+see memory `project_luma_video_retirement_2026.md`). Open menu of
+deferred workstreams: C26 util-aware stall classify (extends RunPod
+heartbeat tick with `gpuUtilPercent` + new STALL_REAP verdict);
+doctor xfail follow-ups; the parked thread-leak fix brainstorm in
+`core/pool.py`.
+
+---
+
+**Destroy-on-teardown fix FULL_GREEN 2026-06-24 (all 7 tasks shipped
+autonomously, $0 spend).** Spec
+`docs/superpowers/specs/2026-06-24-destroy-teardown-fix-design.md`
++ plan `docs/superpowers/plans/2026-06-24-destroy-teardown-fix.md`.
+Closes the 2026-06-23 23:07 PT money-leak that left pod
+`2k0gonzmeqw7xj` running at $1.49/hr (caught only via post-run
+`kinoforge list` per the CLAUDE.md teardown-verification rule).
+
+Multi-layer silent-failure chain identified + each layer fixed:
+  - **T1+T2 `e3c391a`** — `RunPodGraphQLError` + `_unwrap_graphql_response`
+    helper. Pre-fix `RunPodProvider` treated HTTP 200 with
+    `{"errors": [...]}` as success because `_http_post` never inspected
+    the `errors` field; `destroy_instance` then read
+    `resp["data"]["pod"] == None` as "pod confirmed gone" even when the
+    response was errors-only. Helper raises typed exception; extends
+    `TransportError` so `HeartbeatLoop`'s broad catch keeps working.
+    7 unit tests pin the contract.
+  - **T3 `027e401`** — `SweepResult` dataclass. Pre-fix
+    `destroy_all_active_pods` log-warned per-pod exceptions to a
+    logger pytest's default capture suppresses, then returned only
+    clean-exit IDs. New return type exposes `destroyed: list[str]`
+    + `failures: dict[str, BaseException]`; `__contains__` shim
+    keeps `pod_id in result` checks working.
+  - **T4 `0c65a34`** — `teardown_pod_or_raise(pod_id, *, repo_root)`
+    helper. Sweep + targeted subprocess fallback + post-condition
+    probe in one call. Probes `provider.get_instance(pod_id)` and
+    raises `AssertionError` with the full breadcrumb (sweep failures
+    + fallback stdout/stderr/exit) embedded when the pod is still
+    alive. All four smoke fixtures (Tier-3 + Tier-4 branch-routing +
+    LoRA-swap matrices) now use the helper; 4 new unit tests pin
+    the contract.
+  - **T5 `fe7df04`** — `kinoforge destroy --id <orphan>` two-step
+    lookup. Pre-fix the CLI required a ledger entry and exited 1
+    silently otherwise; the smoke subprocess fallback swallowed
+    that exit code. New orphan-fallback path iterates
+    `registry.provider_names()` + probes `get_instance(id)` on each
+    provider; first one that owns the pod wins.
+    `registry.provider_names()` added so callers don't reach into
+    `_providers` directly. 3 unit tests + the existing
+    `test_cmd_destroy_unknown_id_returns_1` (now monkeypatched to
+    pin the empty-registry path).
+  - **T6 `2fd1d2f`** — `pytest_configure` in `tests/smoke/conftest.py`
+    flips `log_cli=True` + `log_cli_level=WARNING` for smoke tiers
+    only, so even if the post-condition probe regresses, the
+    underlying `_log.warning` reaches the operator's terminal.
+    `test_destroy_all_active_pods_reports_failures` extended with a
+    `caplog` assertion that the WARNING fires on failed reap.
+
+Full no-regression suite (engine+core+providers+smoke-harness+cli+smoke
+non-live): **2147 passed, 14 skipped, 6 xfailed, 0 failed** in 2:04.
+Cumulative live spend on Tier-1 fix coverage: **$0.00**. Tier-2 live
+confirmation deferred — fold into next planned smoke run (no
+independent live spend required to claim CODE-COMPLETE).
 
 ---
 
