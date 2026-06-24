@@ -210,18 +210,11 @@ def _warm_wan22_pod(
         try:
             tracker.assert_under_cap()
         finally:
-            reaped = runpod_lifecycle.destroy_all_active_pods()
-            # Tier-3 fires (2026-06-23) showed destroy_all_active_pods
-            # occasionally fails to reap; fall back to explicit destroy.
-            if pod_id not in reaped:
-                subprocess.run(  # noqa: S603
-                    ["pixi", "run", "kinoforge", "destroy", "--id", pod_id],
-                    cwd=str(REPO),
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    check=False,
-                )
+            # Closes the 2026-06-23 money leak: sweep + targeted
+            # subprocess fallback + post-condition probe in one call,
+            # raises AssertionError if the pod is still alive after
+            # both layers run.
+            runpod_lifecycle.teardown_pod_or_raise(pod_id, repo_root=REPO)
 
 
 def test_case_1_baseline_no_lora(_warm_wan22_pod: dict[str, str]) -> None:

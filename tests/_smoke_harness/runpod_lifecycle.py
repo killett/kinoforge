@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 _log = logging.getLogger(__name__)
+
+#: Repo root resolved relative to this file: ``tests/_smoke_harness/`` →
+#: parents[2] is the workspace root.
+_REPO_DEFAULT: Path = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
@@ -119,6 +125,107 @@ def destroy_all_active_pods(*, tag_filter: str | None = None) -> SweepResult:
         # so the caller can still tell something went wrong.
         failures["<sweep>"] = exc
     return SweepResult(destroyed=destroyed, failures=failures)
+
+
+def _kinoforge_destroy_subprocess(
+    pod_id: str, repo_root: Path
+) -> subprocess.CompletedProcess[str]:
+    """Invoke ``pixi run kinoforge destroy --id <pod_id>`` as a subprocess.
+
+    Separated from :func:`teardown_pod_or_raise` so tests can
+    monkeypatch the subprocess call without faking subprocess
+    machinery wholesale.
+    """
+    return subprocess.run(  # noqa: S603
+        ["pixi", "run", "kinoforge", "destroy", "--id", pod_id],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def teardown_pod_or_raise(
+    pod_id: str | None,
+    *,
+    repo_root: Path | None = None,
+) -> None:
+    """One-call sweep + targeted fallback + post-condition probe.
+
+    The replacement for the silent ``destroy_all_active_pods()`` +
+    silent ``subprocess.run(..., check=False)`` chain that allowed
+    the 2026-06-23 destroy-on-teardown money leak.
+
+    Sequence:
+      1. Run :func:`destroy_all_active_pods` to clean up everything.
+      2. If ``pod_id`` is supplied AND not in the sweep's destroyed
+         list, fall back to ``pixi run kinoforge destroy --id`` and
+         surface the subprocess output via :func:`print` (pytest
+         captures it on test failure).
+      3. Probe ``provider.get_instance(pod_id)``.  If the pod is
+         still alive (or in a non-terminal status), raise
+         :class:`AssertionError` with the full breadcrumb embedded
+         so the operator sees the cause in the pytest output.
+
+    Args:
+        pod_id: The pod id the smoke owns.  ``None`` is acceptable
+            when the smoke crashed before capturing the id; the
+            sweep still runs and ``failures`` are surfaced but no
+            post-condition probe fires.
+        repo_root: Working directory for the ``pixi run`` subprocess.
+            Defaults to the workspace root resolved from this module's
+            location.
+
+    Raises:
+        AssertionError: ``pod_id`` is still visible to the provider
+            after the sweep + fallback.
+    """
+    repo = repo_root if repo_root is not None else _REPO_DEFAULT
+    result = destroy_all_active_pods()
+
+    fallback: subprocess.CompletedProcess[str] | None = None
+    if pod_id is not None and pod_id not in result.destroyed:
+        fallback = _kinoforge_destroy_subprocess(pod_id, repo)
+        # Surface output via stdout so pytest captures it on test
+        # failure — the silent `subprocess.run(..., check=False)` of
+        # the pre-fix path is the load-bearing bug we're closing.
+        print(f"[teardown] kinoforge destroy --id {pod_id}: exit={fallback.returncode}")
+        if fallback.stdout:
+            print(f"[teardown stdout]\n{fallback.stdout}")
+        if fallback.stderr:
+            print(f"[teardown stderr]\n{fallback.stderr}", file=sys.stderr)
+
+    if pod_id is None:
+        # Nothing to probe.  Surface any sweep failures so callers
+        # still see they happened even without a pod_id anchor.
+        if result.failures:
+            _log.warning(
+                "teardown_pod_or_raise: sweep failures (no pod_id anchor): %r",
+                {k: repr(v) for k, v in result.failures.items()},
+            )
+        return
+
+    provider = _get_runpod_provider()
+    try:
+        inst = provider.get_instance(pod_id)
+    except KeyError:
+        return  # pod truly gone
+    status = getattr(inst, "status", None)
+    if status in {"stopped", "terminated"}:
+        return
+
+    msg_parts = [
+        f"teardown failed: pod {pod_id!r} still alive (status={status!r})",
+        f"sweep destroyed: {result.destroyed!r}",
+        "sweep failures: " + repr({k: repr(v) for k, v in result.failures.items()}),
+    ]
+    if fallback is not None:
+        msg_parts.append(
+            f"fallback exit={fallback.returncode}; "
+            f"stdout={fallback.stdout!r}; stderr={fallback.stderr!r}"
+        )
+    raise AssertionError("\n".join(msg_parts))
 
 
 def _build_util_endpoint() -> Any:
