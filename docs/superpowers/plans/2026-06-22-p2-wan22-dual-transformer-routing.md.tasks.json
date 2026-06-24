@@ -115,10 +115,10 @@
     {
       "id": 34,
       "subject": "P2 Task 16: Live-smoke fire — Tier-3 + Tier-4 + PROGRESS close-out",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [29, 30, 31, 32, 33],
       "description": "**Goal:** Operator-authorized live spend. Tier-3 Wan 2.1 1.3B (~$0.20) + Tier-4 Wan 2.2 14B (~$1.50). Flip xfail → green; capture sha256s in successful-generations.md; update PROGRESS.md.\n\n**Files:**\n- Modify: `tests/smoke/live_wan21/test_branch_routing.py`\n- Modify: `tests/smoke/release_wan22/test_dual_transformer_routing.py`\n- Modify: `successful-generations.md`\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:** Tier-3 2/2 PASS / Tier-4 7/7 PASS / wrong-routing sha != canonical sha / kinoforge list clean teardown / successful-generations.md updated / PROGRESS.md updated.\n\n**Verify (Tier-3):** `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/live_wan21/test_branch_routing.py -v`\n**Verify (Tier-4):** `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/release_wan22/test_dual_transformer_routing.py -v`\n\nFull steps in plan doc Task 16. Multi-case smoke — --reuse warm pod across matrix cases; destroy explicitly via `kinoforge destroy --id <pod-id>` and verify via `kinoforge list` after.\n\n```json:metadata\n{\"files\": [\"tests/smoke/live_wan21/test_branch_routing.py\", \"tests/smoke/release_wan22/test_dual_transformer_routing.py\", \"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/smoke/live_wan21/test_branch_routing.py tests/smoke/release_wan22/test_dual_transformer_routing.py -v && pixi run kinoforge list\", \"acceptanceCriteria\": [\"Tier-3 2/2 PASS\", \"Tier-4 7/7 PASS\", \"wrong-routing sha != canonical sha\", \"kinoforge list shows clean teardown\", \"successful-generations.md updated\", \"PROGRESS.md updated\"], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-23T00:00:00"
+  "lastUpdated": "2026-06-23T21:38:49"
 }

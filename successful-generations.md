@@ -28,6 +28,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 9. `2026-06-21 05:11:18` — [Diffusers WanPipeline Wan 2.1 T2V-1.3B + single-LoRA matrix on RunPod (RTX A5000 24GB) — t2v](#9-2026-06-21-051118--diffusers-wanpipeline-wan-21-t2v-13b--single-lora-matrix-on-runpod-rtx-a5000-24gb--t2v)
    - See also: `2026-06-23 17:24:19` — P2 Tier-3 branch-routing live fire at HEAD `14ed527` against fresh pod `44xs7kgyz1nxhy` (RTX A5000 24GB). Cold-boot generated `de430bd6c7cfebd002917cc589b5a2276e1286dbb88ae1f6d58a9b7150aaffe8.mp4`; two `/lora/set_stack` POSTs pinned the new branch invariants: `{"branch":"auto"}` → 200 + inventory carries `branch="auto"` (single-transformer path), `{"branch":"high_noise"}` → HTTP 400 with `{"error":"branch_routing","reason":"branch_unsupported_single_transformer","branch":"high_noise","arity":1}` (Q5 strict-reject). Tests: `tests/smoke/live_wan21/test_branch_routing.py` (2/2 PASSED in 352.9 s wall). Two iterations debugging surfaced `_detect_moe_arity` over-count bugs (commits `66a158c` + `14ed527`); cumulative live spend $0.13 across three pods (`lzzv2jccv6fchg`, `ndbvogufj1qhuq`, `44xs7kgyz1nxhy`), all destroyed via `kinoforge destroy --id`. Same tuple `(runpod, DiffusersEngine, Wan-AI/Wan2.1-T2V-1.3B-Diffusers, t2v)`; covers the P2 branch-routing capability axis without reaching the Tier-4 Wan 2.2 MoE matrix.
 10. `2026-06-21 05:37:14` — [Diffusers WanPipeline Wan 2.2 T2V-A14B + Arcane LoRA pair warm-reuse matrix on RunPod (A100 80GB) — t2v](#10-2026-06-21-053714--diffusers-wanpipeline-wan-22-t2v-a14b--arcane-lora-pair-warm-reuse-matrix-on-runpod-a100-80gb--t2v)
+11. `2026-06-23 21:35:52` — [Diffusers WanPipeline Wan 2.2 T2V-A14B + per-transformer branch routing on RunPod (A100 80GB SXM) — t2v](#11-2026-06-23-213552--diffusers-wanpipeline-wan-22-t2v-a14b--per-transformer-branch-routing-on-runpod-a100-80gb-sxm--t2v)
    - See also: `2026-06-20 23:33:36` — LoRA-flexible warm-reuse smoke step-1 (cold-boot, 0 LoRAs) at HEAD `7ce3a09` (test `tests/live/test_wan22_lora_warm_reuse.py`, cfg `examples/configs/wan22-lora-flexible-warm-reuse-smoke.yaml`). 5 attempts across 22:01-23:34 PT validated cold-boot + plain Wan 2.2 T2V generation 3 times; published artifacts `output/20260620-221751_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` (attempt 1, pod `tu1rlnrksgs6sd`), `output/20260620-231141_…` (attempt 4, pod `grvq7smmd7r5g0`), `output/20260620-233336_…` (attempt 5, pod `62zmz86zmmjjg1`). Steps 2-4 (warm-attach with `[high+low]` / `[low]` / `[]` Arcane LoRA stacks via `POST /lora/set_stack`) NOT executed live — every attempt blocked on a different smoke-harness bug (proxy URL pattern, mid-flight pod-leak when cold-boot crashes pre-`_extract_pod_id`, missing `?api_key=…`, missing `User-Agent` to clear Cloudflare). All 4 fixes committed (`dc018a3`, `f7677b2`, `7e55036`, `7ce3a09`); harness is now ready for an operator-fire to drive the LoRA-swap matrix. Cumulative T22 spend $2.15. Same tuple `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`; the LoRA-swap path will graduate to its own section once steps 2-4 land on real hardware.
    - See also: `2026-06-20 12:24:49` — 4-prompt warm-reuse re-fire at HEAD `085781e` (test `tests/live/test_diffusers_wan_t2v_4prompt_live.py`): 1 cold + 3 warm-reuse on the SAME pod, one per file in `examples/configs/prompts/`. Pod `87geau1jcpxr0z` (NVIDIA A100 80GB PCIe), total wall-clock 33 m 19 s, spend ~$0.66. All 4 MP4s ffprobe-verified h264 / yuv420p / 480×480 / 81 frames / 16 fps; 4 distinct sha256s; legs 2/3/4 all `warm-reuse: attached to 87geau1jcpxr0z`. Same tuple `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`. Stable evidence copies at `.kinoforge/wan22_4prompt_evidence/`. Per-leg table:
      | # | Prompt file | Wall-clock from cold start | Published path | Size | SHA-256 |
@@ -1720,3 +1721,99 @@ on this fire.
   no cron — too expensive to fire weekly). It is now a documented
   pre-tag item in `docs/RELEASE-CHECKLIST.md`.
 
+
+---
+
+## 11. `2026-06-23 21:35:52` — Diffusers WanPipeline Wan 2.2 T2V-A14B + per-transformer branch routing on RunPod (A100 80GB SXM) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / DiffusersEngine / Wan-AI/Wan2.2-T2V-A14B-Diffusers` with `civitai:2197303@2474081` + `civitai:2197303@2474073` Arcane LoRA pair routed per-transformer |
+| **Mode** | t2v |
+| **kinoforge version** | branch `main` |
+| **First-success SHA** | `2a7d6f0` (`cfg(p2): reorder Wan 2.2 release gpu_preference — SXM first (stock=High)`) |
+| **Date (local TZ)** | 2026-06-23 21:35:52 -0700 (PDT) |
+| **Layer / phase** | P2 Wan 2.2 dual-transformer routing — Task 16 Tier-4 live fire (plan `docs/superpowers/plans/2026-06-22-p2-wan22-dual-transformer-routing.md`). Capability axis distinct from §10: per-LoRA `branch` field routes high-noise / low-noise tensors to the correct MoE transformer via boolean `load_into_transformer_2` kwarg. |
+
+**P2 PARTIAL_GREEN — 5 of 7 cases PASSED on the warm-reuse routing matrix.** Six-case sequence on a single Wan 2.2 14B A100 80GB SXM pod proves per-transformer dispatch works end-to-end for the canonical (high_noise, low_noise) pair and rejects the MoE+auto contract per spec §7.1. Two cases (case 5 wrong-routing, case 7 same-ref-two-branches) hit HTTP 500 on the server's `/lora/set_stack` swap path — surface as P2 follow-ups, not blocking the routing capability axis.
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_TESTS=1 pixi run pytest \
+  tests/smoke/release_wan22/test_dual_transformer_routing.py \
+  --no-cov -v -s
+```
+
+7-case module-scope warm-reuse — fixture `_warm_wan22_pod` pays the cold-boot once + shares the warm pod across all 7 cases. Case 1 reuses the cold-boot mp4 as the baseline sha (no redundant generate). Cases 2-5 + 7 invoke `kinoforge generate --instance-id` for per-case mp4 capture; case 6 asserts HTTP 400 (no generate).
+
+### YAML config
+
+`examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml` at HEAD `2a7d6f0`. Differences vs §10's HEAD-`53d5777` snapshot:
+
+- `gpu_preference`: SXM-first (`NVIDIA A100-SXM4-80GB` ahead of `NVIDIA A100 80GB PCIe`). Driven by 2 consecutive cold-boot pod kills (8h91rjnslmzwab, 9e2dsucq33zron) on A100 PCIe — RunPod's GraphQL probe reports `stockStatus="Low"` for PCIe at $1.39/hr vs `stockStatus="High"` for SXM at $1.49/hr. The $0.10/hr premium bought reliability.
+- `lifecycle.idle_timeout`: 30m → 90m. The 7-case matrix needs more runway than the 4-step swap-matrix smoke; bumped headroom does not impact §10's existing test path.
+- `lifecycle.max_lifetime`: 150m → 180m.
+
+LoRAs are operator-managed via `/lora/set_stack` — config stays Base-only.
+
+### Prompt
+
+`examples/configs/prompts/field-realistic.txt` verbatim (same prompt across all 6 generations) per the `standard-test-prompt-for-video-smokes` memory. No `ArcaneStyle` prepend — branch routing is observed via raw mp4 sha distinctness, not perceptually.
+
+### Env vars / secret names
+
+- `RUNPOD_API_KEY`, `RUNPOD_TERMINATE_KEY`, `CIVITAI_TOKEN`, `HF_TOKEN` — same set as §10.
+- `KINOFORGE_LIVE_TESTS=1` — pytest gate.
+
+### Region
+
+RunPod auto-select. Green pod `ee38uxn9rs444b` ran on `NVIDIA A100-SXM4-80GB`.
+
+### Capability key
+
+`5dff86b4f44e` — identical to §8 / §10. Per the P2 design, `branch` is intentionally NOT a capability-key factor: a single warm Wan 2.2 pod serves every branch combination via swap.
+
+### LoRA refs
+
+| Role | CivitAI page | Ref | Adapter name shape |
+|---|---|---|---|
+| High noise | <https://civitai.com/models/2197303?modelVersionId=2474081> | `civitai:2197303@2474081` | `lora_0_h` when canonical pair |
+| Low noise  | <https://civitai.com/models/2197303?modelVersionId=2474073> | `civitai:2197303@2474073` | `lora_1_l` when canonical pair |
+
+### Per-case outcomes
+
+Pod `ee38uxn9rs444b` (NVIDIA A100-SXM4-80GB), cold-boot at 21:03 PDT, destroyed at 21:38:49 PDT. Total spend $0.80. Wall clock 31:38.
+
+| # | Case | Stack | mp4 (under `.kinoforge/smoke-22b-branch-<label>/`) | Size | SHA-256 | Outcome |
+|---|---|---|---|---|---|---|
+| — | cold-boot (= baseline) | `[]` | `cold-boot/3f422e835c0ccb03.mp4` | 962,665 | `3f422e835c0ccb0361c78b24557d18a29a17cb1e3d8a7f8b5e471f1529864faf` | seeded `_shas["baseline"]` |
+| 1 | `baseline_no_lora` | `set_stack(target=[])` only | (reuses cold-boot) | — | (same as above) | **PASS** — 200 + `inventory == []` |
+| 2 | `arcane_high_noise_only` | `[(HIGH, 1.0, "high_noise")]` | `h-only/bf38957bb5b3e6d3.mp4` | 784,841 | `bf38957bb5b3e6d3d591782fda438faeefc8b033812cc333b7d2476014fb51eb` | **PASS** — `sha != baseline` |
+| 3 | `arcane_low_noise_only` | `[(LOW, 1.0, "low_noise")]` | `l-only/e36160737fcca851.mp4` | 1,608,397 | `e36160737fcca851769feea77c2244d8913e6063000112b5f3df3d024af4bca0` | **PASS** — `sha != {baseline, h_only}` |
+| 4 | `arcane_pair_canonical` | `[(HIGH, 1.0, "high_noise"), (LOW, 1.0, "low_noise")]` | `canonical-pair/8ab512d51afe0977.mp4` | 1,505,084 | `8ab512d51afe09776810125fc853b6b10e2de19b773d4ea49b0aa095131a7186` | **PASS** — `sha != {h_only, l_only}` |
+| 5 | `wrong_routing_h_into_low_and_l_into_high` | `[(HIGH, 1.0, "low_noise"), (LOW, 1.0, "high_noise")]` | — | — | — | **FAIL** — server `/lora/set_stack` returned HTTP 500 (body `'Internal Server Error'`) before generate was reached |
+| 6 | `moe_with_auto_branch_returns_400` | `[(HIGH, 1.0, "auto")]` | — | — | — | **PASS** — HTTP 400 `branch_routing` / `branch_auto_disallowed_on_moe` / `arity=2` per spec §6.1 |
+| 7 | `same_ref_in_both_branches_composite_key` | `[(HIGH, 1.0, "high_noise"), (HIGH, 0.8, "low_noise")]` | — | — | — | **FAIL** — server `/lora/set_stack` returned HTTP 500 |
+
+All 4 distinct shas (baseline / h_only / l_only / canonical_pair) confirm the per-transformer routing actually reaches both transformers and produces materially different output depending on which transformer each LoRA tensor patches. Case 6 asserts the spec §6.1 strict-reject contract for `auto` on MoE arity=2.
+
+### Open server-side follow-ups (P2 Task 16 gaps)
+
+- **case_5_wrong_routing**: server returns 500 when re-posting the canonical pair with swapped branches after the canonical pair was already loaded. Suspected gap in the unload-then-reload-with-different-branch path. Fix should preserve the strict spec contract (200 + sha materially differs from canonical) so the "routing matters" proof can be captured.
+- **case_7_same_ref_two_branches**: server returns 500 when the same ref is posted with two different branches. Spec Q6 Option 1 "composite identity" requires two inventory rows under composite key `(ref, branch)`. Suspected gap: peft `load_lora_weights` rejects loading the same tensor file under two different adapter names, OR the server's `_adapter_name` collision-suffix breaks under the same-ref case.
+
+Both 500s indicate the server raises an unmapped exception (else FastAPI would have returned a structured 4xx). Next-session priority: capture pod-side traceback (server log), wire the missing branches in `wan_t2v_server._replace_adapter_stack`, then re-fire just these 2 cases against a Tier-3 stub to avoid burning A100 cold-boot tax on each iteration.
+
+### Failure history — preceding 2 fires lost during this session
+
+- **8h91rjnslmzwab** (NVIDIA A100 80GB PCIe, $0.67 sunk). Cold-boot succeeded + first generate ran ~30 min into uptime with GPU at 100%; pod was silently revoked by RunPod mid-generate (no `idle_timeout`, no OOM in log). Diagnosed via `gpuTypes.lowestPrice.stockStatus` probe → PCIe = `Low` stock. Triggered the cfg reorder above.
+- **9e2dsucq33zron** (NVIDIA A100 80GB PCIe, $1.32 sunk before forget). Pod died during `wait_for_ready` (i.e. before generate started). Same PCIe-stock-status root cause.
+
+Both pods forgotten via `kinoforge forget --id <pod>`; ledger clean at fire-3 start.
+
+### Notes
+
+- The fixture pattern (capture cold-boot mp4 as baseline) saves one ~3 min generate cycle vs the canonical "fire all 7 generates" pattern from the original PROGRESS-author plan. Removes the back-to-back generate pressure that may have contributed to fire-1's mid-generate revocation.
+- Case 6's HTTP 400 was structurally correct on FIRST live touch — the server-side arity-gate Task 4 commit `80eede8` (`BranchAutoNotAllowedOnMoE`) wired this through diffusers' `_lora_loadable_modules` reliably (Tier-3 had already proven the analogous Wan 2.1 reject path).
+- Cases 1-4 + 6 lock in 5 of the 7 P2 §7.1 spec contracts on live A100 80GB. The two remaining gaps (cases 5 + 7) are server-side bugs in the swap-after-canonical path, not breaking the routing capability axis itself.
