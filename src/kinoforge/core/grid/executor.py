@@ -111,31 +111,45 @@ def _cell_capability_key(cell: _ResolvedCell) -> str | None:
 def _resolve_spec_cells(
     spec: GridSpec, *, grid_id: str, tmp_dir: Path
 ) -> list[_ResolvedCell]:
-    """Apply overrides per cell; write each effective cfg to a tmp file."""
+    """Apply overrides per cell; write each effective generation cfg to a tmp file.
+
+    For ``generate:`` cells: loads the base kinoforge :class:`Config`,
+    applies each dotted-path override via :func:`set_path`, dumps the
+    resulting effective cfg to ``<tmp_dir>/cell_<i>.yaml``. This is the
+    path the per-cell subprocess passes to ``kinoforge generate --config``.
+
+    For ``path:`` cells: stats the target mp4 path; raises if missing.
+    """
     import yaml
 
+    from kinoforge.core.config import load_config
+    from kinoforge.core.grid.dotted_path import set_path
     from kinoforge.core.grid.errors import GridCellPathMissing
 
-    del grid_id  # logged elsewhere; retained for symmetry with other call sites
+    del grid_id
     tmp_dir.mkdir(parents=True, exist_ok=True)
     resolved: list[_ResolvedCell] = []
     for i, cell in enumerate(spec.cells):
         if cell.generate is not None:
+            base = load_config(Path(cell.generate.config))
+            effective: object = base
+            for path, value in cell.generate.overrides.items():
+                effective = set_path(effective, path, value)  # type: ignore[arg-type]
             cfg_path = tmp_dir / f"cell_{i}.yaml"
             cfg_path.write_text(  # kinoforge:public-write
-                yaml.safe_dump(cell.generate.model_dump(mode="json")),
+                yaml.safe_dump(effective.model_dump(mode="json")),  # type: ignore[attr-defined]
             )
             resolved.append(
                 _ResolvedCell(
                     idx=i,
                     caption=cell.caption,
                     cfg_path=cfg_path,
-                    effective_cfg=cell.generate,
+                    effective_cfg=effective,
                     mp4_path=None,
                 )
             )
         else:
-            if cell.path is None:  # GridCell model_validator guarantees this
+            if cell.path is None:
                 raise GridCellPathMissing(
                     f"cell {i}: neither generate nor path set (model invariant violated)"
                 )
