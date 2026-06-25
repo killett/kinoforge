@@ -2626,3 +2626,70 @@ def _cmd_sweeper_metrics(args: argparse.Namespace, ctx: SessionContext) -> int:
         render_metrics_prom(entry, host=host, interval_s=cfg.sweeper.interval_s)
     )
     return 0
+
+
+def _cmd_grid(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``grid`` subcommand.
+
+    Maps :class:`GridResult.status` → exit code:
+    full → 0, partial → 2, budget → 3, ffmpeg → 4, teardown → 5,
+    spec error → 1.
+    """
+    import asyncio
+
+    from kinoforge.core.grid.errors import (
+        GridSpecParseError,
+        GridSpecPathError,
+        GridSpecUnderRepoError,
+    )
+    from kinoforge.core.grid.executor import run_grid
+    from kinoforge.core.grid.spec import GridSpec
+
+    del ctx  # grid spec is self-contained — no SessionContext-derived state needed
+
+    try:
+        spec = GridSpec.load(args.spec)
+    except (GridSpecUnderRepoError, GridSpecPathError, GridSpecParseError) as exc:
+        print(f"error: grid spec load failed\n{exc}", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        print(
+            f"[grid dry-run] {len(spec.cells)} cells, layout={spec.layout}, "
+            f"budget_cap=${spec.budget_cap_usd:.2f}"
+        )
+        return 0
+
+    output_dir = Path("output")
+    out_path = Path(args.out) if args.out else None
+
+    result = asyncio.run(
+        run_grid(
+            spec=spec,
+            output_dir=output_dir,
+            max_parallel_groups=args.max_parallel_groups,
+            out_path=out_path,
+        )
+    )
+    status_to_exit = {
+        "full": 0,
+        "partial": 2,
+        "budget": 3,
+        "ffmpeg": 4,
+        "teardown": 5,
+    }
+    code = status_to_exit[result.status]
+    if result.status == "full" and result.composed_mp4_path is not None:
+        print(f"[grid summary] composed mp4 → {result.composed_mp4_path}")
+    else:
+        print(
+            f"[grid summary] status={result.status}; "
+            f"partial mp4s → {result.partial_dir}",
+            file=sys.stderr,
+        )
+        if result.teardown_breadcrumb:
+            print(
+                f"[grid summary] residual pod breadcrumb:\n{result.teardown_breadcrumb}",
+                file=sys.stderr,
+            )
+    return code
