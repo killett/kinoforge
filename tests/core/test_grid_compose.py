@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from kinoforge.core.grid.compose import _escape_drawtext
@@ -98,3 +100,134 @@ def test_build_filter_graph_caption_omitted_when_none() -> None:
     cells = [LayoutCell(idx=0, caption=None)]
     graph = _build_filter_graph(probes=probes, layout=(1, 1), cells=cells)
     assert "drawtext" not in graph, "no caption → no drawtext filter"
+
+
+# ---------------------------------------------------------------------------
+# Subprocess-mocked tests for Task 7
+# ---------------------------------------------------------------------------
+
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+from kinoforge.core.grid.compose import (  # noqa: E402
+    _check_ffmpeg,
+    compose_grid_mp4,
+    probe_inputs,
+)
+from kinoforge.core.grid.errors import (  # noqa: E402
+    FfmpegInvocationError,
+    FfmpegNotFoundError,
+)
+
+
+def test_check_ffmpeg_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    with pytest.raises(FfmpegNotFoundError, match="ffmpeg"):
+        _check_ffmpeg()
+
+
+def test_check_ffmpeg_present_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/usr/bin/ffmpeg" if name in ("ffmpeg", "ffprobe") else None,
+    )
+    _check_ffmpeg()
+
+
+def test_probe_inputs_invokes_ffprobe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                '{"streams":[{"width":640,"height":480,'
+                '"r_frame_rate":"16/1","duration":"3.0"}]}'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("kinoforge.core.grid.compose.subprocess.run", fake_run)
+    fake_mp4 = tmp_path / "x.mp4"
+    fake_mp4.write_bytes(b"\x00" * 1024)
+
+    probes = probe_inputs([fake_mp4])
+    assert len(probes) == 1
+    assert probes[0].width == 640
+    assert probes[0].height == 480
+    assert probes[0].fps == 16.0
+    assert probes[0].duration == 3.0
+    assert captured["cmd"][0] == "ffprobe"
+    assert "-show_entries" in captured["cmd"]
+
+
+def test_compose_grid_mp4_invokes_ffmpeg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["cmd"] = cmd
+        out_idx = cmd.index("-y") + 1
+        Path(cmd[out_idx]).write_bytes(b"composed")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("kinoforge.core.grid.compose.subprocess.run", fake_run)
+
+    a, b = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    a.write_bytes(b"x")
+    b.write_bytes(b"y")
+    out = tmp_path / "grid.mp4"
+
+    probes = [
+        InputProbe(width=512, height=512, fps=16.0, duration=2.0),
+        InputProbe(width=512, height=512, fps=16.0, duration=2.0),
+    ]
+    cells = [LayoutCell(idx=0, caption="a"), LayoutCell(idx=1, caption="b")]
+    compose_grid_mp4(
+        inputs=[a, b],
+        probes=probes,
+        cells=cells,
+        layout=(1, 2),
+        out_path=out,
+    )
+    assert out.exists()
+    cmd = captured["cmd"]
+    assert cmd[0] == "ffmpeg"
+    assert "-filter_complex" in cmd
+    assert "libx264" in cmd
+    assert "-an" in cmd
+    assert "-y" in cmd
+
+
+def test_compose_grid_mp4_failure_writes_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="filter parse error at line 3"
+        )
+
+    monkeypatch.setattr("kinoforge.core.grid.compose.subprocess.run", fake_run)
+    out = tmp_path / "grid.mp4"
+    a = tmp_path / "a.mp4"
+    a.write_bytes(b"x")
+    probe = InputProbe(width=512, height=512, fps=16.0, duration=2.0)
+    cell = LayoutCell(idx=0, caption="x")
+
+    with pytest.raises(FfmpegInvocationError, match="filter parse error"):
+        compose_grid_mp4(
+            inputs=[a],
+            probes=[probe],
+            cells=[cell],
+            layout=(1, 1),
+            out_path=out,
+        )
+    stderr_file = out.with_suffix(out.suffix + ".stderr.txt")
+    assert stderr_file.read_text() == "filter parse error at line 3"
