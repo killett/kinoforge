@@ -48,3 +48,11 @@ class FfmpegInvocationError(KinoforgeError):
 
 class DottedPathError(KinoforgeError):
     """Raised when a dotted-path override fails to resolve or apply."""
+
+
+class GridSpecPathError(KinoforgeError):
+    """Raised when a grid spec path is missing or unreadable."""
+
+
+class GridSpecParseError(KinoforgeError):
+    """Raised when a grid spec YAML fails to parse or violates the schema."""

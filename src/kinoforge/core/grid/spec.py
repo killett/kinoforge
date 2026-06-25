@@ -11,11 +11,26 @@ for cost-sensitive knobs (``budget_cap_usd`` is required).
 
 from __future__ import annotations
 
+import logging
+import os
 import re
+import stat
+import subprocess
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import ValidationError as _ValidationError
+
+from kinoforge.core.grid.errors import (
+    GridSpecParseError,
+    GridSpecPathError,
+    GridSpecUnderRepoError,
+)
+from kinoforge.core.redaction import RedactionRegistry
+
+_log = logging.getLogger(__name__)
 
 _LAYOUT_RE = re.compile(r"^(?:[1-9]\d*x[1-9]\d*|auto)$")
 _SCALAR_TYPES = (int, float, str, bool, type(None))
@@ -95,3 +110,105 @@ class GridSpec(BaseModel):
     budget_cap_usd: float = Field(gt=0)
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
     cells: list[GridCell] = Field(min_length=1)
+
+    @classmethod
+    def load(cls, path: Path | str) -> GridSpec:
+        """Load a grid spec YAML; outside-repo guard + redaction registration.
+
+        Mirrors :func:`kinoforge.core.vault.load_vault`. After successful
+        validation, the spec's ``title`` plus every cell ``caption`` is
+        registered with :class:`RedactionRegistry` so the same strings
+        appear redacted in logs / ``successful-generations.md`` while
+        still rendering plain into the output mp4 (the output dir is the
+        universal exempt zone).
+
+        Args:
+            path: Path to the grid spec YAML.
+
+        Returns:
+            The validated :class:`GridSpec`.
+
+        Raises:
+            GridSpecPathError: Path missing or unreadable.
+            GridSpecUnderRepoError: Path resolves under the active repo.
+            GridSpecParseError: YAML or pydantic violation.
+        """
+        p = Path(path).resolve()
+        if not p.exists() or not p.is_file():
+            raise GridSpecPathError(f"grid spec not found: {p}")
+        if not os.access(p, os.R_OK):
+            raise GridSpecPathError(f"grid spec not readable: {p}")
+
+        repo_root = _git_repo_root()
+        if repo_root is not None:
+            try:
+                p.relative_to(repo_root)
+            except ValueError:
+                pass
+            else:
+                raise GridSpecUnderRepoError(
+                    f"grid spec path is under the active repo root "
+                    f"({repo_root}): {p}; move it outside the repo to "
+                    f"avoid accidental commits (captions and overrides "
+                    f"may contain LoRA refs / prompts)"
+                )
+
+        mode = stat.S_IMODE(p.stat().st_mode)
+        if mode & 0o077:
+            _log.warning(
+                "grid spec %s is readable by group/other (mode %o); "
+                "recommend chmod 600",
+                p,
+                mode,
+            )
+
+        try:
+            raw = yaml.safe_load(p.read_text())
+        except yaml.YAMLError as e:
+            raise GridSpecParseError(f"YAML parse failed for {p}: {e}") from e
+        if not isinstance(raw, dict):
+            raise GridSpecParseError(
+                f"grid spec YAML root must be a mapping, got {type(raw).__name__}"
+            )
+
+        try:
+            spec = cls.model_validate(raw)
+        except _ValidationError as e:
+            raise GridSpecParseError(f"grid spec schema violation in {p}: {e}") from e
+
+        _register_caption_tokens(spec)
+        return spec
+
+
+def _git_repo_root() -> Path | None:
+    """Return the active git repo root, or ``None`` if not inside a repo."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    out = result.stdout.strip()
+    return Path(out) if out else None
+
+
+def _register_caption_tokens(spec: GridSpec) -> None:
+    """Register title + every caption with :class:`RedactionRegistry`."""
+    reg = RedactionRegistry.instance()
+    if spec.title:
+        try:
+            reg.add(spec.title, kind="grid:title")
+        except ValueError:
+            pass
+    for cell in spec.cells:
+        if cell.caption:
+            try:
+                reg.add(cell.caption, kind="grid:caption")
+            except ValueError:
+                pass
