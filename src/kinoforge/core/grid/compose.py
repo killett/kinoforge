@@ -7,6 +7,9 @@ warning). This module owns the escape contract.
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
 _DRAWTEXT_ESCAPED = {
     "\\": r"\\",
     ":": r"\:",
@@ -35,3 +38,118 @@ def _escape_drawtext(s: str) -> str:
     for ch in (":", "'", "%", "\n"):
         out = out.replace(ch, _DRAWTEXT_ESCAPED[ch])
     return out
+
+
+@dataclass(frozen=True)
+class InputProbe:
+    """ffprobe output for one input mp4."""
+
+    width: int
+    height: int
+    fps: float
+    duration: float
+
+
+@dataclass(frozen=True)
+class LayoutCell:
+    """Caption + index of one cell in render order."""
+
+    idx: int
+    caption: str | None
+
+
+def _resolve_layout(layout: str, *, n: int) -> tuple[int, int]:
+    """Return ``(rows, cols)`` for the requested layout vs N cells.
+
+    Args:
+        layout: ``'RxC'`` literal or ``'auto'`` for sqrt+ceil.
+        n: Number of cells to fit.
+
+    Returns:
+        ``(rows, cols)`` with ``rows*cols >= n``.
+
+    Raises:
+        ValueError: ``layout`` is explicit and ``rows*cols < n``.
+    """
+    if layout == "auto":
+        cols = math.ceil(math.sqrt(n))
+        rows = math.ceil(n / cols)
+        return rows, cols
+    r_s, c_s = layout.split("x", 1)
+    r, c = int(r_s), int(c_s)
+    if r * c < n:
+        raise ValueError(f"layout {layout!r}: R*C={r * c} < N={n}")
+    return r, c
+
+
+def _build_filter_graph(
+    *,
+    probes: list[InputProbe],
+    layout: tuple[int, int],
+    cells: list[LayoutCell],
+) -> str:
+    """Construct the ``-filter_complex`` value for the ffmpeg invocation.
+
+    Per-input chain (one for every cell):
+    ``[N:v] scale=W:H,pad=W:H:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=F,
+    tpad=stop_mode=clone:stop_duration=D[,drawtext=...][vN]``.
+
+    Followed by ``xstack=inputs=N:layout=...:fill=black`` to stitch.
+
+    Args:
+        probes: ffprobe output per input mp4. Same order as ``cells``.
+        layout: ``(rows, cols)`` from :func:`_resolve_layout`.
+        cells: Caption + idx per cell. Must match ``len(probes)``.
+
+    Returns:
+        The filter-graph string ready to pass to ``ffmpeg -filter_complex``.
+
+    Raises:
+        ValueError: ``cells`` empty or count mismatch with ``probes``.
+    """
+    if not cells:
+        raise ValueError("at least one cell required to build filter graph")
+    if len(cells) != len(probes):
+        raise ValueError(
+            f"cells/probes length mismatch: cells={len(cells)} probes={len(probes)}"
+        )
+
+    target_w = min(p.width for p in probes)
+    target_h = min(p.height for p in probes)
+    target_fps = max(p.fps for p in probes)
+    target_dur = max(p.duration for p in probes)
+
+    _, cols = layout
+    n = len(cells)
+    chains: list[str] = []
+    for i, (probe, cell) in enumerate(zip(probes, cells, strict=True)):
+        del probe  # all-input normalization uses the min/max across probes
+        chain = (
+            f"[{i}:v]"
+            f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"setsar=1,fps={target_fps:g},"
+            f"tpad=stop_mode=clone:stop_duration={target_dur:g}"
+        )
+        if cell.caption:
+            esc = _escape_drawtext(cell.caption)
+            chain += (
+                f",drawtext=text={esc}:fontcolor=white:fontsize=h*0.05:"
+                f"box=1:boxcolor=black@0.5:boxborderw=8:"
+                f"x=(w-text_w)/2:y=20"
+            )
+        chain += f"[v{i}]"
+        chains.append(chain)
+
+    positions: list[str] = []
+    for cell_i in range(n):
+        r = cell_i // cols
+        c = cell_i % cols
+        x = "0" if c == 0 else "+".join(f"w{j}" for j in range(c))
+        y = "0" if r == 0 else "+".join(f"h{j * cols}" for j in range(r))
+        positions.append(f"{x}_{y}")
+    layout_arg = "|".join(positions)
+    inputs_chain = "".join(f"[v{i}]" for i in range(n))
+    xstack = f"{inputs_chain}xstack=inputs={n}:layout={layout_arg}:fill=black[outv]"
+
+    return ";".join(chains + [xstack])
