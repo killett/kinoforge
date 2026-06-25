@@ -94,16 +94,101 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
-**🔴 SINGLE NEXT ACTION — Layer 5 Bearer per-prediction cost capture
-(Replicate / Runway / Luma).** Now that the destroy-on-teardown
-money-leak vector is closed (see "destroy-on-teardown fix" entry
-below), Layer 5 is the highest-value deferred workstream. Goal: for
-every hosted-Bearer generation, capture per-prediction cost from the
-provider's response (or compute it from elapsed time + published
-rate) and persist alongside the artifact in
-`successful-generations.md`, plus surface the running total via
-`kinoforge balance` (or a sibling). Investigation surface: (1)
-Replicate's `prediction.metrics.predict_time` + per-model
+**🔴 SINGLE NEXT ACTION — pick cfg-shape resolution for `kinoforge grid`
+strength fires (Tier-3 + Tier-4).** The `kinoforge grid` CLI verb +
+core/grid/ package shipped 2026-06-25 (commits `e68ff2f..7154570`, 14 of
+20 plan tasks GREEN — see "kinoforge grid build" entry below). Tasks
+16/17 (USER-GATE Tier-3 + Tier-4 live fires) are BLOCKED at T+0s
+because the cfg files the plan referenced (`wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`,
+`wan22-14b-lora-flexible-warm-reuse-release.yaml`) carry LoRA refs
+under `smoke.lora_a` / `smoke.lora_b` / `release.lora_*` (server-side
+`POST /lora/set_stack` driven), NOT under the cfg-level top-level
+`loras:` list with `strength:` fields that the override key
+`loras[0].strength` resolves against (the shape `examples/configs/wan.yaml`
+uses). First Tier-3 attempt failed cleanly at $0.00 spend with
+`DottedPathError: index 0 out of range for 'loras' (len=0)`; pod did
+not boot, no leak.
+
+Resolution menu (operator picks ONE):
+1. **Compose a purpose-built `examples/configs/wan21-1_3b-strength-grid.yaml`**
+   mirroring `wan.yaml` shape with the canonical Pokemon +
+   static-rotation pair (refs already in repo as smoke cfg comments:
+   `civitai:1479320@1673265` static-rotation + `civitai:1595383@1805395`
+   Pokemon). Mirror for Tier-4 by re-using `examples/configs/wan.yaml`
+   (already carries the Arcane high+low pair with `branch:` routing).
+   Smallest scope — purely a config-file addition + a 2-line test patch.
+2. **Extend `kinoforge grid` to drive server-side `/lora/set_stack` per
+   cell** so the existing smoke cfgs work as-is. Significantly larger
+   scope: new cell variant + HTTP plumbing + capability-key collapse
+   semantics (currently every server-driven strength variant would
+   collapse to one warm-reuse group since `capability_key` is
+   ref-only, but the grid CLI lacks the server-side knob).
+
+The Layer 5 Bearer per-prediction cost capture workstream (Replicate
+/ Runway / Luma) remains the highest-value DEFERRED workstream once
+the cfg gap is unblocked.
+
+---
+
+**`kinoforge grid` build PARTIAL_GREEN 2026-06-25 (14/20 plan tasks
+shipped, $0 spend).** Spec
+`docs/superpowers/specs/2026-06-25-kinoforge-grid-design.md` + plan
+`docs/superpowers/plans/2026-06-25-kinoforge-grid.md`. New CLI verb
+`kinoforge grid --spec <yaml> --out <mp4> [--max-parallel-groups N
+--dry-run --ephemeral]` composes N generations into one side-by-side
+mp4 with per-cell captions. Implementation:
+
+  - **`src/kinoforge/core/grid/`** package: `spec.py` (GridSpec /
+    GridCell / GenerateCell / PathCell / CaptionStyle pydantic
+    models + `GridSpec.load` mirroring `Vault.load`'s under-repo
+    guard + RedactionRegistry registration), `dotted_path.py` (set_path
+    walker for `.field` / `[N]` segments with full re-validation;
+    wildcards rejected v1), `grouping.py` (capability_key-based
+    cell grouping; path: cells fold under `_PATH_GROUP_KEY` sentinel),
+    `compose.py` (ffmpeg drawtext escape, layout resolver,
+    filter-graph builder, `compose_grid_mp4` subprocess shell-out
+    with stderr-on-failure write), `executor.py` (asyncio
+    subprocess-per-cell, group-parallel via Semaphore, last-cell-of-group
+    `--no-reuse`, post-condition `kinoforge list` probe surfacing
+    leaked pods as status='teardown' — extends the 2026-06-24
+    destroy-on-teardown protection to the grid path).
+  - **Status → exit code:** full=0, partial=2, budget=3, ffmpeg=4,
+    teardown=5, spec error=1. README §"`kinoforge grid` — composed
+    side-by-side mp4 from N generations" walks the strength-sweep
+    invocation + the full exit-code table + the outside-repo
+    requirement + dotted-path override syntax.
+  - **Coverage GREEN:** 8 unit modules (errors, escape, dotted_path,
+    spec, grouping, compose layout+graph, compose subprocess,
+    executor) + 1 integration (real ffmpeg compose of 3 testsrc mp4s
+    → middle-frame RGB sample per cell, ±40 tolerance) + 1 CLI test
+    module (8 status-mapping cases) + 1 shared smoke harness
+    (`write_strength_grid_spec` keyword-only helper covering Tier-3
+    single-LoRA + Tier-4 MoE pair shapes) + 2 tier mock tests
+    (subprocess-monkeypatched, sha-distinct + teardown_pod_or_raise
+    invariants). Full pre-commit + AC1-9 AST scan + 12/12
+    no-unredacted-writes GREEN.
+  - **Tasks 16/17/18/19 BLOCKED.** Tier-3 + Tier-4 live fires
+    blocked on cfg-shape mismatch documented at top of this file.
+    successful-generations.md NOT amended (no live mp4 landed).
+    Cumulative session spend: $0.00.
+
+Code-complete components ship even without the live evidence — the
+grid CLI + package work correctly against any cfg with a top-level
+`loras:` list (proven by the 27 unit + 2 integration tests + manual
+`kinoforge grid --help` exercise). The live gate captures whether
+the strength override survives the *generation* end-to-end, which
+the cfg gap blocks orthogonally.
+
+---
+
+Now that the destroy-on-teardown money-leak vector is closed (see
+"destroy-on-teardown fix" entry below), Layer 5 is the highest-value
+deferred workstream. Goal: for every hosted-Bearer generation,
+capture per-prediction cost from the provider's response (or compute
+it from elapsed time + published rate) and persist alongside the
+artifact in `successful-generations.md`, plus surface the running
+total via `kinoforge balance` (or a sibling). Investigation surface:
+(1) Replicate's `prediction.metrics.predict_time` + per-model
 $0.000xxx/sec rate sheet; (2) Runway's response payload (likely
 includes credits-charged or a usage-event ID); (3) Luma keyframe
 endpoint cost format (UNI-1 image-only post-platform retirement —
