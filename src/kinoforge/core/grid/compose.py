@@ -7,8 +7,14 @@ warning). This module owns the escape contract.
 
 from __future__ import annotations
 
+import json
 import math
+import shutil
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
+
+from kinoforge.core.grid.errors import FfmpegInvocationError, FfmpegNotFoundError
 
 _DRAWTEXT_ESCAPED = {
     "\\": r"\\",
@@ -153,3 +159,133 @@ def _build_filter_graph(
     xstack = f"{inputs_chain}xstack=inputs={n}:layout={layout_arg}:fill=black[outv]"
 
     return ";".join(chains + [xstack])
+
+
+def _check_ffmpeg() -> None:
+    """Verify ``ffmpeg`` and ``ffprobe`` are on PATH; raise loud otherwise.
+
+    Raises:
+        FfmpegNotFoundError: Either binary missing.
+    """
+    for bin_name in ("ffmpeg", "ffprobe"):
+        if shutil.which(bin_name) is None:
+            raise FfmpegNotFoundError(
+                f"{bin_name} not found on PATH. Install via "
+                f"`pixi install` (ffmpeg pinned in pixi.toml) or "
+                f"`apt-get install ffmpeg`."
+            )
+
+
+def _parse_fps(rate: str) -> float:
+    """Parse ffprobe ``r_frame_rate`` (``'16/1'`` form) into float."""
+    if "/" in rate:
+        num, den = rate.split("/", 1)
+        return float(num) / float(den) if float(den) != 0 else 0.0
+    return float(rate)
+
+
+def probe_inputs(paths: list[Path]) -> list[InputProbe]:
+    """Run ffprobe on each path; return one :class:`InputProbe` per input.
+
+    Args:
+        paths: Resolved mp4 paths.
+
+    Returns:
+        Probes in the same order as ``paths``.
+
+    Raises:
+        FfmpegInvocationError: ffprobe exits non-zero or returns malformed JSON.
+    """
+    probes: list[InputProbe] = []
+    for p in paths:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,r_frame_rate,duration",
+            "-of",
+            "json",
+            str(p),
+        ]
+        result = subprocess.run(  # noqa: S603
+            cmd, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            raise FfmpegInvocationError(
+                f"ffprobe {p}: exit={result.returncode} stderr={result.stderr.strip()}"
+            )
+        try:
+            data = json.loads(result.stdout)
+            stream = data["streams"][0]
+            probes.append(
+                InputProbe(
+                    width=int(stream["width"]),
+                    height=int(stream["height"]),
+                    fps=_parse_fps(stream["r_frame_rate"]),
+                    duration=float(stream["duration"]),
+                )
+            )
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            raise FfmpegInvocationError(
+                f"ffprobe {p}: malformed output: {result.stdout!r}"
+            ) from e
+    return probes
+
+
+def compose_grid_mp4(
+    *,
+    inputs: list[Path],
+    probes: list[InputProbe],
+    cells: list[LayoutCell],
+    layout: tuple[int, int],
+    out_path: Path,
+) -> None:
+    """Compose ``inputs`` into one grid mp4 at ``out_path``.
+
+    Args:
+        inputs: Per-cell mp4 paths, same order as ``probes`` and ``cells``.
+        probes: ffprobe results for each input.
+        cells: Caption + idx per cell.
+        layout: ``(rows, cols)`` from :func:`_resolve_layout`.
+        out_path: Where to write the composed mp4. ``-y`` flag overwrites.
+
+    Raises:
+        FfmpegInvocationError: ffmpeg exits non-zero. Stderr written to
+            ``<out_path>.stderr.txt`` for the executor's pickup. The
+            stderr file is the only known-binary-free artifact written
+            outside the output dir exempt zone (allow-listed in the
+            AST-scan extension shipped in Task 11).
+    """
+    graph = _build_filter_graph(probes=probes, layout=layout, cells=cells)
+    cmd: list[str] = ["ffmpeg"]
+    for p in inputs:
+        cmd += ["-i", str(p)]
+    cmd += [
+        "-filter_complex",
+        graph,
+        "-map",
+        "[outv]",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-an",
+        "-y",
+        str(out_path),
+    ]
+    result = subprocess.run(  # noqa: S603
+        cmd, capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        stderr_path = out_path.with_suffix(out_path.suffix + ".stderr.txt")
+        stderr_path.write_text(result.stderr)
+        raise FfmpegInvocationError(
+            f"ffmpeg exit={result.returncode}: {result.stderr.strip()[:500]}"
+        )
