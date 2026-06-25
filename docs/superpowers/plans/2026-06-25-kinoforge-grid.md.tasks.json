@@ -1,0 +1,145 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-25-kinoforge-grid.md",
+  "lastUpdated": "2026-06-25",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Module skeleton + errors",
+      "status": "pending",
+      "description": "**Goal:** Empty package with all error classes defined; gives downstream tasks an import target without circular wait.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/__init__.py`\n- Create: `src/kinoforge/core/grid/errors.py`\n- Create: `tests/core/test_grid_errors.py`\n\n**Acceptance Criteria:**\n- [ ] `from kinoforge.core.grid.errors import GridSpecUnderRepoError, GridCellPathMissing, GridCellFailure, GridBudgetExceeded, FfmpegInvocationError, FfmpegNotFoundError, DottedPathError` succeeds\n- [ ] Every error class subclasses `KinoforgeError`\n- [ ] `GridCellFailure(idx, cfg_repr, exception_chain)` stores all three attrs\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_errors.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/__init__.py\", \"src/kinoforge/core/grid/errors.py\", \"tests/core/test_grid_errors.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_errors.py -v\", \"acceptanceCriteria\": [\"import all 7 error classes\", \"all subclass KinoforgeError\", \"GridCellFailure stores idx + cfg_repr + exception_chain\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: _escape_drawtext helper",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** ffmpeg drawtext filter mis-parses silently on un-escaped `:`, `'`, `\\`, `%`. Helper percent-encodes these so captions survive intact.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/compose.py` (initial)\n- Create: `tests/core/test_grid_compose.py` (initial)\n\n**Acceptance Criteria:**\n- [ ] `_escape_drawtext(\"a:b'c%d\\\\e\")` returns `\"a\\\\:b\\\\'c\\\\%d\\\\\\\\e\"`\n- [ ] Empty string → empty string\n- [ ] Unicode passthrough\n- [ ] Newlines escaped as `\\n`\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_compose.py::test_escape_drawtext -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/compose.py\", \"tests/core/test_grid_compose.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_compose.py::test_escape_drawtext -v\", \"acceptanceCriteria\": [\"4 special chars escaped\", \"empty string + unicode + newlines handled\", \"backslash processed first to avoid double-escape\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Dotted-path resolver",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** `set_path(obj, path_str, value)` walks `.field` / `[N]` access patterns on pydantic models, mutates target location, then triggers full re-validation. Wildcards explicitly rejected.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/dotted_path.py`\n- Create: `tests/core/test_grid_dotted_path.py`\n\n**Acceptance Criteria:**\n- [ ] `set_path(cfg, 'loras[0].strength', 0.5)` mutates exactly that location\n- [ ] Index out of range → DottedPathError\n- [ ] Unknown field → DottedPathError\n- [ ] `[*]` wildcard rejected\n- [ ] Post-mutation pydantic re-validation runs\n- [ ] Empty path raises\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_dotted_path.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/dotted_path.py\", \"tests/core/test_grid_dotted_path.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_dotted_path.py -v\", \"acceptanceCriteria\": [\"list/dict walker with [N] indexing\", \"unknown field + out-of-range + wildcard all raise DottedPathError\", \"post-mutation re-validation via model_validate\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: GridSpec pydantic models",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Pure schema — cells, captions, layout, budget. No loader, no path guard yet.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/spec.py` (models only)\n- Create: `tests/core/test_grid_spec.py`\n\n**Acceptance Criteria:**\n- [ ] Minimal valid spec parses\n- [ ] Both-variant cell rejected\n- [ ] Neither-variant cell rejected\n- [ ] List/dict override values rejected\n- [ ] Missing budget_cap_usd rejected\n- [ ] extra='forbid' blocks unknown keys\n- [ ] Layout 'RxC' or 'auto' accepted; junk rejected\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_spec.py -v -k 'not load'`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/spec.py\", \"tests/core/test_grid_spec.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_spec.py -v -k 'not load'\", \"acceptanceCriteria\": [\"GenerateCell + PathCell discriminated union\", \"override values scalar-only\", \"budget_cap_usd required (no default)\", \"layout regex validation\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: GridSpec loader + path guard + redaction",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** `GridSpec.load(path)` mirrors `Vault.load`: outside-repo guard, YAML parse, register captions+title with RedactionRegistry.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/spec.py` (add `load` classmethod)\n- Modify: `src/kinoforge/core/grid/errors.py` (add GridSpecPathError, GridSpecParseError)\n- Modify: `tests/core/test_grid_spec.py`\n\n**Acceptance Criteria:**\n- [ ] Outside-repo spec loads successfully\n- [ ] Under-repo spec raises GridSpecUnderRepoError\n- [ ] Missing file raises GridSpecPathError\n- [ ] Malformed YAML raises GridSpecParseError\n- [ ] Title + every caption registered with RedactionRegistry on success\n- [ ] Idempotent register (no raise on duplicate load)\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_spec.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/spec.py\", \"src/kinoforge/core/grid/errors.py\", \"tests/core/test_grid_spec.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_spec.py -v\", \"acceptanceCriteria\": [\"mirrors Vault.load shape exactly\", \"RedactionRegistry.add for title + captions\", \"4 error paths covered\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: capability_key cell grouping",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Walk resolved cells, group by `CapabilityKey.derive()`. path: cells form one degenerate `_PATH_GROUP_KEY` group.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/grouping.py`\n- Create: `tests/core/test_grid_grouping.py`\n\n**Acceptance Criteria:**\n- [ ] Strength sweep (same base, only strength varies) → 1 group\n- [ ] Different config per cell → N groups\n- [ ] Mixed generate + path → 2+ groups (one degenerate path group)\n- [ ] Insertion-order preserved\n- [ ] Empty input returns {}\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_grouping.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/grouping.py\", \"tests/core/test_grid_grouping.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_grouping.py -v\", \"acceptanceCriteria\": [\"structural-subtype protocol on cells\", \"_PATH_GROUP_KEY sentinel for no-compute cells\", \"insertion-order preserved\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Layout resolver + filter-graph builder",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Pure-Python helpers that build the ffmpeg arg list. No subprocess yet.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/compose.py`\n- Modify: `tests/core/test_grid_compose.py`\n\n**Acceptance Criteria:**\n- [ ] `_resolve_layout('auto', n=3)` returns (2,2); n=4 → (2,2); n=6 → (3,2)\n- [ ] Explicit 'RxC' returns (R,C); R*C < N raises ValueError\n- [ ] `_build_filter_graph` produces scale+pad+fps+tpad chain per input + xstack\n- [ ] Caption escaping invoked via `_escape_drawtext`\n- [ ] Empty cells → ValueError\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_compose.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/compose.py\", \"tests/core/test_grid_compose.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_compose.py -v\", \"acceptanceCriteria\": [\"auto-layout via sqrt+ceil\", \"explicit RxC validation\", \"per-cell normalize chain (scale/pad/fps/tpad)\", \"xstack row-major positions\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: ffmpeg composer subprocess invocation",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** `_check_ffmpeg()` + `probe_inputs()` + `compose_grid_mp4()` — actual subprocess shell-out, stderr capture on failure.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/compose.py`\n- Modify: `tests/core/test_grid_compose.py`\n\n**Acceptance Criteria:**\n- [ ] `_check_ffmpeg()` raises FfmpegNotFoundError if binary missing\n- [ ] `probe_inputs([path])` returns list[InputProbe] via ffprobe JSON\n- [ ] `compose_grid_mp4` invokes ffmpeg with libx264 + -an + -y\n- [ ] Non-zero exit → FfmpegInvocationError + stderr → <out>.stderr.txt\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_compose.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/compose.py\", \"tests/core/test_grid_compose.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_compose.py -v\", \"acceptanceCriteria\": [\"subprocess.run arg-list (no shell=True)\", \"ffprobe JSON parsed for width/height/fps/duration\", \"stderr file written on failure\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Grid executor — subprocess per cell, group-parallel",
+      "status": "pending",
+      "blockedBy": [2, 4, 5, 7],
+      "description": "**Goal:** `run_grid(spec, *, output_dir, max_parallel_groups) -> GridResult` orchestrates resolution + grouping + per-cell subprocess + composition.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/executor.py`\n- Create: `tests/core/test_grid_executor.py`\n\n**Acceptance Criteria:**\n- [ ] Status mapping: full | partial | budget | ffmpeg | teardown\n- [ ] Per-cell subprocess cmd has --run-id <grid_id>__cell<idx>; --no-reuse only on last cell of group\n- [ ] Cell failure aborts rest of group (pod state unknown); other groups continue\n- [ ] Partial status → cell mp4s preserved in _grid_<id>_partial/ with caption-slug names\n- [ ] Post-condition `kinoforge list` probe sets status='teardown' on residual pod\n- [ ] asyncio.Semaphore caps concurrent groups\n\n**Verify:** `pixi run -- pytest tests/core/test_grid_executor.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/executor.py\", \"tests/core/test_grid_executor.py\"], \"verifyCommand\": \"pixi run -- pytest tests/core/test_grid_executor.py -v\", \"acceptanceCriteria\": [\"asyncio + Semaphore for group-parallel\", \"warm-reuse via --no-reuse-on-last-cell pattern\", \"post-condition list probe extends destroy-on-teardown protection\", \"GridCellResult.status: success|failed|aborted\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: _cmd_grid CLI + subparser",
+      "status": "pending",
+      "blockedBy": [4, 8],
+      "description": "**Goal:** Wire `kinoforge grid` verb. 5 flags. Map GridResult.status → exit codes 0-5.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py`\n- Modify: `src/kinoforge/cli/_main.py`\n- Create: `tests/cli/test_cmd_grid.py`\n\n**Acceptance Criteria:**\n- [ ] --help prints all 5 flags\n- [ ] Missing --spec exits 1\n- [ ] Status mapping: full=0, partial=2, budget=3, ffmpeg=4, teardown=5, spec error=1\n- [ ] --dry-run skips compute, exits 0\n- [ ] Spec validation error → exit 1 with underlying message\n\n**Verify:** `pixi run -- pytest tests/cli/test_cmd_grid.py -v && pixi run kinoforge grid --help`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"src/kinoforge/cli/_main.py\", \"tests/cli/test_cmd_grid.py\"], \"verifyCommand\": \"pixi run -- pytest tests/cli/test_cmd_grid.py -v && pixi run kinoforge grid --help\", \"acceptanceCriteria\": [\"5 flags wired\", \"exit code mapping per spec\", \"dry-run path tested\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Integration test — 3 path: cells → real grid mp4",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** End-to-end with REAL ffmpeg (no subprocess mocking) but no compute. Synthesizes 3 testsrc mp4s, runs full run_grid on path:-only spec, decodes output and verifies cell regions.\n\n**Files:**\n- Create: `tests/integration/test_grid_end_to_end.py`\n\n**Acceptance Criteria:**\n- [ ] 3 testsrc mp4s generated via ffmpeg lavfi color=red/green/blue\n- [ ] run_grid status=full, composed mp4 exists\n- [ ] Middle frame decoded; cell regions show expected colors (±20 RGB tolerance)\n\n**Verify:** `pixi run -- pytest tests/integration/test_grid_end_to_end.py -v`\n\n```json:metadata\n{\"files\": [\"tests/integration/test_grid_end_to_end.py\"], \"verifyCommand\": \"pixi run -- pytest tests/integration/test_grid_end_to_end.py -v\", \"acceptanceCriteria\": [\"ffmpeg testsrc inputs\", \"real ffmpeg composition\", \"color-region pixel sample per cell\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: AC8 / AST-scan extension",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** Existing AST scan extended to cover core/grid/ modules. Allow-list entry for ffmpeg stderr writer (binary-no-tokens, documented).\n\n**Files:**\n- Modify: `tests/test_no_unredacted_writes.py`\n\n**Acceptance Criteria:**\n- [ ] AST scan visits core/grid/ modules\n- [ ] Compose's stderr writer allow-listed with documented reason\n\n**Verify:** `pixi run -- pytest tests/test_no_unredacted_writes.py -v`\n\n```json:metadata\n{\"files\": [\"tests/test_no_unredacted_writes.py\"], \"verifyCommand\": \"pixi run -- pytest tests/test_no_unredacted_writes.py -v\", \"acceptanceCriteria\": [\"grid modules in coverage list\", \"ffmpeg stderr writer allow-listed with comment\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 12: README section + illustrative spec",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Operator-facing docs.\n\n**Files:**\n- Modify: `README.md`\n- Create: `examples/grids/illustrative-strength-sweep.yaml`\n\n**Acceptance Criteria:**\n- [ ] README section walks strength-sweep invocation + exit-code table + outside-repo requirement\n- [ ] Illustrative spec uses vault-alias references with comment header marking NOT directly loadable\n\n**Verify:** `pixi run -- python -c \"import yaml; yaml.safe_load(open('examples/grids/illustrative-strength-sweep.yaml'))\"`\n\n```json:metadata\n{\"files\": [\"README.md\", \"examples/grids/illustrative-strength-sweep.yaml\"], \"verifyCommand\": \"pixi run -- python -c 'import yaml; yaml.safe_load(open(\\\"examples/grids/illustrative-strength-sweep.yaml\\\"))'\", \"acceptanceCriteria\": [\"README section with worked example\", \"illustrative spec marked NOT loadable\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 13: Shared smoke harness — write_strength_grid_spec",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Both Tier-3 + Tier-4 share one helper that writes per-tier grid spec to a tmp dir outside the repo.\n\n**Files:**\n- Create: `tests/_smoke_harness/grid.py`\n- Create: `tests/_smoke_harness/test_grid.py`\n\n**Acceptance Criteria:**\n- [ ] `write_strength_grid_spec(*, tmp_dir, base_cfg, strengths, lora_indices, budget_usd, title) -> Path`\n- [ ] lora_indices=[0,1] writes both override keys per cell\n- [ ] Returned path passes GridSpec.load round-trip\n\n**Verify:** `pixi run -- pytest tests/_smoke_harness/test_grid.py -v`\n\n```json:metadata\n{\"files\": [\"tests/_smoke_harness/grid.py\", \"tests/_smoke_harness/test_grid.py\"], \"verifyCommand\": \"pixi run -- pytest tests/_smoke_harness/test_grid.py -v\", \"acceptanceCriteria\": [\"keyword-only signature\", \"lora_indices controls override key count\", \"round-trip via GridSpec.load\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 14: Rewire Tier-3 smoke — mocked GREEN",
+      "status": "pending",
+      "blockedBy": [9, 13],
+      "description": "**Goal:** Drop xfail. Wire Tier-3 through write_strength_grid_spec + subprocess `kinoforge grid` invocation. Subprocess mocked at this task; live fire is Task 16.\n\n**Files:**\n- Modify: `tests/smoke/live_wan21/test_lora_strength_variation.py`\n\n**Acceptance Criteria:**\n- [ ] xfail decorator removed from mock body\n- [ ] write_strength_grid_spec used with lora_indices=[0], budget_usd=0.3\n- [ ] Subprocess monkeypatched; per-cell sha distinctness assertion in body\n- [ ] teardown_pod_or_raise in finally\n\n**Verify:** `KINOFORGE_LIVE_TESTS=1 pixi run -- pytest tests/smoke/live_wan21/test_lora_strength_variation.py -v -k mock`\n\n```json:metadata\n{\"files\": [\"tests/smoke/live_wan21/test_lora_strength_variation.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run -- pytest tests/smoke/live_wan21/test_lora_strength_variation.py -v -k mock\", \"acceptanceCriteria\": [\"xfail removed\", \"subprocess mocked\", \"sha-distinct assertion\", \"finally teardown\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 15: Rewire Tier-4 smoke — mocked GREEN",
+      "status": "pending",
+      "blockedBy": [9, 13],
+      "description": "**Goal:** Same pattern as Task 14 for Wan 2.2 14B MoE pair (lora_indices=[0,1], budget_usd=1.5).\n\n**Files:**\n- Modify: `tests/smoke/release_wan22/test_lora_strength_variation.py`\n\n**Acceptance Criteria:**\n- [ ] xfail decorator removed\n- [ ] write_strength_grid_spec with lora_indices=[0,1], budget_usd=1.5\n- [ ] Subprocess mocked + sha distinct assertion + finally teardown\n\n**Verify:** `KINOFORGE_LIVE_TESTS=1 pixi run -- pytest tests/smoke/release_wan22/test_lora_strength_variation.py -v -k mock`\n\n```json:metadata\n{\"files\": [\"tests/smoke/release_wan22/test_lora_strength_variation.py\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run -- pytest tests/smoke/release_wan22/test_lora_strength_variation.py -v -k mock\", \"acceptanceCriteria\": [\"xfail removed\", \"MoE pair shape (lora_indices=[0,1])\", \"sha-distinct assertion\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 16: USER-GATE — LIVE FIRE Tier-3 Wan 2.1 1.3B strength smoke",
+      "status": "pending",
+      "blockedBy": [10, 11, 14],
+      "description": "**Goal:** Real RunPod fire. Wan 2.1 1.3B canonical Pokemon+static-rotation LoRA pair at strength={0.5, 1.0, 1.5}. Budget cap $0.30. Operator-loop perceptual eval.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it \"verified inline\", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.\n\n**Files:**\n- Modify: `tests/smoke/live_wan21/test_lora_strength_variation.py` (add live body)\n\n**Acceptance Criteria:**\n- [ ] `pixi run preflight` exit 0 before fire\n- [ ] Test exit 0 under KINOFORGE_LIVE_TESTS=1 KINOFORGE_LIVE_FIRE=1\n- [ ] Composed grid mp4 lands in output/\n- [ ] 3 per-cell mp4s pairwise-distinct sha256\n- [ ] kinoforge list after = no running instances AND no ledger entries\n- [ ] Spend under $0.30 via kinoforge cost\n- [ ] Operator perceptual eval: strength variation visible\n\n**Verify:** `pixi run preflight && KINOFORGE_LIVE_TESTS=1 KINOFORGE_LIVE_FIRE=1 pixi run -- pytest tests/smoke/live_wan21/test_lora_strength_variation.py::test_lora_strength_variation_wan21_live -v -s 2>&1 | tee /tmp/p1-tier3-fire.log`\n\n```json:metadata\n{\"files\": [\"tests/smoke/live_wan21/test_lora_strength_variation.py\"], \"verifyCommand\": \"pixi run preflight && KINOFORGE_LIVE_TESTS=1 KINOFORGE_LIVE_FIRE=1 pixi run -- pytest tests/smoke/live_wan21/test_lora_strength_variation.py::test_lora_strength_variation_wan21_live -v -s 2>&1 | tee /tmp/p1-tier3-fire.log\", \"acceptanceCriteria\": [\"preflight exit 0 before fire\", \"test exit 0\", \"composed grid mp4 exists in output/\", \"3 per-cell mp4s with pairwise-distinct sha256\", \"kinoforge list after test = no running instances AND no ledger entries\", \"spend under $0.30 via kinoforge cost\", \"operator perceptual eval: strength variation visible on grid mp4\"], \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\", \"tier-3\"], \"gateScope\": \"Tier-3 strength-variation smoke against real RunPod\", \"failurePolicy\": \"abort on cell failure; preserve partial mp4s; destroy pod before exit\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 17: USER-GATE — LIVE FIRE Tier-4 Wan 2.2 14B MoE-pair strength smoke",
+      "status": "pending",
+      "blockedBy": [10, 11, 15],
+      "description": "**Goal:** Real RunPod fire. Wan 2.2 14B MoE pair (Arcane high+low) at strength={0.5, 1.0, 1.5}. Budget cap $1.50. Operator-loop perceptual eval; bug coverage is whether adapter_weights= reaches BOTH transformers.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it \"verified inline\", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.\n\n**Files:**\n- Modify: `tests/smoke/release_wan22/test_lora_strength_variation.py` (add live body)\n\n**Acceptance Criteria:**\n- [ ] preflight exit 0 before fire\n- [ ] test exit 0 under both env vars\n- [ ] composed grid mp4 exists\n- [ ] 3 per-cell mp4s pairwise-distinct sha256\n- [ ] kinoforge list after = no running instances AND no ledger entries\n- [ ] spend under $1.50 via kinoforge cost\n- [ ] operator perceptual eval: BOTH transformers respond to strength\n\n**Verify:** `pixi run preflight && KINOFORGE_LIVE_TESTS=1 KINOFORGE_LIVE_FIRE=1 pixi run -- pytest tests/smoke/release_wan22/test_lora_strength_variation.py::test_lora_strength_variation_wan22_live -v -s 2>&1 | tee /tmp/p1-tier4-fire.log`\n\n```json:metadata\n{\"files\": [\"tests/smoke/release_wan22/test_lora_strength_variation.py\"], \"verifyCommand\": \"pixi run preflight && KINOFORGE_LIVE_TESTS=1 KINOFORGE_LIVE_FIRE=1 pixi run -- pytest tests/smoke/release_wan22/test_lora_strength_variation.py::test_lora_strength_variation_wan22_live -v -s 2>&1 | tee /tmp/p1-tier4-fire.log\", \"acceptanceCriteria\": [\"preflight exit 0 before fire\", \"test exit 0\", \"composed grid mp4 exists in output/\", \"3 per-cell mp4s with pairwise-distinct sha256\", \"kinoforge list after test = no running instances AND no ledger entries\", \"spend under $1.50 via kinoforge cost\", \"operator perceptual eval: BOTH transformers respond to strength change\"], \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\", \"tier-4\", \"release-gate\"], \"gateScope\": \"Tier-4 MoE-pair strength-variation smoke against real RunPod\", \"failurePolicy\": \"abort on cell failure; preserve partial mp4s; destroy pod before exit\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 18,
+      "subject": "Task 18: Log Tier-3 + Tier-4 entries to successful-generations.md",
+      "status": "pending",
+      "blockedBy": [16, 17],
+      "description": "**Goal:** Per CLAUDE.md durability rule: kinoforge grid is a new capability axis so first grid runs land brand-new §entries.\n\n**Files:**\n- Modify: `successful-generations.md`\n\n**Acceptance Criteria:**\n- [ ] One new top-level § for Tier-3 (Wan 2.1 1.3B grid: strength sweep) with full recipe + per-cell shas + costs\n- [ ] One new top-level § for Tier-4 (Wan 2.2 14B MoE-pair grid: strength sweep) with same shape\n- [ ] TOC updated with both entries\n- [ ] Spec paths in entries go through RedactionRegistry placeholder shape\n\n**Verify:** `rg -A 3 'grid:' /workspace/successful-generations.md | head -40`\n\n```json:metadata\n{\"files\": [\"successful-generations.md\"], \"verifyCommand\": \"rg -A 3 'grid:' /workspace/successful-generations.md | head -40\", \"acceptanceCriteria\": [\"Tier-3 § with recipe + shas + cost + wall time\", \"Tier-4 § with same shape + MoE-pair notes\", \"TOC updated\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 19,
+      "subject": "Task 19: PROGRESS.md close-out — P1 CLOSED FULL_GREEN",
+      "status": "pending",
+      "blockedBy": [18],
+      "description": "**Goal:** Update PROGRESS.md: P1 → CLOSED FULL_GREEN; fix stale 13-commits-ahead line; add kinoforge grid command entry; reaffirm Layer 5 single-next-action.\n\n**Files:**\n- Modify: `PROGRESS.md`\n\n**Acceptance Criteria:**\n- [ ] P1 section header retitled CLOSED FULL_GREEN with merge date 2026-06-21 + Tier-3/Tier-4 fire date 2026-06-25\n- [ ] Stale '13 commits ahead, NOT merged' line removed\n- [ ] New active-workstream entry for kinoforge grid command with spec + plan paths, cumulative spend, both fires GREEN\n- [ ] Single-next-action remains Layer 5 Bearer per-prediction cost capture\n\n**Verify:** `rg -n 'P1.*CLOSED|P1.*FULL_GREEN' /workspace/PROGRESS.md | head -3`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'P1.*CLOSED|P1.*FULL_GREEN' /workspace/PROGRESS.md | head -3\", \"acceptanceCriteria\": [\"P1 marked CLOSED FULL_GREEN\", \"stale 13-commits line removed\", \"grid command active-workstream entry\", \"Layer 5 next-action reaffirmed\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ]
+}
