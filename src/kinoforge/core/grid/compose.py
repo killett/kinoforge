@@ -285,7 +285,9 @@ def compose_grid_mp4(
     )
     if result.returncode != 0:
         stderr_path = out_path.with_suffix(out_path.suffix + ".stderr.txt")
-        stderr_path.write_text(result.stderr)
+        stderr_path.write_text(  # kinoforge:public-write
+            result.stderr,
+        )
         raise FfmpegInvocationError(
             f"ffmpeg exit={result.returncode}: {result.stderr.strip()[:500]}"
         )

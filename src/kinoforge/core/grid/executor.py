@@ -122,7 +122,9 @@ def _resolve_spec_cells(
     for i, cell in enumerate(spec.cells):
         if cell.generate is not None:
             cfg_path = tmp_dir / f"cell_{i}.yaml"
-            cfg_path.write_text(yaml.safe_dump(cell.generate.model_dump(mode="json")))
+            cfg_path.write_text(  # kinoforge:public-write
+                yaml.safe_dump(cell.generate.model_dump(mode="json")),
+            )
             resolved.append(
                 _ResolvedCell(
                     idx=i,
