@@ -90,11 +90,44 @@ def _stub_compose(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _stub_config_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bypass the real kinoforge.core.config.Config schema in unit tests.
+
+    `_resolve_spec_cells` calls ``load_config(...)`` + ``set_path(...)``;
+    we replace those with a thin fake that just records overrides and
+    is serializable via ``model_dump(mode='json')``.
+    """
+    from pydantic import BaseModel, ConfigDict
+
+    class _FakeConfig(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        model: str = "fake"
+        prompt: str = "hi"
+
+    def fake_load(path: object) -> _FakeConfig:
+        return _FakeConfig()
+
+    def fake_set_path(root: _FakeConfig, path: str, value: object) -> _FakeConfig:
+        data = root.model_dump()
+        data[path] = value
+        return _FakeConfig.model_validate(data)
+
+    # patch the names imported inside _resolve_spec_cells
+    import kinoforge.core.config as cfg_mod
+    import kinoforge.core.grid.dotted_path as dp_mod
+    import kinoforge.core.grid.executor as ex_mod
+
+    monkeypatch.setattr(cfg_mod, "load_config", fake_load)
+    monkeypatch.setattr(dp_mod, "set_path", fake_set_path)
+    del ex_mod
+
+
 def test_run_grid_all_success_composes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     log = _stub_generate_subprocess(monkeypatch)
     _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
     monkeypatch.setattr(
         "kinoforge.core.grid.executor._cell_capability_key",
         lambda cell: "K-same",
@@ -120,6 +153,7 @@ def test_run_grid_one_cell_fails_aborts_group_other_groups_continue(
 ) -> None:
     _stub_generate_subprocess(monkeypatch, failures={1: "engine boom"})
     _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
 
     keymap = {0: "K-a", 1: "K-a", 2: "K-a", 3: "K-b"}
     monkeypatch.setattr(
@@ -153,6 +187,7 @@ def test_run_grid_residual_pod_after_groups_yields_teardown_status(
         list_stdout="POD: 2k0gonzmeqw7xj running A100-SXM4-80GB",
     )
     _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
     monkeypatch.setattr(
         "kinoforge.core.grid.executor._cell_capability_key", lambda cell: "K"
     )
