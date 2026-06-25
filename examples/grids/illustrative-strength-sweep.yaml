@@ -1,0 +1,45 @@
+# ============================================================================
+# ILLUSTRATIVE EXAMPLE ONLY — NOT LOADABLE BY `kinoforge grid`
+# ----------------------------------------------------------------------------
+# This file lives INSIDE the repo root for documentation. `GridSpec.load`
+# refuses to load any spec whose path resolves under the active git repo
+# (raises `GridSpecUnderRepoError`) — captions and overrides can carry LoRA
+# refs or prompt fragments, so accidental commits must be impossible.
+#
+# To run a real strength sweep, copy this file OUTSIDE the repo, e.g.
+# `~/grids/wan22-arcane-strength.yaml`, replace `<lora-alias-...>` with
+# real vault aliases, then invoke:
+#
+#   pixi run kinoforge grid \
+#       --spec ~/grids/wan22-arcane-strength.yaml \
+#       --out output/wan22-strength-grid.mp4
+# ============================================================================
+
+title: "Wan 2.2 14B Arcane — strength sweep"
+layout: "1x3"
+budget_cap_usd: 1.50
+
+caption_style:
+  position: top-center
+  font_size_pct: 5.0
+  bg_alpha: 0.5
+
+cells:
+  - generate:
+      config: examples/configs/wan22-14b-arcane.yaml
+      overrides:
+        loras[0].strength: 0.5
+        loras[1].strength: 0.5
+    caption: "strength=0.5"
+  - generate:
+      config: examples/configs/wan22-14b-arcane.yaml
+      overrides:
+        loras[0].strength: 1.0
+        loras[1].strength: 1.0
+    caption: "strength=1.0"
+  - generate:
+      config: examples/configs/wan22-14b-arcane.yaml
+      overrides:
+        loras[0].strength: 1.5
+        loras[1].strength: 1.5
+    caption: "strength=1.5"

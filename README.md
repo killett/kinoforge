@@ -1758,6 +1758,51 @@ each other's internal artifact + ledger entry. Pass `--run-id run` to
 restore the prior behavior verbatim. Batch runs are unaffected — each
 manifest entry already names its own `run_id`.
 
+## `kinoforge grid` — composed side-by-side mp4 from N generations
+
+Compose N generations into one side-by-side mp4 with per-cell captions.
+Use it for strength sweeps, prompt comparisons, A/B tests across
+providers / engines / LoRA stacks.
+
+```bash
+pixi run kinoforge grid \
+    --spec ~/grids/wan22-arcane-strength.yaml \
+    --out output/wan22-strength-grid.mp4
+```
+
+**Spec lives OUTSIDE the repo.** `GridSpec.load` raises
+`GridSpecUnderRepoError` for any path resolving under the active git
+repo root — captions and overrides can carry LoRA refs or prompt
+fragments, so accidental commits must be impossible. The
+`examples/grids/` directory contains an illustrative spec marked
+NOT-loadable for documentation only.
+
+Each cell declares EITHER `generate:` (orchestrates a real generation
+via subprocess `kinoforge generate`) OR `path:` (points at a pre-existing
+mp4). Same-`CapabilityKey` cells share a warm pod (matcher reuse); the
+last cell of each group passes `--no-reuse` so the pod auto-destroys.
+Cross-group cells run in parallel under `--max-parallel-groups` (default 2).
+
+**Exit codes:**
+
+| status | exit | meaning |
+|---|---|---|
+| `full` | 0 | every cell GREEN + ffmpeg compose succeeded |
+| (spec err) | 1 | YAML / pydantic / under-repo path |
+| `partial` | 2 | one or more cells failed; per-cell mp4s preserved in `_grid_<id>_partial/` |
+| `budget` | 3 | cumulative spend crossed `budget_cap_usd` mid-run |
+| `ffmpeg` | 4 | every cell succeeded but final compose subprocess failed |
+| `teardown` | 5 | post-condition `kinoforge list` detected a residual pod |
+
+**Override syntax (dotted path).** A cell's `overrides:` map keys are
+dotted paths into the base cfg: `loras[0].strength`, `prompt`,
+`compute.lifecycle.lora_swap_re_probe_after_s`. Values MUST be scalars
+(int/float/str/bool/null); list/dict overrides are rejected — declare a
+separate base cfg instead. `[*]` wildcards rejected in v1.
+
+See `examples/grids/illustrative-strength-sweep.yaml` for a worked
+strength-sweep spec.
+
 ## Roadmap (deferred layers and their seams)
 
 Each item below names the deferred layer and the exact seam it plugs into when built:
