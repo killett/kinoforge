@@ -30,6 +30,7 @@ from kinoforge.cli._commands import (
     _cmd_forget,
     _cmd_gc,
     _cmd_generate,
+    _cmd_grid,
     _cmd_list,
     _cmd_pod_lora_ls,
     _cmd_provision,
@@ -116,6 +117,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "doctor": _cmd_doctor,
     "sweeper": _dispatch_sweeper,
     "pod": _dispatch_pod,
+    "grid": _cmd_grid,
 }
 
 
@@ -693,6 +695,38 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "the chosen pod + swap plan (evict/download) or the cold-boot "
             "fall-through reason. Exits 0."
         ),
+    )
+
+    # grid
+    p_grid = sub.add_parser(
+        "grid", help="compose N generations into a side-by-side grid mp4"
+    )
+    p_grid.add_argument(
+        "--spec",
+        required=True,
+        metavar="PATH",
+        help="grid spec yaml (outside repo)",
+    )
+    p_grid.add_argument(
+        "--out", default=None, metavar="PATH", help="composed grid mp4 destination"
+    )
+    p_grid.add_argument(
+        "--max-parallel-groups",
+        type=int,
+        default=2,
+        dest="max_parallel_groups",
+        help="concurrent groups (default 2)",
+    )
+    p_grid.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="resolve + plan, no compute",
+    )
+    p_grid.add_argument(
+        "--ephemeral",
+        action="store_true",
+        help="pass-through to each underlying generate",
     )
 
     return parser
