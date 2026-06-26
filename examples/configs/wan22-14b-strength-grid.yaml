@@ -1,30 +1,30 @@
-# Wan 2.1 T2V-1.3B + cfg-driven LoRA pair, purpose-built for `kinoforge grid`
-# strength-sweep smoke (Tier-3).
+# Wan 2.2 T2V-A14B + cfg-driven Arcane LoRA pair, purpose-built for
+# `kinoforge grid` strength-sweep release-gate smoke (Tier-4).
+#
+# Mirror of wan22-14b-lora-flexible-warm-reuse-release.yaml EXCEPT
+# `models:` carries the base only and a cfg-level `loras:` list
+# replaces server-side /lora/set_stack driving. Both Arcane tensors
+# default strength 1.0; the grid spec overrides `loras[0].strength`
+# AND `loras[1].strength` per cell (Tier-4 MoE-pair shape).
 #
 # `prompt:` carries the standard video-gen smoke prompt per memory
 # `feedback_standard_test_prompt.md` (verbatim from
 # examples/configs/prompts/field-realistic.txt). `kinoforge generate`
 # requires --prompt at argparse level; the grid executor pulls this
 # field via getattr(cfg, "prompt") to construct the argv.
-#
-# Mirror of wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml EXCEPT the
-# `smoke.lora_a/b` block is replaced with a cfg-level `loras:` list
-# (Shape A) so the grid CLI's override key `loras[0].strength`
-# resolves against `Config.loras[0].strength`.
-#
-# Tier-3 single-transformer Wan 2.1 architecture → both LoRAs use the
-# default `branch: auto`. Both strengths default 1.0; the grid spec
-# overrides `loras[0].strength` per cell.
 
 mode: t2v
 prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
 
 engine:
   kind: diffusers
-  precision: fp16
+  precision: bf16
   diffusers:
     image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
-    server_cmd: ["python", "-m", "kinoforge.engines.diffusers.servers.wan_t2v_server"]
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
     pip:
       - "torch==2.6.0"
       - "torchvision==0.21.0"
@@ -38,57 +38,58 @@ engine:
       - "imageio[ffmpeg]>=2.34"
     base_url: "http://localhost:8000"
     prompt_body_key: "prompt"
-    embed_modules: ["kinoforge.engines.diffusers.servers"]
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
 
 models:
-  - ref: "hf:Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
     kind: base
     target: checkpoints
 
 compute:
   provider: runpod
-  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
   warm_reuse_auto_attach: true
   tags:
-    smoke_tier: "kinoforge-smoke-tier-3-strength-grid"
+    smoke_tier: "kinoforge-smoke-tier-4-strength-grid"
   requirements:
-    min_vram_gb: 24
+    min_vram_gb: 80
     min_cuda: "12.4"
-    max_usd_per_hr: 0.40
+    max_usd_per_hr: 3.00
     gpu_preference:
-      - "NVIDIA RTX A5000"
-      - "NVIDIA RTX 4090"
-      - "NVIDIA L4"
-    disk_gb: 40
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
+    disk_gb: 150
   lifecycle:
-    idle_timeout: 10m
-    job_timeout: 5m
-    time_buffer: 2m
-    max_lifetime: 60m
-    boot_timeout: 30m
-    budget: 0.50
+    idle_timeout: 90m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 180m
+    boot_timeout: 60m
+    budget: 5.0
     heartbeat_interval_s: 30
     lora_swap_re_probe_after_s: 300
 
 spec:
-  model: "Wan2.1-T2V-1.3B-Diffusers"
+  model: "Wan2.2-T2V-A14B-Diffusers"
   pipeline: "WanPipeline"
   scheduler: "UniPCMultistepScheduler"
   width: 480
   height: 480
-  num_frames: 33
+  num_frames: 81
   fps: 16
 
-# Cfg-driven Wan 2.1 1.3B LoRA pair (Shape A).
-# - loras[0]: wan2.1 1.3b static rotation (camera-rotation motion)
-#     trigger: "sttcrttn"
-#     https://civitai.com/models/1479320?modelVersionId=1673265
-# - loras[1]: Pokemon Sprite Animation Video LoRA (Gen-5 sprite art)
-#     no trigger word (activates by load)
-#     https://civitai.com/models/1595383?modelVersionId=1805395
+# Cfg-driven Arcane Style LoRA pair (Shape A). Wan 2.2 MoE → explicit
+# `branch:` routes high_noise tensor to pipe.transformer + low_noise
+# to pipe.transformer_2. P2 (2026-06-22) per-arity validation gate
+# rejects `auto` on MoE pipelines, so the routing must be explicit.
 loras:
-  - ref: "civitai:1479320@1673265"
+  - ref: "civitai:2197303@2474081"     # Arcane Style — high-noise tensor
     strength: 1.0
-  - ref: "civitai:1595383@1805395"
+    branch: high_noise
+  - ref: "civitai:2197303@2474073"     # Arcane Style — low-noise tensor
     strength: 1.0
+    branch: low_noise

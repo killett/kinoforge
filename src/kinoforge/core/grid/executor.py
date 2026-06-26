@@ -171,12 +171,27 @@ def _resolve_spec_cells(
 def _build_generate_cmd(
     cell: _ResolvedCell, *, grid_id: str, output_dir: Path, no_reuse: bool
 ) -> list[str]:
-    """Construct the ``pixi run kinoforge generate ...`` argv for one cell."""
+    """Construct the ``pixi run kinoforge generate ...`` argv for one cell.
+
+    ``kinoforge generate`` requires ``--prompt`` at argparse level
+    (``cli/_main.py:413``). Read the prompt from the effective cfg's
+    top-level ``prompt:`` field. Raises if the cfg doesn't carry one.
+    """
     if cell.cfg_path is None:
         raise ValueError(
             f"cell {cell.idx}: cfg_path is None — _build_generate_cmd called on a "
             f"path: cell, which should be routed through the no-compute branch"
         )
+    cfg = cell.effective_cfg
+    prompt = getattr(cfg, "prompt", None)
+    if not prompt:
+        raise ValueError(
+            f"cell {cell.idx}: effective cfg has no top-level `prompt:` field; "
+            f"grid CLI requires every generate cell's cfg to carry a default "
+            f"prompt (kinoforge generate --prompt is required at argparse level). "
+            f"Add `prompt: ...` to the base cfg or pass it as a per-cell override."
+        )
+    mode = getattr(cfg, "mode", None) or "t2v"
     run_id = f"{grid_id}__cell{cell.idx}"
     cmd = [
         "pixi",
@@ -185,8 +200,10 @@ def _build_generate_cmd(
         "generate",
         "--config",
         str(cell.cfg_path),
+        "--prompt",
+        str(prompt),
         "--mode",
-        "t2v",
+        str(mode),
         "--run-id",
         run_id,
         "--output-dir",

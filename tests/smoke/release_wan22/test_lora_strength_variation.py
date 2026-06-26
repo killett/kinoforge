@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 REPO = Path(__file__).resolve().parents[3]
-CFG = REPO / "examples/configs/wan.yaml"
+CFG = REPO / "examples/configs/wan22-14b-strength-grid.yaml"
 PROMPT_FILE = REPO / "examples/configs/prompts/field-realistic.txt"
 
 _TAG = "kinoforge-smoke-tier-4-strength"
