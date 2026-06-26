@@ -1,0 +1,81 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-25-p3-cli-loras-arg.md",
+  "tasks": [
+    {
+      "id": 7,
+      "subject": "P3 Task 0: Parser module — loras_arg.py + unit tests",
+      "status": "pending",
+      "description": "**Goal:** Land parse_loras_heredoc + LorasParseError + LorasParseReport + LineError with full unit coverage.\n\n**Files:** src/kinoforge/cli/loras_arg.py + tests/cli/test_loras_arg.py\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/loras_arg.py\", \"tests/cli/test_loras_arg.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_loras_arg.py -v\", \"acceptanceCriteria\": [\"parse_loras_heredoc empty returns []\", \"numeric shorthand expands to civitai\", \"collect-all aggregates errors\", \"composite (ref, branch) duplicate detection\", \"LineError has no ref/filename/label field\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "P3 Task 1: Redaction parity tests + AST scan extension",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "**Goal:** Lock down P3-Privacy-1/2 invariants.\n\n```json:metadata\n{\"files\": [\"tests/test_lora_error_redaction.py\", \"tests/test_no_unredacted_writes.py\"], \"verifyCommand\": \"pixi run pytest tests/test_lora_error_redaction.py tests/test_no_unredacted_writes.py -v\", \"acceptanceCriteria\": [\"sensitive ref absent from str/repr/render\", \"loras_arg.py added to scanned files\", \"LineError AST: no ref/filename/label\", \"render_for_cli AST: no .text reference\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "P3 Task 2: Resolver kwarg extension — cli_loras",
+      "status": "pending",
+      "description": "**Goal:** Add keyword-only cli_loras to resolve_active_lora_stack.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lora.py\", \"tests/core/test_lora_resolver_p3.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_lora_resolver_p3.py tests/core/ -v\", \"acceptanceCriteria\": [\"cli_loras=None preserves P1\", \"cli_loras non-None wins\", \"cli_loras=[] valid empty override\", \"RedactionRegistry before WARNING\", \"WARNING count only no refs\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "P3 Task 3: AST scan — precedence-single-source invariant",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Lock down P3-Precedence-Single-Source.\n\n```json:metadata\n{\"files\": [\"tests/test_no_precedence_branches_outside_resolver.py\"], \"verifyCommand\": \"pixi run pytest tests/test_no_precedence_branches_outside_resolver.py -v\", \"acceptanceCriteria\": [\"AST scan passes on clean tree\", \"allow-list documents _cmd_generate hop\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "P3 Task 4: CLI surface — --loras arg + _cmd_generate wiring",
+      "status": "pending",
+      "blockedBy": [7, 9],
+      "description": "**Goal:** Add --loras argparse arg + parse-and-thread to resolver.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_cmd_generate_loras.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_generate_loras.py tests/cli/ -v\", \"acceptanceCriteria\": [\"--loras documented in --help\", \"repeated --loras exits 2\", \"args.loras threaded as cli_loras kwarg\", \"LorasParseError renders to stderr exit 1\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "P3 Task 5: --dry-run-swap loras_source line",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "**Goal:** dry-run-swap preview emits loras_source: cli|vault|cfg|empty.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/cli/test_cmd_generate_loras.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_generate_loras.py -v\", \"acceptanceCriteria\": [\"dry-run-swap emits loras_source\", \"label distinguishes cli/vault/cfg/empty\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "P3 Task 6: Integration tests — CLI → set_stack wire body",
+      "status": "pending",
+      "blockedBy": [11],
+      "description": "**Goal:** End-to-end coverage: CLI override drives SetStackRequest.\n\n```json:metadata\n{\"files\": [\"tests/integration/test_loras_cli_e2e.py\"], \"verifyCommand\": \"pixi run pytest tests/integration/test_loras_cli_e2e.py -v && pixi run pytest\", \"acceptanceCriteria\": [\"SetStackRequest.target reflects CLI stack\", \"LoraStack refs derive from CLI\", \"matcher signals swap on ref change\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "P3 Task 7: PROGRESS.md anchor amendment",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "**Goal:** Amend PROGRESS.md anchor heredoc to ref-first column order.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -nC2 '1111:2222' /workspace/PROGRESS.md\", \"acceptanceCriteria\": [\"heredoc example uses ref-first\", \"amendment note cites P3 spec\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "P3 Task 8: README — --loras subsection",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "**Goal:** New --loras subsection in README.\n\n```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"rg -n '\\\\-\\\\-loras' /workspace/README.md\", \"acceptanceCriteria\": [\"--loras subsection present\", \"precedence table CLI > vault > cfg\", \"redaction invariant note\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "P3 Task 9: Tier-3 live fire via --loras + sg-md update",
+      "status": "pending",
+      "blockedBy": [14, 15],
+      "description": "**Goal:** Live fire validates CLI --loras wire-shape on Tier-3.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"live MP4 via --loras CLI path\", \"no leaked pods post-run\", \"sg.md updated\", \"spend within $0.30\"], \"modelTier\": \"live-spend\"}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "P3 Task 10: PROGRESS.md close-out — Layer 5 next",
+      "status": "pending",
+      "blockedBy": [16],
+      "description": "**Goal:** Close P3 in PROGRESS; advance single-next-action to Layer 5.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'P3 CLOSED|Layer 5' /workspace/PROGRESS.md\", \"acceptanceCriteria\": [\"P3 CLOSED entry under Active workstream\", \"single-next-action = Layer 5\", \"P3 deferred-queue entry struck\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-25"
+}
