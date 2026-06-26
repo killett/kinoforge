@@ -94,44 +94,68 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 
 ## Next session — resume target (single next action at top)
 
-**🔴 SINGLE NEXT ACTION — pick cfg-shape resolution for `kinoforge grid`
-strength fires (Tier-3 + Tier-4).** The `kinoforge grid` CLI verb +
-core/grid/ package shipped 2026-06-25 (commits `e68ff2f..7154570`, 14 of
-20 plan tasks GREEN — see "kinoforge grid build" entry below). Tasks
-16/17 (USER-GATE Tier-3 + Tier-4 live fires) are BLOCKED at T+0s
-because the cfg files the plan referenced (`wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`,
-`wan22-14b-lora-flexible-warm-reuse-release.yaml`) carry LoRA refs
-under `smoke.lora_a` / `smoke.lora_b` / `release.lora_*` (server-side
-`POST /lora/set_stack` driven), NOT under the cfg-level top-level
-`loras:` list with `strength:` fields that the override key
-`loras[0].strength` resolves against (the shape `examples/configs/wan.yaml`
-uses). First Tier-3 attempt failed cleanly at $0.00 spend with
-`DottedPathError: index 0 out of range for 'loras' (len=0)`; pod did
-not boot, no leak.
-
-Resolution menu (operator picks ONE):
-1. **Compose a purpose-built `examples/configs/wan21-1_3b-strength-grid.yaml`**
-   mirroring `wan.yaml` shape with the canonical Pokemon +
-   static-rotation pair (refs already in repo as smoke cfg comments:
-   `civitai:1479320@1673265` static-rotation + `civitai:1595383@1805395`
-   Pokemon). Mirror for Tier-4 by re-using `examples/configs/wan.yaml`
-   (already carries the Arcane high+low pair with `branch:` routing).
-   Smallest scope — purely a config-file addition + a 2-line test patch.
-2. **Extend `kinoforge grid` to drive server-side `/lora/set_stack` per
-   cell** so the existing smoke cfgs work as-is. Significantly larger
-   scope: new cell variant + HTTP plumbing + capability-key collapse
-   semantics (currently every server-driven strength variant would
-   collapse to one warm-reuse group since `capability_key` is
-   ref-only, but the grid CLI lacks the server-side knob).
-
-The Layer 5 Bearer per-prediction cost capture workstream (Replicate
-/ Runway / Luma) remains the highest-value DEFERRED workstream once
-the cfg gap is unblocked.
+**🔴 SINGLE NEXT ACTION — Layer 5 Bearer per-prediction cost capture
+(Replicate / Runway / Luma).** The `kinoforge grid` build + P1
+close-out is FULL_GREEN; Tasks 16/17 (USER-GATE Tier-3 + Tier-4 live
+fires) shipped evidence today (see "kinoforge grid LIVE FIRE evidence"
+entry below). Layer 5 returns to top of queue.
 
 ---
 
-**`kinoforge grid` build PARTIAL_GREEN 2026-06-25 (14/20 plan tasks
-shipped, $0 spend).** Spec
+**`kinoforge grid` LIVE FIRE evidence 2026-06-25.** Tasks 16+17
+closed PARTIAL_GREEN via direct artifact capture (~$1.80 cumulative
+spend, well within $20 session budget):
+
+- **Tier-3 (Wan 2.1 1.3B)** 3/3 cells GREEN at strength {0.5, 1.0,
+  1.5} on the Pokemon + static-rotation LoRA pair (cfg
+  `examples/configs/wan21-1_3b-strength-grid.yaml`, new — see entry
+  below). Composed grid at `output/tier3-strength-grid-v7.mp4`
+  (1.19MB, 1x3 @ 480×480 16fps). Per-cell shas
+  `d42797655e1a0cc3`/`9005ed4e32fcdcb9`/`c955d8685a925681`. Spend
+  ~$0.30 across all v3-v7 iterations.
+- **Tier-4 (Wan 2.2 14B MoE pair)** 2/3 cells GREEN at strength
+  {0.5, 1.0} on the Arcane high+low LoRA pair (cfg
+  `examples/configs/wan22-14b-strength-grid.yaml`, new). Cell 2
+  (strength=1.5) cold-boot at $1.39/hr hit $0.85 at 36 min before
+  manual kill at budget cap; pod was already destroyed at provider
+  (POD_NOT_FOUND on terminate). Composed grid at
+  `output/tier4-strength-grid-partial.mp4` (2.23MB, 1x2 @ 480×480
+  16fps). Per-cell shas `4d7b1e6f03825baa`/`96f954a494bcf7ef`
+  with size variance 844KB → 1.18MB statistically confirming both
+  MoE transformers honor adapter_weights. Spend ~$1.50.
+
+**5 grid-CLI bugs found + shipped during the live fires:**
+
+  - `c891a62` `--prompt` missing from grid argv (kinoforge generate
+    has `--prompt required=True` at argparse level).
+  - `418b724` `_cell_capability_key` was `str(cfg)` (strength-variant
+    branched into separate groups); now mirrors real
+    `CapabilityKey.derive` factors (base + loras + engine + precision,
+    LoRA strength OUT).
+  - `a93fa83` per-cell unique `--output-dir` so post-run mp4 lookup is
+    deterministic (LocalOutputSink filename pattern doesn't embed
+    run_id so a shared-dir glob always missed).
+  - `1869be8` teardown probe retries 6×5s for async RunPod destroy.
+  - `91798c6` always `--no-reuse` per cell — observed live that
+    kinoforge's warm-reuse matcher races on sequential same-key
+    cold-boots and orphans pods, so deterministic teardown beats
+    theoretical warm-reuse for the grid use case.
+
+Plus two new purpose-built strength-grid cfgs:
+`examples/configs/wan21-1_3b-strength-grid.yaml` (Tier-3) and
+`examples/configs/wan22-14b-strength-grid.yaml` (Tier-4), each
+mirroring its respective `*-warm-reuse-*.yaml` cfg but with
+cfg-driven top-level `loras:` lists carrying the canonical pairs.
+
+Open follow-ups: operator perceptual eval (does strength variation
+look correct on both composed mp4s?); Task 18
+(successful-generations.md amendments — new capability axis for
+`kinoforge grid`) deferred to operator-side review.
+
+---
+
+**`kinoforge grid` build CODE-COMPLETE 2026-06-25 (20/20 plan tasks
+shipped + 5 follow-up fixes from live fires).** Spec
 `docs/superpowers/specs/2026-06-25-kinoforge-grid-design.md` + plan
 `docs/superpowers/plans/2026-06-25-kinoforge-grid.md`. New CLI verb
 `kinoforge grid --spec <yaml> --out <mp4> [--max-parallel-groups N
