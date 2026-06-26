@@ -129,6 +129,11 @@ class EphemeralSession:
         """
         self.policy = STRICT_POLICY if enabled else DEFAULT_POLICY
         self.vault = vault
+        # P3 — set by `_cmd_generate` when --loras is passed; downstream
+        # resolver call sites (warm-reuse set_stack swap) read it so the
+        # CLI override flows end-to-end without threading a kwarg through
+        # every orchestrator/backend hop.
+        self.cli_loras: list[Any] | None = None
         self.in_memory_ledger: dict[str, dict[str, Any]] = {}
         self.in_memory_profiles: dict[str, Any] = {}
         self._registered_stores: list[tuple[ArtifactStore, str]] = []
