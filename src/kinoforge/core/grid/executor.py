@@ -347,11 +347,25 @@ async def _run_group(
     output_dir: Path,
     sem: asyncio.Semaphore,
 ) -> list[GridCellResult]:
-    """Run one group sequentially under the parallel-group semaphore."""
+    """Run one group sequentially under the parallel-group semaphore.
+
+    Every cell passes ``--no-reuse`` so the per-cell ``kinoforge generate``
+    subprocess is self-contained: cold-boots a fresh pod, runs the gen,
+    destroys the pod. Trades warm-reuse latency for deterministic teardown.
+
+    Reasoning: kinoforge's warm-reuse matcher has a race on
+    sequential-cold-boots-with-same-cap-key (observed live 2026-06-25 v7
+    fire: 3 sequential cells with identical CapabilityKey cold-booted 3
+    pods anyway because the previous pod's ledger entry hadn't transitioned
+    from in-flight to warm by the next cell's matcher scan). Without
+    ``--no-reuse`` on cells 0..N-2, those orphaned pods stay idle until
+    the sweeper reaps them — that's a money leak masquerading as
+    warm-reuse. Per-cell self-cleanup eliminates the leak deterministically.
+    """
     async with sem:
         results: list[GridCellResult] = []
         aborted = False
-        for i, cell in enumerate(cells):
+        for cell in cells:
             if aborted:
                 results.append(
                     GridCellResult(
@@ -364,12 +378,11 @@ async def _run_group(
                     )
                 )
                 continue
-            is_last = i == len(cells) - 1
             r = await _run_one_cell(
                 cell,
                 grid_id=grid_id,
                 output_dir=output_dir,
-                no_reuse=is_last,
+                no_reuse=True,
             )
             results.append(r)
             if r.status == "failed":
