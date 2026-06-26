@@ -662,3 +662,43 @@ def test_ac7_no_path_write_outside_store_and_sink() -> None:
     assert not violations, "Direct-write violations:\n" + "\n".join(
         f"  {v}" for v in violations
     )
+
+
+def test_p3_line_error_has_no_ref_filename_label_field() -> None:
+    """AC-P3-3 — AST scan: LineError class declaration must not declare
+    any field annotated with a name matching `ref|filename|label`.
+    """
+    src = (SRC / "cli" / "loras_arg.py").read_text()
+    tree = ast.parse(src)
+    forbidden = {"ref", "filename", "label"}
+    found_class = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "LineError":
+            found_class = True
+            for item in node.body:
+                if isinstance(item, ast.AnnAssign) and isinstance(
+                    item.target, ast.Name
+                ):
+                    assert item.target.id not in forbidden, (
+                        f"LineError declared forbidden field `{item.target.id}`"
+                    )
+    assert found_class, "LineError class not found in src/kinoforge/cli/loras_arg.py"
+
+
+def test_p3_render_for_cli_does_not_interpolate_heredoc() -> None:
+    """AC-P3-4 — render_for_cli body must not reference an attribute
+    named `text` (would mean it interpolates the raw heredoc).
+    """
+    src = (SRC / "cli" / "loras_arg.py").read_text()
+    tree = ast.parse(src)
+    found = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "render_for_cli":
+            found = True
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Attribute) and sub.attr == "text":
+                    raise AssertionError(
+                        "render_for_cli references `.text`; must build "
+                        "output strictly from self.errors fields"
+                    )
+    assert found, "render_for_cli not found in src/kinoforge/cli/loras_arg.py"
