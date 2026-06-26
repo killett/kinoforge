@@ -24,11 +24,14 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
 from kinoforge.cli.context import SessionContext
+from kinoforge.cli.loras_arg import LorasParseError, parse_loras_heredoc
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import TeardownError, UnknownAdapter
 from kinoforge.core.interfaces import GenerationRequest, Instance
 from kinoforge.core.lifecycle import destroy_confirmed
+from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
 from kinoforge.core.orchestrator import generate
 from kinoforge.core.reaper_actor import sweep
 from kinoforge.outputs.base import OutputSink
@@ -377,6 +380,26 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     if ctx.cfg is None:
         raise RuntimeError("_cmd_generate requires --config")
     cfg = ctx.cfg
+
+    # P3 — parse --loras heredoc and resolve eagerly so parse errors fail
+    # fast (before preflight + provider work) and CLI refs hit
+    # RedactionRegistry ahead of any traceback that might carry them.
+    # Stashes on the active EphemeralSession so downstream resolver call
+    # sites (warm-reuse set_stack swap) honour the same CLI stack.
+    cli_loras: list[LoraEntry] | None = None
+    _raw_loras = getattr(args, "loras", None)
+    if _raw_loras is not None:
+        try:
+            cli_loras = parse_loras_heredoc(_raw_loras)
+        except LorasParseError as err:
+            sys.stderr.write(err.report.render_for_cli())
+            sys.stderr.write("\n")
+            return 1
+        _session = EphemeralSession.current()
+        _vault = _session.vault if _session is not None else None
+        resolve_active_lora_stack(cfg, _vault, cli_loras=cli_loras)
+        if _session is not None:
+            _session.cli_loras = cli_loras
 
     if getattr(args, "dry_run_swap", False):
         return _dry_run_swap_preview(ctx)

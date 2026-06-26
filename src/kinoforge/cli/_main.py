@@ -58,6 +58,23 @@ from kinoforge.core.vault import Vault, load_vault, register_vault_tokens
 
 _log = logging.getLogger(__name__)
 
+
+class _LorasOnceAction(argparse.Action):
+    """Reject a second ``--loras`` on the same invocation (P3-D1)."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        """Set ``namespace.loras`` once; error on repeat."""
+        if getattr(namespace, self.dest) is not None:
+            parser.error("--loras may be specified at most once")
+        setattr(namespace, self.dest, values)
+
+
 # Subcommands that run a long orchestration loop and therefore need the
 # graceful-interrupt SIGINT handler installed before dispatch. Every
 # other subcommand keeps the default Ctrl-C behavior (read-only
@@ -477,6 +494,23 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "the pod lock, issuing HTTP, or running validate_for_generate. "
             "Prints the chosen pod + swap plan (evict/download) or the "
             "cold-boot fall-through reason. Exits 0."
+        ),
+    )
+    p_generate.add_argument(
+        "--loras",
+        action=_LorasOnceAction,
+        default=None,
+        metavar="HEREDOC",
+        help=(
+            "override cfg.loras AND vault.loras with a CLI-supplied LoRA "
+            "stack. Heredoc body: one LoRA per line, whitespace-separated "
+            "columns `ref [strength] [branch]`. `#` line comments + blank "
+            "lines ignored. Numeric shorthand `<modelId>:<versionId>` "
+            "expands to `civitai:<modelId>@<versionId>`; other refs "
+            "(civitai:..., hf:..., file:..., https://...) pass through "
+            "verbatim; unknown schemes rejected. Strength defaults to 1.0; "
+            "branch defaults to `auto`. Empty heredoc clears the stack for "
+            "this run. Vault.loras bypass logged to stderr."
         ),
     )
 
