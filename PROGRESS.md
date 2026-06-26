@@ -578,10 +578,17 @@ The user's proposed `--loras` heredoc shape (see brainstorming
 session 2026-06-21) — e.g.
 
     --loras "$(cat <<'EOF'
-    1.0 1111:2222 h
-    1.2 3333:4444 l
+    1111:2222 1.0 h
+    3333:4444 1.2 l
     EOF
     )"
+
+**Column order amended 2026-06-25 per P3 spec D2 — `ref [strength]
+[branch]`. The 2026-06-21 anchor originally proposed `strength ref
+branch`; brainstorm 2026-06-25 swapped to ref-first because `ref` is
+the sole required column and trailing-optional ordering allows the
+shortest valid line. See
+`docs/superpowers/specs/2026-06-25-p3-cli-loras-arg-design.md` D2.**
 
 decomposes into THREE independent sub-projects in dependency order.
 Brainstorming session 2026-06-21 chose to design **P1 first**;
