@@ -1,0 +1,85 @@
+# Wan 2.1 T2V-1.3B + cfg-driven LoRA pair, purpose-built for `kinoforge grid`
+# strength-sweep smoke (Tier-3).
+#
+# Mirror of wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml EXCEPT the
+# `smoke.lora_a/b` block is replaced with a cfg-level `loras:` list
+# (Shape A) so the grid CLI's override key `loras[0].strength`
+# resolves against `Config.loras[0].strength`.
+#
+# Tier-3 single-transformer Wan 2.1 architecture → both LoRAs use the
+# default `branch: auto`. Both strengths default 1.0; the grid spec
+# overrides `loras[0].strength` per cell.
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd: ["python", "-m", "kinoforge.engines.diffusers.servers.wan_t2v_server"]
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "peft>=0.13"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules: ["kinoforge.engines.diffusers.servers"]
+
+models:
+  - ref: "hf:Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  warm_reuse_auto_attach: true
+  tags:
+    smoke_tier: "kinoforge-smoke-tier-3-strength-grid"
+  requirements:
+    min_vram_gb: 24
+    min_cuda: "12.4"
+    max_usd_per_hr: 0.40
+    gpu_preference:
+      - "NVIDIA RTX A5000"
+      - "NVIDIA RTX 4090"
+      - "NVIDIA L4"
+    disk_gb: 40
+  lifecycle:
+    idle_timeout: 10m
+    job_timeout: 5m
+    time_buffer: 2m
+    max_lifetime: 60m
+    boot_timeout: 30m
+    budget: 0.50
+    heartbeat_interval_s: 30
+    lora_swap_re_probe_after_s: 300
+
+spec:
+  model: "Wan2.1-T2V-1.3B-Diffusers"
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
+  width: 480
+  height: 480
+  num_frames: 33
+  fps: 16
+
+# Cfg-driven Wan 2.1 1.3B LoRA pair (Shape A).
+# - loras[0]: wan2.1 1.3b static rotation (camera-rotation motion)
+#     trigger: "sttcrttn"
+#     https://civitai.com/models/1479320?modelVersionId=1673265
+# - loras[1]: Pokemon Sprite Animation Video LoRA (Gen-5 sprite art)
+#     no trigger word (activates by load)
+#     https://civitai.com/models/1595383?modelVersionId=1805395
+loras:
+  - ref: "civitai:1479320@1673265"
+    strength: 1.0
+  - ref: "civitai:1595383@1805395"
+    strength: 1.0

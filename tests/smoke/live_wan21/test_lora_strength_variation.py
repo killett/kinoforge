@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 REPO = Path(__file__).resolve().parents[3]
-CFG = REPO / "examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml"
+CFG = REPO / "examples/configs/wan21-1_3b-strength-grid.yaml"
 PROMPT_FILE = REPO / "examples/configs/prompts/field-realistic.txt"
 
 _TAG = "kinoforge-smoke-tier-3-strength"
