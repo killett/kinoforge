@@ -141,11 +141,11 @@ def test_run_grid_all_success_composes(
     assert result.composed_mp4_path is not None
     assert result.composed_mp4_path.exists()
     no_reuse_count = sum("--no-reuse" in cmd for cmd in log.calls)
-    assert no_reuse_count == 1, (
-        f"warm-reuse: exactly 1 --no-reuse on last cell of group, got "
-        f"{no_reuse_count} across {len(log.calls)} cells"
+    assert no_reuse_count == len(log.calls), (
+        f"every cell must pass --no-reuse for deterministic teardown "
+        f"(warm-reuse race observed live 2026-06-25 left orphan pods); "
+        f"got {no_reuse_count} of {len(log.calls)} cells"
     )
-    assert "--no-reuse" in log.calls[-1]
 
 
 def test_run_grid_one_cell_fails_aborts_group_other_groups_continue(
