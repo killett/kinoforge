@@ -129,13 +129,20 @@ def _build_filter_graph(
     n = len(cells)
     chains: list[str] = []
     for i, (probe, cell) in enumerate(zip(probes, cells, strict=True)):
-        del probe  # all-input normalization uses the min/max across probes
+        # tpad ADDS stop_duration seconds AFTER the original clip
+        # (not "pad to duration"). So the per-input padding is
+        # max(0, target_dur - this_input_dur), which is 0 for clips
+        # already at the target length. Without the max() the
+        # composed mp4 doubles in length when all inputs are the same
+        # duration (observed live 2026-06-25 — Tier-4 5.06s cells
+        # composed to 10.12s).
+        pad_s = max(0.0, target_dur - probe.duration)
         chain = (
             f"[{i}:v]"
             f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
             f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
             f"setsar=1,fps={target_fps:g},"
-            f"tpad=stop_mode=clone:stop_duration={target_dur:g}"
+            f"tpad=stop_mode=clone:stop_duration={pad_s:g}"
         )
         if cell.caption:
             esc = _escape_drawtext(cell.caption)

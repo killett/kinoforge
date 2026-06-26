@@ -75,11 +75,25 @@ def test_build_filter_graph_includes_per_cell_chain() -> None:
     ]
     graph = _build_filter_graph(probes=probes, layout=(1, 3), cells=cells)
     assert "scale=512:512" in graph
-    assert "tpad=stop_mode=clone" in graph
-    # Caption escape: '=' is fine, but the ':' option separator MUST escape.
-    # Caption "strength=0.5" has no ':' so the text= field renders verbatim.
+    # tpad MUST be present but with stop_duration=0 for same-length inputs
+    # (target_dur 2.5 - input 2.5 = 0). Without the max() guard the composed
+    # mp4 would double in length to 5.0 s; live 2026-06-25 Tier-4 fire
+    # hit this bug (5.06 s cells → 10.12 s composed grid).
+    assert "tpad=stop_mode=clone:stop_duration=0" in graph
     assert "text=strength=0.5" in graph
     assert "xstack=inputs=3" in graph
+
+
+def test_build_filter_graph_pads_short_clip_to_target_duration() -> None:
+    probes = [
+        InputProbe(width=512, height=512, fps=16.0, duration=2.0),
+        InputProbe(width=512, height=512, fps=16.0, duration=5.0),
+    ]
+    cells = [LayoutCell(idx=0, caption=None), LayoutCell(idx=1, caption=None)]
+    graph = _build_filter_graph(probes=probes, layout=(1, 2), cells=cells)
+    # cell 0 must pad +3 s (target 5 - input 2); cell 1 must pad 0.
+    assert "tpad=stop_mode=clone:stop_duration=3" in graph
+    assert "tpad=stop_mode=clone:stop_duration=0" in graph
 
 
 def test_build_filter_graph_caption_with_colon_is_escaped() -> None:
