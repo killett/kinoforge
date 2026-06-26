@@ -193,6 +193,81 @@ lock is non-blocking — a contended pod is skipped and the matcher
 considers the next candidate. Multi-process kinoforge instances do
 NOT share the lock; that's a documented deferral (Layer H follow-up).
 
+### `kinoforge generate --loras` — CLI LoRA stack override
+
+Override `cfg.loras` (and bypass `vault.loras` with an audit warning)
+by passing a heredoc-string LoRA stack on the command line. No edit to
+the YAML needed for one-off experimentation.
+
+**Shape.** One LoRA per line. Whitespace-separated columns:
+`ref [strength] [branch]`. Only `ref` is required; `strength` defaults
+to `1.0`; `branch` defaults to `auto`. Blank lines and `#` line
+comments are silently dropped.
+
+**Minimal example** (one LoRA, defaults):
+
+```bash
+kinoforge generate -c examples/configs/wan21-1_3b.yaml \
+  --prompt "test" --mode t2v --no-reuse \
+  --loras "civitai:1234@5678"
+```
+
+**Full example** (multi-LoRA with strength + branch):
+
+```bash
+kinoforge generate -c examples/configs/wan22-14b.yaml \
+  --prompt "test" --mode t2v --no-reuse \
+  --loras "$(cat <<'EOF'
+1111:2222 1.0 h
+3333:4444 1.2 l
+EOF
+)"
+```
+
+(`1111:2222` is numeric shorthand for `civitai:1111@2222`. Other refs
+— `civitai:N@N`, `hf:Org/Repo[:filename]`, `file:/abs/path`,
+`https://...` — pass through verbatim. Unknown schemes rejected.)
+
+**Precedence.**
+
+| Source | Wins when... |
+|---|---|
+| `--loras` | passed (override mode; D3 + D4) |
+| `vault.loras` | no `--loras` AND vault loaded with non-empty `.loras` |
+| `cfg.loras` | no `--loras` AND no vault.loras |
+| `[]` (empty) | `--loras ""` (or comments-only heredoc); explicit empty override |
+
+When `--loras` is passed AND `vault.loras` is non-empty, a single
+WARNING line goes to stderr naming the bypass count:
+
+```
+cli-loras-bypass-vault: --loras override applied; vault.loras (3 entries) bypassed for this run. Vault is unchanged on disk.
+```
+
+The vault file on disk is unchanged.
+
+**Errors.** All input lines parsed in one pass; aggregated diagnostics
+printed to stderr on exit 1:
+
+```
+--loras: 2 problem(s) found
+
+  line 2 col 1: unknown scheme `cvtai` (expected one of: civitai, file, hf, http, https)
+  line 4: duplicate (ref, branch) — first declared on line 1
+```
+
+Diagnostic output carries line numbers, column indices, error kinds,
+and scheme prefixes only — never the raw `ref` string. This invariant
+is locked by `tests/test_lora_error_redaction.py` and the
+`tests/test_no_unredacted_writes.py` AST scan.
+
+**Composition.** `--loras` composes orthogonally with all existing
+`generate` flags (`--instance-id`, `--no-reuse`, `--dry-run-swap`,
+`--force-attach`, `--skip-preflight`). `--dry-run-swap` adds a
+`loras_source: cli|vault|cfg|empty` line to the preview so you can
+confirm which precedence branch fired without running the full
+generation.
+
 ### `kinoforge generate --dry-run-swap` — preview without spend
 
 ```bash
