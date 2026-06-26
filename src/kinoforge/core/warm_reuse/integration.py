@@ -110,7 +110,8 @@ def try_warm_attach_with_swap(
 
             _session = EphemeralSession.current()
             _vault = _session.vault if _session is not None else None
-            active_stack = resolve_active_lora_stack(cfg, _vault)
+            _cli_loras = getattr(_session, "cli_loras", None) if _session else None
+            active_stack = resolve_active_lora_stack(cfg, _vault, cli_loras=_cli_loras)
             resp = backend.set_lora_stack(
                 pod_id=match.pod_id,
                 active_stack=active_stack,
