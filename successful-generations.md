@@ -1463,6 +1463,24 @@ a focused commit, and pinned by a unit test:
   (`.github/workflows/leak-sweep.yml`, every 30 min) backstops any
   tier-3 pod older than 45 min.
 
+### See also (2026-06-25): P3 `kinoforge generate --loras` CLI-override path
+
+P3 CLI `--loras` arg surface (spec
+`docs/superpowers/specs/2026-06-25-p3-cli-loras-arg-design.md`,
+plan `docs/superpowers/plans/2026-06-25-p3-cli-loras-arg.md`)
+re-fired the same Wan 2.1 1.3B + LoRA pair end-to-end via
+`kinoforge generate --loras "$(cat <<'EOF' ... EOF)"` against a clone
+of the strength-grid cfg with `loras: []` (CLI sole LoRA source). MP4
+`output/20260625-233553_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4`,
+sha256 prefix `748c9cf4e1c1eb9c`, 425 KB. RunPod pod `6u8gh8dzlix3ct`,
+~10:26 wall-clock, est_spend ≤ $0.10. `--no-reuse` auto-destroyed the
+pod; post-run `kinoforge list` confirmed `No running instances.` +
+`No instances recorded in ledger.` Vault-bypass branch NOT exercised
+(no vault loaded — exercise covered by `tests/core/test_lora_resolver_p3.py`).
+Proves the CLI override threads through `parse_loras_heredoc` →
+`resolve_active_lora_stack(*, cli_loras=...)` →
+`build_set_stack_request` → live `/lora/set_stack` wire body.
+
 ---
 
 ## 10. `2026-06-21 05:37:14` — Diffusers WanPipeline Wan 2.2 T2V-A14B + Arcane LoRA pair warm-reuse matrix on RunPod (A100 80GB) — t2v
