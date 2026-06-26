@@ -381,18 +381,50 @@ async def _run_group(
         return results
 
 
-def _check_no_residual_pods() -> tuple[bool, str]:
-    """Run ``pixi run kinoforge list``; return ``(clean, raw_output)``."""
-    result = subprocess.run(  # noqa: S603
-        ["pixi", "run", "kinoforge", "list"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-    )
-    raw = result.stdout + "\n" + result.stderr
-    clean = bool(_NO_RESIDUAL_RE.search(result.stdout)) and "POD:" not in result.stdout
-    return clean, raw
+def _check_no_residual_pods(
+    *, attempts: int = 6, delay_s: float = 5.0
+) -> tuple[bool, str]:
+    """Run ``pixi run kinoforge list`` repeatedly; return once clean OR timeout.
+
+    Pod destruction on RunPod is asynchronous: when the last cell of a
+    group exits via ``--no-reuse``, the orchestrator returns immediately
+    after issuing the destroy GraphQL mutation, but the RunPod backend
+    can take 10-30 s to actually remove the pod from its API and the
+    local ledger sweeper hasn't yet purged the entry. A one-shot probe
+    immediately after the group settles therefore false-positives on
+    the warm pod that's mid-destroy.
+
+    Retry up to ``attempts`` times with ``delay_s`` between, then bail.
+    Total ceiling: ~30 s by default. Returns ``(clean, last_raw)``.
+
+    Args:
+        attempts: Maximum number of probe attempts. Default 6.
+        delay_s: Seconds to sleep between attempts. Default 5.0.
+
+    Returns:
+        ``(True, raw)`` once the ledger reports no running instances;
+        ``(False, raw)`` after ``attempts`` consecutive dirty probes.
+    """
+    import time as _time
+
+    raw = ""
+    for i in range(attempts):
+        result = subprocess.run(  # noqa: S603
+            ["pixi", "run", "kinoforge", "list"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        raw = result.stdout + "\n" + result.stderr
+        clean = (
+            bool(_NO_RESIDUAL_RE.search(result.stdout)) and "POD:" not in result.stdout
+        )
+        if clean:
+            return True, raw
+        if i < attempts - 1:
+            _time.sleep(delay_s)
+    return False, raw
 
 
 def _move_to_partial_dir(
