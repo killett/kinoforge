@@ -188,6 +188,12 @@ def test_run_grid_residual_pod_after_groups_yields_teardown_status(
     )
     _stub_compose(monkeypatch)
     _stub_config_loader(monkeypatch)
+    # Bypass the residual-pod retry loop's real-time sleeps (6 × 5s default)
+    # so the unit test stays fast — coverage is the dirty-classification
+    # path, not the sleep timing.
+    import time as _t
+
+    monkeypatch.setattr(_t, "sleep", lambda _s: None)
     monkeypatch.setattr(
         "kinoforge.core.grid.executor._cell_capability_key", lambda cell: "K"
     )
