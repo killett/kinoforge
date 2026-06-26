@@ -214,11 +214,10 @@ def test_lora_strength_variation_wan21_live(
         )
         assert out_path.exists(), "composed mp4 missing post-run"
 
-        per_cell_glob = sorted(
-            (REPO / "output").glob(f"*grid_*{_TAG[-15:]}*__cell*.mp4")
-        )
+        per_cell_glob = sorted((REPO / "output").glob("_grid_*/cell_*_out/*.mp4"))
         assert len(per_cell_glob) == 3, (
-            f"expected 3 per-cell mp4s in output/, got {len(per_cell_glob)}"
+            f"expected 3 per-cell mp4s under output/_grid_*/cell_*_out/, "
+            f"got {len(per_cell_glob)}"
         )
         shas = {_sha256_file(p) for p in per_cell_glob}
         assert len(shas) == 3, (

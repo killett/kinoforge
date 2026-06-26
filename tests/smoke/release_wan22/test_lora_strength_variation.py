@@ -203,9 +203,7 @@ def test_lora_strength_variation_wan22_live(
         )
         assert out_path.exists()
 
-        per_cell_glob = sorted(
-            (REPO / "output").glob(f"*grid_*{_TAG[-15:]}*__cell*.mp4")
-        )
+        per_cell_glob = sorted((REPO / "output").glob("_grid_*/cell_*_out/*.mp4"))
         assert len(per_cell_glob) == 3
         shas = {_sha256_file(p) for p in per_cell_glob}
         assert len(shas) == 3, (

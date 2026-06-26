@@ -194,6 +194,11 @@ def _resolve_spec_cells(
     return resolved
 
 
+def _cell_output_dir(grid_id: str, cell_idx: int, output_dir: Path) -> Path:
+    """Unique per-cell output dir so the post-run mp4 glob has exactly one match."""
+    return output_dir / f"_grid_{grid_id}" / f"cell_{cell_idx}_out"
+
+
 def _build_generate_cmd(
     cell: _ResolvedCell, *, grid_id: str, output_dir: Path, no_reuse: bool
 ) -> list[str]:
@@ -202,6 +207,14 @@ def _build_generate_cmd(
     ``kinoforge generate`` requires ``--prompt`` at argparse level
     (``cli/_main.py:413``). Read the prompt from the effective cfg's
     top-level ``prompt:`` field. Raises if the cfg doesn't carry one.
+
+    Each cell gets its OWN ``--output-dir`` (a unique subdir under the
+    grid's tmp dir) so the post-run mp4 lookup is a single-file listdir
+    instead of a fragile glob against the operator's shared
+    ``output/`` directory. LocalOutputSink's filename pattern is
+    ``<ts>_<provider>_<model>_<promptslug>.mp4`` — the ``--run-id`` is
+    NOT embedded in the filename, so any glob against the shared dir
+    will miss when multiple gens land in the same second.
     """
     if cell.cfg_path is None:
         raise ValueError(
@@ -219,6 +232,8 @@ def _build_generate_cmd(
         )
     mode = getattr(cfg, "mode", None) or "t2v"
     run_id = f"{grid_id}__cell{cell.idx}"
+    cell_out = _cell_output_dir(grid_id, cell.idx, output_dir)
+    cell_out.mkdir(parents=True, exist_ok=True)
     cmd = [
         "pixi",
         "run",
@@ -233,7 +248,7 @@ def _build_generate_cmd(
         "--run-id",
         run_id,
         "--output-dir",
-        str(output_dir),
+        str(cell_out),
     ]
     if no_reuse:
         cmd.append("--no-reuse")
@@ -295,13 +310,14 @@ async def _run_one_cell(
             cost_usd=None,
             error=err,
         )
-    matches = sorted(output_dir.glob(f"*{grid_id}__cell{cell.idx}*.mp4"))
+    cell_out = _cell_output_dir(grid_id, cell.idx, output_dir)
+    matches = sorted(cell_out.glob("*.mp4"))
     if not matches:
         err = GridCellFailure(
             idx=cell.idx,
             cfg_repr=f"cfg={cell.cfg_path}",
             exception_chain=FileNotFoundError(
-                f"no mp4 matched glob *{grid_id}__cell{cell.idx}*.mp4 in {output_dir}"
+                f"no mp4 in per-cell output dir {cell_out}"
             ),
         )
         return GridCellResult(
