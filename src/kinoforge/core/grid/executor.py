@@ -96,16 +96,42 @@ class GridResult:
 
 
 def _cell_capability_key(cell: _ResolvedCell) -> str | None:
-    """Default capability_key derivation.
+    """Derive the cell's capability_key from the effective Config.
 
-    Lives at module scope so tests can monkeypatch it without poking
-    into :mod:`kinoforge.core.interfaces`. The real implementation
-    delegates to ``derive_capability_key_from_cfg`` once the executor
-    is wired into ``deploy_session``.
+    Mirrors :class:`kinoforge.core.interfaces.CapabilityKey` factors:
+    base-model ref + ordered LoRA refs + engine kind + precision.
+    LoRA *strength* is intentionally omitted so strength sweeps share
+    one key (warm-reuse intra-group). VAE / scheduler / spec dims are
+    also out by design — they're engine-side details that don't gate
+    pod identity.
+
+    Lives at module scope so tests can monkeypatch it. Path cells
+    return None — they're degenerate and the grouping module folds
+    them under the ``_PATH_GROUP_KEY`` sentinel.
     """
-    if cell.effective_cfg is None:
+    cfg = cell.effective_cfg
+    if cfg is None:
         return None
-    return str(cell.effective_cfg)
+    try:
+        from kinoforge.core.interfaces import CapabilityKey
+
+        base_models = [
+            m for m in getattr(cfg, "models", []) if getattr(m, "kind", None) == "base"
+        ]
+        base_ref = base_models[0].ref if base_models else ""
+        loras = getattr(cfg, "loras", []) or []
+        lora_refs = tuple(lo.ref for lo in loras)
+        engine = getattr(cfg, "engine", None)
+        engine_kind = getattr(engine, "kind", "") if engine is not None else ""
+        precision = getattr(engine, "precision", "") if engine is not None else ""
+        return CapabilityKey(
+            base_model=base_ref,
+            loras=lora_refs,
+            engine=engine_kind,
+            precision=precision,
+        ).derive()
+    except Exception:  # noqa: BLE001 — defensive fallback for cfg shape drift
+        return str(cfg)
 
 
 def _resolve_spec_cells(
@@ -237,6 +263,21 @@ async def _run_one_cell(
         check=False,  # noqa: S603
     )
     if proc.returncode != 0:
+        # Persist FULL stderr to disk for post-mortem inspection. The
+        # executor would otherwise drop everything past 500 chars when
+        # building the breadcrumb (the in-memory GridCellFailure only
+        # carries the truncated tail). The stderr file lives next to
+        # the per-cell tmp cfg under `_grid_<id>/cell_<idx>.stderr.txt`
+        # and is the only durable record of the failure for the
+        # operator's diff.
+        if cell.cfg_path is not None:
+            stderr_log = cell.cfg_path.with_suffix(".stderr.txt")
+            try:
+                stderr_log.write_text(  # kinoforge:public-write
+                    proc.stderr or proc.stdout or "<no output>",
+                )
+            except OSError:
+                pass
         err = GridCellFailure(
             idx=cell.idx,
             cfg_repr=f"cfg={cell.cfg_path}",
