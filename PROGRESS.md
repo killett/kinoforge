@@ -95,10 +95,38 @@ surface (`--dry-run-swap`, `pod lora ls`, failure modes,
 ## Next session — resume target (single next action at top)
 
 **🔴 SINGLE NEXT ACTION — Layer 5 Bearer per-prediction cost capture
-(Replicate / Runway / Luma).** The `kinoforge grid` build + P1
-close-out is FULL_GREEN; Tasks 16/17 (USER-GATE Tier-3 + Tier-4 live
-fires) shipped evidence today (see "kinoforge grid LIVE FIRE evidence"
-entry below). Layer 5 returns to top of queue.
+(Replicate / Runway / Luma).** P3 CLI `--loras` arg surface CLOSED
+2026-06-25 (see entry below). P1 + P2 + P3 of the CLI --loras
+decomposition are now all FULL_GREEN. Layer 5 is the highest-value
+deferred workstream.
+
+---
+
+**P3 CLI `--loras` arg surface CLOSED 2026-06-25 (11 tasks shipped).**
+Spec `docs/superpowers/specs/2026-06-25-p3-cli-loras-arg-design.md`
++ plan `docs/superpowers/plans/2026-06-25-p3-cli-loras-arg.md`. New
+CLI verb `kinoforge generate --loras HEREDOC` overrides `cfg.loras`
+and bypasses `vault.loras` (with audit WARNING) for one-shot LoRA
+stack changes without editing the cfg. Heredoc shape: one LoRA per
+line, columns `ref [strength] [branch]`. Numeric shorthand
+`<modelId>:<versionId>` expands to `civitai:<modelId>@<versionId>`.
+Unknown schemes rejected. Collect-all error aggregation; refs never
+leak in diagnostics (LineError has no ref/filename/label fields per
+P3-Privacy-1, locked by AST scan + redaction parity tests). Composite
+`(ref, branch)` duplicate detection preserves P2's dual-load case.
+Empty heredoc valid empty-stack override (D9). All precedence
+consolidated in `resolve_active_lora_stack(*, cli_loras=)` — single
+source of truth preserves P1 D11 + P2 capability_key invariants,
+locked by AC-P3-5 AST scan. `--dry-run-swap` adds a `loras_source:
+cli|vault|cfg|empty` line so the operator can confirm which precedence
+branch fires without running the full generate. Tier-3 live fire
+2026-06-25 (commit `9cc9bba`) confirmed end-to-end wire-shape on Wan
+2.1 1.3B with cfg.loras: [] (CLI sole LoRA source), spend ≤ $0.10,
+sha256 prefix `748c9cf4e1c1eb9c`, see-also block under
+`successful-generations.md` §9. 11-commit trail: `417bf04`, `3154d3d`,
+`008f392`, `43f299f`, `cfdaba7`, `7c5294d`, `7ebdbd0`, `db8807e`,
+`eb72ddc`, `9cc9bba`, plus this close-out. Layer 5 returns to top of
+single-next-action queue.
 
 ---
 
@@ -613,7 +641,7 @@ Brainstorming session 2026-06-21 chose to design **P1 first**;
   low-noise LoRAs only patch `transformer_2`. Touches the Wan 2.2
   pipeline-build path. Independent of P1. Required by P3.
 
-- **P3 — CLI `--loras` arg surface (DEFERRED, HIGH).**
+- ~~**P3 — CLI `--loras` arg surface (DEFERRED, HIGH).**
   Adds `--loras` to `kinoforge generate`. Parser consumes the
   heredoc shape (one LoRA per line, columns = strength / ref /
   branch), expands shorthand `<modelId>:<versionId>` →
@@ -623,7 +651,10 @@ Brainstorming session 2026-06-21 chose to design **P1 first**;
   routing. CLI semantics (override-vs-append against
   `cfg.models[].kind=lora`, interaction with warm-reuse
   capability_key derivation, error shapes for invalid lines) are
-  the brainstorm-worthy unknowns. Depends on P1 + P2.
+  the brainstorm-worthy unknowns. Depends on P1 + P2.~~ **(CLOSED
+  2026-06-25 — see "P3 CLI --loras arg surface CLOSED" entry above.
+  Column order amended from strength-first to ref-first per
+  brainstorm 2026-06-25 D2.)**
 
 Civitai ref scheme today is `civitai:<modelId>@<versionId>` per
 `src/kinoforge/sources/civitai/__init__.py:67`. HF refs are

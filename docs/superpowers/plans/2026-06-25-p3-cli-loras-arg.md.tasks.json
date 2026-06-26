@@ -65,14 +65,14 @@
     {
       "id": 16,
       "subject": "P3 Task 9: Tier-3 live fire via --loras + sg-md update",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [14, 15],
       "description": "**Goal:** Live fire validates CLI --loras wire-shape on Tier-3.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"live MP4 via --loras CLI path\", \"no leaked pods post-run\", \"sg.md updated\", \"spend within $0.30\"], \"modelTier\": \"live-spend\"}\n```"
     },
     {
       "id": 17,
       "subject": "P3 Task 10: PROGRESS.md close-out — Layer 5 next",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [16],
       "description": "**Goal:** Close P3 in PROGRESS; advance single-next-action to Layer 5.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'P3 CLOSED|Layer 5' /workspace/PROGRESS.md\", \"acceptanceCriteria\": [\"P3 CLOSED entry under Active workstream\", \"single-next-action = Layer 5\", \"P3 deferred-queue entry struck\"], \"modelTier\": \"mechanical\"}\n```"
     }
