@@ -114,6 +114,59 @@ def test_loras_empty_heredoc_threads_empty_list() -> None:
     assert mock_resolve.call_args_list[0].kwargs.get("cli_loras") == []
 
 
+def test_dry_run_swap_with_cli_loras_emits_cli_label(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--loras + --dry-run-swap path prints `loras_source: cli`."""
+    from kinoforge.core.ephemeral import EphemeralSession
+
+    args = _make_args(loras="civitai:1234@5678", dry_run_swap=True)
+    with EphemeralSession(enabled=False):
+        try:
+            _cmd_generate(args, _ctx_with_cfg())
+        except Exception:
+            pass
+    out = capsys.readouterr().out
+    assert "loras_source: cli" in out
+
+
+def test_dry_run_swap_with_no_cli_loras_no_vault_empty_cfg_emits_empty_label(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No --loras, no vault.loras, no cfg.loras → loras_source: empty."""
+    from kinoforge.core.ephemeral import EphemeralSession
+
+    args = _make_args(loras=None, dry_run_swap=True)
+    ctx = _ctx_with_cfg()
+    ctx.cfg.loras = []  # explicit empty
+    with EphemeralSession(enabled=False):
+        try:
+            _cmd_generate(args, ctx)
+        except Exception:
+            pass
+    out = capsys.readouterr().out
+    assert "loras_source: empty" in out
+
+
+def test_dry_run_swap_with_cfg_loras_only_emits_cfg_label(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No --loras, no vault, cfg.loras non-empty → loras_source: cfg."""
+    from kinoforge.core.ephemeral import EphemeralSession
+    from kinoforge.core.lora import LoraEntry as _LE
+
+    args = _make_args(loras=None, dry_run_swap=True)
+    ctx = _ctx_with_cfg()
+    ctx.cfg.loras = [_LE(ref="civitai:cfg@1")]
+    with EphemeralSession(enabled=False):
+        try:
+            _cmd_generate(args, ctx)
+        except Exception:
+            pass
+    out = capsys.readouterr().out
+    assert "loras_source: cfg" in out
+
+
 def test_loras_help_includes_loras_arg() -> None:
     """--help must document --loras."""
     parser = _build_parser()

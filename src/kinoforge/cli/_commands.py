@@ -327,6 +327,22 @@ class _NullPodLockRegistry:
         return False
 
 
+def _classify_loras_source(
+    *,
+    cli_loras: list[LoraEntry] | None,
+    vault: Any,  # noqa: ANN401 — duck-typed Vault
+    cfg: Any,  # noqa: ANN401 — duck-typed Config
+) -> str:
+    """Return 'cli' / 'vault' / 'cfg' / 'empty' for dry-run-swap display."""
+    if cli_loras is not None:
+        return "cli"
+    if vault is not None and getattr(vault, "loras", None):
+        return "vault"
+    if getattr(cfg, "loras", None):
+        return "cfg"
+    return "empty"
+
+
 def _dry_run_swap_preview(ctx: SessionContext) -> int:
     """Render the matcher decision for the active cfg without side effects.
 
@@ -347,6 +363,13 @@ def _dry_run_swap_preview(ctx: SessionContext) -> int:
     threshold = float(
         getattr(lc, "lora_swap_re_probe_after_s", 300.0) if lc is not None else 300.0
     )
+
+    # P3 — classify which precedence branch will drive the LoRA stack.
+    _session = EphemeralSession.current()
+    _vault = _session.vault if _session is not None else None
+    _cli_loras = getattr(_session, "cli_loras", None) if _session else None
+    source = _classify_loras_source(cli_loras=_cli_loras, vault=_vault, cfg=cfg)
+    print(f"loras_source: {source}")
 
     match = find_warm_attach_candidate(
         cfg,
