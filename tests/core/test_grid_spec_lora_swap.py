@@ -86,7 +86,7 @@ def test_lora_stack_entry_branch_literal_rejects_bogus() -> None:
         LoraStackEntry(ref="civitai:1@2", branch="bogus")  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("branch", ["high", "low", "auto"])
+@pytest.mark.parametrize("branch", ["high_noise", "low_noise", "auto"])
 def test_lora_stack_entry_branch_literal_accepted(branch: str) -> None:
     e = LoraStackEntry(ref="civitai:1@2", branch=branch)  # type: ignore[arg-type]
     assert e.branch == branch
@@ -113,13 +113,13 @@ def test_lora_swap_cell_stack_validates_entries() -> None:
     cell = LoraSwapCell(
         config=Path("/outside/base.yaml"),
         stack=[
-            LoraStackEntry(ref="civitai:1@2", strength=0.5, branch="high"),
-            LoraStackEntry(ref="civitai:3@4", strength=1.0, branch="low"),
+            LoraStackEntry(ref="civitai:1@2", strength=0.5, branch="high_noise"),
+            LoraStackEntry(ref="civitai:3@4", strength=1.0, branch="low_noise"),
         ],
     )
     assert [(e.ref, e.strength, e.branch) for e in cell.stack] == [
-        ("civitai:1@2", 0.5, "high"),
-        ("civitai:3@4", 1.0, "low"),
+        ("civitai:1@2", 0.5, "high_noise"),
+        ("civitai:3@4", 1.0, "low_noise"),
     ]
 
 
@@ -222,8 +222,8 @@ def test_lora_swap_refs_registered_with_redaction_registry(
         "cells": [
             _swap_cell(
                 stack=[
-                    {"ref": "civitai:42@99", "strength": 0.5, "branch": "high"},
-                    {"ref": "civitai:7@13", "strength": 1.0, "branch": "low"},
+                    {"ref": "civitai:42@99", "strength": 0.5, "branch": "high_noise"},
+                    {"ref": "civitai:7@13", "strength": 1.0, "branch": "low_noise"},
                 ]
             ),
         ],

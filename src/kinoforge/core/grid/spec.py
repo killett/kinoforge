@@ -87,7 +87,11 @@ class LoraStackEntry(BaseModel):
 
     ref: str
     strength: float = Field(default=1.0, ge=-1.0, le=2.0)
-    branch: Literal["high", "low", "auto"] = "auto"
+    # Canonical form matches `kinoforge.core.lora.LoraEntry.branch` so
+    # the executor can serialize a stack straight into the CLI `--loras`
+    # heredoc without translation. Parity is enforced by AC10's
+    # exempt-tag scan + by `tests/test_lora_schema_parity.py`.
+    branch: Literal["high_noise", "low_noise", "auto"] = "auto"
 
 
 class LoraSwapCell(BaseModel):
