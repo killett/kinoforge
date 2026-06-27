@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T22:10:00-07:00",
+  "lastUpdated": "2026-06-26T22:20:00-07:00",
   "tasks": [
     {
       "id": 1,
@@ -54,7 +54,7 @@
     {
       "id": 8,
       "subject": "AST scan AC10: lora_swap ref redaction invariant",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Add AC10 test enforcing `LoraSwapCell.stack[*].ref` writes/logs go through `RedactionRegistry.redact()` or carry exemption tag. Mirrors AC8/AC9.\n\n**Files:**\n- Modify: `tests/test_no_unredacted_writes.py`\n\n**Acceptance Criteria:**\n- new test_ac10_* function exists\n- AC10 catches unredacted ref writes/logs\n- AC1-AC9 still pass\n\n**Verify:** `pixi run pytest tests/test_no_unredacted_writes.py -v`\n\nPlan doc: §Task 8.\n\n```json:metadata\n{\"files\": [\"tests/test_no_unredacted_writes.py\"], \"verifyCommand\": \"pixi run pytest tests/test_no_unredacted_writes.py -v\", \"acceptanceCriteria\": [\"AC10 exists\", \"AC10 detects leaks\", \"AC1-AC9 still pass\"], \"modelTier\": \"mechanical\"}\n```"
     },

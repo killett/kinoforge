@@ -702,3 +702,47 @@ def test_p3_render_for_cli_does_not_interpolate_heredoc() -> None:
                         "output strictly from self.errors fields"
                     )
     assert found, "render_for_cli not found in src/kinoforge/cli/loras_arg.py"
+
+
+def test_ac10_lora_swap_ref_redaction_invariant() -> None:
+    """Every module that imports ``LoraSwapCell`` or ``LoraStackEntry``
+    must also reference ``RedactionRegistry`` OR carry an explicit
+    ``# kinoforge:lora-redact-exempt`` tag (e.g. type-hint-only imports).
+
+    Bug this catches: a future module pulls ``LoraSwapCell.stack[*].ref``
+    into a log line, sidecar entry, PROGRESS update, or stdout print
+    without first registering the ref with :class:`RedactionRegistry` —
+    the prompt-laden refs land plain in operator artifacts. Mirrors
+    AC8's shape for ``LoraInventoryEntry`` and the
+    ``_register_observed_lora_refs`` chokepoint.
+
+    Owner exemption: ``core/grid/spec.py`` defines the models and IS
+    the registration site (``_register_caption_tokens`` adds each ref
+    via ``reg.add(entry.ref, kind="grid:lora_ref")``).
+    """
+    owner = SRC / "core" / "grid" / "spec.py"
+    violations: list[str] = []
+    for path in _all_py_files():
+        if path == owner:
+            continue
+        source = path.read_text()
+        # Cheap textual prefilter — `from kinoforge.core.grid.spec import …`
+        # is the only legal entry point, and the symbols are unambiguous.
+        if "LoraSwapCell" not in source and "LoraStackEntry" not in source:
+            continue
+        if EXEMPT_LORA in source:
+            continue
+        if "RedactionRegistry" in source:
+            continue
+        violations.append(
+            f"{path.relative_to(SRC.parent.parent)}: module references "
+            f"LoraSwapCell/LoraStackEntry without RedactionRegistry and "
+            f"without a '{EXEMPT_LORA}' tag"
+        )
+    assert not violations, (
+        "AC10: lora_swap ref redaction invariant violated:\n"
+        + "\n".join(f"  {v}" for v in violations)
+        + "\n\nAdd a RedactionRegistry.instance().redact(...) wrapping at "
+        + f"every ref-rendering site, or '{EXEMPT_LORA}' near the import "
+        + "to document a type-hint-only / pass-through use."
+    )
