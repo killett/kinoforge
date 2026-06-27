@@ -1,0 +1,111 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-27-readme-rewrite.md",
+  "specPath": "docs/superpowers/specs/2026-06-27-readme-rewrite-design.md",
+  "lastUpdated": "2026-06-27T00:00:00-07:00",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: Scaffold docs/<topic>.md skeleton",
+      "status": "pending",
+      "description": "Create 14 docs/<topic>.md files with H1 + redirect header; bodies empty. Full body in plan §Task 1.\n\n```json:metadata\n{\"files\":[\"docs/configuration.md\",\"docs/credentials.md\",\"docs/lifecycle.md\",\"docs/warm-reuse.md\",\"docs/engines.md\",\"docs/cost-and-spend.md\",\"docs/batch-and-grid.md\",\"docs/cloud-stores.md\",\"docs/extending.md\",\"docs/output-layout.md\",\"docs/troubleshooting.md\",\"docs/breaking-changes.md\",\"docs/roadmap.md\",\"docs/releasing.md\"],\"verifyCommand\":\"ls docs/{configuration,credentials,lifecycle,warm-reuse,engines,cost-and-spend,batch-and-grid,cloud-stores,extending,output-layout,troubleshooting,breaking-changes,roadmap,releasing}.md\",\"acceptanceCriteria\":[\"All 14 docs/<topic>.md files exist\",\"Each file has H1 + redirect header\",\"Pre-commit clean\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":1}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Migrate docs/configuration.md body",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Move README L729-749, L880-910, L1049-1066, L1505-1551 into docs/configuration.md with heading promotion + path rewrites. Full body in plan §Task 2.\n\n```json:metadata\n{\"files\":[\"docs/configuration.md\"],\"verifyCommand\":\"test \\\"$(rg -c '^## (Configuration|Concurrency|HuggingFace ref grammar|Per-job spec)' docs/configuration.md)\\\" -ge 4\",\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":2}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Migrate docs/credentials.md body",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Move README L1067-1078 + L1079-1153 + L1177-1214 into docs/credentials.md. Full body in plan §Task 3.\n\n```json:metadata\n{\"files\":[\"docs/credentials.md\"],\"verifyCommand\":\"test \\\"$(rg -c '^## (Cloud bootstrap|Credentials|Auth strategies)' docs/credentials.md)\\\" -ge 3\",\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":3}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Migrate docs/lifecycle.md body",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Move README L31-108 + L366-438 + L439-486 + L552-595 into docs/lifecycle.md. Full body in plan §Task 4.\n\n```json:metadata\n{\"files\":[\"docs/lifecycle.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":4}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Migrate docs/warm-reuse.md body",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Move README L109-156 + L157-365 + L750-798 + L799-879 + L1881-1963 into docs/warm-reuse.md. Promote ### lora_swap: cells to ##; add back-link to batch-and-grid.md. Full body in plan §Task 5.\n\n```json:metadata\n{\"files\":[\"docs/warm-reuse.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":5}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Migrate docs/engines.md body",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Move README L1154-1176 + L1215-1293 + L1294-1324 + L1325-1420 + L1421-1504 + L1620-1665 + L1666-1741 into docs/engines.md with heading promotion. Full body in plan §Task 6.\n\n```json:metadata\n{\"files\":[\"docs/engines.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":6}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Migrate docs/cost-and-spend.md body",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Move README L487-551 into docs/cost-and-spend.md. Full body in plan §Task 7.\n\n```json:metadata\n{\"files\":[\"docs/cost-and-spend.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":7}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Migrate docs/batch-and-grid.md body",
+      "status": "pending",
+      "blockedBy": [1, 5],
+      "description": "Move README L596-678 + L1836-1880 into docs/batch-and-grid.md. STOP before ### lora_swap: line; add back-link to warm-reuse.md. Full body in plan §Task 8.\n\n```json:metadata\n{\"files\":[\"docs/batch-and-grid.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":8}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Migrate docs/cloud-stores.md body",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Move README L911-1048 (5 ### children promoted to ##) + L1974-2008 into docs/cloud-stores.md. Full body in plan §Task 9.\n\n```json:metadata\n{\"files\":[\"docs/cloud-stores.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":9}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Migrate docs/extending.md body",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Move README L1552-1619 + L1742-1786 into docs/extending.md. Full body in plan §Task 10.\n\n```json:metadata\n{\"files\":[\"docs/extending.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":10}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: Migrate output-layout + breaking-changes + roadmap + releasing",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Single commit covering 4 small docs/ files: output-layout (README L1787-1835), breaking-changes (L679-728), roadmap (L1964-1973), releasing (L2009-2028). Full body in plan §Task 11.\n\n```json:metadata\n{\"files\":[\"docs/output-layout.md\",\"docs/breaking-changes.md\",\"docs/roadmap.md\",\"docs/releasing.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":11}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 12: Write docs/troubleshooting.md body",
+      "status": "pending",
+      "blockedBy": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      "description": "Build deeper symptom catalogue: 5 ## sections (Install / Credentials / Compute / Engine / Cost), each ≥3 entries; sources = current README + CLAUDE.md + PROGRESS.md + successful-generations.md only. Full body in plan §Task 12.\n\n```json:metadata\n{\"files\":[\"docs/troubleshooting.md\"],\"modelTier\":\"standard\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":12}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 13: Write the new compact README.md",
+      "status": "pending",
+      "blockedBy": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+      "description": "Replace 2032-line README.md with ≤500-line entry-point per spec outline. Full body in plan §Task 13.\n\n```json:metadata\n{\"files\":[\"README.md\"],\"verifyCommand\":\"test \\\"$(wc -l < README.md)\\\" -le 500\",\"modelTier\":\"standard\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":13}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 14: Link-rewrite sweep",
+      "status": "pending",
+      "blockedBy": [13],
+      "description": "Repoint every stale README.md#<anchor> repo-wide to its docs/<topic>.md home. Do NOT rewrite self-referencing spec/plan from 2026-06-27. Full body in plan §Task 14.\n\n```json:metadata\n{\"files\":[\"PROGRESS.md\",\"AGENTS.md\",\"CLAUDE.md\",\"successful-generations.md\"],\"modelTier\":\"mechanical\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":14}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 15: Final acceptance verification",
+      "status": "pending",
+      "blockedBy": [14],
+      "description": "Run spec Acceptance checks end-to-end: length / Quickstart-Step-1-live / verbs / pixi tasks / docs files / no stale anchors / pre-commit --all-files. Log workstream CLOSED in PROGRESS.md. Full body in plan §Task 15.\n\n```json:metadata\n{\"files\":[\"PROGRESS.md\"],\"verifyCommand\":\"set -e ; test \\\"$(wc -l < README.md)\\\" -le 500 && pixi run pre-commit run --all-files\",\"modelTier\":\"standard\",\"planPath\":\"docs/superpowers/plans/2026-06-27-readme-rewrite.md\",\"taskNumber\":15}\n```"
+    }
+  ]
+}
