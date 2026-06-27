@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T21:50:00-07:00",
+  "lastUpdated": "2026-06-26T22:00:00-07:00",
   "tasks": [
     {
       "id": 1,
@@ -40,7 +40,7 @@
     {
       "id": 6,
       "subject": "Failure taxonomy: swap_failures.py module",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** New module exporting `SwapFailureAction` enum + `_classify_swap_failure(stderr, exit_code, policy)`. Pattern-match P2 structured errors + transient HTTP + OOM exit 137. Retry budget = 3 × 5s backoff.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/swap_failures.py`\n- Test: `tests/core/grid/test_swap_failures.py` (~9)\n\n**Acceptance Criteria:**\n- SwapFailureAction enum RETRY/CONTINUE/ABORT\n- strict always ABORT\n- classify routes correctly per pattern table\n- continue ABORTs on truly unrecoverable\n- RETRY_MAX_ATTEMPTS=3, RETRY_BACKOFF_S=5.0\n\n**Verify:** `pixi run pytest tests/core/grid/test_swap_failures.py -v`\n\nPlan doc: §Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/swap_failures.py\", \"tests/core/grid/test_swap_failures.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_swap_failures.py -v\", \"acceptanceCriteria\": [\"enum\", \"strict aborts\", \"classify routes\", \"continue aborts unrecoverable\", \"constants\"], \"modelTier\": \"mechanical\"}\n```"
     },
