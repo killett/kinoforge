@@ -12,6 +12,67 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
+**`kinoforge grid` `lora_swap:` cell variant SHIPPED 2026-06-26 (commits `94956c1..` (Task 1) →
+`<live-fire-commit>` (Tasks 10/11) — 10 of 12 tasks committed, live fires DEFERRED).**
+Spec `docs/superpowers/specs/2026-06-26-grid-lora-swap-design.md` + plan
+`docs/superpowers/plans/2026-06-26-grid-lora-swap.md`. Adds a third top-level grid cell
+variant `lora_swap:` alongside `generate:` / `path:`, so a strength sweep on Wan 2.2 14B
+uses ONE warm pod with server-side `POST /lora/set_stack` swaps between cells instead of
+N cold-boots. Group key collapses to `WarmAttachKey(base, engine, precision)` — LoRA
+stack OUT — so all cells sharing slow-rebuild factors pack into one pod regardless of
+their stack.
+
+- **Task 1 — `LoraSwapCell` + `LoraStackEntry` + 3-way mutex + `GridSpec.on_swap_failure`
+  (commit `94956c1`).** `lora_swap:` cells flow through `RedactionRegistry` kind=`grid:lora_ref`
+  at load time. 27 unit tests.
+- **Task 2 — `WarmAttachKey` grouping (commit `3117091`).** `_cell_capability_key` dispatches
+  on `is_lora_swap`; mixed-variant grids produce disjoint groups by construction. 11 unit
+  tests.
+- **Tasks 3 + 4 — CLI `--attach-pod` + `--emit-provision-record` on `kinoforge generate`
+  (commit `0cdfd13`).** Distinct from `--instance-id` (which uses full `CapabilityKey` +
+  matcher classify). Cold-boot path also stamps `warm_attach_key` via `ledger.touch` so
+  downstream `--attach-pod` can validate identity without a matcher round-trip. 11 unit
+  tests (mutex, ledger-missing, status-not-ready, WAK-mismatch, happy path, `--loras`
+  composition, JSON record schema, failure suppression).
+- **Task 5 — `_run_swap_group` executor + `run_grid` dispatch (commit `cc9aecc`).** Cell-1
+  cold-boots via `--loras` + `--emit-provision-record`; cells 2..N attach via
+  `--attach-pod` + `--loras` (no `--no-reuse`). `try/finally` destroy +
+  `_check_no_residual_pods` probe stamps `teardown_breadcrumb` on every result. Budget
+  cap-trip via `sidecar.total_cost_usd() >= budget_cap_usd` marks remaining cells
+  `budget_killed`. 7 unit tests.
+- **Task 6 — `swap_failures.py` classify/retry/continue/abort (commit `ecba2e3`).**
+  Pattern-matches P2 server exceptions + transient HTTP (502 / `ProxyWarmupTimeout` /
+  `ConnectionError`) + OOM 137. Retry budget 3×5s. 26 unit tests.
+- **Task 7 — `CostSidecarBuilder` + `.cost.json` schema (commit `d4509ae`).** Per-group
+  wall-clock cost; always written; spec_path redacted via Registry; TZ-aware datetime
+  coercion at every boundary. 7 unit tests.
+- **Task 8 — AC10 AST scan `LoraSwapCell` ref redaction invariant (commit `55de071`).**
+  Every module importing `LoraSwapCell` or `LoraStackEntry` must reference
+  `RedactionRegistry` OR carry `# kinoforge:lora-redact-exempt`. Mirrors AC8/AC9
+  `_register_observed_lora_refs` shape.
+- **Task 9 — `tests/_smoke_harness/lora_swap_grid.py` helper (commit `4a54d62`).**
+  Tier-3 (Wan 2.1 1.3B, Pokemon + static-rotation, branch=auto) and Tier-4 (Wan 2.2 14B
+  Arcane, high+low branches) spec builders. Refs sourced verbatim from
+  `examples/configs/wan{21-1_3b,22-14b}-strength-grid.yaml`.
+- **Task 12 — Integration test + README + this PROGRESS entry (commit `<integration-commit>`).**
+  `tests/integration/test_grid_lora_swap_e2e.py` drives `run_grid` against a stubbed
+  `kinoforge generate` subprocess (only ffmpeg + ffprobe are real); validates the
+  cold-boot + N-1 attach + destroy sequence, 3 distinct mp4 SHAs, and the `.cost.json`
+  schema. README `kinoforge grid` section extended with the `lora_swap:` YAML shape +
+  `on_swap_failure` knob + `--attach-pod` / `--emit-provision-record` flag docs.
+- **Tasks 10 + 11 — Tier-3 + Tier-4 live fires DEFERRED.** Implementation surface complete
+  + integration green; live-fire validation pending an operator-fire session. Budget
+  estimate: Tier-3 ≤ $0.50 (happy-path + forced-failure), Tier-4 ≤ $1.50 (3-cell Wan 2.2
+  14B Arcane). On first GREEN: amend `successful-generations.md` §11 with the swap-mode
+  "See also" line.
+
+**Resume target for next session:** Run Task 10 (Tier-3 live fire) using the helper at
+`tests/_smoke_harness/lora_swap_grid.py`. Then Task 11 (Tier-4). Then this CLOSED entry's
+commit-trail placeholders get the actual SHAs filled in and `successful-generations.md`
+gets the Tier-4 amend.
+
+---
+
 **LoRA-flexible warm-reuse SHIPPED 2026-06-20 (commits `a1c1ac0..7ce3a09`,
 22 of 23 tasks committed, T22 live smoke PARTIAL).** Spec
 `docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md`
