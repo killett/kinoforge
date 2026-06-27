@@ -513,6 +513,34 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "this run. Vault.loras bypass logged to stderr."
         ),
     )
+    p_generate.add_argument(
+        "--attach-pod",
+        type=str,
+        default=None,
+        metavar="POD_ID",
+        help=(
+            "attach to an existing warm pod from the ledger; skip provision; "
+            "pod survives at end. Pod must be ledger-recorded AND match cfg's "
+            "WarmAttachKey(base, engine, precision). Distinct from "
+            "--instance-id, which uses full CapabilityKey (and would reject "
+            "a different LoRA stack). Primarily for `kinoforge grid` "
+            "swap-mode cell 2..N. Mutex with --no-reuse and "
+            "--emit-provision-record."
+        ),
+    )
+    p_generate.add_argument(
+        "--emit-provision-record",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "on successful cold-boot provision, write a JSON record "
+            "{pod_id, endpoint_url, provider, warm_attach_key, provision_ts} "
+            "to PATH. Used by `kinoforge grid` swap-mode + operator scripting "
+            "to hand a fresh pod off to a follow-up --attach-pod call. Not "
+            "written on provision failure. Mutex with --attach-pod."
+        ),
+    )
 
     # list
     sub.add_parser("list", help="list running instances from ledger")

@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T21:40:00-07:00",
+  "lastUpdated": "2026-06-26T21:50:00-07:00",
   "tasks": [
     {
       "id": 1,
@@ -19,14 +19,14 @@
     {
       "id": 3,
       "subject": "CLI: --attach-pod flag with ledger validation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** Add `--attach-pod <id>` to `kinoforge generate`. Ledger validation (exists + running + WarmAttachKey match). Skip provision; route HTTP backend at ledger endpoint_url. Mutex with --no-reuse + --emit-provision-record.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py`, `src/kinoforge/cli/_commands.py`, `src/kinoforge/core/orchestrator.py`\n- Test: `tests/cli/test_generate_attach_pod.py` (~8 tests)\n- Add: fixtures in `tests/cli/conftest.py`\n\n**Acceptance Criteria:**\n- --attach-pod + --no-reuse exit 1\n- --attach-pod + --emit-provision-record exit 1\n- ledger-missing exit 1\n- non-running status exit 1\n- WarmAttachKey mismatch exit 1\n- happy-path skips provision + routes endpoint + --loras flows through\n\n**Verify:** `pixi run pytest tests/cli/test_generate_attach_pod.py tests/cli/ -v`\n\nDistinct from existing --instance-id (which uses full CapabilityKey + matcher classify rejections).\n\nPlan doc: §Task 3.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/cli/test_generate_attach_pod.py\", \"tests/cli/conftest.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_generate_attach_pod.py tests/cli/ -v\", \"acceptanceCriteria\": [\"--attach-pod + --no-reuse mutex\", \"--attach-pod + --emit-provision-record mutex\", \"ledger-missing exit 1\", \"non-running status exit 1\", \"WarmAttachKey mismatch exit 1\", \"happy path skips provision\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 4,
       "subject": "CLI: --emit-provision-record flag",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** Add `--emit-provision-record <path>` to `kinoforge generate`. On successful provision write JSON {pod_id, endpoint_url, provider, warm_attach_key, provision_ts}. Local TZ per `feedback_local_timezone_only`.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py`, `src/kinoforge/core/orchestrator.py`, `src/kinoforge/cli/_commands.py`\n- Test: covered by Task 3 tests\n\n**Acceptance Criteria:**\n- 5 keys written on success\n- file NOT written on provision failure\n- provision_ts is local TZ ISO-8601\n- warm_attach_key matches WarmAttachKey.derive()\n\n**Verify:** `pixi run pytest tests/cli/test_generate_attach_pod.py::test_attach_pod_emit_provision_record_happy_path_writes_json -v`\n\nPlan doc: §Task 4.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/core/orchestrator.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_generate_attach_pod.py::test_attach_pod_emit_provision_record_happy_path_writes_json -v\", \"acceptanceCriteria\": [\"JSON 5 keys\", \"not written on failure\", \"local TZ\", \"WAK matches\"], \"modelTier\": \"mechanical\"}\n```"
     },

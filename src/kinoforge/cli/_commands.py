@@ -29,7 +29,7 @@ from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import TeardownError, UnknownAdapter
-from kinoforge.core.interfaces import GenerationRequest, Instance
+from kinoforge.core.interfaces import GenerationRequest, Instance, WarmAttachKey
 from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
 from kinoforge.core.orchestrator import generate
@@ -475,6 +475,24 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
             file=sys.stderr,
         )
         return 2
+
+    attach_pod_id: str | None = getattr(args, "attach_pod", None)
+    emit_record_path: Path | None = getattr(args, "emit_provision_record", None)
+    if attach_pod_id is not None and getattr(args, "no_reuse", False):
+        print(
+            "error: --attach-pod and --no-reuse are mutually exclusive "
+            "(--attach-pod implies pod survival; --no-reuse forces destroy)",
+            file=sys.stderr,
+        )
+        return 1
+    if attach_pod_id is not None and emit_record_path is not None:
+        print(
+            "error: --attach-pod and --emit-provision-record are mutually "
+            "exclusive: attach does not provision",
+            file=sys.stderr,
+        )
+        return 1
+
     single = bool(getattr(args, "no_reuse", False))
     auto_attach_cfg = (
         getattr(cfg.compute, "warm_reuse_auto_attach", True)
@@ -483,7 +501,11 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     )
 
     instance: Instance | None = None
-    if getattr(args, "instance_id", None) is not None:
+    if attach_pod_id is not None:
+        instance, rc = _resolve_attach_pod(ctx, cfg, attach_pod_id)
+        if rc is not None:
+            return rc
+    elif getattr(args, "instance_id", None) is not None:
         instance, rc = _resolve_warm_instance(
             ctx,
             cfg,
@@ -539,6 +561,18 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
                 returned_instance,
                 idle_timeout_s=int(lc.idle_timeout_s),
                 max_age_s=int(lc.max_lifetime_s),
+            )
+        # Stamp the warm_attach_key so a downstream `kinoforge generate
+        # --attach-pod` invocation can validate identity without a
+        # full-CapabilityKey matcher round-trip. The find_pods_by_warm_attach_key
+        # index also gates on this field.
+        cfg_wak = _cfg_warm_attach_key(cfg)
+        ledger.touch(returned_instance.id, warm_attach_key=cfg_wak)
+        if emit_record_path is not None:
+            _write_provision_record(
+                emit_record_path,
+                instance=returned_instance,
+                warm_attach_key=cfg_wak,
             )
 
     print(f"generated: uri={artifact.uri!r}")
@@ -1134,6 +1168,115 @@ def _scan_warm_candidates(
         return (instance, _ScanReport(attached=instance_id, skipped=skipped))
 
     return (None, _ScanReport(attached=None, skipped=skipped))
+
+
+def _cfg_warm_attach_key(cfg: Config) -> str:
+    """Derive ``WarmAttachKey`` hex from a cfg's (base, engine, precision)."""
+    base_models = [m for m in cfg.models if m.kind == "base"]
+    base_ref = base_models[0].ref if base_models else ""
+    engine = cfg.engine
+    return WarmAttachKey(
+        base_model=base_ref,
+        engine=engine.kind if engine is not None else "",
+        precision=engine.precision if engine is not None else "",
+    ).derive()
+
+
+def _resolve_attach_pod(
+    ctx: SessionContext, cfg: Config, pod_id: str
+) -> tuple[Instance | None, int | None]:
+    """Validate operator-supplied --attach-pod; return Instance or exit code.
+
+    Distinct from :func:`_resolve_warm_instance` (which uses full
+    ``CapabilityKey`` + matcher classify): this gate is the simpler
+    "I just provisioned this pod and want to attach by id; skip the
+    matcher, gate on ``WarmAttachKey`` only" surface used by
+    ``kinoforge grid`` swap-mode cells 2..N and any operator scripting
+    a deliberate hand-off from a cold-boot to a follow-up generation.
+
+    Order:
+      1. ``Ledger.read(pod_id)`` — missing → exit 1.
+      2. ``warm_attach_key`` field on entry matches cfg's derived WAK.
+      3. ``provider.get_instance(pod_id).status == "ready"`` (live probe).
+    """
+    from kinoforge.core import registry
+    from kinoforge.core.errors import UnknownAdapter
+
+    ledger = ctx.ledger()
+    entry = ledger.read(pod_id)
+    if entry is None:
+        print(
+            f"pod {pod_id} not in ledger; cannot --attach-pod. Run "
+            f"'kinoforge list' to see ledger ids.",
+            file=sys.stderr,
+        )
+        return (None, 1)
+
+    cfg_wak = _cfg_warm_attach_key(cfg)
+    entry_wak = entry.get("warm_attach_key")
+    if entry_wak != cfg_wak:
+        print(
+            f"pod {pod_id} warm_attach_key mismatch: ledger entry has "
+            f"warm_attach_key={entry_wak!r}; cfg derives {cfg_wak!r}. "
+            f"Use a cfg whose (base_model, engine, precision) match the "
+            f"pod's, or 'kinoforge destroy --id {pod_id}' first.",
+            file=sys.stderr,
+        )
+        return (None, 1)
+
+    provider_kind = str(entry.get("provider", ""))
+    try:
+        provider = registry.get_provider(provider_kind)()
+    except UnknownAdapter as exc:
+        print(
+            f"provider {provider_kind!r} unconstructable: {type(exc).__name__}: {exc}.",
+            file=sys.stderr,
+        )
+        return (None, 1)
+
+    try:
+        live = provider.get_instance(pod_id)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"pod {pod_id} get_instance failed: {type(exc).__name__}: {exc}.",
+            file=sys.stderr,
+        )
+        return (None, 1)
+
+    if live.status != "ready":
+        print(
+            f"pod {pod_id} has status={live.status!r}; --attach-pod "
+            f"requires status=ready.",
+            file=sys.stderr,
+        )
+        return (None, 1)
+
+    return (live, None)
+
+
+def _write_provision_record(
+    path: Path,
+    *,
+    instance: Instance,
+    warm_attach_key: str,
+) -> None:
+    """Write the post-provision JSON record for grid swap-mode handoff."""
+    from datetime import datetime
+
+    endpoint_url = instance.endpoints.get("http") or next(
+        iter(instance.endpoints.values()), ""
+    )
+    record = {
+        "pod_id": instance.id,
+        "endpoint_url": endpoint_url,
+        "provider": instance.provider,
+        "warm_attach_key": warm_attach_key,
+        "provision_ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(  # kinoforge:public-write
+        json.dumps(record, indent=2) + "\n"
+    )
 
 
 def _resolve_warm_instance(
