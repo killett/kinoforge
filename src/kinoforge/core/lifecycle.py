@@ -19,6 +19,7 @@ from kinoforge.core.redaction import RedactionRegistry
 
 if TYPE_CHECKING:
     from kinoforge.core.interfaces import ComputeProvider
+    from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
     from kinoforge.stores.base import ArtifactStore
 
 _log = logging.getLogger(__name__)
@@ -747,6 +748,7 @@ def destroy_confirmed(
     clock: Clock | None = None,  # noqa: ARG001  (reserved for future use)
     sleep_s: float = 0.5,
     sleep: Callable[[float], None] | None = None,
+    ephemeral_index: EphemeralIndex | None = None,
 ) -> None:
     """Destroy an instance and poll until it is confirmed gone.
 
@@ -769,6 +771,11 @@ def destroy_confirmed(
         sleep_s: Seconds to sleep between poll attempts (default 0.5).
         sleep: Injectable sleep callable; defaults to ``time.sleep``.
             Pass ``lambda _: None`` in unit tests.
+        ephemeral_index: Optional ephemeral-index handle. When non-None,
+            ``remove(instance_id)`` is called after confirmed destruction
+            so a follow-up ``--ephemeral`` CLI process does not discover
+            a now-dead pod. Default ``None`` preserves bit-identical
+            behavior for callers that have no index in scope.
 
     Raises:
         TeardownError: If the instance is still visible after all retries.
@@ -779,6 +786,8 @@ def destroy_confirmed(
         provider.destroy_instance(instance_id)
         live_ids = {inst.id for inst in provider.list_instances()}
         if instance_id not in live_ids:
+            if ephemeral_index is not None:
+                ephemeral_index.remove(instance_id)
             return  # confirmed gone
         if attempt < retries:
             _sleep(sleep_s)
