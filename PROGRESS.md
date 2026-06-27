@@ -12,6 +12,31 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
+**README rewrite SHIPPED 2026-06-27 (commits `aa8212a..603af20`, all 15 tasks GREEN).**
+Spec `docs/superpowers/specs/2026-06-27-readme-rewrite-design.md` + plan
+`docs/superpowers/plans/2026-06-27-readme-rewrite.md`. Replaces the 2032-line
+`README.md` with a focused 258-line entry-point (Quickstart tiered ladder
+local-fake → fal.ai → RunPod; install; subcommand + pixi-task cheatsheet
+tables sourced from `cli/_main.py` and `pixi.toml`; inline Credentials
++ Known-keys; operator-concept index; top-10 troubleshooting; license)
+and relocates every deep-dive section under `docs/<topic>.md` (one file
+per operator concept). 14 destination files scaffolded in commit `539aa47`
+then populated per-concept (`ceea4eb` configuration, `cbe569d` credentials,
+`bd0fec7` lifecycle, `c1d9fc2` warm-reuse, `1316047` engines, `e133247`
+cost-and-spend, `e7238be` batch-and-grid, `d5942c8` cloud-stores,
+`c6af8d2` extending, `12cf0b5` output-layout/breaking-changes/roadmap/
+releasing, `e1f09f4` troubleshooting). Link-rewrite sweep across PROGRESS /
+AGENTS / CLAUDE / specs / plans found zero stale anchors (every prior
+README reference was either to the file root or to an anchor still
+present in the new README). Final acceptance: README ≤ 500 lines (258
+actual), every CLI verb in cheatsheet, every operator-relevant pixi task
+in cheatsheet, every concept points at an existing docs/<topic>.md,
+`pixi run pre-commit run --all-files` clean, live `kinoforge generate
+--config examples/configs/local-fake.yaml --no-reuse` succeeded
+end-to-end. **Workstream CLOSED — all 15 tasks GREEN.**
+
+---
+
 **`kinoforge grid` `lora_swap:` cell variant SHIPPED 2026-06-26 (commits `94956c1..` (Task 1) →
 `<live-fire-commit>` (Tasks 10/11) — 10 of 12 tasks committed, live fires DEFERRED).**
 Spec `docs/superpowers/specs/2026-06-26-grid-lora-swap-design.md` + plan
