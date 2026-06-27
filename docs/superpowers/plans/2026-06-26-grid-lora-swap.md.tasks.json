@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T22:00:00-07:00",
+  "lastUpdated": "2026-06-26T22:10:00-07:00",
   "tasks": [
     {
       "id": 1,
@@ -47,7 +47,7 @@
     {
       "id": 7,
       "subject": "Cost sidecar writer",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** `CostSidecarBuilder` class — per-group wall-clock cost tracking; writes `<grid_out>.cost.json` per spec §6 schema. Always written.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/cost_sidecar.py`\n- Test: `tests/core/grid/test_cost_sidecar.py` (~5)\n\n**Acceptance Criteria:**\n- start_group records provision_ts\n- record_cell appends cell\n- mark_cell_error sets status + error\n- total_cost sums across groups\n- write emits schema; spec_path redacted via Registry\n- sidecar always written (empty groups OK)\n\n**Verify:** `pixi run pytest tests/core/grid/test_cost_sidecar.py -v`\n\nPlan doc: §Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/cost_sidecar.py\", \"tests/core/grid/test_cost_sidecar.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_cost_sidecar.py -v\", \"acceptanceCriteria\": [\"start_group\", \"record_cell\", \"mark_cell_error\", \"total cost\", \"spec_path redact\", \"always written\"], \"modelTier\": \"mechanical\"}\n```"
     },
