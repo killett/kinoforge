@@ -1,11 +1,11 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T20:12:21-07:00",
+  "lastUpdated": "2026-06-26T21:30:00-07:00",
   "tasks": [
     {
       "id": 1,
       "subject": "Spec models: LoraSwapCell + LoraStackEntry + GridCell mutex + on_swap_failure",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** Extend `src/kinoforge/core/grid/spec.py` so a YAML spec can declare `lora_swap:` cells alongside existing `generate:` / `path:` cells, and so `GridSpec` carries a whole-grid `on_swap_failure` knob. Register every `lora_swap.stack[*].ref` with `RedactionRegistry`.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/spec.py`\n- Test: `tests/core/grid/test_spec_lora_swap.py` (NEW)\n\n**Acceptance Criteria:**\n- LoraStackEntry with strength range [-1.0, 2.0] + branch literal\n- LoraSwapCell with extra=forbid + empty-stack legal\n- GridCell 3-way mutex (generate/path/lora_swap)\n- GridSpec.on_swap_failure literal default classify\n- lora_swap refs registered with RedactionRegistry\n\n**Verify:** `pixi run pytest tests/core/grid/test_spec_lora_swap.py -v`\n\nPlan doc: §Task 1.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/spec.py\", \"tests/core/grid/test_spec_lora_swap.py\", \"tests/core/grid/conftest.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_spec_lora_swap.py -v\", \"acceptanceCriteria\": [\"LoraStackEntry model with strength range and branch literal\", \"LoraSwapCell model with config + stack list\", \"GridCell 3-way mutex enforced\", \"GridSpec.on_swap_failure literal field\", \"lora_swap refs registered with RedactionRegistry\"], \"modelTier\": \"mechanical\"}\n```"
     },
