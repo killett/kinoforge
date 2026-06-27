@@ -1251,6 +1251,20 @@ def _resolve_attach_pod(
         )
         return (None, 1)
 
+    # `provider.get_instance` returns an Instance whose `endpoints` is
+    # often empty on RunPod — endpoints are constructed lazily from the
+    # pod's tagged port list. The orchestrator's `wait_for_ready` blows
+    # up with `ProvisionFailed: pod has no endpoints` if we hand it an
+    # instance without them populated.
+    try:
+        live.endpoints = provider.endpoints(live)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"pod {pod_id} endpoints query failed: {type(exc).__name__}: {exc}.",
+            file=sys.stderr,
+        )
+        return (None, 1)
+
     return (live, None)
 
 
