@@ -1878,6 +1878,89 @@ separate base cfg instead. `[*]` wildcards rejected in v1.
 See `examples/grids/illustrative-strength-sweep.yaml` for a worked
 strength-sweep spec.
 
+### `lora_swap:` cells — warm-attach LoRA-stack swaps
+
+A strength sweep using `generate:` cells cold-boots one pod per
+distinct LoRA stack — strengths differ but the stack is the same, so
+the matcher reuses a single pod for the whole sweep (good). A
+DIFFERENT-ref sweep (e.g. comparing two LoRAs) cold-boots one pod per
+ref — that's the cost the `lora_swap:` cell variant eliminates.
+
+Each `lora_swap:` cell declares a full stack; cells sharing the same
+`WarmAttachKey(base_model, engine, precision)` pack into ONE group.
+Cell-1 cold-boots a pod via `kinoforge generate --loras
+--emit-provision-record`; cells 2..N attach via `kinoforge generate
+--attach-pod <pod_id> --loras` and route the new stack through the
+existing `POST /lora/set_stack` server endpoint. One pod, N
+generations, N server-side swaps — no N-fold cold-boot tax.
+
+```yaml
+title: Wan 2.2 14B Arcane strength sweep
+layout: 1x3
+budget_cap_usd: 2.0
+on_swap_failure: classify   # strict | continue | classify (default)
+cells:
+  - lora_swap:
+      config: /outside/repo/wan22-arcane-base.yaml
+      stack:
+        - ref: civitai:2197303@2474081
+          strength: 0.5
+          branch: high
+        - ref: civitai:2197303@2474073
+          strength: 0.5
+          branch: low
+    caption: strength=0.5
+  - lora_swap:
+      config: /outside/repo/wan22-arcane-base.yaml
+      stack:
+        - ref: civitai:2197303@2474081
+          strength: 1.0
+          branch: high
+        - ref: civitai:2197303@2474073
+          strength: 1.0
+          branch: low
+    caption: strength=1.0
+  # ... cell 3 at strength 1.5
+```
+
+A `<grid_out>.cost.json` sidecar is written next to the composed mp4
+(always — success, partial, or abort) with per-group wall-clock cost
+broken down by cell. The grid-level `budget_cap_usd` re-checks between
+cells; remaining cells are marked `budget_killed` once tripped.
+
+**`on_swap_failure` policy** drives the per-failure executor decision:
+
+- `strict` — ANY non-zero exit aborts the group + destroys the pod
+  immediately. Use for paranoid pre-prod sweeps.
+- `classify` (default) — pattern-matches stderr. Transient HTTP errors
+  (502 / `ProxyWarmupTimeout` / `ConnectionError`) retry up to 3× at
+  5s backoff; recoverable swap rejections (`BranchUnknown`,
+  `SwapRejectedDetails`) fail the cell but keep the pod warm for the
+  next attempt; unrecoverable (`VRAMRollbackFailure`,
+  `RunPodGraphQLError`, OOM 137) abort the group.
+- `continue` — even ambiguous failures continue to the next cell;
+  truly unrecoverable failures still abort (corrupt pod state would
+  poison the rest).
+
+#### Related CLI flags
+
+The grid executor drives these flags on `kinoforge generate` per
+swap-mode cell; both are also useful for ad-hoc operator scripting.
+
+`--attach-pod <pod_id>` — attach to a ledger-recorded warm pod whose
+`warm_attach_key` matches the cfg AND whose live status is `ready`.
+Skips provision. Distinct from `--instance-id` (which uses full
+`CapabilityKey` + the warm-reuse matcher, and would reject a
+different LoRA stack — that's why grid swap-mode needs the separate
+flag). Mutex with `--no-reuse` and `--emit-provision-record`. Pod
+survives at end.
+
+`--emit-provision-record <path>` — on successful cold-boot, writes a
+JSON record `{pod_id, endpoint_url, provider, warm_attach_key,
+provision_ts, cost_per_hr_usd}` to `<path>`. NOT written on
+provision failure. The grid executor reads this to hand cell-1's
+fresh pod off to cells 2..N's `--attach-pod` invocations.
+
 ## Roadmap (deferred layers and their seams)
 
 Each item below names the deferred layer and the exact seam it plugs into when built:
