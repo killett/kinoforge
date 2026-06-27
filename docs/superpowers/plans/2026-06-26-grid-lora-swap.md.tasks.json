@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T22:20:00-07:00",
+  "lastUpdated": "2026-06-26T22:30:00-07:00",
   "tasks": [
     {
       "id": 1,
@@ -61,7 +61,7 @@
     {
       "id": 9,
       "subject": "Shared smoke harness: write_lora_swap_grid_spec helper",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** New keyword-only helper for Tier-3 + Tier-4 lora_swap grid specs. Pulls canonical refs from `examples/configs/wan{21,22}-*-strength-grid.yaml`.\n\n**Files:**\n- Create: `tests/_smoke_harness/lora_swap_grid.py`\n- Test: `tests/_smoke_harness/test_lora_swap_grid_helper.py`\n\n**Acceptance Criteria:**\n- tier3 helper writes loadable spec with N cells\n- tier4 helper writes spec with high+low branches\n- GridSpec.load accepts output\n\n**Verify:** `pixi run pytest tests/_smoke_harness/test_lora_swap_grid_helper.py -v`\n\nPlan doc: §Task 9.\n\n```json:metadata\n{\"files\": [\"tests/_smoke_harness/lora_swap_grid.py\", \"tests/_smoke_harness/test_lora_swap_grid_helper.py\"], \"verifyCommand\": \"pixi run pytest tests/_smoke_harness/test_lora_swap_grid_helper.py -v\", \"acceptanceCriteria\": [\"tier3 loadable\", \"tier4 high+low\", \"GridSpec accepts\"], \"modelTier\": \"mechanical\"}\n```"
     },
