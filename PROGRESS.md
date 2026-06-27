@@ -1723,11 +1723,7 @@ Queued candidates (operator picks; not ranked):
      `WanVideoLoraSelect → WanVideoSampler.lora` graph variants for
      parity with the now-GREEN Diffusers `/lora/set_stack` path. C24
      is GREEN via Diffusers; C23 still open on ComfyUI side.
-  4. **`worktree-wan22-native-t2v-a14b` merge to `main`.** Per
-     superpowers' `finishing-a-development-branch` workflow — open PR
-     / squash / merge per operator choice. Code already CLOSED 2026-
-     06-20; only the integration step remains.
-  5. **Phase 53 Stage E — end-to-end `kinoforge deploy` on Lambda.**
+  4. **Phase 53 Stage E — end-to-end `kinoforge deploy` on Lambda.**
      `kinoforge deploy examples/configs/skypilot-lambda.yaml` against a
      real FakeEngine to verify kinoforge → SkyPilotProvider → sky →
      Lambda. ~$0.15 budget. Stages A-C CLOSED; Stage D BLOCKED on
@@ -4399,13 +4395,13 @@ See `successful-generations.md` entry #8 for the full schema +
 failure-modes recap. Total session spend ~$10 across 28 attempts
 (layered-bug debug) + ~$0.49 on the green pod.
 
-### Resume pointer
+### Integration status
 
-This worktree (`worktree-wan22-native-t2v-a14b`) is ready to merge
-back to `main`. Pending: superpowers' finishing-a-development-branch
-workflow (open PR / squash / merge — operator's choice).
+Merged to `main` via `744c64a merge: Wan 2.2 native T2V-A14B via
+DiffusersEngine (plan 2026-06-19)`. The `worktree-wan22-native-t2v-
+a14b` branch no longer exists locally or on origin.
 
-Sibling `runpod-comfyui-wan-t2v-14b-2_2.yaml` is now marked DEAD
-with a comment header pointing at the diffusers cfg. The
+Sibling `runpod-comfyui-wan-t2v-14b-2_2.yaml` is marked DEAD with a
+comment header pointing at the diffusers cfg. The
 `hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers` ref + DiffusersEngine path is
 the canonical Wan 2.2 14B integration.
