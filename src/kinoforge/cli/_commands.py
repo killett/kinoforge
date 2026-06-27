@@ -355,6 +355,7 @@ def _dry_run_swap_preview(ctx: SessionContext) -> int:
     Returns:
         Always 0.
     """
+    from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
     from kinoforge.core.warm_reuse.matcher import find_warm_attach_candidate
 
     cfg = ctx.cfg
@@ -378,6 +379,7 @@ def _dry_run_swap_preview(ctx: SessionContext) -> int:
         re_probe=None,
         re_probe_threshold_s=threshold,
         download_specs={},
+        ephemeral_index=EphemeralIndex(store=ctx.store()),
     )
     if match is None:
         print("matcher: no warm candidate, would cold-boot")
@@ -568,6 +570,29 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         # index also gates on this field.
         cfg_wak = _cfg_warm_attach_key(cfg)
         ledger.touch(returned_instance.id, warm_attach_key=cfg_wak)
+        # 2026-06-27 — ephemeral warm-reuse discovery (Option B disk index).
+        # Under STRICT_POLICY the ledger entry above lives only in
+        # session.in_memory_ledger; this index row is what lets the next
+        # CLI process discover the surviving pod.
+        from kinoforge.core.warm_reuse.ephemeral_index import (
+            EphemeralIndex,
+            EphemeralIndexRow,
+        )
+
+        if EphemeralSession.current() is not None:
+            endpoint_url = returned_instance.endpoints.get("http") or next(
+                iter(returned_instance.endpoints.values()), ""
+            )
+            EphemeralIndex(store=ctx.store()).add(
+                EphemeralIndexRow(
+                    id=returned_instance.id,
+                    warm_attach_key=cfg_wak,
+                    kinoforge_key=cfg.capability_key().derive()[:12],
+                    endpoint_url=endpoint_url,
+                    provider=returned_instance.provider,
+                    created_at_local=datetime.now().isoformat(),
+                )
+            )
         if emit_record_path is not None:
             _write_provision_record(
                 emit_record_path,
@@ -1128,7 +1153,18 @@ def _scan_warm_candidates(
     cap_key = cfg.capability_key().derive()[:12]
     provider_kind = cfg.compute.provider if cfg.compute is not None else ""
 
+    from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
+
     entries = ctx.ledger().entries()
+    # 2026-06-27 — union ephemeral-index rows so --ephemeral process #2
+    # can discover pods provisioned by --ephemeral process #1.
+    index_entries = [
+        r.to_entry_dict() for r in EphemeralIndex(store=ctx.store()).rows()
+    ]
+    ledger_ids = {e["id"] for e in entries}
+    for ie in index_entries:
+        if ie["id"] not in ledger_ids:  # ledger wins on overlap
+            entries.append(ie)
 
     matches = [
         e
