@@ -38,6 +38,11 @@ from kinoforge.core.grid.compose import (
 )
 from kinoforge.core.grid.errors import FfmpegInvocationError, GridCellFailure
 from kinoforge.core.grid.grouping import _PATH_GROUP_KEY, group_cells_by_capability_key
+
+# kinoforge:lora-redact-exempt — LoraStackEntry imported as type/payload
+# carrier only; refs are passed through to the `--loras` heredoc subprocess
+# argv (which routes through the P3 RedactionRegistry path) and are never
+# logged or persisted by this module.
 from kinoforge.core.grid.spec import GridSpec, LoraStackEntry
 
 _log = logging.getLogger(__name__)
