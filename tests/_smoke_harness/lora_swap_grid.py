@@ -11,7 +11,7 @@ Canonical refs:
   static-rotation pair, ``branch=auto`` (no MoE).
   Source: ``examples/configs/wan21-1_3b-strength-grid.yaml``.
 - Tier-4 (Wan 2.2 14B Arcane, MoE pair): high-noise + low-noise
-  tensors on ``branch=high`` / ``branch=low``.
+  tensors on ``branch=high_noise`` / ``branch=low_noise``.
   Source: ``examples/configs/wan22-14b-strength-grid.yaml``.
 """
 
@@ -29,8 +29,8 @@ _TIER3_LORAS: tuple[dict[str, Any], ...] = (
 )
 
 _TIER4_LORAS: tuple[dict[str, Any], ...] = (
-    {"ref": "civitai:2197303@2474081", "branch": "high"},
-    {"ref": "civitai:2197303@2474073", "branch": "low"},
+    {"ref": "civitai:2197303@2474081", "branch": "high_noise"},
+    {"ref": "civitai:2197303@2474073", "branch": "low_noise"},
 )
 
 _TIER3_TITLE = "Wan 2.1 1.3B strength sweep (lora_swap)"
@@ -50,7 +50,8 @@ def write_lora_swap_grid_spec(
 
     Args:
         tier: ``tier3`` (Wan 2.1 1.3B; single-transformer; branch=auto)
-            or ``tier4`` (Wan 2.2 14B Arcane; MoE pair; branch=high+low).
+            or ``tier4`` (Wan 2.2 14B Arcane; MoE pair;
+            branch=high_noise+low_noise).
         strengths: One cell per value; e.g. ``[0.5, 1.0, 1.5]``.
         out_path: Where to write the spec YAML (must be OUTSIDE the
             active repo; ``GridSpec.load``'s under-repo guard rejects

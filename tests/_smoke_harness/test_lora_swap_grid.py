@@ -73,7 +73,7 @@ def test_tier4_helper_writes_high_low_branch_pair(
         entry.branch
         for entry in spec.cells[0].lora_swap.stack  # type: ignore[union-attr]
     }
-    assert branches == {"high", "low"}
+    assert branches == {"high_noise", "low_noise"}
 
 
 def test_helper_threads_on_swap_failure_into_spec(
