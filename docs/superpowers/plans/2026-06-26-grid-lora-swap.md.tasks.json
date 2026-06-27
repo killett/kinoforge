@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T21:30:00-07:00",
+  "lastUpdated": "2026-06-26T21:40:00-07:00",
   "tasks": [
     {
       "id": 1,
@@ -12,7 +12,7 @@
     {
       "id": 2,
       "subject": "Grouping: WarmAttachKey derivation for lora_swap cells",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Extend `_cell_capability_key` to dispatch on cell type so `lora_swap:` cells group by `WarmAttachKey(base, engine, precision)` only.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/executor.py` (`_ResolvedCell`, `_cell_capability_key`, `_resolve_spec_cells`)\n- Test: `tests/core/grid/test_grouping_lora_swap.py`\n\n**Acceptance Criteria:**\n- Two swap cells with same WAK share group\n- Swap + generate with same WAK go to different groups\n- Path cells stay under sentinel\n- Different precision splits swap group\n\n**Verify:** `pixi run pytest tests/core/grid/test_grouping_lora_swap.py tests/core/grid/ -v`\n\nPlan doc: §Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/executor.py\", \"tests/core/grid/test_grouping_lora_swap.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_grouping_lora_swap.py tests/core/grid/ -v\", \"acceptanceCriteria\": [\"same WAK groups\", \"swap+gen different groups\", \"path under sentinel\", \"precision splits\"], \"modelTier\": \"mechanical\"}\n```"
     },

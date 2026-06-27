@@ -38,7 +38,7 @@ from kinoforge.core.grid.compose import (
 )
 from kinoforge.core.grid.errors import FfmpegInvocationError, GridCellFailure
 from kinoforge.core.grid.grouping import _PATH_GROUP_KEY, group_cells_by_capability_key
-from kinoforge.core.grid.spec import GridSpec
+from kinoforge.core.grid.spec import GridSpec, LoraStackEntry
 
 _log = logging.getLogger(__name__)
 
@@ -63,6 +63,8 @@ class _ResolvedCell:
     cfg_path: Path | None
     effective_cfg: object | None
     mp4_path: Path | None
+    is_lora_swap: bool = False
+    lora_swap_stack: list[LoraStackEntry] | None = None
 
     def capability_key(self) -> str | None:
         if self.effective_cfg is None:
@@ -96,34 +98,41 @@ class GridResult:
 
 
 def _cell_capability_key(cell: _ResolvedCell) -> str | None:
-    """Derive the cell's capability_key from the effective Config.
+    """Derive the cell's grouping key from the effective Config.
 
-    Mirrors :class:`kinoforge.core.interfaces.CapabilityKey` factors:
-    base-model ref + ordered LoRA refs + engine kind + precision.
-    LoRA *strength* is intentionally omitted so strength sweeps share
-    one key (warm-reuse intra-group). VAE / scheduler / spec dims are
-    also out by design — they're engine-side details that don't gate
-    pod identity.
+    - `generate:` cells return :meth:`CapabilityKey.derive` (base + LoRA
+      refs + engine + precision; strength omitted so strength sweeps
+      share one group on the generate path).
+    - `lora_swap:` cells return :meth:`WarmAttachKey.derive` (base +
+      engine + precision ONLY; LoRA refs OUT) so all cells sharing
+      those slow-rebuild factors pack into ONE warm-pod group
+      regardless of their stack.
+    - `path:` cells return ``None``; the grouping module folds them
+      under the ``_PATH_GROUP_KEY`` sentinel.
 
-    Lives at module scope so tests can monkeypatch it. Path cells
-    return None — they're degenerate and the grouping module folds
-    them under the ``_PATH_GROUP_KEY`` sentinel.
+    Lives at module scope so tests can monkeypatch it.
     """
     cfg = cell.effective_cfg
     if cfg is None:
         return None
     try:
-        from kinoforge.core.interfaces import CapabilityKey
+        from kinoforge.core.interfaces import CapabilityKey, WarmAttachKey
 
         base_models = [
             m for m in getattr(cfg, "models", []) if getattr(m, "kind", None) == "base"
         ]
         base_ref = base_models[0].ref if base_models else ""
-        loras = getattr(cfg, "loras", []) or []
-        lora_refs = tuple(lo.ref for lo in loras)
         engine = getattr(cfg, "engine", None)
         engine_kind = getattr(engine, "kind", "") if engine is not None else ""
         precision = getattr(engine, "precision", "") if engine is not None else ""
+
+        if cell.is_lora_swap:
+            return WarmAttachKey(
+                base_model=base_ref, engine=engine_kind, precision=precision
+            ).derive()
+
+        loras = getattr(cfg, "loras", []) or []
+        lora_refs = tuple(lo.ref for lo in loras)
         return CapabilityKey(
             base_model=base_ref,
             loras=lora_refs,
@@ -174,10 +183,28 @@ def _resolve_spec_cells(
                     mp4_path=None,
                 )
             )
+        elif cell.lora_swap is not None:
+            base = load_config(Path(cell.lora_swap.config))
+            cfg_path = tmp_dir / f"cell_{i}.yaml"
+            cfg_path.write_text(  # kinoforge:public-write
+                yaml.safe_dump(base.model_dump(mode="json")),
+            )
+            resolved.append(
+                _ResolvedCell(
+                    idx=i,
+                    caption=cell.caption,
+                    cfg_path=cfg_path,
+                    effective_cfg=base,
+                    mp4_path=None,
+                    is_lora_swap=True,
+                    lora_swap_stack=list(cell.lora_swap.stack),
+                )
+            )
         else:
             if cell.path is None:
                 raise GridCellPathMissing(
-                    f"cell {i}: neither generate nor path set (model invariant violated)"
+                    f"cell {i}: no variant set (generate/path/lora_swap all None; "
+                    f"model invariant violated)"
                 )
             mp = Path(cell.path).resolve()
             if not mp.exists():
