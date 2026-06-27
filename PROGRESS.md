@@ -1692,37 +1692,46 @@ See `docs/hygiene-notes.md`. Reviewer checks before re-flagging.
 
 ## Single next action
 
-**P2 server-side swap-gap fix (Tier-4 case_5 + case_7).** 2026-06-23
-Tier-4 closed 5/7 PASS (commit `bc7ec14`); two `/lora/set_stack`
-paths in `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`
-raise unmapped exceptions surfacing as HTTP 500:
+**No committed next action — menu open as of 2026-06-27.** Two prior
+single-next-action workstreams both CLOSED on 2026-06-27:
 
-  - case_5 `wrong_routing`: re-post canonical-pair refs with branches
-    SWAPPED after canonical pair already loaded → 500. Likely the
-    `_replace_adapter_stack` unload-then-reload-with-different-branch
-    branch path.
-  - case_7 `same_ref_in_both_branches`: same ref under two distinct
-    branches (composite key `(ref, branch)`) → 500. Likely peft's
-    `load_lora_weights` rejecting the same tensor under two adapter
-    names, OR the `_adapter_name` collision-suffix breaking on
-    same-ref.
+  - **Grid `lora_swap:` cell variant CLOSED** (commit `c9832cb`).
+    All 12 tasks GREEN end-to-end; Tier-3 (Wan 2.1 1.3B) 2/2 + Tier-4
+    (Wan 2.2 14B Arcane) 1/1 FULL GREEN on real RunPod hardware;
+    cumulative live spend $1.67. Full evidence in Active workstream
+    block above + `successful-generations.md §11`.
+  - **P2 server-side swap-gap fix (Tier-4 case_5 + case_7) CLOSED**
+    (fix `fdac5ab`, live validation `39f6297` — Tier-4 7/7 FULL_GREEN).
+    `wan_t2v_server._replace_adapter_stack` now handles re-post-with-
+    swapped-branches and same-ref-under-two-branches via file-aware
+    evict + target seeding.
 
-Next-session protocol:
+Queued candidates (operator picks; not ranked):
 
-  1. Reproduce both 500s against a Tier-3 stub
-     (`KINOFORGE_STUB_MOE=1` per Task 12 commit `32d3608`) — free,
-     local, fast iteration.
-  2. Add unit-test coverage that pins the structured 4xx (or 200)
-     contract the server SHOULD return for both shapes.
-  3. Fix `wan_t2v_server._replace_adapter_stack`.
-  4. Re-fire ONLY cases 5 + 7 of
-     `tests/smoke/release_wan22/test_dual_transformer_routing.py`
-     on real Wan 2.2 14B (~$0.40 + ~25 min cold-boot). Use
-     `KINOFORGE_LIVE_TESTS=1 pixi run pytest <path> -k 'case_5 or case_7'`.
-  5. Append to `successful-generations.md §11` ("See also" line) —
-     no new section needed; same capability axis.
-
-Then resume from the menu below (C26 / Layer-5 Bearer cost / etc.).
+  1. **C27 — restart-loop stall detection.** Sibling predicate
+     (uptime < threshold for K consecutive ticks) alongside C26's
+     low-util predicate; re-fire Wan + ComfyUI Phase B smoke. Spec +
+     plan TBD. Unblocks the C25 Task-4 operator-visible stall class.
+  2. **Layer 5 — hosted-Bearer per-prediction cost capture.**
+     `_extract_cost(status) -> float | None` hook on
+     `RemoteSubmitPollBackend` (Replicate `metrics.predict_time` ×
+     rate-card; Runway / Luma duration + resolution → rate card);
+     lift onto `Artifact.meta["cost_usd"]`, `.cost.json` sidecar,
+     `KINOFORGE_SESSION_BUDGET_USD` pre-submit gate raising
+     `BudgetExceeded`. Carry-forward from Phase 43 Layer 4 close-out.
+  3. **C23 close — ComfyUI graph-tagged LoRA loading.**
+     `WanVideoLoraSelect → WanVideoSampler.lora` graph variants for
+     parity with the now-GREEN Diffusers `/lora/set_stack` path. C24
+     is GREEN via Diffusers; C23 still open on ComfyUI side.
+  4. **`worktree-wan22-native-t2v-a14b` merge to `main`.** Per
+     superpowers' `finishing-a-development-branch` workflow — open PR
+     / squash / merge per operator choice. Code already CLOSED 2026-
+     06-20; only the integration step remains.
+  5. **Phase 53 Stage E — end-to-end `kinoforge deploy` on Lambda.**
+     `kinoforge deploy examples/configs/skypilot-lambda.yaml` against a
+     real FakeEngine to verify kinoforge → SkyPilotProvider → sky →
+     Lambda. ~$0.15 budget. Stages A-C CLOSED; Stage D BLOCKED on
+     upstream sky vast adapter (vastai-sdk ≥ 0.2 incompat).
 
 ---
 
