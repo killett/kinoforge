@@ -46,6 +46,18 @@ from pathlib import Path
 from kinoforge.core.redaction import RedactionRegistry
 
 
+def _coerce_aware(ts: datetime) -> datetime:
+    """Treat naive datetimes as local-TZ; return a TZ-aware datetime.
+
+    Sidecar arithmetic mixes timestamps from three sources — the
+    builder's own ``datetime.now()`` (TZ-aware), provision records read
+    from disk (TZ-aware ISO-8601 with offset), and test fixtures
+    (often naive). Coercing every boundary input to aware avoids
+    `can't subtract offset-naive and offset-aware datetimes`.
+    """
+    return ts if ts.tzinfo is not None else ts.astimezone()
+
+
 @dataclass
 class _CellRecord:
     idx: int
@@ -92,7 +104,7 @@ class CostSidecarBuilder:
         self.out_mp4 = out_mp4
         self.budget_cap_usd = budget_cap_usd
         self._groups: dict[str, _GroupRecord] = {}
-        self._start_ts = datetime.now()
+        self._start_ts = datetime.now().astimezone()
 
     def start_group(
         self,
@@ -104,12 +116,13 @@ class CostSidecarBuilder:
         provision_ts: datetime | None = None,
     ) -> None:
         """Record the pod-cold-boot timestamp + cost rate for a group."""
+        ts = provision_ts if provision_ts is not None else datetime.now().astimezone()
         self._groups[group_key] = _GroupRecord(
             key=group_key,
             pod_id=pod_id,
             provider=provider,
             cost_per_hr_usd=cost_per_hr,
-            provision_ts=provision_ts or datetime.now(),
+            provision_ts=_coerce_aware(ts),
         )
 
     def record_cell(
@@ -151,17 +164,18 @@ class CostSidecarBuilder:
     def group_cost(self, group_key: str, *, now: datetime | None = None) -> float:
         """Return wall-clock cost for one group; clamps at 0 for inverted clock."""
         g = self._groups[group_key]
-        elapsed = ((now or datetime.now()) - g.provision_ts).total_seconds()
+        n = _coerce_aware(now) if now is not None else datetime.now().astimezone()
+        elapsed = (n - g.provision_ts).total_seconds()
         return max(0.0, elapsed) * g.cost_per_hr_usd / 3600.0
 
     def total_cost_usd(self, *, now: datetime | None = None) -> float:
         """Sum of :meth:`group_cost` across every started group."""
-        n = now or datetime.now()
+        n = _coerce_aware(now) if now is not None else datetime.now().astimezone()
         return sum(self.group_cost(k, now=n) for k in self._groups)
 
     def write(self, out_path: Path, *, now: datetime | None = None) -> None:
         """Emit the sidecar JSON at ``out_path`` (parent dirs created)."""
-        n = now or datetime.now()
+        n = _coerce_aware(now) if now is not None else datetime.now().astimezone()
         reg = RedactionRegistry.instance()
         data = {
             "grid_id": self.grid_id,

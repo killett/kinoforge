@@ -339,6 +339,7 @@ def test_emit_provision_record_writes_json_after_cold_boot(
         "provider",
         "warm_attach_key",
         "provision_ts",
+        "cost_per_hr_usd",
     }
     assert rec["pod_id"] == "cold-pod-99"
     assert rec["provider"] == "local"

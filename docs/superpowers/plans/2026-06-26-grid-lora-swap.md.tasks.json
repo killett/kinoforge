@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T22:30:00-07:00",
+  "lastUpdated": "2026-06-26T22:45:00-07:00",
   "tasks": [
     {
       "id": 1,
@@ -33,7 +33,7 @@
     {
       "id": 5,
       "subject": "Executor: _run_swap_group + run_grid dispatch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2, 3, 4, 6, 7],
       "description": "**Goal:** New async `_run_swap_group` driving cell-1 cold-boot via `kinoforge generate --loras --emit-provision-record`, then cells 2..N via `kinoforge generate --attach-pod --loras`. try/finally teardown + residual probe. `_classify_swap_failure` on non-zero exit.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/executor.py`\n- Test: `tests/core/grid/test_executor_swap_group.py` (~6)\n\n**Acceptance Criteria:**\n- cell-1 argv has --loras + --emit-provision-record; no --attach-pod; no --no-reuse\n- cells 2..N argv has --attach-pod + --loras; no --emit-provision-record; no --no-reuse\n- destroy in finally on success\n- destroy in finally on abort\n- residual probe surfaces teardown\n- budget cap-trip marks remaining killed\n\n**Verify:** `pixi run pytest tests/core/grid/test_executor_swap_group.py tests/core/grid/ -v`\n\nPlan doc: §Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/executor.py\", \"tests/core/grid/test_executor_swap_group.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_executor_swap_group.py tests/core/grid/ -v\", \"acceptanceCriteria\": [\"cell-1 argv\", \"cells 2..N argv\", \"destroy in finally success\", \"destroy in finally abort\", \"residual probe\", \"budget cap-trip\"], \"modelTier\": \"standard\"}\n```"
     },
