@@ -467,9 +467,36 @@ class Ledger:
     def _read_entries(self) -> list[dict]:  # type: ignore[type-arg]
         """Load existing entries from the store; return empty list if not yet written.
 
+        Under an active :class:`EphemeralSession` with
+        ``policy.ledger_record=False``, reads from the session's
+        ``in_memory_ledger`` mirror of :meth:`_write_entries`'s diversion
+        target. On the first read inside such a session, bootstrap the
+        in-memory mirror from current disk state so pre-existing entries
+        recorded before the session entered remain visible (warm-attach
+        scans still match pods provisioned by a prior non-ephemeral run).
+        Without this branch, ``record`` would write to in-memory while
+        ``read`` / ``touch`` / ``forget`` / ``entries`` read empty disk —
+        the asymmetry that caused the 2026-06-26 ``hold_until_first_tick``
+        hang + ``[instance overview] No running instances`` warm-attach
+        miss under ``--ephemeral``.
+
         Returns:
             List of entry dicts.
         """
+        from kinoforge.core.ephemeral import EphemeralSession  # noqa: PLC0415
+
+        session = EphemeralSession.current()
+        if session is not None and not session.policy.ledger_record:
+            payload = session.in_memory_ledger.get(self._run_id)
+            if payload is None:
+                payload = {"entries": self._read_entries_from_disk()}
+                session.in_memory_ledger[self._run_id] = payload
+            raw = payload.get("entries", [])
+            return [e for e in raw if isinstance(e, dict)]
+        return self._read_entries_from_disk()
+
+    def _read_entries_from_disk(self) -> list[dict]:  # type: ignore[type-arg]
+        """Read entries from the on-disk store; ``[]`` if absent."""
         uri = self._compute_uri()
         try:
             data = self._store.get_json(uri)
