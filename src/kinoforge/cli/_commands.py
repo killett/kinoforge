@@ -1887,7 +1887,14 @@ def _cmd_destroy(args: argparse.Namespace, ctx: SessionContext) -> int:
         provider_name = entry.get("provider", "local")
         try:
             provider = registry.get_provider(str(provider_name))()
-            destroy_confirmed(provider, args.id, sleep=lambda _: None)
+            from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
+
+            destroy_confirmed(
+                provider,
+                args.id,
+                sleep=lambda _: None,
+                ephemeral_index=EphemeralIndex(store=ctx.store()),
+            )
             ledger.forget(args.id)
             print(f"destroyed: {args.id}")
             return 0
@@ -1935,7 +1942,14 @@ def _cmd_destroy(args: argparse.Namespace, ctx: SessionContext) -> int:
         return 1
 
     try:
-        destroy_confirmed(orphan_provider, args.id, sleep=lambda _: None)
+        from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
+
+        destroy_confirmed(
+            orphan_provider,
+            args.id,
+            sleep=lambda _: None,
+            ephemeral_index=EphemeralIndex(store=ctx.store()),
+        )
     except (UnknownAdapter, KeyError, TeardownError) as exc:
         print(
             f"error destroying orphan {args.id!r} via {orphan_name}: {exc}",

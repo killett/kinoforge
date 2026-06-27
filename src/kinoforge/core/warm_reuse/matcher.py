@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from kinoforge.core.ephemeral import EphemeralSession
+from kinoforge.core.errors import LoraSwapPodUnreachableError
 from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
 from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
 
@@ -202,7 +203,17 @@ def find_warm_attach_candidate(
             or _snapshot_stale(observed_at, re_probe_threshold_s)
         )
         if needs_reprobe and re_probe is not None:
-            snapshot = re_probe(pod_id)
+            try:
+                snapshot = re_probe(pod_id)
+            except LoraSwapPodUnreachableError:
+                # Pod 404'd during liveness re-probe; row is stale.
+                # Drop the discovery row + skip this candidate so the
+                # matcher tries the next instead of raising into the
+                # caller. The integration wrapper's exception arm
+                # handles the swap-time variant of the same failure.
+                if ephemeral_index is not None:
+                    ephemeral_index.remove(pod_id)
+                continue
             _register_observed_lora_refs(snapshot)
             inventory_entries = _coerce_inventory(snapshot)
             free_bytes = _coerce_free_bytes(snapshot)

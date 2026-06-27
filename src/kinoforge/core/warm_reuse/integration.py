@@ -140,6 +140,8 @@ def try_warm_attach_with_swap(
         LoraSwapDiskFullError,
     ):
         ledger.touch(match.pod_id, status="degraded")
+        if ephemeral_index is not None:
+            ephemeral_index.remove(match.pod_id)
         pod_lock_registry.release(match.pod_id)
         raise
     except (LoraSwapDownloadError, LoraSwapVramOomError):
