@@ -75,24 +75,54 @@ class PathCell(BaseModel):
     path: Path
 
 
+class LoraStackEntry(BaseModel):
+    """One LoRA reference in a ``lora_swap:`` cell's stack.
+
+    Mirrors the P3 CLI ``--loras`` heredoc shape so the grid executor can
+    serialize a list of these straight into the heredoc payload routed
+    through ``POST /lora/set_stack``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ref: str
+    strength: float = Field(default=1.0, ge=-1.0, le=2.0)
+    branch: Literal["high", "low", "auto"] = "auto"
+
+
+class LoraSwapCell(BaseModel):
+    """Cell driving a server-side warm-attach LoRA-stack swap.
+
+    Cells sharing the same ``WarmAttachKey(base, engine, precision)``
+    derived from ``config`` pack into one group; the group cold-boots one
+    pod for cell-1 and attaches via ``--attach-pod`` for cells 2..N. The
+    ``stack`` flows through the existing P3 ``--loras`` CLI surface and
+    routes to ``POST /lora/set_stack`` on the warm pod.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    config: Path
+    stack: list[LoraStackEntry] = Field(min_length=0)
+
+
 class GridCell(BaseModel):
-    """One cell in the grid; exactly one of ``generate`` or ``path`` required."""
+    """One cell in the grid; exactly one of ``generate``/``path``/``lora_swap`` required."""
 
     model_config = ConfigDict(extra="forbid")
 
     generate: GenerateCell | None = None
     path: Path | None = None
+    lora_swap: LoraSwapCell | None = None
     caption: str | None = None
 
     @model_validator(mode="after")
     def _check_variant(self) -> GridCell:
-        if self.generate is not None and self.path is not None:
+        n_set = sum(v is not None for v in (self.generate, self.path, self.lora_swap))
+        if n_set != 1:
             raise ValueError(
-                "cell variants are mutually exclusive: declare `generate:` OR "
-                "`path:`, not both"
+                "cell must declare exactly one of `generate:` / `path:` / `lora_swap:`"
             )
-        if self.generate is None and self.path is None:
-            raise ValueError("cell must declare exactly one of `generate:` or `path:`")
         return self
 
 
@@ -110,6 +140,7 @@ class GridSpec(BaseModel):
     budget_cap_usd: float = Field(gt=0)
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
     cells: list[GridCell] = Field(min_length=1)
+    on_swap_failure: Literal["strict", "continue", "classify"] = "classify"
 
     @classmethod
     def load(cls, path: Path | str) -> GridSpec:
@@ -212,3 +243,9 @@ def _register_caption_tokens(spec: GridSpec) -> None:
                 reg.add(cell.caption, kind="grid:caption")
             except ValueError:
                 pass
+        if cell.lora_swap is not None:
+            for entry in cell.lora_swap.stack:
+                try:
+                    reg.add(entry.ref, kind="grid:lora_ref")
+                except ValueError:
+                    pass
