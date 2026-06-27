@@ -1481,6 +1481,62 @@ Proves the CLI override threads through `parse_loras_heredoc` →
 `resolve_active_lora_stack(*, cli_loras=...)` →
 `build_set_stack_request` → live `/lora/set_stack` wire body.
 
+### See also (2026-06-26): `kinoforge grid lora_swap:` cell variant — Tier-3 3-cell sweeps
+
+Grid `lora_swap:` cell variant (spec
+`docs/superpowers/specs/2026-06-26-grid-lora-swap-design.md`,
+plan `docs/superpowers/plans/2026-06-26-grid-lora-swap.md`) packs
+N strength-sweep cells into ONE warm pod with server-side
+`/lora/set_stack` swaps between cells, replacing N cold-boots with
+1 cold-boot + N-1 attaches. Two Tier-3 live fires against Wan 2.1
+1.3B + Pokemon/static-rotation pair on RunPod (RTX A4000 24GB,
+$0.16/hr):
+
+- **Fire 1 (happy-path, all branch=auto):** pod `o80tl2byw6irbh`,
+  3 cells at strengths {0.5, 1.0, 1.5}, group cold-boot ~7 min,
+  3 generations in 80 s after model-ready (~26 s/cell), 3 distinct
+  shas (`bef386d8…392d932`, `241cfbc1…85742a4`, `d5ed27db…71f250`),
+  composed `/tmp/output/tier3-swap-happy-4.mp4` (1.38 MB), sidecar
+  `/tmp/output/tier3-swap-happy-4.cost.json` total $0.0036 (under
+  $0.50 cap), wall 535 s. Post-run `kinoforge list` clean.
+- **Fire 2 (branch=high_noise on single-transformer, no server
+  reject):** pod `3dt0ue4xt1wkv0`, 3 cells, 3 distinct shas, sidecar
+  total $0.0035, wall 466 s. The Wan 2.1 1.3B server accepted
+  `branch=high_noise` rather than raising
+  `BranchUnsupportedOnSingleTransformer` (intended "forced failure"
+  did not trigger; classify CONTINUE path validated by unit tests
+  `tests/core/test_grid_swap_failures.py`).
+
+3 production bugs surfaced + fixed mid-fires:
+
+- `6d313e4` — `_run_swap_cell_once` now persists full subprocess
+  stderr to `<tmp_dir>/cell_<i>.stderr.txt` (was silently dropped
+  past the 500-char tail in `GridCellFailure`).
+- `865a4e4` → `76ff41f` — `_resolve_attach_pod` merges the ledger
+  entry's recorded `tags` into the `provider.get_instance` result
+  before calling `provider.endpoints(live)`. RunPod's pod-query
+  GraphQL doesn't include the port spec; without the merge,
+  `wait_for_ready` raises `ProvisionFailed: pod has no endpoints`
+  on every cells-2..N attach.
+- `59b22cf` — `LoraStackEntry.branch` literal aligned with
+  `kinoforge.core.lora.LoraEntry.branch` canonical form
+  `{high_noise, low_noise, auto}` (was `{high, low, auto}` —
+  the executor's `_stack_to_loras_heredoc` would emit `branch=high`
+  and the CLI `--loras` parser would reject `literal_error`).
+
+Tier-4 attempt (Wan 2.2 14B Arcane high_noise+low_noise pair, pod
+`ik4ryue02c9wps` on A100 80GB, $1.39/hr) cell-0 cold-boot completed +
+generated mp4
+`20260626-231217_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4`;
+cell-1 attach failed with RunPod GraphQL `pod not found` because the
+pod was reaped externally (likely selfterm dead-man hit during the
+17-min cold-boot — `idle_timeout=90m` ⇒ `2 * idle_timeout = 3h`
+dead-man window, but `job_timeout=15m` may have fired if the model
+load was attributed as a job). Implementation surface unchanged; the
+Tier-4 timing-vs-selfterm interaction needs a separate fix.
+Same tuple `(runpod, DiffusersEngine,
+Wan-AI/Wan2.1-T2V-1.3B-Diffusers + Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`.
+
 ---
 
 ## 10. `2026-06-21 05:37:14` — Diffusers WanPipeline Wan 2.2 T2V-A14B + Arcane LoRA pair warm-reuse matrix on RunPod (A100 80GB) — t2v
