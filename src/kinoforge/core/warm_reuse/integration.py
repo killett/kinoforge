@@ -32,6 +32,7 @@ from kinoforge.core.errors import (
     LoraSwapPodUnreachableError,
     LoraSwapVramOomError,
 )
+from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
 from kinoforge.core.warm_reuse.matcher import (
     WarmAttachMatch,
     find_warm_attach_candidate,
@@ -48,6 +49,7 @@ def try_warm_attach_with_swap(
     download_specs: dict[str, dict[str, Any]] | None = None,
     re_probe: Callable[[str], Any] | None = None,
     re_probe_threshold_s: float = 300.0,
+    ephemeral_index: EphemeralIndex | None = None,
 ) -> WarmAttachMatch | None:
     """Find a warm pod + apply the LoRA swap; return the locked match or None.
 
@@ -67,6 +69,9 @@ def try_warm_attach_with_swap(
             needs to download new refs.
         re_probe: Optional ``pod_id -> InventorySnapshot`` re-probe.
         re_probe_threshold_s: Forwarded to the matcher.
+        ephemeral_index: Optional pod-discovery index; forwarded to
+            :func:`find_warm_attach_candidate` so the matcher can union
+            ``--ephemeral``-session rows into the candidate list.
 
     Returns:
         Locked ``WarmAttachMatch`` on success, ``None`` when no candidate
@@ -93,6 +98,7 @@ def try_warm_attach_with_swap(
         re_probe=re_probe,
         re_probe_threshold_s=re_probe_threshold_s,
         download_specs=specs,
+        ephemeral_index=ephemeral_index,
     )
     if match is None:
         return None

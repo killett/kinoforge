@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from kinoforge.core.ephemeral import EphemeralSession
+from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
 from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
 
 # Module-level for tests to override (in MB/s) — tunes the cost ranking only.
@@ -118,6 +119,7 @@ def find_warm_attach_candidate(
     re_probe: Callable[[str], Any] | None = None,
     re_probe_threshold_s: float = 300.0,
     download_specs: dict[str, dict[str, Any]] | None = None,
+    ephemeral_index: EphemeralIndex | None = None,
 ) -> WarmAttachMatch | None:
     """Find the cheapest warm pod to attach for ``cfg``, or ``None`` to cold-boot.
 
@@ -137,6 +139,11 @@ def find_warm_attach_candidate(
         download_specs: ``ref -> {size_hint?, url, headers, filename}`` for
             the target LoRA stack. Required for tight-disk + cost
             estimation; may be empty for the exact-byte fast path.
+        ephemeral_index: Optional store-backed pod-discovery index. When
+            non-None, rows whose WAK matches are unioned into the
+            ledger candidate list (ledger wins on ``id`` collision); the
+            mechanism the ``--ephemeral`` cross-session warm-reuse path
+            relies on to discover pods provisioned by a prior CLI process.
 
     Returns:
         ``WarmAttachMatch`` with the lock acquired, or ``None``.
@@ -148,6 +155,11 @@ def find_warm_attach_candidate(
     new_lora_refs = list(cap_key.lora_stack().refs)
 
     candidates = ledger.find_pods_by_warm_attach_key(wak_hex)
+    if ephemeral_index is not None:
+        ledger_ids = {e["id"] for e in candidates}
+        for row in ephemeral_index.rows_by_wak(wak_hex):
+            if row.id not in ledger_ids:  # ledger wins on overlap
+                candidates.append(row.to_entry_dict())
 
     eligible: list[dict[str, Any]] = []
     for entry in candidates:
