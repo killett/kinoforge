@@ -1234,11 +1234,36 @@ def _resolve_attach_pod(
         )
         return (None, 1)
 
-    try:
-        live = provider.get_instance(pod_id)
-    except Exception as exc:  # noqa: BLE001
+    # RunPod's GraphQL pod-query is eventually consistent — a pod that
+    # was just provisioned + recorded in the ledger by an immediately-
+    # preceding `kinoforge generate --emit-provision-record` call can
+    # still surface `KeyError: no RunPod pod found` for ~10s post-boot
+    # OR briefly during pod state transitions (observed 2026-06-26
+    # Tier-4 fire `db787cbb`: cell-0 cold-boot + generation completed
+    # at 23:12:17, cell-1 attach at 23:12:18 saw KeyError, the pod was
+    # in fact alive). Retry KeyError up to 3 times at 5s backoff before
+    # giving up; non-KeyError failures (auth, transport) surface fast.
+    live: Instance | None = None
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            live = provider.get_instance(pod_id)
+            break
+        except KeyError as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(5.0)
+                continue
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"pod {pod_id} get_instance failed: {type(exc).__name__}: {exc}.",
+                file=sys.stderr,
+            )
+            return (None, 1)
+    if live is None:
         print(
-            f"pod {pod_id} get_instance failed: {type(exc).__name__}: {exc}.",
+            f"pod {pod_id} get_instance returned no pod after 3 retries "
+            f"({type(last_exc).__name__ if last_exc else '?'}: {last_exc}).",
             file=sys.stderr,
         )
         return (None, 1)
