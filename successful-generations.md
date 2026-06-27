@@ -1524,18 +1524,31 @@ $0.16/hr):
   the executor's `_stack_to_loras_heredoc` would emit `branch=high`
   and the CLI `--loras` parser would reject `literal_error`).
 
-Tier-4 attempt (Wan 2.2 14B Arcane high_noise+low_noise pair, pod
-`ik4ryue02c9wps` on A100 80GB, $1.39/hr) cell-0 cold-boot completed +
-generated mp4
-`20260626-231217_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4`;
-cell-1 attach failed with RunPod GraphQL `pod not found` because the
-pod was reaped externally (likely selfterm dead-man hit during the
-17-min cold-boot — `idle_timeout=90m` ⇒ `2 * idle_timeout = 3h`
-dead-man window, but `job_timeout=15m` may have fired if the model
-load was attributed as a job). Implementation surface unchanged; the
-Tier-4 timing-vs-selfterm interaction needs a separate fix.
-Same tuple `(runpod, DiffusersEngine,
-Wan-AI/Wan2.1-T2V-1.3B-Diffusers + Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`.
+Tier-4 (Wan 2.2 14B Arcane high_noise+low_noise pair) **FULL GREEN
+2026-06-27** on pod `oig4i9vcynbq10` (A100 80GB, $1.39/hr): 3 cells
+at strengths {0.5, 1.0, 1.5}, 3 sha-distinct mp4s
+(`8f9d93c1…439aa6`, `31fed0bc…e9f971`, `37ef6e4f…478772`), composed
+`/tmp/output/tier4-swap-3.mp4` (4.37 MB), sidecar
+`/tmp/output/tier4-swap-3.cost.json` total $0.148 (under $2.00 cap),
+wall 1158 s (group wall 385 s for 3 generations after model load).
+Post-run `kinoforge list` clean. The MoE pair `branch=high_noise`
++ `branch=low_noise` correctly routes to pipe.transformer +
+pipe.transformer_2 per the Q5 strict-routing invariants.
+
+Two intermediate Tier-4 failures surfaced two additional bugs before
+the GREEN re-fire:
+- `d34cbfd` — `_resolve_attach_pod` retries `provider.get_instance`
+  on `KeyError` up to 3× at 5s backoff (RunPod GraphQL eventual-
+  consistency mid-state-transition).
+- `0f3790a` — RunPod `authed_post`/`authed_get` retry on
+  502/503/504 up to 3× at (2s, 5s, 10s) backoff (transient gateway
+  failures mid `wait_for_ready` poll loop killed a 5-min cold-boot
+  on fire `94344920`).
+
+Same tuple `(runpod, DiffusersEngine, Wan-AI/Wan2.1-T2V-1.3B-Diffusers
++ Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`. Cumulative live-fire spend
+for the grid `lora_swap` workstream: Tier-3 $0.07 + intermediate
+Tier-4 $1.45 + Tier-4 GREEN $0.15 = **$1.67**.
 
 ---
 
