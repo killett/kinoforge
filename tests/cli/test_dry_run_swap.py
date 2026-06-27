@@ -50,18 +50,41 @@ class _FakeCfg:
         return self._lifecycle
 
 
+class _EmptyStore:
+    """Minimal ArtifactStore stub for dry-run.
+
+    The 2026-06-27 ephemeral-index integration makes ``_dry_run_swap_preview``
+    consult the on-disk index — so ``store()`` is now a legitimate read-only
+    call here. Any write would surface via the matcher refusing to attach,
+    not via this stub (the matcher path is exercised by dedicated tests).
+    """
+
+    def uri_for(self, run_id: str, name: str) -> str:
+        return f"/dev/null/{run_id}/{name}"
+
+    def get_json(self, uri: str) -> dict[str, Any]:
+        raise FileNotFoundError(uri)
+
+    def acquire_lock(self, key: str, *, ttl_s: float) -> Any:
+        raise AssertionError(f"acquire_lock({key!r}) — dry-run must not write index")
+
+    def put_json(self, run_id: str, name: str, obj: dict[str, Any]) -> Any:
+        raise AssertionError(f"put_json({run_id!r}, {name!r}) — dry-run must not write")
+
+
 class _FakeCtx:
     def __init__(self, cfg: _FakeCfg, ledger: _FakeLedger) -> None:
         self.cfg = cfg
         self._ledger = ledger
         self.state_dir = None
         self.cancel_token = None
+        self._store = _EmptyStore()
 
     def ledger(self) -> _FakeLedger:
         return self._ledger
 
-    def store(self) -> Any:  # pragma: no cover — must NOT be called in dry-run
-        raise AssertionError("store() called during --dry-run-swap")
+    def store(self) -> Any:
+        return self._store
 
 
 def _key_two_loras() -> CapabilityKey:
