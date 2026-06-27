@@ -1251,16 +1251,31 @@ def _resolve_attach_pod(
         )
         return (None, 1)
 
-    # `provider.get_instance` returns an Instance whose `endpoints` is
-    # often empty on RunPod — endpoints are constructed lazily from the
-    # pod's tagged port list. The orchestrator's `wait_for_ready` blows
-    # up with `ProvisionFailed: pod has no endpoints` if we hand it an
-    # instance without them populated.
+    # RunPod's `get_instance` returns an Instance whose `tags` LACK the
+    # original port list (the pod-query GraphQL selection set doesn't
+    # include the port spec); `provider.endpoints` reads `tags["ports"]`
+    # and would return an empty dict, which makes
+    # `deploy_session → wait_for_ready` raise
+    # `ProvisionFailed: pod has no endpoints`. The ledger entry captured
+    # the original `instance.tags` at `ledger.record` time, so merge
+    # those back in to recover the port list.
+    ledger_tags = entry.get("tags", {}) or {}
+    if isinstance(ledger_tags, dict):
+        merged_tags = dict(ledger_tags)
+        merged_tags.update(live.tags or {})  # live values still win on collision
+        live.tags = merged_tags
     try:
         live.endpoints = provider.endpoints(live)
     except Exception as exc:  # noqa: BLE001
         print(
             f"pod {pod_id} endpoints query failed: {type(exc).__name__}: {exc}.",
+            file=sys.stderr,
+        )
+        return (None, 1)
+    if not live.endpoints:
+        print(
+            f"pod {pod_id} has no endpoints after ledger tag merge "
+            f"(ledger tag keys={list(ledger_tags.keys())}); cannot --attach-pod.",
             file=sys.stderr,
         )
         return (None, 1)
