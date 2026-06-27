@@ -1260,7 +1260,15 @@ def _write_provision_record(
     instance: Instance,
     warm_attach_key: str,
 ) -> None:
-    """Write the post-provision JSON record for grid swap-mode handoff."""
+    """Write the post-provision JSON record for grid swap-mode handoff.
+
+    Schema (6 keys; ``cost_per_hr_usd`` lets the grid swap-mode
+    executor budget cap-trip without a follow-up provider RPC):
+
+    - pod_id, endpoint_url, provider, warm_attach_key
+    - provision_ts (local TZ ISO-8601)
+    - cost_per_hr_usd (from instance.cost_rate_usd_per_hr)
+    """
     from datetime import datetime
 
     endpoint_url = instance.endpoints.get("http") or next(
@@ -1272,6 +1280,7 @@ def _write_provision_record(
         "provider": instance.provider,
         "warm_attach_key": warm_attach_key,
         "provision_ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "cost_per_hr_usd": instance.cost_rate_usd_per_hr,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(  # kinoforge:public-write
