@@ -69,22 +69,25 @@ their stack.
   bugs surfaced + fixed: `6d313e4` (swap-cell stderr persistence), `865a4e4` → `76ff41f`
   (Instance endpoints populate via ledger-tag merge), `59b22cf` (branch literal canonical
   form). Post-fire ledger empty.
-- **Task 11 — Tier-4 live fire PARTIAL.** Pod `ik4ryue02c9wps` (A100 80GB, $1.39/hr)
-  cell-0 cold-boot + generation GREEN (mp4
-  `20260626-231217_diffusers_Wan2.2-T2V-A14B-Diffuser_*.mp4`); cell-1 attach failed
-  with RunPod GraphQL `pod not found`. Pod was reaped externally during the 17-min
-  cold-boot — likely selfterm `job_timeout=15m` fired against the model-load phase.
-  Spend $0.55 (under $1.50 cap). Implementation surface unchanged; the Tier-4
-  timing-vs-selfterm interaction is independent of the lora_swap plan and needs a
-  separate fix (lengthen `job_timeout` for cold-boot phase OR call selfterm.heartbeat
-  during model load). Pod cleaned up manually via `kinoforge destroy` (RunPod returned
-  POD_NOT_FOUND, ledger forgotten).
-- **`successful-generations.md` amended (2026-06-26)** with a "See also" entry under
-  §11 documenting the Tier-3 happy-path + Tier-3 fire 2 evidence plus the 3 bug fixes;
-  Tier-4 cell-0 cold-boot also captured as observation.
+- **Task 11 — Tier-4 live fire FULL GREEN 2026-06-27 after two bug-fix iterations.**
+  Initial Tier-4 attempt 2026-06-26 (`ik4ryue02c9wps`) cell-1 attach failed with RunPod
+  GraphQL `pod not found` — root-caused as RunPod GraphQL eventual-consistency mid-
+  state-transition (NOT selfterm as initially suspected — selfterm dead-man window for
+  `idle_timeout=90m` is 3h, not reached). Fix `d34cbfd` added KeyError retry to
+  `_resolve_attach_pod`. Second attempt 2026-06-27 (`rl8ke6obtptzme`) cell-0 cold-boot
+  failed mid `wait_for_ready` on a transient HTTP 503 from RunPod GraphQL. Fix `0f3790a`
+  added 5xx retry (502/503/504, 3× backoff) to RunPod `authed_post`/`authed_get`. Third
+  attempt 2026-06-27 (`oig4i9vcynbq10`) FULL GREEN: 3 cells {0.5, 1.0, 1.5} on Wan 2.2
+  14B Arcane high_noise+low_noise pair, 3 sha-distinct mp4s
+  (`8f9d93c1…`, `31fed0bc…`, `37ef6e4f…`), composed mp4 4.37 MB, sidecar $0.15 (under
+  $2.00 cap), wall 1158 s (group wall 385 s for 3 generations after model load).
+  Post-run ledger clean. Cumulative Tier-4 spend across 3 attempts $1.67.
+- **`successful-generations.md` amended (2026-06-27)** with a "See also" entry under
+  §11 documenting Tier-3 2/2 GREEN + Tier-4 FULL GREEN + all 5 bug fixes
+  (`6d313e4`, `865a4e4`, `76ff41f`, `59b22cf`, `d34cbfd`, `0f3790a`).
 
-**Resume target for next session:** Tier-4 swap-mode validation against Wan 2.2 14B
-needs the selfterm-vs-cold-boot interaction resolved first; that's a separate spec.
+**Workstream CLOSED — all 12 tasks GREEN end-to-end on real Wan 2.1 1.3B + Wan 2.2 14B
+RunPod pods. No outstanding resume targets.**
 
 ---
 
