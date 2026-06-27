@@ -1,0 +1,90 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
+  "lastUpdated": "2026-06-26T20:12:21-07:00",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Spec models: LoraSwapCell + LoraStackEntry + GridCell mutex + on_swap_failure",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Extend `src/kinoforge/core/grid/spec.py` so a YAML spec can declare `lora_swap:` cells alongside existing `generate:` / `path:` cells, and so `GridSpec` carries a whole-grid `on_swap_failure` knob. Register every `lora_swap.stack[*].ref` with `RedactionRegistry`.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/spec.py`\n- Test: `tests/core/grid/test_spec_lora_swap.py` (NEW)\n\n**Acceptance Criteria:**\n- LoraStackEntry with strength range [-1.0, 2.0] + branch literal\n- LoraSwapCell with extra=forbid + empty-stack legal\n- GridCell 3-way mutex (generate/path/lora_swap)\n- GridSpec.on_swap_failure literal default classify\n- lora_swap refs registered with RedactionRegistry\n\n**Verify:** `pixi run pytest tests/core/grid/test_spec_lora_swap.py -v`\n\nPlan doc: §Task 1.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/spec.py\", \"tests/core/grid/test_spec_lora_swap.py\", \"tests/core/grid/conftest.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_spec_lora_swap.py -v\", \"acceptanceCriteria\": [\"LoraStackEntry model with strength range and branch literal\", \"LoraSwapCell model with config + stack list\", \"GridCell 3-way mutex enforced\", \"GridSpec.on_swap_failure literal field\", \"lora_swap refs registered with RedactionRegistry\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Grouping: WarmAttachKey derivation for lora_swap cells",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Extend `_cell_capability_key` to dispatch on cell type so `lora_swap:` cells group by `WarmAttachKey(base, engine, precision)` only.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/executor.py` (`_ResolvedCell`, `_cell_capability_key`, `_resolve_spec_cells`)\n- Test: `tests/core/grid/test_grouping_lora_swap.py`\n\n**Acceptance Criteria:**\n- Two swap cells with same WAK share group\n- Swap + generate with same WAK go to different groups\n- Path cells stay under sentinel\n- Different precision splits swap group\n\n**Verify:** `pixi run pytest tests/core/grid/test_grouping_lora_swap.py tests/core/grid/ -v`\n\nPlan doc: §Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/executor.py\", \"tests/core/grid/test_grouping_lora_swap.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_grouping_lora_swap.py tests/core/grid/ -v\", \"acceptanceCriteria\": [\"same WAK groups\", \"swap+gen different groups\", \"path under sentinel\", \"precision splits\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "CLI: --attach-pod flag with ledger validation",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Add `--attach-pod <id>` to `kinoforge generate`. Ledger validation (exists + running + WarmAttachKey match). Skip provision; route HTTP backend at ledger endpoint_url. Mutex with --no-reuse + --emit-provision-record.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py`, `src/kinoforge/cli/_commands.py`, `src/kinoforge/core/orchestrator.py`\n- Test: `tests/cli/test_generate_attach_pod.py` (~8 tests)\n- Add: fixtures in `tests/cli/conftest.py`\n\n**Acceptance Criteria:**\n- --attach-pod + --no-reuse exit 1\n- --attach-pod + --emit-provision-record exit 1\n- ledger-missing exit 1\n- non-running status exit 1\n- WarmAttachKey mismatch exit 1\n- happy-path skips provision + routes endpoint + --loras flows through\n\n**Verify:** `pixi run pytest tests/cli/test_generate_attach_pod.py tests/cli/ -v`\n\nDistinct from existing --instance-id (which uses full CapabilityKey + matcher classify rejections).\n\nPlan doc: §Task 3.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/cli/test_generate_attach_pod.py\", \"tests/cli/conftest.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_generate_attach_pod.py tests/cli/ -v\", \"acceptanceCriteria\": [\"--attach-pod + --no-reuse mutex\", \"--attach-pod + --emit-provision-record mutex\", \"ledger-missing exit 1\", \"non-running status exit 1\", \"WarmAttachKey mismatch exit 1\", \"happy path skips provision\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "CLI: --emit-provision-record flag",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Add `--emit-provision-record <path>` to `kinoforge generate`. On successful provision write JSON {pod_id, endpoint_url, provider, warm_attach_key, provision_ts}. Local TZ per `feedback_local_timezone_only`.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_main.py`, `src/kinoforge/core/orchestrator.py`, `src/kinoforge/cli/_commands.py`\n- Test: covered by Task 3 tests\n\n**Acceptance Criteria:**\n- 5 keys written on success\n- file NOT written on provision failure\n- provision_ts is local TZ ISO-8601\n- warm_attach_key matches WarmAttachKey.derive()\n\n**Verify:** `pixi run pytest tests/cli/test_generate_attach_pod.py::test_attach_pod_emit_provision_record_happy_path_writes_json -v`\n\nPlan doc: §Task 4.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/core/orchestrator.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_generate_attach_pod.py::test_attach_pod_emit_provision_record_happy_path_writes_json -v\", \"acceptanceCriteria\": [\"JSON 5 keys\", \"not written on failure\", \"local TZ\", \"WAK matches\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Executor: _run_swap_group + run_grid dispatch",
+      "status": "pending",
+      "blockedBy": [1, 2, 3, 4, 6, 7],
+      "description": "**Goal:** New async `_run_swap_group` driving cell-1 cold-boot via `kinoforge generate --loras --emit-provision-record`, then cells 2..N via `kinoforge generate --attach-pod --loras`. try/finally teardown + residual probe. `_classify_swap_failure` on non-zero exit.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/executor.py`\n- Test: `tests/core/grid/test_executor_swap_group.py` (~6)\n\n**Acceptance Criteria:**\n- cell-1 argv has --loras + --emit-provision-record; no --attach-pod; no --no-reuse\n- cells 2..N argv has --attach-pod + --loras; no --emit-provision-record; no --no-reuse\n- destroy in finally on success\n- destroy in finally on abort\n- residual probe surfaces teardown\n- budget cap-trip marks remaining killed\n\n**Verify:** `pixi run pytest tests/core/grid/test_executor_swap_group.py tests/core/grid/ -v`\n\nPlan doc: §Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/executor.py\", \"tests/core/grid/test_executor_swap_group.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_executor_swap_group.py tests/core/grid/ -v\", \"acceptanceCriteria\": [\"cell-1 argv\", \"cells 2..N argv\", \"destroy in finally success\", \"destroy in finally abort\", \"residual probe\", \"budget cap-trip\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Failure taxonomy: swap_failures.py module",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** New module exporting `SwapFailureAction` enum + `_classify_swap_failure(stderr, exit_code, policy)`. Pattern-match P2 structured errors + transient HTTP + OOM exit 137. Retry budget = 3 × 5s backoff.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/swap_failures.py`\n- Test: `tests/core/grid/test_swap_failures.py` (~9)\n\n**Acceptance Criteria:**\n- SwapFailureAction enum RETRY/CONTINUE/ABORT\n- strict always ABORT\n- classify routes correctly per pattern table\n- continue ABORTs on truly unrecoverable\n- RETRY_MAX_ATTEMPTS=3, RETRY_BACKOFF_S=5.0\n\n**Verify:** `pixi run pytest tests/core/grid/test_swap_failures.py -v`\n\nPlan doc: §Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/swap_failures.py\", \"tests/core/grid/test_swap_failures.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_swap_failures.py -v\", \"acceptanceCriteria\": [\"enum\", \"strict aborts\", \"classify routes\", \"continue aborts unrecoverable\", \"constants\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Cost sidecar writer",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** `CostSidecarBuilder` class — per-group wall-clock cost tracking; writes `<grid_out>.cost.json` per spec §6 schema. Always written.\n\n**Files:**\n- Create: `src/kinoforge/core/grid/cost_sidecar.py`\n- Test: `tests/core/grid/test_cost_sidecar.py` (~5)\n\n**Acceptance Criteria:**\n- start_group records provision_ts\n- record_cell appends cell\n- mark_cell_error sets status + error\n- total_cost sums across groups\n- write emits schema; spec_path redacted via Registry\n- sidecar always written (empty groups OK)\n\n**Verify:** `pixi run pytest tests/core/grid/test_cost_sidecar.py -v`\n\nPlan doc: §Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/cost_sidecar.py\", \"tests/core/grid/test_cost_sidecar.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_cost_sidecar.py -v\", \"acceptanceCriteria\": [\"start_group\", \"record_cell\", \"mark_cell_error\", \"total cost\", \"spec_path redact\", \"always written\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "AST scan AC10: lora_swap ref redaction invariant",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Add AC10 test enforcing `LoraSwapCell.stack[*].ref` writes/logs go through `RedactionRegistry.redact()` or carry exemption tag. Mirrors AC8/AC9.\n\n**Files:**\n- Modify: `tests/test_no_unredacted_writes.py`\n\n**Acceptance Criteria:**\n- new test_ac10_* function exists\n- AC10 catches unredacted ref writes/logs\n- AC1-AC9 still pass\n\n**Verify:** `pixi run pytest tests/test_no_unredacted_writes.py -v`\n\nPlan doc: §Task 8.\n\n```json:metadata\n{\"files\": [\"tests/test_no_unredacted_writes.py\"], \"verifyCommand\": \"pixi run pytest tests/test_no_unredacted_writes.py -v\", \"acceptanceCriteria\": [\"AC10 exists\", \"AC10 detects leaks\", \"AC1-AC9 still pass\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Shared smoke harness: write_lora_swap_grid_spec helper",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** New keyword-only helper for Tier-3 + Tier-4 lora_swap grid specs. Pulls canonical refs from `examples/configs/wan{21,22}-*-strength-grid.yaml`.\n\n**Files:**\n- Create: `tests/_smoke_harness/lora_swap_grid.py`\n- Test: `tests/_smoke_harness/test_lora_swap_grid_helper.py`\n\n**Acceptance Criteria:**\n- tier3 helper writes loadable spec with N cells\n- tier4 helper writes spec with high+low branches\n- GridSpec.load accepts output\n\n**Verify:** `pixi run pytest tests/_smoke_harness/test_lora_swap_grid_helper.py -v`\n\nPlan doc: §Task 9.\n\n```json:metadata\n{\"files\": [\"tests/_smoke_harness/lora_swap_grid.py\", \"tests/_smoke_harness/test_lora_swap_grid_helper.py\"], \"verifyCommand\": \"pixi run pytest tests/_smoke_harness/test_lora_swap_grid_helper.py -v\", \"acceptanceCriteria\": [\"tier3 loadable\", \"tier4 high+low\", \"GridSpec accepts\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Tier-3 live fire: happy-path + forced-failure sweeps",
+      "status": "pending",
+      "blockedBy": [5, 8, 9],
+      "description": "**Goal:** Two Tier-3 live fires on Wan 2.1 1.3B (RunPod). Cumulative ≤ $0.50.\n\n**Files:** Live invocation. PROGRESS.md update inline.\n\n**Acceptance Criteria:**\n- happy-path 3 sha-distinct mp4s, composed grid, sidecar.json, cost ≤ $0.30\n- forced-failure exit 2, cell-2 failed, cell-3 ok, cost ≤ $0.20\n- post-fire `kinoforge list` empty\n\n**Verify:** Manual inspection of mp4 + sidecar + `pixi run kinoforge list`\n\nMemory: `feedback_use_no_reuse_for_one_shots`, `feedback_proactive_pod_stats`, `feedback_run_tests_yourself`, `feedback_standard_test_prompt`.\n\nPlan doc: §Task 10.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"happy-path 3 distinct shas cost ≤ $0.30\", \"forced-failure exit 2 cell-2 failed cell-3 ok cost ≤ $0.20\", \"ledger empty\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Tier-4 live fire: 3-cell Arcane strength sweep + successful-generations.md amend",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Tier-4 live fire on Wan 2.2 14B Arcane high+low pair, 3 strengths {0.5, 1.0, 1.5}. Single pod, 3 generations. Cumulative ≤ $1.50.\n\n**Files:** Live invocation. Modify `successful-generations.md` (§11 See also) + `PROGRESS.md`.\n\n**Acceptance Criteria:**\n- 3 sha-distinct mp4s on Wan 2.2 14B Arcane pair, cost ≤ $1.50\n- post-fire ledger empty\n- successful-generations.md §11 amended with new See also line\n\n**Verify:** Manual inspection + `pixi run kinoforge list` + grep successful-generations.md\n\nPlan doc: §Task 11.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"3 distinct shas cost ≤ $1.50\", \"ledger empty\", \"§11 amended\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Integration tests + README + PROGRESS update",
+      "status": "pending",
+      "blockedBy": [5, 7, 8],
+      "description": "**Goal:** Integration tests + README + PROGRESS update.\n\n**Files:**\n- Create: `tests/integration/grid/test_lora_swap_executor_integration.py` (~2)\n- Modify: `README.md`, `PROGRESS.md`\n\n**Acceptance Criteria:**\n- 3 sha-distinct mp4s in integration test\n- sidecar JSON shape correct\n- README has lora_swap subsection + flag docs\n- PROGRESS has CLOSED entry\n\n**Verify:** `pixi run pytest tests/integration/grid/test_lora_swap_executor_integration.py -v`\n\nPlan doc: §Task 12.\n\n```json:metadata\n{\"files\": [\"tests/integration/grid/test_lora_swap_executor_integration.py\", \"README.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run pytest tests/integration/grid/test_lora_swap_executor_integration.py -v\", \"acceptanceCriteria\": [\"3 distinct shas\", \"sidecar shape\", \"README updated\", \"PROGRESS CLOSED entry\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ]
+}
