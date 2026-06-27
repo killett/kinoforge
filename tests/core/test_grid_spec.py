@@ -56,7 +56,7 @@ def test_path_cell_parses() -> None:
 
 
 def test_cell_with_both_generate_and_path_rejected() -> None:
-    with pytest.raises(ValidationError, match="mutually exclusive"):
+    with pytest.raises(ValidationError, match="exactly one of"):
         GridSpec.model_validate(
             _spec(cells=[{**_MINIMAL_GENERATE_CELL, "path": "/tmp/a.mp4"}])
         )
