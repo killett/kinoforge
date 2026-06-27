@@ -29,6 +29,7 @@ import json
 import logging
 import secrets
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime
@@ -211,6 +212,33 @@ def _make_default_http_seams(
         sep = "&" if "?" in url else "?"
         return f"{url}{sep}api_key={encoded_key}"
 
+    # RunPod's GraphQL edge intermittently returns 502 / 503 / 504 under
+    # load (observed 2026-06-27 Tier-4 fire `94344920`: a single 503 mid
+    # `wait_for_ready` poll loop aborted a 5-min cold-boot). Wrap every
+    # request in a small retry budget so transient gateway failures
+    # don't kill long orchestrator sequences.
+    _RETRY_STATUS = {502, 503, 504}
+    _RETRY_ATTEMPTS = 3
+    _RETRY_BACKOFF_S = (2.0, 5.0, 10.0)
+
+    def _request(
+        req: urllib.request.Request,
+    ) -> dict[str, Any]:
+        last_exc: urllib.error.HTTPError | None = None
+        for attempt in range(_RETRY_ATTEMPTS):
+            try:
+                with urllib.request.urlopen(req) as resp:  # noqa: S310
+                    return dict(json.loads(resp.read().decode("utf-8")))
+            except urllib.error.HTTPError as exc:
+                if exc.code not in _RETRY_STATUS or attempt == _RETRY_ATTEMPTS - 1:
+                    raise
+                last_exc = exc
+                time.sleep(_RETRY_BACKOFF_S[attempt])
+        # Defensive: loop guarantees a return or raise; satisfy type checker.
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("unreachable")
+
     def authed_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(  # noqa: S310
@@ -219,8 +247,7 @@ def _make_default_http_seams(
             headers={"Content-Type": "application/json", "User-Agent": _UA},
             method="POST",
         )
-        with urllib.request.urlopen(req) as resp:  # noqa: S310
-            return dict(json.loads(resp.read().decode("utf-8")))
+        return _request(req)
 
     def authed_get(url: str) -> dict[str, Any]:
         # Content-Type bypasses RunPod GraphQL's CSRF protection — without
@@ -230,8 +257,7 @@ def _make_default_http_seams(
             _append_api_key(url),
             headers={"Content-Type": "application/json", "User-Agent": _UA},
         )
-        with urllib.request.urlopen(req) as resp:  # noqa: S310
-            return dict(json.loads(resp.read().decode("utf-8")))
+        return _request(req)
 
     return authed_post, authed_get
 
