@@ -257,7 +257,16 @@ def act_on_verdict(
                 Verdict.ORPHAN_REAP,
                 Verdict.STALL_REAP,  # C26
             }:
-                destroy_confirmed(provider, instance_id, sleep=lambda _: None)
+                from kinoforge.core.warm_reuse.ephemeral_index import (
+                    EphemeralIndex,
+                )
+
+                destroy_confirmed(
+                    provider,
+                    instance_id,
+                    sleep=lambda _: None,
+                    ephemeral_index=EphemeralIndex(store=store),
+                )
                 ledger.forget(instance_id)
                 action = "destroyed_and_forgot"
             elif v2 == Verdict.STALE_LEDGER:
