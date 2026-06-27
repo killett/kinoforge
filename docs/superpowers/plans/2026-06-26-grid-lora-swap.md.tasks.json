@@ -1,6 +1,6 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-26-grid-lora-swap.md",
-  "lastUpdated": "2026-06-26T23:00:00-07:00",
+  "lastUpdated": "2026-06-26T23:25:00-07:00",
   "tasks": [
     {
       "id": 1,
@@ -68,14 +68,14 @@
     {
       "id": 10,
       "subject": "Tier-3 live fire: happy-path + forced-failure sweeps",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5, 8, 9],
       "description": "**Goal:** Two Tier-3 live fires on Wan 2.1 1.3B (RunPod). Cumulative ≤ $0.50.\n\n**Files:** Live invocation. PROGRESS.md update inline.\n\n**Acceptance Criteria:**\n- happy-path 3 sha-distinct mp4s, composed grid, sidecar.json, cost ≤ $0.30\n- forced-failure exit 2, cell-2 failed, cell-3 ok, cost ≤ $0.20\n- post-fire `kinoforge list` empty\n\n**Verify:** Manual inspection of mp4 + sidecar + `pixi run kinoforge list`\n\nMemory: `feedback_use_no_reuse_for_one_shots`, `feedback_proactive_pod_stats`, `feedback_run_tests_yourself`, `feedback_standard_test_prompt`.\n\nPlan doc: §Task 10.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"happy-path 3 distinct shas cost ≤ $0.30\", \"forced-failure exit 2 cell-2 failed cell-3 ok cost ≤ $0.20\", \"ledger empty\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 11,
       "subject": "Tier-4 live fire: 3-cell Arcane strength sweep + successful-generations.md amend",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**Goal:** Tier-4 live fire on Wan 2.2 14B Arcane high+low pair, 3 strengths {0.5, 1.0, 1.5}. Single pod, 3 generations. Cumulative ≤ $1.50.\n\n**Files:** Live invocation. Modify `successful-generations.md` (§11 See also) + `PROGRESS.md`.\n\n**Acceptance Criteria:**\n- 3 sha-distinct mp4s on Wan 2.2 14B Arcane pair, cost ≤ $1.50\n- post-fire ledger empty\n- successful-generations.md §11 amended with new See also line\n\n**Verify:** Manual inspection + `pixi run kinoforge list` + grep successful-generations.md\n\nPlan doc: §Task 11.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"3 distinct shas cost ≤ $1.50\", \"ledger empty\", \"§11 amended\"], \"modelTier\": \"standard\"}\n```"
     },

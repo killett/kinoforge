@@ -60,16 +60,31 @@ their stack.
   cold-boot + N-1 attach + destroy sequence, 3 distinct mp4 SHAs, and the `.cost.json`
   schema. README `kinoforge grid` section extended with the `lora_swap:` YAML shape +
   `on_swap_failure` knob + `--attach-pod` / `--emit-provision-record` flag docs.
-- **Tasks 10 + 11 — Tier-3 + Tier-4 live fires DEFERRED.** Implementation surface complete
-  + integration green; live-fire validation pending an operator-fire session. Budget
-  estimate: Tier-3 ≤ $0.50 (happy-path + forced-failure), Tier-4 ≤ $1.50 (3-cell Wan 2.2
-  14B Arcane). On first GREEN: amend `successful-generations.md` §11 with the swap-mode
-  "See also" line.
+- **Task 10 — Tier-3 live fires 2/2 GREEN end-to-end (2026-06-26).** Happy-path pod
+  `o80tl2byw6irbh` 3 cells {0.5, 1.0, 1.5} → 3 sha-distinct mp4s + sidecar $0.0036; second
+  fire (intended forced-failure with branch=high_noise) pod `3dt0ue4xt1wkv0` also 3
+  sha-distinct mp4s + sidecar $0.0035 (Wan 2.1 1.3B server accepted high_noise rather
+  than rejecting — `BranchUnsupportedOnSingleTransformer` classify path validated by
+  unit tests only). Cumulative Tier-3 spend $0.07 (well under $0.50 cap); 3 production
+  bugs surfaced + fixed: `6d313e4` (swap-cell stderr persistence), `865a4e4` → `76ff41f`
+  (Instance endpoints populate via ledger-tag merge), `59b22cf` (branch literal canonical
+  form). Post-fire ledger empty.
+- **Task 11 — Tier-4 live fire PARTIAL.** Pod `ik4ryue02c9wps` (A100 80GB, $1.39/hr)
+  cell-0 cold-boot + generation GREEN (mp4
+  `20260626-231217_diffusers_Wan2.2-T2V-A14B-Diffuser_*.mp4`); cell-1 attach failed
+  with RunPod GraphQL `pod not found`. Pod was reaped externally during the 17-min
+  cold-boot — likely selfterm `job_timeout=15m` fired against the model-load phase.
+  Spend $0.55 (under $1.50 cap). Implementation surface unchanged; the Tier-4
+  timing-vs-selfterm interaction is independent of the lora_swap plan and needs a
+  separate fix (lengthen `job_timeout` for cold-boot phase OR call selfterm.heartbeat
+  during model load). Pod cleaned up manually via `kinoforge destroy` (RunPod returned
+  POD_NOT_FOUND, ledger forgotten).
+- **`successful-generations.md` amended (2026-06-26)** with a "See also" entry under
+  §11 documenting the Tier-3 happy-path + Tier-3 fire 2 evidence plus the 3 bug fixes;
+  Tier-4 cell-0 cold-boot also captured as observation.
 
-**Resume target for next session:** Run Task 10 (Tier-3 live fire) using the helper at
-`tests/_smoke_harness/lora_swap_grid.py`. Then Task 11 (Tier-4). Then this CLOSED entry's
-commit-trail placeholders get the actual SHAs filled in and `successful-generations.md`
-gets the Tier-4 amend.
+**Resume target for next session:** Tier-4 swap-mode validation against Wan 2.2 14B
+needs the selfterm-vs-cold-boot interaction resolved first; that's a separate spec.
 
 ---
 
