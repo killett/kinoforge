@@ -6,6 +6,21 @@
 `2026-06-08-ephemeral-workspaces-design.md` + `2026-06-20-lora-flexible-warm-reuse-design.md`)
 **Owner:** kinoforge
 
+### Revisions
+
+- **2026-06-27 (plan phase):** Plan-time investigation found that
+  production `_cmd_generate` uses `_scan_warm_candidates` (filters on
+  `tags.kinoforge_key`), not `find_warm_attach_candidate`. The matcher
+  is currently only called from `_dry_run_swap_preview`. The
+  implementation plan therefore (a) adds a `kinoforge_key` field to
+  `EphemeralIndexRow`, (b) wires the index into BOTH read paths
+  (`_scan_warm_candidates` + matcher), and (c) centralises cleanup
+  inside `destroy_confirmed` (the chokepoint every destroy path routes
+  through) instead of patching 5+ caller sites. Strict improvements
+  over the original §5 + §4.2 layout — same architecture, broader
+  coverage, less duplication. Full rationale:
+  `docs/superpowers/plans/2026-06-27-ephemeral-warm-reuse-discovery.md`.
+
 ## 1. Problem
 
 Two back-to-back `kinoforge --ephemeral generate` invocations with the
