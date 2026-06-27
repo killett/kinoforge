@@ -430,7 +430,12 @@ async def _run_swap_cell_once(
     attach_pod_id: str | None,
     emit_provision_record: Path | None,
 ) -> tuple[int, str, str]:
-    """Invoke one swap-mode cell subprocess; return (rc, stdout, stderr)."""
+    """Invoke one swap-mode cell subprocess; return (rc, stdout, stderr).
+
+    On non-zero exit, persist the FULL stderr to disk next to the cell's
+    effective cfg — the in-memory GridCellFailure only carries the last
+    500 chars, which is rarely enough to root-cause a cold-boot failure.
+    """
     cmd = _build_swap_generate_cmd(
         cell,
         grid_id=grid_id,
@@ -445,6 +450,14 @@ async def _run_swap_cell_once(
         text=True,
         check=False,  # noqa: S603
     )
+    if proc.returncode != 0 and cell.cfg_path is not None:
+        stderr_log = cell.cfg_path.with_suffix(".stderr.txt")
+        try:
+            stderr_log.write_text(  # kinoforge:public-write
+                proc.stderr or proc.stdout or "<no output>",
+            )
+        except OSError:
+            pass
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
