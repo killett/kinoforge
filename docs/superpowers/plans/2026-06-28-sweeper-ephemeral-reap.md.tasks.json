@@ -10,7 +10,7 @@
     {
       "id": 2,
       "subject": "Task 2: RunPodProvider.probe_runtime — wraps GraphQL util endpoint",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** RunPod probe_runtime override distinguishing 404 vs early-boot vs live.\n\n**Files:** Modify `src/kinoforge/providers/runpod/util.py` (add `probe` method), `src/kinoforge/providers/runpod/__init__.py` (override `probe_runtime`), `tests/core/test_runtime_probe.py`.\n\n**Verify:** `pixi run pytest tests/core/test_runtime_probe.py -v -k runpod`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/util.py\", \"src/kinoforge/providers/runpod/__init__.py\", \"tests/core/test_runtime_probe.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_runtime_probe.py -v\", \"acceptanceCriteria\": [\"RunPodGraphQLUtilEndpoint.probe distinguishes 404 from null-runtime\", \"RunPodProvider.probe_runtime override\", \"TransportError propagates\", \"Local TZ timestamp\"], \"modelTier\": \"standard\"}\n```"
     },
