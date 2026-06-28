@@ -175,3 +175,39 @@ def test_load_idempotent(tmp_path: Path) -> None:
     p = _write_spec_yaml(tmp_path / "g.yaml", _spec(title="Repeat-Idempotent-Token"))
     GridSpec.load(p)
     GridSpec.load(p)
+
+
+def test_allow_in_repo_true_bypasses_under_repo_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug: forgetting opt-in means every example spec we ship gets rejected; entire example pipeline breaks."""
+    import kinoforge.core.grid.spec as spec_mod
+
+    monkeypatch.setattr(spec_mod, "_git_repo_root", lambda: tmp_path)
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(
+        "allow_in_repo: true\n"
+        "budget_cap_usd: 1.0\n"
+        "cells:\n"
+        "  - path: /tmp/fixture.mp4\n"
+        "    caption: only\n"
+    )
+    os.chmod(spec_path, 0o600)
+    spec = GridSpec.load(spec_path)
+    assert spec.allow_in_repo is True
+
+
+def test_default_under_repo_guard_still_rejects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug: gate flips polarity → user-authored specs get accidental-commit risk back."""
+    import kinoforge.core.grid.spec as spec_mod
+
+    monkeypatch.setattr(spec_mod, "_git_repo_root", lambda: tmp_path)
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(
+        "budget_cap_usd: 1.0\ncells:\n  - path: /tmp/fixture.mp4\n    caption: only\n"
+    )
+    os.chmod(spec_path, 0o600)
+    with pytest.raises(GridSpecUnderRepoError):
+        GridSpec.load(spec_path)

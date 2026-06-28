@@ -145,6 +145,7 @@ class GridSpec(BaseModel):
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
     cells: list[GridCell] = Field(min_length=1)
     on_swap_failure: Literal["strict", "continue", "classify"] = "classify"
+    allow_in_repo: bool = False
 
     @classmethod
     def load(cls, path: Path | str) -> GridSpec:
@@ -181,12 +182,16 @@ class GridSpec(BaseModel):
             except ValueError:
                 pass
             else:
-                raise GridSpecUnderRepoError(
-                    f"grid spec path is under the active repo root "
-                    f"({repo_root}): {p}; move it outside the repo to "
-                    f"avoid accidental commits (captions and overrides "
-                    f"may contain LoRA refs / prompts)"
-                )
+                if not _yaml_opts_in_repo(p):
+                    raise GridSpecUnderRepoError(
+                        f"grid spec path is under the active repo root "
+                        f"({repo_root}): {p}; move it outside the repo to "
+                        f"avoid accidental commits (captions and overrides "
+                        f"may contain LoRA refs / prompts). To intentionally "
+                        f"ship an in-repo example spec built from official "
+                        f"refs only, set `allow_in_repo: true` at the spec "
+                        f"top level."
+                    )
 
         mode = stat.S_IMODE(p.stat().st_mode)
         if mode & 0o077:
@@ -213,6 +218,15 @@ class GridSpec(BaseModel):
 
         _register_caption_tokens(spec)
         return spec
+
+
+def _yaml_opts_in_repo(p: Path) -> bool:
+    """Peek YAML for ``allow_in_repo: true`` BEFORE pydantic parse."""
+    try:
+        raw = yaml.safe_load(p.read_text())
+    except yaml.YAMLError:
+        return False
+    return bool(isinstance(raw, dict) and raw.get("allow_in_repo", False))
 
 
 def _git_repo_root() -> Path | None:
