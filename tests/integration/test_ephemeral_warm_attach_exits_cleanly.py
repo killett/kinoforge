@@ -159,15 +159,6 @@ def _make_args(*, run_id: str) -> Any:
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Reproduces the --ephemeral warm-attach teardown hang. "
-        "Flips XPASS after the Task 2 fix in orchestrator.deploy_session; "
-        "remove this decorator in Task 2's final commit."
-    ),
-    run=True,
-    strict=False,
-)
 def test_warm_attach_exits_cleanly_under_ephemeral(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
