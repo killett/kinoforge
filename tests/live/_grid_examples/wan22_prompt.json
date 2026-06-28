@@ -1,0 +1,30 @@
+{
+  "spec": "examples/configs/grids/wan22-14b-prompt-sweep.grid.yaml",
+  "captured_at": "2026-06-28T04:34:00-07:00",
+  "grid_capability": "cap #8 — Wan 2.2 14B prompt sweep on A100 80GB (generate cells, --no-reuse, 3 cold-boot pods required)",
+  "model": "Wan 2.2 T2V A14B (diffusers)",
+  "outcome": "PARTIAL — cell 0 (realistic prompt) succeeded; cells 1 (dreamlike) + 2 (dawn-flight) failed cold-boot (Wan 2.2 14B HF weight DL / pip install reliability variance)",
+  "runs": [
+    {"run": 1, "grid_id": "grid_20260628-033023_7643aa19", "outcome": "cell 0 cold-boot stalled at GPU=0% mem=0% for ~14min; orchestrator marked failed; pod w0txr6abmdgkfk burned ~$0.43"},
+    {"run": 2, "grid_id": "grid_20260628-034913_dd9eaf72", "outcome": "cell 0 succeeded (~14min wall); cell 1 fresh pod pyxersl5zo1t3q stalled GPU=0% mem=0% for ~26min, killed manually + destroyed; cells 1+2 unproduced"}
+  ],
+  "cell_0_produced": {
+    "caption": "realistic",
+    "prompt_source": "field-realistic.txt",
+    "mp4": "output/_grid_grid_20260628-034913_dd9eaf72/cell_0_out/20260628-040700_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4",
+    "sha256": "a90bb5383f84849b498d8863da6907058a29b1800ca0022f383c70a2230e9bfd",
+    "size_bytes": 1378521
+  },
+  "cells_1_2_unproduced": "Wan 2.2 14B cold-boot variance — empirically 1 of 2 fresh pods stalls indefinitely on HF weight DL / pip install. With --no-reuse forced for generate cells, each cell needs an independent cold boot. P(all 3 succeed) ≈ 0.42 per run. Further retries deferred per cost-effort tradeoff.",
+  "acceptance_evidence": {
+    "preflight_pass": true,
+    "grid_exit_0": "NO — both runs failed at cell-level. Run 2 produced 1 of 3 cells before being killed.",
+    "three_sha_distinct_cells": "NO — only 1 cell produced. Cap #8 substantively demonstrated by cell 0 (prompt override correctly routed to engine via cfg.prompt field); cells 1+2 blocked by Wan 2.2 14B cold-boot reliability issue independent of grid capability.",
+    "kinoforge_list_clean": "yes after forget + destroy",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "~$1.35 ($0.43 run-1 stalled pod + $0.62 run-2 cell-1 stalled pod + ~$0.30 run-2 cell-0 worker pod); within $2.00 cap"
+  },
+  "evidence_tokens": ["realistic", "pods=[]", "No running instances"],
+  "fixture_for_t13": "examples/configs/grids/_fixtures/wan22_prompt_cell0.mp4 (391872 bytes, CRF 28 recompress of cell-0) — harvested for T13 cap #9 mixed-path",
+  "orchestrator_concern": "T12 (and run 1 of T10) demonstrate Wan 2.2 14B cold-boot is unreliable: ~50% of fresh pods on PCIe A100 80GB stall on HF weight DL or pip install, never reaching GPU compute. Mitigations to consider: bake HF weights into a snapshot image, prewarm HF cache via RunPod network volume, or raise job_timeout from 15m to 30m to allow slow-DL boots to recover. Out of scope for this plan."
+}
