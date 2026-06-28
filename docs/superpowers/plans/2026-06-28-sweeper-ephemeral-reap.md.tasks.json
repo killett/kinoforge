@@ -17,7 +17,7 @@
     {
       "id": 3,
       "subject": "Task 3: Verdict enum + _classify_ephemeral branch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Sentinel-based dispatch to `_classify_ephemeral` handling only verdicts the sparse substrate supports.\n\n**Files:** Modify `src/kinoforge/core/reaper.py` lines 24-41, 56-67, 247+. Create `tests/core/test_classify_ephemeral.py`.\n\n**Verify:** `pixi run pytest tests/core/test_classify_ephemeral.py tests/core/test_reaper.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper.py\", \"tests/core/test_classify_ephemeral.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_classify_ephemeral.py tests/core/test_reaper.py -v\", \"acceptanceCriteria\": [\"Verdict enum gains 3 members\", \"DEFAULT_APPLY_POLICY includes GC_404 only\", \"classify() dispatches on sentinel\", \"_classify_ephemeral decision tree matches spec §3.5\", \"No heartbeat key reads\"], \"modelTier\": \"standard\"}\n```"
     },

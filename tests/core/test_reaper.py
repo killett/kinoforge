@@ -81,6 +81,9 @@ def test_verdict_values_are_stable_strings() -> None:
         "STALL_REAP",  # C26
         "RESTART_LOOP_REAP",  # C27
         "DEGRADED_REAP",  # Layer LoRA
+        "GC_404",  # sweeper-ephemeral-reap (2026-06-28)
+        "SKIP_NO_PROBE",  # sweeper-ephemeral-reap (2026-06-28)
+        "PROBE_FAILED",  # sweeper-ephemeral-reap (2026-06-28)
     ]
 
 
@@ -99,6 +102,7 @@ def test_default_apply_policy_contains_high_confidence_verdicts() -> None:
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.DEGRADED_REAP,  # Layer LoRA
+            Verdict.GC_404,  # sweeper-ephemeral-reap (2026-06-28)
         }
     )
 
@@ -153,6 +157,7 @@ def test_policy_from_flags_apply_include_orphans_adds_orphan_reap() -> None:
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.DEGRADED_REAP,  # Layer LoRA
+            Verdict.GC_404,  # sweeper-ephemeral-reap (2026-06-28)
             Verdict.ORPHAN_REAP,
         }
     )
@@ -168,6 +173,7 @@ def test_policy_from_flags_apply_force_forget_adds_unroutable() -> None:
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.DEGRADED_REAP,  # Layer LoRA
+            Verdict.GC_404,  # sweeper-ephemeral-reap (2026-06-28)
             Verdict.UNROUTABLE,
         }
     )
@@ -192,6 +198,7 @@ def test_policy_from_flags_apply_all_flags_returns_seven_element_set() -> None:
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.DEGRADED_REAP,  # Layer LoRA
+            Verdict.GC_404,  # sweeper-ephemeral-reap (2026-06-28)
             Verdict.ORPHAN_REAP,
             Verdict.UNROUTABLE,
         }
