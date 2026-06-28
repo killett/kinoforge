@@ -971,7 +971,6 @@ async def run_grid(
             cell_results=all_results,
             partial_dir=partial,
         )
-    shutil.rmtree(tmp_dir, ignore_errors=True)
     return GridResult(
         grid_id=grid_id,
         status="full",
