@@ -1,0 +1,29 @@
+{
+  "spec": "examples/configs/grids/wan21-mixed-path-plus-generate.grid.yaml",
+  "captured_at": "2026-06-28T00:42:00-07:00",
+  "grid_capability": "cap #4 — mixed path + generate (2 path cells from prior runs + 1 fresh generate)",
+  "model": "Wan 2.1 T2V 1.3B (diffusers, generate cell only)",
+  "runs": [
+    {"run": 1, "grid_id": "grid_20260628-001548_31b100b4", "outcome": "status=ffmpeg (caption colon broke drawtext filter); cells produced + partial-dir written"},
+    {"run": 2, "grid_id": "(captured after colon-free caption fix 610862b)", "outcome": "grid exit 0"}
+  ],
+  "composed_mp4": "output/wan21-mixed-path.mp4",
+  "composed_mp4_sha256": "c324af1c397a2d964ca37b57cd4b5d2624b09903e1395b30be0104ffbbb7b88c",
+  "composed_mp4_size_bytes": 1352984,
+  "cells": [
+    {"idx": 0, "kind": "path", "source": "examples/configs/grids/_fixtures/wan21_strength_cell0.mp4", "caption": "path cell fixture strength=0.5"},
+    {"idx": 1, "kind": "path", "source": "examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4", "caption": "path cell fixture realistic prompt"},
+    {"idx": 2, "kind": "generate", "model": "Wan2.1-T2V-1.3B-Diffusers", "caption": "fresh gen"}
+  ],
+  "acceptance_evidence": {
+    "both_fixtures_present_pre_run": "examples/configs/grids/_fixtures/wan21_strength_cell0.mp4 (230576 bytes from T5 cap #1) + wan21_prompt_cell0.mp4 (188953 bytes from T7 cap #3)",
+    "preflight_pass": true,
+    "grid_exit_0": "yes on run 2 (post colon-fix)",
+    "composed_mp4_exists": true,
+    "kinoforge_list_clean": "yes — only sweeper bookkeeping rows post-run",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "estimated ~$0.05 (1 cold-boot pod for the generate cell × ~7-10min × $0.27/hr); under $0.20 cap"
+  },
+  "evidence_tokens": ["path cell", "fresh gen", "pods=[]", "No running instances"],
+  "orchestrator_bug_surfaced_and_worked_around": "drawtext caption escape strips single backslash; colons in captions break ffmpeg filtergraph. Worked around in spec via colon-free captions (commit 610862b); proper fix is `\\\\:` double-escape OR single-quoted text= value in executor compose_grid_mp4."
+}
