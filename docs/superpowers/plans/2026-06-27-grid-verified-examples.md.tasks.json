@@ -94,7 +94,7 @@
     {
       "id": 24,
       "subject": "Task 14: README integration — Grid examples section + TOC sub-entries",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [23],
       "description": "**Goal:** Add new H2 `## Grid examples — verified` section + 9 H3 sub-sections + 9 indented TOC sub-entries with matching anchor links.\n\n**Files:** Modify README.md\n\n**Acceptance Criteria:**\n- 9 H3 Wan sub-sections exist\n- 9 indented TOC sub-entries exist\n- all anchors resolve\n- pre-commit clean\n\n**Verify:** `grep '^### Wan' README.md | wc -l` returns 9.\n\n**Steps:** Find insertion point between `## Subcommands` and `## Configuration` → write H2 + 9 H3 block (paragraph + subshell+heredoc + evidence link per cap) → add TOC fragment → verify anchors slug-match → pre-commit + commit. Full content in plan §Task 14.\n\n```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"grep '^### Wan' README.md | wc -l\", \"acceptanceCriteria\": [\"9 H3 Wan sub-sections\", \"9 indented TOC sub-entries\", \"all anchors resolve\", \"pre-commit clean\"], \"modelTier\": \"mechanical\"}\n```"
     }
