@@ -203,3 +203,32 @@ def test_run_grid_residual_pod_after_groups_yields_teardown_status(
     )
     assert result.status == "teardown"
     assert "2k0gonzmeqw7xj" in (result.teardown_breadcrumb or "")
+
+
+def test_run_grid_treats_sweeper_only_ledger_as_clean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bug: long-lived sweeper bookkeeping rows in `kinoforge list` falsely flip teardown to status='teardown' even when all pods are gone — every live grid run with a sweeper safety-net falsely fails."""
+    sweeper_only = (
+        "[instance overview]\n"
+        "  sweeper:1aecb2060dd3  age=3.4h  est_spend=$0.0000\n"
+        "  sweeper:1aecb2060dd3  age=0.5h  est_spend=$0.0000\n"
+        "  sweeper:1aecb2060dd3  provider=_sweeper  capability_key=<unknown>\n"
+        "  sweeper:1aecb2060dd3  provider=_sweeper  capability_key=<unknown>\n"
+    )
+    _stub_generate_subprocess(monkeypatch, list_stdout=sweeper_only)
+    _stub_compose(monkeypatch)
+    _stub_config_loader(monkeypatch)
+    monkeypatch.setattr(
+        "kinoforge.core.grid.executor._cell_capability_key", lambda cell: "K-same"
+    )
+    spec = _make_spec(tmp_path)
+    result = asyncio.run(
+        run_grid(spec=spec, output_dir=tmp_path / "out", max_parallel_groups=2)
+    )
+    assert result.status == "full", (
+        f"sweeper-only ledger must be treated as clean teardown; "
+        f"got status={result.status!r} with breadcrumb={result.teardown_breadcrumb!r}"
+    )
+    assert result.composed_mp4_path is not None
+    assert result.composed_mp4_path.exists()

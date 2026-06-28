@@ -750,6 +750,23 @@ async def _run_group(
         return results
 
 
+def _is_residual_pod_clean(stdout: str) -> bool:
+    """Decide whether `kinoforge list` stdout represents a clean teardown.
+
+    Sweeper bookkeeping rows (`provider=_sweeper`) persist in the ledger
+    after `sweeper stop` and must NOT be treated as residual pods. The
+    state is clean when no instance row carries a real provider tag and
+    no POD: prefix appears.
+    """
+    if "POD:" in stdout:
+        return False
+    has_real_pod = any(
+        "provider=" in line and "provider=_sweeper" not in line
+        for line in stdout.splitlines()
+    )
+    return not has_real_pod
+
+
 def _check_no_residual_pods(
     *, attempts: int = 6, delay_s: float = 5.0
 ) -> tuple[bool, str]:
@@ -786,9 +803,7 @@ def _check_no_residual_pods(
             timeout=60,
         )
         raw = result.stdout + "\n" + result.stderr
-        clean = (
-            bool(_NO_RESIDUAL_RE.search(result.stdout)) and "POD:" not in result.stdout
-        )
+        clean = _is_residual_pod_clean(result.stdout)
         if clean:
             return True, raw
         if i < attempts - 1:
