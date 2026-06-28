@@ -4,7 +4,7 @@
     {
       "id": 1,
       "subject": "Task 1: RuntimeProbe dataclass + ComputeProvider.probe_runtime ABC default",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Land the probe surface contract. New providers can opt out by inheriting the default; existing providers compile unchanged.\n\n**Files:** Create `src/kinoforge/core/runtime_probe.py`, `tests/core/test_runtime_probe.py`. Modify `src/kinoforge/core/interfaces.py` line ~218.\n\n**Verify:** `pixi run pytest tests/core/test_runtime_probe.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/runtime_probe.py\", \"src/kinoforge/core/interfaces.py\", \"tests/core/test_runtime_probe.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_runtime_probe.py -v\", \"acceptanceCriteria\": [\"RuntimeProbe frozen dataclass with 8 fields\", \"ComputeProvider.probe_runtime ABC method with default None\", \"LocalProvider/SkyPilotProvider instantiate without override\", \"RunPodProvider inherits default until Task 2\"], \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -78,5 +78,5 @@
       "description": "**Goal:** Operator-facing docs reflect new sweeper-ephemeral behavior + verdict matrix.\n\n**Files:** Modify `docs/lifecycle.md`, `docs/warm-reuse.md`.\n\n**Verify:** Visual review\n\n```json:metadata\n{\"files\": [\"docs/lifecycle.md\", \"docs/warm-reuse.md\"], \"verifyCommand\": \"git diff docs/lifecycle.md docs/warm-reuse.md\", \"acceptanceCriteria\": [\"Ephemeral pod reap section in lifecycle.md\", \"verdict matrix table present\", \"cross-reference in warm-reuse.md\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-28T00:00:00"
+  "lastUpdated": "2026-06-28T12:30:00"
 }
