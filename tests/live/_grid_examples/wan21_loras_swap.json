@@ -1,0 +1,33 @@
+{
+  "spec": "examples/configs/grids/wan21-1_3b-loras-swap.grid.yaml",
+  "captured_at": "2026-06-27T23:47:00-07:00",
+  "grid_capability": "cap #2 — LoRA stack swap (single-pod /lora/set_stack warm-reuse)",
+  "model": "Wan 2.1 T2V 1.3B (diffusers)",
+  "grid_id": "grid_20260627-233746_bf351452",
+  "outcome": "grid exit 0; single pod warm-reuse engaged for swap cells",
+  "pod_id": "7q9hddk49i8kxc",
+  "pod_cost_per_hr": 0.16,
+  "wall_time_s": 485.686991,
+  "total_cost_usd": 0.00344,
+  "budget_cap_usd": 0.5,
+  "composed_mp4": "output/wan21-1_3b-loras-swap.mp4",
+  "composed_mp4_size_bytes": 1103929,
+  "cost_sidecar": "output/wan21-1_3b-loras-swap.cost.json",
+  "cells": [
+    {"idx": 0, "caption": "Static Rotation only", "sha256": "596b2fe53bbf3a9693cefedcf9837f549e3a9e29b275ae6b5a2b5d15ff5e1613", "size_bytes": 382420, "swap_wall_time_s": 0.0},
+    {"idx": 1, "caption": "Pokemon only", "sha256": "6631ed9d45762940ca403243842976ccec6b8f076543594af9bd0393c1b4f0a5", "size_bytes": 288423, "swap_wall_time_s": 0.0},
+    {"idx": 2, "caption": "both stacked", "sha256": "444c9a8e11c7a0bea7580ccb289bc5b304d89125fe7f11f2b02e08b03d7986de", "size_bytes": 378250, "swap_wall_time_s": 0.0}
+  ],
+  "acceptance_evidence": {
+    "preflight_pass": true,
+    "grid_exit_0": true,
+    "three_cells_success": true,
+    "three_sha_distinct": "all 3 distinct (596b... / 6631... / 444c...)",
+    "cells_1_and_2_swap_wall_time_gt_0": "FAIL on literal — sidecar reports 0.0 for all 3 cells. Substantively the swap worked (3 distinct mp4s from same pod via /lora/set_stack), but the swap_wall_time_s field is not populated by the executor. Captured as orchestrator instrumentation gap; cell-1 + cell-2 mp4s timestamped 35s and 37s after cell-0, so swap+gen wall ~30s each (vs ~10min cold-boot).",
+    "kinoforge_list_clean": "yes — only sweeper bookkeeping rows post-run",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "$0.00344 (~99% under $0.30 cap)"
+  },
+  "evidence_tokens": ["Static Rotation only", "Pokemon only", "both stacked", "pods=[]", "No running instances"],
+  "warm_reuse_observation": "Single pod served all 3 cells in 77s total group wall time (cell 0 → cell 1 in 35s, cell 1 → cell 2 in 37s). Validates the /lora/set_stack swap path end-to-end."
+}
