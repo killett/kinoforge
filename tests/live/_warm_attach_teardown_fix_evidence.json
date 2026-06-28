@@ -1,0 +1,56 @@
+{
+  "test": "tests/live/test_runpod_ephemeral_warm_reuse_smoke.py::test_two_ephemeral_runs_share_pod",
+  "result": "PASSED",
+  "wall_clock_seconds": 231,
+  "workstream": "docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md",
+  "fix_commit": "ace1e41",
+  "predecessor_failure_session": "2026-06-27 17:44 (run #2 hung after generate completed)",
+  "pod": {
+    "id": "vhtcayt44asret",
+    "provider": "runpod",
+    "gpu_type": "auto-picked from cfg max_usd_per_hr=0.50 envelope",
+    "cost_per_hr_usd": 0.69,
+    "uptime_seconds_observed": 257,
+    "approx_spend_usd": 0.049,
+    "spend_cap_usd": 0.10,
+    "spend_within_cap": true
+  },
+  "run1": {
+    "log_file": "tests/live/_warm_attach_teardown_fix_evidence_run1.log",
+    "exit_code": 0,
+    "cold_boot_marker": "2026-06-27 19:39:50,018 INFO kinoforge.orchestrator running provisioner.provision for instance vhtcayt44asret (engine=comfyui key=cdcd2a98cbf2)",
+    "generate_completed_marker": "2026-06-27 19:42:15,542 INFO kinoforge.orchestrator generate completed — artifact uri='/workspace/.kinoforge/run-20260627-193944/8a3e1083fc0e8e98.mp4'",
+    "cli_generated_print": "generated: uri='/workspace/.kinoforge/run-20260627-193944/8a3e1083fc0e8e98.mp4'"
+  },
+  "run2": {
+    "log_file": "tests/live/_warm_attach_teardown_fix_evidence_run2.log",
+    "exit_code": 0,
+    "warm_attach_marker": "2026-06-27 19:42:24,894 INFO kinoforge.cli._commands warm-reuse: attached to vhtcayt44asret",
+    "warm_attach_latency_seconds": 9,
+    "generate_completed_marker": "2026-06-27 19:43:22,404 INFO kinoforge.orchestrator generate completed — artifact uri='/workspace/.kinoforge/run-20260627-194223/862133c1705a4663.mp4'",
+    "cli_generated_print": "generated: uri='/workspace/.kinoforge/run-20260627-194223/862133c1705a4663.mp4'",
+    "fix_evidence_summary": "subprocess reached 'generated: uri=...' print — pre-fix run #2 hung at hold_until_first_tick post-yield poll after 'generate completed' and never reached this line"
+  },
+  "post_run_cleanup": {
+    "ephemeral_index_rows": 0,
+    "ephemeral_index_payload": {"rows": []},
+    "runpod_pods": [],
+    "kinoforge_list_no_pods": true
+  },
+  "acceptance_criteria": [
+    {"name": "preflight exit 0", "status": "PASS", "evidence": "preflight: PASS — safe to spend (env+pods=0+tree-clean+sky-empty)"},
+    {"name": "live test exits 0 with 1 passed", "status": "PASS", "evidence": "1 passed in 231.06s"},
+    {"name": "run #1 cold-boot provision marker", "status": "PASS", "evidence": "running provisioner.provision for instance vhtcayt44asret"},
+    {"name": "run #2 warm-attach within 30s", "status": "PASS", "evidence": "warm-reuse: attached to vhtcayt44asret @ 19:42:24, 9s after run #1 generate completed @ 19:42:15"},
+    {"name": "both subprocesses print generated: uri=...", "status": "PASS", "evidence": "see run1.cli_generated_print + run2.cli_generated_print above"},
+    {"name": "post-run index empty", "status": "PASS", "evidence": ".kinoforge/_lifecycle/ephemeral-index.json = {\"rows\": []}"},
+    {"name": "post-run RunPod pods empty", "status": "PASS", "evidence": "GraphQL myself.pods = []"},
+    {"name": "spend <= $0.10", "status": "PASS", "evidence": "$0.049 = 257s @ $0.69/hr"},
+    {"name": "prompt from field-realistic.txt", "status": "PASS", "evidence": "live smoke harness reads PROMPT_PATH = examples/configs/prompts/field-realistic.txt verbatim"}
+  ],
+  "evidence_tokens_required": {
+    "cold-boot run-1 provision": "run1.log line 'running provisioner.provision for instance vhtcayt44asret'",
+    "warm-attach run-2 attached": "run2.log line 'warm-reuse: attached to vhtcayt44asret'",
+    "destroy post-cleanup empty": "ephemeral-index {rows: []} + RunPod pods []"
+  }
+}
