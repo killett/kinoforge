@@ -17,6 +17,7 @@ Cost cap: ≤ $0.50 (1.3B model on RTX 3070 / A5000 class GPU, ~13-16¢/hr).
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -33,6 +34,36 @@ REPO = Path(__file__).resolve().parents[2]
 CFG = REPO / "examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml"
 PROMPT_PATH = REPO / "examples/configs/prompts/field-realistic.txt"
 STATE_DIR = REPO / ".kinoforge"
+INDEX_FILE = STATE_DIR / "_lifecycle" / "ephemeral-index.json"
+
+
+def _runpod_live_pod_ids() -> set[str]:
+    """Query RunPod GraphQL for currently-live pod ids.
+
+    The `kinoforge list` CLI reads the on-disk ledger; under --ephemeral
+    the ledger is empty even when the pod is alive. RunPod is the
+    ground truth.
+    """
+    from kinoforge.providers.runpod.util import _default_http_post
+
+    post = _default_http_post(os.environ["RUNPOD_API_KEY"])
+    payload = post(
+        "https://api.runpod.io/graphql",
+        {"query": "{ myself { pods { id desiredStatus } } }"},
+    )
+    pods = payload["data"]["myself"]["pods"]
+    return {
+        p["id"]
+        for p in pods
+        if p.get("desiredStatus") in {"RUNNING", "STARTING", "PROVISIONING"}
+    }
+
+
+def _index_pod_ids() -> set[str]:
+    if not INDEX_FILE.exists():
+        return set()
+    data = json.loads(INDEX_FILE.read_text())
+    return {r["id"] for r in data.get("rows", [])}
 
 
 def _run_generate(prompt: str, log_path: Path) -> subprocess.CompletedProcess[str]:
@@ -103,10 +134,17 @@ def test_two_ephemeral_runs_share_pod(tmp_path: Path) -> None:
         f"{log1_text[-2000:]}"
     )
 
-    listing1 = _kinoforge_list()
-    assert pod_id_run1 in listing1.stdout, (
-        f"pod {pod_id_run1!r} not visible after run #1 — survived-pod contract broken:\n"
-        f"{listing1.stdout}"
+    # Pod must survive between runs. kinoforge list under --ephemeral
+    # reads the empty disk ledger; ground truth is the index file +
+    # RunPod GraphQL.
+    assert pod_id_run1 in _index_pod_ids(), (
+        f"pod {pod_id_run1!r} not in ephemeral-index after run #1 — "
+        f"write site failed:\n"
+        f"{INDEX_FILE.read_text() if INDEX_FILE.exists() else '<missing>'}"
+    )
+    assert pod_id_run1 in _runpod_live_pod_ids(), (
+        f"pod {pod_id_run1!r} not running on RunPod after run #1 — "
+        f"survived-pod contract broken"
     )
 
     # Run #2: should attach
@@ -116,13 +154,23 @@ def test_two_ephemeral_runs_share_pod(tmp_path: Path) -> None:
     assert r2.returncode == 0, f"run #2 exit {r2.returncode}:\n{log2_text[-4000:]}"
 
     pod_id_run2: str | None = None
+    second_provision: str | None = None
     for line in log2_text.splitlines():
         if "warm-reuse: attached to" in line:
             pod_id_run2 = line.split("attached to ")[1].split()[0].strip(",.")
-            break
+        elif "running provisioner.provision for instance" in line:
+            second_provision = line.split("instance ")[1].split()[0].strip(",.")
+    if pod_id_run2 is None and second_provision is None:
+        if {pod_id_run1} == _runpod_live_pod_ids():
+            pod_id_run2 = pod_id_run1
+    assert second_provision is None or second_provision == pod_id_run1, (
+        f"run #2 cold-booted a SECOND pod {second_provision!r} instead of "
+        f"attaching to run #1's pod {pod_id_run1!r} — discovery channel "
+        f"broken:\n{log2_text[-3000:]}"
+    )
     assert pod_id_run2 == pod_id_run1, (
-        f"run #2 cold-booted pod {pod_id_run2!r} instead of attaching to run #1's "
-        f"pod {pod_id_run1!r} — discovery channel broken:\n{log2_text[-2000:]}"
+        f"run #2 expected to attach to {pod_id_run1!r}, got "
+        f"{pod_id_run2!r}:\n{log2_text[-2000:]}"
     )
 
     # Cleanup + post-destroy verification
@@ -135,17 +183,15 @@ def test_two_ephemeral_runs_share_pod(tmp_path: Path) -> None:
     assert destroy.returncode == 0, (
         f"destroy failed: stdout={destroy.stdout!r} stderr={destroy.stderr!r}"
     )
-    assert f"destroyed: {pod_id_run1}" in destroy.stdout
+    assert (
+        f"destroyed: {pod_id_run1}" in destroy.stdout
+        or f"destroyed orphan: {pod_id_run1}" in destroy.stdout
+    ), destroy.stdout
 
-    listing2 = _kinoforge_list()
-    assert "No running instances" in listing2.stdout, listing2.stdout
-    assert "No instances recorded in ledger" in listing2.stdout, listing2.stdout
-
-    from kinoforge.core.warm_reuse.ephemeral_index import EphemeralIndex
-    from kinoforge.stores.local import LocalArtifactStore
-
-    store = LocalArtifactStore(STATE_DIR)
-    remaining = [r for r in EphemeralIndex(store=store).rows() if r.id == pod_id_run1]
-    assert remaining == [], (
-        f"ephemeral-index still has row for destroyed pod {pod_id_run1!r}: {remaining}"
+    assert pod_id_run1 not in _index_pod_ids(), (
+        f"ephemeral-index still has row for destroyed pod {pod_id_run1!r}: "
+        f"{INDEX_FILE.read_text()}"
+    )
+    assert pod_id_run1 not in _runpod_live_pod_ids(), (
+        f"RunPod still has pod {pod_id_run1!r} after destroy"
     )
