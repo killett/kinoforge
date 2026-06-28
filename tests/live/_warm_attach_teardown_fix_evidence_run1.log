@@ -1,0 +1,23 @@
+Pixi task (kinoforge in default): python -m kinoforge --ephemeral generate --config /workspace/examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml --mode t2v --prompt Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking.
+2026-06-27 19:39:38,790 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (37 keys)
+2026-06-27 19:39:50,018 INFO kinoforge.orchestrator running provisioner.provision for instance vhtcayt44asret (engine=comfyui key=cdcd2a98cbf2)
+2026-06-27 19:41:14,131 WARNING kinoforge.profiles engine no longer declares strategy flags for cached key cdcd2a98cbf2a036b8405714d63bcd91c475afbc26e91ffb1a972a4b64ef4d19; either declared_flags_map regressed or the engine was downgraded
+2026-06-27 19:41:16,877 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=0.0s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:21,296 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=5.0s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:25,805 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=9.5s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:30,324 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=14.0s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:34,821 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=18.5s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:39,220 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=23.0s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:43,597 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=27.4s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:48,034 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=31.8s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:52,836 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=36.2s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:41:57,224 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=41.0s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:01,538 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=45.4s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:05,663 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=49.7s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:10,247 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=53.8s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:13,857 INFO kinoforge.comfyui comfyui poll job=bcb67a0c-87ee-4ad5-9f96-e848c72e0bf0 elapsed=58.4s status=success queue_pos=None exec_node=None
+2026-06-27 19:42:15,542 INFO kinoforge.kinoforge.outputs.local output published: /workspace/output/20260627-194215_comfyui_Wan2_1-T2V-1_3B_fp8_e4m3_Photorealistic-cinem.mp4
+2026-06-27 19:42:15,542 INFO kinoforge.orchestrator generate completed — artifact uri='/workspace/.kinoforge/run-20260627-193944/8a3e1083fc0e8e98.mp4'
+[instance overview]
+  sweeper:1aecb2060dd3  age=0.0h  est_spend=$0.0000
+generated: uri='/workspace/.kinoforge/run-20260627-193944/8a3e1083fc0e8e98.mp4'
