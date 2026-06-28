@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkabl
 
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
+    from kinoforge.core.runtime_probe import RuntimeProbe
 
 # --- compute axis -----------------------------------------------------------
 
@@ -216,6 +217,22 @@ class ComputeProvider(ABC):
 
     @abstractmethod
     def heartbeat(self, instance_id: str) -> None: ...  # noqa: D102
+
+    def probe_runtime(self, pod_id: str) -> RuntimeProbe | None:  # noqa: B027
+        """Live runtime probe for sweeper-ephemeral-reap.
+
+        Default returns ``None`` ("substrate missing"). RunPodProvider
+        overrides; SkyPilot / Local inherit the default. Sweeper treats
+        ``None`` as a WARN-once skip per spec 2026-06-28.
+
+        Args:
+            pod_id: Provider-side pod identifier.
+
+        Returns:
+            A :class:`RuntimeProbe` populated from a live provider query,
+            or ``None`` when the provider lacks runtime-probe substrate.
+        """
+        return None
 
     def set_heartbeat_endpoint(  # noqa: B027
         self,
