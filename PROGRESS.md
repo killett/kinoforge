@@ -12,6 +12,33 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
+**Ephemeral warm-reuse discovery SHIPPED 2026-06-27 (commits `158b2dc..e68a009`, all 7 tasks GREEN).**
+Spec `docs/superpowers/specs/2026-06-27-ephemeral-warm-reuse-discovery-design.md` + plan
+`docs/superpowers/plans/2026-06-27-ephemeral-warm-reuse-discovery.md`. Two back-to-back
+`kinoforge --ephemeral generate` invocations now share a RunPod pod via a thin on-disk
+discovery index at `<state>/_lifecycle/ephemeral-index.json`, instead of cold-booting
+twice. Tasks:
+- Task 1 — `EphemeralIndex` module (`158b2dc`)
+- Task 2 — matcher accepts `ephemeral_index=` kwarg (`f05e12d`)
+- Task 3 — cold-create write site + `_scan_warm_candidates` union + `_dry_run_swap_preview`
+  forward (`44882f3`)
+- Task 4 — `destroy_confirmed` chokepoint cleanup + matcher/integration Path 3 arms
+  (`fcec4be`)
+- Task 5 — cross-session + visibility tests (`32a4270`)
+- Task 6 — AST invariant for gated writes (`60872f8`)
+- Bugfixes surfaced during live smoke: `_resolve_warm_instance` accepts entry kwarg +
+  `_scan_warm_candidates` force_attaches index-only entries (`b28311a`); endpoints
+  rehydration prefers index row over provider reconstruction (`000c084`).
+- Task 7 — live smoke RED scaffold (`9ecd902`), scaffold rewrite to ground-truth
+  oracles (`65aeefc`), evidence capture (`e68a009`). Discovery channel + matcher +
+  cleanup verified end-to-end on RunPod pod `d3q7ejf6e910jv`; live test itself does
+  not auto-GREEN due to a separate orchestrator teardown hang on warm-attach,
+  filed for follow-up.
+**Workstream CLOSED — all 7 tasks GREEN; user-gate evidence on record at
+tests/live/_ephemeral_warm_reuse_smoke_evidence.json.**
+
+---
+
 **README rewrite SHIPPED 2026-06-27 (commits `aa8212a..603af20`, all 15 tasks GREEN).**
 Spec `docs/superpowers/specs/2026-06-27-readme-rewrite-design.md` + plan
 `docs/superpowers/plans/2026-06-27-readme-rewrite.md`. Replaces the 2032-line

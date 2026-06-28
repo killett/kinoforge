@@ -10,45 +10,65 @@
     {
       "id": 7,
       "subject": "Task 2 (#7): Wire EphemeralIndex into matcher",
-      "status": "pending",
-      "blockedBy": [6],
+      "status": "completed",
+      "blockedBy": [
+        6
+      ],
       "description": "**Goal:** `find_warm_attach_candidate` accepts optional `ephemeral_index=` kwarg; merges its rows into ledger candidate list; ledger wins on `id` collision. `try_warm_attach_with_swap` forwards kwarg.\n\n**Files:**\n- Modify: `src/kinoforge/core/warm_reuse/matcher.py`\n- Modify: `src/kinoforge/core/warm_reuse/integration.py`\n- Test: `tests/core/warm_reuse/test_matcher_ephemeral_index.py`\n\n**Acceptance Criteria:**\n- [ ] Default `ephemeral_index=None` keeps current behavior bit-identical\n- [ ] Union dedupes by id (ledger-first)\n- [ ] Sparse index rows route through existing `re_probe` path\n- [ ] `try_warm_attach_with_swap` forwards kwarg\n\n**Verify:** `pixi run pytest tests/core/warm_reuse/test_matcher_ephemeral_index.py tests/core/test_warm_reuse_matcher.py tests/core/test_warm_reuse_integration.py -v`\n\n**Steps:** RED 4-test suite → matcher sig change + union block → integration.py forward kwarg → GREEN → ruff/mypy → commit. Full code in plan §Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/warm_reuse/matcher.py\", \"src/kinoforge/core/warm_reuse/integration.py\", \"tests/core/warm_reuse/test_matcher_ephemeral_index.py\"], \"verifyCommand\": \"pixi run pytest tests/core/warm_reuse/test_matcher_ephemeral_index.py tests/core/test_warm_reuse_matcher.py tests/core/test_warm_reuse_integration.py -v\", \"acceptanceCriteria\": [\"default None preserves regression\", \"union dedupes id ledger-first\", \"sparse rows trigger re_probe\", \"integration helper forwards kwarg\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 8,
       "subject": "Task 3 (#8): Write site + _scan_warm_candidates + _dry_run_swap_preview wiring",
-      "status": "pending",
-      "blockedBy": [6],
+      "status": "completed",
+      "blockedBy": [
+        6
+      ],
       "description": "**Goal:** Write index row at cold-create under `--ephemeral`; consume index in both production warm-reuse paths.\n\n**Files:**\n- Modify: `src/kinoforge/cli/_commands.py` (write site ~L560; `_scan_warm_candidates` ~L1131; `_dry_run_swap_preview` ~L346)\n- Test: `tests/core/warm_reuse/test_scan_warm_candidates_ephemeral_index.py`\n\n**Acceptance Criteria:**\n- [ ] Under `--ephemeral` cold-create writes one row per pod\n- [ ] Without `--ephemeral` no row is written (gated)\n- [ ] `_scan_warm_candidates` unions index rows\n- [ ] `_dry_run_swap_preview` forwards `ephemeral_index=`\n\n**Verify:** `pixi run pytest tests/core/warm_reuse/test_scan_warm_candidates_ephemeral_index.py tests/cli/test_dry_run_swap.py -v`\n\n**Steps:** RED scan-integration test → add gated write block after `ledger.touch(... warm_attach_key=cfg_wak)` → add union block in `_scan_warm_candidates` → add `ephemeral_index=` kwarg in `_dry_run_swap_preview` → GREEN → full pytest -x. Full code in plan §Task 3.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/core/warm_reuse/test_scan_warm_candidates_ephemeral_index.py\"], \"verifyCommand\": \"pixi run pytest tests/core/warm_reuse/test_scan_warm_candidates_ephemeral_index.py tests/cli/test_dry_run_swap.py -v\", \"acceptanceCriteria\": [\"ephemeral cold-create writes index row\", \"non-ephemeral cold-create does NOT write\", \"_scan_warm_candidates unions index\", \"_dry_run_swap_preview forwards ephemeral_index\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 9,
       "subject": "Task 4 (#9): Cleanup via destroy_confirmed chokepoint + Path 3 arms",
-      "status": "pending",
-      "blockedBy": [6, 8],
+      "status": "completed",
+      "blockedBy": [
+        6,
+        8
+      ],
       "description": "**Goal:** Index rows are removed whenever a pod is destroyed, regardless of which path triggered the destroy. Centralised in `destroy_confirmed` chokepoint; Path 3 (matcher 404 + swap 404) keeps in-place arms.\n\n**Files:**\n- Modify: `src/kinoforge/core/lifecycle.py::destroy_confirmed` (add `ephemeral_index=` kwarg)\n- Modify: `src/kinoforge/core/warm_reuse/integration.py::try_warm_attach_with_swap` (Path 3 arm)\n- Modify: `src/kinoforge/core/warm_reuse/matcher.py` (probe-time 404 silent skip + remove)\n- Modify: `src/kinoforge/cli/_commands.py::_cmd_destroy` (pass index)\n- Modify: `src/kinoforge/core/reaper_actor.py::sweep` (pass index)\n- Modify: `src/kinoforge/core/lifecycle.py::reap` (pass index)\n- Test: `tests/core/warm_reuse/test_ephemeral_index_cleanup.py`\n\n**Acceptance Criteria:**\n- [ ] `destroy_confirmed(provider, id, ephemeral_index=idx)` calls `idx.remove(id)` after confirmed-gone\n- [ ] Default `None` bit-identical to today\n- [ ] Does NOT remove row on `TeardownError`\n- [ ] `try_warm_attach_with_swap` exception arm removes before re-raise\n- [ ] Matcher probe-404 silently skips + removes row\n- [ ] All 5 destroy call sites pass index\n\n**Verify:** `pixi run pytest tests/core/warm_reuse/test_ephemeral_index_cleanup.py tests/core/test_lifecycle.py tests/core/test_warm_reuse_integration.py -v`\n\n**Steps:** RED 4-test cleanup suite → `destroy_confirmed` sig + remove call → Path 3 arm → matcher probe-404 swallow → wire all destroy call sites → GREEN → ruff/mypy/full pytest. Full code in plan §Task 4.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/lifecycle.py\", \"src/kinoforge/core/warm_reuse/integration.py\", \"src/kinoforge/core/warm_reuse/matcher.py\", \"src/kinoforge/cli/_commands.py\", \"src/kinoforge/core/reaper_actor.py\", \"tests/core/warm_reuse/test_ephemeral_index_cleanup.py\"], \"verifyCommand\": \"pixi run pytest tests/core/warm_reuse/test_ephemeral_index_cleanup.py tests/core/test_lifecycle.py tests/core/test_warm_reuse_integration.py -v\", \"acceptanceCriteria\": [\"destroy_confirmed removes row on success\", \"destroy_confirmed preserves row on TeardownError\", \"default None untouched behavior\", \"integration exception arm removes before re-raise\", \"matcher probe-404 swallow + remove\", \"all 5 destroy call sites pass index\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 10,
       "subject": "Task 5 (#10): Cross-session integration + visibility tests",
-      "status": "pending",
-      "blockedBy": [6, 7, 8],
+      "status": "completed",
+      "blockedBy": [
+        6,
+        7,
+        8
+      ],
       "description": "**Goal:** End-to-end offline verification that the discovery channel works across process boundaries, plus visibility-asymmetry guards.\n\n**Files:**\n- Create: `tests/integration/test_ephemeral_cross_session_warm_reuse.py`\n- Create: `tests/integration/test_non_ephemeral_consumes_index.py`\n- Create: `tests/core/test_non_ephemeral_does_not_write_index.py`\n\n**Acceptance Criteria:**\n- [ ] Cross-session test asserts identity equality on `pod_id`\n- [ ] Non-ephemeral process #2 finds ephemeral process #1's pod\n- [ ] Non-ephemeral process #1 does NOT write index file\n\n**Verify:** `pixi run pytest tests/integration/test_ephemeral_cross_session_warm_reuse.py tests/integration/test_non_ephemeral_consumes_index.py tests/core/test_non_ephemeral_does_not_write_index.py -v`\n\n**Steps:** Write 3 tests → expect GREEN immediately (prior tasks wired the machinery) → commit. Full code in plan §Task 5.\n\n```json:metadata\n{\"files\": [\"tests/integration/test_ephemeral_cross_session_warm_reuse.py\", \"tests/integration/test_non_ephemeral_consumes_index.py\", \"tests/core/test_non_ephemeral_does_not_write_index.py\"], \"verifyCommand\": \"pixi run pytest tests/integration/test_ephemeral_cross_session_warm_reuse.py tests/integration/test_non_ephemeral_consumes_index.py tests/core/test_non_ephemeral_does_not_write_index.py -v\", \"acceptanceCriteria\": [\"cross-session pod_id identity\", \"non-ephemeral reads ephemeral pod\", \"non-ephemeral does NOT write index\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 11,
       "subject": "Task 6 (#11): AST-scan invariant for gated writes",
-      "status": "pending",
-      "blockedBy": [6, 8],
+      "status": "completed",
+      "blockedBy": [
+        6,
+        8
+      ],
       "description": "**Goal:** Future-proof against ungated `EphemeralIndex.add(...)` writes that would leak the discovery row into non-ephemeral runs.\n\n**Files:**\n- Create: `tests/test_ephemeral_index_write_gated.py`\n\n**Acceptance Criteria:**\n- [ ] AST walk over `src/kinoforge/` finds every `.add(...)` on `EphemeralIndex`\n- [ ] Each call inside `if EphemeralSession.current() is not None:` branch\n- [ ] Exemption tag `# kinoforge:ephemeral-index-write-exempt` opts out\n- [ ] Failure message names file + line + offending function\n\n**Verify:** `pixi run pytest tests/test_ephemeral_index_write_gated.py -v`\n\n**Steps:** Write AST scanner (model on `tests/test_no_unredacted_writes.py`) → GREEN initially → temp-break gate in `_cmd_generate` + confirm RED + revert → commit. Full code in plan §Task 6.\n\n```json:metadata\n{\"files\": [\"tests/test_ephemeral_index_write_gated.py\"], \"verifyCommand\": \"pixi run pytest tests/test_ephemeral_index_write_gated.py -v\", \"acceptanceCriteria\": [\"AST finds all EphemeralIndex.add call sites\", \"each call inside EphemeralSession.current() branch\", \"exemption tag honored\", \"violation message names file+line\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 12,
       "subject": "Task 7 (#12): Live smoke — RunPod cross-session warm-reuse (RED scaffold first)",
-      "status": "pending",
-      "blockedBy": [6, 7, 8, 9, 10],
+      "status": "completed",
+      "blockedBy": [
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it \"verified inline\", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.\n\n**Goal:** End-to-end live verification on RunPod that two back-to-back `kinoforge --ephemeral generate` calls share a pod.\n\n**Files:**\n- Create: `tests/live/test_runpod_ephemeral_warm_reuse_smoke.py`\n- Modify: `tests/conftest.py` (add `--runlive` option if not present)\n\n**Acceptance Criteria:**\n- [ ] Scaffold committed RED BEFORE any spend\n- [ ] `pixi run preflight` exits 0 before live run\n- [ ] 1st run cold-boots; provision marker in log\n- [ ] 2nd run attaches; `warm-reuse: attached to <id>` in stderr within 30s\n- [ ] `pixi run kinoforge list` after both runs shows ONE pod (= run #1)\n- [ ] `pixi run kinoforge destroy --id <pod>` succeeds\n- [ ] `pixi run kinoforge list` after destroy: `No running instances.` AND `No instances recorded in ledger.`\n- [ ] `ephemeral-index.json` row removed after destroy\n- [ ] Prompt sourced verbatim from `/workspace/examples/configs/prompts/field-realistic.txt`\n- [ ] Total live spend ≤ $0.50\n\n**Verify:** `pixi run pytest tests/live/test_runpod_ephemeral_warm_reuse_smoke.py -v -s --runlive`\n\n**Steps:** Write RED scaffold (`--runlive`-gated) → commit RED → `pixi run preflight` → run live smoke + proactively poll RunPod GPU util every 60-90s → verify post-run ledger state → commit GREEN. Full code in plan §Task 7.\n\n```json:metadata\n{\"files\": [\"tests/live/test_runpod_ephemeral_warm_reuse_smoke.py\", \"tests/conftest.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_runpod_ephemeral_warm_reuse_smoke.py -v -s --runlive\", \"acceptanceCriteria\": [\"RED scaffold committed pre-spend\", \"preflight exit 0\", \"run #1 cold-boots\", \"run #2 attaches within 30s\", \"kinoforge list shows ONE pod after both\", \"destroy succeeds\", \"post-destroy ledger empty\", \"index row removed post-destroy\", \"prompt from field-realistic.txt\", \"spend <= $0.50\"], \"modelTier\": \"advanced\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"cold-boot\", \"run-1\", \"provision\"], [\"warm-attach\", \"run-2\", \"attached\"]]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-27T16:32:11-07:00"
+  "lastUpdated": "2026-06-27T17:59:00-07:00"
 }
