@@ -379,6 +379,41 @@ def _provision_compute_once(
     )
 
 
+def _warm_attach_install(
+    *,
+    claim_holder: _LazyClaim,
+    ledger: Ledger,
+    record_then_install: Callable[[Instance], None],
+    instance: Instance,
+) -> None:
+    """Install the session-claim for a caller-supplied warm pod, recording first when needed.
+
+    Cold-boot paths invoke ``_record_then_install`` via
+    ``_provision_instance_and_build_backend``'s ``on_instance_created``
+    callback, which records the entry to the ledger BEFORE entering
+    ``hold_until_first_tick`` — so the C29 HeartbeatLoop's strict
+    ``ledger.touch(heartbeat_thread_tick=...)`` finds an entry to mutate
+    and the post-yield poll releases as soon as the first tick lands.
+
+    Warm-attach paths used to skip that callback and call
+    ``claim_holder.install`` directly. Under
+    :class:`~kinoforge.core.ephemeral.EphemeralSession` STRICT_POLICY
+    the in-memory ledger is fresh (the caller-supplied pod was
+    provisioned by an earlier CLI process), so the absent entry made
+    every HeartbeatLoop tick a silent no-op and the post-yield
+    ``hold_until_first_tick`` polled until ``claim_ttl`` elapsed
+    (``boot_timeout_s + 2*heartbeat_interval_s``). This helper closes
+    the gap by routing through ``record_then_install`` when no entry is
+    visible from this process's ledger view; the existing-entry path
+    keeps the prior behaviour bit-identical for non-ephemeral runs and
+    for ephemeral runs that already see the entry from disk bootstrap.
+    """
+    if ledger.read(instance.id) is None:
+        record_then_install(instance)
+    else:
+        claim_holder.install(instance)
+
+
 class _LazyClaim:
     """B7 lazy-acquire wrapper around :func:`hold_until_first_tick`.
 
@@ -1120,7 +1155,12 @@ def deploy_session(
                         ) from None
                     if _caller_supplied_instance:
                         # Caller pre-created the pod; marker-idempotent provision.
-                        claim_holder.install(instance)  # type: ignore[arg-type]
+                        _warm_attach_install(
+                            claim_holder=claim_holder,
+                            ledger=_ledger_for_claim,
+                            record_then_install=_record_then_install,
+                            instance=instance,  # type: ignore[arg-type]
+                        )
                         resolved_engine.provision(
                             instance, cfg_dict, cancel_token=cancel_token
                         )
@@ -1158,7 +1198,12 @@ def deploy_session(
                             "requires_compute is True but no provider was resolved"
                         ) from None
                     if _caller_supplied_instance:
-                        claim_holder.install(instance)  # type: ignore[arg-type]
+                        _warm_attach_install(
+                            claim_holder=claim_holder,
+                            ledger=_ledger_for_claim,
+                            record_then_install=_record_then_install,
+                            instance=instance,  # type: ignore[arg-type]
+                        )
                         resolved_engine.provision(
                             instance, cfg_dict, cancel_token=cancel_token
                         )
