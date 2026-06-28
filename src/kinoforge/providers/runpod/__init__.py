@@ -49,7 +49,9 @@ from kinoforge.core.interfaces import (
     Offer,
 )
 from kinoforge.core.offers import filter_offers
+from kinoforge.core.runtime_probe import RuntimeProbe
 from kinoforge.providers.runpod import selfterm
+from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -335,6 +337,14 @@ class RunPodProvider(ComputeProvider):
         self._sleep = sleep
         self._base_url = base_url.rstrip("/")
         self._heartbeat_endpoint: HeartbeatEndpoint | None = heartbeat_endpoint
+        # Sweeper-side ephemeral reap (spec 2026-06-28): GraphQL probe endpoint
+        # for probe_runtime. Test seam: tests reassign this attribute to a stub
+        # endpoint. None when no api_key → probe_runtime returns None
+        # (substrate-missing signal).
+        self._api_key: str = api_key or ""
+        self._util_endpoint: RunPodGraphQLUtilEndpoint | None = (
+            RunPodGraphQLUtilEndpoint(api_key=self._api_key) if api_key else None
+        )
         # Process-local registry of pods we created in this process: pod_id
         # -> Instance. RunPod's GraphQL pod schema does not surface
         # user-defined tags on list/get responses (only id, desiredStatus,
@@ -601,6 +611,62 @@ class RunPodProvider(ComputeProvider):
             return None
         dt = self._heartbeat_endpoint.read(instance_id)
         return dt.timestamp() if dt is not None else None
+
+    def probe_runtime(self, pod_id: str) -> RuntimeProbe | None:
+        """Live runtime probe via the GraphQL ``pod{runtime{...}}`` query.
+
+        Distinguishes three outcomes:
+            * ``data.pod = null`` (404) → ``RuntimeProbe(found=False, ...)``
+            * ``runtime = null`` (early boot) → ``RuntimeProbe(found=True,
+              container_uptime_s=None, gpu_util_pct=None, ...)``
+            * ``runtime`` populated → fully populated ``RuntimeProbe``
+
+        Returns:
+            A :class:`RuntimeProbe`, or ``None`` when no endpoint is
+            configured (e.g. provider constructed without credentials —
+            substrate-missing signal for sweeper-ephemeral-reap).
+
+        Raises:
+            TransportError: GraphQL transport fault. Sweeper's
+                ``_probe_with_cache`` catches and classifies as
+                ``PROBE_FAILED``.
+        """
+        endpoint = self._util_endpoint
+        if endpoint is None:
+            return None
+        found, snapshot = endpoint.probe(pod_id)
+        now_local = datetime.now().isoformat()
+        if not found:
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=False,
+                container_uptime_s=None,
+                gpu_util_pct=None,
+                cpu_pct=None,
+                cost_per_hr=None,
+                probed_at_local=now_local,
+            )
+        if snapshot is None:
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=True,
+                container_uptime_s=None,
+                gpu_util_pct=None,
+                cpu_pct=None,
+                cost_per_hr=None,
+                probed_at_local=now_local,
+            )
+        return RuntimeProbe(
+            pod_id=pod_id,
+            found=True,
+            container_uptime_s=float(snapshot.uptime_seconds)
+            if snapshot.uptime_seconds is not None
+            else None,
+            gpu_util_pct=snapshot.gpu_util_percent,
+            cpu_pct=snapshot.cpu_percent,
+            cost_per_hr=None,
+            probed_at_local=now_local,
+        )
 
     def set_heartbeat_endpoint(
         self,
