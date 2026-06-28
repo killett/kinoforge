@@ -87,7 +87,7 @@
     {
       "id": 23,
       "subject": "Task 13: Live Wan 2.2 mixed path + generate (cap #9) USER GATE",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [20, 22],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every item in acceptanceCriteria has been re-validated independently with output captured.\n\n**Goal:** Live-verify wan22-14b-mixed-path-plus-generate.grid.yaml after Tasks 10+12 wrote fixtures. ~$1.00.\n\n**Files:** Create tests/live/_grid_examples/wan22_mixed_path.json\n\n**Acceptance Criteria:** both fixture mp4s exist pre-run / preflight PASS / grid exit 0 / composed mp4 exists / pods=[] / spend <= $2.00.\n\n**Verify:** `pixi run kinoforge grid --spec examples/configs/grids/wan22-14b-mixed-path-plus-generate.grid.yaml --out output/wan22-14b-mixed-path.mp4 && pixi run kinoforge list 2>&1 | grep -E 'No running instances|No instances recorded'`\n\n**Steps:** verify fixtures present → dry-run spec → preflight + sweeper → grid + poll (wall ~30-40 min) → verify composed mp4 → pod-clean → sweeper stop → evidence → commit. Full bash in plan §Task 13.\n\n```json:metadata\n{\"files\": [\"tests/live/_grid_examples/wan22_mixed_path.json\"], \"verifyCommand\": \"pixi run kinoforge grid --spec examples/configs/grids/wan22-14b-mixed-path-plus-generate.grid.yaml --out output/wan22-14b-mixed-path.mp4\", \"acceptanceCriteria\": [\"both fixture mp4s exist pre-run\", \"preflight PASS\", \"grid exit 0\", \"composed mp4 exists\", \"pods=[]\", \"spend <= $2.00\"], \"modelTier\": \"advanced\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"fixture\", \"path cell\"], [\"fresh gen\", \"generate cell\"], [\"pods=[]\", \"No running instances\"]]}\n```"
     },
