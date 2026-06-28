@@ -1,0 +1,28 @@
+{
+  "spec": "examples/configs/grids/wan22-14b-mixed-path-plus-generate.grid.yaml",
+  "captured_at": "2026-06-28T04:54:00-07:00",
+  "grid_capability": "cap #9 — Wan 2.2 mixed path + generate (2 path cells from T10+T12 + 1 fresh generate on A100 80GB)",
+  "model": "Wan 2.2 T2V A14B (diffusers, generate cell only)",
+  "grid_id": "grid_20260628-043629_278e055f",
+  "outcome": "grid exit 0",
+  "composed_mp4": "output/wan22-14b-mixed-path.mp4",
+  "composed_mp4_sha256": "d741101588df43163aa86e2d2a182adbe49b87f289e3474207cb33fa7fde9f00",
+  "composed_mp4_size_bytes": 3399666,
+  "cells": [
+    {"idx": 0, "kind": "path", "source": "examples/configs/grids/_fixtures/wan22_strength_cell0.mp4", "caption": "path cell fixture strength=0.5"},
+    {"idx": 1, "kind": "path", "source": "examples/configs/grids/_fixtures/wan22_prompt_cell0.mp4", "caption": "path cell fixture realistic prompt"},
+    {"idx": 2, "kind": "generate", "model": "Wan2.2-T2V-A14B-Diffusers", "caption": "fresh gen", "cell_0_out_mp4": "20260628-044959_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4"}
+  ],
+  "pod_id": "25w8qml99t6f00",
+  "pod_cost_per_hr": 1.49,
+  "acceptance_evidence": {
+    "both_fixtures_present_pre_run": "examples/configs/grids/_fixtures/wan22_strength_cell0.mp4 (315496 bytes from T10) + wan22_prompt_cell0.mp4 (391872 bytes from T12 cell 0)",
+    "preflight_pass": true,
+    "grid_exit_0": true,
+    "composed_mp4_exists": true,
+    "kinoforge_list_clean": "yes — only sweeper bookkeeping rows post-run",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "estimated ~$0.35 (1 cold-boot A100 pod for generate cell × ~14min × $1.49/hr); within $2.00 cap"
+  },
+  "evidence_tokens": ["path cell", "fresh gen", "pods=[]", "No running instances"]
+}
