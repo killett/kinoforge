@@ -402,7 +402,12 @@ def test_force_attach_param_is_false_always(
     captured: dict[str, Any] = {}
 
     def spy_resolve(
-        ctx_: Any, cfg_: Any, iid: str, *, force_attach: bool
+        ctx_: Any,
+        cfg_: Any,
+        iid: str,
+        *,
+        force_attach: bool,
+        entry: Any = None,
     ) -> tuple[Any, int]:
         captured["force_attach"] = force_attach
         return (None, 2)

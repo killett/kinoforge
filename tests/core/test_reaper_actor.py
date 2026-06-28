@@ -70,6 +70,12 @@ class _FakeStore:
         self.acquires.append((key, ttl_s))
         return _FakeLock()
 
+    def uri_for(self, namespace: str, filename: str) -> str:
+        return f"fake://{namespace}/{filename}"
+
+    def get_json(self, uri: str) -> dict[str, Any]:
+        raise FileNotFoundError(uri)
+
 
 class _FakeLock:
     def __enter__(self) -> _FakeLock:

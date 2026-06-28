@@ -293,10 +293,8 @@ def test_engine_swap_comfyui_to_diffusers() -> None:
 REQUIRED_HEADINGS = [
     "# kinoforge",
     "## Quickstart",
-    "## Configuration",
-    "## Extending: add a provider/source/engine",
-    "## Roadmap (deferred layers and their seams)",
-    "## Design references",
+    "## Configuration at a glance",
+    "## Contributing / extending",
 ]
 
 
