@@ -1,0 +1,82 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-28-sweeper-ephemeral-reap.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: RuntimeProbe dataclass + ComputeProvider.probe_runtime ABC default",
+      "status": "pending",
+      "description": "**Goal:** Land the probe surface contract. New providers can opt out by inheriting the default; existing providers compile unchanged.\n\n**Files:** Create `src/kinoforge/core/runtime_probe.py`, `tests/core/test_runtime_probe.py`. Modify `src/kinoforge/core/interfaces.py` line ~218.\n\n**Verify:** `pixi run pytest tests/core/test_runtime_probe.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/runtime_probe.py\", \"src/kinoforge/core/interfaces.py\", \"tests/core/test_runtime_probe.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_runtime_probe.py -v\", \"acceptanceCriteria\": [\"RuntimeProbe frozen dataclass with 8 fields\", \"ComputeProvider.probe_runtime ABC method with default None\", \"LocalProvider/SkyPilotProvider instantiate without override\", \"RunPodProvider inherits default until Task 2\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: RunPodProvider.probe_runtime — wraps GraphQL util endpoint",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** RunPod probe_runtime override distinguishing 404 vs early-boot vs live.\n\n**Files:** Modify `src/kinoforge/providers/runpod/util.py` (add `probe` method), `src/kinoforge/providers/runpod/__init__.py` (override `probe_runtime`), `tests/core/test_runtime_probe.py`.\n\n**Verify:** `pixi run pytest tests/core/test_runtime_probe.py -v -k runpod`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/util.py\", \"src/kinoforge/providers/runpod/__init__.py\", \"tests/core/test_runtime_probe.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_runtime_probe.py -v\", \"acceptanceCriteria\": [\"RunPodGraphQLUtilEndpoint.probe distinguishes 404 from null-runtime\", \"RunPodProvider.probe_runtime override\", \"TransportError propagates\", \"Local TZ timestamp\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Verdict enum + _classify_ephemeral branch",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Sentinel-based dispatch to `_classify_ephemeral` handling only verdicts the sparse substrate supports.\n\n**Files:** Modify `src/kinoforge/core/reaper.py` lines 24-41, 56-67, 247+. Create `tests/core/test_classify_ephemeral.py`.\n\n**Verify:** `pixi run pytest tests/core/test_classify_ephemeral.py tests/core/test_reaper.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper.py\", \"tests/core/test_classify_ephemeral.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_classify_ephemeral.py tests/core/test_reaper.py -v\", \"acceptanceCriteria\": [\"Verdict enum gains 3 members\", \"DEFAULT_APPLY_POLICY includes GC_404 only\", \"classify() dispatches on sentinel\", \"_classify_ephemeral decision tree matches spec §3.5\", \"No heartbeat key reads\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: sweep() unions EphemeralIndex rows + per-tick probe cache",
+      "status": "pending",
+      "blockedBy": [2, 3],
+      "description": "**Goal:** Sweeper discovers ephemeral pods via index union + probe cache + ledger-wins-on-overlap.\n\n**Files:** Modify `src/kinoforge/core/reaper_actor.py` line 297+. Create `tests/core/test_sweep_ephemeral_union.py`.\n\n**Verify:** `pixi run pytest tests/core/test_sweep_ephemeral_union.py tests/core/test_reaper_actor.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper_actor.py\", \"tests/core/test_sweep_ephemeral_union.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_sweep_ephemeral_union.py tests/core/test_reaper_actor.py -v\", \"acceptanceCriteria\": [\"sweep unions ledger ∪ ephemeral_index.rows\", \"ledger wins on overlap\", \"per-tick probe cache\", \"failure isolation per pod\", \"stall_history kwarg plumbed\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: SweeperLoop owns bounded stall history",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Cross-tick stall samples in bounded in-memory deque per pod; evicted on pod disappearance.\n\n**Files:** Modify `src/kinoforge/core/sweeper.py` lines 111-263. Create `tests/core/test_sweeper_loop_stall_history.py`.\n\n**Verify:** `pixi run pytest tests/core/test_sweeper_loop_stall_history.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/sweeper.py\", \"tests/core/test_sweeper_loop_stall_history.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_sweeper_loop_stall_history.py -v\", \"acceptanceCriteria\": [\"_stall_history dict on SweeperLoop\", \"deque maxlen bounded\", \"history pruned per tick\", \"reload preserves history\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: act_on_verdict handles GC_404, SKIP_NO_PROBE, PROBE_FAILED",
+      "status": "pending",
+      "blockedBy": [4, 5],
+      "description": "**Goal:** New verdicts trigger side-effects: GC_404 removes index row, SKIP/FAILED log WARN-once.\n\n**Files:** Modify `src/kinoforge/core/reaper_actor.py`. Create `tests/integration/test_sweeper_reaps_ephemeral_stall.py`, `tests/integration/test_sweep_skypilot_ephemeral_warn_once.py`.\n\n**Verify:** `pixi run pytest tests/integration/test_sweeper_reaps_ephemeral_stall.py tests/integration/test_sweep_skypilot_ephemeral_warn_once.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper_actor.py\", \"tests/integration/test_sweeper_reaps_ephemeral_stall.py\", \"tests/integration/test_sweep_skypilot_ephemeral_warn_once.py\"], \"verifyCommand\": \"pixi run pytest tests/integration/test_sweeper_reaps_ephemeral_stall.py tests/integration/test_sweep_skypilot_ephemeral_warn_once.py -v\", \"acceptanceCriteria\": [\"GC_404 removes row, no destroy\", \"SKIP_NO_PROBE WARN-once\", \"PROBE_FAILED dedup with error_class\", \"scripted stall sequence drives destroy\", \"_LOG_ONLY_VERDICTS dispatch\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: kinoforge reap CLI integration + session-claim race test",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** CLI emits ephemeral pods; --apply runs GC_404; one-shot skips STALL; SweeperStats counters; session-claim race confirmed safe.\n\n**Files:** Modify `src/kinoforge/cli/_commands.py` (2116, 2177), `src/kinoforge/core/sweeper_metrics.py`. Create `tests/integration/test_reap_cli_ephemeral.py`, `tests/integration/test_sweeper_skips_on_session_claim.py`.\n\n**Verify:** `pixi run pytest tests/integration/test_reap_cli_ephemeral.py tests/integration/test_sweeper_skips_on_session_claim.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"src/kinoforge/core/sweeper_metrics.py\", \"tests/integration/test_reap_cli_ephemeral.py\", \"tests/integration/test_sweeper_skips_on_session_claim.py\"], \"verifyCommand\": \"pixi run pytest tests/integration/test_reap_cli_ephemeral.py tests/integration/test_sweeper_skips_on_session_claim.py -v\", \"acceptanceCriteria\": [\"CLI dry-run lists ephemeral\", \"--apply GC_404 removes row\", \"one-shot skips STALL_REAP\", \"JSONL action literals\", \"SweeperStats counters increment\", \"session-claim race safe\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: AST invariant — _classify_ephemeral consumes no heartbeat keys",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** AST-walking test prevents future refactor from re-coupling ephemeral branch to heartbeat substrate.\n\n**Files:** Create `tests/test_classify_ephemeral_no_heartbeat_keys.py`.\n\n**Verify:** `pixi run pytest tests/test_classify_ephemeral_no_heartbeat_keys.py -v`\n\n```json:metadata\n{\"files\": [\"tests/test_classify_ephemeral_no_heartbeat_keys.py\"], \"verifyCommand\": \"pixi run pytest tests/test_classify_ephemeral_no_heartbeat_keys.py -v\", \"acceptanceCriteria\": [\"AST walker finds function\", \"zero forbidden key reads\", \"FunctionNotFound on rename\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Live smoke — RED scaffold (committed BEFORE live spend)",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "**Goal:** Live test scaffold committed RED before any RunPod spend per project durability rule.\n\n**Files:** Create `tests/live/test_runpod_ephemeral_sweeper_smoke.py`.\n\n**Verify:** `pixi run pytest tests/live/test_runpod_ephemeral_sweeper_smoke.py -v` (collects + SKIPS)\n\n```json:metadata\n{\"files\": [\"tests/live/test_runpod_ephemeral_sweeper_smoke.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_runpod_ephemeral_sweeper_smoke.py -v\", \"acceptanceCriteria\": [\"File collects cleanly\", \"module-level skip in place\", \"no live API hits\", \"committed before live spend\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Live smoke — GREEN evidence on RunPod",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** Run live smoke against real RunPod with pod-stats polling; capture evidence; remove skip.\n\n**Files:** Modify `tests/live/test_runpod_ephemeral_sweeper_smoke.py`. Create `tests/live/evidence/2026-06-28-sweeper-ephemeral-reap/`.\n\n**Verify:** `pixi run preflight && pixi run pytest tests/live/test_runpod_ephemeral_sweeper_smoke.py -v -m live`\n\n```json:metadata\n{\"files\": [\"tests/live/test_runpod_ephemeral_sweeper_smoke.py\", \"tests/live/evidence/2026-06-28-sweeper-ephemeral-reap/\"], \"verifyCommand\": \"pixi run preflight && pixi run pytest tests/live/test_runpod_ephemeral_sweeper_smoke.py -v -m live\", \"acceptanceCriteria\": [\"preflight exit 0\", \"sweeper destroyed pod within 240s\", \"evidence files committed\", \"spend ≤ $0.40\", \"post-run ledger empty\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: Documentation updates",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** Operator-facing docs reflect new sweeper-ephemeral behavior + verdict matrix.\n\n**Files:** Modify `docs/lifecycle.md`, `docs/warm-reuse.md`.\n\n**Verify:** Visual review\n\n```json:metadata\n{\"files\": [\"docs/lifecycle.md\", \"docs/warm-reuse.md\"], \"verifyCommand\": \"git diff docs/lifecycle.md docs/warm-reuse.md\", \"acceptanceCriteria\": [\"Ephemeral pod reap section in lifecycle.md\", \"verdict matrix table present\", \"cross-reference in warm-reuse.md\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-06-28T00:00:00"
+}
