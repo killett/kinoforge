@@ -1,0 +1,73 @@
+# Wan 2.1 5B base cfg WITHOUT LoRAs — for model-sweep cell.
+#
+# Mid-size Wan 2.1 variant; uses ComfyUI engine (not diffusers — 5B
+# weights aren't published in diffusers-sharded form for Wan 2.1).
+# No LoRAs (5B-specific LoRAs aren't validated in repo).
+#
+# Cfg blocks below cloned verbatim from
+# examples/configs/runpod-comfyui-wan-t2v-5b.yaml.
+
+mode: t2v
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: comfyui
+  precision: bf16
+  comfyui:
+    version: "0.3.10"
+    custom_nodes:
+      - git: "https://github.com/kijai/ComfyUI-WanVideoWrapper"
+        ref: "088128b224242e110d3906c6750e9a3a348a659b"
+      - git: "https://github.com/kijai/ComfyUI-KJNodes"
+        ref: "369c8aee9ad4641823d0ffd7035076bcd297b6f2"
+      - git: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+        ref: "4ee72c065db22c9d96c2427954dc69e7b908444b"
+
+models:
+  - ref: "hf:Kijai/WanVideo_comfy:FastWan/Wan2_2-TI2V-5B-FastWanFullAttn_bf16.safetensors"
+    kind: base
+    target: diffusion_models
+  - ref: "hf:Kijai/WanVideo_comfy:Wan2_2_VAE_bf16.safetensors"
+    kind: vae
+    target: vae
+  - ref: "hf:Kijai/WanVideo_comfy:umt5-xxl-enc-fp8_e4m3fn.safetensors"
+    kind: text_encoder
+    target: text_encoders
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  warm_reuse_auto_attach: true
+  requirements:
+    min_vram_gb: 16
+    min_cuda: "12.4"
+    max_usd_per_hr: 0.50
+    gpu_preference:
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA RTX A5000"
+      - "NVIDIA GeForce RTX 3090"
+    disk_gb: 40
+  lifecycle:
+    idle_timeout: 15m
+    job_timeout: 10m
+    time_buffer: 3m
+    max_lifetime: 60m
+    boot_timeout: 20m
+    budget: 2.0
+    heartbeat_interval_s: 30
+
+spec:
+  graph_file: ../runpod-comfyui-wan-t2v-5b.graph.json
+  asset_node_ids: {}
+  prompt_node_ids:
+    positive: "16"
+  prompt_input_field: positive_prompt
+  node_overrides: {}
+
+params:
+  fps: 24
+  num_frames: 81
+  steps: 20
+  width: 480
+  height: 480
