@@ -4,37 +4,46 @@
     {
       "id": 9,
       "subject": "Task 1: Write the offline RED repro test",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** A pytest test that exercises `_cmd_generate` on the warm-attach + ephemeral path with mocked compute/engine and asserts a clean exit within 30 s. Today this test must hang (RED via pytest faulthandler).\n\n**Files:**\n- Create: `tests/integration/test_ephemeral_warm_attach_exits_cleanly.py`\n\n**Acceptance Criteria:**\n- exercises _cmd_generate inside EphemeralSession\n- seeds real EphemeralIndex row + stubbed provider/engine\n- pre-fix XFAILs with faulthandler timeout traceback\n- lint + mypy clean\n\n**Verify:** `pixi run pytest tests/integration/test_ephemeral_warm_attach_exits_cleanly.py -v --faulthandler-timeout=30 -s` → XFAIL with timeout-traceback in captured output.\n\n**Steps:** Inspect production call shape → write failing test scaffold → run + confirm hang + capture faulthandler frame → lint+mypy → commit. Full code in plan §Task 1.\n\n```json:metadata\n{\"files\": [\"tests/integration/test_ephemeral_warm_attach_exits_cleanly.py\"], \"verifyCommand\": \"pixi run pytest tests/integration/test_ephemeral_warm_attach_exits_cleanly.py -v --faulthandler-timeout=30 -s\", \"acceptanceCriteria\": [\"exercises _cmd_generate inside EphemeralSession\", \"seeds real EphemeralIndex row + stubbed provider/engine\", \"pre-fix XFAILs with faulthandler timeout traceback\", \"lint + mypy clean\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 10,
       "subject": "Task 2: Identify hang frame + ship smallest branch-gated fix",
-      "status": "pending",
-      "blockedBy": [9],
+      "status": "completed",
+      "blockedBy": [
+        9
+      ],
       "description": "**Goal:** Read the faulthandler dump from Task 1, identify the offending frame in `src/kinoforge/core/orchestrator.py` (or adjacent), ship the smallest possible diff that makes the offline test GREEN, branch-gated so cold-boot and non-ephemeral paths stay byte-identical.\n\n**Files:**\n- Modify: `src/kinoforge/core/orchestrator.py`\n- Modify: `tests/integration/test_ephemeral_warm_attach_exits_cleanly.py` (remove @xfail in final commit)\n\n**Acceptance Criteria:**\n- Task 1 test passes <5s with @xfail removed\n- fix branch-gated to ephemeral+warm-attach\n- no regression in cold-boot or non-ephemeral\n- lint + mypy clean\n\n**Verify:** `pixi run pytest tests/integration/test_ephemeral_warm_attach_exits_cleanly.py tests/core tests/cli tests/integration -x` → all GREEN.\n\n**Steps:** Read dumped frame → differential read of deploy_session → write smallest fix → run offline test → run regression suites → full suite → lint+mypy → commit with @xfail removal. Full guidance in plan §Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/integration/test_ephemeral_warm_attach_exits_cleanly.py\"], \"verifyCommand\": \"pixi run pytest tests/integration/test_ephemeral_warm_attach_exits_cleanly.py tests/core tests/cli tests/integration -x\", \"acceptanceCriteria\": [\"Task 1 test passes <5s with @xfail removed\", \"fix branch-gated to ephemeral+warm-attach\", \"no regression in cold-boot or non-ephemeral\", \"lint + mypy clean\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 11,
       "subject": "Task 3: Full regression sweep + sanity check",
-      "status": "pending",
-      "blockedBy": [10],
+      "status": "completed",
+      "blockedBy": [
+        10
+      ],
       "description": "**Goal:** Verify the fix did not regress any committed test, including the predecessor warm-reuse workstream's offline tests.\n\n**Files:** (no source changes — verification only)\n\n**Acceptance Criteria:**\n- full offline suite green\n- warm-reuse predecessor suite green\n- pre-commit on all files green\n\n**Verify:** `pixi run pytest tests/core tests/cli tests/integration -q && pixi run pre-commit run --all-files`\n\n**Steps:** Offline regression sweep → warm-reuse predecessor suite → pre-commit all-files → no commit (verification only). Full guidance in plan §Task 3.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run pytest tests/core tests/cli tests/integration -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full offline suite green\", \"warm-reuse predecessor suite green\", \"pre-commit on all files green\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 12,
       "subject": "Task 4: Live confirmation on RunPod (USER GATE)",
-      "status": "pending",
-      "blockedBy": [10, 11],
+      "status": "in_progress",
+      "blockedBy": [
+        10,
+        11
+      ],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it \"verified inline\", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.\n\n**Goal:** Re-run the existing `tests/live/test_runpod_ephemeral_warm_reuse_smoke.py` end-to-end on RunPod. Test must pass verbatim, including destroy + post-cleanup assertions reaching GREEN. Spend cap $0.10.\n\n**Files:**\n- Use unchanged: `tests/live/test_runpod_ephemeral_warm_reuse_smoke.py`\n- Create: `tests/live/_warm_attach_teardown_fix_evidence_run1.log` (force-added)\n- Create: `tests/live/_warm_attach_teardown_fix_evidence_run2.log` (force-added)\n- Create: `tests/live/_warm_attach_teardown_fix_evidence.json`\n\n**Acceptance Criteria:**\n- preflight exit 0\n- live test exits 0 with 1 passed\n- run #1 cold-boot provision marker\n- run #2 warm-attach within 30s\n- both subprocesses print generated: uri=...\n- post-run index empty\n- post-run RunPod pods empty\n- spend <= $0.10\n- prompt from field-realistic.txt\n\n**Verify:** `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_runpod_ephemeral_warm_reuse_smoke.py -v -s --faulthandler-timeout=600`\n\n**Steps:** Pre-spend authorization check (autonomous-mode pre-authorized) → sweeper start + preflight → run live smoke with polling per CLAUDE.md → capture evidence files → sweeper stop + final verify → commit. Full code in plan §Task 4.\n\n```json:metadata\n{\"files\": [\"tests/live/_warm_attach_teardown_fix_evidence.json\", \"tests/live/_warm_attach_teardown_fix_evidence_run1.log\", \"tests/live/_warm_attach_teardown_fix_evidence_run2.log\"], \"verifyCommand\": \"KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_runpod_ephemeral_warm_reuse_smoke.py -v -s --faulthandler-timeout=600\", \"acceptanceCriteria\": [\"preflight exit 0\", \"live test exits 0 with 1 passed\", \"run #1 cold-boot provision marker\", \"run #2 warm-attach within 30s\", \"both subprocesses print generated: uri=...\", \"post-run index empty\", \"post-run RunPod pods empty\", \"spend <= $0.10\", \"prompt from field-realistic.txt\"], \"modelTier\": \"advanced\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"cold-boot\", \"run-1\", \"provision\"], [\"warm-attach\", \"run-2\", \"attached\"], [\"destroy\", \"post-cleanup\", \"empty\"]]}\n```"
     },
     {
       "id": 13,
       "subject": "Task 5: Close workstream",
       "status": "pending",
-      "blockedBy": [12],
+      "blockedBy": [
+        12
+      ],
       "description": "**Goal:** Update PROGRESS.md + .tasks.json so the resume protocol cleanly sees this workstream CLOSED.\n\n**Files:**\n- Modify: `PROGRESS.md`\n- Modify: `docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json`\n\n**Acceptance Criteria:**\n- PROGRESS.md active block names all commits + evidence\n- .tasks.json all completed with current local-TZ timestamp\n- no other workstream text disturbed\n\n**Verify:** `git diff HEAD~1 PROGRESS.md docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json` shows only the close edits.\n\n**Steps:** Update tasks.json via python → update PROGRESS.md active block → commit. Full guidance in plan §Task 5.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json\"], \"verifyCommand\": \"git diff HEAD~1 PROGRESS.md docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json\", \"acceptanceCriteria\": [\"PROGRESS.md active block names all commits + evidence\", \".tasks.json all completed with current local-TZ timestamp\", \"no other workstream text disturbed\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-27T18:10:00-07:00"
+  "lastUpdated": "2026-06-27T19:38:04-07:00"
 }
