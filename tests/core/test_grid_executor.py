@@ -146,6 +146,16 @@ def test_run_grid_all_success_composes(
         f"(warm-reuse race observed live 2026-06-25 left orphan pods); "
         f"got {no_reuse_count} of {len(log.calls)} cells"
     )
+    tmp_dir = tmp_path / "out" / f"_grid_{result.grid_id}"
+    assert tmp_dir.exists(), (
+        "Bug: rmtree on success wiped per-cell mp4s; mixed-path grids "
+        "(cap #4) cannot harvest fixture cells if tmp_dir disappears."
+    )
+    per_cell_mp4s = list(tmp_dir.glob("cell_*_out/*.mp4"))
+    assert len(per_cell_mp4s) >= 1, (
+        f"expected at least one per-cell mp4 preserved under tmp_dir, "
+        f"got {per_cell_mp4s}"
+    )
 
 
 def test_run_grid_one_cell_fails_aborts_group_other_groups_continue(
