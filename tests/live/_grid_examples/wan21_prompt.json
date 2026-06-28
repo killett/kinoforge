@@ -1,0 +1,26 @@
+{
+  "spec": "examples/configs/grids/wan21-1_3b-prompt-sweep.grid.yaml",
+  "captured_at": "2026-06-28T00:14:00-07:00",
+  "grid_capability": "cap #3 — prompt sweep (3 prompts, generate cells)",
+  "model": "Wan 2.1 T2V 1.3B (diffusers)",
+  "grid_id": "grid_20260627-234928_023b2b85",
+  "outcome": "grid exit 0",
+  "composed_mp4": "output/wan21-1_3b-prompt.mp4",
+  "composed_mp4_size_bytes": 1340443,
+  "pods_used": ["vwwqyglsikm8d9", "ou16ksjiuqet41", "(plus initial)"],
+  "cells": [
+    {"idx": 0, "caption": "realistic", "sha256": "231e8c589b52dad359f58d145b199b33e63a6e78f1d07a234a3cc6663a97cb04", "size_bytes": 590530, "prompt_source": "field-realistic.txt"},
+    {"idx": 1, "caption": "dreamlike", "sha256": "2fdd27bc7fe5719db8c0a83491febdb0e3ac8bbe2fa67d28b91aa8b3e94403dc", "size_bytes": 393461, "prompt_source": "field-dreamlike.txt"},
+    {"idx": 2, "caption": "forest", "sha256": "84c22c4ad6a359557eb27e54f5a3d4a84bb2dd4a2ae29b146a9524e7a50c8660", "size_bytes": 317612, "prompt_source": "forest.txt"}
+  ],
+  "acceptance_evidence": {
+    "preflight_pass": true,
+    "grid_exit_0": true,
+    "three_sha_distinct": "yes (231e... / 2fdd... / 84c2...)",
+    "kinoforge_list_clean": "yes — only sweeper bookkeeping rows post-run",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "estimated ~$0.10 (3 cold-boot pods × ~7-10min × $0.16-0.27/hr); well under $0.30 cap",
+    "fixture_mp4_copied": "examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4 (cell-0 from this run, 590530 bytes) — verbatim cell-0 mp4 preserved thanks to commit 5368832 tmp_dir-preservation fix"
+  },
+  "evidence_tokens": ["realistic", "dreamlike", "forest", "pods=[]", "No running instances"]
+}

@@ -45,7 +45,7 @@
     {
       "id": 17,
       "subject": "Task 7: Live Wan 2.1 1.3B prompt sweep (cap #3) USER GATE",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [14],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every item in acceptanceCriteria has been re-validated independently with output captured.\n\n**Goal:** Live-verify wan21-1_3b-prompt-sweep.grid.yaml. Single pod, 3 prompts. ~$0.05.\n\n**Files:**\n- Create: tests/live/_grid_examples/wan21_prompt.json\n- Create: examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4 (for Task 8)\n\n**Acceptance Criteria:** preflight PASS / grid exit 0 / 3 sha-distinct cells / pods=[] / spend <= $0.30 / fixture mp4 copied.\n\n**Verify:** `pixi run kinoforge grid --spec examples/configs/grids/wan21-1_3b-prompt-sweep.grid.yaml --out output/wan21-1_3b-prompt.mp4 && pixi run kinoforge list 2>&1 | grep -E 'No running instances|No instances recorded'`\n\n**Steps:** preflight → sweeper → grid + poll → sidecar verify → copy cell-0 fixture → pod-clean → sweeper stop → evidence → force-add commit. Full bash in plan §Task 7.\n\n```json:metadata\n{\"files\": [\"tests/live/_grid_examples/wan21_prompt.json\", \"examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4\"], \"verifyCommand\": \"pixi run kinoforge grid --spec examples/configs/grids/wan21-1_3b-prompt-sweep.grid.yaml --out output/wan21-1_3b-prompt.mp4\", \"acceptanceCriteria\": [\"preflight PASS\", \"grid exit 0\", \"3 sha-distinct cells\", \"pods=[]\", \"spend <= $0.30\", \"fixture mp4 copied\"], \"modelTier\": \"advanced\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"realistic\", \"dreamlike\", \"forest\"], [\"pods=[]\", \"No running instances\"]]}\n```"
     },
