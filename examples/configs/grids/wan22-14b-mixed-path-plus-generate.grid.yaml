@@ -4,9 +4,9 @@ layout: "1x3"
 budget_cap_usd: 2.00
 cells:
   - path: examples/configs/grids/_fixtures/wan22_strength_cell0.mp4
-    caption: "fixture: strength=0.5"
+    caption: "path cell fixture strength=0.5"
   - path: examples/configs/grids/_fixtures/wan22_prompt_cell0.mp4
-    caption: "fixture: realistic prompt"
+    caption: "path cell fixture realistic prompt"
   - generate:
       config: examples/configs/grids/wan22-14b-base.yaml
       overrides:
