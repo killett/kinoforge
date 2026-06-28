@@ -1,0 +1,34 @@
+{
+  "spec": "examples/configs/grids/wan22-14b-loras-swap.grid.yaml",
+  "captured_at": "2026-06-28T03:23:00-07:00",
+  "grid_capability": "cap #7 — Wan 2.2 14B Arcane LoRA stack swap on A100 80GB (single-pod warm-reuse via /lora/set_stack)",
+  "model": "Wan 2.2 T2V A14B (diffusers)",
+  "runs": [
+    {"run": 1, "grid_id": "grid_20260628-022213_57d159e9", "outcome": "PARTIAL — cell 0 done; pod kfmdxf0749x0nh died between cells (RunPod GraphQL returned pod:null on direct query); cell 1 --attach-pod call hung 20+min on dead pod; killed manually"},
+    {"run": 2, "grid_id": "grid_20260628-025555_cf1212f1", "outcome": "grid exit 0; all 3 cells on single warm pod m1bglhs7rtrmq5"}
+  ],
+  "composed_mp4": "output/wan22-14b-loras-swap.mp4",
+  "composed_mp4_size_bytes": 4117470,
+  "cost_sidecar": "output/wan22-14b-loras-swap.cost.json",
+  "pod_id": "m1bglhs7rtrmq5",
+  "pod_cost_per_hr": 1.39,
+  "wall_time_s": 1605.694708,
+  "group_wall_time_s": 508.166707,
+  "total_cost_usd": 0.196209,
+  "cells": [
+    {"idx": 0, "caption": "high-noise only", "sha256": "cd13e623b969b9fa82d732acf5dd46806e2b6e371d894f93c25c7fcee3e1fdf2", "size_bytes": 871098},
+    {"idx": 1, "caption": "low-noise only", "sha256": "851f26108855f1df11c6cf7a651e968562c9d8bfcca82989fba7a7e112b06b4f", "size_bytes": 1504549},
+    {"idx": 2, "caption": "both stacked", "sha256": "b632c03171ce451f2e393ca8da39a66a575b6e45a3cf146f6214fffb7be4bb68", "size_bytes": 1623113}
+  ],
+  "acceptance_evidence": {
+    "preflight_pass": true,
+    "grid_exit_0": "yes on run 2",
+    "three_sha_distinct_cells": "yes — cd13e6... / 851f26... / b632c0... all pairwise distinct",
+    "cells_1_and_2_swap_wall_time_gt_0": "FAIL on literal — same orchestrator instrumentation gap as T6 (sidecar swap_wall_time_s = 0.0 for all 3 cells). Substantive proof: cell-0 mp4 at 03:14:13, cell-1 at 03:17:42 (3.5min later), cell-2 at 03:22:37 (5min later), ALL on single pod m1bglhs7rtrmq5 — group wall 508s (8.5min) for 3 generations confirms warm-reuse via /lora/set_stack engaged",
+    "kinoforge_list_clean": "yes after run 2 (cleared run 1 stale entry kfmdxf0749x0nh via `kinoforge forget`)",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "$0.20 (run 2) + ~$0.78 (run 1 stalled pod) = ~$0.98 cumulative, within $2.00 cap"
+  },
+  "evidence_tokens": ["high-noise only", "low-noise only", "both stacked", "pods=[]", "No running instances"],
+  "orchestrator_bug_surfaced": "Inter-cell pod death + warm-attach hang. Run 1 pod kfmdxf0749x0nh died between cells (likely RunPod platform-side or undetected lifecycle trigger); cell 1's --attach-pod call hung indefinitely waiting for the dead pod, requiring manual kill. Memory `wan_server_set_stack_proxy_warmup` recovery may not cover this scenario. Recovery path: forget stale ledger + retry."
+}
