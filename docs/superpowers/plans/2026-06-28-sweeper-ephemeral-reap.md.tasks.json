@@ -52,7 +52,7 @@
     {
       "id": 8,
       "subject": "Task 8: AST invariant — _classify_ephemeral consumes no heartbeat keys",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** AST-walking test prevents future refactor from re-coupling ephemeral branch to heartbeat substrate.\n\n**Files:** Create `tests/test_classify_ephemeral_no_heartbeat_keys.py`.\n\n**Verify:** `pixi run pytest tests/test_classify_ephemeral_no_heartbeat_keys.py -v`\n\n```json:metadata\n{\"files\": [\"tests/test_classify_ephemeral_no_heartbeat_keys.py\"], \"verifyCommand\": \"pixi run pytest tests/test_classify_ephemeral_no_heartbeat_keys.py -v\", \"acceptanceCriteria\": [\"AST walker finds function\", \"zero forbidden key reads\", \"FunctionNotFound on rename\"], \"modelTier\": \"mechanical\"}\n```"
     },
