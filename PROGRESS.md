@@ -12,23 +12,38 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
-**Warm-attach teardown hang — IN PROGRESS 2026-06-27.**
-Spec `docs/superpowers/specs/2026-06-27-warm-attach-teardown-hang-design.md` + plan
-`docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md`. Follow-up to the
-ephemeral warm-reuse discovery workstream below: live smoke captured this session
-showed run #2 subprocess hangs after emitting `generate completed` under
-(`--ephemeral` + warm-attach + `instance != None`); run #1 cold-boot path exits
-cleanly. Plan scopes a differential debug — offline pytest reproduction with
-faulthandler stack capture, smallest-possible branch-gated fix in
-`orchestrator.deploy_session`/`generate` exit, one live confirmation. 5 tasks
-(`docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json`):
-Task 1 RED repro → Task 2 fix → Task 3 regression sweep → Task 4 live smoke
-(USER GATE) → Task 5 close.
+**No active workstream — next initiative TBD.** See "Next session — resume
+target" below.
 
-**First unchecked task: Task 1 (#9) — Write the offline RED repro test.**
-Resume protocol: read THIS block, then the plan + spec it points to, then
-`git log --oneline -20`, then `/superpowers-extended-cc:executing-plans
-docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md`.
+---
+
+**Warm-attach teardown hang SHIPPED 2026-06-27 (commits `52ae355..3c99729`, all 5 tasks GREEN).**
+Spec `docs/superpowers/specs/2026-06-27-warm-attach-teardown-hang-design.md` + plan
+`docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md`. Follow-up to
+the ephemeral warm-reuse discovery workstream below: `--ephemeral` warm-attach
+run #2 subprocess no longer hangs after `generate completed`. Differential
+debug — offline pytest RED repro pinpointed the hang frame
+(`session_claim.py:134` post-yield `_sleep` in `hold_until_first_tick`,
+reached via `_LazyClaim.__exit__`), branch-gated fix in
+`orchestrator.deploy_session` warm-attach branches via new
+`_warm_attach_install` helper that pre-records the ledger entry when
+`ledger.read(instance.id) is None` (cold-boot path's existing
+`_record_then_install` callback was missing from warm-attach), then one live
+RunPod confirmation. Tasks:
+- Task 1 — offline RED repro test (`52ae355`)
+- Task 2 — `_warm_attach_install` helper + remove `@xfail` (`ace1e41`)
+- Task 3 — full regression sweep (`tests/core tests/cli tests/integration`
+  green modulo 3 pre-existing `_FakeStore.uri_for` failures unrelated to
+  this fix; warm-reuse predecessor suite green; `pre-commit run --all-files`
+  clean) — verification-only, no commit
+- Task 4 — live smoke on RunPod pod `vhtcayt44asret` (`3c99729`): pod
+  cold-booted run #1, warm-attached run #2 (9s after run #1 `generate
+  completed`), destroy + post-cleanup all GREEN, spend $0.049 (cap $0.10),
+  evidence at `tests/live/_warm_attach_teardown_fix_evidence.json` +
+  `tests/live/_warm_attach_teardown_fix_evidence_run{1,2}.log`
+- Task 5 — workstream close (THIS commit)
+**Workstream CLOSED — all 5 tasks GREEN; user-gate evidence on record at
+tests/live/_warm_attach_teardown_fix_evidence.json.**
 
 ---
 
