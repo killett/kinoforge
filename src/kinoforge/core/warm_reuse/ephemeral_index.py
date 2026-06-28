@@ -122,7 +122,9 @@ class EphemeralIndex:
         return [r for r in rows if isinstance(r, dict)]
 
     def _write_raw(self, rows: list[dict[str, Any]]) -> None:
-        self._store.put_json(_INDEX_NAMESPACE, _INDEX_FILENAME, {"rows": rows})
+        self._store.put_json(  # kinoforge:public-write
+            _INDEX_NAMESPACE, _INDEX_FILENAME, {"rows": rows}
+        )
 
     @staticmethod
     def _row_from_dict(d: dict[str, Any]) -> EphemeralIndexRow | None:
