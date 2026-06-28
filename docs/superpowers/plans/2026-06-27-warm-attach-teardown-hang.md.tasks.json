@@ -28,7 +28,7 @@
     {
       "id": 12,
       "subject": "Task 4: Live confirmation on RunPod (USER GATE)",
-      "status": "in_progress",
+      "status": "completed",
       "blockedBy": [
         10,
         11
@@ -38,12 +38,12 @@
     {
       "id": 13,
       "subject": "Task 5: Close workstream",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         12
       ],
       "description": "**Goal:** Update PROGRESS.md + .tasks.json so the resume protocol cleanly sees this workstream CLOSED.\n\n**Files:**\n- Modify: `PROGRESS.md`\n- Modify: `docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json`\n\n**Acceptance Criteria:**\n- PROGRESS.md active block names all commits + evidence\n- .tasks.json all completed with current local-TZ timestamp\n- no other workstream text disturbed\n\n**Verify:** `git diff HEAD~1 PROGRESS.md docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json` shows only the close edits.\n\n**Steps:** Update tasks.json via python → update PROGRESS.md active block → commit. Full guidance in plan §Task 5.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json\"], \"verifyCommand\": \"git diff HEAD~1 PROGRESS.md docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json\", \"acceptanceCriteria\": [\"PROGRESS.md active block names all commits + evidence\", \".tasks.json all completed with current local-TZ timestamp\", \"no other workstream text disturbed\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-27T19:38:04-07:00"
+  "lastUpdated": "2026-06-27T19:47:16-07:00"
 }
