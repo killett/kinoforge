@@ -1,0 +1,30 @@
+{
+  "spec": "examples/configs/grids/wan22-14b-strength-sweep.grid.yaml",
+  "captured_at": "2026-06-28T02:21:00-07:00",
+  "grid_capability": "cap #6 — Wan 2.2 14B Arcane LoRA strength sweep on A100 80GB",
+  "model": "Wan 2.2 T2V A14B (diffusers)",
+  "grid_id": "grid_20260628-013815_b3df480a",
+  "outcome": "grid exit 0",
+  "composed_mp4": "output/wan22-14b-strength.mp4",
+  "composed_mp4_sha256": "c81a8d369a4303fa46c8d248ac02e577dbf783a7a4e172e1fd9057dafad36535",
+  "composed_mp4_size_bytes": 4940637,
+  "wall_time_minutes": 37,
+  "cells": [
+    {"idx": 0, "caption": "strength=0.5", "sha256": "4f625fef72e21bf9089105dfdf94fb04c18500d3968dd756302fdf1ba16050b8", "size_bytes": 1121099},
+    {"idx": 1, "caption": "strength=1.0", "sha256": "3d4383f4ff360af9e2141bf4ab459c1c33adabc3665833ab2398c14882434b3c", "size_bytes": 1589342},
+    {"idx": 2, "caption": "strength=1.5", "sha256": "ae12f44952ca1a49ce79a60f781765cbb47a9f3aa37d40b5fefa3cbd2c34aa1e", "size_bytes": 2079983}
+  ],
+  "pods_used": ["vciya32c0bm0u6 (died mid-boot, retry)", "hsgoaw110sn3m8 (served cells 0+1)", "yikhstog23idd8 (served cell 2)"],
+  "pod_cost_per_hr": 1.49,
+  "gpu_type": "NVIDIA A100 80GB PCIe",
+  "acceptance_evidence": {
+    "preflight_pass": true,
+    "grid_exit_0": true,
+    "three_sha_distinct_cells": "yes — 4f625f... / 3d4383... / ae12f4... all pairwise distinct, sizes 1.1MB / 1.6MB / 2.1MB",
+    "kinoforge_list_clean": "yes — only sweeper bookkeeping rows post-run",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "estimated ~$1.10 (3 cold-boot A100 pods × ~12-15min × $1.49/hr); within $2.00 cap",
+    "fixture_mp4_copied": "examples/configs/grids/_fixtures/wan22_strength_cell0.mp4 (315496 bytes, recompressed with CRF 28 to fit 500KB large-file gate)"
+  },
+  "evidence_tokens": ["strength=0.5", "strength=1.0", "strength=1.5", "pods=[]", "No running instances"]
+}
