@@ -59,7 +59,7 @@
     {
       "id": 19,
       "subject": "Task 9: Live Wan 2.1 model sweep (cap #5) USER GATE",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [14],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every item in acceptanceCriteria has been re-validated independently with output captured.\n\n**Goal:** Live-verify wan21-model-sweep.grid.yaml. 3 cfgs (1.3B/5B/14B), 3 CapabilityKeys → 3 parallel pods. No LoRAs. ~$1.20.\n\n**Files:** Create tests/live/_grid_examples/wan21_model_sweep.json\n\n**Acceptance Criteria:** preflight PASS / grid exit 0 / 3 distinct groups / 3 sha-distinct cells / pods=[] / spend <= $2.50.\n\n**Verify:** `pixi run kinoforge grid --spec examples/configs/grids/wan21-model-sweep.grid.yaml --out output/wan21-model-sweep.mp4 && pixi run kinoforge list 2>&1 | grep -E 'No running instances|No instances recorded'`\n\n**Steps:** preflight → sweeper → grid + poll EVERY concurrent pod (2-3) → verify groups + sha → pod-clean → sweeper stop → evidence → commit. Wall ~20-30 min. Full bash in plan §Task 9.\n\n```json:metadata\n{\"files\": [\"tests/live/_grid_examples/wan21_model_sweep.json\"], \"verifyCommand\": \"pixi run kinoforge grid --spec examples/configs/grids/wan21-model-sweep.grid.yaml --out output/wan21-model-sweep.mp4\", \"acceptanceCriteria\": [\"preflight PASS\", \"grid exit 0\", \"3 distinct groups\", \"3 sha-distinct cells\", \"pods=[]\", \"spend <= $2.50\"], \"modelTier\": \"advanced\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"1.3B\", \"5B\", \"14B\"], [\"pods=[]\", \"No running instances\"]]}\n```"
     },
