@@ -1,0 +1,70 @@
+{
+  "task": "Task 7 (#12) — Live smoke: RunPod cross-session warm-reuse",
+  "plan": "docs/superpowers/plans/2026-06-27-ephemeral-warm-reuse-discovery.md",
+  "captured_at_local": "2026-06-27T17:53:15-07:00",
+  "config": "examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml",
+  "prompt_source": "/workspace/examples/configs/prompts/field-realistic.txt",
+  "pod_id": "d3q7ejf6e910jv",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "cost_rate_usd_per_hr": 0.69,
+  "approx_spend_usd": 0.14,
+  "acceptance_evidence": {
+    "scaffold_red_committed_pre_spend": {
+      "ok": true,
+      "commit": "9ecd902",
+      "note": "RED scaffold landed before any live spend per durability rule"
+    },
+    "preflight_exit_0": {
+      "ok": true,
+      "output": "preflight: PASS — safe to spend"
+    },
+    "run_1_cold_boot_provision_marker": {
+      "ok": true,
+      "log": "tests/live/_ephemeral_warm_reuse_smoke_evidence_run1.log",
+      "line": "2026-06-27 17:42:15,778 INFO kinoforge.orchestrator running provisioner.provision for instance d3q7ejf6e910jv (engine=comfyui key=cdcd2a98cbf2)"
+    },
+    "run_1_generation_completed": {
+      "ok": true,
+      "line": "2026-06-27 17:44:40,221 INFO kinoforge.orchestrator generate completed"
+    },
+    "pod_survives_between_runs": {
+      "ok": true,
+      "evidence": "ephemeral-index.json carried d3q7ejf6e910jv between run #1 and run #2; RunPod GraphQL during the gap reported {id: d3q7ejf6e910jv, desiredStatus: RUNNING}"
+    },
+    "run_2_warm_attach_within_30s": {
+      "ok": true,
+      "line": "2026-06-27 17:44:49,887 INFO kinoforge.cli._commands warm-reuse: attached to d3q7ejf6e910jv",
+      "delta_from_run1_complete_s": 9
+    },
+    "run_2_generation_completed": {
+      "ok": true,
+      "line": "2026-06-27 17:45:56,285 INFO kinoforge.orchestrator generate completed"
+    },
+    "destroy_succeeds": {
+      "ok": true,
+      "output": "destroyed orphan: d3q7ejf6e910jv (no ledger entry, provider=runpod)"
+    },
+    "post_destroy_runpod_empty": {
+      "ok": true,
+      "graphql_response": "{ 'data': { 'myself': { 'pods': [] } } }"
+    },
+    "post_destroy_index_empty": {
+      "ok": true,
+      "file_content": "{\"rows\": []}",
+      "mechanism": "destroy_confirmed chokepoint called EphemeralIndex.remove(d3q7ejf6e910jv)"
+    },
+    "prompt_verbatim_from_field_realistic": {
+      "ok": true,
+      "note": "Run #1 invocation passed PROMPT_PATH.read_text().strip() verbatim"
+    },
+    "spend_under_cap": {
+      "ok": true,
+      "cap_usd": 0.50,
+      "actual_usd_approx": 0.14
+    }
+  },
+  "known_followup_bug": {
+    "summary": "Run #2 subprocess (kinoforge --ephemeral generate via warm-attach) did not exit after 'generate completed'; orchestrator teardown appears to hang under EphemeralSession+warm-attach.",
+    "scope": "Unrelated to the discovery channel under test. Discovery channel + matcher + write/read/cleanup verified end-to-end above. Filed as next-session work."
+  }
+}
