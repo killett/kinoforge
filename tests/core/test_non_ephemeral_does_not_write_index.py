@@ -38,7 +38,7 @@ def test_no_session_no_index_write(tmp_path: Path) -> None:
                 id="leaked",
                 warm_attach_key="wak",
                 kinoforge_key="cap",
-                endpoint_url="x",
+                endpoints={"8188": "https://x"},
                 provider="runpod",
                 created_at_local="2026-06-27T14:18:09",
             )

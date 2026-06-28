@@ -22,7 +22,7 @@ def test_non_ephemeral_reads_index_rows(tmp_path: Path) -> None:
             id="pod-ephemeral",
             warm_attach_key="wak-X",
             kinoforge_key="cap-X",
-            endpoint_url="https://pod-ephemeral.example.invalid",
+            endpoints={"8188": "https://pod-ephemeral.example.invalid"},
             provider="runpod",
             created_at_local="2026-06-27T14:18:09",
         )

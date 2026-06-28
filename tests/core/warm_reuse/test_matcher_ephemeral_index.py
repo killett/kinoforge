@@ -110,7 +110,7 @@ def test_union_includes_index_when_ledger_empty(tmp_path: Path) -> None:
             id="pod-from-index",
             warm_attach_key="wak-X",
             kinoforge_key="cap-X",
-            endpoint_url="https://pod.example.invalid",
+            endpoints={"8188": "https://pod.example.invalid"},
             provider="runpod",
             created_at_local="2026-06-27T14:18:09",
         )
@@ -140,7 +140,7 @@ def test_ledger_wins_on_id_collision(tmp_path: Path) -> None:
             id="pod-shared",
             warm_attach_key="wak-X",
             kinoforge_key="cap-X",
-            endpoint_url="https://pod.example.invalid",
+            endpoints={"8188": "https://pod.example.invalid"},
             provider="runpod",
             created_at_local="2026-06-27T14:18:09",
         )
@@ -177,7 +177,7 @@ def test_sparse_row_triggers_reprobe(tmp_path: Path) -> None:
             id="pod-X",
             warm_attach_key="wak-X",
             kinoforge_key="cap-X",
-            endpoint_url="https://pod.example.invalid",
+            endpoints={"8188": "https://pod.example.invalid"},
             provider="runpod",
             created_at_local="2026-06-27T14:18:09",
         )

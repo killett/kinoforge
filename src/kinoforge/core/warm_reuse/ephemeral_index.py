@@ -42,8 +42,12 @@ class EphemeralIndexRow:
         kinoforge_key: 12-char ``cfg.capability_key().derive()`` prefix.
             Used by ``_scan_warm_candidates`` via the ledger-entry-shaped
             ``tags.kinoforge_key`` field.
-        endpoint_url: HTTP endpoint for re-probe / attach without
-            re-provisioning.
+        endpoints: Port -> URL mapping the orchestrator received at
+            cold-create time. RunPod's ``get_instance`` does not return
+            endpoints, so the warm-attach path replays this dict onto
+            the resolved Instance to populate
+            ``Instance.endpoints[<port>]`` for engine ``wait_for_ready``
+            URL construction.
         provider: Provider kind string (``"runpod"``, ``"skypilot"``, ...)
             — disambiguates which backend to instantiate.
         created_at_local: ISO-format local-TZ timestamp; debugging +
@@ -53,7 +57,7 @@ class EphemeralIndexRow:
     id: str
     warm_attach_key: str
     kinoforge_key: str
-    endpoint_url: str
+    endpoints: dict[str, str]
     provider: str
     created_at_local: str
 
@@ -65,11 +69,16 @@ class EphemeralIndexRow:
         matcher's existing ``always_reprobe`` path under ``--ephemeral``
         refills these on attach. Carrying stale snapshots would mislead
         the eligibility filter.
+
+        ``endpoints`` is the canonical key consumed by
+        ``_scan_warm_candidates`` to repopulate
+        :attr:`Instance.endpoints` after ``provider.get_instance``
+        returns a sparse Instance.
         """
         return {
             "id": self.id,
             "provider": self.provider,
-            "endpoint_url": self.endpoint_url,
+            "endpoints": dict(self.endpoints),
             "warm_attach_key": self.warm_attach_key,
             "tags": {"kinoforge_key": self.kinoforge_key},
         }
@@ -118,11 +127,17 @@ class EphemeralIndex:
     @staticmethod
     def _row_from_dict(d: dict[str, Any]) -> EphemeralIndexRow | None:
         try:
+            endpoints_raw = d.get("endpoints", {})
+            if not isinstance(endpoints_raw, dict):
+                endpoints_raw = {}
+            endpoints: dict[str, str] = {
+                str(k): str(v) for k, v in endpoints_raw.items()
+            }
             return EphemeralIndexRow(
                 id=d["id"],
                 warm_attach_key=d["warm_attach_key"],
                 kinoforge_key=d["kinoforge_key"],
-                endpoint_url=d["endpoint_url"],
+                endpoints=endpoints,
                 provider=d["provider"],
                 created_at_local=d["created_at_local"],
             )
@@ -145,7 +160,7 @@ class EphemeralIndex:
                     "id": row.id,
                     "warm_attach_key": row.warm_attach_key,
                     "kinoforge_key": row.kinoforge_key,
-                    "endpoint_url": row.endpoint_url,
+                    "endpoints": dict(row.endpoints),
                     "provider": row.provider,
                     "created_at_local": row.created_at_local,
                 }

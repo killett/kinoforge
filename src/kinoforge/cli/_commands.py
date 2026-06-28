@@ -580,15 +580,12 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         )
 
         if EphemeralSession.current() is not None:
-            endpoint_url = returned_instance.endpoints.get("http") or next(
-                iter(returned_instance.endpoints.values()), ""
-            )
             EphemeralIndex(store=ctx.store()).add(
                 EphemeralIndexRow(
                     id=returned_instance.id,
                     warm_attach_key=cfg_wak,
                     kinoforge_key=cfg.capability_key().derive()[:12],
-                    endpoint_url=endpoint_url,
+                    endpoints=dict(returned_instance.endpoints),
                     provider=returned_instance.provider,
                     created_at_local=datetime.now().isoformat(),
                 )
@@ -1583,7 +1580,13 @@ def _resolve_warm_instance(
     merged_tags: dict[str, str] = {**entry_tags, **instance.tags}
     instance = dataclasses.replace(instance, tags=merged_tags)
     endpoints_dict: dict[str, str] = {}
-    if hasattr(provider, "endpoints"):
+    # Prefer endpoints recorded at cold-create time (e.g. ephemeral-index
+    # row) over the provider-deterministic reconstruction: the recorded
+    # dict already names the engine's port (RunPod sparse tags do not).
+    entry_endpoints = entry.get("endpoints")
+    if isinstance(entry_endpoints, dict) and entry_endpoints:
+        endpoints_dict = {str(k): str(v) for k, v in entry_endpoints.items()}
+    elif hasattr(provider, "endpoints"):
         try:
             endpoints_dict = provider.endpoints(instance)
         except Exception as exc:  # noqa: BLE001 — best-effort enrichment

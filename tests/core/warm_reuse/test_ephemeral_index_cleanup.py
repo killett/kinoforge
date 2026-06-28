@@ -36,7 +36,7 @@ def _seed(store: LocalArtifactStore, pod_id: str = "pod-A") -> EphemeralIndex:
             id=pod_id,
             warm_attach_key="wak-X",
             kinoforge_key="cap-X",
-            endpoint_url=f"https://{pod_id}.example.invalid",
+            endpoints={"8188": f"https://{pod_id}.example.invalid"},
             provider="runpod",
             created_at_local="2026-06-27T14:18:09",
         )

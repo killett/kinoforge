@@ -29,7 +29,7 @@ def row() -> EphemeralIndexRow:
         id="pod-A",
         warm_attach_key="a" * 64,
         kinoforge_key="cap12345xyzA",
-        endpoint_url="https://pod-A.example.invalid",
+        endpoints={"8188": "https://pod-A.example.invalid"},
         provider="runpod",
         created_at_local="2026-06-27T14:18:09",
     )
@@ -62,7 +62,7 @@ def test_add_is_idempotent_replaces_on_id_collision(
         id="pod-A",
         warm_attach_key="b" * 64,
         kinoforge_key="cap12345xyzB",
-        endpoint_url="https://pod-A.example.invalid",
+        endpoints={"8188": "https://pod-A.example.invalid"},
         provider="runpod",
         created_at_local="2026-06-27T15:00:00",
     )
@@ -98,7 +98,7 @@ def test_rows_by_wak_filters_correctly(
             id="pod-B",
             warm_attach_key="b" * 64,
             kinoforge_key="cap-different",
-            endpoint_url="https://pod-B.example.invalid",
+            endpoints={"8188": "https://pod-B.example.invalid"},
             provider="runpod",
             created_at_local="2026-06-27T14:30:00",
         )
@@ -151,7 +151,7 @@ def test_to_entry_dict_shape_matches_ledger_consumers(
     d = row.to_entry_dict()
     assert d["id"] == "pod-A"
     assert d["provider"] == "runpod"
-    assert d["endpoint_url"] == "https://pod-A.example.invalid"
+    assert d["endpoints"] == {"8188": "https://pod-A.example.invalid"}
     assert d["warm_attach_key"] == "a" * 64
     assert d["tags"]["kinoforge_key"] == "cap12345xyzA"
 
@@ -168,7 +168,7 @@ def test_concurrent_adds_under_lock_no_torn_write(
                 id=f"pod-{suffix}",
                 warm_attach_key=suffix * 64,
                 kinoforge_key=f"cap{suffix}",
-                endpoint_url=f"https://pod-{suffix}.example.invalid",
+                endpoints={"8188": f"https://pod-{suffix}.example.invalid"},
                 provider="runpod",
                 created_at_local="2026-06-27T14:18:09",
             )
