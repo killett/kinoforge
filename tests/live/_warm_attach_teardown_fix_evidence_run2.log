@@ -1,0 +1,22 @@
+Pixi task (kinoforge in default): python -m kinoforge --ephemeral generate --config /workspace/examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml --mode t2v --prompt a different prompt for run two
+2026-06-27 19:42:17,431 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (37 keys)
+2026-06-27 19:42:24,894 INFO kinoforge.cli._commands warm-reuse: attached to vhtcayt44asret
+2026-06-27 19:42:25,807 WARNING kinoforge.profiles engine no longer declares strategy flags for cached key cdcd2a98cbf2a036b8405714d63bcd91c475afbc26e91ffb1a972a4b64ef4d19; either declared_flags_map regressed or the engine was downgraded
+2026-06-27 19:42:27,685 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=0.0s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:32,132 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=4.3s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:36,766 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=8.7s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:41,172 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=13.4s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:45,945 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=17.8s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:50,385 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=22.6s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:54,714 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=27.0s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:42:59,396 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=31.3s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:43:04,196 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=36.0s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:43:08,620 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=40.8s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:43:13,121 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=45.2s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:43:17,733 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=49.7s status=unknown queue_pos=0 exec_node=None
+2026-06-27 19:43:21,588 INFO kinoforge.comfyui comfyui poll job=e32b3672-2caa-4044-9f87-1d13fe27310d elapsed=54.4s status=success queue_pos=None exec_node=None
+2026-06-27 19:43:22,404 INFO kinoforge.kinoforge.outputs.local output published: /workspace/output/20260627-194322_comfyui_Wan2_1-T2V-1_3B_fp8_e4m3_a-different-prompt-f.mp4
+2026-06-27 19:43:22,404 INFO kinoforge.orchestrator generate completed — artifact uri='/workspace/.kinoforge/run-20260627-194223/862133c1705a4663.mp4'
+[instance overview]
+  sweeper:1aecb2060dd3  age=0.1h  est_spend=$0.0000
+generated: uri='/workspace/.kinoforge/run-20260627-194223/862133c1705a4663.mp4'
