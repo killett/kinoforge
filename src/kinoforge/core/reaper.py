@@ -12,6 +12,8 @@ The sentinel-gate contract documented in
 
 from __future__ import annotations
 
+import math
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -39,6 +41,10 @@ class Verdict(StrEnum):
     STALL_REAP = "STALL_REAP"  # C26
     RESTART_LOOP_REAP = "RESTART_LOOP_REAP"  # C27
     DEGRADED_REAP = "DEGRADED_REAP"  # Layer LoRA — pod self-marked degraded
+    # Sweeper-side ephemeral reap (spec 2026-06-28):
+    GC_404 = "GC_404"  # Provider 404 — remove EphemeralIndex row, no destroy
+    SKIP_NO_PROBE = "SKIP_NO_PROBE"  # Provider lacks probe_runtime substrate
+    PROBE_FAILED = "PROBE_FAILED"  # Probe raised transient TransportError
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,7 @@ DEFAULT_APPLY_POLICY = Policy(
             Verdict.STALL_REAP,  # C26
             Verdict.RESTART_LOOP_REAP,  # C27
             Verdict.DEGRADED_REAP,  # Layer LoRA
+            Verdict.GC_404,  # Ephemeral row cleanup (sweeper-ephemeral-reap)
         }
     )
 )
@@ -244,6 +251,75 @@ def _restart_loop_reap_predicate(
     return counter_i * heartbeat_interval_s >= effective_window
 
 
+def _classify_ephemeral(
+    entry: Mapping[str, Any],
+    thresholds: Mapping[str, Any],
+    now: float,
+    *,
+    stall_history: Mapping[str, deque[tuple[float, float]]] | None,
+) -> Verdict:
+    """Heartbeat-free classification for entries flagged ``kinoforge_ephemeral=True``.
+
+    Decision tree (spec 2026-06-28 §3.5):
+      1. probe_state == "not_found"    → GC_404
+      2. probe_state == "no_substrate" → SKIP_NO_PROBE
+      3. probe_state == "failed"        → PROBE_FAILED
+      4. now - created_at > max_lifetime_s → OVERAGE_REAP
+      5. stall_history is None (one-shot CLI) → LIVE (STALL skipped)
+      6. N consecutive samples below gpu+cpu thresholds → STALL_REAP
+         (N = ceil(stall_window_s / heartbeat_interval_s))
+      7. else → LIVE
+
+    NEVER reads heartbeat keys (last_heartbeat, heartbeat_thread_tick,
+    session_claim, restart_count); enforced by AST invariant test (Task 8).
+
+    Args:
+        entry: Synthetic ephemeral entry from ``_synthesize_ephemeral_entry``.
+        thresholds: Threshold mapping; only ``max_lifetime_s``,
+            ``stall_window_s``, ``stall_gpu_threshold``,
+            ``stall_cpu_threshold``, ``heartbeat_interval_s`` are read.
+        now: Wall-clock now (seconds, float).
+        stall_history: Per-pod deque of ``(gpu_util_pct, cpu_pct)`` samples,
+            owned by ``SweeperLoop``. ``None`` from ``kinoforge reap``
+            one-shot mode — skip STALL_REAP entirely.
+
+    Returns:
+        One of GC_404, SKIP_NO_PROBE, PROBE_FAILED, OVERAGE_REAP,
+        STALL_REAP, LIVE.
+    """
+    probe_state = entry.get("probe_state")
+    if probe_state == "not_found":
+        return Verdict.GC_404
+    if probe_state == "no_substrate":
+        return Verdict.SKIP_NO_PROBE
+    if probe_state == "failed":
+        return Verdict.PROBE_FAILED
+
+    created_at = float(entry.get("created_at", 0.0))
+    max_lifetime_s = float(thresholds["max_lifetime_s"])
+    if now - created_at > max_lifetime_s:
+        return Verdict.OVERAGE_REAP
+
+    if stall_history is None:
+        return Verdict.LIVE
+
+    stall_window_s = float(thresholds.get("stall_window_s") or 0.0)
+    interval_s = float(thresholds.get("heartbeat_interval_s") or 30.0)
+    if stall_window_s <= 0.0:
+        return Verdict.LIVE
+    required = max(1, math.ceil(stall_window_s / interval_s))
+    pod_id = str(entry["id"])
+    history = stall_history.get(pod_id)
+    if history is None or len(history) < required:
+        return Verdict.LIVE
+    gpu_thresh = float(thresholds.get("stall_gpu_threshold") or 0.0)
+    cpu_thresh = float(thresholds.get("stall_cpu_threshold") or 0.0)
+    recent = list(history)[-required:]
+    if all(g < gpu_thresh and c < cpu_thresh for (g, c) in recent):
+        return Verdict.STALL_REAP
+    return Verdict.LIVE
+
+
 def classify(
     entry: Mapping[str, Any],
     live_pod_ids: frozenset[str] | set[str],
@@ -258,6 +334,7 @@ def classify(
     stall_cpu_threshold: float = 20.0,
     restart_loop_window_s: float | None = None,
     restart_loop_uptime_threshold_s: float = 90.0,
+    stall_history: Mapping[str, deque[tuple[float, float]]] | None = None,
 ) -> Verdict:
     """Classify a single ledger entry against the current world state.
 
@@ -290,6 +367,12 @@ def classify(
         restart_loop_uptime_threshold_s: C27 cfg uptime-seconds strict-<
             threshold for ``_update_uptime_counter``. Carried for
             HeartbeatLoop and unused inside classify itself.
+        stall_history: Sweeper-side ephemeral reap (spec 2026-06-28).
+            Per-pod deque of ``(gpu_util_pct, cpu_pct)`` samples owned by
+            ``SweeperLoop``. Only consulted on the ephemeral dispatch
+            branch (``entry["kinoforge_ephemeral"] is True``). ``None``
+            (default + ``kinoforge reap`` one-shot mode) skips STALL_REAP
+            in the ephemeral branch.
 
     Returns:
         One of the seven non-UNROUTABLE Verdict values:
@@ -299,6 +382,24 @@ def classify(
         provider lookup fails, never by classify itself. Callers may
         rely on this exclusion when partitioning.
     """
+    # Sweeper-side ephemeral reap (spec 2026-06-28): entries synthesised
+    # from the EphemeralIndex carry the sentinel ``kinoforge_ephemeral=True``
+    # and dispatch to a heartbeat-free decision tree. Ledger-backed entries
+    # never carry this flag — the existing decision tree below runs.
+    if entry.get("kinoforge_ephemeral") is True:
+        return _classify_ephemeral(
+            entry,
+            {
+                "max_lifetime_s": max_lifetime_s,
+                "stall_window_s": stall_window_s,
+                "stall_gpu_threshold": stall_gpu_threshold,
+                "stall_cpu_threshold": stall_cpu_threshold,
+                "heartbeat_interval_s": heartbeat_interval_s,
+            },
+            now,
+            stall_history=stall_history,
+        )
+
     instance_id = str(entry["id"])
     created_at = float(entry.get("created_at", now))
     pod_age = now - created_at
