@@ -30,7 +30,7 @@ def test_two_ephemeral_sessions_share_pod(tmp_path: Path) -> None:
                 id="pod-shared",
                 warm_attach_key="wak-X",
                 kinoforge_key="cap123456789",
-                endpoint_url="https://pod-shared.example.invalid",
+                endpoints={"8188": "https://pod-shared.example.invalid"},
                 provider="runpod",
                 created_at_local="2026-06-27T14:18:09",
             )
@@ -48,4 +48,4 @@ def test_two_ephemeral_sessions_share_pod(tmp_path: Path) -> None:
         f"{len(rows)} (cold-boot regression — discovery channel broken)"
     )
     assert rows[0].id == "pod-shared"
-    assert rows[0].endpoint_url == "https://pod-shared.example.invalid"
+    assert rows[0].endpoints == {"8188": "https://pod-shared.example.invalid"}

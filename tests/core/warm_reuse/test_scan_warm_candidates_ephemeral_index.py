@@ -38,7 +38,7 @@ def test_scan_surfaces_index_row_when_ledger_empty(
             id="pod-from-ephemeral-1",
             warm_attach_key="wak-X",
             kinoforge_key="cap123456789",
-            endpoint_url="https://pod.example.invalid",
+            endpoints={"8188": "https://pod.example.invalid"},
             provider="runpod",
             created_at_local="2026-06-27T14:18:09",
         )
