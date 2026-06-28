@@ -12,6 +12,26 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
+**Warm-attach teardown hang — IN PROGRESS 2026-06-27.**
+Spec `docs/superpowers/specs/2026-06-27-warm-attach-teardown-hang-design.md` + plan
+`docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md`. Follow-up to the
+ephemeral warm-reuse discovery workstream below: live smoke captured this session
+showed run #2 subprocess hangs after emitting `generate completed` under
+(`--ephemeral` + warm-attach + `instance != None`); run #1 cold-boot path exits
+cleanly. Plan scopes a differential debug — offline pytest reproduction with
+faulthandler stack capture, smallest-possible branch-gated fix in
+`orchestrator.deploy_session`/`generate` exit, one live confirmation. 5 tasks
+(`docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md.tasks.json`):
+Task 1 RED repro → Task 2 fix → Task 3 regression sweep → Task 4 live smoke
+(USER GATE) → Task 5 close.
+
+**First unchecked task: Task 1 (#9) — Write the offline RED repro test.**
+Resume protocol: read THIS block, then the plan + spec it points to, then
+`git log --oneline -20`, then `/superpowers-extended-cc:executing-plans
+docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md`.
+
+---
+
 **Ephemeral warm-reuse discovery SHIPPED 2026-06-27 (commits `158b2dc..e68a009`, all 7 tasks GREEN).**
 Spec `docs/superpowers/specs/2026-06-27-ephemeral-warm-reuse-discovery-design.md` + plan
 `docs/superpowers/plans/2026-06-27-ephemeral-warm-reuse-discovery.md`. Two back-to-back
