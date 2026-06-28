@@ -1,0 +1,30 @@
+{
+  "spec": "examples/configs/grids/wan21-model-sweep.grid.yaml",
+  "captured_at": "2026-06-28T01:36:00-07:00",
+  "grid_capability": "cap #5 — intra-family model sweep (1.3B vs 5B vs 14B) → 3 distinct capability keys → 3 parallel pods",
+  "model_family": "Wan 2.1 T2V",
+  "runs": [
+    {"run": 1, "grid_id": "grid_20260628-004301_6d6f372d", "outcome": "cell 2 (14B comfyui) stuck mid-boot 25+min (GPU/mem 0%); orchestrator marked failed; pod 0eqiheju2af2ny self-destructed at lifecycle.idle_timeout", "cells_produced": 2},
+    {"run": 2, "grid_id": "grid_20260628-011027_bf1717fb", "outcome": "all 3 cells succeeded; teardown check false-positive on STALE local ledger entry (0eqiheju2af2ny from run 1 lingered as provider=runpod row even though RunPod GraphQL pods=[]); orchestrator status=teardown despite pods=[]; manual compose required.", "cells_produced": 3}
+  ],
+  "composed_mp4": "output/wan21-model-sweep.mp4",
+  "composed_mp4_sha256": "06ace2b21d7e7cc02817df4cb4ec26bdfdf5466bd30fc613039edf473050e062",
+  "composed_mp4_size_bytes": 1704346,
+  "compose_method": "manual ffmpeg hstack of 3 partial-dir cell mp4s (orchestrator skipped compose due to teardown false-positive)",
+  "cells": [
+    {"idx": 0, "caption": "Wan 2.1 1.3B", "engine": "diffusers", "model": "Wan2.1-T2V-1.3B-Diffusers", "sha256": "b1855e9ec60a7cb593fc35ce50c972099b59d27a8adbebb488b00c147d29f558", "size_bytes": 289665},
+    {"idx": 1, "caption": "Wan 2.1 5B", "engine": "comfyui", "model": "Wan2_2-TI2V-5B-FastWanFullAttn_bf16 (Wan 2.2 5B, used in Wan 2.1 model-sweep context per Q3=C cfg)", "sha256": "50f43f32712ec7c148c75b74e4f5201675d125beb3890e6edff66787d867cd60", "size_bytes": 1423343},
+    {"idx": 2, "caption": "Wan 2.1 14B", "engine": "comfyui", "model": "Wan2_1-T2V-14B_fp8_e4m3fn", "sha256": "703a80f5862976d894b990239e69f56b5e05ef2f6a0bc8650b982a43e7cedcc3", "size_bytes": 1285354}
+  ],
+  "acceptance_evidence": {
+    "preflight_pass": true,
+    "grid_exit_0": "NO on orchestrator literal (exit 5) — failure was teardown false-positive on stale local ledger entry, not a cell failure. Run 2 produced ALL 3 cell mp4s on live RunPod pods; substantively the grid succeeded.",
+    "three_distinct_groups": "yes — 3 distinct CapabilityKeys spawned 3 parallel pods (diffusers 1.3B + comfyui 5B + comfyui 14B all visible in GraphQL during polling)",
+    "three_sha_distinct_cells": "yes — b1855e... (1.3B 289KB) / 50f43f... (5B 1.4MB) / 703a80... (14B 1.3MB) all pairwise distinct",
+    "kinoforge_list_clean": "yes after `kinoforge forget --id 0eqiheju2af2ny` cleared the stale local ledger entry; RunPod GraphQL already showed pods=[]",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "estimated ~$0.50 across both runs (sub-cap; run 1 burned ~$0.10 on 14B cold-boot retry, run 2 ~$0.40 across 3 cold-boot pods)"
+  },
+  "evidence_tokens": ["1.3B", "5B", "14B", "pods=[]", "No running instances"],
+  "orchestrator_bug_surfaced": "kinoforge list shows stale local ledger entries for pods that have since died via RunPod auto-destroy; `_check_no_residual_pods` then false-positives on the stale entry. Workaround: `kinoforge forget --id <stale>` cleans the ledger; proper fix would cross-validate ledger against live provider state on `kinoforge list` invocation OR have lifecycle.idle_timeout auto-forget."
+}
