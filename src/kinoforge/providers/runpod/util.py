@@ -169,3 +169,55 @@ class RunPodGraphQLUtilEndpoint:
             disk_percent=None,
             uptime_seconds=int(uptime) if uptime is not None else None,
         )
+
+    def probe(self, instance_id: str) -> tuple[bool, UtilSnapshot | None]:
+        """Like :meth:`read_util` but distinguishes 404 from early-boot.
+
+        Returns:
+            ``(found, snapshot)``:
+              * ``(False, None)`` — provider returned ``data.pod = null``
+                (pod gone).
+              * ``(True, None)`` — pod exists but ``runtime = null``
+                (early boot — container has not reported a runtime yet).
+              * ``(True, snapshot)`` — pod + runtime present; full data.
+
+        Raises:
+            TransportError: HTTP / JSON / GraphQL transport fault. Caller
+                (sweeper ``_probe_with_cache``) catches and classifies as
+                ``PROBE_FAILED``.
+        """
+        payload = {"query": _build_runtime_query(instance_id)}
+        try:
+            resp = self._http_post(self._graphql_url, payload)
+        except TransportError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise TransportError(f"RunPod runtime query failure: {exc}") from exc
+        if "errors" in resp:
+            raise TransportError(f"RunPod runtime query failed: {resp['errors']}")
+        pod = (resp.get("data") or {}).get("pod")
+        if pod is None:
+            return False, None
+        runtime = pod.get("runtime")
+        if runtime is None:
+            return True, None
+        gpus = runtime.get("gpus") or []
+        gpu_util = max(
+            (
+                float(g["gpuUtilPercent"])
+                for g in gpus
+                if g.get("gpuUtilPercent") is not None
+            ),
+            default=None,
+        )
+        container = runtime.get("container") or {}
+        cpu = container.get("cpuPercent")
+        mem = container.get("memoryPercent")
+        uptime = runtime.get("uptimeInSeconds")
+        return True, UtilSnapshot(
+            gpu_util_percent=gpu_util,
+            cpu_percent=float(cpu) if cpu is not None else None,
+            memory_percent=float(mem) if mem is not None else None,
+            disk_percent=None,
+            uptime_seconds=int(uptime) if uptime is not None else None,
+        )
