@@ -1,0 +1,49 @@
+{
+  "spec": "examples/configs/grids/wan21-1_3b-strength-sweep.grid.yaml",
+  "captured_at": "2026-06-27T23:35:00-07:00",
+  "grid_capability": "cap #1 — LoRA strength sweep (single-pod warm-reuse, generate cells)",
+  "model": "Wan 2.1 T2V 1.3B (diffusers)",
+  "runs": [
+    {
+      "run": 1,
+      "grid_id": "grid_20260627-223753_8cee9e96",
+      "outcome": "status=teardown (false-positive — RunPod pods=[] but `kinoforge list` sweeper bookkeeping rows tripped the residual-pod regex)",
+      "cells_produced": 3,
+      "per_cell_mp4s": [
+        "cell_0_strength-0-5.mp4 351309 bytes (now wiped)",
+        "cell_1_strength-1-0.mp4 327026 bytes (now wiped)",
+        "cell_2_strength-1-5.mp4 366239 bytes (now wiped)"
+      ],
+      "pods_used": ["be4h7cvqigkvwv", "zjtr4sl2rwdfa7", "p6jhf1dcu3z50p"],
+      "took_branch_fix": "fix(grid): residual-pod check ignores sweeper bookkeeping rows (commit 257f23b)"
+    },
+    {
+      "run": 2,
+      "grid_id": "grid_20260627-230830_0a38e0c0",
+      "outcome": "grid exit 0; composed mp4 written",
+      "composed_mp4": "output/wan21-1_3b-strength.mp4",
+      "composed_mp4_sha256": "0ceaa2a2a09af1404f61e5d6d2499ffdcc49ae8decd30256417d3812fd29484b",
+      "composed_mp4_size_bytes": 1197648,
+      "composed_mp4_dims": "1440x480 (3 cells side-by-side @ 480x480 each)",
+      "duration_s": 2.0625,
+      "pods_used": ["b68c5kz5jlbbf0", "jkbqm2r3fqxqlw", "p0eio7ut04hdxh"],
+      "per_cell_mp4_persistence": "wiped at compose by shutil.rmtree(tmp_dir) — fixed in commit 5368832 so future grid runs preserve per-cell mp4s; T5's per-cell artifacts are not recoverable from this run.",
+      "took_branch_fix": "fix(grid): preserve per-cell tmp_dir on success (commit 5368832)"
+    }
+  ],
+  "acceptance_evidence": {
+    "preflight_pass": true,
+    "grid_exit_0_second_run": true,
+    "composed_mp4_exists": true,
+    "three_sha_distinct_cells": "indirect — composed mp4 visibly contains 3 distinct strength variants; per-cell shas not captured because tmp_dir was rmtreed pre-fix",
+    "kinoforge_list_clean": "yes — only sweeper bookkeeping rows; no pod rows (provider=runpod absent post-run)",
+    "runpod_pods_empty": true,
+    "spend_within_cap": "estimated ~$0.30 total across both runs (3 cold-boot pods per run @ $0.27/hr × ~7-10min each); pod-pool warm-reuse did not engage between cells, separate concern",
+    "fixture_mp4_copied": "examples/configs/grids/_fixtures/wan21_strength_cell0.mp4 — cropped 480x480 cell-0 region from composed mp4 via ffmpeg (origin: cell 0 of run 2)"
+  },
+  "evidence_tokens": ["strength=0.5", "strength=1.0", "strength=1.5", "pods=[]", "No running instances"],
+  "orchestrator_bugs_surfaced_and_fixed_during_task": [
+    "residual-pod check false-positives on sweeper bookkeeping rows (commit 257f23b)",
+    "rmtree wipes per-cell mp4s on success preventing fixture harvest (commit 5368832)"
+  ]
+}
