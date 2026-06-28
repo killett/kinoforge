@@ -1162,9 +1162,11 @@ def _scan_warm_candidates(
         r.to_entry_dict() for r in EphemeralIndex(store=ctx.store()).rows()
     ]
     ledger_ids = {e["id"] for e in entries}
+    index_only_ids: set[str] = set()
     for ie in index_entries:
         if ie["id"] not in ledger_ids:  # ledger wins on overlap
             entries.append(ie)
+            index_only_ids.add(ie["id"])
 
     matches = [
         e
@@ -1195,8 +1197,19 @@ def _scan_warm_candidates(
             continue
 
         # B4 cheap-first chain — force_attach=False (D3
-        # conservative-on-ignorance).
-        instance, rc = _resolve_warm_instance(ctx, cfg, instance_id, force_attach=False)
+        # conservative-on-ignorance). Index-only entries (ephemeral
+        # process #1 wrote them; no ledger row) carry no heartbeat
+        # snapshot, so classify would return HEARTBEAT_UNKNOWN; bypass
+        # via force_attach + supply the entry so _resolve_warm_instance
+        # does not re-fetch from the empty disk ledger.
+        is_index_only = instance_id in index_only_ids
+        instance, rc = _resolve_warm_instance(
+            ctx,
+            cfg,
+            instance_id,
+            force_attach=is_index_only,
+            entry=entry if is_index_only else None,
+        )
         if rc is not None:
             skipped.append((instance_id, _rc_to_reason(rc, entry)))
             continue
@@ -1384,6 +1397,7 @@ def _resolve_warm_instance(
     instance_id: str,
     *,
     force_attach: bool,
+    entry: Mapping[str, Any] | None = None,
 ) -> tuple[Instance | None, int | None]:
     """Validate operator-supplied --instance-id; return Instance or exit code.
 
@@ -1407,16 +1421,21 @@ def _resolve_warm_instance(
 
     now = time.time()
 
-    # 1. Ledger lookup.
-    ledger = ctx.ledger()
-    entry = ledger.read(instance_id)
+    # 1. Ledger lookup. Skipped when caller supplies an entry directly
+    # — e.g. the ephemeral-warm-reuse scan path, where the entry comes
+    # from the on-disk ephemeral-index rather than the in-memory ledger
+    # (process #2 has a fresh strict-policy session; the ledger.read
+    # would return None even though the pod is alive).
     if entry is None:
-        print(
-            f"instance not found in ledger: {instance_id}. "
-            f"Run 'kinoforge list' to see available ids.",
-            file=sys.stderr,
-        )
-        return (None, 1)
+        ledger = ctx.ledger()
+        entry = ledger.read(instance_id)
+        if entry is None:
+            print(
+                f"instance not found in ledger: {instance_id}. "
+                f"Run 'kinoforge list' to see available ids.",
+                file=sys.stderr,
+            )
+            return (None, 1)
 
     # 2. Provider-kind.
     entry_provider = str(entry.get("provider", ""))
@@ -1492,7 +1511,7 @@ def _resolve_warm_instance(
         pass
     elif v_name in _FORCE_BYPASSABLE_VERDICTS:
         if not force_attach:
-            reason = _refuse_reason_for_verdict(v_name, entry, lifecycle, now)
+            reason = _refuse_reason_for_verdict(v_name, dict(entry), lifecycle, now)
             print(
                 f"classify verdict {v_name} blocks attach for {instance_id}: "
                 f"{reason}. Pass --force-attach to override, or "
