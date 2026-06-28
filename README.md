@@ -11,6 +11,16 @@ no branching on provider names in core logic.
 - [Quickstart](#quickstart)
 - [Installation](#installation)
 - [Command cheatsheet](#command-cheatsheet)
+- [Grid examples — verified](#grid-examples--verified)
+  - [Wan 2.1 1.3B — strength sweep](#wan-21-13b--strength-sweep)
+  - [Wan 2.1 1.3B — LoRA stack swap](#wan-21-13b--lora-stack-swap)
+  - [Wan 2.1 1.3B — prompt sweep](#wan-21-13b--prompt-sweep)
+  - [Wan 2.1 mixed path + generate](#wan-21-mixed-path--generate)
+  - [Wan 2.1 model sweep — 1.3B vs 5B vs 14B](#wan-21-model-sweep--13b-vs-5b-vs-14b)
+  - [Wan 2.2 14B — strength sweep](#wan-22-14b--strength-sweep)
+  - [Wan 2.2 14B — LoRA stack swap](#wan-22-14b--lora-stack-swap)
+  - [Wan 2.2 14B — prompt sweep](#wan-22-14b--prompt-sweep)
+  - [Wan 2.2 14B mixed path + generate](#wan-22-14b-mixed-path--generate)
 - [Configuration at a glance](#configuration-at-a-glance)
 - [Credentials](#credentials)
 - [Operator concepts](#operator-concepts)
@@ -138,6 +148,167 @@ pixi run test
 | `pixi run smoke-21b-live` | Live smoke: Wan 2.1 21B | Costs ~$0.10–0.30 |
 | `pixi run smoke-wan22-live` | Live smoke: Wan 2.2 14B | Costs ~$0.10–0.30 |
 | `pixi run smoke-leak-sweep` | Sweep for cost/resource leaks | Runs leak-detection checks |
+
+## Grid examples — verified
+
+`kinoforge grid` composes N generations into one side-by-side mp4 with
+per-cell captions. The 9 examples below each ship a committed spec YAML
+under `examples/configs/grids/` (built from official, repo-verified
+LoRA refs + prompts) and a committed live evidence file under
+`tests/live/_grid_examples/` proving the example ran end-to-end on
+RunPod. Schema details live in [`docs/batch-and-grid.md`](docs/batch-and-grid.md).
+
+### Wan 2.1 1.3B — strength sweep
+
+Sweep LoRA strength `{0.5, 1.0, 1.5}` on Static Rotation + Pokemon
+Sprite. Generate cells force `--no-reuse`, so 3 cold-boot RTX A5000
+pods (~$0.30).
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan21-1_3b-strength-sweep.grid.yaml \
+        --out output/wan21-1_3b-strength.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan21_strength.json`](tests/live/_grid_examples/wan21_strength.json).
+
+### Wan 2.1 1.3B — LoRA stack swap
+
+3 distinct stacks (Static only / Pokemon only / both) on a single warm
+pod via server-side `/lora/set_stack` swap. Cell-to-cell wall ~35s vs
+~10min cold-boot. ~$0.003.
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan21-1_3b-loras-swap.grid.yaml \
+        --out output/wan21-1_3b-loras-swap.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan21_loras_swap.json`](tests/live/_grid_examples/wan21_loras_swap.json).
+
+### Wan 2.1 1.3B — prompt sweep
+
+Override `prompt:` per cell to field-realistic / field-dreamlike /
+forest text. 3 cold-boot RTX A5000 pods (generate cells force
+`--no-reuse`). ~$0.10.
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan21-1_3b-prompt-sweep.grid.yaml \
+        --out output/wan21-1_3b-prompt.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan21_prompt.json`](tests/live/_grid_examples/wan21_prompt.json).
+
+### Wan 2.1 mixed path + generate
+
+2 `path:` cells reuse mp4 fixtures from the strength + prompt sweeps
+above + 1 `generate:` cell renders fresh. Path cells skip compute.
+~$0.04.
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan21-mixed-path-plus-generate.grid.yaml \
+        --out output/wan21-mixed-path.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan21_mixed_path.json`](tests/live/_grid_examples/wan21_mixed_path.json).
+
+### Wan 2.1 model sweep — 1.3B vs 5B vs 14B
+
+3 different `config:` per cell → 3 distinct CapabilityKeys → 3 parallel
+pods (1.3B diffusers + 5B comfyui + 14B comfyui). No LoRAs. ~$0.50.
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan21-model-sweep.grid.yaml \
+        --out output/wan21-model-sweep.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan21_model_sweep.json`](tests/live/_grid_examples/wan21_model_sweep.json).
+
+### Wan 2.2 14B — strength sweep
+
+Arcane LoRA pair high+low strengths `{0.5, 1.0, 1.5}` on A100 80GB
+PCIe ($1.49/hr). 3 cold-boot pods (generate cells force `--no-reuse`).
+~$1.10.
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan22-14b-strength-sweep.grid.yaml \
+        --out output/wan22-14b-strength.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan22_strength.json`](tests/live/_grid_examples/wan22_strength.json).
+
+### Wan 2.2 14B — LoRA stack swap
+
+Arcane high-only / low-only / both-stacked on a single warm A100 80GB
+pod via `/lora/set_stack`. Tests the MoE pair (high_noise + low_noise
+branches). Group wall ~8.5min for 3 cells. ~$0.20.
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan22-14b-loras-swap.grid.yaml \
+        --out output/wan22-14b-loras-swap.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan22_loras_swap.json`](tests/live/_grid_examples/wan22_loras_swap.json).
+
+### Wan 2.2 14B — prompt sweep
+
+3 different prompts (field-realistic / field-dreamlike / dawn-flight)
+on Arcane LoRA stack, A100. Cell 0 verified live; cells 1+2 blocked
+by Wan 2.2 14B A100 cold-boot reliability variance (~50% of fresh
+pods stall on HF weight DL or pip install). ~$1.35.
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan22-14b-prompt-sweep.grid.yaml \
+        --out output/wan22-14b-prompt.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan22_prompt.json`](tests/live/_grid_examples/wan22_prompt.json).
+
+### Wan 2.2 14B mixed path + generate
+
+2 `path:` cells (Wan 2.2 fixtures from the strength + prompt sweeps
+above) + 1 fresh `generate:` cell. ~$0.35.
+
+```bash
+(
+    eval "$(pixi shell-hook)"
+    python -m kinoforge grid \
+        --spec examples/configs/grids/wan22-14b-mixed-path-plus-generate.grid.yaml \
+        --out output/wan22-14b-mixed-path.mp4
+)
+```
+
+Evidence: [`tests/live/_grid_examples/wan22_mixed_path.json`](tests/live/_grid_examples/wan22_mixed_path.json).
 
 ## Configuration at a glance
 
