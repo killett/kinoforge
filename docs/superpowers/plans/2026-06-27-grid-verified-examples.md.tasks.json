@@ -4,27 +4,27 @@
     {
       "id": 11,
       "subject": "Task 1: allow_in_repo opt-in field + tests",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Surgical opt-in field on `GridSpec` so example specs in `examples/configs/grids/` bypass the under-repo guard; default-False preserves existing protection for user-authored specs.\n\n**Files:**\n- Modify: `src/kinoforge/core/grid/spec.py` (~10 LOC)\n- Modify: `tests/core/grid/test_spec.py` (add 2 tests)\n\n**Acceptance Criteria:**\n- allow_in_repo: true bypasses guard\n- default False still rejects\n- all existing test_spec.py tests still pass\n- pre-commit clean\n\n**Verify:** `pixi run pytest tests/core/grid/test_spec.py -v` → both new tests pass + all existing tests still green.\n\n**Steps:** Write failing tests → confirm RED → add `_yaml_opts_in_repo` helper + `allow_in_repo` field + bypass gate → confirm GREEN → pre-commit + commit. Full code in plan §Task 1.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/grid/spec.py\", \"tests/core/grid/test_spec.py\"], \"verifyCommand\": \"pixi run pytest tests/core/grid/test_spec.py -v\", \"acceptanceCriteria\": [\"allow_in_repo: true bypasses guard\", \"default False still rejects\", \"all existing test_spec.py tests still pass\", \"pre-commit clean\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 12,
       "subject": "Task 2: 5 base cfgs in examples/configs/grids/",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11],
       "description": "**Goal:** 5 self-contained per-family cfgs that grid spec YAMLs reference. Each carries a top-level `prompt:` field + family-appropriate engine/compute/lifecycle cloned from a proven-green sibling cfg.\n\n**Files:**\n- Create: examples/configs/grids/README.md\n- Create: examples/configs/grids/wan21-1_3b-base.yaml (diffusers + Static Rotation + Pokemon LoRAs)\n- Create: examples/configs/grids/wan21-1_3b-base-no-loras.yaml (for model-sweep)\n- Create: examples/configs/grids/wan21-5b-base-no-loras.yaml\n- Create: examples/configs/grids/wan21-14b-base-no-loras.yaml\n- Create: examples/configs/grids/wan22-14b-base.yaml (diffusers + Arcane high+low)\n- Create: examples/configs/grids/_fixtures/.gitkeep\n\n**Acceptance Criteria:**\n- all 5 cfgs load_config clean\n- every cfg has top-level prompt: (verbatim from field-realistic.txt)\n- LoRA-bearing cfgs include official refs\n- pre-commit clean\n\n**Verify:** `for c in examples/configs/grids/*.yaml; do pixi run python -c \"from kinoforge.core.config import load_config; cfg = load_config('$c'); assert cfg.prompt; print('OK:', '$c')\"; done`\n\n**Steps:** mkdir + .gitkeep → README.md → wan21-1_3b-base.yaml (clone wan21-1_3b-strength-grid.yaml) → 3 no-loras variants (clone existing comfyui cfgs) → wan22-14b-base.yaml (clone wan22-14b-lora-flexible release cfg) → load-test all → pre-commit + commit. Full YAML in plan §Task 2.\n\n```json:metadata\n{\"files\": [\"examples/configs/grids/README.md\", \"examples/configs/grids/wan21-1_3b-base.yaml\", \"examples/configs/grids/wan21-1_3b-base-no-loras.yaml\", \"examples/configs/grids/wan21-5b-base-no-loras.yaml\", \"examples/configs/grids/wan21-14b-base-no-loras.yaml\", \"examples/configs/grids/wan22-14b-base.yaml\"], \"verifyCommand\": \"for c in examples/configs/grids/*.yaml; do pixi run python -c \\\"from kinoforge.core.config import load_config; cfg = load_config('$c'); assert cfg.prompt; print('OK:', '$c')\\\"; done\", \"acceptanceCriteria\": [\"all 5 cfgs load_config clean\", \"every cfg has top-level prompt:\", \"LoRA-bearing cfgs include official refs\", \"pre-commit clean\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 13,
       "subject": "Task 3: 9 grid spec YAMLs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [12],
       "description": "**Goal:** All 9 grid spec YAMLs in `examples/configs/grids/`, each `allow_in_repo: true`, each pointing at the right base cfg + overrides + cells matching spec design §4.\n\n**Files:** 9 NEW .grid.yaml files (specs 1-9 per plan).\n\n**Acceptance Criteria:**\n- all 9 specs GridSpec.load clean\n- every spec has allow_in_repo: true\n- every spec has budget_cap_usd\n- pre-commit clean\n\n**Verify:** `for s in examples/configs/grids/*.grid.yaml; do pixi run python -c \"from kinoforge.core.grid.spec import GridSpec; GridSpec.load('$s')\"; done`\n\n**Steps:** Write each of 9 specs per templates in plan §Task 3 → load-test → pre-commit + commit.\n\n```json:metadata\n{\"files\": [\"examples/configs/grids/wan21-1_3b-strength-sweep.grid.yaml\", \"examples/configs/grids/wan21-1_3b-loras-swap.grid.yaml\", \"examples/configs/grids/wan21-1_3b-prompt-sweep.grid.yaml\", \"examples/configs/grids/wan21-mixed-path-plus-generate.grid.yaml\", \"examples/configs/grids/wan21-model-sweep.grid.yaml\", \"examples/configs/grids/wan22-14b-strength-sweep.grid.yaml\", \"examples/configs/grids/wan22-14b-loras-swap.grid.yaml\", \"examples/configs/grids/wan22-14b-prompt-sweep.grid.yaml\", \"examples/configs/grids/wan22-14b-mixed-path-plus-generate.grid.yaml\"], \"verifyCommand\": \"for s in examples/configs/grids/*.grid.yaml; do pixi run python -c \\\"from kinoforge.core.grid.spec import GridSpec; GridSpec.load('$s')\\\"; done\", \"acceptanceCriteria\": [\"all 9 specs GridSpec.load clean\", \"every spec has allow_in_repo: true\", \"every spec has budget_cap_usd\", \"pre-commit clean\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 14,
       "subject": "Task 4: Dry-run gate across all 9 specs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [13],
       "description": "**Goal:** Validate spec + cfg + dotted-path + capability-key surface without live spend. BLOCKS Tasks 5-13.\n\n**Files:** none (verification only)\n\n**Acceptance Criteria:**\n- 7 of 9 specs dry-run exit 0 (all non-mixed-path)\n- mixed-path specs skipped (fixtures pending Tasks 5/7/10/12)\n- no DottedPathError / pydantic / GridSpecUnderRepoError\n\n**Verify:** `for s in examples/configs/grids/*.grid.yaml; do case \"$s\" in *mixed-path-plus-generate.grid.yaml) continue;; esac; pixi run kinoforge grid --spec \"$s\" --dry-run || exit 1; done`\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"for s in examples/configs/grids/*.grid.yaml; do case \\\"$s\\\" in *mixed-path-plus-generate.grid.yaml) continue;; esac; pixi run kinoforge grid --spec \\\"$s\\\" --dry-run || exit 1; done\", \"acceptanceCriteria\": [\"7 non-mixed-path specs dry-run exit 0\", \"mixed-path skipped (fixtures pending)\", \"no DottedPathError / pydantic / GridSpecUnderRepoError\"], \"modelTier\": \"mechanical\"}\n```"
     },
@@ -99,5 +99,5 @@
       "description": "**Goal:** Add new H2 `## Grid examples — verified` section + 9 H3 sub-sections + 9 indented TOC sub-entries with matching anchor links.\n\n**Files:** Modify README.md\n\n**Acceptance Criteria:**\n- 9 H3 Wan sub-sections exist\n- 9 indented TOC sub-entries exist\n- all anchors resolve\n- pre-commit clean\n\n**Verify:** `grep '^### Wan' README.md | wc -l` returns 9.\n\n**Steps:** Find insertion point between `## Subcommands` and `## Configuration` → write H2 + 9 H3 block (paragraph + subshell+heredoc + evidence link per cap) → add TOC fragment → verify anchors slug-match → pre-commit + commit. Full content in plan §Task 14.\n\n```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"grep '^### Wan' README.md | wc -l\", \"acceptanceCriteria\": [\"9 H3 Wan sub-sections\", \"9 indented TOC sub-entries\", \"all anchors resolve\", \"pre-commit clean\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-27T20:05:00-07:00"
+  "lastUpdated": "2026-06-27T21:30:00-07:00"
 }
