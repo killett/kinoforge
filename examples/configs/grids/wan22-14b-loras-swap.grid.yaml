@@ -1,0 +1,30 @@
+allow_in_repo: true
+title: "Wan 2.2 14B — Arcane LoRA stack swap"
+layout: "1x3"
+budget_cap_usd: 2.00
+on_swap_failure: classify
+cells:
+  - lora_swap:
+      config: examples/configs/grids/wan22-14b-base.yaml
+      stack:
+        - ref: "civitai:2197303@2474081"
+          strength: 1.0
+          branch: high_noise
+    caption: "high-noise only"
+  - lora_swap:
+      config: examples/configs/grids/wan22-14b-base.yaml
+      stack:
+        - ref: "civitai:2197303@2474073"
+          strength: 1.0
+          branch: low_noise
+    caption: "low-noise only"
+  - lora_swap:
+      config: examples/configs/grids/wan22-14b-base.yaml
+      stack:
+        - ref: "civitai:2197303@2474081"
+          strength: 1.0
+          branch: high_noise
+        - ref: "civitai:2197303@2474073"
+          strength: 1.0
+          branch: low_noise
+    caption: "both stacked"

@@ -1,0 +1,15 @@
+allow_in_repo: true
+title: "Wan 2.1 — mixed path + generate"
+layout: "1x3"
+budget_cap_usd: 0.50
+cells:
+  - path: examples/configs/grids/_fixtures/wan21_strength_cell0.mp4
+    caption: "fixture: strength=0.5"
+  - path: examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4
+    caption: "fixture: realistic prompt"
+  - generate:
+      config: examples/configs/grids/wan21-1_3b-base.yaml
+      overrides:
+        loras[0].strength: 1.0
+        loras[1].strength: 1.0
+    caption: "fresh gen"

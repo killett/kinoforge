@@ -1,0 +1,26 @@
+allow_in_repo: true
+title: "Wan 2.1 1.3B — LoRA stack swap"
+layout: "1x3"
+budget_cap_usd: 0.50
+on_swap_failure: classify
+cells:
+  - lora_swap:
+      config: examples/configs/grids/wan21-1_3b-base.yaml
+      stack:
+        - ref: "civitai:1479320@1673265"
+          strength: 1.0
+    caption: "Static Rotation only"
+  - lora_swap:
+      config: examples/configs/grids/wan21-1_3b-base.yaml
+      stack:
+        - ref: "civitai:1595383@1805395"
+          strength: 1.0
+    caption: "Pokemon only"
+  - lora_swap:
+      config: examples/configs/grids/wan21-1_3b-base.yaml
+      stack:
+        - ref: "civitai:1479320@1673265"
+          strength: 1.0
+        - ref: "civitai:1595383@1805395"
+          strength: 1.0
+    caption: "both stacked"
