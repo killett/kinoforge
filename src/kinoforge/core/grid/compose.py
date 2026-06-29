@@ -16,33 +16,37 @@ from pathlib import Path
 
 from kinoforge.core.grid.errors import FfmpegInvocationError, FfmpegNotFoundError
 
-_DRAWTEXT_ESCAPED = {
-    "\\": r"\\",
-    ":": r"\:",
-    "'": r"\'",
-    "%": r"\%",
-    "\n": r"\n",
-}
-
 
 def _escape_drawtext(s: str) -> str:
-    r"""Escape special chars for ffmpeg ``drawtext`` filter ``text=`` arg.
+    r"""Escape a caption for ffmpeg ``drawtext`` ``text=`` value.
 
-    The drawtext filter parses ``:`` as an option separator and ``\`` as
-    an escape introducer, so un-escaped values silently corrupt the caption
-    (e.g. ``"strength=0.5"`` truncates to ``"strength=0"``).
+    Empirically validated against ffmpeg 8.1.1 (2026-06-28):
+
+    * ``\`` doubles to ``\\`` so drawtext's own escape pass does not
+      consume user backslashes via its ``\X`` interpretation (``\n``
+      etc.). MUST be processed first so later substitutions' inserted
+      backslashes are not themselves re-doubled.
+    * ``:`` becomes ``\\:`` (two backslashes on wire) — the chain
+      parser does NOT consume a single-backslash escape for ``:`` in
+      drawtext's ``text=`` value, while a double-backslash survives
+      chain-syntax stripping. This is the load-bearing fix for the
+      2026-06-28 production failure on captions like
+      ``"fixture: realistic prompt"``.
+    * ``,`` ``;`` ``'`` ``%`` each take a single backslash —
+      empirically sufficient. The ``%`` rule keeps drawtext's
+      strftime-like ``%{...}`` substitution inert on user input.
 
     Args:
         s: Raw caption string from the user's grid spec.
 
     Returns:
-        ``s`` with every special char replaced by its escaped form.
-        Backslash MUST be processed first to avoid double-escaping the
-        escapes inserted for the other chars.
+        The escaped value ready to follow ``text=`` in a drawtext
+        filter chain.
     """
-    out = s.replace("\\", _DRAWTEXT_ESCAPED["\\"])
-    for ch in (":", "'", "%", "\n"):
-        out = out.replace(ch, _DRAWTEXT_ESCAPED[ch])
+    out = s.replace("\\", "\\\\")
+    out = out.replace(":", "\\\\:")
+    for ch in (",", ";", "'", "%"):
+        out = out.replace(ch, "\\" + ch)
     return out
 
 

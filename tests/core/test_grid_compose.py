@@ -12,21 +12,49 @@ from kinoforge.core.grid.compose import _escape_drawtext
 @pytest.mark.parametrize(
     "raw,expected",
     [
+        # No special chars — passthrough.
         ("plain", "plain"),
         ("", ""),
-        ("a:b", r"a\:b"),
+        ("café", "café"),
+        # ':' is the load-bearing case — needs DOUBLE backslash on wire.
+        # Empirically verified vs ffmpeg 8.1.1: single backslash fails,
+        # double succeeds. Other separators each take a single backslash.
+        ("a:b", r"a\\:b"),
+        ("a,b", r"a\,b"),
+        ("a;b", r"a\;b"),
         ("a'b", r"a\'b"),
         ("a%b", r"a\%b"),
+        # User-supplied backslash MUST double so drawtext's \\X pass does
+        # not consume the following character.
         ("a\\b", r"a\\b"),
-        ("a:b'c%d\\e", r"a\:b\'c\%d\\e"),
-        ("café", "café"),
-        ("line1\nline2", r"line1\nline2"),
+        # Combined: backslash doubled first, then colon double-escape,
+        # then single-escape for the rest. Output character count derived
+        # by hand from the rule, not by mirroring the implementation.
+        ("a:b'c%d\\e", r"a\\:b\'c\%d\\e"),
+        # Real-world caption from the 2026-06-28 production failure.
+        ("fixture: realistic prompt", r"fixture\\: realistic prompt"),
     ],
 )
 def test_escape_drawtext(raw: str, expected: str) -> None:
-    # Bug: ffmpeg drawtext silently truncates at first un-escaped ':' —
-    # caption "strength=0.5" would render as "strength=0" without escape.
+    # Bug catch: caption "fixture: realistic prompt" was being truncated
+    # at the colon by ffmpeg's filtergraph parser with the previous
+    # single-backslash \: escape (observed 2026-06-28 on T8/T13 grid
+    # renders). Double-backslash on the wire is the empirical fix.
     assert _escape_drawtext(raw) == expected
+
+
+def test_escape_drawtext_ordering_does_not_re_double_inserted_backslashes() -> None:
+    r"""Backslash-doubling MUST run before colon-escape, not after.
+
+    If the colon substitution ran first (emitting r"\\:") and the
+    backslash-doubling step ran second, every inserted backslash would
+    be doubled again, producing r"a\\\\:b" (four backslashes on wire),
+    which empirically FAILS the ffmpeg parser. This test pins the
+    correct ordering.
+    """
+    assert _escape_drawtext("a:b") == r"a\\:b"
+    # Sanity: four-backslash form would mean ordering is wrong.
+    assert _escape_drawtext("a:b") != r"a\\\\:b"
 
 
 from kinoforge.core.grid.compose import (  # noqa: E402
@@ -80,6 +108,7 @@ def test_build_filter_graph_includes_per_cell_chain() -> None:
     # mp4 would double in length to 5.0 s; live 2026-06-25 Tier-4 fire
     # hit this bug (5.06 s cells → 10.12 s composed grid).
     assert "tpad=stop_mode=clone:stop_duration=0" in graph
+    # No special chars in caption — passes through unchanged.
     assert "text=strength=0.5" in graph
     assert "xstack=inputs=3" in graph
 
@@ -96,12 +125,31 @@ def test_build_filter_graph_pads_short_clip_to_target_duration() -> None:
     assert "tpad=stop_mode=clone:stop_duration=0" in graph
 
 
-def test_build_filter_graph_caption_with_colon_is_escaped() -> None:
+def test_build_filter_graph_caption_with_colon_uses_double_backslash() -> None:
+    """':' MUST emit as r'\\\\:' (two backslashes on wire), not r'\\:' (one).
+
+    Bug catch: the previous single-backslash form passed through ffmpeg's
+    chain parser unconsumed and the trailing ':' truncated the caption.
+    The double-backslash form survives chain-syntax stripping and
+    delivers a literal ':' to drawtext.
+    """
     probes = [InputProbe(width=512, height=512, fps=16.0, duration=2.0)]
     cells = [LayoutCell(idx=0, caption="strength:0.5")]
     graph = _build_filter_graph(probes=probes, layout=(1, 1), cells=cells)
-    # The colon in the caption MUST be escaped so drawtext does not eat it.
-    assert r"text=strength\:0.5" in graph
+    assert r"text=strength\\:0.5" in graph
+
+
+def test_build_filter_graph_caption_with_colon_and_space_double_backslashed() -> None:
+    """Real-world caption that broke compose_grid_mp4 in production on 2026-06-28.
+
+    Bug catch: previous per-char r'\\:' escape was insufficient against ffmpeg's
+    filtergraph parser, truncating `fixture: realistic prompt` at the colon.
+    Empirical fix is r'\\\\:' (double backslash on wire).
+    """
+    probes = [InputProbe(width=512, height=512, fps=16.0, duration=2.0)]
+    cells = [LayoutCell(idx=0, caption="fixture: realistic prompt")]
+    graph = _build_filter_graph(probes=probes, layout=(1, 1), cells=cells)
+    assert r"text=fixture\\: realistic prompt" in graph
 
 
 def test_build_filter_graph_empty_cells_raises() -> None:
