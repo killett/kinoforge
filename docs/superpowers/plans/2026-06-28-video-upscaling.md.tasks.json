@@ -90,7 +90,7 @@
       "id": 15,
       "planTaskId": 7,
       "subject": "Task 7: Warm-matcher subset pass for upscale-only cfgs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11, 13],
       "metadata": {
         "files": ["src/kinoforge/core/warm_reuse/matcher.py", "src/kinoforge/cli/_commands.py", "tests/test_warm_matcher_stages.py"],
