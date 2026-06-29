@@ -601,6 +601,89 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``upscale`` subcommand — standalone video upscale.
+
+    The CLI surface validates scale + flag conflicts BEFORE any cfg
+    load or pod provisioning so a malformed invocation costs zero
+    cold-boot time. Full warm-reuse / attach / cold-create wiring
+    routes through the orchestrator (see T16); for v1 the handler
+    only owns the dry-run path + early refusal gates.
+    """
+    from kinoforge.core.errors import NotYetImplementedError
+    from kinoforge.core.scale_target import ScaleTarget
+
+    # Mutual exclusion FIRST — does not require cfg load.
+    if getattr(args, "no_reuse", False) and getattr(args, "attach_pod", None):
+        print(
+            "error: --no-reuse and --attach-pod are mutually exclusive "
+            "(--no-reuse forces cold create + destroy; --attach-pod "
+            "implies pod survival)",
+            file=sys.stderr,
+        )
+        return 2
+
+    # CLI --scale parses BEFORE cfg load. Catches height-target and
+    # malformed tokens at startup so the operator does not pay for a
+    # cold-boot whose inference call was always going to crash.
+    scale: ScaleTarget | None = None
+    raw_scale = getattr(args, "scale", None)
+    if raw_scale is not None:
+        try:
+            scale = ScaleTarget.parse(raw_scale)
+        except ValueError as exc:
+            print(f"error: invalid --scale {raw_scale!r}: {exc}", file=sys.stderr)
+            return 2
+        if scale.kind == "height":
+            print(
+                f"error: --scale {raw_scale} deferred to a later session; "
+                f"use --scale Nx for v1",
+                file=sys.stderr,
+            )
+            return 2
+
+    if ctx.cfg is None:
+        print("error: --config required for upscale", file=sys.stderr)
+        return 2
+    cfg = ctx.cfg
+    if cfg.upscale is None:
+        print(
+            "error: --config must contain an `upscale:` block; "
+            "see examples/configs/upscale-seedvr2-3b.yaml",
+            file=sys.stderr,
+        )
+        return 2
+
+    # CLI override takes precedence over cfg.upscale.scale.
+    if scale is None:
+        try:
+            scale = ScaleTarget.parse(cfg.upscale.scale)
+        except ValueError as exc:
+            print(f"error: invalid cfg.upscale.scale: {exc}", file=sys.stderr)
+            return 2
+
+    if getattr(args, "dry_run", False):
+        print("upscale plan:")
+        print(f"  source: {args.video}")
+        print(f"  scale: {raw_scale or cfg.upscale.scale}")
+        print(f"  engine: {cfg.upscale.engine}")
+        if cfg.upscale.seedvr2 is not None:
+            print(
+                f"  seedvr2: variant={cfg.upscale.seedvr2.variant} "
+                f"precision={cfg.upscale.seedvr2.precision}"
+            )
+        print(f"  no_reuse: {bool(getattr(args, 'no_reuse', False))}")
+        print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
+        return 0
+
+    # Full warm-reuse / orchestrator path wired in T16 — the live
+    # smokes (T18, T19) exercise it end-to-end against RunPod.
+    raise NotYetImplementedError(
+        "upscale full-run path lands in T16 (orchestrator UpscaleStage wiring); "
+        "use --dry-run until then"
+    )
+
+
 def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``batch`` subcommand.
 

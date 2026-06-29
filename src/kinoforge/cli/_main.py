@@ -41,6 +41,7 @@ from kinoforge.cli._commands import (
     _cmd_sweeper_start,
     _cmd_sweeper_status,
     _cmd_sweeper_stop,
+    _cmd_upscale,
 )
 from kinoforge.cli.context import SessionContext
 from kinoforge.cli.sidecar import SIDECAR_NAME
@@ -122,6 +123,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "deploy": _cmd_deploy,
     "provision": _cmd_provision,
     "generate": _cmd_generate,
+    "upscale": _cmd_upscale,
     "batch": _cmd_batch,
     "list": _cmd_list,
     "status": _cmd_status,
@@ -545,6 +547,41 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "to hand a fresh pod off to a follow-up --attach-pod call. Not "
             "written on provision failure. Mutex with --attach-pod."
         ),
+    )
+
+    # upscale (T15) — standalone video upscale subcommand
+    p_upscale = sub.add_parser("upscale", help="upscale a video clip")
+    p_upscale.add_argument("-c", "--config", required=True, metavar="PATH")
+    p_upscale.add_argument(
+        "--video",
+        required=True,
+        metavar="PATH_OR_URL",
+        help="source mp4 (file path or http(s)://... URL)",
+    )
+    p_upscale.add_argument(
+        "--scale",
+        default=None,
+        metavar="TARGET",
+        help="scale target (e.g. '2x', '4x'); overrides cfg.upscale.scale",
+    )
+    p_upscale.add_argument(
+        "--no-reuse",
+        action="store_true",
+        dest="no_reuse",
+        help="force cold create + destroy on completion. Mutex with --attach-pod.",
+    )
+    p_upscale.add_argument(
+        "--attach-pod",
+        type=str,
+        default=None,
+        metavar="POD_ID",
+        help="attach to an existing pod; skip provision. Mutex with --no-reuse.",
+    )
+    p_upscale.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="emit the resolved plan to stdout and exit 0; no pod work",
     )
 
     # list
