@@ -13,6 +13,7 @@ Model loaded once at startup, persists across requests.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import os
 import queue
@@ -25,7 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 # Force-disable huggingface_hub's xet transport before any HF import.
 # Task 8 attempt #8 surfaced a hard xet failure:
@@ -84,6 +85,145 @@ pipe: Any = None  # set in _startup
 jobs: dict[str, JobState] = {}
 _q: queue.Queue[str] = queue.Queue()
 _worker_thread: threading.Thread | None = None
+
+
+# --- T11: in-process LRU model registry -----------------------------------
+#
+# Multiple pipelines (Wan T2V, SeedVR2) co-resident on one pod's GPU. The
+# registry tracks which models are on which device + their last-used
+# timestamp; ``_ensure_on_gpu`` evicts LRU CUDA-resident models to CPU
+# when headroom for a target drops below ``_HEADROOM_MARGIN_BYTES``.
+#
+# Hard floor: when a target alone exceeds total GPU capacity minus the
+# headroom margin, ``VRAMEvictionFailed`` is raised — surfaced as 503 by
+# the FastAPI handler.
+
+
+class LoadedModel(TypedDict):
+    """Registry entry describing one loaded pipeline + its placement."""
+
+    name: str
+    pipe: Any
+    vram_bytes: int
+    last_used_monotonic: float
+    on_device: Literal["cuda", "cpu", "disk"]
+
+
+_LOADED: dict[str, LoadedModel] = {}
+_REGISTRY_LOCK = asyncio.Lock()
+_HEADROOM_MARGIN_BYTES = (
+    int(os.environ.get("KINOFORGE_HEADROOM_MARGIN_GB", "2")) * 1024**3
+)
+
+
+def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2 pipe
+    """Engine-specific loader dispatched on name prefix.
+
+    The single seam where ``wan_t2v_server`` knows which loader to call
+    for which prefix. SeedVR2 lazily imports its runtime so the upstream
+    package isn't required for module import.
+    """
+    if name.startswith("wan-t2v-"):
+        return _diffusers_load()
+    if name.startswith("seedvr2-"):
+        from kinoforge.upscalers.seedvr2._runtime import SeedVR2Runtime
+
+        # Slug: "seedvr2-{variant}-{precision}" → variant + precision tail.
+        parts = name.split("-")
+        variant, precision = parts[-2], parts[-1]
+        return SeedVR2Runtime(
+            weights_dir=Path("/workspace/models/seedvr2"),
+            variant=variant.upper(),  # type: ignore[arg-type]
+            precision=precision,  # type: ignore[arg-type]
+        )
+    raise ValueError(f"unknown model name {name!r}; no loader registered")
+
+
+async def _ensure_on_gpu(name: str) -> LoadedModel:
+    """Ensure ``name`` is on CUDA with sufficient headroom.
+
+    LRU CPU eviction is opportunistic; hard-floor refusal happens when the
+    target's ``vram_bytes`` exceeds GPU capacity minus the headroom margin.
+    """
+    from kinoforge.core.errors import VRAMEvictionFailed  # noqa: F401
+
+    async with _REGISTRY_LOCK:
+        entry = _LOADED.get(name)
+        if entry is not None and entry["on_device"] == "cuda":
+            entry["last_used_monotonic"] = time.monotonic()
+            return entry
+
+        if entry is None:
+            new_pipe = _load_model_to_gpu(name)
+            entry = LoadedModel(
+                name=name,
+                pipe=new_pipe,
+                vram_bytes=getattr(new_pipe, "vram_bytes", 0),
+                last_used_monotonic=time.monotonic(),
+                on_device="cuda",
+            )
+            _LOADED[name] = entry
+        else:
+            entry["pipe"].to("cuda")
+            entry["on_device"] = "cuda"
+            entry["last_used_monotonic"] = time.monotonic()
+
+        await _enforce_headroom(name)
+        return entry
+
+
+async def _enforce_headroom(target_name: str) -> None:
+    """Evict LRU CUDA models to CPU until ``target_name`` has headroom.
+
+    Raises VRAMEvictionFailed when the target alone exceeds capacity OR
+    when every other CUDA + CPU model has been evicted and headroom is
+    still insufficient.
+    """
+    import torch
+
+    from kinoforge.core.errors import VRAMEvictionFailed
+
+    free, total = torch.cuda.mem_get_info()
+    target = _LOADED[target_name]
+
+    if target["vram_bytes"] > total - _HEADROOM_MARGIN_BYTES:
+        raise VRAMEvictionFailed(
+            model=target_name,
+            reason=(
+                f"target exceeds GPU capacity: {target['vram_bytes']} bytes "
+                f"> {total - _HEADROOM_MARGIN_BYTES} (total={total}, "
+                f"margin={_HEADROOM_MARGIN_BYTES})"
+            ),
+        )
+
+    while free < _HEADROOM_MARGIN_BYTES:
+        victims = [
+            n
+            for n, e in _LOADED.items()
+            if e["on_device"] == "cuda" and n != target_name
+        ]
+        if not victims:
+            cpu_victims = [n for n, e in _LOADED.items() if e["on_device"] == "cpu"]
+            if not cpu_victims:
+                raise VRAMEvictionFailed(
+                    model=target_name,
+                    reason="exhausted eviction targets with insufficient headroom",
+                )
+            evict = min(cpu_victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
+            _LOADED[evict]["pipe"] = None
+            _LOADED[evict]["on_device"] = "disk"
+            gc.collect()
+            torch.cuda.empty_cache()
+            free, _ = torch.cuda.mem_get_info()
+            continue
+
+        evict = min(victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
+        _LOADED[evict]["pipe"].to("cpu")
+        _LOADED[evict]["on_device"] = "cpu"
+        gc.collect()
+        torch.cuda.empty_cache()
+        free, _ = torch.cuda.mem_get_info()
+
 
 # LoRA-flexible warm-reuse: pod-side inventory of loaded LoRA weights.
 # P2 (2026-06-22): keyed by composite ``(ref, branch)`` so the same ref

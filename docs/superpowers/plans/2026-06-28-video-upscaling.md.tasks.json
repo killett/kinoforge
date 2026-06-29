@@ -138,7 +138,7 @@
       "id": 19,
       "planTaskId": 11,
       "subject": "Task 11: Server LRU model registry + hard-floor VRAMEvictionFailed",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "metadata": {
         "files": ["src/kinoforge/engines/diffusers/servers/wan_t2v_server.py", "tests/engines/diffusers/test_lru_eviction.py"],
