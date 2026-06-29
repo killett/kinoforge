@@ -55,6 +55,9 @@ import kinoforge.stores.gcs  # noqa: F401
 import kinoforge.stores.local  # noqa: F401
 import kinoforge.stores.s3  # noqa: F401
 
+# Upscalers
+import kinoforge.upscalers.seedvr2  # noqa: F401  # self-registers under "seedvr2"
+
 # --------------------------------------------------------------------------
 # Cross-provider dispatch helpers (live here because they import concrete
 # provider modules — disallowed everywhere else in kinoforge.core).

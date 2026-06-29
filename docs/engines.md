@@ -436,3 +436,19 @@ failure, malformed `/upload/image` response.
 Native multi-segment engines (those declaring
 `supports_native_extension=True` in their `ModelProfile`) are unaffected —
 they receive all segments in a single job and handle continuity internally.
+
+
+## Upscalers
+
+Upscalers are a parallel registry to the generation engines. They are
+keyed by `cfg.upscale.engine` and resolved via
+`kinoforge.core.registry.get_upscaler`.
+
+| Name | Class | Provision surface |
+|------|-------|-------------------|
+| `seedvr2` | `kinoforge.upscalers.seedvr2.SeedVR2Engine` | HTTP via the diffusers server's `/upscale` + `/upscale/status/{id}` |
+
+SeedVR2's upstream pin lives in
+`src/kinoforge/upscalers/seedvr2/__init__.py` as `_UPSTREAM_COMMIT`.
+The pod's provision step pip-installs `seedvr @ git+...@<commit>` so
+the pinned SHA fully determines the inference build.
