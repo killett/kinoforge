@@ -12,21 +12,33 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
-**LoRA URL normalization (Sub-project A) — IN PROGRESS.**
-Spec: `docs/superpowers/specs/2026-06-28-lora-url-normalization-design.md`.
-URL acceptance at the `LoraEntry.ref` field validator (mode=before)
-plus `civarchive` added to the CLI heredoc `_KNOWN_SCHEMES`. Three URL
-shapes normalized:
-- `https://civitai.com/models/<id>/...?modelVersionId=<vid>` → `civitai:<id>@<vid>`
-- `https://civarchive.com/models/<id>?modelVersionId=<vid>` → `civarchive:<id>@<vid>`
-- `https://huggingface.co/<org>/<repo>/blob/<branch>/<file>` → `hf:<org>/<repo>:<file>`
-  (and bare `huggingface.co/<org>/<repo>` → `hf:<org>/<repo>`).
-Civitai/civarchive URL missing `modelVersionId` → `ValueError` with
-NO URL text in the message (privacy invariant). HF branch other than
-`main` → warn-once + drop (canonical `hf:` ref does not encode branch).
-Single validator chokepoint means cfg.loras + vault.loras + grid
-`lora_swap.stack[].ref` + `--loras` heredoc all gain URL acceptance
-through one change.
+**No active workstream — next initiative TBD.** See "NEXT SESSION —
+TOP PRIORITY" below.
+
+---
+
+**LoRA URL normalization (Sub-project A) SHIPPED 2026-06-28 (commits `19fa24c..7b8f095`, all 4 tasks GREEN).**
+Spec `docs/superpowers/specs/2026-06-28-lora-url-normalization-design.md` +
+plan `docs/superpowers/plans/2026-06-28-lora-url-normalization.md`.
+`LoraEntry.ref` now accepts pasted URLs from civitai.com,
+civarchive.com, and huggingface.co; URLs are normalized to the
+canonical short form by a `mode=before` field validator so cfg.loras,
+vault.loras, `--loras` heredoc, and grid `lora_swap.stack[].ref` all
+inherit URL acceptance through one chokepoint. Civitai/civarchive URLs
+without `?modelVersionId=...` are rejected with a privacy-respecting
+error (no URL text in the message; `LoraEntry` config also gains
+`hide_input_in_errors=True` so pydantic's `ValidationError` repr does
+not leak the URL either). HF non-`main` branches drop with a warn-once.
+`civarchive` added to the CLI heredoc `_KNOWN_SCHEMES` + missing-scheme
+suggestion. CLI `--help` + `docs/warm-reuse.md` document URL paste.
+Tasks:
+- Task 1 — `_normalize_ref` pure function + unit tests (`19fa24c`)
+- Task 2 — wire validator into `LoraEntry.ref` (`51ba898`)
+- Task 3 — civarchive in CLI `_KNOWN_SCHEMES` (`8f14bf4`)
+- Task 4 — CLI help + `docs/warm-reuse.md` URL-paste note (`7b8f095`)
+**Workstream CLOSED — pasting URLs into LoRA configs now works
+end-to-end for civitai + hf. Civarchive URLs are parse-accepted;
+resolution waits for Sub-project B (see TOP PRIORITY below).**
 
 ---
 
