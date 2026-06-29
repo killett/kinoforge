@@ -180,3 +180,10 @@ def test_loras_help_includes_loras_arg() -> None:
                 break
     assert "--loras" in sub_help
     assert "HEREDOC" in sub_help
+    # Sub-project A — operators should see that URL paste is supported.
+    # argparse word-wraps the help string, so collapse whitespace before
+    # asserting the canonical phrase is present.
+    sub_help_collapsed = " ".join(sub_help.split())
+    assert "URLs from civitai.com, civarchive.com, huggingface.co" in sub_help_collapsed
+    assert "modelVersionId" in sub_help_collapsed
+    assert "civarchive" in sub_help_collapsed
