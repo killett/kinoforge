@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from kinoforge.cli.loras_arg import (
+    _KNOWN_SCHEMES,
     LineError,
     LorasParseError,
     parse_loras_heredoc,
@@ -310,3 +311,74 @@ def test_render_for_cli_returns_string_with_summary_line() -> None:
     rendered = exc.value.report.render_for_cli()
     assert rendered.startswith("--loras: 1 problem(s) found")
     assert "line 1 col 1: unknown scheme" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Civarchive scheme + URL-form acceptance
+# (Sub-project A — see docs/superpowers/specs/2026-06-28-lora-url-normalization-design.md)
+# ---------------------------------------------------------------------------
+
+
+def test_known_schemes_includes_civarchive() -> None:
+    """Bug catch: a heredoc with `civarchive:111@222` would error
+    `unknown scheme` at the heredoc layer, before LoraEntry's validator
+    ever runs."""
+    assert "civarchive" in _KNOWN_SCHEMES
+
+
+def test_heredoc_accepts_civarchive_canonical_ref() -> None:
+    entries = parse_loras_heredoc("civarchive:111@222\n")
+    assert len(entries) == 1
+    assert entries[0].ref == "civarchive:111@222"
+
+
+def test_heredoc_accepts_civitai_url_and_normalizes() -> None:
+    """URL flows through _expand_ref (https scheme already allowed),
+    then LoraEntry's validator canonicalises."""
+    text = "https://civitai.com/models/111?modelVersionId=222\n"
+    entries = parse_loras_heredoc(text)
+    assert len(entries) == 1
+    assert entries[0].ref == "civitai:111@222"
+
+
+def test_heredoc_accepts_civarchive_url_and_normalizes() -> None:
+    text = "https://civarchive.com/models/111?modelVersionId=222\n"
+    entries = parse_loras_heredoc(text)
+    assert len(entries) == 1
+    assert entries[0].ref == "civarchive:111@222"
+
+
+def test_heredoc_accepts_hf_blob_url_and_normalizes() -> None:
+    text = "https://huggingface.co/Org/Repo/blob/main/file.safetensors 0.8\n"
+    entries = parse_loras_heredoc(text)
+    assert len(entries) == 1
+    assert entries[0].ref == "hf:Org/Repo:file.safetensors"
+    assert entries[0].strength == 0.8
+
+
+def test_heredoc_civitai_url_without_version_raises_LorasParseError_privacy() -> None:
+    """Pydantic ValidationError is wrapped into LineError(kind='pydantic').
+    Privacy invariant: the rendered report MUST NOT echo the URL or any
+    component of it."""
+    text = "https://civitai.com/models/111\n"
+    with pytest.raises(LorasParseError) as excinfo:
+        parse_loras_heredoc(text)
+    report = excinfo.value.report
+    assert len(report.errors) == 1
+    assert report.errors[0].kind == "pydantic"
+    assert report.errors[0].field == "ref"
+    rendered = report.render_for_cli()
+    # URL components must NOT appear anywhere in the rendered report.
+    assert "civitai.com" not in rendered
+    assert "111" not in rendered
+    assert "https://" not in rendered
+
+
+def test_missing_scheme_error_lists_civarchive() -> None:
+    """Bug catch: operator who reads the missing-scheme suggestion learns
+    civarchive is a valid scheme."""
+    text = "no-scheme-here\n"
+    with pytest.raises(LorasParseError) as exc:
+        parse_loras_heredoc(text)
+    rendered = exc.value.report.render_for_cli()
+    assert "civarchive:" in rendered
