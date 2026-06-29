@@ -42,7 +42,7 @@
     {
       "id": 7,
       "subject": "Task 5: Live evidence smoke ($0, anonymous)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         6
       ],
@@ -58,5 +58,5 @@
       "description": "**Goal:** Replace \"not yet implemented\" stubs in `docs/warm-reuse.md` with a confirmation that civarchive refs resolve. Close the sub-project B workstream block in `PROGRESS.md`. Drop the top-priority pointer block.\n\n**Files:**\n- Modify: `docs/warm-reuse.md` (lines 146\u2013149 area \u2014 replace the stub)\n- Modify: `PROGRESS.md` (add a SHIPPED block; drop the pointer at lines 45\u201377; update Active workstream line)\n\n**Acceptance Criteria:**\n- [ ] `docs/warm-reuse.md` no longer contains the phrase \"civarchive source not yet implemented\".\n- [ ] `docs/warm-reuse.md` mentions HTML scrape + sha256 integrity for civarchive refs.\n- [ ] `PROGRESS.md` has a closed \"civarchive source (Sub-project B) SHIPPED\" block mirroring the sub-project A SHIPPED block shape.\n- [ ] `PROGRESS.md` no longer contains the \"Sub-project B \u2014 civarchive source module\" pointer at the prior lines 45\u201377.\n- [ ] `PROGRESS.md` Active workstream line is updated.\n\n**Verify:** `rg -n 'civarchive source not yet implemented' docs/ PROGRESS.md` returns no matches; `rg -n 'civarchive.*SHIPPED' PROGRESS.md` matches a SHIPPED block.\n\n```json:metadata\n{\"files\": [\"docs/warm-reuse.md\", \"PROGRESS.md\"], \"verifyCommand\": \"rg -n 'civarchive source not yet implemented' docs/ PROGRESS.md; rg -n 'civarchive.*SHIPPED' PROGRESS.md\", \"acceptanceCriteria\": [\"stale 'not yet implemented' text removed from warm-reuse.md\", \"warm-reuse.md describes HTML scrape + sha256 integrity\", \"PROGRESS has SHIPPED block for sub-project B\", \"old pointer block removed from PROGRESS\", \"Active workstream line updated\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-06-28T22:34:16-07:00"
+  "lastUpdated": "2026-06-28T22:36:05-07:00"
 }
