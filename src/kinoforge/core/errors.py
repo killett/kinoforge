@@ -447,3 +447,23 @@ class StageMismatch(KinoforgeError):
         super().__init__(f"pod missing stages: want={want!r}, have={have!r}")
         self.want = want
         self.have = have
+
+
+class ExtrasNotInstalled(KinoforgeError):
+    """Raised when a kinoforge component requires a pip extras group that is not installed.
+
+    Args:
+        extras_name: The extras-group key (e.g. ``"seedvr"`` for
+            ``kinoforge[seedvr]``).
+        install_hint: Operator-facing remediation text (concrete command,
+            workstream reference, or "use ``cfg.upscale.engine = 'spandrel'``
+            instead" pointer).
+    """
+
+    def __init__(self, extras_name: str, install_hint: str) -> None:
+        """Format the standard extras-not-installed message and stash both fields."""
+        super().__init__(
+            f"kinoforge[{extras_name}] extras not installed — {install_hint}"
+        )
+        self.extras_name = extras_name
+        self.install_hint = install_hint
