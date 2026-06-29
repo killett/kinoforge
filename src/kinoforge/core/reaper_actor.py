@@ -39,15 +39,22 @@ _LOCK_TTL_S: float = 30.0
 # best-effort (a process restart resets it; the alternative would be
 # leaking dedup state into the ledger).
 _WARNED_SUBSTRATE_MISSING: set[tuple[str, str]] = set()
+# Sweeper-side ephemeral reap (spec 2026-06-28). Sibling dedup sets for
+# the SKIP_NO_PROBE and PROBE_FAILED log lines. Same best-effort contract
+# as _WARNED_SUBSTRATE_MISSING — process-local, reset on restart.
+_WARNED_PROBE_MISSING: set[tuple[str, str]] = set()
+_WARNED_PROBE_FAILED: set[tuple[str, str, str]] = set()
 
 
 def reset_warning_dedup() -> None:
-    """Clear the substrate-missing WARN dedup set.
+    """Clear all substrate-/probe-warn dedup sets.
 
     Test helper. Production code does not call this — the dedup persists
     for the life of the process per the documented best-effort contract.
     """
     _WARNED_SUBSTRATE_MISSING.clear()
+    _WARNED_PROBE_MISSING.clear()
+    _WARNED_PROBE_FAILED.clear()
 
 
 @dataclass(frozen=True)
@@ -192,6 +199,7 @@ def act_on_verdict(
     *,
     thresholds: Mapping[str, Any],
     clock: Clock,
+    stall_history: Mapping[str, deque[tuple[float, float]]] | None = None,
 ) -> ActionResult:
     """Lock + re-classify + dispatch. The single side-effecting surface.
 
@@ -208,6 +216,12 @@ def act_on_verdict(
         snapshot_verdict: The verdict ``sweep`` recorded for this entry.
         thresholds: Threshold kwargs forwarded to ``classify``.
         clock: Wall-clock source for the re-classify timestamp.
+        stall_history: Sweeper-side ephemeral reap (spec 2026-06-28).
+            Per-pod deque mapping forwarded to ``classify`` so the
+            re-classify of an ephemeral STALL_REAP entry sees the same
+            history and returns the same verdict. ``None`` is safe for
+            ledger-backed entries (classify ignores the kwarg on the
+            non-ephemeral branch).
 
     Returns:
         :class:`ActionResult` describing what happened. Never raises;
@@ -232,8 +246,16 @@ def act_on_verdict(
                 action="deferred-session-claim",
                 reason=f"held by pid {deferred}; orchestrator mid-session-claim",
             )
-        live_ids = {i.id for i in provider.list_instances()}
-        v2 = classify(entry, live_ids, clock.now(), **thresholds)
+        # Sweeper-side ephemeral reap (spec 2026-06-28): ephemeral entries
+        # do NOT need a provider.list_instances() round-trip — classify
+        # dispatches via the sentinel branch which ignores live_ids.
+        if entry.get("kinoforge_ephemeral") is True:
+            live_ids: set[str] = set()
+        else:
+            live_ids = {i.id for i in provider.list_instances()}
+        v2 = classify(
+            entry, live_ids, clock.now(), stall_history=stall_history, **thresholds
+        )
         if v2 != snapshot_verdict:
             return ActionResult(
                 instance_id=instance_id,
@@ -264,10 +286,6 @@ def act_on_verdict(
                 Verdict.ORPHAN_REAP,
                 Verdict.STALL_REAP,  # C26
             }:
-                from kinoforge.core.warm_reuse.ephemeral_index import (
-                    EphemeralIndex,
-                )
-
                 destroy_confirmed(
                     provider,
                     instance_id,
@@ -276,6 +294,44 @@ def act_on_verdict(
                 )
                 ledger.forget(instance_id)
                 action = "destroyed_and_forgot"
+            elif v2 == Verdict.GC_404:
+                # Sweeper-side ephemeral reap (spec 2026-06-28).
+                # Ephemeral row points at a pod the provider no longer has.
+                # Remove the index row; no destroy_instance (pod gone);
+                # ledger.forget is NOT called (entry was synthesised from
+                # the index, never recorded in the ledger).
+                EphemeralIndex(store=store).remove(instance_id)
+                action = "gc_404_removed"
+            elif v2 == Verdict.SKIP_NO_PROBE:
+                provider_kind = str(
+                    entry.get("provider_kind") or entry.get("provider", "")
+                )
+                dedup_key = (provider_kind, instance_id)
+                if dedup_key not in _WARNED_PROBE_MISSING:
+                    _WARNED_PROBE_MISSING.add(dedup_key)
+                    _log.warning(
+                        "provider %r lacks runtime-probe substrate; "
+                        "SKIP_NO_PROBE for ephemeral pod %s",
+                        provider_kind,
+                        instance_id,
+                    )
+                action = "no_op"
+            elif v2 == Verdict.PROBE_FAILED:
+                provider_kind = str(
+                    entry.get("provider_kind") or entry.get("provider", "")
+                )
+                error_class = str(entry.get("probe_error_class", "Exception"))
+                pf_key = (provider_kind, instance_id, error_class)
+                if pf_key not in _WARNED_PROBE_FAILED:
+                    _WARNED_PROBE_FAILED.add(pf_key)
+                    _log.warning(
+                        "probe_runtime raised %s for ephemeral pod %s/%s; "
+                        "will retry next tick",
+                        error_class,
+                        provider_kind,
+                        instance_id,
+                    )
+                action = "probe_failed"
             elif v2 == Verdict.STALE_LEDGER:
                 ledger.forget(instance_id)
                 action = "forgot"
@@ -444,12 +500,19 @@ def sweep(
         factory = registry_get_provider(row.provider)
         if factory is None:
             continue
-        try:
-            probe_provider = factory()
-        except Exception as exc:  # noqa: BLE001
-            _log.warning(
-                "ephemeral provider factory failed for %s: %s", row.provider, exc
-            )
+        if row.provider in provider_cache:
+            probe_provider = provider_cache[row.provider]
+        else:
+            try:
+                probe_provider = factory()
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "ephemeral provider factory failed for %s: %s", row.provider, exc
+                )
+                provider_cache[row.provider] = None
+                continue
+            provider_cache[row.provider] = probe_provider
+        if probe_provider is None:
             continue
         probe_result = _probe_with_cache(probe_provider, row, probe_cache)
         entries.append(_synthesize_ephemeral_entry(row, probe_result))
@@ -493,6 +556,40 @@ def sweep(
         verdict = classify(entry, live_pod_ids_cache[name], now, **classify_kwargs)
         snapshot[eid] = (entry, verdict)
 
+    # Emit WARN-once log for SKIP_NO_PROBE and PROBE_FAILED — these verdicts
+    # are deliberately outside DEFAULT_APPLY_POLICY (no state mutation), so
+    # act_on_verdict never sees them. The dedup keeps a single warn line per
+    # (provider, pod_id) for the life of the process.
+    for eid, (snap_entry, snap_verdict) in snapshot.items():
+        if snap_verdict == Verdict.SKIP_NO_PROBE:
+            provider_kind = str(
+                snap_entry.get("provider_kind") or snap_entry.get("provider", "")
+            )
+            dedup_key = (provider_kind, eid)
+            if dedup_key not in _WARNED_PROBE_MISSING:
+                _WARNED_PROBE_MISSING.add(dedup_key)
+                _log.warning(
+                    "provider %r lacks runtime-probe substrate; "
+                    "SKIP_NO_PROBE for ephemeral pod %s",
+                    provider_kind,
+                    eid,
+                )
+        elif snap_verdict == Verdict.PROBE_FAILED:
+            provider_kind = str(
+                snap_entry.get("provider_kind") or snap_entry.get("provider", "")
+            )
+            error_class = str(snap_entry.get("probe_error_class", "Exception"))
+            pf_key = (provider_kind, eid, error_class)
+            if pf_key not in _WARNED_PROBE_FAILED:
+                _WARNED_PROBE_FAILED.add(pf_key)
+                _log.warning(
+                    "probe_runtime raised %s for ephemeral pod %s/%s; "
+                    "will retry next tick",
+                    error_class,
+                    provider_kind,
+                    eid,
+                )
+
     if policy is None:
         return SweepReport(snapshot=snapshot, actions=[])
 
@@ -529,6 +626,7 @@ def sweep(
             verdict,
             thresholds=thresholds,
             clock=clock,
+            stall_history=stall_history,
         )
         actions.append(result)
     return SweepReport(snapshot=snapshot, actions=actions)
