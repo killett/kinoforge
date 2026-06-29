@@ -286,21 +286,33 @@ class WarmAttachKey:
     should NOT trigger re-download for. See
     docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md.
 
+    Extended in 2026-06-28 with stages / upscaler / upscaler_precision
+    factors. derive() participates in the hash only when non-default,
+    preserving the legacy hash space for pure-generate pods.
+
     Attributes:
         base_model: Base-model vendor-neutral ref (e.g. "hf:org/m").
         engine: Engine name (capability is engine-specific).
         precision: Precision/quantization (e.g. "fp16", "gguf-q8").
+        stages: Pipeline stages this pod actually supports. Empty tuple
+            preserves the legacy hash space.
+        upscaler: Upscaler registry key when ``stages`` includes ``"upscale"``.
+        upscaler_precision: Variant+precision slug for the upscaler.
     """
 
     base_model: str
     engine: str = ""
     precision: str = ""
+    stages: tuple[str, ...] = ()
+    upscaler: str = ""
+    upscaler_precision: str = ""
 
     def derive(self) -> str:
-        """Stable sha256 over (base_model, engine, precision)."""
-        payload = json.dumps(
-            [self.base_model, self.engine, self.precision], ensure_ascii=False
-        )
+        """Backward-compat hash; conditional-extend mirrors CapabilityKey."""
+        base: list[object] = [self.base_model, self.engine, self.precision]
+        if self.stages or self.upscaler or self.upscaler_precision:
+            base.extend([list(self.stages), self.upscaler, self.upscaler_precision])
+        payload = json.dumps(base, ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -320,37 +332,61 @@ class LoraStack:
 class CapabilityKey:
     """Full identity a ModelProfile depends on. derive() is the stable cache key.
 
-    Composite over WarmAttachKey + LoraStack. derive() produces the
-    same byte-equal hash as the pre-split CapabilityKey for backward
-    compatibility with every existing ledger entry.
+    Composite over WarmAttachKey + LoraStack + (new in 2026-06-28) stage tags.
+    derive() produces byte-identical output to the pre-stages-factor
+    implementation when ``stages == ()`` AND ``upscaler == ""`` AND
+    ``upscaler_precision == ""``, so every existing ledger entry keeps matching.
 
     Attributes:
         base_model: Base-model vendor-neutral ref (e.g. "hf:org/m").
         loras: Ordered LoRA stack; order matters and contributes to the key.
         engine: Engine name (capability is engine-specific).
         precision: Precision/quantization (e.g. "fp16", "gguf-q8").
+        stages: Pipeline stages this cfg/pod actually supports. Empty tuple
+            preserves the legacy hash space (a pure-generate pod or cfg with
+            no upscale block). Non-empty values participate in the hash.
+        upscaler: Upscaler registry key when ``stages`` includes ``"upscale"``.
+        upscaler_precision: Variant+precision slug for the upscaler
+            (e.g. ``"3b-fp8"`` for SeedVR2 3B FP8).
     """
 
     base_model: str
     loras: tuple[str, ...] = ()
     engine: str = ""
     precision: str = ""
+    stages: tuple[str, ...] = ()
+    upscaler: str = ""
+    upscaler_precision: str = ""
 
     def derive(self) -> str:
-        """Stable, order-sensitive sha256 over all fields (VAE excluded by design).
+        """Stable, order-sensitive sha256 over all fields.
 
-        Byte-identical to the pre-split CapabilityKey.derive() output.
+        Backward-compat invariant: when ``stages == ()`` AND ``upscaler == ""``
+        AND ``upscaler_precision == ""``, derive() returns byte-identical
+        output to the pre-change implementation. Enforced by the
+        conditional-extend below — the legacy payload shape is preserved
+        whenever the new fields are at their defaults.
         """
-        payload = json.dumps(
-            [self.base_model, list(self.loras), self.engine, self.precision],
-            ensure_ascii=False,
-        )
+        base: list[object] = [
+            self.base_model,
+            list(self.loras),
+            self.engine,
+            self.precision,
+        ]
+        if self.stages or self.upscaler or self.upscaler_precision:
+            base.extend([list(self.stages), self.upscaler, self.upscaler_precision])
+        payload = json.dumps(base, ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def warm_attach_key(self) -> WarmAttachKey:
-        """Return the WarmAttachKey factor (base + engine + precision)."""
+        """Return the WarmAttachKey factor with upscale-aware fields populated."""
         return WarmAttachKey(
-            base_model=self.base_model, engine=self.engine, precision=self.precision
+            base_model=self.base_model,
+            engine=self.engine,
+            precision=self.precision,
+            stages=self.stages,
+            upscaler=self.upscaler,
+            upscaler_precision=self.upscaler_precision,
         )
 
     def lora_stack(self) -> LoraStack:
