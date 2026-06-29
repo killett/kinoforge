@@ -66,7 +66,7 @@
     {
       "id": 10,
       "subject": "Task 10: Live smoke — GREEN evidence on RunPod",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** Run live smoke against real RunPod with pod-stats polling; capture evidence; remove skip.\n\n**Files:** Modify `tests/live/test_runpod_ephemeral_sweeper_smoke.py`. Create `tests/live/evidence/2026-06-28-sweeper-ephemeral-reap/`.\n\n**Verify:** `pixi run preflight && pixi run pytest tests/live/test_runpod_ephemeral_sweeper_smoke.py -v -m live`\n\n```json:metadata\n{\"files\": [\"tests/live/test_runpod_ephemeral_sweeper_smoke.py\", \"tests/live/evidence/2026-06-28-sweeper-ephemeral-reap/\"], \"verifyCommand\": \"pixi run preflight && pixi run pytest tests/live/test_runpod_ephemeral_sweeper_smoke.py -v -m live\", \"acceptanceCriteria\": [\"preflight exit 0\", \"sweeper destroyed pod within 240s\", \"evidence files committed\", \"spend ≤ $0.40\", \"post-run ledger empty\"], \"modelTier\": \"standard\"}\n```"
     },
