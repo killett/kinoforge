@@ -951,6 +951,24 @@ class DiffusersEngine(GenerationEngine):
             lines.append(
                 f"pip install -q --extra-index-url {_PYTORCH_EXTRA_INDEX_URL} {quoted}"
             )
+        # T8 — compose upscaler render_provision script when cfg.upscale set.
+        # Reads cfg.upscale.engine, looks up via registry, appends the upscaler's
+        # render_provision script BEFORE the server exec line. Engine-agnostic:
+        # this seam knows nothing about WHICH upscaler. FlashVSR drop-in (future)
+        # gets composition for free. Raises ExtrasNotInstalled when the upscaler
+        # is extras-gated (e.g. seedvr2 pre-Phase 2) — propagates to the
+        # orchestrator's cfg-time pre-flight rather than crashing at pod boot.
+        upscale_block_raw = cfg.get("upscale") if isinstance(cfg, dict) else None
+        if isinstance(upscale_block_raw, dict):
+            upscaler_name = upscale_block_raw.get("engine")
+            if upscaler_name:
+                from kinoforge.core import registry as _registry
+
+                upscaler = _registry.get_upscaler(str(upscaler_name))()
+                upscale_rp = upscaler.render_provision(cfg)
+                lines.append("# ---- upscaler provision (composed) ----")
+                lines.extend(line for line in upscale_rp.script.split("\n") if line)
+
         if wan_model_id and server_cmd:
             # Exported BEFORE server_cmd so the launching shell carries
             # it into the wan_t2v_server process. See wan_t2v_server.py
