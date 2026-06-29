@@ -143,11 +143,16 @@ warn-once (the canonical `hf:` ref does not encode branch). Bare HF
 repo URLs (`huggingface.co/<org>/<repo>`) are NOT normalized — paste
 the `blob/<branch>/<file>` URL instead.
 
-`civarchive:<id>@<vid>` is parse-accepted by this release but the
-downstream resolver is the next workstream (see `PROGRESS.md` →
-"NEXT SESSION — TOP PRIORITY"). Until that ships, civarchive refs
-will fail at resolution time with a clear "civarchive source not yet
-implemented" error.
+`civarchive:<id>@<vid>` resolves via an HTML scrape of the civarchive
+model-version page. SHA256 integrity is verified post-download against
+the hash captured from the page's `/sha256/` anchor. CivArchive's
+`/api/download/models/<vid>` endpoint 307-redirects to whichever host
+currently mirrors the file (civitai.com, HuggingFace, or CivArchive's
+own `/sha256/` store) — kinoforge keeps `Artifact.url` at the abstract
+CivArchive endpoint so persisted refs remain valid across re-mirror
+events. Bare `civarchive:<id>` refs (no `@<vid>`) are rejected at
+resolution time with a clear error; CivArchive does not expose a
+stable default-version selector.
 
 **Precedence.**
 
