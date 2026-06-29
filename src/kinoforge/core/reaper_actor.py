@@ -9,14 +9,21 @@ applied once at the substrate level.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from kinoforge.core.clock import Clock
 from kinoforge.core.errors import TeardownError
 from kinoforge.core.lifecycle import Ledger, destroy_confirmed
 from kinoforge.core.reaper import Policy, Verdict, classify, partition
+from kinoforge.core.runtime_probe import RuntimeProbe
+from kinoforge.core.warm_reuse.ephemeral_index import (
+    EphemeralIndex,
+    EphemeralIndexRow,
+)
 
 if TYPE_CHECKING:
     from kinoforge.core.interfaces import ComputeProvider
@@ -294,6 +301,78 @@ def act_on_verdict(
         )
 
 
+def _iso_to_epoch(iso_str: str) -> float:
+    """Convert local-TZ ISO timestamp to Unix epoch seconds. 0.0 on parse error."""
+    try:
+        return datetime.fromisoformat(iso_str).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _probe_with_cache(
+    provider: ComputeProvider,
+    row: EphemeralIndexRow,
+    cache: dict[tuple[str, str], RuntimeProbe | None | str],
+) -> RuntimeProbe | None | str:
+    """Probe runtime with per-tick caching.
+
+    Returns:
+        ``RuntimeProbe`` on success, ``None`` when the provider lacks the
+        probe substrate, or the string ``"failed"`` when ``probe_runtime``
+        raised. Failures are caught here so a single bad pod cannot abort
+        the rest of the sweep.
+    """
+    key = (row.provider, row.id)
+    if key in cache:
+        return cache[key]
+    try:
+        result: RuntimeProbe | None | str = provider.probe_runtime(row.id)
+    except Exception as exc:  # noqa: BLE001 — TransportError or unknown
+        _log.warning("probe_runtime failed for %s/%s: %s", row.provider, row.id, exc)
+        result = "failed"
+    cache[key] = result
+    return result
+
+
+def _synthesize_ephemeral_entry(
+    row: EphemeralIndexRow,
+    probe_result: RuntimeProbe | None | str,
+) -> dict[str, Any]:
+    """Build a ledger-shape dict from an EphemeralIndex row + probe outcome.
+
+    probe_state encodings:
+      * "failed"        — probe_result == "failed"
+      * "no_substrate"  — probe_result is None
+      * "not_found"     — RuntimeProbe.found is False
+      * "ok"            — RuntimeProbe.found is True (util fields populated)
+    """
+    base: dict[str, Any] = {
+        "id": row.id,
+        "provider": row.provider,
+        "provider_kind": row.provider,
+        "kinoforge_ephemeral": True,
+        "created_at": _iso_to_epoch(row.created_at_local),
+    }
+    if probe_result == "failed":
+        base["probe_state"] = "failed"
+        return base
+    if probe_result is None:
+        base["probe_state"] = "no_substrate"
+        return base
+    if not isinstance(probe_result, RuntimeProbe):
+        # Defensive: unknown encoding — degrade to failed rather than crash.
+        base["probe_state"] = "failed"
+        return base
+    if not probe_result.found:
+        base["probe_state"] = "not_found"
+        return base
+    base["probe_state"] = "ok"
+    base["container_uptime_s"] = probe_result.container_uptime_s
+    base["gpu_util_pct"] = probe_result.gpu_util_pct
+    base["cpu_pct"] = probe_result.cpu_pct
+    return base
+
+
 def sweep(
     store: ArtifactStore,
     ledger: Ledger,
@@ -302,6 +381,7 @@ def sweep(
     clock: Clock,
     *,
     policy: Policy | None = None,
+    stall_history: Mapping[str, deque[tuple[float, float]]] | None = None,
 ) -> SweepReport:
     """Classify all ledger entries; optionally act.
 
@@ -333,6 +413,12 @@ def sweep(
             Otherwise, snapshot entries whose verdict is in
             ``policy.act_verdicts`` are dispatched to
             ``act_on_verdict`` (or the UNROUTABLE force-forget loop).
+        stall_history: Sweeper-side ephemeral reap (spec 2026-06-28).
+            Per-pod deque of ``(gpu_util_pct, cpu_pct)`` samples threaded
+            into the classify call so the ephemeral branch can issue
+            STALL_REAP on N consecutive zero-util samples. ``None``
+            (default + ``kinoforge reap`` one-shot mode) skips STALL_REAP
+            in the ephemeral branch.
 
     Returns:
         :class:`SweepReport` with the verdict snapshot and (optional)
@@ -343,6 +429,36 @@ def sweep(
     live_pod_ids_cache: dict[str, set[str]] = {}
 
     entries = list(ledger.entries())
+    ledger_ids = {str(e["id"]) for e in entries}
+
+    # Sweeper-side ephemeral reap (spec 2026-06-28). Union the EphemeralIndex
+    # rows with the ledger entries; ledger wins on overlap (the ledger entry
+    # has full heartbeat substrate). Each ephemeral row gets a per-tick probe
+    # via _probe_with_cache and a synthesised ledger-shape entry flagged with
+    # ``kinoforge_ephemeral=True`` for the classify dispatch.
+    ephemeral_index = EphemeralIndex(store=store)
+    probe_cache: dict[tuple[str, str], RuntimeProbe | None | str] = {}
+    for row in ephemeral_index.rows():
+        if row.id in ledger_ids:
+            continue
+        factory = registry_get_provider(row.provider)
+        if factory is None:
+            continue
+        try:
+            probe_provider = factory()
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "ephemeral provider factory failed for %s: %s", row.provider, exc
+            )
+            continue
+        probe_result = _probe_with_cache(probe_provider, row, probe_cache)
+        entries.append(_synthesize_ephemeral_entry(row, probe_result))
+
+    # Build the kwargs forwarded to classify() — stall_history threads
+    # through the new classify kwarg (only consulted on the ephemeral branch).
+    classify_kwargs: dict[str, Any] = dict(thresholds)
+    classify_kwargs["stall_history"] = stall_history
+
     snapshot: dict[str, tuple[Mapping[str, Any], Verdict]] = {}
 
     for entry in entries:
@@ -352,6 +468,13 @@ def sweep(
         # `_lifecycle` (run_id) and `_cost_cache` as the third reserved
         # kinoforge namespace. See B1 spec §4.4.
         if eid.startswith("sweeper:"):
+            continue
+        # Ephemeral entries skip the provider resolve + list_instances gate —
+        # they were synthesised above with a fresh probe; classify dispatches
+        # via the sentinel branch.
+        if entry.get("kinoforge_ephemeral") is True:
+            verdict = classify(entry, set(), now, **classify_kwargs)
+            snapshot[eid] = (entry, verdict)
             continue
         provider = provider_for(entry, registry_get_provider, provider_cache)
         if provider is None:
@@ -367,7 +490,7 @@ def sweep(
                 provider_cache[name] = None
                 snapshot[eid] = (entry, Verdict.UNROUTABLE)
                 continue
-        verdict = classify(entry, live_pod_ids_cache[name], now, **thresholds)
+        verdict = classify(entry, live_pod_ids_cache[name], now, **classify_kwargs)
         snapshot[eid] = (entry, verdict)
 
     if policy is None:
