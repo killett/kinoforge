@@ -17,6 +17,38 @@ target" below.
 
 ---
 
+**Sweeper-side ephemeral pod reap SHIPPED 2026-06-28 (commits `9a3b5c9..<head>`,
+all 11 tasks GREEN).**
+Spec `docs/superpowers/specs/2026-06-28-sweeper-ephemeral-reap-design.md` +
+plan `docs/superpowers/plans/2026-06-28-sweeper-ephemeral-reap.md`. Long-running
+sweeper daemon now reads `ephemeral-index.json` on each tick, probes each pod
+via the new `ComputeProvider.probe_runtime` (RunPod override wraps existing C26
+GraphQL substrate; SkyPilot/Local inherit `None` default), synthesises a
+ledger-shape entry flagged `kinoforge_ephemeral=True`, and dispatches a
+heartbeat-free `_classify_ephemeral` decision tree. New verdicts: `GC_404`
+(default-apply removes index row), `SKIP_NO_PROBE` + `PROBE_FAILED` (WARN-once
+log inline in `sweep()`, deliberately outside apply policy). `STALL_REAP` for
+ephemeral pods requires cross-tick `SweeperLoop._stall_history` deques (bounded
+by `ceil(stall_window_s / interval_s)`); one-shot `kinoforge reap` passes
+`stall_history=None` so STALL is impossible from a single sample (avoids
+model-load false positives). Tasks:
+- Task 1 — `RuntimeProbe` dataclass + ABC default (`9a3b5c9`)
+- Task 2 — `RunPodProvider.probe_runtime` override (`d7e759b`)
+- Task 3 — `Verdict.GC_404` / `SKIP_NO_PROBE` / `PROBE_FAILED` + dispatch (`f4983a3`)
+- Task 4 — `sweep()` union with per-tick probe cache (`2645c87`)
+- Task 5 — `SweeperLoop._stall_history` bounded deque (`b82ba0f`)
+- Task 6 — `act_on_verdict` GC_404 + WARN-once inline log in sweep (`377a16f`)
+- Task 7 — CLI emitters + `_SweeperStats` counters + session-claim defer (`b93de58`)
+- Task 8 — AST invariant (no heartbeat keys in `_classify_ephemeral`) (`eb526d8`)
+- Task 9 — live smoke RED scaffold (`5f7d501`)
+- Task 10 — live GC_404 smoke against real RunPod GraphQL ($0 spend, 1.12s,
+  evidence at `tests/live/evidence/2026-06-28-sweeper-ephemeral-reap/`) (`9a6ff08`)
+- Task 11 — docs updated (`lifecycle.md` + `warm-reuse.md`)
+**Workstream CLOSED — closes durability gap where ephemeral pods whose selfterm
+watchdog crashed bled cost until manual intervention.**
+
+---
+
 **Warm-attach teardown hang SHIPPED 2026-06-27 (commits `52ae355..3c99729`, all 5 tasks GREEN).**
 Spec `docs/superpowers/specs/2026-06-27-warm-attach-teardown-hang-design.md` + plan
 `docs/superpowers/plans/2026-06-27-warm-attach-teardown-hang.md`. Follow-up to

@@ -244,3 +244,58 @@ smoke. Each poll tick also emits a structured INFO line
 (`comfyui poll job=… elapsed=…s status=… queue_pos=… exec_node=…`)
 so a hang shows you exactly which node is blocking before the timeout
 fires.
+
+## Sweeper-side ephemeral pod reap (2026-06-28)
+
+The sweeper daemon now reaps **ephemeral pods** — pods registered in
+`ephemeral-index.json` (Layer Warm-Reuse) rather than `ledger.json`.
+Without this, an ephemeral pod whose selfterm watchdog crashed would
+bleed cost until the operator manually destroyed it.
+
+### How it works
+
+Each `SweeperLoop._tick_once()`:
+
+1. Reads `EphemeralIndex.rows()` and unions them with `ledger.entries()`.
+   Ledger wins on overlap (it has the full heartbeat substrate).
+2. For each ephemeral-only row, calls `provider.probe_runtime(pod_id)`
+   with a per-tick cache so two rows for the same provider share one
+   call. Provider's `probe_runtime` is the new ABC method
+   (default returns `None`); only `RunPodProvider` overrides it today
+   via the existing C26 GraphQL substrate.
+3. Synthesises a ledger-shape entry flagged `kinoforge_ephemeral=True`
+   with a `probe_state` of `ok` / `not_found` / `no_substrate` /
+   `failed` and dispatches `classify()`.
+4. `_classify_ephemeral` runs a heartbeat-free decision tree (spec
+   §3.5): probe_state dispatch first, then OVERAGE, then STALL if a
+   cross-tick `stall_history` deque is present, else LIVE.
+
+### Verdict matrix (ephemeral branch)
+
+| probe_state    | Verdict          | Default action       |
+|----------------|------------------|----------------------|
+| `not_found`    | `GC_404`         | remove index row     |
+| `no_substrate` | `SKIP_NO_PROBE`  | WARN-once, no-op     |
+| `failed`       | `PROBE_FAILED`   | WARN-once, no-op     |
+| `ok` + overage | `OVERAGE_REAP`   | destroy + remove row |
+| `ok` + stall   | `STALL_REAP`     | destroy + remove row |
+| `ok` + live    | `LIVE`           | no-op                |
+
+`STALL_REAP` fires only when `SweeperLoop` has accumulated N
+consecutive zero-util samples (N = `ceil(stall_window_s /
+heartbeat_interval_s)`). The one-shot `kinoforge reap` CLI passes
+`stall_history=None`, so `STALL_REAP` is impossible from a single
+sweep — a single 0% sample during a model-load is not enough evidence.
+
+### What's deliberately NOT in apply policy
+
+`SKIP_NO_PROBE` and `PROBE_FAILED` are logged inline in `sweep()`
+(WARN-once, dedup keyed on `(provider, pod_id, error_class)`) and
+deliberately omitted from `DEFAULT_APPLY_POLICY` — they describe
+infrastructure conditions, not pod state, and operators cannot fix
+them by destroying the pod.
+
+`IDLE_REAP` from the ephemeral branch is also impossible: model-load
+periods (Wan 14B weight fetch, 4–8 min at 0% GPU) would otherwise
+trip a false positive. Idle is the wrong predicate for ephemeral
+pods; stall (cross-tick sustained zero util) is the right one.

@@ -73,7 +73,7 @@
     {
       "id": 11,
       "subject": "Task 11: Documentation updates",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**Goal:** Operator-facing docs reflect new sweeper-ephemeral behavior + verdict matrix.\n\n**Files:** Modify `docs/lifecycle.md`, `docs/warm-reuse.md`.\n\n**Verify:** Visual review\n\n```json:metadata\n{\"files\": [\"docs/lifecycle.md\", \"docs/warm-reuse.md\"], \"verifyCommand\": \"git diff docs/lifecycle.md docs/warm-reuse.md\", \"acceptanceCriteria\": [\"Ephemeral pod reap section in lifecycle.md\", \"verdict matrix table present\", \"cross-reference in warm-reuse.md\"], \"modelTier\": \"mechanical\"}\n```"
     }
