@@ -1,0 +1,25 @@
+{
+  "ts_local": "2026-06-28T17:37:55.356068",
+  "fake_pod_id": "fake-nonexistent-sweeper-smoke-zz",
+  "dry_verdict": "GC_404",
+  "dry_probe_state": "not_found",
+  "apply_verdict": "GC_404",
+  "apply_actions": [
+    {
+      "id": "fake-nonexistent-sweeper-smoke-zz",
+      "snapshot_verdict": "GC_404",
+      "applied_verdict": "GC_404",
+      "action": "gc_404_removed",
+      "reason": null
+    }
+  ],
+  "rows_pre_sweep": [
+    "fake-nonexistent-sweeper-smoke-zz"
+  ],
+  "rows_post_dry": [
+    "fake-nonexistent-sweeper-smoke-zz"
+  ],
+  "rows_post_apply": [],
+  "elapsed_s": 1.1181535720825195,
+  "pass": true
+}
