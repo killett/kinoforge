@@ -1036,10 +1036,57 @@ def _startup() -> None:
     _log.info("startup: pipeline loaded + worker spawned, server ready")
 
 
+def _capability_for_model(name: str) -> str | None:
+    """Map a loaded-model registry name to its public capability tag.
+
+    Unknown prefixes return ``None`` so they cannot leak into the
+    ``capabilities`` field — the matcher's pre-flight (T14) treats
+    that list as a closed vocabulary and breaks on stray values.
+    """
+    if name.startswith("wan-t2v-"):
+        return "t2v"
+    if name.startswith("seedvr2-") or name.startswith("flashvsr-"):
+        return "upscale"
+    return None
+
+
+def _capabilities_from_loaded() -> list[str]:
+    """Return sorted capability tags derived from ``_LOADED`` membership.
+
+    Derives from actually-loaded pipelines (not cfg intent) so a
+    half-failed provision reports the partial truth — the matcher
+    sees the gap and refuses to attach an unsupported stage.
+    """
+    caps: set[str] = set()
+    for name in _LOADED:
+        cap = _capability_for_model(name)
+        if cap is not None:
+            caps.add(cap)
+    return sorted(caps)
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
-    """Return readiness + model identity."""
-    return {"ready": ready.is_set(), "model": MODEL_ID}
+    """Return readiness + model identity + per-pipeline state + capabilities.
+
+    The ``model`` field is preserved verbatim for backward compatibility
+    with older CLI tooling that compares it to ``MODEL_ID``. New callers
+    should read ``models[]`` for per-pipeline ``on_device`` / ``ready``
+    truth, and ``capabilities[]`` for pre-flight stage routing.
+    """
+    return {
+        "ready": ready.is_set(),
+        "model": MODEL_ID,
+        "models": [
+            {
+                "name": entry["name"],
+                "on_device": entry["on_device"],
+                "ready": entry["on_device"] == "cuda",
+            }
+            for entry in _LOADED.values()
+        ],
+        "capabilities": _capabilities_from_loaded(),
+    }
 
 
 @app.post("/generate")
