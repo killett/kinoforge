@@ -855,6 +855,71 @@ class GenerationEngine(ABC):
         )
 
 
+class UpscalerEngine(ABC):
+    """A swappable video upscaler; owns env setup; declares supported scales.
+
+    No prompt, no segments, no LoRA stack — upscaling is video-in/video-out.
+    Separate from GenerationEngine because the surfaces don't overlap.
+
+    Attributes:
+        name: Registry key (e.g. ``"seedvr2"``).
+        requires_compute: True when this engine needs a remote pod.
+        requires_local_weights: True when the engine downloads weights into
+            the pod's weight directory.
+        supported_scales: Declared support; matcher pre-flight + ``validate_spec``
+            consult this. Empty tuple means "engine claims to accept any
+            ScaleTarget" (use sparingly).
+    """
+
+    name: str
+    requires_compute: bool
+    requires_local_weights: bool
+    supported_scales: tuple[ScaleTarget, ...]
+
+    @abstractmethod
+    def provision(  # noqa: D102
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None: ...
+
+    @abstractmethod
+    def upscale(  # noqa: D102
+        self,
+        instance: Instance | None,
+        job: UpscaleJob,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> UpscaleResult: ...
+
+    @abstractmethod
+    def validate_spec(self, job: UpscaleJob) -> None:
+        """Raise on engine-unsupportable job. SeedVR2 3B refuses scale='3x'."""
+        ...
+
+    @abstractmethod
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Sink-filename slug (e.g. ``'seedvr2-3b-fp8'``). MUST NOT raise on missing fields."""
+        ...
+
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
+        """Emit boot payload. Default raises; remote-capable engines override."""
+        del cfg
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support remote provisioning"
+        )
+
+    def attach_get_instance(
+        self,
+        get_instance: Callable[[str], Instance],
+    ) -> None:
+        """Wire provider lookup; mirrors GenerationEngine.attach_get_instance."""
+        self._get_instance = get_instance  # noqa: SLF001
+
+
 class BackendPool(ABC):
     """Dispatches jobs across one or more GenerationBackends.
 

@@ -417,3 +417,33 @@ class UnsupportedScaleError(KinoforgeError):
         )
         self.scale = scale
         self.engine_name = engine_name
+
+
+class UpscaleFailed(KinoforgeError):
+    """Server-side upscale job entered an error state."""
+
+    def __init__(self, job_id: str, server_error: str) -> None:
+        """Record the failed job_id and server-supplied error description."""
+        super().__init__(f"upscale job {job_id} failed on server: {server_error}")
+        self.job_id = job_id
+        self.server_error = server_error
+
+
+class VRAMEvictionFailed(KinoforgeError):
+    """Eviction policy exhausted all targets and the requested model still doesn't fit."""
+
+    def __init__(self, model: str, reason: str) -> None:
+        """Record the model that wouldn't fit and the reason eviction failed."""
+        super().__init__(f"VRAM eviction failed for {model}: {reason}")
+        self.model = model
+        self.reason = reason
+
+
+class StageMismatch(KinoforgeError):
+    """Pod /health capabilities disagree with cfg's stages requirement."""
+
+    def __init__(self, want: tuple[str, ...], have: tuple[str, ...]) -> None:
+        """Record requested + actual stage tuples."""
+        super().__init__(f"pod missing stages: want={want!r}, have={have!r}")
+        self.want = want
+        self.have = have

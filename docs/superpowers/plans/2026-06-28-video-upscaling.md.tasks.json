@@ -18,7 +18,7 @@
       "id": 9,
       "planTaskId": 1,
       "subject": "Task 1: UpscaleJob + UpscaleResult dataclasses",
-      "status": "in_progress",
+      "status": "completed",
       "blockedBy": [8],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_upscale_types.py"],
@@ -30,7 +30,7 @@
       "id": 10,
       "planTaskId": 2,
       "subject": "Task 2: UpscalerEngine ABC + register_upscaler registry + new exceptions",
-      "status": "pending",
+      "status": "in_progress",
       "blockedBy": [9],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "src/kinoforge/core/registry.py", "src/kinoforge/core/errors.py", "tests/core/test_upscaler_registry.py"],
