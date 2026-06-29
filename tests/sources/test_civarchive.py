@@ -118,45 +118,66 @@ def test_extract_sha256_rejects_short_hex() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_extract_filename_from_h4() -> None:
-    """Extracts a .safetensors filename inside <h4>...</h4>."""
-    html = "<h4>wan2.2_t2v_arcanestyle_high.safetensors</h4>"
+_H2_PREFIX = '<h2 class="font-semibold text-xl flex items-center gap-2">'
+_H2_SUFFIX = '<a title="Search for this file"></a>'
+
+
+def test_extract_filename_from_h2_anchor() -> None:
+    """Extracts a .safetensors filename from the civarchive <h2> file header."""
+    html = f"{_H2_PREFIX}wan2.2_t2v_arcanestyle_high.safetensors{_H2_SUFFIX}"
     assert _extract_filename(html) == "wan2.2_t2v_arcanestyle_high.safetensors"
 
 
 def test_extract_filename_accepts_all_known_extensions() -> None:
-    """Each of safetensors / ckpt / pt / bin / gguf is recognised inside <h4>."""
+    """Each of safetensors / ckpt / pt / bin / gguf is recognised."""
     for ext in ("safetensors", "ckpt", "pt", "bin", "gguf"):
-        html = f"<h4>foo.{ext}</h4>"
+        html = f"{_H2_PREFIX}foo.{ext}{_H2_SUFFIX}"
         assert _extract_filename(html) == f"foo.{ext}"
 
 
 def test_extract_filename_rejects_unknown_extension() -> None:
-    """A `.zip` filename inside <h4> is NOT matched (not in the allowlist)."""
+    """A `.zip` filename is NOT matched (not in the allowlist)."""
     # Bug this catches: regex using `.\w+` instead of explicit extension
     # allowlist, mis-identifying archive files as model files.
-    html = "<h4>archive.zip</h4>"
+    html = f"{_H2_PREFIX}archive.zip{_H2_SUFFIX}"
     with pytest.raises(KinoforgeError):
         _extract_filename(html)
 
 
-def test_extract_filename_anchored_on_h4_not_anchor_text() -> None:
-    """HF mirror anchor text BEFORE the <h4> is ignored."""
+def test_extract_filename_ignores_mirror_paragraph() -> None:
+    """Mirror-section <p class="font-medium ...">NAME</p> is ignored.
+
+    Civarchive renders mirror filenames inside a `<p>` further down the
+    page. The h2 anchor is the primary filename; mirror paragraphs MUST
+    NOT shadow it.
+    """
     # Bug this catches: a broad `>NAME.safetensors<` regex would match the
-    # HF mirror anchor's *display text* (a renamed mirror filename like
-    # Arcane_style__t2v__HIGH.safetensors) instead of the canonical
-    # civarchive filename (wan2.2_t2v_arcanestyle_high.safetensors).
+    # mirror paragraph's display text and shadow the canonical h2 anchor.
     html = (
-        '<a href="https://huggingface.co/x/y/resolve/main/wrong_mirror.safetensors">'
-        "wrong_mirror.safetensors</a>"
-        "<h4>right_civarchive.safetensors</h4>"
+        '<p class="font-medium text-neutral-400">'
+        "wrong_mirror.safetensors</p>"
+        f"{_H2_PREFIX}right_civarchive.safetensors{_H2_SUFFIX}"
     )
     assert _extract_filename(html) == "right_civarchive.safetensors"
 
 
-def test_extract_filename_missing_h4_raises() -> None:
-    """No <h4>filename.ext</h4> anchor → KinoforgeError."""
+def test_extract_filename_missing_h2_raises() -> None:
+    """No <h2>filename.ext<a anchor → KinoforgeError."""
     html = "<html><body>no filename here</body></html>"
     with pytest.raises(KinoforgeError) as exc:
         _extract_filename(html)
     assert "parser needs maintenance" in str(exc.value)
+
+
+def test_extract_filename_requires_trailing_anchor() -> None:
+    """Filename without the trailing `<a` link is not matched.
+
+    Bug this catches: matching ``<h2 ...>NAME</h2>`` without requiring the
+    civarchive "Search for this file" link that follows the filename. A
+    mirror page might place a filename inside an h2 without the search
+    link; the trailing `<a` requirement keeps that from being mistaken for
+    the canonical entry.
+    """
+    html = f"{_H2_PREFIX}foo.safetensors</h2>"
+    with pytest.raises(KinoforgeError):
+        _extract_filename(html)
