@@ -119,12 +119,26 @@ _HEADROOM_MARGIN_BYTES = (
 )
 
 
-def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2 pipe
+_SPANDREL_WEIGHTS_DIR_DEFAULT = "/workspace/models/spandrel"
+
+
+def _spandrel_weights_dir() -> Path:
+    """Return the on-pod spandrel weights directory.
+
+    Override via ``KINOFORGE_SPANDREL_WEIGHTS_DIR`` for unit tests that
+    can't write under ``/workspace/models``.
+    """
+    return Path(
+        os.environ.get("KINOFORGE_SPANDREL_WEIGHTS_DIR", _SPANDREL_WEIGHTS_DIR_DEFAULT)
+    )
+
+
+def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2/spandrel pipe
     """Engine-specific loader dispatched on name prefix.
 
     The single seam where ``wan_t2v_server`` knows which loader to call
-    for which prefix. SeedVR2 lazily imports its runtime so the upstream
-    package isn't required for module import.
+    for which prefix. SeedVR2 + spandrel lazily import their runtimes so
+    the optional packages aren't required for module import.
     """
     if name.startswith("wan-t2v-"):
         return _diffusers_load()
@@ -138,6 +152,29 @@ def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2 
             weights_dir=Path("/workspace/models/seedvr2"),
             variant=variant.upper(),  # type: ignore[arg-type]
             precision=precision,  # type: ignore[arg-type]
+        )
+    if name.startswith("spandrel-"):
+        from kinoforge.upscalers.spandrel._runtime import SpandrelRuntime
+
+        # Slug: "spandrel-{arch}-{precision}" → precision tail. arch token is
+        # informational; the on-disk filename may not exactly match it, so we
+        # resolve by globbing the dest dir for a known SR weights extension.
+        parts = name.split("-")
+        precision = parts[-1]
+        weights_dir = _spandrel_weights_dir()
+        candidates = sorted(weights_dir.glob("*.pth")) + sorted(
+            weights_dir.glob("*.safetensors")
+        )
+        if not candidates:
+            raise FileNotFoundError(
+                f"spandrel weights not found under {weights_dir}; expected "
+                "_fetch_weights to have run during provision"
+            )
+        return SpandrelRuntime(
+            weights_path=candidates[0],
+            precision=precision,  # type: ignore[arg-type]
+            tile_size=512,
+            batch_size=4,
         )
     raise ValueError(f"unknown model name {name!r}; no loader registered")
 
@@ -1045,7 +1082,11 @@ def _capability_for_model(name: str) -> str | None:
     """
     if name.startswith("wan-t2v-"):
         return "t2v"
-    if name.startswith("seedvr2-") or name.startswith("flashvsr-"):
+    if (
+        name.startswith("seedvr2-")
+        or name.startswith("flashvsr-")
+        or name.startswith("spandrel-")
+    ):
         return "upscale"
     return None
 
