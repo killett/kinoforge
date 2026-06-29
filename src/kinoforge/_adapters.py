@@ -43,6 +43,7 @@ import kinoforge.outputs.local  # noqa: F401  side-effect: register "local" Outp
 import kinoforge.providers.local  # noqa: F401
 import kinoforge.providers.runpod  # noqa: F401
 import kinoforge.providers.skypilot  # noqa: F401
+import kinoforge.sources.civarchive  # noqa: F401
 import kinoforge.sources.civitai  # noqa: F401
 
 # Sources

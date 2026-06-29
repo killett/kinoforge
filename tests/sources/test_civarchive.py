@@ -489,3 +489,34 @@ def test_resolve_error_messages_never_leak_url(
     with pytest.raises((KinoforgeError, ValueError)) as exc:
         src.resolve("garbage", creds)
     assert "https://civarchive.com" not in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Self-registration on import
+# ---------------------------------------------------------------------------
+
+import importlib  # noqa: E402
+
+import kinoforge.sources.civarchive  # noqa: E402, F401
+from kinoforge.core import registry  # noqa: E402
+
+
+def test_self_registers_on_import() -> None:
+    """Importing the module registers a CivArchiveSource."""
+    importlib.reload(kinoforge.sources.civarchive)
+    src = registry.source_for_ref("civarchive:1@2")
+    # Bug this catches: self-registration being conditional on a flag, so
+    # repeated imports leave the registry empty.
+    assert src.scheme == "civarchive"
+    assert src.handles("civarchive:1@2") is True
+
+
+def test_adapter_module_imports_civarchive() -> None:
+    """kinoforge._adapters imports the civarchive source."""
+    # Bug this catches: forgetting to add the import line in _adapters.py,
+    # leaving the kinoforge CLI without civarchive routing despite the
+    # source module existing.
+    import kinoforge._adapters  # noqa: F401
+
+    src = registry.source_for_ref("civarchive:1@2")
+    assert src.scheme == "civarchive"

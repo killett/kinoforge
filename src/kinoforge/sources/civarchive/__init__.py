@@ -247,3 +247,11 @@ class CivArchiveSource(ModelSource):
                 headers=headers,
             )
         ]
+
+
+# Self-register on import so a single ``import kinoforge.sources.civarchive``
+# is enough for ``source_for_ref()`` to route CivArchive refs without an
+# explicit register call. Mirrors the civitai pattern.
+from kinoforge.core import registry  # noqa: E402
+
+registry.register_source(CivArchiveSource())
