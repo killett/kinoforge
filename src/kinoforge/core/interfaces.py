@@ -14,6 +14,8 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
 
+from kinoforge.core.scale_target import ScaleTarget
+
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
     from kinoforge.core.runtime_probe import RuntimeProbe
@@ -553,6 +555,46 @@ class GenerationJob:
     spec: dict  # type: ignore[type-arg]
     segments: list[Segment]
     params: dict = field(default_factory=dict)  # type: ignore[type-arg]
+
+
+@dataclass(frozen=True)
+class UpscaleJob:
+    """One unit of upscale work — engine-agnostic.
+
+    No prompt, no segments, no LoRA stack — upscaling is video-in / video-out.
+
+    Attributes:
+        source: Input video Artifact (uri set by ArtifactStore or pointing at a
+            local path readable by the engine).
+        scale: ScaleTarget. v1 engines MUST raise NotYetImplementedError on
+            ``kind="height"``.
+        params: Engine-specific overrides (e.g. tile_size, steps, denoise);
+            engines validate via ``validate_spec``.
+    """
+
+    source: Artifact
+    scale: ScaleTarget
+    params: dict = field(default_factory=dict)  # type: ignore[type-arg]
+
+
+@dataclass(frozen=True)
+class UpscaleResult:
+    """Output of one upscale job.
+
+    Attributes:
+        artifact: Rendered upscaled video.
+        input_resolution: ``(width, height)`` measured from the source clip.
+        output_resolution: ``(width, height)`` of the rendered output.
+        elapsed_s: Wall-clock seconds spent inside the engine.
+        engine_meta: Engine-specific telemetry (e.g. SeedVR2 tile count,
+            denoise steps used). Free-form open dict.
+    """
+
+    artifact: Artifact
+    input_resolution: tuple[int, int]
+    output_resolution: tuple[int, int]
+    elapsed_s: float
+    engine_meta: dict = field(default_factory=dict)  # type: ignore[type-arg]
 
 
 class ModelProfileProvider(ABC):
