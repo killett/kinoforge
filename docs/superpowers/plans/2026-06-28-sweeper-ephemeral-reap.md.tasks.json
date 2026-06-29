@@ -24,7 +24,7 @@
     {
       "id": 4,
       "subject": "Task 4: sweep() unions EphemeralIndex rows + per-tick probe cache",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 3],
       "description": "**Goal:** Sweeper discovers ephemeral pods via index union + probe cache + ledger-wins-on-overlap.\n\n**Files:** Modify `src/kinoforge/core/reaper_actor.py` line 297+. Create `tests/core/test_sweep_ephemeral_union.py`.\n\n**Verify:** `pixi run pytest tests/core/test_sweep_ephemeral_union.py tests/core/test_reaper_actor.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper_actor.py\", \"tests/core/test_sweep_ephemeral_union.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_sweep_ephemeral_union.py tests/core/test_reaper_actor.py -v\", \"acceptanceCriteria\": [\"sweep unions ledger ∪ ephemeral_index.rows\", \"ledger wins on overlap\", \"per-tick probe cache\", \"failure isolation per pod\", \"stall_history kwarg plumbed\"], \"modelTier\": \"standard\"}\n```"
     },
