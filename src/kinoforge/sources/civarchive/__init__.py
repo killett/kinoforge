@@ -15,8 +15,11 @@ Parser anchors (do NOT loosen without re-pinning the fixture):
 
 - SHA256: ``<a href="/sha256/<hex64>">`` — the ``/sha256/`` URL path is part
   of CivArchive's own routing.
-- Filename: ``<h4>NAME.EXT</h4>`` for EXT in
-  ``{safetensors, ckpt, pt, bin, gguf}``.
+- Filename: ``<h2 class="font-semibold text-xl ...">NAME.EXT<a`` for EXT in
+  ``{safetensors, ckpt, pt, bin, gguf}``. The trailing ``<a`` is the
+  "Search for this file across all platforms" link civarchive renders next
+  to the filename — mirror filenames (rendered inside ``<p>`` further down
+  the page) lack this link and are therefore excluded.
 """
 
 from __future__ import annotations
@@ -36,7 +39,10 @@ _REF_RE = re.compile(r"^civarchive:(\d+)(?:@(\d+))?$")
 # ---------------------------------------------------------------------------
 
 _SHA256_HREF_RE = re.compile(r'href="/sha256/([0-9a-f]{64})"')
-_FILENAME_RE = re.compile(r"<h4>([^<>\s]+\.(?:safetensors|ckpt|pt|bin|gguf))</h4>")
+_FILENAME_RE = re.compile(
+    r'<h2 class="font-semibold text-xl[^"]*">'
+    r"([^<>\s]+\.(?:safetensors|ckpt|pt|bin|gguf))<a"
+)
 
 
 def _extract_sha256(html: str) -> str:
@@ -70,8 +76,8 @@ def _extract_filename(html: str) -> str:
         The filename (e.g. ``"model.safetensors"``).
 
     Raises:
-        KinoforgeError: No ``<h4>filename.ext</h4>`` anchor is present
-            for a recognised model file extension.
+        KinoforgeError: No ``<h2 class="font-semibold text-xl">NAME.EXT<a``
+            anchor is present for a recognised model file extension.
     """
     m = _FILENAME_RE.search(html)
     if m is None:
