@@ -45,7 +45,7 @@
     {
       "id": 7,
       "subject": "Task 7: kinoforge reap CLI integration + session-claim race test",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "**Goal:** CLI emits ephemeral pods; --apply runs GC_404; one-shot skips STALL; SweeperStats counters; session-claim race confirmed safe.\n\n**Files:** Modify `src/kinoforge/cli/_commands.py` (2116, 2177), `src/kinoforge/core/sweeper_metrics.py`. Create `tests/integration/test_reap_cli_ephemeral.py`, `tests/integration/test_sweeper_skips_on_session_claim.py`.\n\n**Verify:** `pixi run pytest tests/integration/test_reap_cli_ephemeral.py tests/integration/test_sweeper_skips_on_session_claim.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"src/kinoforge/core/sweeper_metrics.py\", \"tests/integration/test_reap_cli_ephemeral.py\", \"tests/integration/test_sweeper_skips_on_session_claim.py\"], \"verifyCommand\": \"pixi run pytest tests/integration/test_reap_cli_ephemeral.py tests/integration/test_sweeper_skips_on_session_claim.py -v\", \"acceptanceCriteria\": [\"CLI dry-run lists ephemeral\", \"--apply GC_404 removes row\", \"one-shot skips STALL_REAP\", \"JSONL action literals\", \"SweeperStats counters increment\", \"session-claim race safe\"], \"modelTier\": \"standard\"}\n```"
     },
