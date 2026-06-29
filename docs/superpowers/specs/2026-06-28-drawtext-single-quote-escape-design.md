@@ -1,51 +1,73 @@
-# drawtext caption escape: switch to single-quote wrap
+# drawtext caption escape: empirical double-backslash for `:`
+
+## Status
+
+REVISED 2026-06-28 after empirical ffmpeg test refuted the original
+single-quote hypothesis. Filename kept for git continuity; content
+documents the corrected approach.
 
 ## Problem
 
-`kinoforge.core.grid.compose._escape_drawtext` currently emits the
-character-substitution form: `:` → `\:`, `'` → `\'`, `%` → `\%`,
-`\` → `\\`, `\n` → `\n` (literal). That single layer of backslash escape
-is not robust against ffmpeg's `-filter_complex` parser pipeline: in
-practice, captions containing `:` such as
-`fixture: realistic prompt` truncated mid-string during
-`compose_grid_mp4`, breaking T8 / T13 grid renders on 2026-06-28. The
-workaround shipped at commit 610862b sidesteps the bug by renaming
-captions to avoid `:`, but the escape is still wrong for any caption a
-user supplies that contains `:` (and likely `,` and `;` too, which the
-chain syntax also overloads).
+`kinoforge.core.grid.compose._escape_drawtext` currently emits a
+single-level per-char escape (`:` → `\:`, `'` → `\'`, `%` → `\%`,
+`\` → `\\`). Captions like `fixture: realistic prompt` truncated
+mid-string during `compose_grid_mp4`, breaking T8 / T13 grid renders
+on 2026-06-28. The workaround at commit 610862b renamed captions to
+avoid `:`; the underlying executor bug is unfixed.
 
 ## Goal
 
-Make `_escape_drawtext` robust against `:` `,` `;` in caption text, so
-arbitrary user-supplied captions render correctly without forcing
-operators to memorise an ad-hoc forbidden-character list.
+Make `_escape_drawtext` robust against `:` `,` `;` `'` `%` in caption
+text so arbitrary user-supplied captions render correctly.
 
 ## Non-goals
 
-- Adding live-ffmpeg integration tests beyond the unit tier. T8 / T13
-  reruns will exercise the end-to-end path.
+- Live-ffmpeg integration tests beyond the unit tier. T8 / T13 reruns
+  exercise the end-to-end path.
 - Reverting `examples/configs/grids/*.yaml` to colon-bearing captions.
   Separate follow-up commit once this lands.
 
+## Empirical findings (ffmpeg 8.1.1)
+
+Sweep over `text=a<bs>Xb` for each special char with 1, 2, and 4
+literal backslashes on the argv wire (no shell mangling — subprocess
+argv direct), with the standard `:fontcolor=...:x=...:y=...` suffix:
+
+| char | 1×`\` | 2×`\` | 4×`\` |
+|------|-------|-------|-------|
+| `:`  | FAIL  | OK    | FAIL  |
+| `,`  | OK    | FAIL  | FAIL  |
+| `;`  | OK    | FAIL  | FAIL  |
+| `'`  | OK    | FAIL  | FAIL  |
+| `%`  | OK    | OK    | OK    |
+
+`:` is the outlier — it requires `\\:` (two backslashes on wire) where
+the others want a single backslash. The single-quote-wrap hypothesis
+that this spec previously documented is FALSE for ffmpeg's
+filtergraph parser: `'…'` does NOT make `:` inert. Independent test:
+`text='fixture: realistic prompt'` (with literal quotes, no inner
+backslash) → `No option name near ' realistic prompt:fontcolor='`.
+
+Likely mechanism (not load-bearing on the fix): drawtext's `text=`
+value goes through an extra unescape pass on `:` specifically, so the
+chain parser's single-backslash escape is consumed before drawtext
+gets a chance to interpret. Other separators (`,` `;`) only meet one
+unescape pass.
+
 ## Approach
 
-Switch to ffmpeg's documented single-quote wrap. Inside a
-single-quoted `text='...'` value, the filtergraph parser treats `:`
-`,` `;` as literal — no per-character escape needed. Only `'`, `\`,
-and `%` still need handling inside the quotes:
+Replace the per-char escape with the empirically validated rules:
 
-- `'` → `\'` so the quoted region doesn't close early.
-- `\` → `\\` so drawtext's own escape pass doesn't consume the next
-  character (`\b`, `\n` etc. have meaning).
-- `%` → `\%` so drawtext's strftime-like `%{...}` substitution stays
-  inert on user input (this rule survives even inside single quotes).
+- `\` → `\\` (double — drawtext's own escape pass interprets `\X`
+  sequences such as `\n` for newline; doubling preserves user-supplied
+  literal backslashes).
+- `:` → `\\:` (double-backslash — the empirical winner; single
+  backslash fails).
+- `,` `;` `'` `%` → `\X` (single backslash — empirically sufficient
+  and the `%` rule disables drawtext's strftime-like `%{...}`).
 
-Newline handling unchanged: drawtext's text= treats the two-character
-sequence `\n` as a line break, so an actual `'\n'` in the input
-becomes `\n` in the quoted output via the backslash-doubling rule
-(input `\` doubles to `\\`, input `n` stays literal — yielding `\\n`
-on the wire). That matches existing observed-as-newline behavior; if
-that proves wrong in practice we add a targeted test and revisit.
+Ordering matters: backslash MUST be doubled first, otherwise the
+later substitutions' inserted backslashes would themselves be doubled.
 
 ## Change
 
@@ -53,78 +75,90 @@ that proves wrong in practice we add a targeted test and revisit.
 # core/grid/compose.py
 
 def _escape_drawtext(s: str) -> str:
-    r"""Escape caption text for ffmpeg drawtext text= value.
+    r"""Escape a caption for ffmpeg drawtext text= value.
 
-    Wraps the result in single quotes; inside the quotes the only
-    special characters are '\'', '\\', and '%' (kept escaped to
-    disable strftime-like substitution). Filtergraph chain separators
-    (':' ',' ';') are NOT escaped — they're inert inside single quotes.
+    Empirically validated against ffmpeg 8.1.1 (2026-06-28):
+
+      * '\\' doubles to '\\\\' so drawtext's text= parse does not
+        consume user backslashes via its own \\X interpretation.
+      * ':' becomes '\\\\:' (two backslashes on wire) — the chain
+        parser does not consume a single-backslash escape for ':'
+        in drawtext's text= value, while a double-backslash survives
+        chain-syntax stripping.
+      * ',' ';' "'" '%' each take a single backslash — empirically
+        sufficient and the '%' rule keeps drawtext's strftime-like
+        '%{...}' substitution inert on user input.
+
+    Backslash MUST be doubled first; later substitutions insert
+    backslashes that we do NOT want re-escaped.
     """
-    inner = s.replace("\\", "\\\\").replace("'", r"\'").replace("%", r"\%")
-    return f"'{inner}'"
+    out = s.replace("\\", "\\\\")
+    out = out.replace(":", "\\\\:")
+    for ch in (",", ";", "'", "%"):
+        out = out.replace(ch, "\\" + ch)
+    return out
 ```
 
-Caller in `_build_filter_graph`:
+Caller in `_build_filter_graph` unchanged shape — value is no longer
+wrapped in quotes; emit remains `f",drawtext=text={esc}:fontcolor=..."`
+which was the original shape.
 
-```python
-if cell.caption:
-    text_value = _escape_drawtext(cell.caption)  # already single-quoted
-    chain += (
-        f",drawtext=text={text_value}:fontcolor=white:fontsize=h*0.05:"
-        f"box=1:boxcolor=black@0.5:boxborderw=8:"
-        f"x=(w-text_w)/2:y=20"
-    )
-```
-
-The old `_DRAWTEXT_ESCAPED` constant is removed.
+The old `_DRAWTEXT_ESCAPED` dict is removed.
 
 ## Tests (RED first)
 
 In `tests/core/test_grid_compose.py`:
 
-1. `test_escape_drawtext_single_quotes_output_and_keeps_colon_literal`
-   - Input: `"a:b"`. Expected: `"'a:b'"`.
-   - Bug it catches: a fix that still per-char escapes `:` would emit
-     `'a\:b'` and fail this assertion. Pins the new wrapping scheme.
+1. `test_escape_drawtext_colon_uses_double_backslash`
+   - Input `"a:b"` → expected `r"a\\:b"` (two backslashes, then `:`).
+   - Bug catch: a single-backslash escape (the broken shipped form)
+     would emit `r"a\:b"` and fail this assertion. Matches the
+     empirical ffmpeg-8.1.1 requirement.
 
-2. `test_escape_drawtext_escapes_inner_single_quote`
-   - Input: `"it's"`. Expected: `r"'it\'s'"`.
-   - Bug it catches: forgetting the `'` substitution would close the
-     quoted region early at the apostrophe, producing
-     `'it's'` which the filtergraph parser would see as `'it'` + `s'`.
+2. `test_escape_drawtext_single_backslash_for_chain_separators`
+   - Parametrize `","`, `";"`, `"'"`, `"%"` → each emits `\X`.
+   - Bug catch: applying the colon's double-backslash rule to these
+     chars would over-escape and break ffmpeg's chain parser
+     (empirically verified failure mode).
 
-3. `test_escape_drawtext_doubles_backslash_so_drawtext_does_not_consume`
-   - Input: `"a\\b"` (Python literal: backslash). Expected: `r"'a\\b'"`.
-   - Bug it catches: a single backslash inside the quoted region would
-     let drawtext's escape consume `b`, mis-rendering as `a` + control
-     char.
+3. `test_escape_drawtext_user_backslash_is_doubled`
+   - Input `"a\\b"` (one literal backslash) → expected `r"a\\\\b"`
+     (two literal backslashes).
+   - Bug catch: a single user backslash that survives un-doubled
+     would let drawtext's own escape pass consume the next character
+     (e.g. `\b` interpreted as a control sequence).
 
-4. `test_escape_drawtext_keeps_percent_escape_to_disable_strftime`
-   - Input: `"100%"`. Expected: `r"'100\%'"`.
-   - Bug it catches: dropping `%` from the escape would let drawtext
-     interpret `%{n}` style substitutions on user input.
+4. `test_escape_drawtext_ordering_does_not_double_inserted_backslashes`
+   - Input `"a:b"` must NOT emit `r"a\\\\:b"` (four backslashes).
+   - Bug catch: doing the colon substitution before the backslash
+     doubling would re-double the colon's inserted backslashes,
+     yielding the four-backslash form that empirically FAILS the
+     ffmpeg parser.
 
-5. `test_escape_drawtext_empty_string_still_quoted`
-   - Input: `""`. Expected: `"''"`.
-   - Bug it catches: a guard like `if not s: return s` would emit a
-     bare `text=` (no value), which ffmpeg rejects as a parse error.
+5. `test_escape_drawtext_empty_string_passthrough`
+   - Input `""` → expected `""`.
+   - Bug catch: a guard like `return f"'{s}'"` left over from the
+     abandoned single-quote design would emit `"''"`.
 
-6. `test_build_filter_graph_caption_with_colon_emits_single_quoted_text`
-   - Caption `"strength:0.5"`. Graph contains literal substring
-     `"text='strength:0.5'"`. Replaces the existing
-     `test_build_filter_graph_caption_with_colon_is_escaped` (which
-     pins the old `\:` form and must fail after the switch).
+6. `test_build_filter_graph_caption_with_colon_uses_double_backslash`
+   - Caption `"strength:0.5"` → graph contains literal substring
+     `r"text=strength\\:0.5"`. Replaces the existing
+     `test_build_filter_graph_caption_with_colon_is_escaped` which
+     pins the broken single-backslash form.
 
-7. Update existing parametrized cases in `test_escape_drawtext` that
-   pin per-character escape outputs (`r"a\:b"` etc.). They were
-   pinning the broken contract; replace with the new quoted forms.
+7. `test_build_filter_graph_caption_with_colon_and_space`
+   - Real-world caption `"fixture: realistic prompt"` → graph contains
+     `r"text=fixture\\: realistic prompt"`. Pins the exact bug from
+     the 2026-06-28 production failure.
 
 ## Risk
 
-Low-medium. Single function, unit-tested. The risk is that ffmpeg
-behaves differently than the spec describes for an exotic Unicode
-input we didn't cover. Mitigation: T8 / T13 reruns after merge act as
-live smoke; if a real caption breaks we add a targeted test.
+Low. The empirical sweep covered every relevant character; the
+proposed rules each round-trip OK through ffmpeg 8.1.1's parser when
+exercised in isolation and in a combined caption. Risk vector that
+remains: an exotic Unicode or multi-special input not covered by the
+sweep. Mitigation: T8 / T13 reruns after merge act as live smoke; if
+a real caption breaks we add a targeted test.
 
 ## Follow-up
 
