@@ -31,7 +31,7 @@
     {
       "id": 5,
       "subject": "Task 5: SweeperLoop owns bounded stall history",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Cross-tick stall samples in bounded in-memory deque per pod; evicted on pod disappearance.\n\n**Files:** Modify `src/kinoforge/core/sweeper.py` lines 111-263. Create `tests/core/test_sweeper_loop_stall_history.py`.\n\n**Verify:** `pixi run pytest tests/core/test_sweeper_loop_stall_history.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/sweeper.py\", \"tests/core/test_sweeper_loop_stall_history.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_sweeper_loop_stall_history.py -v\", \"acceptanceCriteria\": [\"_stall_history dict on SweeperLoop\", \"deque maxlen bounded\", \"history pruned per tick\", \"reload preserves history\"], \"modelTier\": \"standard\"}\n```"
     },
