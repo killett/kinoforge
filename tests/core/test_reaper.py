@@ -363,6 +363,55 @@ def test_classify_per_entry_grace_override_beats_cfg_default() -> None:
 
 
 # ---------------------------------------------------------------------------
+# classify — session_end-aware grace (regression: 2026-06-28 misclassification)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_live_when_sentinel_stale_but_session_end_recent() -> None:
+    """grace_after_session_s is measured from session_end, not from created_at.
+
+    Production failure 2026-06-28: pod created 15:23, two generates completed by
+    15:55:52 (session_end written by orchestrator), next CLI at 16:00:17. Pod was
+    healthy and only 4.4 min past last detach, but classify compared pod_age
+    (37 min) against grace (30 min) and returned ORPHAN_REAP, blocking warm-reuse.
+
+    Between CLI invocations the in-process HeartbeatLoop is dead, so the
+    sentinel necessarily goes stale — that is normal, not orphan. As long as
+    session_end is recent the pod is still inside its post-session warm-reuse
+    window and classify must return LIVE.
+    """
+    e = _entry(
+        created_at=0.0,
+        last_heartbeat=700.0,
+        heartbeat_thread_tick=700.0,
+        session_end=950.0,
+    )
+    # now=1_000; sent_age=300 > 90 (stale); pod_age=1_000 > grace=500;
+    # time_since_session_end=50 <= grace=500 → LIVE
+    assert classify(e, {"i-1"}, now=1_000.0, **_THR) == Verdict.LIVE
+
+
+def test_classify_orphan_reap_when_session_end_also_past_grace() -> None:
+    """Both clocks past grace → genuinely orphan, still ORPHAN_REAP.
+
+    Guards a fix that would only consult session_end (and ignore pod_age) or one
+    that flips the comparison: a pod whose driver detached longer ago than the
+    grace window must still be reaped.
+    """
+    e = _entry(
+        created_at=0.0,
+        last_heartbeat=8_000.0,
+        heartbeat_thread_tick=8_000.0,
+        session_end=1_000.0,
+    )
+    # now=9_000; sent_age=1_000 > 90 (stale);
+    # pod_age=9_000 > grace=500; time_since_session_end=8_000 > grace=500
+    # → ORPHAN_REAP (both clocks expired)
+    # max_lifetime_s=10_000 keeps this out of OVERAGE_REAP.
+    assert classify(e, {"i-1"}, now=9_000.0, **_THR) == Verdict.ORPHAN_REAP
+
+
+# ---------------------------------------------------------------------------
 # classify — boundary tests
 # ---------------------------------------------------------------------------
 

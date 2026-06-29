@@ -479,8 +479,29 @@ def classify(
             return Verdict.LIVE
         return Verdict.IDLE_REAP
 
-    # Rows 5 & 6 — sentinel stale
-    if pod_age > grace:
+    # Rows 5 & 6 — sentinel stale. Measure grace from the last driver detach
+    # (``session_end``), not pod creation: ``grace_after_session_s`` is named
+    # and documented (interfaces.py:65) as the POST-SESSION warm-reuse window.
+    # Between CLI invocations the in-process HeartbeatLoop is dead, so the
+    # sentinel necessarily goes stale — that is normal, not orphan. As long
+    # as the last detach is within grace the pod is still inside the
+    # warm-reuse window and must classify LIVE.
+    #
+    # Fallbacks:
+    #   * ``session_end`` absent → never driven yet (or pre-Layer-B3 legacy
+    #     entry); fall back to ``pod_age`` so brand-new pods still get the
+    #     full grace window from creation and ancient orphan entries still
+    #     get reaped.
+    #   * ``max(created_at, session_end)`` guards against an out-of-order
+    #     write where ``session_end`` somehow predates the pod itself; we
+    #     never measure from a marker older than the pod.
+    session_end = entry.get("session_end")
+    if session_end is None:
+        time_since_drive = pod_age
+    else:
+        drive_marker = max(created_at, float(session_end))
+        time_since_drive = now - drive_marker
+    if time_since_drive > grace:
         return Verdict.ORPHAN_REAP
     return Verdict.LIVE
 
