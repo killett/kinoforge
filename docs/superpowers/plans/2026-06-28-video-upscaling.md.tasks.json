@@ -66,7 +66,7 @@
       "id": 13,
       "planTaskId": 5,
       "subject": "Task 5: UpscaleConfig + SeedVR2EngineConfig + Config.capability_key()",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8, 10, 11],
       "metadata": {
         "files": ["src/kinoforge/core/config.py", "tests/core/test_config_upscale.py"],
