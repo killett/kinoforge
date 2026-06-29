@@ -36,3 +36,14 @@ def test_seedvr2_factory_returns_upscaler_instance() -> None:
     engine = factory()
     assert isinstance(engine, UpscalerEngine)
     assert engine.name == "seedvr2"
+
+
+def test_both_seedvr2_and_spandrel_registered() -> None:
+    # Bug caught: a future edit to _adapters.py drops one of the two
+    # upscaler imports, silently removing it from the registry.
+    import kinoforge._adapters  # noqa: F401
+    from kinoforge.core import registry
+
+    names = registry.upscaler_names()
+    assert "seedvr2" in names
+    assert "spandrel" in names
