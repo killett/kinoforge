@@ -6,7 +6,7 @@
       "id": 8,
       "planTaskId": 0,
       "subject": "Task 0: ScaleTarget parser + UnsupportedScaleError + NotYetImplementedError",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "metadata": {
         "files": ["src/kinoforge/core/scale_target.py", "src/kinoforge/core/errors.py", "tests/core/test_scale_target.py"],
@@ -18,7 +18,7 @@
       "id": 9,
       "planTaskId": 1,
       "subject": "Task 1: UpscaleJob + UpscaleResult dataclasses",
-      "status": "pending",
+      "status": "in_progress",
       "blockedBy": [8],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_upscale_types.py"],
@@ -255,5 +255,5 @@
       }
     }
   ],
-  "lastUpdated": "2026-06-28"
+  "lastUpdated": "2026-06-28T23:45:00"
 }
