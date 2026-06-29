@@ -467,6 +467,56 @@ class BedrockVideoEngineConfig(BaseModel):
         return v
 
 
+class SeedVR2EngineConfig(BaseModel):
+    """SeedVR2-specific config; required when ``upscale.engine == "seedvr2"``.
+
+    ``weights_ref`` defaults to ``None``; a ``model_validator`` populates the
+    variant-derived ref (``"hf:ByteDance-Seed/SeedVR2-{variant}"``) so the
+    common case stays one line in cfg. Explicit overrides (fork weights,
+    pinned snapshots) are preserved unchanged.
+
+    Attributes:
+        variant: Model size; ``"3B"`` (default) or ``"7B"``.
+        precision: ``"fp8"`` (default) or ``"fp16"``.
+        tile_size: Optional VRAM-vs-throughput knob; engine default when None.
+        steps: Optional denoise-step override; engine default when None.
+        weights_ref: HF / vendor-neutral ref. Auto-populated from ``variant``
+            when None.
+    """
+
+    variant: Literal["3B", "7B"] = "3B"
+    precision: Literal["fp8", "fp16"] = "fp8"
+    tile_size: int | None = None
+    steps: int | None = None
+    weights_ref: str | None = None
+
+    @model_validator(mode="after")
+    def _fill_weights_ref(self) -> Self:
+        if self.weights_ref is None:
+            object.__setattr__(
+                self,
+                "weights_ref",
+                f"hf:ByteDance-Seed/SeedVR2-{self.variant}",
+            )
+        return self
+
+
+class UpscaleConfig(BaseModel):
+    """Top-level ``upscale:`` block; presence activates the in-pipeline UpscaleStage.
+
+    Attributes:
+        engine: Upscaler name (registry key). v1 supports ``"seedvr2"``.
+        scale: ScaleTarget grammar string (``"2x"`` | ``"4x"`` | ``"1080p"`` ...).
+            Consumers call ``ScaleTarget.parse(scale)``; the height branch
+            raises ``NotYetImplementedError`` in v1.
+        seedvr2: SeedVR2-specific block; required when ``engine == "seedvr2"``.
+    """
+
+    engine: str
+    scale: str
+    seedvr2: SeedVR2EngineConfig | None = None
+
+
 class EngineConfig(BaseModel):
     """Top-level engine block.
 
@@ -845,6 +895,7 @@ class Config(BaseModel):
     spec: dict[str, Any] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
     keyframe: KeyframeConfig | None = None
+    upscale: UpscaleConfig | None = None
     sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
     # C28 A1.5: opt-in diagnostic mode. When True the engine's render_provision
     # prepends an EXIT trap that captures the boot log + system snapshot and
@@ -1005,11 +1056,31 @@ class Config(BaseModel):
         base_model = (
             base_refs[0] if len(base_refs) == 1 else "|".join(sorted(base_refs))
         )
+
+        # 2026-06-28: stages / upscaler factors. Pure-generate cfgs (no
+        # upscale block) leave stages=() so derive() preserves the legacy
+        # hash space.
+        stages: list[str] = []
+        upscaler = ""
+        upscaler_precision = ""
+        if self.upscale is not None:
+            stages.append("t2v")
+            stages.append("upscale")
+            upscaler = self.upscale.engine
+            if self.upscale.seedvr2 is not None:
+                upscaler_precision = (
+                    f"{self.upscale.seedvr2.variant.lower()}-"
+                    f"{self.upscale.seedvr2.precision}"
+                )
+
         return CapabilityKey(
             base_model=base_model,
             loras=tuple(loras),
             engine=self.engine.kind,
             precision=self.engine.precision,
+            stages=tuple(stages),
+            upscaler=upscaler,
+            upscaler_precision=upscaler_precision,
         )
 
     def lifecycle(self) -> InterfaceLifecycle:
