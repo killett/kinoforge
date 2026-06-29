@@ -12,4 +12,5 @@ from kinoforge.validation.checks import (  # noqa: F401 — self-register
     ledger,
     lifecycle,
     models,
+    upscale,
 )
