@@ -56,7 +56,8 @@ import kinoforge.stores.local  # noqa: F401
 import kinoforge.stores.s3  # noqa: F401
 
 # Upscalers
-import kinoforge.upscalers.seedvr2  # noqa: F401  # self-registers under "seedvr2"
+import kinoforge.upscalers.seedvr2  # noqa: F401  # self-registers under "seedvr2" (extras-stub until Phase 2)
+import kinoforge.upscalers.spandrel  # noqa: F401  # self-registers under "spandrel"
 
 # --------------------------------------------------------------------------
 # Cross-provider dispatch helpers (live here because they import concrete
