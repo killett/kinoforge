@@ -38,7 +38,7 @@
     {
       "id": 6,
       "subject": "Task 6: act_on_verdict handles GC_404, SKIP_NO_PROBE, PROBE_FAILED",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 5],
       "description": "**Goal:** New verdicts trigger side-effects: GC_404 removes index row, SKIP/FAILED log WARN-once.\n\n**Files:** Modify `src/kinoforge/core/reaper_actor.py`. Create `tests/integration/test_sweeper_reaps_ephemeral_stall.py`, `tests/integration/test_sweep_skypilot_ephemeral_warn_once.py`.\n\n**Verify:** `pixi run pytest tests/integration/test_sweeper_reaps_ephemeral_stall.py tests/integration/test_sweep_skypilot_ephemeral_warn_once.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper_actor.py\", \"tests/integration/test_sweeper_reaps_ephemeral_stall.py\", \"tests/integration/test_sweep_skypilot_ephemeral_warn_once.py\"], \"verifyCommand\": \"pixi run pytest tests/integration/test_sweeper_reaps_ephemeral_stall.py tests/integration/test_sweep_skypilot_ephemeral_warn_once.py -v\", \"acceptanceCriteria\": [\"GC_404 removes row, no destroy\", \"SKIP_NO_PROBE WARN-once\", \"PROBE_FAILED dedup with error_class\", \"scripted stall sequence drives destroy\", \"_LOG_ONLY_VERDICTS dispatch\"], \"modelTier\": \"standard\"}\n```"
     },
