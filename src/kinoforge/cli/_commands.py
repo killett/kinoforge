@@ -1613,9 +1613,19 @@ def _refuse_reason_for_verdict(
         hb = float(entry.get("last_heartbeat", now))
         return f"hb_age={now - hb:.0f}s > idle_timeout={lifecycle.idle_timeout_s:.0f}s"
     if verdict == "ORPHAN_REAP":
-        tick = float(entry.get("heartbeat_thread_tick", now))
+        # Mirror reaper.classify's decision basis: time since last detach
+        # (session_end), with pod_age fallback when session_end never written.
+        # Reporting sentinel_age here is a footgun — the sentinel is the
+        # trigger for entering the stale branch, not the threshold compared
+        # against grace_after_session_s.
+        session_end = entry.get("session_end")
+        if session_end is not None:
+            elapsed_label = f"time_since_session_end={now - float(session_end):.0f}s"
+        else:
+            created_at = float(entry.get("created_at", now))
+            elapsed_label = f"pod_age={now - created_at:.0f}s"
         return (
-            f"sentinel_age={now - tick:.0f}s past "
+            f"{elapsed_label} past "
             f"grace_after_session_s={lifecycle.grace_after_session_s:.0f}s"
         )
     if verdict == "HEARTBEAT_UNKNOWN":
