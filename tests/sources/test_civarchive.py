@@ -181,3 +181,109 @@ def test_extract_filename_requires_trailing_anchor() -> None:
     html = f"{_H2_PREFIX}foo.safetensors</h2>"
     with pytest.raises(KinoforgeError):
         _extract_filename(html)
+
+
+# ---------------------------------------------------------------------------
+# _urllib_fetch_html — transport
+# ---------------------------------------------------------------------------
+
+from urllib.error import HTTPError  # noqa: E402
+from urllib.request import Request  # noqa: E402
+
+from kinoforge.core.errors import AuthError  # noqa: E402
+from kinoforge.sources.civarchive import _urllib_fetch_html  # noqa: E402
+
+
+class _StubResponse:
+    """Minimal urlopen() context-manager stub."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self) -> _StubResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_fetch_html_returns_decoded_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """200 OK → decoded UTF-8 body string."""
+    captured_url: list[str] = []
+    captured_headers: list[dict[str, str]] = []
+
+    def fake_urlopen(req: Request) -> _StubResponse:
+        captured_url.append(req.full_url)
+        captured_headers.append(dict(req.headers))
+        return _StubResponse(b"hello <h2>x.safetensors</h2>")
+
+    monkeypatch.setattr("kinoforge.sources.civarchive.urlopen", fake_urlopen)
+
+    body = _urllib_fetch_html("https://civarchive.com/foo", {})
+
+    assert body == "hello <h2>x.safetensors</h2>"
+    # urllib title-cases header keys.
+    assert captured_headers[0].get("User-agent") == "kinoforge-smoke/0.1"
+
+
+def test_fetch_html_401_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """401 → AuthError mentioning the URL."""
+
+    # Bug this catches: catching all HTTPErrors as KinoforgeError, hiding the
+    # AuthError signal the credential layer relies on.
+    def fake_urlopen(req: Request) -> _StubResponse:
+        raise HTTPError(
+            url=req.full_url,
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=None,
+        )
+
+    monkeypatch.setattr("kinoforge.sources.civarchive.urlopen", fake_urlopen)
+
+    with pytest.raises(AuthError) as exc:
+        _urllib_fetch_html("https://civarchive.com/x", {})
+    assert "401" in str(exc.value)
+
+
+def test_fetch_html_404_raises_kinoforge_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """404 → KinoforgeError (NOT AuthError)."""
+
+    def fake_urlopen(req: Request) -> _StubResponse:
+        raise HTTPError(
+            url=req.full_url,
+            code=404,
+            msg="Not Found",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=None,
+        )
+
+    monkeypatch.setattr("kinoforge.sources.civarchive.urlopen", fake_urlopen)
+
+    with pytest.raises(KinoforgeError) as exc:
+        _urllib_fetch_html("https://civarchive.com/x", {})
+    assert "404" in str(exc.value)
+    assert not isinstance(exc.value, AuthError)
+
+
+def test_fetch_html_caller_headers_passed_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller-supplied headers are sent on the request."""
+    captured_headers: list[dict[str, str]] = []
+
+    def fake_urlopen(req: Request) -> _StubResponse:
+        captured_headers.append(dict(req.headers))
+        return _StubResponse(b"")
+
+    monkeypatch.setattr("kinoforge.sources.civarchive.urlopen", fake_urlopen)
+
+    _urllib_fetch_html("https://civarchive.com/x", {"X-Custom": "yes"})
+
+    assert captured_headers[0].get("X-custom") == "yes"
