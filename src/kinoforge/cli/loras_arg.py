@@ -23,7 +23,7 @@ from kinoforge.core.errors import KinoforgeError
 from kinoforge.core.lora import LoraEntry
 
 _NUMERIC_SHORTHAND = re.compile(r"^(\d+):(\d+)$")
-_KNOWN_SCHEMES = frozenset({"civitai", "hf", "file", "https", "http"})
+_KNOWN_SCHEMES = frozenset({"civitai", "civarchive", "hf", "file", "https", "http"})
 
 
 class LineError(BaseModel):
@@ -254,8 +254,8 @@ def _format_one(err: LineError) -> str:
         return f"{loc}: unknown scheme `{err.scheme}` (expected one of: {allowed})"
     if err.kind == "missing-scheme":
         return (
-            f"{loc}: missing scheme (use `civitai:`, `hf:`, `file:`, or "
-            f"numeric `<modelId>:<versionId>`)"
+            f"{loc}: missing scheme (use `civitai:`, `civarchive:`, "
+            f"`hf:`, `file:`, or numeric `<modelId>:<versionId>`)"
         )
     if err.kind == "bad-strength":
         return f"{loc}: bad strength (not a float)"
