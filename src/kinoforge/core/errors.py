@@ -389,3 +389,31 @@ class SetStackRequestRejected(KinoforgeError):
     Pydantic bounds, so this firing indicates a contract drift between
     client and server schemas.
     """
+
+
+# --- Video upscaling -------------------------------------------------------
+
+
+class NotYetImplementedError(KinoforgeError):
+    """Raised when a code path is intentionally deferred to a future session.
+
+    Distinct from stdlib NotImplementedError (ABC abstract method) — this is
+    explicit "we chose to parse-then-raise instead of refuse-at-parse-time"
+    semantics. See ScaleTarget(kind="height").
+    """
+
+
+class UnsupportedScaleError(KinoforgeError):
+    """Raised when an UpscalerEngine refuses a ScaleTarget its model can't serve.
+
+    Carries enough context for post-mortem without session memory.
+    """
+
+    def __init__(self, scale: object, engine_name: str) -> None:
+        """Record the scale and engine_name for post-mortem rendering."""
+        super().__init__(
+            f"engine {engine_name!r} does not support scale {scale!r}; "
+            f"declared supported_scales gates this refusal"
+        )
+        self.scale = scale
+        self.engine_name = engine_name
