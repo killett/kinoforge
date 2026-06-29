@@ -495,28 +495,31 @@ def test_no_debug_or_warning_when_one_flag_declared(
     )
 
 
-def test_verify_with_no_declared_flags_logs_at_warning(
+def test_verify_warns_when_cache_and_probe_disagree_and_engine_stopped_declaring(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """verify() against a stale cache where the engine no longer declares flags must WARN.
+    """verify() must WARN when the cached strategy flags disagree with the fresh probe
+    AND the engine no longer declares those flags.
 
-    Bug catch: if a cached profile was discovered when the engine still
-    declared strategy flags but the engine has since been downgraded (or its
-    declared_flags_map regressed), the cached strategy bits no longer match
-    reality. discover() is silent on this because it is the source of truth
-    for a fresh probe — but verify() must escalate to WARNING so the drift
-    is surfaced.
+    This is the genuine regression case: a cached profile was discovered when
+    the engine declared strategy flags (so the merged profile carries the
+    declared value), then the engine's declared_flags_map regressed to empty.
+    The cached bits no longer reflect either the declared value (gone) or the
+    probe (which now wins by default in discover()), so warm-attach should
+    surface the drift.
+
+    Bug catch: an over-eager noise reduction that drops the warning entirely
+    would silence this legitimate regression signal.
     """
     import logging
 
     from kinoforge.core.profiles import JsonProfileCache
 
-    # Build a cached profile by hand — no engine involvement, no extra log records.
+    # Cached profile carries True (e.g. discovered when declared_flags={"native": True})
     profile = _make_probe(supports_native_extension=True, supports_joint_audio=True)
+    # Live probe reports False on both — engine no longer overrides probe
     backend = _CountingBackend(
-        _make_probe(  # same probeable fields → no drift
-            supports_native_extension=True, supports_joint_audio=True
-        )
+        _make_probe(supports_native_extension=False, supports_joint_audio=False)
     )
     key = _make_key()
     # Engine returns empty dict — the "regression" scenario.
@@ -540,6 +543,50 @@ def test_verify_with_no_declared_flags_logs_at_warning(
     ), (
         f"expected WARNING to mention 'no longer declares' and the key hash; "
         f"got: {[r.message for r in warning_records]}"
+    )
+
+
+def test_verify_no_warning_when_engine_declares_no_flags_and_cache_matches_probe(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """verify() must NOT warn when engine declares no flags AND cache agrees with probe.
+
+    This is the baseline state for engines like DiffusersEngine / FALEngine
+    whose registry factories construct them without a declared_flags_map.
+    `engine.declared_flags(key)` returns `{}` for every key. There is no drift
+    — the cached profile's flag values were written from the probe in
+    discover() and the fresh probe reports the same values.
+
+    Bug catch: before the fix, this combination fired the warning on every
+    warm-attach generation, training operators to ignore the line. Observed
+    in production on 2026-06-28 against Wan 2.2 14B.
+    """
+    import logging
+
+    from kinoforge.core.profiles import JsonProfileCache
+
+    # Cache and probe agree exactly on flag fields — no drift.
+    profile = _make_probe(supports_native_extension=False, supports_joint_audio=False)
+    backend = _CountingBackend(
+        _make_probe(supports_native_extension=False, supports_joint_audio=False)
+    )
+    key = _make_key()
+    engine = _FakeEngine(flags_by_derive={})  # diffusers / fal baseline
+
+    store = LocalArtifactStore(tmp_path)
+    cache = JsonProfileCache(store=store)
+
+    caplog.set_level(logging.WARNING, logger="kinoforge.profiles")
+    cache.verify(profile, backend, engine=engine, key=key)
+
+    drift_warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "no longer declares" in r.message
+    ]
+    assert not drift_warnings, (
+        f"should not warn when there is no actual cache/probe drift; "
+        f"got: {[(r.levelname, r.message) for r in drift_warnings]}"
     )
 
 
