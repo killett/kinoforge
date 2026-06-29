@@ -97,3 +97,54 @@ def test_vault_lora_strength_obeys_lora_entry_bounds() -> None:
 
     with pytest.raises(ValidationError):
         VaultLoRA(ref="x", strength=3.0)
+
+
+# ---------------------------------------------------------------------------
+# URL → canonical normalization via the ref field validator
+# (Sub-project A — see docs/superpowers/specs/2026-06-28-lora-url-normalization-design.md)
+# ---------------------------------------------------------------------------
+
+
+def test_LoraEntry_normalizes_civitai_url_with_modelVersionId() -> None:
+    entry = LoraEntry(
+        ref="https://civitai.com/models/2197303/arcane-style?modelVersionId=2474081",
+        strength=0.5,
+        branch="high_noise",
+    )
+    assert entry.ref == "civitai:2197303@2474081"
+    assert entry.strength == 0.5
+    assert entry.branch == "high_noise"
+
+
+def test_LoraEntry_normalizes_civarchive_url() -> None:
+    entry = LoraEntry(
+        ref="https://civarchive.com/models/2197303?modelVersionId=2474081",
+    )
+    assert entry.ref == "civarchive:2197303@2474081"
+
+
+def test_LoraEntry_normalizes_hf_blob_url() -> None:
+    entry = LoraEntry(
+        ref="https://huggingface.co/Org/Repo/blob/main/sub/file.safetensors",
+    )
+    assert entry.ref == "hf:Org/Repo:sub/file.safetensors"
+
+
+def test_LoraEntry_rejects_civitai_url_without_modelVersionId() -> None:
+    """Bug catch: the validator must surface the ambiguity, AND the
+    pydantic ValidationError text must NOT echo the URL (privacy)."""
+    with pytest.raises(ValidationError) as excinfo:
+        LoraEntry(
+            ref="https://civitai.com/models/2197303/arcane-style",
+        )
+    text = str(excinfo.value)
+    assert "civitai URL missing required ?modelVersionId=" in text
+    # Privacy invariant — URL text must NOT appear in the ValidationError.
+    assert "civitai.com" not in text
+    assert "2197303" not in text
+    assert "arcane-style" not in text
+
+
+def test_LoraEntry_canonical_ref_passes_through_unchanged() -> None:
+    entry = LoraEntry(ref="civitai:1234@5678")
+    assert entry.ref == "civitai:1234@5678"
