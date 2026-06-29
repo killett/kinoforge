@@ -53,6 +53,11 @@ class _SweeperStats:
     errors_total: int = 0
     last_sweep_ts: float = 0.0
     deferred: _DeferredCounts = field(default_factory=_DeferredCounts)
+    # Sweeper-side ephemeral reap (spec 2026-06-28).
+    gc_404_total: int = 0
+    probe_failed_total: int = 0
+    skip_no_probe_total: int = 0
+    probe_failed_seen: int = 0
 
     def fold(self, report: SweepReport, *, now: float) -> None:
         """Tally one SweepReport into the cumulative counters.
@@ -81,11 +86,19 @@ class _SweeperStats:
                 )
             elif action.action == "failed":
                 self.errors_total += 1
+            elif action.action == "gc_404_removed":
+                self.gc_404_total += 1
+            elif action.action == "probe_failed":
+                self.probe_failed_total += 1
         for _entry, verdict in report.snapshot.values():
             if verdict == Verdict.HEARTBEAT_SUBSTRATE_MISSING:
                 self.deferred.heartbeat_substrate_missing += 1
             elif verdict == Verdict.HEARTBEAT_UNKNOWN:
                 self.deferred.heartbeat_unknown_skipped += 1
+            elif verdict == Verdict.SKIP_NO_PROBE:
+                self.skip_no_probe_total += 1
+            elif verdict == Verdict.PROBE_FAILED:
+                self.probe_failed_seen += 1
 
     def snapshot_for_ledger(self) -> dict[str, Any]:
         """Return the ``ledger.touch`` ``**extra`` kwargs for this tick."""
@@ -96,6 +109,9 @@ class _SweeperStats:
             "deferred_session_claim": self.deferred.session_claim,
             "deferred_heartbeat_unknown_skipped": self.deferred.heartbeat_unknown_skipped,
             "deferred_heartbeat_substrate_missing": self.deferred.heartbeat_substrate_missing,
+            "gc_404_total": self.gc_404_total,
+            "probe_failed_total": self.probe_failed_total,
+            "skip_no_probe_total": self.skip_no_probe_total,
         }
 
     def snapshot_for_log(self) -> str:
@@ -103,7 +119,9 @@ class _SweeperStats:
         d = self.deferred
         return (
             f"sweeps={self.sweeps_total} destroys={self.destroys_total} "
-            f"errors={self.errors_total} "
+            f"errors={self.errors_total} gc404={self.gc_404_total} "
+            f"probe_fail={self.probe_failed_total} "
+            f"skip_no_probe={self.skip_no_probe_total} "
             f"deferred(session={d.session_claim},"
             f"hb_unk={d.heartbeat_unknown_skipped},"
             f"hb_miss={d.heartbeat_substrate_missing})"
