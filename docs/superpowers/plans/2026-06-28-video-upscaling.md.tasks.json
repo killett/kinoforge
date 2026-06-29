@@ -30,7 +30,7 @@
       "id": 10,
       "planTaskId": 2,
       "subject": "Task 2: UpscalerEngine ABC + register_upscaler registry + new exceptions",
-      "status": "in_progress",
+      "status": "completed",
       "blockedBy": [9],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "src/kinoforge/core/registry.py", "src/kinoforge/core/errors.py", "tests/core/test_upscaler_registry.py"],
@@ -42,7 +42,7 @@
       "id": 11,
       "planTaskId": 3,
       "subject": "Task 3: CapabilityKey stages/upscaler/upscaler_precision factors + backward-compat hash",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_capability_key_stages.py"],
@@ -54,7 +54,7 @@
       "id": 12,
       "planTaskId": 4,
       "subject": "Task 4: WarmAttachKey stages factor (mirror)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_capability_key_stages.py"],
