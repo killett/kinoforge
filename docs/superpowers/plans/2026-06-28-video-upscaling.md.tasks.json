@@ -102,7 +102,7 @@
       "id": 16,
       "planTaskId": 8,
       "subject": "Task 8: SeedVR2Runtime wrapper",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "metadata": {
         "files": ["src/kinoforge/upscalers/__init__.py", "src/kinoforge/upscalers/seedvr2/__init__.py", "src/kinoforge/upscalers/seedvr2/_runtime.py", "tests/upscalers/test_seedvr2_runtime.py"],
