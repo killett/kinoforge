@@ -7,6 +7,9 @@ license-files = ["LICENSE"]
 authors = [{ name = "Emmy Killett" }]
 dependencies = []
 
+[project.optional-dependencies]
+seedvr = []  # Phase 2 fills in: vendored upstream
+
 [tool.ruff]
 # Vendored third-party code is kept verbatim and is not subject to our lint/format rules.
 extend-exclude = ["tools/_vendored"]
