@@ -312,7 +312,16 @@ def test_reload_swaps_policy_under_lock() -> None:
     """
     sweep_args: list[tuple[Mapping[str, Any], Policy]] = []
 
-    def sweep_fn(store, ledger, get_provider, thresholds, clock, *, policy):
+    def sweep_fn(
+        store,
+        ledger,
+        get_provider,
+        thresholds,
+        clock,
+        *,
+        policy,
+        stall_history=None,
+    ):
         sweep_args.append((dict(thresholds), policy))
         return _make_report()
 

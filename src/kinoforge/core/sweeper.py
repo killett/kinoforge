@@ -14,7 +14,9 @@ Public surface:
 from __future__ import annotations
 
 import logging
+import math
 import threading
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -172,6 +174,14 @@ class SweeperLoop:
         self._logger = logger_ or _log
         self._join_timeout_s = join_timeout_s
         self._sweep_fn = _sweep_fn
+        # Sweeper-side ephemeral reap (spec 2026-06-28 §4.2). Per-pod bounded
+        # deque of (gpu_util_pct, cpu_pct) samples accumulated across ticks.
+        # Owned here so a daemon restart wipes it (acceptable — STALL_REAP
+        # only fires after N consecutive samples; a freshly-restarted daemon
+        # gets a clean slate on every pod). Threaded into the sweep call
+        # via the stall_history kwarg; only consulted on the ephemeral
+        # branch of classify.
+        self._stall_history: dict[str, deque[tuple[float, float]]] = {}
         self._stop = threading.Event()
         self._reload_lock = threading.Lock()
         self._thread = threading.Thread(
@@ -248,8 +258,10 @@ class SweeperLoop:
                 thresholds,
                 self._clock,
                 policy=policy,
+                stall_history=self._stall_history,
             )
             now = self._clock.now()
+            self._update_stall_history(report, thresholds)
             self._stats.fold(report, now=now)
             self._ledger.touch(
                 f"sweeper:{self._host}",
@@ -260,3 +272,42 @@ class SweeperLoop:
         except Exception:  # noqa: BLE001
             self._stats.errors_total += 1
             self._logger.exception("sweep tick failed on host=%s", self._host)
+
+    def _update_stall_history(
+        self,
+        report: SweepReport,
+        thresholds: Mapping[str, Any],
+    ) -> None:
+        """Append samples from ok-probe ephemeral entries; evict gone pods.
+
+        Spec 2026-06-28 §4.2. Bound deque maxlen at
+        ``ceil(stall_window_s / interval_s)`` so the in-memory cost is
+        proportional to the classification window, not to pod uptime.
+        """
+        stall_window_s = float(thresholds.get("stall_window_s") or 0.0)
+        maxlen = (
+            max(1, math.ceil(stall_window_s / self._interval_s))
+            if stall_window_s > 0.0
+            else 1
+        )
+        live_ids: set[str] = set()
+        for eid, (entry, _verdict) in report.snapshot.items():
+            if entry.get("kinoforge_ephemeral") is not True:
+                continue
+            live_ids.add(eid)
+            if entry.get("probe_state") != "ok":
+                continue
+            sample = (
+                float(entry.get("gpu_util_pct") or 0.0),
+                float(entry.get("cpu_pct") or 0.0),
+            )
+            history = self._stall_history.get(eid)
+            if history is None or history.maxlen != maxlen:
+                # Initial create or maxlen change (e.g. after reload swapped
+                # stall_window_s). Carry over recent samples up to new cap.
+                existing = list(history) if history is not None else []
+                history = deque(existing[-maxlen:], maxlen=maxlen)
+                self._stall_history[eid] = history
+            history.append(sample)
+        for stale_id in [eid for eid in self._stall_history if eid not in live_ids]:
+            del self._stall_history[stale_id]
