@@ -168,3 +168,29 @@ class TestCapabilities:
         )
         caps = client.get("/health").json()["capabilities"]
         assert caps == ["t2v"]  # unknown prefix ignored, not surfaced
+
+
+class TestSpandrelCapability:
+    def test_spandrel_prefix_yields_upscale_capability(
+        self, loaded_client: Any
+    ) -> None:
+        # Bug caught: _capability_for_model misses the spandrel prefix
+        # and a spandrel-only pod misrepresents itself as having no
+        # capabilities (or as t2v-only). The matcher then refuses to
+        # attach upscale jobs to it.
+        _srv, client, set_loaded = loaded_client
+        set_loaded({"spandrel-realesrgan-fp16": _entry("spandrel-realesrgan-fp16")})
+        assert client.get("/health").json()["capabilities"] == ["upscale"]
+
+    def test_spandrel_and_wan_yield_sorted_both(self, loaded_client: Any) -> None:
+        # Bug caught: a multi-model pod (Wan T2V + spandrel upscaler) reports
+        # only one capability because the loop short-circuits after the first
+        # known prefix matches. Asserts the union appears, sorted.
+        _srv, client, set_loaded = loaded_client
+        set_loaded(
+            {
+                "wan-t2v-a14b-fp8": _entry("wan-t2v-a14b-fp8"),
+                "spandrel-realesrgan-fp16": _entry("spandrel-realesrgan-fp16"),
+            }
+        )
+        assert client.get("/health").json()["capabilities"] == ["t2v", "upscale"]

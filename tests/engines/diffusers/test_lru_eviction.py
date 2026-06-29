@@ -156,3 +156,53 @@ class TestLRUOrder:
 
         assert srv._LOADED["wan-t2v-a14b-fp8"]["on_device"] == "cpu"
         assert srv._LOADED["seedvr2-3b-fp8"]["on_device"] == "cuda"
+
+
+class TestSpandrelDispatch:
+    def test_spandrel_prefix_loads_via_spandrel_runtime(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        # Bug caught: prefix dispatch misses spandrel-* and the LRU
+        # registry tries to load WanPipeline against a spandrel slug.
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        # Pre-create a dummy weights file under a tmp dir and redirect
+        # the on-pod weights-dir lookup to it via the env-var seam.
+        weights = tmp_path / "RealESRGAN_x2plus.pth"
+        weights.write_bytes(b"")
+        monkeypatch.setenv("KINOFORGE_SPANDREL_WEIGHTS_DIR", str(tmp_path))
+
+        # Stub the SpandrelRuntime constructor so we don't pull torch or
+        # the real spandrel package into the unit test.
+        fake_runtime = MagicMock(name="SpandrelRuntime")
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_ctor(**kwargs: Any) -> Any:
+            captured_kwargs.update(kwargs)
+            return fake_runtime
+
+        import kinoforge.upscalers.spandrel._runtime as runtime_mod
+
+        monkeypatch.setattr(runtime_mod, "SpandrelRuntime", fake_ctor)
+
+        pipe = srv._load_model_to_gpu("spandrel-realesrgan-fp16")
+        assert pipe is fake_runtime
+        assert captured_kwargs["weights_path"] == weights
+        assert captured_kwargs["precision"] == "fp16"
+
+    def test_spandrel_missing_weights_raises_filenotfound(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        # Bug caught: dispatch attempts SpandrelRuntime construction
+        # before checking that any weights file actually landed, so the
+        # operator sees a confusing "ImportError loading spandrel" instead
+        # of "weights missing — _fetch_weights didn't run".
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        monkeypatch.setenv("KINOFORGE_SPANDREL_WEIGHTS_DIR", str(tmp_path))
+        with pytest.raises(FileNotFoundError, match="spandrel weights not found"):
+            srv._load_model_to_gpu("spandrel-realesrgan-fp16")
