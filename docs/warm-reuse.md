@@ -473,3 +473,22 @@ JSON record `{pod_id, endpoint_url, provider, warm_attach_key,
 provision_ts, cost_per_hr_usd}` to `<path>`. NOT written on
 provision failure. The grid executor reads this to hand cell-1's
 fresh pod off to cells 2..N's `--attach-pod` invocations.
+
+## Sweeper-side ephemeral pod reap
+
+See [Sweeper-side ephemeral pod reap
+(2026-06-28)](lifecycle.md#sweeper-side-ephemeral-pod-reap-2026-06-28)
+in `lifecycle.md`. As of 2026-06-28, the long-running sweeper daemon
+no longer ignores ephemeral pods: it reads `ephemeral-index.json` on
+each tick, probes each pod via the provider's new `probe_runtime`
+method, and reaps stale rows (`GC_404`), overage pods
+(`OVERAGE_REAP`), or wedged pods (`STALL_REAP` — cross-tick history
+required, so one-shot `kinoforge reap` skips it).
+
+This closes the durability gap where an ephemeral pod whose
+selfterm watchdog crashed bled cost until manual intervention. The
+sweeper now catches that within `stall_window_s` seconds of the
+crash.
+
+Spec:
+`docs/superpowers/specs/2026-06-28-sweeper-ephemeral-reap-design.md`.
