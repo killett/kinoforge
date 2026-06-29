@@ -25,8 +25,48 @@ Parser anchors (do NOT loosen without re-pinning the fixture):
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
-from kinoforge.core.errors import KinoforgeError
+from kinoforge.core.errors import AuthError, KinoforgeError
+
+# ---------------------------------------------------------------------------
+# HTTP transport
+# ---------------------------------------------------------------------------
+
+FetchHTMLCallable = Callable[[str, dict[str, str]], str]
+
+
+def _urllib_fetch_html(url: str, headers: dict[str, str]) -> str:
+    """Fetch *url* with GET, return the response body as a UTF-8 string.
+
+    Args:
+        url: The endpoint URL.
+        headers: HTTP request headers to include. The default
+            ``User-Agent: kinoforge-smoke/0.1`` is prepended but a
+            caller-supplied ``User-Agent`` overrides it.
+
+    Returns:
+        Decoded UTF-8 body.
+
+    Raises:
+        AuthError: The server returned HTTP 401.
+        KinoforgeError: Any other non-2xx HTTP error or network failure.
+    """
+    # CivArchive is Cloudflare-fronted (same gating as civitai); the default
+    # Python-urllib UA gets a 403. Mirror the civitai source pattern.
+    request_headers = {"User-Agent": "kinoforge-smoke/0.1", **headers}
+    req = Request(url, headers=request_headers)  # noqa: S310
+    try:
+        with urlopen(req) as resp:  # noqa: S310 — only civarchive.com HTTPS URLs used
+            body: bytes = resp.read()
+    except HTTPError as exc:
+        if exc.code == 401:
+            raise AuthError(f"CivArchive 401 Unauthorized for {url}") from exc
+        raise KinoforgeError(f"CivArchive HTTP {exc.code} for {url}") from exc
+    return body.decode("utf-8")
+
 
 # ---------------------------------------------------------------------------
 # Ref pattern (mirrors civitai source)
