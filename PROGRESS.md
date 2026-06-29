@@ -12,8 +12,44 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
-**No active workstream — next initiative TBD.** See "NEXT SESSION —
-TOP PRIORITY" below.
+**No active workstream — next initiative TBD.**
+
+---
+
+**civarchive source module (Sub-project B) SHIPPED 2026-06-28 (commits `e58c047..5c7f69a`, all 7 tasks GREEN).**
+Spec `docs/superpowers/specs/2026-06-28-civarchive-source-design.md` +
+plan `docs/superpowers/plans/2026-06-28-civarchive-source.md`.
+`CivArchiveSource` resolves `civarchive:<id>@<vid>` refs via stdlib
+HTML scrape of `civarchive.com/models/<id>?modelVersionId=<vid>`. Two
+regex anchors extract integrity + name: `/sha256/<hex64>` href for the
+sha256 (used post-download to verify), and
+`<h2 class="font-semibold text-xl flex items-center gap-2">NAME.EXT<a`
+for the canonical filename (the trailing `<a` "Search for this file"
+link guards against false positives from mirror-section paragraphs).
+`Artifact.url` stays at the abstract `civarchive.com/api/download/models/<vid>`
+endpoint so the 307 redirect chain owns host indirection; cache
+validity survives re-mirror events. HTML fetch is anonymous (no
+foreign-host leak of `CIVITAI_TOKEN`); the token flows only into
+`Artifact.headers` for the eventual download. Bare `civarchive:N` refs
+parse-accept at `handles()` but reject at `resolve()` pre-HTTP with a
+clear `requires @<versionId>` error (symmetric with sub-project A's
+URL-normalize rejection). Live evidence (one $0 anonymous GET) at
+`tests/live/evidence/2026-06-28-civarchive-source/` — Verdict PASS,
+sha256+filename match pinned fixture. One spec deviation logged in
+commit `05f0564`: live HTML uses `<h2>` not `<h4>` for the filename
+anchor (spec was based on stale inspection); regex + tests adapted to
+the actual structural anchor.
+Tasks:
+- Task 0 — HTML extractor helpers + RED/GREEN unit tests (`e58c047`)
+- Task 1 — pin live HTML fixture + filename-anchor correction (`05f0564`)
+- Task 2 — `_urllib_fetch_html` transport (`56b4d0d`)
+- Task 3 — `CivArchiveSource` class with fixture replay (`79b9e2f`)
+- Task 4 — self-register + `_adapters.py` wire-up (`ecfb796`)
+- Task 5 — live evidence smoke scaffold (`b879427`) + GREEN evidence (`5c7f69a`)
+- Task 6 — docs + workstream close (this commit)
+**Workstream CLOSED — civarchive: refs now resolve end-to-end. Combined
+with Sub-project A, pasting a civarchive URL into a LoRA config flows
+straight through to a downloadable Artifact.**
 
 ---
 
@@ -39,41 +75,6 @@ Tasks:
 **Workstream CLOSED — pasting URLs into LoRA configs now works
 end-to-end for civitai + hf. Civarchive URLs are parse-accepted;
 resolution waits for Sub-project B (see TOP PRIORITY below).**
-
----
-
-## NEXT SESSION — TOP PRIORITY (do this BEFORE anything else)
-
-**Sub-project B — civarchive source module.** Pinned by user 2026-06-28
-during the LoRA URL normalization brainstorming. User chose "Treat as
-separate scheme" (not "normalize civarchive to civitai"), then explicitly
-requested this be the first work picked up after Sub-project A ships.
-
-Required scope:
-- New `src/kinoforge/sources/civarchive/` module analogous to
-  `src/kinoforge/sources/civitai/`.
-- WebFetch civarchive.com to document the API surface: download URL
-  pattern, hash availability (for `LoraEntry.sha256` verification), rate
-  limits, auth (token? anonymous?), error shapes.
-- Register in `src/kinoforge/_adapters.py` next to the existing civitai
-  + huggingface imports.
-- `_REF_RE` mirrors civitai's: `^civarchive:(\d+)(?:@(\d+))?$`.
-- Tests in `tests/sources/test_civarchive.py` mirroring
-  `tests/sources/test_civitai*.py` shape (mocked HTTP, no live).
-- Live evidence: one live download of a known small civarchive LoRA,
-  posted under `tests/live/evidence/<date>-civarchive-source/`.
-
-Sub-project A leaves civarchive refs parse-accepted but resolve-failing
-with a "civarchive source not yet implemented" error until B lands.
-
-User's URL-normalization decisions (recorded 2026-06-28):
-- URL forms accepted: civitai with version, HuggingFace blob, AND
-  civarchive (new scheme, see note above). NO civitai bare-no-version,
-  NO HF bare-repo (recorded in spec; sub-project A implements).
-- Bare civitai / civarchive URL (no `modelVersionId`): REJECT with
-  clear error.
-- Civarchive routing: treat as separate scheme (not aliased to civitai)
-  — this is what makes Sub-project B necessary.
 
 ---
 
