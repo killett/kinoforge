@@ -130,12 +130,26 @@ class LoraEntry(BaseModel):
             (low-entropy enum; same posture as ``strength``).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     ref: str = Field(min_length=1)
     strength: float = Field(default=1.0, ge=-2.0, le=2.0)
     sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$|^$")
     branch: Literal["high_noise", "low_noise", "auto"] = Field(default="auto")
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _normalize_url_ref(cls, v: Any) -> Any:  # noqa: ANN401
+        """Normalize URL-shaped refs to canonical short form.
+
+        Runs ``mode="before"`` so pydantic's ``min_length=1`` check sees
+        the post-normalization value. See module-level ``_normalize_ref``
+        for the URL → canonical rules and the privacy invariant on raised
+        errors.
+        """
+        if isinstance(v, str):
+            return _normalize_ref(v)
+        return v
 
     @field_validator("branch", mode="before")
     @classmethod
