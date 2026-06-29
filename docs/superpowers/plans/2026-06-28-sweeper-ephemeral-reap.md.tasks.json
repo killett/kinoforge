@@ -59,7 +59,7 @@
     {
       "id": 9,
       "subject": "Task 9: Live smoke — RED scaffold (committed BEFORE live spend)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "**Goal:** Live test scaffold committed RED before any RunPod spend per project durability rule.\n\n**Files:** Create `tests/live/test_runpod_ephemeral_sweeper_smoke.py`.\n\n**Verify:** `pixi run pytest tests/live/test_runpod_ephemeral_sweeper_smoke.py -v` (collects + SKIPS)\n\n```json:metadata\n{\"files\": [\"tests/live/test_runpod_ephemeral_sweeper_smoke.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_runpod_ephemeral_sweeper_smoke.py -v\", \"acceptanceCriteria\": [\"File collects cleanly\", \"module-level skip in place\", \"no live API hits\", \"committed before live spend\"], \"modelTier\": \"mechanical\"}\n```"
     },
