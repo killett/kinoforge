@@ -287,3 +287,205 @@ def test_fetch_html_caller_headers_passed_through(
     _urllib_fetch_html("https://civarchive.com/x", {"X-Custom": "yes"})
 
     assert captured_headers[0].get("X-custom") == "yes"
+
+
+# ---------------------------------------------------------------------------
+# CivArchiveSource — handles() + resolve()
+# ---------------------------------------------------------------------------
+
+import pathlib  # noqa: E402
+
+from kinoforge.core.credentials import EnvCredentialProvider  # noqa: E402
+from kinoforge.core.interfaces import Artifact  # noqa: E402
+from kinoforge.sources.civarchive import CivArchiveSource  # noqa: E402
+
+_FIXTURE_PATH = (
+    pathlib.Path(__file__).parent / "civarchive" / "fixtures" / "version_2474081.html"
+)
+_FIXTURE_HTML = _FIXTURE_PATH.read_text()
+
+
+class SpyHTMLFetch:
+    """Injectable fetch that returns canned HTML strings and records calls."""
+
+    def __init__(self, responses: dict[str, str]) -> None:
+        self.calls: list[tuple[str, dict[str, str]]] = []
+        self._responses = responses
+
+    def __call__(self, url: str, headers: dict[str, str]) -> str:
+        self.calls.append((url, headers))
+        if url not in self._responses:
+            raise KeyError(f"spy: no canned response for {url}")
+        return self._responses[url]
+
+
+def _make_creds(
+    monkeypatch: pytest.MonkeyPatch, token: str | None
+) -> EnvCredentialProvider:
+    if token is None:
+        monkeypatch.delenv("CIVITAI_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("CIVITAI_TOKEN", token)
+    return EnvCredentialProvider()
+
+
+def _version_url(model_id: int, version_id: int) -> str:
+    return f"https://civarchive.com/models/{model_id}?modelVersionId={version_id}"
+
+
+# --- scheme + handles ---
+
+
+def test_scheme_attribute_is_civarchive() -> None:
+    """scheme class attribute is 'civarchive'."""
+    assert CivArchiveSource.scheme == "civarchive"
+
+
+def test_handles_canonical_with_version() -> None:
+    src = CivArchiveSource()
+    assert src.handles("civarchive:111@222") is True
+
+
+def test_handles_bare_model_only() -> None:
+    """Bare ref is parse-accepted; resolve() raises separately."""
+    src = CivArchiveSource()
+    assert src.handles("civarchive:111") is True
+
+
+def test_handles_rejects_civitai_scheme() -> None:
+    src = CivArchiveSource()
+    assert src.handles("civitai:111@222") is False
+
+
+def test_handles_rejects_garbage() -> None:
+    src = CivArchiveSource()
+    assert src.handles("civarchive:abc@xyz") is False
+
+
+# --- resolve: error paths ---
+
+
+def test_resolve_bare_ref_raises_pre_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare civarchive:N rejected BEFORE any HTTP fetch."""
+    spy = SpyHTMLFetch({})
+    src = CivArchiveSource(fetch=spy)
+    creds = _make_creds(monkeypatch, None)
+
+    with pytest.raises(KinoforgeError) as exc:
+        src.resolve("civarchive:111", creds)
+
+    msg = str(exc.value)
+    assert "requires @<versionId>" in msg
+    # Bug this catches: validating bare-ref after the HTTP fetch, wasting a
+    # request and producing a confusing parser-failure error on a page that
+    # was never going to yield a single version.
+    assert spy.calls == []
+    # Privacy invariant.
+    assert "https://civarchive.com" not in msg
+
+
+def test_resolve_invalid_ref_raises_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refs that don't match _REF_RE raise ValueError."""
+    src = CivArchiveSource(fetch=SpyHTMLFetch({}))
+    creds = _make_creds(monkeypatch, None)
+
+    with pytest.raises(ValueError) as exc:
+        src.resolve("garbage", creds)
+    assert "Not a valid civarchive ref" in str(exc.value)
+
+
+# --- resolve: happy path from pinned fixture ---
+
+
+def test_resolve_returns_one_artifact_from_pinned_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replay the pinned HTML; assert the exact Artifact contents."""
+    page_url = _version_url(2197303, 2474081)
+    spy = SpyHTMLFetch({page_url: _FIXTURE_HTML})
+    src = CivArchiveSource(fetch=spy)
+    creds = _make_creds(monkeypatch, None)
+
+    artifacts = src.resolve("civarchive:2197303@2474081", creds)
+
+    assert artifacts == [
+        Artifact(
+            filename="wan2.2_t2v_arcanestyle_high.safetensors",
+            url="https://civarchive.com/api/download/models/2474081",
+            size=None,
+            sha256="67cf1c234f8930472437c3fb9f940d1e05c95261a749c75956831b4ee25fba4d",
+            headers={},
+        )
+    ]
+
+
+def test_resolve_html_fetch_is_anonymous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTML fetch carries no auth headers — civarchive HTML is anonymous."""
+    # Bug this catches: leaking CIVITAI_TOKEN to civarchive.com (a foreign
+    # host) by attaching the bearer header to the HTML request as well as
+    # the Artifact.
+    page_url = _version_url(2197303, 2474081)
+    spy = SpyHTMLFetch({page_url: _FIXTURE_HTML})
+    src = CivArchiveSource(fetch=spy)
+    creds = _make_creds(monkeypatch, "secret-token-do-not-leak")
+
+    src.resolve("civarchive:2197303@2474081", creds)
+
+    assert len(spy.calls) == 1
+    fetched_url, fetched_headers = spy.calls[0]
+    assert fetched_url == page_url
+    assert fetched_headers == {}  # NO Authorization on HTML fetch
+
+
+def test_resolve_attaches_civitai_token_to_artifact_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CIVITAI_TOKEN, if present, propagates to Artifact.headers for downloader."""
+    page_url = _version_url(2197303, 2474081)
+    spy = SpyHTMLFetch({page_url: _FIXTURE_HTML})
+    src = CivArchiveSource(fetch=spy)
+    creds = _make_creds(monkeypatch, "abc123")
+
+    artifacts = src.resolve("civarchive:2197303@2474081", creds)
+
+    assert artifacts[0].headers == {"Authorization": "Bearer abc123"}
+
+
+def test_resolve_no_token_no_auth_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No CIVITAI_TOKEN → empty Artifact.headers."""
+    page_url = _version_url(2197303, 2474081)
+    spy = SpyHTMLFetch({page_url: _FIXTURE_HTML})
+    src = CivArchiveSource(fetch=spy)
+    creds = _make_creds(monkeypatch, None)
+
+    artifacts = src.resolve("civarchive:2197303@2474081", creds)
+
+    assert artifacts[0].headers == {}
+
+
+# --- resolve: privacy invariant for every error path ---
+
+
+def test_resolve_error_messages_never_leak_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No error from any resolve path contains the literal civarchive URL."""
+    # Bug this catches: surfacing the fetched URL inside KinoforgeError
+    # messages and breaking the lora-redaction convention established by
+    # sub-project A.
+    src = CivArchiveSource(fetch=SpyHTMLFetch({}))
+    creds = _make_creds(monkeypatch, None)
+
+    with pytest.raises((KinoforgeError, ValueError)) as exc:
+        src.resolve("civarchive:111", creds)
+    assert "https://civarchive.com" not in str(exc.value)
+
+    with pytest.raises((KinoforgeError, ValueError)) as exc:
+        src.resolve("garbage", creds)
+    assert "https://civarchive.com" not in str(exc.value)
