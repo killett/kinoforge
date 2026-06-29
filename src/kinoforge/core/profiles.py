@@ -413,12 +413,25 @@ class JsonProfileCache(ModelProfileProvider):
                 "supports_native_extension" not in declared
                 and "supports_joint_audio" not in declared
             ):
-                _log.warning(
-                    "engine no longer declares strategy flags for cached key %s; "
-                    "either declared_flags_map regressed or the engine was "
-                    "downgraded",
-                    key.derive(),
-                )
+                # Only escalate to WARNING when the cached profile's strategy
+                # flags actually disagree with the fresh probe. When they
+                # agree, there is no drift to surface — the engine simply
+                # never declared strategy flags (the baseline for
+                # DiffusersEngine / FALEngine), and the cached values
+                # originated from the same probe path discover() would take
+                # today. Without this guard, every warm-attach generation
+                # against those engines emitted the warning unconditionally,
+                # training operators to ignore the line.
+                if (
+                    profile.supports_native_extension != probe.supports_native_extension
+                    or profile.supports_joint_audio != probe.supports_joint_audio
+                ):
+                    _log.warning(
+                        "engine no longer declares strategy flags for cached key %s; "
+                        "either declared_flags_map regressed or the engine was "
+                        "downgraded",
+                        key.derive(),
+                    )
 
         for field_name in self._verify_fields():
             cached_val = getattr(profile, field_name)
