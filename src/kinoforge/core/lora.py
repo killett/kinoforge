@@ -14,7 +14,9 @@ Privacy classification (P1):
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import ParseResult, parse_qs, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -24,6 +26,80 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+_CIVITAI_HOSTS = frozenset({"civitai.com", "www.civitai.com"})
+_CIVARCHIVE_HOSTS = frozenset({"civarchive.com", "www.civarchive.com"})
+_HF_HOSTS = frozenset({"huggingface.co", "www.huggingface.co"})
+
+_CIVITAI_LIKE_PATH = re.compile(r"^/models/(\d+)(?:/[^/]*)?/?$")
+_HF_BLOB_PATH = re.compile(r"^/([^/]+)/([^/]+)/blob/([^/]+)/(.+?)/?$")
+
+
+def _normalize_ref(value: str) -> str:
+    """Normalize a URL-shaped LoRA ref to its canonical short form.
+
+    Recognises:
+      * civitai.com /models/<id>?...modelVersionId=<vid>... → civitai:<id>@<vid>
+      * civarchive.com (same shape) → civarchive:<id>@<vid>
+      * huggingface.co /<org>/<repo>/blob/<branch>/<file> → hf:<org>/<repo>:<file>
+
+    Inputs already in canonical short form (``civitai:...``, ``hf:...``,
+    ``file:...``, etc.) pass through unchanged. Unknown URL hosts pass
+    through unchanged so the existing ``http`` source module still
+    resolves them. HuggingFace bare-repo URLs are explicitly out of scope
+    and pass through unchanged.
+
+    Raises:
+        ValueError: civitai or civarchive URL is missing the
+            ``modelVersionId`` query parameter. The error message does
+            NOT include the URL text (privacy invariant — same posture as
+            ``LineError`` in ``cli/loras_arg.py``).
+    """
+    if not value.lower().startswith(("http://", "https://")):
+        return value
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").lower()
+    if host in _CIVITAI_HOSTS:
+        return _normalize_civitai_like(parsed, "civitai")
+    if host in _CIVARCHIVE_HOSTS:
+        return _normalize_civitai_like(parsed, "civarchive")
+    if host in _HF_HOSTS:
+        return _normalize_hf(parsed, original=value)
+    return value
+
+
+def _normalize_civitai_like(parsed: ParseResult, scheme: str) -> str:
+    """Shared rule for civitai + civarchive URLs (identical path shape)."""
+    m = _CIVITAI_LIKE_PATH.match(parsed.path)
+    if m is None:
+        return parsed.geturl()
+    model_id = m.group(1)
+    qs = parse_qs(parsed.query)
+    version_ids = qs.get("modelVersionId") or qs.get("modelversionid")
+    if not version_ids:
+        # Privacy: NO URL text in the message. Operator sees the rule,
+        # not the data they pasted.
+        raise ValueError(
+            f"{scheme} URL missing required ?modelVersionId=... query "
+            f"parameter (canonical refs are version-pinned)"
+        )
+    return f"{scheme}:{model_id}@{version_ids[0]}"
+
+
+def _normalize_hf(parsed: ParseResult, *, original: str) -> str:
+    """Recognise HF blob URLs only; bare-repo and others pass through."""
+    m = _HF_BLOB_PATH.match(parsed.path)
+    if m is None:
+        return original
+    org, repo, branch, file_path = m.groups()
+    if branch != "main":
+        logger.warning(
+            "hf URL branch=%s dropped; canonical hf: ref does not encode "
+            "branch (only `main` is pinned implicitly)",
+            branch,
+        )
+    return f"hf:{org}/{repo}:{file_path}"
 
 
 class LoraEntry(BaseModel):
