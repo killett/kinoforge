@@ -121,8 +121,33 @@ EOF
 ```
 
 (`1111:2222` is numeric shorthand for `civitai:1111@2222`. Other refs
-— `civitai:N@N`, `hf:Org/Repo[:filename]`, `file:/abs/path`,
-`https://...` — pass through verbatim. Unknown schemes rejected.)
+— `civitai:N@N`, `civarchive:N@N`, `hf:Org/Repo[:filename]`,
+`file:/abs/path`, `https://...` — pass through verbatim. Unknown
+schemes rejected.)
+
+**URL paste supported.** As of 2026-06-28 you can paste full URLs in
+place of the canonical short ref, both at the `--loras` heredoc and
+inside cfg / vault / grid `loras:` blocks:
+
+| URL shape | Canonical |
+|-----------|-----------|
+| `https://civitai.com/models/<id>/...?modelVersionId=<vid>` | `civitai:<id>@<vid>` |
+| `https://civarchive.com/models/<id>?modelVersionId=<vid>` | `civarchive:<id>@<vid>` |
+| `https://huggingface.co/<org>/<repo>/blob/main/<file>` | `hf:<org>/<repo>:<file>` |
+
+Civitai and civarchive URLs MUST carry `?modelVersionId=...`;
+canonical refs are version-pinned and a bare model URL is rejected
+with `civitai URL missing required ?modelVersionId=... query
+parameter`. HuggingFace branches other than `main` are dropped with a
+warn-once (the canonical `hf:` ref does not encode branch). Bare HF
+repo URLs (`huggingface.co/<org>/<repo>`) are NOT normalized — paste
+the `blob/<branch>/<file>` URL instead.
+
+`civarchive:<id>@<vid>` is parse-accepted by this release but the
+downstream resolver is the next workstream (see `PROGRESS.md` →
+"NEXT SESSION — TOP PRIORITY"). Until that ships, civarchive refs
+will fail at resolution time with a clear "civarchive source not yet
+implemented" error.
 
 **Precedence.**
 

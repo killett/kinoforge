@@ -507,10 +507,15 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
             "columns `ref [strength] [branch]`. `#` line comments + blank "
             "lines ignored. Numeric shorthand `<modelId>:<versionId>` "
             "expands to `civitai:<modelId>@<versionId>`; other refs "
-            "(civitai:..., hf:..., file:..., https://...) pass through "
-            "verbatim; unknown schemes rejected. Strength defaults to 1.0; "
-            "branch defaults to `auto`. Empty heredoc clears the stack for "
-            "this run. Vault.loras bypass logged to stderr."
+            "(civitai:..., civarchive:..., hf:..., file:..., https://...) "
+            "pass through verbatim; unknown schemes rejected. Strength "
+            "defaults to 1.0; branch defaults to `auto`. Empty heredoc "
+            "clears the stack for this run. Vault.loras bypass logged to "
+            "stderr. URLs from civitai.com, civarchive.com, huggingface.co "
+            "are accepted and normalized to the canonical form; "
+            "civitai/civarchive URLs MUST include `?modelVersionId=...` "
+            "(canonical refs are version-pinned). civarchive refs are "
+            "parse-accepted but their downstream resolver is pending."
         ),
     )
     p_generate.add_argument(
