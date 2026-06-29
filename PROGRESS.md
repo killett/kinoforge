@@ -24,14 +24,71 @@ Done T0–T17: ScaleTarget + UpscaleJob/Result + UpscalerEngine ABC + registry +
 
 Remaining T18–T20: **T18+T19 LIVE SPEND on RunPod** (one-shot SeedVR2 upscale + Wan T2V→SeedVR2 multi-stage warm-reuse); T20 PROGRESS close.
 
-**Resume gotchas — read before continuing T18:**
-1. `_UPSTREAM_COMMIT` in `src/kinoforge/upscalers/seedvr2/__init__.py` is the literal string `PLACEHOLDER_REPLACE_BEFORE_LIVE_SPEND`. **Replace with a real ByteDance-Seed/SeedVR commit SHA before T18** — `pip install git+...@PLACEHOLDER` fails loudly by design, so the smoke will refuse to boot the pod until this is set.
-2. `_cmd_upscale` raises `NotYetImplementedError` on the non-dry-run path (see `src/kinoforge/cli/_commands.py` after the `if args.dry_run:` block). T18 needs the full warm-reuse / cold-create path wired — mirror `_cmd_generate`'s scan/attach/cold-create skeleton, swapping the orchestrator entry point. The plan author deferred this with `"..."` in T15 Step 2. Standalone upscale needs a NEW orchestrator entry that builds a stages list of only `UpscaleStage` (no `GenerateClipStage`), reading the input video as the initial `state.artifacts["clip"]`.
-3. T7 was scoped down. Only the matcher helper + loop-wire shipped; ledger-write side (`kinoforge_stages`, `kinoforge_upscaler`, `kinoforge_upscaler_precision` tags on new pod creation) was deferred to T15 per plan T7 step 5. **Still pending** — T15 only added the argparse + dry-run path. Wire it inside `_cmd_upscale` non-dry-run path when implementing.
-4. T5 skipped the plan's bonus AC `test_upscale_only_cfg`. That AC would have required making `Config.engine` optional and loosening `_validate_engine_and_compute`. `examples/configs/upscale-seedvr2-3b.yaml` does include an `engine:` block as a workaround. Defer the strict upscale-only-cfg shape to a follow-up if real upscale-only pods (no engine block) become needed.
-5. T3+T4 landed as ONE combined commit (`534e0e9`), not two. Plan's narrative split is preserved in tasks.json statuses; commit-count is 1 less than plan implies.
-6. T13 race-bug fix: server `_run_upscale_job` writes `result` BEFORE flipping `state` to `done` so pollers always see a populated result block (test `test_upscale_done_result_block_full_shape` discovered the race in T12).
-7. T15 mutual-excl + scale parse fire BEFORE cfg load so `--scale 1080p`/garbage exits 2 even with a malformed cfg. Tests use `assert rc == 2` (not `SystemExit`) for handler-returned codes; only `required=True` argparse violations raise `SystemExit`.
+**T18/T19 BLOCKERS — architectural gaps surfaced 2026-06-29 (live spend deferred):**
+
+**BLOCKER A — SeedVR upstream is not pip-installable.** `gh api repos/ByteDance-Seed/SeedVR/contents`
+returns NO `setup.py` and NO `pyproject.toml`; the repo ships as research scripts under
+`projects/inference_seedvr2_{3b,7b}.py` + `requirements.txt` + `models/` + `common/` only.
+Plan T8's `SeedVR2Runtime.__init__` does `from seedvr.inference import SeedVR2Inferencer` and plan
+T9's `_fetch_weights` + T18's `pip install seedvr @ git+...@<sha>` BOTH assume a `seedvr` Python
+package exists upstream. It does not. `pip install git+...@<any-sha>` therefore fails for
+"no setup.py" regardless of which commit is pinned. Latest code-bearing commit on main is
+`6b061f467059` (2025-07-02, "fix for A100"); README-only HEAD is `e4de8c24441a` (2026-01-27).
+Neither is installable as a Python package. Resolution options:
+  (a) Vendor `projects/inference_seedvr2_*.py` + `common/` + `models/` into
+      `src/kinoforge/upscalers/seedvr2/_vendored/` and write a thin wrapper that calls the
+      script entry points directly. Substantial vendoring + version-pin maintenance burden.
+  (b) Pivot the v1 default to a pip-installable upscaler (RealESRGAN-x2, FlashVSR variants
+      that ARE packaged, or one of the ComfyUI custom-node SeedVR2 forks that exposes a
+      pip-installable wrapper). Keeps the `UpscalerEngine` ABC + SeedVR2Engine seam; only
+      the runtime layer changes.
+  (c) Use a published HuggingFace Space / ComfyUI-custom-node fork that has packaging
+      bolted on (e.g. `numz` fork which authored the A100 fix PR — has comfyui wrapper).
+  Pick (a), (b), or (c) BEFORE T18 / T19 live spend. Whichever path: the
+  `_UPSTREAM_COMMIT = "PLACEHOLDER_REPLACE_BEFORE_LIVE_SPEND"` sentinel in
+  `src/kinoforge/upscalers/seedvr2/__init__.py:43` stays as a loud-fail until the runtime
+  story is real.
+
+**BLOCKER B — provision composition not wired.** `DiffusersEngine.render_provision`
+(in `src/kinoforge/engines/diffusers/__init__.py:848`) does NOT call
+`SeedVR2Engine.render_provision` even when `cfg.upscale is not None`. The pod's bootstrap
+script installs Wan-only pip deps; no `seedvr` install, no weights fetch. T16's orchestrator
+wiring appends `UpscaleStage` to the runtime pipeline but provision-time composition is the
+separate seam that lights up the pod's `/upscale` endpoint route. To wire: extend
+`DiffusersEngine.render_provision` to peek at `cfg.get("upscale")` and concatenate
+`registry.get_upscaler(cfg.upscale.engine)().render_provision(cfg)` script + pip lines into
+the bootstrap. Blocked behind BLOCKER A (the upscaler's render_provision currently emits
+the broken `pip install seedvr @ git+...` line).
+
+**BLOCKER C — standalone upscale orchestrator entry missing.** `_cmd_upscale`
+(src/kinoforge/cli/_commands.py) raises `NotYetImplementedError` on the non-dry-run path.
+T15 only landed argparse + dry-run; the warm-reuse / cold-create / orchestrate-one-stage
+plumbing was deferred with `"..."` in plan T15 Step 2. A standalone upscale needs a new
+orchestrator entry `kinoforge.core.orchestrator.upscale_only(cfg, input_video, store, sink,
+run_id, ...)` that mirrors `generate()`'s shape but builds `stages=[UpscaleStage]` only and
+seeds `state.artifacts["clip"]` from the input mp4. Or — equivalently — extend `generate()`
+with a `skip_clip_stage=True` flag and an `initial_clip: Artifact` parameter. ~80-120 LOC
+regardless. T19 multi-stage (`kinoforge generate --config wan-with-upscale.yaml`) sidesteps
+BLOCKER C but NOT A or B.
+
+**Resume gotchas — non-blocking carryover from prior sessions:**
+1. T7 ledger-write deferral: `kinoforge_stages`, `kinoforge_upscaler`,
+   `kinoforge_upscaler_precision` tags on new pod creation still need wiring inside
+   `_cmd_upscale` non-dry-run path (resolved when BLOCKER C is wired) and inside
+   `_cmd_generate` so multi-stage pods write those tags too.
+2. T5 skipped the plan's bonus AC `test_upscale_only_cfg` (would require making `Config.engine`
+   optional + loosening `_validate_engine_and_compute`). Workaround:
+   `examples/configs/upscale-seedvr2-3b.yaml` includes an `engine:` block; defer the strict
+   upscale-only-cfg shape until real upscale-only pods become needed.
+3. T3+T4 landed as ONE combined commit (`534e0e9`).
+4. T13 race-bug fix: server `_run_upscale_job` writes `result` BEFORE flipping `state` to
+   `done` so pollers always see a populated result block.
+5. T15 mutual-excl + scale parse fire BEFORE cfg load so `--scale 1080p`/garbage exits 2
+   even with a malformed cfg. Tests use `assert rc == 2` (not `SystemExit`) for
+   handler-returned codes; only `required=True` argparse violations raise `SystemExit`.
+6. `.env` is at `/workspace/.env` (operator-managed); the worktree at
+   `/workspace/.claude/worktrees/video-upscaling` does NOT have its own `.env` — pixi
+   activation will not auto-find creds without symlink or explicit `--env-file` flag.
 
 ---
 
