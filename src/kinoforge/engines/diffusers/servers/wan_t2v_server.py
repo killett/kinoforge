@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import hashlib
+import json
 import logging
 import os
 import queue
 import re
 import shutil
+import subprocess
 import threading
 import time
 import urllib.request
@@ -1411,6 +1414,182 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             free_bytes=_disk_free_bytes(LORAS_DIR),
             swap_rejected=None,
         )
+
+
+# --- T12: /upscale + /upscale/status/{id} ---------------------------------
+#
+# Co-resident with /generate so SeedVR2 upscale and Wan T2V generation
+# share one process and one model registry (the T11 _LOADED map).
+# Heavy CUDA / download / probe calls go through asyncio.to_thread per
+# the wan_server_async_blocking rule: synchronous work in `async def`
+# handlers blocks the event loop → /health hangs → RunPod proxy 502s.
+
+
+class SeedVR2Params(BaseModel):
+    """Engine-specific overrides for a SeedVR2 upscale request."""
+
+    variant: Literal["3B", "7B"] = "3B"
+    precision: Literal["fp8", "fp16"] = "fp8"
+    tile_size: int | None = None
+    steps: int | None = None
+
+
+class UpscaleRequest(BaseModel):
+    """JSON body for ``POST /upscale``.
+
+    ``engine`` is a plain ``str`` (not ``Literal``) so future drop-in
+    upscalers (e.g. FlashVSR) extend the dispatch table inside the
+    handler without touching this schema.
+    """
+
+    source_url: str
+    source_filename: str
+    scale: str
+    engine: str
+    seedvr2: SeedVR2Params | None = None
+    job_id: str | None = None
+
+
+_upscale_lock: asyncio.Lock = asyncio.Lock()
+_upscale_jobs: dict[str, dict[str, Any]] = {}
+
+
+def _download_to_local_temp(source_url: str, source_filename: str) -> Path:
+    """Fetch ``source_url`` to a local mp4 keyed by ``source_filename``.
+
+    Handles ``file://`` (local copy) and ``http(s)://`` (urllib stream).
+    Files land in ``ARTIFACT_DIR`` so the post-upscale FileResponse
+    serving path (``/artifacts/{filename}``) can also reach the input
+    if the caller wants to compare frames side-by-side.
+    """
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    target = ARTIFACT_DIR / source_filename
+    if source_url.startswith("file://"):
+        src = Path(source_url[len("file://") :])
+        shutil.copyfile(src, target)
+        return target
+    req = urllib.request.Request(  # noqa: S310 — caller-resolved URL
+        source_url, headers={"User-Agent": "kinoforge-pod-upscale/0.1"}
+    )
+    with urllib.request.urlopen(req, timeout=600) as resp, target.open("wb") as out:  # noqa: S310
+        shutil.copyfileobj(resp, out)
+    return target
+
+
+def _sha256_file(p: Path) -> str:
+    """Stream-hash ``p`` with sha256."""
+    h = hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _probe_resolution(p: Path) -> tuple[int, int]:
+    """Return ``(width, height)`` for ``p`` via ffprobe.
+
+    Returns ``(0, 0)`` if ffprobe is unavailable so a probe failure
+    does not poison the whole result block. The caller's ledger writes
+    a literal ``[0, 0]`` which is unambiguous in evidence files.
+    """
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "json",
+        str(p),
+    ]
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            return (0, 0)
+        data = json.loads(result.stdout)
+        stream = data["streams"][0]
+        return (int(stream["width"]), int(stream["height"]))
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, IndexError):
+        return (0, 0)
+
+
+@app.post("/upscale")
+async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
+    """Enqueue an upscale job; return ``{"job_id": ...}``.
+
+    Engine dispatch reads ``req.engine``; v1 only handles ``"seedvr2"``.
+    Unknown engines fail fast at submit time with 400 so the caller
+    does not burn a warm-pod attach cycle on a job destined for an
+    async error.
+    """
+    if req.engine != "seedvr2":
+        raise HTTPException(status_code=400, detail=f"unsupported engine: {req.engine}")
+    job_id = req.job_id or f"u-{uuid.uuid4().hex}"
+    _upscale_jobs[job_id] = {
+        "state": "queued",
+        "progress": 0.0,
+        "result": None,
+        "error": None,
+    }
+    asyncio.create_task(_run_upscale_job(job_id, req))
+    return {"job_id": job_id}
+
+
+async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
+    """Run one upscale under ``_upscale_lock``; mutate ``_upscale_jobs[job_id]``."""
+    from kinoforge.core.scale_target import ScaleTarget
+
+    async with _upscale_lock:
+        try:
+            _upscale_jobs[job_id]["state"] = "running"
+            variant = (req.seedvr2.variant if req.seedvr2 else "3B").lower()
+            precision = req.seedvr2.precision if req.seedvr2 else "fp8"
+            model_name = f"seedvr2-{variant}-{precision}"
+            entry = await _ensure_on_gpu(model_name)
+
+            local = await asyncio.to_thread(
+                _download_to_local_temp, req.source_url, req.source_filename
+            )
+            scale = ScaleTarget.parse(req.scale)
+            params = req.seedvr2.model_dump() if req.seedvr2 else {}
+
+            out_path = await asyncio.to_thread(
+                entry["pipe"].upscale, local, scale, params
+            )
+            out_path = Path(out_path)
+            sha = await asyncio.to_thread(_sha256_file, out_path)
+            in_res = await asyncio.to_thread(_probe_resolution, local)
+            out_res = await asyncio.to_thread(_probe_resolution, out_path)
+
+            # Assign result + progress BEFORE flipping state to "done"
+            # so a poller that catches state=="done" is guaranteed to
+            # observe a populated result block (no read-mid-write race).
+            _upscale_jobs[job_id]["result"] = {
+                "filename": out_path.name,
+                "sha256": sha,
+                "size": out_path.stat().st_size,
+                "input_resolution": list(in_res),
+                "output_resolution": list(out_res),
+                "engine_meta": {},
+            }
+            _upscale_jobs[job_id]["progress"] = 1.0
+            _upscale_jobs[job_id]["state"] = "done"
+        except Exception as exc:  # noqa: BLE001 — surface any failure to caller
+            _upscale_jobs[job_id]["error"] = str(exc)
+            _upscale_jobs[job_id]["state"] = "error"
+
+
+@app.get("/upscale/status/{job_id}")
+def upscale_status_handler(job_id: str) -> dict[str, Any]:
+    """Return current state of ``job_id``; 404 if unknown."""
+    payload = _upscale_jobs.get(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
+    return payload
 
 
 if __name__ == "__main__":
