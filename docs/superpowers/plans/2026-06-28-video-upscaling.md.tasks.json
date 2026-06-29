@@ -78,7 +78,7 @@
       "id": 14,
       "planTaskId": 6,
       "subject": "Task 6: UpscaleStage (pipeline)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "metadata": {
         "files": ["src/kinoforge/pipeline/upscale.py", "tests/pipeline/test_upscale_stage.py"],
