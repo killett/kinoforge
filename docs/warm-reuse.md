@@ -522,3 +522,19 @@ crash.
 
 Spec:
 `docs/superpowers/specs/2026-06-28-sweeper-ephemeral-reap-design.md`.
+
+
+## Upscale-only pods
+
+`kinoforge upscale` activates the same warm-reuse machinery as
+`kinoforge generate`. The matcher's `CapabilityKey` carries
+`stages` + `upscaler` + `upscaler_precision` factors so an upscale-only
+cfg attaches to a pod whose loaded pipelines actually cover the cfg's
+stages. The T14 `/health`-driven pre-flight refines this: even with a
+matching cap_key, a half-failed pod whose loaders did not all succeed
+is refused with a `stage-mismatch` skip — matched against the pod's
+live `capabilities[]` (T13 `/health` payload extension).
+
+Pods written before 2026-06-28 (no `kinoforge_stages` tag in their
+ledger row) are pure-generate pods and not eligible for upscale
+warm-reuse.

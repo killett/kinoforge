@@ -1818,6 +1818,26 @@ def generate(
             )
         ]
 
+        # T16 — append UpscaleStage when cfg.upscale is set. The upscaler
+        # engine routes through registry.get_upscaler so adding a future
+        # backend (FlashVSR) needs only its own self-registration; no
+        # change to this orchestrator branch.
+        if cfg.upscale is not None:
+            from kinoforge.core import registry as _registry
+            from kinoforge.core.scale_target import ScaleTarget
+            from kinoforge.pipeline.upscale import UpscaleStage
+
+            upscaler_engine = _registry.get_upscaler(cfg.upscale.engine)()
+            stages.append(
+                UpscaleStage(
+                    engine=upscaler_engine,
+                    scale=ScaleTarget.parse(cfg.upscale.scale),
+                    instance=session.instance,
+                    cfg=cfg_dict,
+                    cancel_token=cancel_token,
+                )
+            )
+
         # ------------------------------------------------------------------
         # Walk the remaining stages with shared PipelineState.
         # ValidationError from any stage → tear down compute before re-raise

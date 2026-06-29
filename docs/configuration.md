@@ -118,3 +118,22 @@ your config will not cost idle pod time.
 
 See `../examples/configs/hosted.yaml`, `../examples/configs/diffusers.yaml`, `../examples/configs/wan.yaml`, and `../examples/configs/fal.yaml`
 for working `spec:` + `params:` shapes per engine.
+
+
+## `upscale:` (optional, video upscaling)
+
+Activates the in-pipeline `UpscaleStage` after `GenerateClipStage` for
+`kinoforge generate`, or stands alone for `kinoforge upscale`. The CLI
+flag `--scale` overrides `upscale.scale` for one-off runs.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `engine` | `"seedvr2"` | — | Required. v1 supports SeedVR2; FlashVSR drop-in is a future session. |
+| `scale` | string | — | `"Nx"` for factor (works in v1); `"Np"` parses but raises `NotYetImplementedError` (deferred). |
+| `seedvr2.variant` | `"3B"` \| `"7B"` | `"3B"` | Required when `engine == "seedvr2"`. |
+| `seedvr2.precision` | `"fp8"` \| `"fp16"` | `"fp8"` | |
+| `seedvr2.tile_size` | int \| null | `null` | engine default |
+| `seedvr2.steps` | int \| null | `null` | engine default |
+
+See `../examples/configs/upscale-seedvr2-3b.yaml` (standalone) and
+`../examples/configs/wan-with-upscale.yaml` (multi-stage).
