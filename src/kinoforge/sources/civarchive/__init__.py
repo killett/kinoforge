@@ -126,3 +126,124 @@ def _extract_filename(html: str) -> str:
             "have changed; civarchive source parser needs maintenance"
         )
     return m.group(1)
+
+
+# ---------------------------------------------------------------------------
+# Source
+# ---------------------------------------------------------------------------
+
+from kinoforge.core.interfaces import (  # noqa: E402
+    Artifact,
+    CredentialProvider,
+    ModelSource,
+)
+
+
+class CivArchiveSource(ModelSource):
+    """Resolves ``civarchive:<modelId>@<versionId>`` refs via HTML scrape.
+
+    CivArchive publishes no JSON metadata API; this Source fetches the
+    canonical model-version HTML page and parses the SHA256 + filename out
+    of structural anchors. ``Artifact.url`` is kept at
+    ``civarchive.com/api/download/models/<vid>`` so CivArchive's own 307
+    redirect chain owns host indirection (preserving cache validity across
+    re-mirror events).
+
+    The optional ``fetch`` parameter injects the HTTP transport. Tests pass
+    a spy that returns canned HTML; the default ``_urllib_fetch_html`` uses
+    ``urllib.request`` from the stdlib.
+
+    Bare refs (``civarchive:N`` with no ``@<versionId>``) are
+    parse-accepted (``handles`` returns True) but rejected at resolve with
+    a clear error — symmetric with the URL-normalisation layer from
+    sub-project A.
+
+    Attributes:
+        scheme: Registry scheme key — ``"civarchive"``.
+    """
+
+    scheme = "civarchive"
+
+    def __init__(
+        self,
+        *,
+        fetch: FetchHTMLCallable = _urllib_fetch_html,
+    ) -> None:
+        """Initialise the source with an optional transport override.
+
+        Args:
+            fetch: Callable ``(url, headers) -> str`` used to perform HTTP
+                requests. Defaults to :func:`_urllib_fetch_html`.
+        """
+        self._fetch = fetch
+
+    def handles(self, ref: str) -> bool:
+        """Return True when *ref* matches ``civarchive:<digits>[@<digits>]``.
+
+        Args:
+            ref: The model reference string to test.
+
+        Returns:
+            True if *ref* is a well-formed civarchive ref.
+        """
+        return _REF_RE.match(ref) is not None
+
+    def resolve(self, ref: str, creds: CredentialProvider) -> list[Artifact]:
+        """Resolve a CivArchive ref to one :class:`Artifact`.
+
+        Args:
+            ref: The model reference string (e.g.
+                ``"civarchive:2197303@2474081"``).
+            creds: Credential provider; ``CIVITAI_TOKEN`` (if present) is
+                copied into ``Artifact.headers`` for the eventual download.
+
+        Returns:
+            A single-element list containing the resolved :class:`Artifact`.
+
+        Raises:
+            ValueError: *ref* does not match the civarchive regex.
+            KinoforgeError: *ref* is a bare ``civarchive:N`` (no
+                ``@<versionId>``), or the upstream HTTP fetch failed, or
+                the HTML did not contain a recognised SHA256 / filename
+                anchor.
+            AuthError: The HTTP fetch returned 401 (unexpected for the
+                anonymous HTML endpoint, retained for symmetry with the
+                civitai source).
+        """
+        m = _REF_RE.match(ref)
+        if m is None:
+            raise ValueError(f"Not a valid civarchive ref: {ref!r}")
+
+        model_id_str, version_id_str = m.group(1), m.group(2)
+        if version_id_str is None:
+            raise KinoforgeError(
+                f"civarchive ref {ref!r} requires @<versionId>; "
+                "civarchive does not expose a stable default-version "
+                "selector"
+            )
+
+        # HTML fetch is anonymous — civarchive does not gate metadata pages.
+        page_url = (
+            f"https://civarchive.com/models/{model_id_str}"
+            f"?modelVersionId={version_id_str}"
+        )
+        html = self._fetch(page_url, {})
+
+        sha256 = _extract_sha256(html)
+        filename = _extract_filename(html)
+
+        # CIVITAI_TOKEN is attached to Artifact.headers — mirrors the
+        # CivitAI source pattern so the downloader can authenticate when
+        # CivArchive's 307 lands on civitai.com.
+        token: str | None = creds.get("CIVITAI_TOKEN")
+        headers: dict[str, str] = {"Authorization": f"Bearer {token}"} if token else {}
+
+        return [
+            Artifact(
+                filename=filename,
+                url=(f"https://civarchive.com/api/download/models/{version_id_str}"),
+                size=None,
+                sha256=sha256,
+                headers=headers,
+            )
+        ]
