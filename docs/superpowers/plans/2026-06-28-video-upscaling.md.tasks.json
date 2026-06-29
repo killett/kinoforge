@@ -126,7 +126,7 @@
       "id": 18,
       "planTaskId": 10,
       "subject": "Task 10: SeedVR2Engine",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10, 16, 17],
       "metadata": {
         "files": ["src/kinoforge/upscalers/seedvr2/__init__.py", "tests/upscalers/test_seedvr2_engine.py"],
