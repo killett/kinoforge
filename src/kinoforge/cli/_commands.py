@@ -1211,6 +1211,24 @@ def _scan_warm_candidates(
             skipped.append((instance_id, _rc_to_reason(rc, entry)))
             continue
 
+        # T14: /health-driven refinement — even with matching cap_key,
+        # refuse a half-failed pod whose loaders did not actually bring
+        # up every stage the cfg needs. Unreachable /health → None →
+        # fall through (the legacy verdict machinery above already
+        # passed; do not synthesise a STAGE_MISMATCH from missing data).
+        want_stages = _cfg_want_stages(cfg)
+        if want_stages and instance is not None:
+            proxy_url = instance.endpoints.get("http") or next(
+                iter(instance.endpoints.values()), ""
+            )
+            if proxy_url:
+                verdict = _health_preflight_ok(
+                    proxy_url=proxy_url, want_stages=want_stages
+                )
+                if verdict is False:
+                    skipped.append((instance_id, "stage-mismatch"))
+                    continue
+
         return (instance, _ScanReport(attached=instance_id, skipped=skipped))
 
     return (None, _ScanReport(attached=None, skipped=skipped))
@@ -1761,6 +1779,56 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         lora_section=lora_section,
     )
     return 0
+
+
+def _cfg_want_stages(cfg: Config) -> tuple[str, ...]:
+    """Return pipeline stages this cfg will exercise on the pod.
+
+    Mirrors :meth:`Config.capability_key` stages derivation: pure-t2v
+    cfgs return ``()`` (no preflight refinement needed; the cap_key
+    pre-filter already gates on pipeline identity); upscale-attached
+    cfgs return ``("t2v", "upscale")``. Drives the matcher's
+    /health-aware refusal of half-failed pods.
+    """
+    if getattr(cfg, "upscale", None) is not None:
+        return ("t2v", "upscale")
+    return ()
+
+
+def _health_preflight_ok(
+    *,
+    proxy_url: str,
+    want_stages: tuple[str, ...],
+) -> bool | None:
+    """Pre-flight gate via ``/health`` before claiming a warm-attach candidate.
+
+    Args:
+        proxy_url: Base URL of the pod's HTTP endpoint (no trailing slash
+            required; ``/health`` is appended).
+        want_stages: Stage tags this cfg requires. Empty tuple
+            short-circuits to True without hitting the network.
+
+    Returns:
+        True — pod's ``capabilities`` is a superset of ``want_stages``.
+        False — pod reachable AND capabilities does NOT cover want_stages
+                (caller should refuse with ``stage-mismatch`` reason).
+                Also returned when the pod is on an older server build
+                whose /health payload lacks the ``capabilities`` key:
+                conservative-on-ignorance — refuse rather than gamble.
+        None — pod /health unreachable; caller falls through to the
+               legacy verdict machinery instead of inventing a refusal.
+    """
+    if not want_stages:
+        return True
+    try:
+        payload = _http_get_json(f"{proxy_url.rstrip('/')}/health")
+    except (ConnectionError, TimeoutError, OSError):
+        return None
+    caps_raw = payload.get("capabilities")
+    if caps_raw is None:
+        return False
+    caps = set(caps_raw)
+    return set(want_stages).issubset(caps)
 
 
 def _http_get_json(url: str) -> dict[str, Any]:
