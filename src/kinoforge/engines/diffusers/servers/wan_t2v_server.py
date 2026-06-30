@@ -1644,12 +1644,12 @@ def _probe_resolution(p: Path) -> tuple[int, int]:
 async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
     """Enqueue an upscale job; return ``{"job_id": ...}``.
 
-    Engine dispatch reads ``req.engine``; v1 only handles ``"seedvr2"``.
-    Unknown engines fail fast at submit time with 400 so the caller
-    does not burn a warm-pod attach cycle on a job destined for an
-    async error.
+    Engine dispatch reads ``req.engine``; v1 handles ``"seedvr2"`` and
+    ``"spandrel"``. Unknown engines fail fast at submit time with 400 so
+    the caller does not burn a warm-pod attach cycle on a job destined
+    for an async error.
     """
-    if req.engine != "seedvr2":
+    if req.engine not in {"seedvr2", "spandrel"}:
         raise HTTPException(status_code=400, detail=f"unsupported engine: {req.engine}")
     job_id = req.job_id or f"u-{uuid.uuid4().hex}"
     _upscale_jobs[job_id] = {
@@ -1691,16 +1691,31 @@ async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
     async with _upscale_lock:
         try:
             _upscale_jobs[job_id]["state"] = "running"
-            variant = (req.seedvr2.variant if req.seedvr2 else "3B").lower()
-            precision = req.seedvr2.precision if req.seedvr2 else "fp8"
-            model_name = f"seedvr2-{variant}-{precision}"
+            if req.engine == "spandrel":
+                if req.spandrel is None or not req.spandrel.arch:
+                    raise ValueError(
+                        "spandrel engine requires a spandrel block with 'arch' set"
+                    )
+                model_name = (
+                    f"spandrel-{req.spandrel.arch.lower()}-{req.spandrel.precision}"
+                )
+                # Drop slug-derived keys from the params dict — arch and
+                # precision are part of the model slug; model_url is a
+                # client-side download hint, not a runtime knob.
+                params = req.spandrel.model_dump(
+                    exclude={"model_url", "arch", "precision"}
+                )
+            else:
+                sv_variant = (req.seedvr2.variant if req.seedvr2 else "3B").lower()
+                sv_precision = req.seedvr2.precision if req.seedvr2 else "fp8"
+                model_name = f"seedvr2-{sv_variant}-{sv_precision}"
+                params = req.seedvr2.model_dump() if req.seedvr2 else {}
             entry = await _ensure_on_gpu(model_name)
 
             local = await asyncio.to_thread(
                 _download_to_local_temp, req.source_url, req.source_filename
             )
             scale = ScaleTarget.parse(req.scale)
-            params = req.seedvr2.model_dump() if req.seedvr2 else {}
 
             out_path = await asyncio.to_thread(
                 entry["pipe"].upscale, local, scale, params
