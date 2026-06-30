@@ -449,6 +449,26 @@ class StageMismatch(KinoforgeError):
         self.have = have
 
 
+class UploadIntegrityError(KinoforgeError):
+    """sha256 of bytes received by the server did not match what the client sent.
+
+    Raised by ``SpandrelEngine._upload_source`` when the ``/upload`` response
+    sha256 disagrees with the locally computed digest. Either side of the
+    upload pipe corrupted bytes (network, kernel buffer, dirty filename
+    sanitization).
+    """
+
+    def __init__(self, local_sha256: str, server_sha256: str, bytes_sent: int) -> None:
+        """Record both hashes and the byte count for post-mortem rendering."""
+        self.local_sha256 = local_sha256
+        self.server_sha256 = server_sha256
+        self.bytes_sent = bytes_sent
+        super().__init__(
+            f"upload sha256 mismatch: client={local_sha256} server={server_sha256} "
+            f"bytes_sent={bytes_sent}"
+        )
+
+
 class ExtrasNotInstalled(KinoforgeError):
     """Raised when a kinoforge component requires a pip extras group that is not installed.
 
