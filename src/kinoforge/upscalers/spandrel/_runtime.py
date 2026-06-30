@@ -95,6 +95,12 @@ class SpandrelRuntime:
             else "cpu"
         )
         dtype = torch.float16 if self._precision == "fp16" else torch.float32
+        # Match model weights to the input dtype — without this the runtime
+        # raises "Input type (c10::Half) and bias type (float) should be the
+        # same" because ModelLoader returns weights at on-disk dtype (fp32)
+        # while the input batch gets cast to fp16 below. Idempotent: a second
+        # call with the same dtype is a no-op for torch.nn.Module.
+        self._model.to(dtype)
 
         out_frames: list[np.ndarray] = []
         for i in range(0, len(frames_in), self._batch):
