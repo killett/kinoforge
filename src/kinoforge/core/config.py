@@ -1088,12 +1088,27 @@ class Config(BaseModel):
                 base_refs.append(entry.ref)
             # vae / text_encoder / clip_vision: skip entirely
 
-        if not base_refs:
+        upscale_only = (
+            self.engine.diffusers is not None and self.engine.diffusers.upscale_only
+        )
+        if not base_refs and not upscale_only:
             raise ConfigError("no model entry with kind: base found in config")
 
-        base_model = (
-            base_refs[0] if len(base_refs) == 1 else "|".join(sorted(base_refs))
-        )
+        if base_refs:
+            base_model = (
+                base_refs[0] if len(base_refs) == 1 else "|".join(sorted(base_refs))
+            )
+        else:
+            # Upscale-only cfgs derive identity from the upscaler weights ref
+            # so two pods running spandrel against different SR weights stay
+            # distinct in the matcher.
+            assert self.upscale is not None  # noqa: S101 — guarded by upscale_only branch
+            if self.upscale.spandrel is not None:
+                base_model = self.upscale.spandrel.model_url
+            elif self.upscale.seedvr2 is not None:
+                base_model = self.upscale.seedvr2.weights_ref or ""
+            else:
+                base_model = self.upscale.engine
 
         # 2026-06-28: stages / upscaler factors. Pure-generate cfgs (no
         # upscale block) leave stages=() so derive() preserves the legacy
@@ -1102,7 +1117,8 @@ class Config(BaseModel):
         upscaler = ""
         upscaler_precision = ""
         if self.upscale is not None:
-            stages.append("t2v")
+            if not upscale_only:
+                stages.append("t2v")
             stages.append("upscale")
             upscaler = self.upscale.engine
             if self.upscale.seedvr2 is not None:
@@ -1110,6 +1126,8 @@ class Config(BaseModel):
                     f"{self.upscale.seedvr2.variant.lower()}-"
                     f"{self.upscale.seedvr2.precision}"
                 )
+            elif self.upscale.spandrel is not None:
+                upscaler_precision = self.upscale.spandrel.precision
 
         return CapabilityKey(
             base_model=base_model,

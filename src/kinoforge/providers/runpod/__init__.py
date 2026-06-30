@@ -28,6 +28,7 @@ import base64
 import json
 import logging
 import secrets
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -232,6 +233,19 @@ def _make_default_http_seams(
                 with urllib.request.urlopen(req) as resp:  # noqa: S310
                     return dict(json.loads(resp.read().decode("utf-8")))
             except urllib.error.HTTPError as exc:
+                # Surface RunPod's GraphQL error body to stderr so 500/4xx
+                # don't masquerade as opaque HTTP errors. URL api_key is
+                # redacted; request body is NOT echoed (would leak HF_TOKEN /
+                # RUNPOD_TERMINATE_KEY from the env injection list).
+                try:
+                    body_dump = exc.read().decode("utf-8", errors="replace")
+                except Exception:  # noqa: BLE001
+                    body_dump = "<unreadable response body>"
+                _redacted_url = req.full_url.split("?")[0] + "?api_key=<redacted>"
+                sys.stderr.write(
+                    f"[runpod-http] {exc.code} {exc.reason} from {_redacted_url}: "
+                    f"{body_dump[:1500]}\n"
+                )
                 if exc.code not in _RETRY_STATUS or attempt == _RETRY_ATTEMPTS - 1:
                     raise
                 last_exc = exc
