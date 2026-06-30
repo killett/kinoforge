@@ -20,8 +20,11 @@ import logging
 import os
 import queue
 import re
+import secrets
 import shutil
+import string
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.request
@@ -46,7 +49,7 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 # volume mount (volumeInGb in the cfg's requirements.disk_gb).
 os.environ.setdefault("HF_HOME", "/workspace/.hf_cache")
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from pydantic import (  # noqa: E402
     BaseModel,
     ConfigDict,
@@ -71,6 +74,9 @@ ARTIFACT_DIR: Path = Path(
     os.environ.get("KINOFORGE_ARTIFACT_DIR", "/workspace/artifacts")
 )
 LORAS_DIR: Path = Path(os.environ.get("KINOFORGE_LORAS_DIR", "/workspace/loras"))
+_UPLOAD_DIR: Path = Path("/tmp/kf-uploads")  # noqa: S108 — pod-local writable scratch
+_UPLOAD_FILENAME_ALLOWED = set(string.ascii_letters + string.digits + "._-")
+_UPLOAD_MAX_BYTES = int(os.environ.get("KINOFORGE_MAX_UPLOAD_MB", "2048")) * 1024 * 1024
 
 _DEFAULT_NEGATIVE_PROMPT = (
     "Bright tones, overexposed, static, blurred details, subtitles, "
@@ -1703,6 +1709,77 @@ def upscale_status_handler(job_id: str) -> dict[str, Any]:
     if payload is None:
         raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
     return payload
+
+
+def _sanitize_upload_filename(raw: str | None) -> str:
+    """Strip path components and forbidden chars from a client-supplied filename.
+
+    Returns a non-empty basename. Falls back to a random ``<hex8>.mp4`` if the
+    cleaned name is empty (missing header or all chars stripped).
+    """
+    if not raw:
+        return f"{secrets.token_hex(4)}.mp4"
+    base = Path(raw).name  # strip any path traversal
+    cleaned = "".join(c for c in base if c in _UPLOAD_FILENAME_ALLOWED)
+    if not cleaned:
+        return f"{secrets.token_hex(4)}.mp4"
+    return cleaned
+
+
+@app.put("/upload")
+async def upload_handler(request: Request) -> dict[str, Any]:
+    """Stream-write a mp4 body into ``_UPLOAD_DIR``; return path + size + sha256.
+
+    Content-Type must be ``video/mp4``. ``X-Filename`` is sanitized to a basename
+    in ``[A-Za-z0-9._-]``; empty or dirty filenames fall back to a random
+    ``<hex8>.mp4``. Bodies larger than ``KINOFORGE_MAX_UPLOAD_MB`` (default
+    2048 MiB) are rejected with HTTP 413 and the partial tempfile is removed.
+    The published path is atomically swapped via ``os.replace`` so a mid-stream
+    abort never leaves a file at the advertised name.
+    """
+    ct = request.headers.get("content-type", "")
+    if not ct.startswith("video/mp4"):
+        raise HTTPException(
+            status_code=415,
+            detail=f"Content-Type must be video/mp4, got {ct!r}",
+        )
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    safe_name = _sanitize_upload_filename(request.headers.get("x-filename"))
+
+    fd, tmp_path_str = tempfile.mkstemp(dir=str(_UPLOAD_DIR), suffix=".part")
+    tmp_path = Path(tmp_path_str)
+    hasher = hashlib.sha256()
+    written = 0
+    try:
+        with os.fdopen(fd, "wb") as fobj:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > _UPLOAD_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"upload exceeded {_UPLOAD_MAX_BYTES} bytes",
+                    )
+                hasher.update(chunk)
+                fobj.write(chunk)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    final = _UPLOAD_DIR / safe_name
+    os.replace(tmp_path, final)
+    _log.info(
+        "upload_received bytes=%d sha=%s path=%s",
+        written,
+        hasher.hexdigest(),
+        final,
+    )
+    return {
+        "path": str(final),
+        "size": written,
+        "sha256": hasher.hexdigest(),
+    }
 
 
 if __name__ == "__main__":
