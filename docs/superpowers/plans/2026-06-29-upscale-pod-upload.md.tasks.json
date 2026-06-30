@@ -37,15 +37,15 @@
     {
       "id": 4,
       "subject": "Task 4: Server-side cleanup in /upscale finally",
-      "status": "pending",
+      "status": "completed",
       "nativeTaskId": "5",
       "blockedBy": [1, 3],
       "description": "**Goal:** _run_upscale_job finally-unlinks source if under _UPLOAD_DIR.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/test_server_upload_cleanup.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/test_server_upload_cleanup.py -v\", \"acceptanceCriteria\": [\"upload under _UPLOAD_DIR unlinked\", \"sibling untouched\", \"cleanup runs on failure\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 5,
-      "subject": "Task 5: Regression sweep + pre-commit",
-      "status": "pending",
+      "subject": "Task 5: Regression sweep + pre-commit (incl. Task 5a spandrel dispatch backfill)",
+      "status": "completed",
       "nativeTaskId": "6",
       "blockedBy": [2, 4],
       "description": "**Goal:** Targeted + full pytest + pre-commit; fix any regressions.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run pre-commit run --all-files && pixi run pytest -x\", \"acceptanceCriteria\": [\"pre-commit clean\", \"targeted suite green\", \"no new failures in full suite\"], \"modelTier\": \"mechanical\"}\n```"
