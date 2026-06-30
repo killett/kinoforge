@@ -1,0 +1,181 @@
+# Wan 2.2 T2V-A14B + in-pipeline SeedVR2 2x upscale (multi-stage).
+# Derived from runpod-diffusers-wan-t2v-14b-2_2.yaml; adds the
+# `upscale:` block so the orchestrator appends UpscaleStage after
+# GenerateClipStage. Same pod runs both stages (LRU model registry
+# handles VRAM swap between Wan + SeedVR2).
+#
+# Wan 2.2 T2V-A14B (native) on RunPod via DiffusersEngine
+# inference server (kinoforge.engines.diffusers.servers.wan_t2v_server).
+#
+# Why this cfg exists:
+#   The earlier runpod-comfyui-wan-t2v-14b-2_2.yaml tried to run
+#   Kijai's I2V-A14B HIGH+LOW pair as T2V via WanVideoEmptyEmbeds and
+#   failed at the patch_embedding layer with a 36-vs-16 channel
+#   mismatch — Wan 2.2 14B I2V has image conditioning baked into its
+#   convolution shape. The actual T2V-A14B model is published in
+#   sharded form by Wan-AI; only diffusers.WanPipeline (via
+#   huggingface_hub) handles sharded loading correctly.
+#
+# Usage:
+#   pixi run kinoforge generate \
+#     --config examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --mode t2v
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    # Image pin at the engine layer. DiffusersEngine.render_provision
+    # reads `engine.diffusers.image` (NOT `compute.image`) when
+    # assembling the pod-create payload.
+    #
+    # Pinned to torch 2.4: the runpod/pytorch:2.4 tag is the most
+    # widely-cached image across RunPod's pool. Task 8 attempts #13-15
+    # all stalled on the torch 2.8 cudnn-devel tag (9.5 GB compressed,
+    # not cached on most machines — 28+ min image pulls per pod, $0.06-
+    # 0.17 of waste each attempt). torch itself is pip-upgraded in the
+    # bootstrap above the cfg deps (DiffusersEngine.render_provision
+    # appends `--extra-index-url https://download.pytorch.org/whl/cu124`
+    # to the pip line) so the in-pod runtime is torch 2.6+ regardless
+    # of the image's pre-installed 2.4. That side-steps the
+    # ``infer_schema`` bug torch 2.4 has with diffusers' Wan VAE
+    # custom_op registration.
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # torch 2.6 fixes the infer_schema stringified-annotation bug
+      # (Task 8 attempt #5). torchvision + torchaudio MUST be pinned
+      # in lockstep — Task 8 attempt #16 hit:
+      #   RuntimeError: operator torchvision::nms does not exist
+      # because the torch 2.4 image's pre-installed torchvision 0.19
+      # was built against torch 2.4's ABI and broke when torch
+      # upgraded to 2.8 alone. Pinning all three to torch 2.6.x
+      # series resolves consistently from the cu124 wheel index.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    # Embed the server module tree into the bootstrap script.
+    # Live smoke 2026-06-19 Leg 1 burned $0.27 because the stock
+    # runpod/pytorch image has no kinoforge package — the bootstrap's
+    # `python -m kinoforge.engines.diffusers.servers.wan_t2v_server`
+    # ModuleNotFoundError'd instantly and the server never bound 8000.
+    # With embed_modules, render_provision base64-encodes the package's
+    # .py files into the script; the pod decodes them into /tmp/kfsrv/
+    # and PYTHONPATH-prepends that path before `exec`.
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+
+models:
+  # Bare-repo ref — HuggingFaceSource enumerates files for capability
+  # key derivation. Actual download is at server startup via
+  # diffusers.WanPipeline.from_pretrained().
+  #
+  # NOTE: the `-Diffusers` variant of the repo, NOT the bare `Wan-AI/
+  # Wan2.2-T2V-A14B`. The bare repo is the native Wan-AI checkpoint
+  # layout (Wan2.1_VAE.pth, models_t5_..., high_noise_model/,
+  # low_noise_model/, configuration.json) and does NOT have the
+  # diffusers `model_index.json` at root — `from_pretrained` 404s
+  # against it. The `-Diffusers` variant is the official converted
+  # format with `model_index.json` + vae/, scheduler/, tokenizer/,
+  # text_encoder/, transformer/, transformer_2/ subfolders. Discovered
+  # during Task 8 attempt #7 via the bootstrap.log surface.
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    kind: base
+    target: checkpoints  # informational only; diffusers manages HF cache
+
+compute:
+  provider: runpod
+  # torch 2.8.0 + cuda 12.8.1. The previous torch 2.4 image tripped
+  # ``infer_schema`` inside diffusers.models.autoencoders.autoencoder_kl_wan
+  # — torch 2.4's torch.library.custom_op cannot resolve stringified
+  # ``'torch.Tensor'`` annotations (used by diffusers' ``from __future__
+  # import annotations`` + flash-attn-3 op registration). torch 2.5+
+  # fixed infer_schema to handle stringified annotations; the 2.8.0
+  # image is the newest runpod/pytorch tag at smoke time (2026-06-19).
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  warm_reuse_auto_attach: true
+  requirements:
+    # Wan 2.2 MoE has TWO 14B transformers (high_noise_model +
+    # low_noise_model) — ~56 GB bf16 just for the transformers, plus
+    # ~11 GB UMT5-XXL T5 encoder + VAE + activations. 48 GB cards
+    # (A40 / A6000 / L40S) OOM during load (Task 8 attempts #17-19).
+    # 80 GB cards (A100 80GB, H100 80GB) fit the MoE comfortably.
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 3.00
+    gpu_preference:
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
+    # ~63 GB of weights + HF cache overhead + ComfyUI runtime not
+    # installed (this cfg is diffusers-only).
+    disk_gb: 150
+  lifecycle:
+    # Cold boot timeline (observed Task 8 attempt #11):
+    #   pip install + image pull ~2-3m
+    #   snapshot_download ~25-30m (41 files; HF auth-paginated; observed
+    #     18/41 at 10min, 28/41 at 21min, ETA 6m more)
+    #   pipe.to("cuda") ~2-3m
+    # boot_timeout extended to 60m to comfortably hold a slow HF Hub
+    # day. idle_timeout matches so warm-reuse doesn't fire selfterm
+    # mid-load. max_lifetime grown to 180m so a full smoke run (cold +
+    # warm + cross-cap-key) fits.
+    idle_timeout: 60m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 180m
+    boot_timeout: 60m
+    budget: 5.0
+    # Required for cross-CLI warm-reuse (same invariant as the
+    # Wan 2.1 1.3B cfg's load-bearing comment).
+    heartbeat_interval_s: 30
+
+spec:
+  # DiffusersEngine.validate_spec requires `pipeline` and `scheduler`
+  # keys to exist on job.spec. The wan_t2v_server has both baked in
+  # (loaded at startup via WanPipeline.from_pretrained), so these
+  # values are purely informational — the engine never reads them at
+  # generation time. Present here only to satisfy the validator
+  # (Task 8 attempt #23 surfaced this gap).
+  # DiffusersEngine.model_identity reads `spec.model` to build the
+  # output filename slug. Without this the live smoke's clips landed
+  # as `..._unknown_...` (see attempt #28 output filenames). The
+  # `test_example_config_produces_non_empty_model_identity` lockdown
+  # also requires this field.
+  model: "Wan2.2-T2V-A14B-Diffusers"
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
+  # Dimensions only — sampler defaults (steps, cfg, shift, scheduler,
+  # negative_prompt) are baked into wan_t2v_server.py.
+  width: 480
+  height: 480
+  num_frames: 81
+  fps: 16
+
+upscale:
+  # T16 — UpscaleStage activation. The orchestrator appends UpscaleStage
+  # after GenerateClipStage when this block is present. The pod's
+  # SeedVR2 weights are fetched at provision time
+  # (kinoforge.upscalers.seedvr2._fetch_weights) and resident in
+  # /workspace/models/seedvr2. The LRU model registry in
+  # wan_t2v_server swaps Wan ↔ SeedVR2 between stages so both fit on
+  # the 80 GB A100 / H100.
+  engine: seedvr2
+  scale: 2x
+  seedvr2:
+    variant: 3B
+    precision: fp8

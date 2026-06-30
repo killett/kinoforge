@@ -12,7 +12,115 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
-**No active workstream — next initiative TBD.**
+**Video upscaling — CODE COMPLETE, LIVE-SMOKE PARTIAL 2026-06-29 (P1 21/21 + P2 14/17 GREEN; P2 T15/T16 BLOCKED on source-upload).**
+
+### History
+
+- **P1 — original SeedVR2 plan (2026-06-28).** Plan
+  `docs/superpowers/plans/2026-06-28-video-upscaling.md`; spec
+  `docs/superpowers/specs/2026-06-28-video-upscaling-design.md` (`3b0b450`). Landed
+  T0–T17 GREEN (commits `16cace5..c8de9b8`): ScaleTarget + ABCs + registry + LRU
+  + server endpoints + `kinoforge upscale` CLI scaffold + RED live smoke.
+  **Surfaced BLOCKER A (SeedVR not pip-installable), B (no provision composition),
+  C (no upscale-only orchestrator entry)** — T18/T19 live spend deferred.
+
+- **P2 — packaging pivot (2026-06-29).** Spec
+  `docs/superpowers/specs/2026-06-29-upscaler-packaging-pivot-design.md` (`c9b5dff`);
+  plan `docs/superpowers/plans/2026-06-29-upscaler-packaging-pivot.md` (`f3a9688`);
+  tasks `docs/superpowers/plans/2026-06-29-upscaler-packaging-pivot.md.tasks.json`
+  (17 entries). Pivots v1 default from SeedVR2 → `spandrel` (the architecture-agnostic
+  SR runtime backing chaiNNer + ComfyUI). SeedVR2 deferred to `[seedvr]` extras
+  awaiting Phase-3 vendoring.
+
+### P2 ship status
+
+**Code-complete: T1–T14 GREEN (commits `e7623d6..a6cf042` + `538d9f4` + `0d990d5` +
+`9febc9e`).** All three P1 blockers resolved:
+
+- **BLOCKER A → solved by pivot.** SeedVR2Engine's four heavyweight ABC methods now
+  raise `ExtrasNotInstalled` (T2); cfg-time validation rejects
+  `cfg.upscale.engine == "seedvr2"` with a PREFLIGHT check (T3); seedvr2 example cfgs
+  moved to `examples/configs/extras/`.
+- **BLOCKER B → fixed in T8.** `DiffusersEngine.render_provision` now composes
+  `registry.get_upscaler(cfg.upscale.engine)().render_provision(cfg)` script lines
+  into the bootstrap BEFORE the server exec line. Engine-agnostic seam — FlashVSR
+  drop-in gets composition for free.
+- **BLOCKER C → fixed in T10+T11.** `generate(skip_clip_stage=True,
+  initial_clip=<Artifact>)` reuses existing warm-reuse / attach / cold-create
+  machinery for upscale-only entry. `_cmd_upscale` non-dry-run wired through that
+  path + symmetric ledger-tag stamping on `_cmd_generate`.
+
+Plus: SpandrelEngine + SpandrelRuntime (T5/T6); spandrel `_fetch_weights` CLI (T7,
+now bypassed on-pod by inline curl); wan_t2v_server spandrel-* prefix dispatch +
+`upscale` capability tag (T9); UpscaleConfig.spandrel field + capability_key
+upscale-only branch + DiffusersEngineConfig.upscale_only knob (skips Wan eager
+load); engines.md spandrel section + extras/ subfolder docs (T12); RED live-smoke
+scaffolds for both single-shot + multi-stage (T13, T14).
+
+### P2 live-smoke status (PARTIAL — T15/T16 BLOCKED)
+
+Eight live-spend iterations on RunPod exposed and fixed a long chain of latent
+infra gaps that the P1 plan never lived on through:
+
+1. RunPod pod-create HTTP 500 = oversized env var (KINOFORGE_PROVISION_SCRIPT 124KB
+   busted RunPod's 64KB ceiling). Fixed: gzip+base64 embed + `python3 -c
+   gzip.decompress` decode (commit `538d9f4`).
+2. Offer chooser silently picked AMD Instinct (incompatible with create-pod
+   mutation). Fixed: NVIDIA `gpu_preference` allowlist on the upscale-only cfg.
+3. `kinoforge.upscalers.spandrel._fetch_weights` on the pod ImportError because
+   spandrel's `__init__.py` pulls `kinoforge.core.registry` (not embedded). Fixed:
+   inline `curl -L -H "Authorization: Bearer $HF_TOKEN"` in the bootstrap (commit
+   `0d990d5`) — no kinoforge import on the pod.
+4. Bootstrap embed-modules tree didn't include `kinoforge.core.errors` /
+   `.scale_target` that SpandrelRuntime imports at /upscale time. Fixed: new
+   `embed_files: list[str]` cfg knob for single-file embeds; cfg lists those two.
+5. Cloudflare 403 on `/upscale` POST from default Python-urllib UA. Fixed:
+   SpandrelEngine._http_json now sets `kinoforge-spandrel/0.1` UA (`0d990d5`).
+6. Pydantic 400 on `/upscale` schema = no `spandrel` block field. Fixed: added
+   `SpandrelParams` to `UpscaleRequest` (commit `9febc9e`).
+7. **REMAINING (T15/T16 BLOCKER):** `source_url=file:///workspace/...mp4`
+   unreachable from the pod. SpandrelEngine builds the payload with the operator's
+   local-host file URL; the pod's `_download_to_local_temp` tries to read a path
+   that doesn't exist on the pod. **No upload mechanism exists yet.**
+
+Total live spend across the 8 iterations: ~$0.20 (8 cold-boot probes on cheap
+NVIDIA gear). All pods cleaned up; ledger empty.
+
+### NEXT SESSION — high priority (single concrete next step)
+
+**Build the pod file-upload path. Test it with
+`/workspace/output/20260623-212902_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4`.**
+
+Two implementation choices to weigh up-front:
+
+- **(a) POST /upload multipart endpoint on the server side** + client-side sender
+  in `SpandrelEngine.upscale` that uploads the local mp4 before submitting
+  /upscale and uses the resulting pod-local file:// path as `source_url`. ~80-150
+  LOC + tests. Mirrors how most batch-inference workers do this.
+- **(b) Reuse RunPod's volume-mount layer.** Pod's `/workspace` is bind-mounted —
+  if the orchestrator can SCP/SFTP into the pod's $RUNPOD_POD_ID-mapped storage,
+  no server endpoint needed. RunPod's SSH provisioning landscape is uneven though
+  — would need a probe.
+
+(a) is the cleaner long-run answer. Once shipped, T15 should be a 1-attempt
+~$0.05 spend; T16 ~$1-3 (Wan 14B cold boot dominates cost).
+
+### P2 resume gotchas (carryover for next session)
+
+1. T15/T16 native task IDs (`#15`, `#16`) are marked `blocked` in the .tasks.json
+   so `TaskList` won't show them as actionable until the upload-path lands. T17
+   was closed as part of THIS commit (the section you're reading).
+2. The on-pod bootstrap script size budget is **~64KB after base64-encoding** —
+   any new `embed_modules` / `embed_files` additions must check via
+   `len(rp.script)` against 64KB before going live.
+3. `examples/configs/upscale-spandrel-x2.yaml` already has `lifecycle.boot_timeout:
+   30m` to absorb fresh-pod torch + spandrel cold-install. Don't drop below 20m.
+4. `.env` is at `/workspace/.env`; the worktree has a symlink `.env →
+   /workspace/.env` (created during T15 debugging) so `pixi run preflight` works.
+5. RunPod GraphQL errors now stderr-log the response body (after the
+   api_key-redacted URL) so the next opaque 500 surfaces its cause immediately.
+6. **CarryOver from P1 (still TRUE):** SeedVR2 vendoring (Phase 3) is its own
+   workstream; deferring it doesn't gate the spandrel live smoke.
 
 ---
 

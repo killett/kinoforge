@@ -364,6 +364,15 @@ class DiffusersEngineConfig(BaseModel):
     asset_paths: dict[str, str] = Field(default_factory=dict)
     prompt_body_key: str | None = "prompt"
     embed_modules: list[str] = Field(default_factory=list)
+    embed_files: list[str] = Field(default_factory=list)  # Single-file
+    # embeds for dotted module paths whose leaf is a .py file (e.g.
+    # ``"kinoforge.core.errors"`` → embeds errors.py without dragging in
+    # the rest of kinoforge/core/. Use when the on-pod runtime needs a
+    # specific module but embedding its whole package would bust the
+    # 64KB env-var ceiling.
+    upscale_only: bool = False  # When True, render_provision emits
+    # KINOFORGE_SKIP_WAN_LOAD=1 so the in-pod wan_t2v_server starts in
+    # upscale-only mode (no eager WanPipeline.from_pretrained call).
 
 
 class FalEngineConfig(BaseModel):
@@ -465,6 +474,84 @@ class BedrockVideoEngineConfig(BaseModel):
                 f"engine.bedrock_video.output_s3_uri must start with 's3://', got {v!r}"
             )
         return v
+
+
+class SeedVR2EngineConfig(BaseModel):
+    """SeedVR2-specific config; required when ``upscale.engine == "seedvr2"``.
+
+    ``weights_ref`` defaults to ``None``; a ``model_validator`` populates the
+    variant-derived ref (``"hf:ByteDance-Seed/SeedVR2-{variant}"``) so the
+    common case stays one line in cfg. Explicit overrides (fork weights,
+    pinned snapshots) are preserved unchanged.
+
+    Attributes:
+        variant: Model size; ``"3B"`` (default) or ``"7B"``.
+        precision: ``"fp8"`` (default) or ``"fp16"``.
+        tile_size: Optional VRAM-vs-throughput knob; engine default when None.
+        steps: Optional denoise-step override; engine default when None.
+        weights_ref: HF / vendor-neutral ref. Auto-populated from ``variant``
+            when None.
+    """
+
+    variant: Literal["3B", "7B"] = "3B"
+    precision: Literal["fp8", "fp16"] = "fp8"
+    tile_size: int | None = None
+    steps: int | None = None
+    weights_ref: str | None = None
+
+    @model_validator(mode="after")
+    def _fill_weights_ref(self) -> Self:
+        if self.weights_ref is None:
+            object.__setattr__(
+                self,
+                "weights_ref",
+                f"hf:ByteDance-Seed/SeedVR2-{self.variant}",
+            )
+        return self
+
+
+class SpandrelEngineConfig(BaseModel):
+    """Spandrel-specific config; required when ``upscale.engine == "spandrel"``.
+
+    Attributes:
+        model_url: Source ref for the SR weights (``hf:org/repo/file.pth``,
+            ``civitai:<id>@<vid>``, ``civarchive:<id>@<vid>``, plain http(s)).
+            Resolved via :mod:`kinoforge.upscalers.spandrel._fetch_weights`
+            during pod provision.
+        arch: Architecture token used for the model-identity slug
+            (``"realesrgan"``, ``"esrgan"``, ``"swinir"``, ...). spandrel
+            auto-detects the actual architecture from the weights file; this
+            value is only the user-facing identifier surfaced in the sink
+            filename schema.
+        precision: ``"fp16"`` (default) or ``"fp32"``.
+        tile_size: Frame-tile dimension in pixels for VRAM headroom.
+        batch_size: Frames per CUDA batch.
+    """
+
+    model_url: str
+    arch: str = "realesrgan"
+    precision: Literal["fp16", "fp32"] = "fp16"
+    tile_size: int = 512
+    batch_size: int = 4
+
+
+class UpscaleConfig(BaseModel):
+    """Top-level ``upscale:`` block; presence activates the in-pipeline UpscaleStage.
+
+    Attributes:
+        engine: Upscaler name (registry key). v1 supports ``"spandrel"``;
+            ``"seedvr2"`` is extras-gated until Phase 2 vendoring lands.
+        scale: ScaleTarget grammar string (``"2x"`` | ``"4x"`` | ``"1080p"`` ...).
+            Consumers call ``ScaleTarget.parse(scale)``; the height branch
+            raises ``NotYetImplementedError`` in v1.
+        seedvr2: SeedVR2-specific block; required when ``engine == "seedvr2"``.
+        spandrel: Spandrel-specific block; required when ``engine == "spandrel"``.
+    """
+
+    engine: str
+    scale: str
+    seedvr2: SeedVR2EngineConfig | None = None
+    spandrel: SpandrelEngineConfig | None = None
 
 
 class EngineConfig(BaseModel):
@@ -845,6 +932,7 @@ class Config(BaseModel):
     spec: dict[str, Any] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
     keyframe: KeyframeConfig | None = None
+    upscale: UpscaleConfig | None = None
     sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
     # C28 A1.5: opt-in diagnostic mode. When True the engine's render_provision
     # prepends an EXIT trap that captures the boot log + system snapshot and
@@ -934,8 +1022,15 @@ class Config(BaseModel):
         # Base count: 1 (single-diffusion, e.g. Wan 2.1) or 2 (dual-diffusion,
         # e.g. Wan 2.2 14B HIGH + LOW stages). CapabilityKey concatenates both
         # refs in sorted order when 2 are present (see capability_key()).
+        # Upscale-only diffusers cfgs (engine.diffusers.upscale_only=true,
+        # `kinoforge upscale`) carry no base model — the spandrel weights
+        # land via cfg.upscale.spandrel.model_url at provision time, not via
+        # cfg.models[]. Skip the base-count gate in that case.
+        upscale_only = (
+            self.engine.diffusers is not None and self.engine.diffusers.upscale_only
+        )
         base_count = sum(1 for e in self.models if e.kind == "base")
-        if base_count == 0:
+        if base_count == 0 and not upscale_only:
             raise ValueError(
                 "models: must contain at least one entry with kind: base (found 0)"
             )
@@ -999,17 +1094,55 @@ class Config(BaseModel):
                 base_refs.append(entry.ref)
             # vae / text_encoder / clip_vision: skip entirely
 
-        if not base_refs:
+        upscale_only = (
+            self.engine.diffusers is not None and self.engine.diffusers.upscale_only
+        )
+        if not base_refs and not upscale_only:
             raise ConfigError("no model entry with kind: base found in config")
 
-        base_model = (
-            base_refs[0] if len(base_refs) == 1 else "|".join(sorted(base_refs))
-        )
+        if base_refs:
+            base_model = (
+                base_refs[0] if len(base_refs) == 1 else "|".join(sorted(base_refs))
+            )
+        else:
+            # Upscale-only cfgs derive identity from the upscaler weights ref
+            # so two pods running spandrel against different SR weights stay
+            # distinct in the matcher.
+            assert self.upscale is not None  # noqa: S101 — guarded by upscale_only branch
+            if self.upscale.spandrel is not None:
+                base_model = self.upscale.spandrel.model_url
+            elif self.upscale.seedvr2 is not None:
+                base_model = self.upscale.seedvr2.weights_ref or ""
+            else:
+                base_model = self.upscale.engine
+
+        # 2026-06-28: stages / upscaler factors. Pure-generate cfgs (no
+        # upscale block) leave stages=() so derive() preserves the legacy
+        # hash space.
+        stages: list[str] = []
+        upscaler = ""
+        upscaler_precision = ""
+        if self.upscale is not None:
+            if not upscale_only:
+                stages.append("t2v")
+            stages.append("upscale")
+            upscaler = self.upscale.engine
+            if self.upscale.seedvr2 is not None:
+                upscaler_precision = (
+                    f"{self.upscale.seedvr2.variant.lower()}-"
+                    f"{self.upscale.seedvr2.precision}"
+                )
+            elif self.upscale.spandrel is not None:
+                upscaler_precision = self.upscale.spandrel.precision
+
         return CapabilityKey(
             base_model=base_model,
             loras=tuple(loras),
             engine=self.engine.kind,
             precision=self.engine.precision,
+            stages=tuple(stages),
+            upscaler=upscaler,
+            upscaler_precision=upscaler_precision,
         )
 
     def lifecycle(self) -> InterfaceLifecycle:
