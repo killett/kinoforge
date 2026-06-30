@@ -10,8 +10,10 @@ from kinoforge.core.scale_target import ScaleTarget
 
 
 def _job_2x() -> UpscaleJob:
+    # https:// source — passes through SpandrelEngine.upscale() without
+    # triggering the file:// → PUT /upload dispatch.
     return UpscaleJob(
-        source=Artifact(uri="file:///tmp/in.mp4", sha256="0" * 64, size=1),
+        source=Artifact(uri="https://example.invalid/in.mp4", sha256="0" * 64, size=1),
         scale=ScaleTarget(kind="factor", value=2.0),
     )
 
