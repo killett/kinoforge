@@ -127,7 +127,7 @@ class TestCapabilities:
         # the matcher attaches an upscale job to a pod that can't run it.
         _srv, client, set_loaded = loaded_client
         set_loaded({"wan-t2v-a14b-fp8": _entry("wan-t2v-a14b-fp8")})
-        assert client.get("/health").json()["capabilities"] == ["t2v"]
+        assert client.get("/health").json()["capabilities"] == ["t2v", "upload"]
 
     def test_wan_and_seedvr2_yields_sorted_both(self, loaded_client: Any) -> None:
         # Bug caught: capabilities returned in insertion order rather
@@ -140,7 +140,11 @@ class TestCapabilities:
                 "wan-t2v-a14b-fp8": _entry("wan-t2v-a14b-fp8"),
             }
         )
-        assert client.get("/health").json()["capabilities"] == ["t2v", "upscale"]
+        assert client.get("/health").json()["capabilities"] == [
+            "t2v",
+            "upload",
+            "upscale",
+        ]
 
     def test_upscale_only_yields_upscale(self, loaded_client: Any) -> None:
         # Bug caught: a hardcoded ``"t2v"`` default in the capabilities
@@ -149,7 +153,7 @@ class TestCapabilities:
         # a pod with no Wan pipeline loaded.
         _srv, client, set_loaded = loaded_client
         set_loaded({"seedvr2-3b-fp8": _entry("seedvr2-3b-fp8")})
-        assert client.get("/health").json()["capabilities"] == ["upscale"]
+        assert client.get("/health").json()["capabilities"] == ["upload", "upscale"]
 
     def test_unknown_prefix_does_not_contribute_capability(
         self, loaded_client: Any
@@ -167,7 +171,20 @@ class TestCapabilities:
             }
         )
         caps = client.get("/health").json()["capabilities"]
-        assert caps == ["t2v"]  # unknown prefix ignored, not surfaced
+        # unknown prefix ignored, not surfaced; "upload" is always advertised.
+        assert caps == ["t2v", "upload"]
+
+
+class TestUploadCapability:
+    def test_health_advertises_upload_capability(self, loaded_client: Any) -> None:
+        # Bug caught: /upload is always wired into the FastAPI app, but
+        # the matcher reads capabilities[] to decide whether to attach
+        # file:// upscale jobs to the pod. If "upload" never appears, the
+        # matcher falls back to a (more expensive) cold-boot or refuses
+        # the job. Tag must be present even when registry is empty.
+        _srv, client, _set_loaded = loaded_client
+        caps = client.get("/health").json()["capabilities"]
+        assert "upload" in caps
 
 
 class TestSpandrelCapability:
@@ -180,7 +197,7 @@ class TestSpandrelCapability:
         # attach upscale jobs to it.
         _srv, client, set_loaded = loaded_client
         set_loaded({"spandrel-realesrgan-fp16": _entry("spandrel-realesrgan-fp16")})
-        assert client.get("/health").json()["capabilities"] == ["upscale"]
+        assert client.get("/health").json()["capabilities"] == ["upload", "upscale"]
 
     def test_spandrel_and_wan_yield_sorted_both(self, loaded_client: Any) -> None:
         # Bug caught: a multi-model pod (Wan T2V + spandrel upscaler) reports
@@ -193,4 +210,8 @@ class TestSpandrelCapability:
                 "spandrel-realesrgan-fp16": _entry("spandrel-realesrgan-fp16"),
             }
         )
-        assert client.get("/health").json()["capabilities"] == ["t2v", "upscale"]
+        assert client.get("/health").json()["capabilities"] == [
+            "t2v",
+            "upload",
+            "upscale",
+        ]
