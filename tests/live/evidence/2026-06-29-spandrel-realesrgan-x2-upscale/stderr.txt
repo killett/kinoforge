@@ -1,7 +1,14 @@
 Pixi task (kinoforge in default): python -m kinoforge upscale --video /workspace/.claude/worktrees/video-upscaling/examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4 --config /workspace/.claude/worktrees/video-upscaling/examples/configs/upscale-spandrel-x2.yaml --no-reuse
-2026-06-30 00:21:05,632 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
-2026-06-30 00:21:10,282 INFO kinoforge.orchestrator running provisioner.provision for instance q9fve1yt90nf6x (engine=diffusers key=b36f749a5703)
-2026-06-30 00:23:07,021 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod q9fve1yt90nf6x
+2026-06-30 00:26:34,370 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
+2026-06-30 00:26:38,926 INFO kinoforge.orchestrator running provisioner.provision for instance w09mc93m82mwr6 (engine=diffusers key=b36f749a5703)
+2026-06-30 00:48:17,572 WARNING kinoforge.engines._proxy_retry [proxy.spandrel.status] transient HTTPError url=https://w09mc93m82mwr6-8000.proxy.runpod.net/upscale/status/u-98b5a3dad9a84804ada769fefabeac92 code=502 attempt=1/7
+2026-06-30 00:48:19,105 WARNING kinoforge.engines._proxy_retry [proxy.spandrel.status] transient HTTPError url=https://w09mc93m82mwr6-8000.proxy.runpod.net/upscale/status/u-98b5a3dad9a84804ada769fefabeac92 code=502 attempt=2/7
+2026-06-30 00:48:21,661 WARNING kinoforge.engines._proxy_retry [proxy.spandrel.status] transient HTTPError url=https://w09mc93m82mwr6-8000.proxy.runpod.net/upscale/status/u-98b5a3dad9a84804ada769fefabeac92 code=404 attempt=3/7
+2026-06-30 00:48:26,053 WARNING kinoforge.engines._proxy_retry [proxy.spandrel.status] transient HTTPError url=https://w09mc93m82mwr6-8000.proxy.runpod.net/upscale/status/u-98b5a3dad9a84804ada769fefabeac92 code=404 attempt=4/7
+2026-06-30 00:48:34,567 WARNING kinoforge.engines._proxy_retry [proxy.spandrel.status] transient HTTPError url=https://w09mc93m82mwr6-8000.proxy.runpod.net/upscale/status/u-98b5a3dad9a84804ada769fefabeac92 code=404 attempt=5/7
+2026-06-30 00:48:51,055 WARNING kinoforge.engines._proxy_retry [proxy.spandrel.status] transient HTTPError url=https://w09mc93m82mwr6-8000.proxy.runpod.net/upscale/status/u-98b5a3dad9a84804ada769fefabeac92 code=404 attempt=6/7
+2026-06-30 00:49:07,536 WARNING kinoforge.engines._proxy_retry [proxy.spandrel.status] transient HTTPError url=https://w09mc93m82mwr6-8000.proxy.runpod.net/upscale/status/u-98b5a3dad9a84804ada769fefabeac92 code=404 attempt=7/7
+2026-06-30 00:49:08,050 ERROR kinoforge.orchestrator --no-reuse destroy raised unexpected for w09mc93m82mwr6: RunPod GraphQL terminate w09mc93m82mwr6 failed: [{'message': 'pod not found to terminate', 'path': ['podTerminate'], 'extensions': {'code': 'POD_NOT_FOUND', 'userId': 'user_3DtUhtVKvSzZzmiy3bzrzjpqRxQ', 'podId': 'w09mc93m82mwr6'}}]
 Traceback (most recent call last):
   File "<frozen runpy>", line 198, in _run_module_as_main
   File "<frozen runpy>", line 88, in _run_code
@@ -27,6 +34,39 @@ Traceback (most recent call last):
     result = self.engine.upscale(
         self.instance, job, self.cfg, cancel_token=self.cancel_token
     )
-  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/_engine.py", line 207, in upscale
-    raise UpscaleFailed(job_id=job_id, server_error=status.get("error", ""))
-kinoforge.core.errors.UpscaleFailed: upscale job u-4fd1f40854f74087b35a5dc2f98131ea failed on server: Input type (c10::Half) and bias type (float) should be the same
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/_engine.py", line 184, in upscale
+    status = retry_proxy_call(
+        label="spandrel.status",
+    ...<4 lines>...
+        sleep=time.sleep,
+    )
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/engines/_proxy_retry.py", line 130, in retry_proxy_call
+    raise last_exc
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/engines/_proxy_retry.py", line 101, in retry_proxy_call
+    return fn()
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/_engine.py", line 187, in <lambda>
+    fn=lambda: _http_json(
+               ~~~~~~~~~~^
+        method="GET", url=f"{base}/upscale/status/{job_id}"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ),
+    ^
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/_engine.py", line 303, in _http_json
+    with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/workspace/.claude/worktrees/video-upscaling/.pixi/envs/default/lib/python3.13/urllib/request.py", line 189, in urlopen
+    return opener.open(url, data, timeout)
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/.claude/worktrees/video-upscaling/.pixi/envs/default/lib/python3.13/urllib/request.py", line 495, in open
+    response = meth(req, response)
+  File "/workspace/.claude/worktrees/video-upscaling/.pixi/envs/default/lib/python3.13/urllib/request.py", line 604, in http_response
+    response = self.parent.error(
+        'http', request, response, code, msg, hdrs)
+  File "/workspace/.claude/worktrees/video-upscaling/.pixi/envs/default/lib/python3.13/urllib/request.py", line 533, in error
+    return self._call_chain(*args)
+           ~~~~~~~~~~~~~~~~^^^^^^^
+  File "/workspace/.claude/worktrees/video-upscaling/.pixi/envs/default/lib/python3.13/urllib/request.py", line 466, in _call_chain
+    result = func(*args)
+  File "/workspace/.claude/worktrees/video-upscaling/.pixi/envs/default/lib/python3.13/urllib/request.py", line 613, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 404: Not Found
