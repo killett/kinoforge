@@ -1,19 +1,19 @@
 {
   "planPath": "docs/superpowers/plans/2026-06-29-upscale-pod-upload.md",
   "specPath": "docs/superpowers/specs/2026-06-29-upscale-pod-upload-design.md",
-  "lastUpdated": "2026-06-29T00:00:00Z",
+  "lastUpdated": "2026-06-29T12:00:00Z",
   "tasks": [
     {
       "id": 0,
       "subject": "Task 0: UploadIntegrityError exception",
-      "status": "pending",
+      "status": "completed",
       "nativeTaskId": "1",
       "description": "**Goal:** Typed exception for upload sha256 mismatch.\n\n**Files:**\n- src/kinoforge/core/errors.py\n- tests/core/test_errors_upload_integrity.py\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"tests/core/test_errors_upload_integrity.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_errors_upload_integrity.py -v\", \"acceptanceCriteria\": [\"UploadIntegrityError subclass of KinoforgeError\", \"carries local_sha256/server_sha256/bytes_sent\", \"__str__ includes both hashes\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: Server PUT /upload route",
-      "status": "pending",
+      "status": "completed",
       "nativeTaskId": "2",
       "blockedBy": [0],
       "description": "**Goal:** PUT /upload streams video/mp4, sha256-echoes, returns {path,size,sha256}.\n\n**Files:**\n- src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\n- tests/engines/diffusers/test_server_upload.py\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/test_server_upload.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/test_server_upload.py -v\", \"acceptanceCriteria\": [\"PUT /upload returns {path,size,sha256}\", \"file lands under _UPLOAD_DIR\", \"_UPLOAD_DIR constant exists\", \"_sanitize_upload_filename strips and falls back\"], \"modelTier\": \"standard\"}\n```"
@@ -21,7 +21,7 @@
     {
       "id": 2,
       "subject": "Task 2: /upload rejection paths + /health capability",
-      "status": "pending",
+      "status": "completed",
       "nativeTaskId": "3",
       "blockedBy": [1],
       "description": "**Goal:** 415/413 rejection + atomic publish + /health 'upload' capability tag.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/test_server_upload.py\", \"tests/engines/diffusers/test_server_health.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/test_server_upload.py tests/engines/diffusers/test_server_health.py -v\", \"acceptanceCriteria\": [\"wrong CT \\u2192 415\", \"oversize \\u2192 413 + no published file\", \"mid-abort leaves no published file\", \"/health includes 'upload'\"], \"modelTier\": \"standard\"}\n```"
