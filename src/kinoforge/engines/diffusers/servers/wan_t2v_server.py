@@ -1123,6 +1123,10 @@ def _capabilities_from_loaded() -> list[str]:
         cap = _capability_for_model(name)
         if cap is not None:
             caps.add(cap)
+    # /upload is always wired into the FastAPI app, independent of which
+    # pipelines successfully loaded — advertise it unconditionally so the
+    # client can pre-flight before PUT.
+    caps.add("upload")
     return sorted(caps)
 
 
