@@ -68,7 +68,10 @@ def test_compose_spandrel_appends_to_script() -> None:
     # inside the runtime crashes on first /upscale request.
     rp = DiffusersEngine().render_provision(_with_spandrel(_wan_only_cfg()))
     assert "spandrel" in rp.script
-    assert "kinoforge.upscalers.spandrel._fetch_weights" in rp.script
+    # Weights fetch is now inlined as a curl HF resolve URL (rather than a
+    # `python -m kinoforge.upscalers.spandrel._fetch_weights` call) so the
+    # pod doesn't need the kinoforge package importable.
+    assert "huggingface.co/lllyasviel/realesrgan/resolve/main" in rp.script
 
 
 def test_compose_order_spandrel_before_server_exec() -> None:

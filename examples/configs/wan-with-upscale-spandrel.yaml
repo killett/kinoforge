@@ -37,6 +37,14 @@ engine:
     prompt_body_key: "prompt"
     embed_modules:
       - "kinoforge.engines.diffusers.servers"
+      # spandrel _fetch_weights CLI runs at provision time before the
+      # server starts; needs the upscalers.spandrel package on disk.
+      - "kinoforge.upscalers.spandrel"
+    embed_files:
+      # SpandrelRuntime imports kinoforge.core.errors + .scale_target at
+      # the first /upscale call.
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
 
 models:
   - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"

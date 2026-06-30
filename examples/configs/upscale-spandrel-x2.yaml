@@ -30,6 +30,16 @@ engine:
       - "spandrel>=0.4.2"
     embed_modules:
       - "kinoforge.engines.diffusers.servers"
+      # SpandrelRuntime + SpandrelEngine for the on-pod /upscale handler.
+      - "kinoforge.upscalers.spandrel"
+    embed_files:
+      # SpandrelRuntime imports kinoforge.core.errors + .scale_target at
+      # the first /upscale call. Single-file embeds keep the bootstrap
+      # script under RunPod's 64KB env-var ceiling (kinoforge.core has
+      # ~15K lines total — embedding the whole package would balloon
+      # the script past 200KB even after gzip).
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
     # Skip the eager WanPipeline.from_pretrained at server startup. The pod
     # runs only the on-demand spandrel runtime via the LRU registry — no Wan
     # weights ever load. Cuts cold-boot from ~30min (full Wan 14B download)

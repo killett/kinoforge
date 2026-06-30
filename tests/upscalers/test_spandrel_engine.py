@@ -66,8 +66,12 @@ class TestRenderProvision:
         assert "pip install" in rp.script
         assert "spandrel" in rp.script
         assert "imageio" in rp.script
-        assert "kinoforge.upscalers.spandrel._fetch_weights" in rp.script
+        # Weights fetch is inlined as a curl invocation rather than
+        # `python -m kinoforge.upscalers.spandrel._fetch_weights` to keep
+        # the on-pod bootstrap self-contained (no kinoforge.core import).
+        assert "curl -L" in rp.script
         assert "RealESRGAN_x2plus.pth" in rp.script
+        assert "huggingface.co/lllyasviel/realesrgan/resolve/main" in rp.script
 
     def test_run_cmd_empty(self) -> None:
         # Bug caught: SpandrelEngine claims a `run_cmd` and overrides
