@@ -501,20 +501,48 @@ class SeedVR2EngineConfig(BaseModel):
         return self
 
 
+class SpandrelEngineConfig(BaseModel):
+    """Spandrel-specific config; required when ``upscale.engine == "spandrel"``.
+
+    Attributes:
+        model_url: Source ref for the SR weights (``hf:org/repo/file.pth``,
+            ``civitai:<id>@<vid>``, ``civarchive:<id>@<vid>``, plain http(s)).
+            Resolved via :mod:`kinoforge.upscalers.spandrel._fetch_weights`
+            during pod provision.
+        arch: Architecture token used for the model-identity slug
+            (``"realesrgan"``, ``"esrgan"``, ``"swinir"``, ...). spandrel
+            auto-detects the actual architecture from the weights file; this
+            value is only the user-facing identifier surfaced in the sink
+            filename schema.
+        precision: ``"fp16"`` (default) or ``"fp32"``.
+        tile_size: Frame-tile dimension in pixels for VRAM headroom.
+        batch_size: Frames per CUDA batch.
+    """
+
+    model_url: str
+    arch: str = "realesrgan"
+    precision: Literal["fp16", "fp32"] = "fp16"
+    tile_size: int = 512
+    batch_size: int = 4
+
+
 class UpscaleConfig(BaseModel):
     """Top-level ``upscale:`` block; presence activates the in-pipeline UpscaleStage.
 
     Attributes:
-        engine: Upscaler name (registry key). v1 supports ``"seedvr2"``.
+        engine: Upscaler name (registry key). v1 supports ``"spandrel"``;
+            ``"seedvr2"`` is extras-gated until Phase 2 vendoring lands.
         scale: ScaleTarget grammar string (``"2x"`` | ``"4x"`` | ``"1080p"`` ...).
             Consumers call ``ScaleTarget.parse(scale)``; the height branch
             raises ``NotYetImplementedError`` in v1.
         seedvr2: SeedVR2-specific block; required when ``engine == "seedvr2"``.
+        spandrel: Spandrel-specific block; required when ``engine == "spandrel"``.
     """
 
     engine: str
     scale: str
     seedvr2: SeedVR2EngineConfig | None = None
+    spandrel: SpandrelEngineConfig | None = None
 
 
 class EngineConfig(BaseModel):
