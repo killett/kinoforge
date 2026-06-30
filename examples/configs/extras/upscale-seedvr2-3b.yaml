@@ -40,6 +40,12 @@ compute:
     min_vram_gb: 24
     disk_gb: 100
 
+spec:
+  # spec.model is informational only for upscale-only cfgs; satisfies the
+  # test_no_unknown_slug_for_example_configs integration test (loads the
+  # cfg + asserts DiffusersEngine.model_identity returns non-empty).
+  model: "seedvr2-3b-fp8"
+
 upscale:
   engine: seedvr2
   scale: 2x
