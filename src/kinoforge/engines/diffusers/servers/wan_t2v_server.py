@@ -1049,8 +1049,22 @@ def _startup() -> None:
     If ``KINOFORGE_INITIAL_LORA_STACK_JSON`` points to a readable JSON
     file shaped ``[[ref, {spec...}], ...]``, those LoRAs are downloaded
     + loaded before the server reports ready.
+
+    Upscale-only mode: when ``KINOFORGE_SKIP_WAN_LOAD`` is set in env,
+    the Wan pipeline + worker thread are skipped — only the
+    on-demand LRU registry (``_load_model_to_gpu`` for spandrel/seedvr2)
+    fires when ``/upscale`` is called. ``/health`` reports ready
+    immediately so wait_for_ready clears. Used by ``kinoforge upscale``
+    cfgs that don't reference a Wan model (``examples/configs/
+    upscale-spandrel-x2.yaml``).
     """
     global pipe, _worker_thread
+    if os.environ.get("KINOFORGE_SKIP_WAN_LOAD"):
+        _log.info("startup: KINOFORGE_SKIP_WAN_LOAD=1; skipping Wan pipeline load")
+        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        LORAS_DIR.mkdir(parents=True, exist_ok=True)
+        ready.set()
+        return
     _log.info("startup: loading pipeline %s", MODEL_ID)
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     LORAS_DIR.mkdir(parents=True, exist_ok=True)

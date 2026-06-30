@@ -90,6 +90,31 @@ def test_no_upscale_block_means_no_composition() -> None:
     assert "kinoforge.upscalers.spandrel._fetch_weights" not in rp.script
 
 
+def test_upscale_only_emits_skip_wan_load_export() -> None:
+    # Bug caught: upscale_only knob silently ignored — the on-pod
+    # wan_t2v_server still calls WanPipeline.from_pretrained at startup
+    # against a cfg with no Wan model, crashing the cold boot before
+    # the first /upscale POST can ever fire.
+    cfg = _with_spandrel(_wan_only_cfg())
+    cfg["engine"]["diffusers"]["upscale_only"] = True
+
+    rp = DiffusersEngine().render_provision(cfg)
+    assert "export KINOFORGE_SKIP_WAN_LOAD=1" in rp.script
+    # Order: the export must come BEFORE the server_cmd line (the export
+    # only affects child processes the bootstrap launches afterwards).
+    export_idx = rp.script.find("export KINOFORGE_SKIP_WAN_LOAD=1")
+    server_idx = rp.script.find("wan_t2v_server")
+    assert export_idx < server_idx
+
+
+def test_no_upscale_only_means_no_skip_wan_load_export() -> None:
+    # Bug caught: the export fires on every cfg, including Wan-loaded ones,
+    # making the multi-stage cfgs accidentally skip the very Wan load they
+    # need.
+    rp = DiffusersEngine().render_provision(_with_spandrel(_wan_only_cfg()))
+    assert "KINOFORGE_SKIP_WAN_LOAD" not in rp.script
+
+
 def test_seedvr2_composition_raises_extras_not_installed() -> None:
     # Bug caught: composition continues into a seedvr2 cfg, the
     # SeedVR2Engine extras-stub raises, the orchestrator sees an

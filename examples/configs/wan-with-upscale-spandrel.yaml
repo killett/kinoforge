@@ -86,7 +86,7 @@ upscale:
   engine: spandrel
   scale: 2x
   spandrel:
-    model_url: "hf:lllyasviel/Annotators/RealESRGAN_x2.pth"
+    model_url: "hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth"
     arch: realesrgan
     precision: fp16
     tile_size: 512
