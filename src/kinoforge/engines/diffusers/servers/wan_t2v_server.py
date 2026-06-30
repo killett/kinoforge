@@ -1536,6 +1536,16 @@ class SeedVR2Params(BaseModel):
     steps: int | None = None
 
 
+class SpandrelParams(BaseModel):
+    """Engine-specific overrides for a spandrel upscale request."""
+
+    model_url: str | None = None
+    arch: str | None = None
+    precision: Literal["fp16", "fp32"] = "fp16"
+    tile_size: int = 512
+    batch_size: int = 4
+
+
 class UpscaleRequest(BaseModel):
     """JSON body for ``POST /upscale``.
 
@@ -1549,6 +1559,7 @@ class UpscaleRequest(BaseModel):
     scale: str
     engine: str
     seedvr2: SeedVR2Params | None = None
+    spandrel: SpandrelParams | None = None
     job_id: str | None = None
 
 
