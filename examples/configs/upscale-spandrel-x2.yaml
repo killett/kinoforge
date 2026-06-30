@@ -1,0 +1,54 @@
+# v1-default upscale-only cfg for `kinoforge upscale`.
+#
+# Per-frame super-resolution via the spandrel library (chaiNNer + ComfyUI's
+# SR runtime; auto-detects RealESRGAN / ESRGAN / SwinIR / OmniSR architectures
+# from weights). Drop-in replacement for the seedvr2 cfg under examples/configs/
+# extras/ — flicker tradeoff documented in docs/engines.md §Upscalers.
+#
+# Usage:
+#   pixi run kinoforge upscale \
+#     --config examples/configs/upscale-spandrel-x2.yaml \
+#     --video /path/to/clip.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+
+models:
+  - kind: base
+    ref: "hf:lllyasviel/Annotators/RealESRGAN_x2.pth"
+    target: diffusion_models
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  requirements:
+    min_vram_gb: 16
+    disk_gb: 40
+
+upscale:
+  engine: spandrel
+  scale: 2x
+  spandrel:
+    model_url: "hf:lllyasviel/Annotators/RealESRGAN_x2.pth"
+    arch: realesrgan
+    precision: fp16
+    tile_size: 512
+    batch_size: 4

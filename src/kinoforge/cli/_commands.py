@@ -659,7 +659,7 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
     if cfg.upscale is None:
         print(
             "error: --config must contain an `upscale:` block; "
-            "see examples/configs/upscale-seedvr2-3b.yaml",
+            "see examples/configs/upscale-spandrel-x2.yaml",
             file=sys.stderr,
         )
         return 2
