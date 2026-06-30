@@ -389,3 +389,81 @@ class SetStackRequestRejected(KinoforgeError):
     Pydantic bounds, so this firing indicates a contract drift between
     client and server schemas.
     """
+
+
+# --- Video upscaling -------------------------------------------------------
+
+
+class NotYetImplementedError(KinoforgeError):
+    """Raised when a code path is intentionally deferred to a future session.
+
+    Distinct from stdlib NotImplementedError (ABC abstract method) — this is
+    explicit "we chose to parse-then-raise instead of refuse-at-parse-time"
+    semantics. See ScaleTarget(kind="height").
+    """
+
+
+class UnsupportedScaleError(KinoforgeError):
+    """Raised when an UpscalerEngine refuses a ScaleTarget its model can't serve.
+
+    Carries enough context for post-mortem without session memory.
+    """
+
+    def __init__(self, scale: object, engine_name: str) -> None:
+        """Record the scale and engine_name for post-mortem rendering."""
+        super().__init__(
+            f"engine {engine_name!r} does not support scale {scale!r}; "
+            f"declared supported_scales gates this refusal"
+        )
+        self.scale = scale
+        self.engine_name = engine_name
+
+
+class UpscaleFailed(KinoforgeError):
+    """Server-side upscale job entered an error state."""
+
+    def __init__(self, job_id: str, server_error: str) -> None:
+        """Record the failed job_id and server-supplied error description."""
+        super().__init__(f"upscale job {job_id} failed on server: {server_error}")
+        self.job_id = job_id
+        self.server_error = server_error
+
+
+class VRAMEvictionFailed(KinoforgeError):
+    """Eviction policy exhausted all targets and the requested model still doesn't fit."""
+
+    def __init__(self, model: str, reason: str) -> None:
+        """Record the model that wouldn't fit and the reason eviction failed."""
+        super().__init__(f"VRAM eviction failed for {model}: {reason}")
+        self.model = model
+        self.reason = reason
+
+
+class StageMismatch(KinoforgeError):
+    """Pod /health capabilities disagree with cfg's stages requirement."""
+
+    def __init__(self, want: tuple[str, ...], have: tuple[str, ...]) -> None:
+        """Record requested + actual stage tuples."""
+        super().__init__(f"pod missing stages: want={want!r}, have={have!r}")
+        self.want = want
+        self.have = have
+
+
+class ExtrasNotInstalled(KinoforgeError):
+    """Raised when a kinoforge component requires a pip extras group that is not installed.
+
+    Args:
+        extras_name: The extras-group key (e.g. ``"seedvr"`` for
+            ``kinoforge[seedvr]``).
+        install_hint: Operator-facing remediation text (concrete command,
+            workstream reference, or "use ``cfg.upscale.engine = 'spandrel'``
+            instead" pointer).
+    """
+
+    def __init__(self, extras_name: str, install_hint: str) -> None:
+        """Format the standard extras-not-installed message and stash both fields."""
+        super().__init__(
+            f"kinoforge[{extras_name}] extras not installed — {install_hint}"
+        )
+        self.extras_name = extras_name
+        self.install_hint = install_hint

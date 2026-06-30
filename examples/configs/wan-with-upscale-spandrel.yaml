@@ -1,0 +1,101 @@
+# Wan 2.2 T2V-A14B + in-pipeline spandrel 2x upscale (multi-stage).
+# Derived from runpod-diffusers-wan-t2v-14b-2_2.yaml; adds the
+# `upscale:` block so the orchestrator appends UpscaleStage after
+# GenerateClipStage. Same pod runs both stages (LRU model registry
+# in wan_t2v_server handles VRAM swap between Wan + spandrel).
+#
+# spandrel replaces the prior SeedVR2 default — see docs/engines.md
+# §Upscalers for the v1 quality / flicker tradeoff and the extras-gated
+# (kinoforge[seedvr]) Phase 2 path.
+#
+# Usage:
+#   pixi run kinoforge generate \
+#     --config examples/configs/wan-with-upscale-spandrel.yaml \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --mode t2v
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      # spandrel _fetch_weights CLI runs at provision time before the
+      # server starts; needs the upscalers.spandrel package on disk.
+      - "kinoforge.upscalers.spandrel"
+    embed_files:
+      # SpandrelRuntime imports kinoforge.core.errors + .scale_target at
+      # the first /upscale call.
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  warm_reuse_auto_attach: true
+  requirements:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 3.00
+    gpu_preference:
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
+    disk_gb: 150
+  lifecycle:
+    idle_timeout: 60m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 180m
+    boot_timeout: 60m
+    budget: 5.0
+    heartbeat_interval_s: 30
+
+spec:
+  model: "Wan2.2-T2V-A14B-Diffusers"
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
+  width: 480
+  height: 480
+  num_frames: 81
+  fps: 16
+
+upscale:
+  # T8 — UpscaleStage activation. The orchestrator appends UpscaleStage
+  # after GenerateClipStage when this block is present. DiffusersEngine
+  # composes spandrel's render_provision into the bootstrap so the pod
+  # has the spandrel package + weights ready when /upscale fires. The
+  # LRU model registry in wan_t2v_server swaps Wan ↔ spandrel between
+  # stages so both fit on the 80 GB A100 / H100.
+  engine: spandrel
+  scale: 2x
+  spandrel:
+    model_url: "hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth"
+    arch: realesrgan
+    precision: fp16
+    tile_size: 512
+    batch_size: 4
