@@ -444,11 +444,56 @@ Upscalers are a parallel registry to the generation engines. They are
 keyed by `cfg.upscale.engine` and resolved via
 `kinoforge.core.registry.get_upscaler`.
 
-| Name | Class | Provision surface |
-|------|-------|-------------------|
-| `seedvr2` | `kinoforge.upscalers.seedvr2.SeedVR2Engine` | HTTP via the diffusers server's `/upscale` + `/upscale/status/{id}` |
+| Name | Class | Status | Provision surface |
+|------|-------|--------|-------------------|
+| `spandrel` | `kinoforge.upscalers.spandrel.SpandrelEngine` | v1 default | HTTP via the diffusers server's `/upscale` + `/upscale/status/{id}` |
+| `seedvr2`  | `kinoforge.upscalers.seedvr2.SeedVR2Engine`   | `kinoforge[seedvr]` extras (Phase 2) | same — HTTP via the diffusers server |
 
-SeedVR2's upstream pin lives in
-`src/kinoforge/upscalers/seedvr2/__init__.py` as `_UPSTREAM_COMMIT`.
-The pod's provision step pip-installs `seedvr @ git+...@<commit>` so
-the pinned SHA fully determines the inference build.
+### `spandrel` (v1 default)
+
+Per-frame super-resolution via the
+[spandrel](https://github.com/chaiNNer-org/spandrel) library — the SR
+runtime that backs chaiNNer and ComfyUI custom nodes. `spandrel`'s
+`ModelLoader` auto-detects the underlying architecture (RealESRGAN,
+ESRGAN, SwinIR, OmniSR, ...) from a `.pth` or `.safetensors` weights
+file, so a single engine surface supports the entire ecosystem of
+published SR weights.
+
+**Quality tradeoff (v1).** Per-frame inference has no temporal model:
+adjacent frames are upscaled independently, which can introduce subtle
+flicker on high-frequency texture (foliage, hair). The tradeoff was
+made deliberately to ship a packaged default in P2 while video-coherent
+upscaling (SeedVR2) waits on Phase 2 vendoring of an unpackaged
+upstream. Operators who need temporal coherence should hold for the
+`[seedvr]` extras path.
+
+**Cfg surface.** See `examples/configs/upscale-spandrel-x2.yaml`
+(upscale-only, for `kinoforge upscale`) and
+`examples/configs/wan-with-upscale-spandrel.yaml` (Wan T2V → spandrel
+multi-stage warm-reuse, for `kinoforge generate`). Per-engine knobs
+live under `cfg.upscale.spandrel`:
+
+- `model_url` — source ref for the weights (`hf:`, `civitai:`,
+  `civarchive:`, plain http(s)). Fetched at provision time via
+  `python -m kinoforge.upscalers.spandrel._fetch_weights`.
+- `arch` — architecture token surfaced in the model-identity slug
+  (informational; the runtime auto-detects from the weights file).
+- `precision` — `"fp16"` (default) or `"fp32"`.
+- `tile_size` / `batch_size` — VRAM-vs-throughput knobs.
+
+### `seedvr2` (extras-gated, Phase 2)
+
+Video-coherent diffusion upscaling via ByteDance-Seed/SeedVR2. The
+upstream repository ships as research scripts with no `setup.py` /
+`pyproject.toml` (verified 2026-06-29), so `pip install seedvr @
+git+...` is not feasible. The engine self-registers under `"seedvr2"`
+but its four heavyweight ABC methods (`render_provision`, `provision`,
+`upscale`, `validate_spec`) raise `ExtrasNotInstalled` until the Phase
+2 workstream vendors `projects/inference_seedvr2_*.py` + `common/` +
+`models/` into `src/kinoforge/upscalers/seedvr2/_vendored/`.
+
+A PREFLIGHT validation check (`seedvr2_extras_pending`) refuses
+`cfg.upscale.engine == "seedvr2"` at `kinoforge generate` pre-flight
+so operators see the structured remediation hint BEFORE any pod is
+created. The example cfgs are kept under `examples/configs/extras/` as
+forward-compatible references.
