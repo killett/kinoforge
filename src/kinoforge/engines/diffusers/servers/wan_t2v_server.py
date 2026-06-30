@@ -1662,8 +1662,30 @@ async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
     return {"job_id": job_id}
 
 
+def _maybe_cleanup_upload(source_url: str) -> None:
+    """Unlink the file:// source IFF it lives under ``_UPLOAD_DIR``.
+
+    Operator-pre-staged paths (anywhere else) are deliberately left alone so a
+    repeat-upscale on the same pod-local file does not vaporize the source.
+    Best-effort: any OSError is swallowed because pod-destroy is the backstop
+    for orphaned scratch under ``/tmp/kf-uploads/``.
+    """
+    if not source_url.startswith("file://"):
+        return
+    try:
+        src = Path(source_url.removeprefix("file://")).resolve()
+        if _UPLOAD_DIR.resolve() in src.parents:
+            src.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
-    """Run one upscale under ``_upscale_lock``; mutate ``_upscale_jobs[job_id]``."""
+    """Run one upscale under ``_upscale_lock``; mutate ``_upscale_jobs[job_id]``.
+
+    Uploaded inputs under ``_UPLOAD_DIR`` are unlinked in the finally block so
+    warm-reuse repeats do not pile up source files on the pod's scratch dir.
+    """
     from kinoforge.core.scale_target import ScaleTarget
 
     async with _upscale_lock:
@@ -1704,6 +1726,8 @@ async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
         except Exception as exc:  # noqa: BLE001 — surface any failure to caller
             _upscale_jobs[job_id]["error"] = str(exc)
             _upscale_jobs[job_id]["state"] = "error"
+        finally:
+            _maybe_cleanup_upload(req.source_url)
 
 
 @app.get("/upscale/status/{job_id}")

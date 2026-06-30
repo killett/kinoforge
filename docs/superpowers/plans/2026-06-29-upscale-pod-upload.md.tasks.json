@@ -29,7 +29,7 @@
     {
       "id": 3,
       "subject": "Task 3: SpandrelEngine._upload_source + dispatch",
-      "status": "pending",
+      "status": "completed",
       "nativeTaskId": "4",
       "blockedBy": [2],
       "description": "**Goal:** Client helper PUT /upload + sha256 verify; upscale() dispatches file:// vs http(s)://.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/spandrel/__init__.py\", \"tests/upscalers/test_spandrel_upload.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/test_spandrel_upload.py -v\", \"acceptanceCriteria\": [\"_upload_source PUT + sha256 verify + file:// return\", \"sha256 mismatch raises UploadIntegrityError\", \"502 retries once\", \"upscale() dispatches on scheme\"], \"modelTier\": \"standard\"}\n```"
