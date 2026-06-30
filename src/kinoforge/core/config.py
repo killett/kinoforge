@@ -364,6 +364,12 @@ class DiffusersEngineConfig(BaseModel):
     asset_paths: dict[str, str] = Field(default_factory=dict)
     prompt_body_key: str | None = "prompt"
     embed_modules: list[str] = Field(default_factory=list)
+    embed_files: list[str] = Field(default_factory=list)  # Single-file
+    # embeds for dotted module paths whose leaf is a .py file (e.g.
+    # ``"kinoforge.core.errors"`` → embeds errors.py without dragging in
+    # the rest of kinoforge/core/. Use when the on-pod runtime needs a
+    # specific module but embedding its whole package would bust the
+    # 64KB env-var ceiling.
     upscale_only: bool = False  # When True, render_provision emits
     # KINOFORGE_SKIP_WAN_LOAD=1 so the in-pod wan_t2v_server starts in
     # upscale-only mode (no eager WanPipeline.from_pretrained call).
