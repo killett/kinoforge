@@ -29,7 +29,12 @@ from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import TeardownError, UnknownAdapter
-from kinoforge.core.interfaces import GenerationRequest, Instance, WarmAttachKey
+from kinoforge.core.interfaces import (
+    Artifact,
+    GenerationRequest,
+    Instance,
+    WarmAttachKey,
+)
 from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
 from kinoforge.core.orchestrator import generate
@@ -569,7 +574,13 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         # full-CapabilityKey matcher round-trip. The find_pods_by_warm_attach_key
         # index also gates on this field.
         cfg_wak = _cfg_warm_attach_key(cfg)
-        ledger.touch(returned_instance.id, warm_attach_key=cfg_wak)
+        ledger.touch(
+            returned_instance.id,
+            warm_attach_key=cfg_wak,
+            kinoforge_stages=",".join(_cfg_want_stages(cfg)),
+            kinoforge_upscaler=cfg.upscale.engine if cfg.upscale else "",
+            kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
+        )
         # 2026-06-27 — ephemeral warm-reuse discovery (Option B disk index).
         # Under STRICT_POLICY the ledger entry above lives only in
         # session.in_memory_ledger; this index row is what lets the next
@@ -610,7 +621,6 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
     routes through the orchestrator (see T16); for v1 the handler
     only owns the dry-run path + early refusal gates.
     """
-    from kinoforge.core.errors import NotYetImplementedError
     from kinoforge.core.scale_target import ScaleTarget
 
     # Mutual exclusion FIRST — does not require cfg load.
@@ -676,12 +686,106 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
         return 0
 
-    # Full warm-reuse / orchestrator path wired in T16 — the live
-    # smokes (T18, T19) exercise it end-to-end against RunPod.
-    raise NotYetImplementedError(
-        "upscale full-run path lands in T16 (orchestrator UpscaleStage wiring); "
-        "use --dry-run until then"
+    # T11 — non-dry-run wiring. Reuses generate()'s machinery via the
+    # skip_clip_stage flag (T10). Mirrors _cmd_generate's warm-reuse /
+    # attach / cold-create precedence chain.
+    from kinoforge.core import orchestrator as _orchestrator
+
+    del scale  # ScaleTarget recomputed inside UpscaleStage via cfg.upscale.scale
+
+    input_artifact = _resolve_input_video_as_artifact(args.video)
+    store = ctx.store()
+    sink_local = _build_sink(cfg, args)
+    run_id = (
+        args.run_id
+        if getattr(args, "run_id", None) is not None
+        else f"upscale-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     )
+
+    instance: Instance | None = None
+    attach_pod_id = getattr(args, "attach_pod", None)
+    if attach_pod_id:
+        instance, rc = _resolve_attach_pod(ctx, cfg, attach_pod_id)
+        if rc is not None:
+            return rc
+    elif not args.no_reuse:
+        instance, report = _scan_warm_candidates(ctx, cfg)
+        summary = report.summarize()
+        if summary:
+            logger.info(summary)
+
+    artifact, returned_instance = _orchestrator.generate(
+        cfg,
+        request=None,
+        store=store,
+        sink=sink_local,
+        run_id=run_id,
+        state_dir=ctx.state_dir,
+        cancel_token=ctx.cancel_token,
+        instance=instance,
+        single=bool(args.no_reuse),
+        skip_clip_stage=True,
+        initial_clip=input_artifact,
+    )
+
+    # T11 — symmetric ledger stamp with _cmd_generate (resolves T7 deferral).
+    if returned_instance is not None and instance is None and not args.no_reuse:
+        ledger = ctx.ledger()
+        if ledger.read(returned_instance.id) is None:
+            lc = cfg.lifecycle()
+            ledger.record(
+                returned_instance,
+                idle_timeout_s=int(lc.idle_timeout_s),
+                max_age_s=int(lc.max_lifetime_s),
+            )
+        cfg_wak = _cfg_warm_attach_key(cfg)
+        ledger.touch(
+            returned_instance.id,
+            warm_attach_key=cfg_wak,
+            kinoforge_stages=",".join(_cfg_want_stages(cfg)),
+            kinoforge_upscaler=cfg.upscale.engine,
+            kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
+        )
+
+    print(f"upscaled: uri={artifact.uri!r}")
+    return 0
+
+
+def _resolve_input_video_as_artifact(video_path_or_url: str) -> Artifact:
+    """Materialise the ``--video`` arg as a kinoforge Artifact.
+
+    Local file path → ``file://`` URL + sha256 from disk + size from stat.
+    ``http(s)://`` URL → passthrough; sha256/size deferred to server-side
+    fetch (the upscaler engine's ``source_url`` consumer handles the
+    integrity check after download).
+    """
+    import hashlib as _hashlib
+
+    if video_path_or_url.startswith(("http://", "https://")):
+        return Artifact(uri=video_path_or_url, sha256="", size=0)
+    p = Path(video_path_or_url).resolve()
+    h = _hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return Artifact(uri=f"file://{p}", sha256=h.hexdigest(), size=p.stat().st_size)
+
+
+def _upscaler_precision_tag(cfg: Config) -> str:
+    """Derive the ``kinoforge_upscaler_precision`` ledger tag from cfg.upscale.
+
+    Format is engine-specific: spandrel uses bare precision (``"fp16"``),
+    seedvr2 uses ``"{variant_lower}-{precision}"`` (``"3b-fp8"``).
+    Returns ``""`` when no upscale block is present or its engine-specific
+    sub-block is unset.
+    """
+    if cfg.upscale is None:
+        return ""
+    if cfg.upscale.spandrel is not None:
+        return cfg.upscale.spandrel.precision
+    if cfg.upscale.seedvr2 is not None:
+        return f"{cfg.upscale.seedvr2.variant.lower()}-{cfg.upscale.seedvr2.precision}"
+    return ""
 
 
 def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
