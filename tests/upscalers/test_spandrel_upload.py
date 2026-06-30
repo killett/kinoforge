@@ -149,8 +149,8 @@ def test_upscale_passes_through_http_source() -> None:
     including https:// URLs the pod can already fetch via its existing
     downloader. Wastes bandwidth and breaks idempotency.
     """
-    from kinoforge.upscalers import spandrel as spandrel_mod
     from kinoforge.upscalers.spandrel import SpandrelEngine
+    from kinoforge.upscalers.spandrel import _engine as spandrel_mod
 
     engine = SpandrelEngine()
     captured: dict[str, object] = {}
@@ -192,8 +192,8 @@ def test_upscale_uploads_file_source(mp4: Path) -> None:
     URL anyway, so /upscale's downloader tries to read a path that does not
     exist on the pod. /upscale fails with FileNotFoundError immediately.
     """
-    from kinoforge.upscalers import spandrel as spandrel_mod
     from kinoforge.upscalers.spandrel import SpandrelEngine
+    from kinoforge.upscalers.spandrel import _engine as spandrel_mod
 
     engine = SpandrelEngine()
     captured: dict[str, object] = {}

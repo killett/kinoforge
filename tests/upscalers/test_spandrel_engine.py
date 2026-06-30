@@ -90,8 +90,8 @@ class TestUpscale:
     def test_posts_then_polls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Bug caught: upscale() either POSTs without polling, or polls
         # without POSTing. Mirror the SeedVR2 HTTP flow exactly.
-        from kinoforge.upscalers import spandrel as spandrel_mod
         from kinoforge.upscalers.spandrel import SpandrelEngine
+        from kinoforge.upscalers.spandrel import _engine as spandrel_mod
 
         submit_resp: dict[str, object] = {"job_id": "u-test"}
         status_resp: dict[str, object] = {
