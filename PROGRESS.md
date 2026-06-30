@@ -12,83 +12,115 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
-**Video upscaling — IN PROGRESS 2026-06-29 (18/21 tasks, all green, commits `16cace5..c8de9b8`).**
+**Video upscaling — CODE COMPLETE, LIVE-SMOKE PARTIAL 2026-06-29 (P1 21/21 + P2 14/17 GREEN; P2 T15/T16 BLOCKED on source-upload).**
 
-- **Spec:** `docs/superpowers/specs/2026-06-28-video-upscaling-design.md` (`3b0b450`)
-- **Plan:** `docs/superpowers/plans/2026-06-28-video-upscaling.md` (`4989349`, `edc0452`)
-- **Tasks snapshot:** `docs/superpowers/plans/2026-06-28-video-upscaling.md.tasks.json` (21 entries; 18 completed, 3 pending)
-- **Branch / worktree:** `worktree-video-upscaling` at `/workspace/.claude/worktrees/video-upscaling`
-- **Resume command:** `/superpowers-extended-cc:executing-plans docs/superpowers/plans/2026-06-28-video-upscaling.md`
+### History
 
-Done T0–T17: ScaleTarget + UpscaleJob/Result + UpscalerEngine ABC + registry + 3 new errors; CapabilityKey + WarmAttachKey stages/upscaler/upscaler_precision factors with golden-hash backward-compat; UpscaleConfig + SeedVR2EngineConfig + Config.capability_key() wiring; UpscaleStage pipeline; warm-matcher stages-subset pass; SeedVR2Runtime wrapper; `_fetch_weights` CLI; SeedVR2Engine (HTTP-aware); server LRU model registry + hard-floor `VRAMEvictionFailed`; **server `/upscale` + `/upscale/status/{id}` endpoints (`5342165`)**; **`/health` payload extension with `models[]` + `capabilities[]` (`73b4585`)**; **`/health`-driven matcher preflight + `stage-mismatch` skip reason (`faca010`)**; **`kinoforge upscale` CLI subcommand (`e699bc8`)**; **`_adapters` self-register seedvr2 + orchestrator wires UpscaleStage + example cfgs + docs (`957c527`)**; **T17 RED live-smoke scaffold (`c8de9b8`)**.
+- **P1 — original SeedVR2 plan (2026-06-28).** Plan
+  `docs/superpowers/plans/2026-06-28-video-upscaling.md`; spec
+  `docs/superpowers/specs/2026-06-28-video-upscaling-design.md` (`3b0b450`). Landed
+  T0–T17 GREEN (commits `16cace5..c8de9b8`): ScaleTarget + ABCs + registry + LRU
+  + server endpoints + `kinoforge upscale` CLI scaffold + RED live smoke.
+  **Surfaced BLOCKER A (SeedVR not pip-installable), B (no provision composition),
+  C (no upscale-only orchestrator entry)** — T18/T19 live spend deferred.
 
-Remaining T18–T20: **T18+T19 LIVE SPEND on RunPod** (one-shot SeedVR2 upscale + Wan T2V→SeedVR2 multi-stage warm-reuse); T20 PROGRESS close.
+- **P2 — packaging pivot (2026-06-29).** Spec
+  `docs/superpowers/specs/2026-06-29-upscaler-packaging-pivot-design.md` (`c9b5dff`);
+  plan `docs/superpowers/plans/2026-06-29-upscaler-packaging-pivot.md` (`f3a9688`);
+  tasks `docs/superpowers/plans/2026-06-29-upscaler-packaging-pivot.md.tasks.json`
+  (17 entries). Pivots v1 default from SeedVR2 → `spandrel` (the architecture-agnostic
+  SR runtime backing chaiNNer + ComfyUI). SeedVR2 deferred to `[seedvr]` extras
+  awaiting Phase-3 vendoring.
 
-**T18/T19 BLOCKERS — architectural gaps surfaced 2026-06-29 (live spend deferred):**
+### P2 ship status
 
-**BLOCKER A — SeedVR upstream is not pip-installable.** `gh api repos/ByteDance-Seed/SeedVR/contents`
-returns NO `setup.py` and NO `pyproject.toml`; the repo ships as research scripts under
-`projects/inference_seedvr2_{3b,7b}.py` + `requirements.txt` + `models/` + `common/` only.
-Plan T8's `SeedVR2Runtime.__init__` does `from seedvr.inference import SeedVR2Inferencer` and plan
-T9's `_fetch_weights` + T18's `pip install seedvr @ git+...@<sha>` BOTH assume a `seedvr` Python
-package exists upstream. It does not. `pip install git+...@<any-sha>` therefore fails for
-"no setup.py" regardless of which commit is pinned. Latest code-bearing commit on main is
-`6b061f467059` (2025-07-02, "fix for A100"); README-only HEAD is `e4de8c24441a` (2026-01-27).
-Neither is installable as a Python package. Resolution options:
-  (a) Vendor `projects/inference_seedvr2_*.py` + `common/` + `models/` into
-      `src/kinoforge/upscalers/seedvr2/_vendored/` and write a thin wrapper that calls the
-      script entry points directly. Substantial vendoring + version-pin maintenance burden.
-  (b) Pivot the v1 default to a pip-installable upscaler (RealESRGAN-x2, FlashVSR variants
-      that ARE packaged, or one of the ComfyUI custom-node SeedVR2 forks that exposes a
-      pip-installable wrapper). Keeps the `UpscalerEngine` ABC + SeedVR2Engine seam; only
-      the runtime layer changes.
-  (c) Use a published HuggingFace Space / ComfyUI-custom-node fork that has packaging
-      bolted on (e.g. `numz` fork which authored the A100 fix PR — has comfyui wrapper).
-  Pick (a), (b), or (c) BEFORE T18 / T19 live spend. Whichever path: the
-  `_UPSTREAM_COMMIT = "PLACEHOLDER_REPLACE_BEFORE_LIVE_SPEND"` sentinel in
-  `src/kinoforge/upscalers/seedvr2/__init__.py:43` stays as a loud-fail until the runtime
-  story is real.
+**Code-complete: T1–T14 GREEN (commits `e7623d6..a6cf042` + `538d9f4` + `0d990d5` +
+`9febc9e`).** All three P1 blockers resolved:
 
-**BLOCKER B — provision composition not wired.** `DiffusersEngine.render_provision`
-(in `src/kinoforge/engines/diffusers/__init__.py:848`) does NOT call
-`SeedVR2Engine.render_provision` even when `cfg.upscale is not None`. The pod's bootstrap
-script installs Wan-only pip deps; no `seedvr` install, no weights fetch. T16's orchestrator
-wiring appends `UpscaleStage` to the runtime pipeline but provision-time composition is the
-separate seam that lights up the pod's `/upscale` endpoint route. To wire: extend
-`DiffusersEngine.render_provision` to peek at `cfg.get("upscale")` and concatenate
-`registry.get_upscaler(cfg.upscale.engine)().render_provision(cfg)` script + pip lines into
-the bootstrap. Blocked behind BLOCKER A (the upscaler's render_provision currently emits
-the broken `pip install seedvr @ git+...` line).
+- **BLOCKER A → solved by pivot.** SeedVR2Engine's four heavyweight ABC methods now
+  raise `ExtrasNotInstalled` (T2); cfg-time validation rejects
+  `cfg.upscale.engine == "seedvr2"` with a PREFLIGHT check (T3); seedvr2 example cfgs
+  moved to `examples/configs/extras/`.
+- **BLOCKER B → fixed in T8.** `DiffusersEngine.render_provision` now composes
+  `registry.get_upscaler(cfg.upscale.engine)().render_provision(cfg)` script lines
+  into the bootstrap BEFORE the server exec line. Engine-agnostic seam — FlashVSR
+  drop-in gets composition for free.
+- **BLOCKER C → fixed in T10+T11.** `generate(skip_clip_stage=True,
+  initial_clip=<Artifact>)` reuses existing warm-reuse / attach / cold-create
+  machinery for upscale-only entry. `_cmd_upscale` non-dry-run wired through that
+  path + symmetric ledger-tag stamping on `_cmd_generate`.
 
-**BLOCKER C — standalone upscale orchestrator entry missing.** `_cmd_upscale`
-(src/kinoforge/cli/_commands.py) raises `NotYetImplementedError` on the non-dry-run path.
-T15 only landed argparse + dry-run; the warm-reuse / cold-create / orchestrate-one-stage
-plumbing was deferred with `"..."` in plan T15 Step 2. A standalone upscale needs a new
-orchestrator entry `kinoforge.core.orchestrator.upscale_only(cfg, input_video, store, sink,
-run_id, ...)` that mirrors `generate()`'s shape but builds `stages=[UpscaleStage]` only and
-seeds `state.artifacts["clip"]` from the input mp4. Or — equivalently — extend `generate()`
-with a `skip_clip_stage=True` flag and an `initial_clip: Artifact` parameter. ~80-120 LOC
-regardless. T19 multi-stage (`kinoforge generate --config wan-with-upscale.yaml`) sidesteps
-BLOCKER C but NOT A or B.
+Plus: SpandrelEngine + SpandrelRuntime (T5/T6); spandrel `_fetch_weights` CLI (T7,
+now bypassed on-pod by inline curl); wan_t2v_server spandrel-* prefix dispatch +
+`upscale` capability tag (T9); UpscaleConfig.spandrel field + capability_key
+upscale-only branch + DiffusersEngineConfig.upscale_only knob (skips Wan eager
+load); engines.md spandrel section + extras/ subfolder docs (T12); RED live-smoke
+scaffolds for both single-shot + multi-stage (T13, T14).
 
-**Resume gotchas — non-blocking carryover from prior sessions:**
-1. T7 ledger-write deferral: `kinoforge_stages`, `kinoforge_upscaler`,
-   `kinoforge_upscaler_precision` tags on new pod creation still need wiring inside
-   `_cmd_upscale` non-dry-run path (resolved when BLOCKER C is wired) and inside
-   `_cmd_generate` so multi-stage pods write those tags too.
-2. T5 skipped the plan's bonus AC `test_upscale_only_cfg` (would require making `Config.engine`
-   optional + loosening `_validate_engine_and_compute`). Workaround:
-   `examples/configs/upscale-seedvr2-3b.yaml` includes an `engine:` block; defer the strict
-   upscale-only-cfg shape until real upscale-only pods become needed.
-3. T3+T4 landed as ONE combined commit (`534e0e9`).
-4. T13 race-bug fix: server `_run_upscale_job` writes `result` BEFORE flipping `state` to
-   `done` so pollers always see a populated result block.
-5. T15 mutual-excl + scale parse fire BEFORE cfg load so `--scale 1080p`/garbage exits 2
-   even with a malformed cfg. Tests use `assert rc == 2` (not `SystemExit`) for
-   handler-returned codes; only `required=True` argparse violations raise `SystemExit`.
-6. `.env` is at `/workspace/.env` (operator-managed); the worktree at
-   `/workspace/.claude/worktrees/video-upscaling` does NOT have its own `.env` — pixi
-   activation will not auto-find creds without symlink or explicit `--env-file` flag.
+### P2 live-smoke status (PARTIAL — T15/T16 BLOCKED)
+
+Eight live-spend iterations on RunPod exposed and fixed a long chain of latent
+infra gaps that the P1 plan never lived on through:
+
+1. RunPod pod-create HTTP 500 = oversized env var (KINOFORGE_PROVISION_SCRIPT 124KB
+   busted RunPod's 64KB ceiling). Fixed: gzip+base64 embed + `python3 -c
+   gzip.decompress` decode (commit `538d9f4`).
+2. Offer chooser silently picked AMD Instinct (incompatible with create-pod
+   mutation). Fixed: NVIDIA `gpu_preference` allowlist on the upscale-only cfg.
+3. `kinoforge.upscalers.spandrel._fetch_weights` on the pod ImportError because
+   spandrel's `__init__.py` pulls `kinoforge.core.registry` (not embedded). Fixed:
+   inline `curl -L -H "Authorization: Bearer $HF_TOKEN"` in the bootstrap (commit
+   `0d990d5`) — no kinoforge import on the pod.
+4. Bootstrap embed-modules tree didn't include `kinoforge.core.errors` /
+   `.scale_target` that SpandrelRuntime imports at /upscale time. Fixed: new
+   `embed_files: list[str]` cfg knob for single-file embeds; cfg lists those two.
+5. Cloudflare 403 on `/upscale` POST from default Python-urllib UA. Fixed:
+   SpandrelEngine._http_json now sets `kinoforge-spandrel/0.1` UA (`0d990d5`).
+6. Pydantic 400 on `/upscale` schema = no `spandrel` block field. Fixed: added
+   `SpandrelParams` to `UpscaleRequest` (commit `9febc9e`).
+7. **REMAINING (T15/T16 BLOCKER):** `source_url=file:///workspace/...mp4`
+   unreachable from the pod. SpandrelEngine builds the payload with the operator's
+   local-host file URL; the pod's `_download_to_local_temp` tries to read a path
+   that doesn't exist on the pod. **No upload mechanism exists yet.**
+
+Total live spend across the 8 iterations: ~$0.20 (8 cold-boot probes on cheap
+NVIDIA gear). All pods cleaned up; ledger empty.
+
+### NEXT SESSION — high priority (single concrete next step)
+
+**Build the pod file-upload path. Test it with
+`/workspace/output/20260623-212902_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4`.**
+
+Two implementation choices to weigh up-front:
+
+- **(a) POST /upload multipart endpoint on the server side** + client-side sender
+  in `SpandrelEngine.upscale` that uploads the local mp4 before submitting
+  /upscale and uses the resulting pod-local file:// path as `source_url`. ~80-150
+  LOC + tests. Mirrors how most batch-inference workers do this.
+- **(b) Reuse RunPod's volume-mount layer.** Pod's `/workspace` is bind-mounted —
+  if the orchestrator can SCP/SFTP into the pod's $RUNPOD_POD_ID-mapped storage,
+  no server endpoint needed. RunPod's SSH provisioning landscape is uneven though
+  — would need a probe.
+
+(a) is the cleaner long-run answer. Once shipped, T15 should be a 1-attempt
+~$0.05 spend; T16 ~$1-3 (Wan 14B cold boot dominates cost).
+
+### P2 resume gotchas (carryover for next session)
+
+1. T15/T16 native task IDs (`#15`, `#16`) are marked `blocked` in the .tasks.json
+   so `TaskList` won't show them as actionable until the upload-path lands. T17
+   was closed as part of THIS commit (the section you're reading).
+2. The on-pod bootstrap script size budget is **~64KB after base64-encoding** —
+   any new `embed_modules` / `embed_files` additions must check via
+   `len(rp.script)` against 64KB before going live.
+3. `examples/configs/upscale-spandrel-x2.yaml` already has `lifecycle.boot_timeout:
+   30m` to absorb fresh-pod torch + spandrel cold-install. Don't drop below 20m.
+4. `.env` is at `/workspace/.env`; the worktree has a symlink `.env →
+   /workspace/.env` (created during T15 debugging) so `pixi run preflight` works.
+5. RunPod GraphQL errors now stderr-log the response body (after the
+   api_key-redacted URL) so the next opaque 500 surfaces its cause immediately.
+6. **CarryOver from P1 (still TRUE):** SeedVR2 vendoring (Phase 3) is its own
+   workstream; deferring it doesn't gate the spandrel live smoke.
 
 ---
 
