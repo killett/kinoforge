@@ -103,6 +103,53 @@ class TestConstruction:
         assert rt is not None
 
 
+class TestPrecisionCast:
+    def test_fp16_upscale_casts_model_to_half_before_inference(
+        self, tmp_path: Path, _fake_spandrel: MagicMock
+    ) -> None:
+        # Bug caught: SpandrelRuntime declares precision="fp16" and casts
+        # INPUT tensors to fp16, but never casts the model weights →
+        # PyTorch "Input type (c10::Half) and bias type (float) should be
+        # the same" at first inference. upscale() MUST recast model
+        # weights so input/weight dtypes agree.
+        torch = pytest.importorskip("torch")
+
+        from kinoforge.upscalers.spandrel._runtime import SpandrelRuntime
+
+        weights = tmp_path / "fake.pth"
+        weights.write_bytes(b"")
+        rt = SpandrelRuntime(
+            weights_path=weights, precision="fp16", tile_size=512, batch_size=4
+        )
+        video = tmp_path / "in.mp4"
+        _write_dummy_mp4(video)
+        rt.upscale(video, ScaleTarget(kind="factor", value=2.0), params={})
+        rt._model.to.assert_any_call(torch.float16)
+
+    def test_fp32_upscale_casts_model_to_float_before_inference(
+        self, tmp_path: Path, _fake_spandrel: MagicMock
+    ) -> None:
+        # Bug caught: a one-line fix that always casts to float16 breaks
+        # the fp32 path. precision=="fp32" must cast model to torch.float32
+        # (idempotent on already-fp32 weights but explicit so a future
+        # fp16-default load does not corrupt fp32-requested inference).
+        torch = pytest.importorskip("torch")
+
+        from kinoforge.upscalers.spandrel._runtime import SpandrelRuntime
+
+        weights = tmp_path / "fake.pth"
+        weights.write_bytes(b"")
+        rt = SpandrelRuntime(
+            weights_path=weights, precision="fp32", tile_size=512, batch_size=4
+        )
+        video = tmp_path / "in.mp4"
+        _write_dummy_mp4(video)
+        rt.upscale(video, ScaleTarget(kind="factor", value=2.0), params={})
+        rt._model.to.assert_any_call(torch.float32)
+        for call in rt._model.to.call_args_list:
+            assert torch.float16 not in call.args
+
+
 class TestUpscale:
     def test_factor_2x_returns_2x_resolution_mp4(
         self, tmp_path: Path, _fake_spandrel: MagicMock
