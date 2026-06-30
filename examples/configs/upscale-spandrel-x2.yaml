@@ -27,13 +27,19 @@ engine:
       - "fastapi>=0.115"
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
+      - "spandrel>=0.4.2"
     embed_modules:
       - "kinoforge.engines.diffusers.servers"
+    # Skip the eager WanPipeline.from_pretrained at server startup. The pod
+    # runs only the on-demand spandrel runtime via the LRU registry — no Wan
+    # weights ever load. Cuts cold-boot from ~30min (full Wan 14B download)
+    # to ~3min (pip install + RealESRGAN_x2 weights only).
+    upscale_only: true
 
-models:
-  - kind: base
-    ref: "hf:lllyasviel/Annotators/RealESRGAN_x2.pth"
-    target: diffusion_models
+# No models[] required — upscale_only=true means the server doesn't
+# eager-load any model. spandrel weights are fetched via
+# `upscale.spandrel.model_url` at provision time (T7 _fetch_weights CLI).
+models: []
 
 compute:
   provider: runpod
@@ -47,7 +53,7 @@ upscale:
   engine: spandrel
   scale: 2x
   spandrel:
-    model_url: "hf:lllyasviel/Annotators/RealESRGAN_x2.pth"
+    model_url: "hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth"
     arch: realesrgan
     precision: fp16
     tile_size: 512
