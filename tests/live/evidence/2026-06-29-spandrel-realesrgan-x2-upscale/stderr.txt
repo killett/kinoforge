@@ -1,0 +1,32 @@
+Pixi task (kinoforge in default): python -m kinoforge upscale --video /workspace/.claude/worktrees/video-upscaling/examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4 --config /workspace/.claude/worktrees/video-upscaling/examples/configs/upscale-spandrel-x2.yaml --no-reuse
+2026-06-30 00:15:27,130 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
+2026-06-30 00:15:31,861 INFO kinoforge.orchestrator running provisioner.provision for instance dsojpjvvj3ff8s (engine=diffusers key=b36f749a5703)
+2026-06-30 00:17:21,424 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod dsojpjvvj3ff8s
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/__main__.py", line 6, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/cli/_main.py", line 967, in main
+    return _DISPATCH[args.cmd](args, ctx)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/cli/_commands.py", line 717, in _cmd_upscale
+    artifact, returned_instance = _orchestrator.generate(
+                                  ~~~~~~~~~~~~~~~~~~~~~~^
+        cfg,
+        ^^^^
+    ...<9 lines>...
+        initial_clip=input_artifact,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/core/orchestrator.py", line 1878, in generate
+    state = stage.run(state)
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/pipeline/upscale.py", line 55, in run
+    result = self.engine.upscale(
+        self.instance, job, self.cfg, cancel_token=self.cancel_token
+    )
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/__init__.py", line 208, in upscale
+    raise UpscaleFailed(job_id=job_id, server_error=status.get("error", ""))
+kinoforge.core.errors.UpscaleFailed: upscale job u-a301e14375e442f098c33a571c33e5ca failed on server: cannot import name 'registry' from 'kinoforge.core' (/tmp/kfsrv/kinoforge/core/__init__.py)
