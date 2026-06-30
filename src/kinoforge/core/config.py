@@ -364,6 +364,9 @@ class DiffusersEngineConfig(BaseModel):
     asset_paths: dict[str, str] = Field(default_factory=dict)
     prompt_body_key: str | None = "prompt"
     embed_modules: list[str] = Field(default_factory=list)
+    upscale_only: bool = False  # When True, render_provision emits
+    # KINOFORGE_SKIP_WAN_LOAD=1 so the in-pod wan_t2v_server starts in
+    # upscale-only mode (no eager WanPipeline.from_pretrained call).
 
 
 class FalEngineConfig(BaseModel):
@@ -1013,8 +1016,15 @@ class Config(BaseModel):
         # Base count: 1 (single-diffusion, e.g. Wan 2.1) or 2 (dual-diffusion,
         # e.g. Wan 2.2 14B HIGH + LOW stages). CapabilityKey concatenates both
         # refs in sorted order when 2 are present (see capability_key()).
+        # Upscale-only diffusers cfgs (engine.diffusers.upscale_only=true,
+        # `kinoforge upscale`) carry no base model — the spandrel weights
+        # land via cfg.upscale.spandrel.model_url at provision time, not via
+        # cfg.models[]. Skip the base-count gate in that case.
+        upscale_only = (
+            self.engine.diffusers is not None and self.engine.diffusers.upscale_only
+        )
         base_count = sum(1 for e in self.models if e.kind == "base")
-        if base_count == 0:
+        if base_count == 0 and not upscale_only:
             raise ValueError(
                 "models: must contain at least one entry with kind: base (found 0)"
             )

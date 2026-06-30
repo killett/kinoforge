@@ -951,6 +951,13 @@ class DiffusersEngine(GenerationEngine):
             lines.append(
                 f"pip install -q --extra-index-url {_PYTORCH_EXTRA_INDEX_URL} {quoted}"
             )
+        # T15 — upscale-only mode: bypass eager WanPipeline.from_pretrained
+        # in the on-pod server. The composed upscaler render_provision (T8)
+        # still fires below so spandrel weights land at /workspace/models/
+        # spandrel; the LRU registry loads spandrel on the first /upscale.
+        if diffusers_cfg.get("upscale_only"):
+            lines.append("export KINOFORGE_SKIP_WAN_LOAD=1")
+
         # T8 — compose upscaler render_provision script when cfg.upscale set.
         # Reads cfg.upscale.engine, looks up via registry, appends the upscaler's
         # render_provision script BEFORE the server exec line. Engine-agnostic:
