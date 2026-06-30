@@ -82,6 +82,14 @@ compute:
     budget: 1.0
     heartbeat_interval_s: 30
 
+# spec.model is informational only for upscale-only cfgs (no /generate
+# call fires) but the integration test_no_unknown_slug_for_example_configs
+# regression lock asserts DiffusersEngine.model_identity returns
+# non-empty for every example. Use the spandrel 3-token slug so the
+# value is at least meaningful.
+spec:
+  model: "spandrel-realesrgan-fp16"
+
 upscale:
   engine: spandrel
   scale: 2x
