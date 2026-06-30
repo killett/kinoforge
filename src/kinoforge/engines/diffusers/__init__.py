@@ -10,6 +10,7 @@ the ``"diffusers"`` key so that ``registry.get_engine("diffusers")()`` works.
 from __future__ import annotations
 
 import base64
+import gzip
 import importlib.resources
 import json
 import logging
@@ -137,8 +138,23 @@ def _render_embed_lines(modules: list[str]) -> list[str]:
             rel = mod_name.replace(".", "/") + "/" + resource.name
             target = f"{kfsrv}/{rel}"
             content = resource.read_bytes()
-            encoded = base64.b64encode(content).decode("ascii")
-            lines.append(f"echo '{encoded}' | base64 -d > {target}")
+            # gzip+base64 keeps the bootstrap script under RunPod's 64KB
+            # env-var ceiling for big embedded modules like wan_t2v_server.py
+            # (~67KB raw → ~16KB gz → ~22KB b64). Pre-gzip embeds blew the
+            # KINOFORGE_PROVISION_SCRIPT env var past the limit and the
+            # create-pod mutation 500ed.
+            #
+            # Decode via python3 (always present in runpod/pytorch images)
+            # rather than `gunzip` — saves us hunting for a gzip binary on
+            # minimal images. python -c "..." keeps the pipeline stateless.
+            encoded = base64.b64encode(gzip.compress(content)).decode("ascii")
+            lines.append(
+                f"echo '{encoded}' | python3 -c "
+                f'"import sys,base64,gzip; '
+                f"sys.stdout.buffer.write("
+                f'gzip.decompress(base64.b64decode(sys.stdin.read())))" '
+                f"> {target}"
+            )
     return lines
 
 

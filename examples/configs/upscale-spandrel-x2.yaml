@@ -48,6 +48,29 @@ compute:
   requirements:
     min_vram_gb: 16
     disk_gb: 40
+    # Pin NVIDIA — without an explicit allowlist the offer chooser can pick
+    # an AMD Instinct that RunPod's create-pod mutation rejects with HTTP
+    # 500. Allowlist covers cheap 16-24GB consumer + datacenter cards that
+    # comfortably run RealESRGAN-x2 inference.
+    gpu_preference:
+      - "NVIDIA RTX A4000"
+      - "NVIDIA RTX A5000"
+      - "NVIDIA L4"
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA GeForce RTX 3090"
+  lifecycle:
+    # spandrel install pulls torch (~2GB), torchvision, torchaudio, fastapi,
+    # uvicorn, imageio[ffmpeg], spandrel. Cold pull from PyPI on a fresh
+    # pod sustains ~10-15min on average; default 15m boot_timeout is
+    # borderline. Bumped to 30m for the upscale-only path so a slow PyPI
+    # day doesn't trip wait_for_ready.
+    boot_timeout: 30m
+    idle_timeout: 30m
+    job_timeout: 10m
+    time_buffer: 3m
+    max_lifetime: 60m
+    budget: 1.0
+    heartbeat_interval_s: 30
 
 upscale:
   engine: spandrel
