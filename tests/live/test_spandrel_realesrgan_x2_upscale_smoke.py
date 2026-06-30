@@ -8,7 +8,6 @@ under ``tests/live/evidence/2026-06-29-spandrel-realesrgan-x2-upscale/``.
 from __future__ import annotations
 
 import hashlib
-import json
 import subprocess
 from pathlib import Path
 
@@ -34,16 +33,10 @@ _CFG = (
 
 
 @pytest.mark.live
-@pytest.mark.xfail(
-    reason="RED scaffold (Task 13) — GREEN evidence lands in Task 15 after live spend",
-    strict=False,
-)
 def test_spandrel_realesrgan_x2_upscales_2x() -> None:
     assert _FIXTURE.exists(), f"input fixture missing: {_FIXTURE}"
     assert _CFG.exists(), f"cfg missing: {_CFG}"
-
-    out_dir = _EVIDENCE_DIR / "out"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
     proc = subprocess.run(  # noqa: S603,S607
         [
@@ -56,8 +49,6 @@ def test_spandrel_realesrgan_x2_upscales_2x() -> None:
             "--config",
             str(_CFG),
             "--no-reuse",
-            "--output-dir",
-            str(out_dir),
         ],
         capture_output=True,
         text=True,
@@ -68,27 +59,48 @@ def test_spandrel_realesrgan_x2_upscales_2x() -> None:
     (_EVIDENCE_DIR / "stderr.txt").write_text(proc.stderr)
     assert proc.returncode == 0, proc.stderr
 
+    # Parse the upscaled artifact URI from stdout ("upscaled: uri='...'")
+    import re as _re
+
+    m = _re.search(r"upscaled: uri='([^']+)'", proc.stdout)
+    assert m, f"no upscaled uri line in stdout:\n{proc.stdout}"
+    uri = m.group(1)
+    assert uri.startswith("file://"), f"expected file:// uri, got {uri!r}"
+    out_path = Path(uri.removeprefix("file://"))
+    assert out_path.exists(), (
+        f"orchestrator-reported output missing on disk: {out_path}"
+    )
+
+    # Copy the output mp4 into the evidence dir for inspection without re-spend.
+    import shutil as _shutil
+
+    evidence_mp4 = _EVIDENCE_DIR / out_path.name
+    _shutil.copy2(out_path, evidence_mp4)
+
     in_w, in_h = _probe_dims(_FIXTURE)
-    out_files = sorted(out_dir.rglob("*.mp4"))
-    assert out_files, "no output mp4 produced"
-    out_w, out_h = _probe_dims(out_files[-1])
+    out_w, out_h = _probe_dims(evidence_mp4)
     assert (out_w, out_h) == (in_w * 2, in_h * 2), (
         f"expected {in_w * 2}x{in_h * 2}, got {out_w}x{out_h}"
     )
 
     in_sha = _first_frame_sha256(_FIXTURE)
-    out_sha = _first_frame_sha256(out_files[-1])
+    out_sha = _first_frame_sha256(evidence_mp4)
     assert in_sha != out_sha, "output identical to input — no upscale work"
 
+    # Pod-cleanup verification per CLAUDE.md durability rule.
     ledger = subprocess.run(  # noqa: S603,S607
-        ["pixi", "run", "kinoforge", "list", "--json"],
+        ["pixi", "run", "kinoforge", "list"],
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
     )
-    pods = json.loads(ledger.stdout).get("instances", [])
-    assert pods == [], f"pod survived --no-reuse: {pods}"
+    assert "No running instances." in ledger.stdout, (
+        f"pod survived --no-reuse:\n{ledger.stdout}"
+    )
+    assert "No instances recorded in ledger." in ledger.stdout, (
+        f"ledger entry survived --no-reuse:\n{ledger.stdout}"
+    )
 
 
 def _probe_dims(path: Path) -> tuple[int, int]:
