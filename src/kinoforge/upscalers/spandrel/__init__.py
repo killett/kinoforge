@@ -10,16 +10,20 @@ Self-registers at module import via
 
 from __future__ import annotations
 
+import hashlib
 import json as _json
 import time
 import urllib.request
-from typing import Any, cast
+from pathlib import Path
+from typing import IO, Any, cast
+from urllib.error import HTTPError
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
 from kinoforge.core.errors import (
     NotYetImplementedError,
     UnknownAdapter,
+    UploadIntegrityError,
     UpscaleFailed,
 )
 from kinoforge.core.interfaces import (
@@ -148,13 +152,18 @@ class SpandrelEngine(UpscalerEngine):
             raise ValueError("SpandrelEngine requires a compute instance")
         base = self._base_url(instance)
 
+        source_uri = job.source.uri
+        if source_uri.startswith("file://"):
+            local_path = Path(source_uri.removeprefix("file://"))
+            source_uri = self._upload_source(instance, local_path)
+
         block = cast(
             dict[str, Any],
             cast(dict[str, Any], cfg.get("upscale", {})).get("spandrel", {}),
         )
         submit_payload = {
-            "source_url": job.source.uri,
-            "source_filename": job.source.uri.rsplit("/", 1)[-1] or "in.mp4",
+            "source_url": source_uri,
+            "source_filename": source_uri.rsplit("/", 1)[-1] or "in.mp4",
             "scale": f"{job.scale.value:g}x",
             "engine": "spandrel",
             "spandrel": block,
@@ -198,6 +207,72 @@ class SpandrelEngine(UpscalerEngine):
             if state == "error":
                 raise UpscaleFailed(job_id=job_id, server_error=status.get("error", ""))
             time.sleep(2.0)
+
+    def _put_upload(
+        self,
+        url: str,
+        data: IO[bytes],
+        headers: dict[str, str],
+        timeout: int,
+    ) -> dict[str, Any]:
+        """Single PUT /upload request — streams ``data`` body, parses JSON response.
+
+        Split out so tests can patch HTTP without monkeypatching urllib globally,
+        and so the retry loop in ``_upload_source`` can swap a fresh file handle
+        on each attempt.
+        """
+        req = urllib.request.Request(  # noqa: S310 — http/https only (pod proxy URL)
+            url, data=data, method="PUT", headers=headers
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            return cast(dict[str, Any], _json.loads(resp.read().decode("utf-8")))
+
+    def _upload_source(self, instance: Instance, local_path: Path) -> str:
+        """Upload ``local_path`` mp4 to the pod via PUT /upload; return file:// URL.
+
+        Computes sha256 locally, streams the file body as the PUT payload, and
+        cross-checks the server's reported sha256 before returning. Recovers
+        once from a proxy cold-warmup 502; subsequent failures bubble.
+        """
+        body = local_path.read_bytes()
+        local_sha = hashlib.sha256(body).hexdigest()
+        short = local_sha[:8]
+        url = f"{self._base_url(instance)}/upload"
+        headers = {
+            "Content-Type": "video/mp4",
+            "X-Filename": f"{short}.mp4",
+            "Content-Length": str(len(body)),
+            "User-Agent": "kinoforge-spandrel/0.1",
+        }
+
+        last_error: HTTPError | None = None
+        payload: dict[str, Any] | None = None
+        for attempt in range(2):
+            with local_path.open("rb") as fobj:
+                try:
+                    payload = self._put_upload(url, fobj, headers, timeout=600)
+                    last_error = None
+                    break
+                except HTTPError as exc:
+                    last_error = exc
+                    if exc.code == 502 and attempt == 0:
+                        continue
+                    raise
+        if payload is None:
+            # Defensive — the loop either breaks with payload or re-raises;
+            # reaching here means a future edit broke that invariant.
+            raise RuntimeError(
+                f"_upload_source loop completed without payload (last_error={last_error!r})"
+            )
+
+        server_sha = str(payload.get("sha256", ""))
+        if server_sha != local_sha:
+            raise UploadIntegrityError(
+                local_sha256=local_sha,
+                server_sha256=server_sha,
+                bytes_sent=len(body),
+            )
+        return f"file://{payload['path']}"
 
     @staticmethod
     def _base_url(instance: Instance) -> str:
