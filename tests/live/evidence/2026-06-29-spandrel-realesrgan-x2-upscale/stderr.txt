@@ -1,7 +1,7 @@
 Pixi task (kinoforge in default): python -m kinoforge upscale --video /workspace/.claude/worktrees/video-upscaling/examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4 --config /workspace/.claude/worktrees/video-upscaling/examples/configs/upscale-spandrel-x2.yaml --no-reuse
-2026-06-30 00:15:27,130 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
-2026-06-30 00:15:31,861 INFO kinoforge.orchestrator running provisioner.provision for instance dsojpjvvj3ff8s (engine=diffusers key=b36f749a5703)
-2026-06-30 00:17:21,424 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod dsojpjvvj3ff8s
+2026-06-30 00:21:05,632 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
+2026-06-30 00:21:10,282 INFO kinoforge.orchestrator running provisioner.provision for instance q9fve1yt90nf6x (engine=diffusers key=b36f749a5703)
+2026-06-30 00:23:07,021 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod q9fve1yt90nf6x
 Traceback (most recent call last):
   File "<frozen runpy>", line 198, in _run_module_as_main
   File "<frozen runpy>", line 88, in _run_code
@@ -27,6 +27,6 @@ Traceback (most recent call last):
     result = self.engine.upscale(
         self.instance, job, self.cfg, cancel_token=self.cancel_token
     )
-  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/__init__.py", line 208, in upscale
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/_engine.py", line 207, in upscale
     raise UpscaleFailed(job_id=job_id, server_error=status.get("error", ""))
-kinoforge.core.errors.UpscaleFailed: upscale job u-a301e14375e442f098c33a571c33e5ca failed on server: cannot import name 'registry' from 'kinoforge.core' (/tmp/kfsrv/kinoforge/core/__init__.py)
+kinoforge.core.errors.UpscaleFailed: upscale job u-4fd1f40854f74087b35a5dc2f98131ea failed on server: Input type (c10::Half) and bias type (float) should be the same
