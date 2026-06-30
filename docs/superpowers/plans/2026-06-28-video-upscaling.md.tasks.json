@@ -6,7 +6,7 @@
       "id": 8,
       "planTaskId": 0,
       "subject": "Task 0: ScaleTarget parser + UnsupportedScaleError + NotYetImplementedError",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "metadata": {
         "files": ["src/kinoforge/core/scale_target.py", "src/kinoforge/core/errors.py", "tests/core/test_scale_target.py"],
@@ -18,7 +18,7 @@
       "id": 9,
       "planTaskId": 1,
       "subject": "Task 1: UpscaleJob + UpscaleResult dataclasses",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_upscale_types.py"],
@@ -30,7 +30,7 @@
       "id": 10,
       "planTaskId": 2,
       "subject": "Task 2: UpscalerEngine ABC + register_upscaler registry + new exceptions",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "src/kinoforge/core/registry.py", "src/kinoforge/core/errors.py", "tests/core/test_upscaler_registry.py"],
@@ -42,7 +42,7 @@
       "id": 11,
       "planTaskId": 3,
       "subject": "Task 3: CapabilityKey stages/upscaler/upscaler_precision factors + backward-compat hash",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_capability_key_stages.py"],
@@ -54,7 +54,7 @@
       "id": 12,
       "planTaskId": 4,
       "subject": "Task 4: WarmAttachKey stages factor (mirror)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11],
       "metadata": {
         "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_capability_key_stages.py"],
@@ -66,7 +66,7 @@
       "id": 13,
       "planTaskId": 5,
       "subject": "Task 5: UpscaleConfig + SeedVR2EngineConfig + Config.capability_key()",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8, 10, 11],
       "metadata": {
         "files": ["src/kinoforge/core/config.py", "tests/core/test_config_upscale.py"],
@@ -78,7 +78,7 @@
       "id": 14,
       "planTaskId": 6,
       "subject": "Task 6: UpscaleStage (pipeline)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "metadata": {
         "files": ["src/kinoforge/pipeline/upscale.py", "tests/pipeline/test_upscale_stage.py"],
@@ -90,7 +90,7 @@
       "id": 15,
       "planTaskId": 7,
       "subject": "Task 7: Warm-matcher subset pass for upscale-only cfgs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11, 13],
       "metadata": {
         "files": ["src/kinoforge/core/warm_reuse/matcher.py", "src/kinoforge/cli/_commands.py", "tests/test_warm_matcher_stages.py"],
@@ -102,7 +102,7 @@
       "id": 16,
       "planTaskId": 8,
       "subject": "Task 8: SeedVR2Runtime wrapper",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "metadata": {
         "files": ["src/kinoforge/upscalers/__init__.py", "src/kinoforge/upscalers/seedvr2/__init__.py", "src/kinoforge/upscalers/seedvr2/_runtime.py", "tests/upscalers/test_seedvr2_runtime.py"],
@@ -114,7 +114,7 @@
       "id": 17,
       "planTaskId": 9,
       "subject": "Task 9: _fetch_weights CLI module",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "metadata": {
         "files": ["src/kinoforge/upscalers/seedvr2/_fetch_weights.py", "tests/upscalers/test_seedvr2_fetch_weights.py"],
@@ -126,7 +126,7 @@
       "id": 18,
       "planTaskId": 10,
       "subject": "Task 10: SeedVR2Engine",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10, 16, 17],
       "metadata": {
         "files": ["src/kinoforge/upscalers/seedvr2/__init__.py", "tests/upscalers/test_seedvr2_engine.py"],
@@ -138,7 +138,7 @@
       "id": 19,
       "planTaskId": 11,
       "subject": "Task 11: Server LRU model registry + hard-floor VRAMEvictionFailed",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "metadata": {
         "files": ["src/kinoforge/engines/diffusers/servers/wan_t2v_server.py", "tests/engines/diffusers/test_lru_eviction.py"],
@@ -150,7 +150,7 @@
       "id": 20,
       "planTaskId": 12,
       "subject": "Task 12: Server /upscale + /upscale/status endpoints",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [19],
       "metadata": {
         "files": ["src/kinoforge/engines/diffusers/servers/wan_t2v_server.py", "tests/engines/diffusers/test_server_upscale.py"],
@@ -162,7 +162,7 @@
       "id": 21,
       "planTaskId": 13,
       "subject": "Task 13: /health payload extension",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [20],
       "metadata": {
         "files": ["src/kinoforge/engines/diffusers/servers/wan_t2v_server.py", "tests/engines/diffusers/test_server_health.py"],
@@ -174,7 +174,7 @@
       "id": 22,
       "planTaskId": 14,
       "subject": "Task 14: /health-driven matcher preflight + STAGE_MISMATCH verdict",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [15, 21],
       "metadata": {
         "files": ["src/kinoforge/cli/_commands.py", "src/kinoforge/core/warm_reuse/matcher.py", "tests/test_warm_matcher_health_preflight.py"],
@@ -186,7 +186,7 @@
       "id": 23,
       "planTaskId": 15,
       "subject": "Task 15: _cmd_upscale CLI subcommand",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [13, 18, 22],
       "metadata": {
         "files": ["src/kinoforge/cli/_commands.py", "src/kinoforge/cli/_main.py", "tests/cli/test_cmd_upscale.py"],
@@ -198,7 +198,7 @@
       "id": 24,
       "planTaskId": 16,
       "subject": "Task 16: _adapters self-register + orchestrator wires UpscaleStage + example cfgs + docs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [23],
       "metadata": {
         "files": ["src/kinoforge/_adapters.py", "src/kinoforge/core/orchestrator.py", "examples/configs/upscale-seedvr2-3b.yaml", "examples/configs/wan-with-upscale.yaml", "docs/warm-reuse.md", "docs/configuration.md", "docs/engines.md", "README.md", "tests/test_adapters_upscale.py"],
@@ -210,7 +210,7 @@
       "id": 25,
       "planTaskId": 17,
       "subject": "Task 17: Live smoke RED scaffold — SeedVR2 3B FP8 2x upscale",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [24],
       "metadata": {
         "files": ["tests/live/test_seedvr2_3b_fp8_upscale_smoke.py"],
@@ -255,5 +255,5 @@
       }
     }
   ],
-  "lastUpdated": "2026-06-28"
+  "lastUpdated": "2026-06-29T00:00:00"
 }

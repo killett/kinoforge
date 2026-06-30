@@ -112,6 +112,39 @@ def _snapshot_stale(observed_at_local: str | None, threshold_s: float) -> bool:
         return True
 
 
+def _stages_subset_match(
+    cap_key: Any,  # noqa: ANN401 — duck-typed CapabilityKey
+    entry: dict[str, Any],
+) -> bool:
+    """Return True iff ``entry`` is a multi-stage pod that can serve an upscale-only cfg.
+
+    The subset pass exists so a pod created for ``(t2v, upscale)`` can serve
+    a follow-up ``--cfg upscale-only.yaml`` invocation without paying for
+    the cold-boot tax again. It applies ONLY when ``cap_key.stages ==
+    ("upscale",)`` — pure-generate and generate-with-upscale cfgs must
+    route through the primary hash-equality path so identity is exact.
+
+    The pod must have ``"upscale"`` in its ``kinoforge_stages`` tag and
+    matching ``kinoforge_upscaler`` / ``kinoforge_upscaler_precision``
+    fields. Pods written by older kinoforge versions (no such tags) are
+    refused — silent attach to an unknown upscaler is worse than a cold
+    boot.
+    """
+    stages = getattr(cap_key, "stages", ()) or ()
+    if tuple(stages) != ("upscale",):
+        return False
+    pod_stages = entry.get("kinoforge_stages") or []
+    if "upscale" not in pod_stages:
+        return False
+    if entry.get("kinoforge_upscaler", "") != getattr(cap_key, "upscaler", ""):
+        return False
+    if entry.get("kinoforge_upscaler_precision", "") != getattr(
+        cap_key, "upscaler_precision", ""
+    ):
+        return False
+    return True
+
+
 def find_warm_attach_candidate(
     cfg: Any,  # noqa: ANN401 — duck-typed Config; structural protocol
     ledger: Any,  # noqa: ANN401 — duck-typed Ledger; structural protocol
@@ -189,6 +222,26 @@ def find_warm_attach_candidate(
                         ),
                     ),
                     0.0,
+                )
+            )
+            continue
+
+        # T7: stages-subset pass for upscale-only cfgs. A multi-stage pod
+        # whose stages contain "upscale" + matching upscaler / precision
+        # can serve an upscale-only invocation at zero LoRA-swap cost.
+        # Cost epsilon (1e-6) keeps the primary hash-match strictly
+        # preferred when both would match the same pod.
+        if _stages_subset_match(cap_key, entry):
+            evaluations.append(
+                (
+                    WarmAttachMatch(
+                        pod_id=pod_id,
+                        pod_entry=entry,
+                        swap_plan=SwapPlan(
+                            evict=[], download=[], estimated_cost_seconds=0.0
+                        ),
+                    ),
+                    1e-6,
                 )
             )
             continue

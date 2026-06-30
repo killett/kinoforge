@@ -29,7 +29,12 @@ from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import TeardownError, UnknownAdapter
-from kinoforge.core.interfaces import GenerationRequest, Instance, WarmAttachKey
+from kinoforge.core.interfaces import (
+    Artifact,
+    GenerationRequest,
+    Instance,
+    WarmAttachKey,
+)
 from kinoforge.core.lifecycle import destroy_confirmed
 from kinoforge.core.lora import LoraEntry, resolve_active_lora_stack
 from kinoforge.core.orchestrator import generate
@@ -569,7 +574,13 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         # full-CapabilityKey matcher round-trip. The find_pods_by_warm_attach_key
         # index also gates on this field.
         cfg_wak = _cfg_warm_attach_key(cfg)
-        ledger.touch(returned_instance.id, warm_attach_key=cfg_wak)
+        ledger.touch(
+            returned_instance.id,
+            warm_attach_key=cfg_wak,
+            kinoforge_stages=",".join(_cfg_want_stages(cfg)),
+            kinoforge_upscaler=cfg.upscale.engine if cfg.upscale else "",
+            kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
+        )
         # 2026-06-27 — ephemeral warm-reuse discovery (Option B disk index).
         # Under STRICT_POLICY the ledger entry above lives only in
         # session.in_memory_ledger; this index row is what lets the next
@@ -599,6 +610,182 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     print(f"generated: uri={artifact.uri!r}")
     return 0
+
+
+def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``upscale`` subcommand — standalone video upscale.
+
+    The CLI surface validates scale + flag conflicts BEFORE any cfg
+    load or pod provisioning so a malformed invocation costs zero
+    cold-boot time. Full warm-reuse / attach / cold-create wiring
+    routes through the orchestrator (see T16); for v1 the handler
+    only owns the dry-run path + early refusal gates.
+    """
+    from kinoforge.core.scale_target import ScaleTarget
+
+    # Mutual exclusion FIRST — does not require cfg load.
+    if getattr(args, "no_reuse", False) and getattr(args, "attach_pod", None):
+        print(
+            "error: --no-reuse and --attach-pod are mutually exclusive "
+            "(--no-reuse forces cold create + destroy; --attach-pod "
+            "implies pod survival)",
+            file=sys.stderr,
+        )
+        return 2
+
+    # CLI --scale parses BEFORE cfg load. Catches height-target and
+    # malformed tokens at startup so the operator does not pay for a
+    # cold-boot whose inference call was always going to crash.
+    scale: ScaleTarget | None = None
+    raw_scale = getattr(args, "scale", None)
+    if raw_scale is not None:
+        try:
+            scale = ScaleTarget.parse(raw_scale)
+        except ValueError as exc:
+            print(f"error: invalid --scale {raw_scale!r}: {exc}", file=sys.stderr)
+            return 2
+        if scale.kind == "height":
+            print(
+                f"error: --scale {raw_scale} deferred to a later session; "
+                f"use --scale Nx for v1",
+                file=sys.stderr,
+            )
+            return 2
+
+    if ctx.cfg is None:
+        print("error: --config required for upscale", file=sys.stderr)
+        return 2
+    cfg = ctx.cfg
+    if cfg.upscale is None:
+        print(
+            "error: --config must contain an `upscale:` block; "
+            "see examples/configs/upscale-spandrel-x2.yaml",
+            file=sys.stderr,
+        )
+        return 2
+
+    # CLI override takes precedence over cfg.upscale.scale.
+    if scale is None:
+        try:
+            scale = ScaleTarget.parse(cfg.upscale.scale)
+        except ValueError as exc:
+            print(f"error: invalid cfg.upscale.scale: {exc}", file=sys.stderr)
+            return 2
+
+    if getattr(args, "dry_run", False):
+        print("upscale plan:")
+        print(f"  source: {args.video}")
+        print(f"  scale: {raw_scale or cfg.upscale.scale}")
+        print(f"  engine: {cfg.upscale.engine}")
+        if cfg.upscale.seedvr2 is not None:
+            print(
+                f"  seedvr2: variant={cfg.upscale.seedvr2.variant} "
+                f"precision={cfg.upscale.seedvr2.precision}"
+            )
+        print(f"  no_reuse: {bool(getattr(args, 'no_reuse', False))}")
+        print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
+        return 0
+
+    # T11 — non-dry-run wiring. Reuses generate()'s machinery via the
+    # skip_clip_stage flag (T10). Mirrors _cmd_generate's warm-reuse /
+    # attach / cold-create precedence chain.
+    from kinoforge.core import orchestrator as _orchestrator
+
+    del scale  # ScaleTarget recomputed inside UpscaleStage via cfg.upscale.scale
+
+    input_artifact = _resolve_input_video_as_artifact(args.video)
+    store = ctx.store()
+    sink_local = _build_sink(cfg, args)
+    run_id = (
+        args.run_id
+        if getattr(args, "run_id", None) is not None
+        else f"upscale-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    )
+
+    instance: Instance | None = None
+    attach_pod_id = getattr(args, "attach_pod", None)
+    if attach_pod_id:
+        instance, rc = _resolve_attach_pod(ctx, cfg, attach_pod_id)
+        if rc is not None:
+            return rc
+    elif not args.no_reuse:
+        instance, report = _scan_warm_candidates(ctx, cfg)
+        summary = report.summarize()
+        if summary:
+            logger.info(summary)
+
+    artifact, returned_instance = _orchestrator.generate(
+        cfg,
+        request=None,
+        store=store,
+        sink=sink_local,
+        run_id=run_id,
+        state_dir=ctx.state_dir,
+        cancel_token=ctx.cancel_token,
+        instance=instance,
+        single=bool(args.no_reuse),
+        skip_clip_stage=True,
+        initial_clip=input_artifact,
+    )
+
+    # T11 — symmetric ledger stamp with _cmd_generate (resolves T7 deferral).
+    if returned_instance is not None and instance is None and not args.no_reuse:
+        ledger = ctx.ledger()
+        if ledger.read(returned_instance.id) is None:
+            lc = cfg.lifecycle()
+            ledger.record(
+                returned_instance,
+                idle_timeout_s=int(lc.idle_timeout_s),
+                max_age_s=int(lc.max_lifetime_s),
+            )
+        cfg_wak = _cfg_warm_attach_key(cfg)
+        ledger.touch(
+            returned_instance.id,
+            warm_attach_key=cfg_wak,
+            kinoforge_stages=",".join(_cfg_want_stages(cfg)),
+            kinoforge_upscaler=cfg.upscale.engine,
+            kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
+        )
+
+    print(f"upscaled: uri={artifact.uri!r}")
+    return 0
+
+
+def _resolve_input_video_as_artifact(video_path_or_url: str) -> Artifact:
+    """Materialise the ``--video`` arg as a kinoforge Artifact.
+
+    Local file path → ``file://`` URL + sha256 from disk + size from stat.
+    ``http(s)://`` URL → passthrough; sha256/size deferred to server-side
+    fetch (the upscaler engine's ``source_url`` consumer handles the
+    integrity check after download).
+    """
+    import hashlib as _hashlib
+
+    if video_path_or_url.startswith(("http://", "https://")):
+        return Artifact(uri=video_path_or_url, sha256="", size=0)
+    p = Path(video_path_or_url).resolve()
+    h = _hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return Artifact(uri=f"file://{p}", sha256=h.hexdigest(), size=p.stat().st_size)
+
+
+def _upscaler_precision_tag(cfg: Config) -> str:
+    """Derive the ``kinoforge_upscaler_precision`` ledger tag from cfg.upscale.
+
+    Format is engine-specific: spandrel uses bare precision (``"fp16"``),
+    seedvr2 uses ``"{variant_lower}-{precision}"`` (``"3b-fp8"``).
+    Returns ``""`` when no upscale block is present or its engine-specific
+    sub-block is unset.
+    """
+    if cfg.upscale is None:
+        return ""
+    if cfg.upscale.spandrel is not None:
+        return cfg.upscale.spandrel.precision
+    if cfg.upscale.seedvr2 is not None:
+        return f"{cfg.upscale.seedvr2.variant.lower()}-{cfg.upscale.seedvr2.precision}"
+    return ""
 
 
 def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
@@ -1211,6 +1398,24 @@ def _scan_warm_candidates(
             skipped.append((instance_id, _rc_to_reason(rc, entry)))
             continue
 
+        # T14: /health-driven refinement — even with matching cap_key,
+        # refuse a half-failed pod whose loaders did not actually bring
+        # up every stage the cfg needs. Unreachable /health → None →
+        # fall through (the legacy verdict machinery above already
+        # passed; do not synthesise a STAGE_MISMATCH from missing data).
+        want_stages = _cfg_want_stages(cfg)
+        if want_stages and instance is not None:
+            proxy_url = instance.endpoints.get("http") or next(
+                iter(instance.endpoints.values()), ""
+            )
+            if proxy_url:
+                verdict = _health_preflight_ok(
+                    proxy_url=proxy_url, want_stages=want_stages
+                )
+                if verdict is False:
+                    skipped.append((instance_id, "stage-mismatch"))
+                    continue
+
         return (instance, _ScanReport(attached=instance_id, skipped=skipped))
 
     return (None, _ScanReport(attached=None, skipped=skipped))
@@ -1761,6 +1966,56 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
         lora_section=lora_section,
     )
     return 0
+
+
+def _cfg_want_stages(cfg: Config) -> tuple[str, ...]:
+    """Return pipeline stages this cfg will exercise on the pod.
+
+    Mirrors :meth:`Config.capability_key` stages derivation: pure-t2v
+    cfgs return ``()`` (no preflight refinement needed; the cap_key
+    pre-filter already gates on pipeline identity); upscale-attached
+    cfgs return ``("t2v", "upscale")``. Drives the matcher's
+    /health-aware refusal of half-failed pods.
+    """
+    if getattr(cfg, "upscale", None) is not None:
+        return ("t2v", "upscale")
+    return ()
+
+
+def _health_preflight_ok(
+    *,
+    proxy_url: str,
+    want_stages: tuple[str, ...],
+) -> bool | None:
+    """Pre-flight gate via ``/health`` before claiming a warm-attach candidate.
+
+    Args:
+        proxy_url: Base URL of the pod's HTTP endpoint (no trailing slash
+            required; ``/health`` is appended).
+        want_stages: Stage tags this cfg requires. Empty tuple
+            short-circuits to True without hitting the network.
+
+    Returns:
+        True — pod's ``capabilities`` is a superset of ``want_stages``.
+        False — pod reachable AND capabilities does NOT cover want_stages
+                (caller should refuse with ``stage-mismatch`` reason).
+                Also returned when the pod is on an older server build
+                whose /health payload lacks the ``capabilities`` key:
+                conservative-on-ignorance — refuse rather than gamble.
+        None — pod /health unreachable; caller falls through to the
+               legacy verdict machinery instead of inventing a refusal.
+    """
+    if not want_stages:
+        return True
+    try:
+        payload = _http_get_json(f"{proxy_url.rstrip('/')}/health")
+    except (ConnectionError, TimeoutError, OSError):
+        return None
+    caps_raw = payload.get("capabilities")
+    if caps_raw is None:
+        return False
+    caps = set(caps_raw)
+    return set(want_stages).issubset(caps)
 
 
 def _http_get_json(url: str) -> dict[str, Any]:

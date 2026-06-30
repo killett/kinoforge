@@ -22,6 +22,7 @@ from kinoforge.core.interfaces import (
     GenerationEngine,
     ModelSource,
     Splitter,
+    UpscalerEngine,
 )
 from kinoforge.stores.base import ArtifactStore
 
@@ -33,6 +34,7 @@ _engines: dict[str, Callable[[], GenerationEngine]] = {}
 _sources: list[ModelSource] = []
 _artifact_stores: dict[str, Callable[[], ArtifactStore]] = {}
 _splitters: dict[str, Callable[[], Splitter]] = {}
+_upscalers: dict[str, Callable[[], UpscalerEngine]] = {}
 
 
 def register_provider(name: str, factory: Callable[[], ComputeProvider]) -> None:
@@ -228,3 +230,41 @@ def get_image_engine(name: str) -> Callable[[], ImageEngine]:
         return _image_engines[name]
     except KeyError:
         raise UnknownAdapter(f"no image engine registered: {name!r}") from None
+
+
+def register_upscaler(name: str, factory: Callable[[], UpscalerEngine]) -> None:
+    """Register an upscaler factory under ``name``.
+
+    Unlike :func:`register_engine`, duplicate registration is rejected so
+    that adapter import-order accidents surface loudly rather than silently
+    overwriting the production binding.
+
+    Args:
+        name: Registry key (e.g. ``"seedvr2"``).
+        factory: Zero-arg callable returning an :class:`UpscalerEngine`.
+
+    Raises:
+        UnknownAdapter: ``name`` is already registered.
+    """
+    if name in _upscalers:
+        raise UnknownAdapter(f"upscaler {name!r} already registered")
+    _upscalers[name] = factory
+
+
+def get_upscaler(name: str) -> Callable[[], UpscalerEngine]:
+    """Return the factory for ``name``.
+
+    Raises:
+        UnknownAdapter: No upscaler registered under ``name``.
+    """
+    try:
+        return _upscalers[name]
+    except KeyError:
+        raise UnknownAdapter(
+            f"no upscaler registered as {name!r}; known: {sorted(_upscalers)}"
+        ) from None
+
+
+def upscaler_names() -> list[str]:
+    """Return all registered upscaler names, sorted."""
+    return sorted(_upscalers)

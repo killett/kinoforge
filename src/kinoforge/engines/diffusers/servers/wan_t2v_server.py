@@ -13,11 +13,15 @@ Model loaded once at startup, persists across requests.
 from __future__ import annotations
 
 import asyncio
+import gc
+import hashlib
+import json
 import logging
 import os
 import queue
 import re
 import shutil
+import subprocess
 import threading
 import time
 import urllib.request
@@ -25,7 +29,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 # Force-disable huggingface_hub's xet transport before any HF import.
 # Task 8 attempt #8 surfaced a hard xet failure:
@@ -84,6 +88,182 @@ pipe: Any = None  # set in _startup
 jobs: dict[str, JobState] = {}
 _q: queue.Queue[str] = queue.Queue()
 _worker_thread: threading.Thread | None = None
+
+
+# --- T11: in-process LRU model registry -----------------------------------
+#
+# Multiple pipelines (Wan T2V, SeedVR2) co-resident on one pod's GPU. The
+# registry tracks which models are on which device + their last-used
+# timestamp; ``_ensure_on_gpu`` evicts LRU CUDA-resident models to CPU
+# when headroom for a target drops below ``_HEADROOM_MARGIN_BYTES``.
+#
+# Hard floor: when a target alone exceeds total GPU capacity minus the
+# headroom margin, ``VRAMEvictionFailed`` is raised — surfaced as 503 by
+# the FastAPI handler.
+
+
+class LoadedModel(TypedDict):
+    """Registry entry describing one loaded pipeline + its placement."""
+
+    name: str
+    pipe: Any
+    vram_bytes: int
+    last_used_monotonic: float
+    on_device: Literal["cuda", "cpu", "disk"]
+
+
+_LOADED: dict[str, LoadedModel] = {}
+_REGISTRY_LOCK = asyncio.Lock()
+_HEADROOM_MARGIN_BYTES = (
+    int(os.environ.get("KINOFORGE_HEADROOM_MARGIN_GB", "2")) * 1024**3
+)
+
+
+_SPANDREL_WEIGHTS_DIR_DEFAULT = "/workspace/models/spandrel"
+
+
+def _spandrel_weights_dir() -> Path:
+    """Return the on-pod spandrel weights directory.
+
+    Override via ``KINOFORGE_SPANDREL_WEIGHTS_DIR`` for unit tests that
+    can't write under ``/workspace/models``.
+    """
+    return Path(
+        os.environ.get("KINOFORGE_SPANDREL_WEIGHTS_DIR", _SPANDREL_WEIGHTS_DIR_DEFAULT)
+    )
+
+
+def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2/spandrel pipe
+    """Engine-specific loader dispatched on name prefix.
+
+    The single seam where ``wan_t2v_server`` knows which loader to call
+    for which prefix. SeedVR2 + spandrel lazily import their runtimes so
+    the optional packages aren't required for module import.
+    """
+    if name.startswith("wan-t2v-"):
+        return _diffusers_load()
+    if name.startswith("seedvr2-"):
+        from kinoforge.upscalers.seedvr2._runtime import SeedVR2Runtime
+
+        # Slug: "seedvr2-{variant}-{precision}" → variant + precision tail.
+        parts = name.split("-")
+        variant, precision = parts[-2], parts[-1]
+        return SeedVR2Runtime(
+            weights_dir=Path("/workspace/models/seedvr2"),
+            variant=variant.upper(),  # type: ignore[arg-type]
+            precision=precision,  # type: ignore[arg-type]
+        )
+    if name.startswith("spandrel-"):
+        from kinoforge.upscalers.spandrel._runtime import SpandrelRuntime
+
+        # Slug: "spandrel-{arch}-{precision}" → precision tail. arch token is
+        # informational; the on-disk filename may not exactly match it, so we
+        # resolve by globbing the dest dir for a known SR weights extension.
+        parts = name.split("-")
+        precision = parts[-1]
+        weights_dir = _spandrel_weights_dir()
+        candidates = sorted(weights_dir.glob("*.pth")) + sorted(
+            weights_dir.glob("*.safetensors")
+        )
+        if not candidates:
+            raise FileNotFoundError(
+                f"spandrel weights not found under {weights_dir}; expected "
+                "_fetch_weights to have run during provision"
+            )
+        return SpandrelRuntime(
+            weights_path=candidates[0],
+            precision=precision,  # type: ignore[arg-type]
+            tile_size=512,
+            batch_size=4,
+        )
+    raise ValueError(f"unknown model name {name!r}; no loader registered")
+
+
+async def _ensure_on_gpu(name: str) -> LoadedModel:
+    """Ensure ``name`` is on CUDA with sufficient headroom.
+
+    LRU CPU eviction is opportunistic; hard-floor refusal happens when the
+    target's ``vram_bytes`` exceeds GPU capacity minus the headroom margin.
+    """
+    from kinoforge.core.errors import VRAMEvictionFailed  # noqa: F401
+
+    async with _REGISTRY_LOCK:
+        entry = _LOADED.get(name)
+        if entry is not None and entry["on_device"] == "cuda":
+            entry["last_used_monotonic"] = time.monotonic()
+            return entry
+
+        if entry is None:
+            new_pipe = _load_model_to_gpu(name)
+            entry = LoadedModel(
+                name=name,
+                pipe=new_pipe,
+                vram_bytes=getattr(new_pipe, "vram_bytes", 0),
+                last_used_monotonic=time.monotonic(),
+                on_device="cuda",
+            )
+            _LOADED[name] = entry
+        else:
+            entry["pipe"].to("cuda")
+            entry["on_device"] = "cuda"
+            entry["last_used_monotonic"] = time.monotonic()
+
+        await _enforce_headroom(name)
+        return entry
+
+
+async def _enforce_headroom(target_name: str) -> None:
+    """Evict LRU CUDA models to CPU until ``target_name`` has headroom.
+
+    Raises VRAMEvictionFailed when the target alone exceeds capacity OR
+    when every other CUDA + CPU model has been evicted and headroom is
+    still insufficient.
+    """
+    import torch
+
+    from kinoforge.core.errors import VRAMEvictionFailed
+
+    free, total = torch.cuda.mem_get_info()
+    target = _LOADED[target_name]
+
+    if target["vram_bytes"] > total - _HEADROOM_MARGIN_BYTES:
+        raise VRAMEvictionFailed(
+            model=target_name,
+            reason=(
+                f"target exceeds GPU capacity: {target['vram_bytes']} bytes "
+                f"> {total - _HEADROOM_MARGIN_BYTES} (total={total}, "
+                f"margin={_HEADROOM_MARGIN_BYTES})"
+            ),
+        )
+
+    while free < _HEADROOM_MARGIN_BYTES:
+        victims = [
+            n
+            for n, e in _LOADED.items()
+            if e["on_device"] == "cuda" and n != target_name
+        ]
+        if not victims:
+            cpu_victims = [n for n, e in _LOADED.items() if e["on_device"] == "cpu"]
+            if not cpu_victims:
+                raise VRAMEvictionFailed(
+                    model=target_name,
+                    reason="exhausted eviction targets with insufficient headroom",
+                )
+            evict = min(cpu_victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
+            _LOADED[evict]["pipe"] = None
+            _LOADED[evict]["on_device"] = "disk"
+            gc.collect()
+            torch.cuda.empty_cache()
+            free, _ = torch.cuda.mem_get_info()
+            continue
+
+        evict = min(victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
+        _LOADED[evict]["pipe"].to("cpu")
+        _LOADED[evict]["on_device"] = "cpu"
+        gc.collect()
+        torch.cuda.empty_cache()
+        free, _ = torch.cuda.mem_get_info()
+
 
 # LoRA-flexible warm-reuse: pod-side inventory of loaded LoRA weights.
 # P2 (2026-06-22): keyed by composite ``(ref, branch)`` so the same ref
@@ -869,8 +1049,22 @@ def _startup() -> None:
     If ``KINOFORGE_INITIAL_LORA_STACK_JSON`` points to a readable JSON
     file shaped ``[[ref, {spec...}], ...]``, those LoRAs are downloaded
     + loaded before the server reports ready.
+
+    Upscale-only mode: when ``KINOFORGE_SKIP_WAN_LOAD`` is set in env,
+    the Wan pipeline + worker thread are skipped — only the
+    on-demand LRU registry (``_load_model_to_gpu`` for spandrel/seedvr2)
+    fires when ``/upscale`` is called. ``/health`` reports ready
+    immediately so wait_for_ready clears. Used by ``kinoforge upscale``
+    cfgs that don't reference a Wan model (``examples/configs/
+    upscale-spandrel-x2.yaml``).
     """
     global pipe, _worker_thread
+    if os.environ.get("KINOFORGE_SKIP_WAN_LOAD"):
+        _log.info("startup: KINOFORGE_SKIP_WAN_LOAD=1; skipping Wan pipeline load")
+        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        LORAS_DIR.mkdir(parents=True, exist_ok=True)
+        ready.set()
+        return
     _log.info("startup: loading pipeline %s", MODEL_ID)
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     LORAS_DIR.mkdir(parents=True, exist_ok=True)
@@ -893,10 +1087,61 @@ def _startup() -> None:
     _log.info("startup: pipeline loaded + worker spawned, server ready")
 
 
+def _capability_for_model(name: str) -> str | None:
+    """Map a loaded-model registry name to its public capability tag.
+
+    Unknown prefixes return ``None`` so they cannot leak into the
+    ``capabilities`` field — the matcher's pre-flight (T14) treats
+    that list as a closed vocabulary and breaks on stray values.
+    """
+    if name.startswith("wan-t2v-"):
+        return "t2v"
+    if (
+        name.startswith("seedvr2-")
+        or name.startswith("flashvsr-")
+        or name.startswith("spandrel-")
+    ):
+        return "upscale"
+    return None
+
+
+def _capabilities_from_loaded() -> list[str]:
+    """Return sorted capability tags derived from ``_LOADED`` membership.
+
+    Derives from actually-loaded pipelines (not cfg intent) so a
+    half-failed provision reports the partial truth — the matcher
+    sees the gap and refuses to attach an unsupported stage.
+    """
+    caps: set[str] = set()
+    for name in _LOADED:
+        cap = _capability_for_model(name)
+        if cap is not None:
+            caps.add(cap)
+    return sorted(caps)
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
-    """Return readiness + model identity."""
-    return {"ready": ready.is_set(), "model": MODEL_ID}
+    """Return readiness + model identity + per-pipeline state + capabilities.
+
+    The ``model`` field is preserved verbatim for backward compatibility
+    with older CLI tooling that compares it to ``MODEL_ID``. New callers
+    should read ``models[]`` for per-pipeline ``on_device`` / ``ready``
+    truth, and ``capabilities[]`` for pre-flight stage routing.
+    """
+    return {
+        "ready": ready.is_set(),
+        "model": MODEL_ID,
+        "models": [
+            {
+                "name": entry["name"],
+                "on_device": entry["on_device"],
+                "ready": entry["on_device"] == "cuda",
+            }
+            for entry in _LOADED.values()
+        ],
+        "capabilities": _capabilities_from_loaded(),
+    }
 
 
 @app.post("/generate")
@@ -1271,6 +1516,193 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
             free_bytes=_disk_free_bytes(LORAS_DIR),
             swap_rejected=None,
         )
+
+
+# --- T12: /upscale + /upscale/status/{id} ---------------------------------
+#
+# Co-resident with /generate so SeedVR2 upscale and Wan T2V generation
+# share one process and one model registry (the T11 _LOADED map).
+# Heavy CUDA / download / probe calls go through asyncio.to_thread per
+# the wan_server_async_blocking rule: synchronous work in `async def`
+# handlers blocks the event loop → /health hangs → RunPod proxy 502s.
+
+
+class SeedVR2Params(BaseModel):
+    """Engine-specific overrides for a SeedVR2 upscale request."""
+
+    variant: Literal["3B", "7B"] = "3B"
+    precision: Literal["fp8", "fp16"] = "fp8"
+    tile_size: int | None = None
+    steps: int | None = None
+
+
+class SpandrelParams(BaseModel):
+    """Engine-specific overrides for a spandrel upscale request."""
+
+    model_url: str | None = None
+    arch: str | None = None
+    precision: Literal["fp16", "fp32"] = "fp16"
+    tile_size: int = 512
+    batch_size: int = 4
+
+
+class UpscaleRequest(BaseModel):
+    """JSON body for ``POST /upscale``.
+
+    ``engine`` is a plain ``str`` (not ``Literal``) so future drop-in
+    upscalers (e.g. FlashVSR) extend the dispatch table inside the
+    handler without touching this schema.
+    """
+
+    source_url: str
+    source_filename: str
+    scale: str
+    engine: str
+    seedvr2: SeedVR2Params | None = None
+    spandrel: SpandrelParams | None = None
+    job_id: str | None = None
+
+
+_upscale_lock: asyncio.Lock = asyncio.Lock()
+_upscale_jobs: dict[str, dict[str, Any]] = {}
+
+
+def _download_to_local_temp(source_url: str, source_filename: str) -> Path:
+    """Fetch ``source_url`` to a local mp4 keyed by ``source_filename``.
+
+    Handles ``file://`` (local copy) and ``http(s)://`` (urllib stream).
+    Files land in ``ARTIFACT_DIR`` so the post-upscale FileResponse
+    serving path (``/artifacts/{filename}``) can also reach the input
+    if the caller wants to compare frames side-by-side.
+    """
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    target = ARTIFACT_DIR / source_filename
+    if source_url.startswith("file://"):
+        src = Path(source_url[len("file://") :])
+        shutil.copyfile(src, target)
+        return target
+    req = urllib.request.Request(  # noqa: S310 — caller-resolved URL
+        source_url, headers={"User-Agent": "kinoforge-pod-upscale/0.1"}
+    )
+    with urllib.request.urlopen(req, timeout=600) as resp, target.open("wb") as out:  # noqa: S310
+        shutil.copyfileobj(resp, out)
+    return target
+
+
+def _sha256_file(p: Path) -> str:
+    """Stream-hash ``p`` with sha256."""
+    h = hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _probe_resolution(p: Path) -> tuple[int, int]:
+    """Return ``(width, height)`` for ``p`` via ffprobe.
+
+    Returns ``(0, 0)`` if ffprobe is unavailable so a probe failure
+    does not poison the whole result block. The caller's ledger writes
+    a literal ``[0, 0]`` which is unambiguous in evidence files.
+    """
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "json",
+        str(p),
+    ]
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            return (0, 0)
+        data = json.loads(result.stdout)
+        stream = data["streams"][0]
+        return (int(stream["width"]), int(stream["height"]))
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, IndexError):
+        return (0, 0)
+
+
+@app.post("/upscale")
+async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
+    """Enqueue an upscale job; return ``{"job_id": ...}``.
+
+    Engine dispatch reads ``req.engine``; v1 only handles ``"seedvr2"``.
+    Unknown engines fail fast at submit time with 400 so the caller
+    does not burn a warm-pod attach cycle on a job destined for an
+    async error.
+    """
+    if req.engine != "seedvr2":
+        raise HTTPException(status_code=400, detail=f"unsupported engine: {req.engine}")
+    job_id = req.job_id or f"u-{uuid.uuid4().hex}"
+    _upscale_jobs[job_id] = {
+        "state": "queued",
+        "progress": 0.0,
+        "result": None,
+        "error": None,
+    }
+    asyncio.create_task(_run_upscale_job(job_id, req))
+    return {"job_id": job_id}
+
+
+async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
+    """Run one upscale under ``_upscale_lock``; mutate ``_upscale_jobs[job_id]``."""
+    from kinoforge.core.scale_target import ScaleTarget
+
+    async with _upscale_lock:
+        try:
+            _upscale_jobs[job_id]["state"] = "running"
+            variant = (req.seedvr2.variant if req.seedvr2 else "3B").lower()
+            precision = req.seedvr2.precision if req.seedvr2 else "fp8"
+            model_name = f"seedvr2-{variant}-{precision}"
+            entry = await _ensure_on_gpu(model_name)
+
+            local = await asyncio.to_thread(
+                _download_to_local_temp, req.source_url, req.source_filename
+            )
+            scale = ScaleTarget.parse(req.scale)
+            params = req.seedvr2.model_dump() if req.seedvr2 else {}
+
+            out_path = await asyncio.to_thread(
+                entry["pipe"].upscale, local, scale, params
+            )
+            out_path = Path(out_path)
+            sha = await asyncio.to_thread(_sha256_file, out_path)
+            in_res = await asyncio.to_thread(_probe_resolution, local)
+            out_res = await asyncio.to_thread(_probe_resolution, out_path)
+
+            # Assign result + progress BEFORE flipping state to "done"
+            # so a poller that catches state=="done" is guaranteed to
+            # observe a populated result block (no read-mid-write race).
+            _upscale_jobs[job_id]["result"] = {
+                "filename": out_path.name,
+                "sha256": sha,
+                "size": out_path.stat().st_size,
+                "input_resolution": list(in_res),
+                "output_resolution": list(out_res),
+                "engine_meta": {},
+            }
+            _upscale_jobs[job_id]["progress"] = 1.0
+            _upscale_jobs[job_id]["state"] = "done"
+        except Exception as exc:  # noqa: BLE001 — surface any failure to caller
+            _upscale_jobs[job_id]["error"] = str(exc)
+            _upscale_jobs[job_id]["state"] = "error"
+
+
+@app.get("/upscale/status/{job_id}")
+def upscale_status_handler(job_id: str) -> dict[str, Any]:
+    """Return current state of ``job_id``; 404 if unknown."""
+    payload = _upscale_jobs.get(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
+    return payload
 
 
 if __name__ == "__main__":

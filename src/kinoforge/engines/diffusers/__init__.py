@@ -10,6 +10,7 @@ the ``"diffusers"`` key so that ``registry.get_engine("diffusers")()`` works.
 from __future__ import annotations
 
 import base64
+import gzip
 import importlib.resources
 import json
 import logging
@@ -20,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import frames, registry
@@ -91,6 +93,44 @@ _READY_POLL_INTERVAL_S: float = 5.0
 _KINOFORGE_USER_AGENT: str = "kinoforge-diffusers/0.1"
 
 
+def _render_embed_single_file(mod_name: str, kfsrv: str) -> list[str]:
+    """Embed a single dotted module (leaf is a .py file, not a package).
+
+    Used for `embed_files` cfg entries that need a specific module without
+    dragging in its whole package — e.g. `kinoforge.core.errors` embeds
+    errors.py while leaving the rest of kinoforge/core/ off the pod.
+    """
+    parts = mod_name.split(".")
+    parent_pkg = ".".join(parts[:-1])
+    leaf = parts[-1]
+    parent_root = importlib.resources.files(parent_pkg)
+    resource = parent_root / f"{leaf}.py"
+    if not resource.is_file():
+        raise ValueError(
+            f"embed_files entry {mod_name!r}: parent={parent_pkg!r} has no "
+            f"file {leaf}.py"
+        )
+    rel = mod_name.replace(".", "/") + ".py"
+    target = f"{kfsrv}/{rel}"
+    lines: list[str] = []
+    # Touch ancestor __init__.py files (same shape as the package embed).
+    for i in range(1, len(parts)):
+        ancestor_dir = f"{kfsrv}/" + "/".join(parts[:i])
+        lines.append(f"mkdir -p {ancestor_dir}")
+        lines.append(f"touch {ancestor_dir}/__init__.py")
+    lines.append(f"mkdir -p {Path(target).parent}")
+    content = resource.read_bytes()
+    encoded = base64.b64encode(gzip.compress(content)).decode("ascii")
+    lines.append(
+        f"echo '{encoded}' | python3 -c "
+        f'"import sys,base64,gzip; '
+        f"sys.stdout.buffer.write("
+        f'gzip.decompress(base64.b64decode(sys.stdin.read())))" '
+        f"> {target}"
+    )
+    return lines
+
+
 def _render_embed_lines(modules: list[str]) -> list[str]:
     """Return bash lines that recreate ``modules``' package trees under /tmp/kfsrv/.
 
@@ -137,8 +177,23 @@ def _render_embed_lines(modules: list[str]) -> list[str]:
             rel = mod_name.replace(".", "/") + "/" + resource.name
             target = f"{kfsrv}/{rel}"
             content = resource.read_bytes()
-            encoded = base64.b64encode(content).decode("ascii")
-            lines.append(f"echo '{encoded}' | base64 -d > {target}")
+            # gzip+base64 keeps the bootstrap script under RunPod's 64KB
+            # env-var ceiling for big embedded modules like wan_t2v_server.py
+            # (~67KB raw → ~16KB gz → ~22KB b64). Pre-gzip embeds blew the
+            # KINOFORGE_PROVISION_SCRIPT env var past the limit and the
+            # create-pod mutation 500ed.
+            #
+            # Decode via python3 (always present in runpod/pytorch images)
+            # rather than `gunzip` — saves us hunting for a gzip binary on
+            # minimal images. python -c "..." keeps the pipeline stateless.
+            encoded = base64.b64encode(gzip.compress(content)).decode("ascii")
+            lines.append(
+                f"echo '{encoded}' | python3 -c "
+                f'"import sys,base64,gzip; '
+                f"sys.stdout.buffer.write("
+                f'gzip.decompress(base64.b64decode(sys.stdin.read())))" '
+                f"> {target}"
+            )
     return lines
 
 
@@ -869,6 +924,7 @@ class DiffusersEngine(GenerationEngine):
         base_url: str = str(diffusers_cfg.get("base_url", ""))
         image: str = str(diffusers_cfg.get("image", _DEFAULT_RUNPOD_IMAGE))
         embed_modules: list[str] = list(diffusers_cfg.get("embed_modules", []))
+        embed_files: list[str] = list(diffusers_cfg.get("embed_files", []))
         # Derive WAN_MODEL_ID from cfg.models[<first-base>].ref so the
         # wan_t2v_server loads the actual cfg-declared repo rather than
         # its hardcoded 14B fallback. Without this, a Wan 2.1 1.3B cfg
@@ -925,8 +981,13 @@ class DiffusersEngine(GenerationEngine):
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
         ]
-        if embed_modules:
-            lines.extend(_render_embed_lines(embed_modules))
+        if embed_modules or embed_files:
+            if embed_modules:
+                lines.extend(_render_embed_lines(embed_modules))
+            for mod in embed_files:
+                lines.extend(
+                    _render_embed_single_file(mod, "/tmp/kfsrv")  # noqa: S108
+                )
             lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
         if pip_deps:
             # shlex.quote each dep — pip version specifiers like
@@ -951,6 +1012,31 @@ class DiffusersEngine(GenerationEngine):
             lines.append(
                 f"pip install -q --extra-index-url {_PYTORCH_EXTRA_INDEX_URL} {quoted}"
             )
+        # T15 — upscale-only mode: bypass eager WanPipeline.from_pretrained
+        # in the on-pod server. The composed upscaler render_provision (T8)
+        # still fires below so spandrel weights land at /workspace/models/
+        # spandrel; the LRU registry loads spandrel on the first /upscale.
+        if diffusers_cfg.get("upscale_only"):
+            lines.append("export KINOFORGE_SKIP_WAN_LOAD=1")
+
+        # T8 — compose upscaler render_provision script when cfg.upscale set.
+        # Reads cfg.upscale.engine, looks up via registry, appends the upscaler's
+        # render_provision script BEFORE the server exec line. Engine-agnostic:
+        # this seam knows nothing about WHICH upscaler. FlashVSR drop-in (future)
+        # gets composition for free. Raises ExtrasNotInstalled when the upscaler
+        # is extras-gated (e.g. seedvr2 pre-Phase 2) — propagates to the
+        # orchestrator's cfg-time pre-flight rather than crashing at pod boot.
+        upscale_block_raw = cfg.get("upscale") if isinstance(cfg, dict) else None
+        if isinstance(upscale_block_raw, dict):
+            upscaler_name = upscale_block_raw.get("engine")
+            if upscaler_name:
+                from kinoforge.core import registry as _registry
+
+                upscaler = _registry.get_upscaler(str(upscaler_name))()
+                upscale_rp = upscaler.render_provision(cfg)
+                lines.append("# ---- upscaler provision (composed) ----")
+                lines.extend(line for line in upscale_rp.script.split("\n") if line)
+
         if wan_model_id and server_cmd:
             # Exported BEFORE server_cmd so the launching shell carries
             # it into the wan_t2v_server process. See wan_t2v_server.py

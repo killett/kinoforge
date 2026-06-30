@@ -110,6 +110,7 @@ pixi run test
 | `provision` | Provision an existing instance | `pixi run kinoforge provision --config cfg.yaml` |
 | `doctor` | Validate config and credentials | `pixi run kinoforge doctor --config cfg.yaml` |
 | `generate` | Run a generation job | `pixi run kinoforge generate --config cfg.yaml --prompt "…" --mode t2v` |
+| `upscale` | Upscale a video clip (SeedVR2) | `pixi run kinoforge upscale --config cfg.yaml --video clip.mp4 --scale 2x` |
 | `list` | List running instances from ledger | `pixi run kinoforge list` |
 | `status` | Show status of one instance | `pixi run kinoforge status --id <id>` |
 | `stop` | Stop an instance | `pixi run kinoforge stop --id <id>` |

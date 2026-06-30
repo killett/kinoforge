@@ -14,6 +14,8 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
 
+from kinoforge.core.scale_target import ScaleTarget
+
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
     from kinoforge.core.runtime_probe import RuntimeProbe
@@ -284,21 +286,33 @@ class WarmAttachKey:
     should NOT trigger re-download for. See
     docs/superpowers/specs/2026-06-20-lora-flexible-warm-reuse-design.md.
 
+    Extended in 2026-06-28 with stages / upscaler / upscaler_precision
+    factors. derive() participates in the hash only when non-default,
+    preserving the legacy hash space for pure-generate pods.
+
     Attributes:
         base_model: Base-model vendor-neutral ref (e.g. "hf:org/m").
         engine: Engine name (capability is engine-specific).
         precision: Precision/quantization (e.g. "fp16", "gguf-q8").
+        stages: Pipeline stages this pod actually supports. Empty tuple
+            preserves the legacy hash space.
+        upscaler: Upscaler registry key when ``stages`` includes ``"upscale"``.
+        upscaler_precision: Variant+precision slug for the upscaler.
     """
 
     base_model: str
     engine: str = ""
     precision: str = ""
+    stages: tuple[str, ...] = ()
+    upscaler: str = ""
+    upscaler_precision: str = ""
 
     def derive(self) -> str:
-        """Stable sha256 over (base_model, engine, precision)."""
-        payload = json.dumps(
-            [self.base_model, self.engine, self.precision], ensure_ascii=False
-        )
+        """Backward-compat hash; conditional-extend mirrors CapabilityKey."""
+        base: list[object] = [self.base_model, self.engine, self.precision]
+        if self.stages or self.upscaler or self.upscaler_precision:
+            base.extend([list(self.stages), self.upscaler, self.upscaler_precision])
+        payload = json.dumps(base, ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -318,37 +332,61 @@ class LoraStack:
 class CapabilityKey:
     """Full identity a ModelProfile depends on. derive() is the stable cache key.
 
-    Composite over WarmAttachKey + LoraStack. derive() produces the
-    same byte-equal hash as the pre-split CapabilityKey for backward
-    compatibility with every existing ledger entry.
+    Composite over WarmAttachKey + LoraStack + (new in 2026-06-28) stage tags.
+    derive() produces byte-identical output to the pre-stages-factor
+    implementation when ``stages == ()`` AND ``upscaler == ""`` AND
+    ``upscaler_precision == ""``, so every existing ledger entry keeps matching.
 
     Attributes:
         base_model: Base-model vendor-neutral ref (e.g. "hf:org/m").
         loras: Ordered LoRA stack; order matters and contributes to the key.
         engine: Engine name (capability is engine-specific).
         precision: Precision/quantization (e.g. "fp16", "gguf-q8").
+        stages: Pipeline stages this cfg/pod actually supports. Empty tuple
+            preserves the legacy hash space (a pure-generate pod or cfg with
+            no upscale block). Non-empty values participate in the hash.
+        upscaler: Upscaler registry key when ``stages`` includes ``"upscale"``.
+        upscaler_precision: Variant+precision slug for the upscaler
+            (e.g. ``"3b-fp8"`` for SeedVR2 3B FP8).
     """
 
     base_model: str
     loras: tuple[str, ...] = ()
     engine: str = ""
     precision: str = ""
+    stages: tuple[str, ...] = ()
+    upscaler: str = ""
+    upscaler_precision: str = ""
 
     def derive(self) -> str:
-        """Stable, order-sensitive sha256 over all fields (VAE excluded by design).
+        """Stable, order-sensitive sha256 over all fields.
 
-        Byte-identical to the pre-split CapabilityKey.derive() output.
+        Backward-compat invariant: when ``stages == ()`` AND ``upscaler == ""``
+        AND ``upscaler_precision == ""``, derive() returns byte-identical
+        output to the pre-change implementation. Enforced by the
+        conditional-extend below — the legacy payload shape is preserved
+        whenever the new fields are at their defaults.
         """
-        payload = json.dumps(
-            [self.base_model, list(self.loras), self.engine, self.precision],
-            ensure_ascii=False,
-        )
+        base: list[object] = [
+            self.base_model,
+            list(self.loras),
+            self.engine,
+            self.precision,
+        ]
+        if self.stages or self.upscaler or self.upscaler_precision:
+            base.extend([list(self.stages), self.upscaler, self.upscaler_precision])
+        payload = json.dumps(base, ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def warm_attach_key(self) -> WarmAttachKey:
-        """Return the WarmAttachKey factor (base + engine + precision)."""
+        """Return the WarmAttachKey factor with upscale-aware fields populated."""
         return WarmAttachKey(
-            base_model=self.base_model, engine=self.engine, precision=self.precision
+            base_model=self.base_model,
+            engine=self.engine,
+            precision=self.precision,
+            stages=self.stages,
+            upscaler=self.upscaler,
+            upscaler_precision=self.upscaler_precision,
         )
 
     def lora_stack(self) -> LoraStack:
@@ -553,6 +591,46 @@ class GenerationJob:
     spec: dict  # type: ignore[type-arg]
     segments: list[Segment]
     params: dict = field(default_factory=dict)  # type: ignore[type-arg]
+
+
+@dataclass(frozen=True)
+class UpscaleJob:
+    """One unit of upscale work — engine-agnostic.
+
+    No prompt, no segments, no LoRA stack — upscaling is video-in / video-out.
+
+    Attributes:
+        source: Input video Artifact (uri set by ArtifactStore or pointing at a
+            local path readable by the engine).
+        scale: ScaleTarget. v1 engines MUST raise NotYetImplementedError on
+            ``kind="height"``.
+        params: Engine-specific overrides (e.g. tile_size, steps, denoise);
+            engines validate via ``validate_spec``.
+    """
+
+    source: Artifact
+    scale: ScaleTarget
+    params: dict = field(default_factory=dict)  # type: ignore[type-arg]
+
+
+@dataclass(frozen=True)
+class UpscaleResult:
+    """Output of one upscale job.
+
+    Attributes:
+        artifact: Rendered upscaled video.
+        input_resolution: ``(width, height)`` measured from the source clip.
+        output_resolution: ``(width, height)`` of the rendered output.
+        elapsed_s: Wall-clock seconds spent inside the engine.
+        engine_meta: Engine-specific telemetry (e.g. SeedVR2 tile count,
+            denoise steps used). Free-form open dict.
+    """
+
+    artifact: Artifact
+    input_resolution: tuple[int, int]
+    output_resolution: tuple[int, int]
+    elapsed_s: float
+    engine_meta: dict = field(default_factory=dict)  # type: ignore[type-arg]
 
 
 class ModelProfileProvider(ABC):
@@ -811,6 +889,71 @@ class GenerationEngine(ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not support wait_for_ready"
         )
+
+
+class UpscalerEngine(ABC):
+    """A swappable video upscaler; owns env setup; declares supported scales.
+
+    No prompt, no segments, no LoRA stack — upscaling is video-in/video-out.
+    Separate from GenerationEngine because the surfaces don't overlap.
+
+    Attributes:
+        name: Registry key (e.g. ``"seedvr2"``).
+        requires_compute: True when this engine needs a remote pod.
+        requires_local_weights: True when the engine downloads weights into
+            the pod's weight directory.
+        supported_scales: Declared support; matcher pre-flight + ``validate_spec``
+            consult this. Empty tuple means "engine claims to accept any
+            ScaleTarget" (use sparingly).
+    """
+
+    name: str
+    requires_compute: bool
+    requires_local_weights: bool
+    supported_scales: tuple[ScaleTarget, ...]
+
+    @abstractmethod
+    def provision(  # noqa: D102
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None: ...
+
+    @abstractmethod
+    def upscale(  # noqa: D102
+        self,
+        instance: Instance | None,
+        job: UpscaleJob,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> UpscaleResult: ...
+
+    @abstractmethod
+    def validate_spec(self, job: UpscaleJob) -> None:
+        """Raise on engine-unsupportable job. SeedVR2 3B refuses scale='3x'."""
+        ...
+
+    @abstractmethod
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Sink-filename slug (e.g. ``'seedvr2-3b-fp8'``). MUST NOT raise on missing fields."""
+        ...
+
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
+        """Emit boot payload. Default raises; remote-capable engines override."""
+        del cfg
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support remote provisioning"
+        )
+
+    def attach_get_instance(
+        self,
+        get_instance: Callable[[str], Instance],
+    ) -> None:
+        """Wire provider lookup; mirrors GenerationEngine.attach_get_instance."""
+        self._get_instance = get_instance  # noqa: SLF001
 
 
 class BackendPool(ABC):

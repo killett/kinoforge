@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, cast
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
@@ -1531,7 +1531,7 @@ def deploy(
 
 def generate(
     cfg: Config,
-    request: GenerationRequest,
+    request: GenerationRequest | None,
     *,
     store: ArtifactStore,
     provider: ComputeProvider | None = None,
@@ -1547,6 +1547,8 @@ def generate(
     tags: dict[str, str] | None = None,
     cancel_token: CancelToken | None = None,
     single: bool = False,
+    skip_clip_stage: bool = False,
+    initial_clip: Artifact | None = None,
 ) -> tuple[Artifact, Instance | None]:
     """Run the full generation pipeline for a single clip.
 
@@ -1614,6 +1616,19 @@ def generate(
             :func:`deploy_session`. When ``True`` the pod is destroyed
             + forgotten under the ``reaper:<id>`` lock at the end of
             this call. Default ``False`` preserves warm-reuse.
+        skip_clip_stage: T10 upscale-only flag. When ``True``,
+            :class:`~kinoforge.pipeline.generate_clip.GenerateClipStage`
+            is NOT constructed and the request-validation / splitter
+            steps are skipped — the orchestrator threads ``initial_clip``
+            straight into ``UpscaleStage``. ``request`` may be ``None``
+            in this mode. Default ``False`` preserves the
+            request-validated text-to-video path.
+        initial_clip: Source clip Artifact used to seed
+            ``state.artifacts["clip"]`` when ``skip_clip_stage=True``.
+            Ignored when ``skip_clip_stage`` is ``False``. The artifact
+            must reference a local mp4 the upscaler engine can fetch via
+            its ``source_url`` payload — kinoforge's source-resolver
+            chain handles ``file://`` / ``hf:`` / ``http(s)://`` URIs.
 
     Returns:
         A ``(Artifact, Instance | None)`` tuple. The ``Artifact`` is the
@@ -1701,8 +1716,25 @@ def generate(
         # validate_request is then called on the enriched request so the role
         # contract is satisfied by the keyframe-generated assets.
         # ------------------------------------------------------------------
-        state = PipelineState(request=request, artifacts={})
-        if cfg.keyframe is not None:
+        seed_artifacts: dict[str, Artifact] = {}
+        if skip_clip_stage and initial_clip is not None:
+            # T10 — upscale-only entry: seed state.artifacts["clip"] so
+            # UpscaleStage finds its input without GenerateClipStage running.
+            seed_artifacts["clip"] = initial_clip
+        # Synthesize a placeholder request only on the upscale-only path
+        # so PipelineState's non-None contract holds. UpscaleStage does
+        # not consume the request. Default path passes the
+        # operator-supplied request through unchanged; if request is
+        # None there, the cast preserves the original behaviour of
+        # exploding on first use.
+        if skip_clip_stage and request is None:
+            effective_request: GenerationRequest = GenerationRequest(
+                prompt="", mode="upscale"
+            )
+        else:
+            effective_request = cast(GenerationRequest, request)
+        state = PipelineState(request=effective_request, artifacts=seed_artifacts)
+        if cfg.keyframe is not None and not skip_clip_stage:
             # Layer 4 — keyframes publish to the user-facing sink with the
             # IMAGE engine's name as `provider` and the keyframe spec.model as
             # `model`, so they land next to the final clip but tagged with
@@ -1764,59 +1796,77 @@ def generate(
 
         # ------------------------------------------------------------------
         # Validate the (possibly keyframe-enriched) request against the
-        # video profile.
+        # video profile + split into prompt segments + assemble
+        # GenerateClipStage. All three steps are skipped in upscale-only
+        # mode (skip_clip_stage=True) — there is no clip to generate and
+        # state.artifacts["clip"] is already seeded from initial_clip.
         # ------------------------------------------------------------------
-        validated = validate_request(
-            session.profile, state.request, accepted_kinds=accepted_kinds
-        )
-        state = dataclasses.replace(state, request=validated)
-
-        # ------------------------------------------------------------------
-        # Split the validated prompt into ordered segments.
-        # Attach assets to segment 0 only.  Continuity (#02) fills 1..N-1.
-        # ------------------------------------------------------------------
-        splitter = registry.get_splitter(cfg.splitter.kind)()
-        prompt_segments = splitter.split(validated.prompt, session.profile, {})
-        if prompt_segments and validated.assets:
-            prompt_segments[0] = dataclasses.replace(
-                prompt_segments[0], assets=list(validated.assets)
-            )
-
-        # ------------------------------------------------------------------
-        # Build stage list from cfg-block presence (GenerateClipStage only
-        # here — KeyframeStage already ran above when keyframe was set).
-        # ------------------------------------------------------------------
-        # Layer 8: provider + model for the OutputSink filename schema.
-        # Provider = registered engine name; model = engine.model_identity(cfg)
-        # so non-hosted engines (fal, comfyui, bedrock) get a real slug instead
-        # of "unknown". Empty return -> WARNING + None -> sink renders "unknown".
-        _provider = getattr(session.engine, "name", None) or None
         cfg_dict = _cfg_dict(cfg)
-        _raw_model = session.engine.model_identity(cfg_dict)
-        if not _raw_model:
-            _log.warning(
-                "engine %s returned empty model identity; "
-                "sink will render filename slug as 'unknown'",
-                session.engine.name,
+        stages: list[Stage] = []
+        if not skip_clip_stage:
+            validated = validate_request(
+                session.profile, state.request, accepted_kinds=accepted_kinds
             )
-        _model = _raw_model or None
-        stages: list[Stage] = [
-            GenerateClipStage(
-                profile=session.profile,
-                pool=session.pool,
-                store=store,
-                run_id=run_id,
-                accepted_kinds=accepted_kinds,
-                base_params=dict(cfg.params),
-                base_spec=dict(cfg.spec),
-                engine=session.engine,
-                segments=prompt_segments,
-                sink=sink,
-                provider=_provider,
-                model=_model,
-                cancel_token=cancel_token,
+            state = dataclasses.replace(state, request=validated)
+
+            splitter = registry.get_splitter(cfg.splitter.kind)()
+            prompt_segments = splitter.split(validated.prompt, session.profile, {})
+            if prompt_segments and validated.assets:
+                prompt_segments[0] = dataclasses.replace(
+                    prompt_segments[0], assets=list(validated.assets)
+                )
+
+            # Layer 8: provider + model for the OutputSink filename schema.
+            # Provider = registered engine name; model = engine.model_identity(cfg)
+            # so non-hosted engines (fal, comfyui, bedrock) get a real slug
+            # instead of "unknown". Empty return -> WARNING + None -> sink
+            # renders "unknown".
+            _provider = getattr(session.engine, "name", None) or None
+            _raw_model = session.engine.model_identity(cfg_dict)
+            if not _raw_model:
+                _log.warning(
+                    "engine %s returned empty model identity; "
+                    "sink will render filename slug as 'unknown'",
+                    session.engine.name,
+                )
+            _model = _raw_model or None
+            stages.append(
+                GenerateClipStage(
+                    profile=session.profile,
+                    pool=session.pool,
+                    store=store,
+                    run_id=run_id,
+                    accepted_kinds=accepted_kinds,
+                    base_params=dict(cfg.params),
+                    base_spec=dict(cfg.spec),
+                    engine=session.engine,
+                    segments=prompt_segments,
+                    sink=sink,
+                    provider=_provider,
+                    model=_model,
+                    cancel_token=cancel_token,
+                )
             )
-        ]
+
+        # T16 — append UpscaleStage when cfg.upscale is set. The upscaler
+        # engine routes through registry.get_upscaler so adding a future
+        # backend (FlashVSR) needs only its own self-registration; no
+        # change to this orchestrator branch.
+        if cfg.upscale is not None:
+            from kinoforge.core import registry as _registry
+            from kinoforge.core.scale_target import ScaleTarget
+            from kinoforge.pipeline.upscale import UpscaleStage
+
+            upscaler_engine = _registry.get_upscaler(cfg.upscale.engine)()
+            stages.append(
+                UpscaleStage(
+                    engine=upscaler_engine,
+                    scale=ScaleTarget.parse(cfg.upscale.scale),
+                    instance=session.instance,
+                    cfg=cfg_dict,
+                    cancel_token=cancel_token,
+                )
+            )
 
         # ------------------------------------------------------------------
         # Walk the remaining stages with shared PipelineState.
@@ -1855,7 +1905,12 @@ def generate(
             )
             raise
 
-        artifact = state.artifacts["clip"]
+        # T10 — upscale-only entry returns the upscaled artifact, not the
+        # input clip. Default path still returns the clip artifact.
+        artifact_key = (
+            "upscaled" if (skip_clip_stage and cfg.upscale is not None) else "clip"
+        )
+        artifact = state.artifacts[artifact_key]
         _log.info("generate completed — artifact uri=%r", artifact.uri)
         owned_instance = None if _caller_supplied_instance else session.instance
         return artifact, owned_instance
