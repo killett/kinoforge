@@ -72,20 +72,56 @@ class SpandrelEngine(UpscalerEngine):
             return ""
 
     def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
-        """Emit the spandrel-only pip-install + weights-fetch fragment."""
+        """Emit the spandrel-only pip-install + weights-fetch fragment.
+
+        Weights fetch is inlined as a ``curl`` invocation rather than a
+        ``python -m kinoforge.upscalers.spandrel._fetch_weights`` call so
+        the on-pod bootstrap doesn't need the kinoforge package
+        importable (which would require embedding the full
+        kinoforge.core dependency tree, busting the bootstrap script
+        past RunPod's 64KB env-var ceiling). Supports the same two
+        ref shapes the live SR-weights cfgs use: ``hf:<org>/<repo>/<path>``
+        (with ``HF_TOKEN`` Authorization) and plain ``http(s)://``.
+        """
         block = cast(dict[str, Any], cast(dict[str, Any], cfg["upscale"])["spandrel"])
         model_url = str(block["model_url"])
-        script = (
-            'pip install "spandrel>=0.4.2" "imageio[ffmpeg]>=2.34"\n'
-            f"python -m kinoforge.upscalers.spandrel._fetch_weights "
-            f"--url {model_url} --dest /workspace/models/spandrel\n"
-        )
+        dest_dir = "/workspace/models/spandrel"
+        script_lines = [
+            'pip install "spandrel>=0.4.2" "imageio[ffmpeg]>=2.34"',
+            f"mkdir -p {dest_dir}",
+        ]
+        if model_url.startswith("hf:"):
+            ref = model_url.removeprefix("hf:")
+            parts = ref.split("/", 2)
+            if len(parts) < 3:
+                raise ValueError(
+                    f"spandrel hf ref {model_url!r} must be "
+                    "hf:<org>/<repo>/<file-or-path>"
+                )
+            org, repo, sub_path = parts
+            file_name = sub_path.rsplit("/", 1)[-1]
+            url = f"https://huggingface.co/{org}/{repo}/resolve/main/{sub_path}"
+            script_lines.append(
+                "curl -L --fail-with-body "
+                '-H "Authorization: Bearer ${HF_TOKEN}" '
+                f"-o {dest_dir}/{file_name} {url}"
+            )
+        elif model_url.startswith(("http://", "https://")):
+            file_name = model_url.rsplit("/", 1)[-1] or "weights.bin"
+            script_lines.append(
+                f"curl -L --fail-with-body -o {dest_dir}/{file_name} {model_url}"
+            )
+        else:
+            raise ValueError(
+                f"spandrel model_url {model_url!r}: unsupported scheme "
+                "(supported: hf:, http(s)://)"
+            )
         return RenderedProvision(
-            script=script,
+            script="\n".join(script_lines) + "\n",
             run_cmd=[],
             image="",
             ports=[],
-            env_required=[],
+            env_required=["HF_TOKEN"],
         )
 
     def provision(
@@ -179,11 +215,18 @@ def _http_json(
     *, method: str, url: str, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     data = _json.dumps(payload).encode("utf-8") if payload is not None else None
+    # Cloudflare (RunPod's proxy edge) returns HTTP 403 to the default
+    # Python-urllib User-Agent — sending a plain kinoforge UA clears
+    # the gate. Same fix already in DiffusersEngine; mirror it here so
+    # the spandrel HTTP path doesn't 403 against live pods.
+    headers: dict[str, str] = {"User-Agent": "kinoforge-spandrel/0.1"}
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
     req = urllib.request.Request(  # noqa: S310 — http/https only (pod proxy URL)
         url,
         data=data,
         method=method,
-        headers={"Content-Type": "application/json"} if payload is not None else {},
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
         body = resp.read()

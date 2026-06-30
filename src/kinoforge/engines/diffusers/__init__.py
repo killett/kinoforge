@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from kinoforge.core import frames, registry
@@ -90,6 +91,44 @@ _READY_POLL_INTERVAL_S: float = 5.0
 #: retry loop for ~12 minutes against a live, healthy pod. Sending a
 #: plain ``kinoforge`` tag clears the gate.
 _KINOFORGE_USER_AGENT: str = "kinoforge-diffusers/0.1"
+
+
+def _render_embed_single_file(mod_name: str, kfsrv: str) -> list[str]:
+    """Embed a single dotted module (leaf is a .py file, not a package).
+
+    Used for `embed_files` cfg entries that need a specific module without
+    dragging in its whole package — e.g. `kinoforge.core.errors` embeds
+    errors.py while leaving the rest of kinoforge/core/ off the pod.
+    """
+    parts = mod_name.split(".")
+    parent_pkg = ".".join(parts[:-1])
+    leaf = parts[-1]
+    parent_root = importlib.resources.files(parent_pkg)
+    resource = parent_root / f"{leaf}.py"
+    if not resource.is_file():
+        raise ValueError(
+            f"embed_files entry {mod_name!r}: parent={parent_pkg!r} has no "
+            f"file {leaf}.py"
+        )
+    rel = mod_name.replace(".", "/") + ".py"
+    target = f"{kfsrv}/{rel}"
+    lines: list[str] = []
+    # Touch ancestor __init__.py files (same shape as the package embed).
+    for i in range(1, len(parts)):
+        ancestor_dir = f"{kfsrv}/" + "/".join(parts[:i])
+        lines.append(f"mkdir -p {ancestor_dir}")
+        lines.append(f"touch {ancestor_dir}/__init__.py")
+    lines.append(f"mkdir -p {Path(target).parent}")
+    content = resource.read_bytes()
+    encoded = base64.b64encode(gzip.compress(content)).decode("ascii")
+    lines.append(
+        f"echo '{encoded}' | python3 -c "
+        f'"import sys,base64,gzip; '
+        f"sys.stdout.buffer.write("
+        f'gzip.decompress(base64.b64decode(sys.stdin.read())))" '
+        f"> {target}"
+    )
+    return lines
 
 
 def _render_embed_lines(modules: list[str]) -> list[str]:
@@ -885,6 +924,7 @@ class DiffusersEngine(GenerationEngine):
         base_url: str = str(diffusers_cfg.get("base_url", ""))
         image: str = str(diffusers_cfg.get("image", _DEFAULT_RUNPOD_IMAGE))
         embed_modules: list[str] = list(diffusers_cfg.get("embed_modules", []))
+        embed_files: list[str] = list(diffusers_cfg.get("embed_files", []))
         # Derive WAN_MODEL_ID from cfg.models[<first-base>].ref so the
         # wan_t2v_server loads the actual cfg-declared repo rather than
         # its hardcoded 14B fallback. Without this, a Wan 2.1 1.3B cfg
@@ -941,8 +981,13 @@ class DiffusersEngine(GenerationEngine):
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
         ]
-        if embed_modules:
-            lines.extend(_render_embed_lines(embed_modules))
+        if embed_modules or embed_files:
+            if embed_modules:
+                lines.extend(_render_embed_lines(embed_modules))
+            for mod in embed_files:
+                lines.extend(
+                    _render_embed_single_file(mod, "/tmp/kfsrv")  # noqa: S108
+                )
             lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
         if pip_deps:
             # shlex.quote each dep — pip version specifiers like
