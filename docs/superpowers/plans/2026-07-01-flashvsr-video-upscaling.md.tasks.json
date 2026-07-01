@@ -53,7 +53,7 @@
       "id": 6,
       "nativeTaskId": "13",
       "subject": "Task 6: Example cfgs + lockdown tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Multi-stage + upscale-only YAML cfgs + lockdown tests + spandrel-cfg redirect comment.\n\n**Files:** examples/configs/runpod-diffusers-wan22-t2v-a14b-flashvsr.yaml, examples/configs/runpod-upscale-only-flashvsr.yaml, examples/configs/runpod-diffusers-wan22-t2v-a14b-spandrel.yaml (header comment), tests/test_examples.py\n\n**Verify:** pixi run pytest tests/test_examples.py -v -k flashvsr → 2 passed; pixi run kinoforge validate <cfg> → 0\n\n```json:metadata\n{\"files\": [\"examples/configs/runpod-diffusers-wan22-t2v-a14b-flashvsr.yaml\", \"examples/configs/runpod-upscale-only-flashvsr.yaml\", \"examples/configs/runpod-diffusers-wan22-t2v-a14b-spandrel.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v -k flashvsr\", \"acceptanceCriteria\": [\"multi-stage pins engine+GPU+region\", \"upscale-only A6000 first\", \"validate 0\", \"spandrel redirect comment\"], \"modelTier\": \"mechanical\"}\n```"
     },
