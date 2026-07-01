@@ -62,15 +62,16 @@ compute:
     min_vram_gb: 80
     min_cuda: "12.4"
     max_usd_per_hr: 3.00
-    # FlashVSR needs SM80+ (Block-Sparse-Attention). Allowlist covers the
-    # 80 GB tier that fits Wan 2.2 A14B + FlashVSR co-resident, ordered
-    # cheapest-first within RunPod's inventory. A6000 kept as fallback for
-    # the upscale-only smoke path (see upscale-flashvsr-x2.yaml).
+    # FlashVSR needs SM80+ (Block-Sparse-Attention). NVIDIA-prefixed names
+    # required — RunPod's fuzzy matcher falls through to a no-GPU offer
+    # for bare tokens like "A100 80GB" (learned on 2026-07-01, T8 attempt
+    # #1 burned $0.10 on a CPU-only pod). 80 GB tier covers Wan 2.2 A14B
+    # + FlashVSR co-resident memory budget.
     gpu_preference:
-      - "A100 80GB"
-      - "A6000"
-      - "L40S"
-      - "A100 40GB"
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
     disk_gb: 150
   lifecycle:
     idle_timeout: 60m

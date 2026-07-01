@@ -62,14 +62,19 @@ compute:
     min_cuda: "12.4"
     max_usd_per_hr: 1.20
     disk_gb: 60
-    # SM80+ only. A6000 first: 48 GB VRAM comfortably fits FlashVSR's ~8 GB
-    # peak plus BSA compile scratch, and typically the cheapest SM80+ pod on
-    # RunPod. A100 40GB / L40S / A100 80GB round out the fallback tier.
+    # SM80+ only (Block-Sparse-Attention requirement). NVIDIA-prefixed names
+    # are required — RunPod's fuzzy matcher falls through to a no-GPU pod
+    # for plain tokens like "A6000" (learned the hard way on 2026-07-01,
+    # first F-single smoke burned $0.10 on a CPU-only offer). A6000 first:
+    # 48 GB VRAM fits FlashVSR's ~8 GB peak plus BSA compile scratch, and
+    # typically the cheapest SM80+ pod on RunPod. L40 / RTX 4090 round out
+    # the fallback tier for consumer-Ampere inventory.
     gpu_preference:
-      - "A6000"
-      - "A100 40GB"
-      - "L40S"
-      - "A100 80GB"
+      - "NVIDIA RTX A6000"
+      - "NVIDIA L40"
+      - "NVIDIA L40S"
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA A100 80GB PCIe"
   lifecycle:
     # BSA nvcc compile is ~2min on 16 cores; FlashVSR pip install ~2min;
     # weights pull ~3min for the 2-file bundle. Total cold-boot budget

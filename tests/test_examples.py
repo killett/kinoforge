@@ -677,12 +677,14 @@ def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
     assert raw["upscale"]["flashvsr"]["long_video_mode"] is False
     assert raw["upscale"]["flashvsr"]["precision"] == "fp16"
     # Set-equality — order is separately tested elsewhere; the invariant
-    # here is that the exact 4-GPU allowlist stays intact.
+    # here is that the exact 4-GPU allowlist stays intact. NVIDIA-prefixed
+    # names are non-negotiable: plain tokens like "A100 80GB" fall through
+    # RunPod's fuzzy matcher to a no-GPU offer (T8 attempt #1 evidence).
     assert set(raw["compute"]["requirements"]["gpu_preference"]) == {
-        "A100 80GB",
-        "A6000",
-        "L40S",
-        "A100 40GB",
+        "NVIDIA A100 80GB PCIe",
+        "NVIDIA A100-SXM4-80GB",
+        "NVIDIA H100 80GB HBM3",
+        "NVIDIA H100 PCIe",
     }
 
 
@@ -698,7 +700,8 @@ def test_upscale_flashvsr_x2_marks_upscale_only_and_a6000_first() -> None:
     assert raw["engine"]["diffusers"]["upscale_only"] is True
     assert raw["upscale"]["engine"] == "flashvsr"
     # A6000 pinned first — cheapest SM80+ pod on RunPod fits FlashVSR's
-    # ~8 GB peak with generous headroom.
-    assert raw["compute"]["requirements"]["gpu_preference"][0] == "A6000"
+    # ~8 GB peak with generous headroom. NVIDIA-prefixed name required
+    # (see F-single T8 attempt-#1 evidence: bare "A6000" → no-GPU pod).
+    assert raw["compute"]["requirements"]["gpu_preference"][0] == "NVIDIA RTX A6000"
     # Load through full validator to catch schema regressions.
     load_config(EXAMPLES_DIR / "upscale-flashvsr-x2.yaml")
