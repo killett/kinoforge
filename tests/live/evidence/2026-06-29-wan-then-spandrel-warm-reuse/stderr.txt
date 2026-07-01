@@ -1,0 +1,36 @@
+Pixi task (kinoforge in default): python -m kinoforge generate --config /workspace/.claude/worktrees/video-upscaling/examples/configs/wan-with-upscale-spandrel.yaml --prompt Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking. --mode t2v --no-reuse --output-dir /workspace/.claude/worktrees/video-upscaling/tests/live/evidence/2026-06-29-wan-then-spandrel-warm-reuse/out
+2026-06-30 21:14:25,387 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
+[runpod-http] 400 Bad Request from https://api.runpod.io/graphql?api_key=<redacted>: {"errors":[{"message":"Unknown type \"GpuTypesInput\". Did you mean \"GpuTypeFilter\", \"ClusterInput\", \"GpuType\", \"ListingsInput\", or \"PoolsInput\"?","locations":[{"line":1,"column":31}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}},{"message":"Cannot query field \"availableCount\" on type \"GpuType\".","locations":[{"line":2,"column":32}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}
+
+2026-06-30 21:14:28,540 INFO kinoforge.cli._commands --no-reuse: skipping warm-reuse scan; cold create + destroy on exit
+2026-06-30 21:14:35,707 INFO kinoforge.orchestrator running provisioner.provision for instance gmbxrqwakrclvl (engine=diffusers key=af26f7a2d4b0)
+2026-06-30 21:34:46,644 INFO kinoforge.kinoforge.outputs.local output published: /workspace/.claude/worktrees/video-upscaling/tests/live/evidence/2026-06-29-wan-then-spandrel-warm-reuse/out/20260630-213446_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4
+2026-06-30 21:34:55,760 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod gmbxrqwakrclvl
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/__main__.py", line 6, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/cli/_main.py", line 998, in main
+    return _DISPATCH[args.cmd](args, ctx)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/cli/_commands.py", line 543, in _cmd_generate
+    artifact, returned_instance = _generate(
+                                  ~~~~~~~~~^
+        cfg,
+        ^^^^
+    ...<10 lines>...
+        single=single,
+        ^^^^^^^^^^^^^^
+    )
+    ^
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/core/orchestrator.py", line 1878, in generate
+    state = stage.run(state)
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/pipeline/upscale.py", line 55, in run
+    result = self.engine.upscale(
+        self.instance, job, self.cfg, cancel_token=self.cancel_token
+    )
+  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/_engine.py", line 207, in upscale
+    raise UpscaleFailed(job_id=job_id, server_error=status.get("error", ""))
+kinoforge.core.errors.UpscaleFailed: upscale job u-71f01891a45e4177b98ffab86b6667e1 failed on server: unknown url type: '/workspace/.claude/worktrees/video-upscaling/.kinoforge/run-20260630-211428/5f288ddd326cfcde.mp4'
