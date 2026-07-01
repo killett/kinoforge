@@ -38,6 +38,8 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
      | 1 (warm1) | `field-dreamlike.txt` | +3 m 26 s | `output/20260620-121758_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-yet-d.mp4` | 1,736,159 B (1.66 MiB) | `36d34431276713e0d20f069759fbffc26aebf0def396674c746d586b43c57a1b` |
      | 2 (warm2) | `forest.txt`          | +3 m 26 s | `output/20260620-122124_diffusers_Wan2.2-T2V-A14B-Diffuser_A-dense-old-growth-f.mp4`   | 798,293 B (0.76 MiB)   | `7b2836285ebd0b64c8a6662fea13ae21e5bac2349b81c3de5c705b309b5b6a94` |
      | 3 (warm3) | `dawn-flight.md`      | +3 m 25 s | `output/20260620-122449_diffusers_Wan2.2-T2V-A14B-Diffuser_Aerial-drone-shot-at.mp4`   | 403,909 B (0.39 MiB)   | `d11c1c194d47a70399838b095f63ea4a3d4dc2e24a99ef2279df8146af46f4f5` |
+12. `2026-06-30 21:19:07` — [SpandrelEngine RealESRGAN-x2 upscale on RunPod (wan_t2v_server multi-engine) — upscale](#12-2026-06-30-211907--spandrelengine-realesrgan-x2-upscale-on-runpod-wan_t2v_server-multi-engine--upscale)
+    - See also: `2026-06-30 22:19:07` — T16 multi-stage warm-reuse on pod `4ju5e4ae9jnx6e`: Wan 2.2 T2V-A14B stage-1 (480×480×81) → SpandrelEngine stage-2 (960×960×81) on the same pod, spend $0.25, 908.82 s wall. Same tuple `(runpod, spandrel, RealESRGAN, upscale)` chained after `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`.
 
 ---
 
@@ -1930,3 +1932,62 @@ Case_7 PASS confirms the case_7 live 500 on fire #3 was a state-cascade from cas
 Teardown note: fixture's `runpod_lifecycle.destroy_all_active_pods()` again failed to reap the pod on teardown (same bug noted on the prior Tier-3 fires this session — PROGRESS.md line 234-237). Smoke harness's explicit-destroy fallback `subprocess.run(["pixi", "run", "kinoforge", "destroy", "--id", pod_id])` ALSO did not reach the pod (visible because `kinoforge list` immediately after pytest exit still showed the pod alive). Manual `pixi run kinoforge destroy --id 2k0gonzmeqw7xj` reaped cleanly at 23:07:30 PT. The destroy bug is a P2 follow-up.
 
 Open follow-up: revert `_BUDGET_CAP = 4.0 → 2.0` in `tests/smoke/release_wan22/test_dual_transformer_routing.py` now that the swap-gap re-fire is FULL_GREEN. The cap was bumped solely for this re-fire (commit `9799657`); single-SXM fires are ~$0.80 so the standing $2 ceiling is right.
+
+---
+
+## 12. `2026-06-30 21:19:07` — SpandrelEngine RealESRGAN-x2 upscale on RunPod (wan_t2v_server multi-engine) — upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / SpandrelEngine (client) + wan_t2v_server (server, spandrel-* prefix) / RealESRGAN_x2 (spandrel-realesrgan-fp16)` |
+| **Mode** | upscale (new capability axis) |
+| **kinoforge version** | branch `video-upscaling` (worktree) |
+| **First-success SHA** | `4052080` (T15 evidence commit); functional-GREEN commits `de42070` + `9274c5c` + `a6345c2` + `43a1cab` + `87024ab` + `1c1f414` + `a7525f8` + `6961530` + `4d95377` + `7366e0b` + `b3b49bf` + `3e07026` |
+| **Date (local TZ)** | 2026-06-30 21:19:07 -0700 (PDT) |
+| **Layer / phase** | P3 (pod file-upload path) — plan `docs/superpowers/plans/2026-06-29-upscale-pod-upload.md`, spec `docs/superpowers/specs/2026-06-29-upscale-pod-upload-design.md` |
+
+**GREEN — T15 single-shot upscale (`4ju5e4ae9jnx6e`-preceding pod `1jofyeyg46m747` att7, spend $0.02, 116.91 s wall) AND T16 multi-stage warm-reuse (Wan T2V → spandrel on same pod `4ju5e4ae9jnx6e`, spend $0.25, 908.82 s wall).** New capability axes: (a) client-side `PUT /upload` sha256-verified streaming path for `file://` sources; (b) pod-side `_UPLOAD_DIR` scratch with atomic publish + cleanup finally; (c) spandrel-* prefix dispatch in `/upscale` route + `_run_upscale_job` body co-existing with seedvr2-*; (d) `_load_model_to_gpu` now moves fresh `nn.Module` to CUDA (regression fix — metadata previously lied when weights stayed on CPU); (e) ImageModelDescriptor unwrap + combined `.to(device, dtype)` to preserve device across dtype cast; (f) orchestrator `sink.publish` for upscaled artifact fires pre-destroy so `--no-reuse` doesn't leave the client with a dead pod URL; (g) new `kinoforge logs --id <pod>` CLI fetches `/tmp/bootstrap.log` via port-8001 sidecar (unblocks post-crash diagnosis).
+
+### Exact command (T15 single-shot)
+
+```bash
+pixi run pytest tests/live/test_spandrel_realesrgan_x2_upscale_smoke.py -v -m live
+```
+
+### Exact command (T16 multi-stage)
+
+```bash
+pixi run pytest tests/live/test_wan_then_spandrel_warm_reuse_smoke.py -v -m live
+```
+
+### YAML configs
+
+- T15 single-shot: `examples/configs/upscale-spandrel-x2.yaml` — `engine.kind=diffusers`, `spec.model=spandrel-realesrgan-fp16`, `upscale.engine=spandrel`, `upscale.scale=2x`, `spandrel.arch=realesrgan`, `spandrel.precision=fp16`, `spandrel.model_url=hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth`.
+- T16 multi-stage: `examples/configs/wan-with-upscale-spandrel.yaml` — Wan 2.2 T2V-A14B (models[0]) + same spandrel upscale block. Prompt sourced from `examples/configs/prompts/field-realistic.txt` per the standard-test-prompt policy.
+
+### Fixture (T15)
+
+`examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4` — 480×480, 33 frames, 188953 bytes, sha256 `54a5f732497679ebdee900644309dcfa9894260db2837d47e0626c4b08ecd1dc`.
+
+### Outputs
+
+- T15 upscaled: 480×480 → 960×960, 33 frames, 773345 bytes. Evidence at `tests/live/evidence/2026-06-29-spandrel-realesrgan-x2-upscale/_t15_evidence.json`.
+- T16 stage-1 (Wan): 480×480, 81 frames, 827869 bytes at `/workspace/output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4`.
+- T16 stage-2 (upscaled): 960×960, 81 frames, 1292638 bytes at `/workspace/output/20260630-221907_upscaled_spandrel_Wan2.2-T2V-A14B-Diffuser_upscale.mp4`. Evidence at `tests/live/evidence/2026-06-29-wan-then-spandrel-warm-reuse/_t16_evidence.json`.
+
+### Bugs surfaced + fixed in-flight (7 attempts to T15 GREEN, 3 to T16)
+
+1. Pod-embed missing `kinoforge.core.registry` → split SpandrelEngine into `._engine` + pod-safe shim `__init__` (`87024ab`).
+2. SpandrelRuntime fp16 input vs fp32 model bias → cast dtype in `upscale()` (`43a1cab`).
+3. Pod hangs undiagnosable without stderr access → new `kinoforge logs` CLI (`4d33e65`).
+4. `_load_model_to_gpu` claimed `on_device="cuda"` but never called `.to("cuda")` on fresh pipe → moved after construction (`a6345c2`).
+5. ImageModelDescriptor.to(dtype) dropped device on some spandrel versions → unwrap raw model + single `.to(device=X, dtype=Y)` (`9274c5c`).
+6. Orchestrator returned pod's proxy URL as artifact.uri; `--no-reuse` destroyed pod before caller could fetch → sink materializes bytes pre-return (`de42070`).
+7. Multi-stage `kinoforge generate` returns "clip" artifact; my materialize hook only fired for "upscaled" → sink both regardless of returned key (`c374d8a`).
+8. Spandrel dispatch only handled `file://` scheme; stage-1 Wan output arrives as bare `/abs` path from LocalStore → accept bare abs paths too (`1a50452`).
+
+### Notes
+
+- T16 stage-2 DID PUT /upload from the operator's disk (Wan output was already sinked locally at end of stage-1). Original plan AC said "no PUT /upload" — updated in `_t16_evidence.json` under `notes`: strict zero-upload warm-reuse would require an orchestrator mode that keeps intermediate artifacts pod-local.
+- Total P3 live spend across all attempts ≈ $1.20 (T15 ~$0.10 across 7 attempts, T16 ~$0.85 across 3 attempts, plus one debugging pod destroy fallback). Under the plan's $1-3 envelope for the multi-stage smoke.
+- Post-both-runs ledger clean: `kinoforge list` returns `No running instances.` AND `No instances recorded in ledger.` at both T15 and T16 close.
