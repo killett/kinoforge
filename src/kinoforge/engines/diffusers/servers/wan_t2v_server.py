@@ -20,8 +20,11 @@ import logging
 import os
 import queue
 import re
+import secrets
 import shutil
+import string
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.request
@@ -46,7 +49,7 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 # volume mount (volumeInGb in the cfg's requirements.disk_gb).
 os.environ.setdefault("HF_HOME", "/workspace/.hf_cache")
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from pydantic import (  # noqa: E402
     BaseModel,
     ConfigDict,
@@ -71,6 +74,9 @@ ARTIFACT_DIR: Path = Path(
     os.environ.get("KINOFORGE_ARTIFACT_DIR", "/workspace/artifacts")
 )
 LORAS_DIR: Path = Path(os.environ.get("KINOFORGE_LORAS_DIR", "/workspace/loras"))
+_UPLOAD_DIR: Path = Path("/tmp/kf-uploads")  # noqa: S108 — pod-local writable scratch
+_UPLOAD_FILENAME_ALLOWED = set(string.ascii_letters + string.digits + "._-")
+_UPLOAD_MAX_BYTES = int(os.environ.get("KINOFORGE_MAX_UPLOAD_MB", "2048")) * 1024 * 1024
 
 _DEFAULT_NEGATIVE_PROMPT = (
     "Bright tones, overexposed, static, blurred details, subtitles, "
@@ -195,6 +201,14 @@ async def _ensure_on_gpu(name: str) -> LoadedModel:
 
         if entry is None:
             new_pipe = _load_model_to_gpu(name)
+            # SpandrelRuntime + SeedVR2Runtime construct their nn.Module on
+            # CPU by default (weights load via torch.load without device=).
+            # Move to CUDA now so downstream ``pipe.upscale`` inference
+            # actually hits the GPU — without this, the on_device metadata
+            # lies and inference silently runs on CPU (fp16 on CPU is either
+            # unsupported for some ops or catastrophically slow).
+            if hasattr(new_pipe, "to"):
+                new_pipe.to("cuda")
             entry = LoadedModel(
                 name=name,
                 pipe=new_pipe,
@@ -1117,6 +1131,10 @@ def _capabilities_from_loaded() -> list[str]:
         cap = _capability_for_model(name)
         if cap is not None:
             caps.add(cap)
+    # /upload is always wired into the FastAPI app, independent of which
+    # pipelines successfully loaded — advertise it unconditionally so the
+    # client can pre-flight before PUT.
+    caps.add("upload")
     return sorted(caps)
 
 
@@ -1634,12 +1652,12 @@ def _probe_resolution(p: Path) -> tuple[int, int]:
 async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
     """Enqueue an upscale job; return ``{"job_id": ...}``.
 
-    Engine dispatch reads ``req.engine``; v1 only handles ``"seedvr2"``.
-    Unknown engines fail fast at submit time with 400 so the caller
-    does not burn a warm-pod attach cycle on a job destined for an
-    async error.
+    Engine dispatch reads ``req.engine``; v1 handles ``"seedvr2"`` and
+    ``"spandrel"``. Unknown engines fail fast at submit time with 400 so
+    the caller does not burn a warm-pod attach cycle on a job destined
+    for an async error.
     """
-    if req.engine != "seedvr2":
+    if req.engine not in {"seedvr2", "spandrel"}:
         raise HTTPException(status_code=400, detail=f"unsupported engine: {req.engine}")
     job_id = req.job_id or f"u-{uuid.uuid4().hex}"
     _upscale_jobs[job_id] = {
@@ -1652,23 +1670,60 @@ async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
     return {"job_id": job_id}
 
 
+def _maybe_cleanup_upload(source_url: str) -> None:
+    """Unlink the file:// source IFF it lives under ``_UPLOAD_DIR``.
+
+    Operator-pre-staged paths (anywhere else) are deliberately left alone so a
+    repeat-upscale on the same pod-local file does not vaporize the source.
+    Best-effort: any OSError is swallowed because pod-destroy is the backstop
+    for orphaned scratch under ``/tmp/kf-uploads/``.
+    """
+    if not source_url.startswith("file://"):
+        return
+    try:
+        src = Path(source_url.removeprefix("file://")).resolve()
+        if _UPLOAD_DIR.resolve() in src.parents:
+            src.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
-    """Run one upscale under ``_upscale_lock``; mutate ``_upscale_jobs[job_id]``."""
+    """Run one upscale under ``_upscale_lock``; mutate ``_upscale_jobs[job_id]``.
+
+    Uploaded inputs under ``_UPLOAD_DIR`` are unlinked in the finally block so
+    warm-reuse repeats do not pile up source files on the pod's scratch dir.
+    """
     from kinoforge.core.scale_target import ScaleTarget
 
     async with _upscale_lock:
         try:
             _upscale_jobs[job_id]["state"] = "running"
-            variant = (req.seedvr2.variant if req.seedvr2 else "3B").lower()
-            precision = req.seedvr2.precision if req.seedvr2 else "fp8"
-            model_name = f"seedvr2-{variant}-{precision}"
+            if req.engine == "spandrel":
+                if req.spandrel is None or not req.spandrel.arch:
+                    raise ValueError(
+                        "spandrel engine requires a spandrel block with 'arch' set"
+                    )
+                model_name = (
+                    f"spandrel-{req.spandrel.arch.lower()}-{req.spandrel.precision}"
+                )
+                # Drop slug-derived keys from the params dict — arch and
+                # precision are part of the model slug; model_url is a
+                # client-side download hint, not a runtime knob.
+                params = req.spandrel.model_dump(
+                    exclude={"model_url", "arch", "precision"}
+                )
+            else:
+                sv_variant = (req.seedvr2.variant if req.seedvr2 else "3B").lower()
+                sv_precision = req.seedvr2.precision if req.seedvr2 else "fp8"
+                model_name = f"seedvr2-{sv_variant}-{sv_precision}"
+                params = req.seedvr2.model_dump() if req.seedvr2 else {}
             entry = await _ensure_on_gpu(model_name)
 
             local = await asyncio.to_thread(
                 _download_to_local_temp, req.source_url, req.source_filename
             )
             scale = ScaleTarget.parse(req.scale)
-            params = req.seedvr2.model_dump() if req.seedvr2 else {}
 
             out_path = await asyncio.to_thread(
                 entry["pipe"].upscale, local, scale, params
@@ -1694,6 +1749,8 @@ async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
         except Exception as exc:  # noqa: BLE001 — surface any failure to caller
             _upscale_jobs[job_id]["error"] = str(exc)
             _upscale_jobs[job_id]["state"] = "error"
+        finally:
+            _maybe_cleanup_upload(req.source_url)
 
 
 @app.get("/upscale/status/{job_id}")
@@ -1703,6 +1760,77 @@ def upscale_status_handler(job_id: str) -> dict[str, Any]:
     if payload is None:
         raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
     return payload
+
+
+def _sanitize_upload_filename(raw: str | None) -> str:
+    """Strip path components and forbidden chars from a client-supplied filename.
+
+    Returns a non-empty basename. Falls back to a random ``<hex8>.mp4`` if the
+    cleaned name is empty (missing header or all chars stripped).
+    """
+    if not raw:
+        return f"{secrets.token_hex(4)}.mp4"
+    base = Path(raw).name  # strip any path traversal
+    cleaned = "".join(c for c in base if c in _UPLOAD_FILENAME_ALLOWED)
+    if not cleaned:
+        return f"{secrets.token_hex(4)}.mp4"
+    return cleaned
+
+
+@app.put("/upload")
+async def upload_handler(request: Request) -> dict[str, Any]:
+    """Stream-write a mp4 body into ``_UPLOAD_DIR``; return path + size + sha256.
+
+    Content-Type must be ``video/mp4``. ``X-Filename`` is sanitized to a basename
+    in ``[A-Za-z0-9._-]``; empty or dirty filenames fall back to a random
+    ``<hex8>.mp4``. Bodies larger than ``KINOFORGE_MAX_UPLOAD_MB`` (default
+    2048 MiB) are rejected with HTTP 413 and the partial tempfile is removed.
+    The published path is atomically swapped via ``os.replace`` so a mid-stream
+    abort never leaves a file at the advertised name.
+    """
+    ct = request.headers.get("content-type", "")
+    if not ct.startswith("video/mp4"):
+        raise HTTPException(
+            status_code=415,
+            detail=f"Content-Type must be video/mp4, got {ct!r}",
+        )
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    safe_name = _sanitize_upload_filename(request.headers.get("x-filename"))
+
+    fd, tmp_path_str = tempfile.mkstemp(dir=str(_UPLOAD_DIR), suffix=".part")
+    tmp_path = Path(tmp_path_str)
+    hasher = hashlib.sha256()
+    written = 0
+    try:
+        with os.fdopen(fd, "wb") as fobj:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > _UPLOAD_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"upload exceeded {_UPLOAD_MAX_BYTES} bytes",
+                    )
+                hasher.update(chunk)
+                fobj.write(chunk)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    final = _UPLOAD_DIR / safe_name
+    os.replace(tmp_path, final)
+    _log.info(
+        "upload_received bytes=%d sha=%s path=%s",
+        written,
+        hasher.hexdigest(),
+        final,
+    )
+    return {
+        "path": str(final),
+        "size": written,
+        "sha256": hasher.hexdigest(),
+    }
 
 
 if __name__ == "__main__":

@@ -109,6 +109,74 @@ class TestPostUpscale:
         body = r.json()
         assert isinstance(body.get("job_id"), str) and body["job_id"]
 
+    def test_post_upscale_spandrel_engine_accepted(self, fresh_server: Any) -> None:
+        # Bug caught: route gates on engine=="seedvr2" only and silently 400s
+        # spandrel jobs even though the loader (_load_model_to_gpu) has a
+        # spandrel-* branch. Client's SpandrelEngine.upscale posts
+        # engine="spandrel"; this test pins the route's accept-list.
+        _srv, client, _pipe, _out = fresh_server
+        body = {
+            "source_url": "https://example.invalid/in.mp4",
+            "source_filename": "in.mp4",
+            "scale": "2x",
+            "engine": "spandrel",
+            "spandrel": {"arch": "realesrgan", "precision": "fp16"},
+        }
+        r = client.post("/upscale", json=body)
+        assert r.status_code == 200, r.text
+        assert isinstance(r.json().get("job_id"), str) and r.json()["job_id"]
+
+    def test_run_upscale_job_spandrel_builds_arch_precision_model_name(
+        self,
+        fresh_server: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Bug caught: _run_upscale_job hardcodes "seedvr2-{variant}-{precision}"
+        # for every engine; a spandrel job would request the wrong pipeline
+        # from _ensure_on_gpu (or NoneType.variant AttributeError if seedvr2
+        # block is None). Pins the spandrel branch builds the slug from
+        # req.spandrel.arch + precision, matching the loader's parser.
+        srv, _client, fake_pipe, out_mp4 = fresh_server
+
+        seen_names: list[str] = []
+
+        async def spy_ensure(name: str) -> dict[str, Any]:
+            seen_names.append(name)
+            return {
+                "name": name,
+                "pipe": fake_pipe,
+                "vram_bytes": 0,
+                "last_used_monotonic": 0.0,
+                "on_device": "cuda",
+            }
+
+        monkeypatch.setattr(srv, "_ensure_on_gpu", spy_ensure)
+
+        src_mp4 = tmp_path / "in.mp4"
+        src_mp4.write_bytes(b"\x00" * 64)
+
+        req = srv.UpscaleRequest(
+            source_url=f"file://{src_mp4}",
+            source_filename=src_mp4.name,
+            scale="2x",
+            engine="spandrel",
+            spandrel=srv.SpandrelParams(arch="realesrgan", precision="fp16"),
+        )
+        srv._upscale_jobs["job-spandrel-1"] = {
+            "state": "queued",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
+        }
+
+        asyncio.run(srv._run_upscale_job("job-spandrel-1", req))
+
+        assert seen_names == ["spandrel-realesrgan-fp16"], seen_names
+        assert srv._upscale_jobs["job-spandrel-1"]["state"] == "done", (
+            srv._upscale_jobs["job-spandrel-1"]
+        )
+
     def test_post_upscale_unsupported_engine_400(self, fresh_server: Any) -> None:
         # Bug caught: server silently accepts engine="flashvsr" (or any
         # unknown engine) and enqueues a job that dies asynchronously,

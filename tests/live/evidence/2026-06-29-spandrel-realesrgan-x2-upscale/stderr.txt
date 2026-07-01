@@ -1,0 +1,7 @@
+Pixi task (kinoforge in default): python -m kinoforge upscale --video /workspace/.claude/worktrees/video-upscaling/examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4 --config /workspace/.claude/worktrees/video-upscaling/examples/configs/upscale-spandrel-x2.yaml --no-reuse
+2026-06-30 21:01:31,396 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
+2026-06-30 21:01:53,498 INFO kinoforge.orchestrator running provisioner.provision for instance 1jofyeyg46m747 (engine=diffusers key=b36f749a5703)
+2026-06-30 21:03:12,434 INFO kinoforge.orchestrator materializing upscaled artifact from https://1jofyeyg46m747-8000.proxy.runpod.net/artifacts/54a5f732.upscaled.mp4
+2026-06-30 21:03:20,089 INFO kinoforge.kinoforge.outputs.local output published: /workspace/.claude/worktrees/video-upscaling/output/20260630-210320_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.mp4
+2026-06-30 21:03:20,089 INFO kinoforge.orchestrator generate completed — artifact uri='file:///workspace/.claude/worktrees/video-upscaling/output/<output:1e3abc>'
+2026-06-30 21:03:25,350 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod 1jofyeyg46m747
