@@ -1,2 +1,2 @@
 [instance overview] No running instances.
-upscaled: uri='https://xir9hkiyz9ip4n-8000.proxy.runpod.net/artifacts/54a5f732.upscaled.mp4'
+upscaled: uri='file:///workspace/.claude/worktrees/video-upscaling/output/20260630-210320_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.mp4'
