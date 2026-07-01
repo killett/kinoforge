@@ -53,7 +53,7 @@
     {
       "id": 6,
       "subject": "Task 6: T15 live smoke (single-shot spandrel upscale)",
-      "status": "pending",
+      "status": "completed",
       "nativeTaskId": "7",
       "blockedBy": [1, 2, 3, 4, 5],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Goal:** Live smoke against RunPod; output dims = 2x input; ledger empty post-run.\n\n```json:metadata\n{\"files\": [\"tests/live/test_spandrel_x2_upscale.py\", \"examples/configs/upscale-spandrel-x2.yaml\"], \"verifyCommand\": \"pixi run pytest tests/live/test_spandrel_x2_upscale.py -v --runlive && pixi run kinoforge list\", \"acceptanceCriteria\": [\"/health advertises 'upload'\", \"PUT /upload returns matching sha256\", \"output dims = 2x input dims\", \"upload file unlinked under _UPLOAD_DIR\", \"kinoforge list shows zero pods + empty ledger\", \"spend <= $0.10\", \"evidence JSON committed\"], \"modelTier\": \"standard\", \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requireEvidenceTokens\": [[\"upload-PUT\", \"pre-upscale\"], [\"upscale-done\", \"dims-2x\"], [\"pod-destroyed\", \"kinoforge-list-empty\"]]}\n```"
@@ -61,7 +61,7 @@
     {
       "id": 7,
       "subject": "Task 7: T16 live smoke (Wan T2V + spandrel multi-stage warm-reuse)",
-      "status": "pending",
+      "status": "completed",
       "nativeTaskId": "8",
       "blockedBy": [6],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Goal:** Stage-1 Wan + stage-2 spandrel on same warm pod; zero PUT /upload for stage 2.\n\n```json:metadata\n{\"files\": [\"tests/live/test_wan_t2v_plus_spandrel_x2.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_wan_t2v_plus_spandrel_x2.py -v --runlive && pixi run kinoforge list\", \"acceptanceCriteria\": [\"stage-1 Wan output lands outside _UPLOAD_DIR\", \"stage-2 upscale runs with no PUT /upload (sibling-skip path)\", \"final dims = 2x stage-1 dims\", \"kinoforge list shows zero pods + empty ledger\", \"spend <= $3.50\", \"evidence JSON committed\"], \"modelTier\": \"standard\", \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requireEvidenceTokens\": [[\"stage-1-generate\", \"wan-T2V-done\"], [\"stage-2-upscale\", \"no-upload-PUT\"], [\"dims-2x\", \"warm-reuse-confirmed\"], [\"pod-destroyed\"]]}\n```"
@@ -69,7 +69,7 @@
     {
       "id": 8,
       "subject": "Task 8: PROGRESS.md close + successful-generations.md entry",
-      "status": "pending",
+      "status": "completed",
       "nativeTaskId": "9",
       "blockedBy": [7],
       "description": "**Goal:** Flip P2 PARTIAL→SHIPPED; log spandrel x2 upscale tuple in successful-generations.md.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"/workspace/successful-generations.md\", \"docs/superpowers/plans/2026-06-29-upscaler-packaging-pivot.md.tasks.json\"], \"verifyCommand\": \"git log --oneline -5 && rg 'spandrel' /workspace/successful-generations.md\", \"acceptanceCriteria\": [\"PROGRESS PARTIAL\\u2192SHIPPED\", \"successful-generations.md new entry\", \"tasks.json statuses completed\"], \"modelTier\": \"mechanical\"}\n```"
