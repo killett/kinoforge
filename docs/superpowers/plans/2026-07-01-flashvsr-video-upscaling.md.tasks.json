@@ -37,7 +37,7 @@
       "id": 4,
       "nativeTaskId": "11",
       "subject": "Task 4: Self-register + _adapters wire",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** Overwrite T1 __init__.py placeholder with self-registration; add _adapters import; extend adapters test.\n\n**Files:** src/kinoforge/upscalers/flashvsr/__init__.py, src/kinoforge/_adapters.py, tests/test_adapters.py\n\n**Verify:** pixi run pytest tests/test_adapters.py -v -k flashvsr → 1 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/test_adapters.py\"], \"verifyCommand\": \"pixi run pytest tests/test_adapters.py -v -k flashvsr\", \"acceptanceCriteria\": [\"import kinoforge registers flashvsr\", \"get_upscaler returns FlashVSREngine\", \"pod-safe ImportError swallow\"], \"modelTier\": \"mechanical\"}\n```"
     },

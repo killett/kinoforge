@@ -47,3 +47,19 @@ def test_both_seedvr2_and_spandrel_registered() -> None:
     names = registry.upscaler_names()
     assert "seedvr2" in names
     assert "spandrel" in names
+
+
+def test_flashvsr_registered_on_kinoforge_import() -> None:
+    # Bug caught: forgetting the _adapters.py import line → engine reachable
+    # only if the caller happens to `import kinoforge.upscalers.flashvsr`
+    # directly; cfg-driven dispatch (`cfg.upscale.engine == "flashvsr"`)
+    # fails with UnknownAdapter at orchestrator stage-assembly.
+    import kinoforge._adapters  # noqa: F401
+    from kinoforge.core import registry
+    from kinoforge.core.interfaces import UpscalerEngine
+
+    assert "flashvsr" in registry.upscaler_names()
+    factory = registry.get_upscaler("flashvsr")
+    engine = factory()
+    assert isinstance(engine, UpscalerEngine)
+    assert engine.name == "flashvsr"
