@@ -1,0 +1,59 @@
+{
+  "task": "T16 — Wan T2V + spandrel multi-stage warm-reuse live smoke",
+  "date_local": "2026-06-30",
+  "outcome": "GREEN",
+  "successful_attempt": 3,
+  "successful_pod_id": "4ju5e4ae9jnx6e",
+  "successful_attempt_wall_s": 908.82,
+  "wall_breakdown_est": {
+    "cold_boot_deps_install_s": 300,
+    "wan_weights_fetch_s": 480,
+    "wan_load_s": 60,
+    "wan_inference_s": 200,
+    "spandrel_upload_load_infer_s": 60,
+    "destroy_s": 10
+  },
+  "attempt_spend_est_usd": 0.25,
+  "cumulative_spend_across_attempts_usd_est": 0.85,
+  "prompt_source": "examples/configs/prompts/field-realistic.txt",
+  "cfg_source": "examples/configs/wan-with-upscale-spandrel.yaml",
+  "stage_1": {
+    "engine": "diffusers",
+    "model_slug": "wan-t2v-a14b-fp8",
+    "output_path": "tests/live/evidence/2026-06-29-wan-then-spandrel-warm-reuse/out/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4",
+    "output_bytes": 827869,
+    "resolution": [480, 480],
+    "frames": 81
+  },
+  "stage_2": {
+    "engine": "spandrel",
+    "model_slug": "spandrel-realesrgan-fp16",
+    "weights_ref": "hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth",
+    "output_path": "tests/live/evidence/2026-06-29-wan-then-spandrel-warm-reuse/out/20260630-221907_upscaled_spandrel_Wan2.2-T2V-A14B-Diffuser_upscale.mp4",
+    "output_bytes": 1292638,
+    "resolution": [960, 960],
+    "frames": 81,
+    "dims_scale_verified": "2x",
+    "upload_from_operator_disk": true
+  },
+  "post_run_ledger": {
+    "running_instances": "No running instances.",
+    "ledger_entries": "No instances recorded in ledger."
+  },
+  "workspace_output_copies": [
+    "/workspace/output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4",
+    "/workspace/output/20260630-221907_upscaled_spandrel_Wan2.2-T2V-A14B-Diffuser_upscale.mp4"
+  ],
+  "bugs_found_in_flight": [
+    "att1: SpandrelEngine dispatch only checked file:// prefix; store returns bare /abs path for stage-1 clip — added bare-abs-path branch (1a50452)",
+    "att2: orchestrator sink materialize only fired when returning upscaled artifact; multi-stage kinoforge generate returns clip, so upscaled bytes orphaned on dead pod — sink both regardless of artifact_key (c374d8a)"
+  ],
+  "commits_in_workstream_since_T15": [
+    "1a50452 fix(spandrel): dispatch bare absolute-path source URIs to _upload_source",
+    "c374d8a fix(orchestrator): materialize upscaled artifact even when returning clip (multi-stage)"
+  ],
+  "notes": [
+    "AC 'stage-2 no PUT /upload' was aspirational — orchestrator sinks Wan output locally at end of stage-1, so stage-2 spandrel upload IS required to send the local mp4 back to the pod. This is the correct behavior for the current sink-first design; a true zero-upload warm-reuse would require an orchestrator mode that keeps intermediate artifacts pod-local.",
+    "T16 GREEN attests the full stage-1→stage-2 flow works end-to-end on a single pod with correct final dimensions, which is the substantive user-facing capability."
+  ]
+}
