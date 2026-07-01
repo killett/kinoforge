@@ -185,6 +185,54 @@ def test_upscale_passes_through_http_source() -> None:
     assert captured["source_url"] == "https://example.com/x.mp4"
 
 
+def test_upscale_uploads_bare_absolute_path_source(mp4: Path) -> None:
+    """job.source.uri = bare /abs/path (no scheme) → upload helper fires.
+
+    Bug caught: multi-stage warm-reuse (Wan T2V stage-1 → spandrel stage-2)
+    hands SpandrelEngine a bare local path because the store returns the
+    stored file's path without a ``file://`` prefix. Dispatch that only
+    checks ``.startswith("file://")`` would pass the bare path through and
+    the pod's ``_download_to_local_temp`` raises ``unknown url type``.
+    """
+    from kinoforge.upscalers.spandrel import SpandrelEngine
+    from kinoforge.upscalers.spandrel import _engine as spandrel_mod
+
+    engine = SpandrelEngine()
+    captured: dict[str, object] = {}
+
+    def fake_http(
+        *, method: str, url: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        if method == "POST":
+            assert payload is not None
+            captured.update(payload)
+            return {"job_id": "j-bare"}
+        return {
+            "state": "done",
+            "progress": 1.0,
+            "result": {
+                "filename": "out.mp4",
+                "sha256": "z",
+                "size": 1,
+                "input_resolution": [64, 48],
+                "output_resolution": [128, 96],
+                "engine_meta": {},
+            },
+            "error": None,
+        }
+
+    with (
+        patch.object(
+            engine, "_upload_source", return_value="file:///tmp/kf-uploads/bare.mp4"
+        ) as upl,
+        patch.object(spandrel_mod, "_http_json", side_effect=fake_http),
+    ):
+        engine.upscale(_instance(), _job(str(mp4)), _cfg())
+    upl.assert_called_once()
+    assert upl.call_args.args[1] == mp4
+    assert captured["source_url"] == "file:///tmp/kf-uploads/bare.mp4"
+
+
 def test_upscale_uploads_file_source(mp4: Path) -> None:
     """job.source.uri file:// → upload helper called once; submit gets pod path.
 
