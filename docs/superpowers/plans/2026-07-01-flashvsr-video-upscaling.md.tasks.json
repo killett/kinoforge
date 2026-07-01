@@ -45,7 +45,7 @@
       "id": 5,
       "nativeTaskId": "12",
       "subject": "Task 5: Server dispatch delta",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 4],
       "description": "**Goal:** 5 edits to wan_t2v_server.py — flashvsr-* prefix dispatch + capability + weights-dir helper + Pydantic body + handler.\n\n**Files:** src/kinoforge/engines/diffusers/servers/wan_t2v_server.py, tests/.../test_wan_t2v_server.py\n\n**Verify:** pixi run pytest tests/engines/diffusers/servers/test_wan_t2v_server.py -v -k 'flashvsr or upscale' → all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/servers/test_wan_t2v_server.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/servers/test_wan_t2v_server.py -v -k 'flashvsr or upscale'\", \"acceptanceCriteria\": [\"prefix dispatch\", \"capability upscale\", \"weights_dir env override\", \"Pydantic body\", \"handler+dispatch\"], \"modelTier\": \"standard\"}\n```"
     },
