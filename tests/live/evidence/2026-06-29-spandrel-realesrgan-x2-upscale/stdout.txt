@@ -1,1 +1,2 @@
 [instance overview] No running instances.
+upscaled: uri='https://xir9hkiyz9ip4n-8000.proxy.runpod.net/artifacts/54a5f732.upscaled.mp4'

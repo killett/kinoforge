@@ -1,32 +1,5 @@
 Pixi task (kinoforge in default): python -m kinoforge upscale --video /workspace/.claude/worktrees/video-upscaling/examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4 --config /workspace/.claude/worktrees/video-upscaling/examples/configs/upscale-spandrel-x2.yaml --no-reuse
-2026-06-30 20:36:25,763 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
-2026-06-30 20:36:36,532 INFO kinoforge.orchestrator running provisioner.provision for instance s2nmwkn8i6ygdi (engine=diffusers key=b36f749a5703)
-2026-06-30 20:38:09,205 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod s2nmwkn8i6ygdi
-Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/__main__.py", line 6, in <module>
-    raise SystemExit(main())
-                     ~~~~^^
-  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/cli/_main.py", line 998, in main
-    return _DISPATCH[args.cmd](args, ctx)
-           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
-  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/cli/_commands.py", line 719, in _cmd_upscale
-    artifact, returned_instance = _orchestrator.generate(
-                                  ~~~~~~~~~~~~~~~~~~~~~~^
-        cfg,
-        ^^^^
-    ...<9 lines>...
-        initial_clip=input_artifact,
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    )
-    ^
-  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/core/orchestrator.py", line 1878, in generate
-    state = stage.run(state)
-  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/pipeline/upscale.py", line 55, in run
-    result = self.engine.upscale(
-        self.instance, job, self.cfg, cancel_token=self.cancel_token
-    )
-  File "/workspace/.claude/worktrees/video-upscaling/src/kinoforge/upscalers/spandrel/_engine.py", line 207, in upscale
-    raise UpscaleFailed(job_id=job_id, server_error=status.get("error", ""))
-kinoforge.core.errors.UpscaleFailed: upscale job u-4cfcaa5c20614581990bfa60326c02a1 failed on server: Expected all tensors to be on the same device, but found at least two devices, cpu and cuda:0! (when checking argument for argument weight in method wrapper_CUDA___slow_conv2d_forward)
+2026-06-30 20:41:48,328 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.claude/worktrees/video-upscaling/.env (37 keys)
+2026-06-30 20:41:56,727 INFO kinoforge.orchestrator running provisioner.provision for instance xir9hkiyz9ip4n (engine=diffusers key=b36f749a5703)
+2026-06-30 20:43:31,555 INFO kinoforge.orchestrator generate completed — artifact uri='https://xir9hkiyz9ip4n-8000.proxy.runpod.net/artifacts/54a5f732.upscaled.mp4'
+2026-06-30 20:43:39,855 INFO kinoforge.orchestrator --no-reuse: destroyed + forgot pod xir9hkiyz9ip4n

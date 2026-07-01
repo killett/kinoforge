@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Literal, NamedTuple, cast
+from typing import Any, Literal, NamedTuple, cast
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
@@ -1911,6 +1911,47 @@ def generate(
             "upscaled" if (skip_clip_stage and cfg.upscale is not None) else "clip"
         )
         artifact = state.artifacts[artifact_key]
+
+        # T15/att6 fix: an ``UpscaleStage.run`` result carries the pod's
+        # proxy URL (e.g. https://<pod>-8000.proxy.runpod.net/artifacts/X)
+        # because ``SpandrelEngine.upscale`` doesn't have a sink. If the
+        # caller passed one AND ``single=True`` (--no-reuse — destroy
+        # fires in deploy_session's finally after we return), we MUST
+        # materialize the artifact bytes locally BEFORE returning, or the
+        # URI points at a dead pod. Runs unconditionally on http(s):// so
+        # warm-reuse callers also get a local mp4 they can cat, ffprobe,
+        # etc. without a second round-trip.
+        if (
+            artifact_key == "upscaled"
+            and sink is not None
+            and artifact.uri.startswith(("http://", "https://"))
+        ):
+            import urllib.request as _urequest  # local — orchestrator stays urllib-free
+
+            _log.info("materializing upscaled artifact from %s", artifact.uri)
+            req = _urequest.Request(  # noqa: S310 — pod proxy URL only
+                artifact.uri,
+                headers={"User-Agent": "kinoforge-orchestrator/0.1"},
+            )
+            with _urequest.urlopen(req, timeout=600) as resp:  # noqa: S310
+                body: bytes = resp.read()
+            provider_tag = cfg.upscale.engine if cfg.upscale is not None else "unknown"
+            spec_obj: Any = cfg.spec
+            model_tag = (
+                getattr(spec_obj, "model", None)
+                or (spec_obj.get("model") if isinstance(spec_obj, dict) else None)
+                or "unknown"
+            )
+            local_path = sink.publish(
+                body,
+                prompt="upscale",
+                extension=".mp4",
+                provider=provider_tag,
+                model=model_tag,
+                kind="upscaled",
+            )
+            artifact = dataclasses.replace(artifact, uri=f"file://{local_path}")
+
         _log.info("generate completed — artifact uri=%r", artifact.uri)
         owned_instance = None if _caller_supplied_instance else session.instance
         return artifact, owned_instance
