@@ -13,7 +13,7 @@
       "id": 1,
       "nativeTaskId": "8",
       "subject": "Task 1: _fetch_weights CLI + manifest",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Pod-safe CLI fetches FlashVSR bundle from HF + SHA256-verifies against shipped weights_manifest.json.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_fetch_weights.py, weights_manifest.json, __init__.py (placeholder), tests/.../test_fetch_weights.py, pyproject.toml\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_fetch_weights.py -v → 6 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_fetch_weights.py\", \"src/kinoforge/upscalers/flashvsr/weights_manifest.json\", \"tests/upscalers/flashvsr/test_fetch_weights.py\", \"pyproject.toml\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_fetch_weights.py -v\", \"acceptanceCriteria\": [\"CLI shape\", \"lite=2 full=4 files\", \"SHA mismatch raises\", \"pod-safe imports\", \"manifest packaged\"], \"modelTier\": \"standard\"}\n```"
     },
