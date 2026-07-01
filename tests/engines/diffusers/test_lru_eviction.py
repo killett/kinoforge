@@ -63,6 +63,26 @@ class TestSingleModel:
             assert entry["vram_bytes"] == 5 * 1024**3
 
 
+class TestFreshLoadMovesToCuda:
+    def test_ensure_on_gpu_calls_to_cuda_on_freshly_loaded_pipe(
+        self, _fake_cuda: list[int]
+    ) -> None:
+        # Bug caught: _ensure_on_gpu records on_device="cuda" in LoadedModel
+        # metadata but never calls pipe.to("cuda") on the freshly-constructed
+        # runtime. SpandrelRuntime / SeedVR2Runtime load weights on CPU by
+        # default → inference runs on CPU (glacial or unsupported for fp16),
+        # while /health lies that the pipe is on cuda. Regression: 2026-06-30
+        # T15 attempt 4 hung at progress=0.0 for 10 min with GPU util = 0%.
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        pipe = _fake_pipe(2 * 1024**3)
+        with patch.object(srv, "_load_model_to_gpu", return_value=pipe):
+            entry = asyncio.run(srv._ensure_on_gpu("spandrel-realesrgan-fp16"))
+
+        assert entry["on_device"] == "cuda"
+        pipe.to.assert_any_call("cuda")
+
+
 class TestEviction:
     def test_lru_evicts_when_tight(self, _fake_cuda: list[int]) -> None:
         from kinoforge.engines.diffusers.servers import wan_t2v_server as srv

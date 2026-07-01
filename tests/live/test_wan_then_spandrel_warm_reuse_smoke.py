@@ -7,7 +7,6 @@ Wan + spandrel weights.
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -36,10 +35,6 @@ _CFG = (
 
 
 @pytest.mark.live
-@pytest.mark.xfail(
-    reason="RED scaffold (Task 14) — GREEN evidence lands in Task 16 after live spend",
-    strict=False,
-)
 def test_wan_t2v_then_spandrel_x2_multi_stage() -> None:
     assert _CFG.exists(), f"cfg missing: {_CFG}"
     _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,14 +76,18 @@ def test_wan_t2v_then_spandrel_x2_multi_stage() -> None:
     assert (w, h) == (960, 960), f"expected 960x960, got {w}x{h}"
 
     ledger = subprocess.run(  # noqa: S603,S607
-        ["pixi", "run", "kinoforge", "list", "--json"],
+        ["pixi", "run", "kinoforge", "list"],
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
     )
-    pods = json.loads(ledger.stdout).get("instances", [])
-    assert pods == [], f"pod survived --no-reuse: {pods}"
+    assert "No running instances." in ledger.stdout, (
+        f"pod survived --no-reuse:\n{ledger.stdout}"
+    )
+    assert "No instances recorded in ledger." in ledger.stdout, (
+        f"ledger entry survived --no-reuse:\n{ledger.stdout}"
+    )
 
 
 def _probe_dims(path: Path) -> tuple[int, int]:

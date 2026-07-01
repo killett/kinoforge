@@ -10,8 +10,10 @@ from kinoforge.core.scale_target import ScaleTarget
 
 
 def _job_2x() -> UpscaleJob:
+    # https:// source — passes through SpandrelEngine.upscale() without
+    # triggering the file:// → PUT /upload dispatch.
     return UpscaleJob(
-        source=Artifact(uri="file:///tmp/in.mp4", sha256="0" * 64, size=1),
+        source=Artifact(uri="https://example.invalid/in.mp4", sha256="0" * 64, size=1),
         scale=ScaleTarget(kind="factor", value=2.0),
     )
 
@@ -88,8 +90,8 @@ class TestUpscale:
     def test_posts_then_polls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Bug caught: upscale() either POSTs without polling, or polls
         # without POSTing. Mirror the SeedVR2 HTTP flow exactly.
-        from kinoforge.upscalers import spandrel as spandrel_mod
         from kinoforge.upscalers.spandrel import SpandrelEngine
+        from kinoforge.upscalers.spandrel import _engine as spandrel_mod
 
         submit_resp: dict[str, object] = {"job_id": "u-test"}
         status_resp: dict[str, object] = {
