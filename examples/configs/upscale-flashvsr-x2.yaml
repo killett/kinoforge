@@ -1,0 +1,99 @@
+# v1-default upscale-only cfg for `kinoforge upscale`.
+#
+# Streaming diffusion super-resolution via FlashVSR v1.1 (Wan 2.1 1.3B backbone
+# wrapped in StreamingDMDPipeline). Distinct from spandrel's per-frame
+# per-image SR: FlashVSR runs a streaming attention window across frames so
+# temporal coherence stays intact across the whole clip. Preferred over
+# upscale-spandrel-x2.yaml for any clip where flicker or texture drift is
+# a concern.
+#
+# Requires SM80+ (Block-Sparse-Attention). Cheapest-first GPU allowlist
+# prioritizes A6000 48 GB for the standalone upscale path (Wan is not
+# co-resident — VRAM budget is FlashVSR's ~8 GB peak plus headroom).
+#
+# Usage:
+#   pixi run kinoforge upscale \
+#     --config examples/configs/upscale-flashvsr-x2.yaml \
+#     --video /path/to/clip.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      # FlashVSRRuntime imports kinoforge.core.errors + .scale_target at
+      # the first /upscale call. Single-file embeds keep the bootstrap
+      # script under RunPod's 64KB env-var ceiling.
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    # Skip the eager WanPipeline.from_pretrained at server startup — the
+    # pod runs only the on-demand FlashVSR runtime via the LRU registry.
+    # Cuts cold-boot from ~30min (full Wan 14B download) to ~5min
+    # (BSA compile + FlashVSR install + 2-file lite bundle download).
+    upscale_only: true
+
+# No models[] required — upscale_only=true means the server doesn't
+# eager-load any model. FlashVSR weights are fetched via
+# `upscale.flashvsr.weights_bundle` at provision time.
+models: []
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  requirements:
+    min_vram_gb: 24
+    min_cuda: "12.4"
+    max_usd_per_hr: 1.20
+    disk_gb: 60
+    # SM80+ only. A6000 first: 48 GB VRAM comfortably fits FlashVSR's ~8 GB
+    # peak plus BSA compile scratch, and typically the cheapest SM80+ pod on
+    # RunPod. A100 40GB / L40S / A100 80GB round out the fallback tier.
+    gpu_preference:
+      - "A6000"
+      - "A100 40GB"
+      - "L40S"
+      - "A100 80GB"
+  lifecycle:
+    # BSA nvcc compile is ~2min on 16 cores; FlashVSR pip install ~2min;
+    # weights pull ~3min for the 2-file bundle. Total cold-boot budget
+    # ~10-15min — bumped to 30m to absorb slow PyPI / HF-CDN days.
+    boot_timeout: 30m
+    idle_timeout: 30m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 90m
+    budget: 1.5
+    heartbeat_interval_s: 30
+
+# spec.model is informational only for upscale-only cfgs (no /generate
+# call fires); the integration lock test asserts DiffusersEngine.model_identity
+# returns non-empty for every example. Use the flashvsr 3-token slug.
+spec:
+  model: "flashvsr-wan21-fp16"
+
+upscale:
+  engine: flashvsr
+  scale: 2x
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    precision: fp16
+    window_size: 24
+    tile_size: 0
+    long_video_mode: false

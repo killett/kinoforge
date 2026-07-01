@@ -661,3 +661,44 @@ def test_diffusers_wan_t2v_14b_cap_key_differs_from_kijai_5b() -> None:
     )
     cfg_5b = load_config(Path("examples/configs/runpod-comfyui-wan-t2v-5b.yaml"))
     assert cfg_14b.capability_key().derive() != cfg_5b.capability_key().derive()
+
+
+def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
+    """FlashVSR multi-stage lockdown: engine, GPU allowlist, long-video default.
+
+    Bug caught: a future edit swaps engine to spandrel silently, or drops
+    the SM80+ GPU tier from the allowlist so RunPod picks a T4 that fails
+    BSA compile at cold boot.
+    """
+    with (EXAMPLES_DIR / "wan-with-upscale-flashvsr.yaml").open() as f:
+        raw = yaml.safe_load(f)
+    assert raw["upscale"]["engine"] == "flashvsr"
+    assert raw["upscale"]["scale"] == "2x"
+    assert raw["upscale"]["flashvsr"]["long_video_mode"] is False
+    assert raw["upscale"]["flashvsr"]["precision"] == "fp16"
+    # Set-equality — order is separately tested elsewhere; the invariant
+    # here is that the exact 4-GPU allowlist stays intact.
+    assert set(raw["compute"]["requirements"]["gpu_preference"]) == {
+        "A100 80GB",
+        "A6000",
+        "L40S",
+        "A100 40GB",
+    }
+
+
+def test_upscale_flashvsr_x2_marks_upscale_only_and_a6000_first() -> None:
+    """FlashVSR upscale-only lockdown: upscale_only=true + A6000 first.
+
+    Bug caught: a future edit re-enables eager WanPipeline load in the
+    upscale-only cfg (upscale_only: false) — cold boot balloons from 5min
+    to 30min and blows the boot_timeout.
+    """
+    with (EXAMPLES_DIR / "upscale-flashvsr-x2.yaml").open() as f:
+        raw = yaml.safe_load(f)
+    assert raw["engine"]["diffusers"]["upscale_only"] is True
+    assert raw["upscale"]["engine"] == "flashvsr"
+    # A6000 pinned first — cheapest SM80+ pod on RunPod fits FlashVSR's
+    # ~8 GB peak with generous headroom.
+    assert raw["compute"]["requirements"]["gpu_preference"][0] == "A6000"
+    # Load through full validator to catch schema regressions.
+    load_config(EXAMPLES_DIR / "upscale-flashvsr-x2.yaml")
