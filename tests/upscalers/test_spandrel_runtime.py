@@ -124,7 +124,12 @@ class TestPrecisionCast:
         video = tmp_path / "in.mp4"
         _write_dummy_mp4(video)
         rt.upscale(video, ScaleTarget(kind="factor", value=2.0), params={})
-        rt._model.to.assert_any_call(torch.float16)
+        raw = getattr(rt._model, "model", rt._model)
+        # Combined single-call .to(device=X, dtype=Y) so descriptor
+        # round-tripping cannot lose one of the two settings.
+        call = raw.to.call_args
+        assert call is not None
+        assert call.kwargs.get("dtype") is torch.float16
 
     def test_fp32_upscale_casts_model_to_float_before_inference(
         self, tmp_path: Path, _fake_spandrel: MagicMock
@@ -145,9 +150,10 @@ class TestPrecisionCast:
         video = tmp_path / "in.mp4"
         _write_dummy_mp4(video)
         rt.upscale(video, ScaleTarget(kind="factor", value=2.0), params={})
-        rt._model.to.assert_any_call(torch.float32)
-        for call in rt._model.to.call_args_list:
-            assert torch.float16 not in call.args
+        raw = getattr(rt._model, "model", rt._model)
+        call = raw.to.call_args
+        assert call is not None
+        assert call.kwargs.get("dtype") is torch.float32
 
 
 class TestUpscale:
