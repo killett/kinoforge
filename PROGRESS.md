@@ -12,7 +12,15 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
-**Video upscaling — CODE COMPLETE, LIVE-SMOKE PARTIAL 2026-06-29 (P1 21/21 + P2 14/17 GREEN; P2 T15/T16 BLOCKED on source-upload).**
+**Video upscaling — SHIPPED 2026-06-30 (P1 21/21 + P2 17/17 GREEN; T15 pod `1jofyeyg46m747` spend $0.02; T16 pod `4ju5e4ae9jnx6e` spend $0.25).**
+
+P3 (pod file-upload path) plan `docs/superpowers/plans/2026-06-29-upscale-pod-upload.md` closed end-to-end:
+Tasks 0-5 unit-GREEN (commits `3e07026..1c1f414`); Task 5a spandrel route/body dispatch
+backfill (`a7525f8`); Task 5b `kinoforge logs` CLI + port-8001 sidecar log-fetch
+(`4d33e65`); refactor + fp-cast + CUDA-move + descriptor-unwrap fixes for live
+(`87024ab`, `43a1cab`, `a6345c2`, `9274c5c`); orchestrator sink materialize for
+`--no-reuse` (`de42070`, `c374d8a`); T15 live GREEN (`4052080`); T16 live GREEN
+(`0536304`). Upscaled outputs saved at `/workspace/output/20260630-221907_upscaled_spandrel_*.mp4`.
 
 ### History
 

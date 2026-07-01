@@ -89,12 +89,26 @@ class SpandrelRuntime:
         except Exception:  # noqa: BLE001 — fall back to a sane default
             fps = 16.0
 
+        # Spandrel's ``ModelLoader().load_from_file`` returns an
+        # ``ImageModelDescriptor`` whose ``.to()`` is ambiguous — a dtype-only
+        # cast can silently drop the device back to CPU on some versions,
+        # producing "Expected all tensors on same device, but found cpu and
+        # cuda:0" at the first conv2d. Unwrap to the raw nn.Module and issue a
+        # single combined ``.to(device=..., dtype=...)`` so both settings land
+        # atomically without descriptor round-tripping.
+        raw_model = getattr(self._model, "model", self._model)
         device = (
-            next(self._model.parameters()).device
-            if hasattr(self._model, "parameters")
+            next(raw_model.parameters()).device
+            if hasattr(raw_model, "parameters")
             else "cpu"
         )
+        # Prefer cuda if available and model was ever moved off cpu; otherwise
+        # honor the parameter-inferred device. This defends against a
+        # descriptor.to("cuda") that didn't actually move the wrapped module.
+        if torch.cuda.is_available() and str(device) == "cpu":
+            device = torch.device("cuda")
         dtype = torch.float16 if self._precision == "fp16" else torch.float32
+        raw_model.to(device=device, dtype=dtype)
 
         out_frames: list[np.ndarray] = []
         for i in range(0, len(frames_in), self._batch):

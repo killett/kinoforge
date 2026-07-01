@@ -32,6 +32,7 @@ from kinoforge.cli._commands import (
     _cmd_generate,
     _cmd_grid,
     _cmd_list,
+    _cmd_logs,
     _cmd_pod_lora_ls,
     _cmd_provision,
     _cmd_reap,
@@ -85,7 +86,18 @@ _INTERRUPTIBLE_CMDS: frozenset[str] = frozenset({"generate", "batch"})
 # Subcommands that never trigger orchestration. ``--ephemeral`` is a no-op
 # for them; emit a one-line stderr note rather than running pre-flight.
 _READ_ONLY_CMDS: frozenset[str] = frozenset(
-    {"list", "status", "stop", "destroy", "forget", "reap", "gc", "cost", "pod"}
+    {
+        "list",
+        "status",
+        "stop",
+        "destroy",
+        "forget",
+        "reap",
+        "gc",
+        "cost",
+        "pod",
+        "logs",
+    }
 )
 
 
@@ -129,6 +141,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "status": _cmd_status,
     "stop": _cmd_stop,
     "destroy": _cmd_destroy,
+    "logs": _cmd_logs,
     "forget": _cmd_forget,
     "reap": _cmd_reap,
     "gc": _cmd_gc,
@@ -606,6 +619,24 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     # destroy
     p_destroy = sub.add_parser("destroy", help="destroy an instance")
     p_destroy.add_argument("--id", required=True, metavar="ID")
+
+    # logs — fetch a file served by the pod's port-8001 sidecar
+    p_logs = sub.add_parser(
+        "logs", help="fetch a file from a running pod's sidecar http.server"
+    )
+    p_logs.add_argument("--id", required=True, metavar="ID")
+    p_logs.add_argument(
+        "--file",
+        default="bootstrap.log",
+        metavar="NAME",
+        help="filename under /tmp on the pod (default: bootstrap.log)",
+    )
+    p_logs.add_argument(
+        "--out",
+        default=None,
+        metavar="PATH",
+        help="write bytes to this local path (default: stdout)",
+    )
 
     # forget
     p_forget = sub.add_parser(

@@ -1,0 +1,78 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-29-upscale-pod-upload.md",
+  "specPath": "docs/superpowers/specs/2026-06-29-upscale-pod-upload-design.md",
+  "lastUpdated": "2026-06-29T12:00:00Z",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: UploadIntegrityError exception",
+      "status": "completed",
+      "nativeTaskId": "1",
+      "description": "**Goal:** Typed exception for upload sha256 mismatch.\n\n**Files:**\n- src/kinoforge/core/errors.py\n- tests/core/test_errors_upload_integrity.py\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"tests/core/test_errors_upload_integrity.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_errors_upload_integrity.py -v\", \"acceptanceCriteria\": [\"UploadIntegrityError subclass of KinoforgeError\", \"carries local_sha256/server_sha256/bytes_sent\", \"__str__ includes both hashes\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Server PUT /upload route",
+      "status": "completed",
+      "nativeTaskId": "2",
+      "blockedBy": [0],
+      "description": "**Goal:** PUT /upload streams video/mp4, sha256-echoes, returns {path,size,sha256}.\n\n**Files:**\n- src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\n- tests/engines/diffusers/test_server_upload.py\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/test_server_upload.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/test_server_upload.py -v\", \"acceptanceCriteria\": [\"PUT /upload returns {path,size,sha256}\", \"file lands under _UPLOAD_DIR\", \"_UPLOAD_DIR constant exists\", \"_sanitize_upload_filename strips and falls back\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: /upload rejection paths + /health capability",
+      "status": "completed",
+      "nativeTaskId": "3",
+      "blockedBy": [1],
+      "description": "**Goal:** 415/413 rejection + atomic publish + /health 'upload' capability tag.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/test_server_upload.py\", \"tests/engines/diffusers/test_server_health.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/test_server_upload.py tests/engines/diffusers/test_server_health.py -v\", \"acceptanceCriteria\": [\"wrong CT \\u2192 415\", \"oversize \\u2192 413 + no published file\", \"mid-abort leaves no published file\", \"/health includes 'upload'\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: SpandrelEngine._upload_source + dispatch",
+      "status": "completed",
+      "nativeTaskId": "4",
+      "blockedBy": [2],
+      "description": "**Goal:** Client helper PUT /upload + sha256 verify; upscale() dispatches file:// vs http(s)://.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/spandrel/__init__.py\", \"tests/upscalers/test_spandrel_upload.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/test_spandrel_upload.py -v\", \"acceptanceCriteria\": [\"_upload_source PUT + sha256 verify + file:// return\", \"sha256 mismatch raises UploadIntegrityError\", \"502 retries once\", \"upscale() dispatches on scheme\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Server-side cleanup in /upscale finally",
+      "status": "completed",
+      "nativeTaskId": "5",
+      "blockedBy": [1, 3],
+      "description": "**Goal:** _run_upscale_job finally-unlinks source if under _UPLOAD_DIR.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/test_server_upload_cleanup.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/test_server_upload_cleanup.py -v\", \"acceptanceCriteria\": [\"upload under _UPLOAD_DIR unlinked\", \"sibling untouched\", \"cleanup runs on failure\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Regression sweep + pre-commit (incl. Task 5a spandrel dispatch backfill)",
+      "status": "completed",
+      "nativeTaskId": "6",
+      "blockedBy": [2, 4],
+      "description": "**Goal:** Targeted + full pytest + pre-commit; fix any regressions.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run pre-commit run --all-files && pixi run pytest -x\", \"acceptanceCriteria\": [\"pre-commit clean\", \"targeted suite green\", \"no new failures in full suite\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: T15 live smoke (single-shot spandrel upscale)",
+      "status": "completed",
+      "nativeTaskId": "7",
+      "blockedBy": [1, 2, 3, 4, 5],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Goal:** Live smoke against RunPod; output dims = 2x input; ledger empty post-run.\n\n```json:metadata\n{\"files\": [\"tests/live/test_spandrel_x2_upscale.py\", \"examples/configs/upscale-spandrel-x2.yaml\"], \"verifyCommand\": \"pixi run pytest tests/live/test_spandrel_x2_upscale.py -v --runlive && pixi run kinoforge list\", \"acceptanceCriteria\": [\"/health advertises 'upload'\", \"PUT /upload returns matching sha256\", \"output dims = 2x input dims\", \"upload file unlinked under _UPLOAD_DIR\", \"kinoforge list shows zero pods + empty ledger\", \"spend <= $0.10\", \"evidence JSON committed\"], \"modelTier\": \"standard\", \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requireEvidenceTokens\": [[\"upload-PUT\", \"pre-upscale\"], [\"upscale-done\", \"dims-2x\"], [\"pod-destroyed\", \"kinoforge-list-empty\"]]}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: T16 live smoke (Wan T2V + spandrel multi-stage warm-reuse)",
+      "status": "completed",
+      "nativeTaskId": "8",
+      "blockedBy": [6],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Goal:** Stage-1 Wan + stage-2 spandrel on same warm pod; zero PUT /upload for stage 2.\n\n```json:metadata\n{\"files\": [\"tests/live/test_wan_t2v_plus_spandrel_x2.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_wan_t2v_plus_spandrel_x2.py -v --runlive && pixi run kinoforge list\", \"acceptanceCriteria\": [\"stage-1 Wan output lands outside _UPLOAD_DIR\", \"stage-2 upscale runs with no PUT /upload (sibling-skip path)\", \"final dims = 2x stage-1 dims\", \"kinoforge list shows zero pods + empty ledger\", \"spend <= $3.50\", \"evidence JSON committed\"], \"modelTier\": \"standard\", \"userGate\": true, \"tags\": [\"user-gate\", \"live-spend\"], \"requireEvidenceTokens\": [[\"stage-1-generate\", \"wan-T2V-done\"], [\"stage-2-upscale\", \"no-upload-PUT\"], [\"dims-2x\", \"warm-reuse-confirmed\"], [\"pod-destroyed\"]]}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: PROGRESS.md close + successful-generations.md entry",
+      "status": "completed",
+      "nativeTaskId": "9",
+      "blockedBy": [7],
+      "description": "**Goal:** Flip P2 PARTIAL→SHIPPED; log spandrel x2 upscale tuple in successful-generations.md.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"/workspace/successful-generations.md\", \"docs/superpowers/plans/2026-06-29-upscaler-packaging-pivot.md.tasks.json\"], \"verifyCommand\": \"git log --oneline -5 && rg 'spandrel' /workspace/successful-generations.md\", \"acceptanceCriteria\": [\"PROGRESS PARTIAL\\u2192SHIPPED\", \"successful-generations.md new entry\", \"tasks.json statuses completed\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ]
+}

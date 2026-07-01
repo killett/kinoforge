@@ -1,0 +1,2 @@
+[instance overview] No running instances.
+generated: uri='/workspace/.claude/worktrees/video-upscaling/.kinoforge/run-20260630-220404/56e01140b6ed377a.mp4'
