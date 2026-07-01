@@ -535,23 +535,112 @@ class SpandrelEngineConfig(BaseModel):
     batch_size: int = 4
 
 
+_FLASHVSR_VALID_TILE_SIZES = (0, 256, 384, 512, 768)
+_FLASHVSR_WINDOW_MIN = 8
+_FLASHVSR_WINDOW_MAX = 64
+_FLASHVSR_VALID_SCHEMES = ("hf:", "http://", "https://", "civitai:", "civarchive:")
+
+
+class FlashVSREngineConfig(BaseModel):
+    """FlashVSR v1.1 engine params — validated at cfg-load-time.
+
+    See docs/superpowers/specs/2026-07-01-flashvsr-video-upscaling-design.md §4.
+
+    Attributes:
+        weights_bundle: Source ref for the 2-file (lite) or 4-file (long-video)
+            bundle (``hf:JunhaoZhuang/FlashVSR-v1.1`` or plain http(s)).
+            Resolved via :mod:`kinoforge.upscalers.flashvsr._fetch_weights`
+            during pod provision.
+        precision: ``"fp16"`` (DMD-native, default) or ``"fp32"``.
+        window_size: Streaming attention window in frames (``[8, 64]``).
+        tile_size: Spatial tile in pixels for VRAM headroom. ``0`` = whole-frame;
+            allowlist ``{0, 256, 384, 512, 768}`` chosen to align with the BSA
+            block-size grid (mis-aligned values crash or produce border seams).
+        long_video_mode: When ``True``, enables LCSA + TCDecoder — needs the
+            4-file bundle. When ``False``, the 2-file lite bundle is enough.
+    """
+
+    weights_bundle: str
+    precision: str = "fp16"
+    window_size: int = 24
+    tile_size: int = 0
+    long_video_mode: bool = False
+
+    @field_validator("weights_bundle")
+    @classmethod
+    def _validate_scheme(cls, v: str) -> str:
+        if not any(v.startswith(s) for s in _FLASHVSR_VALID_SCHEMES):
+            raise ConfigError(
+                f"flashvsr weights_bundle {v!r}: unsupported scheme "
+                f"(supported: {_FLASHVSR_VALID_SCHEMES})"
+            )
+        return v
+
+    @field_validator("precision")
+    @classmethod
+    def _validate_precision(cls, v: str) -> str:
+        if v not in ("fp16", "fp32"):
+            raise ConfigError(f"flashvsr precision {v!r} not in ('fp16', 'fp32')")
+        return v
+
+    @field_validator("window_size")
+    @classmethod
+    def _validate_window(cls, v: int) -> int:
+        if not (_FLASHVSR_WINDOW_MIN <= v <= _FLASHVSR_WINDOW_MAX):
+            raise ConfigError(
+                f"flashvsr window_size {v} out of range "
+                f"[{_FLASHVSR_WINDOW_MIN}, {_FLASHVSR_WINDOW_MAX}]"
+            )
+        return v
+
+    @field_validator("tile_size")
+    @classmethod
+    def _validate_tile(cls, v: int) -> int:
+        if v not in _FLASHVSR_VALID_TILE_SIZES:
+            raise ConfigError(
+                f"flashvsr tile_size {v} not in {_FLASHVSR_VALID_TILE_SIZES}"
+            )
+        return v
+
+
 class UpscaleConfig(BaseModel):
     """Top-level ``upscale:`` block; presence activates the in-pipeline UpscaleStage.
 
     Attributes:
-        engine: Upscaler name (registry key). v1 supports ``"spandrel"``;
+        engine: Upscaler name (registry key). v1 supports ``"spandrel"``
+            (default fallback) and ``"flashvsr"`` (v1 default diffusion VSR);
             ``"seedvr2"`` is extras-gated until Phase 2 vendoring lands.
         scale: ScaleTarget grammar string (``"2x"`` | ``"4x"`` | ``"1080p"`` ...).
             Consumers call ``ScaleTarget.parse(scale)``; the height branch
-            raises ``NotYetImplementedError`` in v1.
+            raises ``NotYetImplementedError`` in v1. For ``engine=flashvsr``,
+            height-target is refused at cfg-time.
         seedvr2: SeedVR2-specific block; required when ``engine == "seedvr2"``.
         spandrel: Spandrel-specific block; required when ``engine == "spandrel"``.
+        flashvsr: FlashVSR-specific block; required when ``engine == "flashvsr"``.
     """
 
     engine: str
     scale: str
     seedvr2: SeedVR2EngineConfig | None = None
     spandrel: SpandrelEngineConfig | None = None
+    flashvsr: FlashVSREngineConfig | None = None
+
+    @model_validator(mode="after")
+    def _validate_flashvsr_wiring(self) -> Self:
+        if self.engine != "flashvsr":
+            return self
+        if self.flashvsr is None:
+            raise ConfigError("engine=flashvsr requires a cfg.upscale.flashvsr block")
+        # Lazy import to avoid top-level cycle with scale_target.
+        from kinoforge.core.scale_target import ScaleTarget
+
+        parsed = ScaleTarget.parse(self.scale)
+        if parsed.kind == "height":
+            raise ConfigError(
+                f"engine=flashvsr: height-target scale ({self.scale!r}) "
+                "not yet wired; use --scale Nx (factor form)"
+            )
+        return self
 
 
 class EngineConfig(BaseModel):
@@ -1113,6 +1202,8 @@ class Config(BaseModel):
                 base_model = self.upscale.spandrel.model_url
             elif self.upscale.seedvr2 is not None:
                 base_model = self.upscale.seedvr2.weights_ref or ""
+            elif self.upscale.flashvsr is not None:
+                base_model = self.upscale.flashvsr.weights_bundle
             else:
                 base_model = self.upscale.engine
 
@@ -1134,6 +1225,8 @@ class Config(BaseModel):
                 )
             elif self.upscale.spandrel is not None:
                 upscaler_precision = self.upscale.spandrel.precision
+            elif self.upscale.flashvsr is not None:
+                upscaler_precision = self.upscale.flashvsr.precision
 
         return CapabilityKey(
             base_model=base_model,
