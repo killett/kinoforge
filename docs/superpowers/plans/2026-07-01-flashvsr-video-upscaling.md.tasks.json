@@ -61,7 +61,7 @@
       "id": 7,
       "nativeTaskId": "14",
       "subject": "Task 7: RED live-smoke scaffold",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "**Goal:** Committed 3-test live-smoke file, all xfail(strict=True). Committed BEFORE any live spend per CLAUDE.md durability rule.\n\n**Files:** tests/live/test_flashvsr_live.py\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py -v → 3 xfailed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py -v\", \"acceptanceCriteria\": [\"3 xfail tests\", \"standard prompt\", \"dims 2x + pod-destroyed asserts\"], \"modelTier\": \"mechanical\"}\n```"
     },
