@@ -126,6 +126,7 @@ _HEADROOM_MARGIN_BYTES = (
 
 
 _SPANDREL_WEIGHTS_DIR_DEFAULT = "/workspace/models/spandrel"
+_FLASHVSR_WEIGHTS_DIR_DEFAULT = "/workspace/models/flashvsr"
 
 
 def _spandrel_weights_dir() -> Path:
@@ -136,6 +137,17 @@ def _spandrel_weights_dir() -> Path:
     """
     return Path(
         os.environ.get("KINOFORGE_SPANDREL_WEIGHTS_DIR", _SPANDREL_WEIGHTS_DIR_DEFAULT)
+    )
+
+
+def _flashvsr_weights_dir() -> Path:
+    """Return the on-pod FlashVSR weights directory.
+
+    Override via ``KINOFORGE_FLASHVSR_WEIGHTS_DIR`` for unit tests that
+    can't write under ``/workspace/models``.
+    """
+    return Path(
+        os.environ.get("KINOFORGE_FLASHVSR_WEIGHTS_DIR", _FLASHVSR_WEIGHTS_DIR_DEFAULT)
     )
 
 
@@ -181,6 +193,19 @@ def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2/
             precision=precision,  # type: ignore[arg-type]
             tile_size=512,
             batch_size=4,
+        )
+    if name.startswith("flashvsr-"):
+        from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+        # Slug: "flashvsr-wan21-{precision}" → precision tail.
+        parts = name.split("-")
+        precision = parts[-1]
+        return FlashVSRRuntime(
+            weights_dir=_flashvsr_weights_dir(),
+            precision=precision,  # type: ignore[arg-type]
+            window_size=24,
+            tile_size=0,
+            long_video_mode=False,
         )
     raise ValueError(f"unknown model name {name!r}; no loader registered")
 
@@ -1564,12 +1589,22 @@ class SpandrelParams(BaseModel):
     batch_size: int = 4
 
 
+class FlashVSRParams(BaseModel):
+    """Engine-specific overrides for a flashvsr upscale request."""
+
+    weights_bundle: str | None = None
+    precision: Literal["fp16", "fp32"] = "fp16"
+    window_size: int = 24
+    tile_size: int = 0
+    long_video_mode: bool = False
+
+
 class UpscaleRequest(BaseModel):
     """JSON body for ``POST /upscale``.
 
-    ``engine`` is a plain ``str`` (not ``Literal``) so future drop-in
-    upscalers (e.g. FlashVSR) extend the dispatch table inside the
-    handler without touching this schema.
+    ``engine`` is a plain ``str`` (not ``Literal``) so drop-in upscalers
+    (e.g. FlashVSR) extend the dispatch table inside the handler without
+    touching this schema.
     """
 
     source_url: str
@@ -1578,6 +1613,7 @@ class UpscaleRequest(BaseModel):
     engine: str
     seedvr2: SeedVR2Params | None = None
     spandrel: SpandrelParams | None = None
+    flashvsr: FlashVSRParams | None = None
     job_id: str | None = None
 
 
@@ -1657,7 +1693,7 @@ async def upscale_handler(req: UpscaleRequest) -> dict[str, str]:
     the caller does not burn a warm-pod attach cycle on a job destined
     for an async error.
     """
-    if req.engine not in {"seedvr2", "spandrel"}:
+    if req.engine not in {"seedvr2", "spandrel", "flashvsr"}:
         raise HTTPException(status_code=400, detail=f"unsupported engine: {req.engine}")
     job_id = req.job_id or f"u-{uuid.uuid4().hex}"
     _upscale_jobs[job_id] = {
@@ -1712,6 +1748,15 @@ async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
                 # client-side download hint, not a runtime knob.
                 params = req.spandrel.model_dump(
                     exclude={"model_url", "arch", "precision"}
+                )
+            elif req.engine == "flashvsr":
+                if req.flashvsr is None:
+                    raise ValueError("flashvsr engine requires a flashvsr block")
+                model_name = f"flashvsr-wan21-{req.flashvsr.precision}"
+                # Drop bundle URL + precision — bundle is a client-side download
+                # hint, precision is in the slug (routes to the correct LRU entry).
+                params = req.flashvsr.model_dump(
+                    exclude={"weights_bundle", "precision"}
                 )
             else:
                 sv_variant = (req.seedvr2.variant if req.seedvr2 else "3B").lower()
