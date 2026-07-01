@@ -78,6 +78,13 @@ class FlashVSREngine(UpscalerEngine):
                 '" || exit 87\n',
                 "export TORCH_EXTENSIONS_DIR=/workspace/.cache/bsa\n",
                 "export MAX_JOBS=4\n",
+                # Pin nvcc target arches to SM80/86/89/90 (Ampere / Ada / Hopper).
+                # Upstream BSA `main` targets compute_120 (Blackwell) which the
+                # pod's CUDA 12.4/12.8 nvcc rejects with `Unsupported gpu
+                # architecture 'compute_120'`. See T8 attempt #2 evidence
+                # (2026-07-01). If Blackwell support is needed later, bump
+                # the pod image to CUDA 12.9+ and re-add compute_120.
+                'export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"\n',
                 'mkdir -p "$TORCH_EXTENSIONS_DIR"\n',
                 "pip install "
                 '"git+https://github.com/mit-han-lab/Block-Sparse-Attention@main" '
