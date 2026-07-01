@@ -29,7 +29,7 @@
       "id": 3,
       "nativeTaskId": "10",
       "subject": "Task 3: FlashVSREngine HTTP dispatch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Client-side UpscalerEngine impl mirroring SpandrelEngine; provision script emits BSA-then-FlashVSR install + weights fetch + HF_HUB_OFFLINE flip.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_engine.py, tests/.../test_engine.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_engine.py -v → 10 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_engine.py\", \"tests/upscalers/flashvsr/test_engine.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_engine.py -v\", \"acceptanceCriteria\": [\"provision order preserved\", \"slug flashvsr-wan21-<prec>\", \"upload branch\", \"validate_spec rejects height\", \"script <=12KB\", \"polls until done\"], \"modelTier\": \"standard\"}\n```"
     },
