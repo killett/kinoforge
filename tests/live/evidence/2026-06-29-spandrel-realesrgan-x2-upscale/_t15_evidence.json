@@ -1,0 +1,57 @@
+{
+  "task": "T15 — single-shot spandrel RealESRGAN-x2 upscale live smoke",
+  "date_local": "2026-06-30",
+  "outcome": "GREEN",
+  "successful_attempt": 7,
+  "successful_pod_id": "1jofyeyg46m747",
+  "successful_attempt_wall_s": 116.91,
+  "successful_attempt_spend_est_usd": 0.02,
+  "cumulative_spend_across_attempts_usd_est": 0.10,
+  "input": {
+    "fixture": "examples/configs/grids/_fixtures/wan21_prompt_cell0.mp4",
+    "size_bytes": 188953,
+    "sha256": "54a5f732497679ebdee900644309dcfa9894260db2837d47e0626c4b08ecd1dc",
+    "resolution": [480, 480],
+    "frames": 33,
+    "fps": 16.0
+  },
+  "output": {
+    "path": "tests/live/evidence/2026-06-29-spandrel-realesrgan-x2-upscale/20260630-210320_upscaled_spandrel_spandrel-realesrgan-fp16_upscale.mp4",
+    "size_bytes": 773345,
+    "resolution": [960, 960],
+    "frames": 33,
+    "dims_scale_verified": "2x"
+  },
+  "engine": {
+    "kind": "diffusers",
+    "upscaler": "spandrel",
+    "model_slug": "spandrel-realesrgan-fp16",
+    "weights_ref": "hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth"
+  },
+  "post_run_ledger": {
+    "running_instances": "No running instances.",
+    "ledger_entries": "No instances recorded in ledger."
+  },
+  "commits_in_workstream": [
+    "3e07026 feat(errors): UploadIntegrityError",
+    "b3b49bf feat(server): PUT /upload streaming",
+    "7366e0b feat(server): /upload rejection + /health upload capability",
+    "4d95377 feat(upscale): SpandrelEngine._upload_source + file:// dispatch",
+    "6961530 feat(server): unlink upload under _UPLOAD_DIR in /upscale finally",
+    "a7525f8 feat(server): /upscale route + body spandrel dispatch",
+    "87024ab refactor(spandrel): split into ._engine + pod-safe shim __init__",
+    "43a1cab fix(spandrel): cast model weights to input dtype before inference",
+    "4d33e65 feat(cli): kinoforge logs — pod port-8001 sidecar files",
+    "a6345c2 fix(server): _ensure_on_gpu moves freshly-loaded pipe to CUDA",
+    "9274c5c fix(spandrel): unwrap ModelDescriptor + combined .to(device,dtype)",
+    "de42070 fix(orchestrator): materialize upscaled pod artifact to sink pre-destroy"
+  ],
+  "bugs_found_in_flight": [
+    "att1: pod embed missing kinoforge.core.registry (pkg __init__ import) → split _engine + shim (87024ab)",
+    "att2: SpandrelRuntime fp16 input vs fp32 weights → cast dtype in upscale() (43a1cab)",
+    "att3: pod stalled/crashed mid-inference — logs unavailable pre-fix — motivated kinoforge logs CLI (4d33e65)",
+    "att4-5: model on cpu while metadata said cuda → _ensure_on_gpu moves fresh pipe to cuda (a6345c2)",
+    "att5-6: spandrel ImageModelDescriptor.to(dtype) dropped device → unwrap + combined .to(device,dtype) (9274c5c)",
+    "att6: pod artifact URI (https://pod...) returned to caller as-is; --no-reuse destroy killed pod before caller could download → orchestrator materializes to sink pre-return (de42070)"
+  ]
+}
