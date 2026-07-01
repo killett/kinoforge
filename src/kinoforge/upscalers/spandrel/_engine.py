@@ -152,7 +152,12 @@ class SpandrelEngine(UpscalerEngine):
         base = self._base_url(instance)
 
         source_uri = job.source.uri
-        if source_uri.startswith("file://"):
+        # Accept ``file://`` schemes AND bare absolute paths — the latter is
+        # what LocalStore / LocalOutputSink produce for a stage-1 clip when
+        # chained into stage-2 upscale (multi-stage warm-reuse). Both branches
+        # upload the local mp4 to the pod's ``PUT /upload`` before submitting
+        # the ``/upscale`` job.
+        if source_uri.startswith("file://") or source_uri.startswith("/"):
             local_path = Path(source_uri.removeprefix("file://"))
             source_uri = self._upload_source(instance, local_path)
 
