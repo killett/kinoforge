@@ -6,7 +6,7 @@
       "id": 0,
       "nativeTaskId": "7",
       "subject": "Task 0: Errors + config surface",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** BSACompileFailed/FlashVSRWeightsIncomplete/UnsupportedGpuArch + FlashVSREngineConfig + UpscaleConfig.flashvsr + cfg-time rejects + capability_key threads precision.\n\n**Files:** src/kinoforge/core/errors.py, src/kinoforge/core/config.py, tests/upscalers/flashvsr/test_config.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_config.py -v → 8 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/core/config.py\", \"tests/upscalers/flashvsr/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_config.py -v\", \"acceptanceCriteria\": [\"3 exceptions importable\", \"FlashVSREngineConfig validates\", \"UpscaleConfig.flashvsr wired\", \"capability_key populates\"], \"modelTier\": \"standard\"}\n```"
     },
     {
