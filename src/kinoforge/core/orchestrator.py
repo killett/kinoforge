@@ -1910,27 +1910,27 @@ def generate(
         artifact_key = (
             "upscaled" if (skip_clip_stage and cfg.upscale is not None) else "clip"
         )
-        artifact = state.artifacts[artifact_key]
 
-        # T15/att6 fix: an ``UpscaleStage.run`` result carries the pod's
-        # proxy URL (e.g. https://<pod>-8000.proxy.runpod.net/artifacts/X)
-        # because ``SpandrelEngine.upscale`` doesn't have a sink. If the
-        # caller passed one AND ``single=True`` (--no-reuse — destroy
-        # fires in deploy_session's finally after we return), we MUST
-        # materialize the artifact bytes locally BEFORE returning, or the
-        # URI points at a dead pod. Runs unconditionally on http(s):// so
-        # warm-reuse callers also get a local mp4 they can cat, ffprobe,
-        # etc. without a second round-trip.
+        # T15/att6 + T16/att2 fix: ``UpscaleStage.run`` returns an Artifact
+        # whose ``.uri`` is the pod's proxy URL (e.g.
+        # https://<pod>-8000.proxy.runpod.net/artifacts/X). ``--no-reuse``
+        # destroys the pod in deploy_session's finally after this function
+        # returns, so we MUST materialize the upscaled bytes NOW while the
+        # pod is still alive — otherwise the URI points at a dead pod.
+        # Materialize regardless of which artifact ``artifact_key`` returns
+        # so the sinked mp4 always survives (multi-stage `kinoforge generate`
+        # returns "clip" but still needs the upscaled file on disk).
+        upscaled = state.artifacts.get("upscaled")
         if (
-            artifact_key == "upscaled"
+            upscaled is not None
             and sink is not None
-            and artifact.uri.startswith(("http://", "https://"))
+            and upscaled.uri.startswith(("http://", "https://"))
         ):
             import urllib.request as _urequest  # local — orchestrator stays urllib-free
 
-            _log.info("materializing upscaled artifact from %s", artifact.uri)
+            _log.info("materializing upscaled artifact from %s", upscaled.uri)
             req = _urequest.Request(  # noqa: S310 — pod proxy URL only
-                artifact.uri,
+                upscaled.uri,
                 headers={"User-Agent": "kinoforge-orchestrator/0.1"},
             )
             with _urequest.urlopen(req, timeout=600) as resp:  # noqa: S310
@@ -1950,8 +1950,11 @@ def generate(
                 model=model_tag,
                 kind="upscaled",
             )
-            artifact = dataclasses.replace(artifact, uri=f"file://{local_path}")
+            state.artifacts["upscaled"] = dataclasses.replace(
+                upscaled, uri=f"file://{local_path}"
+            )
 
+        artifact = state.artifacts[artifact_key]
         _log.info("generate completed — artifact uri=%r", artifact.uri)
         owned_instance = None if _caller_supplied_instance else session.instance
         return artifact, owned_instance
