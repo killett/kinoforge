@@ -201,6 +201,14 @@ async def _ensure_on_gpu(name: str) -> LoadedModel:
 
         if entry is None:
             new_pipe = _load_model_to_gpu(name)
+            # SpandrelRuntime + SeedVR2Runtime construct their nn.Module on
+            # CPU by default (weights load via torch.load without device=).
+            # Move to CUDA now so downstream ``pipe.upscale`` inference
+            # actually hits the GPU — without this, the on_device metadata
+            # lies and inference silently runs on CPU (fp16 on CPU is either
+            # unsupported for some ops or catastrophically slow).
+            if hasattr(new_pipe, "to"):
+                new_pipe.to("cuda")
             entry = LoadedModel(
                 name=name,
                 pipe=new_pipe,
