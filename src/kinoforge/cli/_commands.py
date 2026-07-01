@@ -15,6 +15,8 @@ import logging
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -2153,6 +2155,46 @@ def _cmd_stop(args: argparse.Namespace, ctx: SessionContext) -> int:
     except (UnknownAdapter, KeyError) as exc:
         print(f"error stopping {args.id!r}: {exc}", file=sys.stderr)
         return 1
+
+
+_LOG_SIDECAR_PORT = "8001"
+
+
+def _cmd_logs(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Fetch a file served by the pod's port-8001 sidecar http.server.
+
+    Contract (wan_t2v_server bootstrap): ``/tmp/bootstrap.log`` is the
+    server's redirected stdout/stderr; the sidecar serves ``--directory
+    /tmp`` on port 8001 via the RunPod proxy at
+    ``https://{pod}-8001.proxy.runpod.net``. Pass ``--file selfterm.log``
+    (or any other name under /tmp) to fetch alternate captures.
+
+    Writes bytes to stdout by default; ``--out PATH`` writes to disk
+    without decoding so binary artifacts (frame samples, tensor dumps)
+    pass through unchanged.
+    """
+    del ctx  # ledger not consulted — proxy URL is deterministic from id
+    filename = getattr(args, "file", None) or "bootstrap.log"
+    url = f"https://{args.id}-{_LOG_SIDECAR_PORT}.proxy.runpod.net/{filename}"
+    req = urllib.request.Request(  # noqa: S310 — pod proxy URL only
+        url, headers={"User-Agent": "kinoforge-logs/0.1"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
+            body: bytes = resp.read()
+    except urllib.error.HTTPError as exc:
+        print(f"error fetching {url}: HTTP {exc.code} {exc.reason}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"error fetching {url}: {exc}", file=sys.stderr)
+        return 1
+
+    out_path = getattr(args, "out", None)
+    if out_path:
+        Path(out_path).write_bytes(body)
+    else:
+        sys.stdout.write(body.decode("utf-8", errors="replace"))
+    return 0
 
 
 def _cmd_destroy(args: argparse.Namespace, ctx: SessionContext) -> int:
