@@ -21,7 +21,7 @@
       "id": 2,
       "nativeTaskId": "9",
       "subject": "Task 2: FlashVSRRuntime",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Wrap flashvsr.pipeline.StreamingDMDPipeline; satisfy LRU LoadedModel contract.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_runtime.py, tests/.../test_runtime.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_runtime.py -v → 6 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_runtime.py\", \"tests/upscalers/flashvsr/test_runtime.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_runtime.py -v\", \"acceptanceCriteria\": [\"lazy import\", \".flashvsr.mp4 suffix\", \"height/scale raise\", \"prompt logs warning\", \".to delegates\", \"vram_bytes=8GiB\"], \"modelTier\": \"standard\"}\n```"
     },
