@@ -10,6 +10,25 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
+## HIGH-PRIORITY FOLLOW-UP
+
+**FlashVSR blocker — BSA source-compile too slow (2026-07-01).**
+Block-Sparse-Attention `pip install` runs 45+ min under `nvcc -gencode SM80+SM90`
+on RunPod's 4-CPU-core baseline. Every FlashVSR pod cold-boot pays this tax; T8
+live smoke aborted 5× against it (~$0.44 spend, all pods destroyed).
+
+Path forward (pick one):
+1. **Pre-built BSA wheel** hosted somewhere kinoforge's provision script can
+   `curl` (matches spandrel's inline weights-fetch pattern; single-file drop-in).
+2. **Bake BSA into a fork of the RunPod pod image** and pin
+   `compute.image` at that tag (moves the cost to image-build CI, amortized
+   across every pod cold-boot).
+3. **FlashVSR-provided wheels** (upstream may publish; check the OpenImagingLab
+   repo before rolling our own).
+
+Blocks: T8 (F-single) + T9 (F-multi + F-warm) + T10 (SHIPPED flip) of plan
+`docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`.
+
 ## Active workstream
 
 **FlashVSR v1 diffusion upscaler — CODE COMPLETE 2026-07-01, live smoke blocked on BSA compile budget.**
