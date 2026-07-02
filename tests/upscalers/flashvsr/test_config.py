@@ -210,12 +210,14 @@ def test_capability_key_populates_flashvsr_precision() -> None:
 # T7.5.e — BSA wheel-URL cfg surface (source-compile → prebuilt-wheel swap).
 
 
-def test_flashvsr_config_bsa_wheel_url_defaults_to_pinned_hf_url() -> None:
-    """RED: default bsa_wheel_url points at emmykillett/kinoforge-artifacts.
+def test_flashvsr_config_bsa_wheel_url_defaults_to_pinned_gh_release_url() -> None:
+    """RED: default bsa_wheel_url points at killett/kinoforge-artifacts GH release.
 
     Bug caught: default blanked, drifted to a different host, or accidentally
-    reverted to `git+https://github.com/...` — every FlashVSR pod cold-boot
-    regresses to the 30-min BSA source compile (root cause of the T7.5 spend).
+    reverted to `git+https://github.com/mit-han-lab/Block-Sparse-Attention` —
+    every FlashVSR pod cold-boot regresses to the 30-min BSA source compile
+    (root cause of the T7.5 spend). Release-tag substring guard catches a
+    silent CUDA/torch ABI swap under the same URL.
     """
     from urllib.parse import urlparse
 
@@ -225,9 +227,13 @@ def test_flashvsr_config_bsa_wheel_url_defaults_to_pinned_hf_url() -> None:
 
     parsed = urlparse(c.bsa_wheel_url)
     assert parsed.scheme == "https"
-    assert parsed.netloc == "huggingface.co"
-    assert parsed.path.startswith("/emmykillett/kinoforge-artifacts/resolve/main/")
+    assert parsed.netloc == "github.com"
+    assert parsed.path.startswith("/killett/kinoforge-artifacts/releases/download/")
     assert parsed.path.endswith(".whl")
+    assert "bsa-cu128-torch2.8" in parsed.path, (
+        "release tag must encode CUDA + torch pin so a future rebuild "
+        "cannot silently ship a mismatched-ABI wheel under the same URL"
+    )
 
 
 @pytest.mark.parametrize(

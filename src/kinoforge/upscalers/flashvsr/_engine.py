@@ -84,9 +84,9 @@ class FlashVSREngine(UpscalerEngine):
                 "assert torch.cuda.get_device_capability()[0] >= 8, "
                 "f'flashvsr: BSA needs SM80+, got {torch.cuda.get_device_capability()}'"
                 '" || exit 87\n',
-                # HF_TOKEN auth is a no-op for public repos but future-proofs
-                # for a private mirror; -f flag makes HTTP 4xx/5xx fail-fast.
-                f'curl -L -f -o /tmp/bsa.whl -H "Authorization: Bearer $HF_TOKEN" "{wheel_url}"\n',
+                # -L follows GitHub-release redirect to the S3-backed asset;
+                # -f fail-fast on 4xx/5xx (silent HTML error page otherwise).
+                f'curl -L -f -o /tmp/bsa.whl "{wheel_url}"\n',
                 "pip install --no-deps /tmp/bsa.whl\n",
                 "pip install "
                 '"git+https://github.com/OpenImagingLab/FlashVSR@v1.1" '

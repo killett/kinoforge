@@ -12,7 +12,8 @@ from kinoforge.core.scale_target import ScaleTarget
 from kinoforge.upscalers.flashvsr._engine import FlashVSREngine
 
 _DEFAULT_BSA_WHEEL_URL = (
-    "https://huggingface.co/emmykillett/kinoforge-artifacts/resolve/main/"
+    "https://github.com/killett/kinoforge-artifacts/releases/download/"
+    "bsa-cu128-torch2.8-v1/"
     "block_sparse_attn-0.0.1+cu128torch2.8-cp311-cp311-linux_x86_64.whl"
 )
 
@@ -122,7 +123,7 @@ def test_render_provision_threads_bsa_wheel_url_from_cfg() -> None:
     custom = "https://internal.mirror.example/wheels/bsa-cu128-torch2.8.whl"
     rp = e.render_provision(_cfg(bsa_wheel_url=custom))
     assert custom in rp.script
-    assert "emmykillett/kinoforge-artifacts" not in rp.script, (
+    assert "killett/kinoforge-artifacts" not in rp.script, (
         "default URL leaked into script when cfg override was set"
     )
 
