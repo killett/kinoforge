@@ -69,7 +69,7 @@
       "id": 8,
       "nativeTaskId": "15",
       "subject": "Task 8: F-single live spend",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5, 6, 7],
       "description": "**Goal:** Standalone kinoforge upscale on pre-existing 720p Wan clip. Budget ~$0.05 (ceiling $0.15).\n\n**Files:** tests/live/test_flashvsr_live.py (un-xfail test_f_single), tests/live/evidence/2026-07-01_flashvsr_f_single_stdout.txt\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py::test_f_single -v → 1 passed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\", \"tests/live/evidence/2026-07-01_flashvsr_f_single_stdout.txt\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py::test_f_single -v\", \"acceptanceCriteria\": [\"preflight 0\", \"dims 2x\", \"kinoforge list clean\", \"spend<=0.15\"], \"modelTier\": \"standard\", \"liveSpend\": true, \"budgetUsd\": 0.15}\n```"
     },
@@ -77,7 +77,7 @@
       "id": 9,
       "nativeTaskId": "16",
       "subject": "Task 9: F-multi + F-warm live spend",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8],
       "description": "**Goal:** Wan 2.2 → FlashVSR multi-stage smoke + warm-reuse smoke on same pod. Budget ~$0.60 (combined ceiling $1.20; HARD STOP if F-multi alone > $1).\n\n**Files:** tests/live/test_flashvsr_live.py (un-xfail F-multi + F-warm), tests/live/evidence/2026-07-01_flashvsr_f_multi_warm_stdout.txt\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py::test_f_multi tests/live/test_flashvsr_live.py::test_f_warm -v → 2 passed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\", \"tests/live/evidence/2026-07-01_flashvsr_f_multi_warm_stdout.txt\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py::test_f_multi tests/live/test_flashvsr_live.py::test_f_warm -v\", \"acceptanceCriteria\": [\"F-multi 2 artifacts dims 2x\", \"F-warm LRU hit + no BSA recompile\", \"clean list\", \"spend<=1.20\"], \"modelTier\": \"standard\", \"liveSpend\": true, \"budgetUsd\": 1.20}\n```"
     },
@@ -85,7 +85,7 @@
       "id": 10,
       "nativeTaskId": "17",
       "subject": "Task 10: successful-generations.md + PROGRESS.md SHIPPED flip",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** Log new capability axis to successful-generations.md + flip PROGRESS.md Active workstream to SHIPPED.\n\n**Files:** /workspace/successful-generations.md, PROGRESS.md\n\n**Verify:** rg -l flashvsr-wan21-fp16 /workspace/successful-generations.md PROGRESS.md → both listed\n\n```json:metadata\n{\"files\": [\"/workspace/successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"rg -l flashvsr-wan21-fp16 /workspace/successful-generations.md PROGRESS.md\", \"acceptanceCriteria\": [\"new detailed section\", \"PROGRESS.md flipped SHIPPED\", \"both committed together\"], \"modelTier\": \"mechanical\"}\n```"
     }

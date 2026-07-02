@@ -12,7 +12,41 @@ first unchecked task without redoing committed work.
 
 ## Active workstream
 
-**Video upscaling — SHIPPED 2026-06-30 (P1 21/21 + P2 17/17 GREEN; T15 pod `1jofyeyg46m747` spend $0.02; T16 pod `4ju5e4ae9jnx6e` spend $0.25).**
+**FlashVSR v1 diffusion upscaler — CODE COMPLETE 2026-07-01, live smoke blocked on BSA compile budget.**
+
+Plan: `docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md` (P4). Tasks 0-7
+GREEN on the `worktree-video-upscaling` branch (commits `4f75b4e..c30d480`). T8
+(F-single live spend) attempted 5× against RunPod; each attempt surfaced and
+fixed a real infra bug in the provision path:
+
+1. **RunPod GPU allowlist convention** — bare tokens like `"A6000"` fall through
+   to a no-GPU offer (SM80+ guard fires exit 87 immediately). Fixed to full
+   `"NVIDIA RTX A6000"`-style strings (`830c475`).
+2. **Block-Sparse-Attention `compute_120`** — upstream `main` targets Blackwell
+   (SM120) in its `-gencode` flags; the pod's CUDA 12.4/12.8 nvcc rejects
+   `compute_120` as unknown. Fixed by pinning BSA to commit `3453bbb1`
+   (2025-02-13, last pre-Blackwell revision) (`138ad9d`).
+   `TORCH_CUDA_ARCH_LIST` does NOT override BSA — BSA hardcodes its own list.
+3. **`boot_timeout` too tight** — BSA nvcc compile with SM80+SM90 runs
+   25-45 min on 4 CPU cores. Fixed by bumping to 60 min (upscale-only) and
+   90 min (multi-stage) with rationale in cfg header comments (`84ed1be`).
+4. **Test subprocess timeout too tight** — plan's 15 min ceiling is
+   insufficient for cold BSA compile. Fixed to 60/90/30 min for
+   F-single / F-multi / F-warm respectively (`c30d480`).
+
+**OPEN blocker → follow-up work:** BSA source-compile takes 45+ min in the
+current flow, which even the bumped ceilings cannot reliably absorb. Path
+forward requires either (a) a pre-built BSA wheel hosted somewhere the
+provision script can `curl`, (b) baking BSA into a fork of the RunPod pod
+image, or (c) FlashVSR-provided wheels. Total T8 live spend across
+attempts: ~$0.44 (all pods destroyed, ledger clean).
+
+Video upscaling P3 (spandrel per-frame VSR) remains SHIPPED and is the
+working fallback wired in `wan-with-upscale-spandrel.yaml`. The FlashVSR
+code path is fully unit-covered (75 tests across 4 modules) and ready to
+re-fire the moment the BSA wheel blocker is unblocked.
+
+### Video upscaling — SHIPPED 2026-06-30 (P1 21/21 + P2 17/17 GREEN; T15 pod `1jofyeyg46m747` spend $0.02; T16 pod `4ju5e4ae9jnx6e` spend $0.25).
 
 P3 (pod file-upload path) plan `docs/superpowers/plans/2026-06-29-upscale-pod-upload.md` closed end-to-end:
 Tasks 0-5 unit-GREEN (commits `3e07026..1c1f414`); Task 5a spandrel route/body dispatch
