@@ -52,14 +52,14 @@ def _log(msg: str) -> None:
 def _get_release_id(gh_token: str) -> int:
     """Look up the numeric release ID for our pinned tag."""
     url = f"https://api.github.com/repos/{_GH_OWNER}/{_GH_REPO}/releases/tags/{_GH_TAG}"
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310 — https-only, hardcoded api.github.com
         url,
         headers={
             "Authorization": f"Bearer {gh_token}",
             "Accept": "application/vnd.github+json",
         },
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 — https-only, hardcoded api.github.com
         return int(json.load(resp)["id"])
 
 
@@ -69,14 +69,14 @@ def _list_release_assets(gh_token: str, release_id: int) -> list[dict[str, objec
         f"https://api.github.com/repos/{_GH_OWNER}/{_GH_REPO}"
         f"/releases/{release_id}/assets"
     )
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310 — https-only, hardcoded api.github.com
         url,
         headers={
             "Authorization": f"Bearer {gh_token}",
             "Accept": "application/vnd.github+json",
         },
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 — https-only, hardcoded api.github.com
         data: list[dict[str, object]] = json.load(resp)
         return data
 
@@ -89,17 +89,30 @@ def _build_provision_script(release_id: int) -> str:
     && chmod +x /tmp/p.sh && bash /tmp/p.sh"`` — see
     :meth:`RunPodProvider._create_pod`.
 
-    Ends with ``exit`` so the container terminates naturally on success.
-    On failure (any ``set -e`` trap), the container also exits and the
-    self-terminator sweeps the pod on its next tick.
+    Ends with ``sleep infinity`` so the container stays alive after the
+    upload — RunPod destroys pods whose containers exit fast (empirically
+    <1 min), which is why the driver polls the GH release-assets endpoint
+    from outside and destroys the pod itself via ``destroy_instance``
+    once the wheel asset lands.
     """
     upload_url = (
         f"https://uploads.github.com/repos/{_GH_OWNER}/{_GH_REPO}"
         f"/releases/{release_id}/assets"
     )
+    assets_url = (
+        f"https://api.github.com/repos/{_GH_OWNER}/{_GH_REPO}"
+        f"/releases/{release_id}/assets"
+    )
     return f"""set -euo pipefail
 echo "=== BSA WHEEL BUILDER ==="
 echo "pod=$(hostname) date=$(date -Is)"
+# Idempotent-restart safety: if the wheel is already up, skip the build.
+if curl -sf -H "Authorization: Bearer $GH_TOKEN" \\
+     -H "Accept: application/vnd.github+json" \\
+     "{assets_url}" | grep -q '"name".*\\.whl'; then
+  echo "=== WHEEL_ALREADY_UPLOADED — skipping rebuild ==="
+  sleep infinity
+fi
 pip install --quiet packaging ninja
 export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 export MAX_JOBS=4
@@ -127,7 +140,9 @@ curl -sSL --fail-with-body -X POST \\
   "{upload_url}?name=$NAME"
 echo ""
 echo "=== UPLOAD_DONE ==="
-exit 0
+# Keep container alive so RunPod doesn't reap it before the outside
+# driver's next poll picks up the new asset and destroys the pod cleanly.
+sleep infinity
 """
 
 
@@ -245,8 +260,12 @@ def main() -> int:
         return 0
 
     _log("running preflight ...")
-    r = subprocess.run(
-        ["pixi", "run", "preflight"], check=False, capture_output=True, text=True
+    # trusted `pixi` from PATH — kinoforge uses this everywhere
+    r = subprocess.run(  # noqa: S603
+        ["pixi", "run", "preflight"],  # noqa: S607
+        check=False,
+        capture_output=True,
+        text=True,
     )
     if r.returncode != 0:
         raise SystemExit(f"preflight FAILED:\n{r.stdout}\n{r.stderr}")
