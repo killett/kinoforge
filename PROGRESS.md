@@ -12,19 +12,17 @@ first unchecked task without redoing committed work.
 
 ## HIGH-PRIORITY FOLLOW-UP
 
-**FlashVSR blocker — BSA source-compile too slow (2026-07-01).**
-Block-Sparse-Attention `pip install` runs 45+ min under `nvcc -gencode SM80+SM90`
-on RunPod's 4-CPU-core baseline. Every FlashVSR pod cold-boot pays this tax; T8
-live smoke aborted 5× against it (~$0.44 spend, all pods destroyed).
+**FlashVSR blocker — path 1 chosen: prebuild BSA wheel + host on HF Hub (2026-07-01, in flight).**
 
-Path forward (pick one):
-1. **Pre-built BSA wheel** hosted somewhere kinoforge's provision script can
-   `curl` (matches spandrel's inline weights-fetch pattern; single-file drop-in).
-2. **Bake BSA into a fork of the RunPod pod image** and pin
-   `compute.image` at that tag (moves the cost to image-build CI, amortized
-   across every pod cold-boot).
-3. **FlashVSR-provided wheels** (upstream may publish; check the OpenImagingLab
-   repo before rolling our own).
+Recon closed: BSA upstream v0.0.1 GitHub-release wheels cap at torch 2.2 / cu122
+(pod pins torch 2.8 / cu128 — ABI mismatch); v0.0.2 + v0.0.2.post1 shipped
+source-only (zero release assets). Path (3) FlashVSR-upstream wheels: don't
+exist.
+
+Chosen path: build wheel ourselves once (~$1, 20 min on A6000), host on
+`emmykillett/kinoforge-artifacts` HF Hub public repo, rewrite
+`FlashVSREngine.render_provision` to `curl` + `pip install --no-deps`. New
+sub-plan Task 7.5 (8 sub-steps) inserted into P4 plan file.
 
 Blocks: T8 (F-single) + T9 (F-multi + F-warm) + T10 (SHIPPED flip) of plan
 `docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`.
