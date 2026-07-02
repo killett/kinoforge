@@ -12,17 +12,26 @@ first unchecked task without redoing committed work.
 
 ## HIGH-PRIORITY FOLLOW-UP
 
-**FlashVSR blocker — path 1 chosen: prebuild BSA wheel + host on HF Hub (2026-07-01, in flight).**
+**FlashVSR blocker — path 1 chosen: prebuild BSA wheel + host on GitHub release (2026-07-01, in flight).**
 
 Recon closed: BSA upstream v0.0.1 GitHub-release wheels cap at torch 2.2 / cu122
 (pod pins torch 2.8 / cu128 — ABI mismatch); v0.0.2 + v0.0.2.post1 shipped
 source-only (zero release assets). Path (3) FlashVSR-upstream wheels: don't
 exist.
 
-Chosen path: build wheel ourselves once (~$1, 20 min on A6000), host on
-`emmykillett/kinoforge-artifacts` HF Hub public repo, rewrite
-`FlashVSREngine.render_provision` to `curl` + `pip install --no-deps`. New
-sub-plan Task 7.5 (8 sub-steps) inserted into P4 plan file.
+Chosen path: build wheel ourselves once (~$1, 20 min on A6000), publish as
+GitHub-release asset on `killett/kinoforge-artifacts` under tag
+`bsa-cu128-torch2.8-v1` (tag encodes the ABI pin — future rebuild bumps land
+under a fresh tag to prevent silent drift), rewrite
+`FlashVSREngine.render_provision` to `curl` + `pip install --no-deps`.
+
+Host pivot: originally HF Hub; `.env` HF token is read-scoped and cannot
+`create_repo`, so pivoted to GH release under `killett` (already has `repo`
+scope via `gh`).
+
+Sub-plan Task 7.5 (8 sub-steps) inserted into P4 plan file. T7.5.d/e/f/g/h
+GREEN and committed (`866fe1e`); T7.5.a/b/c pending (repo scaffold + live
+build spend + upload).
 
 Blocks: T8 (F-single) + T9 (F-multi + F-warm) + T10 (SHIPPED flip) of plan
 `docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`.

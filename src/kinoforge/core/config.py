@@ -541,7 +541,8 @@ _FLASHVSR_WINDOW_MAX = 64
 _FLASHVSR_VALID_SCHEMES = ("hf:", "http://", "https://", "civitai:", "civarchive:")
 _FLASHVSR_BSA_WHEEL_SCHEMES = ("hf:", "http://", "https://")
 _FLASHVSR_DEFAULT_BSA_WHEEL_URL = (
-    "https://huggingface.co/emmykillett/kinoforge-artifacts/resolve/main/"
+    "https://github.com/killett/kinoforge-artifacts/releases/download/"
+    "bsa-cu128-torch2.8-v1/"
     "block_sparse_attn-0.0.1+cu128torch2.8-cp311-cp311-linux_x86_64.whl"
 )
 
