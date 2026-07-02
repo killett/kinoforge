@@ -14,7 +14,7 @@ from kinoforge.upscalers.flashvsr._engine import FlashVSREngine
 _DEFAULT_BSA_WHEEL_URL = (
     "https://github.com/killett/kinoforge-artifacts/releases/download/"
     "bsa-cu128-torch2.8-v1/"
-    "block_sparse_attn-0.0.1+cu128torch2.8-cp311-cp311-linux_x86_64.whl"
+    "block_sparse_attn-0.0.1-cp311-cp311-linux_x86_64.whl"
 )
 
 
