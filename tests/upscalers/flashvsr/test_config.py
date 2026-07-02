@@ -205,3 +205,78 @@ def test_capability_key_populates_flashvsr_precision() -> None:
     key = cfg.capability_key()
     assert key.upscaler == "flashvsr"
     assert key.upscaler_precision == "fp32"
+
+
+# T7.5.e — BSA wheel-URL cfg surface (source-compile → prebuilt-wheel swap).
+
+
+def test_flashvsr_config_bsa_wheel_url_defaults_to_pinned_hf_url() -> None:
+    """RED: default bsa_wheel_url points at emmykillett/kinoforge-artifacts.
+
+    Bug caught: default blanked, drifted to a different host, or accidentally
+    reverted to `git+https://github.com/...` — every FlashVSR pod cold-boot
+    regresses to the 30-min BSA source compile (root cause of the T7.5 spend).
+    """
+    from urllib.parse import urlparse
+
+    from kinoforge.core.config import FlashVSREngineConfig
+
+    c = FlashVSREngineConfig(weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1")
+
+    parsed = urlparse(c.bsa_wheel_url)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "huggingface.co"
+    assert parsed.path.startswith("/emmykillett/kinoforge-artifacts/resolve/main/")
+    assert parsed.path.endswith(".whl")
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "git+https://github.com/mit-han-lab/Block-Sparse-Attention@3453bbb1",
+        "file:///tmp/bsa.whl",
+        "",
+        "bare-string-no-scheme",
+        "ssh://user@host/path.whl",
+        "s3://bucket/bsa.whl",
+        "gs://bucket/bsa.whl",
+    ],
+)
+def test_flashvsr_config_rejects_bad_bsa_wheel_url_scheme(bad_url: str) -> None:
+    """RED: unknown / non-fetchable schemes fail cfg-time.
+
+    Bug caught: `bsa_wheel_url: git+https://...` silently accepted → provision
+    script `curl`s the git URL, gets HTML back, `pip install` chokes with a
+    cryptic error 25 min into the cold-boot instead of failing at cfg-load.
+    """
+    from kinoforge.core.config import FlashVSREngineConfig
+
+    with pytest.raises(ConfigError, match="bsa_wheel_url"):
+        FlashVSREngineConfig(
+            weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1",
+            bsa_wheel_url=bad_url,
+        )
+
+
+@pytest.mark.parametrize(
+    "good_url",
+    [
+        "https://huggingface.co/emmykillett/kinoforge-artifacts/resolve/main/bsa.whl",
+        "http://internal.example/bsa.whl",
+        "hf:emmykillett/kinoforge-artifacts/bsa.whl",
+    ],
+)
+def test_flashvsr_config_accepts_valid_bsa_wheel_url_schemes(good_url: str) -> None:
+    """RED: allowlist schemes (https, http, hf:) round-trip cleanly.
+
+    Bug caught: overly-tight validator (e.g., regex pinned to
+    `^https://huggingface\\.co/`) rejects a CI-side fallback URL or a
+    GitHub-release asset URL — kills the fallback path.
+    """
+    from kinoforge.core.config import FlashVSREngineConfig
+
+    c = FlashVSREngineConfig(
+        weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1",
+        bsa_wheel_url=good_url,
+    )
+    assert c.bsa_wheel_url == good_url

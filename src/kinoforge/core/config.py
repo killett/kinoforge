@@ -539,6 +539,11 @@ _FLASHVSR_VALID_TILE_SIZES = (0, 256, 384, 512, 768)
 _FLASHVSR_WINDOW_MIN = 8
 _FLASHVSR_WINDOW_MAX = 64
 _FLASHVSR_VALID_SCHEMES = ("hf:", "http://", "https://", "civitai:", "civarchive:")
+_FLASHVSR_BSA_WHEEL_SCHEMES = ("hf:", "http://", "https://")
+_FLASHVSR_DEFAULT_BSA_WHEEL_URL = (
+    "https://huggingface.co/emmykillett/kinoforge-artifacts/resolve/main/"
+    "block_sparse_attn-0.0.1+cu128torch2.8-cp311-cp311-linux_x86_64.whl"
+)
 
 
 class FlashVSREngineConfig(BaseModel):
@@ -558,6 +563,14 @@ class FlashVSREngineConfig(BaseModel):
             block-size grid (mis-aligned values crash or produce border seams).
         long_video_mode: When ``True``, enables LCSA + TCDecoder — needs the
             4-file bundle. When ``False``, the 2-file lite bundle is enough.
+        bsa_wheel_url: Prebuilt Block-Sparse-Attention wheel URL, fetched by
+            provision via ``curl`` + ``pip install --no-deps``. Default is the
+            kinoforge-hosted HF Hub wheel built at BSA commit ``3453bbb1``
+            against ``runpod/pytorch:2.8.0-py3.11-cuda12.8.1`` — see T7.5 in
+            ``docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md``.
+            Allowed schemes: ``hf:``, ``http://``, ``https://``. ``git+`` and
+            ``file://`` are rejected at cfg-time to prevent a 25-min-late pip
+            error on a scheme ``curl`` cannot handle.
     """
 
     weights_bundle: str
@@ -565,6 +578,7 @@ class FlashVSREngineConfig(BaseModel):
     window_size: int = 24
     tile_size: int = 0
     long_video_mode: bool = False
+    bsa_wheel_url: str = _FLASHVSR_DEFAULT_BSA_WHEEL_URL
 
     @field_validator("weights_bundle")
     @classmethod
@@ -573,6 +587,16 @@ class FlashVSREngineConfig(BaseModel):
             raise ConfigError(
                 f"flashvsr weights_bundle {v!r}: unsupported scheme "
                 f"(supported: {_FLASHVSR_VALID_SCHEMES})"
+            )
+        return v
+
+    @field_validator("bsa_wheel_url")
+    @classmethod
+    def _validate_bsa_wheel_url(cls, v: str) -> str:
+        if not any(v.startswith(s) for s in _FLASHVSR_BSA_WHEEL_SCHEMES):
+            raise ConfigError(
+                f"flashvsr bsa_wheel_url {v!r}: unsupported scheme "
+                f"(supported: {_FLASHVSR_BSA_WHEEL_SCHEMES})"
             )
         return v
 
