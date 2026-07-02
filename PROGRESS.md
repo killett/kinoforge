@@ -12,29 +12,31 @@ first unchecked task without redoing committed work.
 
 ## HIGH-PRIORITY FOLLOW-UP
 
-**FlashVSR blocker — path 1 chosen: prebuild BSA wheel + host on GitHub release (2026-07-01, in flight).**
+**FlashVSR T7.5 SHIPPED 2026-07-02 — BSA wheel prebuild + GH release swap complete.**
 
-Recon closed: BSA upstream v0.0.1 GitHub-release wheels cap at torch 2.2 / cu122
-(pod pins torch 2.8 / cu128 — ABI mismatch); v0.0.2 + v0.0.2.post1 shipped
-source-only (zero release assets). Path (3) FlashVSR-upstream wheels: don't
-exist.
+Wheel live at
+`https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu128-torch2.8-v1/block_sparse_attn-0.0.1-cp311-cp311-linux_x86_64.whl`
+(561 MB, SHA256 `1a0ecfe8d43c1799c43f455e45d0a584f0c0a3d14f243011ca9c2e10df75a6e6`).
+`FlashVSREngine.render_provision` now `curl`s + `pip install --no-deps` on
+every cold-boot; source-compile path deleted. Amortized 25-45 min BSA nvcc
+compile → ~60s wheel install per pod cold-boot.
 
-Chosen path: build wheel ourselves once (~$1, 20 min on A6000), publish as
-GitHub-release asset on `killett/kinoforge-artifacts` under tag
-`bsa-cu128-torch2.8-v1` (tag encodes the ABI pin — future rebuild bumps land
-under a fresh tag to prevent silent drift), rewrite
-`FlashVSREngine.render_provision` to `curl` + `pip install --no-deps`.
+Total T7.5 live spend: ~$0.28 across two build attempts (first pod
+`ykpykanhfirt3m` reaped by RunPod in <60s because `exit 0` triggered
+container-death teardown; fixed by `sleep infinity` post-upload + driver
+polls GH assets externally then destroys via `destroy_instance`; second
+build `vne4fp3c8gtepl` ran 49 min, wheel uploaded clean, pod destroyed
+via `destroy_instance`). All pods now destroyed; ledger clean.
 
-Host pivot: originally HF Hub; `.env` HF token is read-scoped and cannot
-`create_repo`, so pivoted to GH release under `killett` (already has `repo`
-scope via `gh`).
+Commits: `a8cc74c` (plan-section RED) → `866fe1e` (engine + cfg + timeouts
+RED+GREEN) → `d21fdbf` (URL swap HF→GH) → `3bc258d` (build tool) →
+`df66546` (sleep-infinity + idempotent-restart fixes) → `fc04846` (live
+build + URL final).
 
-Sub-plan Task 7.5 (8 sub-steps) inserted into P4 plan file. T7.5.d/e/f/g/h
-GREEN and committed (`866fe1e`); T7.5.a/b/c pending (repo scaffold + live
-build spend + upload).
-
-Blocks: T8 (F-single) + T9 (F-multi + F-warm) + T10 (SHIPPED flip) of plan
-`docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`.
+Unblocks: T8 (F-single) + T9 (F-multi + F-warm) + T10 (SHIPPED flip) of
+plan `docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`.
+T8 is now the first-in-queue: un-xfail `test_f_single`, ~$0.10 expected
+spend, ~8min happy-path.
 
 ## Active workstream
 
