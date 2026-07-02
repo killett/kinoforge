@@ -119,7 +119,9 @@ def test_f_single(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=True,
-        timeout=15 * 60,
+        # 60m: BSA nvcc compile (SM80+SM90) runs ~25-30min on 4 CPU cores;
+        # FlashVSR install ~2min; weights fetch ~3min; upscale ~2min.
+        timeout=60 * 60,
     )
     assert "flashvsr-wan21-fp16" in r.stdout
     outs = sorted(Path("/workspace/output").glob("*_upscaled_flashvsr_*.mp4"))
@@ -155,7 +157,9 @@ def test_f_multi(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=True,
-        timeout=45 * 60,
+        # 90m: multi-stage adds Wan 2.2 A14B download (~15-20min) on top
+        # of the BSA compile budget from F-single.
+        timeout=90 * 60,
     )
     assert "wan-T2V-done" in r.stdout or "diffusers" in r.stdout
     assert "flashvsr-wan21-fp16" in r.stdout
@@ -190,7 +194,9 @@ def test_f_warm(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=True,
-        timeout=15 * 60,
+        # 30m: warm reuse skips BSA compile + FlashVSR install + weights.
+        # Only Wan T2V inference + FlashVSR upscale + sink.
+        timeout=30 * 60,
     )
     # LRU hit on the same pod that F-multi warmed; no cold model load.
     assert "LRU hit" in r.stdout or "warm reuse" in r.stdout
