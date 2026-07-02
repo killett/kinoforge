@@ -78,9 +78,13 @@ compute:
     job_timeout: 15m
     time_buffer: 3m
     max_lifetime: 180m
-    # 60m absorbs the ~25-30min BSA nvcc compile (see upscale-only cfg
-    # header). Wan 2.2 A14B download adds another ~15-20min on top.
-    boot_timeout: 90m
+    # BSA source-compile eliminated by T7.5 (2026-07-01) — prebuilt wheel
+    # curl'd from HF Hub. Cold-boot budget: BSA wheel install ~60s +
+    # FlashVSR install ~2min + FlashVSR weights ~3min + Wan 2.2 A14B
+    # weights ~15-20min. 20m for upscale-only headroom + Wan overhead
+    # already covered by the base cfg's model-load; 25m gives 2x cushion
+    # over ~13min happy path.
+    boot_timeout: 25m
     budget: 5.0
     heartbeat_interval_s: 30
 

@@ -65,10 +65,18 @@ class FlashVSREngine(UpscalerEngine):
             return ""
 
     def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
-        """Emit BSA compile + FlashVSR install + weights fetch + hermetic flip."""
+        """Emit SM80+ guard + BSA-wheel curl + FlashVSR install + weights fetch.
+
+        BSA install swapped from ``pip install git+...`` (25-45 min nvcc source
+        compile on 4-CPU pods) to a ``curl`` + ``pip install --no-deps`` of a
+        prebuilt wheel we host on HF Hub — see T7.5 in
+        ``docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md``.
+        Wheel URL is cfg-driven via ``FlashVSREngineConfig.bsa_wheel_url``.
+        """
         block = cast(dict[str, Any], cast(dict[str, Any], cfg["upscale"])["flashvsr"])
         bundle = str(block["weights_bundle"])
         long_video = "1" if block.get("long_video_mode") else "0"
+        wheel_url = str(block["bsa_wheel_url"])
         script = "".join(
             [
                 "set -euo pipefail\n",
@@ -76,23 +84,10 @@ class FlashVSREngine(UpscalerEngine):
                 "assert torch.cuda.get_device_capability()[0] >= 8, "
                 "f'flashvsr: BSA needs SM80+, got {torch.cuda.get_device_capability()}'"
                 '" || exit 87\n',
-                "export TORCH_EXTENSIONS_DIR=/workspace/.cache/bsa\n",
-                "export MAX_JOBS=4\n",
-                'mkdir -p "$TORCH_EXTENSIONS_DIR"\n',
-                # Pin BSA to commit 3453bbb1 (Feb 2025) — the last version
-                # before the Blackwell (compute_100/110/120) `-gencode` flags
-                # landed in setup.py. Later commits (incl. main and the
-                # 2025-12 v0.0.2 tag) unconditionally add compute_120 which
-                # the pod's CUDA 12.4/12.8 nvcc rejects with
-                # `nvcc fatal : Unsupported gpu architecture 'compute_120'`.
-                # TORCH_CUDA_ARCH_LIST does NOT override — BSA's setup.py
-                # ignores it and hardcodes its own -gencode list.
-                # T8 attempts #2 + #3 evidence (2026-07-01, both failed here).
-                # If Blackwell targets are needed later, bump the pod base
-                # image to CUDA 12.9+ and re-pin BSA to main.
-                "pip install "
-                '"git+https://github.com/mit-han-lab/Block-Sparse-Attention@3453bbb1" '
-                "--no-build-isolation --no-cache-dir\n",
+                # HF_TOKEN auth is a no-op for public repos but future-proofs
+                # for a private mirror; -f flag makes HTTP 4xx/5xx fail-fast.
+                f'curl -L -f -o /tmp/bsa.whl -H "Authorization: Bearer $HF_TOKEN" "{wheel_url}"\n',
+                "pip install --no-deps /tmp/bsa.whl\n",
                 "pip install "
                 '"git+https://github.com/OpenImagingLab/FlashVSR@v1.1" '
                 '"imageio[ffmpeg]>=2.34"\n',

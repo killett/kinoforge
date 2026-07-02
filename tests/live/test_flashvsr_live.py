@@ -119,9 +119,10 @@ def test_f_single(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=True,
-        # 60m: BSA nvcc compile (SM80+SM90) runs ~25-30min on 4 CPU cores;
-        # FlashVSR install ~2min; weights fetch ~3min; upscale ~2min.
-        timeout=60 * 60,
+        # 15m: BSA wheel curl+install ~60s (was 25-30min source compile
+        # pre-T7.5); FlashVSR install ~2min; weights fetch ~3min;
+        # upscale ~2min. ~8min happy path with 2x cushion.
+        timeout=15 * 60,
     )
     assert "flashvsr-wan21-fp16" in r.stdout
     outs = sorted(Path("/workspace/output").glob("*_upscaled_flashvsr_*.mp4"))
@@ -157,9 +158,9 @@ def test_f_multi(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=True,
-        # 90m: multi-stage adds Wan 2.2 A14B download (~15-20min) on top
-        # of the BSA compile budget from F-single.
-        timeout=90 * 60,
+        # 25m: F-single boot budget (~8min) + Wan 2.2 A14B download
+        # (~15-20min). BSA source compile gone post-T7.5.
+        timeout=25 * 60,
     )
     assert "wan-T2V-done" in r.stdout or "diffusers" in r.stdout
     assert "flashvsr-wan21-fp16" in r.stdout
@@ -170,12 +171,11 @@ def test_f_multi(tmp_path: Path) -> None:
 
 
 def test_f_warm(tmp_path: Path) -> None:
-    """F-warm: second kinoforge generate with warm-reuse; no BSA recompile.
+    """F-warm: second kinoforge generate with warm-reuse; no BSA reinstall.
 
-    Bug caught: TORCH_EXTENSIONS_DIR points at a non-persistent path
-    (e.g. $HOME instead of /workspace/.cache/bsa) → BSA nvcc-compiles
-    again on second call, adding a 10-min tax that would otherwise
-    mask a genuine warm-reuse regression.
+    Bug caught: warm-reuse tears down the Python env or re-runs the
+    provision script → BSA wheel curl+install fires twice (a ~60s tax
+    that would mask a genuine LRU-hit regression).
     """
     _require_live_spend_env()
     prompt = _STANDARD_PROMPT_PATH.read_text().strip() + " variant B"
@@ -194,9 +194,9 @@ def test_f_warm(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         check=True,
-        # 30m: warm reuse skips BSA compile + FlashVSR install + weights.
-        # Only Wan T2V inference + FlashVSR upscale + sink.
-        timeout=30 * 60,
+        # 15m: warm reuse skips all install steps. Only Wan T2V inference
+        # + FlashVSR upscale + sink.
+        timeout=15 * 60,
     )
     # LRU hit on the same pod that F-multi warmed; no cold model load.
     assert "LRU hit" in r.stdout or "warm reuse" in r.stdout

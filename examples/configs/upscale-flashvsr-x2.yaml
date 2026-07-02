@@ -76,13 +76,12 @@ compute:
       - "NVIDIA GeForce RTX 4090"
       - "NVIDIA A100 80GB PCIe"
   lifecycle:
-    # BSA nvcc compile with -gencode SM80+SM90 runs ~25-30min on 4 CPU cores
-    # (MAX_JOBS=4 pinned in provision to avoid OOM). FlashVSR pip install
-    # ~2min; weights pull ~3min for the 2-file bundle. T8 attempt #4
-    # (2026-07-01) hit the 30m ceiling mid-compile and RunPod terminated
-    # the pod (KeyError: no RunPod pod found in kinoforge's wait_for_ready
-    # poll). 60m gives ~2x headroom.
-    boot_timeout: 60m
+    # BSA source-compile eliminated by T7.5 (2026-07-01): render_provision
+    # now `curl`s a prebuilt wheel from HF Hub instead of `pip install
+    # git+...`. Cold-boot budget now: BSA wheel fetch+install ~60s;
+    # FlashVSR pip install ~2min; weights pull ~3min for the 2-file bundle.
+    # 15m gives ~2x headroom over the ~6-8min happy path.
+    boot_timeout: 15m
     idle_timeout: 30m
     job_timeout: 15m
     time_buffer: 3m

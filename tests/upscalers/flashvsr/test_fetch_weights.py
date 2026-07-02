@@ -135,18 +135,29 @@ def test_module_does_not_import_kinoforge_core_registry() -> None:
 
     Bug caught: accidental `from kinoforge.core.registry import ...` reintroduces
     the P2-era embed-tree bloat that busted the 64 KB pod env-var ceiling.
+
+    Simulates the pod environment (where `kinoforge.core.registry` is NOT
+    embedded) via a `sys.meta_path` blocker. The package `__init__.py`
+    self-register call catches its own ImportError; if `_fetch_weights` itself
+    grew a hard dependency on registry, this test would surface it.
     """
     import subprocess
     import sys
 
+    probe = (
+        "import importlib.abc, importlib.machinery, sys\n"
+        "class _BlockRegistry(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, name, path, target=None):\n"
+        "        if name == 'kinoforge.core.registry':\n"
+        "            raise ImportError('registry blocked (pod-safe probe)')\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, _BlockRegistry())\n"
+        "import kinoforge.upscalers.flashvsr._fetch_weights  # noqa: F401\n"
+        "assert 'kinoforge.core.registry' not in sys.modules, (\n"
+        "    'registry leaked into pod-safe module')\n"
+    )
     result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "-c",
-            "import sys; import kinoforge.upscalers.flashvsr._fetch_weights; "
-            "assert 'kinoforge.core.registry' not in sys.modules, "
-            "'registry leaked into pod-safe module'",
-        ],
+        [sys.executable, "-c", probe],
         check=False,
         capture_output=True,
         text=True,
