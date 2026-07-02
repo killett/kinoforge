@@ -76,10 +76,13 @@ compute:
       - "NVIDIA GeForce RTX 4090"
       - "NVIDIA A100 80GB PCIe"
   lifecycle:
-    # BSA nvcc compile is ~2min on 16 cores; FlashVSR pip install ~2min;
-    # weights pull ~3min for the 2-file bundle. Total cold-boot budget
-    # ~10-15min — bumped to 30m to absorb slow PyPI / HF-CDN days.
-    boot_timeout: 30m
+    # BSA nvcc compile with -gencode SM80+SM90 runs ~25-30min on 4 CPU cores
+    # (MAX_JOBS=4 pinned in provision to avoid OOM). FlashVSR pip install
+    # ~2min; weights pull ~3min for the 2-file bundle. T8 attempt #4
+    # (2026-07-01) hit the 30m ceiling mid-compile and RunPod terminated
+    # the pod (KeyError: no RunPod pod found in kinoforge's wait_for_ready
+    # poll). 60m gives ~2x headroom.
+    boot_timeout: 60m
     idle_timeout: 30m
     job_timeout: 15m
     time_buffer: 3m

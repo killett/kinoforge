@@ -78,7 +78,9 @@ compute:
     job_timeout: 15m
     time_buffer: 3m
     max_lifetime: 180m
-    boot_timeout: 60m
+    # 60m absorbs the ~25-30min BSA nvcc compile (see upscale-only cfg
+    # header). Wan 2.2 A14B download adds another ~15-20min on top.
+    boot_timeout: 90m
     budget: 5.0
     heartbeat_interval_s: 30
 
