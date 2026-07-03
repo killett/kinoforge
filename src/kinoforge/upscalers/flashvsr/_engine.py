@@ -101,9 +101,24 @@ class FlashVSREngine(UpscalerEngine):
                 # is a deliberate act — never let it drift with upstream main.
                 # b527c6f2 = 2025-12-23, model bundle JunhaoZhuang/FlashVSR-v1.1
                 # matches the pipeline surface at this commit.
-                "pip install "
+                #
+                # `--no-deps` because upstream's requirements.txt pins
+                # `torch==2.6.0+cu124` (local +cu124 suffix), which pip
+                # cannot resolve from PyPI. Runtime deps FlashVSR actually
+                # needs at inference time are installed on the next line;
+                # torch itself is already installed via the cfg's `pip:` block.
+                "pip install --no-deps "
                 '"git+https://github.com/OpenImagingLab/FlashVSR'
-                '@b527c6f285fb30df530f5febc8b45764a789c961" '
+                '@b527c6f285fb30df530f5febc8b45764a789c961"\n',
+                # Runtime deps for diffsynth (FlashVSR's inner package):
+                # modelscope for `from modelscope import snapshot_download`
+                # at diffsynth top level; safetensors, transformers,
+                # accelerate, peft, einops, ftfy, sentencepiece for
+                # ModelManager + WanPipeline surfaces; imageio for the
+                # runtime video read/write.
+                'pip install "modelscope" "safetensors>=0.4" '
+                '"transformers>=4.45" "accelerate>=1.0" "peft>=0.15" '
+                '"einops>=0.8" "ftfy>=6" "sentencepiece>=0.2" '
                 '"imageio[ffmpeg]>=2.34"\n',
                 "python -m kinoforge.upscalers.flashvsr._fetch_weights "
                 f"--bundle {bundle} --dest /workspace/models/flashvsr "
