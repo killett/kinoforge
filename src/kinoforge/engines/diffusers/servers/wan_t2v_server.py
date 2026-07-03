@@ -1851,8 +1851,8 @@ async def upload_handler(request: Request) -> dict[str, Any]:
     hasher = hashlib.sha256()
     written = 0
     try:
-        # kinoforge:public-write — upload spool executes pod-side, not on the
-        # operator's host (same rationale as AC7's string-literal exclusion).
+        # kinoforge:public-write — upload spool executes pod-side (_UPLOAD_DIR
+        # is pod-local /tmp scratch), never on the operator's host.
         with os.fdopen(fd, "wb") as fobj:  # kinoforge:public-write
             async for chunk in request.stream():
                 if not chunk:
