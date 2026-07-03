@@ -109,11 +109,34 @@ spend, ~8min happy-path.
 
 ## Active workstream
 
-**FlashVSR v1 diffusion upscaler — CODE COMPLETE 2026-07-01, live smoke blocked on BSA compile budget.**
+**FlashVSR v1 diffusion upscaler — T7.6.2 review-fixes LANDED 2026-07-02; T8 unblocked.**
 
 Plan: `docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md` (P4). Tasks 0-7
-GREEN on the `worktree-video-upscaling` branch (commits `4f75b4e..c30d480`). T8
-(F-single live spend) attempted 5× against RunPod; each attempt surfaced and
+GREEN on the `worktree-video-upscaling` branch (commits `4f75b4e..9226d4b`).
+
+T7.6.2 spec-review fixes committed `9226d4b` — all 6 must-fix/should-fix items addressed:
+- **Bug #1 (.to() LRU hook):** replaced `load_models_to_device(device_str)` (iterates
+  char-by-char) with `pipe.to(device)` (correct nn.Module device-move API).
+- **Bug #2 (no_grad):** wrapped `pipe()` call in `torch.no_grad()`; test asserts
+  `is_grad_enabled()` is False during the call and context is cleanly exited.
+- **Bug #3 (tensor denorm):** applied `(x+1)*127.5 + clip` before `astype(uint8)`;
+  stub returns float32 in `[-1,1]` and test asserts output is all-zero uint8.
+- **Issue #4 (Causal_LQ4x_Proj):** renamed `in_channels`/`out_channels` →
+  `in_dim`/`out_dim`/`layer_num` (upstream API); added `.to()` and
+  `.load_state_dict()` methods; wired injection + conditional `LQ_proj_in.ckpt`
+  load into `__init__`.
+- **Issue #5 (lifecycle order):** asserts `from_model_manager < to <
+  enable_vram_management < init_cross_kv < load_models_to_device`.
+- **Issue #6 (VAE teardown):** `pipe.vae.model.encoder = None` and `conv1 = None`;
+  test asserts both are `None` post-init.
+
+71/71 flashvsr tests pass. lint/typecheck/pre-commit clean. 1 pre-existing failure
+(`test_scan_surfaces_index_row_when_ledger_empty`) confirmed on prior commit — not
+introduced by these changes.
+
+**Next action: T8 — un-xfail `test_f_single`, fire live smoke (~$0.10, ~8 min).**
+
+T8 (F-single live spend) previously attempted 5× against RunPod; each attempt surfaced and
 fixed a real infra bug in the provision path:
 
 1. **RunPod GPU allowlist convention** — bare tokens like `"A6000"` fall through
