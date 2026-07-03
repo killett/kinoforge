@@ -63,7 +63,7 @@ def test_render_provision_step_order() -> None:
 
     guard_pos = script.find("torch.cuda.get_device_capability")
     curl_pos = script.find("curl -L -f")
-    bsa_install_pos = script.find("pip install --no-deps /tmp/bsa.whl")
+    bsa_install_pos = script.find("pip install --no-deps /tmp/block_sparse_attn")
     fvsr_pos = script.find("OpenImagingLab/FlashVSR")
     fetch_pos = script.find("_fetch_weights")
     offline_pos = script.find("HF_HUB_OFFLINE=1")
@@ -92,13 +92,27 @@ def test_render_provision_uses_prebuilt_wheel_not_git_source() -> None:
     place. Positive-check + explicit blacklist together — the positive-only
     check would still pass if someone left the git-install line in as a
     "fallback".
+
+    Wheel filename is preserved on download (rather than renamed to
+    ``bsa.whl``) because ``pip install`` parses distribution metadata from
+    the filename and rejects a filename that lacks the name-version-
+    pyver-abi-platform tags with ``ERROR: bsa.whl is not a valid wheel
+    filename.``.
     """
     e = FlashVSREngine()
     rp = e.render_provision(_cfg())
     script = rp.script
 
-    assert "curl -L -f -o /tmp/bsa.whl" in script
-    assert "pip install --no-deps /tmp/bsa.whl" in script
+    # Positive check: curl writes to a path containing the real wheel name
+    # and pip install uses that same path (no rename to 'bsa.whl').
+    assert 'curl -L -f -o "/tmp/block_sparse_attn' in script
+    assert "pip install --no-deps /tmp/block_sparse_attn" in script
+
+    # Negative check: no reference to the pip-invalid 'bsa.whl' short name.
+    assert "/tmp/bsa.whl" not in script, (
+        "pip rejects wheels whose filename lacks metadata tags — must "
+        "preserve the remote wheel name"
+    )
 
     forbidden = [
         "git+https://github.com/mit-han-lab/Block-Sparse-Attention",

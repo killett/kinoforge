@@ -77,6 +77,11 @@ class FlashVSREngine(UpscalerEngine):
         bundle = str(block["weights_bundle"])
         long_video = "1" if block.get("long_video_mode") else "0"
         wheel_url = str(block["bsa_wheel_url"])
+        # pip parses distribution metadata (name, version, python tag, ABI,
+        # platform) FROM the wheel filename — a generic 'bsa.whl' rename
+        # fails immediately with "not a valid wheel filename". Preserve the
+        # remote filename verbatim.
+        wheel_name = wheel_url.rsplit("/", 1)[-1]
         script = "".join(
             [
                 "set -euo pipefail\n",
@@ -86,8 +91,8 @@ class FlashVSREngine(UpscalerEngine):
                 '" || exit 87\n',
                 # -L follows GitHub-release redirect to the S3-backed asset;
                 # -f fail-fast on 4xx/5xx (silent HTML error page otherwise).
-                f'curl -L -f -o /tmp/bsa.whl "{wheel_url}"\n',
-                "pip install --no-deps /tmp/bsa.whl\n",
+                f'curl -L -f -o "/tmp/{wheel_name}" "{wheel_url}"\n',
+                f"pip install --no-deps /tmp/{wheel_name}\n",
                 "pip install "
                 '"git+https://github.com/OpenImagingLab/FlashVSR@v1.1" '
                 '"imageio[ffmpeg]>=2.34"\n',
