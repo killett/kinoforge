@@ -12,7 +12,75 @@ first unchecked task without redoing committed work.
 
 ## HIGH-PRIORITY FOLLOW-UP
 
-**FlashVSR T#8 BLOCKED 2026-07-02 — runtime API rewrite required.**
+**FlashVSR T7.6 sub-plan — CODE COMPLETE 2026-07-03, live smoke PARTIAL.**
+
+Sub-plan: `docs/superpowers/plans/2026-07-02-flashvsr-runtime-rewrite.md`
+(7 tasks, IDs 1-7). Tasks 0-5 SHIPPED GREEN. Task 6 (live F-single smoke)
+resolved 15+ discrete infrastructure bugs; pipeline now boots + accepts
+/upscale requests + runs inference on A100 80GB, but the last observed
+error is a vague `expected bytes, NoneType found` at pipe evaluation
+(19th live smoke, pod destroyed via --no-reuse — no server log).
+
+**Cumulative live spend across Task 6 debugging: ~$1.20** (19 pods, all
+destroyed post-run; ledger clean). Every failure surfaced and fixed a
+distinct on-pod infra bug — see commit history `50beca2..8b6ae44`.
+
+### Task 6 debugging chronology (bug per smoke)
+
+| # | Bug (server-side) | Fix commit |
+|---|---|---|
+| 5 | HTTP 422 — server `FlashVSRParams.precision: Literal["fp16","fp32"]` refused `bfloat16` from cfg | `f24a14e` |
+| 6 | `ModuleNotFoundError: modelscope` — diffsynth top-level import | `41f1688` |
+| 7 | BSA `undefined symbol _ZN3c105ErrorC2...` — torch 2.6 vs 2.8 ABI mismatch | `65136f9` |
+| 8 | BSA `undefined symbol _ZN3c104cuda9SetDeviceEa` — cu126 vs cu128 ABI | `e217681`/`e0da478` |
+| 9 | YAML parse — `pytorch_extra_index_url` mis-indented in cfg | `4469d3f` |
+| 10 | `DiffusersEngineConfig` schema stripped `image` + `pytorch_extra_index_url` fields | `db237d3` |
+| 11 | Torch 2.8/cu128 vs BSA wheel's ACTUAL link target (base image torch 2.4.1+cu124) | `ca49cbf` |
+| 12 | `ImportError: PretrainedConfig from transformers.modeling_utils` — transformers 5.x drops it | `64578d4` |
+| 13 | Missing `posi_prompt.pth` — diffsynth hardcodes `../../examples/...` relative path | `b8beea1` |
+| 14 | `pyav` plugin missing — `imageio[pyav]` not in pip deps | `4a4771f` |
+| 15 | `'function' object has no attribute 'get'` — imageio.v3 `.metadata` is a METHOD not attribute | `a94dc2e` |
+| 16 | `'Causal_LQ4x_Proj' object has no attribute 'clear_cache'` — vendored stub insufficient, load real upstream utils.py | `0b184cb` |
+| 17 | `CUDA OOM 2.64 GiB / 47 GiB` on A6000 48GB — pipeline peaks ~42 GB alloc | `d70a951` (tile) + `8b6ae44` (80GB tier) |
+| 18 | Same OOM after tile_size=512; tiling ineffective for this pipeline path | `8b6ae44` |
+| 19 | `expected bytes, NoneType found` — vague pipe-eval error, **OPEN** | — |
+
+### Cfg + runtime state at session end
+
+- `examples/configs/upscale-flashvsr-x4.yaml`: 80GB VRAM tier
+  (A100/H100), torch 2.8/cu128 via `pytorch_extra_index_url`, matched
+  `engine.diffusers.image` = compute image, tile_size=512, precision
+  bfloat16, `pip:` block with modelscope + imageio[pyav] + av.
+- `src/kinoforge/upscalers/flashvsr/_engine.py`: render_provision curls
+  BSA wheel + FlashVSR `--no-deps` + pinned diffsynth-compat runtime
+  deps + posi_prompt.pth + upstream utils.py.
+- `src/kinoforge/upscalers/flashvsr/_runtime.py`: real
+  `FlashVSRFullPipeline` lifecycle, `Causal_LQ4x_Proj` loaded from
+  fetched upstream utils.py via importlib, VAE encoder teardown,
+  init_cross_kv with pre-loaded context_tensor.
+- `src/kinoforge/core/config.py`: `DiffusersEngineConfig` now exposes
+  `image` + `pytorch_extra_index_url` cfg fields.
+- `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`:
+  `FlashVSRParams.precision` allowlist widened bfloat16/fp16/fp32.
+
+### Next steps (deferred to follow-up session)
+
+1. **Diagnose 19th-smoke `expected bytes, NoneType found`.** Fire one
+   more live smoke WITHOUT `--no-reuse` and grab
+   `kinoforge logs --id <pod> --file bootstrap.log` immediately after
+   the upscale POST returns. Likely candidates:
+   - PyAV encoder receiving None for pixel_format or codec context.
+   - Output tensor `.numpy()` returning None in some code path.
+   - `imwrite(..., plugin="pyav")` needing an explicit codec kwarg.
+2. **Un-xfail `test_f_single` + append `successful-generations.md`** per
+   Task 6 acceptance criteria once step 1 lands green.
+
+Sub-plan Task 6 metadata reflects `status=in_progress`. Do NOT restart
+from Task 0 — Tasks 0-5 code is committed and lint/typecheck clean.
+
+---
+
+**Historical (T7.6 origin) — FlashVSR T#8 BLOCKED 2026-07-02, runtime API rewrite required.**
 
 Live smoke pod (`igerhjv1cx94pl`) surfaced the real blocker: server-side
 `ImportError: No module named 'flashvsr'`. Root cause: the `flashvsr` git
