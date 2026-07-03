@@ -121,7 +121,7 @@ class FlashVSREngine(UpscalerEngine):
                 '"safetensors==0.5.3" "transformers==4.46.2" '
                 '"accelerate==1.8.1" "peft==0.16.0" '
                 '"einops==0.8.1" "ftfy==6.3.1" "sentencepiece==0.2.0" '
-                '"imageio[ffmpeg]>=2.34"\n',
+                '"imageio[ffmpeg,pyav]>=2.34" "av"\n',
                 "python -m kinoforge.upscalers.flashvsr._fetch_weights "
                 f"--bundle {bundle} --dest /workspace/models/flashvsr "
                 f"--include-long-video {long_video}\n",
