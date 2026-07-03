@@ -8,10 +8,16 @@ under ``tests/live/evidence/2026-06-29-spandrel-realesrgan-x2-upscale/``.
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("KINOFORGE_LIVE_TESTS") != "1",
+    reason="live smoke: set KINOFORGE_LIVE_TESTS=1 (spends RunPod money)",
+)
 
 _FIXTURE = (
     Path(__file__).parent.parent.parent
