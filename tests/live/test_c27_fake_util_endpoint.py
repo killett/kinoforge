@@ -3,6 +3,7 @@
 These tests are fast (no network) and intentionally live in ``tests/live/``
 next to the smoke they support — they are NOT gated on ``KINOFORGE_LIVE``.
 """
+# kinoforge:ci-safe — fast local fake, no network, no cloud spend.
 
 from __future__ import annotations
 

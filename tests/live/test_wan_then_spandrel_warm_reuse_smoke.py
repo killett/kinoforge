@@ -7,10 +7,16 @@ Wan + spandrel weights.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("KINOFORGE_LIVE_TESTS") != "1",
+    reason="live smoke: set KINOFORGE_LIVE_TESTS=1 (spends RunPod money)",
+)
 
 _PROMPT = (
     (
