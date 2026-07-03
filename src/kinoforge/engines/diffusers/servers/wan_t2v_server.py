@@ -1593,7 +1593,7 @@ class FlashVSRParams(BaseModel):
     """Engine-specific overrides for a flashvsr upscale request."""
 
     weights_bundle: str | None = None
-    precision: Literal["fp16", "fp32"] = "fp16"
+    precision: Literal["bfloat16", "fp16", "fp32"] = "bfloat16"
     window_size: int = 24
     tile_size: int = 0
     long_video_mode: bool = False
