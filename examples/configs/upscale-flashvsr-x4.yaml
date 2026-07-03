@@ -37,6 +37,12 @@ engine:
       - "fastapi>=0.115"
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
+      # diffsynth (upstream FlashVSR package) does a module-top
+      # `from modelscope import snapshot_download` in its downloader
+      # even when weights are pulled from HF. Missing → ImportError
+      # inside `mm.load_models()` → 500 on first /upscale call.
+      # First surfaced 2026-07-03 T#8 attempt (~$0.02 to catch).
+      - "modelscope"
     embed_modules:
       - "kinoforge.engines.diffusers.servers"
       - "kinoforge.upscalers.flashvsr"
