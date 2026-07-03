@@ -55,7 +55,12 @@ def prepare_input_tensor(
         dtype = torch.bfloat16
 
     with iio.imopen(path, "r", plugin="pyav") as reader:
-        meta: dict[str, Any] = reader.metadata  # type: ignore[assignment]
+        # In imageio v3, `.metadata` is a METHOD not an attribute. Calling
+        # `.metadata()` returns the dict; touching `.metadata` returns the
+        # bound-method object, so `.metadata.get("fps", 24.0)` errors with
+        # `'function' object has no attribute 'get'`. Surfaced in the
+        # T7.6 F-single 15th live smoke.
+        meta: dict[str, Any] = reader.metadata()
         fps = float(meta.get("fps", 24.0))
         raw_frames = list(reader.iter())
 

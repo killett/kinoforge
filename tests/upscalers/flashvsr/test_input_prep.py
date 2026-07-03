@@ -256,7 +256,8 @@ def _install_imageio_stub(
 
     def imopen(path: str, mode: str, plugin: str = "pyav") -> Any:  # noqa: ARG001
         class _Reader:
-            metadata: dict[str, Any] = {"fps": fps}
+            def metadata(self) -> dict[str, Any]:
+                return {"fps": fps}
 
             def iter(self) -> Any:  # noqa: A003
                 for _ in range(num_frames):
