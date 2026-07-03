@@ -26,9 +26,12 @@ engine:
       - "-m"
       - "kinoforge.engines.diffusers.servers.wan_t2v_server"
     pip:
-      - "torch==2.6.0"
-      - "torchvision==0.21.0"
-      - "torchaudio==2.6.0"
+      # BSA prebuilt wheel tagged `bsa-cu128-torch2.8-v1` needs torch 2.8
+      # ABI or first `import block_sparse_attn` blows up with undefined
+      # c10::Error symbol. Wan 2.2 diffusers ops still fit torch 2.8.
+      - "torch==2.8.0"
+      - "torchvision==0.23.0"
+      - "torchaudio==2.8.0"
       - "diffusers>=0.32"
       - "transformers>=4.45"
       - "accelerate>=1.0"
