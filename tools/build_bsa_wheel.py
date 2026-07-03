@@ -1,17 +1,28 @@
 """Build a Block-Sparse-Attention wheel on RunPod + upload to GitHub release.
 
-One-shot ops tool for T7.5.b/c of the FlashVSR plan
+One-shot ops tool, first used for T7.5.b/c of the FlashVSR plan
 (``docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md``).
 
-Design: fire a single RunPod A6000 on
-``runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04``; its
-provision script builds ``block-sparse-attn`` at BSA commit ``3453bbb1``
-against SM80+SM86+SM89+SM90 with ``MAX_JOBS=4``; the built ``.whl`` is
-uploaded to the GH release ``bsa-cu128-torch2.8-v1`` on
-``killett/kinoforge-artifacts`` via the uploads API using ``$GH_TOKEN``;
-this driver polls the release-assets endpoint every 60 s from outside
-and destroys the pod as soon as an asset lands. Pod is destroyed on any
-exit path (success, timeout, keyboard interrupt).
+Design: fire a single RunPod A6000 on the pinned base image; its
+provision script pip-installs the pinned torch trio (the wheel links
+against whatever torch is importable at build time — the T7.5 wheel was
+mis-tagged cu128/torch2.8 because the 2.8.0 image actually preinstalls
+torch 2.4.1+cu124, see commit ``ca49cbf``), then builds
+``block-sparse-attn`` at BSA commit ``3453bbb1`` against
+SM80+SM86+SM89+SM90 with ``MAX_JOBS=4``; the built ``.whl`` is uploaded
+to the GH release tag below on ``killett/kinoforge-artifacts`` via the
+uploads API using ``$GH_TOKEN``; this driver polls the release-assets
+endpoint every 60 s from outside and destroys the pod as soon as an
+asset lands. Pod is destroyed on any exit path (success, timeout,
+keyboard interrupt).
+
+Current target: ``bsa-cu124-torch2.6-v1`` — torch 2.6.0+cu124 so the
+F-multi co-resident pod (Wan 2.2 A14B needs torch>=2.6 for the
+``infer_schema`` stringified-annotation fix; BSA must match that same
+torch ABI) can run both models in one process. Built on the
+``2.4.0-...cuda12.4.1-devel`` image: nvcc 12.4 matches the cu124 torch
+wheels, and that tag pulls fast on RunPod (the 2.8.0 cudnn-devel tag
+stalled image pulls three times during T8, ~$0.17 wasted each).
 
 Budget: ``~$1``, hard ceiling ``$2`` via ``lifecycle.budget_usd``.
 """
@@ -37,9 +48,13 @@ from kinoforge.providers.runpod import RunPodProvider
 
 _GH_OWNER = "killett"
 _GH_REPO = "kinoforge-artifacts"
-_GH_TAG = "bsa-cu128-torch2.8-v1"
-_BASE_IMAGE = "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+_GH_TAG = "bsa-cu124-torch2.6-v1"
+_BASE_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 _BSA_COMMIT = "3453bbb1"
+# The wheel links against the torch importable at build time. Pin it
+# explicitly — never trust the image tag (T7.5 lesson, commit ca49cbf).
+_TORCH_PINS = "torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0"
+_TORCH_INDEX = "https://download.pytorch.org/whl/cu124"
 _POLL_INTERVAL_S = 60
 _MAX_WAIT_S = 45 * 60
 
@@ -113,6 +128,11 @@ if curl -sf -H "Authorization: Bearer $GH_TOKEN" \\
   echo "=== WHEEL_ALREADY_UPLOADED — skipping rebuild ==="
   sleep infinity
 fi
+echo "=== PINNING TORCH (wheel links against build-time torch) ==="
+pip install --quiet {_TORCH_PINS} --extra-index-url {_TORCH_INDEX}
+python -c "import torch; v = torch.__version__; \\
+  assert v.startswith('2.6.0'), f'torch pin failed: {{v}}'; \\
+  print(f'build torch={{v}}')"
 pip install --quiet packaging ninja
 export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 export MAX_JOBS=4
