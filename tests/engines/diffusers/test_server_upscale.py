@@ -60,6 +60,7 @@ def fresh_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
 
     monkeypatch.setattr(srv, "_ensure_on_gpu", _fake_ensure_on_gpu)
     monkeypatch.setattr(srv, "ARTIFACT_DIR", tmp_path / "artifacts")
+    monkeypatch.setattr(srv, "LORAS_DIR", tmp_path / "loras")
     # Short-circuit startup: return a sentinel that startup assigns to
     # the module-level ``pipe`` but never touches ``_pipe_arity``.
     monkeypatch.setattr(srv, "_load_pipeline", lambda **_kw: MagicMock())
