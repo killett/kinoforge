@@ -31,14 +31,14 @@ engine:
       - "-m"
       - "kinoforge.engines.diffusers.servers.wan_t2v_server"
     pip:
-      # BSA prebuilt wheel is tagged `bsa-cu128-torch2.8-v1` — installing
-      # a lower torch (e.g. 2.6.0) triggers an ABI mismatch at first
-      # `import block_sparse_attn`: `undefined symbol _ZN3c105Error...`
-      # (c10::Error(SourceLocation, std::string) — the torch 2.8 core
-      # ABI). Pin torch 2.8 to match the wheel.
-      - "torch==2.8.0"
-      - "torchvision==0.23.0"
-      - "torchaudio==2.8.0"
+      # Do NOT reinstall torch here. The compute image
+      # `runpod/pytorch:2.8.0-...cuda12.8.1-...` ships torch 2.8 built
+      # against CUDA 12.8, which is what the prebuilt BSA wheel
+      # (`bsa-cu128-torch2.8-v1`) was linked against. Reinstalling
+      # `torch==2.8.0` from PyPI's default index pulls the cu126 build
+      # instead, and BSA fails at inference with
+      # `undefined symbol _ZN3c104cuda9SetDeviceEa` (torch cu128 CUDA
+      # ABI). Leaving torch alone matches the wheel.
       - "fastapi>=0.115"
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
