@@ -19,14 +19,14 @@ _DEFAULT_BSA_WHEEL_URL = (
 
 
 def _cfg(
-    precision: str = "fp16",
+    precision: str = "bfloat16",
     long_video: bool = False,
     bsa_wheel_url: str = _DEFAULT_BSA_WHEEL_URL,
 ) -> dict[str, Any]:
     return {
         "upscale": {
             "engine": "flashvsr",
-            "scale": "2x",
+            "scale": "4x",
             "flashvsr": {
                 "weights_bundle": "hf:JunhaoZhuang/FlashVSR-v1.1",
                 "precision": precision,
@@ -46,7 +46,7 @@ def test_model_identity_shape() -> None:
     ``parts[-2], parts[-1]`` slug parser.
     """
     e = FlashVSREngine()
-    assert e.model_identity(_cfg()) == "flashvsr-wan21-fp16"
+    assert e.model_identity(_cfg()) == "flashvsr-wan21-bfloat16"
     assert e.model_identity(_cfg(precision="fp32")) == "flashvsr-wan21-fp32"
 
 
@@ -236,7 +236,7 @@ def test_upscale_uploads_local_source_before_submit(
 
     assert len(upload_calls) == 1
     assert submit_body["engine"] == "flashvsr"
-    assert submit_body["flashvsr"]["precision"] == "fp16"
+    assert submit_body["flashvsr"]["precision"] == "bfloat16"
     assert submit_body["source_url"].startswith("file:///workspace/uploads/")
 
 

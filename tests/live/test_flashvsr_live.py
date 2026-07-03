@@ -40,7 +40,7 @@ def _require_live_spend_env() -> None:
 _STANDARD_PROMPT_PATH = Path("/workspace/examples/configs/prompts/field-realistic.txt")
 
 _MULTI_CFG = "examples/configs/wan-with-upscale-flashvsr.yaml"
-_UPSCALE_ONLY_CFG = "examples/configs/upscale-flashvsr-x2.yaml"
+_UPSCALE_ONLY_CFG = "examples/configs/upscale-flashvsr-x4.yaml"
 
 # 480x480 Wan 2.2 clip generated locally on 2026-06-30 as the T8 fixture.
 # Small enough (~800 KB) to stream over the pod's PUT /upload path in
@@ -124,13 +124,13 @@ def test_f_single(tmp_path: Path) -> None:
         # upscale ~2min. ~8min happy path with 2x cushion.
         timeout=15 * 60,
     )
-    assert "flashvsr-wan21-fp16" in r.stdout
+    assert "flashvsr-wan21-bfloat16" in r.stdout
     outs = sorted(Path("/workspace/output").glob("*_upscaled_flashvsr_*.mp4"))
     assert outs, "no upscaled artifact sunk"
     src_dims = _ffprobe_dims(_F_SINGLE_SOURCE)
     out_dims = _ffprobe_dims(outs[-1])
-    assert out_dims == (src_dims[0] * 2, src_dims[1] * 2), (
-        f"expected 2x dims got {out_dims} vs src {src_dims}"
+    assert out_dims == (src_dims[0] * 4, src_dims[1] * 4), (
+        f"expected 4x dims got {out_dims} vs src {src_dims}"
     )
     assert _kinoforge_list_shows_no_pods(), "pod not destroyed post-run"
 
@@ -163,7 +163,7 @@ def test_f_multi(tmp_path: Path) -> None:
         timeout=25 * 60,
     )
     assert "wan-T2V-done" in r.stdout or "diffusers" in r.stdout
-    assert "flashvsr-wan21-fp16" in r.stdout
+    assert "flashvsr-wan21-bfloat16" in r.stdout
     # Two MP4s expected — Wan raw + FlashVSR upscaled sibling.
     wans = sorted(Path("/workspace/output").glob("*_diffusers_Wan2.2-*.mp4"))
     ups = sorted(Path("/workspace/output").glob("*_upscaled_flashvsr_*.mp4"))

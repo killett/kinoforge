@@ -20,9 +20,6 @@ from kinoforge.core.config import load_config
 _EXAMPLE_DIR = Path(__file__).resolve().parents[2] / "examples" / "configs"
 _SKIP_YAMLS = {
     "local-fake.yaml",  # intentional fake; identity doesn't matter.
-    # TODO(T7.6.4): these cfgs still carry scale=2x; renamed to -x4.yaml in Task 4.
-    "upscale-flashvsr-x2.yaml",
-    "wan-with-upscale-flashvsr.yaml",
 }
 
 
