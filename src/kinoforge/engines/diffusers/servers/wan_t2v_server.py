@@ -1792,6 +1792,10 @@ async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
             _upscale_jobs[job_id]["progress"] = 1.0
             _upscale_jobs[job_id]["state"] = "done"
         except Exception as exc:  # noqa: BLE001 — surface any failure to caller
+            # Log full traceback to bootstrap.log so the client-side vague
+            # `str(exc)` doesn't strand debugging. Verbose but diagnostic
+            # cost is low relative to a $0.15-per-attempt live smoke.
+            _log.exception("upscale job %s failed", job_id)
             _upscale_jobs[job_id]["error"] = str(exc)
             _upscale_jobs[job_id]["state"] = "error"
         finally:
