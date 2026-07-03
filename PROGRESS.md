@@ -12,18 +12,18 @@ first unchecked task without redoing committed work.
 
 ## HIGH-PRIORITY FOLLOW-UP
 
-**FlashVSR T7.6 sub-plan — CODE COMPLETE 2026-07-03, live smoke PARTIAL.**
+**FlashVSR T7.6 sub-plan — SHIPPED 2026-07-03. F-single GREEN.**
 
 Sub-plan: `docs/superpowers/plans/2026-07-02-flashvsr-runtime-rewrite.md`
-(7 tasks, IDs 1-7). Tasks 0-5 SHIPPED GREEN. Task 6 (live F-single smoke)
-resolved 15+ discrete infrastructure bugs; pipeline now boots + accepts
-/upscale requests + runs inference on A100 80GB, but the last observed
-error is a vague `expected bytes, NoneType found` at pipe evaluation
-(19th live smoke, pod destroyed via --no-reuse — no server log).
+(7 tasks, IDs 1-7). All 7 tasks GREEN. Task 6 (`test_f_single`) PASSED
+in `1 passed in 275.68s` (~4:35 wall) on RunPod A100 80GB pod
+`50ioxii84z3bjv` (manual smoke 24) and re-fire pod (pytest); source
+480×480 → output 1920×1920 = 4× native upscale verified via ffprobe.
+Full entry #13 in `successful-generations.md`.
 
-**Cumulative live spend across Task 6 debugging: ~$1.20** (19 pods, all
-destroyed post-run; ledger clean). Every failure surfaced and fixed a
-distinct on-pod infra bug — see commit history `50beca2..8b6ae44`.
+**Cumulative live spend across Task 6 debugging: ~$1.60** across 24 pods
+(all destroyed post-run; ledger clean). 15+ discrete on-pod infra bugs
+surfaced and fixed — see commit history `50beca2..af212dc`.
 
 ### Task 6 debugging chronology (bug per smoke)
 
@@ -43,7 +43,10 @@ distinct on-pod infra bug — see commit history `50beca2..8b6ae44`.
 | 16 | `'Causal_LQ4x_Proj' object has no attribute 'clear_cache'` — vendored stub insufficient, load real upstream utils.py | `0b184cb` |
 | 17 | `CUDA OOM 2.64 GiB / 47 GiB` on A6000 48GB — pipeline peaks ~42 GB alloc | `d70a951` (tile) + `8b6ae44` (80GB tier) |
 | 18 | Same OOM after tile_size=512; tiling ineffective for this pipeline path | `8b6ae44` |
-| 19 | `expected bytes, NoneType found` — vague pipe-eval error, **OPEN** | — |
+| 22 | `TypeError: expected bytes, NoneType found` — imageio pyav needs explicit `codec=` kwarg | `db20cc9` (traceback dug via `d3b6670` diag patch) |
+| 23 | numpy broadcast `(77,1920,1920) → (77,1920,3)` — pipe returns 4D `(C,T,H,W)` not 5D | `e1a42e4` |
+| 24 | **GREEN** — pod `50ioxii84z3bjv`, ~5:30 wall, output 1920×1920, `_upscaled_flashvsr_*.mp4` sunk | manual smoke |
+| pytest | `test_f_single PASSED` in `275.68s`; test path bumped from `/workspace/output/` → `Path.cwd() / "output"` (worktree isolation) | `af212dc` |
 
 ### Cfg + runtime state at session end
 
@@ -63,20 +66,19 @@ distinct on-pod infra bug — see commit history `50beca2..8b6ae44`.
 - `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`:
   `FlashVSRParams.precision` allowlist widened bfloat16/fp16/fp32.
 
-### Next steps (deferred to follow-up session)
+### Next steps (deferred to follow-up sessions)
 
-1. **Diagnose 19th-smoke `expected bytes, NoneType found`.** Fire one
-   more live smoke WITHOUT `--no-reuse` and grab
-   `kinoforge logs --id <pod> --file bootstrap.log` immediately after
-   the upscale POST returns. Likely candidates:
-   - PyAV encoder receiving None for pixel_format or codec context.
-   - Output tensor `.numpy()` returning None in some code path.
-   - `imwrite(..., plugin="pyav")` needing an explicit codec kwarg.
-2. **Un-xfail `test_f_single` + append `successful-generations.md`** per
-   Task 6 acceptance criteria once step 1 lands green.
+- **F-multi + F-warm live smokes** — parent P4 plan
+  (`docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`
+  Tasks T9 + T10) still pending. Need same server-side patches on the
+  `wan-with-upscale-flashvsr.yaml` cfg (which currently still pins
+  torch 2.8 — likely needs the same drop-torch-pin treatment as x4).
+- **Deep-clean `_input_prep.Causal_LQ4x_Proj` stub** — the runtime now
+  prefers upstream utils.py, so the stub is only touched by tests.
+  Consider removing it entirely or promoting the runtime-load path to
+  be the ONLY path.
 
-Sub-plan Task 6 metadata reflects `status=in_progress`. Do NOT restart
-from Task 0 — Tasks 0-5 code is committed and lint/typecheck clean.
+Sub-plan Task 6 GREEN. Full T7.6 sub-plan closed. Merge into main.
 
 ---
 
