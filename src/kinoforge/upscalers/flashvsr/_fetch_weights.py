@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
 import re
 import shutil
 import urllib.request
-from importlib import resources
 from pathlib import Path
 
 # kinoforge.core.errors is lazy-imported inside _verify() — a top-level
@@ -39,16 +37,40 @@ _LONG_VIDEO_FILES = ("LQ_proj_in.ckpt", "TCDecoder.ckpt")
 _HF_REF_RE = re.compile(r"^hf:([^/]+/[^/]+)$")
 _HF_BASE = "https://huggingface.co"
 
+# Manifest inlined as a Python constant (previously ``weights_manifest.json``
+# alongside this module). Rationale: the pod bootstrap embeds only ``.py``
+# files under kinoforge.upscalers.flashvsr — a JSON sibling gets silently
+# dropped by ``_render_embed_lines`` (line 175 of
+# ``src/kinoforge/engines/diffusers/__init__.py``: ``.endswith(".py")``
+# filter). Runtime probe on 2026-07-02 (pod ``igerhjv1cx94pl``) crashed
+# with ``FileNotFoundError: /tmp/kfsrv/kinoforge/upscalers/flashvsr/
+# weights_manifest.json``. Inlining keeps the manifest coupled to the
+# code that consumes it and eliminates the pod-embed drop entirely.
+_MANIFEST: dict[str, dict[str, str]] = {
+    "diffusion_pytorch_model_streaming_dmd.safetensors": {
+        "sha256": "bd28180edcf3446c028e32fc6b731a80bf7e4da2ab4caac3186b9499964d37be",
+    },
+    "Wan2.1_VAE.pth": {
+        "sha256": "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981",
+    },
+    "LQ_proj_in.ckpt": {
+        "sha256": "d6d011cdaaba6a52645086caa08fa04124e746f6ca568140a24007591142bfd2",
+    },
+    "TCDecoder.ckpt": {
+        "sha256": "e224bdcf2f52745cbf4d393ff5374c2ba09e90285d5d19062d2bf63b915b6161",
+    },
+}
+
 
 def _load_manifest() -> dict[str, dict[str, str]]:
-    """Read the shipped ``weights_manifest.json``."""
-    with (
-        resources.files("kinoforge.upscalers.flashvsr")
-        .joinpath("weights_manifest.json")
-        .open("r") as f
-    ):
-        data: dict[str, dict[str, str]] = json.load(f)
-        return data
+    """Return the FlashVSR v1.1 weights-file SHA256 manifest.
+
+    Inlined-constant lookup (see ``_MANIFEST`` for rationale). Kept as a
+    function to preserve the existing test-seam patch point and to allow
+    a lazy switch back to on-disk loading if the manifest ever grows too
+    large to co-locate with the code.
+    """
+    return dict(_MANIFEST)
 
 
 def _sha256(path: Path) -> str:
