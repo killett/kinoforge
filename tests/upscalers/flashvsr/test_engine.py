@@ -229,7 +229,7 @@ def test_upscale_uploads_local_source_before_submit(
         instance=inst,
         job=UpscaleJob(
             source=Artifact(uri="file:///workspace/output/in.mp4"),
-            scale=ScaleTarget(kind="factor", value=2.0),
+            scale=ScaleTarget(kind="factor", value=4.0),
         ),
         cfg=_cfg(),
     )
@@ -289,7 +289,7 @@ def test_upscale_polls_until_done_and_returns_result(
         instance=inst,
         job=UpscaleJob(
             source=Artifact(uri="file:///tmp/in.mp4"),
-            scale=ScaleTarget(kind="factor", value=2.0),
+            scale=ScaleTarget(kind="factor", value=4.0),
         ),
         cfg=_cfg(),
     )
@@ -333,7 +333,34 @@ def test_upscale_raises_on_server_error(monkeypatch: pytest.MonkeyPatch) -> None
             instance=inst,
             job=UpscaleJob(
                 source=Artifact(uri="file:///tmp/in.mp4"),
-                scale=ScaleTarget(kind="factor", value=2.0),
+                scale=ScaleTarget(kind="factor", value=4.0),
             ),
             cfg=_cfg(),
         )
+
+
+def test_validate_spec_rejects_non_4x_factor() -> None:
+    """RED: factor != 4x fails fast (upstream native 4x lock)."""
+    from kinoforge.core.errors import UnsupportedScaleError
+    from kinoforge.core.interfaces import Artifact, UpscaleJob
+    from kinoforge.core.scale_target import ScaleTarget
+    from kinoforge.upscalers.flashvsr._engine import FlashVSREngine
+
+    eng = FlashVSREngine()
+    job = UpscaleJob(
+        source=Artifact(uri="file:///tmp/in.mp4", sha256="0" * 64, size=1),
+        scale=ScaleTarget(kind="factor", value=2.0),
+        params={},
+    )
+    with pytest.raises(UnsupportedScaleError):
+        eng.validate_spec(job)
+
+
+def test_model_identity_bfloat16_default() -> None:
+    """RED: default slug is flashvsr-wan21-bfloat16 (was fp16)."""
+    from kinoforge.upscalers.flashvsr._engine import FlashVSREngine
+
+    slug = FlashVSREngine().model_identity(
+        {"upscale": {"flashvsr": {"precision": "bfloat16"}}}
+    )
+    assert slug == "flashvsr-wan21-bfloat16"

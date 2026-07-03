@@ -46,12 +46,16 @@ class FlashVSREngine(UpscalerEngine):
     supported_scales: tuple[ScaleTarget, ...] = ()
 
     def validate_spec(self, job: UpscaleJob) -> None:
-        """Refuse height-target scales (spec §2 non-goal)."""
+        """Refuse height-target + non-4x scales (spec §2 non-goal + native lock)."""
+        from kinoforge.core.errors import UnsupportedScaleError
+
         if job.scale.kind == "height":
             raise NotYetImplementedError(
                 f"flashvsr does not support height-target scale "
-                f"({int(job.scale.value)}p); use --scale Nx"
+                f"({int(job.scale.value)}p); use --scale 4x"
             )
+        if job.scale.value != 4.0:
+            raise UnsupportedScaleError(scale=job.scale, engine_name="flashvsr")
 
     def model_identity(self, cfg: dict[str, object]) -> str:
         """Return ``flashvsr-wan21-<precision>`` slug for the server LRU."""
