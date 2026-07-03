@@ -93,8 +93,14 @@ class FlashVSREngine(UpscalerEngine):
                 # -f fail-fast on 4xx/5xx (silent HTML error page otherwise).
                 f'curl -L -f -o "/tmp/{wheel_name}" "{wheel_url}"\n',
                 f"pip install --no-deps /tmp/{wheel_name}\n",
+                # FlashVSR repo tags no releases; pin to a specific commit SHA
+                # so the pod's install path is reproducible. Bumping this pin
+                # is a deliberate act — never let it drift with upstream main.
+                # b527c6f2 = 2025-12-23, model bundle JunhaoZhuang/FlashVSR-v1.1
+                # matches the pipeline surface at this commit.
                 "pip install "
-                '"git+https://github.com/OpenImagingLab/FlashVSR@v1.1" '
+                '"git+https://github.com/OpenImagingLab/FlashVSR'
+                '@b527c6f285fb30df530f5febc8b45764a789c961" '
                 '"imageio[ffmpeg]>=2.34"\n',
                 "python -m kinoforge.upscalers.flashvsr._fetch_weights "
                 f"--bundle {bundle} --dest /workspace/models/flashvsr "
