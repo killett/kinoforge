@@ -284,44 +284,51 @@ def stub_diffsynth(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, "torch.nn", nn_mod)
         monkeypatch.setitem(sys.modules, "torch.nn.functional", nn_functional)
 
-    if "imageio.v3" not in sys.modules:
-        ii = types.ModuleType("imageio.v3")
+    # Always install the imageio stub — even when real imageio was imported
+    # earlier in the session (full-suite ordering) — otherwise
+    # `import imageio.v3 as iio` binds the real module, which needs the pyav
+    # plugin that is not a project dependency. The parent stub must carry a
+    # .v3 attribute because `import a.b as c` binds via getattr(a, "b") when
+    # the parent is already in sys.modules.
+    ii = types.ModuleType("imageio.v3")
 
-        def imwrite(
-            path: str,
-            data: Any,
-            fps: float = 24.0,
-            plugin: str = "pyav",
-            codec: str = "libx264",
-        ) -> None:  # noqa: ARG001
-            Path(path).write_bytes(b"MP4-STUB")
+    def imwrite(
+        path: str,
+        data: Any,
+        fps: float = 24.0,
+        plugin: str = "pyav",
+        codec: str = "libx264",
+    ) -> None:  # noqa: ARG001
+        Path(path).write_bytes(b"MP4-STUB")
 
-        # imopen is needed in case _input_prep.prepare_input_tensor is ever
-        # called without the stub (e.g. due to module-cache ordering across tests).
-        def imopen(path: str, mode: str, plugin: str = "pyav") -> Any:  # noqa: ARG001
-            class _Reader:
-                def metadata(self) -> dict[str, Any]:
-                    return {"fps": 24.0}
+    # imopen is needed in case _input_prep.prepare_input_tensor is ever
+    # called without the stub (e.g. due to module-cache ordering across tests).
+    def imopen(path: str, mode: str, plugin: str = "pyav") -> Any:  # noqa: ARG001
+        class _Reader:
+            def metadata(self) -> dict[str, Any]:
+                return {"fps": 24.0}
 
-                def iter(self) -> Any:
-                    import numpy as _np
+            def iter(self) -> Any:
+                import numpy as _np
 
-                    for _ in range(16):
-                        yield _np.zeros((16, 16, 3), dtype="uint8")
+                for _ in range(16):
+                    yield _np.zeros((16, 16, 3), dtype="uint8")
 
-                def close(self) -> None: ...
+            def close(self) -> None: ...
 
-                def __enter__(self) -> _Reader:
-                    return self
+            def __enter__(self) -> _Reader:
+                return self
 
-                def __exit__(self, *a: Any) -> None: ...
+            def __exit__(self, *a: Any) -> None: ...
 
-            return _Reader()
+        return _Reader()
 
-        ii.imwrite = imwrite  # type: ignore[attr-defined]
-        ii.imopen = imopen  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "imageio", types.ModuleType("imageio"))
-        monkeypatch.setitem(sys.modules, "imageio.v3", ii)
+    ii.imwrite = imwrite  # type: ignore[attr-defined]
+    ii.imopen = imopen  # type: ignore[attr-defined]
+    imageio_parent = types.ModuleType("imageio")
+    imageio_parent.v3 = ii  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "imageio", imageio_parent)
+    monkeypatch.setitem(sys.modules, "imageio.v3", ii)
 
 
 def _stub_input_prep(monkeypatch: pytest.MonkeyPatch) -> None:
