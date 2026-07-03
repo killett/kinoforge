@@ -45,10 +45,6 @@ engine:
       - "torchvision==0.23.0"
       - "torchaudio==2.8.0"
       - "fastapi>=0.115"
-    # Override the diffusers engine's default (cu124) so torch 2.8/cu128
-    # resolves cleanly. Threaded into the render_provision `pip install
-    # --extra-index-url` line.
-    pytorch_extra_index_url: "https://download.pytorch.org/whl/cu128"
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
       # diffsynth (upstream FlashVSR package) does a module-top
@@ -57,6 +53,10 @@ engine:
       # inside `mm.load_models()` → 500 on first /upscale call.
       # First surfaced 2026-07-03 T#8 attempt (~$0.02 to catch).
       - "modelscope"
+    # Override the diffusers engine's default (cu124) so torch 2.8/cu128
+    # resolves cleanly. Threaded into the render_provision `pip install
+    # --extra-index-url` line.
+    pytorch_extra_index_url: "https://download.pytorch.org/whl/cu128"
     embed_modules:
       - "kinoforge.engines.diffusers.servers"
       - "kinoforge.upscalers.flashvsr"
