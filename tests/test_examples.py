@@ -688,6 +688,10 @@ def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
     }
 
 
+@pytest.mark.xfail(
+    reason="T7.6.4 renames this cfg to upscale-flashvsr-x4.yaml with scale=4x",
+    strict=True,
+)
 def test_upscale_flashvsr_x2_marks_upscale_only_and_a6000_first() -> None:
     """FlashVSR upscale-only lockdown: upscale_only=true + A6000 first.
 

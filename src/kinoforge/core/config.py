@@ -552,12 +552,20 @@ class FlashVSREngineConfig(BaseModel):
 
     See docs/superpowers/specs/2026-07-01-flashvsr-video-upscaling-design.md §4.
 
+    The native upscale factor is FIXED at 4× by the upstream
+    ``Causal_LQ4x_Proj`` weight shape (``native_scale = 4``).
+    ``UpscaleConfig._validate_flashvsr_wiring`` refuses any non-4× ``scale``
+    value at cfg-load time so the pod never cold-boots for a doomed run.
+
     Attributes:
         weights_bundle: Source ref for the 2-file (lite) or 4-file (long-video)
             bundle (``hf:JunhaoZhuang/FlashVSR-v1.1`` or plain http(s)).
             Resolved via :mod:`kinoforge.upscalers.flashvsr._fetch_weights`
             during pod provision.
-        precision: ``"fp16"`` (DMD-native, default) or ``"fp32"``.
+        precision: ``"bfloat16"`` (upstream default, recommended),
+            ``"fp16"`` (legacy DMD path), or ``"fp32"``.  Cast in the runtime
+            at ``ModelManager(torch_dtype=...)``.  ``"bf16"`` (short form) is
+            NOT accepted — upstream never used it.
         window_size: Streaming attention window in frames (``[8, 64]``).
         tile_size: Spatial tile in pixels for VRAM headroom. ``0`` = whole-frame;
             allowlist ``{0, 256, 384, 512, 768}`` chosen to align with the BSA
@@ -575,7 +583,7 @@ class FlashVSREngineConfig(BaseModel):
     """
 
     weights_bundle: str
-    precision: str = "fp16"
+    precision: str = "bfloat16"
     window_size: int = 24
     tile_size: int = 0
     long_video_mode: bool = False
@@ -604,8 +612,10 @@ class FlashVSREngineConfig(BaseModel):
     @field_validator("precision")
     @classmethod
     def _validate_precision(cls, v: str) -> str:
-        if v not in ("fp16", "fp32"):
-            raise ConfigError(f"flashvsr precision {v!r} not in ('fp16', 'fp32')")
+        if v not in ("bfloat16", "fp16", "fp32"):
+            raise ConfigError(
+                f"flashvsr precision {v!r} not in ('bfloat16', 'fp16', 'fp32')"
+            )
         return v
 
     @field_validator("window_size")
@@ -664,6 +674,11 @@ class UpscaleConfig(BaseModel):
             raise ConfigError(
                 f"engine=flashvsr: height-target scale ({self.scale!r}) "
                 "not yet wired; use --scale Nx (factor form)"
+            )
+        if parsed.value != 4.0:
+            raise ConfigError(
+                f"engine=flashvsr fixed at native 4x upscale; got {self.scale!r}. "
+                "Use engine=spandrel for other factors."
             )
         return self
 

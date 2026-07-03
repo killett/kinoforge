@@ -85,13 +85,13 @@ def test_flashvsr_config_valid_defaults() -> None:
     from kinoforge.core.config import FlashVSREngineConfig
 
     c = FlashVSREngineConfig(weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1")
-    assert c.precision == "fp16"
+    assert c.precision == "bfloat16"
     assert c.window_size == 24
     assert c.tile_size == 0
     assert c.long_video_mode is False
 
 
-@pytest.mark.parametrize("bad_precision", ["bf16", "int8", "FP16", ""])
+@pytest.mark.parametrize("bad_precision", ["bf16", "int8", "FP16", "BFloat16", ""])
 def test_flashvsr_config_rejects_bad_precision(bad_precision: str) -> None:
     """RED: precision allowlist enforced at cfg-time.
 
@@ -105,6 +105,66 @@ def test_flashvsr_config_rejects_bad_precision(bad_precision: str) -> None:
             weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1",
             precision=bad_precision,
         )
+
+
+def test_flashvsr_config_accepts_bfloat16() -> None:
+    """RED: precision='bfloat16' is a first-class value (upstream default).
+
+    Bug caught: `bfloat16` missing from allowlist → users copy the upstream
+    YAML example verbatim and immediately hit a ConfigError at cfg-load, before
+    the pod is even started.
+    """
+    from kinoforge.core.config import FlashVSREngineConfig
+
+    c = FlashVSREngineConfig(weights_bundle="hf:x", precision="bfloat16")
+    assert c.precision == "bfloat16"
+
+
+def test_flashvsr_config_accepts_fp16_as_legacy() -> None:
+    """RED: precision='fp16' still accepted for legacy DMD path.
+
+    Bug caught: overly-narrow migration removes fp16 from the allowlist →
+    any user YAML that explicitly sets `precision: fp16` breaks on upgrade.
+    """
+    from kinoforge.core.config import FlashVSREngineConfig
+
+    c = FlashVSREngineConfig(weights_bundle="hf:x", precision="fp16")
+    assert c.precision == "fp16"
+
+
+def test_upscale_config_flashvsr_rejects_non4x_factor() -> None:
+    """RED: scale='2x' with engine=flashvsr fails at cfg-load (native 4x lock).
+
+    Bug caught: deferring the 4x check to runtime means a 2x cfg passes
+    validation, the pod cold-boots (~10 min, ~$0.20), and then blows up
+    with a weight-shape mismatch inside Causal_LQ4x_Proj.
+    """
+    from kinoforge.core.config import FlashVSREngineConfig, UpscaleConfig
+
+    with pytest.raises(ConfigError, match="4x"):
+        UpscaleConfig(
+            engine="flashvsr",
+            scale="2x",
+            flashvsr=FlashVSREngineConfig(
+                weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1"
+            ),
+        )
+
+
+def test_upscale_config_flashvsr_accepts_4x_factor() -> None:
+    """RED: scale='4x' with engine=flashvsr passes cfg-load.
+
+    Bug caught: over-eager validator also rejects the one valid factor →
+    no FlashVSR config can ever be constructed.
+    """
+    from kinoforge.core.config import FlashVSREngineConfig, UpscaleConfig
+
+    cfg = UpscaleConfig(
+        engine="flashvsr",
+        scale="4x",
+        flashvsr=FlashVSREngineConfig(weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1"),
+    )
+    assert cfg.scale == "4x"
 
 
 @pytest.mark.parametrize("bad_window", [0, 7, 65, 128, -1])
@@ -194,7 +254,7 @@ def test_capability_key_populates_flashvsr_precision() -> None:
         _full_cfg_with_upscale(
             {
                 "engine": "flashvsr",
-                "scale": "2x",
+                "scale": "4x",
                 "flashvsr": {
                     "weights_bundle": "hf:JunhaoZhuang/FlashVSR-v1.1",
                     "precision": "fp32",
