@@ -27,8 +27,15 @@ from kinoforge.engines.diffusers import DiffusersEngine
 def _decoded_blob_for(script: str, target: str) -> bytes | None:
     """Decode the gzip+base64 payload written to ``target``, or None.
 
-    Provision emits: ``echo '<b64>' | python3 -c "...gzip.decompress(
-    base64.b64decode(...))..." > <target>`` — one line per embedded file.
+    Provision emits one line per embedded file in the form:
+    ``echo '<b64>' | python3 -c "...gzip.decompress(base64.b64decode(...))" > <target>``
+
+    Args:
+        script: Full provision script text (multi-line string).
+        target: Absolute target path to match (e.g. ``/tmp/kfsrv/...py``).
+
+    Returns:
+        Decompressed file bytes, or ``None`` if no matching line is found.
     """
     for line in script.splitlines():
         if target in line and "base64" in line and line.startswith("echo '"):
@@ -112,7 +119,9 @@ def test_embed_writes_video_io_source_to_kfsrv() -> None:
     fingerprint = b"MP4 encoder helper for diffusers-engine servers"
     decoded = _decoded_blob_for(rp.script, target)
     assert decoded is not None, f"no embed write line found for {target}"
-    assert fingerprint in decoded
+    assert fingerprint in decoded, (
+        f"embedded payload for {target} does not contain {fingerprint!r}"
+    )
 
 
 def test_embed_touches_init_py_at_every_namespace_level() -> None:
