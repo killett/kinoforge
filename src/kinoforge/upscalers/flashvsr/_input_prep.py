@@ -112,16 +112,25 @@ class Causal_LQ4x_Proj:
     preserved so checkpoint loading and pipeline calls work unchanged.
 
     Args:
-        in_channels: Number of input channels (default 3 for RGB video).
-        out_channels: Number of output feature channels (default 16).
+        in_dim: Number of input channels (default 3 for RGB video).
+            Named ``in_dim`` to match upstream ``utils/utils.py`` constructor
+            signature (upstream uses ``in_dim``/``out_dim``/``layer_num``).
+        out_dim: Number of output feature channels (default 1536 upstream).
+        layer_num: Number of projection layers (currently informational; the
+            vendored impl uses a single Conv3d regardless of this value).
     """
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 16) -> None:
+    def __init__(
+        self,
+        in_dim: int = 3,
+        out_dim: int = 1536,
+        layer_num: int = 1,  # noqa: ARG002
+    ) -> None:
         """Lazy-import torch and construct the underlying Conv3d."""
         import torch
 
         self._conv = torch.nn.Conv3d(
-            in_channels, out_channels, kernel_size=(3, 3, 3), padding=(1, 1, 1)
+            in_dim, out_dim, kernel_size=(3, 3, 3), padding=(1, 1, 1)
         )
 
     @property
@@ -144,6 +153,34 @@ class Causal_LQ4x_Proj:
             Projected tensor of shape ``(B, C_out, F, H, W)``.
         """
         return self._conv(x)
+
+    def to(self, *args: Any, **kwargs: Any) -> Causal_LQ4x_Proj:  # noqa: ANN401
+        """Move underlying Conv3d to a device/dtype.
+
+        Mirrors ``nn.Module.to()`` so the caller can chain:
+        ``Causal_LQ4x_Proj(...).to("cuda", dtype=torch.bfloat16)``.
+
+        Args:
+            *args: Positional device or dtype arguments forwarded to
+                ``self._conv.to()``.
+            **kwargs: Keyword arguments (e.g. ``dtype=``) forwarded to
+                ``self._conv.to()``.
+
+        Returns:
+            self — allows chaining.
+        """
+        self._conv = self._conv.to(*args, **kwargs)
+        return self
+
+    def load_state_dict(self, state_dict: dict[str, Any], strict: bool = True) -> None:
+        """Load a checkpoint state dict into the underlying Conv3d.
+
+        Args:
+            state_dict: Dict mapping parameter names to tensors.
+            strict: Whether to require an exact name match (passed through
+                to ``self._conv.load_state_dict``).
+        """
+        self._conv.load_state_dict(state_dict, strict=strict)
 
     def __call__(self, x: Any) -> Any:  # noqa: ANN401
         """Delegate to forward."""

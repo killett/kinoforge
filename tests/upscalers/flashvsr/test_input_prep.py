@@ -379,7 +379,7 @@ def test_causal_lq4x_proj_weight_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     _reset_module(monkeypatch)
     from kinoforge.upscalers.flashvsr._input_prep import Causal_LQ4x_Proj
 
-    proj = Causal_LQ4x_Proj(in_channels=3, out_channels=16)
+    proj = Causal_LQ4x_Proj(in_dim=3, out_dim=16)
     assert hasattr(proj, "weight"), "expected .weight attribute"
     assert hasattr(proj, "bias"), "expected .bias attribute"
 
@@ -398,15 +398,15 @@ def test_causal_lq4x_proj_forward_delegates_to_conv3d(
     _reset_module(monkeypatch)
     from kinoforge.upscalers.flashvsr._input_prep import Causal_LQ4x_Proj
 
-    in_channels = 3
-    out_channels = 16
-    proj = Causal_LQ4x_Proj(in_channels=in_channels, out_channels=out_channels)
+    in_dim = 3
+    out_dim = 16
+    proj = Causal_LQ4x_Proj(in_dim=in_dim, out_dim=out_dim)
 
-    x = _Tensor((1, in_channels, 4, 8, 8), sample=0.5)
+    x = _Tensor((1, in_dim, 4, 8, 8), sample=0.5)
 
     y = proj.forward(x)
-    assert y.shape == (1, out_channels, 4, 8, 8), (
-        f"unexpected output shape {y.shape}; expected (1, {out_channels}, 4, 8, 8)"
+    assert y.shape == (1, out_dim, 4, 8, 8), (
+        f"unexpected output shape {y.shape}; expected (1, {out_dim}, 4, 8, 8)"
     )
 
     # __call__ must also delegate — same shape contract.
