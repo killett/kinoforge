@@ -195,10 +195,14 @@ def test_unknown_scheme_rejected(
 
 
 def test_manifest_shipped_in_package() -> None:
-    """RED: real manifest is packaged.
+    """RED: manifest is inlined as an in-module constant covering every file.
 
-    Bug caught: forgetting to add weights_manifest.json to package
-    manifest → pod runs but `_load_manifest()` raises FileNotFoundError.
+    Bug caught: dropping a file from the ``_MANIFEST`` dict → weights fetch
+    succeeds but ``_verify()`` skips SHA256 checks on that file, letting a
+    silently-corrupted download slip through. Also catches a regression to
+    the ``weights_manifest.json`` on-disk shape — the sibling JSON was
+    silently dropped by the pod-embed `.py`-only filter, crashing every
+    FlashVSR bootstrap with a ``FileNotFoundError``.
     """
     manifest = fw._load_manifest()
     for name in BASE_FILES + LONG_VIDEO_FILES:
