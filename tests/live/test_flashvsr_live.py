@@ -125,7 +125,9 @@ def test_f_single(tmp_path: Path) -> None:
         timeout=15 * 60,
     )
     assert "flashvsr-wan21-bfloat16" in r.stdout
-    outs = sorted(Path("/workspace/output").glob("*_upscaled_flashvsr_*.mp4"))
+    # kinoforge writes outputs under CWD/output/ (worktree-local) not
+    # /workspace/output/ (the shared source dir).
+    outs = sorted((Path.cwd() / "output").glob("*_upscaled_flashvsr_*.mp4"))
     assert outs, "no upscaled artifact sunk"
     src_dims = _ffprobe_dims(_F_SINGLE_SOURCE)
     out_dims = _ffprobe_dims(outs[-1])
