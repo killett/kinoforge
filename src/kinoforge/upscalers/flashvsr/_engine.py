@@ -18,6 +18,7 @@ from urllib.error import HTTPError
 from kinoforge.core.cancel import CancelToken
 from kinoforge.core.errors import (
     NotYetImplementedError,
+    UnsupportedScaleError,
     UploadIntegrityError,
     UpscaleFailed,
 )
@@ -47,8 +48,6 @@ class FlashVSREngine(UpscalerEngine):
 
     def validate_spec(self, job: UpscaleJob) -> None:
         """Refuse height-target + non-4x scales (spec §2 non-goal + native lock)."""
-        from kinoforge.core.errors import UnsupportedScaleError
-
         if job.scale.kind == "height":
             raise NotYetImplementedError(
                 f"flashvsr does not support height-target scale "
