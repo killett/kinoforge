@@ -138,6 +138,17 @@ class FlashVSREngine(UpscalerEngine):
                 '"https://raw.githubusercontent.com/OpenImagingLab/FlashVSR'
                 "/b527c6f285fb30df530f5febc8b45764a789c961"
                 '/examples/WanVSR/prompt_tensor/posi_prompt.pth"\n',
+                # utils.py from the FlashVSR examples/ folder holds the
+                # REAL `Causal_LQ4x_Proj` implementation the pipeline
+                # expects (with `.clear_cache()`, `.stream_forward()`,
+                # etc). Our vendored stub in _input_prep is insufficient
+                # — pip install --no-deps skips the examples/ folder, so
+                # fetch utils.py to a stable path the runtime can load
+                # via importlib.
+                'curl -L -f -o "/workspace/models/flashvsr/utils_upstream.py" '
+                '"https://raw.githubusercontent.com/OpenImagingLab/FlashVSR'
+                "/b527c6f285fb30df530f5febc8b45764a789c961"
+                '/examples/WanVSR/utils/utils.py"\n',
                 "export HF_HUB_OFFLINE=1\n",
             ]
         )
