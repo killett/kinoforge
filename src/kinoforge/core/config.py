@@ -373,6 +373,16 @@ class DiffusersEngineConfig(BaseModel):
     upscale_only: bool = False  # When True, render_provision emits
     # KINOFORGE_SKIP_WAN_LOAD=1 so the in-pod wan_t2v_server starts in
     # upscale-only mode (no eager WanPipeline.from_pretrained call).
+    image: str | None = None  # Override the diffusers engine's default
+    # container image (runpod/pytorch:2.4.0-...cuda12.4.1). Threaded into
+    # RenderedProvision.image → InstanceSpec.image at pod-create time.
+    # Required by cfgs whose upscaler needs a torch build the default
+    # image cannot supply (e.g. FlashVSR's cu128 BSA wheel).
+    pytorch_extra_index_url: str | None = None  # Override the diffusers
+    # engine's default (cu124) pytorch wheel index. Threaded into the
+    # render_provision `pip install --extra-index-url` line. Required by
+    # cfgs pinning torch cu128 to match a prebuilt CUDA extension ABI
+    # (e.g. FlashVSR's BSA wheel tagged `bsa-cu128-torch2.8-v1`).
 
 
 class FalEngineConfig(BaseModel):
@@ -535,23 +545,152 @@ class SpandrelEngineConfig(BaseModel):
     batch_size: int = 4
 
 
+_FLASHVSR_VALID_TILE_SIZES = (0, 256, 384, 512, 768)
+_FLASHVSR_WINDOW_MIN = 8
+_FLASHVSR_WINDOW_MAX = 64
+_FLASHVSR_VALID_SCHEMES = ("hf:", "http://", "https://", "civitai:", "civarchive:")
+_FLASHVSR_BSA_WHEEL_SCHEMES = ("hf:", "http://", "https://")
+_FLASHVSR_DEFAULT_BSA_WHEEL_URL = (
+    "https://github.com/killett/kinoforge-artifacts/releases/download/"
+    "bsa-cu128-torch2.8-v1/"
+    "block_sparse_attn-0.0.1-cp311-cp311-linux_x86_64.whl"
+)
+
+
+class FlashVSREngineConfig(BaseModel):
+    """FlashVSR v1.1 engine params — validated at cfg-load-time.
+
+    See docs/superpowers/specs/2026-07-01-flashvsr-video-upscaling-design.md §4.
+
+    The native upscale factor is FIXED at 4× by the upstream
+    ``Causal_LQ4x_Proj`` weight shape (``native_scale = 4``).
+    ``UpscaleConfig._validate_flashvsr_wiring`` refuses any non-4× ``scale``
+    value at cfg-load time so the pod never cold-boots for a doomed run.
+
+    Attributes:
+        weights_bundle: Source ref for the 2-file (lite) or 4-file (long-video)
+            bundle (``hf:JunhaoZhuang/FlashVSR-v1.1`` or plain http(s)).
+            Resolved via :mod:`kinoforge.upscalers.flashvsr._fetch_weights`
+            during pod provision.
+        precision: ``"bfloat16"`` (upstream default, recommended),
+            ``"fp16"`` (legacy DMD path), or ``"fp32"``.  Cast in the runtime
+            at ``ModelManager(torch_dtype=...)``.  ``"bf16"`` (short form) is
+            NOT accepted — upstream never used it.
+        window_size: Streaming attention window in frames (``[8, 64]``).
+        tile_size: Spatial tile in pixels for VRAM headroom. ``0`` = whole-frame;
+            allowlist ``{0, 256, 384, 512, 768}`` chosen to align with the BSA
+            block-size grid (mis-aligned values crash or produce border seams).
+        long_video_mode: When ``True``, enables LCSA + TCDecoder — needs the
+            4-file bundle. When ``False``, the 2-file lite bundle is enough.
+        bsa_wheel_url: Prebuilt Block-Sparse-Attention wheel URL, fetched by
+            provision via ``curl`` + ``pip install --no-deps``. Default is the
+            kinoforge-hosted HF Hub wheel built at BSA commit ``3453bbb1``
+            against ``runpod/pytorch:2.8.0-py3.11-cuda12.8.1`` — see T7.5 in
+            ``docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md``.
+            Allowed schemes: ``hf:``, ``http://``, ``https://``. ``git+`` and
+            ``file://`` are rejected at cfg-time to prevent a 25-min-late pip
+            error on a scheme ``curl`` cannot handle.
+    """
+
+    weights_bundle: str
+    precision: str = "bfloat16"
+    window_size: int = 24
+    tile_size: int = 0
+    long_video_mode: bool = False
+    bsa_wheel_url: str = _FLASHVSR_DEFAULT_BSA_WHEEL_URL
+
+    @field_validator("weights_bundle")
+    @classmethod
+    def _validate_scheme(cls, v: str) -> str:
+        if not any(v.startswith(s) for s in _FLASHVSR_VALID_SCHEMES):
+            raise ConfigError(
+                f"flashvsr weights_bundle {v!r}: unsupported scheme "
+                f"(supported: {_FLASHVSR_VALID_SCHEMES})"
+            )
+        return v
+
+    @field_validator("bsa_wheel_url")
+    @classmethod
+    def _validate_bsa_wheel_url(cls, v: str) -> str:
+        if not any(v.startswith(s) for s in _FLASHVSR_BSA_WHEEL_SCHEMES):
+            raise ConfigError(
+                f"flashvsr bsa_wheel_url {v!r}: unsupported scheme "
+                f"(supported: {_FLASHVSR_BSA_WHEEL_SCHEMES})"
+            )
+        return v
+
+    @field_validator("precision")
+    @classmethod
+    def _validate_precision(cls, v: str) -> str:
+        if v not in ("bfloat16", "fp16", "fp32"):
+            raise ConfigError(
+                f"flashvsr precision {v!r} not in ('bfloat16', 'fp16', 'fp32')"
+            )
+        return v
+
+    @field_validator("window_size")
+    @classmethod
+    def _validate_window(cls, v: int) -> int:
+        if not (_FLASHVSR_WINDOW_MIN <= v <= _FLASHVSR_WINDOW_MAX):
+            raise ConfigError(
+                f"flashvsr window_size {v} out of range "
+                f"[{_FLASHVSR_WINDOW_MIN}, {_FLASHVSR_WINDOW_MAX}]"
+            )
+        return v
+
+    @field_validator("tile_size")
+    @classmethod
+    def _validate_tile(cls, v: int) -> int:
+        if v not in _FLASHVSR_VALID_TILE_SIZES:
+            raise ConfigError(
+                f"flashvsr tile_size {v} not in {_FLASHVSR_VALID_TILE_SIZES}"
+            )
+        return v
+
+
 class UpscaleConfig(BaseModel):
     """Top-level ``upscale:`` block; presence activates the in-pipeline UpscaleStage.
 
     Attributes:
-        engine: Upscaler name (registry key). v1 supports ``"spandrel"``;
+        engine: Upscaler name (registry key). v1 supports ``"spandrel"``
+            (default fallback) and ``"flashvsr"`` (v1 default diffusion VSR);
             ``"seedvr2"`` is extras-gated until Phase 2 vendoring lands.
         scale: ScaleTarget grammar string (``"2x"`` | ``"4x"`` | ``"1080p"`` ...).
             Consumers call ``ScaleTarget.parse(scale)``; the height branch
-            raises ``NotYetImplementedError`` in v1.
+            raises ``NotYetImplementedError`` in v1. For ``engine=flashvsr``,
+            height-target is refused at cfg-time.
         seedvr2: SeedVR2-specific block; required when ``engine == "seedvr2"``.
         spandrel: Spandrel-specific block; required when ``engine == "spandrel"``.
+        flashvsr: FlashVSR-specific block; required when ``engine == "flashvsr"``.
     """
 
     engine: str
     scale: str
     seedvr2: SeedVR2EngineConfig | None = None
     spandrel: SpandrelEngineConfig | None = None
+    flashvsr: FlashVSREngineConfig | None = None
+
+    @model_validator(mode="after")
+    def _validate_flashvsr_wiring(self) -> Self:
+        if self.engine != "flashvsr":
+            return self
+        if self.flashvsr is None:
+            raise ConfigError("engine=flashvsr requires a cfg.upscale.flashvsr block")
+        # Lazy import to avoid top-level cycle with scale_target.
+        from kinoforge.core.scale_target import ScaleTarget
+
+        parsed = ScaleTarget.parse(self.scale)
+        if parsed.kind == "height":
+            raise ConfigError(
+                f"engine=flashvsr: height-target scale ({self.scale!r}) "
+                "not yet wired; use --scale Nx (factor form)"
+            )
+        if parsed.value != 4.0:
+            raise ConfigError(
+                f"engine=flashvsr fixed at native 4x upscale; got {self.scale!r}. "
+                "Use engine=spandrel for other factors."
+            )
+        return self
 
 
 class EngineConfig(BaseModel):
@@ -1113,6 +1252,8 @@ class Config(BaseModel):
                 base_model = self.upscale.spandrel.model_url
             elif self.upscale.seedvr2 is not None:
                 base_model = self.upscale.seedvr2.weights_ref or ""
+            elif self.upscale.flashvsr is not None:
+                base_model = self.upscale.flashvsr.weights_bundle
             else:
                 base_model = self.upscale.engine
 
@@ -1134,6 +1275,8 @@ class Config(BaseModel):
                 )
             elif self.upscale.spandrel is not None:
                 upscaler_precision = self.upscale.spandrel.precision
+            elif self.upscale.flashvsr is not None:
+                upscaler_precision = self.upscale.flashvsr.precision
 
         return CapabilityKey(
             base_model=base_model,

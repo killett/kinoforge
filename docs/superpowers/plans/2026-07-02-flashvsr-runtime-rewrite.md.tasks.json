@@ -1,0 +1,54 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-02-flashvsr-runtime-rewrite.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 0: Vendor upstream input-prep helpers",
+      "status": "completed",
+      "description": "Vendor prepare_input_tensor + Causal_LQ4x_Proj from upstream examples/WanVSR/utils/utils.py (commit b527c6f2) into src/kinoforge/upscalers/flashvsr/_input_prep.py. Lazy torch+imageio imports. 4 unit tests.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_input_prep.py\", \"tests/upscalers/flashvsr/test_input_prep.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_input_prep.py -v\", \"acceptanceCriteria\": [\"prepare_input_tensor 5-tuple\", \"Causal_LQ4x_Proj weight+bias+forward\", \"lazy imports\", \"upstream provenance docstring\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 1: FlashVSREngineConfig precision default bfloat16 + 4x native lock",
+      "status": "completed",
+      "blockedBy": [1],
+      "description": "FlashVSREngineConfig.precision default bfloat16; allowlist {bfloat16, fp16, fp32}; UpscaleConfig._validate_flashvsr_wiring rejects non-4x factor.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/upscalers/flashvsr/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_config.py -v\", \"acceptanceCriteria\": [\"default bfloat16\", \"bfloat16 accepted\", \"bf16 rejected\", \"non-4x cfg-time rejection\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 2: Rewrite _runtime.py around diffsynth.FlashVSRFullPipeline",
+      "status": "completed",
+      "blockedBy": [1, 2],
+      "description": "Full rewrite of _runtime.py: lazy diffsynth import, ModelManager weights load, FullPipeline.from_model_manager + enable_vram_management + init_cross_kv + load_models_to_device, pipe(...) 16-kwarg call, imageio output writer, .to() delegates to load_models_to_device.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_runtime.py\", \"tests/upscalers/flashvsr/test_runtime.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_runtime.py -v\", \"acceptanceCriteria\": [\"diffsynth lazy import\", \"ModelManager weights load\", \"FullPipeline lifecycle\", \"pipe kwarg surface\", \"imageio writer\", \".to() delegates\", \"_native_scale=4.0\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 3: FlashVSREngine.validate_spec rejects non-4x factor + bfloat16 slug",
+      "status": "completed",
+      "blockedBy": [1, 2],
+      "description": "validate_spec refuses factor!=4 with UpscaleFailed. model_identity returns flashvsr-wan21-bfloat16 slug.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_engine.py\", \"tests/upscalers/flashvsr/test_engine.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_engine.py -v\", \"acceptanceCriteria\": [\"non-4x raises UnsupportedScaleError\", \"height still rejected\", \"bfloat16 slug\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 4: Rename upscale-flashvsr-x2 → -x4; bump precision + wan-multi cfg",
+      "status": "completed",
+      "blockedBy": [2, 3],
+      "description": "git mv the standalone cfg. Flip scale 2x→4x + precision fp16→bfloat16 + spec.model slug in both example cfgs. Update tests/live/test_flashvsr_live.py path + slug + dim assertion (src*2 → src*4).\n\n```json:metadata\n{\"files\": [\"examples/configs/upscale-flashvsr-x4.yaml\", \"examples/configs/wan-with-upscale-flashvsr.yaml\", \"tests/test_examples.py\", \"tests/live/test_flashvsr_live.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/upscalers/flashvsr/ -v\", \"acceptanceCriteria\": [\"git mv preserves history\", \"scale=4x\", \"precision=bfloat16\", \"live-test refs updated\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 5: Full-suite lint + typecheck + pre-commit",
+      "status": "completed",
+      "blockedBy": [2, 3, 4],
+      "description": "Run pixi run test + lint + typecheck + pre-commit run --all-files.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"pixi run test && pixi run lint && pixi run typecheck && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"all four gates green\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 6: Live smoke — un-xfail test_f_single on RunPod",
+      "status": "completed",
+      "blockedBy": [1, 2, 3, 4, 5, 6],
+      "description": "Preflight → fire test_f_single with KINOFORGE_LIVE_SPEND=1 → verify 4x dims + pod destroyed + spend ≤$0.15 → append successful-generations entry → bump PROGRESS.md T#8 to SHIPPED.\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\", \"PROGRESS.md\", \"/workspace/successful-generations.md\"], \"verifyCommand\": \"pixi run preflight && KINOFORGE_LIVE_SPEND=1 pixi run pytest tests/live/test_flashvsr_live.py::test_f_single -v && pixi run kinoforge list\", \"acceptanceCriteria\": [\"preflight clean\", \"F-single green <15m\", \"4x dims verified\", \"pod destroyed\", \"spend <=$0.15\", \"successful-generations updated\"], \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-02T12:00:00-07:00"
+}

@@ -10,9 +10,233 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
+## HIGH-PRIORITY FOLLOW-UP
+
+**FlashVSR T7.6 sub-plan — SHIPPED 2026-07-03. F-single GREEN.**
+
+Sub-plan: `docs/superpowers/plans/2026-07-02-flashvsr-runtime-rewrite.md`
+(7 tasks, IDs 1-7). All 7 tasks GREEN. Task 6 (`test_f_single`) PASSED
+in `1 passed in 275.68s` (~4:35 wall) on RunPod A100 80GB pod
+`50ioxii84z3bjv` (manual smoke 24) and re-fire pod (pytest); source
+480×480 → output 1920×1920 = 4× native upscale verified via ffprobe.
+Full entry #13 in `successful-generations.md`.
+
+**Cumulative live spend across Task 6 debugging: ~$1.60** across 24 pods
+(all destroyed post-run; ledger clean). 15+ discrete on-pod infra bugs
+surfaced and fixed — see commit history `50beca2..af212dc`.
+
+### Task 6 debugging chronology (bug per smoke)
+
+| # | Bug (server-side) | Fix commit |
+|---|---|---|
+| 5 | HTTP 422 — server `FlashVSRParams.precision: Literal["fp16","fp32"]` refused `bfloat16` from cfg | `f24a14e` |
+| 6 | `ModuleNotFoundError: modelscope` — diffsynth top-level import | `41f1688` |
+| 7 | BSA `undefined symbol _ZN3c105ErrorC2...` — torch 2.6 vs 2.8 ABI mismatch | `65136f9` |
+| 8 | BSA `undefined symbol _ZN3c104cuda9SetDeviceEa` — cu126 vs cu128 ABI | `e217681`/`e0da478` |
+| 9 | YAML parse — `pytorch_extra_index_url` mis-indented in cfg | `4469d3f` |
+| 10 | `DiffusersEngineConfig` schema stripped `image` + `pytorch_extra_index_url` fields | `db237d3` |
+| 11 | Torch 2.8/cu128 vs BSA wheel's ACTUAL link target (base image torch 2.4.1+cu124) | `ca49cbf` |
+| 12 | `ImportError: PretrainedConfig from transformers.modeling_utils` — transformers 5.x drops it | `64578d4` |
+| 13 | Missing `posi_prompt.pth` — diffsynth hardcodes `../../examples/...` relative path | `b8beea1` |
+| 14 | `pyav` plugin missing — `imageio[pyav]` not in pip deps | `4a4771f` |
+| 15 | `'function' object has no attribute 'get'` — imageio.v3 `.metadata` is a METHOD not attribute | `a94dc2e` |
+| 16 | `'Causal_LQ4x_Proj' object has no attribute 'clear_cache'` — vendored stub insufficient, load real upstream utils.py | `0b184cb` |
+| 17 | `CUDA OOM 2.64 GiB / 47 GiB` on A6000 48GB — pipeline peaks ~42 GB alloc | `d70a951` (tile) + `8b6ae44` (80GB tier) |
+| 18 | Same OOM after tile_size=512; tiling ineffective for this pipeline path | `8b6ae44` |
+| 22 | `TypeError: expected bytes, NoneType found` — imageio pyav needs explicit `codec=` kwarg | `db20cc9` (traceback dug via `d3b6670` diag patch) |
+| 23 | numpy broadcast `(77,1920,1920) → (77,1920,3)` — pipe returns 4D `(C,T,H,W)` not 5D | `e1a42e4` |
+| 24 | **GREEN** — pod `50ioxii84z3bjv`, ~5:30 wall, output 1920×1920, `_upscaled_flashvsr_*.mp4` sunk | manual smoke |
+| pytest | `test_f_single PASSED` in `275.68s`; test path bumped from `/workspace/output/` → `Path.cwd() / "output"` (worktree isolation) | `af212dc` |
+
+### Cfg + runtime state at session end
+
+- `examples/configs/upscale-flashvsr-x4.yaml`: 80GB VRAM tier
+  (A100/H100), torch 2.8/cu128 via `pytorch_extra_index_url`, matched
+  `engine.diffusers.image` = compute image, tile_size=512, precision
+  bfloat16, `pip:` block with modelscope + imageio[pyav] + av.
+- `src/kinoforge/upscalers/flashvsr/_engine.py`: render_provision curls
+  BSA wheel + FlashVSR `--no-deps` + pinned diffsynth-compat runtime
+  deps + posi_prompt.pth + upstream utils.py.
+- `src/kinoforge/upscalers/flashvsr/_runtime.py`: real
+  `FlashVSRFullPipeline` lifecycle, `Causal_LQ4x_Proj` loaded from
+  fetched upstream utils.py via importlib, VAE encoder teardown,
+  init_cross_kv with pre-loaded context_tensor.
+- `src/kinoforge/core/config.py`: `DiffusersEngineConfig` now exposes
+  `image` + `pytorch_extra_index_url` cfg fields.
+- `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py`:
+  `FlashVSRParams.precision` allowlist widened bfloat16/fp16/fp32.
+
+### Next steps (deferred to follow-up sessions)
+
+- **F-multi + F-warm live smokes** — parent P4 plan
+  (`docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`
+  Tasks T9 + T10) still pending. Need same server-side patches on the
+  `wan-with-upscale-flashvsr.yaml` cfg (which currently still pins
+  torch 2.8 — likely needs the same drop-torch-pin treatment as x4).
+- **Deep-clean `_input_prep.Causal_LQ4x_Proj` stub** — the runtime now
+  prefers upstream utils.py, so the stub is only touched by tests.
+  Consider removing it entirely or promoting the runtime-load path to
+  be the ONLY path.
+
+Sub-plan Task 6 GREEN. Full T7.6 sub-plan closed. Merge into main.
+
+---
+
+**Historical (T7.6 origin) — FlashVSR T#8 BLOCKED 2026-07-02, runtime API rewrite required.**
+
+Live smoke pod (`igerhjv1cx94pl`) surfaced the real blocker: server-side
+`ImportError: No module named 'flashvsr'`. Root cause: the `flashvsr` git
+repo does NOT ship a `flashvsr` Python package — it ships `diffsynth`
+(package name declared in `setup.py`, contains
+`diffsynth/pipelines/flashvsr_full.py` etc.). Our
+`FlashVSRRuntime.__init__` in `src/kinoforge/upscalers/flashvsr/_runtime.py`
+imports `from flashvsr.pipeline import StreamingDMDPipeline` — that class
+does not exist. The real upstream class is
+`diffsynth.FlashVSRFullPipeline`, constructed via a much different flow:
+
+```python
+from diffsynth import ModelManager, FlashVSRFullPipeline
+mm = ModelManager(torch_dtype=torch.bfloat16, device="cpu")
+mm.load_models([weights_dir + "/diffusion_pytorch_model_streaming_dmd.safetensors",
+                weights_dir + "/Wan2.1_VAE.pth"])
+pipe = FlashVSRFullPipeline.from_model_manager(mm, device="cuda")
+# ... LQ_proj_in load, VAE surgery, enable_vram_management, init_cross_kv,
+#     load_models_to_device — see examples/WanVSR/infer_flashvsr_v1.1_full.py
+video = pipe(prompt="", negative_prompt="", cfg_scale=1.0,
+             num_inference_steps=1, seed=0, tiled=False,
+             LQ_video=LQ, num_frames=F, height=th, width=tw,
+             is_full_block=False, if_buffer=True,
+             topk_ratio=..., kv_ratio=3.0, local_range=11, color_fix=True)
+```
+
+Native scale is fixed at 4x (not 2x — needs the spandrel-fallback cfg for
+2x). Input tensor prep is complex (`prepare_input_tensor` builds LQ + th
++ tw + F + fps from a path with a `scale=4, dtype=bfloat16, device='cuda'`
+target). Output is a bfloat16 tensor → uint8 → imageio writer.
+
+**Sub-plan T7.6 needed.** Rewrite scope:
+
+- `src/kinoforge/upscalers/flashvsr/_runtime.py` — full rewrite around
+  `FlashVSRFullPipeline` API (~180 LOC).
+- `src/kinoforge/upscalers/flashvsr/_input_prep.py` — new file mirroring
+  `examples/WanVSR/utils/utils.py::prepare_input_tensor` + `Causal_LQ4x_Proj`
+  helpers (~120 LOC). NB `utils/` is a folder-import path in upstream —
+  we can't `pip install` it, must vendor.
+- `src/kinoforge/core/config.py` — pin `FlashVSREngineConfig` default
+  scale factor to 4x (currently anything). Also `precision` default
+  should track upstream bfloat16 rather than fp16.
+- `src/kinoforge/upscalers/flashvsr/_engine.py` — server-side
+  `validate_spec` update (reject non-4x targets), remove native_scale=2
+  assumption.
+- `examples/configs/upscale-flashvsr-x2.yaml` → rename to
+  `upscale-flashvsr-x4.yaml`; update spec/tests to expect 4x dims.
+- `examples/configs/wan-with-upscale-flashvsr.yaml` — same 4x update
+  (480×480 → 1920×1920 pixel doubling implicit in spec).
+- `tests/upscalers/flashvsr/test_runtime.py` — rewrite the 6 tests
+  against `FlashVSRFullPipeline`. Delete the `StreamingDMDPipeline`
+  fiction.
+- `tests/live/test_flashvsr_live.py` — bump dims assertion `src_dims * 2`
+  → `src_dims * 4`.
+
+Fixes already committed and validated:
+- `d135386` — BSA wheel filename preserved on curl (pip metadata parse).
+- `a22a122` — FlashVSR git ref pinned to commit SHA (no `v1.1` tag).
+- `87e87d3` — weights_manifest.json inlined as Python constant (pod
+  embed drops non-.py files).
+
+Sub-plan T7.5 (BSA prebuild + GH release swap) SHIPPED — see below.
+
+Total live spend across all T#8 attempts + T7.5 build ~$0.87. All pods
+destroyed.
+
+---
+
+**FlashVSR T7.5 SHIPPED 2026-07-02 — BSA wheel prebuild + GH release swap complete.**
+
+Wheel live at
+`https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu128-torch2.8-v1/block_sparse_attn-0.0.1-cp311-cp311-linux_x86_64.whl`
+(561 MB, SHA256 `1a0ecfe8d43c1799c43f455e45d0a584f0c0a3d14f243011ca9c2e10df75a6e6`).
+`FlashVSREngine.render_provision` now `curl`s + `pip install --no-deps` on
+every cold-boot; source-compile path deleted. Amortized 25-45 min BSA nvcc
+compile → ~60s wheel install per pod cold-boot.
+
+Total T7.5 live spend: ~$0.28 across two build attempts (first pod
+`ykpykanhfirt3m` reaped by RunPod in <60s because `exit 0` triggered
+container-death teardown; fixed by `sleep infinity` post-upload + driver
+polls GH assets externally then destroys via `destroy_instance`; second
+build `vne4fp3c8gtepl` ran 49 min, wheel uploaded clean, pod destroyed
+via `destroy_instance`). All pods now destroyed; ledger clean.
+
+Commits: `a8cc74c` (plan-section RED) → `866fe1e` (engine + cfg + timeouts
+RED+GREEN) → `d21fdbf` (URL swap HF→GH) → `3bc258d` (build tool) →
+`df66546` (sleep-infinity + idempotent-restart fixes) → `fc04846` (live
+build + URL final).
+
+Unblocks: T8 (F-single) + T9 (F-multi + F-warm) + T10 (SHIPPED flip) of
+plan `docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`.
+T8 is now the first-in-queue: un-xfail `test_f_single`, ~$0.10 expected
+spend, ~8min happy-path.
+
 ## Active workstream
 
-**Video upscaling — SHIPPED 2026-06-30 (P1 21/21 + P2 17/17 GREEN; T15 pod `1jofyeyg46m747` spend $0.02; T16 pod `4ju5e4ae9jnx6e` spend $0.25).**
+**FlashVSR v1 diffusion upscaler — T7.6.2 review-fixes LANDED 2026-07-02; T8 unblocked.**
+
+Plan: `docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md` (P4). Tasks 0-7
+GREEN on the `worktree-video-upscaling` branch (commits `4f75b4e..9226d4b`).
+
+T7.6.2 spec-review fixes committed `9226d4b` — all 6 must-fix/should-fix items addressed:
+- **Bug #1 (.to() LRU hook):** replaced `load_models_to_device(device_str)` (iterates
+  char-by-char) with `pipe.to(device)` (correct nn.Module device-move API).
+- **Bug #2 (no_grad):** wrapped `pipe()` call in `torch.no_grad()`; test asserts
+  `is_grad_enabled()` is False during the call and context is cleanly exited.
+- **Bug #3 (tensor denorm):** applied `(x+1)*127.5 + clip` before `astype(uint8)`;
+  stub returns float32 in `[-1,1]` and test asserts output is all-zero uint8.
+- **Issue #4 (Causal_LQ4x_Proj):** renamed `in_channels`/`out_channels` →
+  `in_dim`/`out_dim`/`layer_num` (upstream API); added `.to()` and
+  `.load_state_dict()` methods; wired injection + conditional `LQ_proj_in.ckpt`
+  load into `__init__`.
+- **Issue #5 (lifecycle order):** asserts `from_model_manager < to <
+  enable_vram_management < init_cross_kv < load_models_to_device`.
+- **Issue #6 (VAE teardown):** `pipe.vae.model.encoder = None` and `conv1 = None`;
+  test asserts both are `None` post-init.
+
+71/71 flashvsr tests pass. lint/typecheck/pre-commit clean. 1 pre-existing failure
+(`test_scan_surfaces_index_row_when_ledger_empty`) confirmed on prior commit — not
+introduced by these changes.
+
+**Next action: T8 — un-xfail `test_f_single`, fire live smoke (~$0.10, ~8 min).**
+
+T8 (F-single live spend) previously attempted 5× against RunPod; each attempt surfaced and
+fixed a real infra bug in the provision path:
+
+1. **RunPod GPU allowlist convention** — bare tokens like `"A6000"` fall through
+   to a no-GPU offer (SM80+ guard fires exit 87 immediately). Fixed to full
+   `"NVIDIA RTX A6000"`-style strings (`830c475`).
+2. **Block-Sparse-Attention `compute_120`** — upstream `main` targets Blackwell
+   (SM120) in its `-gencode` flags; the pod's CUDA 12.4/12.8 nvcc rejects
+   `compute_120` as unknown. Fixed by pinning BSA to commit `3453bbb1`
+   (2025-02-13, last pre-Blackwell revision) (`138ad9d`).
+   `TORCH_CUDA_ARCH_LIST` does NOT override BSA — BSA hardcodes its own list.
+3. **`boot_timeout` too tight** — BSA nvcc compile with SM80+SM90 runs
+   25-45 min on 4 CPU cores. Fixed by bumping to 60 min (upscale-only) and
+   90 min (multi-stage) with rationale in cfg header comments (`84ed1be`).
+4. **Test subprocess timeout too tight** — plan's 15 min ceiling is
+   insufficient for cold BSA compile. Fixed to 60/90/30 min for
+   F-single / F-multi / F-warm respectively (`c30d480`).
+
+**OPEN blocker → follow-up work:** BSA source-compile takes 45+ min in the
+current flow, which even the bumped ceilings cannot reliably absorb. Path
+forward requires either (a) a pre-built BSA wheel hosted somewhere the
+provision script can `curl`, (b) baking BSA into a fork of the RunPod pod
+image, or (c) FlashVSR-provided wheels. Total T8 live spend across
+attempts: ~$0.44 (all pods destroyed, ledger clean).
+
+Video upscaling P3 (spandrel per-frame VSR) remains SHIPPED and is the
+working fallback wired in `wan-with-upscale-spandrel.yaml`. The FlashVSR
+code path is fully unit-covered (75 tests across 4 modules) and ready to
+re-fire the moment the BSA wheel blocker is unblocked.
+
+### Video upscaling — SHIPPED 2026-06-30 (P1 21/21 + P2 17/17 GREEN; T15 pod `1jofyeyg46m747` spend $0.02; T16 pod `4ju5e4ae9jnx6e` spend $0.25).
 
 P3 (pod file-upload path) plan `docs/superpowers/plans/2026-06-29-upscale-pod-upload.md` closed end-to-end:
 Tasks 0-5 unit-GREEN (commits `3e07026..1c1f414`); Task 5a spandrel route/body dispatch

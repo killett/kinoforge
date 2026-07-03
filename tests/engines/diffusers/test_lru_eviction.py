@@ -226,3 +226,39 @@ class TestSpandrelDispatch:
         monkeypatch.setenv("KINOFORGE_SPANDREL_WEIGHTS_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError, match="spandrel weights not found"):
             srv._load_model_to_gpu("spandrel-realesrgan-fp16")
+
+
+class TestFlashVSRDispatch:
+    def test_flashvsr_prefix_loads_via_flashvsr_runtime(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        # Bug caught: prefix dispatch misses flashvsr-* and the LRU registry
+        # tries to load WanPipeline against a flashvsr slug (or worse, silently
+        # falls through to the "unknown model name" raise, breaking the
+        # multi-stage capability advertisement).
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        monkeypatch.setenv("KINOFORGE_FLASHVSR_WEIGHTS_DIR", str(tmp_path))
+
+        fake_runtime = MagicMock(name="FlashVSRRuntime")
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_ctor(**kwargs: Any) -> Any:
+            captured_kwargs.update(kwargs)
+            return fake_runtime
+
+        import kinoforge.upscalers.flashvsr._runtime as runtime_mod
+
+        monkeypatch.setattr(runtime_mod, "FlashVSRRuntime", fake_ctor)
+
+        pipe = srv._load_model_to_gpu("flashvsr-wan21-bfloat16")
+        assert pipe is fake_runtime
+        assert captured_kwargs["weights_dir"] == tmp_path
+        assert captured_kwargs["precision"] == "bfloat16"
+        # Server defaults window=24, tile=0, long_video_mode=False; per-request
+        # overrides land via the params dict, not the loader.
+        assert captured_kwargs["window_size"] == 24
+        assert captured_kwargs["tile_size"] == 0
+        assert captured_kwargs["long_video_mode"] is False

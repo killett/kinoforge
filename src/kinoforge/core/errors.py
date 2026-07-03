@@ -487,3 +487,56 @@ class ExtrasNotInstalled(KinoforgeError):
         )
         self.extras_name = extras_name
         self.install_hint = install_hint
+
+
+class BSACompileFailed(KinoforgeError):
+    """Block-Sparse-Attention nvcc compile failed on pod.
+
+    Raised inside the server when ``import block_sparse_attention`` fails at
+    first ``/upscale`` after cold boot — the compile happened at provision
+    time but produced no importable module.
+    """
+
+    def __init__(self, pod_id: str, stderr_tail: str) -> None:
+        """Record the pod that failed to compile + tail of the compiler stderr."""
+        super().__init__(
+            f"Block-Sparse-Attention compile failed on pod {pod_id}: "
+            f"{stderr_tail[-500:]}"
+        )
+        self.pod_id = pod_id
+        self.stderr_tail = stderr_tail
+
+
+class FlashVSRWeightsIncomplete(KinoforgeError):
+    """FlashVSR weights bundle failed SHA256 verification against manifest.
+
+    Distinguishes CDN corruption / repo tampering from a plain
+    download-timeout (which would surface as TransportError).
+    """
+
+    def __init__(self, filename: str, got_sha256: str, want_sha256: str) -> None:
+        """Record the file, observed sha, and expected sha for post-mortem."""
+        super().__init__(
+            f"FlashVSR weights integrity failure on {filename}: "
+            f"got sha256={got_sha256[:8]}..., want={want_sha256[:8]}..."
+        )
+        self.filename = filename
+        self.got_sha256 = got_sha256
+        self.want_sha256 = want_sha256
+
+
+class UnsupportedGpuArch(KinoforgeError):
+    """Pod GPU compute capability is below FlashVSR's SM80 requirement.
+
+    Raised via provision-script exit code 87. Surfaces up the orchestrator
+    as a hard-fail before any ``/upscale`` work is attempted.
+    """
+
+    def __init__(self, got: tuple[int, int], required_major: int) -> None:
+        """Record the observed SM (major, minor) and the minimum required major."""
+        super().__init__(
+            f"GPU compute capability sm_{got[0]}{got[1]} below required "
+            f"sm_{required_major}0+"
+        )
+        self.got = got
+        self.required_major = required_major

@@ -2230,9 +2230,89 @@ Ref: docs/superpowers/specs/2026-07-01-flashvsr-video-upscaling-design.md §7.2"
 
 ---
 
+## Task 7.5: BSA wheel prebuild + GitHub-release host + provision rewrite
+
+**Goal:** Replace the 45+ min Block-Sparse-Attention source-compile step in
+`FlashVSREngine.render_provision` with a `curl`-fetch of a prebuilt wheel we
+host on a GitHub release. Unblocks T8/T9/T10 (5 previous T8 attempts all TIMED
+OUT on BSA nvcc compile against RunPod's 4-CPU baseline; sunk cost ~$0.44).
+
+**Root cause of blocker:** Block-Sparse-Attention `pip install` from source
+takes 25-45 min on the target pod (4 CPU cores, `MAX_JOBS=4`, SM80+SM90+SM89+SM86
+arch list). Every FlashVSR pod cold-boot pays this tax. Upstream v0.0.1
+GitHub-release wheels stop at torch 2.2 / cu122; our pod pins torch 2.8 / cu128
+— ABI mismatch, wheels unusable as-is. v0.0.2 + v0.0.2.post1 shipped source-only.
+
+**Strategy:** One-shot ~$1 spend on a cu128/torch2.8 A6000 to build the wheel,
+publish as a GitHub-release asset at
+`https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu128-torch2.8-v1/<file>.whl`,
+then rewrite `render_provision` to `curl` the release-download URL. Amortizes
+the 30-min compile cost across every future FlashVSR cold-boot (each becomes
+<60 s wheel install).
+
+**Host pivot (2026-07-01, mid-T7.5):** Original plan called for a HF Hub public
+repo. Actual HF token in `.env` is read-scoped (whoami: `retool4251`,
+role=read), cannot `create_repo`/`upload_file`. GH `killett` already has
+`repo` scope via `gh` CLI. Pivoted to GH release asset — same amortization
+outcome, no operator token rotation required.
+
+**BSA commit pin stays at `3453bbb1`** — predates Blackwell `-gencode
+compute_120` breakage. Wheel is built at that commit; if the pod base image
+ever bumps to CUDA 12.9+, rebuild wheel + re-pin BSA to `main` in a follow-up
+release tag (encoding the CUDA/torch pin in the tag name is deliberate —
+prevents silent ABI drift under the same URL).
+
+**Files:**
+- Modify: `src/kinoforge/upscalers/flashvsr/_engine.py` — swap `render_provision` BSA block for wheel-fetch (no HF_TOKEN header on the curl — GH public release doesn't need it).
+- Modify: `src/kinoforge/core/config.py` — `FlashVSREngineConfig.bsa_wheel_url: str` field with scheme validator; default pin.
+- Modify: `examples/configs/upscale-flashvsr-x2.yaml` — `boot_timeout: 15m` (was 60m); update header comment.
+- Modify: `examples/configs/wan-with-upscale-flashvsr.yaml` — `boot_timeout: 25m` (was 90m); update header comment.
+- Modify: `tests/live/test_flashvsr_live.py` — subprocess timeouts 15/25/15 min (were 60/90/30).
+- Modify: `tests/upscalers/flashvsr/test_engine.py` — extend provision-render tests.
+- Modify: `tests/upscalers/flashvsr/test_config.py` — extend cfg-time tests.
+
+**Acceptance Criteria:**
+- [ ] `FlashVSREngineConfig.bsa_wheel_url` accepts schemes `{"hf:", "http://", "https://"}`; rejects `git+`, `file://`, `ssh://`, `s3://`, `gs://`, empty.
+- [ ] Default value points at `https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu128-torch2.8-v1/<filename>.whl`; test asserts the tag substring `bsa-cu128-torch2.8` (blocks silent ABI drift under the same URL).
+- [ ] `FlashVSREngine.render_provision` emits `curl -L -f -o /tmp/bsa.whl <url>` followed by `pip install --no-deps /tmp/bsa.whl` INSTEAD OF `pip install git+https://github.com/mit-han-lab/Block-Sparse-Attention@3453bbb1`.
+- [ ] Provision script no longer references `TORCH_EXTENSIONS_DIR`, `MAX_JOBS`, or `3453bbb1` (source compile eliminated).
+- [ ] Provision script body still ≤ 12 KB (bootstrap budget).
+- [ ] `env_required` still `["HF_TOKEN"]` (weights fetch keeps it; BSA curl no longer needs it since the GH release is public).
+- [ ] Wheel published as GH-release asset on `killett/kinoforge-artifacts`; SHA256 recorded in commit message; wheel file size logged.
+- [ ] All 75 existing unit tests still GREEN; new tests added for wheel-URL validation + provision-body rewrite.
+- [ ] `pixi run kinoforge list` shows no pods after the T7.5.b build spend.
+- [ ] Build spend recorded in T7.5.b commit message; ≤ $2 (2× budget = hard ceiling).
+
+**Sub-steps:**
+
+- [x] **7.5.h — plan-file section committed** (commit `a8cc74c`, retargeted to GH release in follow-up).
+- [x] **7.5.d — Rewrite `render_provision`** (commit `866fe1e`).
+- [x] **7.5.e — Add `FlashVSREngineConfig.bsa_wheel_url`** (commit `866fe1e`).
+- [x] **7.5.f — Restore original timeouts** (commit `866fe1e`).
+- [x] **7.5.g — Regreen suite** (commit `866fe1e`; 145 flashvsr-adjacent tests GREEN).
+- [ ] **7.5.a — Scaffold GH release repo:** `gh repo create killett/kinoforge-artifacts --public -d "Prebuilt wheels + supporting artifacts for kinoforge"`. Create a placeholder release: `gh release create bsa-cu128-torch2.8-v1 --repo killett/kinoforge-artifacts --title "BSA @3453bbb1 on cu128/torch2.8" --notes "..." --prerelease --target main`.
+- [ ] **7.5.b — Build wheel (LIVE SPEND).** `pixi run preflight`. Spin one A6000 pod on `runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`. Provision:
+  ```bash
+  set -euo pipefail
+  pip install packaging ninja
+  export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
+  export MAX_JOBS=4
+  git clone --depth 1 https://github.com/mit-han-lab/Block-Sparse-Attention.git /tmp/bsa
+  cd /tmp/bsa
+  git checkout 3453bbb1
+  pip wheel --no-deps --no-build-isolation --wheel-dir /tmp/whl .
+  ls -lh /tmp/whl/
+  ```
+  Download wheel back to `/workspace/wheels/`. Destroy pod. Verify `pixi run kinoforge list` clean.
+- [ ] **7.5.c — Upload + verify URL.** `gh release upload bsa-cu128-torch2.8-v1 <path>.whl --repo killett/kinoforge-artifacts`. Verify via anonymous `curl -I <default_url>` that response is 302→200. If filename ends up different from the config-pinned name, rename before upload OR patch the default URL in a `.post1` commit.
+
+**Verify:** After 7.5.c, `pixi run pytest tests/upscalers/flashvsr/ -q` → 75+ passed. `curl -I <default_url>` → HTTP 200 or 302→200.
+
+---
+
 ## Task 8: F-single live spend
 
-**Goal:** Standalone `kinoforge upscale` on a pre-existing 720p Wan clip. Confirms `_upload_source` + `/upscale` + BSA compile-and-cache work end-to-end. Budget: ~$0.05.
+**Goal:** Standalone `kinoforge upscale` on a pre-existing 720p Wan clip. Confirms `_upload_source` + `/upscale` + prebuilt-wheel install + weights fetch work end-to-end. Budget: ~$0.10 (was $0.05 pre-BSA-compile; upped to reflect new baseline).
 
 **Files:**
 - Modify: `tests/live/test_flashvsr_live.py` — un-xfail `test_f_single`

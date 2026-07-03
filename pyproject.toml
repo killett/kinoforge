@@ -69,6 +69,10 @@ ignore_missing_imports = true
 module = ["torch", "torch.*", "diffusers", "diffusers.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]  # imageio + imageio.v3 have no py.typed markers; lazy-imported in _input_prep.
+module = ["imageio", "imageio.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]  # Tests often have untyped functions and use dynamic features, so relax mypy rules for them.
 module = ["tests.*"]
 strict = false

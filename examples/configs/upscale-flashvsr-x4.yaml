@@ -1,0 +1,126 @@
+# v1-default upscale-only cfg for `kinoforge upscale`.
+#
+# Streaming diffusion super-resolution via FlashVSR v1.1 (Wan 2.1 1.3B backbone
+# wrapped in StreamingDMDPipeline) at 4x native scale. Distinct from spandrel's
+# per-frame per-image SR: FlashVSR runs a streaming attention window across
+# frames so temporal coherence stays intact across the whole clip. Preferred
+# over upscale-spandrel-x2.yaml for any clip where flicker or texture drift is
+# a concern.
+#
+# Requires SM80+ (Block-Sparse-Attention). Cheapest-first GPU allowlist
+# prioritizes A6000 48 GB for the standalone upscale path (Wan is not
+# co-resident — VRAM budget is FlashVSR's ~8 GB peak plus headroom). Note:
+# 4x scale (e.g. 480×480 → 1920×1920) is ~4x the pixel budget of a 2x
+# upscale; A6000 48 GB comfortably covers the ~8 GB FlashVSR VRAM peak even
+# at 4x. The 15m boot_timeout remains sufficient — bfloat16 install path is
+# identical in duration to fp16.
+#
+# Usage:
+#   pixi run kinoforge upscale \
+#     --config examples/configs/upscale-flashvsr-x4.yaml \
+#     --video /path/to/clip.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bfloat16
+  diffusers:
+    # BSA prebuilt wheel is linked against torch 2.8 + CUDA 12.8. The
+    # image field here (used by kinoforge's diffusers provisioner as the
+    # actual pod OS image) MUST match the compute.image below or BSA
+    # loads against torch 2.4/cu124 and errors at inference with
+    # `undefined symbol _ZN3c105ErrorC2ENS_14SourceLocation...`.
+    image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # DO NOT reinstall torch here. The BSA prebuilt wheel
+      # (`bsa-cu128-torch2.8-v1`) is a MISLEADING TAG: build_bsa_wheel.py
+      # runs on `runpod/pytorch:2.8.0-...cuda12.8.1-...` but does NOT
+      # pip-install torch — it uses whatever the image preinstalls,
+      # which is actually `torch 2.4.1+cu124` (verified via
+      # `kinoforge logs` 2026-07-03). So the wheel is really
+      # cu124/torch2.4 despite the tag. Reinstalling torch here to
+      # 2.8/cu128 (or 2.8/cu126) breaks BSA's c10 ABI at inference.
+      # Keep the image's torch untouched → BSA loads clean.
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      # diffsynth (upstream FlashVSR package) does a module-top
+      # `from modelscope import snapshot_download` in its downloader
+      # even when weights are pulled from HF. Missing → ImportError
+      # inside `mm.load_models()` → 500 on first /upscale call.
+      # First surfaced 2026-07-03 T#8 attempt (~$0.02 to catch).
+      - "modelscope"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      # FlashVSRRuntime imports kinoforge.core.errors + .scale_target at
+      # the first /upscale call. Single-file embeds keep the bootstrap
+      # script under RunPod's 64KB env-var ceiling.
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    # Skip the eager WanPipeline.from_pretrained at server startup — the
+    # pod runs only the on-demand FlashVSR runtime via the LRU registry.
+    # Cuts cold-boot from ~30min (full Wan 14B download) to ~5min
+    # (BSA compile + FlashVSR install + 2-file lite bundle download).
+    upscale_only: true
+
+# No models[] required — upscale_only=true means the server doesn't
+# eager-load any model. FlashVSR weights are fetched via
+# `upscale.flashvsr.weights_bundle` at provision time.
+models: []
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  requirements:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 2.50
+    disk_gb: 60
+    # SM80+ + 80GB VRAM. FlashVSR v1.1 at 480x480 → 1920x1920 (4x
+    # native) with num_persistent_param_in_dit=None allocates ~42 GB
+    # at inference peak (17th + 18th live smokes OOM'd on A6000 48GB
+    # with tile_size=512). Upstream infer script targets H100 80GB;
+    # A100 80GB is the RunPod-available equivalent at ~$1.90/hr.
+    gpu_preference:
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA H100 80GB HBM3"
+  lifecycle:
+    # BSA source-compile eliminated by T7.5 (2026-07-01): render_provision
+    # now `curl`s a prebuilt wheel from HF Hub instead of `pip install
+    # git+...`. Cold-boot budget now: BSA wheel fetch+install ~60s;
+    # FlashVSR pip install ~2min; weights pull ~3min for the 2-file bundle.
+    # 15m gives ~2x headroom over the ~6-8min happy path.
+    boot_timeout: 15m
+    idle_timeout: 30m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 90m
+    budget: 1.5
+    heartbeat_interval_s: 30
+
+# spec.model is informational only for upscale-only cfgs (no /generate
+# call fires); the integration lock test asserts DiffusersEngine.model_identity
+# returns non-empty for every example. Use the flashvsr 3-token slug.
+spec:
+  model: "flashvsr-wan21-bfloat16"
+
+upscale:
+  engine: flashvsr
+  scale: 4x
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    precision: bfloat16
+    window_size: 24
+    # tile_size: spatial tiling for VRAM headroom on A6000 (48 GB).
+    # Without tiling, 480x480 → 1920x1920 4x upscale peaks at ~46 GB
+    # PyTorch alloc → OOM on the 17th live smoke. 512-pixel tiles cut
+    # peak by ~half.
+    tile_size: 512
+    long_video_mode: false
