@@ -66,13 +66,36 @@ class FlashVSRRuntime:
         long_video_mode: bool,
     ) -> None:
         """Lazy-import diffsynth + torch, load weights via ModelManager."""
+        import importlib.util
+
         import torch
         from diffsynth import (  # type: ignore[import-not-found]
             FlashVSRFullPipeline,
             ModelManager,
         )
 
-        from kinoforge.upscalers.flashvsr._input_prep import Causal_LQ4x_Proj
+        # Prefer upstream Causal_LQ4x_Proj (staged by render_provision at
+        # /workspace/models/flashvsr/utils_upstream.py) — it has the full
+        # `.clear_cache()`, `.stream_forward()`, etc surface the pipeline
+        # actually invokes. Fall back to the vendored stub when the file
+        # is missing (unit tests, dry-run local use).
+        upstream_utils_path = weights_dir / "utils_upstream.py"
+        if upstream_utils_path.exists():
+            spec = importlib.util.spec_from_file_location(
+                "_flashvsr_upstream_utils", str(upstream_utils_path)
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(
+                    f"flashvsr: could not load upstream utils.py from "
+                    f"{upstream_utils_path}"
+                )
+            _upstream = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(_upstream)
+            Causal_LQ4x_Proj = _upstream.Causal_LQ4x_Proj
+        else:
+            from kinoforge.upscalers.flashvsr._input_prep import (
+                Causal_LQ4x_Proj,
+            )
 
         if precision == "bfloat16":
             dtype = torch.bfloat16
