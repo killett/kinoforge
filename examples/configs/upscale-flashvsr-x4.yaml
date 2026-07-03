@@ -25,7 +25,12 @@ engine:
   kind: diffusers
   precision: bfloat16
   diffusers:
-    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    # BSA prebuilt wheel is linked against torch 2.8 + CUDA 12.8. The
+    # image field here (used by kinoforge's diffusers provisioner as the
+    # actual pod OS image) MUST match the compute.image below or BSA
+    # loads against torch 2.4/cu124 and errors at inference with
+    # `undefined symbol _ZN3c105ErrorC2ENS_14SourceLocation...`.
+    image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
     server_cmd:
       - "python"
       - "-m"
