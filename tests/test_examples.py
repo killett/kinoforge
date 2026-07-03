@@ -673,9 +673,9 @@ def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
     with (EXAMPLES_DIR / "wan-with-upscale-flashvsr.yaml").open() as f:
         raw = yaml.safe_load(f)
     assert raw["upscale"]["engine"] == "flashvsr"
-    assert raw["upscale"]["scale"] == "2x"
+    assert raw["upscale"]["scale"] == "4x"
     assert raw["upscale"]["flashvsr"]["long_video_mode"] is False
-    assert raw["upscale"]["flashvsr"]["precision"] == "fp16"
+    assert raw["upscale"]["flashvsr"]["precision"] == "bfloat16"
     # Set-equality — order is separately tested elsewhere; the invariant
     # here is that the exact 4-GPU allowlist stays intact. NVIDIA-prefixed
     # names are non-negotiable: plain tokens like "A100 80GB" fall through
@@ -688,18 +688,14 @@ def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
     }
 
 
-@pytest.mark.xfail(
-    reason="T7.6.4 renames this cfg to upscale-flashvsr-x4.yaml with scale=4x",
-    strict=True,
-)
-def test_upscale_flashvsr_x2_marks_upscale_only_and_a6000_first() -> None:
+def test_upscale_flashvsr_x4_marks_upscale_only_and_a6000_first() -> None:
     """FlashVSR upscale-only lockdown: upscale_only=true + A6000 first.
 
     Bug caught: a future edit re-enables eager WanPipeline load in the
     upscale-only cfg (upscale_only: false) — cold boot balloons from 5min
     to 30min and blows the boot_timeout.
     """
-    with (EXAMPLES_DIR / "upscale-flashvsr-x2.yaml").open() as f:
+    with (EXAMPLES_DIR / "upscale-flashvsr-x4.yaml").open() as f:
         raw = yaml.safe_load(f)
     assert raw["engine"]["diffusers"]["upscale_only"] is True
     assert raw["upscale"]["engine"] == "flashvsr"
@@ -708,4 +704,4 @@ def test_upscale_flashvsr_x2_marks_upscale_only_and_a6000_first() -> None:
     # (see F-single T8 attempt-#1 evidence: bare "A6000" → no-GPU pod).
     assert raw["compute"]["requirements"]["gpu_preference"][0] == "NVIDIA RTX A6000"
     # Load through full validator to catch schema regressions.
-    load_config(EXAMPLES_DIR / "upscale-flashvsr-x2.yaml")
+    load_config(EXAMPLES_DIR / "upscale-flashvsr-x4.yaml")

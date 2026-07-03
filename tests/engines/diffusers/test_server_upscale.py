@@ -242,11 +242,11 @@ class TestPostUpscale:
         req = srv.UpscaleRequest(
             source_url=f"file://{src_mp4}",
             source_filename=src_mp4.name,
-            scale="2x",
+            scale="4x",
             engine="flashvsr",
             flashvsr=srv.FlashVSRParams(
                 weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1",
-                precision="fp16",
+                precision="bfloat16",
             ),
         )
         srv._upscale_jobs["job-flashvsr-1"] = {
@@ -258,7 +258,7 @@ class TestPostUpscale:
 
         asyncio.run(srv._run_upscale_job("job-flashvsr-1", req))
 
-        assert seen_names == ["flashvsr-wan21-fp16"], seen_names
+        assert seen_names == ["flashvsr-wan21-bfloat16"], seen_names
         assert srv._upscale_jobs["job-flashvsr-1"]["state"] == "done", (
             srv._upscale_jobs["job-flashvsr-1"]
         )

@@ -1,4 +1,4 @@
-# Wan 2.2 T2V-A14B + in-pipeline FlashVSR v1.1 2x streaming diffusion upscale.
+# Wan 2.2 T2V-A14B + in-pipeline FlashVSR v1.1 4x streaming diffusion upscale.
 # v1 default multi-stage cfg — supersedes wan-with-upscale-spandrel.yaml
 # (kept as fallback).
 #
@@ -104,10 +104,10 @@ upscale:
   # into the bootstrap. The LRU model registry in wan_t2v_server swaps
   # Wan ↔ FlashVSR between stages so both fit on the 80 GB tier.
   engine: flashvsr
-  scale: 2x
+  scale: 4x
   flashvsr:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
-    precision: fp16
+    precision: bfloat16
     window_size: 24
     tile_size: 0
     # Lite bundle (2 files): TCDecoder + LCSA disabled. Enable

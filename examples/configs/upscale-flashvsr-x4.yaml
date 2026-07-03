@@ -1,25 +1,29 @@
 # v1-default upscale-only cfg for `kinoforge upscale`.
 #
 # Streaming diffusion super-resolution via FlashVSR v1.1 (Wan 2.1 1.3B backbone
-# wrapped in StreamingDMDPipeline). Distinct from spandrel's per-frame
-# per-image SR: FlashVSR runs a streaming attention window across frames so
-# temporal coherence stays intact across the whole clip. Preferred over
-# upscale-spandrel-x2.yaml for any clip where flicker or texture drift is
+# wrapped in StreamingDMDPipeline) at 4x native scale. Distinct from spandrel's
+# per-frame per-image SR: FlashVSR runs a streaming attention window across
+# frames so temporal coherence stays intact across the whole clip. Preferred
+# over upscale-spandrel-x2.yaml for any clip where flicker or texture drift is
 # a concern.
 #
 # Requires SM80+ (Block-Sparse-Attention). Cheapest-first GPU allowlist
 # prioritizes A6000 48 GB for the standalone upscale path (Wan is not
-# co-resident — VRAM budget is FlashVSR's ~8 GB peak plus headroom).
+# co-resident — VRAM budget is FlashVSR's ~8 GB peak plus headroom). Note:
+# 4x scale (e.g. 480×480 → 1920×1920) is ~4x the pixel budget of a 2x
+# upscale; A6000 48 GB comfortably covers the ~8 GB FlashVSR VRAM peak even
+# at 4x. The 15m boot_timeout remains sufficient — bfloat16 install path is
+# identical in duration to fp16.
 #
 # Usage:
 #   pixi run kinoforge upscale \
-#     --config examples/configs/upscale-flashvsr-x2.yaml \
+#     --config examples/configs/upscale-flashvsr-x4.yaml \
 #     --video /path/to/clip.mp4 \
 #     --no-reuse
 
 engine:
   kind: diffusers
-  precision: fp16
+  precision: bfloat16
   diffusers:
     image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
     server_cmd:
@@ -93,14 +97,14 @@ compute:
 # call fires); the integration lock test asserts DiffusersEngine.model_identity
 # returns non-empty for every example. Use the flashvsr 3-token slug.
 spec:
-  model: "flashvsr-wan21-fp16"
+  model: "flashvsr-wan21-bfloat16"
 
 upscale:
   engine: flashvsr
-  scale: 2x
+  scale: 4x
   flashvsr:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
-    precision: fp16
+    precision: bfloat16
     window_size: 24
     tile_size: 0
     long_video_mode: false

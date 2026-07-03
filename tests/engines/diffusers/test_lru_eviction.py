@@ -253,10 +253,10 @@ class TestFlashVSRDispatch:
 
         monkeypatch.setattr(runtime_mod, "FlashVSRRuntime", fake_ctor)
 
-        pipe = srv._load_model_to_gpu("flashvsr-wan21-fp16")
+        pipe = srv._load_model_to_gpu("flashvsr-wan21-bfloat16")
         assert pipe is fake_runtime
         assert captured_kwargs["weights_dir"] == tmp_path
-        assert captured_kwargs["precision"] == "fp16"
+        assert captured_kwargs["precision"] == "bfloat16"
         # Server defaults window=24, tile=0, long_video_mode=False; per-request
         # overrides land via the params dict, not the loader.
         assert captured_kwargs["window_size"] == 24
