@@ -234,6 +234,14 @@ def _poll_until_uploaded_or_timeout(
             inst = provider.get_instance(pod_id)
             probe = provider.probe_runtime(pod_id)
         except Exception as exc:  # noqa: BLE001
+            # RunPod deleting the pod out from under us (community-cloud
+            # host reclaim, observed 2026-07-03 pod yh0pkr1ve7h8bm ~5 min
+            # into a build) surfaces as "no RunPod pod found". That is
+            # terminal — fail fast so the operator refires instead of
+            # burning the whole 45 min deadline on a ghost.
+            if "no RunPod pod found" in str(exc):
+                _log(f"pod {pod_id} vanished (host reclaim?) — aborting poll")
+                return None
             _log(f"pod-status probe failed (retrying): {exc}")
             time.sleep(_POLL_INTERVAL_S)
             continue

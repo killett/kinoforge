@@ -2,11 +2,18 @@
 # v1 default multi-stage cfg — supersedes wan-with-upscale-spandrel.yaml
 # (kept as fallback).
 #
-# FlashVSR wraps a Wan 2.1 1.3B backbone through StreamingDMDPipeline; runs
+# FlashVSR wraps a Wan 2.1 1.3B backbone through FlashVSRFullPipeline; runs
 # as a co-resident LRU-managed model in wan_t2v_server, sharing the pod
-# with the Wan 2.2 A14B T2V generator. Block-Sparse-Attention CUDA kernel
-# compiles once at pod cold-boot (see render_provision) and caches on
-# /workspace so warm-reuse skips the ~2min nvcc build.
+# with the Wan 2.2 A14B T2V generator. Block-Sparse-Attention installs
+# from a prebuilt wheel at pod cold-boot (T7.5); warm-reuse skips it.
+#
+# Torch ABI (the co-residency constraint, learned across T8 smokes 5-23):
+# Wan 2.2's diffusers VAE needs torch>=2.6 (infer_schema stringified-
+# annotation bug in 2.4); BSA loads ONLY against the exact torch it was
+# built with. So this cfg pins the torch 2.6.0+cu124 trio AND points
+# bsa_wheel_url at the matching bsa-cu124-torch2.6-v1 wheel. Change
+# either side alone and the first /upscale dies with an undefined c10
+# symbol at import.
 #
 # See docs/superpowers/specs/2026-07-01-flashvsr-video-upscaling-design.md.
 #
@@ -20,18 +27,24 @@ engine:
   kind: diffusers
   precision: bf16
   diffusers:
+    # MUST match compute.image below — BSA links against the pod's
+    # torch; a mismatched provisioner image reintroduces the undefined
+    # c10 symbol crash (T8 smoke #11, commit ca49cbf). The 2.4.0 tag
+    # pulls fast on RunPod (2.8.0 cudnn-devel stalled 3x during T8);
+    # torch itself is pip-upgraded to 2.6 below.
     image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
     server_cmd:
       - "python"
       - "-m"
       - "kinoforge.engines.diffusers.servers.wan_t2v_server"
     pip:
-      # BSA prebuilt wheel tagged `bsa-cu128-torch2.8-v1` needs torch 2.8
-      # ABI or first `import block_sparse_attn` blows up with undefined
-      # c10::Error symbol. Wan 2.2 diffusers ops still fit torch 2.8.
-      - "torch==2.8.0"
-      - "torchvision==0.23.0"
-      - "torchaudio==2.8.0"
+      # torch 2.6.0+cu124 — the one version both co-residents accept:
+      # Wan 2.2 VAE needs >=2.6, BSA wheel (bsa-cu124-torch2.6-v1
+      # below) was built against exactly this trio. cu124 wheels come
+      # via the provisioner's default --extra-index-url.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
       - "diffusers>=0.32"
       - "transformers>=4.45"
       - "accelerate>=1.0"
@@ -62,7 +75,8 @@ models:
 
 compute:
   provider: runpod
-  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  # Keep in lockstep with engine.diffusers.image above (see comment there).
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: pod
   warm_reuse_auto_attach: true
   requirements:
@@ -107,16 +121,24 @@ spec:
 upscale:
   # Orchestrator appends UpscaleStage after GenerateClipStage when this
   # block is present. FlashVSREngine.render_provision composes the BSA
-  # compile + FlashVSR install + _fetch_weights + HF_HUB_OFFLINE flip
-  # into the bootstrap. The LRU model registry in wan_t2v_server swaps
-  # Wan ↔ FlashVSR between stages so both fit on the 80 GB tier.
+  # wheel install + FlashVSR install + _fetch_weights + HF_HUB_OFFLINE
+  # flip into the bootstrap. The LRU model registry in wan_t2v_server
+  # swaps Wan ↔ FlashVSR between stages so both fit on the 80 GB tier.
   engine: flashvsr
   scale: 4x
   flashvsr:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    # torch 2.6.0+cu124 build — matches the pip torch pin above. The
+    # default (bsa-cu128-torch2.8-v1) is really a torch 2.4.1 build
+    # (mis-tagged, commit ca49cbf) and hard-crashes next to Wan 2.2's
+    # torch 2.6 requirement.
+    bsa_wheel_url: "https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu124-torch2.6-v1/block_sparse_attn-0.0.1-cp311-cp311-linux_x86_64.whl"
     precision: bfloat16
     window_size: 24
-    tile_size: 0
+    # 480x480 → 1920x1920 4x peaks ~42-46 GB torch alloc untiled (T8
+    # smokes 17-18 OOM'd an A6000 48GB). 512-px tiles halve the peak;
+    # mandatory here because Wan 2.2 A14B co-resides on the same 80 GB.
+    tile_size: 512
     # Lite bundle (2 files): TCDecoder + LCSA disabled. Enable
     # long_video_mode=true when a smoke exceeds ~60 frames and the
     # streaming window boundary shows drift.
