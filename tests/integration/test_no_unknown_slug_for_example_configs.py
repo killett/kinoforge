@@ -27,7 +27,11 @@ def _collect_example_configs() -> list[Path]:
     return sorted(
         p
         for p in _EXAMPLE_DIR.glob("**/*.yaml")
-        if p.name not in _SKIP_YAMLS and "manifests" not in p.parts
+        if p.name not in _SKIP_YAMLS
+        and "manifests" not in p.parts
+        # *.grid.yaml files are grid-sweep specs consumed by the grid
+        # loader, not load_config — they have no top-level engine/models.
+        and not p.name.endswith(".grid.yaml")
     )
 
 
