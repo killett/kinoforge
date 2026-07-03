@@ -237,7 +237,12 @@ class FlashVSRRuntime:
         else:
             # Stub or unexpected shape — pass through as-is.
             video = arr
-        iio.imwrite(str(out), video, fps=fps, plugin="pyav")
+        # `codec=` is required when writing via the pyav plugin — without
+        # it, imageio passes codec=None down to
+        # `avcodec_find_encoder_by_name(None)` which raises
+        # `TypeError: expected bytes, NoneType found`. libx264 is the
+        # standard mp4 encoder; 22nd live smoke surfaced this.
+        iio.imwrite(str(out), video, fps=fps, plugin="pyav", codec="libx264")
         return out
 
     def to(self, device: str) -> None:
