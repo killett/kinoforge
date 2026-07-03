@@ -123,5 +123,9 @@ upscale:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
     precision: bfloat16
     window_size: 24
-    tile_size: 0
+    # tile_size: spatial tiling for VRAM headroom on A6000 (48 GB).
+    # Without tiling, 480x480 → 1920x1920 4x upscale peaks at ~46 GB
+    # PyTorch alloc → OOM on the 17th live smoke. 512-pixel tiles cut
+    # peak by ~half.
+    tile_size: 512
     long_video_mode: false
