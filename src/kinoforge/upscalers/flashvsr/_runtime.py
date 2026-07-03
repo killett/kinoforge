@@ -229,14 +229,22 @@ class FlashVSRRuntime:
         # The pipe returns shape (1, 3, F, H, W) in [-1, 1] float.
         import numpy as np
 
-        arr: Any = out_tensor.cpu().float().numpy()  # (1, 3, F, H, W) float in [-1,1]
+        arr: Any = out_tensor.cpu().float().numpy()
+        # Upstream tensor2video expects (C, T, H, W). Some FlashVSR
+        # pipeline paths return the 4D version, others return (1, C, T,
+        # H, W). Reduce to 4D (C, T, H, W) before denorm+rearrange.
         if hasattr(arr, "shape") and len(arr.shape) == 5:
-            # Denormalise [-1,1] → [0,255], then rearrange (1,3,F,H,W) → (F,H,W,3).
-            video = ((arr[0] + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
-            video = video.transpose(1, 2, 3, 0)  # (3, F, H, W) → (F, H, W, 3)
+            arr4d = arr[0]  # (C, T, H, W)
+        elif hasattr(arr, "shape") and len(arr.shape) == 4:
+            arr4d = arr  # already (C, T, H, W)
         else:
-            # Stub or unexpected shape — pass through as-is.
+            # Stub or unexpected shape — pass through as-is (test path).
             video = arr
+            arr4d = None
+        if arr4d is not None:
+            # Denormalise [-1,1] → [0,255], then rearrange (C,T,H,W)→(T,H,W,C).
+            video = ((arr4d + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
+            video = video.transpose(1, 2, 3, 0)  # (T, H, W, C)
         # `codec=` is required when writing via the pyav plugin — without
         # it, imageio passes codec=None down to
         # `avcodec_find_encoder_by_name(None)` which raises
