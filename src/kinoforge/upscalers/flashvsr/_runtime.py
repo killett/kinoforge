@@ -80,6 +80,7 @@ class FlashVSRRuntime:
             dtype = torch.float16
         else:
             dtype = torch.float32
+        self._dtype = dtype
 
         mm = ModelManager(torch_dtype=dtype, device="cpu")
         mm.load_models(
@@ -102,8 +103,10 @@ class FlashVSRRuntime:
 
         # Inject LQ_proj_in on the denoising model's LQ conditioning path.
         # Upstream: Causal_LQ4x_Proj(in_dim=3, out_dim=1536, layer_num=1)
+        # dtype follows user precision so the projection stays on the same
+        # dtype as the rest of the pipeline (avoids fp32/bf16 mismatch).
         lq_proj = Causal_LQ4x_Proj(in_dim=3, out_dim=1536, layer_num=1).to(
-            "cuda", dtype=torch.bfloat16
+            "cuda", dtype=self._dtype
         )
         lq_ckpt = weights_dir / "LQ_proj_in.ckpt"
         if lq_ckpt.exists():
@@ -111,7 +114,9 @@ class FlashVSRRuntime:
                 torch.load(str(lq_ckpt), map_location="cpu"), strict=True
             )
         pipe.denoising_model().LQ_proj_in = lq_proj
-        pipe.denoising_model().LQ_proj_in.to("cuda")
+        # NOTE: no second .to("cuda") call here — the .to("cuda", dtype=...)
+        # above already placed lq_proj on device; the assignment on the
+        # preceding line preserves device/dtype (no copy occurs).
 
         # VAE encoder teardown — VRAM optimisation (upstream init_pipeline).
         pipe.vae.model.encoder = None
