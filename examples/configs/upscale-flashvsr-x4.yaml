@@ -36,14 +36,15 @@ engine:
       - "-m"
       - "kinoforge.engines.diffusers.servers.wan_t2v_server"
     pip:
-      # torch 2.8/cu128 required — matches the prebuilt BSA wheel
-      # `bsa-cu128-torch2.8-v1`. The pytorch_extra_index_url below is
-      # cu128 so pip picks the cu128 build; without it pip serves the
-      # cu126 default which fails at inference with
-      # `undefined symbol _ZN3c104cuda9SetDeviceEa`.
-      - "torch==2.8.0"
-      - "torchvision==0.23.0"
-      - "torchaudio==2.8.0"
+      # DO NOT reinstall torch here. The BSA prebuilt wheel
+      # (`bsa-cu128-torch2.8-v1`) is a MISLEADING TAG: build_bsa_wheel.py
+      # runs on `runpod/pytorch:2.8.0-...cuda12.8.1-...` but does NOT
+      # pip-install torch — it uses whatever the image preinstalls,
+      # which is actually `torch 2.4.1+cu124` (verified via
+      # `kinoforge logs` 2026-07-03). So the wheel is really
+      # cu124/torch2.4 despite the tag. Reinstalling torch here to
+      # 2.8/cu128 (or 2.8/cu126) breaks BSA's c10 ABI at inference.
+      # Keep the image's torch untouched → BSA loads clean.
       - "fastapi>=0.115"
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
@@ -53,10 +54,6 @@ engine:
       # inside `mm.load_models()` → 500 on first /upscale call.
       # First surfaced 2026-07-03 T#8 attempt (~$0.02 to catch).
       - "modelscope"
-    # Override the diffusers engine's default (cu124) so torch 2.8/cu128
-    # resolves cleanly. Threaded into the render_provision `pip install
-    # --extra-index-url` line.
-    pytorch_extra_index_url: "https://download.pytorch.org/whl/cu128"
     embed_modules:
       - "kinoforge.engines.diffusers.servers"
       - "kinoforge.upscalers.flashvsr"
