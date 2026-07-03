@@ -40,6 +40,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
      | 3 (warm3) | `dawn-flight.md`      | +3 m 25 s | `output/20260620-122449_diffusers_Wan2.2-T2V-A14B-Diffuser_Aerial-drone-shot-at.mp4`   | 403,909 B (0.39 MiB)   | `d11c1c194d47a70399838b095f63ea4a3d4dc2e24a99ef2279df8146af46f4f5` |
 12. `2026-06-30 21:19:07` — [SpandrelEngine RealESRGAN-x2 upscale on RunPod (wan_t2v_server multi-engine) — upscale](#12-2026-06-30-211907--spandrelengine-realesrgan-x2-upscale-on-runpod-wan_t2v_server-multi-engine--upscale)
     - See also: `2026-06-30 22:19:07` — T16 multi-stage warm-reuse on pod `4ju5e4ae9jnx6e`: Wan 2.2 T2V-A14B stage-1 (480×480×81) → SpandrelEngine stage-2 (960×960×81) on the same pod, spend $0.25, 908.82 s wall. Same tuple `(runpod, spandrel, RealESRGAN, upscale)` chained after `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`.
+13. `2026-07-03 12:13:45` — [FlashVSR v1.1 diffusion upscaler (4x native) on RunPod A100 80GB — upscale](#13-2026-07-03-121345--flashvsr-v11-diffusion-upscaler-4x-native-on-runpod-a100-80gb--upscale)
 
 ---
 
@@ -1991,3 +1992,78 @@ pixi run pytest tests/live/test_wan_then_spandrel_warm_reuse_smoke.py -v -m live
 - T16 stage-2 DID PUT /upload from the operator's disk (Wan output was already sinked locally at end of stage-1). Original plan AC said "no PUT /upload" — updated in `_t16_evidence.json` under `notes`: strict zero-upload warm-reuse would require an orchestrator mode that keeps intermediate artifacts pod-local.
 - Total P3 live spend across all attempts ≈ $1.20 (T15 ~$0.10 across 7 attempts, T16 ~$0.85 across 3 attempts, plus one debugging pod destroy fallback). Under the plan's $1-3 envelope for the multi-stage smoke.
 - Post-both-runs ledger clean: `kinoforge list` returns `No running instances.` AND `No instances recorded in ledger.` at both T15 and T16 close.
+
+---
+
+## 13. `2026-07-03 12:13:45` — FlashVSR v1.1 diffusion upscaler (4x native) on RunPod A100 80GB — upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / FlashVSREngine + DiffusersEngine (upscale-only mode) / diffsynth.FlashVSRFullPipeline @ JunhaoZhuang/FlashVSR-v1.1` |
+| **Mode** | upscale |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `af212dc` (F-single pytest); `e1a42e4` first end-to-end green (24th manual smoke `50ioxii84z3bjv`) |
+| **Date (local TZ)** | 2026-07-03 12:13:45 -0700 (PDT) |
+| **Layer / phase** | T7.6 sub-plan (`docs/superpowers/plans/2026-07-02-flashvsr-runtime-rewrite.md`) — closes T#8 F-single from parent P4 plan (`docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`). |
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_SPEND=1 pixi run pytest \
+  tests/live/test_flashvsr_live.py::test_f_single -v -s
+```
+
+### Cfg
+
+- `examples/configs/upscale-flashvsr-x4.yaml` — engine=`diffusers`, upscaler=`flashvsr`, scale=`4x`, precision=`bfloat16`, tile_size=`512`, GPU tier=A100/H100 80GB, image=`runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`.
+
+### Input
+
+- Source clip: `/workspace/output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` — 480×480, 81 frames, Wan 2.2 T2V-A14B (see entry #8).
+
+### Output
+
+- Artifact: `output/20260703-121345_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4`
+- Dims: **1920×1920** (source×4) — verified via `pixi run ffprobe`.
+- Size: ~34 MB, h264 / yuv420p / libx264.
+- SHA256: `e277993070125f05fb0288443327e037c74abe207169dcb7a116cb6220386a22` (24th manual smoke output at `20260703-120312_...mp4` was the first artifact; pytest re-fire produced `20260703-121345_...`).
+
+### Pod
+
+- Provider: RunPod (GraphQL `podFindAndDeployOnDemand`).
+- GPU: NVIDIA A100 80GB PCIe.
+- Cost rate: ~$1.19/hr.
+- Pytest wall-clock: **4 m 35 s** (`1 passed in 275.68s`).
+- Manual smoke wall-clock (24th): ~5 m 30 s (provision + fetch + upscale + destroy).
+- Ledger post-run: clean (`No running instances.` + `No instances recorded in ledger.`).
+
+### Reproduction recipe deltas vs. #12 (SpandrelEngine)
+
+- **Engine change**: swap SpandrelEngine per-frame architecture-agnostic SR for FlashVSREngine streaming diffusion (Wan 2.1 1.3B backbone with Block-Sparse-Attention).
+- **Native scale**: fixed at 4× by upstream `Causal_LQ4x_Proj` weight shape (spandrel was 2× via RealESRGAN).
+- **VRAM tier**: 80GB required (spandrel fit A6000 48GB). FlashVSR at 480×480→1920×1920 peaks ~42 GB PyTorch alloc; A6000 OOMs even with tile_size=512.
+- **Precision**: bfloat16 (spandrel was fp16).
+- **Weights bundle**: `hf:JunhaoZhuang/FlashVSR-v1.1` — 2-file lite bundle (StreamingDMD + Wan2.1_VAE) + `posi_prompt.pth` + `LQ_proj_in.ckpt` + upstream `utils.py` fetched at provision.
+- **Runtime deps pinned** to diffsynth 1.1.7's `install_requires` (transformers==4.46.2, safetensors==0.5.3, accelerate==1.8.1, peft==0.16.0, einops==0.8.1, ftfy==6.3.1, sentencepiece==0.2.0).
+
+### Live-smoke debugging chronology (T7.6 sub-plan Task 6)
+
+24 total live smokes across 2026-07-02 and 2026-07-03; 15+ discrete on-pod infra bugs surfaced and fixed. Cumulative spend ~$1.60 (all pods destroyed via `kinoforge destroy` or `--no-reuse`). Full chronology in `PROGRESS.md` § **FlashVSR T7.6 sub-plan** table.
+
+Key learnings for future FlashVSR / diffsynth-based upscalers:
+
+1. **`--no-deps` is mandatory** on FlashVSR git-install — upstream `requirements.txt` pins `torch==2.6.0+cu124` (local +cu124 suffix) which pip cannot resolve.
+2. **modelscope is a required runtime dep** even when weights come from HF Hub — diffsynth's downloader.py has a module-top `from modelscope import snapshot_download`.
+3. **BSA prebuilt wheel tag is misleading** — `bsa-cu128-torch2.8-v1` was actually linked against `runpod/pytorch:2.8.0-...cuda12.8.1`'s preinstalled torch (2.4.1+cu124 in reality). Reinstalling torch (any version) breaks BSA ABI.
+4. **`init_cross_kv()` needs `posi_prompt.pth`** at a hardcoded relative path — pass `context_tensor=` kwarg to bypass.
+5. **`Causal_LQ4x_Proj`** must be loaded from upstream `utils.py` (fetched at provision) — the vendored stub in `_input_prep.py` lacks `.clear_cache()` / `.stream_forward()`.
+6. **`imwrite` via pyav plugin** needs explicit `codec="libx264"` — imageio v3 defaults to `codec=None` which crashes PyAV.
+7. **Server-side traceback logging** in `_run_upscale_job` catch block is essential — client-side `str(exc)` alone strands debugging.
+8. **`reader.metadata` is a method** in imageio.v3, not an attribute.
+9. **80GB VRAM required** for 480×480 → 1920×1920 4× with `num_persistent_param_in_dit=None` — A6000 48GB OOMs even with tiling.
+10. **`DiffusersEngineConfig` schema needs `image` + `pytorch_extra_index_url` fields** — pydantic silently strips undeclared cfg keys.
+
+### Notes
+
+- Test fixture source clip is the 480×480 Wan 2.2 output from entry #8. F-multi (Wan generate → FlashVSR upscale on same pod) and F-warm (LRU-hit second generate) live smokes are still xfail-gated (`KINOFORGE_LIVE_SPEND` env var); firing them is deferred to a follow-up session.
+- The 24th manual smoke output at `20260703-120312_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` (35 MB, same tuple) is the FIRST-EVER green FlashVSR generation kinoforge produced; the pytest re-fire at `20260703-121345_...` is the receipt for Task 6 AC.
