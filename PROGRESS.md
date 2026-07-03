@@ -12,6 +12,75 @@ first unchecked task without redoing committed work.
 
 ## HIGH-PRIORITY FOLLOW-UP
 
+**FlashVSR T#8 BLOCKED 2026-07-02 — runtime API rewrite required.**
+
+Live smoke pod (`igerhjv1cx94pl`) surfaced the real blocker: server-side
+`ImportError: No module named 'flashvsr'`. Root cause: the `flashvsr` git
+repo does NOT ship a `flashvsr` Python package — it ships `diffsynth`
+(package name declared in `setup.py`, contains
+`diffsynth/pipelines/flashvsr_full.py` etc.). Our
+`FlashVSRRuntime.__init__` in `src/kinoforge/upscalers/flashvsr/_runtime.py`
+imports `from flashvsr.pipeline import StreamingDMDPipeline` — that class
+does not exist. The real upstream class is
+`diffsynth.FlashVSRFullPipeline`, constructed via a much different flow:
+
+```python
+from diffsynth import ModelManager, FlashVSRFullPipeline
+mm = ModelManager(torch_dtype=torch.bfloat16, device="cpu")
+mm.load_models([weights_dir + "/diffusion_pytorch_model_streaming_dmd.safetensors",
+                weights_dir + "/Wan2.1_VAE.pth"])
+pipe = FlashVSRFullPipeline.from_model_manager(mm, device="cuda")
+# ... LQ_proj_in load, VAE surgery, enable_vram_management, init_cross_kv,
+#     load_models_to_device — see examples/WanVSR/infer_flashvsr_v1.1_full.py
+video = pipe(prompt="", negative_prompt="", cfg_scale=1.0,
+             num_inference_steps=1, seed=0, tiled=False,
+             LQ_video=LQ, num_frames=F, height=th, width=tw,
+             is_full_block=False, if_buffer=True,
+             topk_ratio=..., kv_ratio=3.0, local_range=11, color_fix=True)
+```
+
+Native scale is fixed at 4x (not 2x — needs the spandrel-fallback cfg for
+2x). Input tensor prep is complex (`prepare_input_tensor` builds LQ + th
++ tw + F + fps from a path with a `scale=4, dtype=bfloat16, device='cuda'`
+target). Output is a bfloat16 tensor → uint8 → imageio writer.
+
+**Sub-plan T7.6 needed.** Rewrite scope:
+
+- `src/kinoforge/upscalers/flashvsr/_runtime.py` — full rewrite around
+  `FlashVSRFullPipeline` API (~180 LOC).
+- `src/kinoforge/upscalers/flashvsr/_input_prep.py` — new file mirroring
+  `examples/WanVSR/utils/utils.py::prepare_input_tensor` + `Causal_LQ4x_Proj`
+  helpers (~120 LOC). NB `utils/` is a folder-import path in upstream —
+  we can't `pip install` it, must vendor.
+- `src/kinoforge/core/config.py` — pin `FlashVSREngineConfig` default
+  scale factor to 4x (currently anything). Also `precision` default
+  should track upstream bfloat16 rather than fp16.
+- `src/kinoforge/upscalers/flashvsr/_engine.py` — server-side
+  `validate_spec` update (reject non-4x targets), remove native_scale=2
+  assumption.
+- `examples/configs/upscale-flashvsr-x2.yaml` → rename to
+  `upscale-flashvsr-x4.yaml`; update spec/tests to expect 4x dims.
+- `examples/configs/wan-with-upscale-flashvsr.yaml` — same 4x update
+  (480×480 → 1920×1920 pixel doubling implicit in spec).
+- `tests/upscalers/flashvsr/test_runtime.py` — rewrite the 6 tests
+  against `FlashVSRFullPipeline`. Delete the `StreamingDMDPipeline`
+  fiction.
+- `tests/live/test_flashvsr_live.py` — bump dims assertion `src_dims * 2`
+  → `src_dims * 4`.
+
+Fixes already committed and validated:
+- `d135386` — BSA wheel filename preserved on curl (pip metadata parse).
+- `a22a122` — FlashVSR git ref pinned to commit SHA (no `v1.1` tag).
+- `87e87d3` — weights_manifest.json inlined as Python constant (pod
+  embed drops non-.py files).
+
+Sub-plan T7.5 (BSA prebuild + GH release swap) SHIPPED — see below.
+
+Total live spend across all T#8 attempts + T7.5 build ~$0.87. All pods
+destroyed.
+
+---
+
 **FlashVSR T7.5 SHIPPED 2026-07-02 — BSA wheel prebuild + GH release swap complete.**
 
 Wheel live at
