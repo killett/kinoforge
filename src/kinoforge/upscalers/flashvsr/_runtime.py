@@ -124,7 +124,19 @@ class FlashVSRRuntime:
 
         pipe.to("cuda")
         pipe.enable_vram_management(num_persistent_param_in_dit=None)
-        pipe.init_cross_kv()
+        # init_cross_kv defaults to loading `posi_prompt.pth` from a
+        # HARDCODED relative path (`../../examples/WanVSR/prompt_tensor/
+        # posi_prompt.pth`, see diffsynth/pipelines/flashvsr_full.py:259).
+        # Bypass the hardcoded path by loading the tensor ourselves from
+        # the weights_dir (staged by render_provision) and passing
+        # `context_tensor=` directly. When the file is absent (unit test
+        # stubs), fall back to the upstream default so mocked pipes work.
+        posi_prompt = weights_dir / "posi_prompt.pth"
+        if posi_prompt.exists():
+            ctx = torch.load(str(posi_prompt), map_location="cpu")
+            pipe.init_cross_kv(context_tensor=ctx)
+        else:
+            pipe.init_cross_kv()
         pipe.load_models_to_device(["dit", "vae"])
 
         self._pipe = pipe

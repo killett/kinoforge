@@ -125,6 +125,19 @@ class FlashVSREngine(UpscalerEngine):
                 "python -m kinoforge.upscalers.flashvsr._fetch_weights "
                 f"--bundle {bundle} --dest /workspace/models/flashvsr "
                 f"--include-long-video {long_video}\n",
+                # posi_prompt.pth is a precomputed CLIP-encoded prompt
+                # tensor that FlashVSRFullPipeline.init_cross_kv() loads
+                # by a HARDCODED RELATIVE PATH
+                # (`../../examples/WanVSR/prompt_tensor/posi_prompt.pth`,
+                # see diffsynth/pipelines/flashvsr_full.py:259). The runtime
+                # bypasses the hardcoded path by passing the tensor
+                # directly, so we just need to stage the file where
+                # _runtime.py can find it. Fetch straight from the pinned
+                # commit — small (< 1 MB), no HF Hub needed.
+                'curl -L -f -o "/workspace/models/flashvsr/posi_prompt.pth" '
+                '"https://raw.githubusercontent.com/OpenImagingLab/FlashVSR'
+                "/b527c6f285fb30df530f5febc8b45764a789c961"
+                '/examples/WanVSR/prompt_tensor/posi_prompt.pth"\n',
                 "export HF_HUB_OFFLINE=1\n",
             ]
         )
