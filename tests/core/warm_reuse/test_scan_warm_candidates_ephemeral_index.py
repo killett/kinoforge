@@ -62,6 +62,9 @@ def test_scan_surfaces_index_row_when_ledger_empty(
             return_value=(fake_instance, None),
         ),
         patch("kinoforge.cli._commands._probe_lock_held", return_value=False),
+        # Production scan gained a /health capability preflight; this test
+        # covers index-row surfacing, not stage matching — report "covers".
+        patch("kinoforge.cli._commands._health_preflight_ok", return_value=True),
     ):
         instance, report = _scan_warm_candidates(ctx, cfg)
 
