@@ -108,9 +108,20 @@ class _StubPipe:
             def numpy(self) -> Any:
                 import numpy as np
 
-                # Return float32 in [-1, 1] — matches upstream pipe output
-                # and exercises the (x+1)*127.5 denorm path in upscale().
-                return np.full(self.shape, -1.0, dtype=np.float32)
+                # Return a mixed-value array spanning [-1.0, 0.0, 1.0] so
+                # the denorm test can distinguish (x+1)*127.5 from wrong
+                # formulas such as x*127.5+127.5 (both yield 127 at x=0,
+                # but differ at x=-1 and x=1).
+                # Shape: (1, 3, F, H, W) — we write sentinel values into
+                # three spatial positions across channel 0 / frame 0.
+                arr = np.zeros(self.shape, dtype=np.float32)
+                # Position (0, 0, 0, 0, 0) → -1.0 → denorm → 0
+                arr[0, 0, 0, 0, 0] = -1.0
+                # Position (0, 0, 0, 0, 1) → 0.0 → denorm → 127
+                arr[0, 0, 0, 0, 1] = 0.0
+                # Position (0, 0, 0, 0, 2) → 1.0 → denorm → 255
+                arr[0, 0, 0, 0, 2] = 1.0
+                return arr
 
         return _T(kwargs["num_frames"], kwargs["height"], kwargs["width"])
 
@@ -246,11 +257,14 @@ def stub_diffsynth(monkeypatch: pytest.MonkeyPatch) -> None:
             def __init__(self, *a: Any, **k: Any) -> None:
                 self.weight = object()
                 self.bias = object()
+                # Records every .to() call as (args, kwargs) for dtype assertions.
+                self.to_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
             def __call__(self, x: Any) -> Any:
                 return x
 
             def to(self, *a: Any, **k: Any) -> _StubConv3d:
+                self.to_calls.append((a, k))
                 return self
 
             def state_dict(self) -> dict[str, Any]:
@@ -598,6 +612,11 @@ def test_upscale_denormalises_output_tensor(
     all negative values to 0 (most pixels) and clips 1.0 to 1 → produces a
     nearly-black video with a single non-zero row at the maximum. The error is
     silent — imageio writes a valid-format MP4 with incorrect pixel values.
+
+    The stub pipe returns a mixed-value array with sentinel pixels at
+    positions (F=0,H=0,W=0..2) → [-1.0, 0.0, 1.0].  This distinguishes
+    the correct formula (x+1)*127.5 from wrong variants such as x*127.5+127.5
+    (both agree at x=0 → 127, but diverge at x=-1 and x=1).
     """
     import numpy as np
 
@@ -626,17 +645,59 @@ def test_upscale_denormalises_output_tensor(
     assert len(imwrite_calls) == 1, "imwrite must be called exactly once"
     video = imwrite_calls[0]
 
-    # The stub pipe returns np.full(shape, -1.0, dtype=float32).
-    # After denorm: (-1.0 + 1.0) * 127.5 = 0.0 → uint8 0.
-    # Shape must be (F, H, W, 3).
+    # Shape must be (F, H, W, 3) after (1,3,F,H,W) → (F,H,W,3) rearrange.
     assert hasattr(video, "dtype"), "video passed to imwrite must be a numpy array"
     assert video.dtype == np.uint8, (
         f"expected uint8 output; got {video.dtype} — denorm path missing"
     )
     assert len(video.shape) == 4, f"expected (F, H, W, 3) shape; got {video.shape}"
     assert video.shape[-1] == 3, f"last dim must be 3 (channels); got {video.shape}"
-    # All values should be 0 (since stub returns -1.0 floats → denorm → 0.0).
-    assert (video == 0).all(), (
-        "denorm of -1.0 input should produce all-zero uint8 pixels; "
-        f"got max={video.max()} — naïve astype(uint8) or wrong scaling"
+
+    # Verify the exact denorm formula (x+1)*127.5 using the three sentinels:
+    #   input -1.0 → (-1+1)*127.5 = 0   → uint8 0
+    #   input  0.0 → (0+1)*127.5  = 127  → uint8 127
+    #   input  1.0 → (1+1)*127.5  = 255  → uint8 255
+    # Stub wrote sentinels into channel-0 of frame-0 at W=0,1,2.
+    # After (1,3,F,H,W) → (F,H,W,3) the layout is video[frame, H, W, channel].
+    pixel_neg1 = int(video[0, 0, 0, 0])  # W=0, channel 0 → input -1.0
+    pixel_zero = int(video[0, 0, 1, 0])  # W=1, channel 0 → input  0.0
+    pixel_pos1 = int(video[0, 0, 2, 0])  # W=2, channel 0 → input  1.0
+    assert pixel_neg1 == 0, (
+        f"denorm(-1.0) must be 0; got {pixel_neg1} — wrong formula or clip"
+    )
+    assert pixel_zero in (127, 128), (
+        f"denorm(0.0) must be 127 or 128; got {pixel_zero} — wrong formula"
+    )
+    assert pixel_pos1 == 255, (
+        f"denorm(1.0) must be 255; got {pixel_pos1} — wrong formula or clip"
+    )
+
+
+def test_lq_proj_in_dtype_tracks_precision(
+    stub_diffsynth: None, tmp_path: Path
+) -> None:
+    """RED: LQ_proj_in is cast to the dtype derived from the precision arg.
+
+    Bug caught: hardcoding ``dtype=torch.bfloat16`` in the .to() call causes
+    a dtype mismatch when the user sets ``precision='fp32'`` — the pipe and
+    all other weights are fp32 but the LQ projection is bfloat16, triggering a
+    runtime dtype error on the first forward pass.
+    """
+    import torch
+
+    from kinoforge.upscalers.flashvsr._input_prep import Causal_LQ4x_Proj
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    rt = FlashVSRRuntime(tmp_path, "fp32", 24, 0, False)
+
+    lq = rt._pipe._denoising_model.LQ_proj_in
+    assert isinstance(lq, Causal_LQ4x_Proj), "LQ_proj_in must be a Causal_LQ4x_Proj"
+
+    # _StubConv3d.to_calls records every (args, kwargs) pair from .to() calls.
+    # We expect at least one call whose kwargs include dtype=torch.float32
+    # (the fp32 sentinel in the stubbed torch module).
+    dtype_kwargs = [k.get("dtype") for (_, k) in lq._conv.to_calls]
+    assert torch.float32 in dtype_kwargs, (
+        f"LQ_proj_in._conv.to() must receive dtype=torch.float32 for "
+        f"precision='fp32'; recorded kwargs dtypes: {dtype_kwargs}"
     )
