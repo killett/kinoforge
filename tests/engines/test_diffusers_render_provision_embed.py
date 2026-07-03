@@ -18,9 +18,23 @@ import without any pod-side pip install of kinoforge.
 from __future__ import annotations
 
 import base64
+import gzip
 from typing import Any
 
 from kinoforge.engines.diffusers import DiffusersEngine
+
+
+def _decoded_blob_for(script: str, target: str) -> bytes | None:
+    """Decode the gzip+base64 payload written to ``target``, or None.
+
+    Provision emits: ``echo '<b64>' | python3 -c "...gzip.decompress(
+    base64.b64decode(...))..." > <target>`` — one line per embedded file.
+    """
+    for line in script.splitlines():
+        if target in line and "base64" in line and line.startswith("echo '"):
+            blob = line.split("'", 2)[1]
+            return gzip.decompress(base64.b64decode(blob))
+    return None
 
 
 def _make_engine() -> DiffusersEngine:
@@ -75,20 +89,14 @@ def test_embed_writes_wan_t2v_server_source_to_kfsrv() -> None:
     target = "/tmp/kfsrv/kinoforge/engines/diffusers/servers/wan_t2v_server.py"
     assert target in script, "expected embedded write to wan_t2v_server.py"
 
-    # Pull the base64 blob written to that target and decode it; must
+    # Pull the gzip+base64 blob written to that target and decode it; must
     # contain a fingerprint string unique to our server module.
     fingerprint = b"FastAPI inference server for Wan 2.2 T2V-A14B"
-    # Extract a base64-decode line referencing the target
-    decoded_any = False
-    for line in script.splitlines():
-        if target in line and "base64 -d" in line:
-            # Format: echo '<b64>' | base64 -d > <target>
-            blob = line.split("'", 2)[1]
-            decoded = base64.b64decode(blob)
-            if fingerprint in decoded:
-                decoded_any = True
-                break
-    assert decoded_any, f"no base64 line decoded to bytes containing {fingerprint!r}"
+    decoded = _decoded_blob_for(script, target)
+    assert decoded is not None, f"no embed write line found for {target}"
+    assert fingerprint in decoded, (
+        f"embedded payload for {target} does not contain {fingerprint!r}"
+    )
     # Sanity: the source on disk has the same fingerprint.
     with open(srv_mod.__file__, "rb") as f:
         assert fingerprint in f.read()
@@ -102,15 +110,9 @@ def test_embed_writes_video_io_source_to_kfsrv() -> None:
     target = "/tmp/kfsrv/kinoforge/engines/diffusers/servers/_video_io.py"
     assert target in rp.script
     fingerprint = b"MP4 encoder helper for diffusers-engine servers"
-    found = False
-    for line in rp.script.splitlines():
-        if target in line and "base64 -d" in line:
-            blob = line.split("'", 2)[1]
-            decoded = base64.b64decode(blob)
-            if fingerprint in decoded:
-                found = True
-                break
-    assert found
+    decoded = _decoded_blob_for(rp.script, target)
+    assert decoded is not None, f"no embed write line found for {target}"
+    assert fingerprint in decoded
 
 
 def test_embed_touches_init_py_at_every_namespace_level() -> None:
