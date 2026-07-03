@@ -688,20 +688,25 @@ def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
     }
 
 
-def test_upscale_flashvsr_x4_marks_upscale_only_and_a6000_first() -> None:
-    """FlashVSR upscale-only lockdown: upscale_only=true + A6000 first.
+def test_upscale_flashvsr_x4_marks_upscale_only_and_a100_first() -> None:
+    """FlashVSR upscale-only lockdown: upscale_only=true + A100 first.
 
     Bug caught: a future edit re-enables eager WanPipeline load in the
     upscale-only cfg (upscale_only: false) — cold boot balloons from 5min
     to 30min and blows the boot_timeout.
+
+    A100 80GB required — 17th + 18th F-single live smokes OOM'd on
+    A6000 48GB at 480×480 → 1920×1920 4x. Upstream infer script
+    targets H100 80GB; A100 is the cheaper 80GB tier on RunPod.
     """
     with (EXAMPLES_DIR / "upscale-flashvsr-x4.yaml").open() as f:
         raw = yaml.safe_load(f)
     assert raw["engine"]["diffusers"]["upscale_only"] is True
     assert raw["upscale"]["engine"] == "flashvsr"
-    # A6000 pinned first — cheapest SM80+ pod on RunPod fits FlashVSR's
-    # ~8 GB peak with generous headroom. NVIDIA-prefixed name required
-    # (see F-single T8 attempt-#1 evidence: bare "A6000" → no-GPU pod).
-    assert raw["compute"]["requirements"]["gpu_preference"][0] == "NVIDIA RTX A6000"
+    assert (
+        raw["compute"]["requirements"]["gpu_preference"][0] == "NVIDIA A100 80GB PCIe"
+    )
+    # 80 GB required — A6000 48GB OOMs.
+    assert raw["compute"]["requirements"]["min_vram_gb"] == 80
     # Load through full validator to catch schema regressions.
     load_config(EXAMPLES_DIR / "upscale-flashvsr-x4.yaml")

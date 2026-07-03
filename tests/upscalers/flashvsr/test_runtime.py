@@ -300,7 +300,8 @@ def stub_diffsynth(monkeypatch: pytest.MonkeyPatch) -> None:
         # called without the stub (e.g. due to module-cache ordering across tests).
         def imopen(path: str, mode: str, plugin: str = "pyav") -> Any:  # noqa: ARG001
             class _Reader:
-                metadata: dict[str, Any] = {"fps": 24.0}
+                def metadata(self) -> dict[str, Any]:
+                    return {"fps": 24.0}
 
                 def iter(self) -> Any:
                     import numpy as _np
