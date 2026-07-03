@@ -373,6 +373,16 @@ class DiffusersEngineConfig(BaseModel):
     upscale_only: bool = False  # When True, render_provision emits
     # KINOFORGE_SKIP_WAN_LOAD=1 so the in-pod wan_t2v_server starts in
     # upscale-only mode (no eager WanPipeline.from_pretrained call).
+    image: str | None = None  # Override the diffusers engine's default
+    # container image (runpod/pytorch:2.4.0-...cuda12.4.1). Threaded into
+    # RenderedProvision.image → InstanceSpec.image at pod-create time.
+    # Required by cfgs whose upscaler needs a torch build the default
+    # image cannot supply (e.g. FlashVSR's cu128 BSA wheel).
+    pytorch_extra_index_url: str | None = None  # Override the diffusers
+    # engine's default (cu124) pytorch wheel index. Threaded into the
+    # render_provision `pip install --extra-index-url` line. Required by
+    # cfgs pinning torch cu128 to match a prebuilt CUDA extension ABI
+    # (e.g. FlashVSR's BSA wheel tagged `bsa-cu128-torch2.8-v1`).
 
 
 class FalEngineConfig(BaseModel):
