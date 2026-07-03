@@ -110,15 +110,17 @@ class FlashVSREngine(UpscalerEngine):
                 "pip install --no-deps "
                 '"git+https://github.com/OpenImagingLab/FlashVSR'
                 '@b527c6f285fb30df530f5febc8b45764a789c961"\n',
-                # Runtime deps for diffsynth (FlashVSR's inner package):
-                # modelscope for `from modelscope import snapshot_download`
-                # at diffsynth top level; safetensors, transformers,
-                # accelerate, peft, einops, ftfy, sentencepiece for
-                # ModelManager + WanPipeline surfaces; imageio for the
-                # runtime video read/write.
-                'pip install "modelscope" "safetensors>=0.4" '
-                '"transformers>=4.45" "accelerate>=1.0" "peft>=0.15" '
-                '"einops>=0.8" "ftfy>=6" "sentencepiece>=0.2" '
+                # Runtime deps for diffsynth (FlashVSR's inner package).
+                # Pins match diffsynth 1.1.7's `install_requires` so
+                # ModelManager + FlashVSRFullPipeline surfaces load
+                # cleanly. transformers 5.x removed `PretrainedConfig`
+                # from `transformers.modeling_utils` — diffsynth breaks
+                # at `from transformers.modeling_utils import
+                # PretrainedConfig`. Downgrade + pin.
+                'pip install "modelscope" '
+                '"safetensors==0.5.3" "transformers==4.46.2" '
+                '"accelerate==1.8.1" "peft==0.16.0" '
+                '"einops==0.8.1" "ftfy==6.3.1" "sentencepiece==0.2.0" '
                 '"imageio[ffmpeg]>=2.34"\n',
                 "python -m kinoforge.upscalers.flashvsr._fetch_weights "
                 f"--bundle {bundle} --dest /workspace/models/flashvsr "
