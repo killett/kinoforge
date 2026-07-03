@@ -188,16 +188,24 @@ def _spec_for_build(release_id: int, gh_token: str) -> InstanceSpec:
 
 
 def _pick_offer(provider: RunPodProvider) -> object:
-    """Ask the provider for a matching A6000 (or 4090) offer, cheapest first."""
+    """Ask the provider for an 80GB-tier offer, cheapest first.
+
+    Deliberately NOT the bottom-tier A6000: two consecutive builds on
+    $0.33/hr community A6000s (yh0pkr1ve7h8bm, rlxdi6kdj77u16,
+    2026-07-03) were deleted mid-compile — zero-volume pods on
+    interrupted community hosts are terminated outright, not stopped.
+    The A100/H100 tier carried 24 F-single smoke pods without a single
+    unexplained deletion. ~25 min build ≈ $0.80, inside the $2 ceiling.
+    """
     reqs = HardwareRequirements(
-        min_vram_gb=48,
+        min_vram_gb=80,
         min_cuda="12.4",
-        max_usd_per_hr=1.5,
+        max_usd_per_hr=2.5,
         gpu_preference=(
-            "NVIDIA RTX A6000",
-            "NVIDIA GeForce RTX 4090",
-            "NVIDIA L40",
-            "NVIDIA L40S",
+            "NVIDIA A100 80GB PCIe",
+            "NVIDIA A100-SXM4-80GB",
+            "NVIDIA H100 80GB HBM3",
+            "NVIDIA H100 PCIe",
         ),
         disk_gb=100,
     )
