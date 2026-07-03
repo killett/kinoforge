@@ -2191,7 +2191,9 @@ def _cmd_logs(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     out_path = getattr(args, "out", None)
     if out_path:
-        Path(out_path).write_bytes(body)
+        # kinoforge:public-write — user explicitly requested this destination
+        # via `fetch --out <path>`; the write IS the command's contract.
+        Path(out_path).write_bytes(body)  # kinoforge:public-write
     else:
         sys.stdout.write(body.decode("utf-8", errors="replace"))
     return 0
