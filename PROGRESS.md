@@ -10,6 +10,27 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
+## Main CI back to green — SHIPPED 2026-07-03
+
+CI on main had been red for 5 days (last green run 28312332662); run 28683391787
+showed 19 failed + 14 errors across 7 buckets. All fixed; run **28686427587 GREEN**
+(ubuntu + macos). Spec: `docs/superpowers/specs/2026-07-03-ci-failures-fix-design.md`.
+Plan: `docs/superpowers/plans/2026-07-03-ci-failures-fix.md` (9 tasks, all complete).
+Commits `7bed7b1..2d9df80`. Highlights:
+
+- **Live-smoke spend footgun closed** — two ungated live smokes ran under plain
+  `pixi run test`; now module-gated on `KINOFORGE_LIVE_TESTS` AND deselected via
+  `-m 'not live'` in the default test/test-cov tasks, enforced by new lockdown
+  `tests/test_live_gating_lockdown.py`.
+- AC7 public-write exemption tags on `kinoforge logs --out` write + pod-side upload spool.
+- Stale-test repairs: flashvsr imageio stub now unconditional (CI ordering);
+  `fresh_server` patches LORAS_DIR (GH runner PermissionError); warm-reuse scan stubs
+  `_health_preflight_ok`; embed tests parse gzip+base64 provision format;
+  slug test excludes `*.grid.yaml`.
+- Known follow-up (non-blocking): torch stub in flashvsr test_runtime still guarded by
+  `if "torch" not in sys.modules` — same latent ordering bug the imageio fix removed;
+  bring in line if tests ever run inside live-flashvsr env.
+
 ## HIGH-PRIORITY FOLLOW-UP
 
 **FlashVSR T7.6 sub-plan — SHIPPED 2026-07-03. F-single GREEN.**
