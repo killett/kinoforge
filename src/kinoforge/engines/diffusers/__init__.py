@@ -1009,9 +1009,15 @@ class DiffusersEngine(GenerationEngine):
             # custom_op decorator). The flag is safe for cfgs that
             # don't upgrade torch — pip just ignores it for deps
             # already satisfied.
-            lines.append(
-                f"pip install -q --extra-index-url {_PYTORCH_EXTRA_INDEX_URL} {quoted}"
+            #
+            # Cfg override `engine.diffusers.pytorch_extra_index_url`
+            # lets a cfg pin a different CUDA build — required by the
+            # FlashVSR x4 cfg which needs cu128 to match the prebuilt
+            # BSA wheel (`bsa-cu128-torch2.8-v1`).
+            extra_index_url = str(
+                diffusers_cfg.get("pytorch_extra_index_url", _PYTORCH_EXTRA_INDEX_URL)
             )
+            lines.append(f"pip install -q --extra-index-url {extra_index_url} {quoted}")
         # T15 — upscale-only mode: bypass eager WanPipeline.from_pretrained
         # in the on-pod server. The composed upscaler render_provision (T8)
         # still fires below so spandrel weights land at /workspace/models/

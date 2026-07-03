@@ -178,16 +178,103 @@ class TestPostUpscale:
         )
 
     def test_post_upscale_unsupported_engine_400(self, fresh_server: Any) -> None:
-        # Bug caught: server silently accepts engine="flashvsr" (or any
-        # unknown engine) and enqueues a job that dies asynchronously,
-        # leaving the caller with a job_id whose status will only ever
-        # report "error" — wasting one warm-pod attach cycle. The 400
-        # surface lets the caller fail fast at submit time.
+        # Bug caught: server silently accepts an unknown engine and enqueues
+        # a job that dies asynchronously, leaving the caller with a job_id
+        # whose status will only ever report "error" — wasting one warm-pod
+        # attach cycle. The 400 surface lets the caller fail fast at submit
+        # time. (Kept literal unknown token since flashvsr was promoted to
+        # a supported engine in the FlashVSR v1 default upscaler rollout.)
         _srv, client, _pipe, _out = fresh_server
-        bad = {**_VALID_BODY, "engine": "flashvsr"}
+        bad = {**_VALID_BODY, "engine": "does_not_exist"}
         r = client.post("/upscale", json=bad)
         assert r.status_code == 400, r.text
         assert "unsupported engine" in r.json().get("detail", "").lower()
+
+    def test_post_upscale_flashvsr_engine_accepted(self, fresh_server: Any) -> None:
+        # Bug caught: allowlist regression drops flashvsr → cfg.upscale.engine
+        # == "flashvsr" always 400s at submit time. Pins engine=="flashvsr"
+        # into the allowlist beside seedvr2 + spandrel.
+        _srv, client, _pipe, _out = fresh_server
+        body = {
+            "source_url": "https://example.invalid/in.mp4",
+            "source_filename": "in.mp4",
+            "scale": "2x",
+            "engine": "flashvsr",
+            "flashvsr": {
+                "weights_bundle": "hf:JunhaoZhuang/FlashVSR-v1.1",
+                "precision": "fp16",
+            },
+        }
+        r = client.post("/upscale", json=body)
+        assert r.status_code == 200, r.text
+        assert isinstance(r.json().get("job_id"), str) and r.json()["job_id"]
+
+    def test_run_upscale_job_flashvsr_builds_precision_slug(
+        self,
+        fresh_server: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Bug caught: _run_upscale_job falls through to the else branch
+        # (seedvr2) for req.engine=="flashvsr" → attempts to build
+        # "seedvr2-3b-fp8" and reaches for req.seedvr2 which is None →
+        # AttributeError. Pins the flashvsr branch builds the slug from
+        # req.flashvsr.precision, matching the loader's parser.
+        srv, _client, fake_pipe, _out = fresh_server
+
+        seen_names: list[str] = []
+
+        async def spy_ensure(name: str) -> dict[str, Any]:
+            seen_names.append(name)
+            return {
+                "name": name,
+                "pipe": fake_pipe,
+                "vram_bytes": 0,
+                "last_used_monotonic": 0.0,
+                "on_device": "cuda",
+            }
+
+        monkeypatch.setattr(srv, "_ensure_on_gpu", spy_ensure)
+
+        src_mp4 = tmp_path / "in.mp4"
+        src_mp4.write_bytes(b"\x00" * 64)
+
+        req = srv.UpscaleRequest(
+            source_url=f"file://{src_mp4}",
+            source_filename=src_mp4.name,
+            scale="4x",
+            engine="flashvsr",
+            flashvsr=srv.FlashVSRParams(
+                weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1",
+                precision="bfloat16",
+            ),
+        )
+        srv._upscale_jobs["job-flashvsr-1"] = {
+            "state": "queued",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
+        }
+
+        asyncio.run(srv._run_upscale_job("job-flashvsr-1", req))
+
+        assert seen_names == ["flashvsr-wan21-bfloat16"], seen_names
+        assert srv._upscale_jobs["job-flashvsr-1"]["state"] == "done", (
+            srv._upscale_jobs["job-flashvsr-1"]
+        )
+
+    def test_flashvsr_weights_dir_env_override(
+        self, fresh_server: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Bug caught: _flashvsr_weights_dir hardcodes /workspace/models/flashvsr
+        # → unit tests can't write there, and operators wanting to point at a
+        # different mount lose the environment escape-hatch. Pins the env-var
+        # contract so future refactors don't drop the override.
+        srv, _client, _pipe, _out = fresh_server
+        monkeypatch.setenv("KINOFORGE_FLASHVSR_WEIGHTS_DIR", str(tmp_path / "flash"))
+        assert srv._flashvsr_weights_dir() == tmp_path / "flash"
+        monkeypatch.delenv("KINOFORGE_FLASHVSR_WEIGHTS_DIR")
+        assert srv._flashvsr_weights_dir() == Path("/workspace/models/flashvsr")
 
 
 class TestUpscaleStatus:

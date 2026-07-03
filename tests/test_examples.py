@@ -661,3 +661,52 @@ def test_diffusers_wan_t2v_14b_cap_key_differs_from_kijai_5b() -> None:
     )
     cfg_5b = load_config(Path("examples/configs/runpod-comfyui-wan-t2v-5b.yaml"))
     assert cfg_14b.capability_key().derive() != cfg_5b.capability_key().derive()
+
+
+def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
+    """FlashVSR multi-stage lockdown: engine, GPU allowlist, long-video default.
+
+    Bug caught: a future edit swaps engine to spandrel silently, or drops
+    the SM80+ GPU tier from the allowlist so RunPod picks a T4 that fails
+    BSA compile at cold boot.
+    """
+    with (EXAMPLES_DIR / "wan-with-upscale-flashvsr.yaml").open() as f:
+        raw = yaml.safe_load(f)
+    assert raw["upscale"]["engine"] == "flashvsr"
+    assert raw["upscale"]["scale"] == "4x"
+    assert raw["upscale"]["flashvsr"]["long_video_mode"] is False
+    assert raw["upscale"]["flashvsr"]["precision"] == "bfloat16"
+    # Set-equality — order is separately tested elsewhere; the invariant
+    # here is that the exact 4-GPU allowlist stays intact. NVIDIA-prefixed
+    # names are non-negotiable: plain tokens like "A100 80GB" fall through
+    # RunPod's fuzzy matcher to a no-GPU offer (T8 attempt #1 evidence).
+    assert set(raw["compute"]["requirements"]["gpu_preference"]) == {
+        "NVIDIA A100 80GB PCIe",
+        "NVIDIA A100-SXM4-80GB",
+        "NVIDIA H100 80GB HBM3",
+        "NVIDIA H100 PCIe",
+    }
+
+
+def test_upscale_flashvsr_x4_marks_upscale_only_and_a100_first() -> None:
+    """FlashVSR upscale-only lockdown: upscale_only=true + A100 first.
+
+    Bug caught: a future edit re-enables eager WanPipeline load in the
+    upscale-only cfg (upscale_only: false) — cold boot balloons from 5min
+    to 30min and blows the boot_timeout.
+
+    A100 80GB required — 17th + 18th F-single live smokes OOM'd on
+    A6000 48GB at 480×480 → 1920×1920 4x. Upstream infer script
+    targets H100 80GB; A100 is the cheaper 80GB tier on RunPod.
+    """
+    with (EXAMPLES_DIR / "upscale-flashvsr-x4.yaml").open() as f:
+        raw = yaml.safe_load(f)
+    assert raw["engine"]["diffusers"]["upscale_only"] is True
+    assert raw["upscale"]["engine"] == "flashvsr"
+    assert (
+        raw["compute"]["requirements"]["gpu_preference"][0] == "NVIDIA A100 80GB PCIe"
+    )
+    # 80 GB required — A6000 48GB OOMs.
+    assert raw["compute"]["requirements"]["min_vram_gb"] == 80
+    # Load through full validator to catch schema regressions.
+    load_config(EXAMPLES_DIR / "upscale-flashvsr-x4.yaml")
