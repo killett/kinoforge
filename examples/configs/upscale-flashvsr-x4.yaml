@@ -79,23 +79,18 @@ compute:
   image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
   requirements:
-    min_vram_gb: 24
+    min_vram_gb: 80
     min_cuda: "12.4"
-    max_usd_per_hr: 1.20
+    max_usd_per_hr: 2.50
     disk_gb: 60
-    # SM80+ only (Block-Sparse-Attention requirement). NVIDIA-prefixed names
-    # are required — RunPod's fuzzy matcher falls through to a no-GPU pod
-    # for plain tokens like "A6000" (learned the hard way on 2026-07-01,
-    # first F-single smoke burned $0.10 on a CPU-only offer). A6000 first:
-    # 48 GB VRAM fits FlashVSR's ~8 GB peak plus BSA compile scratch, and
-    # typically the cheapest SM80+ pod on RunPod. L40 / RTX 4090 round out
-    # the fallback tier for consumer-Ampere inventory.
+    # SM80+ + 80GB VRAM. FlashVSR v1.1 at 480x480 → 1920x1920 (4x
+    # native) with num_persistent_param_in_dit=None allocates ~42 GB
+    # at inference peak (17th + 18th live smokes OOM'd on A6000 48GB
+    # with tile_size=512). Upstream infer script targets H100 80GB;
+    # A100 80GB is the RunPod-available equivalent at ~$1.90/hr.
     gpu_preference:
-      - "NVIDIA RTX A6000"
-      - "NVIDIA L40"
-      - "NVIDIA L40S"
-      - "NVIDIA GeForce RTX 4090"
       - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA H100 80GB HBM3"
   lifecycle:
     # BSA source-compile eliminated by T7.5 (2026-07-01): render_provision
     # now `curl`s a prebuilt wheel from HF Hub instead of `pip install
