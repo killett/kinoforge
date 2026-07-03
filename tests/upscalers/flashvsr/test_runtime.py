@@ -288,7 +288,11 @@ def stub_diffsynth(monkeypatch: pytest.MonkeyPatch) -> None:
         ii = types.ModuleType("imageio.v3")
 
         def imwrite(
-            path: str, data: Any, fps: float = 24.0, plugin: str = "pyav"
+            path: str,
+            data: Any,
+            fps: float = 24.0,
+            plugin: str = "pyav",
+            codec: str = "libx264",
         ) -> None:  # noqa: ARG001
             Path(path).write_bytes(b"MP4-STUB")
 
@@ -628,7 +632,11 @@ def test_upscale_denormalises_output_tensor(
     import imageio.v3 as iio_stub
 
     def capturing_imwrite(
-        path: str, data: Any, fps: float = 24.0, plugin: str = "pyav"
+        path: str,
+        data: Any,
+        fps: float = 24.0,
+        plugin: str = "pyav",
+        codec: str = "libx264",
     ) -> None:
         imwrite_calls.append(data)
         Path(path).write_bytes(b"MP4-STUB")
