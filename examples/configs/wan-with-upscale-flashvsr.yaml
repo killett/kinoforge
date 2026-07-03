@@ -35,6 +35,10 @@ engine:
       - "fastapi>=0.115"
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
+      # diffsynth module-top imports `from modelscope import
+      # snapshot_download`. Missing → ImportError inside
+      # `mm.load_models()` → 500 on first /upscale call.
+      - "modelscope"
     base_url: "http://localhost:8000"
     prompt_body_key: "prompt"
     embed_modules:
