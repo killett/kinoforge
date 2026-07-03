@@ -45,7 +45,7 @@
     {
       "id": 7,
       "subject": "Task 6: Live smoke — un-xfail test_f_single on RunPod",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2, 3, 4, 5, 6],
       "description": "Preflight → fire test_f_single with KINOFORGE_LIVE_SPEND=1 → verify 4x dims + pod destroyed + spend ≤$0.15 → append successful-generations entry → bump PROGRESS.md T#8 to SHIPPED.\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\", \"PROGRESS.md\", \"/workspace/successful-generations.md\"], \"verifyCommand\": \"pixi run preflight && KINOFORGE_LIVE_SPEND=1 pixi run pytest tests/live/test_flashvsr_live.py::test_f_single -v && pixi run kinoforge list\", \"acceptanceCriteria\": [\"preflight clean\", \"F-single green <15m\", \"4x dims verified\", \"pod destroyed\", \"spend <=$0.15\", \"successful-generations updated\"], \"modelTier\": \"standard\"}\n```"
     }
