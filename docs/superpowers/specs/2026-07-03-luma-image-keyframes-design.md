@@ -131,3 +131,33 @@ out of scope here; the live smoke drives the engine directly.)
 - Video (retired), Ray/Dream-Machine video models.
 - E21 (upload keyframe → hosted i2v end-to-end) and E22 (role wiring).
 - Rate limiting / provisioned throughput.
+
+
+## 9. Correction (same day, pre-smoke)
+
+The first implementation pass targeted
+`api.lumalabs.ai/dream-machine/v1/generations/image` per
+docs.lumalabs.ai — that surface is RETIRED for platform keys and
+returns `403 Not authenticated` (verified live). The Layer 5a
+brainstorm (memory `project_luma_video_retirement_2026`) had already
+recorded the correct surface and locked decisions this design failed
+to consult first:
+
+- Base URL `agents.lumalabs.ai` (docs at docs.agents.lumalabs.ai);
+  `POST /v1/generations` with `{"prompt","model","type":"image",
+  "aspect_ratio"}`; poll `GET /v1/generations/{id}`; completed
+  payload carries `output: [{"url": ...}]` (with `assets.image` kept
+  as a defensive fallback in `_extract_output_url`).
+- Module `image_engines/luma_agents/`, registry slug `luma_agents`
+  (NOT `luma`), class `LumaAgentsImageEngine`.
+- Model id `uni-1` (default; `uni-1-max` also documented). No
+  DELETE endpoint — `_delete` raises NotImplementedError and
+  `manual_cleanup_url` points at the dashboard.
+- The stored `LUMAAI_API_KEY` is VALID for the agents API (GET on a
+  bogus id returns 404 Generation-not-found, i.e. authenticated).
+
+Process lesson recorded for future sessions: recall project memories
+for the target subsystem BEFORE external doc research — the memory
+explicitly said not to relitigate these decisions, and the stale
+public docs cost one wasted implementation pass + a wrongly-diagnosed
+operator blocker (retracted before commit).

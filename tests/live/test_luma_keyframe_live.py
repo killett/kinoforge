@@ -29,30 +29,29 @@ def _require_live_spend_env() -> None:
 
 
 def test_luma_keyframe_generation(tmp_path: Path) -> None:
-    """Generate one image; assert real image bytes; delete the record.
+    """Generate one image; assert real image bytes land.
 
-    Bug caught: request-shape drift against the live API (the offline
-    suite can only pin OUR side of the wire), and the uni-1.1 model-id
-    question the docs left open (design doc §2 — probe uni-1.1, fall
-    back to photon-1; whichever passes gets pinned in the example cfg).
+    Bug caught: request-shape drift against the live agents API (the
+    offline suite can only pin OUR side of the wire) — including the
+    output[].url vs assets.image response-shape question.
     """
     _require_live_spend_env()
     import kinoforge._adapters  # noqa: F401 — registry side-effects
     from kinoforge.core import registry
     from kinoforge.core.errors import KinoforgeError
     from kinoforge.core.interfaces import ImageJob
-    from kinoforge.image_engines.luma import LumaImageBackend
+    from kinoforge.image_engines.luma_agents import LumaAgentsImageBackend
 
-    engine = registry.get_image_engine("luma")()
+    engine = registry.get_image_engine("luma_agents")()
     engine.provision(None, {})
     backend = engine.backend(None, {})
-    assert isinstance(backend, LumaImageBackend)
+    assert isinstance(backend, LumaAgentsImageBackend)
 
     prompt = _STANDARD_PROMPT_PATH.read_text().strip()
     art = None
     model_used = None
     job_id = ""
-    for model in ("uni-1.1", "photon-1"):
+    for model in ("uni-1",):
         job = ImageJob(
             spec={"model": model, "params": {"aspect_ratio": "16:9"}},
             prompt=prompt,
@@ -68,7 +67,7 @@ def test_luma_keyframe_generation(tmp_path: Path) -> None:
             if "model" in str(exc).lower():
                 continue
             raise
-    assert art is not None, "both model ids rejected — API surface changed"
+    assert art is not None, "uni-1 rejected — API surface changed"
 
     out = tmp_path / "keyframe.img"
     with urllib.request.urlopen(art.url, timeout=120) as resp:  # noqa: S310
@@ -78,7 +77,5 @@ def test_luma_keyframe_generation(tmp_path: Path) -> None:
     assert data[:4] == _PNG_MAGIC or data[:3] == _JPEG_MAGIC, (
         f"not PNG/JPEG magic: {data[:8]!r}"
     )
-    # Record which model id the live API accepted — close-out pins it in cfg.
-    print(f"MODEL_USED={model_used} BYTES={len(data)} URL={art.url}")
-
-    backend._inner._delete(job_id)
+    # Record run facts for the evidence file + successful-generations entry.
+    print(f"MODEL_USED={model_used} JOB_ID={job_id} BYTES={len(data)} URL={art.url}")

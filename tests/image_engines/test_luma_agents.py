@@ -1,4 +1,4 @@
-"""Tests for LumaImageEngine + LumaImageBackend (raw-REST, no SDK)."""
+"""Tests for LumaAgentsImageEngine + backend (agents API, raw REST)."""
 
 from __future__ import annotations
 
@@ -40,9 +40,9 @@ class _FakeLumaHttp:
 
 
 def _backend(fake: _FakeLumaHttp) -> Any:
-    from kinoforge.image_engines.luma import LumaImageBackend
+    from kinoforge.image_engines.luma_agents import LumaAgentsImageBackend
 
-    return LumaImageBackend(client_factory=lambda: fake, sleep=lambda _s: None)
+    return LumaAgentsImageBackend(client_factory=lambda: fake, sleep=lambda _s: None)
 
 
 def _job(**spec_extra: Any) -> ImageJob:
@@ -58,10 +58,11 @@ def test_submit_posts_image_generation_body() -> None:
     job_id = _backend(fake).submit(_job(params={"aspect_ratio": "16:9"}))
     assert job_id == "gen-1"
     path, body = fake.post_calls[0]
-    assert path == "/dream-machine/v1/generations/image"
+    assert path == "/v1/generations"
     assert body == {
         "prompt": "a lighthouse at dawn",
         "model": "photon-1",
+        "type": "image",
         "aspect_ratio": "16:9",
     }
     assert "image_ref" not in body and "style_ref" not in body
@@ -76,7 +77,7 @@ def test_poll_dreaming_then_completed_returns_image_artifact() -> None:
             {
                 "id": "gen-1",
                 "state": "completed",
-                "assets": {"video": None, "image": "https://cdn.luma/img.png"},
+                "output": [{"url": "https://cdn.luma/img.png"}],
             },
         ]
     )
@@ -85,8 +86,8 @@ def test_poll_dreaming_then_completed_returns_image_artifact() -> None:
     art = backend.result("gen-1")
     assert art.url == "https://cdn.luma/img.png"
     assert fake.get_calls == [
-        "/dream-machine/v1/generations/gen-1",
-        "/dream-machine/v1/generations/gen-1",
+        "/v1/generations/gen-1",
+        "/v1/generations/gen-1",
     ]
 
 
@@ -103,19 +104,21 @@ def test_poll_failed_raises_with_failure_reason() -> None:
         backend.result("gen-1")
 
 
-def test_delete_calls_generation_endpoint() -> None:
-    """Bug caught: _delete left as a scaffold raise (replicate-sibling
-    copy/paste) — Luma documents DELETE and ephemeral mode relies on it."""
+def test_delete_raises_not_implemented() -> None:
+    """Bug caught: ephemeral mode silently 'succeeding' a delete against
+    an API with NO documented DELETE endpoint — must raise loudly so the
+    ephemeral policy surfaces the manual-cleanup URL instead."""
     fake = _FakeLumaHttp()
     backend = _backend(fake)
-    backend._inner._delete("gen-9")
-    assert fake.delete_calls == ["/dream-machine/v1/generations/gen-9"]
+    with pytest.raises(NotImplementedError, match="dashboard"):
+        backend._inner._delete("gen-9")
+    assert fake.delete_calls == []
 
 
 def test_validate_spec_requires_model_and_prompt() -> None:
-    from kinoforge.image_engines.luma import LumaImageEngine
+    from kinoforge.image_engines.luma_agents import LumaAgentsImageEngine
 
-    engine = LumaImageEngine(
+    engine = LumaAgentsImageEngine(
         auth=Bearer(
             env_var="LUMAAI_API_KEY", credential_provider=EnvCredentialProvider()
         )
@@ -129,10 +132,10 @@ def test_validate_spec_requires_model_and_prompt() -> None:
 def test_backend_without_key_raises_auth_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from kinoforge.image_engines.luma import LumaImageEngine
+    from kinoforge.image_engines.luma_agents import LumaAgentsImageEngine
 
     monkeypatch.delenv("LUMAAI_API_KEY", raising=False)
-    engine = LumaImageEngine(
+    engine = LumaAgentsImageEngine(
         auth=Bearer(
             env_var="LUMAAI_API_KEY", credential_provider=EnvCredentialProvider()
         )
@@ -143,10 +146,10 @@ def test_backend_without_key_raises_auth_error(
 
 def test_provision_rejects_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     """Bug caught: hosted image engine silently accepting a compute pod."""
-    from kinoforge.image_engines.luma import LumaImageEngine
+    from kinoforge.image_engines.luma_agents import LumaAgentsImageEngine
 
     monkeypatch.setenv("LUMAAI_API_KEY", "k")
-    engine = LumaImageEngine(
+    engine = LumaAgentsImageEngine(
         auth=Bearer(
             env_var="LUMAAI_API_KEY", credential_provider=EnvCredentialProvider()
         )
@@ -156,9 +159,9 @@ def test_provision_rejects_instance(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_model_identity_reads_spec_model() -> None:
-    from kinoforge.image_engines.luma import LumaImageEngine
+    from kinoforge.image_engines.luma_agents import LumaAgentsImageEngine
 
-    engine = LumaImageEngine(
+    engine = LumaAgentsImageEngine(
         auth=Bearer(
             env_var="LUMAAI_API_KEY", credential_provider=EnvCredentialProvider()
         )
@@ -170,6 +173,24 @@ def test_model_identity_reads_spec_model() -> None:
 def test_registry_registration() -> None:
     import kinoforge._adapters  # noqa: F401 — side-effect registration
     from kinoforge.core import registry
-    from kinoforge.image_engines.luma import LumaImageEngine
+    from kinoforge.image_engines.luma_agents import LumaAgentsImageEngine
 
-    assert isinstance(registry.get_image_engine("luma")(), LumaImageEngine)
+    assert isinstance(registry.get_image_engine("luma_agents")(), LumaAgentsImageEngine)
+
+
+def test_extract_output_url_assets_image_fallback() -> None:
+    """Bug caught: docs vs wire drift — if the agents API ever returns the
+    legacy dream-machine `assets.image` shape, the URL must still extract."""
+    fake = _FakeLumaHttp(
+        get_responses=[
+            {
+                "id": "gen-1",
+                "state": "completed",
+                "assets": {"video": None, "image": "https://cdn.luma/legacy.png"},
+            }
+        ]
+    )
+    backend = _backend(fake)
+    backend.submit(_job())
+    art = backend.result("gen-1")
+    assert art.url == "https://cdn.luma/legacy.png"
