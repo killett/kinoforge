@@ -4946,11 +4946,25 @@ adapter compatible with vastai-sdk ≥ 0.2.
 
 Spend: $0.00 (provision failed before any compute billed).
 
-#### Stage E — end-to-end `kinoforge deploy` on Lambda (NOT STARTED)
+#### Stage E — end-to-end `kinoforge deploy` on Lambda (CLOSED 2026-07-04)
 
-After Stages C+D: a real FakeEngine deploy via
-`kinoforge deploy examples/configs/skypilot-lambda.yaml` to verify the
-full kinoforge → SkyPilotProvider → sky → Lambda path. ~$0.15 budget.
+GREEN 2026-07-04 02:26 PDT: `kinoforge deploy --config
+examples/configs/skypilot-lambda.yaml` → `deployed:
+instance='skypilot-cluster'` (status=ready). Lambda us-east-1
+gpu_1x_a10 ($1.29/hr), docker container up, ~6 min wall, spend ~$0.15.
+Full kinoforge → build_provider_for(cloud pin) → SkyPilotProvider →
+sky → Lambda path verified, then `kinoforge destroy --id
+skypilot-cluster` → sky reports no clusters, ledger clean. Evidence:
+`tests/live/evidence/2026-07-04_stage_e_lambda_deploy_stdout.txt`.
+(An earlier 2026-06-18 attempt caught the nonexistent
+`skypilot/skypilot-gpu:latest` image — fix was already in the cfg.)
+Phase 53 fully closed except Stage D (Vast), which stays blocked on
+the upstream sky 0.12.3 vastai-sdk regression.
+
+Follow-up (minor): sky auto-picked us-east-1 — Lambda region pinning
+is not exposed in the cfg surface; the Oregon-default memory covers
+AWS/GCP/Azure only. Add `compute.region` threading if Lambda spend
+grows past smoke scale.
 
 ---
 
