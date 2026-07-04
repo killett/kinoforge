@@ -9,7 +9,11 @@
       "status": "completed",
       "blockedBy": [],
       "metadata": {
-        "files": ["src/kinoforge/core/scale_target.py", "src/kinoforge/core/errors.py", "tests/core/test_scale_target.py"],
+        "files": [
+          "src/kinoforge/core/scale_target.py",
+          "src/kinoforge/core/errors.py",
+          "tests/core/test_scale_target.py"
+        ],
         "verifyCommand": "pixi run pytest tests/core/test_scale_target.py -v",
         "modelTier": "mechanical"
       }
@@ -19,9 +23,14 @@
       "planTaskId": 1,
       "subject": "Task 1: UpscaleJob + UpscaleResult dataclasses",
       "status": "completed",
-      "blockedBy": [8],
+      "blockedBy": [
+        8
+      ],
       "metadata": {
-        "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_upscale_types.py"],
+        "files": [
+          "src/kinoforge/core/interfaces.py",
+          "tests/core/test_upscale_types.py"
+        ],
         "verifyCommand": "pixi run pytest tests/core/test_upscale_types.py -v && pixi run mypy src/kinoforge/core/interfaces.py",
         "modelTier": "mechanical"
       }
@@ -31,9 +40,16 @@
       "planTaskId": 2,
       "subject": "Task 2: UpscalerEngine ABC + register_upscaler registry + new exceptions",
       "status": "completed",
-      "blockedBy": [9],
+      "blockedBy": [
+        9
+      ],
       "metadata": {
-        "files": ["src/kinoforge/core/interfaces.py", "src/kinoforge/core/registry.py", "src/kinoforge/core/errors.py", "tests/core/test_upscaler_registry.py"],
+        "files": [
+          "src/kinoforge/core/interfaces.py",
+          "src/kinoforge/core/registry.py",
+          "src/kinoforge/core/errors.py",
+          "tests/core/test_upscaler_registry.py"
+        ],
         "verifyCommand": "pixi run pytest tests/core/test_upscaler_registry.py -v",
         "modelTier": "mechanical"
       }
@@ -45,7 +61,10 @@
       "status": "completed",
       "blockedBy": [],
       "metadata": {
-        "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_capability_key_stages.py"],
+        "files": [
+          "src/kinoforge/core/interfaces.py",
+          "tests/core/test_capability_key_stages.py"
+        ],
         "verifyCommand": "pixi run pytest tests/core/test_capability_key_stages.py -v",
         "modelTier": "mechanical"
       }
@@ -55,9 +74,14 @@
       "planTaskId": 4,
       "subject": "Task 4: WarmAttachKey stages factor (mirror)",
       "status": "completed",
-      "blockedBy": [11],
+      "blockedBy": [
+        11
+      ],
       "metadata": {
-        "files": ["src/kinoforge/core/interfaces.py", "tests/core/test_capability_key_stages.py"],
+        "files": [
+          "src/kinoforge/core/interfaces.py",
+          "tests/core/test_capability_key_stages.py"
+        ],
         "verifyCommand": "pixi run pytest tests/core/test_capability_key_stages.py -v",
         "modelTier": "mechanical"
       }
@@ -67,9 +91,16 @@
       "planTaskId": 5,
       "subject": "Task 5: UpscaleConfig + SeedVR2EngineConfig + Config.capability_key()",
       "status": "completed",
-      "blockedBy": [8, 10, 11],
+      "blockedBy": [
+        8,
+        10,
+        11
+      ],
       "metadata": {
-        "files": ["src/kinoforge/core/config.py", "tests/core/test_config_upscale.py"],
+        "files": [
+          "src/kinoforge/core/config.py",
+          "tests/core/test_config_upscale.py"
+        ],
         "verifyCommand": "pixi run pytest tests/core/test_config_upscale.py -v",
         "modelTier": "standard"
       }
@@ -79,9 +110,14 @@
       "planTaskId": 6,
       "subject": "Task 6: UpscaleStage (pipeline)",
       "status": "completed",
-      "blockedBy": [10],
+      "blockedBy": [
+        10
+      ],
       "metadata": {
-        "files": ["src/kinoforge/pipeline/upscale.py", "tests/pipeline/test_upscale_stage.py"],
+        "files": [
+          "src/kinoforge/pipeline/upscale.py",
+          "tests/pipeline/test_upscale_stage.py"
+        ],
         "verifyCommand": "pixi run pytest tests/pipeline/test_upscale_stage.py -v",
         "modelTier": "mechanical"
       }
@@ -91,9 +127,16 @@
       "planTaskId": 7,
       "subject": "Task 7: Warm-matcher subset pass for upscale-only cfgs",
       "status": "completed",
-      "blockedBy": [11, 13],
+      "blockedBy": [
+        11,
+        13
+      ],
       "metadata": {
-        "files": ["src/kinoforge/core/warm_reuse/matcher.py", "src/kinoforge/cli/_commands.py", "tests/test_warm_matcher_stages.py"],
+        "files": [
+          "src/kinoforge/core/warm_reuse/matcher.py",
+          "src/kinoforge/cli/_commands.py",
+          "tests/test_warm_matcher_stages.py"
+        ],
         "verifyCommand": "pixi run pytest tests/test_warm_matcher_stages.py tests/ -k warm_reuse -v",
         "modelTier": "standard"
       }
@@ -103,9 +146,16 @@
       "planTaskId": 8,
       "subject": "Task 8: SeedVR2Runtime wrapper",
       "status": "completed",
-      "blockedBy": [10],
+      "blockedBy": [
+        10
+      ],
       "metadata": {
-        "files": ["src/kinoforge/upscalers/__init__.py", "src/kinoforge/upscalers/seedvr2/__init__.py", "src/kinoforge/upscalers/seedvr2/_runtime.py", "tests/upscalers/test_seedvr2_runtime.py"],
+        "files": [
+          "src/kinoforge/upscalers/__init__.py",
+          "src/kinoforge/upscalers/seedvr2/__init__.py",
+          "src/kinoforge/upscalers/seedvr2/_runtime.py",
+          "tests/upscalers/test_seedvr2_runtime.py"
+        ],
         "verifyCommand": "pixi run pytest tests/upscalers/test_seedvr2_runtime.py -v",
         "modelTier": "standard"
       }
@@ -115,9 +165,14 @@
       "planTaskId": 9,
       "subject": "Task 9: _fetch_weights CLI module",
       "status": "completed",
-      "blockedBy": [10],
+      "blockedBy": [
+        10
+      ],
       "metadata": {
-        "files": ["src/kinoforge/upscalers/seedvr2/_fetch_weights.py", "tests/upscalers/test_seedvr2_fetch_weights.py"],
+        "files": [
+          "src/kinoforge/upscalers/seedvr2/_fetch_weights.py",
+          "tests/upscalers/test_seedvr2_fetch_weights.py"
+        ],
         "verifyCommand": "pixi run pytest tests/upscalers/test_seedvr2_fetch_weights.py -v",
         "modelTier": "mechanical"
       }
@@ -127,9 +182,16 @@
       "planTaskId": 10,
       "subject": "Task 10: SeedVR2Engine",
       "status": "completed",
-      "blockedBy": [10, 16, 17],
+      "blockedBy": [
+        10,
+        16,
+        17
+      ],
       "metadata": {
-        "files": ["src/kinoforge/upscalers/seedvr2/__init__.py", "tests/upscalers/test_seedvr2_engine.py"],
+        "files": [
+          "src/kinoforge/upscalers/seedvr2/__init__.py",
+          "tests/upscalers/test_seedvr2_engine.py"
+        ],
         "verifyCommand": "pixi run pytest tests/upscalers/test_seedvr2_engine.py -v",
         "modelTier": "standard"
       }
@@ -141,7 +203,10 @@
       "status": "completed",
       "blockedBy": [],
       "metadata": {
-        "files": ["src/kinoforge/engines/diffusers/servers/wan_t2v_server.py", "tests/engines/diffusers/test_lru_eviction.py"],
+        "files": [
+          "src/kinoforge/engines/diffusers/servers/wan_t2v_server.py",
+          "tests/engines/diffusers/test_lru_eviction.py"
+        ],
         "verifyCommand": "pixi run pytest tests/engines/diffusers/test_lru_eviction.py -v",
         "modelTier": "standard"
       }
@@ -151,9 +216,14 @@
       "planTaskId": 12,
       "subject": "Task 12: Server /upscale + /upscale/status endpoints",
       "status": "completed",
-      "blockedBy": [19],
+      "blockedBy": [
+        19
+      ],
       "metadata": {
-        "files": ["src/kinoforge/engines/diffusers/servers/wan_t2v_server.py", "tests/engines/diffusers/test_server_upscale.py"],
+        "files": [
+          "src/kinoforge/engines/diffusers/servers/wan_t2v_server.py",
+          "tests/engines/diffusers/test_server_upscale.py"
+        ],
         "verifyCommand": "pixi run pytest tests/engines/diffusers/test_server_upscale.py -v",
         "modelTier": "standard"
       }
@@ -163,9 +233,14 @@
       "planTaskId": 13,
       "subject": "Task 13: /health payload extension",
       "status": "completed",
-      "blockedBy": [20],
+      "blockedBy": [
+        20
+      ],
       "metadata": {
-        "files": ["src/kinoforge/engines/diffusers/servers/wan_t2v_server.py", "tests/engines/diffusers/test_server_health.py"],
+        "files": [
+          "src/kinoforge/engines/diffusers/servers/wan_t2v_server.py",
+          "tests/engines/diffusers/test_server_health.py"
+        ],
         "verifyCommand": "pixi run pytest tests/engines/diffusers/test_server_health.py -v",
         "modelTier": "mechanical"
       }
@@ -175,9 +250,16 @@
       "planTaskId": 14,
       "subject": "Task 14: /health-driven matcher preflight + STAGE_MISMATCH verdict",
       "status": "completed",
-      "blockedBy": [15, 21],
+      "blockedBy": [
+        15,
+        21
+      ],
       "metadata": {
-        "files": ["src/kinoforge/cli/_commands.py", "src/kinoforge/core/warm_reuse/matcher.py", "tests/test_warm_matcher_health_preflight.py"],
+        "files": [
+          "src/kinoforge/cli/_commands.py",
+          "src/kinoforge/core/warm_reuse/matcher.py",
+          "tests/test_warm_matcher_health_preflight.py"
+        ],
         "verifyCommand": "pixi run pytest tests/test_warm_matcher_health_preflight.py -v",
         "modelTier": "standard"
       }
@@ -187,9 +269,17 @@
       "planTaskId": 15,
       "subject": "Task 15: _cmd_upscale CLI subcommand",
       "status": "completed",
-      "blockedBy": [13, 18, 22],
+      "blockedBy": [
+        13,
+        18,
+        22
+      ],
       "metadata": {
-        "files": ["src/kinoforge/cli/_commands.py", "src/kinoforge/cli/_main.py", "tests/cli/test_cmd_upscale.py"],
+        "files": [
+          "src/kinoforge/cli/_commands.py",
+          "src/kinoforge/cli/_main.py",
+          "tests/cli/test_cmd_upscale.py"
+        ],
         "verifyCommand": "pixi run pytest tests/cli/test_cmd_upscale.py -v",
         "modelTier": "standard"
       }
@@ -199,9 +289,21 @@
       "planTaskId": 16,
       "subject": "Task 16: _adapters self-register + orchestrator wires UpscaleStage + example cfgs + docs",
       "status": "completed",
-      "blockedBy": [23],
+      "blockedBy": [
+        23
+      ],
       "metadata": {
-        "files": ["src/kinoforge/_adapters.py", "src/kinoforge/core/orchestrator.py", "examples/configs/upscale-seedvr2-3b.yaml", "examples/configs/wan-with-upscale.yaml", "docs/warm-reuse.md", "docs/configuration.md", "docs/engines.md", "README.md", "tests/test_adapters_upscale.py"],
+        "files": [
+          "src/kinoforge/_adapters.py",
+          "src/kinoforge/core/orchestrator.py",
+          "examples/configs/upscale-seedvr2-3b.yaml",
+          "examples/configs/wan-with-upscale.yaml",
+          "docs/warm-reuse.md",
+          "docs/configuration.md",
+          "docs/engines.md",
+          "README.md",
+          "tests/test_adapters_upscale.py"
+        ],
         "verifyCommand": "pixi run pytest tests/test_adapters_upscale.py -v && pixi run kinoforge upscale --help",
         "modelTier": "mechanical"
       }
@@ -209,11 +311,15 @@
     {
       "id": 25,
       "planTaskId": 17,
-      "subject": "Task 17: Live smoke RED scaffold — SeedVR2 3B FP8 2x upscale",
+      "subject": "Task 17: Live smoke RED scaffold \u2014 SeedVR2 3B FP8 2x upscale",
       "status": "completed",
-      "blockedBy": [24],
+      "blockedBy": [
+        24
+      ],
       "metadata": {
-        "files": ["tests/live/test_seedvr2_3b_fp8_upscale_smoke.py"],
+        "files": [
+          "tests/live/test_seedvr2_3b_fp8_upscale_smoke.py"
+        ],
         "verifyCommand": "pixi run pytest tests/live/test_seedvr2_3b_fp8_upscale_smoke.py -v",
         "modelTier": "mechanical"
       }
@@ -221,39 +327,58 @@
     {
       "id": 26,
       "planTaskId": 18,
-      "subject": "Task 18: Live smoke GREEN — execute SeedVR2 3B FP8 2x upscale + evidence",
-      "status": "pending",
-      "blockedBy": [25],
+      "subject": "Task 18: Live smoke GREEN \u2014 execute SeedVR2 3B FP8 2x upscale + evidence",
+      "status": "cancelled",
+      "blockedBy": [
+        25
+      ],
       "metadata": {
-        "files": ["tests/live/test_seedvr2_3b_fp8_upscale_smoke.py", "tests/live/evidence/2026-06-28-seedvr2-3b-fp8-upscale/", "successful-generations.md"],
+        "files": [
+          "tests/live/test_seedvr2_3b_fp8_upscale_smoke.py",
+          "tests/live/evidence/2026-06-28-seedvr2-3b-fp8-upscale/",
+          "successful-generations.md"
+        ],
         "verifyCommand": "pixi run pytest tests/live/test_seedvr2_3b_fp8_upscale_smoke.py -v && pixi run kinoforge list",
         "modelTier": "live-spend"
-      }
+      },
+      "note": "superseded: SeedVR2 deferred to [seedvr] extras by the 2026-06-29 upscaler packaging pivot; upscaling shipped via spandrel (#12) + FlashVSR (P4 plan, entries #13/#14)"
     },
     {
       "id": 27,
       "planTaskId": 19,
-      "subject": "Task 19: Live smoke — Wan T2V + SeedVR2 multi-stage warm-reuse (RED + GREEN)",
-      "status": "pending",
-      "blockedBy": [26],
+      "subject": "Task 19: Live smoke \u2014 Wan T2V + SeedVR2 multi-stage warm-reuse (RED + GREEN)",
+      "status": "cancelled",
+      "blockedBy": [
+        26
+      ],
       "metadata": {
-        "files": ["tests/live/test_wan_then_upscale_warm_reuse_smoke.py", "tests/live/evidence/2026-06-28-wan-then-upscale-warm-reuse/", "successful-generations.md"],
+        "files": [
+          "tests/live/test_wan_then_upscale_warm_reuse_smoke.py",
+          "tests/live/evidence/2026-06-28-wan-then-upscale-warm-reuse/",
+          "successful-generations.md"
+        ],
         "verifyCommand": "pixi run pytest tests/live/test_wan_then_upscale_warm_reuse_smoke.py -v && pixi run kinoforge list",
         "modelTier": "live-spend"
-      }
+      },
+      "note": "superseded: SeedVR2 deferred to [seedvr] extras by the 2026-06-29 upscaler packaging pivot; upscaling shipped via spandrel (#12) + FlashVSR (P4 plan, entries #13/#14)"
     },
     {
       "id": 28,
       "planTaskId": 20,
-      "subject": "Task 20: PROGRESS.md close — workstream SHIPPED",
-      "status": "pending",
-      "blockedBy": [27],
+      "subject": "Task 20: PROGRESS.md close \u2014 workstream SHIPPED",
+      "status": "cancelled",
+      "blockedBy": [
+        27
+      ],
       "metadata": {
-        "files": ["PROGRESS.md"],
+        "files": [
+          "PROGRESS.md"
+        ],
         "verifyCommand": "git log --oneline -1 PROGRESS.md",
         "modelTier": "mechanical"
-      }
+      },
+      "note": "superseded: SeedVR2 deferred to [seedvr] extras by the 2026-06-29 upscaler packaging pivot; upscaling shipped via spandrel (#12) + FlashVSR (P4 plan, entries #13/#14)"
     }
   ],
-  "lastUpdated": "2026-06-29T00:00:00"
+  "lastUpdated": "2026-07-04T04:43:11.367444-07:00"
 }

@@ -10,6 +10,41 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
+## RESUME SNAPSHOT (updated 2026-07-04 — read this, then STOP; below is history)
+
+This file exceeds the 256 KB single-read limit. A fresh session should
+read THIS section (top ~120 lines) and then `rg` the history below on
+demand — do NOT attempt a full-file read.
+
+**State:** main green on CI (11 consecutive pushes through `797e013`);
+suite ~3,780 tests; zero pods/clusters; ledger clean; working tree clean.
+
+**Everything through 2026-07-04 is SHIPPED**, including: FlashVSR 4x
+upscaler + co-resident Wan↔FlashVSR multi-stage + warm-reuse re-generate
+(entries #13/#14); Luma UNI-1 keyframes via agents API (#15) + keyframe
+matrix w/ visual review (#18); E21 data-URI keyframe hand-off + first
+keyframe→i2v (#16) and flf2v (#17) pipelines; Phase 53 Stage E Lambda
+deploy; RunPod schema-migration survival (compute.cloud_type=secure,
+GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
+atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
+
+**Open items (ALL gated — none actionable without new input):**
+
+| Item | Gate |
+|---|---|
+| Phase 53 Stage D (Vast.ai via sky) | upstream: sky 0.12.3 vastai-sdk regression; recheck PyPI for >0.12.3 |
+| Lambda region pin (`compute.region`) | condition: Lambda spend grows past smoke scale |
+| LoRA stack replay on Wan reload | condition: LoRA + upscale co-residency gets a real use case |
+| Flip keyframe default to `uni-1-max` | operator: confirm max-tier pricing on Luma dashboard (entry #18) |
+| RunPod balance top-up (~$4.57 left) | operator |
+
+**Key operational rules learned the hard way (grep history for detail):**
+pin `compute.cloud_type: secure` for >10-min RunPod pods; consult
+project memories BEFORE external doc research; never TaskStop a live
+pytest before its FAILURES section prints; inspect keyframes before
+paying for the video leg.
+
+
 ## LumaAgentsImageEngine (UNI-1 image keyframes) — SHIPPED 2026-07-04 00:02 PDT
 
 Spec: `docs/superpowers/specs/2026-07-03-luma-image-keyframes-design.md`
