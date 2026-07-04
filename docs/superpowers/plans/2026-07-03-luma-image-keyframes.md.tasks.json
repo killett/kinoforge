@@ -1,0 +1,36 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-03-luma-image-keyframes.md",
+  "tasks": [
+    {
+      "id": 11,
+      "subject": "Task 1: LumaImageEngine module + unit tests + registration",
+      "status": "pending"
+    },
+    {
+      "id": 12,
+      "subject": "Task 2: keyframe-luma.yaml example cfg",
+      "status": "pending",
+      "blockedBy": [
+        11
+      ]
+    },
+    {
+      "id": 13,
+      "subject": "Task 3: RED live-smoke scaffold (commit before spend)",
+      "status": "pending",
+      "blockedBy": [
+        11
+      ]
+    },
+    {
+      "id": 14,
+      "subject": "Task 4: Luma live smoke + evidence + close-out",
+      "status": "pending",
+      "blockedBy": [
+        12,
+        13
+      ]
+    }
+  ],
+  "lastUpdated": "2026-07-03T23:48:47.131676-07:00"
+}
