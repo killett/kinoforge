@@ -120,6 +120,14 @@ class LoadedModel(TypedDict):
 
 _LOADED: dict[str, LoadedModel] = {}
 _REGISTRY_LOCK = asyncio.Lock()
+# Registry name of the eager-loaded Wan pipeline (set by
+# ``_register_eager_wan`` during startup; None on upscale-only pods).
+_WAN_REGISTRY_NAME: str | None = None
+# threading lock for the sync promotion path (the generate worker is a
+# plain thread and cannot take the asyncio lock). Stages run strictly
+# sequentially through the orchestrator, so the two locks never guard
+# genuinely concurrent registry mutations in practice.
+_REGISTRY_TLOCK = threading.RLock()
 _HEADROOM_MARGIN_BYTES = (
     int(os.environ.get("KINOFORGE_HEADROOM_MARGIN_GB", "2")) * 1024**3
 )
@@ -302,6 +310,79 @@ async def _enforce_headroom(target_name: str) -> None:
         gc.collect()
         torch.cuda.empty_cache()
         free, _ = torch.cuda.mem_get_info()
+
+
+def _register_eager_wan(wan_pipe: Any) -> None:  # noqa: ANN401 — diffusers pipe
+    """Register the eager-loaded Wan pipeline in the LRU registry.
+
+    Without this the eager pipe is a module global INVISIBLE to
+    ``_enforce_headroom`` — ``/upscale`` finds zero eviction victims and
+    FlashVSR OOMs against Wan's ~75 GiB residency (pod 1ee3p98cogzxct,
+    2026-07-03: ``1.32 GiB free … 77.81 GiB in use``).
+
+    ``vram_bytes`` is measured from the live allocation counter, not
+    guessed — the promotion path sizes its eviction target from it.
+    """
+    global _WAN_REGISTRY_NAME
+    try:
+        import torch
+
+        vram_bytes = int(torch.cuda.memory_allocated())
+    except ImportError:
+        # torch-less unit-test envs drive _startup with a stubbed
+        # _load_pipeline; 0 only weakens promotion sizing there.
+        vram_bytes = 0
+
+    name = f"wan-eager-{MODEL_ID}"
+    _LOADED[name] = LoadedModel(
+        name=name,
+        pipe=wan_pipe,
+        vram_bytes=vram_bytes,
+        last_used_monotonic=time.monotonic(),
+        on_device="cuda",
+    )
+    _WAN_REGISTRY_NAME = name
+
+
+def _promote_wan_if_evicted() -> None:
+    """Move the eager Wan pipe back to CUDA before a generate job.
+
+    Evicts CUDA-resident upscalers FIRST — promoting a ~70 GiB pipe next
+    to a resident upscaler would OOM on the way back. No-op on
+    upscale-only pods (no eager Wan) and when Wan is already on CUDA.
+    Runs in the sync generate worker thread; guarded by the threading
+    registry lock (the asyncio lock is unusable off the event loop).
+    """
+    name = _WAN_REGISTRY_NAME
+    if name is None:
+        return
+    entry = _LOADED.get(name)
+    if entry is None or entry["on_device"] == "cuda":
+        return
+    import torch
+
+    with _REGISTRY_TLOCK:
+        needed = entry["vram_bytes"] + _HEADROOM_MARGIN_BYTES
+        free, _total = torch.cuda.mem_get_info()
+        while free < needed:
+            victims = [
+                n for n, e in _LOADED.items() if e["on_device"] == "cuda" and n != name
+            ]
+            if not victims:
+                # Nothing left to evict — attempt the move anyway and
+                # let CUDA surface the real allocation failure.
+                break
+            evict = min(victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
+            _log.info("generate: evicting %s to cpu to re-promote wan", evict)
+            _LOADED[evict]["pipe"].to("cpu")
+            _LOADED[evict]["on_device"] = "cpu"
+            gc.collect()
+            torch.cuda.empty_cache()
+            free, _total = torch.cuda.mem_get_info()
+        entry["pipe"].to("cuda")
+        entry["on_device"] = "cuda"
+        entry["last_used_monotonic"] = time.monotonic()
+        _log.info("generate: wan pipeline re-promoted to cuda")
 
 
 # LoRA-flexible warm-reuse: pod-side inventory of loaded LoRA weights.
@@ -1046,6 +1127,9 @@ def _worker_loop() -> None:
         state.status = "running"
         state.started_at = time.time()
         try:
+            # A prior /upscale may have evicted the eager Wan pipe to
+            # CPU (F-warm second generate). Swap it back before running.
+            _promote_wan_if_evicted()
             output = pipe(
                 prompt=state.prompt,
                 negative_prompt=state.params.get("negative_prompt")
@@ -1120,6 +1204,9 @@ def _startup() -> None:
         pipe = _load_pipeline(initial_lora_stack=raw)
     else:
         pipe = _load_pipeline()
+    # F-multi co-residency: the LRU registry must know about the eager
+    # pipe or /upscale can never evict it (see _register_eager_wan).
+    _register_eager_wan(pipe)
     _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
     _worker_thread.start()
     ready.set()
