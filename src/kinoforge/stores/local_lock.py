@@ -139,7 +139,7 @@ class FileLock:
             self._sleep(self._poll_interval_s)
 
     def release(self, token: LockToken) -> None:
-        """Release the OS lock and remove the sidecar.
+        """Release the OS lock; the sidecar file persists (inode-stable).
 
         Silent when the token does not match the currently held token (e.g.
         after a TTL steal by another process).
@@ -152,14 +152,21 @@ class FileLock:
             return
         if self._fd is not None:
             try:
+                # Truncate the informational payload WHILE still holding
+                # the lock so diagnostics never read a stale holder.
+                try:
+                    os.ftruncate(self._fd, 0)
+                except OSError:
+                    pass
                 self._flock(self._fd, fcntl.LOCK_UN)
             finally:
                 os.close(self._fd)
                 self._fd = None
-        try:
-            self._path.unlink()
-        except FileNotFoundError:
-            pass
+        # NEVER unlink the sidecar: a waiter that opened the path before
+        # an unlink keeps an fd on the orphaned inode while the next
+        # acquirer creates a fresh one — two "holders" on two inodes,
+        # lost updates (CI run 28700621336, ephemeral-index add lost
+        # under contention). The empty file is inert and inode-stable.
         self._held_token = None
 
     def __enter__(self) -> LockToken:
