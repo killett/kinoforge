@@ -36,6 +36,7 @@ import kinoforge.engines.runway  # noqa: F401  # self-registers under "runway"
 # Image engines
 import kinoforge.image_engines.fake  # noqa: F401  # self-registers under "fake"
 import kinoforge.image_engines.fal  # noqa: F401  # self-registers under "fal"
+import kinoforge.image_engines.luma  # noqa: F401  # self-registers under "luma"
 import kinoforge.image_engines.replicate  # noqa: F401  # self-registers under "replicate"
 
 # Output sinks
