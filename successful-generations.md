@@ -43,6 +43,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 13. `2026-07-03 12:13:45` — [FlashVSR v1.1 diffusion upscaler (4x native) on RunPod A100 80GB — upscale](#13-2026-07-03-121345--flashvsr-v11-diffusion-upscaler-4x-native-on-runpod-a100-80gb--upscale)
 14. `2026-07-03 22:10:05` — [Wan 2.2 T2V-A14B + FlashVSR 4x co-resident multi-stage + warm-reuse re-generate on RunPod A100 80GB — t2v+upscale](#14-2026-07-03-221005--wan-22-t2v-a14b--flashvsr-4x-co-resident-multi-stage--warm-reuse-re-generate-on-runpod-a100-80gb--t2vupscale)
 15. `2026-07-04 00:02:32` — [Luma UNI-1 image keyframe via agents API (LumaAgentsImageEngine) — t2i](#15-2026-07-04-000232--luma-uni-1-image-keyframe-via-agents-api-lumaagentsimageengine--t2i)
+16. `2026-07-04 00:50:21` — [Keyframe→video pipeline: Luma UNI-1 keyframe → fal wan-i2v (E21 data-URI hand-off) — i2v](#16-2026-07-04-005021--keyframevideo-pipeline-luma-uni-1-keyframe--fal-wan-i2v-e21-data-uri-hand-off--i2v)
 
 ---
 
@@ -2184,3 +2185,48 @@ KINOFORGE_LIVE_SPEND=1 pixi run pytest \
 
 - First `(luma_agents, t2i)` tuple and the first image-keyframe capability in the log; unlocks Layer-R `keyframe:` flows (i2v/flf2v openers) with a second hosted image provider next to fal + replicate.
 - E21 (keyframe → hosted i2v end-to-end upload) remains the known gap before the full `keyframe-luma.yaml` i2v pipeline runs unattended.
+
+---
+
+## 16. `2026-07-04 00:50:21` — Keyframe→video pipeline: Luma UNI-1 keyframe → fal wan-i2v (E21 data-URI hand-off) — i2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `lumalabs.ai agents API (keyframe) + fal.ai queue (video) / LumaAgentsImageEngine → KeyframeStage → FalEngine / uni-1 → fal-ai/wan-i2v` |
+| **Mode** | i2v with keyframe pre-stage — FIRST full keyframe→video pipeline in the log; also the first live fal i2v |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `7ea8e96` (E21 data-URI inlining + asset_paths cfg fix) |
+| **Date (local TZ)** | 2026-07-04 00:50:21 -0700 (PDT) |
+| **Layer / phase** | Closes Phase 32 deferred E21; first live exercise of the Layer R `keyframe:` → `ConditioningAsset` → hosted-engine flow. Phase 43 T14's fal-i2v leg is now live-proven. |
+
+### Exact command
+
+```bash
+pixi run -e live-hosted kinoforge generate \
+  --config <scratch copy of examples/configs/keyframe-luma.yaml \
+            with keyframe.prompt = the standard prompt> \
+  --mode i2v \
+  --prompt "$(cat examples/configs/prompts/field-realistic.txt)"
+```
+
+### Cfg
+
+- `examples/configs/keyframe-luma.yaml` (scratch copy differed ONLY in prompts — both video + keyframe slots set to the standard prompt for coherence). Key blocks: `keyframe.engine=luma_agents` / `spec.model=uni-1` / `aspect_ratio 16:9`; `engine.fal.endpoint=fal-ai/wan-i2v` with `asset_paths: {init_image: image_url}` (the E21 fix — without it the keyframe never reached the video request).
+- Hand-off mechanics: KeyframeStage stores the PNG locally → FalBackend inlines it as a `data:image/png;base64,…` (~7.9 MB body) at submit — accepted by fal first try.
+
+### Input
+
+- Standard prompt verbatim from `examples/configs/prompts/field-realistic.txt` (both stages).
+
+### Output
+
+- Keyframe: `output/20260704-004927_keyframe-init_luma_agents_uni-1_Photorealistic-cinem.png` — 2784×1504, 5,936,684 B, sha256 `f09218af24bf0fa0…`.
+- Video: `output/20260704-005021_fal_fal-ai-wan-i2v_Photorealistic-cinem.mp4` — **1280×720, 161 frames**, 3,151,314 B, sha256 `e43a6d1e2baed198…`.
+- Wall-clock: 2 m 13 s total (keyframe ~79 s incl. UNI-1 generation, fal i2v ~54 s).
+- Evidence: `tests/live/evidence/2026-07-04_keyframe_luma_fal_i2v_stdout.txt`.
+
+### Notes
+
+- Spend: one Luma generation (~cents) + one fal wan-i2v run (fal does not return cost on the wire; list price ~$0.2-0.4 for a 5 s 720p clip).
+- flf2v role→field mapping in `keyframe-fal-flf2v.yaml` remains docs-derived and NOT live-verified — only the i2v leg is proven here.
+- The published keyframe filename carries the `keyframe-init_luma_agents_uni-1` token chain — Layer 4 sink naming worked unmodified with the new image engine.

@@ -34,8 +34,11 @@ files fail at submit naming the role. All three keyframe example cfgs
 gained the previously-MISSING `asset_paths` routing (without it the
 keyframe never reached the video request at all — latent since Layer
 R). flf2v role→field mapping (`start_image_url`/`end_image_url`) is
-docs-derived, not yet live-verified (Phase 43 T14 territory). Offline
-only — no live keyframe→i2v smoke fired yet.
+docs-derived, not yet live-verified (Phase 43 T14 territory). Live E2E GREEN
+2026-07-04 00:50 PDT: Luma UNI-1 keyframe → fal wan-i2v, 2 m 13 s,
+1280x720x161 clip. Entry #16 in `successful-generations.md`. fal
+accepted the ~7.9 MB data-URI body first try; fal i2v leg of Phase 43
+T14 now live-proven (flf2v leg still pending).
 
 Course-correction note: first pass targeted the RETIRED dream-machine
 surface off stale public docs and mis-diagnosed the resulting 403 as
