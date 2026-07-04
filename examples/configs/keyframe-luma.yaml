@@ -1,0 +1,50 @@
+# Keyframe via Luma: Luma generates the first frame, fal generates the clip.
+#
+# The keyframe block routes to LumaImageEngine (dream-machine image API,
+# photon / UNI-1 family). The resulting image is injected as the
+# init_image conditioning asset for the fal wan-i2v model — identical
+# plumbing to keyframe-fal-i2v.yaml with the image side swapped.
+#
+# Set LUMAAI_API_KEY (and FAL_KEY for the video half) in .env.
+#
+# Model id note (2026-07-03): docs list photon-1 / photon-flash-1; the
+# UNI-1 ids are announced but undocumented in the SDK reference. The
+# live smoke (tests/live/test_luma_keyframe_live.py) probes uni-1.1
+# first and this file pins whatever the API accepted.
+
+mode: i2v
+prompt: "a cat walking through a sunlit meadow, soft motion"
+
+engine:
+  kind: fal
+  precision: ""
+  fal:
+    endpoint: "fal-ai/wan-i2v"
+    queue_base: "https://queue.fal.run"
+    api_key_env: "FAL_KEY"
+    url_path: "video.url"
+
+spec:
+  model: "fal-ai/wan-i2v"
+
+keyframe:
+  engine: luma
+  prompt: "photorealistic cat in a sunlit meadow, shot on 35mm film, shallow depth of field"
+  spec:
+    model: "photon-1"
+    params:
+      aspect_ratio: "16:9"
+
+models:
+  - kind: base
+    ref: "fal://fal-ai/wan-i2v"
+    target: checkpoints
+
+compute: null
+
+lifecycle:
+  idle_timeout: 60s
+  job_timeout: 30m
+  max_lifetime: 1h
+  budget: 1.0
+  max_in_flight: 1
