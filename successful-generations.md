@@ -2307,7 +2307,17 @@ Manifests: `tests/live/evidence/2026-07-04_luma_matrix_manifest_run{1,2}.json`.
 - Objective metrics are near-identical between uni-1 and uni-1-max (same dims, ±15 % latency, comparable size). Visual-quality ranking needs operator eyes: PNG pairs live side-by-side under `output/luma-keyframe-matrix/`.
 - Run 1 died mid-uni-1-max on a transient SSL EOF — root-caused and fixed same session (`60cc9a2`: GET polls retry once + map to KinoforgeError; POSTs never retry to avoid double-generation). One orphaned generation likely completed unclaimed server-side (~cents).
 
+### Visual review (2026-07-04, in-session, all 4 pairs)
+
+| prompt | verdict | detail |
+|---|---|---|
+| field-realistic | style trade-off | uni-1: heavier cinematic grade, denser magical elements, softer subject. uni-1-max: more photoreal (prompt says "Photorealistic"), clearer face, natural waterfall. |
+| field-dreamlike | **uni-1-max** | uni-1 shows hair/antler blending artifact on the subject + blown highlights; max is structurally clean with crisper florals and coherent spectral deer. |
+| forest | **uni-1** | More dramatic god-ray shaft + sun star; max reads flatter/duskier. |
+| dawn-flight | **uni-1-max** | uni-1 has destructive frame-wide out-of-focus blob artifacts (reads as sensor dirt — would propagate into any i2v clip); max's droplet sparkle is confined to the bottom edge. |
+
 ### Notes
 
 - Spend: 9 generations total (~$0.3-0.7 of the $20 credit; Luma does not return per-generation cost on the wire).
-- Recommendation for cfg defaults: stay on `uni-1` — no measurable objective win from `uni-1-max` for keyframe duty; revisit if operator review finds visual quality differences.
+- **Revised recommendation** (metrics said tie; eyes disagree): `uni-1-max` is the safer keyframe default — fewer destructive artifacts and better subject clarity at +15 % latency. Cfg stays on `uni-1` for now ONLY because max-tier per-image pricing is unverifiable on the wire; flip `keyframe-luma.yaml` to `uni-1-max` once the dashboard confirms the price delta is acceptable.
+- Artifact caution for keyframe→i2v flows: inspect keyframes before spending on the video leg — uni-1's dawn-flight blobs would have seeded a ruined clip.
