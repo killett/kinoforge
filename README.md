@@ -21,6 +21,7 @@ no branching on provider names in core logic.
   - [Wan 2.2 14B — LoRA stack swap](#wan-22-14b--lora-stack-swap)
   - [Wan 2.2 14B — prompt sweep](#wan-22-14b--prompt-sweep)
   - [Wan 2.2 14B mixed path + generate](#wan-22-14b-mixed-path--generate)
+- [Upscaling and keyframes](#upscaling-and-keyframes)
 - [Configuration at a glance](#configuration-at-a-glance)
 - [Credentials](#credentials)
 - [Operator concepts](#operator-concepts)
@@ -110,7 +111,7 @@ pixi run test
 | `provision` | Provision an existing instance | `pixi run kinoforge provision --config cfg.yaml` |
 | `doctor` | Validate config and credentials | `pixi run kinoforge doctor --config cfg.yaml` |
 | `generate` | Run a generation job | `pixi run kinoforge generate --config cfg.yaml --prompt "…" --mode t2v` |
-| `upscale` | Upscale a video clip (SeedVR2) | `pixi run kinoforge upscale --config cfg.yaml --video clip.mp4 --scale 2x` |
+| `upscale` | Upscale a video clip (FlashVSR 4x default; spandrel 2x) | `pixi run kinoforge upscale --config cfg.yaml --video clip.mp4 --no-reuse` |
 | `list` | List running instances from ledger | `pixi run kinoforge list` |
 | `status` | Show status of one instance | `pixi run kinoforge status --id <id>` |
 | `stop` | Stop an instance | `pixi run kinoforge stop --id <id>` |
@@ -311,6 +312,27 @@ above) + 1 fresh `generate:` cell. ~$0.35.
 
 Evidence: [`tests/live/_grid_examples/wan22_mixed_path.json`](tests/live/_grid_examples/wan22_mixed_path.json).
 
+## Upscaling and keyframes
+
+**Video upscaling** — two engines behind one `upscale:` cfg block and the `kinoforge upscale`
+subcommand. `flashvsr` (v1 default) is a streaming diffusion 4× upscaler (Wan 2.1 1.3B backbone,
+Block-Sparse-Attention prebuilt wheel, 80 GB tier) that preserves temporal coherence across the
+clip; `spandrel` is per-frame architecture-agnostic SR (RealESRGAN et al., 2×, fits 48 GB).
+`wan-with-upscale-flashvsr.yaml` chains generate → upscale on ONE pod: the server's LRU registry
+swaps Wan ↔ FlashVSR so both fit, and warm-reuse re-generates reload Wan from the pod-local cache.
+
+```bash
+pixi run kinoforge upscale --config examples/configs/upscale-flashvsr-x4.yaml \
+  --video clip.mp4 --no-reuse
+```
+
+**Keyframe pipelines** — a `keyframe:` cfg block runs an image engine before the video job and
+injects the result as a conditioning asset (`init_image` for i2v; `first_frame`/`last_frame` for
+flf2v, per-role prompts + seeds supported). Image engines: `fal` (flux et al.), `replicate`,
+`luma_agents` (Luma UNI-1 via the agents API). Local keyframes hand off to hosted video engines
+as inline data URIs — no storage round-trip. Both flows are live-verified end-to-end
+(`keyframe-luma.yaml` → fal wan-i2v; `keyframe-fal-flf2v.yaml` → fal wan-flf2v).
+
 ## Configuration at a glance
 
 A kinoforge YAML config has three top-level blocks. **`engine`** declares the inference backend
@@ -331,6 +353,9 @@ Canonical example configs in `examples/configs/`:
 | `nova-reel.yaml` | AWS Nova Reel hosted engine |
 | `luma-ray.yaml` | Luma Ray hosted engine |
 | `skypilot-lambda.yaml` | SkyPilot on Lambda Labs GPU |
+| `upscale-flashvsr-x4.yaml` | Standalone FlashVSR 4x video upscale (RunPod A100 80GB) |
+| `wan-with-upscale-flashvsr.yaml` | Wan 2.2 t2v + FlashVSR 4x co-resident multi-stage |
+| `keyframe-luma.yaml` | Luma UNI-1 keyframe → fal wan-i2v |
 
 Full reference (all keys, precedence, override flags): [docs/configuration.md](docs/configuration.md).
 
@@ -372,8 +397,10 @@ generation completes so the next call can attach without paying the cold-boot ta
 RunPod). Pass `--no-reuse` for one-shot runs to auto-destroy on completion.
 
 **Engines** ([docs/engines.md](docs/engines.md)) — kinoforge supports ComfyUI, Diffusers, FakeEngine
-(offline testing), and hosted Bearer providers (Replicate, Runway, Luma, fal.ai, Nova Reel).
-Each engine exposes the same `generate()` interface; switching is a config-only change.
+(offline testing), and hosted Bearer providers (Replicate, Runway, fal.ai, Nova Reel / Bedrock;
+Luma's direct video API is retired — Luma lives on as the `luma_agents` IMAGE engine for
+keyframes). Each video engine exposes the same `generate()` interface; image engines plug into
+the `keyframe:` block. Switching is a config-only change.
 
 **Cost and spend** ([docs/cost-and-spend.md](docs/cost-and-spend.md)) — `kinoforge cost` pulls
 runtime spend from provider APIs and (optionally) BigQuery billing export. Budget caps in the
