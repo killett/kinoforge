@@ -136,6 +136,65 @@ _DEFAULT_STUB_PROFILE = ModelProfile(
 # ---------------------------------------------------------------------------
 
 
+_DATA_URI_MIME_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+#: Above this inline size, log a warning — fal accepts multi-MB data URIs
+#: but an oversize 4xx at submit should be diagnosable from our logs.
+_DATA_URI_WARN_BYTES = 8 * 1024**2
+
+
+def _asset_uri_for_wire(role: str, uri: str) -> str:
+    """Return a provider-fetchable value for an asset uri (E21).
+
+    Remote (`http`/`https`) and already-inlined (`data:`) uris pass
+    through verbatim. Local filesystem paths — what
+    ``LocalArtifactStore.put_bytes`` records for KeyframeStage outputs —
+    are read and inlined as base64 data URIs, which fal's ``*_url``
+    inputs accept. Without this, the provider receives an unfetchable
+    ``/workspace/...`` string and every keyframe→i2v run dies at submit.
+
+    Args:
+        role: Conditioning-asset role (for error messages).
+        uri: The asset's recorded uri — remote URL, data URI, bare
+            filesystem path, or ``file:`` URI.
+
+    Returns:
+        The uri unchanged, or a ``data:<mime>;base64,...`` string.
+
+    Raises:
+        ValidationError: The uri is a local path that does not exist.
+    """
+    import base64
+    import logging
+    from pathlib import Path
+
+    scheme = urlparse(uri).scheme
+    if scheme in ("http", "https", "data"):
+        return uri
+    path = Path(uri[len("file://") :] if uri.startswith("file://") else uri)
+    if not path.is_file():
+        raise ValidationError(
+            f"fal: conditioning asset {role!r} points at a local path that "
+            f"does not exist: {path}"
+        )
+    payload = path.read_bytes()
+    if len(payload) > _DATA_URI_WARN_BYTES:
+        logging.getLogger(__name__).warning(
+            "fal: inlining %s asset %s as a %.1f MB data URI — submit may "
+            "hit provider body-size limits",
+            role,
+            path.name,
+            len(payload) / 1024**2,
+        )
+    mime = _DATA_URI_MIME_BY_SUFFIX.get(path.suffix.lower(), "application/octet-stream")
+    return f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"
+
+
 class FalBackend(GenerationBackend):
     """Live backend wired to a fal.ai queue endpoint.
 
@@ -278,7 +337,7 @@ class FalBackend(GenerationBackend):
             asset = find_asset(job, role)
             if asset is None:
                 continue
-            set_by_dot_path(body, dot_path, asset.ref.uri)
+            set_by_dot_path(body, dot_path, _asset_uri_for_wire(role, asset.ref.uri))
         full_url = f"{self._queue_base.rstrip('/')}/{self._endpoint}"
         headers = {
             "Content-Type": "application/json",

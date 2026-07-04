@@ -24,8 +24,18 @@ i2v host, Luma keyframe); env-gated live smoke.
 Live smoke GREEN: `1 passed in 125.60s`, model `uni-1`, PNG
 2784x1504 (5.9 MB), generation `a08e47af-…`. Entry #15 in
 `successful-generations.md`. Existing LUMAAI_API_KEY valid; ~cents
-of the $20 credit spent. Known gap before full keyframe→i2v: E21
-(hosted-provider keyframe upload).
+of the $20 credit spent.
+
+**E21 CLOSED 2026-07-04** (spec
+`docs/superpowers/specs/2026-07-04-e21-keyframe-asset-inlining-design.md`):
+local keyframe paths now inline as base64 data URIs at the fal submit
+seam (`_asset_uri_for_wire`); remote/data uris pass through; missing
+files fail at submit naming the role. All three keyframe example cfgs
+gained the previously-MISSING `asset_paths` routing (without it the
+keyframe never reached the video request at all — latent since Layer
+R). flf2v role→field mapping (`start_image_url`/`end_image_url`) is
+docs-derived, not yet live-verified (Phase 43 T14 territory). Offline
+only — no live keyframe→i2v smoke fired yet.
 
 Course-correction note: first pass targeted the RETIRED dream-machine
 surface off stale public docs and mis-diagnosed the resulting 403 as
