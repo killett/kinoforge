@@ -38,7 +38,11 @@ docs-derived, not yet live-verified (Phase 43 T14 territory). Live E2E GREEN
 2026-07-04 00:50 PDT: Luma UNI-1 keyframe → fal wan-i2v, 2 m 13 s,
 1280x720x161 clip. Entry #16 in `successful-generations.md`. fal
 accepted the ~7.9 MB data-URI body first try; fal i2v leg of Phase 43
-T14 now live-proven (flf2v leg still pending).
+T14 now live-proven. **flf2v leg CLOSED 2026-07-04 01:29 PDT** (entry
+#17): dual flux-schnell keyframes → wan-flf2v, 63 s, 1280x720x81; the
+docs-derived start/end_image_url mapping is live-verified. Bonus fix:
+FalImageEngine.model_identity now falls back to spec.model so keyframe
+filenames stop rendering 'unknown'.
 
 Course-correction note: first pass targeted the RETIRED dream-machine
 surface off stale public docs and mis-diagnosed the resulting 403 as

@@ -1,0 +1,9 @@
+Pixi task (kinoforge in live-hosted): python -m kinoforge generate --config examples/configs/keyframe-fal-flf2v.yaml --mode flf2v --prompt a cat morphing into a tiger, smooth transition
+2026-07-04 01:28:55,254 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (37 keys)
+2026-07-04 01:28:55,266 WARNING kinoforge.orchestrator image engine fal returned empty model identity; sink will render keyframe filename slug as 'unknown'
+2026-07-04 01:28:58,821 INFO kinoforge.kinoforge.outputs.local output published: /workspace/output/20260704-012858_keyframe-first_fal_unknown_photorealistic-cat-s.png
+2026-07-04 01:29:00,712 INFO kinoforge.kinoforge.outputs.local output published: /workspace/output/20260704-012900_keyframe-last_fal_unknown_photorealistic-tiger.png
+2026-07-04 01:29:58,565 INFO kinoforge.kinoforge.outputs.local output published: /workspace/output/20260704-012958_fal_fal-ai-wan-flf2v_a-cat-morphing-into.mp4
+2026-07-04 01:29:58,565 INFO kinoforge.orchestrator generate completed — artifact uri='/workspace/.kinoforge/run-20260704-012855/335aa5cc2daccad8.mp4'
+[instance overview] No running instances.
+generated: uri='/workspace/.kinoforge/run-20260704-012855/335aa5cc2daccad8.mp4'

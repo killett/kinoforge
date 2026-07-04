@@ -287,14 +287,22 @@ class FalImageEngine(ImageEngine):
             raise ValidationError("FalImageEngine: spec.model (fal endpoint) required")
 
     def model_identity(self, cfg: dict[str, object]) -> str:
-        """Fal image identity is the queue endpoint."""
+        """Fal image identity: queue endpoint, else ``spec.model``.
+
+        Keyframe sub-cfgs carry ``spec.model`` and no ``engine.fal``
+        block — without the fallback every published keyframe filename
+        rendered the model slug as ``unknown`` (live flf2v run,
+        2026-07-04).
+        """
         engine_block = cfg.get("engine", {})
-        if not isinstance(engine_block, dict):
-            return ""
-        fal_block = engine_block.get("fal", {})
-        if not isinstance(fal_block, dict):
-            return ""
-        return str(fal_block.get("endpoint", "") or "")
+        if isinstance(engine_block, dict):
+            fal_block = engine_block.get("fal", {})
+            if isinstance(fal_block, dict) and fal_block.get("endpoint"):
+                return str(fal_block["endpoint"])
+        spec = cfg.get("spec", {})
+        if isinstance(spec, dict):
+            return str(spec.get("model", "") or "")
+        return ""
 
 
 registry.register_image_engine("fal", lambda: FalImageEngine())

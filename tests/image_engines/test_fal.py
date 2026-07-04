@@ -213,3 +213,30 @@ def test_fal_image_engine_model_identity_empty_on_missing_engine_block() -> None
     assert eng.model_identity({}) == ""
     assert eng.model_identity({"engine": {}}) == ""
     assert eng.model_identity({"engine": {"fal": {}}}) == ""
+
+
+def test_model_identity_falls_back_to_spec_model() -> None:
+    """Keyframe sub-cfgs carry `spec.model`, not an `engine.fal` block.
+
+    Bug caught (live flf2v run 2026-07-04): model_identity returned ""
+    for every keyframe generation and published filenames rendered the
+    model slug as 'unknown' — the keyframe cfg shape was never handled.
+    """
+    from kinoforge.image_engines.fal import FalImageEngine
+
+    engine = FalImageEngine.__new__(FalImageEngine)  # identity needs no auth
+    assert (
+        engine.model_identity({"spec": {"model": "fal-ai/flux/schnell"}})
+        == "fal-ai/flux/schnell"
+    )
+    # engine.fal.endpoint still wins when present (full-cfg shape).
+    assert (
+        engine.model_identity(
+            {
+                "engine": {"fal": {"endpoint": "fal-ai/flux/dev"}},
+                "spec": {"model": "ignored"},
+            }
+        )
+        == "fal-ai/flux/dev"
+    )
+    assert engine.model_identity({}) == ""
