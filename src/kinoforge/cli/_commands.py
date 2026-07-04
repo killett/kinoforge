@@ -3056,8 +3056,11 @@ def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
         created_at=datetime.now().timestamp(),
         cost_rate_usd_per_hr=0.0,
     )
-    ledger.record(synthetic)
-    ledger.touch(f"sweeper:{host}", pid=pid)
+    # NOTE: recorded AFTER signal handlers install (below). The ledger
+    # entry is the daemon's readiness signal — supervisors (and the
+    # xprocess test) SIGTERM as soon as they see it, and a signal
+    # landing before signal.signal() hits the default handler:
+    # rc=-15 instead of graceful exit 0 (CI flake, run 28696410210).
 
     stats = _SweeperStats()
     loop = SweeperLoop(
@@ -3107,6 +3110,10 @@ def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
     signal.signal(signal.SIGTERM, _handle_sigterm)
     signal.signal(signal.SIGHUP, _handle_sighup)
     signal.signal(signal.SIGUSR1, _handle_sigusr1)
+
+    # Handlers live — NOW publish readiness (see NOTE at `synthetic`).
+    ledger.record(synthetic)
+    ledger.touch(f"sweeper:{host}", pid=pid)
 
     loop.start()
     exit_event.wait()

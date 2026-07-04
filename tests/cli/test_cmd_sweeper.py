@@ -200,3 +200,41 @@ def test_cmd_sweeper_start_records_synthetic_entry(tmp_path: Path) -> None:
     assert entry["provider"] == "_sweeper"
     assert int(entry["pid"]) == os.getpid()
     assert entry["cost_rate_usd_per_hr"] == 0.0
+
+
+def test_cmd_sweeper_start_installs_handlers_before_ledger_entry(
+    tmp_path: Path,
+) -> None:
+    """SIGTERM handler must be live BEFORE the liveness ledger entry lands.
+
+    Bug caught (CI ubuntu flake, run 28696410210, 2026-07-04): the
+    xprocess test (and any supervisor) treats the sweeper:<host> ledger
+    entry as the readiness signal and may SIGTERM immediately after
+    seeing it. With ledger.record before signal.signal, the signal
+    lands on the default handler and the daemon dies rc=-15 instead of
+    the graceful exit-0 path.
+    """
+    ctx, cfg_path = _make_ctx(tmp_path)
+    order: list[str] = []
+
+    real_record = type(ctx.ledger()).record
+
+    def _recording_record(self: object, entry: object) -> None:
+        order.append("ledger.record")
+        real_record(self, entry)  # type: ignore[arg-type]
+
+    with (
+        patch("kinoforge.core.sweeper.SweeperLoop.start", lambda self: None),
+        patch("kinoforge.core.sweeper.SweeperLoop.stop", lambda self: None),
+        patch("threading.Event.wait", return_value=True),
+        patch("signal.signal", side_effect=lambda *_a: order.append("signal.signal")),
+        patch.object(type(ctx.ledger()), "record", _recording_record),
+    ):
+        rc = _cmd_sweeper_start(_args(config=str(cfg_path), interval_s=None), ctx)
+    assert rc == 0
+    assert "ledger.record" in order and "signal.signal" in order
+    first_signal = order.index("signal.signal")
+    first_record = order.index("ledger.record")
+    assert first_signal < first_record, (
+        f"handlers installed after ledger entry — SIGTERM race window: {order}"
+    )
