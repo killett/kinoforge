@@ -82,6 +82,29 @@ def _ffprobe_dims(video: Path) -> tuple[int, int]:
     return int(w), int(h)
 
 
+def _run_cli(args: list[str], timeout_s: int) -> subprocess.CompletedProcess[str]:
+    """Run a kinoforge CLI invocation; on failure, surface output in the assert.
+
+    Bug caught (meta, 2026-07-03): ``check=True`` raises CalledProcessError
+    whose repr omits stdout/stderr — a failed live smoke leaves NO diagnosis
+    trail once the subprocess exits, forcing a paid re-run just to see the
+    error.
+    """
+    r = subprocess.run(  # noqa: S603
+        args,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout_s,
+    )
+    assert r.returncode == 0, (
+        f"exit={r.returncode} cmd={' '.join(args[:6])}...\n"
+        f"--- stdout tail ---\n{r.stdout[-3000:]}\n"
+        f"--- stderr tail ---\n{r.stderr[-2000:]}"
+    )
+    return r
+
+
 def _kinoforge_list_shows_no_pods() -> bool:
     """Return True iff ``kinoforge list`` reports zero pods AND empty ledger."""
     r = subprocess.run(  # noqa: S603
@@ -192,7 +215,7 @@ def test_f_multi(tmp_path: Path) -> None:
     prompt = _STANDARD_PROMPT_PATH.read_text().strip()
     before = _snapshot_mp4s()
     try:
-        r = subprocess.run(  # noqa: S603
+        r = _run_cli(
             [
                 "pixi",
                 "run",
@@ -205,12 +228,9 @@ def test_f_multi(tmp_path: Path) -> None:
                 "--mode",
                 "t2v",
             ],
-            capture_output=True,
-            text=True,
-            check=True,
             # 40m: image pull + provision (~8m) + Wan 2.2 A14B download
             # (~15-20m) + T2V inference + FlashVSR upscale + sink.
-            timeout=40 * 60,
+            timeout_s=40 * 60,
         )
         assert "flashvsr-wan21-bfloat16" in r.stdout
         new = _snapshot_mp4s() - before
@@ -243,7 +263,7 @@ def test_f_warm(tmp_path: Path) -> None:
     prompt = _STANDARD_PROMPT_PATH.read_text().strip() + " variant B"
     before = _snapshot_mp4s()
     try:
-        r = subprocess.run(  # noqa: S603
+        r = _run_cli(
             [
                 "pixi",
                 "run",
@@ -256,12 +276,9 @@ def test_f_warm(tmp_path: Path) -> None:
                 "--mode",
                 "t2v",
             ],
-            capture_output=True,
-            text=True,
-            check=True,
             # 20m: warm attach skips image pull + provision + downloads.
             # Wan T2V inference + FlashVSR upscale + sink only.
-            timeout=20 * 60,
+            timeout_s=20 * 60,
         )
         # Warm hit on the pod F-multi left running; a cold create here
         # means the capability-key match regressed.
