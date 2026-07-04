@@ -1,12 +1,17 @@
-"""LumaImageEngine — Layer-R image engine for Luma's dream-machine image API.
+"""LumaAgentsImageEngine — Layer-R image engine for Luma's agents API (UNI-1).
 
-Raw-REST (urllib) — no ``lumaai`` SDK dependency. Video surface retired
-by the provider (Phase 44 deleted the old ``LumaEngine``); this module is
-image/keyframe-only. API contract verified 2026-07-03 against
-``docs.lumalabs.ai`` — see
-``docs/superpowers/specs/2026-07-03-luma-image-keyframes-design.md``.
+Raw-REST (urllib) — no SDK dependency. Targets the CURRENT Luma platform
+surface at ``agents.lumalabs.ai/v1`` (verified 2026-07-03 against
+``docs.agents.lumalabs.ai``); the old ``api.lumalabs.ai/dream-machine``
+video+image surface is retired for platform keys and returns
+``403 Not authenticated`` (Phase 44 deleted the video engine; the first
+draft of THIS module targeted dream-machine off stale docs and hit that
+same 403 — the Layer 5a memory had the correct surface recorded all
+along).
 
-Self-registers under ``"luma"`` via the image-engine registry.
+Self-registers under ``"luma_agents"`` via the image-engine registry
+(NOT ``"luma"`` — slug reserved against a future direct-API revival,
+per the Layer 5a locked decisions).
 """
 
 from __future__ import annotations
@@ -36,22 +41,22 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.core.remote_backend import RemoteSubmitPollBackend
 
-_BASE_URL = "https://api.lumalabs.ai"
+_BASE_URL = "https://agents.lumalabs.ai"
 _IMAGE_PROBE = ImageProfile(
-    name="luma-image",
+    name="luma-agents-image",
     max_resolution=(1920, 1080),
     supported_modes={"t2i"},
 )
 
 
 class _LumaHttp:
-    """Minimal Bearer-authenticated JSON client for the Luma REST API."""
+    """Minimal Bearer-authenticated JSON client for the Luma agents API."""
 
     def __init__(self, *, token: str, base_url: str = _BASE_URL) -> None:
         """Bind the Bearer token + base URL.
 
         Args:
-            token: LUMAAI_API_KEY value.
+            token: LUMAAI_API_KEY value (platform ``luma-api-...`` key).
             base_url: API origin; overridable for tests.
         """
         self._token = token
@@ -78,7 +83,7 @@ class _LumaHttp:
         except HTTPError as exc:
             detail = exc.read()[:500].decode(errors="replace")
             raise KinoforgeError(
-                f"luma-image: {method} {path} -> HTTP {exc.code}: {detail}"
+                f"luma-agents: {method} {path} -> HTTP {exc.code}: {detail}"
             ) from exc
         if not raw:
             return {}
@@ -93,13 +98,9 @@ class _LumaHttp:
         """GET; return the parsed JSON response."""
         return self._request("GET", path)
 
-    def delete(self, path: str) -> None:
-        """DELETE; response body (if any) ignored."""
-        self._request("DELETE", path)
 
-
-class _LumaImageInnerBackend(RemoteSubmitPollBackend):
-    """Submit-poll backend for ``/dream-machine/v1/generations/image``."""
+class _LumaAgentsInnerBackend(RemoteSubmitPollBackend):
+    """Submit-poll backend for ``POST /v1/generations`` (type=image)."""
 
     def _submit(self, client: object, job: GenerationJob) -> str:
         """POST the generation; return the provider id."""
@@ -108,18 +109,19 @@ class _LumaImageInnerBackend(RemoteSubmitPollBackend):
         body: dict[str, Any] = {
             "prompt": prompt,
             "model": job.spec["model"],
+            "type": "image",
             **(job.spec.get("params") or {}),
         }
-        resp = http.post_json("/dream-machine/v1/generations/image", body)
+        resp = http.post_json("/v1/generations", body)
         gen_id = str(resp.get("id", ""))
         if not gen_id:
-            raise KinoforgeError(f"luma-image: submit returned no id: {resp!r}")
+            raise KinoforgeError(f"luma-agents: submit returned no id: {resp!r}")
         return gen_id
 
     def _poll_one(self, client: object, job_id: str) -> dict[str, Any]:
         """Fetch one generation snapshot."""
         http: _LumaHttp = client  # type: ignore[assignment]
-        return http.get_json(f"/dream-machine/v1/generations/{job_id}")
+        return http.get_json(f"/v1/generations/{job_id}")
 
     def _is_done(self, status: dict[str, Any]) -> bool:
         """True when ``state == 'completed'``."""
@@ -129,19 +131,32 @@ class _LumaImageInnerBackend(RemoteSubmitPollBackend):
         """True + reason when ``state == 'failed'``."""
         if status.get("state") == "failed":
             return True, str(
-                status.get("failure_reason") or "luma-image generation failed"
+                status.get("failure_reason") or "luma-agents generation failed"
             )
         return False, ""
 
     def _extract_output_url(self, status: dict[str, Any]) -> str:
-        """Return ``assets.image`` — the video slot is null for images."""
+        """Return the image URL.
+
+        Documented shape (2026-07-03): ``output`` is an array of
+        ``{"url": ...}``. The earlier dream-machine shape
+        (``assets.image``) is kept as a fallback in case the docs and
+        the wire disagree — the live smoke settles which one is real.
+        """
+        output = status.get("output")
+        if isinstance(output, list) and output:
+            first = output[0]
+            if isinstance(first, dict):
+                return str(first.get("url") or "")
+            return str(first or "")
         assets = status.get("assets") or {}
         return str(assets.get("image") or "")
 
     def _delete(self, job_id: str) -> None:
-        """DELETE the generation record (documented Luma endpoint)."""
-        http: _LumaHttp = self._client()  # type: ignore[assignment]
-        http.delete(f"/dream-machine/v1/generations/{job_id}")
+        """No DELETE endpoint documented on the agents API."""
+        raise NotImplementedError(
+            "luma-agents: no documented DELETE endpoint; purge via dashboard"
+        )
 
     @classmethod
     def manual_cleanup_url(cls, job_id: str) -> str:
@@ -149,8 +164,8 @@ class _LumaImageInnerBackend(RemoteSubmitPollBackend):
         return "https://lumalabs.ai/dream-machine/creations"
 
 
-class LumaImageBackend(ImageBackend):
-    """Image-shape adapter around the Luma submit-poll lifecycle."""
+class LumaAgentsImageBackend(ImageBackend):
+    """Image-shape adapter around the Luma agents submit-poll lifecycle."""
 
     def __init__(
         self,
@@ -165,7 +180,7 @@ class LumaImageBackend(ImageBackend):
 
         Args:
             client_factory: Zero-arg callable returning a ``_LumaHttp``
-                (or a fake with the same three methods in tests).
+                (or a fake with the same two methods in tests).
             sleep: Injectable sleep between poll iterations.
             max_poll: Maximum poll iterations before TimeoutError.
             poll_interval_s: Seconds between polls (~31 s generations →
@@ -173,7 +188,7 @@ class LumaImageBackend(ImageBackend):
             probe_profile: ImageProfile returned by capability methods.
         """
         self._probe = probe_profile
-        self._inner = _LumaImageInnerBackend(
+        self._inner = _LumaAgentsInnerBackend(
             client_factory=client_factory,
             sleep=sleep,
             max_poll=max_poll,
@@ -215,10 +230,10 @@ class LumaImageBackend(ImageBackend):
         return {}
 
 
-class LumaImageEngine(ImageEngine):
-    """Hosted Luma dream-machine image-engine adapter (photon / UNI-1)."""
+class LumaAgentsImageEngine(ImageEngine):
+    """Hosted Luma agents image-engine adapter (UNI-1 family)."""
 
-    name: str = "luma"
+    name: str = "luma_agents"
     requires_compute: bool = False
     requires_local_weights: bool = False
 
@@ -239,25 +254,27 @@ class LumaImageEngine(ImageEngine):
     ) -> None:
         """Validate credentials; reject any non-None ``instance``."""
         if instance is not None:
-            raise KinoforgeError("LumaImageEngine.provision: instance must be None")
+            raise KinoforgeError(
+                "LumaAgentsImageEngine.provision: instance must be None"
+            )
         if not self._auth.credentials_present():
-            raise AuthError("luma-image: LUMAAI_API_KEY not present")
+            raise AuthError("luma-agents: LUMAAI_API_KEY not present")
 
     def backend(
         self, instance: Instance | None, cfg: dict[str, object]
-    ) -> LumaImageBackend:
+    ) -> LumaAgentsImageBackend:
         """Build the image backend bound to the Bearer credential."""
         del instance, cfg
         kwargs = self._auth.client_kwargs()
         token = kwargs.get("api_key")
         if not token:
-            raise AuthError("luma-image: LUMAAI_API_KEY is empty")
-        return LumaImageBackend(client_factory=lambda: _LumaHttp(token=token))
+            raise AuthError("luma-agents: LUMAAI_API_KEY is empty")
+        return LumaAgentsImageBackend(client_factory=lambda: _LumaHttp(token=token))
 
     def profile_for(self, key: CapabilityKey) -> ImageProfile:
         """Profiles flow through ImageProfileProvider — not the engine."""
         raise NotImplementedError(
-            "LumaImageEngine.profile_for is supplied by ImageProfileProvider"
+            "LumaAgentsImageEngine.profile_for is supplied by ImageProfileProvider"
         )
 
     def validate_spec(self, job: ImageJob) -> None:
@@ -265,19 +282,19 @@ class LumaImageEngine(ImageEngine):
         from kinoforge.core.errors import ValidationError
 
         if not job.spec.get("model"):
-            raise ValidationError("luma-image: spec.model missing")
+            raise ValidationError("luma-agents: spec.model missing")
         if not job.prompt:
-            raise ValidationError("luma-image: prompt is empty")
+            raise ValidationError("luma-agents: prompt is empty")
 
     def model_identity(self, cfg: dict[str, object]) -> str:
-        """Luma image identity is the model slug at ``spec.model``."""
+        """Luma agents image identity is the model slug at ``spec.model``."""
         spec = cfg.get("spec", {})
         return str(spec.get("model", "") or "") if isinstance(spec, dict) else ""
 
 
-def _default_factory() -> LumaImageEngine:
+def _default_factory() -> LumaAgentsImageEngine:
     """Zero-arg engine factory used by the image-engine registry."""
-    return LumaImageEngine(
+    return LumaAgentsImageEngine(
         auth=Bearer(
             env_var="LUMAAI_API_KEY",
             credential_provider=EnvCredentialProvider(),
@@ -285,4 +302,4 @@ def _default_factory() -> LumaImageEngine:
     )
 
 
-registry.register_image_engine("luma", _default_factory)
+registry.register_image_engine("luma_agents", _default_factory)

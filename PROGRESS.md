@@ -10,6 +10,24 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
+## LumaAgentsImageEngine (UNI-1 image keyframes) — CODE-COMPLETE 2026-07-03, live smoke next
+
+Spec: `docs/superpowers/specs/2026-07-03-luma-image-keyframes-design.md`
+(incl. §9 same-day correction). Plan:
+`docs/superpowers/plans/2026-07-03-luma-image-keyframes.md`.
+
+`image_engines/luma_agents/` — raw-REST ImageEngine for the Luma
+agents API (`agents.lumalabs.ai/v1`, UNI-1), registry slug
+`luma_agents`, 10 offline tests; `keyframe-luma.yaml` example (fal
+i2v host, Luma keyframe); env-gated live smoke.
+
+Course-correction note: first pass targeted the RETIRED dream-machine
+surface off stale public docs and mis-diagnosed the resulting 403 as
+a stale key. The Layer 5a memory (`project_luma_video_retirement_2026`)
+had the correct surface + locked decisions all along — consult project
+memories BEFORE external doc research. Key verified VALID against the
+agents API (bogus-id GET → 404, authenticated).
+
 ## F-multi + F-warm (P4 plan T9/T10) — SHIPPED 2026-07-03 22:17 PDT
 
 `test_f_multi` + `test_f_warm` both PASSED (attempt 13, `2 passed in
