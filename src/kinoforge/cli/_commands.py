@@ -289,16 +289,45 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
         if not offers:
             print("error: no compute offers available", file=sys.stderr)
             return 1
-        from kinoforge.core.interfaces import InstanceSpec
+        import dataclasses as _dc
 
+        from kinoforge.core.interfaces import InstanceSpec
+        from kinoforge.core.orchestrator import _cfg_dict
+
+        # Thread the engine's rendered payload like deploy_session does.
+        # The legacy bare spec (image+offer+lifecycle only) booted pods
+        # with NO ports and NO bootstrap: RunPod exposed no proxy
+        # endpoints and wait_for_ready raised `ProvisionFailed: ... has
+        # no endpoints` AFTER money was committed (pod forewgeluuy9qh,
+        # 2026-07-03).
+        cfg_dict = _cfg_dict(cfg)
+        cfg_dict["lifecycle"] = _dc.asdict(cfg.lifecycle())
+        rendered = engine.render_provision(cfg_dict)
+        from kinoforge.core.credentials import EnvCredentialProvider as _ECP
+
+        _creds = _ECP()
+        rendered_env = {
+            var: value
+            for var in rendered.env_required
+            if (value := _creds.get(var)) is not None
+        }
         spec = InstanceSpec(
-            image=cfg.compute.image if cfg.compute else "",
+            image=rendered.image or (cfg.compute.image if cfg.compute else ""),
             offer=offers[0],
+            ports=tuple(rendered.ports),
             lifecycle=cfg.lifecycle(),
+            env=rendered_env,
+            provision_script=rendered.script,
+            run_cmd=rendered.run_cmd,
+            cloud_type=(cfg.compute.cloud_type if cfg.compute is not None else "any"),
         )
         instance = provider.create_instance(spec)
         while instance.status != "ready":
-            instance = provider.get_instance(instance.id)
+            time.sleep(2.0)
+            # Status-only refresh — get_instance strips endpoints/tags
+            # (the pod GraphQL query returns id/status/image only).
+            refreshed = provider.get_instance(instance.id)
+            instance = _dc.replace(instance, status=refreshed.status)
 
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.provisioner import provision

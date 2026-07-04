@@ -52,9 +52,10 @@ Session battle log (13 smoke attempts + 4 wheel builds, ~$6 total):
   read from `lowestPrice.stockStatus`; live-verified.
 - Wan reload on promotion drops live LoRA adapters — needs stack
   replay if LoRA + upscale co-residency ever composes.
-- `kinoforge provision` subcommand raises `ProvisionFailed: no
-  endpoints` (legacy path builds InstanceSpec without ports) —
-  pre-existing, surfaced 2026-07-03.
+- ~~`kinoforge provision` no-endpoints bug~~ — FIXED (2026-07-03):
+  legacy path now threads engine.render_provision output (ports,
+  bootstrap script, env, cloud_type) into InstanceSpec like
+  deploy_session; status polls no longer strip endpoints.
 
 ## Main CI back to green — SHIPPED 2026-07-03
 
