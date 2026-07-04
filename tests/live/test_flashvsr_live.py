@@ -232,7 +232,9 @@ def test_f_multi(tmp_path: Path) -> None:
             # (~15-20m) + T2V inference + FlashVSR upscale + sink.
             timeout_s=40 * 60,
         )
-        assert "flashvsr-wan21-bfloat16" in r.stdout
+        # kinoforge logs to stderr; stdout carries only the artifact uri
+        # (attempt-9 lesson: slug assert on stdout failed a GREEN run).
+        assert "flashvsr-wan21-bfloat16" in r.stdout + r.stderr
         new = _snapshot_mp4s() - before
         wans = sorted(p for p in new if "_diffusers_Wan2.2-" in p.name)
         ups = sorted(p for p in new if "_upscaled_flashvsr_" in p.name)
@@ -281,11 +283,13 @@ def test_f_warm(tmp_path: Path) -> None:
             timeout_s=20 * 60,
         )
         # Warm hit on the pod F-multi left running; a cold create here
-        # means the capability-key match regressed.
-        assert "warm-reuse: attached to" in r.stdout, (
+        # means the capability-key match regressed. Search stdout+stderr
+        # (kinoforge splits prints/logs across both).
+        combined = r.stdout + r.stderr
+        assert "warm-reuse: attached to" in combined, (
             "no warm attach — cold create burned a second pod"
         )
-        assert "cold create" not in r.stdout
+        assert "cold create" not in combined
         new = _snapshot_mp4s() - before
         assert any("_upscaled_flashvsr_" in p.name for p in new), (
             "no fresh upscaled artifact from warm run"
