@@ -44,6 +44,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 14. `2026-07-03 22:10:05` — [Wan 2.2 T2V-A14B + FlashVSR 4x co-resident multi-stage + warm-reuse re-generate on RunPod A100 80GB — t2v+upscale](#14-2026-07-03-221005--wan-22-t2v-a14b--flashvsr-4x-co-resident-multi-stage--warm-reuse-re-generate-on-runpod-a100-80gb--t2vupscale)
 15. `2026-07-04 00:02:32` — [Luma UNI-1 image keyframe via agents API (LumaAgentsImageEngine) — t2i](#15-2026-07-04-000232--luma-uni-1-image-keyframe-via-agents-api-lumaagentsimageengine--t2i)
 16. `2026-07-04 00:50:21` — [Keyframe→video pipeline: Luma UNI-1 keyframe → fal wan-i2v (E21 data-URI hand-off) — i2v](#16-2026-07-04-005021--keyframevideo-pipeline-luma-uni-1-keyframe--fal-wan-i2v-e21-data-uri-hand-off--i2v)
+17. `2026-07-04 01:29:58` — [flf2v pipeline: dual fal flux-schnell keyframes → fal wan-flf2v — flf2v](#17-2026-07-04-012958--flf2v-pipeline-dual-fal-flux-schnell-keyframes--fal-wan-flf2v--flf2v)
 
 ---
 
@@ -2230,3 +2231,44 @@ pixi run -e live-hosted kinoforge generate \
 - Spend: one Luma generation (~cents) + one fal wan-i2v run (fal does not return cost on the wire; list price ~$0.2-0.4 for a 5 s 720p clip).
 - flf2v role→field mapping in `keyframe-fal-flf2v.yaml` remains docs-derived and NOT live-verified — only the i2v leg is proven here.
 - The published keyframe filename carries the `keyframe-init_luma_agents_uni-1` token chain — Layer 4 sink naming worked unmodified with the new image engine.
+
+---
+
+## 17. `2026-07-04 01:29:58` — flf2v pipeline: dual fal flux-schnell keyframes → fal wan-flf2v — flf2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `fal.ai / FalImageEngine (x2 roles) → KeyframeStage → FalEngine / fal-ai/flux/schnell → fal-ai/wan-flf2v` |
+| **Mode** | flf2v with dual-keyframe pre-stage — first flf2v entry; closes the Phase 43 T14 flf2v leg |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `7add3d8` (tree state; E21 seam from `7ea8e96`) |
+| **Date (local TZ)** | 2026-07-04 01:29:58 -0700 (PDT) |
+| **Layer / phase** | Validates the docs-derived `first_frame→start_image_url` / `last_frame→end_image_url` mapping flagged UNVERIFIED in the E21 close-out. Layer R per-role overrides (distinct prompt+seed per frame) exercised live for the first time. |
+
+### Exact command
+
+```bash
+pixi run -e live-hosted kinoforge generate \
+  --config examples/configs/keyframe-fal-flf2v.yaml \
+  --mode flf2v \
+  --prompt "a cat morphing into a tiger, smooth transition"
+```
+
+### Cfg
+
+- `examples/configs/keyframe-fal-flf2v.yaml` verbatim (committed shape). Per-role keyframe overrides: first_frame = cat (seed 42), last_frame = tiger (seed 43), both `fal-ai/flux/schnell`.
+- Standard-prompt deviation, deliberate: flf2v needs a COHERENT first/last pair; the single-scene standard prompt cannot decompose into two frame prompts. The cfg's purpose-built cat→tiger pair is the test.
+
+### Output
+
+- first_frame: `output/20260704-012858_keyframe-first_fal_unknown_photorealistic-cat-s.png` — 248,223 B, sha `b47910a8fcfeb273…`.
+- last_frame: `output/20260704-012900_keyframe-last_fal_unknown_photorealistic-tiger.png` — 307,859 B, sha `5ce83b82420b829d…`.
+- Video: `output/20260704-012958_fal_fal-ai-wan-flf2v_a-cat-morphing-into.mp4` — **1280×720, 81 frames**, 1,260,495 B, sha `335aa5cc2daccad8…`.
+- Wall-clock: 63 s total (two flux keyframes ~5 s, wan-flf2v ~58 s).
+- Evidence: `tests/live/evidence/2026-07-04_keyframe_fal_flf2v_stdout.txt`.
+
+### Notes
+
+- Spend: 2× flux-schnell (~$0.01) + wan-flf2v (~$0.3 list).
+- The `_fal_unknown_` token in the keyframe filenames is a bug this run surfaced: `FalImageEngine.model_identity` only read `engine.fal.endpoint` and returned `""` for keyframe sub-cfgs (which carry `spec.model`). Fixed same commit — future runs render `fal-ai-flux-schnell`.
+- Both keyframes hand off through the E21 data-URI seam (two ~250-300 KB inline bodies).
