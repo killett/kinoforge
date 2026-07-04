@@ -10,6 +10,52 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
+## F-multi + F-warm (P4 plan T9/T10) — SHIPPED 2026-07-03 22:17 PDT
+
+`test_f_multi` + `test_f_warm` both PASSED (attempt 13, `2 passed in
+1223.57s`, pod `cb25udex7bvoq6`, spend ~$0.47). Full co-resident
+Wan 2.2 A14B + FlashVSR 4x multi-stage pipeline on one A100 80GB,
+then warm-reuse attach + second generate (Wan reloaded from pod-local
+HF cache after the upscale stage's disk-drop eviction). Entry #14 in
+`successful-generations.md`. Evidence:
+`tests/live/evidence/2026-07-03_flashvsr_f_multi_warm_stdout.txt`.
+
+Session battle log (13 smoke attempts + 4 wheel builds, ~$6 total):
+
+- **BSA wheel rebuilt for torch 2.6.0+cu124** (`bsa-cu124-torch2.6-v1`
+  on killett/kinoforge-artifacts) — Wan 2.2 needs torch>=2.6, old
+  wheel linked the image's torch 2.4.1 (`ab03dbc`, `038a62a`).
+- **RunPod deleted every community-pool pod** minutes into runs all
+  day (their GraphQL schema migration day: GpuTypesInput →
+  GpuTypeFilter, availableCount removed). New
+  `InstanceSpec.cloud_type` + `compute.cloud_type` cfg surface pins
+  SECURE (`79bbb7b`, `070778e`); even secure pods vanished twice —
+  retry-to-green. Memory: `reference_runpod_community_pool_deletions`.
+- **Server co-residency swap** (the real feature work): eager Wan pipe
+  registered in the T11 LRU registry, pre-load headroom eviction,
+  disk-drop semantics (never .to("cpu") — 32 GiB min-RAM pods +
+  device_map pipes), worker-side re-promotion with full victim drop
+  (CPU-parked FlashVSR leaves ~2-3 GiB CUDA residue) (`17aaf96`,
+  `3d15fac`, `18418f4`).
+- **Provision pins**: peft 0.17.0, transformers `>=4.48,<5` window,
+  HF_HUB_OFFLINE tail suppressed on co-resident pods (`a711450`,
+  `0a6b266`, `166dd00`).
+- **Test-harness lessons**: `_run_cli` surfaces stdout/stderr tails in
+  assert messages (CalledProcessError hides them — two paid re-runs
+  just to see errors); generate never prints the model slug (that is
+  the upscale subcommand); never TaskStop a live pytest before the
+  FAILURES section prints.
+
+**Known follow-ups (non-blocking):**
+- RunPod `GpuAvailability` probe 400s on the new `GpuTypeFilter`
+  schema — nonfatal (logged, fallback proceeds); rewrite when RunPod's
+  schema settles.
+- Wan reload on promotion drops live LoRA adapters — needs stack
+  replay if LoRA + upscale co-residency ever composes.
+- `kinoforge provision` subcommand raises `ProvisionFailed: no
+  endpoints` (legacy path builds InstanceSpec without ports) —
+  pre-existing, surfaced 2026-07-03.
+
 ## Main CI back to green — SHIPPED 2026-07-03
 
 CI on main had been red for 5 days (last green run 28312332662); run 28683391787
@@ -89,11 +135,8 @@ surfaced and fixed — see commit history `50beca2..af212dc`.
 
 ### Next steps (deferred to follow-up sessions)
 
-- **F-multi + F-warm live smokes** — parent P4 plan
-  (`docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`
-  Tasks T9 + T10) still pending. Need same server-side patches on the
-  `wan-with-upscale-flashvsr.yaml` cfg (which currently still pins
-  torch 2.8 — likely needs the same drop-torch-pin treatment as x4).
+- **F-multi + F-warm live smokes** — DONE 2026-07-03 (see the
+  F-multi + F-warm SHIPPED section at the top of this file).
 - **Deep-clean `_input_prep.Causal_LQ4x_Proj` stub** — the runtime now
   prefers upstream utils.py, so the stub is only touched by tests.
   Consider removing it entirely or promoting the runtime-load path to
