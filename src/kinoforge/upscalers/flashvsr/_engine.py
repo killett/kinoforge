@@ -122,8 +122,15 @@ class FlashVSREngine(UpscalerEngine):
                 # peft>=0.17 at import — 0.16 crash-loops the server at
                 # startup (pod 1sjify76z1oqha, 2026-07-03). diffsynth's
                 # peft surface loads fine on 0.17 (F-multi live smoke).
+                #
+                # transformers window >=4.48,<5 (not ==4.46.2): diffusers
+                # latest imports Dinov2WithRegistersConfig (added 4.48)
+                # inside the Wan VAE module (pod riwilukyvoq7iz), while
+                # transformers 5.x drops PretrainedConfig from
+                # modeling_utils, which diffsynth imports at module top.
+                # The window is the co-residency intersection.
                 'pip install "modelscope" '
-                '"safetensors==0.5.3" "transformers==4.46.2" '
+                '"safetensors==0.5.3" "transformers>=4.48,<5" '
                 '"accelerate==1.8.1" "peft==0.17.0" '
                 '"einops==0.8.1" "ftfy==6.3.1" "sentencepiece==0.2.0" '
                 '"imageio[ffmpeg,pyav]>=2.34" "av"\n',
