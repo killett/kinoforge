@@ -1157,9 +1157,17 @@ from kinoforge.validation.protocol import (  # noqa: E402
 )
 from kinoforge.validation.registry import register as _register  # noqa: E402
 
+# 2026-07-03 RunPod schema migration: GpuTypesInput → GpuTypeFilter
+# (list field `ids`, was `gpuTypes`); GpuType.availableCount REMOVED.
+# Capacity signal is now lowestPrice(input:{gpuCount:1}).stockStatus —
+# observed "Low"/"High", null when no stock. The old query 400'd with
+# GRAPHQL_VALIDATION_FAILED on every generate.
 _GPU_AVAILABILITY_QUERY = """
-query GpuAvailability($input: GpuTypesInput!) {
-  gpuTypes(input: $input) { id availableCount }
+query GpuAvailability($input: GpuTypeFilter) {
+  gpuTypes(input: $input) {
+    id
+    lowestPrice(input: {gpuCount: 1}) { stockStatus }
+  }
 }
 """.strip()
 
@@ -1208,7 +1216,7 @@ class RunPodCapacityHintCheck:
                 self._graphql_url,
                 {
                     "query": _GPU_AVAILABILITY_QUERY,
-                    "variables": {"input": {"gpuTypes": prefs}},
+                    "variables": {"input": {"ids": prefs}},
                 },
             )
         except Exception as exc:  # noqa: BLE001
@@ -1219,7 +1227,11 @@ class RunPodCapacityHintCheck:
                 message=f"capacity probe inconclusive: {exc}; not blocking",
             )
         types = (resp.get("data") or {}).get("gpuTypes", [])
-        any_available = any(int(t.get("availableCount", 0)) > 0 for t in types)
+        # stockStatus null (or lowestPrice missing entirely — delisted
+        # SKUs) means no stock; any non-null value ("Low"/"High") counts.
+        any_available = any(
+            (t.get("lowestPrice") or {}).get("stockStatus") for t in types
+        )
         if any_available:
             return _CR(
                 name=self.name,
