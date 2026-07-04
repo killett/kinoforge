@@ -78,6 +78,12 @@ compute:
   # Keep in lockstep with engine.diffusers.image above (see comment there).
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: pod
+  # Dedicated hosts only. 2026-07-03: every cloudType=ALL pod (community
+  # capacity) was deleted by RunPod minutes after create — 3 BSA wheel
+  # builds + 2 F-multi smoke pods in one day. The multi-stage pipeline
+  # holds a pod 30-60 min; community interruption terminates zero-volume
+  # pods outright.
+  cloud_type: secure
   warm_reuse_auto_attach: true
   requirements:
     min_vram_gb: 80

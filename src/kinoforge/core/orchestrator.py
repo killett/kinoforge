@@ -738,6 +738,9 @@ def _provision_instance_and_build_backend(
             run_cmd=rendered.run_cmd,
             diagnostic_env=diagnostic_env,
             restart_policy=restart_policy,
+            # cfg.compute is None on hosted-engine cfgs that still reach
+            # the compute path in tests; "any" preserves cloudType ALL.
+            cloud_type=(cfg.compute.cloud_type if cfg.compute is not None else "any"),
         )
 
     instance, _chosen_offer = _create_with_offer_retry(
