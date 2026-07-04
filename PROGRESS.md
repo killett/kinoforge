@@ -47,9 +47,9 @@ Session battle log (13 smoke attempts + 4 wheel builds, ~$6 total):
   FAILURES section prints.
 
 **Known follow-ups (non-blocking):**
-- RunPod `GpuAvailability` probe 400s on the new `GpuTypeFilter`
-  schema — nonfatal (logged, fallback proceeds); rewrite when RunPod's
-  schema settles.
+- ~~RunPod `GpuAvailability` probe 400s~~ — FIXED `55baa15`
+  (2026-07-03): query rewritten for `GpuTypeFilter` + `ids`, capacity
+  read from `lowestPrice.stockStatus`; live-verified.
 - Wan reload on promotion drops live LoRA adapters — needs stack
   replay if LoRA + upscale co-residency ever composes.
 - `kinoforge provision` subcommand raises `ProvisionFailed: no
