@@ -43,8 +43,10 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 13. `2026-07-03 12:13:45` — [FlashVSR v1.1 diffusion upscaler (4x native) on RunPod A100 80GB — upscale](#13-2026-07-03-121345--flashvsr-v11-diffusion-upscaler-4x-native-on-runpod-a100-80gb--upscale)
 14. `2026-07-03 22:10:05` — [Wan 2.2 T2V-A14B + FlashVSR 4x co-resident multi-stage + warm-reuse re-generate on RunPod A100 80GB — t2v+upscale](#14-2026-07-03-221005--wan-22-t2v-a14b--flashvsr-4x-co-resident-multi-stage--warm-reuse-re-generate-on-runpod-a100-80gb--t2vupscale)
 15. `2026-07-04 00:02:32` — [Luma UNI-1 image keyframe via agents API (LumaAgentsImageEngine) — t2i](#15-2026-07-04-000232--luma-uni-1-image-keyframe-via-agents-api-lumaagentsimageengine--t2i)
+    - See also: `2026-07-04 03:26` — uni-1 4-prompt standard matrix (field-realistic / field-dreamlike / forest / dawn-flight, 16:9): 4/4 green, all 2784×1504, latency 102-194 s (median 118 s), median 6.9 MB. Same tuple `(luma_agents, LumaAgentsImageEngine, uni-1, t2i)`. Manifest: `tests/live/evidence/2026-07-04_luma_matrix_manifest_run1.json`; PNGs under `output/luma-keyframe-matrix/`.
 16. `2026-07-04 00:50:21` — [Keyframe→video pipeline: Luma UNI-1 keyframe → fal wan-i2v (E21 data-URI hand-off) — i2v](#16-2026-07-04-005021--keyframevideo-pipeline-luma-uni-1-keyframe--fal-wan-i2v-e21-data-uri-hand-off--i2v)
 17. `2026-07-04 01:29:58` — [flf2v pipeline: dual fal flux-schnell keyframes → fal wan-flf2v — flf2v](#17-2026-07-04-012958--flf2v-pipeline-dual-fal-flux-schnell-keyframes--fal-wan-flf2v--flf2v)
+18. `2026-07-04 03:56:00` — [Luma UNI-1-MAX keyframes — 4-prompt matrix vs uni-1 — t2i](#18-2026-07-04-035600--luma-uni-1-max-keyframes--4-prompt-matrix-vs-uni-1--t2i)
 
 ---
 
@@ -2272,3 +2274,40 @@ pixi run -e live-hosted kinoforge generate \
 - Spend: 2× flux-schnell (~$0.01) + wan-flf2v (~$0.3 list).
 - The `_fal_unknown_` token in the keyframe filenames is a bug this run surfaced: `FalImageEngine.model_identity` only read `engine.fal.endpoint` and returned `""` for keyframe sub-cfgs (which carry `spec.model`). Fixed same commit — future runs render `fal-ai-flux-schnell`.
 - Both keyframes hand off through the E21 data-URI seam (two ~250-300 KB inline bodies).
+
+---
+
+## 18. `2026-07-04 03:56:00` — Luma UNI-1-MAX keyframes — 4-prompt matrix vs uni-1 — t2i
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `lumalabs.ai (agents API) / LumaAgentsImageEngine / uni-1-max` |
+| **Mode** | t2i (keyframe matrix) |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `60cc9a2` |
+| **Date (local TZ)** | 2026-07-04 03:56 -0700 (PDT) |
+| **Layer / phase** | Keyframe quality matrix (spends the $20 Luma platform credit per its earmark). New model id in the tuple → new section per the log schema. |
+
+### Exact command
+
+One-off matrix runner (scratchpad ops script) driving
+`registry.get_image_engine("luma_agents")` directly: models × the four
+standard prompt files in `examples/configs/prompts/`, `aspect_ratio 16:9`.
+Manifests: `tests/live/evidence/2026-07-04_luma_matrix_manifest_run{1,2}.json`.
+
+### Results
+
+| model | cells | dims | latency (s, median / range) | size (median) |
+|---|---|---|---|---|
+| `uni-1` | 4/4 | 2784×1504 | 118 / 102–194 | 6.9 MB |
+| `uni-1-max` | 4/4 | 2784×1504 | 137 / 115–186 | 6.6 MB |
+| `photon-1` | rejected | — | — | — |
+
+- **photon-1 is DEAD on the agents API**: `HTTP 400 {"detail":"Unknown model: photon-1"}` — the photon family did not carry over from dream-machine. Only the UNI family exists here.
+- Objective metrics are near-identical between uni-1 and uni-1-max (same dims, ±15 % latency, comparable size). Visual-quality ranking needs operator eyes: PNG pairs live side-by-side under `output/luma-keyframe-matrix/`.
+- Run 1 died mid-uni-1-max on a transient SSL EOF — root-caused and fixed same session (`60cc9a2`: GET polls retry once + map to KinoforgeError; POSTs never retry to avoid double-generation). One orphaned generation likely completed unclaimed server-side (~cents).
+
+### Notes
+
+- Spend: 9 generations total (~$0.3-0.7 of the $20 credit; Luma does not return per-generation cost on the wire).
+- Recommendation for cfg defaults: stay on `uni-1` — no measurable objective win from `uni-1-max` for keyframe duty; revisit if operator review finds visual quality differences.
