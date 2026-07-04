@@ -170,6 +170,11 @@ def _spec_for_build(release_id: int, gh_token: str) -> InstanceSpec:
     """Build the InstanceSpec for the one-shot builder pod."""
     return InstanceSpec(
         image=_BASE_IMAGE,
+        # Dedicated hosts only. Three community-cloud builds in a row
+        # (2026-07-03) were deleted mid-compile — community interruption
+        # terminates zero-volume pods outright, and a 25-45 min build is
+        # a wide interruption window.
+        cloud_type="secure",
         volume_gb=0,  # no persistent storage — wheel goes straight to GH.
         lifecycle=Lifecycle(
             idle_timeout_s=45 * 60,

@@ -798,11 +798,17 @@ class RunPodProvider(ComputeProvider):
             pod_name = f"kinoforge-{secrets.token_hex(4)}"
         else:
             pod_name = spec.run_id or "kinoforge-pod"
+        # spec.cloud_type pins the host pool — "secure" for long-running
+        # one-shot workloads (community interruption deletes zero-volume
+        # pods outright; 3 BSA builds lost 2026-07-03).
+        cloud_type = {"any": "ALL", "secure": "SECURE", "community": "COMMUNITY"}[
+            spec.cloud_type
+        ]
         body: dict[str, Any] = {
             "query": _CREATE_POD_MUTATION,
             "variables": {
                 "input": {
-                    "cloudType": "ALL",
+                    "cloudType": cloud_type,
                     "gpuCount": 1,
                     "volumeInGb": spec.volume_gb,
                     # Container disk sized to fit large-model downloads

@@ -154,6 +154,12 @@ class InstanceSpec:
     # sidecar (tests/live/_c28_runpod_input_schema_probe.json); if the field
     # is absent the provider warns + skips on the wire.
     restart_policy: Literal["always", "never"] = "always"
+    # 2026-07-03: host-pool pin. "any" preserves the historical
+    # cloudType=ALL behaviour (cheapest capacity, often community hosts —
+    # whose interruption DELETES zero-volume pods outright; three BSA
+    # wheel builds died that way). "secure" pins dedicated hosts for
+    # long-running one-shot workloads; "community" forces the cheap pool.
+    cloud_type: Literal["any", "secure", "community"] = "any"
 
 
 @dataclass
