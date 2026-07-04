@@ -1811,3 +1811,60 @@ models:
     cfg = load_config(p)
     assert cfg.compute is not None
     assert cfg.compute.warm_reuse_auto_attach is True
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-03: ComputeConfig.cloud_type (RunPod host-pool pin)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_config_cloud_type_default_is_any() -> None:
+    """Backward compat: YAMLs without compute.cloud_type load as "any".
+
+    Bug caught: a default flip to "secure" silently shrinks the RunPod
+    capacity pool (and raises prices) for every existing cfg.
+    """
+    from kinoforge.core.config import ComputeConfig
+
+    cfg = ComputeConfig(provider="runpod", image="runpod/pytorch:latest")
+    assert cfg.cloud_type == "any"
+
+
+@pytest.mark.parametrize("cloud_type", ["any", "secure", "community"])
+def test_compute_config_cloud_type_accepts_valid_literals(cloud_type: str) -> None:
+    """The three supported pool pins parse.
+
+    Bug caught: "secure" rejected at cfg time would leave long-running
+    pods stuck on community hosts, which delete zero-volume pods on
+    interruption (three BSA builds + two F-multi pods, 2026-07-03).
+    """
+    from kinoforge.core.config import ComputeConfig
+
+    cfg = ComputeConfig.model_validate(
+        {
+            "provider": "runpod",
+            "image": "runpod/pytorch:latest",
+            "cloud_type": cloud_type,
+        }
+    )
+    assert cfg.cloud_type == cloud_type
+
+
+def test_compute_config_cloud_type_rejects_unknown() -> None:
+    """Typos ("secur", "premium") fail at cfg load, not on the wire.
+
+    Bug caught: pydantic passthrough would surface as a RunPod GraphQL
+    enum error mid-deploy — after money is already committed.
+    """
+    import pydantic
+
+    from kinoforge.core.config import ComputeConfig
+
+    with pytest.raises(pydantic.ValidationError):
+        ComputeConfig.model_validate(
+            {
+                "provider": "runpod",
+                "image": "runpod/pytorch:latest",
+                "cloud_type": "premium",
+            }
+        )

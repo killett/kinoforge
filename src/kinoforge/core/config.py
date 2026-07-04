@@ -790,6 +790,13 @@ class ComputeConfig(BaseModel):
     heartbeat_mode: str = "none"
     warm_reuse_auto_attach: bool = True
     cloud: list[str] | None = None
+    # 2026-07-03: RunPod host-pool pin. "any" = historical cloudType ALL
+    # (cheapest capacity, often community hosts — whose interruption
+    # DELETES zero-volume pods outright; three BSA wheel builds and two
+    # F-multi smoke pods died that way in one day). "secure" pins
+    # dedicated hosts for anything that must survive a long window.
+    # Ignored by non-runpod providers.
+    cloud_type: Literal["any", "secure", "community"] = "any"
 
     @field_validator("cloud")
     @classmethod

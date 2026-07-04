@@ -2842,3 +2842,27 @@ def test_resolve_provider_threads_skypilot_cloud_pin() -> None:
     resolved = _resolve_provider(cfg, provider=None)
     assert isinstance(resolved, SkyPilotProvider)
     assert resolved._clouds == ["lambda"]
+
+
+def test_deploy_session_threads_cloud_type_into_instance_spec(
+    tmp_path: Path,
+) -> None:
+    """cfg.compute.cloud_type="secure" → InstanceSpec.cloud_type="secure".
+
+    Bug catch: cfg surface parses but the orchestrator never copies it
+    onto the spec — RunPod keeps emitting cloudType ALL and long-running
+    pods keep landing on community hosts that delete them mid-run
+    (three BSA builds + two F-multi pods, 2026-07-03).
+    """
+    cfg = _compute_cfg()
+    assert cfg.compute is not None
+    cfg.compute.cloud_type = "secure"
+    store = LocalArtifactStore(tmp_path)
+    spy = _InstanceSupplyProvider()
+    engine = _CountingFakeEngine()
+
+    with deploy_session(cfg, store=store, provider=spy, engine=engine):
+        pass
+
+    assert len(spy.create_calls) == 1
+    assert spy.create_calls[0].cloud_type == "secure"
