@@ -10,7 +10,9 @@ Self-registers under ``"local"`` on import via the store registry.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Literal
 
@@ -91,7 +93,18 @@ class LocalArtifactStore(ArtifactStore):
         """
         p = self._path(run_id, name)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(data)
+        # Atomic replace: the ledger (and other JSON artifacts) are
+        # rewritten by the HeartbeatLoop thread while other threads read
+        # them; a naive truncate+write let readers observe torn content
+        # (JSONDecodeError 'Extra data', CI run 28699672323). Same-dir
+        # tmp + os.replace makes every read see a complete old or new
+        # file.
+        with tempfile.NamedTemporaryFile(
+            dir=p.parent, prefix=f".{p.name}.", suffix=".tmp", delete=False
+        ) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+        os.replace(tmp_path, p)
         return Artifact(uri=str(p))
 
     def get_bytes(self, uri: str) -> bytes:

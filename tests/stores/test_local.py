@@ -233,3 +233,57 @@ def test_uri_for_round_trip_via_cross_instance_read(tmp_path: Path) -> None:
     inst_a.put_bytes("run-1", "hello.bin", b"hello")
     uri = inst_b.uri_for("run-1", "hello.bin")
     assert inst_b.get_bytes(uri) == b"hello"
+
+
+def test_put_bytes_is_atomic_under_concurrent_reads(tmp_path: Path) -> None:
+    """A reader never observes a torn write — full old doc or full new doc.
+
+    Bug caught (CI run 28699672323, 2026-07-04): ``put_bytes`` used a
+    naive truncate+write; the HeartbeatLoop thread rewriting
+    ``_lifecycle/ledger.json`` raced ``session_claim``'s read in the
+    main thread and ``json.loads`` blew up with ``Extra data`` /
+    partial content. Same-directory tmp + ``os.replace`` closes every
+    interleaving on POSIX.
+    """
+    import json
+    import threading
+
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(tmp_path)
+    # Two payload sizes so torn states are detectable both directions.
+    small = json.dumps({"n": 0}).encode()
+    big = json.dumps({"n": 1, "pad": "x" * 4096}).encode()
+    art = store.put_bytes("run", "ledger.json", big)
+
+    stop = threading.Event()
+    errors: list[Exception] = []
+
+    def _writer() -> None:
+        i = 0
+        while not stop.is_set():
+            store.put_bytes("run", "ledger.json", small if i % 2 else big)
+            i += 1
+
+    def _reader() -> None:
+        while not stop.is_set():
+            try:
+                json.loads(store.get_bytes(art.uri).decode())
+            except json.JSONDecodeError as exc:
+                errors.append(exc)
+                stop.set()
+            except FileNotFoundError as exc:
+                # rename-based replace must never leave a missing-file window
+                errors.append(exc)
+                stop.set()
+
+    threads = [threading.Thread(target=_writer), threading.Thread(target=_reader)]
+    for t in threads:
+        t.start()
+    import time as _time
+
+    _time.sleep(1.5)
+    stop.set()
+    for t in threads:
+        t.join(timeout=5)
+    assert not errors, f"torn/missing read observed: {errors[0]!r}"
