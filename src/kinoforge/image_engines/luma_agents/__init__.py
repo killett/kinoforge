@@ -21,7 +21,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from typing import Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from kinoforge.core import registry
 from kinoforge.core.auth import Bearer
@@ -52,15 +52,23 @@ _IMAGE_PROBE = ImageProfile(
 class _LumaHttp:
     """Minimal Bearer-authenticated JSON client for the Luma agents API."""
 
-    def __init__(self, *, token: str, base_url: str = _BASE_URL) -> None:
+    def __init__(
+        self,
+        *,
+        token: str,
+        base_url: str = _BASE_URL,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         """Bind the Bearer token + base URL.
 
         Args:
             token: LUMAAI_API_KEY value (platform ``luma-api-...`` key).
             base_url: API origin; overridable for tests.
+            sleep: Injectable sleep for the single transient retry.
         """
         self._token = token
         self._base_url = base_url.rstrip("/")
+        self._sleep = sleep
 
     def _request(
         self, method: str, path: str, body: dict[str, Any] | None = None
@@ -77,14 +85,34 @@ class _LumaHttp:
                 "Accept": "application/json",
             },
         )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
-                raw = resp.read()
-        except HTTPError as exc:
-            detail = exc.read()[:500].decode(errors="replace")
+        raw = b""
+        last_transient: URLError | None = None
+        # Only idempotent GETs earn the transient retry — a retried POST
+        # the server already accepted would double-generate.
+        attempts = (1, 2) if method == "GET" else (1,)
+        for attempt in attempts:
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
+                    raw = resp.read()
+                last_transient = None
+                break
+            except HTTPError as exc:
+                detail = exc.read()[:500].decode(errors="replace")
+                raise KinoforgeError(
+                    f"luma-agents: {method} {path} -> HTTP {exc.code}: {detail}"
+                ) from exc
+            except URLError as exc:
+                # Transient socket/SSL blip (observed: SSL UNEXPECTED_EOF
+                # killing a 2-min generation on one poll tick). One retry,
+                # then map — callers must only ever see KinoforgeError.
+                last_transient = exc
+                if attempt == 1 and len(attempts) > 1:
+                    self._sleep(2.0)
+        if last_transient is not None:
             raise KinoforgeError(
-                f"luma-agents: {method} {path} -> HTTP {exc.code}: {detail}"
-            ) from exc
+                f"luma-agents: {method} {path} -> network error after retry: "
+                f"{last_transient.reason}"
+            ) from last_transient
         if not raw:
             return {}
         parsed: dict[str, Any] = json.loads(raw)

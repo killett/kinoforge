@@ -194,3 +194,85 @@ def test_extract_output_url_assets_image_fallback() -> None:
     backend.submit(_job())
     art = backend.result("gen-1")
     assert art.url == "https://cdn.luma/legacy.png"
+
+
+def test_http_transient_urlerror_retries_then_maps_to_kinoforge_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transient socket/SSL failures retry once, then surface as
+    KinoforgeError — never a raw URLError.
+
+    Bug caught (keyframe matrix run, 2026-07-04): a single
+    `SSL: UNEXPECTED_EOF_WHILE_READING` on one poll tick escaped as
+    urllib.error.URLError and killed a 2-minute generation mid-flight;
+    HTTPError was the only exception the client mapped.
+    """
+    import urllib.error
+    import urllib.request
+
+    from kinoforge.image_engines.luma_agents import _LumaHttp
+
+    calls = {"n": 0}
+
+    class _FakeResp:
+        def __enter__(self) -> _FakeResp:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"ok": true}'
+
+    def _flaky_urlopen(req: object, timeout: float = 0) -> _FakeResp:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.URLError("SSL: UNEXPECTED_EOF_WHILE_READING")
+        return _FakeResp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _flaky_urlopen)
+    http = _LumaHttp(token="k")
+    assert http.get_json("/v1/generations/x") == {"ok": True}
+    assert calls["n"] == 2
+
+
+def test_http_persistent_urlerror_raises_kinoforge_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A URLError on every attempt maps to KinoforgeError with context."""
+    import urllib.error
+    import urllib.request
+
+    from kinoforge.image_engines.luma_agents import _LumaHttp
+
+    def _always_fail(req: object, timeout: float = 0) -> object:
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _always_fail)
+    http = _LumaHttp(token="k", sleep=lambda _s: None)
+    with pytest.raises(KinoforgeError, match="connection refused"):
+        http.get_json("/v1/generations/x")
+
+
+def test_http_post_never_retries_on_transient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST maps the transient WITHOUT retrying — a retried submit that
+    the server already accepted would double-generate (double credit).
+    Only idempotent GETs earn the retry."""
+    import urllib.error
+    import urllib.request
+
+    from kinoforge.image_engines.luma_agents import _LumaHttp
+
+    calls = {"n": 0}
+
+    def _always_fail(req: object, timeout: float = 0) -> object:
+        calls["n"] += 1
+        raise urllib.error.URLError("reset by peer")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _always_fail)
+    http = _LumaHttp(token="k", sleep=lambda _s: None)
+    with pytest.raises(KinoforgeError, match="reset by peer"):
+        http.post_json("/v1/generations", {"prompt": "x"})
+    assert calls["n"] == 1
