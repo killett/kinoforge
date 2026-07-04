@@ -232,9 +232,11 @@ def test_f_multi(tmp_path: Path) -> None:
             # (~15-20m) + T2V inference + FlashVSR upscale + sink.
             timeout_s=40 * 60,
         )
-        # kinoforge logs to stderr; stdout carries only the artifact uri
-        # (attempt-9 lesson: slug assert on stdout failed a GREEN run).
-        assert "flashvsr-wan21-bfloat16" in r.stdout + r.stderr
+        # kinoforge generate never prints the model slug (that's the
+        # upscale subcommand's output — attempts 9+10 failed GREEN runs
+        # on it). The orchestrator's materialize line + published
+        # filename are the reliable upscale-stage markers.
+        assert "_upscaled_flashvsr_" in r.stdout + r.stderr
         new = _snapshot_mp4s() - before
         wans = sorted(p for p in new if "_diffusers_Wan2.2-" in p.name)
         ups = sorted(p for p in new if "_upscaled_flashvsr_" in p.name)
