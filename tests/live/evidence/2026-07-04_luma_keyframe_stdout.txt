@@ -1,0 +1,63 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /workspace/.pixi/envs/default/bin/python3.13
+cachedir: .pytest_cache
+rootdir: /workspace
+configfile: pyproject.toml
+plugins: anyio-4.14.1, cov-7.1.0
+collecting ... collected 1 item
+
+tests/live/test_luma_keyframe_live.py::test_luma_keyframe_generation Timeout (0:00:15)!
+Thread 0x00007b69a1885540 (most recent call first):
+  File "/workspace/.pixi/envs/default/lib/python3.13/ssl.py", line 1138 in read
+  File "/workspace/.pixi/envs/default/lib/python3.13/ssl.py", line 1304 in recv_into
+  File "/workspace/.pixi/envs/default/lib/python3.13/socket.py", line 719 in readinto
+  File "/workspace/.pixi/envs/default/lib/python3.13/http/client.py", line 297 in _read_status
+  File "/workspace/.pixi/envs/default/lib/python3.13/http/client.py", line 336 in begin
+  File "/workspace/.pixi/envs/default/lib/python3.13/http/client.py", line 1450 in getresponse
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 1323 in do_open
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 1367 in https_open
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 466 in _call_chain
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 506 in _open
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 489 in open
+  File "/workspace/.pixi/envs/default/lib/python3.13/urllib/request.py", line 189 in urlopen
+  File "/workspace/src/kinoforge/image_engines/luma_agents/__init__.py", line 81 in _request
+  File "/workspace/src/kinoforge/image_engines/luma_agents/__init__.py", line 99 in get_json
+  File "/workspace/src/kinoforge/image_engines/luma_agents/__init__.py", line 124 in _poll_one
+  File "/workspace/src/kinoforge/core/remote_backend.py", line 281 in result
+  File "/workspace/src/kinoforge/image_engines/luma_agents/__init__.py", line 226 in result
+  File "/workspace/tests/live/test_luma_keyframe_live.py", line 62 in test_luma_keyframe_generation
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/python.py", line 166 in pytest_pyfunc_call
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/python.py", line 1720 in runtest
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 179 in pytest_runtest_call
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 245 in <lambda>
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 353 in from_call
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 244 in call_and_report
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 137 in runtestprotocol
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 118 in pytest_runtest_protocol
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 396 in pytest_runtestloop
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 372 in _main
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 318 in wrap_session
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 365 in pytest_cmdline_main
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/config/__init__.py", line 199 in main
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/config/__init__.py", line 223 in console_main
+  File "/workspace/.pixi/envs/default/bin/pytest", line 10 in <module>
+MODEL_USED=uni-1 JOB_ID=a08e47af-e1dc-41bd-9f5b-453911fb4d34 BYTES=5923004 URL=https://ai-lumalabs-vespa-production.s3.amazonaws.com/e11209fe-f846-4ded-bc4f-7085c7e722e8/6S2gVFIm.png?<presigned-query-scrubbed>
+PASSED=== POST-SESSION THREAD DUMP === clean (1 threads, no non-daemon extras)
+
+
+======================== 1 passed in 125.60s (0:02:05) =========================
