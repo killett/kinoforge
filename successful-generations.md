@@ -41,6 +41,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 12. `2026-06-30 21:19:07` — [SpandrelEngine RealESRGAN-x2 upscale on RunPod (wan_t2v_server multi-engine) — upscale](#12-2026-06-30-211907--spandrelengine-realesrgan-x2-upscale-on-runpod-wan_t2v_server-multi-engine--upscale)
     - See also: `2026-06-30 22:19:07` — T16 multi-stage warm-reuse on pod `4ju5e4ae9jnx6e`: Wan 2.2 T2V-A14B stage-1 (480×480×81) → SpandrelEngine stage-2 (960×960×81) on the same pod, spend $0.25, 908.82 s wall. Same tuple `(runpod, spandrel, RealESRGAN, upscale)` chained after `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`.
 13. `2026-07-03 12:13:45` — [FlashVSR v1.1 diffusion upscaler (4x native) on RunPod A100 80GB — upscale](#13-2026-07-03-121345--flashvsr-v11-diffusion-upscaler-4x-native-on-runpod-a100-80gb--upscale)
+14. `2026-07-03 22:10:05` — [Wan 2.2 T2V-A14B + FlashVSR 4x co-resident multi-stage + warm-reuse re-generate on RunPod A100 80GB — t2v+upscale](#14-2026-07-03-221005--wan-22-t2v-a14b--flashvsr-4x-co-resident-multi-stage--warm-reuse-re-generate-on-runpod-a100-80gb--t2vupscale)
 
 ---
 
@@ -2067,3 +2068,70 @@ Key learnings for future FlashVSR / diffsynth-based upscalers:
 
 - Test fixture source clip is the 480×480 Wan 2.2 output from entry #8. F-multi (Wan generate → FlashVSR upscale on same pod) and F-warm (LRU-hit second generate) live smokes are still xfail-gated (`KINOFORGE_LIVE_SPEND` env var); firing them is deferred to a follow-up session.
 - The 24th manual smoke output at `20260703-120312_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` (35 MB, same tuple) is the FIRST-EVER green FlashVSR generation kinoforge produced; the pytest re-fire at `20260703-121345_...` is the receipt for Task 6 AC.
+
+
+---
+
+## 14. `2026-07-03 22:10:05` — Wan 2.2 T2V-A14B + FlashVSR 4x co-resident multi-stage + warm-reuse re-generate on RunPod A100 80GB — t2v+upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / DiffusersEngine + FlashVSREngine (co-resident, one wan_t2v_server process) / diffusers.WanPipeline @ Wan-AI/Wan2.2-T2V-A14B-Diffusers + diffsynth.FlashVSRFullPipeline @ JunhaoZhuang/FlashVSR-v1.1` |
+| **Mode** | t2v + upscale (multi-stage pipeline), then warm-reuse t2v + upscale on the same pod |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `a9f187e` (attempt 13, 2 passed); first pipeline-green run was attempt 9 at `3d15fac` (failed only a test assert) |
+| **Date (local TZ)** | 2026-07-03 22:10:05 -0700 (PDT) |
+| **Layer / phase** | Parent P4 plan T9 (`docs/superpowers/plans/2026-07-01-flashvsr-video-upscaling.md`) — closes F-multi + F-warm. |
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_SPEND=1 pixi run pytest \
+  tests/live/test_flashvsr_live.py::test_f_multi \
+  tests/live/test_flashvsr_live.py::test_f_warm \
+  -v --tb=long
+```
+
+### Cfg
+
+- `examples/configs/wan-with-upscale-flashvsr.yaml` — engine=`diffusers` (Wan 2.2 A14B eager), upscale block engine=`flashvsr`, scale=`4x`, precision=`bfloat16`, tile_size=`512`, `bsa_wheel_url`=`bsa-cu124-torch2.6-v1` wheel, torch trio pinned `2.6.0` (cu124), image `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` on BOTH `engine.diffusers.image` and `compute.image`, `compute.cloud_type: secure`.
+
+### Input
+
+- Standard prompt verbatim from `examples/configs/prompts/field-realistic.txt`; F-warm appends " variant B".
+
+### Output
+
+- F-multi Wan stage: `output/20260703-220726_diffusers_...mp4` — 480×480, sha `29040cb375e4b950…`.
+- F-multi FlashVSR stage: `output/20260703-221005_upscaled_flashvsr_...mp4` — **1920×1920** (4×), 37.9 MB, sha `89cb29cadfae67c5…`.
+- F-warm Wan stage: `output/20260703-221416_diffusers_...mp4` — 480×480, sha `a638daf6816246e3…`.
+- F-warm FlashVSR stage: `output/20260703-221714_upscaled_flashvsr_...mp4` — **1920×1920**, 43.7 MB, sha `c2afd8e6031dbc00…`.
+
+### Pod
+
+- Single pod `cb25udex7bvoq6` for BOTH tests (warm-reuse attach confirmed: `warm-reuse: attached to cb25udex7bvoq6`).
+- GPU: NVIDIA A100 80GB (secure cloud, $1.39/hr).
+- Wall-clock: `2 passed in 1223.57s` (20 m 23 s) — F-multi cold ~13 min, F-warm warm leg ~7 min.
+- Spend ≈ $0.47. Post-run: `kinoforge list` clean + RunPod `myself.pods` empty (explicit `kinoforge destroy` in the test's finally).
+
+### The co-residency VRAM swap (the new capability axis)
+
+One 80 GB card cannot hold Wan 2.2 A14B (~74 GiB resident) and FlashVSR (~9 GiB + inference) together. The T11 LRU registry now swaps them:
+
+1. Startup registers the eager Wan pipe in the registry (`_register_eager_wan`) — previously a module global invisible to eviction.
+2. `/upscale` frees headroom BEFORE FlashVSR's constructor runs (`_free_headroom_for`, prefix-sized) — post-load eviction OOM'd.
+3. Wan eviction is a **disk-drop** (registry + module-global refs cleared), never `.to("cpu")` — pods pin only 32 GiB min RAM, and `device_map="cuda"` pipes raise on `.to()`.
+4. F-warm's generate re-promotes Wan (`_promote_wan_if_evicted` in the sync worker): drops FlashVSR entirely (CPU-parking left ~2-3 GiB CUDA residue that OOM'd the reload at the margin), then reloads Wan from the pod-local HF cache (~4 min).
+
+### Reproduction recipe deltas vs. #13 (F-single)
+
+- **New BSA wheel**: `bsa-cu124-torch2.6-v1` (torch pinned at build time with version assert) — Wan 2.2 needs torch>=2.6 (infer_schema), the old wheel linked the image's torch 2.4.1.
+- **peft 0.17.0** (was 0.16.0) — diffusers-latest import floor.
+- **transformers window `>=4.48,<5`** (was ==4.46.2) — diffusers needs Dinov2WithRegistersConfig (4.48+), diffsynth needs PretrainedConfig (<5).
+- **No `HF_HUB_OFFLINE=1`** in the provision tail on co-resident pods (it put the whole server env offline and killed the Wan eager load); upscale-only cfgs keep it.
+- **`compute.cloud_type: secure`** — new cfg surface; community-pool pods were deleted by RunPod minutes into runs all day (schema-migration day), and even secure pods vanished twice (attempts 7, 12) — retry-to-green.
+
+### Notes
+
+- 13 attempts total for T9; every pipeline component was green by attempt 9 — attempts 9-12 burned on two test-harness assert bugs (slug printed only by the upscale subcommand, not generate) and two RunPod mid-run pod deletions.
+- Known follow-up: Wan reload on promotion drops any live LoRA adapters (stack-replay needed if LoRA + upscale ever compose); RunPod `GpuAvailability` probe still 400s on the new `GpuTypeFilter` schema (nonfatal, logged).

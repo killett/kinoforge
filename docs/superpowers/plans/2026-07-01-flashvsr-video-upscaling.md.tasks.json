@@ -7,87 +7,112 @@
       "nativeTaskId": "7",
       "subject": "Task 0: Errors + config surface",
       "status": "completed",
-      "description": "**Goal:** BSACompileFailed/FlashVSRWeightsIncomplete/UnsupportedGpuArch + FlashVSREngineConfig + UpscaleConfig.flashvsr + cfg-time rejects + capability_key threads precision.\n\n**Files:** src/kinoforge/core/errors.py, src/kinoforge/core/config.py, tests/upscalers/flashvsr/test_config.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_config.py -v → 8 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/core/config.py\", \"tests/upscalers/flashvsr/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_config.py -v\", \"acceptanceCriteria\": [\"3 exceptions importable\", \"FlashVSREngineConfig validates\", \"UpscaleConfig.flashvsr wired\", \"capability_key populates\"], \"modelTier\": \"standard\"}\n```"
+      "description": "**Goal:** BSACompileFailed/FlashVSRWeightsIncomplete/UnsupportedGpuArch + FlashVSREngineConfig + UpscaleConfig.flashvsr + cfg-time rejects + capability_key threads precision.\n\n**Files:** src/kinoforge/core/errors.py, src/kinoforge/core/config.py, tests/upscalers/flashvsr/test_config.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_config.py -v \u2192 8 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/core/config.py\", \"tests/upscalers/flashvsr/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_config.py -v\", \"acceptanceCriteria\": [\"3 exceptions importable\", \"FlashVSREngineConfig validates\", \"UpscaleConfig.flashvsr wired\", \"capability_key populates\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 1,
       "nativeTaskId": "8",
       "subject": "Task 1: _fetch_weights CLI + manifest",
       "status": "completed",
-      "blockedBy": [0],
-      "description": "**Goal:** Pod-safe CLI fetches FlashVSR bundle from HF + SHA256-verifies against shipped weights_manifest.json.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_fetch_weights.py, weights_manifest.json, __init__.py (placeholder), tests/.../test_fetch_weights.py, pyproject.toml\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_fetch_weights.py -v → 6 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_fetch_weights.py\", \"src/kinoforge/upscalers/flashvsr/weights_manifest.json\", \"tests/upscalers/flashvsr/test_fetch_weights.py\", \"pyproject.toml\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_fetch_weights.py -v\", \"acceptanceCriteria\": [\"CLI shape\", \"lite=2 full=4 files\", \"SHA mismatch raises\", \"pod-safe imports\", \"manifest packaged\"], \"modelTier\": \"standard\"}\n```"
+      "blockedBy": [
+        0
+      ],
+      "description": "**Goal:** Pod-safe CLI fetches FlashVSR bundle from HF + SHA256-verifies against shipped weights_manifest.json.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_fetch_weights.py, weights_manifest.json, __init__.py (placeholder), tests/.../test_fetch_weights.py, pyproject.toml\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_fetch_weights.py -v \u2192 6 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_fetch_weights.py\", \"src/kinoforge/upscalers/flashvsr/weights_manifest.json\", \"tests/upscalers/flashvsr/test_fetch_weights.py\", \"pyproject.toml\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_fetch_weights.py -v\", \"acceptanceCriteria\": [\"CLI shape\", \"lite=2 full=4 files\", \"SHA mismatch raises\", \"pod-safe imports\", \"manifest packaged\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 2,
       "nativeTaskId": "9",
       "subject": "Task 2: FlashVSRRuntime",
       "status": "completed",
-      "blockedBy": [0],
-      "description": "**Goal:** Wrap flashvsr.pipeline.StreamingDMDPipeline; satisfy LRU LoadedModel contract.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_runtime.py, tests/.../test_runtime.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_runtime.py -v → 6 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_runtime.py\", \"tests/upscalers/flashvsr/test_runtime.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_runtime.py -v\", \"acceptanceCriteria\": [\"lazy import\", \".flashvsr.mp4 suffix\", \"height/scale raise\", \"prompt logs warning\", \".to delegates\", \"vram_bytes=8GiB\"], \"modelTier\": \"standard\"}\n```"
+      "blockedBy": [
+        0
+      ],
+      "description": "**Goal:** Wrap flashvsr.pipeline.StreamingDMDPipeline; satisfy LRU LoadedModel contract.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_runtime.py, tests/.../test_runtime.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_runtime.py -v \u2192 6 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_runtime.py\", \"tests/upscalers/flashvsr/test_runtime.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_runtime.py -v\", \"acceptanceCriteria\": [\"lazy import\", \".flashvsr.mp4 suffix\", \"height/scale raise\", \"prompt logs warning\", \".to delegates\", \"vram_bytes=8GiB\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 3,
       "nativeTaskId": "10",
       "subject": "Task 3: FlashVSREngine HTTP dispatch",
       "status": "completed",
-      "blockedBy": [0],
-      "description": "**Goal:** Client-side UpscalerEngine impl mirroring SpandrelEngine; provision script emits BSA-then-FlashVSR install + weights fetch + HF_HUB_OFFLINE flip.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_engine.py, tests/.../test_engine.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_engine.py -v → 10 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_engine.py\", \"tests/upscalers/flashvsr/test_engine.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_engine.py -v\", \"acceptanceCriteria\": [\"provision order preserved\", \"slug flashvsr-wan21-<prec>\", \"upload branch\", \"validate_spec rejects height\", \"script <=12KB\", \"polls until done\"], \"modelTier\": \"standard\"}\n```"
+      "blockedBy": [
+        0
+      ],
+      "description": "**Goal:** Client-side UpscalerEngine impl mirroring SpandrelEngine; provision script emits BSA-then-FlashVSR install + weights fetch + HF_HUB_OFFLINE flip.\n\n**Files:** src/kinoforge/upscalers/flashvsr/_engine.py, tests/.../test_engine.py\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_engine.py -v \u2192 10 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_engine.py\", \"tests/upscalers/flashvsr/test_engine.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_engine.py -v\", \"acceptanceCriteria\": [\"provision order preserved\", \"slug flashvsr-wan21-<prec>\", \"upload branch\", \"validate_spec rejects height\", \"script <=12KB\", \"polls until done\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 4,
       "nativeTaskId": "11",
       "subject": "Task 4: Self-register + _adapters wire",
       "status": "completed",
-      "blockedBy": [3],
-      "description": "**Goal:** Overwrite T1 __init__.py placeholder with self-registration; add _adapters import; extend adapters test.\n\n**Files:** src/kinoforge/upscalers/flashvsr/__init__.py, src/kinoforge/_adapters.py, tests/test_adapters.py\n\n**Verify:** pixi run pytest tests/test_adapters.py -v -k flashvsr → 1 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/test_adapters.py\"], \"verifyCommand\": \"pixi run pytest tests/test_adapters.py -v -k flashvsr\", \"acceptanceCriteria\": [\"import kinoforge registers flashvsr\", \"get_upscaler returns FlashVSREngine\", \"pod-safe ImportError swallow\"], \"modelTier\": \"mechanical\"}\n```"
+      "blockedBy": [
+        3
+      ],
+      "description": "**Goal:** Overwrite T1 __init__.py placeholder with self-registration; add _adapters import; extend adapters test.\n\n**Files:** src/kinoforge/upscalers/flashvsr/__init__.py, src/kinoforge/_adapters.py, tests/test_adapters.py\n\n**Verify:** pixi run pytest tests/test_adapters.py -v -k flashvsr \u2192 1 passed\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/test_adapters.py\"], \"verifyCommand\": \"pixi run pytest tests/test_adapters.py -v -k flashvsr\", \"acceptanceCriteria\": [\"import kinoforge registers flashvsr\", \"get_upscaler returns FlashVSREngine\", \"pod-safe ImportError swallow\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 5,
       "nativeTaskId": "12",
       "subject": "Task 5: Server dispatch delta",
       "status": "completed",
-      "blockedBy": [2, 4],
-      "description": "**Goal:** 5 edits to wan_t2v_server.py — flashvsr-* prefix dispatch + capability + weights-dir helper + Pydantic body + handler.\n\n**Files:** src/kinoforge/engines/diffusers/servers/wan_t2v_server.py, tests/.../test_wan_t2v_server.py\n\n**Verify:** pixi run pytest tests/engines/diffusers/servers/test_wan_t2v_server.py -v -k 'flashvsr or upscale' → all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/servers/test_wan_t2v_server.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/servers/test_wan_t2v_server.py -v -k 'flashvsr or upscale'\", \"acceptanceCriteria\": [\"prefix dispatch\", \"capability upscale\", \"weights_dir env override\", \"Pydantic body\", \"handler+dispatch\"], \"modelTier\": \"standard\"}\n```"
+      "blockedBy": [
+        2,
+        4
+      ],
+      "description": "**Goal:** 5 edits to wan_t2v_server.py \u2014 flashvsr-* prefix dispatch + capability + weights-dir helper + Pydantic body + handler.\n\n**Files:** src/kinoforge/engines/diffusers/servers/wan_t2v_server.py, tests/.../test_wan_t2v_server.py\n\n**Verify:** pixi run pytest tests/engines/diffusers/servers/test_wan_t2v_server.py -v -k 'flashvsr or upscale' \u2192 all pass\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/servers/test_wan_t2v_server.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/servers/test_wan_t2v_server.py -v -k 'flashvsr or upscale'\", \"acceptanceCriteria\": [\"prefix dispatch\", \"capability upscale\", \"weights_dir env override\", \"Pydantic body\", \"handler+dispatch\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 6,
       "nativeTaskId": "13",
       "subject": "Task 6: Example cfgs + lockdown tests",
       "status": "completed",
-      "blockedBy": [4],
-      "description": "**Goal:** Multi-stage + upscale-only YAML cfgs + lockdown tests + spandrel-cfg redirect comment.\n\n**Files:** examples/configs/runpod-diffusers-wan22-t2v-a14b-flashvsr.yaml, examples/configs/runpod-upscale-only-flashvsr.yaml, examples/configs/runpod-diffusers-wan22-t2v-a14b-spandrel.yaml (header comment), tests/test_examples.py\n\n**Verify:** pixi run pytest tests/test_examples.py -v -k flashvsr → 2 passed; pixi run kinoforge validate <cfg> → 0\n\n```json:metadata\n{\"files\": [\"examples/configs/runpod-diffusers-wan22-t2v-a14b-flashvsr.yaml\", \"examples/configs/runpod-upscale-only-flashvsr.yaml\", \"examples/configs/runpod-diffusers-wan22-t2v-a14b-spandrel.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v -k flashvsr\", \"acceptanceCriteria\": [\"multi-stage pins engine+GPU+region\", \"upscale-only A6000 first\", \"validate 0\", \"spandrel redirect comment\"], \"modelTier\": \"mechanical\"}\n```"
+      "blockedBy": [
+        4
+      ],
+      "description": "**Goal:** Multi-stage + upscale-only YAML cfgs + lockdown tests + spandrel-cfg redirect comment.\n\n**Files:** examples/configs/runpod-diffusers-wan22-t2v-a14b-flashvsr.yaml, examples/configs/runpod-upscale-only-flashvsr.yaml, examples/configs/runpod-diffusers-wan22-t2v-a14b-spandrel.yaml (header comment), tests/test_examples.py\n\n**Verify:** pixi run pytest tests/test_examples.py -v -k flashvsr \u2192 2 passed; pixi run kinoforge validate <cfg> \u2192 0\n\n```json:metadata\n{\"files\": [\"examples/configs/runpod-diffusers-wan22-t2v-a14b-flashvsr.yaml\", \"examples/configs/runpod-upscale-only-flashvsr.yaml\", \"examples/configs/runpod-diffusers-wan22-t2v-a14b-spandrel.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py -v -k flashvsr\", \"acceptanceCriteria\": [\"multi-stage pins engine+GPU+region\", \"upscale-only A6000 first\", \"validate 0\", \"spandrel redirect comment\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 7,
       "nativeTaskId": "14",
       "subject": "Task 7: RED live-smoke scaffold",
       "status": "completed",
-      "blockedBy": [6],
-      "description": "**Goal:** Committed 3-test live-smoke file, all xfail(strict=True). Committed BEFORE any live spend per CLAUDE.md durability rule.\n\n**Files:** tests/live/test_flashvsr_live.py\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py -v → 3 xfailed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py -v\", \"acceptanceCriteria\": [\"3 xfail tests\", \"standard prompt\", \"dims 2x + pod-destroyed asserts\"], \"modelTier\": \"mechanical\"}\n```"
+      "blockedBy": [
+        6
+      ],
+      "description": "**Goal:** Committed 3-test live-smoke file, all xfail(strict=True). Committed BEFORE any live spend per CLAUDE.md durability rule.\n\n**Files:** tests/live/test_flashvsr_live.py\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py -v \u2192 3 xfailed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py -v\", \"acceptanceCriteria\": [\"3 xfail tests\", \"standard prompt\", \"dims 2x + pod-destroyed asserts\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 8,
       "nativeTaskId": "15",
       "subject": "Task 8: F-single live spend",
       "status": "completed",
-      "blockedBy": [5, 6, 7],
-      "description": "**Goal:** Standalone kinoforge upscale on pre-existing 720p Wan clip. Budget ~$0.05 (ceiling $0.15).\n\n**Files:** tests/live/test_flashvsr_live.py (un-xfail test_f_single), tests/live/evidence/2026-07-01_flashvsr_f_single_stdout.txt\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py::test_f_single -v → 1 passed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\", \"tests/live/evidence/2026-07-01_flashvsr_f_single_stdout.txt\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py::test_f_single -v\", \"acceptanceCriteria\": [\"preflight 0\", \"dims 2x\", \"kinoforge list clean\", \"spend<=0.15\"], \"modelTier\": \"standard\", \"liveSpend\": true, \"budgetUsd\": 0.15}\n```"
+      "blockedBy": [
+        5,
+        6,
+        7
+      ],
+      "description": "**Goal:** Standalone kinoforge upscale on pre-existing 720p Wan clip. Budget ~$0.05 (ceiling $0.15).\n\n**Files:** tests/live/test_flashvsr_live.py (un-xfail test_f_single), tests/live/evidence/2026-07-01_flashvsr_f_single_stdout.txt\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py::test_f_single -v \u2192 1 passed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\", \"tests/live/evidence/2026-07-01_flashvsr_f_single_stdout.txt\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py::test_f_single -v\", \"acceptanceCriteria\": [\"preflight 0\", \"dims 2x\", \"kinoforge list clean\", \"spend<=0.15\"], \"modelTier\": \"standard\", \"liveSpend\": true, \"budgetUsd\": 0.15}\n```"
     },
     {
       "id": 9,
       "nativeTaskId": "16",
       "subject": "Task 9: F-multi + F-warm live spend",
       "status": "completed",
-      "blockedBy": [8],
-      "description": "**Goal:** Wan 2.2 → FlashVSR multi-stage smoke + warm-reuse smoke on same pod. Budget ~$0.60 (combined ceiling $1.20; HARD STOP if F-multi alone > $1).\n\n**Files:** tests/live/test_flashvsr_live.py (un-xfail F-multi + F-warm), tests/live/evidence/2026-07-01_flashvsr_f_multi_warm_stdout.txt\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py::test_f_multi tests/live/test_flashvsr_live.py::test_f_warm -v → 2 passed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\", \"tests/live/evidence/2026-07-01_flashvsr_f_multi_warm_stdout.txt\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py::test_f_multi tests/live/test_flashvsr_live.py::test_f_warm -v\", \"acceptanceCriteria\": [\"F-multi 2 artifacts dims 2x\", \"F-warm LRU hit + no BSA recompile\", \"clean list\", \"spend<=1.20\"], \"modelTier\": \"standard\", \"liveSpend\": true, \"budgetUsd\": 1.20}\n```"
+      "blockedBy": [
+        8
+      ],
+      "description": "**Goal:** Wan 2.2 \u2192 FlashVSR multi-stage smoke + warm-reuse smoke on same pod. Budget ~$0.60 (combined ceiling $1.20; HARD STOP if F-multi alone > $1).\n\n**Files:** tests/live/test_flashvsr_live.py (un-xfail F-multi + F-warm), tests/live/evidence/2026-07-01_flashvsr_f_multi_warm_stdout.txt\n\n**Verify:** pixi run pytest tests/live/test_flashvsr_live.py::test_f_multi tests/live/test_flashvsr_live.py::test_f_warm -v \u2192 2 passed\n\n```json:metadata\n{\"files\": [\"tests/live/test_flashvsr_live.py\", \"tests/live/evidence/2026-07-01_flashvsr_f_multi_warm_stdout.txt\"], \"verifyCommand\": \"pixi run pytest tests/live/test_flashvsr_live.py::test_f_multi tests/live/test_flashvsr_live.py::test_f_warm -v\", \"acceptanceCriteria\": [\"F-multi 2 artifacts dims 2x\", \"F-warm LRU hit + no BSA recompile\", \"clean list\", \"spend<=1.20\"], \"modelTier\": \"standard\", \"liveSpend\": true, \"budgetUsd\": 1.20}\n```",
+      "lastUpdated": "2026-07-03T22:20:36.407295-07:00"
     },
     {
       "id": 10,
       "nativeTaskId": "17",
       "subject": "Task 10: successful-generations.md + PROGRESS.md SHIPPED flip",
       "status": "completed",
-      "blockedBy": [9],
-      "description": "**Goal:** Log new capability axis to successful-generations.md + flip PROGRESS.md Active workstream to SHIPPED.\n\n**Files:** /workspace/successful-generations.md, PROGRESS.md\n\n**Verify:** rg -l flashvsr-wan21-fp16 /workspace/successful-generations.md PROGRESS.md → both listed\n\n```json:metadata\n{\"files\": [\"/workspace/successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"rg -l flashvsr-wan21-fp16 /workspace/successful-generations.md PROGRESS.md\", \"acceptanceCriteria\": [\"new detailed section\", \"PROGRESS.md flipped SHIPPED\", \"both committed together\"], \"modelTier\": \"mechanical\"}\n```"
+      "blockedBy": [
+        9
+      ],
+      "description": "**Goal:** Log new capability axis to successful-generations.md + flip PROGRESS.md Active workstream to SHIPPED.\n\n**Files:** /workspace/successful-generations.md, PROGRESS.md\n\n**Verify:** rg -l flashvsr-wan21-fp16 /workspace/successful-generations.md PROGRESS.md \u2192 both listed\n\n```json:metadata\n{\"files\": [\"/workspace/successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"rg -l flashvsr-wan21-fp16 /workspace/successful-generations.md PROGRESS.md\", \"acceptanceCriteria\": [\"new detailed section\", \"PROGRESS.md flipped SHIPPED\", \"both committed together\"], \"modelTier\": \"mechanical\"}\n```",
+      "lastUpdated": "2026-07-03T22:20:36.407295-07:00"
     }
   ],
   "lastUpdated": "2026-07-01T12:00:00-07:00"
