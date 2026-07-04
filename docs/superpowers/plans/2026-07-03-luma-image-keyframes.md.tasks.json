@@ -25,13 +25,12 @@
     {
       "id": 14,
       "subject": "Task 4: Luma live smoke + evidence + close-out",
-      "status": "in_progress",
+      "status": "completed",
       "blockedBy": [
         12,
         13
-      ],
-      "note": "BLOCKED: LUMAAI_API_KEY rejected 403 (pre-migration key); operator must issue fresh key at lumalabs.ai/api"
+      ]
     }
   ],
-  "lastUpdated": "2026-07-03T23:55:46.731204-07:00"
+  "lastUpdated": "2026-07-04T00:11:58.705278-07:00"
 }

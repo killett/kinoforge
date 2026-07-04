@@ -42,6 +42,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
     - See also: `2026-06-30 22:19:07` — T16 multi-stage warm-reuse on pod `4ju5e4ae9jnx6e`: Wan 2.2 T2V-A14B stage-1 (480×480×81) → SpandrelEngine stage-2 (960×960×81) on the same pod, spend $0.25, 908.82 s wall. Same tuple `(runpod, spandrel, RealESRGAN, upscale)` chained after `(runpod, DiffusersEngine, Wan-AI/Wan2.2-T2V-A14B-Diffusers, t2v)`.
 13. `2026-07-03 12:13:45` — [FlashVSR v1.1 diffusion upscaler (4x native) on RunPod A100 80GB — upscale](#13-2026-07-03-121345--flashvsr-v11-diffusion-upscaler-4x-native-on-runpod-a100-80gb--upscale)
 14. `2026-07-03 22:10:05` — [Wan 2.2 T2V-A14B + FlashVSR 4x co-resident multi-stage + warm-reuse re-generate on RunPod A100 80GB — t2v+upscale](#14-2026-07-03-221005--wan-22-t2v-a14b--flashvsr-4x-co-resident-multi-stage--warm-reuse-re-generate-on-runpod-a100-80gb--t2vupscale)
+15. `2026-07-04 00:02:32` — [Luma UNI-1 image keyframe via agents API (LumaAgentsImageEngine) — t2i](#15-2026-07-04-000232--luma-uni-1-image-keyframe-via-agents-api-lumaagentsimageengine--t2i)
 
 ---
 
@@ -2135,3 +2136,51 @@ One 80 GB card cannot hold Wan 2.2 A14B (~74 GiB resident) and FlashVSR (~9 GiB 
 
 - 13 attempts total for T9; every pipeline component was green by attempt 9 — attempts 9-12 burned on two test-harness assert bugs (slug printed only by the upscale subcommand, not generate) and two RunPod mid-run pod deletions.
 - Known follow-up: Wan reload on promotion drops any live LoRA adapters (stack-replay needed if LoRA + upscale ever compose); RunPod `GpuAvailability` probe still 400s on the new `GpuTypeFilter` schema (nonfatal, logged).
+
+---
+
+## 15. `2026-07-04 00:02:32` — Luma UNI-1 image keyframe via agents API (LumaAgentsImageEngine) — t2i
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `lumalabs.ai (agents API) / LumaAgentsImageEngine / uni-1` |
+| **Mode** | t2i (image keyframe — first image-mode entry in this log) |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `6f933c8` (agents retarget; engine first landed at `857e2f6`) |
+| **Date (local TZ)** | 2026-07-04 00:02:32 -0700 (PDT) |
+| **Layer / phase** | Layer 5b (Luma keyframe pivot; closes the build half of memory `project_luma_video_retirement_2026`; deletion half was Phase 44). Plugs into Layer R (`keyframe:` block, Phase 32). |
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_SPEND=1 pixi run pytest \
+  tests/live/test_luma_keyframe_live.py -v -s
+```
+
+### Cfg
+
+- Engine driven directly (registry `"luma_agents"`); example cfg `examples/configs/keyframe-luma.yaml` pins the same block: `keyframe.engine=luma_agents`, `spec.model=uni-1`, `params.aspect_ratio="16:9"`.
+- Wire: `POST https://agents.lumalabs.ai/v1/generations` body `{"prompt", "model": "uni-1", "type": "image", "aspect_ratio": "16:9"}`; poll `GET /v1/generations/{id}`; image at `output[0].url` (pre-signed S3, ~1 h expiry).
+
+### Input
+
+- Standard prompt verbatim from `examples/configs/prompts/field-realistic.txt`.
+
+### Output
+
+- Generation id `a08e47af-e1dc-41bd-9f5b-453911fb4d34`; PNG **2784×1504** (16:9 honoured), 5,923,004 B.
+- SHA256 `a672c733f1b629e25b33e418dc711fcdbed84f8545f092688fae1218aaee40aa`.
+- Wall-clock `1 passed in 125.60s` (~2 min generation — UNI-1 is autoregressive; slower than the ~31 s the marketing page quotes).
+- Evidence: `tests/live/evidence/2026-07-04_luma_keyframe_stdout.txt` (pre-signed query string scrubbed — it carries short-lived AWS tokens).
+
+### Reproduction recipe notes
+
+- Auth: `Authorization: Bearer $LUMAAI_API_KEY` (platform `luma-api-…` key, already in `.env` since 2026-06-07 — still valid).
+- The RETIRED `api.lumalabs.ai/dream-machine/v1` surface returns `403 {"detail":"Not authenticated"}` for platform keys — if you see that 403, you are on the wrong host, not holding a bad key.
+- No DELETE endpoint on the agents API; records purge via the dashboard (`manual_cleanup_url`).
+- Spend: single generation from the $20 platform credit (~$0.01-0.05 range; Luma does not return per-generation cost on the wire).
+
+### Notes
+
+- First `(luma_agents, t2i)` tuple and the first image-keyframe capability in the log; unlocks Layer-R `keyframe:` flows (i2v/flf2v openers) with a second hosted image provider next to fal + replicate.
+- E21 (keyframe → hosted i2v end-to-end upload) remains the known gap before the full `keyframe-luma.yaml` i2v pipeline runs unattended.

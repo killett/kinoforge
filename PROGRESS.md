@@ -10,7 +10,7 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
-## LumaAgentsImageEngine (UNI-1 image keyframes) — CODE-COMPLETE 2026-07-03, live smoke next
+## LumaAgentsImageEngine (UNI-1 image keyframes) — SHIPPED 2026-07-04 00:02 PDT
 
 Spec: `docs/superpowers/specs/2026-07-03-luma-image-keyframes-design.md`
 (incl. §9 same-day correction). Plan:
@@ -20,6 +20,12 @@ Spec: `docs/superpowers/specs/2026-07-03-luma-image-keyframes-design.md`
 agents API (`agents.lumalabs.ai/v1`, UNI-1), registry slug
 `luma_agents`, 10 offline tests; `keyframe-luma.yaml` example (fal
 i2v host, Luma keyframe); env-gated live smoke.
+
+Live smoke GREEN: `1 passed in 125.60s`, model `uni-1`, PNG
+2784x1504 (5.9 MB), generation `a08e47af-…`. Entry #15 in
+`successful-generations.md`. Existing LUMAAI_API_KEY valid; ~cents
+of the $20 credit spent. Known gap before full keyframe→i2v: E21
+(hosted-provider keyframe upload).
 
 Course-correction note: first pass targeted the RETIRED dream-machine
 surface off stale public docs and mis-diagnosed the resulting 403 as
