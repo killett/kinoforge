@@ -1,0 +1,46 @@
+{
+  "ran_at_local": "2026-07-04T03:26:00-07:00 (reconstructed from run log; SSL crash pre-manifest)",
+  "aspect_ratio": "16:9",
+  "cells": [
+    {
+      "model": "uni-1",
+      "prompt": "field-realistic",
+      "status": "ok",
+      "latency_s": 193.9,
+      "bytes": 6702636,
+      "dims": "2784x1504",
+      "sha256": "8bc59d5ce58896565f9ac9d74d6c0b57c2cc37096610518264bea81213169ab7",
+      "file": "/workspace/output/luma-keyframe-matrix/uni-1_field-realistic.png"
+    },
+    {
+      "model": "uni-1",
+      "prompt": "field-dreamlike",
+      "status": "ok",
+      "latency_s": 131.4,
+      "bytes": 7176598,
+      "dims": "2784x1504",
+      "sha256": "9d40e2dac8e1a1356e3a588314f774ff93a83577250f60e9135c1c1cf31930ab",
+      "file": "/workspace/output/luma-keyframe-matrix/uni-1_field-dreamlike.png"
+    },
+    {
+      "model": "uni-1",
+      "prompt": "forest",
+      "status": "ok",
+      "latency_s": 102.5,
+      "bytes": 7731367,
+      "dims": "2784x1504",
+      "sha256": "22d83269fd8fdb6229f1493b120af2a1e03fe884cb444a397317018ab53ed3a5",
+      "file": "/workspace/output/luma-keyframe-matrix/uni-1_forest.png"
+    },
+    {
+      "model": "uni-1",
+      "prompt": "dawn-flight",
+      "status": "ok",
+      "latency_s": 103.8,
+      "bytes": 4381989,
+      "dims": "2784x1504",
+      "sha256": "03731737b7258b9c74824045f4f48a9c6921dcdf5f922f741a2d3a9181ad72c5",
+      "file": "/workspace/output/luma-keyframe-matrix/uni-1_dawn-flight.png"
+    }
+  ]
+}
