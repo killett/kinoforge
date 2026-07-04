@@ -1,0 +1,23 @@
+Pixi task (kinoforge in live-skypilot): python -m kinoforge deploy --config examples/configs/skypilot-lambda.yaml
+2026-07-04 02:20:09,161 INFO kinoforge.core.dotenv_loader loaded .env from /workspace/.env (37 keys)
+[instance overview] No running instances.
+<sky-payload>"<rich_init>[bold cyan]Updating Lambda catalog: lambda/vms.csv[/] (every 7 hours)</rich_init>"</sky-payload>
+<sky-payload>"<rich_update>[bold cyan]Updating Lambda catalog: lambda/vms.csv[/] (every 7 hours)</rich_update>"</sky-payload>
+<sky-payload>"<rich_start>[bold cyan]Updating Lambda catalog: lambda/vms.csv[/] (every 7 hours)</rich_start>"</sky-payload>
+<sky-payload>"<rich_exit></rich_exit>"</sky-payload>
+Running on cluster: skypilot-cluster
+Considered resources (1 node):
+---------------------------------------------------------------------------------
+ INFRA                INSTANCE     vCPUs   Mem(GB)   GPUS    COST ($)   CHOSEN   
+---------------------------------------------------------------------------------
+ Lambda (us-east-1)   gpu_1x_a10   30      200       A10:1   1.29       [32m   ✔[0m     
+---------------------------------------------------------------------------------
+[0m⚙︎ Launching on Lambda us-east-1[0m.
+[2m├── [0m[2mInstance is up.[0m
+[2m└── [0m[2mDocker container is up.[0m
+[0m[32m✓ Cluster launched: skypilot-cluster.[0m[0m  [2mView logs: [1msky logs --provision skypilot-cluster[0m[0m
+[0m⚙︎ Syncing files.
+Run commands not specified or empty.
+2026-07-04 02:26:14,104 INFO kinoforge.orchestrator deployed instance 'skypilot-cluster' via 'skypilot' (status=ready)
+INFO:kinoforge.orchestrator:deployed instance 'skypilot-cluster' via 'skypilot' (status=ready)
+deployed: instance='skypilot-cluster'
