@@ -100,8 +100,10 @@ def test_context_manager_acquires_and_releases(tmp_path: Path) -> None:
     ) as token:
         assert token.key == "k"
         assert sidecar.exists()
-    # Sidecar must be gone after exit; lock state must be released.
-    assert not sidecar.exists()
+    # Sidecar must PERSIST after exit (unlinking it re-introduces the
+    # split-brain inode race — see test_release_does_not_unlink_sidecar);
+    # only the OS lock state is released.
+    assert sidecar.exists()
     # Spy must have observed an UN unlock call (matches LOCK_UN flag).
     import fcntl as _fcntl
 
@@ -153,10 +155,17 @@ def test_blocking_with_timeout_raises_lock_timeout(tmp_path: Path) -> None:
         lock.acquire(blocking=True, timeout_s=1.0)
 
 
-def test_release_removes_sidecar(tmp_path: Path) -> None:
-    """release() must unlink the sidecar so the path layout is self-cleaning."""
+def test_release_keeps_sidecar_but_empties_payload(tmp_path: Path) -> None:
+    """release() keeps the sidecar (inode stability) and truncates the payload.
+
+    Bug caught: unlinking on release orphans the inode under any waiter's
+    already-open fd — two holders on two inodes, lost updates (CI run
+    28700621336). The stale-payload truncate keeps diagnostics honest:
+    an empty file means "not held", a JSON payload means "held".
+    """
+    sidecar = tmp_path / "_locks" / "k.lock"
     lock = FileLock(
-        path=tmp_path / "_locks" / "k.lock",
+        path=sidecar,
         key="k",
         ttl_s=5.0,
         clock=FakeClock(start=0.0),
@@ -165,9 +174,10 @@ def test_release_removes_sidecar(tmp_path: Path) -> None:
     )
     token = lock.acquire()
     assert token is not None
-    assert (tmp_path / "_locks" / "k.lock").exists()
+    assert sidecar.exists() and sidecar.stat().st_size > 0
     lock.release(token)
-    assert not (tmp_path / "_locks" / "k.lock").exists()
+    assert sidecar.exists(), "sidecar must persist across release"
+    assert sidecar.stat().st_size == 0, "payload must truncate on release"
 
 
 # ---------------------------------------------------------------------------
@@ -231,3 +241,43 @@ def test_real_fcntl_blocks_cross_process(tmp_path: Path) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+
+
+def test_release_does_not_unlink_sidecar_no_split_brain(tmp_path: Path) -> None:
+    """Two holders must never coexist across a release/re-acquire cycle.
+
+    Bug caught (CI run 28700621336: ephemeral-index lost an add under
+    contention): ``release()`` unlinked the sidecar, so a waiter still
+    holding a pre-unlink fd (inode A) and a fresh acquirer creating the
+    path anew (inode B) both took "the" lock on DIFFERENT inodes —
+    split-brain, lost update. Release must leave the sidecar in place
+    so every open() forever resolves to the same inode.
+    """
+    import fcntl
+    import os
+
+    from kinoforge.stores.local_lock import FileLock
+
+    path = tmp_path / "k.lock"
+
+    lock_a = FileLock(path=path, key="k", ttl_s=5.0)
+    token_a = lock_a.acquire()
+    assert token_a is not None
+
+    # Simulate a waiter that opened the sidecar BEFORE release. With the
+    # unlink in place this fd points at an inode that becomes orphaned.
+    waiter_fd = os.open(str(path), os.O_RDWR)
+    try:
+        lock_a.release(token_a)
+        assert path.exists(), "release must not unlink the sidecar"
+
+        lock_b = FileLock(path=path, key="k", ttl_s=5.0)
+        token_b = lock_b.acquire()
+        assert token_b is not None
+
+        # The stale-fd waiter must STILL be excluded — same inode as B.
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(waiter_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_b.release(token_b)
+    finally:
+        os.close(waiter_fd)
