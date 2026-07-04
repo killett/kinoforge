@@ -17,6 +17,10 @@ engine:
     queue_base: "https://queue.fal.run"
     api_key_env: "FAL_KEY"
     url_path: "video.url"
+    # E21: route the generated keyframe into the i2v request (local
+    # keyframe paths inline as base64 data URIs at the submit seam).
+    asset_paths:
+      init_image: image_url
 
 spec:
   model: "fal-ai/wan-i2v"

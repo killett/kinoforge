@@ -18,6 +18,11 @@ engine:
     queue_base: "https://queue.fal.run"
     api_key_env: "FAL_KEY"
     url_path: "video.url"
+    # E21: route the generated keyframes into the flf2v request (local
+    # keyframe paths inline as base64 data URIs at the submit seam).
+    asset_paths:
+      first_frame: start_image_url
+      last_frame: end_image_url
 
 spec:
   model: "fal-ai/wan-flf2v"

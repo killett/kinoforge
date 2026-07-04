@@ -21,6 +21,10 @@ engine:
     queue_base: "https://queue.fal.run"
     api_key_env: "FAL_KEY"
     url_path: "video.url"
+    # E21: route the Luma keyframe into the i2v request. The local
+    # keyframe path inlines as a base64 data URI at the submit seam.
+    asset_paths:
+      init_image: image_url
 
 spec:
   model: "fal-ai/wan-i2v"

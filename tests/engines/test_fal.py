@@ -507,3 +507,111 @@ def test_fal_model_identity_empty_on_missing_engine_block() -> None:
     assert eng.model_identity({}) == ""
     assert eng.model_identity({"engine": {}}) == ""
     assert eng.model_identity({"engine": {"fal": {}}}) == ""
+
+
+# ---------------------------------------------------------------------------
+# E21 — local keyframe assets inline as data URIs at the submit seam
+# ---------------------------------------------------------------------------
+
+
+def test_submit_inlines_local_asset_path_as_data_uri(tmp_path: Any) -> None:
+    """A local-path asset ref becomes a base64 data URI in the body.
+
+    Bug catch (E21): KeyframeStage stores keyframes in the LOCAL artifact
+    store (bare filesystem path uri); forwarding that verbatim gives
+    fal's servers an unfetchable `/workspace/...` string and every
+    keyframe→i2v run dies at submit.
+    """
+    import base64
+
+    png = tmp_path / "keyframe-init_image.png"
+    payload = b"\x89PNG\r\n\x1a\n" + b"fakepixels" * 10
+    png.write_bytes(payload)
+
+    backend = _make_backend(asset_paths={"init_image": "image_url"})
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename=png.name, uri=str(png)),
+    )
+    job = GenerationJob(
+        segments=[Segment(prompt="x", params={}, assets=[asset])],
+        params={},
+        spec={"prompt": "x"},
+    )
+    backend.submit(job)
+    _, body, _ = backend._spy_posts[0]
+    value = body["image_url"]
+    assert value.startswith("data:image/png;base64,")
+    assert base64.b64decode(value.split(",", 1)[1]) == payload
+
+
+def test_submit_inlines_jpg_with_jpeg_mime(tmp_path: Any) -> None:
+    """.jpg suffix maps to image/jpeg in the data URI.
+
+    Bug catch: hardcoding image/png would mislabel jpeg keyframes;
+    providers that sniff the declared mime reject the input.
+    """
+    jpg = tmp_path / "frame.jpg"
+    jpg.write_bytes(b"\xff\xd8\xff\xe0fakejpeg")
+    backend = _make_backend(asset_paths={"init_image": "image_url"})
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename=jpg.name, uri=str(jpg)),
+    )
+    job = GenerationJob(
+        segments=[Segment(prompt="x", params={}, assets=[asset])],
+        params={},
+        spec={"prompt": "x"},
+    )
+    backend.submit(job)
+    _, body, _ = backend._spy_posts[0]
+    assert body["image_url"].startswith("data:image/jpeg;base64,")
+
+
+def test_submit_passes_data_uri_through_untouched() -> None:
+    """An already-inlined data: uri is forwarded verbatim.
+
+    Bug catch: re-encoding a data URI double-wraps the payload.
+    """
+    data_uri = "data:image/png;base64,AAAA"
+    backend = _make_backend(asset_paths={"init_image": "image_url"})
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="x.png", uri=data_uri),
+    )
+    job = GenerationJob(
+        segments=[Segment(prompt="x", params={}, assets=[asset])],
+        params={},
+        spec={"prompt": "x"},
+    )
+    backend.submit(job)
+    _, body, _ = backend._spy_posts[0]
+    assert body["image_url"] == data_uri
+
+
+def test_submit_missing_local_asset_file_raises_validation_error(
+    tmp_path: Any,
+) -> None:
+    """A local asset path that does not exist fails AT SUBMIT, naming the role.
+
+    Bug catch: forwarding a dangling path produces an opaque provider-side
+    422 minutes later; the operator gets no hint which asset broke.
+    """
+    from kinoforge.core.errors import ValidationError
+
+    backend = _make_backend(asset_paths={"init_image": "image_url"})
+    asset = ConditioningAsset(
+        kind="image",
+        role="init_image",
+        ref=Artifact(filename="gone.png", uri=str(tmp_path / "gone.png")),
+    )
+    job = GenerationJob(
+        segments=[Segment(prompt="x", params={}, assets=[asset])],
+        params={},
+        spec={"prompt": "x"},
+    )
+    with pytest.raises(ValidationError, match="init_image"):
+        backend.submit(job)
