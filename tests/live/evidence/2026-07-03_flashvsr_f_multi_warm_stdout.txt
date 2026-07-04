@@ -1,0 +1,13 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /workspace/.pixi/envs/default/bin/python3.13
+cachedir: .pytest_cache
+rootdir: /workspace
+configfile: pyproject.toml
+plugins: anyio-4.14.1, cov-7.1.0
+collecting ... collected 2 items
+
+tests/live/test_flashvsr_live.py::test_f_multi PASSED                    [ 50%]
+tests/live/test_flashvsr_live.py::test_f_warm PASSED                     [100%]=== POST-SESSION THREAD DUMP === clean (1 threads, no non-daemon extras)
+
+
+======================== 2 passed in 1223.57s (0:20:23) ========================
