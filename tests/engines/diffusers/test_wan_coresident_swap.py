@@ -11,6 +11,7 @@ stages — these tests pin that promise for the eager pipe.
 from __future__ import annotations
 
 import asyncio
+import gc as _gc
 import sys
 import types
 from typing import Any
@@ -73,49 +74,61 @@ class TestEagerRegistration:
 
 
 class TestUpscaleEvictsEagerWan:
-    def test_flashvsr_load_evicts_wan_to_cpu(self, _fake_cuda: dict[str, Any]) -> None:
-        """Bug caught: FlashVSR loads next to resident Wan → CUDA OOM."""
+    def test_flashvsr_load_drops_wan_to_disk(self, _fake_cuda: dict[str, Any]) -> None:
+        """Bug caught: FlashVSR loads next to resident Wan → CUDA OOM.
+
+        Wan is DISK-dropped, never CPU-moved: pods pin only 32 GiB min
+        RAM (minMemoryInGb), so a ~70 GiB .to("cpu") would OOM-kill the
+        container on small-RAM hosts; device_map="cuda" pipes also
+        raise on .to(). Reload comes from the pod-local HF cache.
+        """
         from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
 
         wan = _wan_pipe()
         srv._register_eager_wan(wan)
+        srv.pipe = wan
 
-        def _free_on_cpu_move(dev: str) -> None:
-            wan.calls.append(f"to:{dev}")
-            if dev == "cpu":
-                _fake_cuda["free"] = 75 * 1024**3
+        def _free_on_drop() -> None:
+            _fake_cuda["free"] = 75 * 1024**3
 
-        wan.to = MagicMock(side_effect=_free_on_cpu_move)
+        monkey_gc = patch.object(_gc, "collect", side_effect=_free_on_drop)
 
         flash = MagicMock()
         flash.vram_bytes = 8 * 1024**3
-        with patch.object(srv, "_load_model_to_gpu", return_value=flash):
+        with monkey_gc, patch.object(srv, "_load_model_to_gpu", return_value=flash):
             entry = asyncio.run(srv._ensure_on_gpu("flashvsr-wan21-bfloat16"))
 
         assert entry["on_device"] == "cuda"
         assert srv._WAN_REGISTRY_NAME is not None
         wan_entry = srv._LOADED[srv._WAN_REGISTRY_NAME]
-        assert wan_entry["on_device"] == "cpu"
-        assert "to:cpu" in wan.calls
+        assert wan_entry["on_device"] == "disk"
+        assert wan_entry["pipe"] is None
+        # The module-global reference must ALSO drop or the CUDA tensors
+        # stay alive and no VRAM is actually freed.
+        assert srv.pipe is None
+        wan.to.assert_not_called()
 
 
 class TestWorkerPromotesWanBack:
-    def test_promote_evicts_upscaler_before_moving_wan(
+    def test_promote_evicts_upscaler_before_reloading_wan(
         self, _fake_cuda: dict[str, Any]
     ) -> None:
-        """Bug caught: promoting a ~70 GiB Wan pipe BEFORE freeing the
+        """Bug caught: reloading a ~70 GiB Wan pipe BEFORE freeing the
         upscaler OOMs on the way back (78 GiB peak on an 80 GiB card).
-        Eviction must complete before wan.to("cuda") fires.
+        Eviction must complete before the reload fires; the reloaded
+        pipe must land in BOTH the registry entry and the module global
+        the worker loop reads.
         """
         from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
 
         order: list[str] = []
 
         wan = MagicMock()
-        wan.to = MagicMock(side_effect=lambda dev: order.append(f"wan:to:{dev}"))
         srv._register_eager_wan(wan)
         assert srv._WAN_REGISTRY_NAME is not None
-        srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] = "cpu"
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] = "disk"
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["pipe"] = None
+        srv.pipe = None
 
         flash = MagicMock()
 
@@ -133,11 +146,19 @@ class TestWorkerPromotesWanBack:
             on_device="cuda",
         )
 
-        srv._promote_wan_if_evicted()
+        reloaded = MagicMock()
 
-        assert order.index("flash:to:cpu") < order.index("wan:to:cuda")
-        assert srv._WAN_REGISTRY_NAME is not None
+        def _reload() -> MagicMock:
+            order.append("reload")
+            return reloaded
+
+        with patch.object(srv, "_load_pipeline", side_effect=_reload):
+            srv._promote_wan_if_evicted()
+
+        assert order.index("flash:to:cpu") < order.index("reload")
         assert srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] == "cuda"
+        assert srv._LOADED[srv._WAN_REGISTRY_NAME]["pipe"] is reloaded
+        assert srv.pipe is reloaded
         assert srv._LOADED["flashvsr-wan21-bfloat16"]["on_device"] == "cpu"
 
     def test_promote_noop_when_wan_not_registered(
@@ -161,3 +182,63 @@ class TestWorkerPromotesWanBack:
 
         srv._promote_wan_if_evicted()
         wan.to.assert_not_called()
+
+
+class TestEvictionBeforeFreshLoad:
+    def test_wan_evicted_before_flashvsr_constructor_runs(
+        self, _fake_cuda: dict[str, Any]
+    ) -> None:
+        """Bug caught (pod 8bhz609nkvjqhx, 2026-07-03): _ensure_on_gpu
+        loads the new model BEFORE _enforce_headroom, so FlashVSR's
+        constructor OOMs against resident Wan and eviction never fires.
+        The registry must free headroom for the incoming model FIRST.
+        """
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        order: list[str] = []
+
+        wan = MagicMock()
+        srv._register_eager_wan(wan)
+        srv.pipe = wan
+
+        def _free_on_drop() -> None:
+            order.append("drop")
+            _fake_cuda["free"] = 75 * 1024**3
+
+        flash = MagicMock()
+        flash.vram_bytes = 8 * 1024**3
+
+        def _loader(name: str) -> MagicMock:
+            order.append("load")
+            return flash
+
+        with (
+            patch.object(_gc, "collect", side_effect=_free_on_drop),
+            patch.object(srv, "_load_model_to_gpu", side_effect=_loader),
+        ):
+            asyncio.run(srv._ensure_on_gpu("flashvsr-wan21-bfloat16"))
+
+        assert "drop" in order and "load" in order
+        assert order.index("drop") < order.index("load")
+
+    def test_wan_drop_never_calls_to_cpu(self, _fake_cuda: dict[str, Any]) -> None:
+        """Bug caught: .to("cpu") on the device_map="cuda" WanPipeline
+        raises ValueError (accelerate hooks), and even when it works a
+        ~70 GiB CPU copy OOM-kills 32 GiB-RAM hosts. The wan eviction
+        path must never touch .to().
+        """
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        wan = MagicMock()
+        srv._register_eager_wan(wan)
+        srv.pipe = wan
+        assert srv._WAN_REGISTRY_NAME is not None
+
+        def _free_on_drop() -> None:
+            _fake_cuda["free"] = 75 * 1024**3
+
+        with patch.object(_gc, "collect", side_effect=_free_on_drop):
+            srv._evict_to_cpu(srv._WAN_REGISTRY_NAME)
+
+        wan.to.assert_not_called()
+        assert srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] == "disk"
