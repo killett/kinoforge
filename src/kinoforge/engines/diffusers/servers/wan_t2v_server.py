@@ -218,6 +218,67 @@ def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2/
     raise ValueError(f"unknown model name {name!r}; no loader registered")
 
 
+# Pre-load VRAM estimates by registry-name prefix (see _ensure_on_gpu).
+_EXPECTED_VRAM_BYTES: dict[str, int] = {
+    "flashvsr": 9 * 1024**3,
+    "seedvr2": 8 * 1024**3,
+    "spandrel": 2 * 1024**3,
+}
+
+
+def _evict_to_cpu(victim_name: str) -> None:
+    """Evict one registry entry off the GPU.
+
+    The eager Wan pipe is DISK-dropped (pipe reference cleared in the
+    registry AND the module global — either alone keeps the CUDA
+    tensors alive), never CPU-moved: pods pin only 32 GiB min RAM
+    (minMemoryInGb) so a ~70 GiB ``.to("cpu")`` would OOM-kill the
+    container, and ``device_map="cuda"`` pipes raise on ``.to()``
+    anyway. Reload comes from the pod-local HF cache on promotion.
+
+    Other entries (upscaler runtimes, a few GiB) move to CPU, clearing
+    any accelerate device map first.
+    """
+    import torch
+
+    global pipe
+    victim = _LOADED[victim_name]
+    if victim_name == _WAN_REGISTRY_NAME:
+        _log.info("registry: dropping eager wan pipe to disk (reload on demand)")
+        victim["pipe"] = None
+        victim["on_device"] = "disk"
+        pipe = None
+    else:
+        _log.info("registry: evicting %s to cpu", victim_name)
+        reset = getattr(victim["pipe"], "reset_device_map", None)
+        if callable(reset):
+            reset()
+        victim["pipe"].to("cpu")
+        victim["on_device"] = "cpu"
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
+def _free_headroom_for(needed_bytes: int, keep: str) -> None:
+    """Evict LRU CUDA entries (except ``keep``) until ``needed_bytes`` free.
+
+    Best-effort: returns silently when no victims remain — the caller's
+    own allocation surfaces the real failure if memory is still short.
+    """
+    import torch
+
+    free, _total = torch.cuda.mem_get_info()
+    while free < needed_bytes:
+        victims = [
+            n for n, e in _LOADED.items() if e["on_device"] == "cuda" and n != keep
+        ]
+        if not victims:
+            return
+        evict = min(victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
+        _evict_to_cpu(evict)
+        free, _total = torch.cuda.mem_get_info()
+
+
 async def _ensure_on_gpu(name: str) -> LoadedModel:
     """Ensure ``name`` is on CUDA with sufficient headroom.
 
@@ -233,6 +294,14 @@ async def _ensure_on_gpu(name: str) -> LoadedModel:
             return entry
 
         if entry is None:
+            # Free headroom BEFORE the loader runs. FlashVSR's
+            # constructor allocates CUDA directly and OOM'd against
+            # resident Wan when eviction only ran post-load (pod
+            # 8bhz609nkvjqhx, 2026-07-03). Unknown prefixes estimate
+            # 0 → no pre-eviction (legacy behaviour).
+            expected = _EXPECTED_VRAM_BYTES.get(name.split("-", 1)[0], 0)
+            if expected:
+                _free_headroom_for(expected + _HEADROOM_MARGIN_BYTES, keep=name)
             new_pipe = _load_model_to_gpu(name)
             # SpandrelRuntime + SeedVR2Runtime construct their nn.Module on
             # CPU by default (weights load via torch.load without device=).
@@ -305,10 +374,7 @@ async def _enforce_headroom(target_name: str) -> None:
             continue
 
         evict = min(victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
-        _LOADED[evict]["pipe"].to("cpu")
-        _LOADED[evict]["on_device"] = "cpu"
-        gc.collect()
-        torch.cuda.empty_cache()
+        _evict_to_cpu(evict)
         free, _ = torch.cuda.mem_get_info()
 
 
@@ -361,6 +427,7 @@ def _promote_wan_if_evicted() -> None:
         return
     import torch
 
+    global pipe
     with _REGISTRY_TLOCK:
         needed = entry["vram_bytes"] + _HEADROOM_MARGIN_BYTES
         free, _total = torch.cuda.mem_get_info()
@@ -374,12 +441,18 @@ def _promote_wan_if_evicted() -> None:
                 break
             evict = min(victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
             _log.info("generate: evicting %s to cpu to re-promote wan", evict)
-            _LOADED[evict]["pipe"].to("cpu")
-            _LOADED[evict]["on_device"] = "cpu"
-            gc.collect()
-            torch.cuda.empty_cache()
+            _evict_to_cpu(evict)
             free, _total = torch.cuda.mem_get_info()
-        entry["pipe"].to("cuda")
+        if entry["on_device"] == "disk" or entry["pipe"] is None:
+            # Disk-dropped by a prior /upscale eviction: reload from the
+            # pod-local HF cache (shards already on container disk;
+            # device_map="cuda" streams straight to GPU).
+            _log.info("generate: reloading wan pipeline from disk cache")
+            new_pipe = _load_pipeline()
+            entry["pipe"] = new_pipe
+            pipe = new_pipe
+        else:
+            entry["pipe"].to("cuda")
         entry["on_device"] = "cuda"
         entry["last_used_monotonic"] = time.monotonic()
         _log.info("generate: wan pipeline re-promoted to cuda")
