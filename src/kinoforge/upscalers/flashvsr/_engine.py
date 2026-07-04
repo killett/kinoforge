@@ -80,6 +80,18 @@ class FlashVSREngine(UpscalerEngine):
         bundle = str(block["weights_bundle"])
         long_video = "1" if block.get("long_video_mode") else "0"
         wheel_url = str(block["bsa_wheel_url"])
+        # HF_HUB_OFFLINE=1 tail is upscale-only-pod hygiene (no accidental
+        # Hub hits at inference). This script runs BEFORE the server exec
+        # line, so on a co-resident pod the export would put the Wan 2.2
+        # eager load offline too — OfflineModeIsEnabled crash-loop, pod
+        # dk8otbrvddetmx 2026-07-03. Suppress when a diffusers engine
+        # block is present without upscale_only (missing engine block =
+        # bare upscale cfg = upscale-only semantics, keep the tail).
+        engine_block = cast(dict[str, Any], cfg.get("engine") or {})
+        diffusers_block = cast(dict[str, Any], engine_block.get("diffusers") or {})
+        offline_tail = "diffusers" not in engine_block or bool(
+            diffusers_block.get("upscale_only")
+        )
         # pip parses distribution metadata (name, version, python tag, ABI,
         # platform) FROM the wheel filename — a generic 'bsa.whl' rename
         # fails immediately with "not a valid wheel filename". Preserve the
@@ -161,8 +173,8 @@ class FlashVSREngine(UpscalerEngine):
                 '"https://raw.githubusercontent.com/OpenImagingLab/FlashVSR'
                 "/b527c6f285fb30df530f5febc8b45764a789c961"
                 '/examples/WanVSR/utils/utils.py"\n',
-                "export HF_HUB_OFFLINE=1\n",
             ]
+            + (["export HF_HUB_OFFLINE=1\n"] if offline_tail else [])
         )
         return RenderedProvision(
             script=script,

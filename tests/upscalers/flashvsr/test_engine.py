@@ -364,3 +364,31 @@ def test_model_identity_bfloat16_default() -> None:
         {"upscale": {"flashvsr": {"precision": "bfloat16"}}}
     )
     assert slug == "flashvsr-wan21-bfloat16"
+
+
+def _cfg_coresident(**kw: Any) -> dict[str, Any]:
+    """Cfg shaped like wan-with-upscale-flashvsr.yaml: Wan co-resident."""
+    cfg = _cfg(**kw)
+    cfg["engine"] = {"kind": "diffusers", "diffusers": {}}
+    cfg["models"] = [{"ref": "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"}]
+    return cfg
+
+
+def test_render_provision_offline_tail_only_when_upscale_only() -> None:
+    """HF_HUB_OFFLINE=1 must NOT be exported on co-resident pods.
+
+    Bug caught (pod dk8otbrvddetmx, 2026-07-03): the flashvsr provision
+    block runs BEFORE the server exec line; exporting HF_HUB_OFFLINE=1
+    there put the whole server env offline, so the co-resident Wan 2.2
+    eager load died with OfflineModeIsEnabled on its first Hub metadata
+    fetch. Upscale-only pods (no eager Wan load) keep the tail — it
+    guards against accidental Hub hits at inference.
+    """
+    e = FlashVSREngine()
+
+    upscale_only = _cfg()
+    upscale_only["engine"] = {"kind": "diffusers", "diffusers": {"upscale_only": True}}
+    assert "HF_HUB_OFFLINE=1" in e.render_provision(upscale_only).script
+
+    coresident = _cfg_coresident()
+    assert "HF_HUB_OFFLINE=1" not in e.render_provision(coresident).script
