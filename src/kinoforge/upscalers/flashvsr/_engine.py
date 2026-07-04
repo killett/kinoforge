@@ -117,9 +117,14 @@ class FlashVSREngine(UpscalerEngine):
                 # from `transformers.modeling_utils` — diffsynth breaks
                 # at `from transformers.modeling_utils import
                 # PretrainedConfig`. Downgrade + pin.
+                # peft 0.17 (not 0.16): the co-resident F-multi pod's
+                # diffusers (cfg pip, floats latest) hard-requires
+                # peft>=0.17 at import — 0.16 crash-loops the server at
+                # startup (pod 1sjify76z1oqha, 2026-07-03). diffsynth's
+                # peft surface loads fine on 0.17 (F-multi live smoke).
                 'pip install "modelscope" '
                 '"safetensors==0.5.3" "transformers==4.46.2" '
-                '"accelerate==1.8.1" "peft==0.16.0" '
+                '"accelerate==1.8.1" "peft==0.17.0" '
                 '"einops==0.8.1" "ftfy==6.3.1" "sentencepiece==0.2.0" '
                 '"imageio[ffmpeg,pyav]>=2.34" "av"\n',
                 "python -m kinoforge.upscalers.flashvsr._fetch_weights "
