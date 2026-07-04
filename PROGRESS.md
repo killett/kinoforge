@@ -17,7 +17,7 @@ read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
 **State:** main green on CI (11 consecutive pushes through `797e013`);
-suite ~3,780 tests; zero pods/clusters; ledger clean; working tree clean.
+suite 3,906 collected tests (3,780+ executed non-live); zero pods/clusters; ledger clean; working tree clean.
 
 **Everything through 2026-07-04 is SHIPPED**, including: FlashVSR 4x
 upscaler + co-resident Wan↔FlashVSR multi-stage + warm-reuse re-generate

@@ -5,7 +5,10 @@ This project is built across multiple sessions, and a session can die mid-run â€
 that poisons the conversation so every subsequent turn fails until it is cleared. On **every** new
 or resumed session, before doing anything else:
 
-1. Read `PROGRESS.md` at the repo root. It is the source of truth for where the build is.
+1. Read the **RESUME SNAPSHOT** section at the top of `PROGRESS.md` (first ~120 lines).
+   It is the source of truth for where the build is. The file exceeds the 256 KB
+   single-read limit â€” do NOT attempt a full-file read; `rg` the history below the
+   snapshot on demand.
 2. Read the design doc and the implementation plan that `PROGRESS.md` points to.
 3. Run `git log --oneline -20` to see what is already committed.
 4. Resume from the first unchecked task in the plan. **Do not** redo work that is already committed.
