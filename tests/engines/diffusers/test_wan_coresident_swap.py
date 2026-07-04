@@ -131,13 +131,6 @@ class TestWorkerPromotesWanBack:
         srv.pipe = None
 
         flash = MagicMock()
-
-        def _flash_to(dev: str) -> None:
-            order.append(f"flash:to:{dev}")
-            if dev == "cpu":
-                _fake_cuda["free"] = 75 * 1024**3
-
-        flash.to = MagicMock(side_effect=_flash_to)
         srv._LOADED["flashvsr-wan21-bfloat16"] = srv.LoadedModel(
             name="flashvsr-wan21-bfloat16",
             pipe=flash,
@@ -146,20 +139,28 @@ class TestWorkerPromotesWanBack:
             on_device="cuda",
         )
 
+        def _free_on_drop() -> None:
+            order.append("drop")
+            _fake_cuda["free"] = 75 * 1024**3
+
         reloaded = MagicMock()
 
         def _reload() -> MagicMock:
             order.append("reload")
             return reloaded
 
-        with patch.object(srv, "_load_pipeline", side_effect=_reload):
+        with (
+            patch.object(_gc, "collect", side_effect=_free_on_drop),
+            patch.object(srv, "_load_pipeline", side_effect=_reload),
+        ):
             srv._promote_wan_if_evicted()
 
-        assert order.index("flash:to:cpu") < order.index("reload")
+        assert order.index("drop") < order.index("reload")
         assert srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] == "cuda"
         assert srv._LOADED[srv._WAN_REGISTRY_NAME]["pipe"] is reloaded
         assert srv.pipe is reloaded
-        assert srv._LOADED["flashvsr-wan21-bfloat16"]["on_device"] == "cpu"
+        assert srv._LOADED["flashvsr-wan21-bfloat16"]["on_device"] == "disk"
+        assert srv._LOADED["flashvsr-wan21-bfloat16"]["pipe"] is None
 
     def test_promote_noop_when_wan_not_registered(
         self, _fake_cuda: dict[str, Any]
@@ -242,3 +243,73 @@ class TestEvictionBeforeFreshLoad:
 
         wan.to.assert_not_called()
         assert srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] == "disk"
+
+
+class TestPromotionDropsVictimsToDisk:
+    def test_promote_disk_drops_upscaler_not_cpu_move(
+        self, _fake_cuda: dict[str, Any]
+    ) -> None:
+        """Bug caught (pod uwoi349f9zychm, 2026-07-03): FlashVSR moved
+        to CPU leaves ~2-3 GiB of CUDA residue (cross-KV / BSA buffers
+        outside the module graph); the reloaded ~74 GiB Wan then OOMs
+        mid-T2V at the margin. Promotion must DROP victims (pipe=None,
+        disk) so every CUDA ref dies.
+        """
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        wan = MagicMock()
+        srv._register_eager_wan(wan)
+        assert srv._WAN_REGISTRY_NAME is not None
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] = "disk"
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["pipe"] = None
+        srv.pipe = None
+
+        flash = MagicMock()
+        srv._LOADED["flashvsr-wan21-bfloat16"] = srv.LoadedModel(
+            name="flashvsr-wan21-bfloat16",
+            pipe=flash,
+            vram_bytes=8 * 1024**3,
+            last_used_monotonic=0.0,
+            on_device="cuda",
+        )
+
+        def _free_on_drop() -> None:
+            _fake_cuda["free"] = 75 * 1024**3
+
+        reloaded = MagicMock()
+        with (
+            patch.object(_gc, "collect", side_effect=_free_on_drop),
+            patch.object(srv, "_load_pipeline", return_value=reloaded),
+        ):
+            srv._promote_wan_if_evicted()
+
+        entry = srv._LOADED["flashvsr-wan21-bfloat16"]
+        assert entry["on_device"] == "disk"
+        assert entry["pipe"] is None
+        flash.to.assert_not_called()
+
+    def test_ensure_on_gpu_reloads_disk_dropped_entry(
+        self, _fake_cuda: dict[str, Any]
+    ) -> None:
+        """Bug caught: a disk-dropped entry (pipe=None) hits
+        ``entry["pipe"].to("cuda")`` → AttributeError on the next
+        /upscale instead of a clean reload.
+        """
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        _fake_cuda["free"] = 75 * 1024**3
+        srv._LOADED["flashvsr-wan21-bfloat16"] = srv.LoadedModel(
+            name="flashvsr-wan21-bfloat16",
+            pipe=None,
+            vram_bytes=8 * 1024**3,
+            last_used_monotonic=0.0,
+            on_device="disk",
+        )
+        reloaded = MagicMock()
+        reloaded.vram_bytes = 8 * 1024**3
+        with patch.object(srv, "_load_model_to_gpu", return_value=reloaded):
+            entry = asyncio.run(srv._ensure_on_gpu("flashvsr-wan21-bfloat16"))
+
+        assert entry["pipe"] is reloaded
+        assert entry["on_device"] == "cuda"
+        reloaded.to.assert_called_with("cuda")

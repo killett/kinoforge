@@ -226,35 +226,48 @@ _EXPECTED_VRAM_BYTES: dict[str, int] = {
 }
 
 
-def _evict_to_cpu(victim_name: str) -> None:
-    """Evict one registry entry off the GPU.
+def _drop_to_disk(victim_name: str) -> None:
+    """Drop a registry entry entirely — every CUDA reference dies.
 
-    The eager Wan pipe is DISK-dropped (pipe reference cleared in the
-    registry AND the module global — either alone keeps the CUDA
-    tensors alive), never CPU-moved: pods pin only 32 GiB min RAM
-    (minMemoryInGb) so a ~70 GiB ``.to("cpu")`` would OOM-kill the
-    container, and ``device_map="cuda"`` pipes raise on ``.to()``
-    anyway. Reload comes from the pod-local HF cache on promotion.
-
-    Other entries (upscaler runtimes, a few GiB) move to CPU, clearing
-    any accelerate device map first.
+    Preferred eviction for co-residency swaps: a CPU move leaves CUDA
+    residue for pipes holding buffers outside their module graph
+    (FlashVSR's cross-KV / BSA workspace cost ~2-3 GiB and OOM'd the
+    reloaded Wan on pod uwoi349f9zychm, 2026-07-03), and a ~70 GiB Wan
+    ``.to("cpu")`` would OOM-kill 32 GiB-RAM hosts anyway. Reload comes
+    from pod-local disk (HF cache / fetched weights) on next use.
     """
     import torch
 
     global pipe
     victim = _LOADED[victim_name]
+    _log.info("registry: dropping %s to disk (reload on demand)", victim_name)
+    victim["pipe"] = None
+    victim["on_device"] = "disk"
     if victim_name == _WAN_REGISTRY_NAME:
-        _log.info("registry: dropping eager wan pipe to disk (reload on demand)")
-        victim["pipe"] = None
-        victim["on_device"] = "disk"
         pipe = None
-    else:
-        _log.info("registry: evicting %s to cpu", victim_name)
-        reset = getattr(victim["pipe"], "reset_device_map", None)
-        if callable(reset):
-            reset()
-        victim["pipe"].to("cpu")
-        victim["on_device"] = "cpu"
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
+def _evict_to_cpu(victim_name: str) -> None:
+    """Evict one registry entry off the GPU.
+
+    The eager Wan pipe always disk-drops (see :func:`_drop_to_disk`).
+    Other entries move to CPU, clearing any accelerate device map first
+    (``device_map=`` pipes raise ValueError on ``.to()`` otherwise).
+    """
+    import torch
+
+    victim = _LOADED[victim_name]
+    if victim_name == _WAN_REGISTRY_NAME:
+        _drop_to_disk(victim_name)
+        return
+    _log.info("registry: evicting %s to cpu", victim_name)
+    reset = getattr(victim["pipe"], "reset_device_map", None)
+    if callable(reset):
+        reset()
+    victim["pipe"].to("cpu")
+    victim["on_device"] = "cpu"
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -319,6 +332,19 @@ async def _ensure_on_gpu(name: str) -> LoadedModel:
                 on_device="cuda",
             )
             _LOADED[name] = entry
+        elif entry["pipe"] is None:
+            # Disk-dropped earlier (co-residency swap or CPU-tier
+            # eviction) — reload from pod-local weights.
+            expected = _EXPECTED_VRAM_BYTES.get(name.split("-", 1)[0], 0)
+            if expected:
+                _free_headroom_for(expected + _HEADROOM_MARGIN_BYTES, keep=name)
+            new_pipe = _load_model_to_gpu(name)
+            if hasattr(new_pipe, "to"):
+                new_pipe.to("cuda")
+            entry["pipe"] = new_pipe
+            entry["vram_bytes"] = getattr(new_pipe, "vram_bytes", entry["vram_bytes"])
+            entry["on_device"] = "cuda"
+            entry["last_used_monotonic"] = time.monotonic()
         else:
             entry["pipe"].to("cuda")
             entry["on_device"] = "cuda"
@@ -440,8 +466,10 @@ def _promote_wan_if_evicted() -> None:
                 # let CUDA surface the real allocation failure.
                 break
             evict = min(victims, key=lambda n: _LOADED[n]["last_used_monotonic"])
-            _log.info("generate: evicting %s to cpu to re-promote wan", evict)
-            _evict_to_cpu(evict)
+            _log.info("generate: dropping %s to re-promote wan", evict)
+            # Full drop, not CPU move — CPU-parked upscalers leave CUDA
+            # residue that OOMs the reloaded Wan at the margin.
+            _drop_to_disk(evict)
             free, _total = torch.cuda.mem_get_info()
         if entry["on_device"] == "disk" or entry["pipe"] is None:
             # Disk-dropped by a prior /upscale eviction: reload from the
