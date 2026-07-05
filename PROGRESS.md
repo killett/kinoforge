@@ -16,7 +16,7 @@ This file exceeds the 256 KB single-read limit. A fresh session should
 read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
-**State (updated 2026-07-04 root-cause session):** main green; suite 3,919
+**State (updated 2026-07-04 root-cause session):** main green; suite 3,928
 collected tests; zero pods/clusters; ledger clean.
 ✅ FlashVSR corruption ROOT-CAUSED AND FIXED (`e82b0d1`), verified clean live.
 
