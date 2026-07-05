@@ -50,6 +50,17 @@ def test_model_identity_shape() -> None:
     assert e.model_identity(_cfg(precision="fp32")) == "flashvsr-wan21-fp32"
 
 
+def test_supported_scales_declares_native_4x() -> None:
+    """FlashVSR declares its native 4x factor so height targets resolve.
+
+    Bug caught (live smoke 2026-07-05): an empty supported_scales tuple made
+    UpscaleStage's height resolver raise 'supported_factors must be non-empty'
+    after a full 16-min provision+inference. The 4x native lock must be
+    declared, not left as the accept-any sentinel.
+    """
+    assert FlashVSREngine().supported_scales == (ScaleTarget(kind="factor", value=4.0),)
+
+
 def test_render_provision_step_order() -> None:
     """RED: SM80+ guard first, BSA wheel fetched + installed before FlashVSR,
     HF_HUB_OFFLINE tail.
