@@ -1,0 +1,85 @@
+# Upscale-only FlashVSR cfg on the TORCH 2.6 stack (F-multi's engine stack,
+# entry #14) — created for the 2026-07-04 corruption root-cause session so
+# the new-stack upscale path can be A/B'd against upscale-flashvsr-x4.yaml
+# (the torch 2.4.1 / bsa-cu128 stack of entry #13) without booting a full
+# co-resident Wan pod.
+#
+# Engine block mirrors wan-with-upscale-flashvsr.yaml exactly (image,
+# torch trio, bsa-cu124-torch2.6-v1 wheel); everything else mirrors
+# upscale-flashvsr-x4.yaml (upscale_only, no models, A100 80GB).
+#
+# Usage:
+#   pixi run kinoforge upscale \
+#     --config examples/configs/upscale-flashvsr-x4-torch26.yaml \
+#     --video /path/to/clip.mp4
+
+engine:
+  kind: diffusers
+  precision: bfloat16
+  diffusers:
+    # MUST match compute.image below (BSA torch-ABI lockstep — see
+    # wan-with-upscale-flashvsr.yaml for the full T8 history).
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # torch 2.6.0+cu124 trio — the bsa-cu124-torch2.6-v1 wheel below
+      # was built against exactly this torch.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      # diffsynth module-top `from modelscope import snapshot_download`.
+      - "modelscope"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  cloud_type: secure
+  warm_reuse_auto_attach: true
+  requirements:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 2.50
+    disk_gb: 60
+    gpu_preference:
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA H100 80GB HBM3"
+  lifecycle:
+    boot_timeout: 15m
+    idle_timeout: 30m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 90m
+    budget: 2.0
+    heartbeat_interval_s: 30
+
+spec:
+  model: "flashvsr-wan21-bfloat16"
+
+upscale:
+  engine: flashvsr
+  scale: 4x
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    # torch 2.6.0+cu124 BSA build — matches the pip torch pin above.
+    bsa_wheel_url: "https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu124-torch2.6-v1/block_sparse_attn-0.0.1-cp311-cp311-linux_x86_64.whl"
+    precision: bfloat16
+    window_size: 24
+    tile_size: 512
+    long_video_mode: false
