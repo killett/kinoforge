@@ -16,9 +16,9 @@ This file exceeds the 256 KB single-read limit. A fresh session should
 read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
-**State (updated 2026-07-04 frame-QA session):** main green; suite 3,918
-collected tests after the frames additions; zero pods/clusters; ledger clean.
-⚠️ FlashVSR upscaler produces corrupted video — root-cause is the next action.
+**State (updated 2026-07-04 root-cause session):** main green; suite 3,919
+collected tests; zero pods/clusters; ledger clean.
+✅ FlashVSR corruption ROOT-CAUSED AND FIXED (`e82b0d1`), verified clean live.
 
 **Everything through 2026-07-04 is SHIPPED**, including: FlashVSR 4x
 upscaler + co-resident Wan↔FlashVSR multi-stage + warm-reuse re-generate
@@ -29,19 +29,37 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION: root-cause the FlashVSR visual corruption.**
-The 2026-07-04 frame-extraction QA (see § Frame-extraction QA below) found
-EVERY surviving FlashVSR upscale (all 7 from the 2026-07-03 evening session,
-entries #13/#14) is psychedelic false-color garbage — scene silhouette
-preserved, colors/texture destroyed. Facts established: sources (Wan 480²)
-clean; spandrel upscale through the same encode path clean; upscale mp4s are
-plain yuv420p/h264 with no exotic color metadata (so extraction is faithful —
-any player shows the same); `_input_prep.py` [-1,1] in / `_runtime.py`
-(x+1)*127.5 out are symmetric. Prime suspects: `bsa-cu124-torch2.6-v1` wheel
-numerics vs the entry-#13 torch-2.4.1 stack (entry #13's own artifacts were
-deleted un-inspected, so "FlashVSR ever worked" is UNVERIFIED), VAE decode
-path, or bfloat16 precision loss. Needs a live pod to debug; consider a
-single-frame/CPU repro first. Entries #13/#14 carry ⚠️ QUALITY FLAGs.
+**SINGLE NEXT ACTION:** none urgent — pick from the gated table below, or
+re-fire the F-multi co-resident smoke to regenerate the 7 corrupt session
+upscales with the fix (optional; the fix is already live-verified on the
+F-multi source clip).
+
+**FlashVSR corruption — ROOT-CAUSED AND FIXED 2026-07-04 (~$0.55 debug spend):**
+
+- **Root cause:** `_fetch_weights` gated `LQ_proj_in.ckpt` behind
+  `long_video_mode` — every cfg runs `long_video_mode: false`, so the ckpt
+  was never downloaded and `_runtime`'s upstream-copied `if lq_ckpt.exists()`
+  guard silently skipped the load. The Causal_LQ4x_Proj that injects the LQ
+  video into EVERY DiT block ran with RANDOM weights on every pod since
+  entry #13. Structured psychedelic garbage; adain color_fix amplified it.
+- **Evidence chain:** old-stack (torch 2.4.1 + cu128 wheel, entry-#13 cfg)
+  repro `20260704-220357` equally corrupt → killed the torch-2.6/BSA-wheel
+  regression theory. color_fix=False output was a washed-out ghost
+  (std 0.147, no NaN). Pod bootstrap.log showed only 2 of 3 `wrote` lines.
+  BSA python surface identical between pinned 3453bbb1 and main (128-blocks,
+  same signature) — BSA exonerated.
+- **Fix (`e82b0d1`):** `LQ_proj_in.ckpt` → `_BASE_FILES` (TCDecoder stays
+  long-video-gated); `FlashVSRRuntime` now raises `FlashVSRWeightsIncomplete`
+  at construction when the ckpt is missing. Silent-fallback footgun deleted.
+- **Verified:** pod `thtta0gl4zuyo0` fetched all 3 weights (sha `d6d011cd`),
+  produced `output/20260704-222558_upscaled_flashvsr_...mp4` — frame-QA'd
+  per the new CLAUDE.md rule: sharp, color-correct, temporally coherent 4x
+  of the F-multi Wan clip. Pod destroyed; ledger clean.
+- **Debug instrumentation kept:** `FlashVSRParams.pipe_overrides` /
+  `attention_impl="dense"` (fp32 q-chunked BSA-bypass) / `debug_stats`
+  (`cbbe957`, `093535c`); `tools/flashvsr_debug_matrix.py` drives variant
+  A/Bs against a warm pod; `examples/configs/upscale-flashvsr-x4-torch26.yaml`
+  is the torch-2.6 upscale-only stack for future A/Bs.
 
 **Frame-extraction QA — DONE 2026-07-04 (was the user-directed next action):**
 

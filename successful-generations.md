@@ -2079,7 +2079,15 @@ Key learnings for future FlashVSR / diffsynth-based upscalers:
   preserved; unusable as video. This entry's own artifacts (`20260703-1203*/1213*`) were
   deleted before any frame-level inspection, so the original torch-2.4.1/cu128-wheel
   output is unverifiable. Green here means orchestration + dims only, NOT visual output.
-  Root-cause open — see PROGRESS.md RESUME SNAPSHOT next action.
+- **✅ RESOLVED (2026-07-04 root-cause session, `e82b0d1`):** `_fetch_weights` classified
+  `LQ_proj_in.ckpt` as long-video-only, so every `long_video_mode: false` pod (i.e. all
+  of them) ran the LQ conditioning projection with RANDOM weights — the runtime's
+  upstream-copied `if lq_ckpt.exists()` guard silently skipped the load. Corruption was
+  stack-independent (old-stack repro `20260704-220357` equally corrupt). Fix: ckpt moved
+  to the base bundle + runtime hard-fails on a missing ckpt. Verified clean:
+  `output/20260704-222558_upscaled_flashvsr_...mp4` (1920², 4x of `20260703-220726`,
+  frame-QA'd — sharp, color-correct, temporally coherent). See also: 2026-07-04 22:25
+  re-fire of this tuple, pod `thtta0gl4zuyo0`, ~3.5 min, destroyed clean.
 
 
 ---
@@ -2152,9 +2160,13 @@ One 80 GB card cannot hold Wan 2.2 A14B (~74 GiB resident) and FlashVSR (~9 GiB 
   session — are **visually corrupted**: severe false-color/channel-scramble noise over a
   preserved scene silhouette. The Wan stage outputs (`220726`, `221416`) are clean, and a
   spandrel upscale (`20260630-221907`) through the same encode path is clean, so the
-  corruption is FlashVSR-stage specific (prime suspects: bsa-cu124-torch2.6-v1 wheel /
-  torch 2.6 numerics vs the entry-#13 torch-2.4.1 stack, or VAE decode). The multi-stage +
-  warm-reuse ORCHESTRATION this entry records is real; the upscaled pixels are not usable.
+  corruption is FlashVSR-stage specific. The multi-stage + warm-reuse ORCHESTRATION this
+  entry records is real; the upscaled pixels are not usable.
+- **✅ RESOLVED (2026-07-04, `e82b0d1`):** root cause was a missing `LQ_proj_in.ckpt`
+  (mis-gated behind `long_video_mode` in `_fetch_weights`) leaving the LQ conditioning
+  projection random-init — NOT the BSA wheel or torch 2.6 (old stack reproduced the same
+  corruption). Fixed + verified clean on this entry's own F-multi source clip:
+  `output/20260704-222558_upscaled_flashvsr_...mp4` (frame-QA'd sharp/color-correct).
 
 ---
 
