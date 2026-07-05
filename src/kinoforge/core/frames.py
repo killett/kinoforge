@@ -1,13 +1,16 @@
-"""Shared ffmpeg-based last-frame decoder used by every real engine.
+"""Shared ffmpeg-based frame decoders used by every real engine.
 
 Engines call `ffmpeg_last_frame(video_bytes)` to get the last frame as PNG
-bytes; the subprocess seam is injectable so tests never spawn a real ffmpeg.
+bytes; QA tooling calls `ffmpeg_frames_by_count` / `ffmpeg_frames_by_interval`
+to pull evenly spread frames from an on-disk video. Subprocess and ffprobe
+seams are injectable so tests never spawn real binaries.
 """
 
 from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 
 from kinoforge.core.errors import FrameExtractionError
 
@@ -79,3 +82,168 @@ def ffmpeg_last_frame(
             single failure type is needed.
     """
     return run(_FFMPEG_ARGV, video_bytes)
+
+
+_FRAME_OUTPUT_ARGV: list[str] = [
+    "-frames:v",
+    "1",
+    "-f",
+    "image2pipe",
+    "-vcodec",
+    "png",
+    "pipe:1",
+]
+
+
+def _argv_at(video_path: str, timestamp_s: float) -> list[str]:
+    """Build the ffmpeg argv extracting one PNG frame at *timestamp_s*.
+
+    Args:
+        video_path: Path to the video file on disk.
+        timestamp_s: Seek position in seconds from the start.
+
+    Returns:
+        The full ffmpeg argv.
+    """
+    return [
+        "ffmpeg",
+        "-ss",
+        f"{timestamp_s:.6f}",
+        "-i",
+        video_path,
+        *_FRAME_OUTPUT_ARGV,
+    ]
+
+
+def _argv_last(video_path: str) -> list[str]:
+    """Build the ffmpeg argv extracting the last frame of *video_path*.
+
+    Same `-sseof -1` semantics as `ffmpeg_last_frame`, reading from a path
+    instead of stdin.
+
+    Args:
+        video_path: Path to the video file on disk.
+
+    Returns:
+        The full ffmpeg argv.
+    """
+    return ["ffmpeg", "-sseof", "-1", "-i", video_path, *_FRAME_OUTPUT_ARGV]
+
+
+def _default_probe_duration(video_path: str | Path) -> float:
+    """Probe the container duration of *video_path* in seconds via ffprobe.
+
+    Args:
+        video_path: Path to the video file on disk.
+
+    Returns:
+        Duration in seconds.
+
+    Raises:
+        FrameExtractionError: ffprobe missing from PATH, non-zero exit, or
+            output that does not parse as a float (e.g. ``N/A`` for streams
+            without a container duration).
+    """
+    argv = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        str(video_path),
+    ]
+    try:
+        proc = subprocess.run(argv, capture_output=True, check=False)  # noqa: S603
+    except FileNotFoundError as exc:
+        raise FrameExtractionError(f"ffprobe not found on PATH: {exc}") from exc
+    if proc.returncode != 0:
+        stderr_snip = proc.stderr.decode(errors="replace")[:512]
+        raise FrameExtractionError(f"ffprobe exit {proc.returncode}: {stderr_snip}")
+    raw = proc.stdout.decode(errors="replace").strip()
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise FrameExtractionError(
+            f"unparseable ffprobe duration {raw!r} for {video_path}"
+        ) from exc
+
+
+def ffmpeg_frames_by_count(
+    video_path: str | Path,
+    total: int,
+    *,
+    run: Callable[[list[str], bytes], bytes] = _default_run,
+    probe: Callable[[str | Path], float] = _default_probe_duration,
+) -> list[bytes]:
+    """Extract *total* PNG frames evenly spread through *video_path*.
+
+    Frames are the first frame, the last frame, and ``total - 2`` frames
+    evenly spaced between them. ``total == 1`` returns just the last frame
+    (matching `ffmpeg_last_frame` semantics) and never probes duration.
+
+    Args:
+        video_path: Path to the video file on disk.
+        total: Number of frames to extract; must be >= 1.
+        run: Injectable subprocess seam ``(argv, stdin) -> stdout``.
+        probe: Injectable duration seam ``(video_path) -> seconds``.
+
+    Returns:
+        PNG-encoded frames as bytes, in temporal order.
+
+    Raises:
+        ValueError: ``total`` is less than 1.
+        FrameExtractionError: The default seams hit a missing binary,
+            non-zero exit, or unparseable ffprobe output.
+    """
+    if total < 1:
+        raise ValueError(f"total must be >= 1, got {total}")
+    path = str(video_path)
+    if total == 1:
+        return [run(_argv_last(path), b"")]
+    duration = probe(video_path)
+    timestamps = [i * duration / (total - 1) for i in range(total - 1)]
+    frames = [run(_argv_at(path, ts), b"") for ts in timestamps]
+    frames.append(run(_argv_last(path), b""))
+    return frames
+
+
+def ffmpeg_frames_by_interval(
+    video_path: str | Path,
+    interval_s: float,
+    *,
+    run: Callable[[list[str], bytes], bytes] = _default_run,
+    probe: Callable[[str | Path], float] = _default_probe_duration,
+) -> list[bytes]:
+    """Extract a PNG frame every *interval_s* seconds plus the last frame.
+
+    Frames are taken at t=0, t=interval_s, t=2*interval_s, ... for every
+    grid point strictly before the video duration, and the last frame is
+    always appended as the final entry.
+
+    Args:
+        video_path: Path to the video file on disk.
+        interval_s: Seconds between frames; must be > 0.
+        run: Injectable subprocess seam ``(argv, stdin) -> stdout``.
+        probe: Injectable duration seam ``(video_path) -> seconds``.
+
+    Returns:
+        PNG-encoded frames as bytes, in temporal order.
+
+    Raises:
+        ValueError: ``interval_s`` is not positive.
+        FrameExtractionError: The default seams hit a missing binary,
+            non-zero exit, or unparseable ffprobe output.
+    """
+    if interval_s <= 0:
+        raise ValueError(f"interval_s must be > 0, got {interval_s}")
+    path = str(video_path)
+    duration = probe(video_path)
+    frames: list[bytes] = []
+    k = 0
+    while k * interval_s < duration:
+        frames.append(run(_argv_at(path, k * interval_s), b""))
+        k += 1
+    frames.append(run(_argv_last(path), b""))
+    return frames
