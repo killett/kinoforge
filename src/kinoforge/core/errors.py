@@ -419,6 +419,30 @@ class UnsupportedScaleError(KinoforgeError):
         self.engine_name = engine_name
 
 
+class ScaleUnsatisfiableError(KinoforgeError):
+    """No supported upscale factor can reach the requested height target.
+
+    Raised by :func:`kinoforge.core.scale_resolver.resolve_height_target` when
+    even the largest declared factor leaves the output below the requested
+    vertical resolution. Carries full context for post-mortem without session
+    memory.
+    """
+
+    def __init__(
+        self, source_h: int, largest_factor: float, reached_h: int, requested_h: int
+    ) -> None:
+        """Record source height, largest factor, reached height, and target."""
+        super().__init__(
+            f"no supported factor reaches {requested_h}p: source {source_h}p x "
+            f"largest factor {largest_factor:g} = {reached_h}p (< {requested_h}p); "
+            f"use a larger-factor engine"
+        )
+        self.source_h = source_h
+        self.largest_factor = largest_factor
+        self.reached_h = reached_h
+        self.requested_h = requested_h
+
+
 class UpscaleFailed(KinoforgeError):
     """Server-side upscale job entered an error state."""
 
