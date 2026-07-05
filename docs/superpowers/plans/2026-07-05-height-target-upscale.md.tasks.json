@@ -43,8 +43,14 @@
       "id": 6,
       "subject": "Task 6: Live FlashVSR height-target smoke + frame-QA",
       "status": "pending",
-      "blockedBy": [3, 4, 5],
+      "blockedBy": [3, 4, 5, 7],
       "description": "USER-ORDERED GATE. Live flashvsr scale=1080p on 480p source; --no-reuse; RED scaffold committed before spend; preflight; poll GPU/cost; ffprobe height==1080; 5-frame contact-sheet QA; verify teardown via kinoforge list; log successful-generations.md.\n\n```json:metadata\n{\"files\": [\"examples/configs/upscale-flashvsr-1080p.yaml\", \"tests/live/test_flashvsr_height_target_live.py\", \"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 <out>.mp4\", \"acceptanceCriteria\": [\"RED scaffold committed before spend\", \"preflight exit 0\", \"delivered mp4 height==1080 aspect preserved\", \"5-frame contact sheet QA'd high quality, verdict recorded\", \"kinoforge list clean + pod destroyed\", \"successful-generations.md entry added\"], \"modelTier\": \"standard\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"single\", \"requiresUserSpecification\": false}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: gzip provision script under RunPod env-size limit",
+      "status": "completed",
+      "description": "gzip base64 provision script in _create_pod so total env stays under RunPod's ~101KB create limit (was 500ing at 101,971 bytes). dockerArgs base64 -d | gzip -d.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod_provision_script.py\"], \"verifyCommand\": \"pixi run test tests/providers/test_runpod_provision_script.py -v\", \"acceptanceCriteria\": [\"env value = base64(gzip(script)) round-trips\", \"dockerArgs uses base64 -d | gzip -d\", \"large script encodes <half plain-base64 size\", \"existing provider tests green\"], \"modelTier\": \"standard\"}\n```"
     }
   ],
   "lastUpdated": "2026-07-05"
