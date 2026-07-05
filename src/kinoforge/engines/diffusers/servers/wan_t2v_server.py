@@ -1785,6 +1785,12 @@ class FlashVSRParams(BaseModel):
     window_size: int = 24
     tile_size: int = 0
     long_video_mode: bool = False
+    # Debug-matrix knobs (2026-07-04 corruption root-cause session):
+    # per-request pipe kwarg overrides, dense-attention BSA bypass, and
+    # tensor-stats logging. None/False = production baseline unchanged.
+    pipe_overrides: dict[str, Any] | None = None
+    attention_impl: Literal["bsa", "dense"] | None = None
+    debug_stats: bool = False
 
 
 class UpscaleRequest(BaseModel):

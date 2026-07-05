@@ -34,6 +34,106 @@ _KV_RATIO = 3.0
 _LOCAL_RANGE = 11
 
 
+#: Token block size of the Block-Sparse-Attention kernel. FlashVSR derives
+#: its block mask over 128-token blocks (window_size = win_f*h*w // 128 in
+#: wan_video_dit.model_fn_wan_video); the dense fallback expands the mask
+#: back to token granularity with the same constant.
+_BSA_BLOCK_SIZE = 128
+
+
+def _dense_masked_attention(
+    q: Any,  # noqa: ANN401
+    k: Any,  # noqa: ANN401
+    v: Any,  # noqa: ANN401
+    num_heads: int,
+    attention_mask: Any,  # noqa: ANN401
+    block_size: int = _BSA_BLOCK_SIZE,
+) -> Any:  # noqa: ANN401
+    """Dense reference implementation of BSA's masked attention.
+
+    Debug-only path for the corruption root-cause matrix: computes exact
+    softmax attention in fp32 with the block mask expanded to token
+    granularity, replacing the ``block_sparse_attn_func`` CUDA kernel. Slow
+    and memory-hungry by design — evidence quality over speed.
+
+    Args:
+        q: Query tensor ``(B, S_q, num_heads*d)`` (already RoPE'd +
+            window-reordered by the caller, same as the BSA path receives).
+        k: Key tensor ``(B, S_kv, num_heads*d)``.
+        v: Value tensor ``(B, S_kv, num_heads*d)``.
+        num_heads: Attention head count.
+        attention_mask: Boolean block mask ``(B, num_heads, Qb, Kb)`` over
+            ``block_size``-token blocks (True = attend).
+        block_size: Tokens per mask block.
+
+    Returns:
+        Attention output ``(B, S_q, num_heads*d)`` in ``q``'s dtype.
+    """
+    import torch
+
+    bsz, s_q, dim = q.shape
+    d = dim // num_heads
+    s_kv = k.shape[1]
+    qh = q.view(bsz, s_q, num_heads, d).permute(0, 2, 1, 3).float()
+    kh = k.view(bsz, s_kv, num_heads, d).permute(0, 2, 1, 3).float()
+    vh = v.view(bsz, s_kv, num_heads, d).permute(0, 2, 1, 3).float()
+
+    mask_tok = attention_mask.repeat_interleave(block_size, dim=-2)
+    mask_tok = mask_tok.repeat_interleave(block_size, dim=-1)
+    mask_tok = mask_tok[:, :, :s_q, :s_kv].to(torch.bool)
+
+    scale = d**-0.5
+    out = torch.empty_like(qh)
+    # Per-head loop keeps peak memory at one (S_q, S_kv) fp32 score matrix.
+    for h in range(num_heads):
+        scores = torch.einsum("bqd,bkd->bqk", qh[:, h], kh[:, h]) * scale
+        scores = scores.masked_fill(~mask_tok[:, h], float("-inf"))
+        attn = torch.softmax(scores, dim=-1)
+        # Rows whose mask is entirely False softmax to NaN — zero them so
+        # they contribute nothing (matches the sparse kernel's behaviour).
+        attn = torch.nan_to_num(attn, nan=0.0)
+        out[:, h] = torch.einsum("bqk,bkd->bqd", attn, vh[:, h])
+    return out.permute(0, 2, 1, 3).reshape(bsz, s_q, dim).to(q.dtype)
+
+
+def _make_dense_flash_attention(orig: Any) -> Any:  # noqa: ANN401
+    """Wrap wan_video_dit.flash_attention, replacing only the masked branch.
+
+    Unmasked calls (cross-attention, any non-BSA path) delegate to the
+    original so the experiment isolates exactly one variable: the
+    block-sparse CUDA kernel.
+
+    Args:
+        orig: The original ``flash_attention`` function being replaced.
+
+    Returns:
+        A drop-in replacement callable.
+    """
+
+    def patched(
+        q: Any = None,  # noqa: ANN401
+        k: Any = None,  # noqa: ANN401
+        v: Any = None,  # noqa: ANN401
+        num_heads: int = 0,
+        compatibility_mode: bool = False,
+        attention_mask: Any = None,  # noqa: ANN401
+        return_KV: bool = False,  # noqa: N803 — upstream kwarg name
+    ) -> Any:  # noqa: ANN401
+        if attention_mask is not None:
+            return _dense_masked_attention(q, k, v, num_heads, attention_mask)
+        return orig(
+            q=q,
+            k=k,
+            v=v,
+            num_heads=num_heads,
+            compatibility_mode=compatibility_mode,
+            attention_mask=attention_mask,
+            return_KV=return_KV,
+        )
+
+    return patched
+
+
 class FlashVSRRuntime:
     """Loads FlashVSR weights + runs streaming VSR via diffsynth.
 
@@ -196,6 +296,13 @@ class FlashVSRRuntime:
 
         import torch
 
+        attention_impl = params.get("attention_impl")
+        if attention_impl not in (None, "bsa", "dense"):
+            raise ValueError(
+                f"attention_impl must be 'bsa', 'dense', or absent; "
+                f"got {attention_impl!r}"
+            )
+
         lq, th, tw, num_frames, fps = prepare_input_tensor(
             str(video_path), scale=int(self._native_scale)
         )
@@ -203,25 +310,43 @@ class FlashVSRRuntime:
         # sparse_ratio * 768 * 1280 / (th * tw) with sparse_ratio=2.0.
         topk_ratio = _SPARSE_RATIO * 768 * 1280 / (th * tw)
 
-        with torch.no_grad():
-            out_tensor = self._pipe(
-                prompt="",
-                negative_prompt="",
-                cfg_scale=1.0,
-                num_inference_steps=1,
-                seed=0,
-                tiled=bool(self._tile),
-                LQ_video=lq,
-                num_frames=num_frames,
-                height=th,
-                width=tw,
-                is_full_block=False,
-                if_buffer=True,
-                topk_ratio=topk_ratio,
-                kv_ratio=_KV_RATIO,
-                local_range=_LOCAL_RANGE,
-                color_fix=True,
-            )
+        pipe_kwargs: dict[str, Any] = {
+            "prompt": "",
+            "negative_prompt": "",
+            "cfg_scale": 1.0,
+            "num_inference_steps": 1,
+            "seed": 0,
+            "tiled": bool(self._tile),
+            "LQ_video": lq,
+            "num_frames": num_frames,
+            "height": th,
+            "width": tw,
+            "is_full_block": False,
+            "if_buffer": True,
+            "topk_ratio": topk_ratio,
+            "kv_ratio": _KV_RATIO,
+            "local_range": _LOCAL_RANGE,
+            "color_fix": True,
+        }
+        # Debug-matrix seam: per-request kwargs replace the baseline above.
+        pipe_kwargs.update(params.get("pipe_overrides") or {})
+
+        dit_mod: Any = None
+        orig_flash_attention: Any = None
+        if attention_impl == "dense":
+            import importlib
+
+            dit_mod = importlib.import_module("diffsynth.models.wan_video_dit")
+            orig_flash_attention = dit_mod.flash_attention
+            dit_mod.flash_attention = _make_dense_flash_attention(orig_flash_attention)
+            _log.info("flashvsr: attention_impl=dense — BSA kernel bypassed")
+
+        try:
+            with torch.no_grad():
+                out_tensor = self._pipe(**pipe_kwargs)
+        finally:
+            if dit_mod is not None:
+                dit_mod.flash_attention = orig_flash_attention
 
         out = video_path.with_suffix(".flashvsr.mp4")
         # Upstream tensor2video: rearrange "C T H W -> T H W C", denormalise
@@ -230,6 +355,21 @@ class FlashVSRRuntime:
         import numpy as np
 
         arr: Any = out_tensor.cpu().float().numpy()
+        if params.get("debug_stats"):
+            try:
+                _stats_arr = np.asarray(arr, dtype=np.float32)
+                _log.info(
+                    "flashvsr debug_stats output shape=%s min=%.6f max=%.6f "
+                    "mean=%.6f std=%.6f nan_count=%d",
+                    tuple(_stats_arr.shape),
+                    float(np.nanmin(_stats_arr)),
+                    float(np.nanmax(_stats_arr)),
+                    float(np.nanmean(_stats_arr)),
+                    float(np.nanstd(_stats_arr)),
+                    int(np.isnan(_stats_arr).sum()),
+                )
+            except Exception:  # noqa: BLE001 — diagnostics must never kill the job
+                _log.exception("flashvsr debug_stats failed (non-fatal)")
         # Upstream tensor2video expects (C, T, H, W). Some FlashVSR
         # pipeline paths return the 4D version, others return (1, C, T,
         # H, W). Reduce to 4D (C, T, H, W) before denorm+rearrange.
