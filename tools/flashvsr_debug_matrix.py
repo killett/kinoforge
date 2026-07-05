@@ -148,7 +148,13 @@ def main() -> int:
     provider = RunPodProvider(creds=EnvCredentialProvider())
     inst = provider.get_instance(args.pod_id)
     endpoints = inst.endpoints or {}
-    base = (endpoints.get("8000") or next(iter(endpoints.values()))).rstrip("/")
+    base = endpoints.get("8000") or next(
+        iter(endpoints.values()),
+        # get_instance's raw GraphQL shape carries no endpoints; the RunPod
+        # HTTP proxy URL is deterministic from pod id + port.
+        f"https://{args.pod_id}-8000.proxy.runpod.net",
+    )
+    base = base.rstrip("/")
     _log(f"pod={args.pod_id} base={base}")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
