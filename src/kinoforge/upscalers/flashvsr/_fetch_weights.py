@@ -28,11 +28,18 @@ from pathlib import Path
 # (via splitter self-registration), which is the exact bloat the pod-safe
 # embed shape MUST NOT drag along (see P2 64 KB env-var ceiling incident).
 
+# LQ_proj_in.ckpt is a BASE file: upstream init_pipeline loads it for EVERY
+# FlashVSRFullPipeline mode. It was originally gated behind long_video_mode
+# here, which left the LQ conditioning projection randomly initialised on
+# every long_video_mode=false pod — the 2026-07-04 corruption root cause
+# (all entry #13/#14 outputs were structured psychedelic garbage while the
+# smokes stayed green on exit-code + dims).
 _BASE_FILES = (
     "diffusion_pytorch_model_streaming_dmd.safetensors",
     "Wan2.1_VAE.pth",
+    "LQ_proj_in.ckpt",
 )
-_LONG_VIDEO_FILES = ("LQ_proj_in.ckpt", "TCDecoder.ckpt")
+_LONG_VIDEO_FILES = ("TCDecoder.ckpt",)
 
 _HF_REF_RE = re.compile(r"^hf:([^/]+/[^/]+)$")
 _HF_BASE = "https://huggingface.co"

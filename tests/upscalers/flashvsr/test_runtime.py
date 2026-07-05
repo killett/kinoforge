@@ -134,6 +134,20 @@ class _StubModelManager:
         self.loaded.extend(paths)
 
 
+@pytest.fixture(autouse=True)
+def lq_ckpt_present(tmp_path: Path) -> Path:
+    """Stage a dummy LQ_proj_in.ckpt so constructions don't hard-fail.
+
+    FlashVSRRuntime refuses to construct without the checkpoint (a missing
+    file used to mean a silently random-initialised LQ projection — the
+    2026-07-04 corruption root cause). Tests exercising other behaviour
+    get the file for free; the missing-ckpt test deletes it explicitly.
+    """
+    ckpt = tmp_path / "LQ_proj_in.ckpt"
+    ckpt.write_bytes(b"DUMMY-CKPT")
+    return ckpt
+
+
 @pytest.fixture()
 def stub_diffsynth(monkeypatch: pytest.MonkeyPatch) -> None:
     """Install stubs for diffsynth + torch + imageio for unit-test isolation."""
@@ -944,3 +958,23 @@ def test_upscale_debug_stats_logs_output_stats(
     line = stats_lines[0]
     for token in ("min=", "max=", "mean=", "nan_count="):
         assert token in line, f"stats line must include {token}; got: {line}"
+
+
+def test_construct_missing_lq_ckpt_raises(
+    stub_diffsynth: None, tmp_path: Path, lq_ckpt_present: Path
+) -> None:
+    """Constructing without LQ_proj_in.ckpt raises FlashVSRWeightsIncomplete.
+
+    Bug caught: the upstream-copied `if lq_ckpt.exists()` guard silently
+    skipped the load when the fetch step didn't stage the file — the LQ
+    conditioning projection ran RANDOM-INIT and every FlashVSR output was
+    structured psychedelic garbage (25 green-looking smokes, ~$3, entries
+    #13/#14). Missing weights must be loud, not a quality regression.
+    """
+    from kinoforge.core.errors import FlashVSRWeightsIncomplete
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    lq_ckpt_present.unlink()
+
+    with pytest.raises(FlashVSRWeightsIncomplete, match="LQ_proj_in.ckpt"):
+        FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
