@@ -16,8 +16,9 @@ This file exceeds the 256 KB single-read limit. A fresh session should
 read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
-**State:** main green on CI (11 consecutive pushes through `797e013`);
-suite 3,906 collected tests (3,780+ executed non-live); zero pods/clusters; ledger clean; working tree clean.
+**State (updated 2026-07-04 frame-QA session):** main green; suite 3,918
+collected tests after the frames additions; zero pods/clusters; ledger clean.
+⚠️ FlashVSR upscaler produces corrupted video — root-cause is the next action.
 
 **Everything through 2026-07-04 is SHIPPED**, including: FlashVSR 4x
 upscaler + co-resident Wan↔FlashVSR multi-stage + warm-reuse re-generate
@@ -28,29 +29,35 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION (user-directed, 2026-07-04 ~05:45 PDT) — do this FIRST next session:**
+**SINGLE NEXT ACTION: root-cause the FlashVSR visual corruption.**
+The 2026-07-04 frame-extraction QA (see § Frame-extraction QA below) found
+EVERY surviving FlashVSR upscale (all 7 from the 2026-07-03 evening session,
+entries #13/#14) is psychedelic false-color garbage — scene silhouette
+preserved, colors/texture destroyed. Facts established: sources (Wan 480²)
+clean; spandrel upscale through the same encode path clean; upscale mp4s are
+plain yuv420p/h264 with no exotic color metadata (so extraction is faithful —
+any player shows the same); `_input_prep.py` [-1,1] in / `_runtime.py`
+(x+1)*127.5 out are symmetric. Prime suspects: `bsa-cu124-torch2.6-v1` wheel
+numerics vs the entry-#13 torch-2.4.1 stack (entry #13's own artifacts were
+deleted un-inspected, so "FlashVSR ever worked" is UNVERIFIED), VAE decode
+path, or bfloat16 precision loss. Needs a live pod to debug; consider a
+single-frame/CPU repro first. Entries #13/#14 carry ⚠️ QUALITY FLAGs.
 
-1. **Extend `src/kinoforge/core/frames.py` with multi-frame extraction** (TDD;
-   `ffmpeg_last_frame` stays as-is for the continuity path). New API, two modes:
-   - **Count mode** — caller asks for `total` frames evenly spread through the
-     video: first frame + last frame + (`total` − 2) evenly spaced between.
-     `total == 1` → just the last frame (matches existing behaviour).
-   - **Interval mode** — caller asks for a frame every `N` seconds: first
-     frame, then t=N, t=2N, …, and ALWAYS the last frame as the final entry.
-   Returns PNG bytes per frame (list, in temporal order). Probe duration via
-   ffprobe; seam-injectable like the existing function.
-2. **Use it to visually QA EVERY video generated this session** (19 mp4s in
-   `output/`, timestamps `20260703-1936*` through `20260704-0129*`: 8 Wan 480²
-   T2V clips, 8 FlashVSR 1920² upscales incl. the F-multi/F-warm pair, the
-   keyframe→i2v clip `20260704-005021`, the flf2v morph `20260704-012958`).
-   Extract frames (count mode, ~5/video is a good default), Read them, judge
-   like the entry-#18 keyframe review (artifacts, coherence, prompt adherence,
-   upscale fidelity vs the 480² sibling), and record verdicts — flag anything
-   NOT high quality against its successful-generations entry.
-3. **Add a CLAUDE.md rule**: run this automated frame-extraction quality check
-   on EVERY test output video going forward — outputs get eyeballed by Claude
-   BEFORE the operator ever sees them. A live smoke is not "green" on exit
-   code + ffprobe dims alone.
+**Frame-extraction QA — DONE 2026-07-04 (was the user-directed next action):**
+
+1. `ffmpeg_frames_by_count` + `ffmpeg_frames_by_interval` shipped in
+   `core/frames.py` (TDD, 12 new tests, `ee02c04`).
+2. All 19 session videos QA'd via 5-frame contact sheets. Verdicts:
+   - **10 Wan 2.2 T2V 480² clips (1936–2214): PASS.** Coherent, prompt-adherent
+     (meadow/waterfall/woman/wisps). Nits only: `201412` oversaturated light
+     ribbons; `203344` woman seated not turning, dark grade; `210343` oversized
+     glowing-butterfly blobs late in clip.
+   - **7 FlashVSR 1920² upscales (2040–2217): FAIL — all corrupted** (above).
+   - **i2v `20260704-005021`: PASS** — matches Luma keyframe scene, push-in to
+     close-up per prompt. **flf2v `20260704-012958`: PASS** — clean cat→tiger
+     morph, endpoints match keyframes.
+3. CLAUDE.md rule added: mandatory frame-extraction visual QA on every output
+   video before reporting a smoke green.
 
 **Other open items (gated):**
 

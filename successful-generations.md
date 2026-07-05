@@ -2073,6 +2073,13 @@ Key learnings for future FlashVSR / diffsynth-based upscalers:
 
 - Test fixture source clip is the 480×480 Wan 2.2 output from entry #8. F-multi (Wan generate → FlashVSR upscale on same pod) and F-warm (LRU-hit second generate) live smokes are still xfail-gated (`KINOFORGE_LIVE_SPEND` env var); firing them is deferred to a follow-up session.
 - The 24th manual smoke output at `20260703-120312_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` (35 MB, same tuple) is the FIRST-EVER green FlashVSR generation kinoforge produced; the pytest re-fire at `20260703-121345_...` is the receipt for Task 6 AC.
+- **⚠️ QUALITY FLAG (2026-07-04 frame-extraction QA):** every FlashVSR output still on
+  disk (all 7 upscales from the 2026-07-03 evening session, entries #13/#14 stack) is
+  **visually corrupted** — psychedelic false-color noise with only scene structure
+  preserved; unusable as video. This entry's own artifacts (`20260703-1203*/1213*`) were
+  deleted before any frame-level inspection, so the original torch-2.4.1/cu128-wheel
+  output is unverifiable. Green here means orchestration + dims only, NOT visual output.
+  Root-cause open — see PROGRESS.md RESUME SNAPSHOT next action.
 
 
 ---
@@ -2140,6 +2147,14 @@ One 80 GB card cannot hold Wan 2.2 A14B (~74 GiB resident) and FlashVSR (~9 GiB 
 
 - 13 attempts total for T9; every pipeline component was green by attempt 9 — attempts 9-12 burned on two test-harness assert bugs (slug printed only by the upscale subcommand, not generate) and two RunPod mid-run pod deletions.
 - Known follow-up: Wan reload on promotion drops any live LoRA adapters (stack-replay needed if LoRA + upscale ever compose); RunPod `GpuAvailability` probe still 400s on the new `GpuTypeFilter` schema (nonfatal, logged).
+- **⚠️ QUALITY FLAG (2026-07-04 frame-extraction QA):** both FlashVSR stage outputs
+  (`20260703-221005`, `20260703-221714`) — and all 5 other FlashVSR upscales from this
+  session — are **visually corrupted**: severe false-color/channel-scramble noise over a
+  preserved scene silhouette. The Wan stage outputs (`220726`, `221416`) are clean, and a
+  spandrel upscale (`20260630-221907`) through the same encode path is clean, so the
+  corruption is FlashVSR-stage specific (prime suspects: bsa-cu124-torch2.6-v1 wheel /
+  torch 2.6 numerics vs the entry-#13 torch-2.4.1 stack, or VAE decode). The multi-stage +
+  warm-reuse ORCHESTRATION this entry records is real; the upscaled pixels are not usable.
 
 ---
 
