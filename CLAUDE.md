@@ -212,6 +212,29 @@ It classifies idle pods and reaps them per `Lifecycle()` defaults.
 Useful when running multiple back-to-back smokes where you might
 forget the per-run teardown check.
 
+## Visual QA of every output video (mandatory, before reporting green)
+
+A live smoke is NOT "green" on exit code + ffprobe dims alone. Every
+test/smoke output video MUST be eyeballed by Claude BEFORE the operator
+ever sees it or the run is reported successful:
+
+1. Extract frames with `kinoforge.core.frames.ffmpeg_frames_by_count`
+   (~5 frames is the default; use `ffmpeg_frames_by_interval` for long
+   clips).
+2. Read the frames (a contact-sheet montage keeps context cost at one
+   image per video) and judge like the entry-#18 keyframe review:
+   artifacts, temporal coherence, prompt adherence, and — for upscales —
+   fidelity against the lower-res sibling.
+3. Record the verdict wherever the run is reported (test evidence,
+   `successful-generations.md` entry, PROGRESS note). Anything not
+   clearly high quality gets an explicit ⚠️ flag.
+
+The failure mode this rule exists to prevent: 2026-07-03 FlashVSR
+smokes (entries #13/#14) were reported green on exit code + `1920x1920`
+dims across 24+ attempts and ~$2 of spend — every surviving output was
+psychedelic false-color garbage, caught only by the 2026-07-04
+frame-extraction QA pass. Dims and duration cannot see pixels.
+
 ## Workspace scaffolding
 
 This project has already been scaffolded. The following files
