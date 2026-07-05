@@ -62,6 +62,15 @@ not validated).
 
 ## 5. Architecture
 
+> **Planning-time correction (2026-07-05).** The first draft placed the downscale
+> in a mid-walk `DownscaleStage`. Code review during planning found the upscaled
+> artifact's bytes are pod-side (its `.uri` is a RunPod proxy URL) and only become
+> local in the orchestrator's post-stage *materialize* block; a mid-walk stage
+> would have no local file and re-fetching would double-download the large
+> intermediate. The downscale therefore runs at the **materialize boundary**,
+> driven by the engine's already-returned `output_resolution`. All six locked
+> policy decisions in §4 are unchanged — only the internal seam moved.
+
 Runtime resolution — the source height is unknown until the render stage
 completes, so height→factor resolution happens at **stage-run time**, never at
 config load.
@@ -106,41 +115,81 @@ and `FrameExtractionError` handling.
 
 ### 5.3 `UpscaleStage` height-awareness
 
-`pipeline/upscale.py` — delete the `kind=="height"` raise. On a height target:
+`pipeline/upscale.py` — delete the `kind=="height"` raise. On a height target the
+stage picks a factor, runs the engine, and records the downscale decision for the
+materialize boundary (§5.5). Runtime reality (source bytes/dims are pod-side in
+render+upscale mode; the engine already returns `input_resolution` +
+`output_resolution`) drives two cases:
 
-1. Probe source height (`ffprobe_dims` on `state.artifacts["clip"]`).
-2. `plan = resolve_height_target(h, tuple(s.value for s in engine.supported_scales), requested)`.
-3. `plan.upscale_factor` set → run `engine.upscale` at that factor
-   (`ScaleTarget(kind="factor", value=plan.upscale_factor)`).
-4. `plan.upscale_factor is None` (downscale-only) → skip the engine, pass the
-   clip through.
-5. Always set `artifacts["upscaled"]` (engine output, or the clip when skipped)
-   so downstream keying holds.
+- **Single-factor engine** (FlashVSR `supported_scales=(4x,)`): no pre-run source
+  probe needed — run the sole factor, then read `result.output_resolution[1]`.
+  `output_h < requested` → raise `ScaleUnsatisfiableError`; `output_h > requested`
+  → `downscale_to=requested`; `==` → no downscale.
+- **Multi-factor engine** (seedvr2 `(2x,4x)`, spandrel per-model): pre-select the
+  smallest sufficient factor via `resolve_height_target`. `source_h` comes from
+  `ffprobe_dims` when the source artifact is local (`file://`, the upscale-only
+  path); the downscale decision is confirmed post-run against `output_resolution`.
+  Not live-validated this pass.
 
-`kind="factor"` path unchanged.
+The stage stashes the resolved `downscale_to` (int, or absent) onto
+`artifacts["upscaled"].meta["downscale_to"]` so the materialize step acts without
+re-deciding. Downscale-only (`upscale_factor is None`, source ≥ target) skips the
+engine, passes the clip through as `"upscaled"`, stashes `downscale_to=requested`.
+Always sets `artifacts["upscaled"]`. `kind="factor"` path unchanged.
 
-### 5.4 `DownscaleStage` (new)
+### 5.4 Downscale executor — `pipeline/downscale.py`
 
-`pipeline/downscale.py` — appended only for `kind="height"`. Carries the target
-height. On run: probe `artifacts["upscaled"]` height; if `> requested_h` →
-ffmpeg `scale=-2:{requested_h}:flags=lanczos` (`-2` auto-computes an even width
-with aspect preserved → h264-safe). Idempotent passthrough if already exact.
-Rewrites `artifacts["upscaled"]` with the shrunk file; the large intermediate is
-a temp, discarded.
+A pure helper (NOT a mid-walk Stage — bytes aren't local until the orchestrator
+materializes them, §5.5):
 
-### 5.5 Orchestrator wiring
+```python
+def downscale_video_bytes(
+    video_bytes: bytes, target_h: int,
+    *, run: Callable[[list[str], bytes], bytes] = _default_run,
+) -> bytes: ...
+```
 
-`core/orchestrator.py:1858` (`if cfg.upscale is not None`) — after appending
-`UpscaleStage`, if `ScaleTarget.parse(cfg.upscale.scale).kind == "height"`, also
-append `DownscaleStage(requested_h=…)`. The existing artifact materialization
-(1908–1926) is unchanged — the delivered file stays under `"upscaled"`.
+Runs ffmpeg `scale=-2:{target_h}:flags=lanczos` over stdin→stdout (`-2`
+auto-computes an even width, aspect preserved → h264-safe), reusing the injectable
+`run` seam from `core/frames.py`. Fully offline-testable. The large intermediate is
+the transient input bytes — never a delivered artifact.
 
-### 5.6 Remove stale raises
+### 5.5 Orchestrator materialize-boundary wiring
 
-Drop the `kind=="height"` `NotYetImplementedError` in
-`seedvr2/_runtime.py`, `spandrel/_runtime.py`, `flashvsr/_runtime.py`, and both
-engine `validate_spec`s. Resolution now happens upstream in the stage; runtimes
-only ever receive a concrete factor.
+The delivered upscaled file is fetched to local bytes in the orchestrator's
+post-stage materialize block (`core/orchestrator.py` ~1926–1958) — the first point
+bytes are guaranteed local. Downscale slots here:
+
+1. Obtain local `body` bytes for `state.artifacts["upscaled"]` (fetch when the uri
+   is `http(s)`, read when `file://`).
+2. If `upscaled.meta.get("downscale_to")` is set →
+   `body = downscale_video_bytes(body, downscale_to)` before `sink.publish`.
+3. Publish + replace the artifact uri with the local `file://` path, as today.
+
+Reuses the single existing download (no double-fetch), stays engine-agnostic, keeps
+the delivered file under `"upscaled"`. The block's current `http`-only guard widens
+to "ensure local bytes, then optionally downscale" so a future local-uri upscaler
+also downscales.
+
+### 5.6 Lift the two height refusals; keep engine guards as invariants
+
+Because `UpscaleStage` resolves height → a concrete factor *before* calling the
+engine, the engine/runtime never receive `kind="height"`. Only two refusals must
+be lifted:
+
+1. `pipeline/upscale.py` — replace `UpscaleStage`'s `kind=="height"`
+   `NotYetImplementedError` with the resolution logic of §5.3.
+2. `core/config.py` ~683 — relax `UpscaleConfig._validate_flashvsr_wiring` to
+   accept a height-target `scale`. Guard the existing `parsed.value != 4.0` check
+   behind `parsed.kind == "factor"` (height has no factor value; the native run
+   stays 4×, height is reached by 4× + downscale).
+
+The `kind=="height"` guards in `seedvr2/_runtime.py`, `spandrel/_runtime.py`,
+`flashvsr/_runtime.py`, and the two engine `validate_spec`s are **kept** — they are
+now unreachable-in-normal-flow invariants ("height must be resolved upstream before
+an engine sees it"), i.e. defense in depth. Optionally re-message them from
+"deferred" to "must be resolved upstream", but no functional removal is required.
+This keeps the change surface minimal and the live FlashVSR path low-risk.
 
 ### 5.7 Errors
 
@@ -152,22 +201,23 @@ larger-factor engine.
 ## 6. Data flow
 
 ```
-cfg.upscale.scale = "1080p"
+cfg.upscale.scale = "1080p"   (engine=flashvsr)
   → orchestrator: ScaleTarget.parse → kind="height", value=1080
-  → stages = [ …render…, UpscaleStage(scale=height/1080), DownscaleStage(1080) ]
+  → stages = [ …render…, UpscaleStage(scale=height/1080) ]
   → UpscaleStage.run:
-       source_h = ffprobe_dims(clip).h            # e.g. 480
-       plan = resolve_height_target(480, (4.0,), 1080)
-            → factor=4.0 (1920 ≥ 1080), downscale_to=1080
-       upscaled = engine.upscale(factor=4.0)      # 1920²
-  → DownscaleStage.run:
-       1920 > 1080 → ffmpeg scale=-2:1080:lanczos → 1080p artifact
-  → delivered artifact = 1080p (intermediate 1920² discarded)
+       single-factor engine (4x) → engine.upscale(factor=4.0)   # runs on pod
+       result.output_resolution = (1920,1920)
+       1920 > 1080 → artifacts["upscaled"].meta["downscale_to"] = 1080
+  → orchestrator materialize block:
+       fetch pod bytes → body
+       meta.downscale_to == 1080 → body = downscale_video_bytes(body, 1080)
+       sink.publish(body) → local file://…1080p.mp4
+  → delivered artifact = 1080p (intermediate 1920² bytes discarded)
 ```
 
-Downscale-only example: `source_h=1080, requested=720` →
-`HeightPlan(upscale_factor=None, downscale_to=720)` → GPU skipped, lanczos to
-720p.
+Downscale-only example (`source_h=1080, requested=720`, source local):
+resolver → `HeightPlan(upscale_factor=None, downscale_to=720)` → engine skipped,
+`downscale_to=720` stashed → materialize block lanczos to 720p.
 
 ## 7. Testing (red/green, per `test-design` skill)
 
@@ -180,11 +230,16 @@ Downscale-only example: `source_h=1080, requested=720` →
   - undershoot (`240, (4,), 1080`) → raises `ScaleUnsatisfiableError`.
   - single-factor menu (FlashVSR `(4,)`) vs multi (`(2,4)`).
 - **`ffprobe_dims`** — offline against a tiny fixture mp4; asserts exact w,h.
-- **`DownscaleStage`** — offline ffmpeg on a fixture: output height == target,
-  width even, aspect within ±1px of source, passthrough (byte-identical or
-  dims-identical) when already exact.
-- **`UpscaleStage` height branch** — mocked engine: asserts the factor passed to
-  the engine, and that the engine is **not** called on the downscale-only path.
+- **`downscale_video_bytes`** — offline, injectable `run` seam: asserts the ffmpeg
+  argv contains `scale=-2:{target}:flags=lanczos`; a real-ffmpeg fixture test
+  asserts output height == target, width even, aspect within ±1px.
+- **`UpscaleStage` height branch** — mocked engine: single-factor path runs the
+  sole factor and stashes `downscale_to` from `output_resolution` (overshoot),
+  omits it on exact, raises `ScaleUnsatisfiableError` on undershoot; downscale-only
+  path does **not** call the engine and stashes `downscale_to=requested`.
+- **Orchestrator materialize** — fakes (fake sink + injected fetch/downscale
+  seams): asserts `downscale_video_bytes` is invoked with the stashed
+  `downscale_to`, and NOT invoked when meta is absent (factor-target path).
 - **Live** — FlashVSR only, one `--no-reuse` smoke (480² → `1080p`: 4×=1920 →
   lanczos 1080), frame-QA'd per CLAUDE.md (5-frame contact sheet, judged for
   artifacts / coherence / fidelity vs the 1920² sibling) before reporting green.
