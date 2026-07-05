@@ -9,9 +9,11 @@ from kinoforge.core.frames import _default_run, ffprobe_dims
 from kinoforge.pipeline.downscale import downscale_video_bytes
 
 
-def test_argv_uses_lanczos_and_even_width() -> None:
-    # Behaviour: the ffmpeg filter is scale=-2:{h}:flags=lanczos. Bug caught:
-    # dropping -2 (odd width -> h264 reject) or using a blurrier default filter.
+def test_argv_uses_lanczos_and_reads_input_file() -> None:
+    # Behaviour: filter is scale=-2:{h}:flags=lanczos and input comes from a
+    # seekable FILE (-i <path>), not stdin. Bug caught: dropping -2 (odd width
+    # -> h264 reject), a blurrier filter, OR piping a large mp4 via pipe:0 which
+    # fails demux (moov atom needs seeking) -> exit 183 on the real 1920² upscale.
     seen: dict[str, object] = {}
 
     def fake_run(argv: list[str], stdin: bytes) -> bytes:
@@ -21,8 +23,13 @@ def test_argv_uses_lanczos_and_even_width() -> None:
 
     out = downscale_video_bytes(b"IN", 1080, run=fake_run)
     assert out == b"OUT"
-    assert "scale=-2:1080:flags=lanczos" in seen["argv"]  # type: ignore[operator]
-    assert seen["stdin"] == b"IN"
+    argv = seen["argv"]
+    assert isinstance(argv, list)
+    assert "scale=-2:1080:flags=lanczos" in argv
+    assert "-i" in argv
+    # Input is a temp file path, not stdin bytes.
+    assert seen["stdin"] == b""
+    assert argv[argv.index("-i") + 1] != "pipe:0"
 
 
 @pytest.mark.parametrize("bad", [0, -2, 1081])
@@ -34,9 +41,13 @@ def test_rejects_non_positive_or_odd_height(bad: int) -> None:
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
-def test_real_ffmpeg_downscales_to_target(tmp_path: object) -> None:
-    # Behaviour: a real 256x256 clip downscaled to 128 -> (128,128), width even.
-    # Bug caught: aspect distortion or wrong output height end-to-end.
+def test_real_ffmpeg_downscales_large_moov_at_end(tmp_path: object) -> None:
+    # Behaviour: a LARGE 1920x1920 clip (moov atom at end, like a real FlashVSR
+    # 4x upscale) downscales to 1080 -> (1080,1080), width even. Bug caught: the
+    # old stdin-pipe path failed to demux large mp4 ('partial file / unspecified
+    # pixel format', exit 183) because a non-seekable pipe can't reach the moov
+    # atom (live smoke run 3, 2026-07-05). A 256x256 fixture was small enough to
+    # slip through and missed this; the size here is what makes the test bite.
     src = tmp_path / "src.mp4"  # type: ignore[operator]
     subprocess.run(
         [
@@ -44,7 +55,7 @@ def test_real_ffmpeg_downscales_to_target(tmp_path: object) -> None:
             "-f",
             "lavfi",
             "-i",
-            "testsrc=size=256x256:duration=1:rate=8",
+            "testsrc=size=1920x1920:duration=3:rate=16",
             "-pix_fmt",
             "yuv420p",
             str(src),
@@ -52,9 +63,9 @@ def test_real_ffmpeg_downscales_to_target(tmp_path: object) -> None:
         check=True,
         capture_output=True,
     )
-    out_bytes = downscale_video_bytes(src.read_bytes(), 128, run=_default_run)
+    out_bytes = downscale_video_bytes(src.read_bytes(), 1080, run=_default_run)
     out = tmp_path / "out.mp4"  # type: ignore[operator]
     out.write_bytes(out_bytes)
     w, h = ffprobe_dims(out)
-    assert h == 128
+    assert h == 1080
     assert w % 2 == 0

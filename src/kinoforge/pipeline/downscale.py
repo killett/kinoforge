@@ -8,17 +8,26 @@ encoded video bytes, aspect preserved, width kept even for h264. The injectable
 
 from __future__ import annotations
 
+import os
+import tempfile
 from collections.abc import Callable
 
 from kinoforge.core.frames import _default_run
 
 
-def _downscale_argv(target_h: int) -> list[str]:
-    """Build the ffmpeg argv lanczos-downscaling stdin video to ``target_h``."""
+def _downscale_argv(src_path: str, target_h: int) -> list[str]:
+    """Build the ffmpeg argv lanczos-downscaling *src_path* to ``target_h``.
+
+    Input is a seekable FILE, not stdin: an mp4's moov atom lives at the end of
+    the container, and ffmpeg cannot seek back to read it from a non-seekable
+    pipe (``pipe:0``) — large inputs fail with 'partial file / unspecified pixel
+    format' (exit 183). Output stays on stdout (``pipe:1``) with fragmented
+    flags, which needs no seeking.
+    """
     return [
         "ffmpeg",
         "-i",
-        "pipe:0",
+        src_path,
         "-vf",
         f"scale=-2:{target_h}:flags=lanczos",
         "-c:a",
@@ -58,4 +67,10 @@ def downscale_video_bytes(
     """
     if target_h <= 0 or target_h % 2 != 0:
         raise ValueError(f"target_h must be a positive even int, got {target_h}")
-    return run(_downscale_argv(target_h), video_bytes)
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+        tf.write(video_bytes)
+        src_path = tf.name
+    try:
+        return run(_downscale_argv(src_path, target_h), b"")
+    finally:
+        os.unlink(src_path)
