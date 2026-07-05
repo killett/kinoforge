@@ -170,6 +170,68 @@ def _default_probe_duration(video_path: str | Path) -> float:
         ) from exc
 
 
+def _default_probe_run(argv: list[str]) -> bytes:
+    """Run an ffprobe *argv*; return stdout; raise on missing binary / non-zero.
+
+    Args:
+        argv: The ffprobe command line.
+
+    Returns:
+        The subprocess's stdout bytes.
+
+    Raises:
+        FrameExtractionError: ffprobe missing from PATH or non-zero exit.
+    """
+    try:
+        proc = subprocess.run(argv, capture_output=True, check=False)  # noqa: S603
+    except FileNotFoundError as exc:
+        raise FrameExtractionError(f"ffprobe not found on PATH: {exc}") from exc
+    if proc.returncode != 0:
+        stderr_snip = proc.stderr.decode(errors="replace")[:512]
+        raise FrameExtractionError(f"ffprobe exit {proc.returncode}: {stderr_snip}")
+    return proc.stdout
+
+
+def ffprobe_dims(
+    video_path: str | Path,
+    *,
+    run: Callable[[list[str]], bytes] = _default_probe_run,
+) -> tuple[int, int]:
+    """Probe ``(width, height)`` of the first video stream via ffprobe.
+
+    Args:
+        video_path: Path to the video file on disk.
+        run: Injectable seam ``(argv) -> stdout`` so tests spawn no binary.
+
+    Returns:
+        ``(width, height)`` in pixels.
+
+    Raises:
+        FrameExtractionError: ffprobe missing / non-zero exit, or output that
+            does not parse as ``WxH``.
+    """
+    argv = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "csv=s=x:p=0",
+        str(video_path),
+    ]
+    raw = run(argv).decode(errors="replace").strip()
+    try:
+        w_str, h_str = raw.split("x")
+        return int(w_str), int(h_str)
+    except ValueError as exc:
+        raise FrameExtractionError(
+            f"unparseable ffprobe dims {raw!r} for {video_path}"
+        ) from exc
+
+
 def ffmpeg_frames_by_count(
     video_path: str | Path,
     total: int,
