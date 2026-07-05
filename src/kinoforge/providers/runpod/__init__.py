@@ -25,6 +25,7 @@ Self-registers under ``"runpod"`` when this module is imported.
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import logging
 import secrets
@@ -778,13 +779,18 @@ class RunPodProvider(ComputeProvider):
         env.pop("RUNPOD_API_KEY", None)
 
         if spec.provision_script is not None:
-            encoded = base64.b64encode(spec.provision_script.encode("utf-8")).decode(
-                "ascii"
-            )
+            # Gzip BEFORE base64: RunPod's podFindAndDeployOnDemand mutation
+            # returns a raw HTTP 500 (not a GraphQL error) once the total env
+            # payload exceeds ~101 KB. The wan+flashvsr bootstrap is ~74 KB raw
+            # → 98.8 KB plain base64, which alone pushed total env to 101,971
+            # bytes and 500'd every create (root-caused live 2026-07-05). Gzip
+            # cuts it to ~72 KB base64 (~4× headroom for future script growth).
+            compressed = gzip.compress(spec.provision_script.encode("utf-8"))
+            encoded = base64.b64encode(compressed).decode("ascii")
             env["KINOFORGE_PROVISION_SCRIPT"] = encoded
             docker_args = (
-                'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh '
-                '&& chmod +x /tmp/p.sh && bash /tmp/p.sh"'
+                'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d | gzip -d '
+                '> /tmp/p.sh && chmod +x /tmp/p.sh && bash /tmp/p.sh"'
             )
         else:
             docker_args = ""

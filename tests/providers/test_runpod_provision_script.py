@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 from collections.abc import Callable
 from typing import Any
 
@@ -43,8 +44,13 @@ def test_create_pod_without_provision_script_emits_empty_docker_args() -> None:
     assert body["variables"]["input"]["dockerArgs"] == ""
 
 
-def test_create_pod_with_provision_script_base64_encodes_into_env_var() -> None:
-    """spec.provision_script flows into KINOFORGE_PROVISION_SCRIPT as base64."""
+def test_create_pod_provision_script_gzip_base64_round_trips() -> None:
+    """spec.provision_script -> KINOFORGE_PROVISION_SCRIPT as base64(gzip(script)).
+
+    Gzip (not plain base64) keeps the env payload under RunPod's ~101 KB
+    create-mutation limit. Bug caught: plain base64 of a large bootstrap
+    (98.8 KB for wan+flashvsr) pushed total env to 101,971 -> HTTP 500.
+    """
     captured, post = _capture_post()
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     script = "set -euo pipefail\ncd /workspace\necho ok"
@@ -59,8 +65,33 @@ def test_create_pod_with_provision_script_base64_encodes_into_env_var() -> None:
     env_list = body["variables"]["input"]["env"]
     env_map = {item["key"]: item["value"] for item in env_list}
     assert "KINOFORGE_PROVISION_SCRIPT" in env_map
-    decoded = base64.b64decode(env_map["KINOFORGE_PROVISION_SCRIPT"]).decode("utf-8")
-    assert decoded == script
+    raw = base64.b64decode(env_map["KINOFORGE_PROVISION_SCRIPT"])
+    assert gzip.decompress(raw).decode("utf-8") == script
+
+
+def test_create_pod_gzip_shrinks_large_provision_script() -> None:
+    """A large compressible script encodes to well under half its plain-base64 size.
+
+    Bug caught: emitting raw base64 (no gzip) pushes the env payload past
+    RunPod's ~101 KB create-mutation limit -> HTTP 500 at pod create.
+    """
+    captured, post = _capture_post()
+    p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
+    script = "echo provisioning line\n" * 8000  # ~176 KB, highly compressible
+    spec = InstanceSpec(
+        image="runpod/pytorch:latest",
+        offer=_offer(),
+        provision_script=script,
+        run_cmd=["python", "main.py"],
+    )
+    p.create_instance(spec)
+    env_map = {
+        i["key"]: i["value"] for i in captured[0][1]["variables"]["input"]["env"]
+    }
+    value = env_map["KINOFORGE_PROVISION_SCRIPT"]
+    plain_b64_len = len(base64.b64encode(script.encode("utf-8")))
+    assert len(value) < plain_b64_len / 2
+    assert gzip.decompress(base64.b64decode(value)).decode("utf-8") == script
 
 
 def test_create_pod_with_provision_script_assembles_docker_args() -> None:
@@ -76,7 +107,7 @@ def test_create_pod_with_provision_script_assembles_docker_args() -> None:
     p.create_instance(spec)
     body = captured[0][1]
     assert body["variables"]["input"]["dockerArgs"] == (
-        'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh '
+        'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d | gzip -d > /tmp/p.sh '
         '&& chmod +x /tmp/p.sh && bash /tmp/p.sh"'
     )
 
@@ -135,7 +166,7 @@ def test_create_pod_with_script_but_no_run_cmd_still_encodes_script() -> None:
     env_map = {item["key"]: item["value"] for item in env_list}
     assert "KINOFORGE_PROVISION_SCRIPT" in env_map
     assert body["variables"]["input"]["dockerArgs"] == (
-        'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d > /tmp/p.sh '
+        'bash -c "echo $KINOFORGE_PROVISION_SCRIPT | base64 -d | gzip -d > /tmp/p.sh '
         '&& chmod +x /tmp/p.sh && bash /tmp/p.sh"'
     )
 
