@@ -243,10 +243,22 @@ class FlashVSRRuntime:
             "cuda", dtype=self._dtype
         )
         lq_ckpt = weights_dir / "LQ_proj_in.ckpt"
-        if lq_ckpt.exists():
-            lq_proj.load_state_dict(
-                torch.load(str(lq_ckpt), map_location="cpu"), strict=True
+        if not lq_ckpt.exists():
+            # Upstream guards this with a silent `if exists` — which is how
+            # a fetch-classification bug shipped 25 "green" smokes whose LQ
+            # conditioning projection ran RANDOM-INIT (every output was
+            # psychedelic garbage; root-caused 2026-07-04). Missing weights
+            # must be loud.
+            from kinoforge.core.errors import FlashVSRWeightsIncomplete
+
+            raise FlashVSRWeightsIncomplete(
+                filename="LQ_proj_in.ckpt",
+                got_sha256="absent — file missing from weights_dir",
+                want_sha256="see _fetch_weights manifest",
             )
+        lq_proj.load_state_dict(
+            torch.load(str(lq_ckpt), map_location="cpu"), strict=True
+        )
         pipe.denoising_model().LQ_proj_in = lq_proj
         # NOTE: no second .to("cuda") call here — the .to("cuda", dtype=...)
         # above already placed lq_proj on device; the assignment on the

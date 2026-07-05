@@ -10,11 +10,19 @@ import pytest
 from kinoforge.core.errors import FlashVSRWeightsIncomplete
 from kinoforge.upscalers.flashvsr import _fetch_weights as fw
 
+# LQ_proj_in.ckpt is a BASE file: FlashVSRFullPipeline loads it for EVERY
+# mode (upstream init_pipeline), not just long-video. Classifying it as
+# long-video-only left the LQ conditioning projection RANDOMLY INITIALISED
+# on every long_video_mode=false pod — the runtime's upstream-copied
+# `if lq_ckpt.exists()` guard silently skipped the load and every FlashVSR
+# output since entry #13 came out as structured psychedelic garbage
+# (root-caused 2026-07-04).
 BASE_FILES = (
     "diffusion_pytorch_model_streaming_dmd.safetensors",
     "Wan2.1_VAE.pth",
+    "LQ_proj_in.ckpt",
 )
-LONG_VIDEO_FILES = ("LQ_proj_in.ckpt", "TCDecoder.ckpt")
+LONG_VIDEO_FILES = ("TCDecoder.ckpt",)
 
 
 def _fake_bytes(name: str) -> bytes:
@@ -38,15 +46,17 @@ def fake_manifest(
     return manifest
 
 
-def test_lite_bundle_fetches_two_files(
+def test_lite_bundle_fetches_base_files_including_lq_proj(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     fake_manifest: dict[str, dict[str, str]],
 ) -> None:
-    """RED: --include-long-video 0 stops at BASE_FILES.
+    """--include-long-video 0 fetches DMD + VAE + LQ_proj_in.ckpt.
 
-    Bug caught: off-by-one on the include flag → fetches all 4 files always,
-    wastes ~4 GB HF pull on cold boot.
+    Bug caught: LQ_proj_in.ckpt gated behind long_video → the projection
+    that injects the LQ video into every DiT block runs random-init and
+    every upscale is corrupted (the 2026-07-04 root cause). Also catches
+    the inverse: fetching TCDecoder always wastes the HF pull.
     """
     calls: list[str] = []
 
@@ -71,12 +81,12 @@ def test_lite_bundle_fetches_two_files(
     assert set(calls) == set(BASE_FILES)
 
 
-def test_full_bundle_fetches_four_files(
+def test_full_bundle_adds_tcdecoder(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     fake_manifest: dict[str, dict[str, str]],
 ) -> None:
-    """RED: --include-long-video 1 fetches BASE + LONG_VIDEO."""
+    """--include-long-video 1 fetches BASE + TCDecoder.ckpt."""
     calls: list[str] = []
 
     def fake_download(ref: str, filename: str, dest: Path) -> Path:
