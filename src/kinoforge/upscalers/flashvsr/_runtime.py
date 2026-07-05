@@ -80,24 +80,30 @@ def _dense_masked_attention(
 
     scale = d**-0.5
     out = torch.empty_like(qh)
-    # Per-head loop with per-head mask expansion keeps peak memory at one
-    # (S_q, S_kv) fp32 score matrix plus one bool token mask — expanding
-    # the mask for all heads at once costs ~30 GB at 1920² and OOMs next
-    # to the resident model.
+    # Per-head, q-row-chunked loop. A whole (S_q, S_kv) fp32 score matrix
+    # is ~30 GB at 1920² (first stream chunk is 86400² — 83 GiB as a bool
+    # mask alone, observed OOM on pod 0t7wo4sthf1o70); 128-aligned q chunks
+    # cap the transient at chunk_rows × S_kv.
+    chunk_rows = 4096  # multiple of block_size so mask rows slice cleanly
     for h in range(num_heads):
-        mask_tok = attention_mask[:, h].repeat_interleave(block_size, dim=-2)
-        mask_tok = mask_tok.repeat_interleave(block_size, dim=-1)
-        mask_tok = mask_tok[:, :s_q, :s_kv].to(torch.bool)
-        scores = torch.einsum("bqd,bkd->bqk", qh[:, h], kh[:, h])
-        scores *= scale
-        scores.masked_fill_(~mask_tok, float("-inf"))
-        attn = torch.softmax(scores, dim=-1)
-        del scores, mask_tok
-        # Rows whose mask is entirely False softmax to NaN — zero them so
-        # they contribute nothing (matches the sparse kernel's behaviour).
-        attn = torch.nan_to_num_(attn, nan=0.0)
-        out[:, h] = torch.einsum("bqk,bkd->bqd", attn, vh[:, h])
-        del attn
+        for q0 in range(0, s_q, chunk_rows):
+            q1 = min(q0 + chunk_rows, s_q)
+            mask_rows = attention_mask[
+                :, h, q0 // block_size : (q1 + block_size - 1) // block_size
+            ]
+            mask_tok = mask_rows.repeat_interleave(block_size, dim=-2)
+            mask_tok = mask_tok.repeat_interleave(block_size, dim=-1)
+            mask_tok = mask_tok[:, : q1 - q0, :s_kv].to(torch.bool)
+            scores = torch.einsum("bqd,bkd->bqk", qh[:, h, q0:q1], kh[:, h])
+            scores *= scale
+            scores.masked_fill_(~mask_tok, float("-inf"))
+            attn = torch.softmax(scores, dim=-1)
+            del scores, mask_tok
+            # Rows whose mask is entirely False softmax to NaN — zero them
+            # so they contribute nothing (matches the sparse kernel).
+            attn = torch.nan_to_num_(attn, nan=0.0)
+            out[:, h, q0:q1] = torch.einsum("bqk,bkd->bqd", attn, vh[:, h])
+            del attn
     return out.permute(0, 2, 1, 3).reshape(bsz, s_q, dim).to(q.dtype)
 
 
