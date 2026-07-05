@@ -656,9 +656,10 @@ class UpscaleConfig(BaseModel):
             (default fallback) and ``"flashvsr"`` (v1 default diffusion VSR);
             ``"seedvr2"`` is extras-gated until Phase 2 vendoring lands.
         scale: ScaleTarget grammar string (``"2x"`` | ``"4x"`` | ``"1080p"`` ...).
-            Consumers call ``ScaleTarget.parse(scale)``; the height branch
-            raises ``NotYetImplementedError`` in v1. For ``engine=flashvsr``,
-            height-target is refused at cfg-time.
+            Factor targets multiply the source; height targets (``"1080p"``,
+            ``"720p"``) resolve to a factor + smooth downscale in UpscaleStage.
+            For ``engine=flashvsr`` a non-4x *factor* form is still refused
+            (native scale is fixed at 4x).
         seedvr2: SeedVR2-specific block; required when ``engine == "seedvr2"``.
         spandrel: Spandrel-specific block; required when ``engine == "spandrel"``.
         flashvsr: FlashVSR-specific block; required when ``engine == "flashvsr"``.
@@ -680,12 +681,10 @@ class UpscaleConfig(BaseModel):
         from kinoforge.core.scale_target import ScaleTarget
 
         parsed = ScaleTarget.parse(self.scale)
-        if parsed.kind == "height":
-            raise ConfigError(
-                f"engine=flashvsr: height-target scale ({self.scale!r}) "
-                "not yet wired; use --scale Nx (factor form)"
-            )
-        if parsed.value != 4.0:
+        # Height targets are now supported: UpscaleStage resolves them to the
+        # native 4x factor plus a post-upscale downscale. Only a non-4x FACTOR
+        # form is still nonsense for flashvsr's fixed native scale.
+        if parsed.kind == "factor" and parsed.value != 4.0:
             raise ConfigError(
                 f"engine=flashvsr fixed at native 4x upscale; got {self.scale!r}. "
                 "Use engine=spandrel for other factors."

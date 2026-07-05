@@ -224,17 +224,26 @@ def test_upscale_config_flashvsr_engine_requires_block() -> None:
         UpscaleConfig(engine="flashvsr", scale="2x", flashvsr=None)
 
 
-def test_upscale_config_flashvsr_rejects_height_scale() -> None:
-    """RED: height-target refused at cfg-time (spec §4.2 fail-fast).
+def test_upscale_config_flashvsr_accepts_height_scale() -> None:
+    """Height-target is now accepted at cfg-time (resolved to 4x + downscale).
 
-    Bug caught: deferring the reject to runtime burns the pod cold-boot.
+    Bug caught: the old cfg-time height-refusal still firing after the
+    height-target feature lands, blocking `--scale 1080p` for flashvsr. A
+    non-4x *factor* form is still refused (native scale fixed at 4x).
     """
     from kinoforge.core.config import FlashVSREngineConfig, UpscaleConfig
 
-    with pytest.raises(ConfigError, match="height-target"):
+    cfg = UpscaleConfig(
+        engine="flashvsr",
+        scale="1080p",
+        flashvsr=FlashVSREngineConfig(weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1"),
+    )
+    assert cfg.scale == "1080p"
+
+    with pytest.raises(ConfigError, match="4x"):
         UpscaleConfig(
             engine="flashvsr",
-            scale="1080p",
+            scale="3x",
             flashvsr=FlashVSREngineConfig(
                 weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1"
             ),
