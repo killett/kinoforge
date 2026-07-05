@@ -29,7 +29,24 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION:** none urgent — pick from the gated table below.
+**SINGLE NEXT ACTION (2026-07-05):** re-fire the FlashVSR 1080p height-target
+live smoke once RunPod's create API recovers —
+`KINOFORGE_LIVE_SPEND=1 pixi run test tests/live/test_flashvsr_height_target_live.py`.
+
+**Height-target upscaling (1080p/720p) — offline COMPLETE, live BLOCKED 2026-07-05:**
+Spec `docs/superpowers/specs/2026-07-05-height-target-upscale-design.md`, plan
+`docs/superpowers/plans/2026-07-05-height-target-upscale.md`. Tasks 0-5 shipped +
+committed (`65120de`..`5cf4c09`): pure `resolve_height_target` resolver +
+`ScaleUnsatisfiableError`, `ffprobe_dims`, `downscale_video_bytes` (lanczos),
+config accepts height, `UpscaleStage` resolves height→factor + stashes
+`meta["downscale_to"]`, orchestrator downscales at the materialize boundary. All
+offline tests green (348 in the upscale/orchestrator/materialize slice). Task 6
+(live FlashVSR 480²→1080p smoke, RED scaffold `89bb5e3`) is BLOCKED: RunPod's
+`api.runpod.io/graphql` create mutation returned HTTP 500 on 3 consecutive
+attempts (~6 min, 01:54-02:00 PDT) — no pod ever created, zero spend, ledger
+clean each time. `kinoforge list` (a RunPod read) succeeds, so it's the create
+mutation degraded server-side, NOT auth/balance/our cfg (`scale` never reaches
+the create request body). Retry when RunPod recovers.
 
 **F-multi/F-warm re-fire with fix — GREEN 2026-07-04 23:15 PDT:**
 `2 passed in 1172.22s`, pod `utbf9k7bp2khuo`, ~$0.40, ledger clean after.
