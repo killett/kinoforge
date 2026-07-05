@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from kinoforge.core.credentials import EnvCredentialProvider
+from kinoforge.core.dotenv_loader import load_env_file
 from kinoforge.providers.runpod import RunPodProvider
 
 _UA = "kinoforge-flashvsr/0.1"
@@ -143,6 +144,7 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    load_env_file()  # pixi does not auto-source .env (activation quirk)
     provider = RunPodProvider(creds=EnvCredentialProvider())
     inst = provider.get_instance(args.pod_id)
     endpoints = inst.endpoints or {}
