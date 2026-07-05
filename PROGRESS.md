@@ -28,7 +28,31 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**Open items (ALL gated — none actionable without new input):**
+**SINGLE NEXT ACTION (user-directed, 2026-07-04 ~05:45 PDT) — do this FIRST next session:**
+
+1. **Extend `src/kinoforge/core/frames.py` with multi-frame extraction** (TDD;
+   `ffmpeg_last_frame` stays as-is for the continuity path). New API, two modes:
+   - **Count mode** — caller asks for `total` frames evenly spread through the
+     video: first frame + last frame + (`total` − 2) evenly spaced between.
+     `total == 1` → just the last frame (matches existing behaviour).
+   - **Interval mode** — caller asks for a frame every `N` seconds: first
+     frame, then t=N, t=2N, …, and ALWAYS the last frame as the final entry.
+   Returns PNG bytes per frame (list, in temporal order). Probe duration via
+   ffprobe; seam-injectable like the existing function.
+2. **Use it to visually QA EVERY video generated this session** (19 mp4s in
+   `output/`, timestamps `20260703-1936*` through `20260704-0129*`: 8 Wan 480²
+   T2V clips, 8 FlashVSR 1920² upscales incl. the F-multi/F-warm pair, the
+   keyframe→i2v clip `20260704-005021`, the flf2v morph `20260704-012958`).
+   Extract frames (count mode, ~5/video is a good default), Read them, judge
+   like the entry-#18 keyframe review (artifacts, coherence, prompt adherence,
+   upscale fidelity vs the 480² sibling), and record verdicts — flag anything
+   NOT high quality against its successful-generations entry.
+3. **Add a CLAUDE.md rule**: run this automated frame-extraction quality check
+   on EVERY test output video going forward — outputs get eyeballed by Claude
+   BEFORE the operator ever sees them. A live smoke is not "green" on exit
+   code + ffprobe dims alone.
+
+**Other open items (gated):**
 
 | Item | Gate |
 |---|---|
