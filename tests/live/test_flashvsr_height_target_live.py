@@ -1,16 +1,17 @@
-"""FlashVSR height-target (1080p) live smoke — RED gate pre-spend scaffold.
+"""FlashVSR height-target (1080p) live smoke — upscale-only, fixture-sourced.
 
-Committed BEFORE any live spend per CLAUDE.md durability rule. Gated on
-``KINOFORGE_LIVE_SPEND=1`` (same gate as ``test_flashvsr_live.py``) so CI /
-regression runs never fire a pod.
+Committed BEFORE any live spend per CLAUDE.md. Gated on
+``KINOFORGE_LIVE_SPEND=1`` (same gate as ``test_flashvsr_live.py``).
 
-Proves the height-target feature end-to-end: ``upscale.scale: 1080p`` on a
-480x480 Wan render resolves to FlashVSR's native 4x (480 -> 1920) and then
-downscales 1920 -> 1080 at the orchestrator materialize boundary. The delivered
-artifact must be 1080x1080 (square aspect preserved), NOT 1920x1920.
+Validates the height-target feature end-to-end WITHOUT Wan: a pre-generated 480²
+fixture clip is fed to ``kinoforge upscale`` with ``upscale.scale: 1080p``.
+FlashVSR is 4x-native, so UpscaleStage resolves 1080p → 4x (480→1920) and the
+orchestrator materialize boundary lanczos-downscales 1920→1080. Delivered
+artifact must be 1080×1080 (square, aspect preserved), NOT 1920×1920.
 
-Cost: ~$0.90 (ceiling $1.20) — A100 80GB @ ~$1.90/hr dominated by the Wan 2.2
-A14B download. One-shot with ``--no-reuse`` so the pod auto-destroys.
+Upscale-only (no 70 GB Wan A14B download): ~8-10 min, ~$0.15 — far cheaper and a
+much shorter pod-death window than the render+upscale multi-stage path. One-shot
+``--no-reuse`` so the pod auto-destroys.
 """
 
 from __future__ import annotations
@@ -22,8 +23,12 @@ from pathlib import Path
 import pytest
 
 _LIVE_SPEND_ENV = "KINOFORGE_LIVE_SPEND"
-_STANDARD_PROMPT_PATH = Path("/workspace/examples/configs/prompts/field-realistic.txt")
-_CFG = "examples/configs/wan-with-upscale-flashvsr-1080p.yaml"
+_CFG = "examples/configs/upscale-flashvsr-1080p.yaml"
+# 480x480 / 81-frame Wan clip generated 2026-06-30 (also the F-single fixture).
+_SOURCE = Path(
+    "/workspace/output/"
+    "20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4"
+)
 
 
 def _require_live_spend_env() -> None:
@@ -32,13 +37,8 @@ def _require_live_spend_env() -> None:
 
 
 def _output_dir() -> Path:
-    """Artifact sink — kinoforge writes under CWD/output/, not /workspace."""
+    """Artifact sink — kinoforge writes under CWD/output/."""
     return Path.cwd() / "output"
-
-
-def _snapshot_mp4s() -> set[Path]:
-    d = _output_dir()
-    return set(d.glob("*.mp4")) if d.is_dir() else set()
 
 
 def _ffprobe_dims(video: Path) -> tuple[int, int]:
@@ -79,7 +79,7 @@ def _kinoforge_list_shows_no_pods() -> bool:
 
 
 def _destroy_ledger_pods() -> None:
-    """Best-effort sweep so an assert failure never leaks a running A100."""
+    """Best-effort sweep so an assert failure never leaks a running pod."""
     r = subprocess.run(  # noqa: S603
         ["pixi", "run", "kinoforge", "list"],
         capture_output=True,
@@ -100,36 +100,36 @@ def _destroy_ledger_pods() -> None:
 
 
 def test_flashvsr_1080p_delivers_1080_square(tmp_path: Path) -> None:
-    """Height-target 1080p on a 480 source -> 1080x1080 deliverable.
+    """Upscale a 480² fixture with scale=1080p -> 1080×1080 deliverable.
 
-    Bug caught: the height target failing to resolve to 4x+downscale
-    end-to-end — either delivering the raw 1920x1920 (downscale never fired)
-    or erroring at cfg/stage/materialize boundaries.
+    Bug caught: the height target failing to resolve to 4x+downscale end-to-end
+    — delivering the raw 1920×1920 (downscale never fired) or erroring at the
+    cfg / stage / materialize / ffmpeg boundaries.
     """
     _require_live_spend_env()
-    prompt = _STANDARD_PROMPT_PATH.read_text().strip()
-    before = _snapshot_mp4s()
+    assert _SOURCE.exists(), f"missing fixture clip {_SOURCE}"
+    before = (
+        {p for p in _output_dir().glob("*.mp4")} if _output_dir().is_dir() else set()
+    )
     try:
         r = subprocess.run(  # noqa: S603
             [
                 "pixi",
                 "run",
                 "kinoforge",
-                "generate",
+                "upscale",
                 "--config",
                 _CFG,
-                "--prompt",
-                prompt,
-                "--mode",
-                "t2v",
+                "--video",
+                str(_SOURCE),
                 "--no-reuse",
             ],
             capture_output=True,
             text=True,
             check=False,
-            # 40m: image pull + provision + Wan 2.2 A14B download (~15-20m)
-            # + T2V inference + FlashVSR 4x upscale + downscale + sink.
-            timeout=40 * 60,
+            # 15m: BSA wheel install ~60s + FlashVSR install ~2min + weights
+            # ~3min + 4x upscale ~3min + downscale + sink. ~2x cushion.
+            timeout=15 * 60,
         )
         assert r.returncode == 0, (
             f"exit={r.returncode}\n--- stdout tail ---\n{r.stdout[-3000:]}\n"
@@ -137,11 +137,11 @@ def test_flashvsr_1080p_delivers_1080_square(tmp_path: Path) -> None:
         )
         combined = r.stdout + r.stderr
         assert "_upscaled_flashvsr_" in combined, "no upscaled artifact sunk"
-        # The materialize boundary logs the downscale — proves the seam fired.
+        # Materialize boundary logs the downscale — proves the seam fired.
         assert "downscaling upscaled artifact to 1080p" in combined, (
             "materialize-boundary downscale did not fire"
         )
-        new = _snapshot_mp4s() - before
+        new = ({p for p in _output_dir().glob("*.mp4")}) - before
         ups = sorted(p for p in new if "_upscaled_flashvsr_" in p.name)
         assert ups, f"no fresh upscaled artifact among {sorted(p.name for p in new)}"
         out_dims = _ffprobe_dims(ups[-1])
