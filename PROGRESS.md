@@ -29,10 +29,15 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION:** none urgent — pick from the gated table below, or
-re-fire the F-multi co-resident smoke to regenerate the 7 corrupt session
-upscales with the fix (optional; the fix is already live-verified on the
-F-multi source clip).
+**SINGLE NEXT ACTION:** none urgent — pick from the gated table below.
+
+**F-multi/F-warm re-fire with fix — GREEN 2026-07-04 23:15 PDT:**
+`2 passed in 1172.22s`, pod `utbf9k7bp2khuo`, ~$0.40, ledger clean after.
+All four artifacts frame-QA'd clean (`230446`/`230735` F-multi pair,
+`231130`/`231525` F-warm pair) — first visually-verified green for the
+co-resident multi-stage tuple. Evidence:
+`tests/live/evidence/2026-07-04_flashvsr_fix_refire_f_multi_warm_stdout.txt`.
+Root-cause session total spend ≈ $1.00 of the $20 authorization.
 
 **FlashVSR corruption — ROOT-CAUSED AND FIXED 2026-07-04 (~$0.55 debug spend):**
 
