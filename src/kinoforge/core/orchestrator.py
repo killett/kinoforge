@@ -1924,20 +1924,34 @@ def generate(
         # so the sinked mp4 always survives (multi-stage `kinoforge generate`
         # returns "clip" but still needs the upscaled file on disk).
         upscaled = state.artifacts.get("upscaled")
-        if (
+        _downscale_to = upscaled.meta.get("downscale_to") if upscaled else None
+        _needs_materialize = (
             upscaled is not None
             and sink is not None
-            and upscaled.uri.startswith(("http://", "https://"))
-        ):
-            import urllib.request as _urequest  # local — orchestrator stays urllib-free
-
-            _log.info("materializing upscaled artifact from %s", upscaled.uri)
-            req = _urequest.Request(  # noqa: S310 — pod proxy URL only
-                upscaled.uri,
-                headers={"User-Agent": "kinoforge-orchestrator/0.1"},
+            and (
+                upscaled.uri.startswith(("http://", "https://"))
+                or (_downscale_to is not None and upscaled.uri.startswith("file://"))
             )
-            with _urequest.urlopen(req, timeout=600) as resp:  # noqa: S310
-                body: bytes = resp.read()
+        )
+        if _needs_materialize and upscaled is not None and sink is not None:
+            from kinoforge.pipeline.materialize import finalize_upscaled_bytes
+
+            if upscaled.uri.startswith(("http://", "https://")):
+                import urllib.request as _urequest  # orchestrator stays urllib-free
+
+                _log.info("materializing upscaled artifact from %s", upscaled.uri)
+                req = _urequest.Request(  # noqa: S310 — pod proxy URL only
+                    upscaled.uri,
+                    headers={"User-Agent": "kinoforge-orchestrator/0.1"},
+                )
+                with _urequest.urlopen(req, timeout=600) as resp:  # noqa: S310
+                    body: bytes = resp.read()
+            else:
+                body = Path(upscaled.uri.removeprefix("file://")).read_bytes()
+
+            if _downscale_to is not None:
+                _log.info("downscaling upscaled artifact to %dp", _downscale_to)
+                body = finalize_upscaled_bytes(body, _downscale_to)
             provider_tag = cfg.upscale.engine if cfg.upscale is not None else "unknown"
             spec_obj: Any = cfg.spec
             model_tag = (
