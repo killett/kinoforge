@@ -4,38 +4,38 @@
     {
       "id": 0,
       "subject": "Task 0: Resolver + ScaleUnsatisfiableError",
-      "status": "pending",
+      "status": "completed",
       "description": "Pure height->factor resolver (core/scale_resolver.py: HeightPlan + resolve_height_target) + ScaleUnsatisfiableError in core/errors.py. Full unit table.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\", \"src/kinoforge/core/scale_resolver.py\", \"tests/core/test_scale_resolver.py\"], \"verifyCommand\": \"pixi run test tests/core/test_scale_resolver.py -v\", \"acceptanceCriteria\": [\"smallest sufficient factor + correct downscale_to\", \"source>=target => factor None; exact => downscale None\", \"undershoot raises ScaleUnsatisfiableError with context\", \"empty factors => ValueError\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: ffprobe_dims helper",
-      "status": "pending",
+      "status": "completed",
       "description": "core/frames.py: _default_probe_run + ffprobe_dims((w,h) via ffprobe csv=s=x:p=0), injectable seam.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/frames.py\", \"tests/core/test_frames_dims.py\"], \"verifyCommand\": \"pixi run test tests/core/test_frames_dims.py -v\", \"acceptanceCriteria\": [\"returns (w,h) from WxH output\", \"injectable run seam, no binary in unit test\", \"unparseable output raises FrameExtractionError\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: downscale_video_bytes helper",
-      "status": "pending",
+      "status": "completed",
       "description": "pipeline/downscale.py: ffmpeg lanczos scale=-2:{h} stdin->stdout, even width, reuses core.frames._default_run.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/downscale.py\", \"tests/pipeline/test_downscale.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/test_downscale.py -v\", \"acceptanceCriteria\": [\"argv contains scale=-2:{target}:flags=lanczos\", \"odd/non-positive target_h raises ValueError\", \"real ffmpeg: output height==target, width even\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: Relax UpscaleConfig to accept height targets",
-      "status": "pending",
+      "status": "completed",
       "description": "core/config.py: _validate_flashvsr_wiring guards non-4x check behind kind==factor; accept height. Docstring update.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_upscale_config_height.py\"], \"verifyCommand\": \"pixi run test tests/core/test_upscale_config_height.py -v\", \"acceptanceCriteria\": [\"flashvsr scale=1080p validates\", \"720p and 4x validate\", \"3x still raises ConfigError\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: UpscaleStage height-awareness",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0, 1],
       "description": "pipeline/upscale.py: run() branches factor vs height; _run_height resolves factor + stashes meta[downscale_to]; local source uses resolver, remote single-factor decides from output_resolution. probe_dims seam. Engines never see kind=height.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/upscale.py\", \"tests/pipeline/test_upscale_stage_height.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/test_upscale_stage_height.py -v\", \"acceptanceCriteria\": [\"factor path unchanged, no meta\", \"single-factor overshoot stashes downscale_to==requested\", \"exact output => no downscale_to\", \"undershoot raises ScaleUnsatisfiableError\", \"downscale-only skips engine, stashes downscale_to\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: Materialize-boundary downscale wiring",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 4],
       "description": "pipeline/materialize.py: finalize_upscaled_bytes(body, downscale_to). Wire orchestrator materialize block to call it before sink.publish; widen guard to file:// when downscale pending.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/materialize.py\", \"tests/pipeline/test_materialize.py\", \"src/kinoforge/core/orchestrator.py\"], \"verifyCommand\": \"pixi run test tests/pipeline/test_materialize.py -v\", \"acceptanceCriteria\": [\"finalize downscales iff downscale_to set\", \"orchestrator calls finalize before sink.publish\", \"block reads file:// bytes when downscale pending\"], \"modelTier\": \"standard\"}\n```"
     },
