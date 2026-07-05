@@ -278,6 +278,74 @@ class TestPostUpscale:
         assert srv._flashvsr_weights_dir() == Path("/workspace/models/flashvsr")
 
 
+class TestFlashVSRDebugParams:
+    def test_flashvsr_debug_fields_reach_runtime_params(
+        self,
+        fresh_server: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Bug caught: pydantic drops undeclared fields at model_dump — a
+        # debug matrix submitted with pipe_overrides/attention_impl/
+        # debug_stats would silently run the plain baseline for every
+        # variant and the whole root-cause evidence table would be lies.
+        srv, _client, _pipe, _out = fresh_server
+
+        seen_params: list[dict[str, Any]] = []
+
+        class _RecordingPipe:
+            def upscale(self, local: Any, scale: Any, params: dict[str, Any]) -> Any:
+                seen_params.append(params)
+                out = tmp_path / "out.flashvsr.mp4"
+                out.write_bytes(b"MP4")
+                return out
+
+        async def spy_ensure(name: str) -> dict[str, Any]:
+            return {
+                "name": name,
+                "pipe": _RecordingPipe(),
+                "vram_bytes": 0,
+                "last_used_monotonic": 0.0,
+                "on_device": "cuda",
+            }
+
+        monkeypatch.setattr(srv, "_ensure_on_gpu", spy_ensure)
+        monkeypatch.setattr(srv, "_probe_resolution", lambda p: (1920, 1920))
+
+        src_mp4 = tmp_path / "in.mp4"
+        src_mp4.write_bytes(b"\x00" * 64)
+
+        req = srv.UpscaleRequest(
+            source_url=f"file://{src_mp4}",
+            source_filename=src_mp4.name,
+            scale="4x",
+            engine="flashvsr",
+            flashvsr=srv.FlashVSRParams(
+                weights_bundle="hf:JunhaoZhuang/FlashVSR-v1.1",
+                precision="bfloat16",
+                pipe_overrides={"color_fix": False},
+                attention_impl="dense",
+                debug_stats=True,
+            ),
+        )
+        srv._upscale_jobs["job-fv-debug"] = {
+            "state": "queued",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
+        }
+        asyncio.run(srv._run_upscale_job("job-fv-debug", req))
+
+        assert srv._upscale_jobs["job-fv-debug"]["state"] == "done", srv._upscale_jobs[
+            "job-fv-debug"
+        ]
+        assert len(seen_params) == 1
+        params = seen_params[0]
+        assert params.get("pipe_overrides") == {"color_fix": False}
+        assert params.get("attention_impl") == "dense"
+        assert params.get("debug_stats") is True
+
+
 class TestUpscaleStatus:
     def test_get_upscale_status_unknown_404(self, fresh_server: Any) -> None:
         # Bug caught: handler returns {} or null with 200, indistinguishable

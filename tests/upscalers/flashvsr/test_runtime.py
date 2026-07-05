@@ -717,3 +717,230 @@ def test_lq_proj_in_dtype_tracks_precision(
         f"LQ_proj_in._conv.to() must receive dtype=torch.float32 for "
         f"precision='fp32'; recorded kwargs dtypes: {dtype_kwargs}"
     )
+
+
+# --- debug plumbing: pipe_overrides / attention_impl / debug_stats ----------
+#
+# Added 2026-07-04 for the FlashVSR corruption root-cause session. These
+# knobs are driven per-request through FlashVSRParams so a warm pod can run
+# an experiment matrix (color_fix off, dense attention, sparse-ratio sweeps)
+# without a re-provision cycle per variant.
+
+
+def test_upscale_pipe_overrides_win_over_defaults(
+    stub_diffsynth: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """params['pipe_overrides'] entries replace the default pipe kwargs.
+
+    Bug caught: overrides merged the wrong way round (defaults win) — the
+    live debug matrix would silently run the baseline config for every
+    variant and the evidence table would be meaningless.
+    """
+    _stub_input_prep(monkeypatch)
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"SRC")
+    rt = FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
+    rt.upscale(
+        src,
+        ScaleTarget(kind="factor", value=4.0),
+        {"pipe_overrides": {"color_fix": False, "tiled": True, "topk_ratio": 9.5}},
+    )
+
+    call = rt._pipe.pipe_calls[0]
+    assert call["color_fix"] is False, "override color_fix=False must win"
+    assert call["tiled"] is True, "override tiled=True must win"
+    assert call["topk_ratio"] == 9.5, "override topk_ratio must win"
+    # Non-overridden defaults survive.
+    assert call["cfg_scale"] == 1.0
+    assert call["num_inference_steps"] == 1
+
+
+def test_upscale_no_overrides_keeps_baseline_kwargs(
+    stub_diffsynth: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without pipe_overrides the historical baseline kwargs are unchanged.
+
+    Bug caught: the merge plumbing accidentally mutates a default (e.g.
+    flips color_fix) — every production upscale would silently change
+    behaviour under a debug-only feature.
+    """
+    _stub_input_prep(monkeypatch)
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"SRC")
+    rt = FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
+    rt.upscale(src, ScaleTarget(kind="factor", value=4.0), {})
+
+    call = rt._pipe.pipe_calls[0]
+    assert call["color_fix"] is True
+    assert call["tiled"] is False
+    assert call["is_full_block"] is False
+    assert call["if_buffer"] is True
+    assert call["kv_ratio"] == 3.0
+    assert call["local_range"] == 11
+
+
+def _install_dit_stub(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Seed sys.modules with a stub diffsynth.models.wan_video_dit module."""
+    dit_mod = types.ModuleType("diffsynth.models.wan_video_dit")
+
+    def original_flash_attention(**kwargs: Any) -> str:
+        return "original"
+
+    dit_mod.flash_attention = original_flash_attention  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "diffsynth.models.wan_video_dit", dit_mod)
+    return dit_mod
+
+
+class _AttentionObservingPipe:
+    """Pipe stand-in that records the dit module's flash_attention at call time."""
+
+    def __init__(self, dit_mod: Any, fail: bool = False) -> None:
+        self._dit_mod = dit_mod
+        self._fail = fail
+        self.seen_during_call: Any = None
+
+    def __call__(self, **kwargs: Any) -> Any:
+        self.seen_during_call = self._dit_mod.flash_attention
+        if self._fail:
+            raise RuntimeError("pipe exploded mid-inference")
+
+        class _T:
+            shape = (1, 3, kwargs["num_frames"], kwargs["height"], kwargs["width"])
+
+            def cpu(self) -> Any:
+                return self
+
+            def float(self) -> Any:
+                return self
+
+            def numpy(self) -> Any:
+                import numpy as _np
+
+                return _np.zeros(self.shape, dtype="float32")
+
+        return _T()
+
+
+def test_upscale_attention_impl_dense_patches_during_call_and_restores(
+    stub_diffsynth: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """attention_impl='dense' swaps wan_video_dit.flash_attention only for
+    the duration of the pipe call, restoring the original afterwards.
+
+    Bug caught: patch installed but never removed — the NEXT job on the
+    same warm pod (e.g. the BSA baseline of the A/B pair) silently runs
+    dense attention too, and the A/B comparison compares dense to dense.
+    """
+    _stub_input_prep(monkeypatch)
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    dit_mod = _install_dit_stub(monkeypatch)
+    original = dit_mod.flash_attention
+
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"SRC")
+    rt = FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
+    observer = _AttentionObservingPipe(dit_mod)
+    rt._pipe = observer
+
+    rt.upscale(
+        src,
+        ScaleTarget(kind="factor", value=4.0),
+        {"attention_impl": "dense"},
+    )
+
+    assert observer.seen_during_call is not original, (
+        "flash_attention must be PATCHED while the pipe runs"
+    )
+    assert dit_mod.flash_attention is original, (
+        "flash_attention must be RESTORED after upscale returns"
+    )
+
+
+def test_upscale_attention_impl_dense_restores_on_pipe_exception(
+    stub_diffsynth: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dense patch is removed even when the pipe raises.
+
+    Bug caught: missing try/finally — one OOM under the dense variant
+    poisons every subsequent job on the warm pod with patched attention.
+    """
+    _stub_input_prep(monkeypatch)
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    dit_mod = _install_dit_stub(monkeypatch)
+    original = dit_mod.flash_attention
+
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"SRC")
+    rt = FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
+    rt._pipe = _AttentionObservingPipe(dit_mod, fail=True)
+
+    with pytest.raises(RuntimeError, match="pipe exploded"):
+        rt.upscale(
+            src,
+            ScaleTarget(kind="factor", value=4.0),
+            {"attention_impl": "dense"},
+        )
+
+    assert dit_mod.flash_attention is original, (
+        "flash_attention must be restored by the finally block"
+    )
+
+
+def test_upscale_unknown_attention_impl_raises(
+    stub_diffsynth: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """attention_impl values other than 'dense'/'bsa'/None fail fast.
+
+    Bug caught: a typo in the experiment payload ('demse') silently runs
+    the BSA baseline and the evidence table records a lie.
+    """
+    _stub_input_prep(monkeypatch)
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"SRC")
+    rt = FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
+    with pytest.raises(ValueError, match="attention_impl"):
+        rt.upscale(
+            src,
+            ScaleTarget(kind="factor", value=4.0),
+            {"attention_impl": "demse"},
+        )
+
+
+def test_upscale_debug_stats_logs_output_stats(
+    stub_diffsynth: None,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """debug_stats=True logs min/max/mean/nan_count of the raw pipe output.
+
+    Bug caught: stats path crashes the job (e.g. numpy call on a stub
+    tensor) or logs nothing — the on-pod evidence for 'are the latents
+    NaN/garbage' never materialises and the debug session flies blind.
+    """
+    _stub_input_prep(monkeypatch)
+    from kinoforge.upscalers.flashvsr._runtime import FlashVSRRuntime
+
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"SRC")
+    rt = FlashVSRRuntime(tmp_path, "bfloat16", 24, 0, False)
+    with caplog.at_level(logging.INFO):
+        rt.upscale(
+            src,
+            ScaleTarget(kind="factor", value=4.0),
+            {"debug_stats": True},
+        )
+
+    stats_lines = [r.message for r in caplog.records if "debug_stats" in r.message]
+    assert stats_lines, "an INFO line containing 'debug_stats' must be logged"
+    line = stats_lines[0]
+    for token in ("min=", "max=", "mean=", "nan_count="):
+        assert token in line, f"stats line must include {token}; got: {line}"
