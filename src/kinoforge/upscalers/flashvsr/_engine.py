@@ -42,9 +42,12 @@ class FlashVSREngine(UpscalerEngine):
     name = "flashvsr"
     requires_compute = True
     requires_local_weights = True
-    # Empty tuple = runtime declares scale at weights-load time (spec §3.5);
-    # StreamingDMDPipeline's `.scale` attribute reports it after from_pretrained.
-    supported_scales: tuple[ScaleTarget, ...] = ()
+    # Native scale is hard-pinned to 4x by the upstream Causal_LQ4x_Proj weight
+    # shape (config._validate_flashvsr_wiring + runtime _NATIVE_SCALE enforce it).
+    # Declared explicitly — NOT the empty accept-any sentinel — so UpscaleStage's
+    # height-target resolver can read the factor menu. Live smoke 2026-07-05 hit
+    # 'supported_factors must be non-empty' with the old empty tuple.
+    supported_scales: tuple[ScaleTarget, ...] = (ScaleTarget(kind="factor", value=4.0),)
 
     def validate_spec(self, job: UpscaleJob) -> None:
         """Refuse height-target + non-4x scales (spec §2 non-goal + native lock)."""
