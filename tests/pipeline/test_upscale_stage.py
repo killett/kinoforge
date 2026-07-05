@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from kinoforge.core.errors import NotYetImplementedError
+from kinoforge.core.errors import ScaleUnsatisfiableError
 from kinoforge.core.interfaces import (
     Artifact,
     GenerationRequest,
@@ -101,13 +101,24 @@ class TestUpscaleStageFailureModes:
         with pytest.raises(KeyError, match="clip"):
             stage.run(_state(with_clip=False))
 
-    def test_height_scale_refused(self) -> None:
+    def test_height_scale_no_longer_deferred(self) -> None:
+        # Behaviour: a height target is now resolved in-stage, not raised. With a
+        # single-factor (4x) engine on a remote clip, the sole factor runs and
+        # the output (960<1080 here) is unsatisfiable -> ScaleUnsatisfiableError,
+        # NOT the old NotYetImplementedError. Bug caught: the stale deferral
+        # raise surviving the feature.
         eng = _FakeEngine()
+        eng.supported_scales = (ScaleTarget(kind="factor", value=4.0),)
         stage = UpscaleStage(
             engine=eng,
             scale=ScaleTarget(kind="height", value=1080.0),
             instance=None,
             cfg={},
         )
-        with pytest.raises(NotYetImplementedError, match="1080p deferred"):
-            stage.run(_state())
+        # Remote source (no file:// clip) + 4x output 960 < 1080 -> unsatisfiable.
+        remote = PipelineState(
+            request=GenerationRequest(prompt="p", mode="t2v"),
+            artifacts={"clip": _art("https://pod/in.mp4")},
+        )
+        with pytest.raises(ScaleUnsatisfiableError):
+            stage.run(remote)
