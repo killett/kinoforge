@@ -47,6 +47,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 16. `2026-07-04 00:50:21` — [Keyframe→video pipeline: Luma UNI-1 keyframe → fal wan-i2v (E21 data-URI hand-off) — i2v](#16-2026-07-04-005021--keyframevideo-pipeline-luma-uni-1-keyframe--fal-wan-i2v-e21-data-uri-hand-off--i2v)
 17. `2026-07-04 01:29:58` — [flf2v pipeline: dual fal flux-schnell keyframes → fal wan-flf2v — flf2v](#17-2026-07-04-012958--flf2v-pipeline-dual-fal-flux-schnell-keyframes--fal-wan-flf2v--flf2v)
 18. `2026-07-04 03:56:00` — [Luma UNI-1-MAX keyframes — 4-prompt matrix vs uni-1 — t2i](#18-2026-07-04-035600--luma-uni-1-max-keyframes--4-prompt-matrix-vs-uni-1--t2i)
+19. `2026-07-05 04:16:18` — [FlashVSR height-target upscale (scale=1080p → 4x+downscale) on RunPod A100 80GB — upscale](#19-2026-07-05-041618--flashvsr-height-target-upscale-scale1080p--4xdownscale-on-runpod-a100-80gb--upscale)
 
 ---
 
@@ -2355,3 +2356,60 @@ Manifests: `tests/live/evidence/2026-07-04_luma_matrix_manifest_run{1,2}.json`.
 - Spend: 9 generations total (~$0.3-0.7 of the $20 credit; Luma does not return per-generation cost on the wire).
 - **Revised recommendation** (metrics said tie; eyes disagree): `uni-1-max` is the safer keyframe default — fewer destructive artifacts and better subject clarity at +15 % latency. Cfg stays on `uni-1` for now ONLY because max-tier per-image pricing is unverifiable on the wire; flip `keyframe-luma.yaml` to `uni-1-max` once the dashboard confirms the price delta is acceptable.
 - Artifact caution for keyframe→i2v flows: inspect keyframes before spending on the video leg — uni-1's dawn-flight blobs would have seeded a ruined clip.
+
+---
+
+## 19. `2026-07-05 04:16:18` — FlashVSR height-target upscale (scale=1080p → 4x+downscale) on RunPod A100 80GB — upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / FlashVSREngine + DiffusersEngine (upscale-only mode) / diffsynth.FlashVSRFullPipeline @ JunhaoZhuang/FlashVSR-v1.1` |
+| **Mode** | upscale |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `42c4451` (upscale-only smoke green); feature commits `65120de`..`8438a8b` |
+| **Date (local TZ)** | 2026-07-05 04:16:18 -0700 (PDT) |
+| **Layer / phase** | Height-target upscaling — spec `docs/superpowers/specs/2026-07-05-height-target-upscale-design.md`, plan `docs/superpowers/plans/2026-07-05-height-target-upscale.md` (Task 6). |
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_SPEND=1 pixi run pytest \
+  tests/live/test_flashvsr_height_target_live.py -v -s
+```
+
+### Cfg
+
+- `examples/configs/upscale-flashvsr-1080p.yaml` — engine=`diffusers` (upscale_only), upscaler=`flashvsr`, **scale=`1080p`** (height target, NOT a raw factor), precision=`bfloat16`, tile_size=`512`, cloud_type=`secure`, GPU tier=A100/H100 80GB, image=`runpod/pytorch:2.8.0-...cuda12.8.1`.
+
+### Input
+
+- Source clip: `/workspace/output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` — 480×480, 81 frames (Wan 2.2 T2V-A14B, entry #8). Same fixture as #13's F-single.
+
+### Output
+
+- Artifact: `output/20260705-041618_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4`
+- Dims: **1080×1080** (height-target 1080p; source 480² → FlashVSR 4×=1920² → lanczos downscale → 1080²). Verified via `pixi run ffprobe`.
+- Duration 4.81 s, ~2.25 MB, h264 / yuv420p.
+- SHA256: `5c5b6c13b086491bf061bb456d7b81f3a67e983f058d519e1ec3a25363f99f9f`
+
+### Frame-QA verdict (5-frame contact sheet)
+
+**PASS — high quality.** Sharp, color-correct golden-hour grade (NOT the pre-`e82b0d1` psychedelic corruption). Prompt-adherent: woman in wildflower meadow, tall waterfall on mossy cliffs, backlit glow, luminous butterflies + light-wisps, colorful dress, glancing over shoulder. Temporally coherent across frames (subject turns, camera glides, no flicker/warp). Crisp 4× detail retained through the downscale.
+
+### Pod
+
+- Provider: RunPod; GPU: A100 80GB; cost rate ~$1.19/hr.
+- Pytest wall-clock: **4 m 04 s** (`1 passed in 243.99s`) — vs ~30 min for the render+upscale multi-stage path (no 70 GB Wan A14B download).
+- Spend: ~$0.08. Ledger post-run: clean (`--no-reuse` auto-destroy verified via `kinoforge list`).
+
+### Reproduction recipe deltas vs. #13 (FlashVSR 4x)
+
+- **New scale grammar**: `scale: 1080p` (height target) instead of `4x`. `UpscaleStage` resolves it against the engine's `supported_scales=(4x,)` to a concrete 4× factor + a `downscale_to=1080` stashed on the artifact meta; the orchestrator materialize boundary lanczos-downscales the fetched bytes before publishing. Engine-agnostic pure resolver `kinoforge.core.scale_resolver.resolve_height_target`.
+- **Delivered size capped**: 1080² deliverable (2.25 MB) vs #13's raw 1920² (34 MB) — the whole point of the height target.
+
+### Infra bugs root-caused + fixed en route (4 live runs, ~$1.6 total)
+
+1. **RunPod create HTTP 500** — total `env` payload >~101 KB (base64 provision script alone 98,848 B → total 101,971). Fixed `5418c35`: gzip the script before base64 (→72 KB), `dockerArgs` decodes `base64 -d | gzip -d`. Hardens every RunPod create.
+2. **`ValueError: supported_factors must be non-empty`** — FlashVSR declared the empty accept-any `supported_scales` sentinel; the height resolver needs a factor menu. Fixed `e3c3065`: declare `supported_scales=(4x,)`.
+3. **ffmpeg exit 183 on the downscale** — a large mp4 piped via `pipe:0` fails demux (moov atom needs seeking on a non-seekable pipe). Fixed `8438a8b`: write bytes to a seekable temp file, `ffmpeg -i <file>`.
+4. **RunPod pod-death mid-run** (run 2, secure host, ~30 min in) — infra, not code. Motivated the pivot to the upscale-only fixture path (`42c4451`): ~4 min / ~$0.08, far shorter pod-death window than render+upscale.

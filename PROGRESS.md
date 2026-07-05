@@ -29,24 +29,35 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION (2026-07-05):** re-fire the FlashVSR 1080p height-target
-live smoke once RunPod's create API recovers —
-`KINOFORGE_LIVE_SPEND=1 pixi run test tests/live/test_flashvsr_height_target_live.py`.
+**SINGLE NEXT ACTION (2026-07-05):** none — height-target upscaling shipped +
+live-verified (entry #19). Pick from the gated table below.
 
-**Height-target upscaling (1080p/720p) — offline COMPLETE, live BLOCKED 2026-07-05:**
+**Height-target upscaling (1080p/720p) — SHIPPED + LIVE-GREEN 2026-07-05:**
 Spec `docs/superpowers/specs/2026-07-05-height-target-upscale-design.md`, plan
-`docs/superpowers/plans/2026-07-05-height-target-upscale.md`. Tasks 0-5 shipped +
-committed (`65120de`..`5cf4c09`): pure `resolve_height_target` resolver +
+`docs/superpowers/plans/2026-07-05-height-target-upscale.md`. Tasks 0-7 done.
+Offline (`65120de`..`5cf4c09`): pure `resolve_height_target` resolver +
 `ScaleUnsatisfiableError`, `ffprobe_dims`, `downscale_video_bytes` (lanczos),
 config accepts height, `UpscaleStage` resolves height→factor + stashes
-`meta["downscale_to"]`, orchestrator downscales at the materialize boundary. All
-offline tests green (348 in the upscale/orchestrator/materialize slice). Task 6
-(live FlashVSR 480²→1080p smoke, RED scaffold `89bb5e3`) is BLOCKED: RunPod's
-`api.runpod.io/graphql` create mutation returned HTTP 500 on 3 consecutive
-attempts (~6 min, 01:54-02:00 PDT) — no pod ever created, zero spend, ledger
-clean each time. `kinoforge list` (a RunPod read) succeeds, so it's the create
-mutation degraded server-side, NOT auth/balance/our cfg (`scale` never reaches
-the create request body). Retry when RunPod recovers.
+`meta["downscale_to"]`, orchestrator downscales at the materialize boundary.
+**Live GREEN**: `test_flashvsr_height_target_live.py` upscale-only path
+(fixture 480²→4x=1920²→downscale→**1080×1080**, `1 passed in 243.99s`, ~$0.08,
+pod auto-destroyed, frame-QA PASS — entry #19). Delivered 2.25 MB vs raw 1920²
+34 MB (the point of the height cap).
+
+**Four infra bugs root-caused + fixed en route (see entry #19):**
+1. RunPod create HTTP 500 = total `env` >~101 KB; gzip provision script
+   (`5418c35`) — hardens every RunPod create. `dockerArgs`: `base64 -d | gzip -d`.
+2. FlashVSR empty `supported_scales` sentinel → resolver ValueError; declared
+   `(4x,)` (`e3c3065`).
+3. downscale ffmpeg exit 183 = large mp4 via `pipe:0` can't seek to moov atom;
+   temp-file input (`8438a8b`).
+4. RunPod pod-death mid-run (secure host, ~30 min) → pivoted to the upscale-only
+   fixture path (`42c4451`): no 70 GB Wan download, ~4 min, short pod-death window.
+
+**Reusable lesson:** RunPod's `podFindAndDeployOnDemand` raw-500s (not a GraphQL
+error) when total env exceeds ~101 KB — gzip large provision payloads. And test
+downscale/ffmpeg seams with REALISTIC file sizes (a 256² fixture hid the
+mp4-pipe-seek bug that a 1920² file trips).
 
 **F-multi/F-warm re-fire with fix — GREEN 2026-07-04 23:15 PDT:**
 `2 passed in 1172.22s`, pod `utbf9k7bp2khuo`, ~$0.40, ledger clean after.
