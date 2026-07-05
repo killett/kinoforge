@@ -78,21 +78,26 @@ def _dense_masked_attention(
     kh = k.view(bsz, s_kv, num_heads, d).permute(0, 2, 1, 3).float()
     vh = v.view(bsz, s_kv, num_heads, d).permute(0, 2, 1, 3).float()
 
-    mask_tok = attention_mask.repeat_interleave(block_size, dim=-2)
-    mask_tok = mask_tok.repeat_interleave(block_size, dim=-1)
-    mask_tok = mask_tok[:, :, :s_q, :s_kv].to(torch.bool)
-
     scale = d**-0.5
     out = torch.empty_like(qh)
-    # Per-head loop keeps peak memory at one (S_q, S_kv) fp32 score matrix.
+    # Per-head loop with per-head mask expansion keeps peak memory at one
+    # (S_q, S_kv) fp32 score matrix plus one bool token mask — expanding
+    # the mask for all heads at once costs ~30 GB at 1920² and OOMs next
+    # to the resident model.
     for h in range(num_heads):
-        scores = torch.einsum("bqd,bkd->bqk", qh[:, h], kh[:, h]) * scale
-        scores = scores.masked_fill(~mask_tok[:, h], float("-inf"))
+        mask_tok = attention_mask[:, h].repeat_interleave(block_size, dim=-2)
+        mask_tok = mask_tok.repeat_interleave(block_size, dim=-1)
+        mask_tok = mask_tok[:, :s_q, :s_kv].to(torch.bool)
+        scores = torch.einsum("bqd,bkd->bqk", qh[:, h], kh[:, h])
+        scores *= scale
+        scores.masked_fill_(~mask_tok, float("-inf"))
         attn = torch.softmax(scores, dim=-1)
+        del scores, mask_tok
         # Rows whose mask is entirely False softmax to NaN — zero them so
         # they contribute nothing (matches the sparse kernel's behaviour).
-        attn = torch.nan_to_num(attn, nan=0.0)
+        attn = torch.nan_to_num_(attn, nan=0.0)
         out[:, h] = torch.einsum("bqk,bkd->bqd", attn, vh[:, h])
+        del attn
     return out.permute(0, 2, 1, 3).reshape(bsz, s_q, dim).to(q.dtype)
 
 
