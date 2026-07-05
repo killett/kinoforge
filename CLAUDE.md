@@ -235,6 +235,46 @@ dims across 24+ attempts and ~$2 of spend — every surviving output was
 psychedelic false-color garbage, caught only by the 2026-07-04
 frame-extraction QA pass. Dims and duration cannot see pixels.
 
+## Known infra gotchas (learned the hard way)
+
+### RunPod create returns a raw HTTP 500 when the env payload exceeds ~101 KB
+RunPod's `podFindAndDeployOnDemand` mutation returns a **raw HTTP 500**
+("Internal Server Error", NOT a GraphQL `errors[]` body) once the total
+`env` payload crosses ~101 KB. `list` / `find_offers` (reads) keep working,
+so it looks like an outage but is not — it is the *create mutation* choking
+on the request body. Root-caused 2026-07-05: the base64 provision script
+alone was 98,848 B → total env 101,971 B → every create 500'd.
+
+- The provider now **gzips the provision script before base64**
+  (`_create_pod`, commit `5418c35`): `dockerArgs` decodes with
+  `base64 -d | gzip -d`. ~74 KB script → ~72 KB base64, ~4× headroom.
+- If a create 500s again: it is almost never an outage. Probe with a
+  MINIMAL create body (single small env) — if that succeeds, the payload
+  is the culprit. Binary-search fields; the env total is the usual suspect.
+  Never conclude "RunPod is down" without ruling out payload size first.
+- RunPod pods (even `cloud_type: secure`) can be **terminated mid-run** by
+  the host — the driver subprocess then hangs on a dead pod until timeout.
+  Poll pod existence directly (`myself { pods { id } }`); empty list mid-run
+  = pod died, kill the driver + `kinoforge forget` the stale ledger entry.
+
+### ffmpeg cannot read a large mp4 from a non-seekable pipe (`pipe:0`)
+An mp4's `moov` atom lives at the container tail; ffmpeg must seek back to
+read it. Over `pipe:0` (stdin) that seek is impossible, so large inputs fail
+with `partial file` / `unspecified pixel format` / `Invalid data` → **exit
+183**. Small clips buffer through and hide it. `downscale_video_bytes` writes
+bytes to a **seekable temp file** and runs `ffmpeg -i <file>` (commit
+`8438a8b`); output stays on `pipe:1` (fragmented flags need no seek).
+**Test ffmpeg/video seams with REALISTIC file sizes** — a 256² fixture hid
+this bug that a 1920² FlashVSR output trips.
+
+### Prefer the upscale-only path for upscaler validation
+To validate an upscaler feature (e.g. height-target `scale: 1080p`), feed a
+pre-generated fixture clip to `kinoforge upscale` rather than running a full
+Wan render+upscale. The 70 GB Wan A14B download is ~25 of ~30 min and most of
+the cost + pod-death exposure, and it is incidental to what the upscaler test
+actually exercises. Upscale-only (`upscale_only: true`, `models: []`, fixture
+via `--video`) is ~4 min / ~$0.08. Fixture: `output/20260630-221857_..._Photorealistic-cinem.mp4` (480²/81f).
+
 ## Workspace scaffolding
 
 This project has already been scaffolded. The following files
