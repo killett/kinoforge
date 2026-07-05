@@ -1,0 +1,132 @@
+# Wan 2.2 T2V-A14B + in-pipeline FlashVSR v1.1 HEIGHT-TARGET upscale to 1080p.
+# Height-target variant of wan-with-upscale-flashvsr.yaml: instead of a raw 4x
+# factor, `upscale.scale: 1080p` asks for a 1080-pixel vertical deliverable.
+#
+# Resolution math (source render is 480x480):
+#   FlashVSR native factor is fixed at 4x -> 480 x 4 = 1920 (>= 1080, ok).
+#   UpscaleStage runs 4x, then the orchestrator materialize boundary
+#   lanczos-downscales 1920 -> 1080 (aspect preserved -> 1080x1080 square).
+#   Delivered artifact = 1080x1080; the 1920x1920 intermediate is discarded.
+#
+# See docs/superpowers/specs/2026-07-05-height-target-upscale-design.md.
+#
+# Usage:
+#   pixi run kinoforge generate \
+#     --config examples/configs/wan-with-upscale-flashvsr-1080p.yaml \
+#     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+#     --mode t2v --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    # MUST match compute.image below — BSA links against the pod's
+    # torch; a mismatched provisioner image reintroduces the undefined
+    # c10 symbol crash (T8 smoke #11, commit ca49cbf). The 2.4.0 tag
+    # pulls fast on RunPod (2.8.0 cudnn-devel stalled 3x during T8);
+    # torch itself is pip-upgraded to 2.6 below.
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # torch 2.6.0+cu124 — the one version both co-residents accept:
+      # Wan 2.2 VAE needs >=2.6, BSA wheel (bsa-cu124-torch2.6-v1
+      # below) was built against exactly this trio. cu124 wheels come
+      # via the provisioner's default --extra-index-url.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      # diffsynth module-top imports `from modelscope import
+      # snapshot_download`. Missing → ImportError inside
+      # `mm.load_models()` → 500 on first /upscale call.
+      - "modelscope"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      # flashvsr _fetch_weights CLI runs at provision time before the
+      # server starts; needs the upscalers.flashvsr package on disk.
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      # FlashVSRRuntime imports kinoforge.core.errors + .scale_target at
+      # the first /upscale call.
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+
+models:
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: runpod
+  # Keep in lockstep with engine.diffusers.image above (see comment there).
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  # Dedicated hosts only. 2026-07-03: every cloudType=ALL pod (community
+  # capacity) was deleted by RunPod minutes after create — 3 BSA wheel
+  # builds + 2 F-multi smoke pods in one day. The multi-stage pipeline
+  # holds a pod 30-60 min; community interruption terminates zero-volume
+  # pods outright.
+  cloud_type: secure
+  warm_reuse_auto_attach: true
+  requirements:
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 3.00
+    # FlashVSR needs SM80+ (Block-Sparse-Attention). NVIDIA-prefixed names
+    # required — RunPod's fuzzy matcher falls through to a no-GPU offer
+    # for bare tokens like "A100 80GB" (learned on 2026-07-01, T8 attempt
+    # #1 burned $0.10 on a CPU-only pod). 80 GB tier covers Wan 2.2 A14B
+    # + FlashVSR co-resident memory budget.
+    gpu_preference:
+      - "NVIDIA A100 80GB PCIe"
+      - "NVIDIA A100-SXM4-80GB"
+      - "NVIDIA H100 80GB HBM3"
+      - "NVIDIA H100 PCIe"
+    disk_gb: 150
+  lifecycle:
+    idle_timeout: 60m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 180m
+    boot_timeout: 25m
+    budget: 5.0
+    heartbeat_interval_s: 30
+
+spec:
+  model: "Wan2.2-T2V-A14B-Diffusers"
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
+  width: 480
+  height: 480
+  num_frames: 81
+  fps: 16
+
+upscale:
+  # Height target: resolve to FlashVSR's native 4x (480 -> 1920), then
+  # downscale 1920 -> 1080 at the orchestrator materialize boundary.
+  engine: flashvsr
+  scale: 1080p
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    # torch 2.6.0+cu124 build — matches the pip torch pin above. The
+    # default (bsa-cu128-torch2.8-v1) is really a torch 2.4.1 build
+    # (mis-tagged, commit ca49cbf) and hard-crashes next to Wan 2.2's
+    # torch 2.6 requirement.
+    bsa_wheel_url: "https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu124-torch2.6-v1/block_sparse_attn-0.0.1-cp311-cp311-linux_x86_64.whl"
+    precision: bfloat16
+    window_size: 24
+    # 480x480 → 1920x1920 4x peaks ~42-46 GB torch alloc untiled (T8
+    # smokes 17-18 OOM'd an A6000 48GB). 512-px tiles halve the peak;
+    # mandatory here because Wan 2.2 A14B co-resides on the same 80 GB.
+    tile_size: 512
+    long_video_mode: false
