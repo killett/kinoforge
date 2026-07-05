@@ -2167,6 +2167,13 @@ One 80 GB card cannot hold Wan 2.2 A14B (~74 GiB resident) and FlashVSR (~9 GiB 
   projection random-init — NOT the BSA wheel or torch 2.6 (old stack reproduced the same
   corruption). Fixed + verified clean on this entry's own F-multi source clip:
   `output/20260704-222558_upscaled_flashvsr_...mp4` (frame-QA'd sharp/color-correct).
+- **See also (re-fire with fix, 2026-07-04 23:15 PDT):** full F-multi + F-warm pytest
+  pair re-run green post-fix — `2 passed in 1172.22s`, pod `utbf9k7bp2khuo`, ~$0.40,
+  destroyed clean. All four artifacts frame-QA'd CLEAN: `20260704-230446` (Wan) +
+  `20260704-230735` (1920² upscale), `20260704-231130` (F-warm Wan) + `20260704-231525`
+  (1920² upscale). Evidence:
+  `tests/live/evidence/2026-07-04_flashvsr_fix_refire_f_multi_warm_stdout.txt`. This is
+  the first visually-verified green for the co-resident multi-stage tuple.
 
 ---
 
