@@ -1,0 +1,96 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-05-frame-interpolation.md",
+  "tasks": [
+    {
+      "id": 5,
+      "subject": "Task 0: InterpolationError exception",
+      "status": "pending",
+      "description": "**Goal:** Add the interp error type (mirror UpscaleFailed). Files: core/errors.py + tests/test_errors_interpolation.py. Verify: pixi run pytest tests/test_errors_interpolation.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\"], \"verifyCommand\": \"pixi run pytest tests/test_errors_interpolation.py -v\", \"acceptanceCriteria\": [\"InterpolationError subclasses KinoforgeError with job_id+server_error\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 1: ffprobe_fps frame-rate probe",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** ffprobe_fps parses rational r_frame_rate to float. Files: core/frames.py + tests/test_frames_ffprobe_fps.py. Verify: pixi run pytest tests/test_frames_ffprobe_fps.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/frames.py\"], \"verifyCommand\": \"pixi run pytest tests/test_frames_ffprobe_fps.py -v\", \"acceptanceCriteria\": [\"parses rational to float\", \"raises on bad/zero-denom\", \"argv targets r_frame_rate\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 2: fps_resolver — engine-agnostic foundation",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Pure resolve_fps_target → FpsPlan (passthrough/decimate/arbitrary-schedule/recursive-depth). Files: core/fps_resolver.py + tests/test_fps_resolver.py. Verify: pixi run pytest tests/test_fps_resolver.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/fps_resolver.py\"], \"verifyCommand\": \"pixi run pytest tests/test_fps_resolver.py -v\", \"acceptanceCriteria\": [\"passthrough/decimate/arbitrary/recursive branches\", \"target<=0 ValueError\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 3: decimate_video_fps — ffmpeg re-timing",
+      "status": "pending",
+      "blockedBy": [7],
+      "description": "**Goal:** decimate_video_fps ffmpeg fps filter over temp-file input (not pipe:0). Files: pipeline/decimate.py + tests/pipeline/test_decimate.py. Verify: pixi run pytest tests/pipeline/test_decimate.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/decimate.py\"], \"verifyCommand\": \"pixi run pytest tests/pipeline/test_decimate.py -v\", \"acceptanceCriteria\": [\"fps filter over temp-file not pipe:0\", \"NTSC exact\", \"real-ffmpeg hits target\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 4: InterpolatorEngine interface + registry",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** InterpolateJob/Result + InterpolatorEngine ABC + registry trio. Files: core/interfaces.py, core/registry.py + tests/core/test_interpolator_registry.py. Verify: pixi run pytest tests/core/test_interpolator_registry.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/registry.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_interpolator_registry.py -v\", \"acceptanceCriteria\": [\"job/result dataclasses\", \"ABC parallel to UpscalerEngine + capability\", \"registry mirrors upscaler\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 5: InterpolateStage",
+      "status": "pending",
+      "blockedBy": [7, 8, 9],
+      "description": "**Goal:** Stage routes upshift→engine, downshift→local decimate, equal→passthrough, remote→engine. Files: pipeline/interpolate.py + tests/pipeline/test_interpolate_stage.py. Verify: pixi run pytest tests/pipeline/test_interpolate_stage.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/interpolate.py\"], \"verifyCommand\": \"pixi run pytest tests/pipeline/test_interpolate_stage.py -v\", \"acceptanceCriteria\": [\"4 routing cases\", \"writes interpolated artifact\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 6: Config surface — interpolate: block",
+      "status": "pending",
+      "blockedBy": [10],
+      "description": "**Goal:** RifeEngineConfig + InterpolateConfig + Config.interpolate + capability_key wiring. Files: core/config.py + tests/test_config_interpolate.py. Verify: pixi run pytest tests/test_config_interpolate.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\"], \"verifyCommand\": \"pixi run pytest tests/test_config_interpolate.py -v\", \"acceptanceCriteria\": [\"fps>0 + rife-block-required\", \"precision allowlist\", \"capability_key backward-compatible\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 7: Orchestrator wiring (standalone path only)",
+      "status": "pending",
+      "blockedBy": [10, 11],
+      "description": "**Goal:** Append InterpolateStage + materialize interpolated artifact; NO inter-stage refactor. Files: core/orchestrator.py + tests/core/test_orchestrator_interpolate.py. Verify: pixi run pytest tests/core/test_orchestrator_interpolate.py -v then full pixi run test.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_interpolate.py -v\", \"acceptanceCriteria\": [\"stage appended\", \"interpolated materialized+published\", \"standalone returns interpolated\", \"no-interp unaffected\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 8: CLI — kinoforge interpolate subcommand",
+      "status": "pending",
+      "blockedBy": [11, 12],
+      "description": "**Goal:** interpolate subparser + _cmd_interpolate (mirror upscale). Files: cli/_main.py, cli/_commands.py + tests/cli/test_cmd_interpolate.py. Verify: pixi run pytest tests/cli/test_cmd_interpolate.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"src/kinoforge/cli/_commands.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_cmd_interpolate.py -v\", \"acceptanceCriteria\": [\"subparser flags\", \"exit-2 gates\", \"--fps override + dry-run\", \"non-dry-run drives generate skip_clip_stage+initial_clip\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 9: RifeEngine client (HTTP to pod)",
+      "status": "pending",
+      "blockedBy": [9],
+      "description": "**Goal:** RifeEngine InterpolatorEngine impl (upload+POST+poll+result) + render_provision + self-register. Files: interpolators/rife/*.py + tests/interpolators/test_rife_engine.py. Verify: pixi run pytest tests/interpolators/test_rife_engine.py -v. EXEC-TIME TODO: pin Practical-RIFE SHA + confirm weights layout.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/interpolators/rife/_engine.py\", \"src/kinoforge/interpolators/rife/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/interpolators/test_rife_engine.py -v\", \"acceptanceCriteria\": [\"upload+POST+poll+result\", \"error→InterpolationError\", \"validate/model_identity/capability\", \"self-registered rife\"], \"modelTier\": \"standard\", \"executionTimeTodo\": \"pin Practical-RIFE commit SHA + confirm weights layout\"}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 10: On-pod RIFE runtime + server /interpolate endpoints",
+      "status": "pending",
+      "blockedBy": [7, 14],
+      "description": "**Goal:** _runtime.py renders schedule→mp4 at output_fps; ln.py /interpolate + status endpoints mirror /upscale. Files: interpolators/rife/_runtime.py, engines/diffusers/servers/ln.py + tests/interpolators/test_rife_runtime.py. Verify: pixi run pytest tests/interpolators/test_rife_runtime.py -v. READ ln.py /upscale block first.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/interpolators/rife/_runtime.py\", \"src/kinoforge/engines/diffusers/servers/ln.py\"], \"verifyCommand\": \"pixi run pytest tests/interpolators/test_rife_runtime.py -v\", \"acceptanceCriteria\": [\"runtime renders schedule to mp4, decimate-only-when-set\", \"server endpoints mirror /upscale\", \"offline fake-model asserts count+fps\"], \"modelTier\": \"complex\"}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 11: Example config + RED live-smoke scaffold (commit before spend)",
+      "status": "pending",
+      "blockedBy": [11, 13, 15],
+      "description": "**Goal:** interpolate-only cfg + gated RED live smoke, committed before spend (CLAUDE.md durability). Files: examples/configs/interpolate-rife-60fps.yaml, tests/live/test_rife_interpolate_live.py. Verify: pixi run pytest tests/live/test_rife_interpolate_live.py -v → SKIPPED; pixi run preflight → 0.\n\n```json:metadata\n{\"files\": [\"examples/configs/interpolate-rife-60fps.yaml\", \"tests/live/test_rife_interpolate_live.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_rife_interpolate_live.py -v\", \"acceptanceCriteria\": [\"cfg cloud_type secure\", \"live test gated/SKIPPED\", \"drives CLI on 480 fixture asserting fps==60 + clean ledger\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 12: Live smoke + frame-QA + successful-generations entry",
+      "status": "pending",
+      "blockedBy": [16],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Run RIFE interpolate-only live smoke, frame-QA before green, verify teardown, log generation. Files: successful-generations.md, tests/live/evidence/. Verify: KINOFORGE_LIVE=1 pixi run pytest tests/live/test_rife_interpolate_live.py -v → 1 passed; kinoforge list → no instances.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"tests/live/evidence/\"], \"verifyCommand\": \"KINOFORGE_LIVE=1 pixi run pytest tests/live/test_rife_interpolate_live.py -v\", \"acceptanceCriteria\": [\"preflight exit 0 before spend\", \"1 passed + captured stdout\", \"fps==60 + duration within 1 frame\", \"frame-QA verdict recorded before green\", \"pod destroyed + ledger clean\", \"successful-generations entry\"], \"modelTier\": \"complex\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requiresUserSpecification\": false, \"gateScope\": \"live-smoke\", \"failurePolicy\": \"stop\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-05"
+}
