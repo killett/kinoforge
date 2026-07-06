@@ -14,6 +14,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
 
+from kinoforge.core.fps_resolver import InterpCapability
 from kinoforge.core.scale_target import ScaleTarget
 
 if TYPE_CHECKING:
@@ -639,6 +640,45 @@ class UpscaleResult:
     engine_meta: dict = field(default_factory=dict)  # type: ignore[type-arg]
 
 
+@dataclass(frozen=True)
+class InterpolateJob:
+    """One unit of frame-interpolation work — engine-agnostic.
+
+    Attributes:
+        source: Input video Artifact (uri local or pod-fetchable).
+        target_fps: Requested output frame rate.
+        params: Engine-specific overrides (model tag, precision); engines
+            validate via ``validate_spec``.
+    """
+
+    source: Artifact
+    target_fps: float
+    params: dict = field(default_factory=dict)  # type: ignore[type-arg]
+
+
+@dataclass(frozen=True)
+class InterpolateResult:
+    """Output of one interpolation job.
+
+    Attributes:
+        artifact: Rendered interpolated video.
+        input_fps: Probed source frame rate.
+        output_fps: Delivered frame rate.
+        input_frame_count: Source frame count.
+        output_frame_count: Delivered frame count.
+        elapsed_s: Wall-clock seconds inside the engine.
+        engine_meta: Free-form engine telemetry.
+    """
+
+    artifact: Artifact
+    input_fps: float
+    output_fps: float
+    input_frame_count: int
+    output_frame_count: int
+    elapsed_s: float
+    engine_meta: dict = field(default_factory=dict)  # type: ignore[type-arg]
+
+
 class ModelProfileProvider(ABC):
     """A cache of ModelProfiles keyed by CapabilityKey."""
 
@@ -959,6 +999,69 @@ class UpscalerEngine(ABC):
         get_instance: Callable[[str], Instance],
     ) -> None:
         """Wire provider lookup; mirrors GenerationEngine.attach_get_instance."""
+        self._get_instance = get_instance  # noqa: SLF001
+
+
+class InterpolatorEngine(ABC):
+    """A swappable frame interpolator; owns env setup; declares capability.
+
+    Video-in / video-out at a higher frame rate. Separate from UpscalerEngine
+    because the surfaces don't overlap.
+
+    Attributes:
+        name: Registry key (e.g. ``"rife"``).
+        requires_compute: True when this engine needs a remote pod.
+        requires_local_weights: True when it downloads weights on the pod.
+        capability: How it reaches an intermediate time (arbitrary vs
+            recursive-2x); the stage's fps resolver consults this.
+    """
+
+    name: str
+    requires_compute: bool
+    requires_local_weights: bool
+    capability: InterpCapability
+
+    @abstractmethod
+    def provision(  # noqa: D102
+        self,
+        instance: Instance | None,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> None: ...
+
+    @abstractmethod
+    def interpolate(  # noqa: D102
+        self,
+        instance: Instance | None,
+        job: InterpolateJob,
+        cfg: dict[str, object],
+        *,
+        cancel_token: CancelToken | None = None,
+    ) -> InterpolateResult: ...
+
+    @abstractmethod
+    def validate_spec(self, job: InterpolateJob) -> None:
+        """Raise on an engine-unsupportable job."""
+        ...
+
+    @abstractmethod
+    def model_identity(self, cfg: dict[str, object]) -> str:
+        """Sink-filename slug (e.g. ``'rife-v4.9'``). MUST NOT raise."""
+        ...
+
+    def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
+        """Emit boot payload. Default raises; remote engines override."""
+        del cfg
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support remote provisioning"
+        )
+
+    def attach_get_instance(
+        self,
+        get_instance: Callable[[str], Instance],
+    ) -> None:
+        """Wire provider lookup; mirrors UpscalerEngine.attach_get_instance."""
         self._get_instance = get_instance  # noqa: SLF001
 
 

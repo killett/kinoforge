@@ -20,6 +20,7 @@ from kinoforge.core.errors import UnknownAdapter
 from kinoforge.core.interfaces import (
     ComputeProvider,
     GenerationEngine,
+    InterpolatorEngine,
     ModelSource,
     Splitter,
     UpscalerEngine,
@@ -35,6 +36,7 @@ _sources: list[ModelSource] = []
 _artifact_stores: dict[str, Callable[[], ArtifactStore]] = {}
 _splitters: dict[str, Callable[[], Splitter]] = {}
 _upscalers: dict[str, Callable[[], UpscalerEngine]] = {}
+_interpolators: dict[str, Callable[[], InterpolatorEngine]] = {}
 
 
 def register_provider(name: str, factory: Callable[[], ComputeProvider]) -> None:
@@ -268,3 +270,40 @@ def get_upscaler(name: str) -> Callable[[], UpscalerEngine]:
 def upscaler_names() -> list[str]:
     """Return all registered upscaler names, sorted."""
     return sorted(_upscalers)
+
+
+def register_interpolator(name: str, factory: Callable[[], InterpolatorEngine]) -> None:
+    """Register an interpolator factory under ``name``.
+
+    Duplicate registration is rejected so adapter import-order accidents surface
+    loudly rather than silently overwriting the production binding.
+
+    Args:
+        name: Registry key (e.g. ``"rife"``).
+        factory: Zero-arg callable returning an :class:`InterpolatorEngine`.
+
+    Raises:
+        UnknownAdapter: ``name`` is already registered.
+    """
+    if name in _interpolators:
+        raise UnknownAdapter(f"interpolator {name!r} already registered")
+    _interpolators[name] = factory
+
+
+def get_interpolator(name: str) -> Callable[[], InterpolatorEngine]:
+    """Return the factory for ``name``.
+
+    Raises:
+        UnknownAdapter: No interpolator registered under ``name``.
+    """
+    try:
+        return _interpolators[name]
+    except KeyError:
+        raise UnknownAdapter(
+            f"no interpolator registered as {name!r}; known: {sorted(_interpolators)}"
+        ) from None
+
+
+def interpolator_names() -> list[str]:
+    """Return all registered interpolator names, sorted."""
+    return sorted(_interpolators)
