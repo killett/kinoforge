@@ -166,7 +166,7 @@ Root-cause session total spend ≈ $1.00 of the $20 authorization.
 | Lambda region pin (`compute.region`) | condition: Lambda spend grows past smoke scale |
 | LoRA stack replay on Wan reload | condition: LoRA + upscale co-residency gets a real use case |
 | Flip keyframe default to `uni-1-max` | operator: confirm max-tier pricing on Luma dashboard (entry #18) |
-| RunPod balance top-up (~$4.57 left) | operator |
+| ~~RunPod balance top-up~~ | RESOLVED 2026-07-06 — operator topped up; live RunPod smokes unblocked |
 
 **Key operational rules learned the hard way (grep history for detail):**
 pin `compute.cloud_type: secure` for >10-min RunPod pods; consult
