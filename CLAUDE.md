@@ -113,6 +113,37 @@ SkyPilot cluster, hosted Bearer endpoint), **periodically poll the
 remote's resource utilisation** while the test runs. Do not wait for
 the test's own timeout to discover the pod is dead.
 
+**Poll UTILISATION, never `est_spend` as the health signal.** `est_spend`
+(and `kinoforge list`) grows purely on wall-clock — it looks identical
+whether the GPU is at 100% or dead at 0%, so it is blind to exactly the
+stall it is meant to catch. A monitor that only surfaces spend is NOT
+following this rule. Every polling loop MUST query the util probe below
+and surface `gpuUtilPercent` / `cpuPercent` / `memoryPercent`; treat GPU
+0% for ≥3 consecutive probes (or CPU 0% with flat memory during a boot)
+as a dead/stalled pod → pull `bootstrap.log`, destroy, fail fast. Copy-paste
+probe (loads `.env` itself — `pixi run` does not):
+
+```python
+from kinoforge.core.dotenv_loader import load_env_file; load_env_file()
+import os
+from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
+print(RunPodGraphQLUtilEndpoint(api_key=os.environ["RUNPOD_API_KEY"]).probe("<pod-id>"))
+# -> (True, UtilSnapshot(gpu_util_percent=.., cpu_percent=.., memory_percent=..))
+```
+
+The pod serves `/tmp` on port 8001 — fetch the boot log with
+`curl -s https://<pod-id>-8001.proxy.runpod.net/bootstrap.log | tail -40`
+(the `[bootstrap-trap] rc=<N>` line at the tail is the exit code; `rc != 0`
+means the provision script died and the container is idling under the trap).
+
+The failure mode this rule exists to prevent (2026-07-05 RIFE interpolate
+smoke): the monitor polled only `est_spend`, which climbed happily for 15
+minutes while the pod sat at **0% GPU / 0% CPU** — the RIFE bootstrap had
+crashed at minute ~3 (`huggingface-cli download` is deprecated and exits 1
+under `set -euo pipefail`). A util probe would have flagged the 0% at
+minute ~3; the wasted ~12 min + the operator having to ask "what's the
+utilisation?" is the exact cost this rule is meant to avoid.
+
 The failure mode this rule exists to prevent: a 40-minute wall-clock
 wait on a pod that died early (OOM, image-pull failure, model-weight
 fetch hang, worker thread crashed), with the operator only learning
