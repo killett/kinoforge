@@ -17,7 +17,7 @@
     {
       "id": 7,
       "subject": "Task 2: fps_resolver — engine-agnostic foundation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "**Goal:** Pure resolve_fps_target → FpsPlan (passthrough/decimate/arbitrary-schedule/recursive-depth). Files: core/fps_resolver.py + tests/test_fps_resolver.py. Verify: pixi run pytest tests/test_fps_resolver.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/fps_resolver.py\"], \"verifyCommand\": \"pixi run pytest tests/test_fps_resolver.py -v\", \"acceptanceCriteria\": [\"passthrough/decimate/arbitrary/recursive branches\", \"target<=0 ValueError\"], \"modelTier\": \"standard\"}\n```"
     },
