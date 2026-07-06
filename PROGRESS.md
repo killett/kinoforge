@@ -29,8 +29,29 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION (2026-07-05):** none — height-target upscaling shipped +
-live-verified (entry #19). Pick from the gated table below.
+**SINGLE NEXT ACTION (2026-07-05):** frame-interpolation (RIFE v4) build IN
+PROGRESS — resume at plan Task 8 (CLI `kinoforge interpolate` subcommand).
+
+**Frame-interpolation (RIFE v4) — IN PROGRESS 2026-07-05:**
+Spec `docs/superpowers/specs/2026-07-05-frame-interpolation-design.md` (see
+`git log`), plan `docs/superpowers/plans/2026-07-05-frame-interpolation.md`
+(13 tasks 0-12; tasks.json alongside). Offline foundation DONE + committed:
+- T0 `InterpolationError` (errors.py). T1 `ffprobe_fps` rational probe
+  (frames.py). T2 pure `fps_resolver` (passthrough/decimate/arbitrary-schedule/
+  recursive-depth). T3 `decimate_video_fps` ffmpeg fps re-time over temp-file
+  (NTSC-family exact). T4 `InterpolatorEngine` ABC + `InterpolateJob/Result` +
+  registry trio. T5 `InterpolateStage` (resolver-routed engine/decimate/
+  passthrough). T6 config `interpolate:` block (`RifeEngineConfig`,
+  `InterpolateConfig`, `Config.interpolate`, `CapabilityKey.interpolator[_fps]`
+  backward-compat-guarded derive). T7 orchestrator appends `InterpolateStage` +
+  materializes `interpolated` (standalone `skip_clip_stage` path only — see the
+  plan's Planning-time correction; combined generate+interp & co-resident stay
+  out of scope, workflow = command chaining `upscale` then `interpolate`).
+- **Remaining:** T8 CLI subcommand, T9 `RifeEngine` HTTP client (+`<PIN_SHA>`
+  exec-time TODO: pin Practical-RIFE commit + weights layout), T10 on-pod
+  `_runtime.py` + server `/interpolate` endpoints, T11 example cfg + RED live
+  smoke (commit before spend), T12 USER-GATE live smoke + frame-QA + gen log.
+- Full suite green after T7: 3861 passed / 130 skipped / 6 xfailed.
 
 **Height-target upscaling (1080p/720p) — SHIPPED + LIVE-GREEN 2026-07-05:**
 Spec `docs/superpowers/specs/2026-07-05-height-target-upscale-design.md`, plan
