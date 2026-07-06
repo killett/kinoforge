@@ -76,14 +76,11 @@ interpolate:
   engine: rife
   fps: 60.0
   rife:
-    # RIFE v4 weights. weights_ref is fetched to /workspace/models/rife at
-    # provision (huggingface-cli download). AlexWortega/RIFE (verified) ships
-    # flownet.pkl at the repo root; RifeRuntime._load_rife_infer calls
-    # Model.load_model("/workspace/models/rife", -1) which expects flownet.pkl
-    # there. EXEC-TIME TODO (Task 12, USER-GATE): confirm the `train_log`
-    # RIFE_HDv3 arch is importable on the pod (Practical-RIFE is a script repo,
-    # not a pip package — the arch may need staging alongside the weights, as
-    # in hzwer/RIFE's RIFEv4.26 bundle). Validate live before declaring green.
-    weights_ref: "hf:AlexWortega/RIFE"
-    model: rife49
+    # RIFE v4 model bundle. weights_ref names the HF repo holding the release
+    # zip (RIFEv4.26_0921.zip = arch .py files + flownet.pkl); render_provision
+    # curls it and unzips into the cloned Practical-RIFE's train_log/. The arch
+    # ships inside the zip, NOT the git repo — cloning alone leaves train_log/
+    # empty ("No module named train_log.RIFE_HDv3", 2026-07-05).
+    weights_ref: "hf:hzwer/RIFE"
+    model: rife426
     precision: fp16

@@ -82,23 +82,25 @@ class RifeRuntime:
 
         # Practical-RIFE is a script repo (cloned by render_provision, not
         # pip-installed): its train_log/ package is only importable with the
-        # repo root on sys.path.
+        # repo root on sys.path. The arch + flownet.pkl were unzipped into
+        # <repo>/train_log/ from the model release bundle.
         rife_repo = "/workspace/Practical-RIFE"
+        train_log = rife_repo + "/train_log"
         if rife_repo not in sys.path:
             sys.path.insert(0, rife_repo)
         from train_log.RIFE_HDv3 import Model  # type: ignore[import-not-found]
 
+        dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = Model()
-        model.load_model(str(self.weights_dir), -1)
+        # load_model reads ``{path}/flownet.pkl``; the arch-matched weights live
+        # in train_log/ (NOT self.weights_dir, which is only a mirror).
+        model.load_model(train_log, -1)
         model.eval()
-        model.device()
 
         def _infer(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
             def _to_tensor(frame: np.ndarray) -> Any:  # noqa: ANN401 — torch.Tensor (untyped)
                 arr = np.asarray(frame).astype(np.float32) / 255.0
-                return (
-                    torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(model.device)
-                )
+                return torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(dev)
 
             with torch.no_grad():
                 mid = model.inference(_to_tensor(a), _to_tensor(b), t)
