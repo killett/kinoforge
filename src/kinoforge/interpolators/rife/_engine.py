@@ -80,6 +80,11 @@ class RifeEngine(InterpolatorEngine):
         script = "".join(
             [
                 "set -euo pipefail\n",
+                # System ffmpeg — RifeRuntime shells out to `ffprobe` (fps +
+                # frame-count probes) and muxes via imageio; the base
+                # runpod/pytorch image ships neither on PATH. Missing ffprobe
+                # failed the 2026-07-05 interp job server-side.
+                "apt-get update -qq && apt-get install -y -qq ffmpeg\n",
                 # Clone the pinned Practical-RIFE (arch code lives in train_log/).
                 f"git clone https://github.com/hzwer/Practical-RIFE {_RIFE_REPO_DIR}\n",
                 f"cd {_RIFE_REPO_DIR} && git checkout {_PRACTICAL_RIFE_COMMIT}\n",
