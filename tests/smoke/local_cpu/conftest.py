@@ -7,8 +7,10 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
+from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -79,6 +81,23 @@ def uvicorn_server(tmp_path: Path) -> Iterator[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+    # Drain the server's stdout in a daemon thread. Without this, a chatty
+    # request (the vram-rollback test POSTs 200 LoRA specs → 200+ log lines)
+    # fills the ~64 KB OS pipe buffer, the server BLOCKS on write, stops
+    # answering, and the client's POST hangs until its 60 s timeout — a
+    # deterministic-looking "flake" whose real trigger is total server log
+    # volume (any extra logging upstream tips it over). Draining keeps the
+    # pipe empty AND retains a tail of the log for failure diagnostics.
+    log_tail: deque[str] = deque(maxlen=400)
+
+    def _drain() -> None:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            log_tail.append(raw.decode(errors="replace").rstrip())
+
+    drainer = threading.Thread(target=_drain, daemon=True)
+    drainer.start()
+
     base = f"http://127.0.0.1:{port}"
     try:
         _await_health(base)
