@@ -453,6 +453,16 @@ class UpscaleFailed(KinoforgeError):
         self.server_error = server_error
 
 
+class InterpolationError(KinoforgeError):
+    """Server-side frame-interpolation job entered an error state."""
+
+    def __init__(self, job_id: str, server_error: str) -> None:
+        """Record the failed job_id and server-supplied error description."""
+        super().__init__(f"interpolate job {job_id} failed on server: {server_error}")
+        self.job_id = job_id
+        self.server_error = server_error
+
+
 class VRAMEvictionFailed(KinoforgeError):
     """Eviction policy exhausted all targets and the requested model still doesn't fit."""
 
