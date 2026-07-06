@@ -1037,6 +1037,55 @@ class SweeperConfig(BaseModel):
         return v
 
 
+class RifeEngineConfig(BaseModel):
+    """RIFE v4 engine params, validated at cfg-load time.
+
+    Attributes:
+        weights_ref: Source ref for the RIFE model weights (``hf:`` or
+            ``http(s)``), fetched during pod provision.
+        model: RIFE model tag (e.g. ``"rife49"``); selects the arch on the pod.
+        precision: ``"fp16"`` (default) or ``"fp32"``.
+    """
+
+    weights_ref: str
+    model: str = "rife49"
+    precision: str = "fp16"
+
+    @field_validator("precision")
+    @classmethod
+    def _validate_precision(cls, v: str) -> str:
+        if v not in ("fp16", "fp32"):
+            raise ConfigError(f"rife precision {v!r} not in ('fp16', 'fp32')")
+        return v
+
+
+class InterpolateConfig(BaseModel):
+    """Top-level ``interpolate:`` block; presence activates InterpolateStage.
+
+    Attributes:
+        engine: Interpolator name (registry key). v1 supports ``"rife"``.
+        fps: Target output frame rate (float, > 0).
+        rife: RIFE-specific block; required when ``engine == "rife"``.
+    """
+
+    engine: str
+    fps: float
+    rife: RifeEngineConfig | None = None
+
+    @field_validator("fps")
+    @classmethod
+    def _validate_fps(cls, v: float) -> float:
+        if v <= 0:
+            raise ConfigError(f"interpolate fps must be > 0, got {v}")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_rife_wiring(self) -> Self:
+        if self.engine == "rife" and self.rife is None:
+            raise ConfigError("engine=rife requires a cfg.interpolate.rife block")
+        return self
+
+
 class Config(BaseModel):
     """Top-level kinoforge configuration.
 
@@ -1078,6 +1127,7 @@ class Config(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     keyframe: KeyframeConfig | None = None
     upscale: UpscaleConfig | None = None
+    interpolate: InterpolateConfig | None = None
     sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
     # C28 A1.5: opt-in diagnostic mode. When True the engine's render_provision
     # prepends an EXIT trap that captures the boot log + system snapshot and
@@ -1242,18 +1292,17 @@ class Config(BaseModel):
         upscale_only = (
             self.engine.diffusers is not None and self.engine.diffusers.upscale_only
         )
-        if not base_refs and not upscale_only:
+        if not base_refs and not upscale_only and self.interpolate is None:
             raise ConfigError("no model entry with kind: base found in config")
 
         if base_refs:
             base_model = (
                 base_refs[0] if len(base_refs) == 1 else "|".join(sorted(base_refs))
             )
-        else:
+        elif self.upscale is not None:
             # Upscale-only cfgs derive identity from the upscaler weights ref
             # so two pods running spandrel against different SR weights stay
             # distinct in the matcher.
-            assert self.upscale is not None  # noqa: S101 — guarded by upscale_only branch
             if self.upscale.spandrel is not None:
                 base_model = self.upscale.spandrel.model_url
             elif self.upscale.seedvr2 is not None:
@@ -1262,6 +1311,16 @@ class Config(BaseModel):
                 base_model = self.upscale.flashvsr.weights_bundle
             else:
                 base_model = self.upscale.engine
+        else:
+            # Interpolate-only cfgs (no base model, no upscale): identity comes
+            # from the interpolator weights ref so distinct RIFE weights stay
+            # distinct in the matcher.
+            assert self.interpolate is not None  # noqa: S101 — guarded above
+            base_model = (
+                self.interpolate.rife.weights_ref
+                if self.interpolate.rife is not None
+                else self.interpolate.engine
+            )
 
         # 2026-06-28: stages / upscaler factors. Pure-generate cfgs (no
         # upscale block) leave stages=() so derive() preserves the legacy
@@ -1284,6 +1343,13 @@ class Config(BaseModel):
             elif self.upscale.flashvsr is not None:
                 upscaler_precision = self.upscale.flashvsr.precision
 
+        interpolator = ""
+        interpolator_fps = 0.0
+        if self.interpolate is not None:
+            stages.append("interpolate")
+            interpolator = self.interpolate.engine
+            interpolator_fps = self.interpolate.fps
+
         return CapabilityKey(
             base_model=base_model,
             loras=tuple(loras),
@@ -1292,6 +1358,8 @@ class Config(BaseModel):
             stages=tuple(stages),
             upscaler=upscaler,
             upscaler_precision=upscaler_precision,
+            interpolator=interpolator,
+            interpolator_fps=interpolator_fps,
         )
 
     def lifecycle(self) -> InterfaceLifecycle:
