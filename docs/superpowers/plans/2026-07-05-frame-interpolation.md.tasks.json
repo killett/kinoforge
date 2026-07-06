@@ -24,7 +24,7 @@
     {
       "id": 8,
       "subject": "Task 3: decimate_video_fps — ffmpeg re-timing",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7],
       "description": "**Goal:** decimate_video_fps ffmpeg fps filter over temp-file input (not pipe:0). Files: pipeline/decimate.py + tests/pipeline/test_decimate.py. Verify: pixi run pytest tests/pipeline/test_decimate.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/decimate.py\"], \"verifyCommand\": \"pixi run pytest tests/pipeline/test_decimate.py -v\", \"acceptanceCriteria\": [\"fps filter over temp-file not pipe:0\", \"NTSC exact\", \"real-ffmpeg hits target\"], \"modelTier\": \"standard\"}\n```"
     },
