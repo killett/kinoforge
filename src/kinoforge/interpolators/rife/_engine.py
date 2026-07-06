@@ -36,6 +36,10 @@ _DEFAULT_SERVER_PORT = "8000"
 # light — no BSA wheel, no diffsynth.
 _PRACTICAL_RIFE_COMMIT = "17d8c7a1005b37f4c97bfee04e316aaec7fdc536"
 
+# Where render_provision clones Practical-RIFE; _runtime adds it to sys.path so
+# ``from train_log.RIFE_HDv3 import Model`` resolves (script repo, not a pkg).
+_RIFE_REPO_DIR = "/workspace/Practical-RIFE"
+
 
 class RifeEngine(InterpolatorEngine):
     """RIFE v4 arbitrary-timestep frame interpolator (pod-side)."""
@@ -61,13 +65,14 @@ class RifeEngine(InterpolatorEngine):
             return ""
 
     def render_provision(self, cfg: dict[str, object]) -> RenderedProvision:
-        """Emit a Practical-RIFE install + RIFE weights fetch bootstrap.
+        """Emit a Practical-RIFE checkout + RIFE weights fetch bootstrap.
 
-        Weights are fetched inline via ``huggingface-cli download`` from the
-        ``hf:`` ref rather than a bespoke ``_fetch_weights`` module — RIFE ships
-        a single small ``train_log/`` folder (flownet.pkl + arch .py). The
-        exact per-model file layout is confirmed against the live repo in the
-        Task 11 example cfg + smoke.
+        Practical-RIFE is a *script* repo, not a pip package — its
+        ``train_log/RIFE_HDv3.py`` (the ``Model`` arch) is only importable with
+        the repo root on ``sys.path``. So we ``git clone`` it to a stable path
+        (:data:`_RIFE_REPO_DIR`, which :mod:`._runtime` adds to ``sys.path``)
+        rather than ``pip install`` it, and stage the weights (``flownet.pkl``)
+        into the same ``train_log/`` the arch's ``load_model`` reads from.
         """
         block = cast(dict[str, Any], cast(dict[str, Any], cfg["interpolate"])["rife"])
         weights_ref = str(block["weights_ref"])
@@ -75,15 +80,20 @@ class RifeEngine(InterpolatorEngine):
         script = "".join(
             [
                 "set -euo pipefail\n",
-                "pip install --no-deps "
-                f'"git+https://github.com/hzwer/Practical-RIFE'
-                f'@{_PRACTICAL_RIFE_COMMIT}"\n',
-                'pip install "torch" "numpy" "opencv-python-headless" '
-                '"imageio[ffmpeg]" "huggingface_hub"\n',
-                # Fetch RIFE weights (train_log/*.pkl + arch) to a stable path.
-                "mkdir -p /workspace/models/rife\n",
+                # Clone the pinned Practical-RIFE (arch code lives in train_log/).
+                f"git clone https://github.com/hzwer/Practical-RIFE {_RIFE_REPO_DIR}\n",
+                f"cd {_RIFE_REPO_DIR} && git checkout {_PRACTICAL_RIFE_COMMIT}\n",
+                'pip install "numpy" "opencv-python-headless" '
+                '"imageio[ffmpeg]" "huggingface_hub" "torchvision" '
+                '"scikit-image" "tqdm"\n',
+                # Stage weights into the repo's train_log/ so the arch's
+                # ``Model.load_model(train_log, -1)`` finds flownet.pkl, AND a
+                # mirror under /workspace/models/rife (the runtime weights_dir).
+                f"mkdir -p {_RIFE_REPO_DIR}/train_log /workspace/models/rife\n",
                 f'huggingface-cli download "{hf_repo}" '
                 "--local-dir /workspace/models/rife\n",
+                f"cp -f /workspace/models/rife/*.pkl {_RIFE_REPO_DIR}/train_log/ "
+                "2>/dev/null || true\n",
             ]
         )
         return RenderedProvision(
