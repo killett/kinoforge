@@ -4,7 +4,7 @@
     {
       "id": 5,
       "subject": "Task 0: InterpolationError exception",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add the interp error type (mirror UpscaleFailed). Files: core/errors.py + tests/test_errors_interpolation.py. Verify: pixi run pytest tests/test_errors_interpolation.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/errors.py\"], \"verifyCommand\": \"pixi run pytest tests/test_errors_interpolation.py -v\", \"acceptanceCriteria\": [\"InterpolationError subclasses KinoforgeError with job_id+server_error\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
