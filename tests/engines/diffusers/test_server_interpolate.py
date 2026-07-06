@@ -22,6 +22,20 @@ def client() -> TestClient:
     return TestClient(srv.app)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_interpolate_globals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the module-level interpolate globals pristine across tests.
+
+    ``asyncio.run(_run_interpolate_job(...))`` acquires the module
+    ``_interpolate_lock``, binding it to a throwaway loop that is then closed —
+    a dead-loop-bound lock leaks process-level asyncio state that flakes a
+    later subprocess smoke (the vram-rollback lora test). Swap in a fresh lock
+    per test and reset the jobs dict so nothing survives teardown.
+    """
+    monkeypatch.setattr(srv, "_interpolate_lock", asyncio.Lock())
+    monkeypatch.setattr(srv, "_interpolate_jobs", {})
+
+
 def _req(**over: Any) -> srv.InterpolateRequest:
     base: dict[str, Any] = {
         "source_url": "file:///tmp/in.mp4",
