@@ -1043,6 +1043,22 @@ class DiffusersEngine(GenerationEngine):
                 lines.append("# ---- upscaler provision (composed) ----")
                 lines.extend(line for line in upscale_rp.script.split("\n") if line)
 
+        # Compose the interpolator render_provision when cfg.interpolate is set.
+        # Mirrors the upscaler composition above: reads cfg.interpolate.engine,
+        # resolves via the registry, and appends the interpolator's provision
+        # script BEFORE the server exec line. Engine-agnostic — knows nothing
+        # about WHICH interpolator (RIFE today, FILM/GIMM future drop-ins).
+        interp_block_raw = cfg.get("interpolate") if isinstance(cfg, dict) else None
+        if isinstance(interp_block_raw, dict):
+            interp_name = interp_block_raw.get("engine")
+            if interp_name:
+                from kinoforge.core import registry as _registry
+
+                interpolator = _registry.get_interpolator(str(interp_name))()
+                interp_rp = interpolator.render_provision(cfg)
+                lines.append("# ---- interpolator provision (composed) ----")
+                lines.extend(line for line in interp_rp.script.split("\n") if line)
+
         if wan_model_id and server_cmd:
             # Exported BEFORE server_cmd so the launching shell carries
             # it into the wan_t2v_server process. See wan_t2v_server.py
