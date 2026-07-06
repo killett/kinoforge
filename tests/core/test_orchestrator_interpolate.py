@@ -50,23 +50,6 @@ def _register_fake_interp() -> None:
         registry.register_interpolator("fake-interp", _FakeInterp)
 
 
-@pytest.fixture(autouse=True)
-def _fresh_event_loop() -> Any:
-    """Hand the next test a fresh asyncio loop.
-
-    ``import kinoforge._adapters`` pulls in ``wan_t2v_server`` (module-level
-    ``asyncio.Lock`` instances + ``app``); exercising ``generate()`` here can
-    leave the process's default event loop closed/bound, which deterministically
-    hangs a later subprocess smoke (the vram-rollback lora test) even though the
-    server itself is fine. Install a fresh loop on teardown so no dead loop
-    survives this module.
-    """
-    import asyncio
-
-    yield
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-
 def _interp_cfg() -> Config:
     return Config.model_validate(
         {
