@@ -29,10 +29,28 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION (2026-07-05):** frame-interpolation (RIFE v4) build IN
-PROGRESS — resume at plan Task 8 (CLI `kinoforge interpolate` subcommand).
+**SINGLE NEXT ACTION (2026-07-05):** none — frame-interpolation (RIFE v4)
+SHIPPED + LIVE-GREEN (entry #20, `1 passed in 69.62s`, frame-QA PASS, ~$0.02,
+pod auto-destroyed, ledger clean). All 13 plan tasks done. Pick next from the
+gated table below or start a new feature.
 
-**Frame-interpolation (RIFE v4) — IN PROGRESS 2026-07-05:**
+**Frame-interpolation (RIFE v4) — SHIPPED + LIVE-GREEN 2026-07-05:**
+All 13 tasks committed (`4e5e201`..`13ec94d`). First interpolate-mode
+generation: 480²/16fps Wan fixture → **480²/60.000fps/304 frames** via
+`kinoforge interpolate --video … --fps 60 --no-reuse` on an RTX A4000
+(`interpolate-rife-60fps.yaml`). Frame-QA PASS (real synthesized midpoints,
+no ghosting — entry #20). RifeEngine (HTTP client, self-registered "rife") +
+on-pod RifeRuntime (pad-to-64 → IFNet → crop → mux) + server /interpolate
+endpoints; engine-agnostic `fps_resolver` (arbitrary-timestep schedule). Six
+live boots to green — root-caused: RunPod host-reclaim (transient); deprecated
+`huggingface-cli download` (→ `hf`/zip); missing system `ffprobe` (apt ffmpeg);
+RIFE arch ships in the model ZIP not the git repo (unzip into `train_log/`);
+IFNet needs H/W padded to /64. **Monitoring lesson baked into CLAUDE.md:** poll
+`gpuUtilPercent`, never `est_spend` (spend is GPU-blind — missed a 0%-GPU stall
+for ~12 min). Standalone-only per plan Planning-time correction (combined
+generate+interp & co-resident stay out of scope; workflow = command chaining).
+
+**Frame-interpolation (RIFE v4) — build detail:**
 Spec `docs/superpowers/specs/2026-07-05-frame-interpolation-design.md` (see
 `git log`), plan `docs/superpowers/plans/2026-07-05-frame-interpolation.md`
 (13 tasks 0-12; tasks.json alongside). Offline foundation DONE + committed:
@@ -47,10 +65,9 @@ Spec `docs/superpowers/specs/2026-07-05-frame-interpolation-design.md` (see
   materializes `interpolated` (standalone `skip_clip_stage` path only — see the
   plan's Planning-time correction; combined generate+interp & co-resident stay
   out of scope, workflow = command chaining `upscale` then `interpolate`).
-- **Remaining:** T8 CLI subcommand, T9 `RifeEngine` HTTP client (+`<PIN_SHA>`
-  exec-time TODO: pin Practical-RIFE commit + weights layout), T10 on-pod
-  `_runtime.py` + server `/interpolate` endpoints, T11 example cfg + RED live
-  smoke (commit before spend), T12 USER-GATE live smoke + frame-QA + gen log.
+- T8 CLI subcommand, T9 `RifeEngine` HTTP client (Practical-RIFE SHA pinned
+  `17d8c7a`), T10 on-pod `_runtime.py` + server `/interpolate` endpoints, T11
+  example cfg + RED live smoke, T12 USER-GATE live smoke — ALL DONE + committed.
 - Full suite green after T7: 3861 passed / 130 skipped / 6 xfailed.
 
 **Height-target upscaling (1080p/720p) — SHIPPED + LIVE-GREEN 2026-07-05:**

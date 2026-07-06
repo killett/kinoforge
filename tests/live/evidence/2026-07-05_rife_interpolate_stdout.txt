@@ -1,0 +1,49 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- /workspace/.pixi/envs/default/bin/python3.13
+cachedir: .pytest_cache
+rootdir: /workspace
+configfile: pyproject.toml
+plugins: anyio-4.14.1, cov-7.1.0
+collecting ... collected 1 item
+
+tests/live/test_rife_interpolate_live.py::test_rife_interpolate_delivers_60fps Timeout (0:00:15)!
+Thread 0x00007abd62ed5540 (most recent call first):
+  File "/workspace/.pixi/envs/default/lib/python3.13/selectors.py", line 398 in select
+  File "/workspace/.pixi/envs/default/lib/python3.13/subprocess.py", line 2154 in _communicate
+  File "/workspace/.pixi/envs/default/lib/python3.13/subprocess.py", line 1222 in communicate
+  File "/workspace/.pixi/envs/default/lib/python3.13/subprocess.py", line 556 in run
+  File "/workspace/tests/live/test_rife_interpolate_live.py", line 114 in test_rife_interpolate_delivers_60fps
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/python.py", line 166 in pytest_pyfunc_call
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/python.py", line 1720 in runtest
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 179 in pytest_runtest_call
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 245 in <lambda>
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 353 in from_call
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 244 in call_and_report
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 137 in runtestprotocol
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/runner.py", line 118 in pytest_runtest_protocol
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 396 in pytest_runtestloop
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 372 in _main
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 318 in wrap_session
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/main.py", line 365 in pytest_cmdline_main
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_callers.py", line 121 in _multicall
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_manager.py", line 120 in _hookexec
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/pluggy/_hooks.py", line 512 in __call__
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/config/__init__.py", line 199 in main
+  File "/workspace/.pixi/envs/default/lib/python3.13/site-packages/_pytest/config/__init__.py", line 223 in console_main
+  File "/workspace/.pixi/envs/default/bin/pytest", line 10 in <module>
+PASSED=== POST-SESSION THREAD DUMP === clean (1 threads, no non-daemon extras)
+
+
+========================= 1 passed in 69.62s (0:01:09) =========================

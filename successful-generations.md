@@ -48,6 +48,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 17. `2026-07-04 01:29:58` — [flf2v pipeline: dual fal flux-schnell keyframes → fal wan-flf2v — flf2v](#17-2026-07-04-012958--flf2v-pipeline-dual-fal-flux-schnell-keyframes--fal-wan-flf2v--flf2v)
 18. `2026-07-04 03:56:00` — [Luma UNI-1-MAX keyframes — 4-prompt matrix vs uni-1 — t2i](#18-2026-07-04-035600--luma-uni-1-max-keyframes--4-prompt-matrix-vs-uni-1--t2i)
 19. `2026-07-05 04:16:18` — [FlashVSR height-target upscale (scale=1080p → 4x+downscale) on RunPod A100 80GB — upscale](#19-2026-07-05-041618--flashvsr-height-target-upscale-scale1080p--4xdownscale-on-runpod-a100-80gb--upscale)
+20. `2026-07-05 22:24:29` — [RIFE v4.26 frame interpolation (16fps→60fps) on RunPod RTX A4000 — interpolate](#20-2026-07-05-222429--rife-v426-frame-interpolation-16fps60fps-on-runpod-rtx-a4000--interpolate)
 
 ---
 
@@ -2413,3 +2414,72 @@ KINOFORGE_LIVE_SPEND=1 pixi run pytest \
 2. **`ValueError: supported_factors must be non-empty`** — FlashVSR declared the empty accept-any `supported_scales` sentinel; the height resolver needs a factor menu. Fixed `e3c3065`: declare `supported_scales=(4x,)`.
 3. **ffmpeg exit 183 on the downscale** — a large mp4 piped via `pipe:0` fails demux (moov atom needs seeking on a non-seekable pipe). Fixed `8438a8b`: write bytes to a seekable temp file, `ffmpeg -i <file>`.
 4. **RunPod pod-death mid-run** (run 2, secure host, ~30 min in) — infra, not code. Motivated the pivot to the upscale-only fixture path (`42c4451`): ~4 min / ~$0.08, far shorter pod-death window than render+upscale.
+
+## 20. `2026-07-05 22:24:29` — RIFE v4.26 frame interpolation (16fps→60fps) on RunPod RTX A4000 — interpolate
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `runpod / RifeEngine + DiffusersEngine (upscale_only mode) / Practical-RIFE RIFE_HDv3 @ hzwer/RIFE RIFEv4.26_0921` |
+| **Mode** | interpolate |
+| **kinoforge version** | `v0.1.0` |
+| **First-success SHA** | `13ec94d` (padding fix — the green run); feature commits `4e5e201`..`13ec94d` |
+| **Date (local TZ)** | 2026-07-05 22:24:29 -0700 (PDT) |
+| **Layer / phase** | Frame-interpolation stage (RIFE v4) — spec `docs/superpowers/specs/2026-07-05-frame-interpolation-design.md`, plan `docs/superpowers/plans/2026-07-05-frame-interpolation.md` (Task 12, USER-GATE). First interpolate-mode generation. |
+
+### Exact command
+
+```bash
+KINOFORGE_LIVE_SPEND=1 pixi run pytest \
+  tests/live/test_rife_interpolate_live.py -v -s
+```
+
+Equivalent standalone CLI (what the smoke drives):
+
+```bash
+pixi run kinoforge interpolate \
+  --config examples/configs/interpolate-rife-60fps.yaml \
+  --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
+  --fps 60 --no-reuse
+```
+
+### Cfg
+
+- `examples/configs/interpolate-rife-60fps.yaml` — engine=`diffusers` (`upscale_only: true` = skip eager Wan load), interpolator=`rife`, **fps=`60.0`**, `rife.weights_ref=hf:hzwer/RIFE`, `model=rife426`, precision=`fp16`, `compute.cloud_type=secure`, GPU tier RTX A4000/4090/A5000, image=`runpod/pytorch:2.4.0-...cuda12.4.1`.
+- `embed_modules` includes `kinoforge.interpolators.rife`; `embed_files` add `kinoforge.core.fps_resolver` + `kinoforge.core.frames`.
+
+### Input
+
+- Source clip: `/workspace/output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` — 480×480, **81 frames, 16 fps, 5.062 s** (Wan 2.2 T2V-A14B, entry #8). Same fixture as #13/#19.
+
+### Output
+
+- Artifact: `output/20260705-222429_interpolated_rife_interp_interpolate.mp4`
+- Dims **480×480** (unchanged — interpolation is temporal only), **60.000 fps**, **304 frames**, 5.067 s, ~0.84 MB, h264 / yuv420p.
+- Frame count = `round(5.0625 s × 60) = 304`; duration matches the source within 0.005 s (≈0.08 frame). Verified via `ffprobe_fps` + `nb_read_packets`.
+- SHA256: `bbb6968c27035851481bdc709ac93c6707442bf886ac58b353c6a2cec563cc73`
+
+### Frame-QA verdict (contact sheet + adjacent-frame check)
+
+**PASS — high quality, no ⚠️.** 6-frame sweep: sharp, temporally coherent (woman turning in a wildflower meadow, tall backlit waterfall, luminous butterflies + light-wisps), prompt-adherent, no warping/ghosting/false-color. **Interp-specific check:** two *consecutive* 60 fps frames (n=150, 151) show a small, smooth pose delta — a genuine synthesized midpoint, NOT a duplicated/held frame and NOT a ghosted double-exposure. Confirms real 3.75× arbitrary-timestep synthesis (16→60), not frame-repeat padding.
+
+### Pod
+
+- Provider: RunPod; GPU: RTX A4000; `cloud_type: secure`.
+- Pytest wall-clock: **1 m 10 s** (`1 passed in 69.62s`) — fast: no torch reinstall (base image), ~22 MB model bundle, 81→304-frame interp is seconds on the GPU.
+- Spend: ~$0.02 (this run). Ledger post-run: clean (`--no-reuse` auto-destroy verified via `kinoforge list` → no instances + empty ledger).
+- Evidence: `tests/live/evidence/2026-07-05_rife_interpolate_stdout.txt`.
+
+### Reproduction recipe (new capability axis: interpolate mode + RifeEngine)
+
+- **Engine-agnostic resolver** `kinoforge.core.fps_resolver.resolve_fps_target` maps `(source_fps, target_fps, ARBITRARY_TIMESTEP)` → a per-output-frame `(source_index, timestep)` schedule (t=0 copies a source frame, else synthesize). 16→60 over 304 frames.
+- **Standalone command** `kinoforge interpolate --video … --fps …` reuses `generate(skip_clip_stage=True, initial_clip=…)` — its own RIFE pod, structurally identical to `kinoforge upscale --video`. Upscale→interpolate ordering (when both wanted) is realized by chaining the two commands, NOT single-pass (see plan Planning-time correction).
+- **On-pod**: `RifeRuntime` decodes frames (imageio/FFMPEG), pads each to a multiple of 64 for IFNet, runs `Model.inference(f0, f1, t)`, crops back, muxes at 60 fps. Server `/interpolate` + `/interpolate/status/{id}` mirror `/upscale`.
+
+### Infra bugs root-caused + fixed en route (6 live boots, ~$0.11 total)
+
+1. **RunPod host reclaim mid-provision** (boot 1) — pod terminated during `wait_for_ready` → `KeyError: no RunPod pod found`. Transient, not code; `kinoforge forget` + retry.
+2. **`huggingface-cli download` deprecated → exit 1** (boot 2) — killed the bootstrap under `set -euo pipefail` (`[bootstrap-trap] rc=1`, pod idle at 0% GPU/CPU). Fixed → later dropped for the zip path.
+3. **`ffprobe not found on PATH`** (boot 3) — base `runpod/pytorch` image ships no system ffmpeg; the runtime shells out to `ffprobe`. Fixed `a75622f`: `apt-get install -y ffmpeg unzip`.
+4. **`No module named 'train_log.RIFE_HDv3'`** (boot 4) — the RIFE v4 arch (`RIFE_HDv3.py`, `IFNet_HDv3.py`, `refine.py`) ships INSIDE the model release zip, NOT the git repo; cloning alone leaves `train_log/` empty. Fixed `9810052`: `curl` the `RIFEv4.26_0921.zip` bundle + unzip its contents into `<repo>/train_log/`; load `flownet.pkl` from there; also fixed a `.to(model.device)` bug (device is a *method*).
+5. **`Expected size 512 but got size 480`** (boot 5) — RIFE v4's IFNet flow pyramid needs H/W padded up to a multiple of 64 (480→512). Fixed `13ec94d`: pad before `inference`, crop back after → **GREEN** (boot 6).
+- **Monitoring lesson**: boots 1–2 were watched with a monitor that polled only `est_spend` (wall-clock, GPU-blind) — it missed the 0%-GPU stall for ~12 min until the operator asked. CLAUDE.md "Live smoke monitoring" now hard-bans spend-as-health and mandates the `gpuUtilPercent/cpuPercent/memoryPercent` probe.
