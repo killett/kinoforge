@@ -40,6 +40,10 @@ _PRACTICAL_RIFE_COMMIT = "17d8c7a1005b37f4c97bfee04e316aaec7fdc536"
 # ``from train_log.RIFE_HDv3 import Model`` resolves (script repo, not a pkg).
 _RIFE_REPO_DIR = "/workspace/Practical-RIFE"
 
+# RIFE v4 model release bundle (arch .py + flownet.pkl) in the hf:hzwer/RIFE
+# repo. The arch code lives here, NOT in the git repo's (empty) train_log/.
+_RIFE_MODEL_ZIP = "RIFEv4.26_0921.zip"
+
 
 class RifeEngine(InterpolatorEngine):
     """RIFE v4 arbitrary-timestep frame interpolator (pod-side)."""
@@ -77,6 +81,7 @@ class RifeEngine(InterpolatorEngine):
         block = cast(dict[str, Any], cast(dict[str, Any], cfg["interpolate"])["rife"])
         weights_ref = str(block["weights_ref"])
         hf_repo = weights_ref.removeprefix("hf:")
+        zip_url = f"https://huggingface.co/{hf_repo}/resolve/main/{_RIFE_MODEL_ZIP}"
         script = "".join(
             [
                 "set -euo pipefail\n",
@@ -84,23 +89,24 @@ class RifeEngine(InterpolatorEngine):
                 # frame-count probes) and muxes via imageio; the base
                 # runpod/pytorch image ships neither on PATH. Missing ffprobe
                 # failed the 2026-07-05 interp job server-side.
-                "apt-get update -qq && apt-get install -y -qq ffmpeg\n",
-                # Clone the pinned Practical-RIFE (arch code lives in train_log/).
+                "apt-get update -qq && apt-get install -y -qq ffmpeg unzip\n",
+                # Clone Practical-RIFE for its model/ package (warplayer, loss —
+                # RIFE_HDv3 imports them). torch + torchvision come from the base
+                # image (loss.py imports torchvision).
                 f"git clone https://github.com/hzwer/Practical-RIFE {_RIFE_REPO_DIR}\n",
                 f"cd {_RIFE_REPO_DIR} && git checkout {_PRACTICAL_RIFE_COMMIT}\n",
-                'pip install "numpy<2" "opencv-python-headless" '
-                '"imageio[ffmpeg]" "huggingface_hub" "torchvision" '
-                '"scikit-image" "tqdm"\n',
-                # Stage weights into the repo's train_log/ so the arch's
-                # ``Model.load_model(train_log, -1)`` finds flownet.pkl, AND a
-                # mirror under /workspace/models/rife (the runtime weights_dir).
-                # NOTE: `huggingface-cli download` is DEPRECATED and exits 1 on
-                # huggingface_hub>=1.0 (killed the 2026-07-05 boot under
-                # `set -euo pipefail`); the modern entrypoint is `hf download`.
+                'pip install "numpy<2" "opencv-python-headless" "imageio[ffmpeg]"\n',
+                # The RIFE v4 arch (RIFE_HDv3.py, IFNet_HDv3.py, refine.py) ships
+                # INSIDE the model release zip, NOT the git repo — train_log/ is
+                # empty until unzipped. Fetch the bundle + drop its contents into
+                # train_log/ so `from train_log.RIFE_HDv3 import Model` (arch) and
+                # `load_model(train_log, -1)` (flownet.pkl) both resolve.
                 f"mkdir -p {_RIFE_REPO_DIR}/train_log /workspace/models/rife\n",
-                f'hf download "{hf_repo}" --local-dir /workspace/models/rife\n',
-                f"cp -f /workspace/models/rife/*.pkl {_RIFE_REPO_DIR}/train_log/ "
-                "2>/dev/null || true\n",
+                f'curl -sL "{zip_url}" -o /tmp/rife_model.zip\n',
+                "unzip -oq /tmp/rife_model.zip -d /tmp/rife_model\n",
+                "cp -f /tmp/rife_model/*/*.py /tmp/rife_model/*/flownet.pkl "
+                f"{_RIFE_REPO_DIR}/train_log/\n",
+                f"cp -f {_RIFE_REPO_DIR}/train_log/flownet.pkl /workspace/models/rife/\n",
             ]
         )
         return RenderedProvision(
