@@ -38,7 +38,7 @@
     {
       "id": 10,
       "subject": "Task 5: InterpolateStage",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7, 8, 9],
       "description": "**Goal:** Stage routes upshift→engine, downshift→local decimate, equal→passthrough, remote→engine. Files: pipeline/interpolate.py + tests/pipeline/test_interpolate_stage.py. Verify: pixi run pytest tests/pipeline/test_interpolate_stage.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/pipeline/interpolate.py\"], \"verifyCommand\": \"pixi run pytest tests/pipeline/test_interpolate_stage.py -v\", \"acceptanceCriteria\": [\"4 routing cases\", \"writes interpolated artifact\"], \"modelTier\": \"standard\"}\n```"
     },
