@@ -10,7 +10,7 @@
     {
       "id": 6,
       "subject": "Task 1: ffprobe_fps frame-rate probe",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5],
       "description": "**Goal:** ffprobe_fps parses rational r_frame_rate to float. Files: core/frames.py + tests/test_frames_ffprobe_fps.py. Verify: pixi run pytest tests/test_frames_ffprobe_fps.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/frames.py\"], \"verifyCommand\": \"pixi run pytest tests/test_frames_ffprobe_fps.py -v\", \"acceptanceCriteria\": [\"parses rational to float\", \"raises on bad/zero-denom\", \"argv targets r_frame_rate\"], \"modelTier\": \"standard\"}\n```"
     },

@@ -232,6 +232,53 @@ def ffprobe_dims(
         ) from exc
 
 
+def ffprobe_fps(
+    video_path: str | Path,
+    *,
+    run: Callable[[list[str]], bytes] = _default_probe_run,
+) -> float:
+    """Probe the frame rate of the first video stream via ffprobe.
+
+    Reads ``r_frame_rate`` (the base frame rate, a rational such as ``16/1``
+    or ``30000/1001``) rather than ``avg_frame_rate`` — the latter is ``0/0``
+    for streamed / variable-frame-rate inputs.
+
+    Args:
+        video_path: Path to the video file on disk.
+        run: Injectable seam ``(argv) -> stdout`` so tests spawn no binary.
+
+    Returns:
+        Frame rate in frames per second.
+
+    Raises:
+        FrameExtractionError: ffprobe missing / non-zero exit, output that is
+            not a ``num/den`` rational, or a zero denominator.
+    """
+    argv = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=r_frame_rate",
+        "-of",
+        "csv=p=0",
+        str(video_path),
+    ]
+    raw = run(argv).decode(errors="replace").strip()
+    try:
+        num_str, den_str = raw.split("/")
+        num, den = float(num_str), float(den_str)
+        if den == 0.0:
+            raise ValueError("zero denominator")
+        return num / den
+    except ValueError as exc:
+        raise FrameExtractionError(
+            f"unparseable ffprobe frame rate {raw!r} for {video_path}"
+        ) from exc
+
+
 def ffmpeg_frames_by_count(
     video_path: str | Path,
     total: int,
