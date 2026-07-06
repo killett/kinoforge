@@ -782,6 +782,98 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
     return 0
 
 
+def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
+    """Handle ``interpolate`` subcommand — standalone frame interpolation.
+
+    Structurally identical to :func:`_cmd_upscale`: the CLI validates flag
+    conflicts + the ``interpolate:`` block BEFORE any pod work, then drives the
+    orchestrator's ``generate(skip_clip_stage=True, initial_clip=...)`` path so
+    the seeded clip is interpolated on its own RIFE pod. The ``--fps`` flag
+    overrides ``cfg.interpolate.fps`` for one-off runs.
+    """
+    # Mutual exclusion FIRST — does not require cfg load.
+    if getattr(args, "no_reuse", False) and getattr(args, "attach_pod", None):
+        print(
+            "error: --no-reuse and --attach-pod are mutually exclusive "
+            "(--no-reuse forces cold create + destroy; --attach-pod "
+            "implies pod survival)",
+            file=sys.stderr,
+        )
+        return 2
+
+    if ctx.cfg is None:
+        print("error: --config required for interpolate", file=sys.stderr)
+        return 2
+    cfg = ctx.cfg
+    if cfg.interpolate is None:
+        print(
+            "error: --config must contain an `interpolate:` block; "
+            "see examples/configs/interpolate-rife-60fps.yaml",
+            file=sys.stderr,
+        )
+        return 2
+
+    fps = args.fps if args.fps is not None else cfg.interpolate.fps
+    if fps <= 0:
+        print(f"error: invalid --fps {fps}", file=sys.stderr)
+        return 2
+
+    if getattr(args, "dry_run", False):
+        print("interpolate plan:")
+        print(f"  source: {args.video}")
+        print(f"  fps: {fps}")
+        print(f"  engine: {cfg.interpolate.engine}")
+        print(f"  no_reuse: {bool(getattr(args, 'no_reuse', False))}")
+        print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
+        return 0
+
+    from kinoforge.core import orchestrator as _orchestrator
+
+    # CLI --fps override reaches the stage via cfg.interpolate.fps.
+    if args.fps is not None:
+        cfg = cfg.model_copy(
+            update={"interpolate": cfg.interpolate.model_copy(update={"fps": fps})}
+        )
+
+    input_artifact = _resolve_input_video_as_artifact(args.video)
+    store = ctx.store()
+    sink_local = _build_sink(cfg, args)
+    run_id = (
+        args.run_id
+        if getattr(args, "run_id", None) is not None
+        else f"interpolate-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    )
+
+    instance: Instance | None = None
+    attach_pod_id = getattr(args, "attach_pod", None)
+    if attach_pod_id:
+        instance, rc = _resolve_attach_pod(ctx, cfg, attach_pod_id)
+        if rc is not None:
+            return rc
+    elif not args.no_reuse:
+        instance, report = _scan_warm_candidates(ctx, cfg)
+        summary = report.summarize()
+        if summary:
+            logger.info(summary)
+
+    artifact, returned_instance = _orchestrator.generate(
+        cfg,
+        request=None,
+        store=store,
+        sink=sink_local,
+        run_id=run_id,
+        state_dir=ctx.state_dir,
+        cancel_token=ctx.cancel_token,
+        instance=instance,
+        single=bool(args.no_reuse),
+        skip_clip_stage=True,
+        initial_clip=input_artifact,
+    )
+    del returned_instance
+    print(f"interpolated: uri={artifact.uri!r}")
+    return 0
+
+
 def _resolve_input_video_as_artifact(video_path_or_url: str) -> Artifact:
     """Materialise the ``--video`` arg as a kinoforge Artifact.
 
