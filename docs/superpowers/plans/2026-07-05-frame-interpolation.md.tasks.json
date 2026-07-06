@@ -80,7 +80,7 @@
     {
       "id": 16,
       "subject": "Task 11: Example config + RED live-smoke scaffold (commit before spend)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [11, 13, 15],
       "description": "**Goal:** interpolate-only cfg + gated RED live smoke, committed before spend (CLAUDE.md durability). Files: examples/configs/interpolate-rife-60fps.yaml, tests/live/test_rife_interpolate_live.py. Verify: pixi run pytest tests/live/test_rife_interpolate_live.py -v → SKIPPED; pixi run preflight → 0.\n\n```json:metadata\n{\"files\": [\"examples/configs/interpolate-rife-60fps.yaml\", \"tests/live/test_rife_interpolate_live.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_rife_interpolate_live.py -v\", \"acceptanceCriteria\": [\"cfg cloud_type secure\", \"live test gated/SKIPPED\", \"drives CLI on 480 fixture asserting fps==60 + clean ledger\"], \"modelTier\": \"standard\"}\n```"
     },

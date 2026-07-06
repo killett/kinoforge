@@ -1,0 +1,89 @@
+# Interpolate-only cfg for `kinoforge interpolate` → 60fps deliverable (RIFE v4).
+#
+# Raises a clip's frame rate to 60fps on a dedicated RIFE pod. Wan is NOT
+# involved (engine.diffusers.upscale_only skips the eager WanPipeline load — the
+# flag means "no eager base-model load" here; the pod runs only the on-demand
+# RifeRuntime). The source clip is supplied via --video, so this exercises the
+# full standalone interpolate path (resolve → arbitrary-timestep synth → mux)
+# without a 70 GB Wan download.
+#
+# See docs/superpowers/plans/2026-07-05-frame-interpolation.md.
+#
+# Usage:
+#   pixi run kinoforge interpolate \
+#     --config examples/configs/interpolate-rife-60fps.yaml \
+#     --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
+#     --fps 60 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.interpolators.rife"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.frames"
+      - "kinoforge.core.fps_resolver"
+    # Skip the eager WanPipeline load — this pod runs only the on-demand RIFE
+    # runtime, loaded on the first /interpolate. Cuts cold boot to ~4min.
+    upscale_only: true
+
+# No models[] — upscale_only=true (no eager base model). RIFE weights are
+# fetched via interpolate.rife.weights_ref at provision time.
+models: []
+
+compute:
+  provider: runpod
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  # Dedicated hosts — RunPod terminated community-adjacent smoke pods mid-run
+  # on 2026-07-03; secure pins the host pool for the short interp job.
+  cloud_type: secure
+  requirements:
+    min_vram_gb: 16
+    min_cuda: "12.1"
+    max_usd_per_hr: 1.00
+    disk_gb: 40
+    gpu_preference:
+      - "NVIDIA RTX A4000"
+      - "NVIDIA GeForce RTX 4090"
+      - "NVIDIA RTX A5000"
+  lifecycle:
+    boot_timeout: 12m
+    idle_timeout: 20m
+    job_timeout: 12m
+    time_buffer: 3m
+    max_lifetime: 45m
+    budget: 0.5
+    heartbeat_interval_s: 30
+
+spec:
+  model: "rife-rife49"
+
+interpolate:
+  engine: rife
+  fps: 60.0
+  rife:
+    # RIFE v4 weights. weights_ref is fetched to /workspace/models/rife at
+    # provision (huggingface-cli download). AlexWortega/RIFE (verified) ships
+    # flownet.pkl at the repo root; RifeRuntime._load_rife_infer calls
+    # Model.load_model("/workspace/models/rife", -1) which expects flownet.pkl
+    # there. EXEC-TIME TODO (Task 12, USER-GATE): confirm the `train_log`
+    # RIFE_HDv3 arch is importable on the pod (Practical-RIFE is a script repo,
+    # not a pip package — the arch may need staging alongside the weights, as
+    # in hzwer/RIFE's RIFEv4.26 bundle). Validate live before declaring green.
+    weights_ref: "hf:AlexWortega/RIFE"
+    model: rife49
+    precision: fp16

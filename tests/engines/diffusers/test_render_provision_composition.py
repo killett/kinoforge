@@ -62,6 +62,40 @@ def _with_seedvr2(cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def _with_rife(cfg: dict[str, Any]) -> dict[str, Any]:
+    cfg = dict(cfg)
+    cfg["interpolate"] = {
+        "engine": "rife",
+        "fps": 60.0,
+        "rife": {
+            "weights_ref": "hf:kinoforge/rife",
+            "model": "rife49",
+            "precision": "fp16",
+        },
+    }
+    return cfg
+
+
+def test_compose_rife_appends_to_script_before_server_exec() -> None:
+    # Bug caught: render_provision does NOT compose the interpolator script, so
+    # the pod boots without Practical-RIFE installed and the first /interpolate
+    # crashes at model load. Composition must fire BEFORE the server exec line.
+    rp = DiffusersEngine().render_provision(_with_rife(_wan_only_cfg()))
+    assert "Practical-RIFE" in rp.script
+    rife_idx = rp.script.find("Practical-RIFE")
+    server_idx = rp.script.find("wan_t2v_server")
+    assert rife_idx >= 0
+    assert server_idx >= 0
+    assert rife_idx < server_idx
+
+
+def test_no_interpolate_block_means_no_rife_composition() -> None:
+    # Bug caught: interpolator composition fires unconditionally, dragging
+    # Practical-RIFE onto pure-t2v / upscale pods that never interpolate.
+    rp = DiffusersEngine().render_provision(_wan_only_cfg())
+    assert "Practical-RIFE" not in rp.script
+
+
 def test_compose_spandrel_appends_to_script() -> None:
     # Bug caught: render_provision does NOT compose the upscaler script
     # and the pod boots without spandrel installed; `import spandrel`
