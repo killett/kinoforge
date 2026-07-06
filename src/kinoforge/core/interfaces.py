@@ -364,6 +364,8 @@ class CapabilityKey:
     stages: tuple[str, ...] = ()
     upscaler: str = ""
     upscaler_precision: str = ""
+    interpolator: str = ""
+    interpolator_fps: float = 0.0
 
     def derive(self) -> str:
         """Stable, order-sensitive sha256 over all fields.
@@ -382,6 +384,10 @@ class CapabilityKey:
         ]
         if self.stages or self.upscaler or self.upscaler_precision:
             base.extend([list(self.stages), self.upscaler, self.upscaler_precision])
+            # Interpolator fields append only when set, so upscale/generate
+            # ledger entries (interpolator == "" / 0.0) keep byte-identical keys.
+            if self.interpolator or self.interpolator_fps:
+                base.append([self.interpolator, self.interpolator_fps])
         payload = json.dumps(base, ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

@@ -45,7 +45,7 @@
     {
       "id": 11,
       "subject": "Task 6: Config surface — interpolate: block",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10],
       "description": "**Goal:** RifeEngineConfig + InterpolateConfig + Config.interpolate + capability_key wiring. Files: core/config.py + tests/test_config_interpolate.py. Verify: pixi run pytest tests/test_config_interpolate.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\"], \"verifyCommand\": \"pixi run pytest tests/test_config_interpolate.py -v\", \"acceptanceCriteria\": [\"fps>0 + rife-block-required\", \"precision allowlist\", \"capability_key backward-compatible\"], \"modelTier\": \"standard\"}\n```"
     },
