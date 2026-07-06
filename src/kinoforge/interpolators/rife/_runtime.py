@@ -180,7 +180,7 @@ class RifeRuntime:
             from kinoforge.pipeline.decimate import decimate_video_fps
 
             trimmed = decimate_video_fps(out_path.read_bytes(), plan.decimate_to)
-            out_path.write_bytes(trimmed)
+            out_path.write_bytes(trimmed)  # kinoforge:public-write — pod-side artifact
             output_fps = plan.decimate_to
 
         output_frame_count = self._probe_frame_count(out_path)
@@ -197,10 +197,24 @@ class RifeRuntime:
 
     @staticmethod
     def _mux(frames: np.ndarray, fps: float, path: Path) -> None:
-        """Encode ``frames`` (T, H, W, 3 uint8) to an H.264 mp4 at ``fps``."""
-        from kinoforge.engines.diffusers.servers._video_io import write_mp4
+        """Encode ``frames`` (T, H, W, 3 uint8) to an H.264 mp4 at ``fps``.
 
-        write_mp4(frames, int(round(fps)), path)
+        Inlined (not shared from the diffusers server's ``_video_io``) so the
+        interpolators package stays confined to its own subdir — importing
+        ``kinoforge.engines.diffusers.*`` from here trips the engine-confinement
+        invariant. Same H.264 / yuv420p / crf=19 profile as the Wan outputs.
+        """
+        import imageio.v3 as iio
+
+        iio.imwrite(
+            str(path),  # kinoforge:public-write — pod-side artifact
+            frames,
+            fps=int(round(fps)),
+            codec="libx264",
+            pixelformat="yuv420p",
+            macro_block_size=1,
+            ffmpeg_params=["-crf", "19"],
+        )
 
     @staticmethod
     def _probe_frame_count(path: Path) -> int:
