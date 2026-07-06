@@ -31,7 +31,7 @@
     {
       "id": 9,
       "subject": "Task 4: InterpolatorEngine interface + registry",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8],
       "description": "**Goal:** InterpolateJob/Result + InterpolatorEngine ABC + registry trio. Files: core/interfaces.py, core/registry.py + tests/core/test_interpolator_registry.py. Verify: pixi run pytest tests/core/test_interpolator_registry.py -v.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/registry.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_interpolator_registry.py -v\", \"acceptanceCriteria\": [\"job/result dataclasses\", \"ABC parallel to UpscalerEngine + capability\", \"registry mirrors upscaler\"], \"modelTier\": \"standard\"}\n```"
     },
