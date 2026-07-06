@@ -39,6 +39,9 @@ import kinoforge.image_engines.fal  # noqa: F401  # self-registers under "fal"
 import kinoforge.image_engines.luma_agents  # noqa: F401  # self-registers under "luma_agents"
 import kinoforge.image_engines.replicate  # noqa: F401  # self-registers under "replicate"
 
+# Interpolators
+import kinoforge.interpolators.rife  # noqa: F401  # self-registers under "rife" (RIFE v4 arbitrary-timestep)
+
 # Output sinks
 import kinoforge.outputs.local  # noqa: F401  side-effect: register "local" OutputSink
 import kinoforge.providers.local  # noqa: F401
