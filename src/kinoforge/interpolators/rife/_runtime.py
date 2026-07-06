@@ -98,14 +98,24 @@ class RifeRuntime:
         model.eval()
 
         def _infer(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
+            # RIFE v4's IFNet flow pyramid needs H/W padded up to a multiple of
+            # 64 (480 -> 512), else the merge concat mismatches ("Expected size
+            # 512 but got 480", 2026-07-05). Pad, infer, crop back.
+            h, w = int(a.shape[0]), int(a.shape[1])
+            ph = ((h - 1) // 64 + 1) * 64
+            pw = ((w - 1) // 64 + 1) * 64
+            pad = (0, pw - w, 0, ph - h)
+
             def _to_tensor(frame: np.ndarray) -> Any:  # noqa: ANN401 — torch.Tensor (untyped)
                 arr = np.asarray(frame).astype(np.float32) / 255.0
-                return torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(dev)
+                ten = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(dev)
+                return torch.nn.functional.pad(ten, pad)
 
             with torch.no_grad():
                 mid = model.inference(_to_tensor(a), _to_tensor(b), t)
+            cropped = mid[0][:, :h, :w]
             out: np.ndarray = (
-                (mid[0].clamp(0, 1) * 255.0).byte().permute(1, 2, 0).cpu().numpy()
+                (cropped.clamp(0, 1) * 255.0).byte().permute(1, 2, 0).cpu().numpy()
             )
             return out
 
