@@ -215,6 +215,16 @@ def _load_model_to_gpu(name: str) -> Any:  # noqa: ANN401 — diffusers/SeedVR2/
             tile_size=0,
             long_video_mode=False,
         )
+    if name.startswith("rife-"):
+        from kinoforge.interpolators.rife._runtime import RifeRuntime
+
+        # Slug: "rife-{model}" → model tag tail.
+        parts = name.split("-", 1)
+        model = parts[-1]
+        return RifeRuntime(
+            weights_dir=Path("/workspace/models/rife"),
+            model=model,
+        )
     raise ValueError(f"unknown model name {name!r}; no loader registered")
 
 
@@ -223,6 +233,7 @@ _EXPECTED_VRAM_BYTES: dict[str, int] = {
     "flashvsr": 9 * 1024**3,
     "seedvr2": 8 * 1024**3,
     "spandrel": 2 * 1024**3,
+    "rife": 2 * 1024**3,
 }
 
 
@@ -2000,6 +2011,108 @@ async def _run_upscale_job(job_id: str, req: UpscaleRequest) -> None:
 def upscale_status_handler(job_id: str) -> dict[str, Any]:
     """Return current state of ``job_id``; 404 if unknown."""
     payload = _upscale_jobs.get(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
+    return payload
+
+
+# --- /interpolate + /interpolate/status/{id} ------------------------------
+#
+# Frame interpolation (RIFE) on its own pod. Mirrors the /upscale block 1:1:
+# a serialized async lock, heavy work in asyncio.to_thread (the
+# wan_server_async_blocking rule), and a result block written BEFORE state
+# flips to "done" so a poller never observes done-without-result.
+
+
+class RifeParams(BaseModel):
+    """Engine-specific overrides for a rife interpolate request."""
+
+    model: str = "rife49"
+    precision: Literal["fp16", "fp32"] = "fp16"
+
+
+class InterpolateRequest(BaseModel):
+    """JSON body for ``POST /interpolate``.
+
+    ``engine`` is a plain ``str`` (not ``Literal``) so drop-in interpolators
+    extend the dispatch table inside the handler without touching this schema.
+    """
+
+    source_url: str
+    source_filename: str
+    target_fps: float
+    engine: str
+    rife: RifeParams | None = None
+    job_id: str | None = None
+
+
+_interpolate_lock: asyncio.Lock = asyncio.Lock()
+_interpolate_jobs: dict[str, dict[str, Any]] = {}
+
+
+@app.post("/interpolate")
+async def interpolate_handler(req: InterpolateRequest) -> dict[str, str]:
+    """Enqueue an interpolate job; return ``{"job_id": ...}``.
+
+    Engine dispatch reads ``req.engine``; v1 handles ``"rife"``. Unknown
+    engines fail fast at submit time with 400 so the caller does not burn a
+    warm-pod attach cycle on a job destined for an async error.
+    """
+    if req.engine != "rife":
+        raise HTTPException(
+            status_code=400, detail=f"unsupported interpolate engine: {req.engine}"
+        )
+    job_id = req.job_id or f"i-{uuid.uuid4().hex}"
+    _interpolate_jobs[job_id] = {
+        "state": "queued",
+        "progress": 0.0,
+        "result": None,
+        "error": None,
+    }
+    asyncio.create_task(_run_interpolate_job(job_id, req))
+    return {"job_id": job_id}
+
+
+async def _run_interpolate_job(job_id: str, req: InterpolateRequest) -> None:
+    """Run one interpolate under ``_interpolate_lock``; mutate the job dict.
+
+    Uploaded inputs under ``_UPLOAD_DIR`` are unlinked in the finally block so
+    warm-reuse repeats do not pile up source files on the pod's scratch dir.
+    """
+    async with _interpolate_lock:
+        try:
+            _interpolate_jobs[job_id]["state"] = "running"
+            rife = req.rife or RifeParams()
+            model_name = f"rife-{rife.model}"
+            entry = await _ensure_on_gpu(model_name)
+
+            local = await asyncio.to_thread(
+                _download_to_local_temp, req.source_url, req.source_filename
+            )
+            params = rife.model_dump(exclude={"model"})
+
+            result = await asyncio.to_thread(
+                entry["pipe"].interpolate, local, req.target_fps, params
+            )
+
+            # Assign result BEFORE flipping state to "done" so a poller that
+            # catches state=="done" is guaranteed to observe a populated result
+            # block (no read-mid-write race).
+            _interpolate_jobs[job_id]["result"] = result
+            _interpolate_jobs[job_id]["progress"] = 1.0
+            _interpolate_jobs[job_id]["state"] = "done"
+        except Exception as exc:  # noqa: BLE001 — surface any failure to caller
+            _log.exception("interpolate job %s failed", job_id)
+            _interpolate_jobs[job_id]["error"] = str(exc)
+            _interpolate_jobs[job_id]["state"] = "error"
+        finally:
+            _maybe_cleanup_upload(req.source_url)
+
+
+@app.get("/interpolate/status/{job_id}")
+def interpolate_status_handler(job_id: str) -> dict[str, Any]:
+    """Return current state of ``job_id``; 404 if unknown."""
+    payload = _interpolate_jobs.get(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
     return payload
