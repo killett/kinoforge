@@ -75,8 +75,17 @@ class RifeRuntime:
         Lazy — torch + the RIFE arch are only imported on a real pod run, never
         in the offline unit tests (which inject ``infer``).
         """
+        import sys
+
         import numpy as np
         import torch
+
+        # Practical-RIFE is a script repo (cloned by render_provision, not
+        # pip-installed): its train_log/ package is only importable with the
+        # repo root on sys.path.
+        rife_repo = "/workspace/Practical-RIFE"
+        if rife_repo not in sys.path:
+            sys.path.insert(0, rife_repo)
         from train_log.RIFE_HDv3 import Model  # type: ignore[import-not-found]
 
         model = Model()
