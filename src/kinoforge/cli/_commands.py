@@ -717,6 +717,10 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
         return 0
 
+    if (video_err := _video_arg_error(args.video)) is not None:
+        print(video_err, file=sys.stderr)
+        return 2
+
     # T11 — non-dry-run wiring. Reuses generate()'s machinery via the
     # skip_clip_stage flag (T10). Mirrors _cmd_generate's warm-reuse /
     # attach / cold-create precedence chain.
@@ -827,6 +831,10 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(f"  attach_pod: {getattr(args, 'attach_pod', None)}")
         return 0
 
+    if (video_err := _video_arg_error(args.video)) is not None:
+        print(video_err, file=sys.stderr)
+        return 2
+
     from kinoforge.core import orchestrator as _orchestrator
 
     # CLI --fps override reaches the stage via cfg.interpolate.fps.
@@ -872,6 +880,26 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
     del returned_instance
     print(f"interpolated: uri={artifact.uri!r}")
     return 0
+
+
+def _video_arg_error(video: str) -> str | None:
+    """Return a CLI error message for a bad ``--video`` arg, else ``None``.
+
+    Fails fast BEFORE any pod work so a mistyped / empty / directory path does
+    not surface as an opaque ``IsADirectoryError`` deep inside provisioning
+    (2026-07-06: a chained ``--video "$(ls ...)"`` that expanded empty resolved
+    to cwd). ``http(s)://`` sources are NOT file-checked — the pod fetches them.
+    """
+    if not video:
+        return "error: --video is empty (no input path or URL)"
+    if video.startswith(("http://", "https://")):
+        return None
+    p = Path(video)
+    if not p.exists():
+        return f"error: --video path does not exist: {video}"
+    if not p.is_file():
+        return f"error: --video is not a file: {video}"
+    return None
 
 
 def _resolve_input_video_as_artifact(video_path_or_url: str) -> Artifact:

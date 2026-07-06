@@ -97,6 +97,64 @@ class TestInterpBlockRequired:
         assert rc == 2
 
 
+class TestVideoArgValidation:
+    def test_directory_video_exits_2(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught (2026-07-06): a chained `--video "$(ls ...)"` that expands
+        # empty resolves to cwd, and _resolve_input_video_as_artifact opened the
+        # DIRECTORY -> opaque `IsADirectoryError` deep in provisioning. A local
+        # --video that is not a regular file must fail fast with exit 2.
+        cfg = _stub_cfg(tmp_path)
+        rc = main(["interpolate", "--video", str(tmp_path), "--config", str(cfg)])
+        assert rc == 2
+        assert "not a file" in capsys.readouterr().err
+
+    def test_missing_video_file_exits_2(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = _stub_cfg(tmp_path)
+        rc = main(
+            [
+                "interpolate",
+                "--video",
+                str(tmp_path / "nope.mp4"),
+                "--config",
+                str(cfg),
+            ]
+        )
+        assert rc == 2
+        assert "does not exist" in capsys.readouterr().err
+
+    def test_empty_video_exits_2(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: the exact 2026-07-06 trigger — a chained `--video "$(ls
+        # ...)"` expanded to "" and crashed deep in provisioning.
+        cfg = _stub_cfg(tmp_path)
+        rc = main(["interpolate", "--video", "", "--config", str(cfg)])
+        assert rc == 2
+        assert "empty" in capsys.readouterr().err
+
+    def test_http_video_not_file_checked(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Bug caught: file-checking an http(s):// source would reject valid
+        # remote inputs (the pod fetches them). Remote URLs bypass the check.
+        cfg = _stub_cfg(tmp_path)
+        rc = main(
+            [
+                "interpolate",
+                "--video",
+                "https://example.com/clip.mp4",
+                "--config",
+                str(cfg),
+                "--dry-run",
+            ]
+        )
+        assert rc == 0
+
+
 class TestDryRun:
     def test_dry_run_emits_plan(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
