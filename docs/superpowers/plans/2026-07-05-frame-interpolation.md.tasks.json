@@ -66,7 +66,7 @@
     {
       "id": 14,
       "subject": "Task 9: RifeEngine client (HTTP to pod)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [9],
       "description": "**Goal:** RifeEngine InterpolatorEngine impl (upload+POST+poll+result) + render_provision + self-register. Files: interpolators/rife/*.py + tests/interpolators/test_rife_engine.py. Verify: pixi run pytest tests/interpolators/test_rife_engine.py -v. EXEC-TIME TODO: pin Practical-RIFE SHA + confirm weights layout.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/interpolators/rife/_engine.py\", \"src/kinoforge/interpolators/rife/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/interpolators/test_rife_engine.py -v\", \"acceptanceCriteria\": [\"upload+POST+poll+result\", \"error→InterpolationError\", \"validate/model_identity/capability\", \"self-registered rife\"], \"modelTier\": \"standard\", \"executionTimeTodo\": \"pin Practical-RIFE commit SHA + confirm weights layout\"}\n```"
     },
