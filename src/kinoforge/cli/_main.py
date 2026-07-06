@@ -31,6 +31,7 @@ from kinoforge.cli._commands import (
     _cmd_gc,
     _cmd_generate,
     _cmd_grid,
+    _cmd_interpolate,
     _cmd_list,
     _cmd_logs,
     _cmd_pod_lora_ls,
@@ -136,6 +137,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace, SessionContext], int]] = {
     "provision": _cmd_provision,
     "generate": _cmd_generate,
     "upscale": _cmd_upscale,
+    "interpolate": _cmd_interpolate,
     "batch": _cmd_batch,
     "list": _cmd_list,
     "status": _cmd_status,
@@ -591,6 +593,42 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
         help="attach to an existing pod; skip provision. Mutex with --no-reuse.",
     )
     p_upscale.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="emit the resolved plan to stdout and exit 0; no pod work",
+    )
+
+    # interpolate
+    p_interp = sub.add_parser("interpolate", help="raise a video's frame rate (RIFE)")
+    p_interp.add_argument("-c", "--config", required=True, metavar="PATH")
+    p_interp.add_argument(
+        "--video",
+        required=True,
+        metavar="PATH_OR_URL",
+        help="source mp4 (file path or http(s)://... URL)",
+    )
+    p_interp.add_argument(
+        "--fps",
+        type=float,
+        default=None,
+        metavar="FPS",
+        help="target output fps (overrides cfg.interpolate.fps)",
+    )
+    p_interp.add_argument(
+        "--no-reuse",
+        action="store_true",
+        dest="no_reuse",
+        help="force cold create + destroy on completion. Mutex with --attach-pod.",
+    )
+    p_interp.add_argument(
+        "--attach-pod",
+        type=str,
+        default=None,
+        metavar="POD_ID",
+        help="attach to an existing pod; skip provision. Mutex with --no-reuse.",
+    )
+    p_interp.add_argument(
         "--dry-run",
         action="store_true",
         dest="dry_run",
