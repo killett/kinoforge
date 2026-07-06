@@ -68,7 +68,17 @@ Spec `docs/superpowers/specs/2026-07-05-frame-interpolation-design.md` (see
 - T8 CLI subcommand, T9 `RifeEngine` HTTP client (Practical-RIFE SHA pinned
   `17d8c7a`), T10 on-pod `_runtime.py` + server `/interpolate` endpoints, T11
   example cfg + RED live smoke, T12 USER-GATE live smoke — ALL DONE + committed.
-- Full suite green after T7: 3861 passed / 130 skipped / 6 xfailed.
+- **Full suite GREEN: 3882 passed / 132 skipped / 6 xfailed** (`eabdc66`).
+- Fixed en route: 2 real invariant regressions (engine-confinement — RIFE
+  runtime must NOT import `engines.diffusers.servers._video_io`, inline the mux;
+  write-outside-store — mark pod-side writes `# kinoforge:public-write`). Plus a
+  latent test-infra deadlock the RIFE server-log volume exposed: the
+  `uvicorn_server` smoke fixture captured `stdout=PIPE` but never drained it, so
+  a chatty request (the vram-rollback test's 200-LoRA POST) filled the ~64 KB
+  pipe → server blocked on write → client POST hung 60 s. Fix (`eabdc66`): drain
+  the subprocess stdout in a daemon thread. **Lesson: never `Popen(stdout=PIPE)`
+  without draining it** — asyncio-loop/lock theories were red herrings (reverted);
+  the DEVNULL diagnostic (whole suite passed) nailed the pipe buffer.
 
 **Height-target upscaling (1080p/720p) — SHIPPED + LIVE-GREEN 2026-07-05:**
 Spec `docs/superpowers/specs/2026-07-05-height-target-upscale-design.md`, plan
