@@ -52,7 +52,7 @@
     {
       "id": 12,
       "subject": "Task 7: Orchestrator wiring (standalone path only)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [10, 11],
       "description": "**Goal:** Append InterpolateStage + materialize interpolated artifact; NO inter-stage refactor. Files: core/orchestrator.py + tests/core/test_orchestrator_interpolate.py. Verify: pixi run pytest tests/core/test_orchestrator_interpolate.py -v then full pixi run test.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_interpolate.py -v\", \"acceptanceCriteria\": [\"stage appended\", \"interpolated materialized+published\", \"standalone returns interpolated\", \"no-interp unaffected\"], \"modelTier\": \"standard\"}\n```"
     },

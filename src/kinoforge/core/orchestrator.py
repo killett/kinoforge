@@ -1871,6 +1871,42 @@ def generate(
                 )
             )
 
+        # Append InterpolateStage when cfg.interpolate is set. Standalone path
+        # only (see plan Planning-time correction): interp runs on its own pod
+        # via a separate `kinoforge interpolate` invocation, so its input clip
+        # is always the seeded initial_clip (local/http), never a mid-walk
+        # pod-side upscaled artifact. The local-decimate branch publishes via
+        # the sink seam below; the engine branch's pod-proxy artifact is
+        # materialized post-walk (mirrors the upscale materialize block).
+        if cfg.interpolate is not None:
+            from kinoforge.core import registry as _registry
+            from kinoforge.pipeline.interpolate import InterpolateStage
+
+            interp_engine = _registry.get_interpolator(cfg.interpolate.engine)()
+            _interp_provider = cfg.interpolate.engine
+
+            def _interp_publish(body: bytes) -> str:
+                assert sink is not None  # noqa: S101 — guarded by the seam below
+                return "file://" + sink.publish(
+                    body,
+                    prompt="interpolate",
+                    extension=".mp4",
+                    provider=_interp_provider,
+                    model="interp",
+                    kind="interpolated",
+                )
+
+            stages.append(
+                InterpolateStage(
+                    engine=interp_engine,
+                    target_fps=cfg.interpolate.fps,
+                    instance=session.instance,
+                    cfg=cfg_dict,
+                    cancel_token=cancel_token,
+                    publish=_interp_publish if sink is not None else None,
+                )
+            )
+
         # ------------------------------------------------------------------
         # Walk the remaining stages with shared PipelineState.
         # ValidationError from any stage → tear down compute before re-raise
@@ -1909,10 +1945,14 @@ def generate(
             raise
 
         # T10 — upscale-only entry returns the upscaled artifact, not the
-        # input clip. Default path still returns the clip artifact.
-        artifact_key = (
-            "upscaled" if (skip_clip_stage and cfg.upscale is not None) else "clip"
-        )
+        # input clip. Standalone interpolate returns the interpolated artifact.
+        # Default path still returns the clip artifact.
+        if skip_clip_stage and cfg.interpolate is not None:
+            artifact_key = "interpolated"
+        elif skip_clip_stage and cfg.upscale is not None:
+            artifact_key = "upscaled"
+        else:
+            artifact_key = "clip"
 
         # T15/att6 + T16/att2 fix: ``UpscaleStage.run`` returns an Artifact
         # whose ``.uri`` is the pod's proxy URL (e.g.
@@ -1969,6 +2009,39 @@ def generate(
             )
             state.artifacts["upscaled"] = dataclasses.replace(
                 upscaled, uri=f"file://{local_path}"
+            )
+
+        # Materialize a pod-side interpolated artifact (engine branch) while the
+        # pod is still alive — same reason as the upscale block above. The
+        # local-decimate branch already published via the stage's publish seam,
+        # so only an http(s) proxy uri needs fetching here. Interp has no
+        # downscale, so this is the simpler fetch+publish half.
+        interpolated = state.artifacts.get("interpolated")
+        if (
+            interpolated is not None
+            and sink is not None
+            and interpolated.uri.startswith(("http://", "https://"))
+        ):
+            import urllib.request as _urequest  # orchestrator stays urllib-free
+
+            _log.info("materializing interpolated artifact from %s", interpolated.uri)
+            req = _urequest.Request(  # noqa: S310 — pod proxy URL only
+                interpolated.uri,
+                headers={"User-Agent": "kinoforge-orchestrator/0.1"},
+            )
+            with _urequest.urlopen(req, timeout=600) as resp:  # noqa: S310
+                interp_body: bytes = resp.read()
+            provider_tag = cfg.interpolate.engine if cfg.interpolate else "unknown"
+            local_path = sink.publish(
+                interp_body,
+                prompt="interpolate",
+                extension=".mp4",
+                provider=provider_tag,
+                model="interp",
+                kind="interpolated",
+            )
+            state.artifacts["interpolated"] = dataclasses.replace(
+                interpolated, uri=f"file://{local_path}"
             )
 
         artifact = state.artifacts[artifact_key]
