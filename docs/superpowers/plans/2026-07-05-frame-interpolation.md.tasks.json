@@ -87,10 +87,10 @@
     {
       "id": 17,
       "subject": "Task 12: Live smoke + frame-QA + successful-generations entry",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [16],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Run RIFE interpolate-only live smoke, frame-QA before green, verify teardown, log generation. Files: successful-generations.md, tests/live/evidence/. Verify: KINOFORGE_LIVE=1 pixi run pytest tests/live/test_rife_interpolate_live.py -v → 1 passed; kinoforge list → no instances.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"tests/live/evidence/\"], \"verifyCommand\": \"KINOFORGE_LIVE=1 pixi run pytest tests/live/test_rife_interpolate_live.py -v\", \"acceptanceCriteria\": [\"preflight exit 0 before spend\", \"1 passed + captured stdout\", \"fps==60 + duration within 1 frame\", \"frame-QA verdict recorded before green\", \"pod destroyed + ledger clean\", \"successful-generations entry\"], \"modelTier\": \"complex\", \"userGate\": true, \"tags\": [\"user-gate\"], \"requiresUserSpecification\": false, \"gateScope\": \"live-smoke\", \"failurePolicy\": \"stop\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-05"
+  "lastUpdated": "2026-07-05T22:25:00-07:00"
 }
