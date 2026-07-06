@@ -73,7 +73,7 @@
     {
       "id": 15,
       "subject": "Task 10: On-pod RIFE runtime + server /interpolate endpoints",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [7, 14],
       "description": "**Goal:** _runtime.py renders schedule→mp4 at output_fps; ln.py /interpolate + status endpoints mirror /upscale. Files: interpolators/rife/_runtime.py, engines/diffusers/servers/ln.py + tests/interpolators/test_rife_runtime.py. Verify: pixi run pytest tests/interpolators/test_rife_runtime.py -v. READ ln.py /upscale block first.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/interpolators/rife/_runtime.py\", \"src/kinoforge/engines/diffusers/servers/ln.py\"], \"verifyCommand\": \"pixi run pytest tests/interpolators/test_rife_runtime.py -v\", \"acceptanceCriteria\": [\"runtime renders schedule to mp4, decimate-only-when-set\", \"server endpoints mirror /upscale\", \"offline fake-model asserts count+fps\"], \"modelTier\": \"complex\"}\n```"
     },
