@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +25,7 @@ from types import FrameType
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import kinoforge._adapters  # noqa: F401 — triggers self-registrations
+from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 from kinoforge.cli.context import SessionContext
 from kinoforge.cli.loras_arg import LorasParseError, parse_loras_heredoc
 from kinoforge.core.clock import Clock, RealClock
@@ -1114,75 +1115,6 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
     n_ok = sum(1 for o in result.outcomes if o.status == "ok")
     n_fail = len(result.outcomes) - n_ok
     return 0 if n_fail == 0 else 1
-
-
-class _ForgetLedger(Protocol):
-    """Minimal ledger surface the reconciler needs: just ``forget``."""
-
-    def forget(self, instance_id: str) -> None:  # noqa: D102
-        ...
-
-
-# Providers whose ``get_instance(id)`` is authoritative ACROSS processes — a
-# KeyError reliably means "this pod no longer exists". Only these are auto-
-# reconciled on ``list``. ``local`` is excluded: its instance table is
-# in-process, so a fresh CLI invocation always KeyErrors on a valid pod.
-_RECONCILABLE_PROVIDERS: frozenset[str] = frozenset({"runpod"})
-
-
-def _reconcile_dead_ledger_entries(
-    ledger: _ForgetLedger,
-    entries: list[dict[str, Any]],
-    *,
-    get_provider: Callable[[str], Callable[[], Any]] | None = None,
-) -> list[str]:
-    """Forget ledger entries whose pod the provider confirms is gone.
-
-    For each entry, resolve its provider and call ``get_instance(id)``. A
-    ``KeyError`` means the pod definitively does not exist provider-side, so the
-    stale ledger entry is forgotten — otherwise its ``est_spend`` (age×rate) goes
-    on inflating forever (2026-07-06: two 7-day-old dead pods showed ~$210 each).
-    ANY other outcome (unknown provider, auth/transport error, live pod) is
-    treated as uncertain and the entry is left untouched. Best-effort: never
-    raises, so it can run inline on ``kinoforge list`` without a creds/network
-    dependency becoming fatal.
-
-    Args:
-        ledger: Object exposing ``forget(instance_id)``.
-        entries: Ledger entry dicts (each may carry ``id`` + ``provider``).
-        get_provider: Injectable provider-factory resolver (test seam); defaults
-            to :func:`kinoforge.core.registry.get_provider`.
-
-    Returns:
-        The ids that were confirmed gone and forgotten.
-    """
-    from kinoforge.core import registry
-
-    resolve = get_provider if get_provider is not None else registry.get_provider
-    forgotten: list[str] = []
-    for entry in entries:
-        pid = str(entry.get("id") or "")
-        pname = str(entry.get("provider") or "")
-        if not pid or pname not in _RECONCILABLE_PROVIDERS:
-            continue
-        try:
-            provider = resolve(pname)()
-        except Exception as exc:  # noqa: BLE001 — unknown/unresolvable provider
-            logger.debug("reconcile: skip %s (provider %s: %s)", pid, pname, exc)
-            continue
-        try:
-            provider.get_instance(pid)
-        except KeyError:
-            try:
-                ledger.forget(pid)
-                forgotten.append(pid)
-            except Exception as exc:  # noqa: BLE001 — forget best-effort
-                logger.debug("reconcile: forget %s failed: %s", pid, exc)
-                continue
-        except Exception as exc:  # noqa: BLE001 — auth/transport → uncertain, keep
-            logger.debug("reconcile: probe %s uncertain, keeping: %s", pid, exc)
-            continue
-    return forgotten
 
 
 def _cmd_list(args: argparse.Namespace, ctx: SessionContext) -> int:  # noqa: ARG001

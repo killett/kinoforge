@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from kinoforge.cli._commands import _reconcile_dead_ledger_entries
+from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 
 
 class _FakeLedger:
