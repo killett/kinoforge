@@ -984,7 +984,18 @@ def _print_instance_overview(
         age_h = age_s / 3600.0
         rate = float(entry.get("cost_rate_usd_per_hr", 0.0))
         spend = age_h * rate
-        print(f"  {iid}  age={age_h:.1f}h  est_spend=${spend:.4f}", file=out)
+        max_age_s = float(entry.get("max_age_s", _OVERVIEW_STALE_AFTER_S))
+        # A suspect row still present here survived reconcile — the provider
+        # could not confirm it gone (unreachable/uncertain), so its est_spend
+        # may be entirely fictional. Flag it rather than present it as fact.
+        row_suspect = age_s > max_age_s
+        marker = "  ⚠ unverified — run 'kinoforge list'" if row_suspect else ""
+        print(
+            f"  {iid}  age={age_h:.1f}h  "
+            f"est≤${spend:.4f} (age×rate; $0 if pod already dead)"
+            f"{marker}",
+            file=out,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

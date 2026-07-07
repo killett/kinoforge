@@ -130,3 +130,90 @@ def test_reconcile_failure_does_not_raise(
 
     out = _run(_Ctx(ledger), monkeypatch, boom)
     assert "ghost2" in out  # kept, printed, no crash
+
+
+def test_est_spend_is_labelled_as_estimate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The spend figure prints as an explicit upper-bound estimate.
+
+    Bug caught: a bare 'est_spend=$225' reads as a real charge and alarms the
+    operator, which is the whole defect this feature fixes.
+    """
+    now = time.time()
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "live1",
+                "provider": "runpod",
+                "created_at": now - 60,
+                "max_age_s": 3600,
+                "cost_rate_usd_per_hr": 1.0,
+            }
+        ]
+    )
+
+    def resolver(name: str) -> Any:
+        raise AssertionError("young row must not be probed")
+
+    out = _run(_Ctx(ledger), monkeypatch, resolver)
+    assert "est" in out
+    assert "$0 if pod" in out  # honest caveat present
+
+
+def test_offline_suspect_row_marked_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A suspect row that reconcile could not confirm gone is flagged.
+
+    Bug caught: with the provider unreachable, a real ghost is printed with a
+    confident number and no hint that it may be dead.
+    """
+    now = time.time()
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "maybe_ghost",
+                "provider": "runpod",
+                "created_at": now - 200 * 3600,
+                "max_age_s": 3600,
+                "cost_rate_usd_per_hr": 1.0,
+            }
+        ]
+    )
+
+    def boom(name: str) -> Any:
+        raise RuntimeError("network down")
+
+    out = _run(_Ctx(ledger), monkeypatch, boom)
+    assert "maybe_ghost" in out
+    assert "unverified" in out
+
+
+def test_young_row_not_marked_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A young/live row must NOT carry the unverified marker.
+
+    Bug caught: marking every row unverified would defeat the signal — the
+    marker must fire only for suspect rows that survived reconcile.
+    """
+    now = time.time()
+    ledger = _FakeLedger(
+        [
+            {
+                "id": "young1",
+                "provider": "runpod",
+                "created_at": now - 60,
+                "max_age_s": 3600,
+                "cost_rate_usd_per_hr": 1.0,
+            }
+        ]
+    )
+
+    def resolver(name: str) -> Any:
+        raise AssertionError("young row must not be probed")
+
+    out = _run(_Ctx(ledger), monkeypatch, resolver)
+    assert "young1" in out
+    assert "unverified" not in out
