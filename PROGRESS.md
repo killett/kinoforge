@@ -10,15 +10,38 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
-## RESUME SNAPSHOT (updated 2026-07-04 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-07-06 — read this, then STOP; below is history)
 
 This file exceeds the 256 KB single-read limit. A fresh session should
 read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
-**State (updated 2026-07-04 root-cause session):** main green; suite 3,928
-collected tests; zero pods/clusters; ledger clean.
+**State (updated 2026-07-06 dead-pod-ghost session):** main green; suite
+**3898 passed** / 132 skipped / 6 xfailed; lint + typecheck clean; zero
+pods/clusters; ledger clean.
 ✅ FlashVSR corruption ROOT-CAUSED AND FIXED (`e82b0d1`), verified clean live.
+
+**Dead-pod ledger-ghost fix — SHIPPED 2026-07-06:**
+Spec `docs/superpowers/specs/2026-07-06-dead-pod-ledger-ghosts-design.md`, plan
+`docs/superpowers/plans/2026-07-06-dead-pod-ledger-ghosts.md` (5 tasks 0-4, all
+done + committed). Stops the top-of-every-command instance overview printing a
+confident dollar `est_spend` for pods already dead. Three changes:
+- **Task 0** (`refactor`): extracted `_reconcile_dead_ledger_entries` +
+  `_RECONCILABLE_PROVIDERS` + `_ForgetLedger` into shared `cli/_reconcile.py`;
+  `_cmd_list` + overview now share one impl.
+- **Task 1** (read-side): `_print_instance_overview` age-gates rows
+  (`age > max_age_s`, legacy fallback `_OVERVIEW_STALE_AFTER_S=6h`) and
+  reconciles only the SUSPECT subset against the provider before printing —
+  young/live rows never probed (warm-reuse hot path stays zero-network),
+  failures degrade (never raises). Confirmed-gone rows forgotten + dropped.
+- **Task 2** (honest label): spend prints as `est≤$X (age×rate; $0 if pod
+  already dead)`; suspect rows that survive reconcile (provider unreachable)
+  get `⚠ unverified — run 'kinoforge list'`.
+- **Task 3** (source-side): `HeartbeatLoop` gains `_pod_confirmed_gone()` via
+  the C26 util `probe()` existence flag + factored `_reap_and_stop`; on
+  observed host-reclaim mid-run it forgets + cancels + stops (new
+  `Verdict.POD_GONE`, appended last to honor the insertion-order contract).
+Ledger is treated as a cache; provider is source of truth for liveness.
 
 **Everything through 2026-07-04 is SHIPPED**, including: FlashVSR 4x
 upscaler + co-resident Wan↔FlashVSR multi-stage + warm-reuse re-generate
@@ -29,10 +52,11 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION (2026-07-05):** none — frame-interpolation (RIFE v4)
-SHIPPED + LIVE-GREEN (entry #20, `1 passed in 69.62s`, frame-QA PASS, ~$0.02,
-pod auto-destroyed, ledger clean). All 13 plan tasks done. Pick next from the
-gated table below or start a new feature.
+**SINGLE NEXT ACTION (2026-07-06):** none — dead-pod ledger-ghost fix SHIPPED
+(offline suite green, lint/type clean; no live spend needed — the fix is
+read-side + heartbeat-side unit-tested logic). Pick next from the gated table
+below or start a new feature. Prior: frame-interpolation (RIFE v4) SHIPPED +
+LIVE-GREEN (entry #20, frame-QA PASS, ~$0.02, ledger clean).
 
 **Frame-interpolation (RIFE v4) — SHIPPED + LIVE-GREEN 2026-07-05:**
 All 13 tasks committed (`4e5e201`..`13ec94d`). First interpolate-mode
