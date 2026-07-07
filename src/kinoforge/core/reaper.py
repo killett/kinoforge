@@ -45,6 +45,7 @@ class Verdict(StrEnum):
     GC_404 = "GC_404"  # Provider 404 — remove EphemeralIndex row, no destroy
     SKIP_NO_PROBE = "SKIP_NO_PROBE"  # Provider lacks probe_runtime substrate
     PROBE_FAILED = "PROBE_FAILED"  # Probe raised transient TransportError
+    POD_GONE = "POD_GONE"  # 2026-07-06 — provider confirmed pod absent mid-run
 
 
 @dataclass(frozen=True)
