@@ -34,7 +34,7 @@
     {
       "id": 4,
       "subject": "Task 4: Full-suite + lint/type green, update PROGRESS",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1,
         2,
