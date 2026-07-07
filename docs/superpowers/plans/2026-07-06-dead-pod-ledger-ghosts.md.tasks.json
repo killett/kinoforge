@@ -4,34 +4,42 @@
     {
       "id": 0,
       "subject": "Task 0: Extract shared reconcile primitive",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Move `_reconcile_dead_ledger_entries` and helpers to `cli/_reconcile.py` so overview + `_cmd_list` share one impl.\n\n**Files:** Create `src/kinoforge/cli/_reconcile.py`; Modify `src/kinoforge/cli/_commands.py`; Test `tests/cli/test_reconcile_ledger.py`.\n\n**Verify:** `pixi run pytest tests/cli/test_reconcile_ledger.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_reconcile.py\", \"src/kinoforge/cli/_commands.py\", \"tests/cli/test_reconcile_ledger.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_reconcile_ledger.py -v\", \"acceptanceCriteria\": [\"helpers moved to cli/_reconcile.py\", \"_cmd_list output byte-identical\", \"existing reconcile test passes after import update\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: Age-gated suspect reconcile in instance overview",
-      "status": "pending",
-      "blockedBy": [0],
+      "status": "completed",
+      "blockedBy": [
+        0
+      ],
       "description": "**Goal:** `_print_instance_overview` reconciles only suspect rows (`age > max_age_s`) before printing; young/live never probed.\n\n**Files:** Modify `src/kinoforge/cli/_main.py`; Test `tests/cli/test_instance_overview.py`.\n\n**Verify:** `pixi run pytest tests/cli/test_instance_overview.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"tests/cli/test_instance_overview.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_instance_overview.py -v\", \"acceptanceCriteria\": [\"young row not probed (resolver uncalled)\", \"suspect gone row forgotten+dropped\", \"reconcile failure degrades, no raise\", \"reuses shared primitive\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Honest est_spend label + offline unverified marker",
-      "status": "pending",
-      "blockedBy": [1],
-      "description": "**Goal:** Relabel spend as upper-bound estimate; flag surviving suspect rows `⚠ unverified`.\n\n**Files:** Modify `src/kinoforge/cli/_main.py`; Test `tests/cli/test_instance_overview.py`.\n\n**Verify:** `pixi run pytest tests/cli/test_instance_overview.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"tests/cli/test_instance_overview.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_instance_overview.py -v\", \"acceptanceCriteria\": [\"spend labelled as upper-bound estimate\", \"surviving suspect row marked unverified\", \"young/live row unmarked\"], \"modelTier\": \"mechanical\"}\n```"
+      "status": "completed",
+      "blockedBy": [
+        1
+      ],
+      "description": "**Goal:** Relabel spend as upper-bound estimate; flag surviving suspect rows `\u26a0 unverified`.\n\n**Files:** Modify `src/kinoforge/cli/_main.py`; Test `tests/cli/test_instance_overview.py`.\n\n**Verify:** `pixi run pytest tests/cli/test_instance_overview.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_main.py\", \"tests/cli/test_instance_overview.py\"], \"verifyCommand\": \"pixi run pytest tests/cli/test_instance_overview.py -v\", \"acceptanceCriteria\": [\"spend labelled as upper-bound estimate\", \"surviving suspect row marked unverified\", \"young/live row unmarked\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 3,
-      "subject": "Task 3: Source fix — heartbeat forgets on observed pod-death",
-      "status": "pending",
+      "subject": "Task 3: Source fix \u2014 heartbeat forgets on observed pod-death",
+      "status": "completed",
       "description": "**Goal:** HeartbeatLoop forgets + stops when util `probe()` confirms pod absent mid-run.\n\n**Files:** Modify `src/kinoforge/core/reaper.py`, `src/kinoforge/core/heartbeat_loop.py`; Test `tests/core/test_heartbeat_pod_gone.py`.\n\n**Verify:** `pixi run pytest tests/core/test_heartbeat_pod_gone.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/reaper.py\", \"src/kinoforge/core/heartbeat_loop.py\", \"tests/core/test_heartbeat_pod_gone.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_heartbeat_pod_gone.py -v\", \"acceptanceCriteria\": [\"probe exists=False forgets+cancels+stops\", \"exists=True no reap\", \"util_endpoint None no probe\", \"Verdict.POD_GONE added\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Full-suite + lint/type green, update PROGRESS",
       "status": "pending",
-      "blockedBy": [1, 2, 3],
+      "blockedBy": [
+        1,
+        2,
+        3
+      ],
       "description": "**Goal:** Suite green, lint/type clean, record fix in PROGRESS.\n\n**Files:** Modify `PROGRESS.md`.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full suite green\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS snapshot updated\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
