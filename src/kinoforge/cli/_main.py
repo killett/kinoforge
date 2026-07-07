@@ -13,7 +13,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -45,6 +45,7 @@ from kinoforge.cli._commands import (
     _cmd_sweeper_stop,
     _cmd_upscale,
 )
+from kinoforge.cli._reconcile import _reconcile_dead_ledger_entries
 from kinoforge.cli.context import SessionContext
 from kinoforge.cli.sidecar import SIDECAR_NAME
 from kinoforge.core.cancel import CancelToken
@@ -905,6 +906,27 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     return parser
 
 
+#: Fallback suspect-age threshold when a ledger row lacks ``max_age_s``
+#: (legacy rows). A row older than this is probed against the provider before
+#: its est_spend is printed. Probing a still-live long-lived pod merely
+#: confirms it alive (get_instance succeeds → kept), so this is a
+#: performance knob, never a correctness one.
+_OVERVIEW_STALE_AFTER_S: float = 6 * 3600.0
+
+
+def _overview_get_provider(name: str) -> Callable[[], Any]:
+    """Resolve a provider factory by name (test seam; patched in unit tests).
+
+    Ensures the runpod provider is registered before resolving, so the
+    top-of-command overview reconcile works even when no subcommand has
+    imported the provider yet.
+    """
+    import kinoforge.providers.runpod  # noqa: F401 — self-registers
+    from kinoforge.core import registry
+
+    return registry.get_provider(name)
+
+
 def _print_instance_overview(
     ctx: SessionContext, *, file: TextIO | None = None
 ) -> None:
@@ -928,6 +950,29 @@ def _print_instance_overview(
         print(f"[instance overview] unavailable: {type(exc).__name__}: {exc}", file=out)
         return
     now = time.time()
+    # Read-side self-heal: reconcile only SUSPECT rows (older than their own
+    # max_age_s reap deadline, or a default for legacy rows). Young/live rows
+    # are never probed, so the warm-reuse hot path stays zero-network. Any
+    # failure degrades gracefully — the overview must never raise.
+    suspect = [
+        e
+        for e in entries
+        if now - float(e.get("created_at", now))
+        > float(e.get("max_age_s", _OVERVIEW_STALE_AFTER_S))
+    ]
+    if suspect:
+        try:
+            gone = _reconcile_dead_ledger_entries(
+                ledger, suspect, get_provider=_overview_get_provider
+            )
+            if gone:
+                gone_set = set(gone)
+                entries = [e for e in entries if str(e.get("id") or "") not in gone_set]
+        except Exception as exc:  # noqa: BLE001 — best-effort, never fatal
+            print(
+                f"[instance overview] reconcile skipped: {type(exc).__name__}: {exc}",
+                file=out,
+            )
     if not entries:
         print("[instance overview] No running instances.", file=out)
         return
