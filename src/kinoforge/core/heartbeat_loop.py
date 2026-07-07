@@ -283,6 +283,17 @@ class HeartbeatLoop:
                 last_heartbeat=last_hb,
                 **extra,
             )
+            # Source-side self-heal: if the provider confirms the pod is gone
+            # (host-reclaim), forget + stop immediately so the ledger row does
+            # not orphan and inflate est_spend forever. Return before the STALL
+            # check — we have already stopped.
+            if self._pod_confirmed_gone():
+                self._logger.warning(
+                    "POD_GONE fired for %s (provider confirmed absent)",
+                    self._instance_id,
+                )
+                self._reap_and_stop(Verdict.POD_GONE)
+                return
             if self._util_endpoint is not None:
                 self._maybe_fire_reap(now=now)
         except Exception:  # noqa: BLE001 — single bad tick must not kill the loop
@@ -378,6 +389,16 @@ class HeartbeatLoop:
             self._stall_window_s,
             self._restart_loop_window_s,
         )
+        self._reap_and_stop(verdict)
+
+    def _reap_and_stop(self, verdict: Verdict) -> None:
+        """Destroy (best-effort) + forget the entry + signal cancel + stop.
+
+        Shared by STALL/RESTART_LOOP reaps and POD_GONE detection.
+
+        Args:
+            verdict: The classification that triggered the reap (log label).
+        """
         destroy = getattr(self._provider, "destroy_instance", None)
         if destroy is not None:
             try:
@@ -399,3 +420,23 @@ class HeartbeatLoop:
         if self._cancel_token is not None:
             self._cancel_token.set()
         self._stop.set()
+
+    def _pod_confirmed_gone(self) -> bool:
+        """True iff the util endpoint's probe() reports the pod not-found.
+
+        Uses ``probe()`` (returns ``(exists, snap)``) rather than
+        ``read_util()`` (which conflates 'gone' and 'null runtime' as
+        ``None``). Only runs when the endpoint exposes ``probe()``; returns
+        ``False`` on any error (uncertain → keep, never a false reap).
+
+        Returns:
+            ``True`` only when the provider positively reports the pod absent.
+        """
+        probe = getattr(self._util_endpoint, "probe", None)
+        if self._util_endpoint is None or probe is None:
+            return False
+        try:
+            exists, _snap = probe(self._instance_id)
+        except Exception:  # noqa: BLE001 — transport/auth uncertain → keep
+            return False
+        return exists is False
