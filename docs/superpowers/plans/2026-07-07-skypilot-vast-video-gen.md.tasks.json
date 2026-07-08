@@ -30,7 +30,7 @@
     {
       "id": 4,
       "subject": "Task 4: Live-proof example config",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** examples/configs/skypilot-vast-flashvsr.yaml — provider=skypilot, cloud=[vast], upscale-only FlashVSR cfg that loads + passes validation.\n\n**Files:** examples/configs/skypilot-vast-flashvsr.yaml (new), tests/core/test_config.py (extend).\n\n**Verify:** `pixi run pytest tests/core/test_config.py -k skypilot_vast_flashvsr -v`\n\n```json:metadata\n{\"files\": [\"examples/configs/skypilot-vast-flashvsr.yaml\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -k skypilot_vast_flashvsr -v\", \"acceptanceCriteria\": [\"provider skypilot + cloud [vast]\", \"upscale_only true + upscale.engine flashvsr\", \"passes cloud-pin validation\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
@@ -48,5 +48,5 @@
       "description": "**Goal:** Whole suite green, lint/type clean, PROGRESS records the SkyPilot-vast video-gen capability (slice 1 shipped).\n\n**Files:** PROGRESS.md.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full offline suite green\", \"vast_compat green in live-skypilot env\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS updated\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-07T00:00:04"
+  "lastUpdated": "2026-07-07T00:00:05"
 }
