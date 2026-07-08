@@ -59,17 +59,18 @@ compute:
     # Lambda's catalog reports a flat cuda=12.0; the 12.8 image ships its own
     # toolkit and Lambda hosts carry a recent driver.
     min_cuda: "12.0"
-    # A100 40GB (Ampere sm_80) preferred first: Lambda offers it in multiple
-    # regions, so it rides Lambda's fluid capacity better than the single-region
-    # A6000 (48GB, Ampere sm_86 — 2026-07-07 A6000 us-east-1 was capacity-dry).
-    # Both are the Ampere class the BSA wheel needs. Cap sits below GH200 ($2.29),
-    # which is ARM (aarch64) and incompatible with the amd64 runpod/pytorch image.
+    # A6000 48GB (Ampere sm_86) preferred first: FlashVSR's peak working set for
+    # this upscale genuinely exceeds 40GB (2026-07-08: A100 40GB OOM'd needing a
+    # 5.27GB alloc with 37.36GB in use — a hard VRAM wall, not fragmentation), so
+    # the 48GB A6000 is required for a full-quality (tile 512 / window 24) run.
+    # A100 40GB stays as a fallback GPU pin. Cap sits below GH200 ($2.29), which
+    # is ARM (aarch64) and incompatible with the amd64 runpod/pytorch image.
     min_vram_gb: 40
     max_usd_per_hr: 2.20
     disk_gb: 60
     gpu_preference:
-      - "A100"
       - "A6000"
+      - "A100"
   lifecycle:
     boot_timeout: 15m
     idle_timeout: 30m
