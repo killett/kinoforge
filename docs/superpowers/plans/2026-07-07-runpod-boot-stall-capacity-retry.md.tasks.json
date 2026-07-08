@@ -16,7 +16,7 @@
     {
       "id": 2,
       "subject": "Task 2: Capacity-wait retry loop in orchestrator",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0, 1],
       "description": "**Goal:** On CapacityError, re-query find_offers + retry create every 25s until capacity_wait_s, then re-raise.\n\n**Files:** core/orchestrator.py (_create_with_capacity_wait + wire into _provision_instance_and_build_backend), tests/core/test_capacity_wait_retry.py.\n\n**Verify:** `pixi run pytest tests/core/test_capacity_wait_retry.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_capacity_wait_retry.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_capacity_wait_retry.py -v\", \"acceptanceCriteria\": [\"retries then succeeds re-querying offers\", \"zero-wait fails first miss\", \"deadline reraises\", \"non-capacity propagates\"], \"modelTier\": \"standard\"}\n```"
     },
