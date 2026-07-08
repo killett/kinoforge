@@ -1,0 +1,52 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-07-skypilot-vast-video-gen.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Vast adapter compat shim",
+      "status": "pending",
+      "description": "**Goal:** apply_vast_sdk_compat() makes sky's vast.vast().client.api_key resolve against vastai-sdk 0.2.5, idempotently and only when needed.\n\n**Files:** src/kinoforge/providers/skypilot/vast_compat.py (new), src/kinoforge/providers/skypilot/__init__.py (call at import), tests/providers/test_skypilot_vast_compat.py.\n\n**Verify:** `pixi run -e live-skypilot pytest tests/providers/test_skypilot_vast_compat.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/skypilot/vast_compat.py\", \"src/kinoforge/providers/skypilot/__init__.py\", \"tests/providers/test_skypilot_vast_compat.py\"], \"verifyCommand\": \"pixi run -e live-skypilot pytest tests/providers/test_skypilot_vast_compat.py -v\", \"acceptanceCriteria\": [\"VastAI().client.api_key resolves after shim\", \"idempotent (2nd call False)\", \"no raise when sdk absent/already-correct\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Tunnel seams + create_instance HTTP endpoint",
+      "status": "pending",
+      "description": "**Goal:** SkyPilotProvider.__init__ gains injectable ssh_spawn/port_allocator seams + _tunnels map; create_instance opens ssh -L tunnel and returns endpoints={\"8000\": \"http://127.0.0.1:<port>\"} for a server spec.\n\n**Files:** src/kinoforge/providers/skypilot/__init__.py (__init__, create_instance, _alloc_free_port/_spawn_ssh_tunnel, import ProvisionFailed/socket/subprocess), tests/providers/test_skypilot_tunnel.py (new).\n\n**Verify:** `pixi run pytest tests/providers/test_skypilot_tunnel.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/skypilot/__init__.py\", \"tests/providers/test_skypilot_tunnel.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_skypilot_tunnel.py -v\", \"acceptanceCriteria\": [\"server spec yields http://127.0.0.1 endpoint\", \"ssh_spawn called (cluster,port,8000) + stored in _tunnels\", \"no run_cmd -> no tunnel/empty endpoints\", \"spawn failure -> ProvisionFailed + sky.down\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: destroy_instance tunnel teardown",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** destroy_instance kills the tunnel subprocess (in a finally, even if sky down raises) and drops it from _tunnels.\n\n**Files:** src/kinoforge/providers/skypilot/__init__.py (destroy_instance, _kill_tunnel), tests/providers/test_skypilot_tunnel.py (extend).\n\n**Verify:** `pixi run pytest tests/providers/test_skypilot_tunnel.py -k destroy -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/skypilot/__init__.py\", \"tests/providers/test_skypilot_tunnel.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_skypilot_tunnel.py -k destroy -v\", \"acceptanceCriteria\": [\"destroy kills tunnel + drops from _tunnels\", \"tunnel killed even if sky.down raises\", \"tunnel-less destroy no raise\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Provisioning characterization guard",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Lock that create_instance builds a sky Task carrying provision_script->setup and run_cmd->run so the server starts on the node (Component C).\n\n**Files:** tests/providers/test_skypilot_tunnel.py (extend — reuses Task-1 fakes).\n\n**Verify:** `pixi run pytest tests/providers/test_skypilot_tunnel.py -k task_carries -v`\n\n```json:metadata\n{\"files\": [\"tests/providers/test_skypilot_tunnel.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_skypilot_tunnel.py -k task_carries -v\", \"acceptanceCriteria\": [\"setup == stripped provision_script\", \"run == shlex-joined run_cmd\", \"accelerators from offer.gpu_type\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Live-proof example config",
+      "status": "pending",
+      "description": "**Goal:** examples/configs/skypilot-vast-flashvsr.yaml — provider=skypilot, cloud=[vast], upscale-only FlashVSR cfg that loads + passes validation.\n\n**Files:** examples/configs/skypilot-vast-flashvsr.yaml (new), tests/core/test_config.py (extend).\n\n**Verify:** `pixi run pytest tests/core/test_config.py -k skypilot_vast_flashvsr -v`\n\n```json:metadata\n{\"files\": [\"examples/configs/skypilot-vast-flashvsr.yaml\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -k skypilot_vast_flashvsr -v\", \"acceptanceCriteria\": [\"provider skypilot + cloud [vast]\", \"upscale_only true + upscale.engine flashvsr\", \"passes cloud-pin validation\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Live proof — one video on vast.ai via SkyPilot (USER-GATE)",
+      "status": "pending",
+      "blockedBy": [0, 1, 2, 3, 4],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Requested by the user in-conversation; MUST NOT be closed by walking around it or substituting a cheaper check. Close only after every acceptanceCriteria item is independently re-validated with captured output.\n\n**Goal:** Provision a vast.ai GPU via SkyPilot, upscale the fixture over the SSH tunnel, frame-QA, confirm clean teardown — proving the HTTP-over-sky chain end to end.\n\n**Files:** tests/live/test_skypilot_vast_flashvsr_live.py (RED scaffold committed BEFORE spend), successful-generations.md (entry after green).\n\n**Verify:** VAST_API_KEY present -> `pixi run preflight` exit 0 -> upscale cmd -> frame-QA -> `pixi run kinoforge list` fully clean.\n\n```json:metadata\n{\"files\": [\"tests/live/test_skypilot_vast_flashvsr_live.py\", \"successful-generations.md\"], \"verifyCommand\": \"pixi run preflight && pixi run -e live-skypilot kinoforge upscale --config examples/configs/skypilot-vast-flashvsr.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse\", \"acceptanceCriteria\": [\"upscale exits 0 + writes mp4\", \"ffprobe shows real 1080-height video\", \"frame-QA high-quality verdict recorded\", \"GPU utilisation observed non-zero during run\", \"kinoforge list clean after (no pod, no ledger entry)\", \"successful-generations.md entry added\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"single\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Full suite + lint/type green, update PROGRESS",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** Whole suite green, lint/type clean, PROGRESS records the SkyPilot-vast video-gen capability (slice 1 shipped).\n\n**Files:** PROGRESS.md.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full offline suite green\", \"vast_compat green in live-skypilot env\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS updated\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-07"
+}
