@@ -10,16 +10,40 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
-## RESUME SNAPSHOT (updated 2026-07-06 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-07-07 — read this, then STOP; below is history)
 
 This file exceeds the 256 KB single-read limit. A fresh session should
 read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
-**State (updated 2026-07-06 dead-pod-ghost session):** main green; suite
-**3898 passed** / 132 skipped / 6 xfailed; lint + typecheck clean; zero
-pods/clusters; ledger clean.
+**State (updated 2026-07-07 boot-stall/capacity-retry session):** main green;
+lint + typecheck clean; zero pods/clusters; ledger clean.
 ✅ FlashVSR corruption ROOT-CAUSED AND FIXED (`e82b0d1`), verified clean live.
+
+**RunPod boot-stall fast-fail + capacity-retry — SHIPPED 2026-07-07 (offline):**
+Spec `docs/superpowers/specs/2026-07-07-runpod-boot-stall-capacity-retry-design.md`,
+plan `docs/superpowers/plans/2026-07-07-runpod-boot-stall-capacity-retry.md`
+(8 tasks 0-7, all done + committed `344b78c`..HEAD). Kills the 900s dead-boot
+wait + rides transient RunPod capacity droughts. Two independent seams, both
+defaulting to today's behavior:
+- **Boot-stall fast-fail:** pure `classify_boot_liveness` (core/boot_liveness.py)
+  → BootVerdict {ALIVE,GONE,STALLED,UNKNOWN} from `[bootstrap-trap] rc!=0` OR
+  util flatline (CPU 0 + flat mem/disk) for K probes behind a grace window;
+  stateful `RunPodBootLivenessProbe` (util `probe()` + :8001/bootstrap.log tail);
+  `wait_for_ready` (diffusers + comfyui) consults it on a 30s throttle → aborts
+  GONE/STALLED with ProvisionFailed in ~2-3min; `get_instance` KeyError → clean
+  ProvisionFailed. `probe=None` preserves poll-until-timeout. Orchestrator
+  attaches the provider's probe (provider-gated; non-RunPod → None).
+- **Capacity-retry:** RunPod `_create_pod` classifies the two "no longer any
+  instances available" variants as the existing `CapacityError` (no new type);
+  `_create_with_capacity_wait` in the orchestrator re-queries `find_offers` +
+  retries create every 25s until `lifecycle.capacity_wait` (new duration cfg
+  field, default 5m) elapses, then re-raises. `capacity_wait=0` fails on first
+  miss (smoke-safe). FlashVSR 1080p cfg widened to 4 Ampere/Hopper 80GB types
+  under a $3 cap + `capacity_wait: 5m`.
+NOT done: no auto-reprovision/self-heal (out of scope by user appetite); no CLI
+flag (cfg-only). All unit-tested with fakes; no live spend needed (logic is
+seam-injected + provider-gated).
 
 **Dead-pod ledger-ghost fix — SHIPPED 2026-07-06:**
 Spec `docs/superpowers/specs/2026-07-06-dead-pod-ledger-ghosts-design.md`, plan
@@ -52,11 +76,13 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION (2026-07-06):** none — dead-pod ledger-ghost fix SHIPPED
-(offline suite green, lint/type clean; no live spend needed — the fix is
-read-side + heartbeat-side unit-tested logic). Pick next from the gated table
-below or start a new feature. Prior: frame-interpolation (RIFE v4) SHIPPED +
-LIVE-GREEN (entry #20, frame-QA PASS, ~$0.02, ledger clean).
+**SINGLE NEXT ACTION (2026-07-07):** none — RunPod boot-stall fast-fail +
+capacity-retry SHIPPED (offline suite green, lint/type clean; no live spend
+needed — logic is seam-injected + provider-gated unit tests). Next natural
+validation: a live FlashVSR 1080p smoke on the widened cfg would exercise the
+boot probe + capacity-wait against real RunPod, but is optional. Pick next from
+the gated table below or start a new feature. Prior: dead-pod ledger-ghost fix
+SHIPPED; frame-interpolation (RIFE v4) SHIPPED + LIVE-GREEN (entry #20).
 
 **Frame-interpolation (RIFE v4) — SHIPPED + LIVE-GREEN 2026-07-05:**
 All 13 tasks committed (`4e5e201`..`13ec94d`). First interpolate-mode
