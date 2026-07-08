@@ -56,12 +56,14 @@ Self-registers under ``"skypilot"`` when this module is imported.
 from __future__ import annotations
 
 import shlex
+import socket
+import subprocess
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from kinoforge.core import registry
-from kinoforge.core.errors import KinoforgeError
+from kinoforge.core.errors import KinoforgeError, ProvisionFailed
 from kinoforge.core.interfaces import (
     ComputeProvider,
     HardwareRequirements,
@@ -334,6 +336,47 @@ def _strip_trailing_exec(script: str) -> str:
     return script
 
 
+# ---------------------------------------------------------------------------
+# Provider-internal SSH tunnel (HTTP-over-sky seam)
+# ---------------------------------------------------------------------------
+
+#: Port the diffusers/comfyui video server listens on inside the cluster
+#: (matches the RunPod path's 8000). The provider forwards a local port to this.
+_VIDEO_SERVER_PORT: int = 8000
+
+
+def _alloc_free_port() -> int:
+    """Return an ephemeral free localhost TCP port for a tunnel's local end."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+    finally:
+        s.close()
+
+
+def _spawn_ssh_tunnel(cluster_name: str, local_port: int, remote_port: int) -> Any:  # noqa: ANN401
+    """Spawn a background ``ssh -N -L`` port-forward to ``cluster_name``.
+
+    Relies on sky's generated SSH config making ``cluster_name`` resolvable.
+    ``ExitOnForwardFailure`` makes ssh exit (not hang) if the forward can't bind.
+    """
+    return subprocess.Popen(  # noqa: S603 — fixed argv, cluster_name from our own run_id
+        [  # noqa: S607 — ssh resolved via PATH inside the live-skypilot env
+            "ssh",
+            "-N",
+            "-T",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-L",
+            f"{local_port}:localhost:{remote_port}",
+            cluster_name,
+        ]
+    )
+
+
 _SKY_STATUS_MAP: dict[str, str] = {
     "UP": "ready",
     "INIT": "starting",
@@ -464,6 +507,8 @@ class SkyPilotProvider(ComputeProvider):
         region: str | None = None,
         retry_until_up: bool = False,
         sleep: Callable[[float], None] = time.sleep,
+        ssh_spawn: Callable[[str, int, int], Any] | None = None,
+        port_allocator: Callable[[], int] | None = None,
     ) -> None:
         """Initialise the provider.
 
@@ -495,12 +540,25 @@ class SkyPilotProvider(ComputeProvider):
                 ``ResourcesUnavailableError`` and is only safe when the
                 operator knows capacity is currently available.
             sleep: Injectable sleep used between destroy-poll iterations.
+            ssh_spawn: Injectable ``(cluster_name, local_port, remote_port) ->
+                proc`` seam opening the provider-internal ``ssh -L`` tunnel;
+                defaults to :func:`_spawn_ssh_tunnel`. Tests pass a fake proc.
+            port_allocator: Injectable ``() -> int`` seam picking the tunnel's
+                free local port; defaults to :func:`_alloc_free_port`.
         """
         self._sky_client = sky_client
         self._clouds = clouds
         self._region = region
         self._retry_until_up = retry_until_up
         self._sleep = sleep
+        self._ssh_spawn: Callable[[str, int, int], Any] = (
+            ssh_spawn if ssh_spawn is not None else _spawn_ssh_tunnel
+        )
+        self._alloc_port: Callable[[], int] = (
+            port_allocator if port_allocator is not None else _alloc_free_port
+        )
+        #: cluster_name -> live tunnel subprocess handle (killed on destroy).
+        self._tunnels: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Private helper — resolve sky seam
@@ -709,11 +767,31 @@ class SkyPilotProvider(ComputeProvider):
         # payload is ``(Optional[job_id], Optional[ResourceHandle])`` on the
         # modern API.
         _resolve(sky, raw)
+        endpoints: dict[str, str] = {}
+        # Only a server spec (long-running run_cmd) needs an HTTP tunnel; a
+        # server-less deploy (CPU smoke) gets no tunnel and empty endpoints.
+        if spec.run_cmd:
+            local_port = self._alloc_port()
+            try:
+                tunnel = self._ssh_spawn(cluster_name, local_port, _VIDEO_SERVER_PORT)
+            except Exception as exc:  # noqa: BLE001 — any spawn fault → clean fail
+                # Best-effort teardown so a live-but-unreachable cluster is not
+                # left billing while we raise.
+                try:
+                    _resolve(sky, sky.down(cluster_name))
+                except Exception:  # noqa: BLE001, S110
+                    pass
+                raise ProvisionFailed(
+                    f"failed to open ssh tunnel to {cluster_name!r}: {exc}"
+                ) from exc
+            self._tunnels[cluster_name] = tunnel
+            endpoints = {"8000": f"http://127.0.0.1:{local_port}"}
         return Instance(
             id=cluster_name,
             provider=self.name,
             status="starting",
             created_at=time.time(),
+            endpoints=endpoints,
             tags=dict(spec.tags),
             cost_rate_usd_per_hr=(
                 spec.offer.cost_rate_usd_per_hr if spec.offer else 0.0

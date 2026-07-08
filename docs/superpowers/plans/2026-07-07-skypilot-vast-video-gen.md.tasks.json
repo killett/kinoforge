@@ -10,7 +10,7 @@
     {
       "id": 1,
       "subject": "Task 1: Tunnel seams + create_instance HTTP endpoint",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** SkyPilotProvider.__init__ gains injectable ssh_spawn/port_allocator seams + _tunnels map; create_instance opens ssh -L tunnel and returns endpoints={\"8000\": \"http://127.0.0.1:<port>\"} for a server spec.\n\n**Files:** src/kinoforge/providers/skypilot/__init__.py (__init__, create_instance, _alloc_free_port/_spawn_ssh_tunnel, import ProvisionFailed/socket/subprocess), tests/providers/test_skypilot_tunnel.py (new).\n\n**Verify:** `pixi run pytest tests/providers/test_skypilot_tunnel.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/skypilot/__init__.py\", \"tests/providers/test_skypilot_tunnel.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_skypilot_tunnel.py -v\", \"acceptanceCriteria\": [\"server spec yields http://127.0.0.1 endpoint\", \"ssh_spawn called (cluster,port,8000) + stored in _tunnels\", \"no run_cmd -> no tunnel/empty endpoints\", \"spawn failure -> ProvisionFailed + sky.down\"], \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -48,5 +48,5 @@
       "description": "**Goal:** Whole suite green, lint/type clean, PROGRESS records the SkyPilot-vast video-gen capability (slice 1 shipped).\n\n**Files:** PROGRESS.md.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full offline suite green\", \"vast_compat green in live-skypilot env\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS updated\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-07T00:00:01"
+  "lastUpdated": "2026-07-07T00:00:02"
 }
