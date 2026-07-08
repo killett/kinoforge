@@ -403,10 +403,21 @@ class HeartbeatLoop:
         if destroy is not None:
             try:
                 destroy(self._instance_id)
-            except Exception:  # noqa: BLE001 — best-effort destroy
-                self._logger.exception(
-                    "%s destroy failed for %s", verdict.value, self._instance_id
-                )
+            except Exception as exc:  # noqa: BLE001 — best-effort destroy
+                if verdict is Verdict.POD_GONE:
+                    # POD_GONE means the provider already confirmed the pod
+                    # absent — a "not found" on destroy is the expected happy
+                    # path, not a failure. Log calm (no traceback) so routine
+                    # host-reclaims don't read as errors.
+                    self._logger.info(
+                        "POD_GONE destroy skipped for %s (already gone: %s)",
+                        self._instance_id,
+                        exc,
+                    )
+                else:
+                    self._logger.exception(
+                        "%s destroy failed for %s", verdict.value, self._instance_id
+                    )
         forget = getattr(self._ledger, "forget", None)
         if forget is not None:
             try:
