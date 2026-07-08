@@ -29,6 +29,7 @@ from kinoforge.core import frames, registry
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
 from kinoforge.core.assets import find_asset, set_by_dot_path
+from kinoforge.core.boot_liveness import BootVerdict
 from kinoforge.core.errors import (
     FrameExtractionError,
     ProvisionFailed,
@@ -84,6 +85,10 @@ _PYTORCH_EXTRA_INDEX_URL: str = "https://download.pytorch.org/whl/cu124"
 
 #: Seconds between readiness polls in :meth:`DiffusersEngine.wait_for_ready`.
 _READY_POLL_INTERVAL_S: float = 5.0
+
+#: Throttle for the boot-liveness probe inside wait_for_ready — consulted at
+#: most this often, not on every /health poll (2026-07-07).
+_BOOT_PROBE_INTERVAL_S: float = 30.0
 
 #: User-Agent for outbound HTTP from this engine. Cloudflare (RunPod's
 #: proxy edge) returns 403 to the default ``Python-urllib/3.13`` UA —
@@ -1137,6 +1142,7 @@ class DiffusersEngine(GenerationEngine):
         ready_url = f"{base.rstrip('/')}/health"
 
         start = time.monotonic()
+        last_probe = start - _BOOT_PROBE_INTERVAL_S  # allow a probe on first idle poll
         while True:
             if cancel_token is not None:
                 cancel_token.raise_if_set()
@@ -1151,12 +1157,32 @@ class DiffusersEngine(GenerationEngine):
                 return
             except Exception:  # noqa: BLE001, S110
                 pass
-            current = get_instance(instance.id)
+            try:
+                current = get_instance(instance.id)
+            except KeyError as exc:
+                raise ProvisionFailed(
+                    f"pod {instance.id!r} vanished during boot (provider "
+                    f"no longer knows it)"
+                ) from exc
             if current.status in ("terminated", "stopped"):
                 raise ProvisionFailed(
                     f"pod {instance.id!r} entered terminal status "
                     f"{current.status!r} before ready"
                 )
+            # 2026-07-07 boot-stall fast-fail: consult the injected liveness
+            # probe on its own throttle (not every /health poll). GONE/STALLED
+            # abort in ~2-3min instead of waiting the full boot_timeout.
+            probe = getattr(self, "_boot_liveness_probe", None)
+            if probe is not None and now - last_probe >= _BOOT_PROBE_INTERVAL_S:
+                last_probe = now
+                verdict = probe.check(instance.id)
+                if verdict is BootVerdict.GONE:
+                    raise ProvisionFailed(f"pod {instance.id!r} vanished during boot")
+                if verdict is BootVerdict.STALLED:
+                    raise ProvisionFailed(
+                        f"pod {instance.id!r} boot stalled (provision crashed "
+                        f"or util flatline) — aborting before boot_timeout"
+                    )
             sleep(_READY_POLL_INTERVAL_S)
 
     def backend(
