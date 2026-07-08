@@ -4,7 +4,7 @@
     {
       "id": 0,
       "subject": "Task 0: Vast adapter compat shim",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** apply_vast_sdk_compat() makes sky's vast.vast().client.api_key resolve against vastai-sdk 0.2.5, idempotently and only when needed.\n\n**Files:** src/kinoforge/providers/skypilot/vast_compat.py (new), src/kinoforge/providers/skypilot/__init__.py (call at import), tests/providers/test_skypilot_vast_compat.py.\n\n**Verify:** `pixi run -e live-skypilot pytest tests/providers/test_skypilot_vast_compat.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/skypilot/vast_compat.py\", \"src/kinoforge/providers/skypilot/__init__.py\", \"tests/providers/test_skypilot_vast_compat.py\"], \"verifyCommand\": \"pixi run -e live-skypilot pytest tests/providers/test_skypilot_vast_compat.py -v\", \"acceptanceCriteria\": [\"VastAI().client.api_key resolves after shim\", \"idempotent (2nd call False)\", \"no raise when sdk absent/already-correct\"], \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -48,5 +48,5 @@
       "description": "**Goal:** Whole suite green, lint/type clean, PROGRESS records the SkyPilot-vast video-gen capability (slice 1 shipped).\n\n**Files:** PROGRESS.md.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full offline suite green\", \"vast_compat green in live-skypilot env\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS updated\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-07"
+  "lastUpdated": "2026-07-07T00:00:01"
 }
