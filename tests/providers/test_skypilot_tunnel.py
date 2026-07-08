@@ -165,3 +165,33 @@ def test_destroy_without_tunnel_is_noop() -> None:
     provider = _provider(_FakeSky())
     inst = provider.create_instance(_cpu_spec())
     provider.destroy_instance(inst.id)  # must not raise
+
+
+def test_task_carries_provision_setup_and_server_run() -> None:
+    # Bug caught: the sky Task drops setup/run, so the video server never starts
+    # on the node and the tunnel forwards to a dead port.
+    captured: dict[str, Any] = {}
+
+    class _RecTask:
+        @staticmethod
+        def from_yaml_config(cfg: dict[str, Any]) -> dict[str, Any]:
+            captured["cfg"] = cfg
+            return cfg
+
+    class _RecSky(_FakeSky):
+        Task = _RecTask  # type: ignore[assignment]
+
+    provider = _provider(_RecSky())
+    spec = _server_spec()  # provision_script + run_cmd both set
+    # Provision script whose LAST line is the Layer-Q ``exec <run_cmd>`` hand-off.
+    # SkyPilot's setup phase must terminate for run to start, so create_instance
+    # strips that trailing exec line before mapping the script to Task.setup.
+    spec.provision_script = "#!/bin/sh\nsetup-step\nexec python -m server\n"
+    provider.create_instance(spec)
+
+    cfg = captured["cfg"]
+    # setup == provision_script with the trailing exec line removed (Component C).
+    assert cfg["setup"] == "#!/bin/sh\nsetup-step"
+    assert "exec" not in cfg["setup"]
+    assert cfg["run"] == "python -m server"  # shlex-quoted join of run_cmd
+    assert cfg["resources"]["accelerators"] == "RTX_A6000:1"
