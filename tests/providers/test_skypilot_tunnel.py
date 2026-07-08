@@ -195,3 +195,62 @@ def test_task_carries_provision_setup_and_server_run() -> None:
     assert "exec" not in cfg["setup"]
     assert cfg["run"] == "python -m server"  # shlex-quoted join of run_cmd
     assert cfg["resources"]["accelerators"] == "RTX_A6000:1"
+
+
+class _RecTask:
+    @staticmethod
+    def from_yaml_config(cfg: dict[str, Any]) -> dict[str, Any]:
+        _RecTask.captured = cfg  # type: ignore[attr-defined]
+        return cfg
+
+
+class _RecSky(_FakeSky):
+    Task = _RecTask  # type: ignore[assignment]
+
+
+def test_launch_pins_single_cloud_from_clouds_filter() -> None:
+    # Bug caught (live, 2026-07-07): without a cloud pin on the sky Task, the
+    # optimizer picks the cheapest cloud across ALL enabled infra (observed:
+    # Lambda A100 $1.99), silently defeating a compute.cloud=["vast"] pin — the
+    # vast proof provisioned Lambda and blew the $1 cap. find_offers' _clouds
+    # filter only narrows the CATALOG; the launch must be pinned too.
+    sky = _RecSky()
+    provider = SkyPilotProvider(
+        sky_client=sky,
+        clouds=["vast"],
+        ssh_spawn=lambda *_a: _FakeProc(),
+        port_allocator=lambda: 54321,
+    )
+    provider.create_instance(_server_spec())
+    assert _RecTask.captured["resources"]["cloud"] == "vast"  # type: ignore[attr-defined]
+
+
+def test_launch_pins_multiple_clouds_via_any_of() -> None:
+    # Bug caught: a two-cloud pin (["lambda","vast"]) collapsed to one cloud (or
+    # none) lets the optimizer stray outside the operator's allowed set.
+    sky = _RecSky()
+    provider = SkyPilotProvider(
+        sky_client=sky,
+        clouds=["lambda", "vast"],
+        ssh_spawn=lambda *_a: _FakeProc(),
+        port_allocator=lambda: 54321,
+    )
+    provider.create_instance(_server_spec())
+    res = _RecTask.captured["resources"]  # type: ignore[attr-defined]
+    assert "cloud" not in res  # single-cloud key not used for a multi-set
+    assert res["any_of"] == [{"cloud": "lambda"}, {"cloud": "vast"}]
+
+
+def test_launch_no_cloud_pin_when_clouds_unset() -> None:
+    # Regression guard: an unpinned provider must NOT inject a cloud key — the
+    # existing multi-cloud optimizer behavior for Lambda-era configs stays.
+    sky = _RecSky()
+    provider = SkyPilotProvider(
+        sky_client=sky,
+        ssh_spawn=lambda *_a: _FakeProc(),
+        port_allocator=lambda: 54321,
+    )
+    provider.create_instance(_server_spec())
+    res = _RecTask.captured["resources"]  # type: ignore[attr-defined]
+    assert "cloud" not in res
+    assert "any_of" not in res

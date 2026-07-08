@@ -740,6 +740,17 @@ class SkyPilotProvider(ComputeProvider):
                 resources["use_spot"] = True
             if self._region:
                 resources["region"] = self._region
+            # Pin the LAUNCH cloud to the operator's compute.cloud set. The
+            # _clouds filter only narrows find_offers' CATALOG enumeration; sky's
+            # optimizer otherwise still launches on the globally-cheapest cloud
+            # for the accelerator (observed 2026-07-07: a compute.cloud=["vast"]
+            # config provisioned a Lambda A100 at $1.99, defeating the vast pin
+            # and the price cap). One cloud → ``cloud``; several → ``any_of``.
+            if self._clouds:
+                if len(self._clouds) == 1:
+                    resources["cloud"] = self._clouds[0]
+                else:
+                    resources["any_of"] = [{"cloud": c} for c in self._clouds]
             task_config["resources"] = resources
         # Layer Q dual-exec hazard resolution: the script's trailing
         # ``exec <run_cmd>`` line is stripped before it becomes Task.setup so
