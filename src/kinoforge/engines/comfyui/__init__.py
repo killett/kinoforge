@@ -29,6 +29,7 @@ from kinoforge.core import frames, registry
 if TYPE_CHECKING:
     from kinoforge.core.cancel import CancelToken
 from kinoforge.core.assets import asset_bytes, find_asset
+from kinoforge.core.boot_liveness import BootVerdict
 from kinoforge.core.errors import (
     AssetFetchError,
     FrameExtractionError,
@@ -88,6 +89,10 @@ _DEFAULT_RUNPOD_IMAGE: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubunt
 
 #: Seconds to sleep between ready-check polls in :func:`ComfyUIEngine.wait_for_ready`.
 _READY_POLL_INTERVAL_S: float = 5.0
+
+#: Throttle for the boot-liveness probe inside wait_for_ready — consulted at
+#: most this often, not on every readiness poll (2026-07-07).
+_BOOT_PROBE_INTERVAL_S: float = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -1444,6 +1449,7 @@ class ComfyUIEngine(GenerationEngine):
         ready_url = f"{base.rstrip('/')}/system_stats"
 
         start = time.monotonic()
+        last_probe = start - _BOOT_PROBE_INTERVAL_S  # allow a probe on first idle poll
         while True:
             if cancel_token is not None:
                 cancel_token.raise_if_set()
@@ -1458,12 +1464,32 @@ class ComfyUIEngine(GenerationEngine):
                 return
             except Exception:  # noqa: BLE001, S110
                 pass
-            current = get_instance(instance.id)
+            try:
+                current = get_instance(instance.id)
+            except KeyError as exc:
+                raise ProvisionFailed(
+                    f"pod {instance.id!r} vanished during boot (provider "
+                    f"no longer knows it)"
+                ) from exc
             if current.status in ("terminated", "stopped"):
                 raise ProvisionFailed(
                     f"pod {instance.id!r} entered terminal status "
                     f"{current.status!r} before ready"
                 )
+            # 2026-07-07 boot-stall fast-fail: consult the injected liveness
+            # probe on its own throttle (not every readiness poll). GONE/STALLED
+            # abort in ~2-3min instead of waiting the full boot_timeout.
+            probe = getattr(self, "_boot_liveness_probe", None)
+            if probe is not None and now - last_probe >= _BOOT_PROBE_INTERVAL_S:
+                last_probe = now
+                verdict = probe.check(instance.id)
+                if verdict is BootVerdict.GONE:
+                    raise ProvisionFailed(f"pod {instance.id!r} vanished during boot")
+                if verdict is BootVerdict.STALLED:
+                    raise ProvisionFailed(
+                        f"pod {instance.id!r} boot stalled (provision crashed "
+                        f"or util flatline) — aborting before boot_timeout"
+                    )
             sleep(_READY_POLL_INTERVAL_S)
 
     def backend(self, instance: Instance | None, cfg: dict[str, Any]) -> ComfyUIBackend:

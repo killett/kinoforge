@@ -36,7 +36,7 @@
     {
       "id": 5,
       "subject": "Task 5: Consult boot probe in wait_for_ready",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3, 4],
       "description": "**Goal:** wait_for_ready (diffusers + comfyui) consults injected probe on throttle, aborts GONE/STALLED with ProvisionFailed; get_instance KeyError → ProvisionFailed; probe=None preserves timeout. Orchestrator attaches provider probe.\n\n**Files:** engines/diffusers/__init__.py, engines/comfyui/__init__.py, core/orchestrator.py, tests/engines/test_diffusers_wait_for_ready_boot_stall.py.\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers_wait_for_ready_boot_stall.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/engines/test_diffusers_wait_for_ready_boot_stall.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers_wait_for_ready_boot_stall.py -v\", \"acceptanceCriteria\": [\"STALLED/GONE abort ProvisionFailed\", \"KeyError maps to ProvisionFailed\", \"None probe preserves ProvisionTimeout\", \"probe throttled\"], \"modelTier\": \"standard\"}\n```"
     },

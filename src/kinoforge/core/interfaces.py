@@ -18,6 +18,7 @@ from kinoforge.core.fps_resolver import InterpCapability
 from kinoforge.core.scale_target import ScaleTarget
 
 if TYPE_CHECKING:
+    from kinoforge.core.boot_liveness import BootLivenessProbe
     from kinoforge.core.cancel import CancelToken
     from kinoforge.core.runtime_probe import RuntimeProbe
 
@@ -907,6 +908,23 @@ class GenerationEngine(ABC):
         """
         self._get_instance = get_instance  # noqa: SLF001
 
+    def attach_boot_liveness_probe(
+        self,
+        probe: BootLivenessProbe | None,
+    ) -> None:
+        """Wire the provider's boot-liveness probe (or None) for wait_for_ready.
+
+        The orchestrator calls this alongside :meth:`attach_get_instance`.
+        Default stores ``self._boot_liveness_probe``; engines whose
+        ``wait_for_ready`` consults it (Diffusers, ComfyUI) read it there.
+        Storing on an engine that never consults it is harmless.
+
+        Args:
+            probe: Provider-supplied boot-liveness probe, or ``None`` when the
+                provider offers none (boot-stall fast-fail disabled).
+        """
+        self._boot_liveness_probe = probe  # noqa: SLF001
+
     def wait_for_ready(
         self,
         instance: Instance,
@@ -1010,6 +1028,13 @@ class UpscalerEngine(ABC):
         """Wire provider lookup; mirrors GenerationEngine.attach_get_instance."""
         self._get_instance = get_instance  # noqa: SLF001
 
+    def attach_boot_liveness_probe(
+        self,
+        probe: BootLivenessProbe | None,
+    ) -> None:
+        """Store the boot-liveness probe; mirrors GenerationEngine's setter."""
+        self._boot_liveness_probe = probe  # noqa: SLF001
+
 
 class InterpolatorEngine(ABC):
     """A swappable frame interpolator; owns env setup; declares capability.
@@ -1072,6 +1097,13 @@ class InterpolatorEngine(ABC):
     ) -> None:
         """Wire provider lookup; mirrors UpscalerEngine.attach_get_instance."""
         self._get_instance = get_instance  # noqa: SLF001
+
+    def attach_boot_liveness_probe(
+        self,
+        probe: BootLivenessProbe | None,
+    ) -> None:
+        """Store the boot-liveness probe; mirrors UpscalerEngine's setter."""
+        self._boot_liveness_probe = probe  # noqa: SLF001
 
 
 class BackendPool(ABC):

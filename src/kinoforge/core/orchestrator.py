@@ -831,6 +831,13 @@ def _provision_instance_and_build_backend(
     # NEW — Layer Q: wire provider.get_instance onto engine before engine.provision
     resolved_engine.attach_get_instance(resolved_provider.get_instance)
 
+    # 2026-07-07: give the engine a boot-liveness probe when the provider
+    # supplies one (RunPod). Providers without one → None → no boot-stall check.
+    _make_probe = getattr(resolved_provider, "make_boot_liveness_probe", None)
+    resolved_engine.attach_boot_liveness_probe(
+        _make_probe(instance) if _make_probe is not None else None
+    )
+
     try:
         _provision_compute_once(
             engine=resolved_engine,
