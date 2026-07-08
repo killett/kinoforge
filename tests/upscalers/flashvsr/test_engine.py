@@ -309,6 +309,60 @@ def test_upscale_polls_until_done_and_returns_result(
     assert poll_count["n"] >= 3
 
 
+def test_upscale_aborts_on_cancel_when_pod_dies_midjob(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel_token fired mid-poll (POD_GONE) aborts with Cancelled fast.
+
+    Bug caught (2026-07-07 repro): RunPod reclaimed the pod mid-decode; the
+    status poll burned 7 retries (502->404x6) then raised a raw HTTP 404
+    instead of the prompt Cancelled the heartbeat's POD_GONE had signalled.
+    Proves the engine threads cancel_token into the status retry loop.
+    """
+    import urllib.error
+
+    from kinoforge.core.cancel import CancelToken
+    from kinoforge.core.errors import Cancelled
+
+    inst = Instance(
+        id="pod-abc",
+        provider="runpod",
+        status="ready",
+        created_at=0.0,
+        endpoints={"8000": "http://pod-abc.runpod.io"},
+    )
+    e = FlashVSREngine()
+    token = CancelToken()
+    calls = {"get": 0}
+
+    def fake_http(
+        *, method: str, url: str, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if method == "POST":
+            return {"job_id": "j-1"}
+        calls["get"] += 1
+        token.set()  # pod reclaimed mid-job → POD_GONE sets the token
+        raise urllib.error.HTTPError(url=url, code=404, msg="gone", hdrs=None, fp=None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("kinoforge.upscalers.flashvsr._engine._http_json", fake_http)
+    monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        e, "_upload_source", lambda *a, **k: "file:///workspace/uploads/x.mp4"
+    )
+
+    with pytest.raises(Cancelled):
+        e.upscale(
+            instance=inst,
+            job=UpscaleJob(
+                source=Artifact(uri="file:///tmp/in.mp4"),
+                scale=ScaleTarget(kind="factor", value=4.0),
+            ),
+            cfg=_cfg(),
+            cancel_token=token,
+        )
+    assert calls["get"] == 1  # aborted after first failed poll, not 7 retries
+
+
 def test_upscale_raises_on_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """RED: state=='error' → UpscaleFailed with server_error message.
 
