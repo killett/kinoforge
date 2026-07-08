@@ -23,7 +23,7 @@
     {
       "id": 3,
       "subject": "Task 3: Provisioning characterization guard",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Lock that create_instance builds a sky Task carrying provision_script->setup and run_cmd->run so the server starts on the node (Component C).\n\n**Files:** tests/providers/test_skypilot_tunnel.py (extend — reuses Task-1 fakes).\n\n**Verify:** `pixi run pytest tests/providers/test_skypilot_tunnel.py -k task_carries -v`\n\n```json:metadata\n{\"files\": [\"tests/providers/test_skypilot_tunnel.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_skypilot_tunnel.py -k task_carries -v\", \"acceptanceCriteria\": [\"setup == stripped provision_script\", \"run == shlex-joined run_cmd\", \"accelerators from offer.gpu_type\"], \"modelTier\": \"mechanical\"}\n```"
     },
@@ -48,5 +48,5 @@
       "description": "**Goal:** Whole suite green, lint/type clean, PROGRESS records the SkyPilot-vast video-gen capability (slice 1 shipped).\n\n**Files:** PROGRESS.md.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full offline suite green\", \"vast_compat green in live-skypilot env\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS updated\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-07T00:00:03"
+  "lastUpdated": "2026-07-07T00:00:04"
 }
