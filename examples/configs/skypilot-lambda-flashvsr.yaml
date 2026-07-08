@@ -1,0 +1,83 @@
+# Upscale-only FlashVSR on Lambda Cloud via SkyPilot (slice-1 live proof).
+#
+# Lambda variant of skypilot-vast-flashvsr.yaml. Proves the SAME
+# provider-internal SSH-tunnel HTTP path (SkyPilotProvider launches a GPU, opens
+# ssh -L to the diffusers server's :8000, and the upscale path drives it over
+# http://127.0.0.1:<port> unchanged) — but on Lambda, which sky supports
+# natively, because vast's instance-list API was retired upstream (410 Gone),
+# blocking sky's vast readiness poll (2026-07-07). The tunnel code is
+# cloud-agnostic, so a Lambda run validates the identical seam end to end.
+#
+# See docs/superpowers/specs/2026-07-07-skypilot-vast-video-gen-design.md.
+#
+# Usage:
+#   pixi run -e live-skypilot kinoforge upscale \
+#     --config examples/configs/skypilot-lambda-flashvsr.yaml \
+#     --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bfloat16
+  diffusers:
+    image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      - "modelscope"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: skypilot
+  cloud:
+    - "lambda"
+  image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+  mode: pod
+  requirements:
+    # Lambda's catalog reports a flat cuda=12.0; the 12.8 image ships its own
+    # toolkit and Lambda hosts carry a recent driver.
+    min_cuda: "12.0"
+    # A6000 (48GB, Ampere sm_86) is Lambda's cheapest FlashVSR-capable card and
+    # exactly the Ampere class the BSA wheel needs; A100 40GB is the fallback.
+    # Cap sits below GH200 ($2.29) — GH200 is ARM (aarch64), incompatible with
+    # the amd64 runpod/pytorch image.
+    min_vram_gb: 40
+    max_usd_per_hr: 2.20
+    disk_gb: 60
+    gpu_preference:
+      - "A6000"
+      - "A100"
+  lifecycle:
+    boot_timeout: 15m
+    idle_timeout: 30m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 90m
+    budget: 2.0
+    capacity_wait: 5m
+
+spec:
+  model: "flashvsr-wan21-bfloat16"
+
+upscale:
+  engine: flashvsr
+  scale: 1080p
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    precision: bfloat16
+    window_size: 24
+    tile_size: 512
+    long_video_mode: false
