@@ -65,6 +65,8 @@ def retry_proxy_call[T](
     fn: Callable[[], T],
     sleep: Callable[[float], None],
     policy: RetryPolicy = RUNPOD_PROXY_POLICY,
+    *,
+    cancel_token: CancelToken | None = None,
 ) -> T:
     """Run *fn* with bounded retry on transient proxy failures.
 
@@ -74,6 +76,13 @@ def retry_proxy_call[T](
     immediately. After ``policy.backoffs`` is exhausted, the final
     transient exception re-raises.
 
+    When *cancel_token* is supplied it is honored before every attempt and
+    across each backoff wait, so a mid-flight cancellation (e.g. the
+    heartbeat loop firing ``POD_GONE`` the moment RunPod reclaims the pod)
+    aborts with :class:`~kinoforge.core.errors.Cancelled` immediately —
+    instead of hammering a dead pod through the full backoff schedule and
+    surfacing a raw transient ``HTTPError`` (2026-07-07 mid-job reclaim).
+
     Args:
         label: Call-site tag for log lines (e.g. ``"diffusers.result"``).
         url: URL passed to *fn*; included in WARNING messages.
@@ -82,11 +91,14 @@ def retry_proxy_call[T](
         policy: Retry policy. Defaults to :data:`RUNPOD_PROXY_POLICY`.
             Callers outside the RunPod-proxy fault domain MUST pass an
             explicit policy.
+        cancel_token: Optional cooperative-cancellation token. ``None``
+            (default) preserves the legacy always-exhaust behaviour.
 
     Returns:
         Successful return value of *fn*.
 
     Raises:
+        Cancelled: *cancel_token* was set before or during a retry.
         urllib.error.HTTPError: Last transient HTTPError after backoff
             exhaustion, or any non-transient HTTPError on any attempt.
         BaseException: Last instance of any ``policy.catch_classes``
@@ -95,8 +107,11 @@ def retry_proxy_call[T](
     last_exc: BaseException | None = None
     attempts = 1 + len(policy.backoffs)
     for attempt_idx, delay in enumerate((0.0,) + policy.backoffs):
+        if cancel_token is not None:
+            cancel_token.raise_if_set()
         if delay > 0:
-            sleep(delay)
+            if interpoll_wait(delay, cancel_token, sleep) and cancel_token is not None:
+                cancel_token.raise_if_set()
         try:
             return fn()
         except urllib.error.HTTPError as exc:

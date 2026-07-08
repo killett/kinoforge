@@ -197,6 +197,78 @@ def test_http_error_dispatch_precedes_url_error() -> None:
     assert sleeps == []
 
 
+# --- cancel-aware retry -----------------------------------------------
+
+
+def test_cancel_token_preset_aborts_before_first_attempt(
+    fast_policy: RetryPolicy,
+) -> None:
+    """A pre-set cancel_token raises Cancelled before fn is ever called.
+
+    Bug caught: POD_GONE sets the token, but retry_proxy_call ignores it and
+    still fires a doomed request at the already-dead pod.
+    """
+    from kinoforge.core.cancel import CancelToken
+    from kinoforge.core.errors import Cancelled
+
+    token = CancelToken()
+    token.set()
+    calls = {"n": 0}
+
+    def fn() -> str:
+        calls["n"] += 1
+        raise _make_http_error(404)
+
+    with pytest.raises(Cancelled):
+        retry_proxy_call(
+            "test", "http://x", fn, lambda _: None, fast_policy, cancel_token=token
+        )
+    assert calls["n"] == 0
+
+
+def test_cancel_token_set_mid_retry_aborts_fast(fast_policy: RetryPolicy) -> None:
+    """A token fired mid-retry raises Cancelled instead of exhausting backoff.
+
+    Bug caught (2026-07-07 repro): RunPod reclaimed the pod mid-job; the status
+    poll burned all 7 retries (502->404x6, ~60s) then raised a raw HTTP 404,
+    instead of the prompt Cancelled the heartbeat's POD_GONE had signalled.
+    """
+    from kinoforge.core.cancel import CancelToken
+    from kinoforge.core.errors import Cancelled
+
+    token = CancelToken()
+    calls = {"n": 0}
+
+    def fn() -> str:
+        calls["n"] += 1
+        token.set()  # POD_GONE fires right after the first failed poll
+        raise _make_http_error(404)
+
+    with pytest.raises(Cancelled):
+        retry_proxy_call(
+            "test", "http://x", fn, lambda _: None, fast_policy, cancel_token=token
+        )
+    assert calls["n"] == 1  # aborted after the first attempt, not all four
+
+
+def test_no_cancel_token_preserves_exhaustion(fast_policy: RetryPolicy) -> None:
+    """Without a cancel_token the exhaustion path re-raises the last transient.
+
+    Bug caught: adding cancel support silently alters the default (no-token)
+    control flow that every existing caller depends on.
+    """
+    counter = {"n": 0}
+
+    def fn() -> None:
+        counter["n"] += 1
+        raise _make_http_error(503)
+
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        retry_proxy_call("test", "http://x", fn, lambda _: None, fast_policy)
+    assert exc_info.value.code == 503
+    assert counter["n"] == 4
+
+
 # --- interpoll_wait ---------------------------------------------------
 
 
