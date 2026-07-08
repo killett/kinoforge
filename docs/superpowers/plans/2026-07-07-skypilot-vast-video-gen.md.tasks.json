@@ -16,7 +16,7 @@
     {
       "id": 2,
       "subject": "Task 2: destroy_instance tunnel teardown",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** destroy_instance kills the tunnel subprocess (in a finally, even if sky down raises) and drops it from _tunnels.\n\n**Files:** src/kinoforge/providers/skypilot/__init__.py (destroy_instance, _kill_tunnel), tests/providers/test_skypilot_tunnel.py (extend).\n\n**Verify:** `pixi run pytest tests/providers/test_skypilot_tunnel.py -k destroy -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/skypilot/__init__.py\", \"tests/providers/test_skypilot_tunnel.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_skypilot_tunnel.py -k destroy -v\", \"acceptanceCriteria\": [\"destroy kills tunnel + drops from _tunnels\", \"tunnel killed even if sky.down raises\", \"tunnel-less destroy no raise\"], \"modelTier\": \"standard\"}\n```"
     },
@@ -48,5 +48,5 @@
       "description": "**Goal:** Whole suite green, lint/type clean, PROGRESS records the SkyPilot-vast video-gen capability (slice 1 shipped).\n\n**Files:** PROGRESS.md.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full offline suite green\", \"vast_compat green in live-skypilot env\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS updated\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-07T00:00:02"
+  "lastUpdated": "2026-07-07T00:00:03"
 }

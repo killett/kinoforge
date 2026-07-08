@@ -130,3 +130,38 @@ def test_tunnel_spawn_failure_raises_provisionfailed() -> None:
     with pytest.raises(ProvisionFailed):
         provider.create_instance(_server_spec())
     assert "kf-vast-test" in sky.downed  # best-effort teardown fired
+
+
+def test_destroy_kills_tunnel_then_drops_it() -> None:
+    # Bug caught: destroy tears the cluster but leaks the ssh subprocess forever.
+    proc = _FakeProc()
+    provider = _provider(_FakeSky(), spawn=lambda *_a: proc)
+    inst = provider.create_instance(_server_spec())
+
+    provider.destroy_instance(inst.id)
+
+    assert proc.terminated is True
+    assert inst.id not in provider._tunnels  # noqa: SLF001
+
+
+def test_destroy_kills_tunnel_even_if_down_raises() -> None:
+    # Bug caught: a failing sky.down skips tunnel cleanup → orphaned ssh proc.
+    proc = _FakeProc()
+
+    class _BadSky(_FakeSky):
+        def down(self, name: str) -> None:
+            raise RuntimeError("down fail")
+
+    provider = _provider(_BadSky(), spawn=lambda *_a: proc)
+    inst = provider.create_instance(_server_spec())
+
+    with pytest.raises(RuntimeError):
+        provider.destroy_instance(inst.id)
+    assert proc.terminated is True
+
+
+def test_destroy_without_tunnel_is_noop() -> None:
+    # Bug caught: KeyError when destroying a server-less (no-tunnel) cluster.
+    provider = _provider(_FakeSky())
+    inst = provider.create_instance(_cpu_spec())
+    provider.destroy_instance(inst.id)  # must not raise
