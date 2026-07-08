@@ -36,9 +36,11 @@ import urllib.request
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from kinoforge.core import registry
+from kinoforge.core.boot_liveness import BootVerdict, classify_boot_liveness
+from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import CapacityError, TeardownError, TransportError
 from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
@@ -52,6 +54,7 @@ from kinoforge.core.interfaces import (
 )
 from kinoforge.core.offers import filter_offers
 from kinoforge.core.runtime_probe import RuntimeProbe
+from kinoforge.core.util_endpoints import UtilSnapshot
 from kinoforge.providers.runpod import selfterm
 from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
 
@@ -683,6 +686,18 @@ class RunPodProvider(ComputeProvider):
             probed_at_local=now_local,
         )
 
+    def make_boot_liveness_probe(
+        self, instance: Instance
+    ) -> RunPodBootLivenessProbe | None:
+        """Fresh boot-liveness probe for this pod, or None if no util endpoint."""
+        if self._util_endpoint is None:
+            return None
+        return RunPodBootLivenessProbe(
+            instance_id=instance.id,
+            util_endpoint=self._util_endpoint,
+            fetch_bootstrap_log=lambda _iid: _fetch_bootstrap_log_tail(instance),
+        )
+
     def set_heartbeat_endpoint(
         self,
         endpoint: object | None,
@@ -1039,6 +1054,87 @@ _CREATE_POD_MUTATION: str = (
 _CREATE_SERVERLESS_MUTATION: str = (
     "mutation($input: EndpointInput!) { saveTemplate(input: $input) { id } }"
 )
+
+
+class _UtilProbeEndpoint(Protocol):
+    """Duck type for the util endpoint's existence+snapshot probe."""
+
+    def probe(self, instance_id: str) -> tuple[bool, UtilSnapshot | None]:  # noqa: D102
+        ...
+
+
+class RunPodBootLivenessProbe:
+    """Stateful boot-liveness probe for one RunPod pod (2026-07-07).
+
+    Each check() reads the util snapshot + bootstrap.log tail and feeds them to
+    classify_boot_liveness, tracking the prior snapshot + flatline counter. Boot
+    start time is captured at construction for the grace/elapsed window. Any
+    fetch/read error degrades to UNKNOWN/ALIVE — never a false STALLED.
+    """
+
+    def __init__(
+        self,
+        *,
+        instance_id: str,
+        util_endpoint: _UtilProbeEndpoint,
+        fetch_bootstrap_log: Callable[[str], str | None],
+        grace_s: float = 90.0,
+        consecutive_needed: int = 3,
+        clock: Clock | None = None,
+    ) -> None:
+        """Capture boot-start time + wire the util/log/clock seams."""
+        self._id = instance_id
+        self._util = util_endpoint
+        self._fetch_log = fetch_bootstrap_log
+        self._grace_s = grace_s
+        self._needed = consecutive_needed
+        self._clock = clock if clock is not None else RealClock()
+        self._start = self._clock.now()
+        self._prev_snap: UtilSnapshot | None = None
+        self._consecutive_flat = 0
+
+    def check(self, instance_id: str) -> BootVerdict:  # noqa: D102
+        try:
+            exists, snap = self._util.probe(instance_id)
+        except Exception:  # noqa: BLE001 — transport uncertain → keep waiting
+            return BootVerdict.UNKNOWN
+        try:
+            log_tail = self._fetch_log(instance_id)
+        except Exception:  # noqa: BLE001 — log fetch best-effort
+            log_tail = None
+        result = classify_boot_liveness(
+            exists=exists,
+            log_tail=log_tail,
+            snap=snap,
+            prev_snap=self._prev_snap,
+            consecutive_flat=self._consecutive_flat,
+            elapsed_s=self._clock.now() - self._start,
+            grace_s=self._grace_s,
+            consecutive_needed=self._needed,
+        )
+        self._consecutive_flat = result.consecutive_flat
+        if snap is not None:
+            self._prev_snap = snap
+        return result.verdict
+
+
+def _fetch_bootstrap_log_tail(instance: Instance, *, lines: int = 40) -> str | None:
+    """Best-effort GET of the pod's :8001/bootstrap.log tail (or None)."""
+    base = instance.endpoints.get("8001")
+    if not base:
+        # Derive from the 8000 proxy host if only that is present.
+        base = next(iter(instance.endpoints.values()), "")
+        if base:
+            base = base.replace("-8000.", "-8001.")
+    if not base:
+        return None
+    url = f"{base.rstrip('/')}/bootstrap.log"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
+            text = resp.read().decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return None
+    return "\n".join(text.splitlines()[-lines:])
 
 
 def _get_pod_query(pod_id: str) -> str:

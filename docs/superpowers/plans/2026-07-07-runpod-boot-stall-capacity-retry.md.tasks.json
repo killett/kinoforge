@@ -29,7 +29,7 @@
     {
       "id": 4,
       "subject": "Task 4: RunPod BootLivenessProbe implementation",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** Stateful RunPod probe: check(id) fetches util snap + bootstrap.log tail → classify_boot_liveness, tracks prev snap + counter + boot-start clock.\n\n**Files:** providers/runpod/__init__.py (RunPodBootLivenessProbe + _fetch_bootstrap_log_tail + make_boot_liveness_probe), tests/providers/test_runpod_boot_liveness.py.\n\n**Verify:** `pixi run pytest tests/providers/test_runpod_boot_liveness.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod_boot_liveness.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_boot_liveness.py -v\", \"acceptanceCriteria\": [\"GONE on absent\", \"STALLED on trap rc!=0\", \"STALLED after K flatline across calls\", \"never raises on fetch error\"], \"modelTier\": \"standard\"}\n```"
     },
