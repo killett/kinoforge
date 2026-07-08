@@ -114,3 +114,46 @@ def test_no_util_endpoint_no_probe() -> None:
     loop._tick_once()
     assert ledger.forgotten == []
     assert not loop._stop.is_set()
+
+
+class _NotFoundDestroyProvider(_FakeProvider):
+    """destroy_instance raises as if the pod is already gone (POD_NOT_FOUND)."""
+
+    def destroy_instance(self, iid: str) -> None:
+        raise RuntimeError(f"RunPod GraphQL terminate {iid} failed: POD_NOT_FOUND")
+
+
+def test_pod_gone_destroy_not_found_logs_calm(
+    caplog: Any,
+) -> None:
+    """POD_GONE whose destroy 404s (pod already gone) logs calm, not a stack.
+
+    Bug caught (2026-07-07 repro): every host-reclaim logs the EXPECTED
+    POD_NOT_FOUND at exception level (full traceback), turning the normal
+    self-heal path into log noise that reads like a real failure. The reap
+    must still forget + stop.
+    """
+    import logging
+
+    ledger = _RecordingLedger()
+    cancel = CancelToken()
+    loop = HeartbeatLoop(
+        instance_id="pod1",
+        provider=_NotFoundDestroyProvider(),
+        ledger=ledger,
+        interval_s=1.0,
+        util_endpoint=_Probe(exists=False),
+        cancel_token=cancel,
+        provider_kind="runpod",
+        stall_window_s=None,
+        restart_loop_window_s=None,
+    )
+    with caplog.at_level(logging.DEBUG):
+        loop._tick_once()
+
+    # Reap still completes despite the (expected) destroy failure.
+    assert ledger.forgotten == ["pod1"]
+    assert loop._stop.is_set()
+    # The expected POD_NOT_FOUND must not surface as an ERROR/exception record.
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors == [], f"expected calm log, got {[r.getMessage() for r in errors]}"
