@@ -1868,3 +1868,32 @@ def test_compute_config_cloud_type_rejects_unknown() -> None:
                 "cloud_type": "premium",
             }
         )
+
+
+def test_capacity_wait_parses_duration_and_defaults() -> None:
+    """capacity_wait accepts a duration string, defaults to 300s, maps to the interface.
+
+    Bug caught: the field is added as a bare int (no duration parse) so
+    `capacity_wait: 5m` in YAML raises, or the default drifts from 300s.
+    """
+    from kinoforge.core.config import LifecycleConfig
+
+    assert LifecycleConfig(budget=1.0).capacity_wait == 300.0
+    assert (
+        LifecycleConfig.model_validate(
+            {"budget": 1.0, "capacity_wait": "5m"}
+        ).capacity_wait
+        == 300.0
+    )
+    assert LifecycleConfig(budget=1.0, capacity_wait=0).capacity_wait == 0.0
+
+
+def test_capacity_wait_surfaces_on_interface_lifecycle() -> None:
+    """cfg.lifecycle().capacity_wait_s carries the configured value.
+
+    Bug caught: the LifecycleConfig field exists but isn't threaded into the
+    InterfaceLifecycle the orchestrator actually reads.
+    """
+    from kinoforge.core.interfaces import Lifecycle
+
+    assert Lifecycle().capacity_wait_s == 300.0

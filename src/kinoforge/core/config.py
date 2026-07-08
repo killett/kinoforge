@@ -110,6 +110,7 @@ class LifecycleConfig(BaseModel):
     budget: float
     max_in_flight: int = 1
     boot_timeout: float = 900.0
+    capacity_wait: float = 300.0
     heartbeat_interval_s: float | None = None
     grace_after_session_s: float = 1800.0
     stall_reap_enabled: bool = True
@@ -132,6 +133,7 @@ class LifecycleConfig(BaseModel):
         "time_buffer",
         "max_lifetime",
         "boot_timeout",
+        "capacity_wait",
         mode="before",
     )
     @classmethod
@@ -1385,6 +1387,7 @@ class Config(BaseModel):
             budget_usd=lc.budget,
             max_in_flight=lc.max_in_flight,
             boot_timeout_s=lc.boot_timeout,
+            capacity_wait_s=lc.capacity_wait,
             heartbeat_interval_s=lc.heartbeat_interval_s,
             grace_after_session_s=lc.grace_after_session_s,
             stall_window_s=lc.stall_window_s if lc.stall_reap_enabled else None,
