@@ -49,6 +49,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 18. `2026-07-04 03:56:00` — [Luma UNI-1-MAX keyframes — 4-prompt matrix vs uni-1 — t2i](#18-2026-07-04-035600--luma-uni-1-max-keyframes--4-prompt-matrix-vs-uni-1--t2i)
 19. `2026-07-05 04:16:18` — [FlashVSR height-target upscale (scale=1080p → 4x+downscale) on RunPod A100 80GB — upscale](#19-2026-07-05-041618--flashvsr-height-target-upscale-scale1080p--4xdownscale-on-runpod-a100-80gb--upscale)
 20. `2026-07-05 22:24:29` — [RIFE v4.26 frame interpolation (16fps→60fps) on RunPod RTX A4000 — interpolate](#20-2026-07-05-222429--rife-v426-frame-interpolation-16fps60fps-on-runpod-rtx-a4000--interpolate)
+21. `2026-07-08 01:33:54` — [FlashVSR upscale on Lambda A100 via SkyPilot ssh-tunnel (provider-internal HTTP seam) — upscale](#21-2026-07-08-013354--flashvsr-upscale-on-lambda-a100-via-skypilot-ssh-tunnel-provider-internal-http-seam--upscale)
 
 ---
 
@@ -2483,3 +2484,43 @@ pixi run kinoforge interpolate \
 4. **`No module named 'train_log.RIFE_HDv3'`** (boot 4) — the RIFE v4 arch (`RIFE_HDv3.py`, `IFNet_HDv3.py`, `refine.py`) ships INSIDE the model release zip, NOT the git repo; cloning alone leaves `train_log/` empty. Fixed `9810052`: `curl` the `RIFEv4.26_0921.zip` bundle + unzip its contents into `<repo>/train_log/`; load `flownet.pkl` from there; also fixed a `.to(model.device)` bug (device is a *method*).
 5. **`Expected size 512 but got size 480`** (boot 5) — RIFE v4's IFNet flow pyramid needs H/W padded up to a multiple of 64 (480→512). Fixed `13ec94d`: pad before `inference`, crop back after → **GREEN** (boot 6).
 - **Monitoring lesson**: boots 1–2 were watched with a monitor that polled only `est_spend` (wall-clock, GPU-blind) — it missed the 0%-GPU stall for ~12 min until the operator asked. CLAUDE.md "Live smoke monitoring" now hard-bans spend-as-health and mandates the `gpuUtilPercent/cpuPercent/memoryPercent` probe.
+
+---
+
+## 21. `2026-07-08 01:33:54` — FlashVSR upscale on Lambda A100 via SkyPilot ssh-tunnel (provider-internal HTTP seam) — upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `skypilot(lambda) / DiffusersEngine(FlashVSR) / flashvsr-wan21-bfloat16` |
+| **Mode** | upscale (FlashVSR 4x-native → 1080p height-target) |
+| **New capability axis** | First kinoforge generation on a **SkyPilot-provisioned** GPU, driven over the **provider-internal `ssh -L` tunnel HTTP seam** (`SkyPilotProvider.create_instance` opens `ssh -L <local>:localhost:8000` and returns `endpoints={"8000":"http://127.0.0.1:<port>"}`, exactly where RunPod returns a proxy URL — the diffusers engine's `wait_for_ready`/`http_get`/`generate` run unchanged). Slice-1 of the SkyPilot vast video-gen plan. |
+| **First-success SHA** | `78279b0047f3c6c38113ac317537dc5dfccfd873` |
+| **Date (local TZ)** | 2026-07-08 01:33:54 -0700 (PDT) |
+| **Plan / spec** | `docs/superpowers/plans/2026-07-07-skypilot-vast-video-gen.md`, `docs/superpowers/specs/2026-07-07-skypilot-vast-video-gen-design.md` |
+
+### Exact command
+
+```bash
+pixi run -e live-skypilot kinoforge upscale \
+  --config examples/configs/skypilot-lambda-flashvsr.yaml \
+  --video output/flashvsr-fixture-41f-288sq.mp4 \
+  --no-reuse
+```
+
+### Output
+
+- Published: `output/20260708-013354_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4`
+- ffprobe: **1080×1080**, 16 fps, ~2.3 s, h264/yuv420p — decode rc 0.
+- SHA-256: `59654c56d566cf3e009eca75b5c102adea18cd9037f078522d595bd7ec525937`
+- **Frame-QA (5 frames): PASS** — coherent photorealistic meadow/waterfall scene with a figure + glowing butterflies; sharp grass/flower/hair detail, temporally consistent across frames, no false-color/psychedelic artifacts, no visible tile seams.
+
+### GPU / cost
+
+- Lambda `gpu_1x_a100_sxm4` (A100 40GB, us-east-1), $1.99/hr. Session live spend ≈ $3 across the slice-1 bring-up (many capacity-miss/OOM iterations, each torn down).
+- GPU polled during the run; 0% seen only during the FlashVSR weight-fetch (network-bound, expected — not a stall). The successful 1080p output confirms real GPU inference ran (not a 0%-GPU stall).
+
+### Reproduction notes / deviations (read before re-firing)
+
+- **Lambda, not vast (approved pivot).** The plan targeted vast.ai, but vast's instance-**list** API (`/api/v0/instances`) returns **410 Gone** and vastai-sdk 0.2.5's `show_instances()` returns empty, so sky's vast readiness poll (`list_instances`) never sees the launched instance and waits forever — a *second* incompatibility beyond the `VastAI().client.api_key` shim (Task 0). The vast shim + `sitecustomize` server-process shim + launch-cloud pin are all committed and did get vast to actually **launch** a real A100 (instance ran) before the list-API wall. User approved pivoting the live proof to Lambda (sky-native); vast stays deferred pending an upstream sky/SDK fix.
+- **Source downscaled to 288² to fit A100 40GB.** FlashVSR's 4x path peaks >40GB at a 1920² output (the reference RunPod cfg pins 80GB); the FullPipeline **ignores `window_size` and treats `tile_size` as on/off only**, and the peak is resolution-bound (a ~5.27GB 1920²-sized buffer), not frame-bound — so trimming frames or shrinking tiles did **not** help. Lambda's 48GB A6000 was capacity-dry all session. The fit lever is output resolution: a 288² source → 4x = 1152² on the GPU (fits 40GB) → downscaled to the cfg's 1080p target. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (via an `env` argv prefix in `server_cmd`) reclaims fragmentation and is kept in the cfg.
+- **Teardown bug (`--no-reuse`):** after `generate completed`, the driver hung instead of destroying the pod — `HeartbeatLoop._tick_once` throws `AttributeError: 'SkyPilotProvider' object has no attribute 'last_heartbeat'` (the B5a heartbeat substrate expects a method SkyPilotProvider doesn't implement; triggered because validation auto-set `heartbeat_interval_s=30`). Pod + tunnel were destroyed manually (`sky down` + `kill <ssh -L pid>` + `kinoforge forget`); ledger verified clean. **Follow-up:** implement `SkyPilotProvider.last_heartbeat` (or gate the heartbeat loop off for providers lacking it) so `--no-reuse` tears down cleanly.
