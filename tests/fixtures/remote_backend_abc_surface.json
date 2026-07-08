@@ -20,6 +20,7 @@
   "RemoteSubmitPollEngine": {
     "_build_backend": "(self, cfg: 'dict[str, Any]', instance: 'Instance | None') -> 'RemoteSubmitPollBackend'",
     "_build_client_factory": "(self, cfg: 'dict[str, Any]', creds: 'CredentialProvider | None') -> 'Callable[[], Any]'",
+    "attach_boot_liveness_probe": "(self, probe: 'BootLivenessProbe | None') -> 'None'",
     "attach_get_instance": "(self, get_instance: 'Callable[[str], Instance]') -> 'None'",
     "backend": "(self, instance: 'Instance | None', cfg: 'dict[str, object]') -> 'RemoteSubmitPollBackend'",
     "declared_flags": "(self, key: 'CapabilityKey') -> 'dict[str, bool]'",
