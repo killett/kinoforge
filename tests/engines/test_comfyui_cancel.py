@@ -56,6 +56,38 @@ def test_result_raises_cancelled_on_preset_token() -> None:
     assert calls == [], f"expected no http_get calls, got {calls}"
 
 
+def test_result_cancel_during_transient_retry_aborts_fast() -> None:
+    """A token fired mid-retry-storm aborts inside the inner retry, not after it.
+
+    Bug caught (2026-07-07 reclaim): the pod dies mid-job and the poll's inner
+    retry_proxy_call burned its full backoff (~7 attempts) against the dead pod
+    before the outer loop could honor the cancel. Threading the token into the
+    inner retry aborts on the first failed attempt (calls == 1, not 7).
+    """
+    import urllib.error
+
+    calls = {"n": 0}
+    token = CancelToken()
+
+    def _http_get(url: str) -> dict[str, Any]:
+        calls["n"] += 1
+        token.set()  # pod reclaimed mid-job → POD_GONE sets the token
+        raise urllib.error.HTTPError(url=url, code=404, msg="gone", hdrs=None, fp=None)  # type: ignore[arg-type]
+
+    backend = ComfyUIBackend(
+        http_post=_unused_post,
+        http_get=_http_get,
+        base_url="http://x",
+        probe=_PROBE,
+        poll_interval_s=0.0,
+        poll_timeout_s=60.0,
+        sleep=lambda _s: None,
+    )
+    with pytest.raises(Cancelled):
+        backend.result("job-789", cancel_token=token)
+    assert calls["n"] == 1
+
+
 def test_result_honors_token_set_during_wait() -> None:
     """Token set after one poll tick raises Cancelled within ~poll_interval_s."""
     tick_count = [0]

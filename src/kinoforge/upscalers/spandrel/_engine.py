@@ -34,7 +34,7 @@ from kinoforge.core.interfaces import (
     UpscaleResult,
 )
 from kinoforge.core.scale_target import ScaleTarget
-from kinoforge.engines._proxy_retry import retry_proxy_call
+from kinoforge.engines._proxy_retry import interpoll_wait, retry_proxy_call
 
 _DEFAULT_SERVER_PORT = "8000"
 
@@ -179,6 +179,7 @@ class SpandrelEngine(UpscalerEngine):
                 method="POST", url=f"{base}/upscale", payload=submit_payload
             ),
             sleep=time.sleep,
+            cancel_token=cancel_token,
         )
         job_id: str = submit_resp["job_id"]
 
@@ -193,6 +194,7 @@ class SpandrelEngine(UpscalerEngine):
                     method="GET", url=f"{base}/upscale/status/{job_id}"
                 ),
                 sleep=time.sleep,
+                cancel_token=cancel_token,
             )
             state = status["state"]
             if state == "done":
@@ -210,7 +212,7 @@ class SpandrelEngine(UpscalerEngine):
                 )
             if state == "error":
                 raise UpscaleFailed(job_id=job_id, server_error=status.get("error", ""))
-            time.sleep(2.0)
+            interpoll_wait(2.0, cancel_token, time.sleep)
 
     def _put_upload(
         self,

@@ -151,6 +151,49 @@ def test_interpolate_raises_on_server_error(monkeypatch: pytest.MonkeyPatch) -> 
         )
 
 
+def test_interpolate_aborts_on_cancel_when_pod_dies_midjob(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel_token fired mid-poll (POD_GONE) aborts with Cancelled fast.
+
+    Bug caught (2026-07-07 reclaim): RunPod pulls the pod mid-job; without the
+    token threaded into the status retry the poll burns the full backoff then
+    raises a raw HTTP 404 instead of the prompt Cancelled POD_GONE signalled.
+    """
+    import urllib.error
+
+    from kinoforge.core.cancel import CancelToken
+    from kinoforge.core.errors import Cancelled
+
+    e = RifeEngine()
+    token = CancelToken()
+    calls = {"get": 0}
+
+    def fake_http(
+        *, method: str, url: str, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if method == "POST":
+            return {"job_id": "j-1"}
+        calls["get"] += 1
+        token.set()  # pod reclaimed mid-job → POD_GONE sets the token
+        raise urllib.error.HTTPError(url=url, code=404, msg="gone", hdrs=None, fp=None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("kinoforge.interpolators.rife._engine._http_json", fake_http)
+    monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(e, "_upload_source", lambda *a, **k: "file:///up/x.mp4")
+
+    with pytest.raises(Cancelled):
+        e.interpolate(
+            instance=_inst(),
+            job=InterpolateJob(
+                source=Artifact(uri="file:///tmp/in.mp4"), target_fps=60.0
+            ),
+            cfg=_cfg(),
+            cancel_token=token,
+        )
+    assert calls["get"] == 1  # aborted after first failed poll, not full backoff
+
+
 def test_rife_is_registered() -> None:
     # Bug caught: importing the package doesn't self-register -> the orchestrator's
     # registry.get_interpolator("rife") raises UnknownAdapter at runtime.

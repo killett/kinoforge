@@ -81,6 +81,28 @@ def test_cancel_token_raises_before_first_io() -> None:
     assert calls == []
 
 
+def test_cancel_during_transient_retry_aborts_fast() -> None:
+    """A token fired mid-retry-storm aborts inside the inner retry, not after it.
+
+    Bug caught (2026-07-07 reclaim): the pod dies mid-job and the poll's inner
+    retry_proxy_call burned its full backoff (~7 attempts) against the dead pod
+    before the outer loop could honor the cancel. Threading the token into the
+    inner retry aborts on the first failed attempt (calls == 1, not 7).
+    """
+    calls = {"n": 0}
+    token = CancelToken()
+
+    def http_get(url: str) -> dict[str, Any]:
+        calls["n"] += 1
+        token.set()  # pod reclaimed mid-job → POD_GONE sets the token
+        raise _http_error(404)
+
+    backend = _make_backend(http_get=http_get)
+    with pytest.raises(Cancelled):
+        backend.result("jid", cancel_token=token)
+    assert calls["n"] == 1
+
+
 def test_cancel_token_raises_during_interpoll_wait() -> None:
     """Catches: inter-poll sleep not token-aware.
 

@@ -533,6 +533,7 @@ class DiffusersBackend(GenerationBackend):
                     lambda: self._http_get(url),
                     self._sleep,
                     RUNPOD_PROXY_POLICY,
+                    cancel_token=cancel_token,
                 )
             except urllib.error.HTTPError as exc:
                 if exc.code in RUNPOD_PROXY_POLICY.transient_codes:
