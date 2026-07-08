@@ -10,7 +10,7 @@
     {
       "id": 1,
       "subject": "Task 1: RunPod classifies 'no instances available' as CapacityError",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** _create_pod raises existing CapacityError for the two 'no longer any instances available' variants.\n\n**Files:** providers/runpod/__init__.py (_create_pod match), tests/providers/test_runpod_capacity_error.py.\n\n**Verify:** `pixi run pytest tests/providers/test_runpod_capacity_error.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod_capacity_error.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_capacity_error.py -v\", \"acceptanceCriteria\": [\"both no-instances variants CapacityError\", \"resources-to-deploy still CapacityError\", \"non-capacity stays ValueError\"], \"modelTier\": \"standard\"}\n```"
     },
     {
