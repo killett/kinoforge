@@ -1920,3 +1920,31 @@ def test_flashvsr_widened_config_loads() -> None:
     ]
     assert reqs.max_usd_per_hr == 3.00
     assert cfg.lifecycle().capacity_wait_s == 300.0
+
+
+def test_skypilot_vast_flashvsr_cfg_loads() -> None:
+    """The SkyPilot-vast FlashVSR upscale cfg parses + pins vast.
+
+    Bug caught: a typo'd provider/cloud or an unsupported cloud ships a cfg that
+    only fails on a live launch.
+    """
+    from pathlib import Path
+
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(Path("examples/configs/skypilot-vast-flashvsr.yaml"))
+    assert cfg.compute is not None
+    assert cfg.compute.provider == "skypilot"
+    assert cfg.compute.cloud == ["vast"]
+    assert cfg.engine.diffusers is not None
+    assert cfg.engine.diffusers.upscale_only is True
+    assert cfg.upscale is not None
+    assert cfg.upscale.engine == "flashvsr"
+
+    # The cloud pin must clear the SkyPilot supported-cloud check (vast ∈ set),
+    # not merely parse — a bad cloud would only surface at live launch otherwise.
+    import kinoforge.providers.skypilot as _sky
+
+    check = _sky.SkyPilotCloudPinSupportedCheck()
+    assert check.applies_to(cfg)
+    assert check.run(cfg).passed is True
