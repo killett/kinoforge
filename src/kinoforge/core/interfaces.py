@@ -87,6 +87,9 @@ class Lifecycle:
     max_workers: int = 1
     max_in_flight: int = 1
     boot_timeout_s: float = 900.0
+    #: Max seconds to keep retrying create on a RunPod capacity miss before
+    #: giving up (2026-07-07). 0 = fail on the first miss.
+    capacity_wait_s: float = 300.0
     # C26 — populated by Config.lifecycle() from compute.lifecycle when set.
     stall_window_s: float | None = None
     stall_gpu_threshold: float = 5.0

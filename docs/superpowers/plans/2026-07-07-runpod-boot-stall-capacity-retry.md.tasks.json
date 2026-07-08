@@ -4,7 +4,7 @@
     {
       "id": 0,
       "subject": "Task 0: lifecycle.capacity_wait config field",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** capacity_wait duration field on lifecycle config, parsed like boot_timeout, surfaced as Lifecycle.capacity_wait_s (default 300s).\n\n**Files:** interfaces.py (Lifecycle), config.py (LifecycleConfig + validator + lifecycle() map), tests/core/test_config.py.\n\n**Verify:** `pixi run pytest tests/core/test_config.py -k capacity_wait -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -k capacity_wait -v\", \"acceptanceCriteria\": [\"duration string parses to 300.0\", \"defaults 300.0\", \"surfaces on Lifecycle.capacity_wait_s\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
