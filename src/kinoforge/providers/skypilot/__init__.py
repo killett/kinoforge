@@ -841,6 +841,14 @@ class SkyPilotProvider(ComputeProvider):
         """
         # SkyPilot clusters are either UP or torn down; no intermediate pause.
 
+    @staticmethod
+    def _kill_tunnel(tunnel: Any) -> None:  # noqa: ANN401
+        """Terminate a tunnel subprocess best-effort (never raises)."""
+        try:
+            tunnel.terminate()
+        except Exception:  # noqa: BLE001, S110 — teardown must not mask the real error
+            pass
+
     def destroy_instance(self, instance_id: str) -> None:
         """Tear down a SkyPilot cluster and poll until it is confirmed gone.
 
@@ -852,18 +860,25 @@ class SkyPilotProvider(ComputeProvider):
             instance_id: The SkyPilot cluster name to destroy.
         """
         sky = self._sky()
-        # Resolve the down RequestId so the call blocks until SkyPilot has
-        # accepted (and committed to) the teardown — otherwise the provider
-        # returns while teardown is still pending and the status-poll loop
-        # may observe stale records.
-        _resolve(sky, sky.down(instance_id))
-        # Poll until the cluster disappears from the status listing.
-        while True:
-            clusters = _resolve(sky, sky.status())
-            names = {_record_field(c, "name") for c in clusters}
-            if instance_id not in names:
-                return  # confirmed gone
-            self._sleep(3.0)
+        # Pop the tunnel up front and kill it in a finally, so a failing
+        # sky.down (or status-poll) never leaks the ssh port-forward.
+        tunnel = self._tunnels.pop(instance_id, None)
+        try:
+            # Resolve the down RequestId so the call blocks until SkyPilot has
+            # accepted (and committed to) the teardown — otherwise the provider
+            # returns while teardown is still pending and the status-poll loop
+            # may observe stale records.
+            _resolve(sky, sky.down(instance_id))
+            # Poll until the cluster disappears from the status listing.
+            while True:
+                clusters = _resolve(sky, sky.status())
+                names = {_record_field(c, "name") for c in clusters}
+                if instance_id not in names:
+                    return  # confirmed gone
+                self._sleep(3.0)
+        finally:
+            if tunnel is not None:
+                self._kill_tunnel(tunnel)
 
     def heartbeat(self, instance_id: str) -> None:
         """No-op: SkyPilot manages cluster liveness via autostop.
