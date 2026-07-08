@@ -1948,3 +1948,30 @@ def test_skypilot_vast_flashvsr_cfg_loads() -> None:
     check = _sky.SkyPilotCloudPinSupportedCheck()
     assert check.applies_to(cfg)
     assert check.run(cfg).passed is True
+
+
+def test_skypilot_lambda_flashvsr_cfg_loads() -> None:
+    """The SkyPilot-Lambda FlashVSR upscale cfg parses + pins lambda.
+
+    Bug caught: a typo'd provider/cloud or an unsupported cloud ships a cfg that
+    only fails on a live launch. Lambda is the slice-1 live-proof cloud after
+    vast's list-API retirement blocked sky's vast readiness poll (2026-07-07).
+    """
+    from pathlib import Path
+
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(Path("examples/configs/skypilot-lambda-flashvsr.yaml"))
+    assert cfg.compute is not None
+    assert cfg.compute.provider == "skypilot"
+    assert cfg.compute.cloud == ["lambda"]
+    assert cfg.engine.diffusers is not None
+    assert cfg.engine.diffusers.upscale_only is True
+    assert cfg.upscale is not None
+    assert cfg.upscale.engine == "flashvsr"
+
+    import kinoforge.providers.skypilot as _sky
+
+    check = _sky.SkyPilotCloudPinSupportedCheck()
+    assert check.applies_to(cfg)
+    assert check.run(cfg).passed is True
