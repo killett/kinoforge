@@ -129,6 +129,47 @@ class TestUpscale:
         assert result.artifact.sha256 == "abcd"
         assert result.output_resolution == (128, 96)
 
+    def test_aborts_on_cancel_when_pod_dies_midjob(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cancel_token fired mid-poll (POD_GONE) aborts with Cancelled fast.
+
+        Bug caught (2026-07-07 reclaim): RunPod pulls the pod mid-job; without
+        the token threaded into the status retry the poll burns the full backoff
+        then raises a raw HTTP 404 instead of the prompt Cancelled.
+        """
+        import urllib.error
+
+        from kinoforge.core.cancel import CancelToken
+        from kinoforge.core.errors import Cancelled
+        from kinoforge.upscalers.spandrel import SpandrelEngine
+        from kinoforge.upscalers.spandrel import _engine as spandrel_mod
+
+        token = CancelToken()
+        calls = {"get": 0}
+
+        def fake_http(
+            *, method: str, url: str, payload: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            if method == "POST":
+                return {"job_id": "u-test"}
+            calls["get"] += 1
+            token.set()  # pod reclaimed mid-job → POD_GONE sets the token
+            raise urllib.error.HTTPError(
+                url=url,
+                code=404,
+                msg="gone",
+                hdrs=None,  # type: ignore[arg-type]
+                fp=None,
+            )
+
+        monkeypatch.setattr(spandrel_mod, "_http_json", fake_http)
+        monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
+
+        with pytest.raises(Cancelled):
+            SpandrelEngine().upscale(_instance(), _job_2x(), _cfg(), cancel_token=token)
+        assert calls["get"] == 1  # aborted after first failed poll
+
 
 class TestValidateSpec:
     def test_height_refused(self) -> None:

@@ -815,6 +815,7 @@ class ComfyUIBackend(GenerationBackend):
                     lambda: self._http_get(url),
                     self._sleep,
                     RUNPOD_PROXY_POLICY,
+                    cancel_token=cancel_token,
                 )
             except urllib.error.HTTPError as exc:
                 # Non-transient HTTPError: log + propagate (today's
