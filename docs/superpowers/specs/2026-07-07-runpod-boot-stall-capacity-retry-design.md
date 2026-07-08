@@ -108,23 +108,31 @@ The existing `KeyError` from `get_instance` is caught and mapped to the same
 
 ## Component 2 — Capacity-retry + widened config
 
-### Typed error
+### Typed error — reuse existing `CapacityError`
 
-RunPod's `_create_pod` (`providers/runpod/__init__.py` ~907) currently raises a
-generic error whose message contains the capacity string. Introduce
-`CapacityUnavailable(KinoforgeError)` and raise it for exactly the two capacity
-variants (`"no longer any instances available with the requested specifications"`
-and `"… with enough disk space"`). The retry loop keys on the **type**, never a
-substring — the string match lives in one place (the provider), classified once.
+`CapacityError` already exists (`core/errors.py`) and `_create_with_offer_retry`
+already catches it per-offer. RunPod's `_create_pod`
+(`providers/runpod/__init__.py` ~903) already raises `CapacityError` — but only
+for the message substring `"resources to deploy"`. The two variants we actually
+hit — `"no longer any instances available with the requested specifications"` and
+`"… with enough disk space"` — miss that match and fall through to a raw
+`ValueError`, so the offer-retry never sees them.
+
+Fix = **extend the existing capacity-message match** to also catch
+`"no longer any instances available"`. No new error type: reuse `CapacityError`.
+The substring match stays confined to the one place it already lives (the
+provider), and the retry loop keys on the `CapacityError` type.
 
 ### Retry loop
 
-Wrap the create path (`_create_with_offer_retry`, `orchestrator.py` ~523): on
-`CapacityUnavailable`, sleep `_CAPACITY_RETRY_INTERVAL_S` (default 25s), re-query
-`find_offers` (capacity is fluid — a fresh query may surface a newly-free host),
-and retry create — until the `capacity_wait` deadline elapses, then re-raise the
-last `CapacityUnavailable` clean. Every other exception propagates immediately
-(unchanged). Clock + sleep are injected seams for tests.
+Wrap the **find_offers + create** block (both live in
+`_provision_instance_and_build_backend`, `orchestrator.py` ~679–748): on
+`CapacityError` (from either an empty `find_offers` or all offers exhausted),
+sleep `_CAPACITY_RETRY_INTERVAL_S` (default 25s), **re-query `find_offers`**
+(capacity is fluid — a fresh query may surface a newly-free host), and retry —
+until the `capacity_wait` deadline elapses, then re-raise the last `CapacityError`
+clean. Every other exception propagates immediately (unchanged). Clock + sleep are
+injected seams for tests.
 
 ### The knob: `lifecycle.capacity_wait`
 
@@ -174,17 +182,18 @@ All unit-level, fakes only, no network/pod:
 - **Config** — `capacity_wait` parses the duration string (`5m` → 300.0, `0` → 0.0) and
   defaults to `5m` when absent; the widened FlashVSR cfg loads with the four prefs +
   `max_usd_per_hr=3.00`.
-- **Provider classification** — `_create_pod` maps both capacity message variants to
-  `CapacityUnavailable`; a non-capacity GraphQL error stays its original type.
+- **Provider classification** — `_create_pod` maps both "no longer any instances available"
+  variants to `CapacityError` (existing type); the pre-existing "resources to deploy" match
+  still works; a non-capacity GraphQL error stays a raw `ValueError`.
 
 ## File structure
 
 - **New:** `src/kinoforge/core/boot_liveness.py` — `BootVerdict`, `BootLivenessProbe` protocol.
 - **New:** RunPod `BootLivenessProbe` impl (in `providers/runpod/`, uses the util endpoint +
   bootstrap.log fetch).
-- **Modify:** `core/errors.py` — add `CapacityUnavailable`.
-- **Modify:** `providers/runpod/__init__.py` — raise `CapacityUnavailable`; construct + expose
-  the boot-liveness probe for `wait_for_ready` wiring.
+- **Modify:** `providers/runpod/__init__.py` — extend the `_create_pod` capacity-message match
+  to raise the existing `CapacityError` for the "no longer any instances available" variants;
+  expose a boot-liveness-probe factory for `wait_for_ready` wiring. (No new error type.)
 - **Modify:** `engines/diffusers/__init__.py` + `engines/comfyui/__init__.py` — accept +
   consult the `BootLivenessProbe` in `wait_for_ready`; map `get_instance` KeyError → GONE.
 - **Modify:** `core/orchestrator.py` — capacity-retry loop around `_create_with_offer_retry`;
