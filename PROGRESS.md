@@ -10,15 +10,67 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 
-## RESUME SNAPSHOT (updated 2026-07-07 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-07-08 — read this, then STOP; below is history)
 
 This file exceeds the 256 KB single-read limit. A fresh session should
 read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
-**State (updated 2026-07-07 boot-stall/capacity-retry session):** main green;
-lint + typecheck clean; zero pods/clusters; ledger clean.
+**State (updated 2026-07-08 SkyPilot vast video-gen slice-1 session):** main green;
+lint + typecheck clean (746 files); zero pods/clusters; ledger clean.
 ✅ FlashVSR corruption ROOT-CAUSED AND FIXED (`e82b0d1`), verified clean live.
+
+**SkyPilot vast video-gen — SLICE 1 SHIPPED + LIVE-GREEN (on Lambda) 2026-07-08:**
+Spec `docs/superpowers/specs/2026-07-07-skypilot-vast-video-gen-design.md`,
+plan `docs/superpowers/plans/2026-07-07-skypilot-vast-video-gen.md` (7 tasks 0-6,
+all committed `6bc33fb`..`fc14f07`). Goal: run a real video-gen on a SkyPilot GPU
+over a **provider-internal `ssh -L` tunnel HTTP seam**. All offline code green +
+unit-tested; the live proof landed on **Lambda A100** (see pivot below).
+- **Component A — vast shim (Task 0):** `providers/skypilot/vast_compat.py`
+  `apply_vast_sdk_compat()` adds `VastAI.client → self` so sky's
+  `vast.vast().client.api_key` resolves against vastai-sdk 0.2.5. PLUS a
+  **`src/sitecustomize.py`** that applies the same patch at interpreter startup
+  (PYTHONPATH=src) so it reaches sky's **API-server subprocess** (`python -m
+  sky.server.server`) — the in-process shim alone never did, and that subprocess
+  is where vast provisioning runs.
+- **Component B — tunnel seam (Tasks 1-2):** `SkyPilotProvider.__init__` gains
+  injectable `ssh_spawn`/`port_allocator` + `_tunnels`; `create_instance` opens
+  `ssh -N -L <local>:localhost:8000` for a server spec and returns
+  `endpoints={"8000":"http://127.0.0.1:<port>"}` (RunPod-shaped — engine unchanged);
+  `destroy_instance` kills the tunnel in a `finally`. PLUS a **launch-cloud pin**
+  fix: `create_instance` now sets `resources.cloud`/`any_of` from `_clouds` (else
+  sky optimises to the globally-cheapest cloud — observed provisioning a Lambda
+  A100 despite `compute.cloud=[vast]`).
+- **Component C — provisioning guard (Task 3):** characterization test locks
+  provision_script→setup (exec-stripped) + run_cmd→run + offer→accelerators.
+- **Cfgs (Task 4):** `examples/configs/skypilot-vast-flashvsr.yaml` (vast) +
+  `skypilot-lambda-flashvsr.yaml` (the live-proof cloud).
+- **Live proof (Task 5, USER-GATE):** see `successful-generations.md` §21 —
+  FlashVSR upscale → **1080×1080**, frame-QA PASS, on a Lambda A100 via the
+  ssh-tunnel. Ledger verified clean after.
+
+**⚠️ vast BLOCKED upstream (why the proof ran on Lambda):** vast's instance-**list**
+API (`/api/v0/instances`) now returns **410 Gone** and vastai-sdk 0.2.5's
+`show_instances()` returns empty, so sky's vast readiness poll (`list_instances`)
+never sees the launched instance and waits forever — a *second* incompatibility
+beyond the `client.api_key` shim. The shim + sitecustomize + cloud-pin DID get
+vast to launch a real A100 (it ran) before the list-API wall. User approved
+pivoting the live proof to Lambda (sky-native). vast stays deferred to slice 2.
+
+**⚠️ Slice-2 follow-ups (known, NOT fixed — hardening deferred per plan):**
+1. **vast list-API compat** — reimplement/patch sky's `list_instances` against
+   vast's migrated read API (the `/api/v0/instances` 410); unblocks the vast path.
+2. **`SkyPilotProvider.last_heartbeat` missing** — with `heartbeat_interval_s` set
+   (validation auto-sets 30), `HeartbeatLoop._tick_once` throws
+   `AttributeError: 'SkyPilotProvider' object has no attribute 'last_heartbeat'`
+   and `--no-reuse` **teardown HANGS** (pod kept billing until manual `sky down`).
+   Implement a `last_heartbeat` (or gate the loop off for providers lacking it).
+   Workaround today: manual destroy + `kinoforge forget`; run the sweeper daemon.
+3. FlashVSR 4x needs >40GB at 1920² (FullPipeline ignores window_size, treats
+   tile_size as on/off; peak is resolution-bound). Lambda A6000 48GB was
+   capacity-dry all session; the proof used a 288² source (→4x=1152²→1080p) on a
+   40GB A100. A 48GB+ card runs the full 480²→1920² at reference quality.
+Also deferred (original non-goals): sky warm-reuse, tunnel-drop reconnect.
 
 **RunPod boot-stall fast-fail + capacity-retry — SHIPPED 2026-07-07 (offline):**
 Spec `docs/superpowers/specs/2026-07-07-runpod-boot-stall-capacity-retry-design.md`,
@@ -76,13 +128,14 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION (2026-07-07):** none — RunPod boot-stall fast-fail +
-capacity-retry SHIPPED (offline suite green, lint/type clean; no live spend
-needed — logic is seam-injected + provider-gated unit tests). Next natural
-validation: a live FlashVSR 1080p smoke on the widened cfg would exercise the
-boot probe + capacity-wait against real RunPod, but is optional. Pick next from
-the gated table below or start a new feature. Prior: dead-pod ledger-ghost fix
-SHIPPED; frame-interpolation (RIFE v4) SHIPPED + LIVE-GREEN (entry #20).
+**SINGLE NEXT ACTION (2026-07-08):** none — SkyPilot vast video-gen slice-1
+SHIPPED + LIVE-GREEN on Lambda (offline suite 3948 passed, lint/type clean;
+gen §21). Next natural work is slice-2: pick from the three ⚠️ follow-ups in the
+slice-1 block above — highest-value is (2) `SkyPilotProvider.last_heartbeat` so
+`--no-reuse` teardown stops hanging (money-safety), then (1) vast list-API compat
+to unblock the vast path. Prior: RunPod boot-stall fast-fail + capacity-retry
+SHIPPED; dead-pod ledger-ghost fix SHIPPED; frame-interpolation (RIFE v4)
+SHIPPED + LIVE-GREEN (entry #20).
 
 **Frame-interpolation (RIFE v4) — SHIPPED + LIVE-GREEN 2026-07-05:**
 All 13 tasks committed (`4e5e201`..`13ec94d`). First interpolate-mode
