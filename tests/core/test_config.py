@@ -1897,3 +1897,26 @@ def test_capacity_wait_surfaces_on_interface_lifecycle() -> None:
     from kinoforge.core.interfaces import Lifecycle
 
     assert Lifecycle().capacity_wait_s == 300.0
+
+
+def test_flashvsr_widened_config_loads() -> None:
+    """The widened FlashVSR upscale cfg parses with 4 prefs, $3 cap, 5m capacity_wait.
+
+    Bug caught: a typo'd GPU name or an unparseable capacity_wait silently ships
+    a config that fails only on a live create.
+    """
+    from pathlib import Path
+
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(Path("examples/configs/upscale-flashvsr-1080p.yaml"))
+    assert cfg.compute is not None
+    reqs = cfg.compute.requirements
+    assert list(reqs.gpu_preference) == [
+        "NVIDIA A100 80GB PCIe",
+        "NVIDIA A100-SXM4-80GB",
+        "NVIDIA H100 80GB HBM3",
+        "NVIDIA H100 NVL",
+    ]
+    assert reqs.max_usd_per_hr == 3.00
+    assert cfg.lifecycle().capacity_wait_s == 300.0

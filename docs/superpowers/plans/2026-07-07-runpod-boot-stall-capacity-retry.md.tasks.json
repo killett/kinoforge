@@ -43,7 +43,7 @@
     {
       "id": 6,
       "subject": "Task 6: Widen FlashVSR config + set capacity_wait",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** upscale-flashvsr-1080p.yaml — 4 Ampere/Hopper 80GB types under $3.00 cap + capacity_wait: 5m.\n\n**Files:** examples/configs/upscale-flashvsr-1080p.yaml, tests/core/test_config.py.\n\n**Verify:** `pixi run pytest tests/core/test_config.py -k flashvsr_widened -v`\n\n```json:metadata\n{\"files\": [\"examples/configs/upscale-flashvsr-1080p.yaml\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -k flashvsr_widened -v\", \"acceptanceCriteria\": [\"4 gpu prefs in order\", \"cap 3.00\", \"capacity_wait 300s\"], \"modelTier\": \"mechanical\"}\n```"
     },
