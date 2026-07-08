@@ -21,7 +21,16 @@ engine:
   precision: bfloat16
   diffusers:
     image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
+    # `env VAR=val` argv prefix (no shell) sets PYTORCH_CUDA_ALLOC_CONF before
+    # torch's CUDA allocator initialises. The A100 40GB OOM'd the upscale by only
+    # ~676 MiB with 3.68 GiB reserved-but-unallocated (pure fragmentation — the
+    # 34.64 GiB high-water mark is fixed model/VAE memory, unchanged by tile_size,
+    # 2026-07-08); expandable_segments reclaims that reserved headroom so it fits
+    # 40GB. A plain `bash -lc` wrapper was tried first but its login shell broke
+    # the server launch; `env` avoids a shell entirely.
     server_cmd:
+      - "env"
+      - "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
       - "python"
       - "-m"
       - "kinoforge.engines.diffusers.servers.wan_t2v_server"
@@ -80,9 +89,8 @@ upscale:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
     precision: bfloat16
     window_size: 24
-    # tile_size 256 (down from 512): the A100 40GB OOM'd the 512-tile upscale by
-    # ~676 MiB (2026-07-08). Smaller spatial tiles cut peak activation VRAM
-    # sharply so it fits 40GB; FlashVSR blends tile borders, so output stays
-    # coherent (verified by frame-QA). A 48GB+ card could keep 512.
-    tile_size: 256
+    # tile_size 512 (reference quality). A trial at 256 produced the IDENTICAL
+    # OOM figures, confirming the 34.64 GiB high-water mark is not tile-gated —
+    # the fix is expandable_segments (see server_cmd), not smaller tiles.
+    tile_size: 512
     long_video_mode: false
