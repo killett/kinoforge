@@ -23,7 +23,7 @@
     {
       "id": 3,
       "subject": "Task 3: Pure boot-liveness classifier (core/boot_liveness.py)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Pure classify_boot_liveness → BootVerdict + flatline counter; BootVerdict enum + BootLivenessProbe protocol + BootLivenessResult.\n\n**Files:** core/boot_liveness.py (new), tests/core/test_boot_liveness.py (new).\n\n**Verify:** `pixi run pytest tests/core/test_boot_liveness.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/boot_liveness.py\", \"tests/core/test_boot_liveness.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_boot_liveness.py -v\", \"acceptanceCriteria\": [\"GONE/STALLED/ALIVE/UNKNOWN precedence\", \"grace suppresses flatline\", \"disk-None safe\", \"progress resets counter\"], \"modelTier\": \"standard\"}\n```"
     },
     {
