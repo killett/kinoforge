@@ -28,6 +28,7 @@ from typing import Any, Literal, NamedTuple, cast
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
+from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
 from kinoforge.core.ephemeral import EphemeralSession
@@ -538,6 +539,58 @@ def _create_with_offer_retry(
     ) from last_capacity_exc
 
 
+_CAPACITY_RETRY_INTERVAL_S: float = 25.0
+
+
+def _create_with_capacity_wait[T](
+    *,
+    find_offers: Callable[[], list[Any]],
+    create: Callable[[list[Any]], T],
+    capacity_wait_s: float,
+    retry_interval_s: float = _CAPACITY_RETRY_INTERVAL_S,
+    clock: Clock | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> T:
+    """Retry ``find_offers`` + ``create`` while it raises CapacityError.
+
+    Capacity is fluid: a RunPod offer listed by find_offers can vanish by
+    create time, and a currently-empty pool can free up seconds later. Retry
+    the whole find+create on CapacityError, re-querying offers each attempt,
+    until ``capacity_wait_s`` elapses; then re-raise the last CapacityError.
+    Non-CapacityError propagates immediately. ``capacity_wait_s <= 0`` fails on
+    the first miss.
+
+    Args:
+        find_offers: Re-queries provider offers (fresh each attempt).
+        create: Builds the instance from offers; may raise CapacityError.
+        capacity_wait_s: Deadline; 0 disables retry.
+        retry_interval_s: Sleep between attempts.
+        clock: Injected clock (defaults to RealClock).
+        sleep: Injected sleep seam.
+
+    Returns:
+        The created instance (whatever ``create`` returns).
+
+    Raises:
+        CapacityError: Deadline elapsed with sustained capacity exhaustion.
+    """
+    the_clock = clock if clock is not None else RealClock()
+    start = the_clock.now()
+    while True:
+        try:
+            return create(find_offers())
+        except CapacityError:
+            if the_clock.now() - start >= capacity_wait_s:
+                raise
+            _log.warning(
+                "[capacity-wait] no capacity yet; retry in %.0fs (waited %.0fs / %.0fs)",
+                retry_interval_s,
+                the_clock.now() - start,
+                capacity_wait_s,
+            )
+            sleep(retry_interval_s)
+
+
 def _build_start_heartbeat_closure(
     *,
     ledger: Ledger,
@@ -677,13 +730,6 @@ def _provision_instance_and_build_backend(
         ValidationError: Spec validation failed; instance destroyed.
     """
     hw_reqs = cfg.hardware_requirements()
-    offers = resolved_provider.find_offers(hw_reqs)
-    if not offers:
-        prefix = "for discovery " if for_discovery else ""
-        raise CapacityError(
-            f"no offers available {prefix}from provider "
-            f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
-        ) from None
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
     key_hash = _key_hash(key)
@@ -743,8 +789,27 @@ def _provision_instance_and_build_backend(
             cloud_type=(cfg.compute.cloud_type if cfg.compute is not None else "any"),
         )
 
-    instance, _chosen_offer = _create_with_offer_retry(
-        resolved_provider, _build_spec, offers
+    # 2026-07-07 capacity-wait: re-query offers + retry create on CapacityError
+    # (empty offers OR every offer exhausted at create time) until
+    # lifecycle.capacity_wait_s elapses, then re-raise clean. Rides transient
+    # RunPod capacity droughts instead of failing the run on the first miss.
+    def _find_offers() -> list[Offer]:
+        found = resolved_provider.find_offers(hw_reqs)
+        if not found:
+            prefix = "for discovery " if for_discovery else ""
+            raise CapacityError(
+                f"no offers available {prefix}from provider "
+                f"{getattr(resolved_provider, 'name', repr(resolved_provider))!r}"
+            )
+        return found
+
+    def _create(offers: list[Offer]) -> tuple[Instance, Offer]:
+        return _create_with_offer_retry(resolved_provider, _build_spec, offers)
+
+    instance, _chosen_offer = _create_with_capacity_wait(
+        find_offers=_find_offers,
+        create=_create,
+        capacity_wait_s=lifecycle.capacity_wait_s,
     )
     # B7 — acquire the cooperative session-claim lock now that instance.id is
     # known, BEFORE engine.provision runs. The callback enters the outer
