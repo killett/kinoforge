@@ -900,7 +900,15 @@ class RunPodProvider(ComputeProvider):
             )
             value_error = ValueError(assembled)
             joined_lower = "\n".join(error_msgs).lower()
-            if "resources to deploy" in joined_lower:
+            # Capacity exhaustion has three observed phrasings; all mean "the
+            # offer find_offers listed is gone by create time" and are transient
+            # (2026-07-07). Classify them so _create_with_offer_retry + the
+            # capacity-wait loop retry instead of failing the whole run.
+            _CAPACITY_MARKERS = (
+                "resources to deploy",
+                "no longer any instances available",
+            )
+            if any(marker in joined_lower for marker in _CAPACITY_MARKERS):
                 raise CapacityError(
                     f"RunPod has no current capacity for {gpu_type_id!r}: {assembled}"
                 ) from value_error
