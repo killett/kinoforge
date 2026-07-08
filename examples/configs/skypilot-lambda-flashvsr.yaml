@@ -21,16 +21,10 @@ engine:
   precision: bfloat16
   diffusers:
     image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
-    # Wrap the server launch to export PYTORCH_CUDA_ALLOC_CONF before torch's
-    # CUDA allocator initialises. A100 40GB OOM'd the FlashVSR upscale by only
-    # ~676 MiB with 3.68 GiB reserved-but-unallocated (fragmentation, 2026-07-07);
-    # expandable_segments reclaims that headroom so it fits 40GB without any
-    # quality-affecting tile/window reduction. exec keeps the server PID 1 so
-    # signals propagate.
     server_cmd:
-      - "bash"
-      - "-lc"
-      - "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True exec python -m kinoforge.engines.diffusers.servers.wan_t2v_server"
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
     pip:
       - "fastapi>=0.115"
       - "uvicorn>=0.30"
@@ -86,5 +80,9 @@ upscale:
     weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
     precision: bfloat16
     window_size: 24
-    tile_size: 512
+    # tile_size 256 (down from 512): the A100 40GB OOM'd the 512-tile upscale by
+    # ~676 MiB (2026-07-08). Smaller spatial tiles cut peak activation VRAM
+    # sharply so it fits 40GB; FlashVSR blends tile borders, so output stays
+    # coherent (verified by frame-QA). A 48GB+ card could keep 512.
+    tile_size: 256
     long_video_mode: false
