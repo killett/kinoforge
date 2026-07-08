@@ -50,7 +50,7 @@
     {
       "id": 7,
       "subject": "Task 7: Full-suite + lint/type green, update PROGRESS",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 5, 6],
       "description": "**Goal:** Whole suite green, lint/type clean, PROGRESS records the feature.\n\n**Files:** PROGRESS.md.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full suite green\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS updated\"], \"modelTier\": \"mechanical\"}\n```"
     }
