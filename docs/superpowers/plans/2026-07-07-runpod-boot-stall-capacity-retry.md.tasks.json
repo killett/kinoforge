@@ -1,0 +1,59 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-07-runpod-boot-stall-capacity-retry.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: lifecycle.capacity_wait config field",
+      "status": "pending",
+      "description": "**Goal:** capacity_wait duration field on lifecycle config, parsed like boot_timeout, surfaced as Lifecycle.capacity_wait_s (default 300s).\n\n**Files:** interfaces.py (Lifecycle), config.py (LifecycleConfig + validator + lifecycle() map), tests/core/test_config.py.\n\n**Verify:** `pixi run pytest tests/core/test_config.py -k capacity_wait -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/config.py\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -k capacity_wait -v\", \"acceptanceCriteria\": [\"duration string parses to 300.0\", \"defaults 300.0\", \"surfaces on Lifecycle.capacity_wait_s\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: RunPod classifies 'no instances available' as CapacityError",
+      "status": "pending",
+      "description": "**Goal:** _create_pod raises existing CapacityError for the two 'no longer any instances available' variants.\n\n**Files:** providers/runpod/__init__.py (_create_pod match), tests/providers/test_runpod_capacity_error.py.\n\n**Verify:** `pixi run pytest tests/providers/test_runpod_capacity_error.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod_capacity_error.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_capacity_error.py -v\", \"acceptanceCriteria\": [\"both no-instances variants CapacityError\", \"resources-to-deploy still CapacityError\", \"non-capacity stays ValueError\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Capacity-wait retry loop in orchestrator",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "**Goal:** On CapacityError, re-query find_offers + retry create every 25s until capacity_wait_s, then re-raise.\n\n**Files:** core/orchestrator.py (_create_with_capacity_wait + wire into _provision_instance_and_build_backend), tests/core/test_capacity_wait_retry.py.\n\n**Verify:** `pixi run pytest tests/core/test_capacity_wait_retry.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/orchestrator.py\", \"tests/core/test_capacity_wait_retry.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_capacity_wait_retry.py -v\", \"acceptanceCriteria\": [\"retries then succeeds re-querying offers\", \"zero-wait fails first miss\", \"deadline reraises\", \"non-capacity propagates\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Pure boot-liveness classifier (core/boot_liveness.py)",
+      "status": "pending",
+      "description": "**Goal:** Pure classify_boot_liveness → BootVerdict + flatline counter; BootVerdict enum + BootLivenessProbe protocol + BootLivenessResult.\n\n**Files:** core/boot_liveness.py (new), tests/core/test_boot_liveness.py (new).\n\n**Verify:** `pixi run pytest tests/core/test_boot_liveness.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/boot_liveness.py\", \"tests/core/test_boot_liveness.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_boot_liveness.py -v\", \"acceptanceCriteria\": [\"GONE/STALLED/ALIVE/UNKNOWN precedence\", \"grace suppresses flatline\", \"disk-None safe\", \"progress resets counter\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: RunPod BootLivenessProbe implementation",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** Stateful RunPod probe: check(id) fetches util snap + bootstrap.log tail → classify_boot_liveness, tracks prev snap + counter + boot-start clock.\n\n**Files:** providers/runpod/__init__.py (RunPodBootLivenessProbe + _fetch_bootstrap_log_tail + make_boot_liveness_probe), tests/providers/test_runpod_boot_liveness.py.\n\n**Verify:** `pixi run pytest tests/providers/test_runpod_boot_liveness.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/runpod/__init__.py\", \"tests/providers/test_runpod_boot_liveness.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/test_runpod_boot_liveness.py -v\", \"acceptanceCriteria\": [\"GONE on absent\", \"STALLED on trap rc!=0\", \"STALLED after K flatline across calls\", \"never raises on fetch error\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Consult boot probe in wait_for_ready",
+      "status": "pending",
+      "blockedBy": [3, 4],
+      "description": "**Goal:** wait_for_ready (diffusers + comfyui) consults injected probe on throttle, aborts GONE/STALLED with ProvisionFailed; get_instance KeyError → ProvisionFailed; probe=None preserves timeout. Orchestrator attaches provider probe.\n\n**Files:** engines/diffusers/__init__.py, engines/comfyui/__init__.py, core/orchestrator.py, tests/engines/test_diffusers_wait_for_ready_boot_stall.py.\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers_wait_for_ready_boot_stall.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/engines/test_diffusers_wait_for_ready_boot_stall.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers_wait_for_ready_boot_stall.py -v\", \"acceptanceCriteria\": [\"STALLED/GONE abort ProvisionFailed\", \"KeyError maps to ProvisionFailed\", \"None probe preserves ProvisionTimeout\", \"probe throttled\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Widen FlashVSR config + set capacity_wait",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** upscale-flashvsr-1080p.yaml — 4 Ampere/Hopper 80GB types under $3.00 cap + capacity_wait: 5m.\n\n**Files:** examples/configs/upscale-flashvsr-1080p.yaml, tests/core/test_config.py.\n\n**Verify:** `pixi run pytest tests/core/test_config.py -k flashvsr_widened -v`\n\n```json:metadata\n{\"files\": [\"examples/configs/upscale-flashvsr-1080p.yaml\", \"tests/core/test_config.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_config.py -k flashvsr_widened -v\", \"acceptanceCriteria\": [\"4 gpu prefs in order\", \"cap 3.00\", \"capacity_wait 300s\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Full-suite + lint/type green, update PROGRESS",
+      "status": "pending",
+      "blockedBy": [2, 5, 6],
+      "description": "**Goal:** Whole suite green, lint/type clean, PROGRESS records the feature.\n\n**Files:** PROGRESS.md.\n\n**Verify:** `pixi run pre-commit run --all-files`; `pixi run test`\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\"], \"verifyCommand\": \"pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"full suite green\", \"lint+typecheck clean\", \"pre-commit passes\", \"PROGRESS updated\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-07"
+}
