@@ -70,6 +70,11 @@ from kinoforge.core.interfaces import (
     Offer,
 )
 from kinoforge.core.offers import filter_offers
+from kinoforge.providers.skypilot.vast_compat import apply_vast_sdk_compat
+
+# Bridge sky's vast adapter to vastai-sdk >= 0.2 as soon as the provider is
+# imported; no-op when vastai_sdk is absent (default env) or already correct.
+apply_vast_sdk_compat()
 
 if TYPE_CHECKING:
     pass  # No runtime-conditional imports needed here
