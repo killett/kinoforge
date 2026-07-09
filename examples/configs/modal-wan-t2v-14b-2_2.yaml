@@ -1,0 +1,76 @@
+# Wan 2.2 T2V-A14B (dual-14B MoE) on Modal serverless GPU (Milestone 2 live proof).
+# Delivery: Option-A generic Modal app — the diffusers wan_t2v_server runs on a
+# Modal web_server(8000) via the same provision_script; exec run_cmd as RunPod.
+# Reuses the Milestone-1 Modal transport verbatim (py3.13-slim image, torch2.6
+# cu124 pip stack, gzip-chunked Secret boot payload); swaps model + 80GB target.
+# NOTE: NO `cloud:` key — that field is SkyPilot-only and fails validation here.
+#
+# `prompt:` carries the standard video-gen smoke prompt (verbatim from
+# examples/configs/prompts/field-realistic.txt) per feedback_standard_test_prompt.
+
+mode: t2v
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: diffusers
+  precision: bf16
+  diffusers:
+    # Modal serialized web_server fn requires the image Python to match the
+    # controller (live-modal env = 3.13). python:3.13-slim matches; the provision
+    # pip-installs torch/diffusers (cu124 cp313 wheels bundle CUDA + libgomp;
+    # imageio[ffmpeg] bundles ffmpeg). Same transport as Milestone 1.
+    image: "python:3.13-slim"
+    server_cmd: ["python", "-m", "kinoforge.engines.diffusers.servers.wan_t2v_server"]
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules: ["kinoforge.engines.diffusers.servers"]
+
+models:
+  # The `-Diffusers` variant (NOT bare Wan-AI/Wan2.2-T2V-A14B): sharded diffusers
+  # layout with model_index.json + transformer/ + transformer_2/ (high/low-noise
+  # MoE) that WanPipeline.from_pretrained loads. Bare repo 404s from_pretrained.
+  - ref: "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    kind: base
+    target: checkpoints  # informational; diffusers manages HF cache
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  requirements:
+    # MoE = two 14B transformers (~56GB bf16) + UMT5-XXL T5 + VAE + activations.
+    # 48GB cards OOM (RunPod Task 8 attempts #17-19); 80GB fits comfortably.
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 4.00
+    gpu_preference:
+      - "A100-80GB"
+      - "H100"
+    disk_gb: 150
+  lifecycle:
+    # ~63GB HF snapshot download dominates cold boot (~25-30m observed on RunPod).
+    idle_timeout: 60m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 90m
+    boot_timeout: 45m
+    budget: 4.0
+
+spec:
+  model: "Wan2.2-T2V-A14B-Diffusers"
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
+  width: 480
+  height: 480
+  num_frames: 81
+  fps: 16
