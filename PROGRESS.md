@@ -11,8 +11,9 @@ first unchecked task without redoing committed work.
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
-- **Modal plan (ready to execute):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; tasks 7-8 USER-GATE live; `.tasks.json` co-located)
-- **SINGLE NEXT ACTION:** Modal **Milestone 2 — Wan 2.2 T2V-A14B on Modal 80GB GPU** (A100-80GB / H100). Modal provider spec 1 COMPLETE + LIVE-GREEN (M1 Wan 2.1 1.3B on A10 — `successful-generations.md` §22). M2 = own spec+plan (brainstorm→plan→execute): dual-14B MoE, needs 80GB, ~$1+/run — **probe the $30 Modal credit before committing to live spend** (brief flag). Reuses the ModalProvider + diffusers WanPipeline path; new config mirrors the RunPod Wan 2.2 A14B cfg (gen §8) minus `cloud:`, image `python:3.13-slim`, gpu_preference `["A100-80GB","H100"]`. Carry the 4 Modal gotchas: [[reference_modal_provider_gotchas]] (serialized-fn py3.13 match, omit add_python, gzip-chunk Secret <32768B, app-name under `description`). Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M3 FlashVSR 4x full-res, M4 RIFE remain).
+- **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
+- **Modal M2 spec+plan (done + live-green):** `docs/superpowers/specs/2026-07-08-modal-milestone2-wan22-a14b-design.md` + `docs/superpowers/plans/2026-07-08-modal-milestone2-wan22-a14b.md` (3 tasks 0-2, all committed)
+- **SINGLE NEXT ACTION:** Modal **Milestone 3 — FlashVSR 4x upscale full-res (480²→1920²) on Modal 80GB** (A100-80GB). M1 (Wan 2.1 1.3B / A10, §22) + M2 (Wan 2.2 A14B / A100-80GB, §23) both LIVE-GREEN. M3 = own spec+plan (brainstorm→plan→execute): reuses the ModalProvider transport + the diffusers `wan_t2v_server` upscale path; a Modal 80GB card runs the FULL 480²→1920² (unlike the Lambda 40GB proof §21 that downscaled to 288²). Mirror the RunPod FlashVSR cfg (gen §13/§19) onto Modal (no `cloud:`, `python:3.13-slim`, gpu_preference `["A100-80GB","H100"]`, boot_timeout ≥45m). Prefer the **upscale-only** path (fixture clip via `--video`, `upscale_only: true`) to skip the 70 GB Wan download (CLAUDE.md upscaler rule). Carry the M2 fix + gotchas: **container-init `startup_timeout`/`timeout` go on `@app.function`, not `@web_server`** (serialized=True drops the web_server one → 300 s default kills long boots — fixed `7b820a1`); [[reference_modal_provider_gotchas]]. **Strongly consider wiring `HF_HOME=/cache/hf` first** — Modal preempts pooled GPUs mid-boot and there is no weight caching yet, so a preemption re-downloads from scratch (M2 §23 follow-up). Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
 
 ## RESUME SNAPSHOT (updated 2026-07-08 — read this, then STOP; below is history)
 
@@ -36,15 +37,27 @@ offline, 16 tests). Registered as `"modal"`; config omits `cloud:` (non-sky).
 - **Milestone 1 LIVE-GREEN:** Wan 2.1 T2V-1.3B on Modal **A10**, 480×480×33f,
   frame-QA PASS, ~$0.19, ledger + `modal app list` clean after `--no-reuse`. See
   `successful-generations.md` §22.
+- **Milestone 2 LIVE-GREEN (2026-07-08):** Wan 2.2 T2V-A14B (dual-14B MoE) on
+  Modal **A100-80GB**, 480×480×81f, frame-QA PASS, ~$1.60 cumulative, teardown
+  clean. See `successful-generations.md` §23; spec+plan
+  `docs/superpowers/{specs,plans}/2026-07-08-modal-milestone2-wan22-a14b*`.
+  **New-config milestone + one code fix (`7b820a1`):** with `serialized=True`
+  Modal DROPS `@web_server(startup_timeout=)` and uses the **`@app.function`
+  startup_timeout/timeout** (default 300 s) — A14B's ~63 GB download blew past
+  300 s and the container was killed until both were mapped from `boot_timeout`.
+  M1's 1.3B downloaded under 300 s so never tripped it. ⚠️ Modal preempts pooled
+  GPUs mid-boot + **no HF weight caching yet** (Volume mounted at `/cache/hf` but
+  `HF_HOME` unset) → a preemption re-downloads from scratch; wire `HF_HOME` next.
 - **Live-discovered Modal-CLI realities the plan mis-specified (all fixed):**
   (1) `serialized=True` web-server fn requires image-Python == controller-Python
   (3.13) → images must be py3.13 (`python:3.13-slim`); (2) `add_python` must be
   OMITTED (breaks images that already ship Python); (3) boot payload gzip-chunked
   across Secret keys (Modal 32768-byte per-value cap); (4) `modal app list --json`
   names apps under `description` (not `name`) + keeps stopped apps listed.
-- **NOT done (follow-up specs):** Milestones 2-4 (i2v/flf2v, other engines, warm
-  reuse on Modal). Modal has no util probe → live-smoke monitoring is app-state +
-  orchestrator-log only (bootstrap.log not proxied; port 8001 unexposed on Modal).
+- **NOT done (follow-up specs):** Milestone 3 (FlashVSR 4x full-res) + Milestone 4
+  (RIFE); i2v/flf2v, warm reuse on Modal, `HF_HOME=/cache/hf` weight caching.
+  Modal has no util probe → live-smoke monitoring is app-state + orchestrator-log
+  only (bootstrap.log not proxied; port 8001 unexposed on Modal).
 
 **SkyPilot vast video-gen — SLICE 1 SHIPPED + LIVE-GREEN (on Lambda) 2026-07-08:**
 Spec `docs/superpowers/specs/2026-07-07-skypilot-vast-video-gen-design.md`,

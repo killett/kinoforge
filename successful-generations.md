@@ -51,6 +51,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 20. `2026-07-05 22:24:29` — [RIFE v4.26 frame interpolation (16fps→60fps) on RunPod RTX A4000 — interpolate](#20-2026-07-05-222429--rife-v426-frame-interpolation-16fps60fps-on-runpod-rtx-a4000--interpolate)
 21. `2026-07-08 01:33:54` — [FlashVSR upscale on Lambda A100 via SkyPilot ssh-tunnel (provider-internal HTTP seam) — upscale](#21-2026-07-08-013354--flashvsr-upscale-on-lambda-a100-via-skypilot-ssh-tunnel-provider-internal-http-seam--upscale)
 22. `2026-07-08 22:12:07` — [Diffusers WanPipeline Wan 2.1 T2V-1.3B on Modal serverless GPU (A10) — t2v](#22-2026-07-08-221207--diffusers-wanpipeline-wan-21-t2v-13b-on-modal-serverless-gpu-a10--t2v)
+23. `2026-07-08 23:55:31` — [Diffusers WanPipeline Wan 2.2 T2V-A14B on Modal serverless GPU (A100-80GB) — t2v](#23-2026-07-08-235531--diffusers-wanpipeline-wan-22-t2v-a14b-on-modal-serverless-gpu-a100-80gb--t2v)
 
 ---
 
@@ -2572,3 +2573,49 @@ pixi run -e live-modal kinoforge generate \
 - **Boot payload is gzip-chunked across Secret keys.** Modal caps a Secret value at 32768 bytes; the embedded-server provision payload is ~50 KB base64. It is gzipped then split across `KINOFORGE_PROVISION_B64_<i>` keys (+ `NCHUNKS`), reassembled + gunzipped in the container. Wan 1.3B → 2 chunks (30000 + 7468).
 - **`modal app list --json` names the app under `description`, not `name`,** and keeps stopped apps listed — `list_instances`/`destroy` read `description`(-or-`name`) and treat "gone" as "no longer `deployed`/`running`".
 - **Teardown verified** post-run: `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` active `[]`.
+
+---
+
+## 23. `2026-07-08 23:55:31` — Diffusers WanPipeline Wan 2.2 T2V-A14B on Modal serverless GPU (A100-80GB) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine / Wan-AI/Wan2.2-T2V-A14B-Diffusers` |
+| **Mode** | t2v |
+| **New capability axis** | **Big-model gen on Modal 80GB** (Milestone 2) — dual-14B MoE (`transformer/` high-noise + `transformer_2/` low-noise, ~56 GB bf16) on a Modal A100-80GB via the SAME Milestone-1 transport (serialized `@modal.web_server(8000)`, gzip-chunked Secret boot payload, `python:3.13-slim`). First model on Modal needing an 80 GB card — the axis M1's 24 GB A10 could not reach. |
+| **First-success SHA** | `7b820a1c2b80501c5b7707ba9c4d4294bbb1cad1` |
+| **Date (local TZ)** | 2026-07-08 23:55:31 -0700 (PDT) |
+| **GPU** | Modal `A100-80GB` (80 GB), serverless; preference-first offer from the Modal catalog ($2.50/hr snapshot) |
+| **Wall clock** | ~27 m 02 s cold (deploy 23:28:34 → provision/pip torch+diffusers → ~63 GB HF snapshot download → `WanPipeline.from_pretrained` MoE load → generate → destroy 23:55:36). Survived one mid-download Modal worker **preemption** (auto-restarted, recovered). |
+| **Est. spend** | ~$1.13 this run (A100-80GB @ $2.50/hr × ~0.45 h) + ~$0.46 on the first (startup-timeout-killed) attempt + ~$0 CPU probes ≈ **~$1.60 cumulative** — within the $30 Modal credit |
+| **Layer / phase** | Modal-provider Milestone 2 — `docs/superpowers/plans/2026-07-08-modal-milestone2-wan22-a14b.md` Task 2 (spec `docs/superpowers/specs/2026-07-08-modal-milestone2-wan22-a14b-design.md`) |
+
+### Exact command
+
+```bash
+pixi run -e live-modal kinoforge generate \
+  --config examples/configs/modal-wan-t2v-14b-2_2.yaml \
+  --mode t2v \
+  --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+  --no-reuse
+```
+
+### Artifact
+
+| Field | Value |
+|---|---|
+| **Published path** | `output/20260708-235531_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` |
+| **Internal uri** | `.kinoforge/run-20260708-232834/ba16e42341e88ef7.mp4` |
+| **Dimensions** | 480×480, 81 frames, 16 fps (ffprobe: width=480 height=480 nb_frames=81 r_frame_rate=16/1) |
+| **Size / SHA-256** | 1,656,317 B / `ba16e42341e88ef7aa8a33994a9ffdde1800a04d12f5e1f33025f7f159cdfb99` |
+
+### Frame-QA verdict (mandatory visual review)
+
+**PASS — clearly high quality.** 5 frames extracted (`ffmpeg_frames_by_count`, indices 0/2/4 eyeballed). Alpine meadow of red/yellow wildflowers, tall waterfall down moss-covered cliffs into a misting pool, golden-hour backlight + anamorphic lens flare, volumetric god rays; a young woman in a vivid blue-and-red dress. Narrative arc holds across the clip: frame 0 back-to-camera facing the waterfall → frame 2 turning → frame 4 turned toward camera (the prompt's "glance over her shoulder → close-up"). Glowing butterflies + light-wisp ribbons drifting. Strong prompt adherence; no corruption, no false-color, no visible artifacts; temporal coherence good. Frames at `/tmp/.../scratchpad/m2qa_{0..4}.png`.
+
+### Reproduction notes / deviations (read before re-firing)
+
+- **THE FIX that made this work (`7b820a1`): container-init `startup_timeout` on `@app.function`, not `@web_server`.** With `serialized=True`, Modal **drops** the `@modal.web_server(8000, startup_timeout=...)` value and governs the container-init window by the *function's* `startup_timeout`, which itself defaults to `timeout` (300 s). A ~63 GB A14B download takes ~30 min, so the first attempt was killed at exactly 300 s (`Runner has been initializing for too long: 300 seconds`). Milestone 1's 1.3B downloaded **under** 300 s, which is why this only surfaced at A14B. `build_modal_app` now sets `startup_timeout=req.startup_timeout_s` AND `timeout=req.startup_timeout_s` on `@app.function`, mapped from `lifecycle.boot_timeout` (45 m → 2700 s). Verified with two CPU probes (bind-after-320 s): timeout on `@web_server` alone → killed at 300 s; timeout on `@app.function` → survived to 320 s bind.
+- **Modal pooled GPUs can preempt mid-boot.** This run took one `Runner interrupted due to worker preemption. Your Function will be restarted with the same input` during the download; it auto-restarted and recovered. **No HF weight caching is wired yet** — the Volume `kinoforge-hf-cache` is mounted at `/cache/hf` but nothing sets `HF_HOME` there, so a preemption restart re-downloads from scratch. A repeated-preemption run could exhaust `boot_timeout` (45 m). **Follow-up:** set `HF_HOME=/cache/hf` so downloads persist across restarts AND future boots are fast (deferred as a non-goal in the M2 spec; the preemption risk argues for promoting it).
+- **Config = M1 transport + RunPod A14B model/hardware.** `bf16`, model `Wan-AI/Wan2.2-T2V-A14B-Diffusers` (the `-Diffusers` variant — sharded `from_pretrained`; bare repo 404s), `min_vram_gb: 80`, `gpu_preference: [A100-80GB, H100]`, `disk_gb: 150`, 81 frames, `boot_timeout: 45m`. Same `python:3.13-slim` image + torch 2.6 cu124 pip stack + gzip-chunked Secret boot payload as M1 (carry all four M1 gotchas).
+- **Teardown verified** post-run: `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` shows `kinoforge-run-20260708-232834` = `stopped`.
