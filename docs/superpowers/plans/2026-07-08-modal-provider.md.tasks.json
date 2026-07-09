@@ -19,7 +19,7 @@
       "id": 2,
       "nativeId": "8",
       "subject": "Task 2: ModalProvider skeleton — registry, seams, heartbeat, find_offers",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3, 1],
       "description": "**Goal:** ModalProvider registers as modal, injected seams, find_offers + heartbeat noop + last_heartbeat None.\n\n**Files:** Modify providers/modal/__init__.py + _adapters.py; create tests/providers/modal/test_provider.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/test_provider.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/providers/modal/test_provider.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_provider.py -v\", \"acceptanceCriteria\": [\"registry resolves modal to ModalProvider\", \"find_offers returns filtered catalog\", \"last_heartbeat None + heartbeat noop\", \"injectable seams present\"], \"modelTier\": \"standard\"}\n```"
     },

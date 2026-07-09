@@ -45,6 +45,7 @@ import kinoforge.interpolators.rife  # noqa: F401  # self-registers under "rife"
 # Output sinks
 import kinoforge.outputs.local  # noqa: F401  side-effect: register "local" OutputSink
 import kinoforge.providers.local  # noqa: F401
+import kinoforge.providers.modal  # noqa: F401
 import kinoforge.providers.runpod  # noqa: F401
 import kinoforge.providers.skypilot  # noqa: F401
 import kinoforge.sources.civarchive  # noqa: F401
