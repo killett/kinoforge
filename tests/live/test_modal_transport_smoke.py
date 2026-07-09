@@ -20,7 +20,10 @@ def test_modal_transport_end_to_end():
     provider = ModalProvider()
     # Trivial server: Python stdlib http.server on 0.0.0.0:8000, no provisioning.
     spec = InstanceSpec(
-        image="python:3.11-slim",
+        # serialized=True requires the image Python to match the controller
+        # (this live-modal env, 3.13); python:3.11-slim tripped Modal's version
+        # guard. Keep the image minor version aligned with the controller.
+        image="python:3.13-slim",
         offer=Offer("T4", "T4", 16, "12.4", 0.59, mode="serverless"),
         run_id=f"smoke{int(time.time())}",
         provision_script="echo 'no provisioning needed'",
