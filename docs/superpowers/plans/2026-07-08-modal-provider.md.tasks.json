@@ -66,10 +66,10 @@
       "id": 8,
       "nativeId": "14",
       "subject": "Task 8: LIVE Milestone 1 proof — Wan 2.1 T2V-1.3B generation (USER-GATE)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6, 7, 0],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Produce a real Wan 2.1 T2V-1.3B video via kinoforge generate on Modal, frame-QA, log as first Modal-provider generation.\n\n**Files:** Create tests/live/test_modal_wan_t2v_1_3b.py; modify successful-generations.md + PROGRESS.md.\n\n**Verify:** generate command exits 0 with playable 480x480 mp4; frame-QA verdict recorded; kinoforge list + modal app list clean.\n\n```json:metadata\n{\"userGate\": true, \"tags\": [\"user-gate\"], \"files\": [\"tests/live/test_modal_wan_t2v_1_3b.py\", \"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run -e live-modal kinoforge generate --config examples/configs/modal-wan-t2v-1_3b.yaml --mode t2v --prompt \\\"$(cat examples/configs/prompts/field-realistic.txt)\\\" --no-reuse\", \"acceptanceCriteria\": [\"playable 480x480 ~33f mp4 produced\", \"frames eyeballed coherent + prompt-adherent, verdict recorded\", \"kinoforge list AND modal app list both clean after\", \"successful-generations.md Modal section added\", \"spend within $30 credit\"], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-08"
+  "lastUpdated": "2026-07-08T22:15:00-07:00"
 }

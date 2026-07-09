@@ -12,7 +12,7 @@ first unchecked task without redoing committed work.
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (ready to execute):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; tasks 7-8 USER-GATE live; `.tasks.json` co-located)
-- **SINGLE NEXT ACTION:** execute Modal plan Task 0 (add `live-modal` pixi env + `modal` dep) via subagent-driven-development. Option A (generic config-driven Modal app reusing render_provision + FastAPI server); scope = provider + Milestone 1 (Wan 2.1 T2V-1.3B live proof). $30 Modal credit ceiling.
+- **SINGLE NEXT ACTION:** Modal provider spec 1 **COMPLETE + LIVE-GREEN** (all 9 tasks 0-8 done; Milestone 1 Wan 2.1 T2V-1.3B proven on Modal A10 — see `successful-generations.md` §22). Next = Modal Milestone 2+ (follow-up specs) OR other roadmap work.
 
 ## RESUME SNAPSHOT (updated 2026-07-08 — read this, then STOP; below is history)
 
@@ -23,6 +23,28 @@ demand — do NOT attempt a full-file read.
 **State (updated 2026-07-08 SkyPilot vast video-gen slice-1 session):** main green;
 lint + typecheck clean (746 files); zero pods/clusters; ledger clean.
 ✅ FlashVSR corruption ROOT-CAUSED AND FIXED (`e82b0d1`), verified clean live.
+
+**Modal serverless-GPU provider — SHIPPED + LIVE-GREEN 2026-07-08 (spec 1 complete):**
+Spec `docs/superpowers/specs/2026-07-08-modal-provider-design.md`, plan
+`docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8, all done +
+committed). New `ModalProvider` (`src/kinoforge/providers/modal/`) deploys the
+existing diffusers `wan_t2v_server` onto a Modal `@modal.web_server(8000)` via the
+SAME `provision_script; exec run_cmd` bundle RunPod uses (Option-A generic reuse);
+public `.modal.run` URL returned as `endpoints["8000"]` so all downstream HTTP code
+is unchanged. All Modal/subprocess touchpoints behind injected seams (unit-tested
+offline, 16 tests). Registered as `"modal"`; config omits `cloud:` (non-sky).
+- **Milestone 1 LIVE-GREEN:** Wan 2.1 T2V-1.3B on Modal **A10**, 480×480×33f,
+  frame-QA PASS, ~$0.19, ledger + `modal app list` clean after `--no-reuse`. See
+  `successful-generations.md` §22.
+- **Live-discovered Modal-CLI realities the plan mis-specified (all fixed):**
+  (1) `serialized=True` web-server fn requires image-Python == controller-Python
+  (3.13) → images must be py3.13 (`python:3.13-slim`); (2) `add_python` must be
+  OMITTED (breaks images that already ship Python); (3) boot payload gzip-chunked
+  across Secret keys (Modal 32768-byte per-value cap); (4) `modal app list --json`
+  names apps under `description` (not `name`) + keeps stopped apps listed.
+- **NOT done (follow-up specs):** Milestones 2-4 (i2v/flf2v, other engines, warm
+  reuse on Modal). Modal has no util probe → live-smoke monitoring is app-state +
+  orchestrator-log only (bootstrap.log not proxied; port 8001 unexposed on Modal).
 
 **SkyPilot vast video-gen — SLICE 1 SHIPPED + LIVE-GREEN (on Lambda) 2026-07-08:**
 Spec `docs/superpowers/specs/2026-07-07-skypilot-vast-video-gen-design.md`,
