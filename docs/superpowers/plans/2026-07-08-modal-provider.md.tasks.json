@@ -12,7 +12,7 @@
       "id": 1,
       "nativeId": "7",
       "subject": "Task 1: Modal GPU offer catalog + modal_offers",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Pure function returns static Modal GPU catalog as Offers filtered by HardwareRequirements, mode=serverless.\n\n**Files:** Create src/kinoforge/providers/modal/_catalog.py, __init__.py, tests/providers/modal/test_catalog.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/test_catalog.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/_catalog.py\", \"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_catalog.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_catalog.py -v\", \"acceptanceCriteria\": [\"catalog has correct Modal GPU strings + VRAM\", \"all offers mode=serverless\", \"modal_offers filters by vram + orders by preference\"], \"modelTier\": \"standard\"}\n```"
     },
     {
