@@ -15,7 +15,11 @@ engine:
   kind: diffusers
   precision: fp16
   diffusers:
-    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    # Modal serialized web_server fn requires the image Python to match the
+    # controller (live-modal env = 3.13). runpod/pytorch is py3.11 → rejected.
+    # python:3.13-slim matches; the provision below pip-installs torch/diffusers
+    # (cu124 cp313 wheels bundle CUDA + libgomp; imageio[ffmpeg] bundles ffmpeg).
+    image: "python:3.13-slim"
     server_cmd: ["python", "-m", "kinoforge.engines.diffusers.servers.wan_t2v_server"]
     pip:
       - "torch==2.6.0"
@@ -39,7 +43,7 @@ models:
 
 compute:
   provider: modal
-  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  image: "python:3.13-slim"
   mode: pod
   requirements:
     min_vram_gb: 24
