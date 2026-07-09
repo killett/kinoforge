@@ -147,25 +147,40 @@ class ModalProvider(ComputeProvider):
             return {"8000": rec["url"]}
         return dict(instance.endpoints)
 
+    @staticmethod
+    def _rec_name(rec: dict[str, Any]) -> str:
+        """App name from a ``modal app list`` record.
+
+        The real ``modal app list --json`` exposes the deploy name under
+        ``description``; unit fakes use ``name``. Accept either.
+        """
+        return str(rec.get("description") or rec.get("name") or "")
+
+    @staticmethod
+    def _rec_active(rec: dict[str, Any]) -> bool:
+        """True while the app is live (``modal app list`` keeps stopped apps)."""
+        return str(rec.get("state", "")) in {"deployed", "running"}
+
     def _record_to_instance(self, rec: dict[str, Any]) -> Instance:
         """Map a ``modal app list`` record onto an :class:`Instance`."""
-        name = rec.get("name", "")
-        run_id = name[len("kinoforge-") :]
-        state = rec.get("state", "")
-        status = "ready" if state in {"deployed", "running"} else "stopped"
+        run_id = self._rec_name(rec)[len("kinoforge-") :]
         return Instance(
             id=run_id,
             provider=self.name,
-            status=status,
+            status="ready",
             created_at=self._clock(),
         )
 
     def list_instances(self) -> list[Instance]:
-        """Return kinoforge-owned Modal deployments."""
+        """Return kinoforge-owned Modal deployments that are still active.
+
+        Stopped apps linger in ``modal app list``; excluding them keeps the
+        ledger/teardown checks honest.
+        """
         return [
             self._record_to_instance(r)
             for r in self._lister()
-            if str(r.get("name", "")).startswith("kinoforge-")
+            if self._rec_name(r).startswith("kinoforge-") and self._rec_active(r)
         ]
 
     def get_instance(self, instance_id: str) -> Instance:
@@ -186,8 +201,10 @@ class ModalProvider(ComputeProvider):
         try:
             self._stopper(app_name)
             for _ in range(_DESTROY_POLL_MAX_ITERS):
-                names = {str(r.get("name", "")) for r in self._lister()}
-                if app_name not in names:
+                active = {
+                    self._rec_name(r) for r in self._lister() if self._rec_active(r)
+                }
+                if app_name not in active:  # absent OR transitioned to stopped
                     break
                 self._sleep(3.0)
         finally:

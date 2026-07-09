@@ -48,6 +48,7 @@ def test_modal_transport_end_to_end():
     finally:
         provider.destroy_instance(inst.id)
 
-    # Confirm teardown.
-    names = {r.get("name") for r in provider._lister()}
-    assert f"kinoforge-{spec.run_id}" not in names
+    # Confirm teardown — the app is no longer active (stopped apps linger in
+    # `modal app list`, so assert on active instances, not raw presence).
+    active_ids = {i.id for i in provider.list_instances()}
+    assert spec.run_id not in active_ids
