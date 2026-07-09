@@ -9,7 +9,10 @@ first unchecked task without redoing committed work.
 - **Design (validated):** `DESIGN.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
-- **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (see SINGLE NEXT ACTION)
+- **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
+- **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
+- **Modal plan (ready to execute):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; tasks 7-8 USER-GATE live; `.tasks.json` co-located)
+- **SINGLE NEXT ACTION:** execute Modal plan Task 0 (add `live-modal` pixi env + `modal` dep) via subagent-driven-development. Option A (generic config-driven Modal app reusing render_provision + FastAPI server); scope = provider + Milestone 1 (Wan 2.1 T2V-1.3B live proof). $30 Modal credit ceiling.
 
 ## RESUME SNAPSHOT (updated 2026-07-08 — read this, then STOP; below is history)
 

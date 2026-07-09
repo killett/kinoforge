@@ -1,0 +1,75 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-08-modal-provider.md",
+  "tasks": [
+    {
+      "id": 0,
+      "nativeId": "6",
+      "subject": "Task 0: pixi live-modal env + modal dependency",
+      "status": "pending",
+      "description": "**Goal:** A `live-modal` pixi env exists with the `modal` SDK importable, mirroring `live-skypilot`.\n\n**Files:** Modify pixi.toml (+ pixi.lock).\n\n**Verify:** `pixi run -e live-modal python -c \"import modal; print(modal.__version__)\"`\n\n```json:metadata\n{\"files\": [\"pixi.toml\", \"pixi.lock\"], \"verifyCommand\": \"pixi run -e live-modal python -c \\\"import modal; print(modal.__version__)\\\"\", \"acceptanceCriteria\": [\"modal importable in live-modal env\", \"pixi.lock staged with pixi.toml\", \"default env unchanged\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 1,
+      "nativeId": "7",
+      "subject": "Task 1: Modal GPU offer catalog + modal_offers",
+      "status": "pending",
+      "description": "**Goal:** Pure function returns static Modal GPU catalog as Offers filtered by HardwareRequirements, mode=serverless.\n\n**Files:** Create src/kinoforge/providers/modal/_catalog.py, __init__.py, tests/providers/modal/test_catalog.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/test_catalog.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/_catalog.py\", \"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_catalog.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_catalog.py -v\", \"acceptanceCriteria\": [\"catalog has correct Modal GPU strings + VRAM\", \"all offers mode=serverless\", \"modal_offers filters by vram + orders by preference\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "nativeId": "8",
+      "subject": "Task 2: ModalProvider skeleton — registry, seams, heartbeat, find_offers",
+      "status": "pending",
+      "blockedBy": [3, 1],
+      "description": "**Goal:** ModalProvider registers as modal, injected seams, find_offers + heartbeat noop + last_heartbeat None.\n\n**Files:** Modify providers/modal/__init__.py + _adapters.py; create tests/providers/modal/test_provider.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/test_provider.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"src/kinoforge/_adapters.py\", \"tests/providers/modal/test_provider.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_provider.py -v\", \"acceptanceCriteria\": [\"registry resolves modal to ModalProvider\", \"find_offers returns filtered catalog\", \"last_heartbeat None + heartbeat noop\", \"injectable seams present\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "nativeId": "9",
+      "subject": "Task 3: build_modal_app — the reuse hinge",
+      "status": "pending",
+      "description": "**Goal:** Pure builder constructs modal.App whose serialized web_server(8000) runs provision_script; exec run_cmd, with image/gpu/volume/secret.\n\n**Files:** Create src/kinoforge/providers/modal/_app.py, tests/providers/modal/test_app.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/test_app.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/_app.py\", \"tests/providers/modal/test_app.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_app.py -v\", \"acceptanceCriteria\": [\"wires image/app/volume\", \"function kwargs carry gpu/serialized/scaledown/volume/secret\", \"web_server port 8000 + startup_timeout\", \"secret payload has provision_script + run_cmd\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "nativeId": "10",
+      "subject": "Task 4: create_instance — deploy + return HTTP endpoint",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** create_instance builds app request from spec+offer, deploys via seam, returns Instance(starting, endpoints 8000 url).\n\n**Files:** Modify providers/modal/__init__.py + tests/providers/modal/test_provider.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/test_provider.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_provider.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_provider.py -v\", \"acceptanceCriteria\": [\"maps offer.gpu_type + lifecycle to app request\", \"returns Instance starting with endpoints 8000 url\", \"records deployment\", \"raises on missing run_cmd/offer\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 5,
+      "nativeId": "11",
+      "subject": "Task 5: get/list/stop/destroy_instance + endpoints (bounded teardown)",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Inventory + teardown via lister/stopper seams, bounded destroy poll (_DESTROY_POLL_MAX_ITERS=40), endpoints reader.\n\n**Files:** Modify providers/modal/__init__.py + tests/providers/modal/test_provider.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/ -v && pixi run lint && pixi run typecheck`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_provider.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/ -v && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"endpoints returns recorded url\", \"list_instances filters kinoforge- prefix\", \"get_instance returns or raises\", \"destroy bounded by 40-iter poll, idempotent\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "nativeId": "12",
+      "subject": "Task 6: Milestone 1 config + build_provider_for characterization test",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** modal-wan-t2v-1_3b.yaml resolves through build_provider_for to ModalProvider; omits cloud:.\n\n**Files:** Create examples/configs/modal-wan-t2v-1_3b.yaml, tests/test_modal_config.py.\n\n**Verify:** `pixi run pytest tests/test_modal_config.py -v`\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-wan-t2v-1_3b.yaml\", \"tests/test_modal_config.py\"], \"verifyCommand\": \"pixi run pytest tests/test_modal_config.py -v\", \"acceptanceCriteria\": [\"config provider=modal, cloud omitted, diffusers t2v 1.3B\", \"build_provider_for returns ModalProvider\", \"spec targets 1.3B cheaply 480x480 33f\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 7,
+      "nativeId": "13",
+      "subject": "Task 7: LIVE transport smoke — prove Modal deploy for pennies (USER-GATE)",
+      "status": "pending",
+      "blockedBy": [4, 5, 0],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Prove Modal deploy → live .modal.run URL → teardown with a trivial hello-world server, before any weights spend.\n\n**Files:** Create tests/live/test_modal_transport_smoke.py.\n\n**Verify:** `pixi run -e live-modal pytest tests/live/test_modal_transport_smoke.py -v -s`\n\n```json:metadata\n{\"userGate\": true, \"tags\": [\"user-gate\"], \"files\": [\"tests/live/test_modal_transport_smoke.py\"], \"verifyCommand\": \"pixi run -e live-modal pytest tests/live/test_modal_transport_smoke.py -v -s\", \"acceptanceCriteria\": [\"endpoints['8000'] is a https .modal.run URL\", \"GET url returns 200 within startup window\", \"destroy returns bounded AND app no longer listed\", \"spend is a few cents\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "nativeId": "14",
+      "subject": "Task 8: LIVE Milestone 1 proof — Wan 2.1 T2V-1.3B generation (USER-GATE)",
+      "status": "pending",
+      "blockedBy": [6, 7, 0],
+      "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Produce a real Wan 2.1 T2V-1.3B video via kinoforge generate on Modal, frame-QA, log as first Modal-provider generation.\n\n**Files:** Create tests/live/test_modal_wan_t2v_1_3b.py; modify successful-generations.md + PROGRESS.md.\n\n**Verify:** generate command exits 0 with playable 480x480 mp4; frame-QA verdict recorded; kinoforge list + modal app list clean.\n\n```json:metadata\n{\"userGate\": true, \"tags\": [\"user-gate\"], \"files\": [\"tests/live/test_modal_wan_t2v_1_3b.py\", \"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run -e live-modal kinoforge generate --config examples/configs/modal-wan-t2v-1_3b.yaml --mode t2v --prompt \\\"$(cat examples/configs/prompts/field-realistic.txt)\\\" --no-reuse\", \"acceptanceCriteria\": [\"playable 480x480 ~33f mp4 produced\", \"frames eyeballed coherent + prompt-adherent, verdict recorded\", \"kinoforge list AND modal app list both clean after\", \"successful-generations.md Modal section added\", \"spend within $30 credit\"], \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-08"
+}
