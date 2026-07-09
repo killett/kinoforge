@@ -12,7 +12,7 @@ first unchecked task without redoing committed work.
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (ready to execute):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; tasks 7-8 USER-GATE live; `.tasks.json` co-located)
-- **SINGLE NEXT ACTION:** Modal provider spec 1 **COMPLETE + LIVE-GREEN** (all 9 tasks 0-8 done; Milestone 1 Wan 2.1 T2V-1.3B proven on Modal A10 — see `successful-generations.md` §22). Next = Modal Milestone 2+ (follow-up specs) OR other roadmap work.
+- **SINGLE NEXT ACTION:** Modal **Milestone 2 — Wan 2.2 T2V-A14B on Modal 80GB GPU** (A100-80GB / H100). Modal provider spec 1 COMPLETE + LIVE-GREEN (M1 Wan 2.1 1.3B on A10 — `successful-generations.md` §22). M2 = own spec+plan (brainstorm→plan→execute): dual-14B MoE, needs 80GB, ~$1+/run — **probe the $30 Modal credit before committing to live spend** (brief flag). Reuses the ModalProvider + diffusers WanPipeline path; new config mirrors the RunPod Wan 2.2 A14B cfg (gen §8) minus `cloud:`, image `python:3.13-slim`, gpu_preference `["A100-80GB","H100"]`. Carry the 4 Modal gotchas: [[reference_modal_provider_gotchas]] (serialized-fn py3.13 match, omit add_python, gzip-chunk Secret <32768B, app-name under `description`). Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M3 FlashVSR 4x full-res, M4 RIFE remain).
 
 ## RESUME SNAPSHOT (updated 2026-07-08 — read this, then STOP; below is history)
 
