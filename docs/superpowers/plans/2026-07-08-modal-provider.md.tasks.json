@@ -58,7 +58,7 @@
       "id": 7,
       "nativeId": "13",
       "subject": "Task 7: LIVE transport smoke — prove Modal deploy for pennies (USER-GATE)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4, 5, 0],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Prove Modal deploy → live .modal.run URL → teardown with a trivial hello-world server, before any weights spend.\n\n**Files:** Create tests/live/test_modal_transport_smoke.py.\n\n**Verify:** `pixi run -e live-modal pytest tests/live/test_modal_transport_smoke.py -v -s`\n\n```json:metadata\n{\"userGate\": true, \"tags\": [\"user-gate\"], \"files\": [\"tests/live/test_modal_transport_smoke.py\"], \"verifyCommand\": \"pixi run -e live-modal pytest tests/live/test_modal_transport_smoke.py -v -s\", \"acceptanceCriteria\": [\"endpoints['8000'] is a https .modal.run URL\", \"GET url returns 200 within startup window\", \"destroy returns bounded AND app no longer listed\", \"spend is a few cents\"], \"modelTier\": \"standard\"}\n```"
     },
