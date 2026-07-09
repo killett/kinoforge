@@ -1,0 +1,26 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-08-modal-milestone2-wan22-a14b.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Wan 2.2 A14B Modal config + offline characterization test",
+      "status": "pending",
+      "description": "Create examples/configs/modal-wan-t2v-14b-2_2.yaml merging M1 Modal transport + RunPod A14B model/hardware (bf16, 80GB, gpu_preference [A100-80GB,H100], 81 frames); append 3 characterization tests to tests/test_modal_config.py; RED->GREEN offline; commit.\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-wan-t2v-14b-2_2.yaml\", \"tests/test_modal_config.py\"], \"verifyCommand\": \"pixi run -e live-modal python -m pytest tests/test_modal_config.py -v\", \"acceptanceCriteria\": [\"provider==modal cloud None min_vram_gb==80\", \"build_provider_for->ModalProvider\", \"model ref Wan2.2-T2V-A14B\", \"modal_offers[0] A100-80GB\", \"spec.model != unknown\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: RED live-smoke scaffold (committed BEFORE any spend)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "Create tests/live/test_modal_wan_t2v_14b_2_2.py mirroring tests/live/test_modal_wan_t2v_1_3b.py (skip-unless-live gating), swapping config path + model slug Wan2.2-T2V-A14B; confirm RED/xfail; commit BEFORE spend.\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_wan_t2v_14b_2_2.py\"], \"verifyCommand\": \"pixi run -e live-modal python -m pytest tests/live/test_modal_wan_t2v_14b_2_2.py -v\", \"acceptanceCriteria\": [\"module refs M2 cfg + t2v\", \"skip-unless-live gated\", \"committed before spend\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Live smoke — generate, frame-QA, verify teardown, log (USER-ORDERED GATE)",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "Run real Wan 2.2 A14B generation on Modal 80GB GPU, frame-QA, verify teardown, log successful-generations.md §23 + update PROGRESS. USER-ORDERED GATE — non-skippable.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"preflight exit 0\", \"80GB container allocated\", \"non-empty mp4 480x480 81f\", \"frame-QA passed\", \"teardown verified clean\", \"§23 logged + PROGRESS updated\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-08"
+}
