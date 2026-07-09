@@ -242,6 +242,12 @@ runwayml = ">=3.0.0"
 lumaai = ">=1.0.0"
 fal-client = ">=0.5.0"
 
+[feature.live-modal.pypi-dependencies]
+# Modal serverless-GPU SDK (not on conda-forge). Auth via MODAL_TOKEN_ID/SECRET
+# from .env (activation not required — SDK reads env vars directly).
+modal = ">=1.0"
+
 [environments]
 live-skypilot = { features = ["live-skypilot"] }
 live-hosted = { features = ["live-hosted"] }
+live-modal = { features = ["live-modal"] }

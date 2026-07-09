@@ -5,7 +5,7 @@
       "id": 0,
       "nativeId": "6",
       "subject": "Task 0: pixi live-modal env + modal dependency",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** A `live-modal` pixi env exists with the `modal` SDK importable, mirroring `live-skypilot`.\n\n**Files:** Modify pixi.toml (+ pixi.lock).\n\n**Verify:** `pixi run -e live-modal python -c \"import modal; print(modal.__version__)\"`\n\n```json:metadata\n{\"files\": [\"pixi.toml\", \"pixi.lock\"], \"verifyCommand\": \"pixi run -e live-modal python -c \\\"import modal; print(modal.__version__)\\\"\", \"acceptanceCriteria\": [\"modal importable in live-modal env\", \"pixi.lock staged with pixi.toml\", \"default env unchanged\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
