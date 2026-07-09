@@ -90,7 +90,7 @@ def test_build_wires_image_app_volume(fake_modal):
     build_modal_app(_req(), fake_modal)
     assert fake_modal.from_registry_args == {
         "tag": "runpod/pytorch:2.4.0-cuda12.4",
-        "add_python": "3.11",
+        "add_python": None,  # image already ships Python; forcing add_python fails
     }
     assert fake_modal.app.name == "kinoforge-run123"
     assert fake_modal.volume_args == {
