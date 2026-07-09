@@ -167,6 +167,39 @@ def test_destroy_without_tunnel_is_noop() -> None:
     provider.destroy_instance(inst.id)  # must not raise
 
 
+def test_destroy_poll_is_bounded_when_cluster_never_disappears() -> None:
+    # Bug caught (2026-07-08): an unbounded `while True` poll on sky.status()
+    # hangs teardown forever when the cloud is slow to deprovision — observed as
+    # a ~7-min --no-reuse hang that kept a Lambda A100 billing until manual kill.
+    from kinoforge.providers.skypilot import _DESTROY_POLL_MAX_ITERS
+
+    class _StuckSky(_FakeSky):
+        def status(self) -> list[dict[str, Any]]:
+            return [{"name": "kf-vast-test"}]  # cluster never disappears
+
+    sleeps: list[float] = []
+    sky = _StuckSky()
+    provider = SkyPilotProvider(
+        sky_client=sky,
+        sleep=lambda s: sleeps.append(s),
+        ssh_spawn=lambda *_a: _FakeProc(),
+        port_allocator=lambda: 54321,
+    )
+    inst = provider.create_instance(_server_spec())
+    provider.destroy_instance(inst.id)  # must RETURN (not hang) — down was issued
+
+    assert 1 <= len(sleeps) <= _DESTROY_POLL_MAX_ITERS
+    assert sky.downed == ["kf-vast-test"]  # sky.down was still issued
+
+
+def test_last_heartbeat_returns_none() -> None:
+    # Bug caught: HeartbeatLoop._tick_once calls provider.last_heartbeat every
+    # tick; SkyPilotProvider lacked it -> AttributeError spam on every heartbeat
+    # -enabled session (validation auto-sets heartbeat_interval_s).
+    provider = SkyPilotProvider(sky_client=_FakeSky())
+    assert provider.last_heartbeat("any-cluster") is None
+
+
 def test_task_carries_provision_setup_and_server_run() -> None:
     # Bug caught: the sky Task drops setup/run, so the video server never starts
     # on the node and the tunnel forwards to a dead port.

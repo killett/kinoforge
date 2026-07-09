@@ -57,16 +57,22 @@ beyond the `client.api_key` shim. The shim + sitecustomize + cloud-pin DID get
 vast to launch a real A100 (it ran) before the list-API wall. User approved
 pivoting the live proof to Lambda (sky-native). vast stays deferred to slice 2.
 
+**✅ Teardown-hang FIXED 2026-07-08 (post-slice-1):** the `--no-reuse` hang had
+TWO causes, both fixed + unit-tested:
+- `SkyPilotProvider.destroy_instance` had an **unbounded `while True`** poll on
+  `sky.status()` — if the cloud was slow to deprovision it hung forever. Now
+  bounded by `_DESTROY_POLL_MAX_ITERS` (40 × 3s ≈ 120s); returns after the bound
+  (idempotent — `destroy_confirmed` re-verifies + retries). This was the actual
+  ~7-min Lambda billing hang.
+- `SkyPilotProvider.last_heartbeat` missing (not on the `ComputeProvider` ABC, so
+  `HeartbeatLoop._tick_once` AttributeError'd every tick once validation
+  auto-set `heartbeat_interval_s`). Now returns `None` (RunPod-style disabled-read
+  fallback → loop uses the orchestrator clock).
+
 **⚠️ Slice-2 follow-ups (known, NOT fixed — hardening deferred per plan):**
 1. **vast list-API compat** — reimplement/patch sky's `list_instances` against
    vast's migrated read API (the `/api/v0/instances` 410); unblocks the vast path.
-2. **`SkyPilotProvider.last_heartbeat` missing** — with `heartbeat_interval_s` set
-   (validation auto-sets 30), `HeartbeatLoop._tick_once` throws
-   `AttributeError: 'SkyPilotProvider' object has no attribute 'last_heartbeat'`
-   and `--no-reuse` **teardown HANGS** (pod kept billing until manual `sky down`).
-   Implement a `last_heartbeat` (or gate the loop off for providers lacking it).
-   Workaround today: manual destroy + `kinoforge forget`; run the sweeper daemon.
-3. FlashVSR 4x needs >40GB at 1920² (FullPipeline ignores window_size, treats
+2. FlashVSR 4x needs >40GB at 1920² (FullPipeline ignores window_size, treats
    tile_size as on/off; peak is resolution-bound). Lambda A6000 48GB was
    capacity-dry all session; the proof used a 288² source (→4x=1152²→1080p) on a
    40GB A100. A 48GB+ card runs the full 480²→1920² at reference quality.
@@ -130,10 +136,10 @@ atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
 **SINGLE NEXT ACTION (2026-07-08):** none — SkyPilot vast video-gen slice-1
 SHIPPED + LIVE-GREEN on Lambda (offline suite 3948 passed, lint/type clean;
-gen §21). Next natural work is slice-2: pick from the three ⚠️ follow-ups in the
-slice-1 block above — highest-value is (2) `SkyPilotProvider.last_heartbeat` so
-`--no-reuse` teardown stops hanging (money-safety), then (1) vast list-API compat
-to unblock the vast path. Prior: RunPod boot-stall fast-fail + capacity-retry
+gen §21). Teardown-hang (money-safety) now FIXED (bounded destroy poll + `last_heartbeat`).
+Next natural work is slice-2: pick from the two remaining ⚠️ follow-ups in the
+slice-1 block above — (1) vast list-API compat to unblock the vast path, or (2)
+run the full FlashVSR 480²→1920² on a 48GB+ card. Prior: RunPod boot-stall fast-fail + capacity-retry
 SHIPPED; dead-pod ledger-ghost fix SHIPPED; frame-interpolation (RIFE v4)
 SHIPPED + LIVE-GREEN (entry #20).
 

@@ -344,6 +344,13 @@ def _strip_trailing_exec(script: str) -> str:
 #: (matches the RunPod path's 8000). The provider forwards a local port to this.
 _VIDEO_SERVER_PORT: int = 8000
 
+#: Max status polls in destroy_instance before returning even if the cluster is
+#: still listed. Bounds teardown so a cloud that is slow to deprovision (or a
+#: stale status listing) can never hang --no-reuse forever (observed as a ~7-min
+#: Lambda hang 2026-07-08). destroy_confirmed re-verifies via list_instances and
+#: retries, so returning unconfirmed here is safe, not a leak.
+_DESTROY_POLL_MAX_ITERS: int = 40  # 40 × 3s ≈ 120s upper bound
+
 
 def _alloc_free_port() -> int:
     """Return an ephemeral free localhost TCP port for a tunnel's local end."""
@@ -880,8 +887,11 @@ class SkyPilotProvider(ComputeProvider):
             # returns while teardown is still pending and the status-poll loop
             # may observe stale records.
             _resolve(sky, sky.down(instance_id))
-            # Poll until the cluster disappears from the status listing.
-            while True:
+            # Poll until the cluster disappears — BOUNDED. sky.down was already
+            # accepted above; if the cluster is slow to leave the status listing
+            # we return after the bound rather than hang forever (the caller's
+            # destroy_confirmed re-verifies + retries).
+            for _ in range(_DESTROY_POLL_MAX_ITERS):
                 clusters = _resolve(sky, sky.status())
                 names = {_record_field(c, "name") for c in clusters}
                 if instance_id not in names:
@@ -898,6 +908,27 @@ class SkyPilotProvider(ComputeProvider):
             instance_id: Unused.
         """
         # Autostop is set at launch time; no heartbeat mechanism is needed.
+
+    def last_heartbeat(self, instance_id: str) -> float | None:
+        """Return ``None`` — SkyPilot has no wire-level heartbeat read substrate.
+
+        ``HeartbeatLoop._tick_once`` calls ``provider.last_heartbeat`` every
+        tick (validation auto-sets ``heartbeat_interval_s``, which starts the
+        loop even when ``heartbeat_mode`` is ``"none"``). This method is NOT on
+        the ``ComputeProvider`` ABC, so a provider lacking it raised
+        ``AttributeError`` every tick — cosmetic during a run, but the loop then
+        never contributes a real ``last_heartbeat`` and, worse, the error was
+        observed alongside a hung ``--no-reuse`` teardown. Returning ``None``
+        mirrors RunPod's disabled-read fallback: the loop substitutes the
+        orchestrator clock, and the ledger stays consistent.
+
+        Args:
+            instance_id: Unused — SkyPilot autostop owns cluster liveness.
+
+        Returns:
+            ``None`` (no provider-side heartbeat timestamp).
+        """
+        return None
 
     def endpoints(self, instance: Instance) -> dict[str, str]:
         """Return the SSH endpoint for ``instance``.
