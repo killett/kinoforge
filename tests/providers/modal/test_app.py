@@ -119,9 +119,19 @@ def test_web_server_port_and_timeout(fake_modal):
 def test_secret_payload_contains_provision_and_run_cmd(fake_modal):
     # Bug caught: dropping run_cmd (server never launches) or the provision
     # script (deps/weights never installed) → dead container at startup.
+    import gzip
+
     build_modal_app(_req(), fake_modal)
-    payload_b64 = fake_modal.secret_dict["KINOFORGE_PROVISION_B64"]
-    decoded = base64.b64decode(payload_b64).decode()
+    n = int(fake_modal.secret_dict["KINOFORGE_PROVISION_NCHUNKS"])
+    blob = "".join(
+        fake_modal.secret_dict[f"KINOFORGE_PROVISION_B64_{i}"] for i in range(n)
+    )
+    # Every chunk must stay under Modal's 32768-byte per-value Secret cap.
+    assert all(
+        len(fake_modal.secret_dict[f"KINOFORGE_PROVISION_B64_{i}"]) <= 32768
+        for i in range(n)
+    )
+    decoded = gzip.decompress(base64.b64decode(blob)).decode()
     assert "echo provisioning" in decoded
     assert "wan_t2v_server" in decoded  # run_cmd exec'd
     assert fake_modal.secret_dict["HF_HOME"] == "/cache/hf"  # env passed through
