@@ -50,7 +50,7 @@
       "id": 6,
       "nativeId": "12",
       "subject": "Task 6: Milestone 1 config + build_provider_for characterization test",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** modal-wan-t2v-1_3b.yaml resolves through build_provider_for to ModalProvider; omits cloud:.\n\n**Files:** Create examples/configs/modal-wan-t2v-1_3b.yaml, tests/test_modal_config.py.\n\n**Verify:** `pixi run pytest tests/test_modal_config.py -v`\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-wan-t2v-1_3b.yaml\", \"tests/test_modal_config.py\"], \"verifyCommand\": \"pixi run pytest tests/test_modal_config.py -v\", \"acceptanceCriteria\": [\"config provider=modal, cloud omitted, diffusers t2v 1.3B\", \"build_provider_for returns ModalProvider\", \"spec targets 1.3B cheaply 480x480 33f\"], \"modelTier\": \"standard\"}\n```"
     },

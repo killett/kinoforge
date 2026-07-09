@@ -1,0 +1,68 @@
+# Wan 2.1 T2V-1.3B on Modal serverless GPU (Milestone 1 live proof).
+# Delivery: Option-A generic Modal app — the diffusers wan_t2v_server runs on a
+# Modal web_server(8000) via the same provision_script; exec run_cmd as RunPod.
+# NOTE: NO `cloud:` key — that field is SkyPilot-only and fails validation here.
+#
+# `prompt:` carries the standard video-gen smoke prompt per memory
+# `feedback_standard_test_prompt.md` (verbatim from
+# examples/configs/prompts/field-realistic.txt). `kinoforge generate` requires
+# --prompt at argparse level; the live smoke passes it from that file.
+
+mode: t2v
+prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    server_cmd: ["python", "-m", "kinoforge.engines.diffusers.servers.wan_t2v_server"]
+    pip:
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "diffusers>=0.32"
+      - "transformers>=4.45"
+      - "accelerate>=1.0"
+      - "peft>=0.13"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    base_url: "http://localhost:8000"
+    prompt_body_key: "prompt"
+    embed_modules: ["kinoforge.engines.diffusers.servers"]
+
+models:
+  - ref: "hf:Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+    kind: base
+    target: checkpoints
+
+compute:
+  provider: modal
+  image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+  mode: pod
+  requirements:
+    min_vram_gb: 24
+    min_cuda: "12.4"
+    max_usd_per_hr: 1.20
+    gpu_preference:
+      - "A10"
+      - "L4"
+      - "A100-40GB"
+    disk_gb: 40
+  lifecycle:
+    idle_timeout: 5m
+    job_timeout: 10m
+    time_buffer: 2m
+    max_lifetime: 40m
+    boot_timeout: 30m
+    budget: 2.0
+
+spec:
+  model: "Wan2.1-T2V-1.3B-Diffusers"
+  pipeline: "WanPipeline"
+  scheduler: "UniPCMultistepScheduler"
+  width: 480
+  height: 480
+  num_frames: 33
+  fps: 16
