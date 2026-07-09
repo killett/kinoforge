@@ -88,6 +88,15 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         gpu=req.gpu,
         serialized=True,  # cloudpickle this runtime-built fn (not import-by-ref)
         scaledown_window=req.scaledown_window_s,
+        # Container-init window. With serialized=True Modal DROPS the
+        # @web_server(startup_timeout=...) below and governs the init window by
+        # the FUNCTION's startup_timeout (which itself defaults to `timeout`,
+        # 300s). A ~63GB Wan 2.2 A14B download takes ~30min, so a 300s default
+        # kills the container mid-download ("initializing for too long: 300
+        # seconds"). Set both from req.startup_timeout_s (Milestone-1's 1.3B
+        # downloaded under 300s, which is why this only surfaced at A14B).
+        startup_timeout=req.startup_timeout_s,
+        timeout=req.startup_timeout_s,
         volumes={req.volume_mount: volume},
         secrets=[secret],
     )

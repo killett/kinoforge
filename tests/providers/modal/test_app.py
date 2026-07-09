@@ -116,6 +116,20 @@ def test_web_server_port_and_timeout(fake_modal):
     assert fake_modal.web_server.calls == [{"port": 8000, "startup_timeout": 1800}]
 
 
+def test_function_startup_timeout_governs_container_init(fake_modal):
+    # Bug caught (Modal Milestone 2, 2026-07-08): with serialized=True, Modal
+    # DROPS the @web_server(startup_timeout=...) and falls back to the FUNCTION's
+    # startup_timeout, which defaults to `timeout` (300s). A ~63GB Wan 2.2 A14B
+    # weight download takes ~30min → the container was killed at exactly 300s
+    # ("Runner has been initializing for too long: 300 seconds"). The container
+    # init window is the @app.function startup_timeout/timeout, so both MUST be
+    # set from req.startup_timeout_s or any model whose boot exceeds 300s dies.
+    build_modal_app(_req(), fake_modal)
+    kw = fake_modal.app.function_kwargs
+    assert kw["startup_timeout"] == 1800  # higher precedence than timeout
+    assert kw["timeout"] == 1800  # startup_timeout defaults to timeout if unset
+
+
 def test_secret_payload_contains_provision_and_run_cmd(fake_modal):
     # Bug caught: dropping run_cmd (server never launches) or the provision
     # script (deps/weights never installed) → dead container at startup.
