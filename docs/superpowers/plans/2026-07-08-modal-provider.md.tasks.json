@@ -27,7 +27,7 @@
       "id": 3,
       "nativeId": "9",
       "subject": "Task 3: build_modal_app — the reuse hinge",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Pure builder constructs modal.App whose serialized web_server(8000) runs provision_script; exec run_cmd, with image/gpu/volume/secret.\n\n**Files:** Create src/kinoforge/providers/modal/_app.py, tests/providers/modal/test_app.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/test_app.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/_app.py\", \"tests/providers/modal/test_app.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_app.py -v\", \"acceptanceCriteria\": [\"wires image/app/volume\", \"function kwargs carry gpu/serialized/scaledown/volume/secret\", \"web_server port 8000 + startup_timeout\", \"secret payload has provision_script + run_cmd\"], \"modelTier\": \"standard\"}\n```"
     },
     {

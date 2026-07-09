@@ -73,6 +73,10 @@ ignore_missing_imports = true
 module = ["imageio", "imageio.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]  # Modal SDK lives only in the live-modal env; lazy-imported in provider seams.
+module = ["modal", "modal.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]  # Tests often have untyped functions and use dynamic features, so relax mypy rules for them.
 module = ["tests.*"]
 strict = false
