@@ -9,6 +9,7 @@ first unchecked task without redoing committed work.
 - **Design (validated):** `DESIGN.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
+- **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (see SINGLE NEXT ACTION)
 
 ## RESUME SNAPSHOT (updated 2026-07-08 — read this, then STOP; below is history)
 
@@ -134,12 +135,30 @@ deploy; RunPod schema-migration survival (compute.cloud_type=secure,
 GpuTypeFilter probe); three concurrency fixes (sweeper SIGTERM race,
 atomic put_bytes, FileLock unlink split-brain); luma-agents GET-retry.
 
-**SINGLE NEXT ACTION (2026-07-08):** none — SkyPilot vast video-gen slice-1
-SHIPPED + LIVE-GREEN on Lambda (offline suite 3948 passed, lint/type clean;
-gen §21). Teardown-hang (money-safety) now FIXED (bounded destroy poll + `last_heartbeat`).
-Next natural work is slice-2: pick from the two remaining ⚠️ follow-ups in the
-slice-1 block above — (1) vast list-API compat to unblock the vast path, or (2)
-run the full FlashVSR 480²→1920² on a 48GB+ card. Prior: RunPod boot-stall fast-fail + capacity-retry
+**SINGLE NEXT ACTION (2026-07-08) — START HERE, AUTONOMOUS:** Add **Modal**
+(serverless GPU) as a kinoforge `ComputeProvider` and progressively bring up four
+capabilities on it. Operator has signed up, has the $30 credit, and put
+`MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` in `.env` (creds READY). This is the
+reliability pivot off raw-GPU rental (RunPod/Lambda availability + vast
+software-block).
+
+**Resuming agent, do this immediately (no user handshake — autonomous per
+`feedback_autonomous_no_gates`, live smokes pre-authorized within the $30 Modal
+credit):**
+1. Read the build brief: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`.
+2. Invoke the **superpowers-extended-cc:brainstorm** skill ON that brief to design
+   the Modal provider (key open question: run the existing `wan_t2v_server` HTTP
+   server as a Modal web endpoint — no ssh-tunnel needed — vs. direct Modal
+   function calls; brief recommends the former). Persist the design to
+   `docs/superpowers/specs/` as it forms.
+3. Then **write-plan** → **execute** the progressive roadmap, cheapest first, one
+   live-green + frame-QA'd + logged milestone at a time:
+   (1) Wan 2.1 T2V-1.3B → (2) Wan 2.2 T2V-A14B (needs 80GB) → (3) FlashVSR upscale
+   → (4) RIFE interpolation.
+
+Prior slice-2 follow-ups (deferred, still open): vast list-API compat; full
+FlashVSR 1920² on a 48GB+ card. SkyPilot vast video-gen slice-1 SHIPPED +
+LIVE-GREEN on Lambda (gen §21); teardown-hang FIXED; offline suite 3948 passed. Prior: RunPod boot-stall fast-fail + capacity-retry
 SHIPPED; dead-pod ledger-ghost fix SHIPPED; frame-interpolation (RIFE v4)
 SHIPPED + LIVE-GREEN (entry #20).
 
