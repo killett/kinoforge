@@ -50,6 +50,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 19. `2026-07-05 04:16:18` — [FlashVSR height-target upscale (scale=1080p → 4x+downscale) on RunPod A100 80GB — upscale](#19-2026-07-05-041618--flashvsr-height-target-upscale-scale1080p--4xdownscale-on-runpod-a100-80gb--upscale)
 20. `2026-07-05 22:24:29` — [RIFE v4.26 frame interpolation (16fps→60fps) on RunPod RTX A4000 — interpolate](#20-2026-07-05-222429--rife-v426-frame-interpolation-16fps60fps-on-runpod-rtx-a4000--interpolate)
 21. `2026-07-08 01:33:54` — [FlashVSR upscale on Lambda A100 via SkyPilot ssh-tunnel (provider-internal HTTP seam) — upscale](#21-2026-07-08-013354--flashvsr-upscale-on-lambda-a100-via-skypilot-ssh-tunnel-provider-internal-http-seam--upscale)
+22. `2026-07-08 22:12:07` — [Diffusers WanPipeline Wan 2.1 T2V-1.3B on Modal serverless GPU (A10) — t2v](#22-2026-07-08-221207--diffusers-wanpipeline-wan-21-t2v-13b-on-modal-serverless-gpu-a10--t2v)
 
 ---
 
@@ -2524,3 +2525,50 @@ pixi run -e live-skypilot kinoforge upscale \
 - **Lambda, not vast (approved pivot).** The plan targeted vast.ai, but vast's instance-**list** API (`/api/v0/instances`) returns **410 Gone** and vastai-sdk 0.2.5's `show_instances()` returns empty, so sky's vast readiness poll (`list_instances`) never sees the launched instance and waits forever — a *second* incompatibility beyond the `VastAI().client.api_key` shim (Task 0). The vast shim + `sitecustomize` server-process shim + launch-cloud pin are all committed and did get vast to actually **launch** a real A100 (instance ran) before the list-API wall. User approved pivoting the live proof to Lambda (sky-native); vast stays deferred pending an upstream sky/SDK fix.
 - **Source downscaled to 288² to fit A100 40GB.** FlashVSR's 4x path peaks >40GB at a 1920² output (the reference RunPod cfg pins 80GB); the FullPipeline **ignores `window_size` and treats `tile_size` as on/off only**, and the peak is resolution-bound (a ~5.27GB 1920²-sized buffer), not frame-bound — so trimming frames or shrinking tiles did **not** help. Lambda's 48GB A6000 was capacity-dry all session. The fit lever is output resolution: a 288² source → 4x = 1152² on the GPU (fits 40GB) → downscaled to the cfg's 1080p target. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (via an `env` argv prefix in `server_cmd`) reclaims fragmentation and is kept in the cfg.
 - **Teardown bug (`--no-reuse`):** after `generate completed`, the driver hung instead of destroying the pod — `HeartbeatLoop._tick_once` throws `AttributeError: 'SkyPilotProvider' object has no attribute 'last_heartbeat'` (the B5a heartbeat substrate expects a method SkyPilotProvider doesn't implement; triggered because validation auto-set `heartbeat_interval_s=30`). Pod + tunnel were destroyed manually (`sky down` + `kill <ssh -L pid>` + `kinoforge forget`); ledger verified clean. **Follow-up:** implement `SkyPilotProvider.last_heartbeat` (or gate the heartbeat loop off for providers lacking it) so `--no-reuse` tears down cleanly.
+
+---
+
+## 22. `2026-07-08 22:12:07` — Diffusers WanPipeline Wan 2.1 T2V-1.3B on Modal serverless GPU (A10) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine / Wan-AI/Wan2.1-T2V-1.3B-Diffusers` |
+| **Mode** | t2v |
+| **New capability axis** | **New provider — Modal serverless GPU** (first non-RunPod/non-sky/non-hosted compute provider; the diffusers `wan_t2v_server` runs on a Modal `@modal.web_server(8000)` via the SAME `provision_script; exec run_cmd` bundle as RunPod — Option-A generic reuse) |
+| **First-success SHA** | `1126f93b9c2f9596c110a61e3782b6b704f7f0a3` |
+| **Date (local TZ)** | 2026-07-08 22:12:07 -0700 (PDT) |
+| **GPU** | Modal `A10` (24 GB), serverless; preference-first offer from the Modal catalog |
+| **Wall clock** | ~10 m 31 s cold (deploy 22:01:41 → provision/pip-install torch+diffusers → weight download → eager `WanPipeline.from_pretrained` → generate → destroy 22:12:12) |
+| **Est. spend** | ~$0.19 (A10 @ $1.10/hr × ~0.175 h; Modal serverless per-second) — within the $30 Modal credit |
+| **Layer / phase** | Modal-provider spec 1 (Milestone 1) — `docs/superpowers/plans/2026-07-08-modal-provider.md` Task 8 |
+
+### Exact command
+
+```bash
+pixi run -e live-modal kinoforge generate \
+  --config examples/configs/modal-wan-t2v-1_3b.yaml \
+  --mode t2v \
+  --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
+  --no-reuse
+```
+
+### Artifact
+
+| Field | Value |
+|---|---|
+| **Published path** | `output/20260708-221207_diffusers_Wan2.1-T2V-1.3B-Diffuser_Photorealistic-cinem.mp4` |
+| **Internal uri** | `.kinoforge/run-20260708-220141/743cb2c5e3620187.mp4` |
+| **Dimensions** | 480×480, 33 frames, 16 fps (ffprobe-equivalent via imageio: shape `(33, 480, 480, 3)`) |
+| **Size / SHA-256** | 305,079 B / `743cb2c5e3620187e08bfe1210dc3532025ac1926692a50f1dc3afbb0b7713ae` |
+
+### Frame-QA verdict (mandatory visual review)
+
+**PASS — clearly high quality.** 5 frames extracted (`ffmpeg_frames_by_count`, indices 0/2/4 eyeballed). Coherent alpine meadow of wildflowers, tall waterfall down mossy cliffs, golden-hour backlight + sun flare; a woman (back to camera) standing in the meadow facing the waterfall; glowing butterflies / light-wisps drifting. Strong prompt adherence; no corruption, no false-color, no visible artifacts. Temporal coherence good for a ~2 s clip (slow push-in — mid/late frames near-identical, expected). Frames at `/tmp/.../scratchpad/modal_m1_frame{0..4}.png`.
+
+### Reproduction notes / deviations (read before re-firing)
+
+- **Image MUST be Python-3.13** (`python:3.13-slim`, NOT the RunPod `runpod/pytorch:...py3.11`). Modal's `serialized=True` web-server function (required so the container never has to import kinoforge) rejects a serialized-fn/image **Python-minor mismatch** — the controller (`live-modal` env) is 3.13 (`requires-python >=3.12,<3.14` forbids dropping to 3.11), so the image minor must match. The provision then pip-installs torch 2.6.0 (cu124 cp313 wheels bundle CUDA + libgomp) + diffusers; `imageio[ffmpeg]` bundles ffmpeg. No CUDA base image needed — Modal supplies the driver, torch wheels supply the runtime.
+- **`add_python` must be OMITTED.** `Image.from_registry(tag, add_python=...)` runs `ln -s .../python3 /usr/local/bin/python`, which fails (`File exists`) on any image that already ships Python. `ModalAppRequest.add_python` defaults `None` (omit).
+- **Boot payload is gzip-chunked across Secret keys.** Modal caps a Secret value at 32768 bytes; the embedded-server provision payload is ~50 KB base64. It is gzipped then split across `KINOFORGE_PROVISION_B64_<i>` keys (+ `NCHUNKS`), reassembled + gunzipped in the container. Wan 1.3B → 2 chunks (30000 + 7468).
+- **`modal app list --json` names the app under `description`, not `name`,** and keeps stopped apps listed — `list_instances`/`destroy` read `description`(-or-`name`) and treat "gone" as "no longer `deployed`/`running`".
+- **Teardown verified** post-run: `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` active `[]`.
