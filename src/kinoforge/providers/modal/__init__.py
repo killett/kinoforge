@@ -76,10 +76,69 @@ class ModalProvider(ComputeProvider):
         """Return Modal catalog offers meeting ``reqs``."""
         return modal_offers(reqs)
 
-    # -- lifecycle (implemented in Tasks 4-5) -------------------------------
+    # -- lifecycle ----------------------------------------------------------
     def create_instance(self, spec: InstanceSpec) -> Instance:
-        """Build + deploy a Modal App (implemented in Task 4)."""
-        raise NotImplementedError  # pragma: no cover
+        """Build + deploy a Modal App and return its HTTP endpoint.
+
+        Args:
+            spec: The instance spec (image, offer, provision_script, run_cmd, env).
+
+        Returns:
+            An ``Instance`` in ``starting`` state with ``endpoints["8000"]`` set.
+
+        Raises:
+            ValueError: If ``run_cmd``/``provision_script`` or ``offer`` is missing.
+        """
+        if not spec.run_cmd or not spec.provision_script:
+            raise ValueError(
+                "ModalProvider requires spec.run_cmd and spec.provision_script "
+                f"(the server boot command); got run_cmd={spec.run_cmd!r}"
+            )
+        if spec.offer is None:
+            raise ValueError("ModalProvider requires spec.offer (GPU selection)")
+
+        req = ModalAppRequest(
+            run_id=spec.run_id,
+            image=spec.image,
+            gpu=spec.offer.gpu_type,
+            provision_script=spec.provision_script,
+            run_cmd=list(spec.run_cmd),
+            env=dict(spec.env),
+            volume_mount=spec.volume_mount or "/cache/hf",
+            scaledown_window_s=int(spec.lifecycle.idle_timeout_s),
+            startup_timeout_s=int(spec.lifecycle.boot_timeout_s) or 1800,
+        )
+        app, server_fn = self._app_factory(req, self._modal_mod())
+        url = self._deployer(app, server_fn)
+        self._deployments[spec.run_id] = {
+            "app": app,
+            "url": url,
+            "name": f"kinoforge-{spec.run_id}",
+        }
+        return Instance(
+            id=spec.run_id,
+            provider=self.name,
+            status="starting",
+            created_at=self._clock(),
+            endpoints={"8000": url},
+            tags=dict(spec.tags),
+            cost_rate_usd_per_hr=spec.offer.cost_rate_usd_per_hr,
+        )
+
+    def _modal_mod(self) -> Any:  # noqa: ANN401
+        """Return the injected/real ``modal`` module (``None`` if unavailable).
+
+        The real ``build_modal_app`` needs a live ``modal`` module, present only
+        in the ``live-modal`` env. Offline tests inject ``app_factory`` and ignore
+        the module, so a missing SDK degrades to ``None`` rather than raising.
+        """
+        if self._modal is None:
+            try:
+                import modal
+            except ImportError:
+                return None
+            self._modal = modal
+        return self._modal
 
     def get_instance(self, instance_id: str) -> Instance:
         """Return the named deployment (implemented in Task 5)."""

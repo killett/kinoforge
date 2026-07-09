@@ -34,7 +34,7 @@
       "id": 4,
       "nativeId": "10",
       "subject": "Task 4: create_instance — deploy + return HTTP endpoint",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** create_instance builds app request from spec+offer, deploys via seam, returns Instance(starting, endpoints 8000 url).\n\n**Files:** Modify providers/modal/__init__.py + tests/providers/modal/test_provider.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/test_provider.py -v`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_provider.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_provider.py -v\", \"acceptanceCriteria\": [\"maps offer.gpu_type + lifecycle to app request\", \"returns Instance starting with endpoints 8000 url\", \"records deployment\", \"raises on missing run_cmd/offer\"], \"modelTier\": \"standard\"}\n```"
     },
