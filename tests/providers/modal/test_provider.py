@@ -75,3 +75,48 @@ def test_create_instance_requires_run_cmd():
 
     with pytest.raises(ValueError, match="run_cmd"):
         provider.create_instance(spec)
+
+
+def test_endpoints_returns_recorded_url():
+    from kinoforge.core.interfaces import Instance
+
+    provider = ModalProvider()
+    provider._deployments["r"] = {"url": "https://x.modal.run", "name": "kinoforge-r"}
+    inst = Instance(id="r", provider="modal", status="ready", created_at=0.0)
+    assert provider.endpoints(inst) == {"8000": "https://x.modal.run"}
+
+
+def test_list_instances_filters_kinoforge_apps():
+    records = [
+        {"name": "kinoforge-run1", "state": "deployed"},
+        {"name": "someone-elses-app", "state": "deployed"},
+    ]
+    provider = ModalProvider(lister=lambda: records)
+    ids = [i.id for i in provider.list_instances()]
+    assert ids == ["run1"]  # only kinoforge-prefixed, prefix stripped
+
+
+def test_destroy_is_bounded_when_app_never_disappears():
+    # Bug caught: an unbounded poll (the gen §21 --no-reuse hang) if the app
+    # never leaves the list. Must return after _DESTROY_POLL_MAX_ITERS.
+    stop_calls = []
+    sleeps = []
+    provider = ModalProvider(
+        lister=lambda: [{"name": "kinoforge-r", "state": "deployed"}],  # never gone
+        stopper=lambda name: stop_calls.append(name),
+        sleep=lambda s: sleeps.append(s),
+    )
+    provider._deployments["r"] = {"url": "u", "name": "kinoforge-r"}
+    provider.destroy_instance("r")  # must return, not hang
+    assert stop_calls == ["kinoforge-r"]
+    assert len(sleeps) == 40  # _DESTROY_POLL_MAX_ITERS
+
+
+def test_destroy_returns_early_when_app_gone():
+    provider = ModalProvider(
+        lister=lambda: [],  # already gone
+        stopper=lambda name: None,
+        sleep=lambda s: (_ for _ in ()).throw(AssertionError("should not sleep")),
+    )
+    provider._deployments["r"] = {"url": "u", "name": "kinoforge-r"}
+    provider.destroy_instance("r")  # returns immediately, no sleep
