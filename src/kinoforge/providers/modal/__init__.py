@@ -140,25 +140,58 @@ class ModalProvider(ComputeProvider):
             self._modal = modal
         return self._modal
 
-    def get_instance(self, instance_id: str) -> Instance:
-        """Return the named deployment (implemented in Task 5)."""
-        raise NotImplementedError  # pragma: no cover
+    def endpoints(self, instance: Instance) -> dict[str, str]:
+        """Return the HTTP endpoint map for ``instance``."""
+        rec = self._deployments.get(instance.id)
+        if rec and rec.get("url"):
+            return {"8000": rec["url"]}
+        return dict(instance.endpoints)
+
+    def _record_to_instance(self, rec: dict[str, Any]) -> Instance:
+        """Map a ``modal app list`` record onto an :class:`Instance`."""
+        name = rec.get("name", "")
+        run_id = name[len("kinoforge-") :]
+        state = rec.get("state", "")
+        status = "ready" if state in {"deployed", "running"} else "stopped"
+        return Instance(
+            id=run_id,
+            provider=self.name,
+            status=status,
+            created_at=self._clock(),
+        )
 
     def list_instances(self) -> list[Instance]:
-        """Return kinoforge-owned Modal deployments (implemented in Task 5)."""
-        raise NotImplementedError  # pragma: no cover
+        """Return kinoforge-owned Modal deployments."""
+        return [
+            self._record_to_instance(r)
+            for r in self._lister()
+            if str(r.get("name", "")).startswith("kinoforge-")
+        ]
+
+    def get_instance(self, instance_id: str) -> Instance:
+        """Return the named deployment or raise ``KeyError``-style not-found."""
+        for inst in self.list_instances():
+            if inst.id == instance_id:
+                return inst
+        raise KeyError(f"no modal deployment for run_id={instance_id!r}")
 
     def stop_instance(self, instance_id: str) -> None:
-        """Stop the named deployment (implemented in Task 5)."""
-        raise NotImplementedError  # pragma: no cover
+        """Stop (== destroy for Modal) the named deployment."""
+        self.destroy_instance(instance_id)
 
     def destroy_instance(self, instance_id: str) -> None:
-        """Stop + poll until gone, bounded (implemented in Task 5)."""
-        raise NotImplementedError  # pragma: no cover
-
-    def endpoints(self, instance: Instance) -> dict[str, str]:
-        """Return the HTTP endpoint map (implemented in Task 5)."""
-        raise NotImplementedError  # pragma: no cover
+        """Stop the deployment and poll until gone (bounded)."""
+        rec = self._deployments.get(instance_id)
+        app_name = rec["name"] if rec else f"kinoforge-{instance_id}"
+        try:
+            self._stopper(app_name)
+            for _ in range(_DESTROY_POLL_MAX_ITERS):
+                names = {str(r.get("name", "")) for r in self._lister()}
+                if app_name not in names:
+                    break
+                self._sleep(3.0)
+        finally:
+            self._deployments.pop(instance_id, None)
 
     # -- heartbeat (Modal owns liveness) ------------------------------------
     def heartbeat(self, instance_id: str) -> None:

@@ -42,7 +42,7 @@
       "id": 5,
       "nativeId": "11",
       "subject": "Task 5: get/list/stop/destroy_instance + endpoints (bounded teardown)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Inventory + teardown via lister/stopper seams, bounded destroy poll (_DESTROY_POLL_MAX_ITERS=40), endpoints reader.\n\n**Files:** Modify providers/modal/__init__.py + tests/providers/modal/test_provider.py.\n\n**Verify:** `pixi run pytest tests/providers/modal/ -v && pixi run lint && pixi run typecheck`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_provider.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/ -v && pixi run lint && pixi run typecheck\", \"acceptanceCriteria\": [\"endpoints returns recorded url\", \"list_instances filters kinoforge- prefix\", \"get_instance returns or raises\", \"destroy bounded by 40-iter poll, idempotent\"], \"modelTier\": \"standard\"}\n```"
     },
