@@ -9,12 +9,18 @@ config reaches the remote container through a ``modal.Secret`` (no image rebuild
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import os
 import shlex
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
+
+#: Modal caps a single Secret value at 32768 bytes. The gzipped+base64 boot
+#: payload (embedded server modules) exceeds that, so it is split across
+#: ``KINOFORGE_PROVISION_B64_<i>`` keys, each safely under the cap.
+_SECRET_CHUNK = 30000
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,20 @@ def _boot_payload(req: ModalAppRequest) -> str:
     return f"{req.provision_script}\n{exec_line}\n"
 
 
+def _payload_secret_env(payload: str) -> dict[str, str]:
+    """gzip+base64 the boot payload and split it across chunked secret keys.
+
+    Modal's 32768-byte-per-value Secret cap forces chunking. Returns the env
+    dict the container reassembles: an ``NCHUNKS`` count plus ``_B64_<i>`` parts.
+    """
+    blob = base64.b64encode(gzip.compress(payload.encode())).decode()
+    chunks = [blob[i : i + _SECRET_CHUNK] for i in range(0, len(blob), _SECRET_CHUNK)]
+    env = {"KINOFORGE_PROVISION_NCHUNKS": str(len(chunks))}
+    for i, chunk in enumerate(chunks):
+        env[f"KINOFORGE_PROVISION_B64_{i}"] = chunk
+    return env
+
+
 def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  # noqa: ANN401
     """Build ``(app, server_fn)`` for ``req`` using ``modal_mod``.
 
@@ -60,9 +80,8 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
     app = modal_mod.App(name=f"kinoforge-{req.run_id}", image=image)
     volume = modal_mod.Volume.from_name(_VOLUME_NAME, create_if_missing=True)
 
-    payload_b64 = base64.b64encode(_boot_payload(req).encode()).decode()
     secret = modal_mod.Secret.from_dict(
-        {**req.env, "KINOFORGE_PROVISION_B64": payload_b64}
+        {**req.env, **_payload_secret_env(_boot_payload(req))}
     )
 
     @app.function(  # type: ignore[untyped-decorator]  # decorator from an Any-typed module
@@ -74,9 +93,12 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
     )
     @modal_mod.web_server(8000, startup_timeout=req.startup_timeout_s)  # type: ignore[untyped-decorator]
     def server() -> None:
-        # Runs INSIDE the Modal container at startup. Decode the boot script,
-        # write it, and launch (non-blocking) so it binds 0.0.0.0:8000.
-        script = base64.b64decode(os.environ["KINOFORGE_PROVISION_B64"]).decode()
+        # Runs INSIDE the Modal container at startup. Reassemble the chunked
+        # gzip+base64 boot script, write it, and launch (non-blocking) so it
+        # binds 0.0.0.0:8000.
+        n = int(os.environ["KINOFORGE_PROVISION_NCHUNKS"])
+        blob = "".join(os.environ[f"KINOFORGE_PROVISION_B64_{i}"] for i in range(n))
+        script = gzip.decompress(base64.b64decode(blob)).decode()
         with open("/tmp/kinoforge_boot.sh", "w") as fh:  # noqa: S108
             fh.write(script)
         subprocess.Popen(["bash", "/tmp/kinoforge_boot.sh"])  # noqa: S603,S607,S108
