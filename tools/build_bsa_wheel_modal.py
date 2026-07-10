@@ -29,9 +29,17 @@ import os
 
 import modal
 
-from kinoforge.core.dotenv_loader import load_env_file
+# Load .env LOCALLY so os.environ carries GH_TOKEN for the Secret below (pixi does
+# not auto-source .env). Guarded: Modal re-imports THIS module inside the container
+# to locate the function, where kinoforge is not installed — the attached Secret
+# already carries the token there, so skipping the load in-container is correct
+# (an unguarded import raises ModuleNotFoundError and kills the function).
+try:
+    from kinoforge.core.dotenv_loader import load_env_file
 
-load_env_file()  # GH_TOKEN + MODAL_TOKEN_* from .env (pixi does not auto-source)
+    load_env_file()
+except ModuleNotFoundError:
+    pass
 
 _GH_OWNER = "killett"
 _GH_REPO = "kinoforge-artifacts"
