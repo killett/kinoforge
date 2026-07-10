@@ -21,6 +21,21 @@ def test_provision_script_builds_under_py313():
     assert "3453bbb1" in script
     assert "8.0;8.6;8.9;9.0" in script
     assert "pip wheel" in script
+    # py3.13 comes from uv's static build-standalone, NOT apt/deadsnakes (the
+    # first attempt crash-looped on the PPA network dance).
+    assert "uv venv --python 3.13" in script
+    assert "apt-get" not in script
+
+
+def test_provision_script_ships_log_on_failure():
+    # Bug caught: a raw builder pod serves no logs, so a failed build is
+    # invisible. The ERR trap uploads /tmp/build.log to the release and sleeps
+    # (instead of exiting, which RunPod restart-loops into a 0%-util ghost).
+    m = _mod()
+    script = m._build_provision_script(release_id=999)
+    assert "exec >/tmp/build.log 2>&1" in script
+    assert "trap " in script and "ERR" in script
+    assert "build-log-" in script
 
 
 def test_torch_index_is_cu124():

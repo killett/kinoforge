@@ -124,6 +124,20 @@ def _build_provision_script(release_id: int) -> str:
         f"/releases/{release_id}/assets"
     )
     return f"""set -euo pipefail
+# All output to a file so the ERR trap can ship it to the GH release — a raw
+# builder pod serves no logs (no port-8001 bootstrap server), so without this
+# a failure is invisible from outside (2026-07-09 blind crash-loop lesson).
+exec >/tmp/build.log 2>&1
+_upload_log() {{
+  curl -sSL -X POST -H "Authorization: Bearer $GH_TOKEN" \\
+    -H "Content-Type: text/plain" -H "Accept: application/vnd.github+json" \\
+    --data-binary @/tmp/build.log \\
+    "{upload_url}?name=build-log-$(date +%s).txt" || true
+}}
+# On ANY failure: capture rc, upload the log, then sleep — NOT exit. An exiting
+# container is restart-looped by RunPod (default policy), which resets uptime to
+# 0 and hides the real error behind an endless reboot. Sleeping pins the failure.
+trap '_rc=$?; echo "=== SCRIPT FAILED rc=$_rc ==="; _upload_log; sleep infinity' ERR
 echo "=== BSA WHEEL BUILDER (cp313) ==="
 echo "pod=$(hostname) date=$(date -Is)"
 if curl -sf -H "Authorization: Bearer $GH_TOKEN" \\
@@ -132,17 +146,16 @@ if curl -sf -H "Authorization: Bearer $GH_TOKEN" \\
   echo "=== WHEEL_ALREADY_UPLOADED — skipping rebuild ==="
   sleep infinity
 fi
-echo "=== INSTALLING PYTHON 3.13 (wheel ABI tag = build python) ==="
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
-apt-get install -y -q software-properties-common
-add-apt-repository -y ppa:deadsnakes/ppa
-apt-get update -q
-apt-get install -y -q python3.13 python3.13-venv python3.13-dev
-python3.13 -m venv /tmp/py313
+echo "=== INSTALLING PYTHON 3.13 via uv (static build-standalone; no apt/PPA) ==="
+# uv fetches a self-contained CPython 3.13 (python-build-standalone) — no
+# apt/deadsnakes/GPG network dance that crash-looped the first attempt. --seed
+# puts pip in the venv so `pip wheel --no-build-isolation` (needs real pip) works.
+pip install --quiet uv || python3 -m pip install --quiet uv
+export UV_PYTHON_INSTALL_DIR=/tmp/uvpy
+uv python install 3.13
+uv venv --python 3.13 --seed /tmp/py313
 . /tmp/py313/bin/activate
 python -c "import sys; assert sys.version_info[:2] == (3, 13), sys.version; print(sys.version)"
-python -m ensurepip --upgrade
 python -m pip install --quiet --upgrade pip
 echo "=== PINNING TORCH (wheel links against build-time torch) ==="
 python -m pip install --quiet {_TORCH_PINS} --extra-index-url {_TORCH_INDEX}
@@ -180,6 +193,7 @@ curl -sSL --fail-with-body -X POST \\
   "{upload_url}?name=$NAME"
 echo ""
 echo "=== UPLOAD_DONE ==="
+_upload_log
 sleep infinity
 """
 
