@@ -1,0 +1,97 @@
+# FlashVSR v1.1 4x upscale (480x480 -> 1920x1920) on Modal serverless GPU
+# (Milestone 3 live proof). Full native resolution on an 80GB card — unlike the
+# SkyPilot/Lambda 40GB proof (successful-generations.md §21) that downscaled the
+# source to 288sq. Delivery: Option-A generic Modal app — the diffusers
+# wan_t2v_server runs on a Modal web_server(8000) via the same
+# provision_script; exec run_cmd bundle as RunPod, reusing the M1/M2 transport.
+#
+# BSA note: Modal's serialized web-server fn forces a py3.13 image, but FlashVSR's
+# Block-Sparse-Attention prebuilt wheels are cp311. This cfg points bsa_wheel_url
+# at a cp313 wheel built for exactly this reason (torch2.6+cu124, BSA 3453bbb1) —
+# built on Modal (CPU cuda-devel image) after RunPod host-reclaimed the builder
+# pods; see tools/build_bsa_wheel_modal.py and
+# docs/superpowers/specs/2026-07-09-modal-milestone3-flashvsr-design.md.
+#
+# NO `cloud:` key — that field is SkyPilot-only and fails validation here.
+#
+# Usage (upscale-only; supply the source clip via --video):
+#   pixi run -e live-modal kinoforge upscale \
+#     --config examples/configs/modal-flashvsr-x4.yaml \
+#     --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bfloat16
+  diffusers:
+    # Modal serialized web_server fn requires image-Python == controller (3.13).
+    # python:3.13-slim matches; provision pip-installs torch 2.6 cu124 (cp313
+    # wheels bundle the CUDA runtime + libgomp the BSA wheel needs at runtime).
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # torch 2.6.0+cu124 trio — the cp313 BSA wheel below links against exactly
+      # this torch (ABI lockstep: a mismatch surfaces as a c10 undefined-symbol
+      # at inference, not at install). Do NOT bump without rebuilding the wheel.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      # diffsynth (FlashVSR upstream) does a module-top
+      # `from modelscope import snapshot_download` even for HF weights.
+      - "modelscope"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    # Skip eager WanPipeline load — pod runs only the on-demand FlashVSR runtime.
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  requirements:
+    # FlashVSR 480->1920 4x peaks ~42-46 GB with tile_size=512 (RunPod x4 cfg
+    # history) — an 80GB card runs the full 81f clip without the §21 downscale.
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 4.00
+    disk_gb: 60
+    gpu_preference:
+      - "A100-80GB"
+      - "H100"
+  lifecycle:
+    # BSA wheel fetch+install ~60s; FlashVSR pip+weights ~5min; first-call setup.
+    # 45m mirrors M2 and gives wide headroom over the ~8min happy path.
+    idle_timeout: 30m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 90m
+    boot_timeout: 45m
+    budget: 2.0
+
+spec:
+  model: "flashvsr-wan21-bfloat16"
+
+upscale:
+  engine: flashvsr
+  scale: 4x
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    # cp313 BSA wheel — built on Modal (tools/build_bsa_wheel_modal.py) against
+    # torch 2.6.0+cu124 / BSA 3453bbb1, hosted on killett/kinoforge-artifacts.
+    bsa_wheel_url: "https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu124-torch2.6-cp313-v1/block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl"
+    precision: bfloat16
+    window_size: 24
+    tile_size: 512
+    long_video_mode: false

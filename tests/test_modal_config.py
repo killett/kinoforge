@@ -9,6 +9,7 @@ from kinoforge.providers.modal._catalog import modal_offers
 
 CFG = Path("examples/configs/modal-wan-t2v-1_3b.yaml")
 CFG_A14B = Path("examples/configs/modal-wan-t2v-14b-2_2.yaml")
+CFG_FLASHVSR = Path("examples/configs/modal-flashvsr-x4.yaml")
 
 
 def test_config_resolves_to_modal_provider():
@@ -52,3 +53,37 @@ def test_a14b_config_selects_80gb_offer_first():
     assert offers, "expected at least one 80GB offer"
     assert offers[0].vram_gb >= 80
     assert offers[0].gpu_type == "A100-80GB"  # cheapest 80GB, first in preference
+
+
+def test_flashvsr_config_resolves_to_modal_provider():
+    cfg = load_config(CFG_FLASHVSR)
+    assert cfg.compute is not None
+    assert cfg.compute.provider == "modal"
+    assert cfg.compute.cloud is None  # non-sky
+    assert isinstance(build_provider_for(cfg), ModalProvider)
+
+
+def test_flashvsr_config_is_upscale_only_80gb_cp313():
+    cfg = load_config(CFG_FLASHVSR)
+    assert cfg.compute is not None
+    assert cfg.compute.requirements.min_vram_gb == 80
+    # Upscale-only: no eager base model, server runs only the FlashVSR runtime.
+    assert cfg.models == []
+    assert cfg.engine.diffusers is not None
+    assert cfg.engine.diffusers.upscale_only is True
+    # Full native 4x (480 -> 1920) — the milestone's point, not a downscale.
+    assert cfg.upscale is not None
+    assert cfg.upscale.engine == "flashvsr"
+    assert cfg.upscale.scale == "4x"
+    assert cfg.upscale.flashvsr is not None
+    # The Milestone-3 cp313 wheel (Modal py3.13), NOT the default cp311 wheel.
+    assert "cp313" in cfg.upscale.flashvsr.bsa_wheel_url
+
+
+def test_flashvsr_config_selects_80gb_offer_first():
+    cfg = load_config(CFG_FLASHVSR)
+    assert cfg.compute is not None
+    offers = modal_offers(cfg.hardware_requirements())
+    assert offers, "expected at least one 80GB offer"
+    assert offers[0].vram_gb >= 80
+    assert offers[0].gpu_type == "A100-80GB"
