@@ -16,13 +16,17 @@ endpoint every 60 s from outside and destroys the pod as soon as an
 asset lands. Pod is destroyed on any exit path (success, timeout,
 keyboard interrupt).
 
-Current target: ``bsa-cu124-torch2.6-v1`` — torch 2.6.0+cu124 so the
-F-multi co-resident pod (Wan 2.2 A14B needs torch>=2.6 for the
-``infer_schema`` stringified-annotation fix; BSA must match that same
-torch ABI) can run both models in one process. Built on the
-``2.4.0-...cuda12.4.1-devel`` image: nvcc 12.4 matches the cu124 torch
-wheels, and that tag pulls fast on RunPod (the 2.8.0 cudnn-devel tag
-stalled image pulls three times during T8, ~$0.17 wasted each).
+Current target: ``bsa-cu124-torch2.6-cp313-v1`` — torch 2.6.0+cu124,
+built under **Python 3.13** so the wheel ABI tag is ``cp313-cp313``.
+Modal's serialized web-server function forces a py3.13 image, which
+pip-rejects the older cp311 wheel; this tag is the prerequisite for
+running FlashVSR on Modal. The provision script installs python3.13
+via the deadsnakes PPA into the ``cuda12.4.1-devel`` base image and
+drives ``pip wheel`` under a py3.13 venv (the wheel ABI tag follows
+the build interpreter, so building under 3.13 is what makes the tag
+cp313). nvcc 12.4 matches the cu124 torch wheels, and that image tag
+pulls fast on RunPod (the 2.8.0 cudnn-devel tag stalled image pulls
+three times during T8, ~$0.17 wasted each).
 
 Budget: ``~$1``, hard ceiling ``$2`` via ``lifecycle.budget_usd``.
 """
@@ -48,7 +52,7 @@ from kinoforge.providers.runpod import RunPodProvider
 
 _GH_OWNER = "killett"
 _GH_REPO = "kinoforge-artifacts"
-_GH_TAG = "bsa-cu124-torch2.6-v1"
+_GH_TAG = "bsa-cu124-torch2.6-cp313-v1"
 _BASE_IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 _BSA_COMMIT = "3453bbb1"
 # The wheel links against the torch importable at build time. Pin it
@@ -119,21 +123,32 @@ def _build_provision_script(release_id: int) -> str:
         f"/releases/{release_id}/assets"
     )
     return f"""set -euo pipefail
-echo "=== BSA WHEEL BUILDER ==="
+echo "=== BSA WHEEL BUILDER (cp313) ==="
 echo "pod=$(hostname) date=$(date -Is)"
-# Idempotent-restart safety: if the wheel is already up, skip the build.
 if curl -sf -H "Authorization: Bearer $GH_TOKEN" \\
      -H "Accept: application/vnd.github+json" \\
      "{assets_url}" | grep -q '"name".*\\.whl'; then
   echo "=== WHEEL_ALREADY_UPLOADED — skipping rebuild ==="
   sleep infinity
 fi
+echo "=== INSTALLING PYTHON 3.13 (wheel ABI tag = build python) ==="
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+apt-get install -y -q software-properties-common
+add-apt-repository -y ppa:deadsnakes/ppa
+apt-get update -q
+apt-get install -y -q python3.13 python3.13-venv python3.13-dev
+python3.13 -m venv /tmp/py313
+. /tmp/py313/bin/activate
+python -c "import sys; assert sys.version_info[:2] == (3, 13), sys.version; print(sys.version)"
+python -m ensurepip --upgrade
+python -m pip install --quiet --upgrade pip
 echo "=== PINNING TORCH (wheel links against build-time torch) ==="
-pip install --quiet {_TORCH_PINS} --extra-index-url {_TORCH_INDEX}
+python -m pip install --quiet {_TORCH_PINS} --extra-index-url {_TORCH_INDEX}
 python -c "import torch; v = torch.__version__; \\
   assert v.startswith('2.6.0'), f'torch pin failed: {{v}}'; \\
   print(f'build torch={{v}}')"
-pip install --quiet packaging ninja
+python -m pip install --quiet packaging ninja
 export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 export MAX_JOBS=4
 echo "=== CLONING BSA @{_BSA_COMMIT} ==="
@@ -142,9 +157,13 @@ cd /tmp/bsa
 git checkout {_BSA_COMMIT}
 echo "=== BUILDING WHEEL (this is the long step) ==="
 mkdir -p /tmp/whl
-time pip wheel --no-deps --no-build-isolation --wheel-dir /tmp/whl .
+time python -m pip wheel --no-deps --no-build-isolation --wheel-dir /tmp/whl .
 WHEEL=$(ls /tmp/whl/*.whl | head -1)
 NAME=$(basename "$WHEEL")
+case "$NAME" in
+  *cp313-cp313*) echo "=== CP313 TAG CONFIRMED: $NAME ===" ;;
+  *) echo "FATAL: wheel is not cp313: $NAME" >&2; exit 91 ;;
+esac
 SHA=$(sha256sum "$WHEEL" | cut -d' ' -f1)
 SIZE=$(stat -c%s "$WHEEL")
 echo "=== WHEEL_MANIFEST ==="
@@ -160,8 +179,6 @@ curl -sSL --fail-with-body -X POST \\
   "{upload_url}?name=$NAME"
 echo ""
 echo "=== UPLOAD_DONE ==="
-# Keep container alive so RunPod doesn't reap it before the outside
-# driver's next poll picks up the new asset and destroys the pod cleanly.
 sleep infinity
 """
 
