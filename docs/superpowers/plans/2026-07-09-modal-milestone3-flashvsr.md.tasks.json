@@ -4,7 +4,7 @@
     {
       "id": 0,
       "subject": "Task 0: Generalize build_bsa_wheel.py to emit a cp313 wheel",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Parameterize the one-shot BSA wheel builder to build a cp313-cp313 wheel (torch 2.6.0+cu124) to a new release tag, keeping the cp311 path reproducible.\n\n**Files:** Modify tools/build_bsa_wheel.py; create tests/tools/test_build_bsa_wheel.py\n\n**Acceptance Criteria:** _GH_TAG == bsa-cu124-torch2.6-cp313-v1; provision script installs deadsnakes py3.13 and builds under it (cp313 tag); torch/BSA/arch pins unchanged; --dry-run exits 0 no pod; cp313 filename guard.\n\n**Verify:** pixi run pytest tests/tools/test_build_bsa_wheel.py -v\n\n```json:metadata\n{\"files\": [\"tools/build_bsa_wheel.py\", \"tests/tools/test_build_bsa_wheel.py\"], \"verifyCommand\": \"pixi run pytest tests/tools/test_build_bsa_wheel.py -v\", \"acceptanceCriteria\": [\"_GH_TAG cp313\", \"py3.13 build\", \"pins unchanged\", \"--dry-run exit 0\"], \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -24,7 +24,7 @@
     {
       "id": 3,
       "subject": "Task 3: Wire HF_HOME=/cache/hf into Modal container env",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Set HF_HOME to the Volume mount so HF-cached weights persist across Modal container starts. Independent of FlashVSR path.\n\n**Files:** modify src/kinoforge/providers/modal/__init__.py (create_instance); create tests/providers/modal/test_hf_home_env.py\n\n**Acceptance Criteria:** ModalAppRequest.env HF_HOME == resolved volume_mount (/cache/hf default); operator-supplied HF_HOME not overridden.\n\n**Verify:** pixi run pytest tests/providers/modal/test_hf_home_env.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_hf_home_env.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_hf_home_env.py -v\", \"acceptanceCriteria\": [\"HF_HOME default /cache/hf\", \"operator override preserved\"], \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -42,5 +42,5 @@
       "description": "**Goal:** Run full 480->1920 4x upscale on Modal 80GB, frame-QA, verify teardown, log §24.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:** modify successful-generations.md (§24); modify PROGRESS.md\n\n**Acceptance Criteria:** upscale completes, output mp4 1920x1920 (ffprobe); frame-QA ~5 frames no corruption/coherent/faithful to 480 source; kinoforge list + modal app list clean after exit; §24 written.\n\n**Verify:** pixi run kinoforge list (no instances + empty ledger); ffprobe output 1920x1920; §24 present.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"output 1920x1920\", \"frame-QA clean vs source\", \"teardown clean\", \"§24 written\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"source\", \"480\", \"input\"], [\"output\", \"1920\", \"upscaled\"]], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-09"
+  "lastUpdated": "2026-07-09T19:36"
 }
