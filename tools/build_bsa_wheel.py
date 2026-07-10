@@ -43,6 +43,7 @@ import urllib.request
 from dataclasses import replace
 
 from kinoforge.core.credentials import EnvCredentialProvider
+from kinoforge.core.dotenv_loader import load_env_file
 from kinoforge.core.interfaces import (
     HardwareRequirements,
     InstanceSpec,
@@ -303,6 +304,12 @@ def main() -> int:
         help="Render provision script + print, don't create a pod.",
     )
     args = parser.parse_args()
+
+    # `pixi run` does NOT auto-source .env (pixi 0.69), and this process reads
+    # RUNPOD_API_KEY (via EnvCredentialProvider) + GH_TOKEN directly. Without
+    # this, the RunPod provider falls back to its no-key HTTP seams (no
+    # User-Agent) and RunPod's Cloudflare edge 403s every call.
+    load_env_file()
 
     gh_token = os.environ.get("GH_TOKEN") or ""
     if not gh_token:

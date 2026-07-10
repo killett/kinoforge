@@ -26,3 +26,20 @@ def test_provision_script_builds_under_py313():
 def test_torch_index_is_cu124():
     m = _mod()
     assert "cu124" in m._TORCH_INDEX
+
+
+def test_main_loads_dotenv_before_reading_creds(monkeypatch):
+    # Bug caught: `pixi run` does not auto-source .env, so without an explicit
+    # load_env_file() the builder's own process lacks RUNPOD_API_KEY -> the
+    # RunPod provider uses its no-User-Agent fallback seams -> Cloudflare 403.
+    m = _mod()
+    calls = []
+    monkeypatch.setattr(m, "load_env_file", lambda *a, **k: calls.append("loaded"))
+    monkeypatch.setattr(m, "_get_release_id", lambda _tok: 12345)
+    monkeypatch.setattr(m.sys, "argv", ["build_bsa_wheel", "--dry-run"])
+    monkeypatch.setenv("GH_TOKEN", "dummy-token-for-dry-run")
+
+    rc = m.main()
+
+    assert rc == 0
+    assert calls == ["loaded"], "main() must call load_env_file() at startup"
