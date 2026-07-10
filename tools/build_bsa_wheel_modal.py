@@ -53,6 +53,13 @@ _image = (
     )
     # Build backend deps for `pip wheel --no-build-isolation`.
     .pip_install("packaging", "ninja", "wheel", "setuptools")
+    # add_python's standalone CPython bakes `clang` into its sysconfig, so
+    # torch's cpp_extension links the final .so with clang++ — absent from the
+    # cuda-devel image (only g++). The 70-min nvcc compile succeeds, then the
+    # link dies with "clang++ ... No such file or directory". Install clang so
+    # the linker exists (it links the g++/nvcc objects against libstdc++ fine).
+    # Placed AFTER the torch pip layer so that cached layer is reused on rebuild.
+    .apt_install("clang")
     .run_commands(
         "git clone --depth 100 "
         "https://github.com/mit-han-lab/Block-Sparse-Attention.git /tmp/bsa",
