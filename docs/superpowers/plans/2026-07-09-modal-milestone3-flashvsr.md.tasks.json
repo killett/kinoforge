@@ -17,7 +17,7 @@
     {
       "id": 2,
       "subject": "Task 2: Modal FlashVSR cfg + offline characterization",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Create examples/configs/modal-flashvsr-x4.yaml (py3.13-slim + cp313 wheel + upscale-only 80GB) + offline tests.\n\n**Files:** create examples/configs/modal-flashvsr-x4.yaml; modify tests/test_modal_config.py\n\n**Acceptance Criteria:** resolves ModalProvider, cloud None, min_vram 80; upscale flashvsr, scale 4x, bsa_wheel_url cp313, models [], upscale_only; modal_offers 80GB A100-80GB first.\n\n**Verify:** pixi run pytest tests/test_modal_config.py -v\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-flashvsr-x4.yaml\", \"tests/test_modal_config.py\"], \"verifyCommand\": \"pixi run pytest tests/test_modal_config.py -v\", \"acceptanceCriteria\": [\"ModalProvider cloud None vram80\", \"flashvsr 4x cp313 upscale_only\", \"80GB offer first\"], \"modelTier\": \"standard\"}\n```"
     },
@@ -30,7 +30,7 @@
     {
       "id": 4,
       "subject": "Task 4: RED live-proof scaffold",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Commit failing (xfail) live-proof contract test BEFORE any Modal spend.\n\n**Files:** create tests/live/test_modal_flashvsr_x4.py\n\n**Acceptance Criteria:** live+xfail, records upscale CLI (config + fixture --video + --no-reuse), asserts 1920x1920 mp4 + frame-QA; committed before Task 5.\n\n**Verify:** pixi run pytest tests/live/test_modal_flashvsr_x4.py -v → 1 xfailed\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_flashvsr_x4.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_modal_flashvsr_x4.py -v\", \"acceptanceCriteria\": [\"live+xfail records upscale CLI + 1920x1920 + frame-QA\", \"committed before spend\"], \"modelTier\": \"mechanical\"}\n```"
     },
@@ -42,5 +42,5 @@
       "description": "**Goal:** Run full 480->1920 4x upscale on Modal 80GB, frame-QA, verify teardown, log §24.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:** modify successful-generations.md (§24); modify PROGRESS.md\n\n**Acceptance Criteria:** upscale completes, output mp4 1920x1920 (ffprobe); frame-QA ~5 frames no corruption/coherent/faithful to 480 source; kinoforge list + modal app list clean after exit; §24 written.\n\n**Verify:** pixi run kinoforge list (no instances + empty ledger); ffprobe output 1920x1920; §24 present.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"output 1920x1920\", \"frame-QA clean vs source\", \"teardown clean\", \"§24 written\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"source\", \"480\", \"input\"], [\"output\", \"1920\", \"upscaled\"]], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-09T22:33"
+  "lastUpdated": "2026-07-09T22:40"
 }
