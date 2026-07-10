@@ -10,7 +10,7 @@
     {
       "id": 1,
       "subject": "Task 1: Create cp313 release + run live wheel build (RunPod spend)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Produce + host block_sparse_attn cp313 wheel on killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:** none (live ops using Task-0 tool).\n\n**Acceptance Criteria:** release tag exists; cp313-cp313 .whl asset present; builder pod destroyed (ledger clean).\n\n**Verify:** curl release-by-tag | rg cp313 .whl name; pixi run kinoforge list → no instances.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"curl release tag | rg cp313 whl\", \"acceptanceCriteria\": [\"release tag exists\", \"cp313 whl asset\", \"pod destroyed\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"modelTier\": \"standard\"}\n```"
     },
@@ -42,5 +42,5 @@
       "description": "**Goal:** Run full 480->1920 4x upscale on Modal 80GB, frame-QA, verify teardown, log §24.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:** modify successful-generations.md (§24); modify PROGRESS.md\n\n**Acceptance Criteria:** upscale completes, output mp4 1920x1920 (ffprobe); frame-QA ~5 frames no corruption/coherent/faithful to 480 source; kinoforge list + modal app list clean after exit; §24 written.\n\n**Verify:** pixi run kinoforge list (no instances + empty ledger); ffprobe output 1920x1920; §24 present.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"acceptanceCriteria\": [\"output 1920x1920\", \"frame-QA clean vs source\", \"teardown clean\", \"§24 written\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"source\", \"480\", \"input\"], [\"output\", \"1920\", \"upscaled\"]], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-09T19:36"
+  "lastUpdated": "2026-07-09T22:33"
 }
