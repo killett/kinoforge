@@ -1,0 +1,39 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-10-modal-fast-boot-image-bake.md",
+  "tasks": [
+    {
+      "id": 6,
+      "subject": "Task 6: Split render_provision into build/runtime phases",
+      "status": "pending",
+      "description": "**Goal:** render_provision returns build_script (pip + composed upscaler/interpolator install) + runtime_script (everything else) while script stays byte-identical.\n\n**Files:** interfaces.py (RenderedProvision), engines/diffusers/__init__.py (render_provision), tests/engines/diffusers/test_render_provision_split.py + _golden_provision.json\n\n**Acceptance:** RenderedProvision build_script/runtime_script fields; build has pip/BSA/weights not runtime bits; runtime has server not installs; script byte-identical golden.\n\n**Verify:** pixi run pytest tests/engines/diffusers/test_render_provision_split.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/diffusers/test_render_provision_split.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/test_render_provision_split.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: FlashVSR BSA guard tolerates no-GPU build env",
+      "status": "pending",
+      "description": "**Goal:** BSA SM80 guard no-ops when no CUDA device (build time) instead of exit 87; still enforces SM80+ at runtime.\n\n**Files:** upscalers/flashvsr/_engine.py (guard), tests/upscalers/flashvsr/test_engine.py\n\n**Acceptance:** guard uses torch.cuda.is_available(); curl+pip install lines unchanged.\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_engine.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_engine.py\", \"tests/upscalers/flashvsr/test_engine.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_engine.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Thread build/runtime split onto InstanceSpec + orchestrator",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** InstanceSpec carries image_build_script + runtime_provision_script; orchestrator populates from rendered split; RunPod ignores both.\n\n**Files:** interfaces.py (InstanceSpec), orchestrator.py (spec build), tests/core/test_orchestrator_provision_threading.py\n\n**Acceptance:** InstanceSpec two new fields; orchestrator spec has image_build_script==rendered.build_script, runtime_provision_script==rendered.runtime_script, provision_script==rendered.script.\n\n**Verify:** pixi run pytest tests/core/test_orchestrator_provision_threading.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator_provision_threading.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_provision_threading.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: ModalProvider bakes build script into the image",
+      "status": "pending",
+      "blockedBy": [8],
+      "description": "**Goal:** build_modal_app runs image_build_script via Image.run_commands; boot payload uses runtime script only.\n\n**Files:** providers/modal/_app.py (ModalAppRequest + build_modal_app), providers/modal/__init__.py (create_instance), tests/providers/modal/test_image_bake.py\n\n**Acceptance:** ModalAppRequest image_build_script field; image.run_commands(build_script) when set; boot payload from runtime_provision_script or provision_script (no pip/BSA, server exec present).\n\n**Verify:** pixi run pytest tests/providers/modal/test_image_bake.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/_app.py\", \"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_image_bake.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_image_bake.py -v\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10 (native #6): Live FlashVSR 4x proof on Modal — run, frame-QA, teardown, log",
+      "status": "pending",
+      "blockedBy": [6, 7, 8, 9],
+      "description": "**Goal:** Re-run FlashVSR upscale on Modal 80GB with fast boot; 1920x1920 output; frame-QA; teardown; log §24. USER-GATE (tracked as native task #6). Blocked by Tasks 6-9.\n\n**Verify:** pixi run kinoforge list (clean); ffprobe 1920x1920; §24 present.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"source\", \"480\", \"input\"], [\"output\", \"1920\", \"upscaled\"]], \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-10T00:00"
+}
