@@ -13,17 +13,50 @@ first unchecked task without redoing committed work.
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
 - **Modal M2 spec+plan (done + live-green):** `docs/superpowers/specs/2026-07-08-modal-milestone2-wan22-a14b-design.md` + `docs/superpowers/plans/2026-07-08-modal-milestone2-wan22-a14b.md` (3 tasks 0-2, all committed)
-- **SINGLE NEXT ACTION:** Modal **Milestone 3 — FlashVSR 4x upscale full-res (480²→1920²) on Modal 80GB** (A100-80GB). M1 (Wan 2.1 1.3B / A10, §22) + M2 (Wan 2.2 A14B / A100-80GB, §23) both LIVE-GREEN. M3 = own spec+plan (brainstorm→plan→execute): reuses the ModalProvider transport + the diffusers `wan_t2v_server` upscale path; a Modal 80GB card runs the FULL 480²→1920² (unlike the Lambda 40GB proof §21 that downscaled to 288²). Mirror the RunPod FlashVSR cfg (gen §13/§19) onto Modal (no `cloud:`, `python:3.13-slim`, gpu_preference `["A100-80GB","H100"]`, boot_timeout ≥45m). Prefer the **upscale-only** path (fixture clip via `--video`, `upscale_only: true`) to skip the 70 GB Wan download (CLAUDE.md upscaler rule). Carry the M2 fix + gotchas: **container-init `startup_timeout`/`timeout` go on `@app.function`, not `@web_server`** (serialized=True drops the web_server one → 300 s default kills long boots — fixed `7b820a1`); [[reference_modal_provider_gotchas]]. **Strongly consider wiring `HF_HOME=/cache/hf` first** — Modal preempts pooled GPUs mid-boot and there is no weight caching yet, so a preemption re-downloads from scratch (M2 §23 follow-up). Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
+- **Modal M3 spec+plan (offline-complete; live proof BLOCKED):** `docs/superpowers/specs/2026-07-09-modal-milestone3-flashvsr-design.md` + `docs/superpowers/plans/2026-07-09-modal-milestone3-flashvsr.md` (6 tasks 0-5; `.tasks.json` co-located). Tasks 0-4 done + committed; Task 5 (live upscale proof) blocked — see below.
+- **SINGLE NEXT ACTION:** **Unblock Modal M3 Task 5 (FlashVSR live proof) by making the Modal boot fast + preemption-resilient.** M3 offline work is DONE + committed: the cp313 BSA wheel is built (on Modal, `tools/build_bsa_wheel_modal.py`) + hosted (`killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1`, `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl`, 526 MB); the Modal cfg (`examples/configs/modal-flashvsr-x4.yaml`), `HF_HOME=/cache/hf` provider wiring, offline tests, and the RED live scaffold are all committed. **BLOCKER (2026-07-09):** the live `kinoforge upscale` never converged — the kinoforge Modal transport provisions at RUNTIME (pip torch+BSA-wheel+FlashVSR-weights via the boot script, ~15 min), and Modal **preempted the pooled A100 repeatedly mid-boot** ("Worker disappeared, in-progress inputs will be re-scheduled"); each preempt restarts the boot from scratch (no caching for the BSA wheel / FlashVSR weights), so `/health` never bound and the run **accumulated 10 containers** before teardown (~$1.5 est). Torn down clean (app stopped, ledger `forget`, verified `No running instances`). **FIX (the next action):** bake the heavy pip deps + BSA wheel INTO the Modal image at build time (`ModalProvider`/`build_modal_app` `Image.pip_install(...)` instead of runtime boot-script installs) so container start is seconds, not ~15 min → no preemption window, no container pile-up. Then re-run Task 5 (`pixi run -e live-modal kinoforge upscale --config examples/configs/modal-flashvsr-x4.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse`), frame-QA, log §24. Note: M1 (§22, 1.3B ~5 min boot) + M2 (§23, A14B ~30 min HF boot) survived preemption on lucky windows; FlashVSR's mix of a 526 MB non-HF wheel + weights is the worst case and forces the image-bake fix. [[reference_modal_provider_gotchas]] · [[reference_modal_add_python_clang_link]]. Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
 
-## RESUME SNAPSHOT (updated 2026-07-08 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-07-09 — read this, then STOP; below is history)
 
 This file exceeds the 256 KB single-read limit. A fresh session should
 read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
-**State (updated 2026-07-08 SkyPilot vast video-gen slice-1 session):** main green;
-lint + typecheck clean (746 files); zero pods/clusters; ledger clean.
-✅ FlashVSR corruption ROOT-CAUSED AND FIXED (`e82b0d1`), verified clean live.
+**State (updated 2026-07-09 Modal M3 FlashVSR session):** main green; ledger
+clean; zero pods/clusters/Modal apps. Modal M3 offline-complete + cp313 wheel
+built; live proof BLOCKED by Modal preemption-on-long-boot (see SINGLE NEXT
+ACTION above for the fix). Earlier state: FlashVSR corruption fixed (`e82b0d1`).
+
+**Modal M3 (FlashVSR 4x on 80GB) — OFFLINE-COMPLETE, LIVE PROOF BLOCKED 2026-07-09:**
+Spec+plan `docs/superpowers/{specs,plans}/2026-07-09-modal-milestone3-flashvsr*`.
+Tasks 0-4 done + committed (`0857d0f`..`e49364c`):
+- **Task 0** (`15a3a84`): `tools/build_bsa_wheel.py` generalized to emit a cp313
+  wheel (later superseded for the actual build by the Modal builder below).
+- **Task 1** (cp313 wheel, DONE): after **two RunPod builder pods were
+  host-reclaimed mid-compile** (`POD_NOT_FOUND` ~6-8 min into a ~70 min build)
+  and a Cloudflare-UA 403 (fixed `05a7f88` — builder now `load_env_file()`s so
+  RunPod creds reach the provider), the wheel was **built on Modal**
+  (`tools/build_bsa_wheel_modal.py`, `9a6c014`): CPU image build on
+  `nvidia/cuda:12.4.1-devel` + `add_python=3.13` — nvcc compiles BSA's kernels
+  with no GPU (flash-attn CI pattern). Two Modal build fixes: **install clang**
+  (`ed63e83` — `add_python` bakes clang into sysconfig so the `.so` links via
+  clang++, absent from cuda-devel; [[reference_modal_add_python_clang_link]]) and
+  **guard the kinoforge import** (`86e6301` — Modal re-imports the entrypoint
+  in-container where kinoforge isn't installed). Wheel hosted:
+  `killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1` /
+  `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl` (526 MB, `state=uploaded`).
+- **Task 2** (`e202df3`): `examples/configs/modal-flashvsr-x4.yaml` (py3.13-slim,
+  cp313 wheel URL, `upscale_only`, 80GB, no `cloud:`) + 3 offline tests (green).
+- **Task 3** (`4f2376f`): `HF_HOME=/cache/hf` wired into `ModalProvider`
+  container env (setdefault, respects operator override) + unit tests.
+- **Task 4** (`e49364c`): RED live scaffold `tests/live/test_modal_flashvsr_x4.py`.
+- **Task 5 (LIVE PROOF) — BLOCKED:** see SINGLE NEXT ACTION. Modal preempted the
+  pooled A100 repeatedly during the ~15 min runtime boot; never converged;
+  accumulated 10 containers; torn down clean. Fix = bake deps into the Modal
+  image (fast boot). NOT logged to `successful-generations.md` (no successful gen).
+- **New gotchas:** [[reference_runpod_rest_pod_detail_leaks_env]] (RunPod REST
+  `/v1/pods/{id}` echoes env secrets — a `gho_` GH token leaked; **rotate it**),
+  [[reference_modal_add_python_clang_link]].
 
 **Modal serverless-GPU provider — SHIPPED + LIVE-GREEN 2026-07-08 (spec 1 complete):**
 Spec `docs/superpowers/specs/2026-07-08-modal-provider-design.md`, plan
