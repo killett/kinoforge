@@ -97,14 +97,21 @@ class ModalProvider(ComputeProvider):
         if spec.offer is None:
             raise ValueError("ModalProvider requires spec.offer (GPU selection)")
 
+        volume_mount = spec.volume_mount or "/cache/hf"
+        env = dict(spec.env)
+        # Persist the HF cache onto the Modal Volume so a preempted/cold
+        # container re-uses downloaded weights instead of re-fetching. The
+        # server's own os.environ.setdefault("HF_HOME", ...) respects this.
+        env.setdefault("HF_HOME", volume_mount)
+
         req = ModalAppRequest(
             run_id=spec.run_id,
             image=spec.image,
             gpu=spec.offer.gpu_type,
             provision_script=spec.provision_script,
             run_cmd=list(spec.run_cmd),
-            env=dict(spec.env),
-            volume_mount=spec.volume_mount or "/cache/hf",
+            env=env,
+            volume_mount=volume_mount,
             scaledown_window_s=int(spec.lifecycle.idle_timeout_s),
             startup_timeout_s=int(spec.lifecycle.boot_timeout_s) or 1800,
         )
