@@ -120,10 +120,13 @@ def test_build_modal_app_bakes_build_script() -> None:
     assert calls.index(("from_registry", "python:3.13-slim")) < calls.index(
         bake_calls[0]
     )
-    # curl must be apt-installed before the bake (slim image lacks it; the
-    # composed FlashVSR bake curls the wheel + weights).
+    # curl + git must be apt-installed before the bake (slim image lacks both;
+    # the composed FlashVSR bake curls the wheel/weights and pip-installs
+    # FlashVSR from git+https).
     assert ("apt_install", "curl") in calls
+    assert ("apt_install", "git") in calls
     assert calls.index(("apt_install", "curl")) < calls.index(bake_calls[0])
+    assert calls.index(("apt_install", "git")) < calls.index(bake_calls[0])
 
 
 def test_no_build_script_skips_run_commands() -> None:
