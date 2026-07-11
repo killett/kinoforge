@@ -41,7 +41,11 @@ def test_flashvsr_build_script_has_installs_not_runtime():
     # runtime-only bits must NOT be in the bakeable build script:
     assert "sleep infinity" not in b
     assert "http.server 8001" not in b
-    assert "wan_t2v_server" not in b  # server exec is runtime, never baked
+    # the server EXEC (module -m invocation) is runtime, never baked. NB: the
+    # embed DOES write .../wan_t2v_server.py into the image (build needs the
+    # module tree for the weights fetch), so assert on the exec form, not the
+    # bare substring.
+    assert "python -m kinoforge.engines.diffusers.servers.wan_t2v_server" not in b
     assert "/tmp/bootstrap.log" not in b  # runtime log redirect
 
 
@@ -58,11 +62,31 @@ def test_flashvsr_runtime_script_has_server_not_installs():
     assert "pip install" not in r
 
 
+def test_flashvsr_build_script_embeds_before_weights_fetch():
+    # Bug caught: the composed FlashVSR weights fetch runs `python -m kinoforge
+    # ...._fetch_weights`, which resolves ONLY against the embedded /tmp/kfsrv
+    # tree + PYTHONPATH. If the embed is runtime-only, the build-time fetch hits
+    # ModuleNotFoundError and the Modal image bake fails before any GPU spend.
+    # The embed (+ PYTHONPATH export) must appear in build_script BEFORE the
+    # fetch line.
+    b = _render(_FLASHVSR).build_script
+    pythonpath_pos = b.find("export PYTHONPATH=/tmp/kfsrv")
+    # Match the fetch INVOCATION, not the embed's .../_fetch_weights.py write.
+    fetch_pos = b.find("python -m kinoforge.upscalers.flashvsr._fetch_weights")
+    assert pythonpath_pos != -1, "embed PYTHONPATH missing from build_script"
+    assert fetch_pos != -1, "weights fetch missing from build_script"
+    assert pythonpath_pos < fetch_pos, "PYTHONPATH must be set before the fetch"
+    # The embed is ALSO in runtime (the server needs it) — appears in both.
+    assert "export PYTHONPATH=/tmp/kfsrv" in _render(_FLASHVSR).runtime_script
+
+
 def test_wan_cfg_without_upscaler_has_no_build_script():
     # Bug caught: a plain Wan t2v cfg (pip only) should still populate build_script
     # with its pip line but never with upscaler/server bits; runtime carries server.
     rp = _render(_WAN)
     assert "pip install" in rp.build_script
-    assert "wan_t2v_server" not in rp.build_script
-    assert "wan_t2v_server" in rp.runtime_script
+    # server EXEC (module -m invocation) is runtime, not build:
+    exec_line = "python -m kinoforge.engines.diffusers.servers.wan_t2v_server"
+    assert exec_line not in rp.build_script
+    assert exec_line in rp.runtime_script
     assert "pip install" not in rp.runtime_script
