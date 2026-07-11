@@ -100,10 +100,11 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         # across the script (one RUN = one shell).
         #
         # python:X-slim (the image Modal's serialized web-server fn forces) ships
-        # NO curl, but the composed FlashVSR bake curls the BSA wheel + weights
-        # ("curl: command not found", live 2026-07-10). RunPod's pytorch base has
-        # curl already; on the slim path apt-install it before the bake.
-        image = image.apt_install("curl")
+        # NEITHER curl NOR git, but the composed FlashVSR bake curls the BSA
+        # wheel + weights and pip-installs FlashVSR from git+https (both "command
+        # not found" at build, live 2026-07-10). RunPod's pytorch base has both;
+        # on the slim path apt-install them before the bake.
+        image = image.apt_install("curl", "git")
         blob = base64.b64encode(req.image_build_script.encode()).decode()
         image = image.run_commands(f"echo {blob} | base64 -d | bash")
     app = modal_mod.App(name=f"kinoforge-{req.run_id}", image=image)
