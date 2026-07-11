@@ -46,11 +46,12 @@ engine:
       # `from modelscope import snapshot_download` even for HF weights.
       - "modelscope"
       # FlashVSR is pip-installed from git+https; its setup.py imports
-      # pkg_resources at build. python:3.13-slim's pip ships no setuptools
-      # ("No module named 'pkg_resources'", live 2026-07-10) — RunPod's pytorch
-      # image has it, but the Modal slim path needs it baked in. wheel too, for
-      # the PEP 517 build backend.
-      - "setuptools"
+      # pkg_resources at build. python:3.13-slim's pip ships no setuptools, and
+      # modern setuptools (>=81) REMOVED pkg_resources — bare "setuptools" pulled
+      # 81+ from Modal's mirror and still failed ("No module named
+      # 'pkg_resources'", live 2026-07-10). Pin <81 (last series that bundles
+      # pkg_resources). wheel too, for the PEP 517 build backend.
+      - "setuptools<81"
       - "wheel"
     embed_modules:
       - "kinoforge.engines.diffusers.servers"
