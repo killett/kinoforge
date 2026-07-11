@@ -23,7 +23,7 @@
     {
       "id": 9,
       "subject": "Task 9: ModalProvider bakes build script into the image",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [8],
       "description": "**Goal:** build_modal_app runs image_build_script via Image.run_commands; boot payload uses runtime script only.\n\n**Files:** providers/modal/_app.py (ModalAppRequest + build_modal_app), providers/modal/__init__.py (create_instance), tests/providers/modal/test_image_bake.py\n\n**Acceptance:** ModalAppRequest image_build_script field; image.run_commands(build_script) when set; boot payload from runtime_provision_script or provision_script (no pip/BSA, server exec present).\n\n**Verify:** pixi run pytest tests/providers/modal/test_image_bake.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/_app.py\", \"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_image_bake.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_image_bake.py -v\", \"modelTier\": \"standard\"}\n```"
     },

@@ -41,6 +41,10 @@ class ModalAppRequest:
     # `ln -s .../python3 /usr/local/bin/python` fail ("File exists"). Default
     # None => omit, use the image's own Python.
     add_python: str | None = None
+    # Modal fast-boot: bakeable install steps (pip deps, BSA wheel, model
+    # weights) baked into the image via Image.run_commands at BUILD time. None =>
+    # nothing to bake (the whole provision runs at container start, as before).
+    image_build_script: str | None = None
 
 
 _VOLUME_NAME = "kinoforge-hf-cache"
@@ -77,6 +81,13 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         The constructed app and its decorated web-server function.
     """
     image = modal_mod.Image.from_registry(req.image, add_python=req.add_python)
+    if req.image_build_script:
+        # Bake the slow install steps (pip/BSA/weights) INTO the image so
+        # container boot is seconds — no ~15min runtime provision for Modal to
+        # preempt (the 2026-07-09 FlashVSR failure). run_commands streams to the
+        # build log, so a bad wheel/weights fetch surfaces at BUILD time rather
+        # than as a silent boot hang. Chainable, mirrors Modal's Image API.
+        image = image.run_commands(req.image_build_script)
     app = modal_mod.App(name=f"kinoforge-{req.run_id}", image=image)
     volume = modal_mod.Volume.from_name(_VOLUME_NAME, create_if_missing=True)
 

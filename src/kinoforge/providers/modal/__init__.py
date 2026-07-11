@@ -104,16 +104,24 @@ class ModalProvider(ComputeProvider):
         # server's own os.environ.setdefault("HF_HOME", ...) respects this.
         env.setdefault("HF_HOME", volume_mount)
 
+        # Modal fast-boot: the container boots with the RUNTIME script only —
+        # the build script is baked into the image below, so re-running it at
+        # container start would re-download everything and re-open the
+        # preemption window (2026-07-09 FlashVSR failure). Non-splitting engines
+        # leave runtime_provision_script None and fall back to the combined one.
+        boot_script = spec.runtime_provision_script or spec.provision_script
+
         req = ModalAppRequest(
             run_id=spec.run_id,
             image=spec.image,
             gpu=spec.offer.gpu_type,
-            provision_script=spec.provision_script,
+            provision_script=boot_script,
             run_cmd=list(spec.run_cmd),
             env=env,
             volume_mount=volume_mount,
             scaledown_window_s=int(spec.lifecycle.idle_timeout_s),
             startup_timeout_s=int(spec.lifecycle.boot_timeout_s) or 1800,
+            image_build_script=spec.image_build_script,
         )
         app, server_fn = self._app_factory(req, self._modal_mod())
         url = self._deployer(app, server_fn)
