@@ -88,15 +88,18 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         # build log, so a bad wheel/weights fetch surfaces at BUILD time rather
         # than as a silent boot hang.
         #
-        # Modal emits each run_commands arg as a Dockerfile `RUN <arg>`. A raw
-        # multi-line string would leak its newlines into a single RUN, and the
-        # Dockerfile parser reads line 2 as a new (unsupported) instruction —
-        # observed 2026-07-10: "the 'mkdir' Dockerfile command is not supported".
-        # Wrap the whole script in one `bash -c '<script>'` so BASH, not the
-        # Dockerfile parser, interprets the newlines; this also preserves
-        # `set -e`, exports, and PYTHONPATH across the script (one RUN = one
-        # shell). Chainable, mirrors Modal's Image API.
-        image = image.run_commands(f"bash -c {shlex.quote(req.image_build_script)}")
+        # Modal emits each run_commands arg as a Dockerfile `RUN <arg>`, and the
+        # Dockerfile parser TERMINATES a RUN at any newline (no `\` continuation)
+        # BEFORE a shell ever sees it — so neither a raw multi-line string
+        # ("the 'mkdir' Dockerfile command is not supported") nor a shell-quoted
+        # `bash -c '<multi-line>'` ("Unterminated quoted string") works; both
+        # observed live 2026-07-10. Encode the whole script into ONE newline-free
+        # base64 blob and decode+run it inside a single RUN line — the same
+        # `echo <b64> | base64 -d | ...` trick the module-embed lines use. bash
+        # then interprets the newlines and set -e/exports/PYTHONPATH survive
+        # across the script (one RUN = one shell).
+        blob = base64.b64encode(req.image_build_script.encode()).decode()
+        image = image.run_commands(f"echo {blob} | base64 -d | bash")
     app = modal_mod.App(name=f"kinoforge-{req.run_id}", image=image)
     volume = modal_mod.Volume.from_name(_VOLUME_NAME, create_if_missing=True)
 
