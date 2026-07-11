@@ -86,8 +86,17 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         # container boot is seconds — no ~15min runtime provision for Modal to
         # preempt (the 2026-07-09 FlashVSR failure). run_commands streams to the
         # build log, so a bad wheel/weights fetch surfaces at BUILD time rather
-        # than as a silent boot hang. Chainable, mirrors Modal's Image API.
-        image = image.run_commands(req.image_build_script)
+        # than as a silent boot hang.
+        #
+        # Modal emits each run_commands arg as a Dockerfile `RUN <arg>`. A raw
+        # multi-line string would leak its newlines into a single RUN, and the
+        # Dockerfile parser reads line 2 as a new (unsupported) instruction —
+        # observed 2026-07-10: "the 'mkdir' Dockerfile command is not supported".
+        # Wrap the whole script in one `bash -c '<script>'` so BASH, not the
+        # Dockerfile parser, interprets the newlines; this also preserves
+        # `set -e`, exports, and PYTHONPATH across the script (one RUN = one
+        # shell). Chainable, mirrors Modal's Image API.
+        image = image.run_commands(f"bash -c {shlex.quote(req.image_build_script)}")
     app = modal_mod.App(name=f"kinoforge-{req.run_id}", image=image)
     volume = modal_mod.Volume.from_name(_VOLUME_NAME, create_if_missing=True)
 

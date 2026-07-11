@@ -97,7 +97,13 @@ def test_build_modal_app_bakes_build_script() -> None:
     build_modal_app(req, fake_modal)
     bake_calls = [c for c in calls if c[0] == "run_commands"]
     assert len(bake_calls) == 1
-    assert "pip install torch==2.6.0" in bake_calls[0][1]
+    baked = bake_calls[0][1]
+    # Must be ONE `bash -c '<script>'` RUN: a raw multi-line string leaks
+    # newlines into a single Dockerfile RUN and the parser rejects line 2
+    # ("the 'mkdir' Dockerfile command is not supported", 2026-07-10). bash -c
+    # makes bash interpret the newlines and preserves set -e/exports/PYTHONPATH.
+    assert baked.startswith("bash -c ")
+    assert "pip install torch==2.6.0" in baked  # multiline script survives the quote
     # from_registry must precede the bake (bake runs ON the base image).
     assert calls.index(("from_registry", "python:3.13-slim")) < calls.index(
         bake_calls[0]
