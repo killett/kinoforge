@@ -125,6 +125,17 @@ class RenderedProvision:
             Orchestrator validates each is reachable via the configured
             ``CredentialProvider`` before ``provider.create_instance``;
             lifts onto ``spec.env``.
+        build_script: Bakeable install steps only (pip deps, composed
+            upscaler/interpolator install — BSA wheel, model weights). Safe to
+            run at image-build time. Empty when the engine emits no installs.
+            Modal bakes this into the image so container boot is seconds.
+        runtime_script: Container-start steps only (log surface, keep-alive
+            trap, sidecar/selfterm, embed decode, ``export`` env, server exec).
+            Never re-runs the heavy installs. ``build_script`` +
+            ``runtime_script`` together equal ``script`` (byte-identical); the
+            split exists so a provider that provisions at IMAGE-build (Modal)
+            can separate the two. Providers that provision at RUNTIME (RunPod)
+            keep using the combined ``script`` unchanged.
     """
 
     script: str
@@ -132,6 +143,8 @@ class RenderedProvision:
     image: str
     ports: list[str]
     env_required: list[str]
+    build_script: str = ""
+    runtime_script: str = ""
 
 
 @dataclass

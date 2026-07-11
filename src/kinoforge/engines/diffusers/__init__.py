@@ -125,7 +125,12 @@ def _render_embed_single_file(mod_name: str, kfsrv: str) -> list[str]:
         lines.append(f"touch {ancestor_dir}/__init__.py")
     lines.append(f"mkdir -p {Path(target).parent}")
     content = resource.read_bytes()
-    encoded = base64.b64encode(gzip.compress(content)).decode("ascii")
+    # mtime=0: gzip stamps the current time into its header by default, so the
+    # same module bytes produce a DIFFERENT base64 blob every render — the boot
+    # script is non-deterministic run-to-run. Zeroing mtime makes render_provision
+    # reproducible (required for the build/runtime split golden test) with no
+    # change to what decompresses on the pod.
+    encoded = base64.b64encode(gzip.compress(content, mtime=0)).decode("ascii")
     lines.append(
         f"echo '{encoded}' | python3 -c "
         f'"import sys,base64,gzip; '
@@ -191,7 +196,9 @@ def _render_embed_lines(modules: list[str]) -> list[str]:
             # Decode via python3 (always present in runpod/pytorch images)
             # rather than `gunzip` — saves us hunting for a gzip binary on
             # minimal images. python -c "..." keeps the pipeline stateless.
-            encoded = base64.b64encode(gzip.compress(content)).decode("ascii")
+            # mtime=0 zeroes gzip's header timestamp so identical module bytes
+            # render to identical base64 every run (deterministic boot script).
+            encoded = base64.b64encode(gzip.compress(content, mtime=0)).decode("ascii")
             lines.append(
                 f"echo '{encoded}' | python3 -c "
                 f'"import sys,base64,gzip; '
@@ -947,7 +954,7 @@ class DiffusersEngine(GenerationEngine):
                 wan_model_id = ref[len("hf:") :]
                 break
 
-        lines: list[str] = [
+        _preamble: list[str] = [
             "set -euo pipefail",
             # Capture all bootstrap stdout/stderr into a file the sidecar
             # log server (below) serves. Without this surface, Task 8
@@ -987,14 +994,32 @@ class DiffusersEngine(GenerationEngine):
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
         ]
+        # Fast-boot split (2026-07-10): every appended segment is tagged either
+        # "build" (bakeable install — pip, composed upscaler/interpolator) or
+        # "runtime" (container-start — embed, exports, server exec). ``lines`` is
+        # the combined stream RunPod still boots verbatim; the two buckets feed
+        # RenderedProvision.build_script / runtime_script so Modal can bake the
+        # installs into the image. The preamble is all runtime.
+        lines: list[str] = list(_preamble)
+        runtime_lines: list[str] = list(_preamble)
+        build_lines: list[str] = []
+
+        def _add(phase: str, *new: str) -> None:
+            """Append line(s) to the combined stream AND the phase bucket."""
+            for ln in new:
+                lines.append(ln)
+                (build_lines if phase == "build" else runtime_lines).append(ln)
+
         if embed_modules or embed_files:
+            embed_lines: list[str] = []
             if embed_modules:
-                lines.extend(_render_embed_lines(embed_modules))
+                embed_lines.extend(_render_embed_lines(embed_modules))
             for mod in embed_files:
-                lines.extend(
+                embed_lines.extend(
                     _render_embed_single_file(mod, "/tmp/kfsrv")  # noqa: S108
                 )
-            lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
+            embed_lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
+            _add("runtime", *embed_lines)
         if pip_deps:
             # shlex.quote each dep — pip version specifiers like
             # ``diffusers>=0.32`` contain a bare ``>=`` which bash
@@ -1023,13 +1048,15 @@ class DiffusersEngine(GenerationEngine):
             extra_index_url = str(
                 diffusers_cfg.get("pytorch_extra_index_url", _PYTORCH_EXTRA_INDEX_URL)
             )
-            lines.append(f"pip install -q --extra-index-url {extra_index_url} {quoted}")
+            _add(
+                "build", f"pip install -q --extra-index-url {extra_index_url} {quoted}"
+            )
         # T15 — upscale-only mode: bypass eager WanPipeline.from_pretrained
         # in the on-pod server. The composed upscaler render_provision (T8)
         # still fires below so spandrel weights land at /workspace/models/
         # spandrel; the LRU registry loads spandrel on the first /upscale.
         if diffusers_cfg.get("upscale_only"):
-            lines.append("export KINOFORGE_SKIP_WAN_LOAD=1")
+            _add("runtime", "export KINOFORGE_SKIP_WAN_LOAD=1")
 
         # T8 — compose upscaler render_provision script when cfg.upscale set.
         # Reads cfg.upscale.engine, looks up via registry, appends the upscaler's
@@ -1046,8 +1073,11 @@ class DiffusersEngine(GenerationEngine):
 
                 upscaler = _registry.get_upscaler(str(upscaler_name))()
                 upscale_rp = upscaler.render_provision(cfg)
-                lines.append("# ---- upscaler provision (composed) ----")
-                lines.extend(line for line in upscale_rp.script.split("\n") if line)
+                _add(
+                    "build",
+                    "# ---- upscaler provision (composed) ----",
+                    *(line for line in upscale_rp.script.split("\n") if line),
+                )
 
         # Compose the interpolator render_provision when cfg.interpolate is set.
         # Mirrors the upscaler composition above: reads cfg.interpolate.engine,
@@ -1062,28 +1092,40 @@ class DiffusersEngine(GenerationEngine):
 
                 interpolator = _registry.get_interpolator(str(interp_name))()
                 interp_rp = interpolator.render_provision(cfg)
-                lines.append("# ---- interpolator provision (composed) ----")
-                lines.extend(line for line in interp_rp.script.split("\n") if line)
+                _add(
+                    "build",
+                    "# ---- interpolator provision (composed) ----",
+                    *(line for line in interp_rp.script.split("\n") if line),
+                )
 
         if wan_model_id and server_cmd:
             # Exported BEFORE server_cmd so the launching shell carries
             # it into the wan_t2v_server process. See wan_t2v_server.py
             # MODEL_ID = os.environ.get("WAN_MODEL_ID", "<14B-default>").
-            lines.append(f"export WAN_MODEL_ID={shlex.quote(wan_model_id)}")
+            _add("runtime", f"export WAN_MODEL_ID={shlex.quote(wan_model_id)}")
         if server_cmd:
             # NOTE: NO `exec` prefix. Bash must remain PID 1 so the
             # EXIT trap can fire when the main server crashes (or
             # exits cleanly). Replacing bash with python via ``exec``
             # would strand the trap and the container would die at
             # the first python error.
-            lines.append(" ".join(server_cmd))
+            _add("runtime", " ".join(server_cmd))
 
         port = _extract_port_from_base_url(base_url)
         # 8001 is the sidecar log-server port; emitted alongside the main
         # server port so the provider exposes both via its proxy URLs.
         ports = [port, "8001"] if port != "8001" else [port]
+        build_script = ""
+        if build_lines:
+            # build_lines run at image-BUILD (Modal) — give them their own
+            # fail-fast preamble (the combined script's set -e lives in the
+            # runtime preamble, which the baked image does not run).
+            build_script = "set -euo pipefail\n" + "\n".join(build_lines)
+        runtime_script = "\n".join(runtime_lines)
         return RenderedProvision(
             script="\n".join(lines),
+            build_script=build_script,
+            runtime_script=runtime_script,
             run_cmd=server_cmd,
             image=image,
             ports=ports,

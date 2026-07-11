@@ -4,7 +4,7 @@
     {
       "id": 6,
       "subject": "Task 6: Split render_provision into build/runtime phases",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** render_provision returns build_script (pip + composed upscaler/interpolator install) + runtime_script (everything else) while script stays byte-identical.\n\n**Files:** interfaces.py (RenderedProvision), engines/diffusers/__init__.py (render_provision), tests/engines/diffusers/test_render_provision_split.py + _golden_provision.json\n\n**Acceptance:** RenderedProvision build_script/runtime_script fields; build has pip/BSA/weights not runtime bits; runtime has server not installs; script byte-identical golden.\n\n**Verify:** pixi run pytest tests/engines/diffusers/test_render_provision_split.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/diffusers/test_render_provision_split.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/test_render_provision_split.py -v\", \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -35,5 +35,5 @@
       "description": "**Goal:** Re-run FlashVSR upscale on Modal 80GB with fast boot; 1920x1920 output; frame-QA; teardown; log §24. USER-GATE (tracked as native task #6). Blocked by Tasks 6-9.\n\n**Verify:** pixi run kinoforge list (clean); ffprobe 1920x1920; §24 present.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"source\", \"480\", \"input\"], [\"output\", \"1920\", \"upscaled\"]], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-10T00:00"
+  "lastUpdated": "2026-07-10T18:40"
 }
