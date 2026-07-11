@@ -1005,10 +1005,21 @@ class DiffusersEngine(GenerationEngine):
         build_lines: list[str] = []
 
         def _add(phase: str, *new: str) -> None:
-            """Append line(s) to the combined stream AND the phase bucket."""
+            """Append line(s) to the combined stream AND the phase bucket(s).
+
+            phase is "build", "runtime", or "both". "both" is for steps a baked
+            image needs at BUILD time yet the runtime container also needs — the
+            module embed: the composed FlashVSR weights-fetch runs
+            ``python -m kinoforge...`` which resolves only against the embedded
+            /tmp/kfsrv tree + PYTHONPATH, so that tree must exist in the image at
+            bake time; the runtime server needs it too.
+            """
             for ln in new:
                 lines.append(ln)
-                (build_lines if phase == "build" else runtime_lines).append(ln)
+                if phase in ("build", "both"):
+                    build_lines.append(ln)
+                if phase in ("runtime", "both"):
+                    runtime_lines.append(ln)
 
         if embed_modules or embed_files:
             embed_lines: list[str] = []
@@ -1019,7 +1030,10 @@ class DiffusersEngine(GenerationEngine):
                     _render_embed_single_file(mod, "/tmp/kfsrv")  # noqa: S108
                 )
             embed_lines.append("export PYTHONPATH=/tmp/kfsrv:${PYTHONPATH:-}")
-            _add("runtime", *embed_lines)
+            # "both": the baked image needs /tmp/kfsrv + PYTHONPATH so the
+            # build-phase weights fetch (python -m kinoforge...) resolves; the
+            # runtime server needs it too. Appears once in the combined script.
+            _add("both", *embed_lines)
         if pip_deps:
             # shlex.quote each dep — pip version specifiers like
             # ``diffusers>=0.32`` contain a bare ``>=`` which bash
