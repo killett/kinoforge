@@ -98,6 +98,12 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         # `echo <b64> | base64 -d | ...` trick the module-embed lines use. bash
         # then interprets the newlines and set -e/exports/PYTHONPATH survive
         # across the script (one RUN = one shell).
+        #
+        # python:X-slim (the image Modal's serialized web-server fn forces) ships
+        # NO curl, but the composed FlashVSR bake curls the BSA wheel + weights
+        # ("curl: command not found", live 2026-07-10). RunPod's pytorch base has
+        # curl already; on the slim path apt-install it before the bake.
+        image = image.apt_install("curl")
         blob = base64.b64encode(req.image_build_script.encode()).decode()
         image = image.run_commands(f"echo {blob} | base64 -d | bash")
     app = modal_mod.App(name=f"kinoforge-{req.run_id}", image=image)
