@@ -10,7 +10,7 @@
     {
       "id": 7,
       "subject": "Task 7: FlashVSR BSA guard tolerates no-GPU build env",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** BSA SM80 guard no-ops when no CUDA device (build time) instead of exit 87; still enforces SM80+ at runtime.\n\n**Files:** upscalers/flashvsr/_engine.py (guard), tests/upscalers/flashvsr/test_engine.py\n\n**Acceptance:** guard uses torch.cuda.is_available(); curl+pip install lines unchanged.\n\n**Verify:** pixi run pytest tests/upscalers/flashvsr/test_engine.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/upscalers/flashvsr/_engine.py\", \"tests/upscalers/flashvsr/test_engine.py\"], \"verifyCommand\": \"pixi run pytest tests/upscalers/flashvsr/test_engine.py -v\", \"modelTier\": \"standard\"}\n```"
     },
     {

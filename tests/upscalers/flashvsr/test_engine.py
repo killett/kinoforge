@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from typing import Any
 
 import pytest
@@ -457,3 +459,71 @@ def test_render_provision_offline_tail_only_when_upscale_only() -> None:
 
     coresident = _cfg_coresident()
     assert "HF_HUB_OFFLINE=1" not in e.render_provision(coresident).script
+
+
+# ---------------------------------------------------------------------------
+# BSA SM80 guard: bakeable on a no-GPU (image-build) environment.
+# ---------------------------------------------------------------------------
+
+
+def _extract_guard_pycode(script: str) -> str:
+    """Return the inner code of the guard's ``python -c "<code>" || exit 87``."""
+    marker = 'python -c "'
+    start = script.index(marker) + len(marker)
+    end = script.index('" || exit 87', start)
+    return script[start:end]
+
+
+def _run_guard(pycode: str, *, available: bool, capability: tuple[int, int]) -> None:
+    """Execute the guard snippet under a fake ``torch``.
+
+    Mirrors real torch: ``get_device_capability()`` RAISES when no CUDA device
+    is present (the exact failure that made the guard ``exit 87`` on Modal's
+    CPU image builder). Raises whatever the guard raises; returns on pass.
+    """
+
+    def _cap() -> tuple[int, int]:
+        if not available:
+            raise RuntimeError("No CUDA GPUs are available")
+        return capability
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(  # type: ignore[attr-defined]
+        is_available=lambda: available,
+        get_device_capability=_cap,
+    )
+    saved = sys.modules.get("torch")
+    sys.modules["torch"] = fake_torch
+    try:
+        exec(compile(pycode, "<guard>", "exec"), {})  # noqa: S102
+    finally:
+        if saved is not None:
+            sys.modules["torch"] = saved
+        else:
+            del sys.modules["torch"]
+
+
+def test_bsa_guard_noops_on_no_gpu_build_env() -> None:
+    """RED: guard must not blow up when no CUDA device exists (image build).
+
+    Bug caught: the SM80 guard calls torch.cuda.get_device_capability()
+    unconditionally -> RuntimeError -> ``exit 87`` on Modal's CPU image
+    builder, so build_script can never bake. It must no-op with no device.
+    """
+    code = _extract_guard_pycode(FlashVSREngine().render_provision(_cfg()).script)
+    _run_guard(code, available=False, capability=(8, 0))  # must NOT raise
+
+
+def test_bsa_guard_enforces_sm80_when_gpu_present() -> None:
+    """Guard still rejects sub-SM80 when a device IS present (RunPod runtime)."""
+    code = _extract_guard_pycode(FlashVSREngine().render_provision(_cfg()).script)
+    _run_guard(code, available=True, capability=(8, 0))  # SM80 accepted
+    with pytest.raises(AssertionError):
+        _run_guard(code, available=True, capability=(7, 5))  # SM75 rejected
+
+
+def test_bsa_wheel_fetch_lines_unchanged_by_guard_edit() -> None:
+    """The curl + ``pip install --no-deps`` wheel lines are untouched."""
+    script = FlashVSREngine().render_provision(_cfg()).script
+    assert "curl -L -f -o " in script
+    assert "pip install --no-deps /tmp/block_sparse_attn" in script

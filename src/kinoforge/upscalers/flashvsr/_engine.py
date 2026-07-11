@@ -103,9 +103,18 @@ class FlashVSREngine(UpscalerEngine):
         script = "".join(
             [
                 "set -euo pipefail\n",
+                # SM80+ guard. At image-BUILD time (Modal's CPU image builder)
+                # there is no CUDA device -> is_available() is False -> the guard
+                # no-ops so the BSA wheel can still bake into the image. At
+                # runtime (GPU present) it enforces SM80+. The Modal cfg pins
+                # A100-80GB/H100 (SM80/SM90), so on the baked path the dropped
+                # runtime check is belt-and-suspenders; RunPod still gets the
+                # full runtime enforcement via the combined script.
                 'python -c "import torch; '
-                "assert torch.cuda.get_device_capability()[0] >= 8, "
-                "f'flashvsr: BSA needs SM80+, got {torch.cuda.get_device_capability()}'"
+                "cap = torch.cuda.get_device_capability() "
+                "if torch.cuda.is_available() else None; "
+                "assert cap is None or cap[0] >= 8, "
+                "f'flashvsr: BSA needs SM80+, got {cap}'"
                 '" || exit 87\n',
                 # -L follows GitHub-release redirect to the S3-backed asset;
                 # -f fail-fast on 4xx/5xx (silent HTML error page otherwise).
