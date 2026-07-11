@@ -98,12 +98,19 @@ def test_build_modal_app_bakes_build_script() -> None:
     bake_calls = [c for c in calls if c[0] == "run_commands"]
     assert len(bake_calls) == 1
     baked = bake_calls[0][1]
-    # Must be ONE `bash -c '<script>'` RUN: a raw multi-line string leaks
-    # newlines into a single Dockerfile RUN and the parser rejects line 2
-    # ("the 'mkdir' Dockerfile command is not supported", 2026-07-10). bash -c
-    # makes bash interpret the newlines and preserves set -e/exports/PYTHONPATH.
-    assert baked.startswith("bash -c ")
-    assert "pip install torch==2.6.0" in baked  # multiline script survives the quote
+    # The bake RUN must be a SINGLE newline-free line: the Dockerfile parser
+    # terminates a RUN at any bare newline BEFORE a shell sees it, so a raw
+    # multi-line string ("the 'mkdir' Dockerfile command is not supported") and
+    # a quoted `bash -c '<multi-line>'` ("Unterminated quoted string") both fail
+    # (observed live 2026-07-10). Encode to one base64 blob + decode|bash.
+    assert "\n" not in baked
+    assert baked.startswith("echo ")
+    assert "| base64 -d | bash" in baked
+    # The blob must decode back to the real multi-line script.
+    blob = baked[len("echo ") :].split(" | ", 1)[0]
+    decoded = base64.b64decode(blob).decode()
+    assert "pip install torch==2.6.0" in decoded
+    assert decoded == req.image_build_script
     # from_registry must precede the bake (bake runs ON the base image).
     assert calls.index(("from_registry", "python:3.13-slim")) < calls.index(
         bake_calls[0]
