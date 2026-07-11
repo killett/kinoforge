@@ -16,7 +16,7 @@
     {
       "id": 8,
       "subject": "Task 8: Thread build/runtime split onto InstanceSpec + orchestrator",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "**Goal:** InstanceSpec carries image_build_script + runtime_provision_script; orchestrator populates from rendered split; RunPod ignores both.\n\n**Files:** interfaces.py (InstanceSpec), orchestrator.py (spec build), tests/core/test_orchestrator_provision_threading.py\n\n**Acceptance:** InstanceSpec two new fields; orchestrator spec has image_build_script==rendered.build_script, runtime_provision_script==rendered.runtime_script, provision_script==rendered.script.\n\n**Verify:** pixi run pytest tests/core/test_orchestrator_provision_threading.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_orchestrator_provision_threading.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_orchestrator_provision_threading.py -v\", \"modelTier\": \"standard\"}\n```"
     },

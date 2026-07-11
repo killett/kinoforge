@@ -781,6 +781,12 @@ def _provision_instance_and_build_backend(
             env=dict(rendered_env),
             run_id=run_id,
             provision_script=rendered.script,
+            # Modal fast-boot split: bake image_build_script into the image,
+            # boot with runtime_provision_script only. Empty -> None so
+            # non-splitting engines/providers see no change (RunPod uses the
+            # combined provision_script above regardless).
+            image_build_script=(rendered.build_script or None),
+            runtime_provision_script=(rendered.runtime_script or None),
             run_cmd=rendered.run_cmd,
             diagnostic_env=diagnostic_env,
             restart_policy=restart_policy,
