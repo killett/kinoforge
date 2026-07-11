@@ -99,12 +99,19 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         # then interprets the newlines and set -e/exports/PYTHONPATH survive
         # across the script (one RUN = one shell).
         #
-        # python:X-slim (the image Modal's serialized web-server fn forces) ships
-        # NEITHER curl NOR git, but the composed FlashVSR bake curls the BSA
-        # wheel + weights and pip-installs FlashVSR from git+https (both "command
-        # not found" at build, live 2026-07-10). RunPod's pytorch base has both;
-        # on the slim path apt-install them before the bake.
-        image = image.apt_install("curl", "git")
+        # python:X-slim (the image Modal's serialized web-server fn forces) is a
+        # bare Debian: no curl, git, or C/C++ toolchain. The composed FlashVSR
+        # bake needs them all (live 2026-07-10, one missing tool per rebuild):
+        #   - curl: fetch the BSA wheel + FlashVSR weights
+        #   - git: pip install FlashVSR from git+https
+        #   - build-essential + cmake + pkg-config: sentencepiece==0.2.0 has no
+        #     cp313 wheel, so pip builds it from source (build_bundled.sh runs
+        #     cmake/g++/pkg-config).
+        # RunPod's pytorch base (py3.11) ships these AND has the wheels, so this
+        # is a slim-image-only gap; apt-install them before the bake.
+        image = image.apt_install(
+            "curl", "git", "build-essential", "cmake", "pkg-config"
+        )
         blob = base64.b64encode(req.image_build_script.encode()).decode()
         image = image.run_commands(f"echo {blob} | base64 -d | bash")
     app = modal_mod.App(name=f"kinoforge-{req.run_id}", image=image)
