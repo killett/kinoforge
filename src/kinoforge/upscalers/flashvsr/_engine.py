@@ -131,7 +131,16 @@ class FlashVSREngine(UpscalerEngine):
                 # cannot resolve from PyPI. Runtime deps FlashVSR actually
                 # needs at inference time are installed on the next line;
                 # torch itself is already installed via the cfg's `pip:` block.
-                "pip install --no-deps "
+                #
+                # `--no-build-isolation`: FlashVSR's setup.py imports
+                # pkg_resources at build. With pip's default build isolation the
+                # wheel builds in a fresh env that lacks setuptools unless the
+                # project's build-system.requires lists it (it doesn't) →
+                # "No module named 'pkg_resources'" on python:3.13-slim (Modal),
+                # observed live 2026-07-10. --no-build-isolation reuses the main
+                # env's setuptools/wheel (cfg `pip:` installs them; RunPod's
+                # pytorch image already ships them), so the build finds them.
+                "pip install --no-deps --no-build-isolation "
                 '"git+https://github.com/OpenImagingLab/FlashVSR'
                 '@b527c6f285fb30df530f5febc8b45764a789c961"\n',
                 # Runtime deps for diffsynth (FlashVSR's inner package).
