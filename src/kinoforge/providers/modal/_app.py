@@ -145,7 +145,10 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         n = int(os.environ["KINOFORGE_PROVISION_NCHUNKS"])
         blob = "".join(os.environ[f"KINOFORGE_PROVISION_B64_{i}"] for i in range(n))
         script = gzip.decompress(base64.b64decode(blob)).decode()
-        with open("/tmp/kinoforge_boot.sh", "w") as fh:  # noqa: S108
+        # Runs INSIDE the ephemeral Modal container at startup, writing its own
+        # boot script to the container's /tmp (not a controller-side artifact) —
+        # exempt from the store/sink write policy via the trailing marker.
+        with open("/tmp/kinoforge_boot.sh", "w") as fh:  # noqa: S108  # kinoforge:public-write
             fh.write(script)
         subprocess.Popen(["bash", "/tmp/kinoforge_boot.sh"])  # noqa: S603,S607,S108
 
