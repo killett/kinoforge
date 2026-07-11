@@ -45,6 +45,13 @@ engine:
       # diffsynth (FlashVSR upstream) does a module-top
       # `from modelscope import snapshot_download` even for HF weights.
       - "modelscope"
+      # FlashVSR is pip-installed from git+https; its setup.py imports
+      # pkg_resources at build. python:3.13-slim's pip ships no setuptools
+      # ("No module named 'pkg_resources'", live 2026-07-10) — RunPod's pytorch
+      # image has it, but the Modal slim path needs it baked in. wheel too, for
+      # the PEP 517 build backend.
+      - "setuptools"
+      - "wheel"
     embed_modules:
       - "kinoforge.engines.diffusers.servers"
       - "kinoforge.upscalers.flashvsr"
