@@ -161,6 +161,13 @@ class InstanceSpec:
     tags: dict[str, str] = field(default_factory=dict)
     run_id: str = ""
     provision_script: str | None = None
+    # Modal fast-boot (2026-07-10): the engine's bakeable install steps and its
+    # runtime-only steps, split out of ``provision_script``. RunPod ignores both
+    # and provisions from the combined ``provision_script``; Modal bakes
+    # ``image_build_script`` into the image at build time and boots the container
+    # with ``runtime_provision_script`` only (so nothing heavy re-runs at start).
+    image_build_script: str | None = None
+    runtime_provision_script: str | None = None
     run_cmd: list[str] | None = None
     spot: bool = False  # Request a spot/preemptible instance when True
     # C28 A1.5: diagnostic env overlay merged into pod env via setdefault
