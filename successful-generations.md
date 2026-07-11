@@ -52,6 +52,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 21. `2026-07-08 01:33:54` — [FlashVSR upscale on Lambda A100 via SkyPilot ssh-tunnel (provider-internal HTTP seam) — upscale](#21-2026-07-08-013354--flashvsr-upscale-on-lambda-a100-via-skypilot-ssh-tunnel-provider-internal-http-seam--upscale)
 22. `2026-07-08 22:12:07` — [Diffusers WanPipeline Wan 2.1 T2V-1.3B on Modal serverless GPU (A10) — t2v](#22-2026-07-08-221207--diffusers-wanpipeline-wan-21-t2v-13b-on-modal-serverless-gpu-a10--t2v)
 23. `2026-07-08 23:55:31` — [Diffusers WanPipeline Wan 2.2 T2V-A14B on Modal serverless GPU (A100-80GB) — t2v](#23-2026-07-08-235531--diffusers-wanpipeline-wan-22-t2v-a14b-on-modal-serverless-gpu-a100-80gb--t2v)
+24. `2026-07-10 23:52:23` — [FlashVSR v1.1 4x upscale on Modal A100-80GB via image-bake fast boot (Milestone 3) — upscale](#24-2026-07-10-235223--flashvsr-v11-4x-upscale-on-modal-a100-80gb-via-image-bake-fast-boot-milestone-3--upscale)
 
 ---
 
@@ -2619,3 +2620,53 @@ pixi run -e live-modal kinoforge generate \
 - **Modal pooled GPUs can preempt mid-boot.** This run took one `Runner interrupted due to worker preemption. Your Function will be restarted with the same input` during the download; it auto-restarted and recovered. **No HF weight caching is wired yet** — the Volume `kinoforge-hf-cache` is mounted at `/cache/hf` but nothing sets `HF_HOME` there, so a preemption restart re-downloads from scratch. A repeated-preemption run could exhaust `boot_timeout` (45 m). **Follow-up:** set `HF_HOME=/cache/hf` so downloads persist across restarts AND future boots are fast (deferred as a non-goal in the M2 spec; the preemption risk argues for promoting it).
 - **Config = M1 transport + RunPod A14B model/hardware.** `bf16`, model `Wan-AI/Wan2.2-T2V-A14B-Diffusers` (the `-Diffusers` variant — sharded `from_pretrained`; bare repo 404s), `min_vram_gb: 80`, `gpu_preference: [A100-80GB, H100]`, `disk_gb: 150`, 81 frames, `boot_timeout: 45m`. Same `python:3.13-slim` image + torch 2.6 cu124 pip stack + gzip-chunked Secret boot payload as M1 (carry all four M1 gotchas).
 - **Teardown verified** post-run: `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` shows `kinoforge-run-20260708-232834` = `stopped`.
+
+---
+
+## 24. `2026-07-10 23:52:23` — FlashVSR v1.1 4x upscale on Modal A100-80GB via image-bake fast boot (Milestone 3) — upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine (FlashVSR upscaler, composed) / JunhaoZhuang/FlashVSR-v1.1` |
+| **Mode** | upscale (480×480 → 1920×1920, native 4x) |
+| **New capability axis** | **Modal fast-boot via image-bake** (Milestone 3). The heavy provision steps — pip torch 2.6 cu124, the 526 MB **cp313** Block-Sparse-Attention wheel, and the FlashVSR weights — are BAKED into the Modal image at BUILD time (`Image.run_commands`), so the container boots in seconds instead of running a ~15 min runtime provision. That closes the preemption window that killed the 2026-07-09 attempt (Modal preempted the pooled A100 repeatedly mid-boot → `/health` never bound → 10-container pile-up, never converged). First kinoforge run to split `render_provision` into a bakeable `build_script` + a fast `runtime_script` and have a provider bake the former. Also the first FlashVSR success on Modal (M1/M2 were Wan t2v; this is the FlashVSR/BSA/cp313 axis on Modal). |
+| **First-success SHA** | `22793a668da9c8a2e8d931e9a875c311ec6fbb1d` |
+| **Date (local TZ)** | 2026-07-10 23:52:23 -0700 (PDT) |
+| **GPU** | Modal `A100-80GB` (80 GB), serverless; preference-first offer from the Modal catalog |
+| **Wall clock** | Image bake (one-time, cached, CPU builder): 350 s for the deps/wheel/weights layer + 29 s for the apt layer. Then **fast boot**: provision→result **~97 s** on the GPU (provision 23:50:46 → artifact 23:52:23). NO preemption loop, NO container pile-up (contrast 2026-07-09: 10 containers, never converged). |
+| **Est. spend** | ~$0.15–0.20 GPU (A100-80GB, ~2–3 min live) + ~8 CPU-only failed image builds (near-zero) while clearing the slim-image gaps below. Cumulative well under $1 — within the Modal credit. |
+| **Layer / phase** | Modal fast-boot image-bake — `docs/superpowers/plans/2026-07-10-modal-fast-boot-image-bake.md` Task 10 (spec `docs/superpowers/specs/2026-07-10-modal-fast-boot-image-bake.md`). Unblocks M3 Task 5. |
+
+### Exact command
+
+```bash
+pixi run -e live-modal kinoforge upscale \
+  --config examples/configs/modal-flashvsr-x4.yaml \
+  --video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4 \
+  --no-reuse
+```
+
+### Artifact
+
+| Field | Value |
+|---|---|
+| **Published path** | `output/20260710-235223_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` |
+| **Source (480² sibling)** | `output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` (from §23-lineage Wan 2.2 A14B) |
+| **Dimensions** | 1920×1920, 77 frames, 4.81 s (ffprobe: width=1920 height=1920 nb_frames=77) |
+| **Size / SHA-256** | 6,419,912 B / `179875588b067e270797b9defe9d03e50f0d7d092add23783284e1b056047352` |
+
+### Frame-QA verdict (mandatory visual review)
+
+**PASS — clearly high quality.** 5 frames extracted per clip (output + 480² source); output frames 1/3/5 + source frame 1 eyeballed. Alpine meadow of yellow/white wildflowers, tall waterfall down moss cliffs, golden-hour backlight, glowing butterflies + light-wisp ribbons; young woman in a red/blue dress. Faithful 4x upscale of the 480² source: same composition, sharpened flower/hair/dress detail, NO invented content, NO color shift. Temporal coherence good (woman turns from back-to-camera → toward camera across the clip). **No corruption, no false-color** — a clean contrast with the §13/§14 RunPod FlashVSR psychedelic-garbage failures (root-caused later to the `LQ_proj_in.ckpt` gating bug, fixed `e82b0d1`). Frames at `/tmp/.../scratchpad/qa_{out,src}_*.png`.
+
+### Reproduction recipe / deviations (read before re-firing)
+
+The fast-boot mechanism + every slim-image gap it exposed (one failed CPU build per gap; the build fails FAST + cheap, unlike a silent boot hang):
+
+- **The bake mechanism (`ModalProvider`).** `build_modal_app` bakes `image_build_script` into the image and the container boots with `runtime_provision_script` only. Modal emits each `run_commands` arg as a Dockerfile `RUN`, and the Dockerfile parser terminates a RUN at any bare newline BEFORE a shell sees it — so a raw multi-line string (`'mkdir' Dockerfile command is not supported`) and a quoted `bash -c '<multi-line>'` (`Unterminated quoted string`) BOTH fail. Fix: encode the whole build script to one newline-free base64 blob and `echo <b64> | base64 -d | bash` in a single RUN (same trick the module-embed lines use); bash then runs it with `set -e`/exports/PYTHONPATH intact.
+- **`python:3.13-slim` is a bare Debian** — the composed FlashVSR bake needs tools it lacks. `ModalProvider` now `apt_install`s them before the bake: **curl** (BSA wheel + weights fetch), **git** (FlashVSR `pip install git+https`), **build-essential + cmake + pkg-config** (`sentencepiece==0.2.0` has no cp313 wheel → source build via `build_bundled.sh`). RunPod's pytorch base (py3.11) ships all of these AND the wheels, so this is a slim-only gap — RunPod behavior is unchanged.
+- **setuptools:** slim's pip ships none, and modern setuptools (**≥81**) REMOVED `pkg_resources` which FlashVSR's `setup.py` imports. Cfg pins `setuptools<81` + `wheel`, and the FlashVSR git install uses **`--no-build-isolation`** so its wheel build reuses that main-env setuptools (pip's default isolation would build in a fresh env lacking it).
+- **The embed must be in BOTH build and runtime phases.** The composed weights fetch runs `python -m kinoforge.upscalers.flashvsr._fetch_weights`, which resolves only against the embedded `/tmp/kfsrv` tree + `PYTHONPATH` — so the embed lands in `build_script` (before the fetch) AND `runtime_script` (for the server). The combined `script` is byte-identical (embed appears once), so RunPod + the golden are unaffected.
+- **cp313 BSA wheel.** Modal's serialized web-server fn forces `python:3.13-slim` (image-Python == controller 3.13), but BSA's prebuilt wheels are cp311; this cfg points `bsa_wheel_url` at the cp313 wheel built on Modal (`tools/build_bsa_wheel_modal.py`), torch 2.6.0+cu124. The BSA SM80 guard now no-ops when `torch.cuda.is_available()` is False so the wheel bakes on the CPU image builder; it still enforces SM80+ at runtime.
+- **`--extra-index-url None` is harmless** (the cfg leaves `pytorch_extra_index_url` unset → pydantic default None → literal `None`): pip logs `Location 'None/...' is ignored` and resolves torch 2.6.0 from PyPI (cu124 default on linux). Same as M1/M2.
+- **Teardown verified** post-run: log `--no-reuse: destroyed + forgot pod upscale-20260710-234415`; then `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` → no running kinoforge app.

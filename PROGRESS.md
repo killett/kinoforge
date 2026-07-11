@@ -13,19 +13,37 @@ first unchecked task without redoing committed work.
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
 - **Modal M2 spec+plan (done + live-green):** `docs/superpowers/specs/2026-07-08-modal-milestone2-wan22-a14b-design.md` + `docs/superpowers/plans/2026-07-08-modal-milestone2-wan22-a14b.md` (3 tasks 0-2, all committed)
-- **Modal M3 spec+plan (offline-complete; live proof BLOCKED):** `docs/superpowers/specs/2026-07-09-modal-milestone3-flashvsr-design.md` + `docs/superpowers/plans/2026-07-09-modal-milestone3-flashvsr.md` (6 tasks 0-5; `.tasks.json` co-located). Tasks 0-4 done + committed; Task 5 (live upscale proof) blocked — see below.
-- **SINGLE NEXT ACTION:** **Unblock Modal M3 Task 5 (FlashVSR live proof) by making the Modal boot fast + preemption-resilient.** M3 offline work is DONE + committed: the cp313 BSA wheel is built (on Modal, `tools/build_bsa_wheel_modal.py`) + hosted (`killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1`, `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl`, 526 MB); the Modal cfg (`examples/configs/modal-flashvsr-x4.yaml`), `HF_HOME=/cache/hf` provider wiring, offline tests, and the RED live scaffold are all committed. **BLOCKER (2026-07-09):** the live `kinoforge upscale` never converged — the kinoforge Modal transport provisions at RUNTIME (pip torch+BSA-wheel+FlashVSR-weights via the boot script, ~15 min), and Modal **preempted the pooled A100 repeatedly mid-boot** ("Worker disappeared, in-progress inputs will be re-scheduled"); each preempt restarts the boot from scratch (no caching for the BSA wheel / FlashVSR weights), so `/health` never bound and the run **accumulated 10 containers** before teardown (~$1.5 est). Torn down clean (app stopped, ledger `forget`, verified `No running instances`). **FIX (the next action):** bake the heavy pip deps + BSA wheel INTO the Modal image at build time (`ModalProvider`/`build_modal_app` `Image.pip_install(...)` instead of runtime boot-script installs) so container start is seconds, not ~15 min → no preemption window, no container pile-up. Then re-run Task 5 (`pixi run -e live-modal kinoforge upscale --config examples/configs/modal-flashvsr-x4.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse`), frame-QA, log §24. Note: M1 (§22, 1.3B ~5 min boot) + M2 (§23, A14B ~30 min HF boot) survived preemption on lucky windows; FlashVSR's mix of a 526 MB non-HF wheel + weights is the worst case and forces the image-bake fix. [[reference_modal_provider_gotchas]] · [[reference_modal_add_python_clang_link]]. Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
+- **Modal M3 spec+plan (COMPLETE + LIVE-GREEN 2026-07-10):** `docs/superpowers/specs/2026-07-09-modal-milestone3-flashvsr-design.md` + `docs/superpowers/plans/2026-07-09-modal-milestone3-flashvsr.md`. Tasks 0-4 done earlier; Task 5 (live proof) UNBLOCKED + green via the fast-boot image-bake below. See `successful-generations.md` §24.
+- **Modal fast-boot image-bake spec+plan (COMPLETE + LIVE-GREEN 2026-07-10):** `docs/superpowers/specs/2026-07-10-modal-fast-boot-image-bake.md` + `docs/superpowers/plans/2026-07-10-modal-fast-boot-image-bake.md` (5 tasks 6-10, all done + committed `8813da8`..`22793a6`; `.tasks.json` co-located). Bakes pip/BSA-wheel/weights into the Modal image at build time so container boot is seconds → closed the preemption window that blocked M3. FlashVSR 480²→1920² live-green, frame-QA PASS, teardown clean.
+- **SINGLE NEXT ACTION:** **Modal M4 (RIFE interpolation) on the fast-boot path** — roadmap `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`. M3 (FlashVSR 4x) is DONE + live-green (§24); the image-bake fast-boot mechanism generalises to any heavy-provision engine. (Superseded next action, kept for context:) **Unblock Modal M3 Task 5 (FlashVSR live proof) by making the Modal boot fast + preemption-resilient.** M3 offline work is DONE + committed: the cp313 BSA wheel is built (on Modal, `tools/build_bsa_wheel_modal.py`) + hosted (`killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1`, `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl`, 526 MB); the Modal cfg (`examples/configs/modal-flashvsr-x4.yaml`), `HF_HOME=/cache/hf` provider wiring, offline tests, and the RED live scaffold are all committed. **BLOCKER (2026-07-09):** the live `kinoforge upscale` never converged — the kinoforge Modal transport provisions at RUNTIME (pip torch+BSA-wheel+FlashVSR-weights via the boot script, ~15 min), and Modal **preempted the pooled A100 repeatedly mid-boot** ("Worker disappeared, in-progress inputs will be re-scheduled"); each preempt restarts the boot from scratch (no caching for the BSA wheel / FlashVSR weights), so `/health` never bound and the run **accumulated 10 containers** before teardown (~$1.5 est). Torn down clean (app stopped, ledger `forget`, verified `No running instances`). **FIX (the next action):** bake the heavy pip deps + BSA wheel INTO the Modal image at build time (`ModalProvider`/`build_modal_app` `Image.pip_install(...)` instead of runtime boot-script installs) so container start is seconds, not ~15 min → no preemption window, no container pile-up. Then re-run Task 5 (`pixi run -e live-modal kinoforge upscale --config examples/configs/modal-flashvsr-x4.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse`), frame-QA, log §24. Note: M1 (§22, 1.3B ~5 min boot) + M2 (§23, A14B ~30 min HF boot) survived preemption on lucky windows; FlashVSR's mix of a 526 MB non-HF wheel + weights is the worst case and forces the image-bake fix. [[reference_modal_provider_gotchas]] · [[reference_modal_add_python_clang_link]]. Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
 
-## RESUME SNAPSHOT (updated 2026-07-09 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-07-10 — read this, then STOP; below is history)
 
 This file exceeds the 256 KB single-read limit. A fresh session should
 read THIS section (top ~120 lines) and then `rg` the history below on
 demand — do NOT attempt a full-file read.
 
-**State (updated 2026-07-09 Modal M3 FlashVSR session):** main green; ledger
-clean; zero pods/clusters/Modal apps. Modal M3 offline-complete + cp313 wheel
-built; live proof BLOCKED by Modal preemption-on-long-boot (see SINGLE NEXT
-ACTION above for the fix). Earlier state: FlashVSR corruption fixed (`e82b0d1`).
+**State (updated 2026-07-10 Modal fast-boot image-bake session):** main green;
+ledger clean; zero pods/clusters/running Modal apps. **Modal M3 FlashVSR 4x is
+DONE + LIVE-GREEN** via the fast-boot image-bake (plan 2026-07-10, tasks 6-10 all
+committed `8813da8`..`22793a6`; FlashVSR 480²→1920² on A100-80GB, frame-QA PASS,
+§24). Fast boot confirmed: image bake ~350s (CPU, cached) then provision→result
+~97s on GPU — no preemption loop, no container pile-up (the 2026-07-09 blocker).
+Earlier: FlashVSR corruption fixed (`e82b0d1`).
+
+**Modal fast-boot image-bake — SHIPPED + LIVE-GREEN 2026-07-10 (M3 unblocked):**
+Split `render_provision` into a bakeable `build_script` (pip/BSA-wheel/weights)
++ a fast `runtime_script`; thread both onto `InstanceSpec`; `ModalProvider`
+bakes `image_build_script` into the image via `Image.run_commands`
+(`echo <b64> | base64 -d | bash` — one RUN, since Dockerfile RUN dies on bare
+newlines) and boots with the runtime script only. RunPod untouched (combined
+`script` byte-identical, golden-locked). Slim-image (`python:3.13-slim`) gaps
+cleared by `apt_install(curl, git, build-essential, cmake, pkg-config)` +
+cfg-pinned `setuptools<81` (≥81 dropped `pkg_resources`) + FlashVSR
+`--no-build-isolation`. Embed tagged "both" phases so the build-time
+weights-fetch (`python -m kinoforge...`) resolves against `/tmp/kfsrv`. Also
+zeroed gzip mtime in the module-embed encoder (render_provision now
+deterministic). Full detail: `successful-generations.md` §24.
 
 **Modal M3 (FlashVSR 4x on 80GB) — OFFLINE-COMPLETE, LIVE PROOF BLOCKED 2026-07-09:**
 Spec+plan `docs/superpowers/{specs,plans}/2026-07-09-modal-milestone3-flashvsr*`.

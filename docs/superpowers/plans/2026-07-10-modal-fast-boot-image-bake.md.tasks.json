@@ -30,10 +30,10 @@
     {
       "id": 10,
       "subject": "Task 10 (native #6): Live FlashVSR 4x proof on Modal — run, frame-QA, teardown, log",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6, 7, 8, 9],
       "description": "**Goal:** Re-run FlashVSR upscale on Modal 80GB with fast boot; 1920x1920 output; frame-QA; teardown; log §24. USER-GATE (tracked as native task #6). Blocked by Tasks 6-9.\n\n**Verify:** pixi run kinoforge list (clean); ffprobe 1920x1920; §24 present.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"source\", \"480\", \"input\"], [\"output\", \"1920\", \"upscaled\"]], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-10T18:40"
+  "lastUpdated": "2026-07-11T01:05"
 }
