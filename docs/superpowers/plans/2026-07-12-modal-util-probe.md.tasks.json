@@ -1,0 +1,39 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-12-modal-util-probe.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Server /util endpoint + GpuStatsReader seam",
+      "status": "pending",
+      "description": "**Goal:** Self-contained `read_gpu_stats()` (pynvml primary, nvidia-smi fallback, psutil for cpu/mem/disk, uptime) that never raises, exposed via a sync `/util` route on wan_t2v_server.\n\n**Files:** src/kinoforge/engines/diffusers/servers/_util_stats.py (create); src/kinoforge/engines/diffusers/servers/wan_t2v_server.py (modify, route ~1365); tests/engines/diffusers/servers/test_util_stats.py (create).\n\n**Acceptance:** read_gpu_stats returns 5-key dict; pynvml->nvidia-smi->None fallback; reader never raises; GET /util sync def returns dict; no kinoforge.core import in reader.\n\n**Verify:** pixi run pytest tests/engines/diffusers/servers/test_util_stats.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/servers/_util_stats.py\", \"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\", \"tests/engines/diffusers/servers/test_util_stats.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/diffusers/servers/test_util_stats.py -v\", \"acceptanceCriteria\": [\"read_gpu_stats returns 5-key dict\", \"pynvml->nvidia-smi->None fallback chain\", \"reader never raises\", \"GET /util sync def returns dict\", \"no kinoforge.core import in reader\"], \"planTask\": 0, \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: ModalUtilEndpoint.read_util",
+      "status": "pending",
+      "description": "**Goal:** Controller-side UtilSnapshotEndpoint satisfier: resolve instance_id -> .modal.run URL (injected resolver), GET /util, map JSON -> UtilSnapshot; honor invariants (None when unresolved/404; TransportError on non-2xx).\n\n**Files:** src/kinoforge/providers/modal/util.py (create); tests/providers/modal/test_modal_util_endpoint.py (create).\n\n**Acceptance:** read_util satisfies UtilSnapshotEndpoint protocol; unresolved id -> None (no HTTP); 200 body -> UtilSnapshot; 404 -> None; 500 -> TransportError; missing fields -> None; side-effect-free.\n\n**Verify:** pixi run pytest tests/providers/modal/test_modal_util_endpoint.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/util.py\", \"tests/providers/modal/test_modal_util_endpoint.py\"], \"verifyCommand\": \"pixi run pytest tests/providers/modal/test_modal_util_endpoint.py -v\", \"acceptanceCriteria\": [\"read_util satisfies UtilSnapshotEndpoint protocol\", \"unresolved id -> None no HTTP\", \"200 body -> UtilSnapshot\", \"404 -> None, 500 -> TransportError\", \"missing fields -> None\"], \"planTask\": 1, \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Register modal + wire factory with ledger-backed resolver",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** provider_util_supported('modal') true; build_util_endpoint_for builds a ModalUtilEndpoint for a reap-enabled Modal cfg, resolver threaded from the orchestrator's ledger.\n\n**Files:** src/kinoforge/core/util_endpoints.py (_UTIL_SUPPORTED); src/kinoforge/_adapters.py (build_util_endpoint_for modal branch + resolve_modal_endpoint kwarg); src/kinoforge/core/orchestrator.py (~1172 resolver); tests/core/test_build_util_endpoint_modal.py.\n\n**Acceptance:** provider_util_supported('modal') True; factory builds ModalUtilEndpoint w/ resolver; None when both reap flags off; None when resolver None; orchestrator passes ledger.read(id)['endpoints']['8000'] resolver; runpod/local branches byte-unchanged.\n\n**Verify:** pixi run pytest tests/core/test_build_util_endpoint_modal.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/util_endpoints.py\", \"src/kinoforge/_adapters.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_build_util_endpoint_modal.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_build_util_endpoint_modal.py -v\", \"acceptanceCriteria\": [\"provider_util_supported('modal') True\", \"factory builds ModalUtilEndpoint with resolver\", \"None when reap disabled or no resolver\", \"orchestrator threads ledger resolver\", \"runpod/local branches unchanged\"], \"planTask\": 2, \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: RED live scaffold (committed before spend)",
+      "status": "pending",
+      "blockedBy": [0, 1, 2],
+      "description": "**Goal:** pytest.mark.live scaffold documenting the util-probe live proof, committed BEFORE live spend (durability rule).\n\n**Files:** tests/live/test_modal_util_probe.py (create).\n\n**Acceptance:** marked pytest.mark.live so `pixi run test` (-m 'not live') deselects it (offline green); documents runbook (warm gen -> resolve id from ledger -> poll read_util mid-gen, assert gpu_util_percent>0) + xfail contract (mirrors M5 scaffold).\n\n**Verify:** pixi run pytest tests/live/test_modal_util_probe.py -q -> 1 xfailed / deselected; MUST NOT run live.\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_util_probe.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_modal_util_probe.py -q\", \"acceptanceCriteria\": [\"marked live, deselected under -m 'not live'\", \"documents runbook + xfail contract\", \"committed before spend\"], \"planTask\": 3, \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Live proof — util>0 mid-generation + PROGRESS/memory",
+      "status": "pending",
+      "blockedBy": [0, 1, 2, 3],
+      "description": "**Goal:** Live-prove the Modal util probe returns real non-zero GPU% during a gen and ~0 idle; verify teardown; record PROGRESS + gotchas memory (NO successful-generations.md entry — infra, not a gen axis).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Requested by the user in the current conversation. Close only after every acceptanceCriteria item is re-validated independently with output captured.\n\n**Files:** PROGRESS.md, reference_modal_provider_gotchas memory; (possibly) examples/configs/modal-wan-t2v-1_3b.yaml (add psutil+nvidia-ml-py to pip).\n\n**Acceptance:** preflight PASS; read_util(id) DURING gen -> gpu_util_percent>0 (captured); idle -> gpu ~0 (captured); both observed; cpu_percent + uptime_seconds non-None; teardown clean (kinoforge list + modal app list); PROGRESS+memory updated, NO successful-generations entry.\n\n**Verify:** pixi run kinoforge list -> No running instances + empty ledger; captured gpu_util>0 under load in PROGRESS.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"examples/configs/modal-wan-t2v-1_3b.yaml\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"under-load\", \"gpu_util_percent>0\", \"mid-gen\"], [\"idle\", \"gpu ~0\", \"between gens\"]], \"acceptanceCriteria\": [\"preflight PASS\", \"read_util gpu_util>0 mid-gen captured\", \"read_util gpu ~0 idle captured\", \"cpu_percent + uptime_seconds non-None\", \"teardown clean\", \"PROGRESS+memory updated, no successful-generations entry\"], \"planTask\": 4, \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-12T02:00"
+}
