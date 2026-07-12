@@ -559,7 +559,11 @@ class Ledger:
         Args:
             instance: The :class:`~kinoforge.core.interfaces.Instance` to
                 record.  Fields ``id``, ``provider``, ``tags``,
-                ``created_at``, and ``cost_rate_usd_per_hr`` are stored.
+                ``endpoints``, ``created_at``, and ``cost_rate_usd_per_hr``
+                are stored.  ``endpoints`` is persisted so warm-attach can
+                replay it for providers whose URL cannot be deterministically
+                rebuilt from ``tags["ports"]`` (e.g. Modal's
+                ``build-<hash>`` ``.modal.run`` URL).
             idle_timeout_s: Optional lifecycle policy snapshot — when
                 non-None, persisted into the entry so ``kinoforge status``
                 can surface it without re-loading the YAML config.
@@ -577,6 +581,7 @@ class Ledger:
                 "id": instance.id,
                 "provider": instance.provider,
                 "tags": dict(instance.tags),
+                "endpoints": dict(instance.endpoints),
                 "created_at": instance.created_at,
                 "cost_rate_usd_per_hr": instance.cost_rate_usd_per_hr,
             }
@@ -592,7 +597,7 @@ class Ledger:
 
         Returns:
             A list of dicts, each with keys ``id``, ``provider``, ``tags``,
-            ``created_at``, and ``cost_rate_usd_per_hr``.
+            ``endpoints``, ``created_at``, and ``cost_rate_usd_per_hr``.
         """
         return self._read_entries()
 
