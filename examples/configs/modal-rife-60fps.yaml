@@ -1,0 +1,75 @@
+# RIFE v4.26 frame interpolation (16fps -> 60fps) on Modal serverless GPU
+# (Milestone 4). Reuses the M3 fast-boot image bake: the composed RIFE provision
+# (git clone Practical-RIFE + pip + HF weights zip) is baked into the Modal image
+# at BUILD time, so the container boots in seconds. Delivery: the diffusers
+# wan_t2v_server on a Modal web_server(8000), same transport as M1/M2/M3.
+#
+# NO `cloud:` key — that field is SkyPilot-only and fails validation here.
+#
+# Usage (interpolate-only; supply the source clip via --video):
+#   pixi run -e live-modal kinoforge interpolate \
+#     --config examples/configs/modal-rife-60fps.yaml \
+#     --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
+#     --fps 60 --no-reuse
+
+engine:
+  kind: diffusers
+  precision: fp16
+  diffusers:
+    # Modal's serialized web_server fn requires image-Python == controller (3.13).
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # torch is ADDED vs the RunPod RIFE cfg: python:3.13-slim ships no torch
+      # (runpod/pytorch did). No ABI lock (RIFE has no compiled ext like BSA) —
+      # torch 2.6.0 cu124 cp313 for stack consistency with M3.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.interpolators.rife"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.fps_resolver"
+    # Skip eager WanPipeline load — pod runs only the on-demand RIFE runtime.
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  requirements:
+    min_vram_gb: 16
+    min_cuda: "12.4"
+    max_usd_per_hr: 1.00
+    disk_gb: 40
+    gpu_preference:
+      - "T4"
+      - "L4"
+      - "A10G"
+  lifecycle:
+    boot_timeout: 30m
+    idle_timeout: 20m
+    job_timeout: 12m
+    time_buffer: 3m
+    max_lifetime: 45m
+    budget: 0.5
+
+spec:
+  model: "rife-rife49"
+
+interpolate:
+  engine: rife
+  fps: 60.0
+  rife:
+    weights_ref: "hf:hzwer/RIFE"
+    model: rife426
+    precision: fp16
