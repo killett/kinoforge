@@ -1,0 +1,26 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-11-modal-milestone4-rife.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Modal RIFE config + offline split characterization",
+      "status": "pending",
+      "description": "**Goal:** New modal-rife-60fps.yaml loads as a Modal (non-sky) interpolate cfg; rendered provision splits RIFE install into build_script and server exec into runtime_script.\n\n**Files:** examples/configs/modal-rife-60fps.yaml (create), tests/test_modal_rife_config.py (create)\n\n**Acceptance:** cfg loads (provider modal, no cloud key, interpolate rife/60fps); build_script has RIFE git clone Practical-RIFE + numpy<2 + RIFEv4.26 + torch==2.6.0, not server exec; runtime_script has wan_t2v_server exec not the installs.\n\n**Verify:** pixi run pytest tests/test_modal_rife_config.py -v\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-rife-60fps.yaml\", \"tests/test_modal_rife_config.py\"], \"verifyCommand\": \"pixi run pytest tests/test_modal_rife_config.py -v\", \"planTask\": 0, \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: RED live scaffold (committed before spend)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** pytest.mark.live end-to-end scaffold for the Modal RIFE interpolate run, committed BEFORE live spend (durability rule).\n\n**Files:** tests/live/test_modal_rife_60fps.py (create)\n\n**Acceptance:** marked pytest.mark.live so `pixi run test` (-m 'not live') skips it (offline suite green); under -m live drives kinoforge interpolate + asserts ~60fps; committed RED.\n\n**Verify:** pixi run pytest tests/live/test_modal_rife_60fps.py -q (default env) → skipped, not run live.\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_rife_60fps.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_modal_rife_60fps.py -q\", \"planTask\": 1, \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Live RIFE 60fps proof on Modal + frame-QA + teardown + §25",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "**Goal:** Run RIFE interpolate live on Modal (T4-first, fast boot); ~60fps clip; frame-QA; verify teardown; log §25 + PROGRESS. USER-GATE.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Requested by the user in the current conversation. Close only after every acceptanceCriteria item is re-validated with captured output.\n\n**Files:** successful-generations.md (new §25), PROGRESS.md (RESUME SNAPSHOT)\n\n**Acceptance:** preflight PASS; fast boot not preemption loop (numpy<2 build error fails fast at BUILD, no GPU spend, deviation-handled); output ~60fps ffprobe r_frame_rate=60/1 ~304 frames 480x480; frame-QA smooth pose deltas no ghosting; teardown clean (kinoforge list + modal app list); §25 written.\n\n**Verify:** pixi run kinoforge list → No running instances + empty ledger; ffprobe → r_frame_rate=60/1; §25 present.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"source\", \"16fps\", \"input\"], [\"output\", \"60\", \"interpolated\"]], \"planTask\": 2, \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-11T01:20"
+}
