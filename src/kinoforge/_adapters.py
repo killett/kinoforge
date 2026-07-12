@@ -71,6 +71,8 @@ import kinoforge.upscalers.spandrel  # noqa: F401  # self-registers under "spand
 # --------------------------------------------------------------------------
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from kinoforge.core.balance_endpoints import BalanceEndpoint
     from kinoforge.core.config import Config
     from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
@@ -230,6 +232,8 @@ def build_balance_endpoint_for(
 def build_util_endpoint_for(
     cfg: "Config",
     creds: "CredentialProvider",
+    *,
+    resolve_modal_endpoint: "Callable[[str], str | None] | None" = None,
 ) -> "UtilSnapshotEndpoint | None":
     """Build the right :class:`UtilSnapshotEndpoint` for the configured provider.
 
@@ -241,9 +245,18 @@ def build_util_endpoint_for(
       - provider_util_supported(cfg.compute.provider) is False
         (e.g. SkyPilot pre-B5b; Bedrock).
 
+    The ``modal`` branch additionally returns ``None`` when
+    ``resolve_modal_endpoint`` is ``None`` — without a ledger-backed
+    id->URL resolver the ``/util`` route cannot be reached, so the
+    endpoint would be inert.
+
     Args:
         cfg: The loaded kinoforge config.
         creds: Credential provider; RunPod branch reads ``RUNPOD_API_KEY``.
+        resolve_modal_endpoint: Callable mapping a Modal instance id to its
+            public ``.modal.run`` URL (or ``None`` when absent). Wired by
+            the orchestrator to read the ledger. Required for the ``modal``
+            branch; ignored otherwise.
 
     Returns:
         A :class:`UtilSnapshotEndpoint` instance, or ``None``.
@@ -280,6 +293,12 @@ def build_util_endpoint_for(
         from kinoforge.providers.local.util import LocalUtilEndpoint
 
         return LocalUtilEndpoint()
+    if provider == "modal":
+        if resolve_modal_endpoint is None:
+            return None  # no ledger resolver wired -> cannot reach /util
+        from kinoforge.providers.modal.util import ModalUtilEndpoint
+
+        return ModalUtilEndpoint(resolve_endpoint=resolve_modal_endpoint)
     return None
 
 

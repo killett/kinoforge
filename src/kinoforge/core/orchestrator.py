@@ -1171,8 +1171,18 @@ def deploy_session(
     ):
         from kinoforge._adapters import build_util_endpoint_for
 
+        def _resolve_modal_endpoint(iid: str) -> str | None:
+            entry = _ledger_for_claim.read(iid)
+            if not entry:
+                return None
+            return (entry.get("endpoints") or {}).get("8000")
+
         _util_endpoint = (
-            build_util_endpoint_for(cfg, creds) if creds is not None else None
+            build_util_endpoint_for(
+                cfg, creds, resolve_modal_endpoint=_resolve_modal_endpoint
+            )
+            if creds is not None
+            else None
         )
         _stall_window_s: float | None = None
         _stall_gpu_threshold = 5.0

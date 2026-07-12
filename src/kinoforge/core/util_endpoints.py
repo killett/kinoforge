@@ -63,7 +63,7 @@ class UtilSnapshotEndpoint(Protocol):
         ...
 
 
-_UTIL_SUPPORTED: frozenset[str] = frozenset({"local", "runpod"})
+_UTIL_SUPPORTED: frozenset[str] = frozenset({"local", "modal", "runpod"})
 
 
 def provider_util_supported(provider_kind: str) -> bool:
