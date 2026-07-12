@@ -53,6 +53,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 22. `2026-07-08 22:12:07` — [Diffusers WanPipeline Wan 2.1 T2V-1.3B on Modal serverless GPU (A10) — t2v](#22-2026-07-08-221207--diffusers-wanpipeline-wan-21-t2v-13b-on-modal-serverless-gpu-a10--t2v)
 23. `2026-07-08 23:55:31` — [Diffusers WanPipeline Wan 2.2 T2V-A14B on Modal serverless GPU (A100-80GB) — t2v](#23-2026-07-08-235531--diffusers-wanpipeline-wan-22-t2v-a14b-on-modal-serverless-gpu-a100-80gb--t2v)
 24. `2026-07-10 23:52:23` — [FlashVSR v1.1 4x upscale on Modal A100-80GB via image-bake fast boot (Milestone 3) — upscale](#24-2026-07-10-235223--flashvsr-v11-4x-upscale-on-modal-a100-80gb-via-image-bake-fast-boot-milestone-3--upscale)
+25. `2026-07-11 17:59:51` — [RIFE v4.26 frame interpolation (16fps→60fps) on Modal T4 via image-bake fast boot (Milestone 4) — interpolate](#25-2026-07-11-175951--rife-v426-frame-interpolation-16fps60fps-on-modal-t4-via-image-bake-fast-boot-milestone-4--interpolate)
 
 ---
 
@@ -2670,3 +2671,59 @@ The fast-boot mechanism + every slim-image gap it exposed (one failed CPU build 
 - **cp313 BSA wheel.** Modal's serialized web-server fn forces `python:3.13-slim` (image-Python == controller 3.13), but BSA's prebuilt wheels are cp311; this cfg points `bsa_wheel_url` at the cp313 wheel built on Modal (`tools/build_bsa_wheel_modal.py`), torch 2.6.0+cu124. The BSA SM80 guard now no-ops when `torch.cuda.is_available()` is False so the wheel bakes on the CPU image builder; it still enforces SM80+ at runtime.
 - **`--extra-index-url None` is harmless** (the cfg leaves `pytorch_extra_index_url` unset → pydantic default None → literal `None`): pip logs `Location 'None/...' is ignored` and resolves torch 2.6.0 from PyPI (cu124 default on linux). Same as M1/M2.
 - **Teardown verified** post-run: log `--no-reuse: destroyed + forgot pod upscale-20260710-234415`; then `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` → no running kinoforge app.
+
+---
+
+## 25. `2026-07-11 17:59:51` — RIFE v4.26 frame interpolation (16fps→60fps) on Modal T4 via image-bake fast boot (Milestone 4) — interpolate
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine (RIFE interpolator, composed) / hzwer/RIFE RIFEv4.26` |
+| **Mode** | interpolate (480×480, 16 fps 81f → 60 fps 304f; temporal-only, dims unchanged) |
+| **New capability axis** | **RIFE interpolation on Modal via the M3 image-bake fast boot** (Milestone 4) — closes the Modal engine matrix (t2v §22/§23 · upscale §24 · **interpolate** here). Pure-config: the Task-6 provision split already routes the composed `interpolate.engine` (RIFE) provision into `build_script`, and `ModalProvider` already bakes it — so RIFE-on-Modal fast-boots with NO provider/engine change. First interpolate-mode generation on Modal, and first RIFE bake on the slim py3.13 image. |
+| **First-success SHA** | `e819248` (the embed fix — the green run). Feature commits: `c01a515` (cfg + offline split test), `cdbc317` (RED live scaffold, pre-spend), `e819248` (embed `kinoforge.core.frames` + regression assertion). |
+| **Date (local TZ)** | 2026-07-11 17:59:51 -0700 (PDT) |
+| **GPU** | Modal **T4** (16 GB), serverless. T4-first `gpu_preference: [T4, L4, A10G]` + `min_vram_gb: 16` → catalog picks T4 (`$0.59/hr` snapshot). RIFE needs ~2 GB VRAM, no SM80 — T4 is ample and cheapest. |
+| **Wall clock** | This run **rebuilt the image** (the embed-list change busts the single base64 bake RUN → full apt+pip+numpy-source-build re-ran, ~3.5 min CPU builder). Then **fast boot**: provision→result **~42 s** on the T4 (provision 17:59:02 → artifact 17:59:44). NO preemption loop. A same-embed re-fire would skip the rebuild (cached layer) and boot in seconds. |
+| **Est. spend** | ~$0.01 GPU (T4 ~53 s live, provision→destroy) + a first failed T4 attempt (~20 s to the `core.frames` import error, torn down) + near-zero CPU image builds. Total well under $0.05 — within the Modal credit. |
+| **Layer / phase** | Modal Milestone 4 — plan `docs/superpowers/plans/2026-07-11-modal-milestone4-rife.md` Task 2 (spec `docs/superpowers/specs/2026-07-11-modal-milestone4-rife-design.md`). Rides the M3 fast-boot bake (§24). USER-GATE. |
+
+### Exact command
+
+```bash
+pixi run -e live-modal kinoforge interpolate \
+  --config examples/configs/modal-rife-60fps.yaml \
+  --video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4 \
+  --fps 60 --no-reuse
+```
+
+### Cfg
+
+- `examples/configs/modal-rife-60fps.yaml` — `compute.provider=modal` (NO `cloud:` key — SkyPilot-only), `image=python:3.13-slim`, interpolator=`rife`, **fps=`60.0`**, `rife.weights_ref=hf:hzwer/RIFE`, `model=rife426`, precision=`fp16`, `upscale_only: true` (skip eager Wan load — pod runs only the on-demand RIFE runtime), `models: []`.
+- **torch is ADDED vs the RunPod RIFE cfg** (§20): slim ships no torch, so `pip:` carries `torch==2.6.0` + `torchvision==0.21.0` (cu124 cp313, stack-consistent with M3). No ABI lock (RIFE has no compiled ext like BSA).
+- **`embed_files` must include `kinoforge.core.frames`** — see the deviation below; the RIFE runtime imports `ffprobe_fps` from it. Also embeds `kinoforge.core.errors` + `kinoforge.core.fps_resolver`; `embed_modules` = `kinoforge.engines.diffusers.servers` + `kinoforge.interpolators.rife`.
+
+### Input
+
+- Source clip: `/workspace/output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` — 480×480, **81 frames, 16 fps, 5.062 s** (Wan 2.2 T2V-A14B, §23 lineage). Same fixture as §20/§24.
+
+### Output
+
+| Field | Value |
+|---|---|
+| **Published path** | `output/20260711-175951_interpolated_rife_interp_interpolate.mp4` |
+| **Dimensions** | **480×480** (unchanged — interpolation is temporal only), **r_frame_rate=60/1**, **304 frames** (ffprobe: width=480 height=480 r_frame_rate=60/1 nb_frames=304) |
+| **Frame math** | `round(5.0625 s × 60) = 304` = 3.75× the 81-frame source; matches §20's RunPod RIFE result exactly. |
+| **Size / SHA-256** | 879,994 B / `fed84f7751f07ecd19f9d194914fe29efd9823a9b4ecc86508145fd4a8ed9ff6` |
+
+### Frame-QA verdict (spread sweep + adjacent-frame check)
+
+**PASS — clearly high quality, no ⚠️.** Spread sweep (5 frames, every 60th) + 6 consecutive mid-clip frames (n=150–155) eyeballed. Woman in a red/blue dress turning in a backlit wildflower meadow, tall waterfall down moss cliffs, golden-hour light, glowing butterflies + light-wisps — sharp, prompt-adherent, no warping/ghosting/false-color. **Interp-specific check:** consecutive 60 fps frames (150/152/154) show small, smooth pose deltas (torso/head rotation, hair) — genuine synthesized midpoints, NOT duplicated/held frames and NOT ghosted double-exposures. Confirms real 3.75× arbitrary-timestep synthesis (16→60), not frame-repeat padding. Frames at `/tmp/.../scratchpad/rifeqa_{spread,consec}_*.png`.
+
+### Reproduction recipe / deviations (read before re-firing)
+
+- **numpy<2 source-build on py3.13 — SUCCEEDED, no cfg change (the #1 pre-run risk).** RIFE pins `numpy<2`; py3.13 has no cp313 wheel for numpy 1.26.4, so pip built it from source (`numpy-1.26.4.tar.gz` → `numpy-1.26.4-cp313-cp313-linux_x86_64.whl`). The `build-essential` that `ModalProvider` already `apt_install`s (for the M3 FlashVSR bake — carried here as harmless ~200 MB waste per the pure-cfg decision) supplied the toolchain, so it "just built." The build fails FAST + cheap at IMAGE-BUILD time (no GPU spend) if it ever can't compile — it didn't.
+- **Embed gap — the one live-caught bug (fixed `e819248`).** The first live attempt failed on the GPU with `InterpolationError: ... No module named 'kinoforge.core.frames'`: the RIFE runtime (`interpolators/rife/_runtime.py`) imports `ffprobe_fps` from `kinoforge.core.frames`, but the M4 cfg (mirroring §24's FlashVSR embed list) OMITTED it. The working RunPod RIFE cfg (§20) DOES embed it. Fix: add `kinoforge.core.frames` to `embed_files` + an offline regression assertion (`"core/frames.py" in build_script`) that would have caught it pre-spend. `core.frames` only needs `core.errors` (already embedded) + stdlib — no transitive gap. **Lesson:** when cloning a Modal cfg's embed list across engines, diff it against that engine's own working (RunPod) cfg — the embed set is engine-specific.
+- **The bake mechanism is unchanged from §24** — `ModalProvider` bakes `build_script` (RIFE `git clone` Practical-RIFE + `numpy<2` + `RIFEv4.26` weights + torch) into the image via one base64 `RUN`, boots with `runtime_script` (the `wan_t2v_server` exec) only. The single-RUN base64 encoding means ANY build-phase change (like the embed-list edit) busts the whole layer → full rebuild; a same-content re-fire is cached.
+- **`--extra-index-url None` is harmless** (same as §22–§24): `pytorch_extra_index_url` unset → literal `None`, pip logs `Location 'None/...' is ignored`, resolves torch 2.6.0 from PyPI (cu124 default on linux).
+- **Teardown verified** post-run: log `--no-reuse: destroyed + forgot pod interpolate-20260711-175532`; then `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` → both kinoforge apps `stopped` (0 GPUs), no running app.
