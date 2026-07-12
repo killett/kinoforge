@@ -10,7 +10,7 @@
     {
       "id": 1,
       "subject": "Task 1: RED live scaffold (committed before spend)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** A `pytest.mark.live` scaffold documenting the 3-run warm-reuse + cold-cache sequence, committed BEFORE the live spend (durability rule).\n\n**Files:** tests/live/test_modal_warm_reuse_hf_cache.py (create).\n\n**Acceptance:** marked `pytest.mark.live` so `pixi run test` (`-m 'not live'`) deselects it (offline green); documents cold→warm-attach→destroy→cold-cache as constants + xfail contract (mirrors M4 scaffold).\n\n**Verify:** pixi run pytest tests/live/test_modal_warm_reuse_hf_cache.py -q → 1 xfailed / deselected; MUST NOT run live.\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_warm_reuse_hf_cache.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_modal_warm_reuse_hf_cache.py -q\", \"acceptanceCriteria\": [\"marked live, deselected under -m 'not live'\", \"documents 3-run sequence as constants + xfail contract\", \"committed before spend\"], \"planTask\": 1, \"modelTier\": \"standard\"}\n```"
     },
