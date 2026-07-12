@@ -1386,6 +1386,18 @@ def health() -> dict[str, Any]:
     }
 
 
+@app.get("/util")
+def util() -> dict[str, Any]:
+    """Per-tick GPU/CPU/mem stats for the provider util probe (Modal).
+
+    Sync def on purpose: FastAPI runs sync handlers in a threadpool, so the
+    blocking pynvml/nvidia-smi/psutil reads cannot stall the event loop.
+    """
+    from kinoforge.engines.diffusers.servers._util_stats import read_gpu_stats
+
+    return read_gpu_stats()
+
+
 @app.post("/generate")
 def generate(req: GenerateRequest) -> dict[str, str]:
     """Enqueue a job; return its server-assigned id."""

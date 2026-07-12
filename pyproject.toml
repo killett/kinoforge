@@ -77,6 +77,10 @@ ignore_missing_imports = true
 module = ["modal", "modal.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]  # pynvml + psutil live only on-pod; lazy-imported+guarded in servers/_util_stats.
+module = ["pynvml", "pynvml.*", "psutil", "psutil.*"]
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]  # Tests often have untyped functions and use dynamic features, so relax mypy rules for them.
 module = ["tests.*"]
 strict = false
