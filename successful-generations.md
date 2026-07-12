@@ -54,6 +54,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 23. `2026-07-08 23:55:31` — [Diffusers WanPipeline Wan 2.2 T2V-A14B on Modal serverless GPU (A100-80GB) — t2v](#23-2026-07-08-235531--diffusers-wanpipeline-wan-22-t2v-a14b-on-modal-serverless-gpu-a100-80gb--t2v)
 24. `2026-07-10 23:52:23` — [FlashVSR v1.1 4x upscale on Modal A100-80GB via image-bake fast boot (Milestone 3) — upscale](#24-2026-07-10-235223--flashvsr-v11-4x-upscale-on-modal-a100-80gb-via-image-bake-fast-boot-milestone-3--upscale)
 25. `2026-07-11 17:59:51` — [RIFE v4.26 frame interpolation (16fps→60fps) on Modal T4 via image-bake fast boot (Milestone 4) — interpolate](#25-2026-07-11-175951--rife-v426-frame-interpolation-16fps60fps-on-modal-t4-via-image-bake-fast-boot-milestone-4--interpolate)
+26. `2026-07-12 01:08:08` — [Cross-CLI warm-reuse + HF Volume weight-cache on Modal (Wan 2.1 1.3B / A10, Milestone 5) — t2v](#26-2026-07-12-010808--cross-cli-warm-reuse--hf-volume-weight-cache-on-modal-wan-21-13b--a10-milestone-5--t2v)
 
 ---
 
@@ -2727,3 +2728,64 @@ pixi run -e live-modal kinoforge interpolate \
 - **The bake mechanism is unchanged from §24** — `ModalProvider` bakes `build_script` (RIFE `git clone` Practical-RIFE + `numpy<2` + `RIFEv4.26` weights + torch) into the image via one base64 `RUN`, boots with `runtime_script` (the `wan_t2v_server` exec) only. The single-RUN base64 encoding means ANY build-phase change (like the embed-list edit) busts the whole layer → full rebuild; a same-content re-fire is cached.
 - **`--extra-index-url None` is harmless** (same as §22–§24): `pytorch_extra_index_url` unset → literal `None`, pip logs `Location 'None/...' is ignored`, resolves torch 2.6.0 from PyPI (cu124 default on linux).
 - **Teardown verified** post-run: log `--no-reuse: destroyed + forgot pod interpolate-20260711-175532`; then `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` → both kinoforge apps `stopped` (0 GPUs), no running app.
+
+---
+
+## 26. `2026-07-12 01:08:08` — Cross-CLI warm-reuse + HF Volume weight-cache on Modal (Wan 2.1 1.3B / A10, Milestone 5) — t2v
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine (Wan 2.1 T2V-1.3B) / Wan-AI/Wan2.1-T2V-1.3B-Diffusers` |
+| **Mode** | t2v (480×480, 33 frames, 16 fps) |
+| **New capability axis** | **Cross-CLI warm-reuse + HF Volume weight-cache on Modal** (Milestone 5). Two firsts, both proven live in separate `kinoforge generate` processes: (1) a second CLI invocation **warm-attaches** to the first run's still-alive Modal container (no redeploy, no re-boot); (2) a fresh Modal container **reuses Volume-cached weights** (`HF_HOME=/cache/hf` on the named `kinoforge-hf-cache` Volume) instead of re-downloading. Closes the last two open Modal threads (the §24/§25 gotcha-memory "STILL OPEN" items). |
+| **First-success SHA** | `1cb4299` — the enabling fix (`fix(warm-reuse): persist instance.endpoints in ledger.record`). Milestone commits: `15fe799` (offline round-trip characterization), `bb29fbc` (RED live scaffold, pre-spend), `1cb4299` (the ledger-endpoints fix that made Modal warm-attach work). |
+| **Date (local TZ)** | 2026-07-12 01:08:08 -0700 (PDT) |
+| **GPU** | Modal **A10** (24 GB), serverless. Cfg `min_vram_gb: 24` (T4/16 GB excluded); catalog picks A10. |
+| **Runs (3, each a separate CLI process)** | See the evidence table below. RUN 1 = cold + weight-download baseline; RUN 2 = cold + **cache-hit** (download skipped); RUN 3 = **warm-attach** to RUN 2 (no redeploy). |
+| **Est. spend** | ~$0.14 total: RUN 1 cold ~$0.10, RUN 2 cold-cache ~$0.02 (75 s), RUN 3 warm ~$0.01 (39 s), + a first failed warm-attach (pre-fix, ~$0, died fast on `has no endpoints`). Within the Modal credit. |
+| **Layer / phase** | Modal Milestone 5 — plan `docs/superpowers/plans/2026-07-12-modal-milestone5-warm-reuse-hf-cache.md` (spec `docs/superpowers/specs/2026-07-12-modal-milestone5-warm-reuse-hf-cache-design.md`). USER-GATE. |
+
+### Exact commands (all separate CLI invocations; default warm-reuse, NO `--no-reuse` until teardown)
+
+```bash
+# RUN 2 — cold boot, weights served from the /cache/hf Volume (cache hit)
+pixi run -e live-modal kinoforge generate \
+  --config examples/configs/modal-wan-t2v-1_3b.yaml --mode t2v \
+  --prompt "$(cat examples/configs/prompts/field-realistic.txt)"
+
+# RUN 3 — a fresh process warm-attaches to RUN 2's live container
+pixi run -e live-modal kinoforge generate \
+  --config examples/configs/modal-wan-t2v-1_3b.yaml --mode t2v \
+  --prompt "$(cat examples/configs/prompts/field-dreamlike.txt)"
+```
+
+(There is no `--prompt-file` flag; `--prompt TEXT` + `--mode t2v` are both required — discovered while building the M5 RED scaffold.)
+
+### Evidence — the two proofs
+
+| Run | Instance | Prompt | Boot/attach → gen-complete | What it proves |
+|---|---|---|---|---|
+| RUN 1 (cold+download, baseline) | `run-20260712-004352` | field-realistic | provision 00:45:39 → gen 00:49:22 = **223 s** | cold boot WITH the first-ever 1.3B weight download to the Volume |
+| RUN 2 (cold, **cache-hit**) | `run-20260712-010548` | field-realistic | provision 01:05:53 → gen 01:07:08 = **75 s** | **HF cache hit** — download skipped (weights persisted on the Volume across RUN 1's destroy) → 3× faster than RUN 1 (148 s saved) |
+| RUN 3 (**warm-attach**) | attached to `run-20260712-010548` | field-dreamlike | attach 01:07:29 → gen 01:08:08 = **39 s**; log `warm-reuse: attached to run-20260712-010548`; **zero** `Building image` / deploy lines | **cross-CLI warm-reuse** — a separate process reused the live container, no redeploy, no boot |
+
+### Artifacts
+
+| Field | RUN 2 (field-realistic) | RUN 3 (field-dreamlike) |
+|---|---|---|
+| **Path** | `.kinoforge/run-20260712-010548/1435ee833b214ac5.mp4` | `.kinoforge/run-20260712-010727/6d5582a3567c15c0.mp4` |
+| **Dims** | 480×480, 16 fps, 33 frames | 480×480, 16 fps, 33 frames |
+| **Size / SHA-256 (head)** | 299,321 B / `1435ee833b214ac5…` | 451,363 B / `6d5582a3567c15c0…` |
+
+### Frame-QA verdict (mandatory visual review)
+
+**PASS — clearly high quality, no ⚠️.** 3–4 frames per clip eyeballed. RUN 2 (field-realistic): a young woman in a blue dress in a golden-hour wildflower meadow, tall backlit waterfall, glowing butterflies — coherent, sharp, prompt-adherent, real temporal motion (she turns from back-to-camera toward camera across the clip), no warping/ghosting. RUN 3 (field-dreamlike): visibly DISTINCT output (distinct SHA) — an enchanted glowing meadow with prismatic rainbow tones, violet/rose/gold flowers, blooming halos; the heavier chromatic glow is prompt-driven ("dreamlike, prismatic rainbow, blooming highlights into halos"), not corruption. Both prompt-adherent and artifact-free. (Wan 2.1 1.3B renders slightly more illustrative than the A14B, expected for the small model.)
+
+### Reproduction recipe / deviations (read before re-firing)
+
+- **The enabling fix (`1cb4299`) — the reason this milestone needed code.** Modal warm-attach initially died `ProvisionFailed: pod '<id>' has no endpoints — cannot construct ready URL` even though discovery + attach succeeded (`warm-reuse: attached to <id>`). Root cause: `Ledger.record` (`core/lifecycle.py`) persisted only `id/provider/tags/created_at/cost_rate` — NOT `instance.endpoints`. The warm-attach reconstructor `_resolve_warm_instance` replays `entry.get("endpoints")` and, only if empty, falls back to `provider.endpoints()` — a port-based rebuild that works for RunPod/SkyPilot but returns empty for Modal (its `.modal.run` URL carries a non-deterministic `build-<hash>` suffix, not rebuildable from ports). **Modal is the first provider that is BOTH non-rebuildable AND used with non-ephemeral warm-reuse**, so it's the first to trip the gap. Fix: persist `instance.endpoints` in the ledger entry (provider-agnostic, one line); the existing replay then serves Modal's URL. Offline coverage added: `tests/core/test_ledger_record_endpoints.py` + a Modal-shape replay test in `tests/cli/test_resolve_warm_instance_endpoints.py`.
+- **The warm-reuse discovery channel already worked** for Modal — cross-CLI discovery is via the disk **ledger** (non-ephemeral) matched on `capability_key` (provider-agnostic, `_scan_warm_candidates` → `_resolve_warm_instance`). The modal provider is registered on the attach path via `_commands.py:27` → `kinoforge._adapters` (verified offline in Task 0). Only the endpoint *replay* was broken.
+- **The HF cache persisted across an app destroy.** RUN 1's downloaded weights survived on the named `kinoforge-hf-cache` Volume even after its app was destroyed (Modal committed the Volume), so RUN 2's fresh container served them from `/cache/hf` — the Volume-commit uncertainty flagged in the spec resolved in favour of persistence for a clean full-download (RUN 1 ran to completion before destroy).
+- **Warm window = `lifecycle.idle_timeout` (5 min here).** RUN 3 must fire within the idle window of RUN 2's last generation or the container scales down (Modal `scaledown_window = idle_timeout_s`). Fire the second process promptly.
+- **Artifacts land in `.kinoforge/<run-id>/` under default warm-reuse**, not `output/` (contrast the `--no-reuse` §24/§25 runs which publish to `output/`).
+- **Teardown verified** post-run: `kinoforge destroy --id run-20260712-010548` → `destroyed`; then `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` → no RUNNING kinoforge app. (Destroy MUST run under `-e live-modal` — the `modal` binary is absent in the default env; a `default`-env destroy fails `FileNotFoundError: 'modal'`.)
