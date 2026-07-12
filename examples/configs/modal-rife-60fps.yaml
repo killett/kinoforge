@@ -55,7 +55,7 @@ compute:
     gpu_preference:
       - "T4"
       - "L4"
-      - "A10G"
+      - "A10"
   lifecycle:
     boot_timeout: 30m
     idle_timeout: 20m
