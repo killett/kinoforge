@@ -17,10 +17,10 @@
     {
       "id": 2,
       "subject": "Task 2: Live RIFE 60fps proof on Modal + frame-QA + teardown + §25",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0, 1],
       "description": "**Goal:** Run RIFE interpolate live on Modal (T4-first, fast boot); ~60fps clip; frame-QA; verify teardown; log §25 + PROGRESS. USER-GATE.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Requested by the user in the current conversation. Close only after every acceptanceCriteria item is re-validated with captured output.\n\n**Files:** successful-generations.md (new §25), PROGRESS.md (RESUME SNAPSHOT)\n\n**Acceptance:** preflight PASS; fast boot not preemption loop (numpy<2 build error fails fast at BUILD, no GPU spend, deviation-handled); output ~60fps ffprobe r_frame_rate=60/1 ~304 frames 480x480; frame-QA smooth pose deltas no ghosting; teardown clean (kinoforge list + modal app list); §25 written.\n\n**Verify:** pixi run kinoforge list → No running instances + empty ledger; ffprobe → r_frame_rate=60/1; §25 present.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"source\", \"16fps\", \"input\"], [\"output\", \"60\", \"interpolated\"]], \"planTask\": 2, \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-11T02:00"
+  "lastUpdated": "2026-07-11T18:05"
 }
