@@ -10,7 +10,7 @@
     {
       "id": 1,
       "subject": "Task 1: RED live scaffold (committed before spend)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** pytest.mark.live end-to-end scaffold for the Modal RIFE interpolate run, committed BEFORE live spend (durability rule).\n\n**Files:** tests/live/test_modal_rife_60fps.py (create)\n\n**Acceptance:** marked pytest.mark.live so `pixi run test` (-m 'not live') skips it (offline suite green); under -m live drives kinoforge interpolate + asserts ~60fps; committed RED.\n\n**Verify:** pixi run pytest tests/live/test_modal_rife_60fps.py -q (default env) → skipped, not run live.\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_rife_60fps.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_modal_rife_60fps.py -q\", \"planTask\": 1, \"modelTier\": \"standard\"}\n```"
     },
