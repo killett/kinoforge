@@ -22,5 +22,14 @@
       "description": "**Goal:** Run the live sequence on Modal (Wan 2.1 1.3B / A10): cold, warm-attach, destroy, cold-cache; prove warm-attach (no redeploy) + HF Volume cache-hit (download skipped); frame-QA; verify teardown; log §26 + PROGRESS.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Requested by the user in the current conversation. Close only after every acceptanceCriteria item is re-validated independently with output captured.\n\n**Files:** successful-generations.md (new §26), PROGRESS.md (RESUME SNAPSHOT).\n\n**Acceptance:** preflight PASS; RUN_A cold valid mp4 + index row written; RUN_B warm-attach (separate process) no redeploy + faster; RUN_C cold-cache fresh boot skips weight download from /cache/hf; frame-QA RUN_A+RUN_B clean; teardown clean (kinoforge list + modal app list); §26 written.\n\n**Verify:** pixi run kinoforge list → No running instances + empty ledger; §26 present with warm-attach + cache-hit evidence.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"cold\", \"run_a\", \"building image\"], [\"warm-attach\", \"run_b\", \"no redeploy\"], [\"cache-hit\", \"run_c\", \"download skipped\"]], \"acceptanceCriteria\": [\"preflight PASS\", \"RUN_A cold: valid mp4 + index row written\", \"RUN_B warm-attach: no redeploy, faster\", \"RUN_C cold-cache: weight download skipped from /cache/hf\", \"frame-QA RUN_A+RUN_B clean\", \"teardown clean\", \"§26 written\"], \"planTask\": 2, \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-12T11:00"
+  "lastUpdatedNote": "Task 3 added as a live-surfaced deviation (spec Known-Risk #2): ledger.record dropped instance.endpoints, breaking Modal warm-attach endpoint replay.",
+  "extraTasks": [
+    {
+      "id": 3,
+      "subject": "Task 3: Persist endpoints in ledger.record (fix Modal warm-attach endpoint replay)",
+      "status": "completed",
+      "description": "Live-surfaced deviation. Ledger.record (core/lifecycle.py) dropped instance.endpoints, so non-ephemeral warm-attach could not replay Modal's non-rebuildable .modal.run URL -> ProvisionFailed: pod has no endpoints. Fix: persist endpoints in the ledger entry; _resolve_warm_instance's existing entry.get('endpoints') replay picks it up. Provider-agnostic. Tests: tests/core/test_ledger_record_endpoints.py + tests/cli/test_resolve_warm_instance_endpoints.py."
+    }
+  ],
+  "lastUpdated": "2026-07-12T11:30"
 }

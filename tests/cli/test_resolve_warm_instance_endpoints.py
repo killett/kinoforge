@@ -117,6 +117,63 @@ class _RunPodShapeProvider:
         return {p: _PROXY_URL_PATTERN.format(pod_id=instance.id, port=p) for p in ports}
 
 
+_MODAL_POD_ID = "modal-test-warm-endpoints"
+_MODAL_URL = "https://x--kinoforge-run-build-27e651.modal.run"
+
+
+def _entry_with_endpoints() -> dict[str, Any]:
+    """Ledger entry shaped like the record()-fix persists for Modal.
+
+    Unlike RunPod, Modal cannot rebuild its ``.modal.run`` URL from
+    ``tags["ports"]`` (the URL carries a non-deterministic ``build-<hash>``
+    suffix), so the endpoint MUST come from the persisted ``endpoints`` key
+    on the entry. This entry carries it at the top level — exactly what the
+    ``Ledger.record`` fix persists — and NO ``ports`` tag, so a green
+    assert can only come from the entry replay, never a port-rebuild.
+    """
+    return {
+        "id": _MODAL_POD_ID,
+        "provider": "modal-test",
+        "created_at": _NOW - 60.0,
+        "cost_rate_usd_per_hr": 1.10,
+        "endpoints": {"8000": _MODAL_URL},
+        "tags": {
+            "kinoforge_engine": "comfyui",
+            "kinoforge_key": "ab12cd34ef56",
+        },
+        "last_heartbeat": _NOW - 5.0,
+        "heartbeat_thread_tick": _NOW - 5.0,
+    }
+
+
+class _ModalShapeProvider:
+    """Provider that reproduces Modal's non-rebuildable endpoints.
+
+    ``get_instance`` returns a sparse Instance (empty endpoints, ``{"mode":
+    "pod"}`` tags) like RunPod's, but crucially ``endpoints`` returns ``{}``
+    unconditionally — Modal cannot deterministically reconstruct its URL. So
+    the ONLY way ``_resolve_warm_instance`` can populate endpoints is by
+    replaying the persisted ``entry["endpoints"]``.
+    """
+
+    def list_instances(self) -> list[Instance]:
+        return [self.get_instance(_MODAL_POD_ID)]
+
+    def get_instance(self, iid: str) -> Instance:
+        return Instance(
+            id=iid,
+            provider="modal-test",
+            status="ready",
+            created_at=_NOW - 60.0,
+            endpoints={},
+            tags={"mode": "pod"},
+        )
+
+    def endpoints(self, instance: Instance) -> dict[str, str]:
+        # Modal cannot rebuild its build-<hash> URL from ports.
+        return {}
+
+
 class _Compute:
     def __init__(self, provider: str) -> None:
         self.provider = provider
@@ -209,4 +266,53 @@ def test_warm_attached_instance_carries_endpoints_built_from_ledger_tags(
     assert inst.endpoints.get("8188") == expected_url, (
         f"endpoints['8188'] mismatch: expected {expected_url!r}, "
         f"got {inst.endpoints.get('8188')!r}"
+    )
+
+
+@pytest.fixture
+def patched_modal_registry(monkeypatch: pytest.MonkeyPatch) -> _ModalShapeProvider:
+    """Patch `registry.get_provider` to return a Modal-shape provider."""
+    provider = _ModalShapeProvider()
+
+    def _factory(name: str) -> Any:
+        def _ctor() -> _ModalShapeProvider:
+            return provider
+
+        return _ctor
+
+    monkeypatch.setattr("kinoforge.core.registry.get_provider", _factory)
+    return provider
+
+
+def test_warm_attached_modal_replays_endpoints_from_ledger_entry(
+    patched_modal_registry: _ModalShapeProvider,
+    fixed_clock: None,
+) -> None:
+    """Non-rebuildable provider (Modal): endpoint must come from the entry.
+
+    The provider's ``endpoints()`` returns ``{}`` (Modal cannot rebuild its
+    ``build-<hash>`` URL), and the entry carries no ``ports`` tag — so the
+    ONLY source for a populated ``endpoints`` field is the persisted
+    ``entry["endpoints"]`` that the ``Ledger.record`` fix writes.
+
+    Would-fail-bug: if ``_resolve_warm_instance`` stopped preferring
+    ``entry["endpoints"]`` (or ``record()`` stopped persisting it), the
+    returned Instance would carry an empty endpoints dict and downstream
+    ``wait_for_ready`` would raise ProvisionFailed — exactly the live
+    2026-07-11 Modal warm-reuse failure.
+    """
+    cfg: Any = _FakeCfg(provider="modal-test", cap_hash="ab12cd34ef56XX")
+    entry = _entry_with_endpoints()
+    ctx = _ctx(entry, cfg)
+
+    inst, rc = _resolve_warm_instance(ctx, cfg, _MODAL_POD_ID, force_attach=False)
+
+    assert rc is None, f"warm-attach unexpectedly refused: rc={rc!r}"
+    assert inst is not None, "warm-attach returned None instance"
+
+    assert inst.endpoints.get("8000") == _MODAL_URL, (
+        f"Modal warm-attach must replay endpoint from the persisted ledger "
+        f"entry (provider.endpoints() returns {{}} for Modal). Got "
+        f"{inst.endpoints!r}; expected {{'8000': {_MODAL_URL!r}}}. An empty "
+        f"dict here means the entry-replay path was lost → ProvisionFailed."
     )
