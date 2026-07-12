@@ -1,0 +1,26 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-12-modal-milestone5-warm-reuse-hf-cache.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Offline — Modal warm-reuse write→discover round-trip + provider registration",
+      "status": "pending",
+      "description": "**Goal:** Offline test proving a Modal-provider instance round-trips through the EphemeralIndex (write run 1 → discover run 2, carrying its `.modal.run` endpoint) and that `registry.get_provider(\"modal\")` resolves on the warm-attach path; close any Modal-specific gap with the smallest provider-agnostic patch.\n\n**Files:** tests/core/warm_reuse/test_modal_warm_reuse_roundtrip.py (create); src/kinoforge/cli/_commands.py (modify only if gap found, ~479-480).\n\n**Acceptance:** modal index row round-trips carrying its `.modal.run` endpoint (not port-rebuildable); `get_provider('modal')` returns ModalProvider; modal self-registered on generate/warm-attach path (add `import kinoforge.providers.modal` if absent); offline suite green.\n\n**Verify:** pixi run pytest tests/core/warm_reuse/test_modal_warm_reuse_roundtrip.py -v\n\n```json:metadata\n{\"files\": [\"tests/core/warm_reuse/test_modal_warm_reuse_roundtrip.py\", \"src/kinoforge/cli/_commands.py\"], \"verifyCommand\": \"pixi run pytest tests/core/warm_reuse/test_modal_warm_reuse_roundtrip.py -v\", \"acceptanceCriteria\": [\"modal index row round-trips carrying .modal.run endpoint\", \"get_provider('modal') returns ModalProvider\", \"modal self-registered on generate/warm-attach path\", \"offline suite green\"], \"planTask\": 0, \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: RED live scaffold (committed before spend)",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** A `pytest.mark.live` scaffold documenting the 3-run warm-reuse + cold-cache sequence, committed BEFORE the live spend (durability rule).\n\n**Files:** tests/live/test_modal_warm_reuse_hf_cache.py (create).\n\n**Acceptance:** marked `pytest.mark.live` so `pixi run test` (`-m 'not live'`) deselects it (offline green); documents cold→warm-attach→destroy→cold-cache as constants + xfail contract (mirrors M4 scaffold).\n\n**Verify:** pixi run pytest tests/live/test_modal_warm_reuse_hf_cache.py -q → 1 xfailed / deselected; MUST NOT run live.\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_warm_reuse_hf_cache.py\"], \"verifyCommand\": \"pixi run pytest tests/live/test_modal_warm_reuse_hf_cache.py -q\", \"acceptanceCriteria\": [\"marked live, deselected under -m 'not live'\", \"documents 3-run sequence as constants + xfail contract\", \"committed before spend\"], \"planTask\": 1, \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Live 3-run warm-reuse + cold-cache proof + frame-QA + teardown + §26",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "**Goal:** Run the live sequence on Modal (Wan 2.1 1.3B / A10): cold, warm-attach, destroy, cold-cache; prove warm-attach (no redeploy) + HF Volume cache-hit (download skipped); frame-QA; verify teardown; log §26 + PROGRESS.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Requested by the user in the current conversation. Close only after every acceptanceCriteria item is re-validated independently with output captured.\n\n**Files:** successful-generations.md (new §26), PROGRESS.md (RESUME SNAPSHOT).\n\n**Acceptance:** preflight PASS; RUN_A cold valid mp4 + index row written; RUN_B warm-attach (separate process) no redeploy + faster; RUN_C cold-cache fresh boot skips weight download from /cache/hf; frame-QA RUN_A+RUN_B clean; teardown clean (kinoforge list + modal app list); §26 written.\n\n**Verify:** pixi run kinoforge list → No running instances + empty ledger; §26 present with warm-attach + cache-hit evidence.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"cold\", \"run_a\", \"building image\"], [\"warm-attach\", \"run_b\", \"no redeploy\"], [\"cache-hit\", \"run_c\", \"download skipped\"]], \"acceptanceCriteria\": [\"preflight PASS\", \"RUN_A cold: valid mp4 + index row written\", \"RUN_B warm-attach: no redeploy, faster\", \"RUN_C cold-cache: weight download skipped from /cache/hf\", \"frame-QA RUN_A+RUN_B clean\", \"teardown clean\", \"§26 written\"], \"planTask\": 2, \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-12T10:30"
+}
