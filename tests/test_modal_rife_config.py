@@ -36,6 +36,10 @@ def test_build_script_has_rife_install_not_server() -> None:
     assert "numpy<2" in b  # RIFE's pip pin
     assert "RIFEv4.26" in b  # weights zip fetch
     assert "torch==2.6.0" in b  # torch baked (slim has none)
+    # core.frames MUST be embedded: the RIFE runtime imports ffprobe_fps from it
+    # (interpolators/rife/_runtime.py). Omitting it fails the server at run time
+    # with `No module named 'kinoforge.core.frames'` (live-caught 2026-07-11).
+    assert "core/frames.py" in b
     assert _SERVER_EXEC not in b  # server exec is runtime, never baked
 
 

@@ -36,6 +36,7 @@ engine:
       - "kinoforge.interpolators.rife"
     embed_files:
       - "kinoforge.core.errors"
+      - "kinoforge.core.frames"
       - "kinoforge.core.fps_resolver"
     # Skip eager WanPipeline load — pod runs only the on-demand RIFE runtime.
     upscale_only: true
