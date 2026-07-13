@@ -12,7 +12,7 @@
 #
 # Intended use: CLI cross-invocation warm-reuse demonstration plus
 # capability-key isolation against the 14B sibling
-# (runpod-comfyui-wan-t2v-14b-2_2.yaml).
+# (runpod-comfyui-wan-2_2-14b-t2v.yaml).
 #
 # Usage:
 #   pixi run kinoforge generate \

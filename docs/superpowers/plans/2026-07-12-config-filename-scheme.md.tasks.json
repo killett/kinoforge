@@ -52,7 +52,7 @@
     {
       "id": 7,
       "subject": "Task 7: Manifest rename + final global verification",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "**Goal:** Rename the model-bearing manifest and prove the whole refactor clean: zero stale basenames outside frozen archives, full suite green, pre-commit green. See plan doc Task 7.\n\n**Verify:** `pixi run test` PASS (>= baseline); global stale-grep no MISS; `pixi run pre-commit run --all-files` clean.\n\n```json:metadata\n{\"files\": [\"examples/configs/manifests/runpod-comfyui-wan-manifest.yaml\", \"tests/test_examples.py\", \"README.md\", \"PROGRESS.md\", \"successful-generations.md\"], \"verifyCommand\": \"pixi run test && pixi run pytest tests/test_examples.py -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"manifest renamed zero refs\", \"global stale-grep no MISS\", \"full suite PASS >= baseline\", \"pre-commit clean\", \"docstring corrected\"], \"modelTier\": \"mechanical\"}\n```"
     }
