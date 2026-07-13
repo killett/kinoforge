@@ -290,7 +290,7 @@ End-to-end RunPod → ComfyUI → Wan 2.1 i2v generation. Drives a real RunPod p
 
 ```bash
 pixi run kinoforge generate \
-  --config ../examples/configs/wan.yaml \
+  --config ../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml \
   --prompt "a cat turns into a woman" \
   --init-image ../tests/providers/fixtures/runpod/sample_init_frame.png
 ```
@@ -300,7 +300,7 @@ pixi run kinoforge generate \
 ```bash
 KINOFORGE_LIVE_KEEP_POD=1 pixi run pytest ../tests/live/test_comfyui_wan_live.py -v
 # iterate: tweak graph JSON / fixture / prompt, re-run with the same KINOFORGE_LIVE_KEEP_POD=1
-# pod stays warm and auto-reaps after idle_timeout (configured at 2h in ../examples/configs/wan.yaml)
+# pod stays warm and auto-reaps after idle_timeout (configured at 2h in ../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml)
 # manual reap:
 pixi run kinoforge destroy <pod_id>
 ```
@@ -312,7 +312,7 @@ pixi run kinoforge destroy <pod_id>
 - Always run `pixi run preflight` before live spend (checks zero active pods, clean tree, creds present)
 
 **Configuration files:**
-- `../examples/configs/wan.yaml` — Wan 2.1 i2v engine config (lifecycle, params, model entries)
+- `../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml` — Wan 2.1 i2v engine config (lifecycle, params, model entries)
 - `../examples/configs/runpod-comfyui-wan.graph.json` — kijai WanVideoWrapper API-format graph
 
 ## Diffusers inference-server response contract

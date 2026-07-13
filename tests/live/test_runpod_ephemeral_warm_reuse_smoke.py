@@ -31,7 +31,7 @@ pytestmark = pytest.mark.skipif(
 
 
 REPO = Path(__file__).resolve().parents[2]
-CFG = REPO / "examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml"
+CFG = REPO / "examples/configs/runpod-comfyui-wan-2_1-1_3b-t2v.yaml"
 PROMPT_PATH = REPO / "examples/configs/prompts/field-realistic.txt"
 STATE_DIR = REPO / ".kinoforge"
 INDEX_FILE = STATE_DIR / "_lifecycle" / "ephemeral-index.json"

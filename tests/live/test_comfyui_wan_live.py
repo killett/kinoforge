@@ -108,7 +108,7 @@ def test_runpod_comfyui_wan_live_e2e_smoke() -> None:
 
     # --- [phase=setup] -------------------------------------------------
     _log.info("[phase=setup]")
-    cfg = load_config(Path("examples/configs/runpod-comfyui-wan.yaml"))
+    cfg = load_config(Path("examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml"))
     creds = EnvCredentialProvider()
 
     runpod_fixtures = Path("tests/providers/fixtures/runpod")

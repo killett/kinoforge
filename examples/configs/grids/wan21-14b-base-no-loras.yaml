@@ -2,7 +2,7 @@
 #
 # Largest Wan 2.1 variant; ComfyUI engine + fp8 quant. No LoRAs.
 # Cfg blocks below cloned verbatim from
-# examples/configs/runpod-comfyui-wan-t2v.yaml.
+# examples/configs/runpod-comfyui-wan-2_1-14b-t2v.yaml.
 
 mode: t2v
 prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."

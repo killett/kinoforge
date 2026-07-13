@@ -28,8 +28,11 @@
 ```
 -g '!.pixi/**' -g '!.git/**' -g '!output/**' -g '!.kinoforge/**' \
 -g '!docs/superpowers/plans/**' -g '!docs/superpowers/specs/**' \
+-g '!docs/superpowers/research/**' -g '!docs/superpowers/briefs/**' \
 -g '!tests/live/evidence/**'
 ```
+
+**Frozen = ALL dated point-in-time archives**, not just plans/specs. `docs/superpowers/research/**` and `docs/superpowers/briefs/**` are the same genre (dated snapshots) and MUST be excluded from every sweep too — their old filenames were accurate when written. Every task's inline `EXCL=` must carry these two extra globs in addition to the ones shown per-task below.
 
 Note: this plan file lives under `docs/superpowers/plans/` and is therefore itself frozen from the sweeps — correct; its old→new tables are documentation, not live references.
 

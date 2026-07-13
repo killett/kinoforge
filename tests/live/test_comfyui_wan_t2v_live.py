@@ -129,7 +129,7 @@ def test_runpod_comfyui_wan_t2v_warm_reuse_two_prompts() -> None:
 
     # --- [phase=setup] -------------------------------------------------
     _log.info("[phase=setup]")
-    cfg = load_config(Path("examples/configs/runpod-comfyui-wan-t2v.yaml"))
+    cfg = load_config(Path("examples/configs/runpod-comfyui-wan-2_1-14b-t2v.yaml"))
     creds = EnvCredentialProvider()
     keep_pod = os.getenv("KINOFORGE_LIVE_KEEP_POD") == "1"
     _log.info("[phase=setup] keep_pod=%s", keep_pod)

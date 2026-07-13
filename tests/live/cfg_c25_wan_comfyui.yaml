@@ -1,7 +1,7 @@
 # C25 acceptance-smoke cfg — Wan 2.1 14B t2v on RunPod + ComfyUI with
 # B3 cross-CLI warm-reuse + B5a heartbeat substrate enabled.
 #
-# Differs from examples/configs/runpod-comfyui-wan-t2v.yaml by:
+# Differs from examples/configs/runpod-comfyui-wan-2_1-14b-t2v.yaml by:
 #   compute.warm_reuse_auto_attach: true   (B3 auto-discovery)
 #   compute.heartbeat_mode: graphql-tag    (B5a satisfier; C25 ship makes this safe with ComfyUI)
 #   compute.lifecycle.heartbeat_interval_s: 30

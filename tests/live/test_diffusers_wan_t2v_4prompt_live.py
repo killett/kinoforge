@@ -38,7 +38,7 @@ pytestmark = pytest.mark.skipif(
 
 
 REPO = Path(__file__).resolve().parents[2]
-CFG_14B = REPO / "examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml"
+CFG_14B = REPO / "examples/configs/runpod-diffusers-wan-2_2-14b-t2v.yaml"
 PROMPTS_DIR = REPO / "examples/configs/prompts"
 LEGS: list[tuple[str, str]] = [
     ("cold", "field-realistic.txt"),

@@ -107,7 +107,7 @@ def test_empty_embeds_shape_matches_params(
     import yaml
 
     yaml_cfg = yaml.safe_load(
-        Path("examples/configs/runpod-comfyui-wan-t2v.yaml").read_text()
+        Path("examples/configs/runpod-comfyui-wan-2_1-14b-t2v.yaml").read_text()
     )
     expected = {
         "width": yaml_cfg["params"]["width"],

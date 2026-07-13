@@ -715,7 +715,7 @@ silently picking one:
 ## Definition of done
 Treat each item below as a behavioral acceptance criterion — write it as a failing test first
 (per `CLAUDE.md`/Superpowers), then make it pass:
-- `kinoforge deploy --config examples/configs/wan.yaml --dry-run` prints a correct, vendor- and
+- `kinoforge deploy --config examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml --dry-run` prints a correct, vendor- and
   engine-neutral plan with no network calls.
 - Against `LocalProvider` + `FakeEngine`, an end-to-end provision downloads models from HTTP/HF
   sources and produces a clip artifact — with no GPU or real model weights.

@@ -1,4 +1,4 @@
-# Wan 2.1 14B t2v on RunPod + ComfyUI (sibling of runpod-comfyui-wan.yaml).
+# Wan 2.1 14B t2v on RunPod + ComfyUI (sibling of runpod-comfyui-wan-2_1-14b-i2v.yaml).
 #
 # Wan 2.1 (not 2.2): same fp8 quant family as the i2v config; ~17 GB
 # diffusion + 0.5 GB VAE + 6.7 GB T5 = ~24 GB on disk (~3 GB less than
@@ -65,7 +65,7 @@ compute:
   lifecycle:
     # idle_timeout sized to cover cold weight downloads (~24 GB via
     # render_provision curl). 25m matches the i2v config's worst-case
-    # bootstrap window (see runpod-comfyui-wan.yaml for the diagnosis
+    # bootstrap window (see runpod-comfyui-wan-2_1-14b-i2v.yaml for the diagnosis
     # against pod 98f0qlyf8h1210).
     idle_timeout: 25m
     # job_timeout per-job; 2 jobs in sequence each capped at 15m.

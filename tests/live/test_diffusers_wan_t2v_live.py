@@ -36,8 +36,8 @@ pytestmark = pytest.mark.skipif(
 
 
 REPO = Path(__file__).resolve().parents[2]
-CFG_14B = REPO / "examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml"
-CFG_5B = REPO / "examples/configs/runpod-comfyui-wan-t2v-5b.yaml"
+CFG_14B = REPO / "examples/configs/runpod-diffusers-wan-2_2-14b-t2v.yaml"
+CFG_5B = REPO / "examples/configs/runpod-comfyui-wan-2_2-5b-t2v.yaml"
 PROMPT_REALISTIC = REPO / "examples/configs/prompts/field-realistic.txt"
 PROMPT_DREAMLIKE = REPO / "examples/configs/prompts/field-dreamlike.txt"
 OUTPUT_DIR = REPO / "output"

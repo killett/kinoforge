@@ -30,7 +30,7 @@ from pathlib import Path
 
 from kinoforge.core.config import load_config
 
-YAML_PATH = Path("examples/configs/runpod-comfyui-wan.yaml")
+YAML_PATH = Path("examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml")
 GRAPH_PATH = Path("examples/configs/runpod-comfyui-wan.graph.json")
 KIJAI_REPO_HINT = "kijai/ComfyUI-WanVideoWrapper"
 

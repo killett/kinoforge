@@ -1,4 +1,4 @@
-# Wan 2.1 1.3B t2v on RunPod + ComfyUI — sibling of runpod-comfyui-wan-t2v.yaml.
+# Wan 2.1 1.3B t2v on RunPod + ComfyUI — sibling of runpod-comfyui-wan-2_1-14b-t2v.yaml.
 #
 # Same kijai workflow shape as the 14B variant; only the diffusion
 # checkpoint differs (Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors, ~1.47 GB,
@@ -18,10 +18,10 @@
 #   export RUNPOD_TERMINATE_KEY=...
 #   export HF_TOKEN=...                     # Wan weights are gated
 #   pixi run kinoforge generate \
-#     --config examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml \
+#     --config examples/configs/runpod-comfyui-wan-2_1-1_3b-t2v.yaml \
 #     --prompt "first prompt" --mode t2v
 #   pixi run kinoforge generate \
-#     --config examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml \
+#     --config examples/configs/runpod-comfyui-wan-2_1-1_3b-t2v.yaml \
 #     --prompt "second prompt" --mode t2v
 #
 # Cost guards (quadruple-locked):

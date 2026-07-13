@@ -33,7 +33,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 REPO = Path(__file__).resolve().parents[3]
-CFG = REPO / "examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml"
+CFG = (
+    REPO
+    / "examples/configs/runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release.yaml"
+)
 PROMPT_FILE = REPO / "examples/configs/prompts/field-realistic.txt"
 OUTPUT_DIR = REPO / "output"
 

@@ -1,5 +1,5 @@
 # Example batch manifest. Run with:
-#   kinoforge batch -c examples/configs/wan.yaml --manifest examples/configs/manifests/batch-prompts.yaml
+#   kinoforge batch -c examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml --manifest examples/configs/manifests/batch-prompts.yaml
 #
 # All three entries share one deploy. Each entry's outputs land under
 # .kinoforge/<batch_id>/<run_id>/. The default batch_id is

@@ -44,7 +44,10 @@ pytestmark = [
 
 
 REPO = Path(__file__).resolve().parents[3]
-CFG = REPO / "examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml"
+CFG = (
+    REPO
+    / "examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml"
+)
 PROMPT_FILE = REPO / "examples/configs/prompts/field-realistic.txt"
 
 _TAG = "kinoforge-smoke-tier-3-branch"

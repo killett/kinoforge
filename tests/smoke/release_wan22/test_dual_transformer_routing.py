@@ -47,11 +47,14 @@ pytestmark = [
 
 
 REPO = Path(__file__).resolve().parents[3]
-CFG = REPO / "examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml"
+CFG = (
+    REPO
+    / "examples/configs/runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release.yaml"
+)
 PROMPT_FILE = REPO / "examples/configs/prompts/field-realistic.txt"
 
 # Canonical Arcane Style [WAN 2.2 T2V] v1.0 pair (CivitAI model 2197303).
-# Pinned by `examples/configs/wan.yaml` (Task 13 `5004cf2`); the Tier-4
+# Pinned by `examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml` (Task 13 `5004cf2`); the Tier-4
 # release cfg is intentionally Base-only and drives LoRA stacks via
 # /lora/set_stack so the smoke owns the refs.
 ARCANE_HIGH = "civitai:2197303@2474081"

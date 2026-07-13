@@ -63,7 +63,7 @@ def _wan_cfg_with_loras(loras: list[dict[str, object]]) -> dict[str, object]:
 
 def _load_cfg(root: Path, raw: dict[str, object]) -> Config:
     root.mkdir(parents=True, exist_ok=True)
-    p = root / "wan.yaml"
+    p = root / "runpod-comfyui-wan-2_2-14b-t2v.yaml"
     p.write_text(yaml.safe_dump(raw))
     return load_config(p)
 
