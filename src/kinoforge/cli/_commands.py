@@ -1547,11 +1547,11 @@ def _scan_warm_candidates(
         # B4 cheap-first chain — force_attach=False (D3
         # conservative-on-ignorance). Index-only entries (ephemeral
         # process #1 wrote them; no ledger row) carry no heartbeat
-        # snapshot, so classify would return HEARTBEAT_UNKNOWN (or
-        # HEARTBEAT_SUBSTRATE_MISSING for providers without a heartbeat
-        # satisfier, e.g. modal); bypass via force_attach + supply the
-        # entry so _resolve_warm_instance does not re-fetch from the
-        # empty disk ledger.
+        # snapshot, so classify returns HEARTBEAT_SUBSTRATE_MISSING for
+        # providers without a heartbeat satisfier (e.g. modal) or
+        # HEARTBEAT_UNKNOWN for those with one (runpod/local); bypass
+        # via force_attach + supply the entry so _resolve_warm_instance
+        # does not re-fetch from the empty disk ledger.
         is_index_only = instance_id in index_only_ids
         instance, rc = _resolve_warm_instance(
             ctx,
