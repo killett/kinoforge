@@ -30,10 +30,10 @@
     {
       "id": 4,
       "subject": "Task 4: Live proof — util>0 mid-generation + PROGRESS/memory",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0, 1, 2, 3],
       "description": "**Goal:** Live-prove the Modal util probe returns real non-zero GPU% during a gen and ~0 idle; verify teardown; record PROGRESS + gotchas memory (NO successful-generations.md entry — infra, not a gen axis).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.** Requested by the user in the current conversation. Close only after every acceptanceCriteria item is re-validated independently with output captured.\n\n**Files:** PROGRESS.md, reference_modal_provider_gotchas memory; (possibly) examples/configs/modal-wan-t2v-1_3b.yaml (add psutil+nvidia-ml-py to pip).\n\n**Acceptance:** preflight PASS; read_util(id) DURING gen -> gpu_util_percent>0 (captured); idle -> gpu ~0 (captured); both observed; cpu_percent + uptime_seconds non-None; teardown clean (kinoforge list + modal app list); PROGRESS+memory updated, NO successful-generations entry.\n\n**Verify:** pixi run kinoforge list -> No running instances + empty ledger; captured gpu_util>0 under load in PROGRESS.\n\n```json:metadata\n{\"files\": [\"PROGRESS.md\", \"examples/configs/modal-wan-t2v-1_3b.yaml\"], \"verifyCommand\": \"pixi run kinoforge list\", \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"one\", \"requireEvidenceTokens\": [[\"under-load\", \"gpu_util_percent>0\", \"mid-gen\"], [\"idle\", \"gpu ~0\", \"between gens\"]], \"acceptanceCriteria\": [\"preflight PASS\", \"read_util gpu_util>0 mid-gen captured\", \"read_util gpu ~0 idle captured\", \"cpu_percent + uptime_seconds non-None\", \"teardown clean\", \"PROGRESS+memory updated, no successful-generations entry\"], \"planTask\": 4, \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-12T03:15"
+  "lastUpdated": "2026-07-12T17:15"
 }
