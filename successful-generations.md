@@ -2507,7 +2507,7 @@ pixi run kinoforge interpolate \
 
 ```bash
 pixi run -e live-skypilot kinoforge upscale \
-  --config examples/configs/skypilot-lambda-flashvsr.yaml \
+  --config examples/configs/skypilot-lambda-diffusers-flashvsr-upscale.yaml \
   --video output/flashvsr-fixture-41f-288sq.mp4 \
   --no-reuse
 ```

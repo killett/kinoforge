@@ -53,7 +53,7 @@ src/kinoforge/
   stores/      base + local/  (s3/, gcs/ later)
   cli.py       deploy | provision | generate | list | status | stop | destroy | reap | gc
   __main__.py  python -m kinoforge
-examples/configs/   runpod-comfyui-wan-2_2-14b-t2v.yaml, diffusers.yaml, hosted.yaml, local-fake.yaml
+examples/configs/   runpod-comfyui-wan-2_2-14b-t2v.yaml, runpod-diffusers-serverless.yaml, hosted.yaml, local-fake.yaml
 hooks/
 tests/
 .github/workflows/ci.yml
