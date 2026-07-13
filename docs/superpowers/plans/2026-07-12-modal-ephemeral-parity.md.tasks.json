@@ -1,0 +1,64 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-12-modal-ephemeral-parity.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Opaque Modal app name under ephemeral",
+      "status": "pending",
+      "description": "**Goal:** ModalProvider.create_instance deploys as kinoforge-eph-{8hex} under an active ephemeral session; non-ephemeral naming byte-identical.\n\n**Files:**\n- Modify: src/kinoforge/providers/modal/__init__.py\n- Test: tests/providers/modal/test_provider.py\n\n**Verify:** pixi run test -- tests/providers/modal/test_provider.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_provider.py\"], \"verifyCommand\": \"pixi run test -- tests/providers/modal/test_provider.py -v\", \"acceptanceCriteria\": [\"ephemeral create names app kinoforge-eph-{8hex} and Instance.id is the eph token\", \"deployments keyed by opaque id; destroy resolves it\", \"non-ephemeral naming byte-identical (existing tests green)\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: Capability entries + preflight message",
+      "status": "pending",
+      "description": "**Goal:** --ephemeral passes preflight for (diffusers|comfyui, modal); refusal message names modal among pod providers.\n\n**Files:**\n- Modify: src/kinoforge/core/ephemeral.py:81-97\n- Modify: src/kinoforge/cli/_main.py:233-248\n- Test: tests/core/test_ephemeral.py\n\n**Verify:** pixi run test -- tests/core/test_ephemeral.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/ephemeral.py\", \"src/kinoforge/cli/_main.py\", \"tests/core/test_ephemeral.py\"], \"verifyCommand\": \"pixi run test -- tests/core/test_ephemeral.py -v\", \"acceptanceCriteria\": [\"both modal combos True in EPHEMERAL_CAPABILITIES\", \"preflight error block names modal\", \"capability-table test updated + green\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: EM1 live proof — --ephemeral --no-reuse upscale on Modal",
+      "status": "pending",
+      "blockedBy": [0, 1],
+      "description": "**Goal:** Live-prove EM1: ephemeral Modal upscale end-to-end — opaque app, no persistent records, scrubbed store, surviving output/ artifact.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em1.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em1.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold committed pre-spend\", \"preflight exit 0\", \"run exit 0 + output/ artifact present\", \"opaque stopped app in modal app list; no timestamped app\", \"kinoforge list: no instances + empty ledger\", \"store run dir scrubbed\", \"PROGRESS updated; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Shared _ephemeral_index_add helper, called by all three handlers",
+      "status": "pending",
+      "description": "**Goal:** Extract the generate-only EphemeralIndex.add into a CLI helper called by generate/upscale/interpolate.\n\n**Files:**\n- Modify: src/kinoforge/cli/_commands.py\n- Test: tests/test_ephemeral_index_add_helper.py\n\n**Verify:** pixi run test -- tests/test_ephemeral_index_add_helper.py tests/test_ephemeral_index_write_gated.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/test_ephemeral_index_add_helper.py\"], \"verifyCommand\": \"pixi run test -- tests/test_ephemeral_index_add_helper.py tests/test_ephemeral_index_write_gated.py -v\", \"acceptanceCriteria\": [\"helper session-gated + None-safe\", \"generate inline block replaced, behavior unchanged\", \"upscale + interpolate call helper under cold-create gate\", \"AST invariant green\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Warm-attach discovery accepts a Modal index row (offline)",
+      "status": "pending",
+      "description": "**Goal:** Prove the matcher/scan warm-attaches from a Modal EphemeralIndexRow (verbatim endpoint replay).\n\n**Files:**\n- Test: tests/integration/test_ephemeral_modal_row_discovery.py\n\n**Verify:** pixi run test -- tests/integration/test_ephemeral_modal_row_discovery.py -v\n\n```json:metadata\n{\"files\": [\"tests/integration/test_ephemeral_modal_row_discovery.py\"], \"verifyCommand\": \"pixi run test -- tests/integration/test_ephemeral_modal_row_discovery.py -v\", \"acceptanceCriteria\": [\"modal row surfaced by warm scan with endpoints replayed verbatim\", \"zero (or minimal, named) production change\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: EM2 live proof — bare --ephemeral cross-CLI warm-attach on Modal",
+      "status": "pending",
+      "blockedBy": [2, 3, 4],
+      "description": "**Goal:** Live-prove bare---ephemeral cross-CLI warm-attach on Modal (run2 attaches run1's eph app via the index), then explicit teardown.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em2_warm_attach.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** rg 'warm' <run2 log> && pixi run kinoforge list\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em2_warm_attach.py\", \"PROGRESS.md\"], \"verifyCommand\": \"rg 'warm' <run2 log> && pixi run kinoforge list\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"run1 leaves live app + index row\", \"run2 warm-attaches run1 app (log line + faster wall-clock)\", \"explicit destroy -> app stopped + index row gone + ledger clean\", \"PROGRESS updated; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"run1\", \"cold\"], [\"run2\", \"warm-attach\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: ModalProvider.probe_runtime + note_endpoints + reaper threading",
+      "status": "pending",
+      "description": "**Goal:** Modal runtime-probe substrate: existence from list_instances, util from /util, reaper primes URL via note_endpoints.\n\n**Files:**\n- Modify: src/kinoforge/providers/modal/__init__.py\n- Modify: src/kinoforge/core/reaper_actor.py:380-390\n- Test: tests/providers/modal/test_probe_runtime.py\n\n**Verify:** pixi run test -- tests/providers/modal/test_probe_runtime.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"src/kinoforge/core/reaper_actor.py\", \"tests/providers/modal/test_probe_runtime.py\"], \"verifyCommand\": \"pixi run test -- tests/providers/modal/test_probe_runtime.py -v\", \"acceptanceCriteria\": [\"absent app -> found=False\", \"active+util -> full field mapping\", \"unknown URL / util raise / util 404 -> partial probe with error, found=True\", \"lister failure propagates\", \"reaper primes note_endpoints duck-typed\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Sweeper end-to-end classification of Modal ephemeral rows (offline)",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Prove Modal rows flow sweep -> probe -> verdict -> action (GC_404 gone; STALL_REAP idle -> destroy).\n\n**Files:**\n- Test: tests/integration/test_sweeper_reaps_ephemeral_modal.py\n\n**Verify:** pixi run test -- tests/integration/test_sweeper_reaps_ephemeral_modal.py -v\n\n```json:metadata\n{\"files\": [\"tests/integration/test_sweeper_reaps_ephemeral_modal.py\"], \"verifyCommand\": \"pixi run test -- tests/integration/test_sweeper_reaps_ephemeral_modal.py -v\", \"acceptanceCriteria\": [\"gone app -> GC_404, row removed, no destroy\", \"idle app -> STALL_REAP, destroy called, row removed\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: EM3 live proof — sweeper reaps an idle ephemeral Modal app",
+      "status": "pending",
+      "blockedBy": [5, 6, 7],
+      "description": "**Goal:** Live-prove the sweeper reaps an idle bare---ephemeral Modal app (destroy fired, index row gone, app stopped).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em3_sweeper.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em3_sweeper.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"bare ephemeral run leaves live eph app + index row\", \"sweeper verdict reaps it (log captured)\", \"modal app list stopped + index row gone + ledger clean\", \"PROGRESS updated + workstream closed; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live\", \"deployed\", \"idle\"], [\"reaped\", \"stopped\", \"STALL_REAP\", \"OVERAGE_REAP\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-12"
+}
