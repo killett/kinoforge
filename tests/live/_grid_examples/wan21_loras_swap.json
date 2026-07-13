@@ -1,5 +1,5 @@
 {
-  "spec": "examples/configs/grids/wan21-1_3b-loras-swap.grid.yaml",
+  "spec": "examples/configs/grids/wan-2_1-1_3b-loras-swap.grid.yaml",
   "captured_at": "2026-06-27T23:47:00-07:00",
   "grid_capability": "cap #2 — LoRA stack swap (single-pod /lora/set_stack warm-reuse)",
   "model": "Wan 2.1 T2V 1.3B (diffusers)",

@@ -1,20 +1,20 @@
 allow_in_repo: true
-title: "Wan 2.1 1.3B — prompt sweep"
+title: "Wan 2.2 14B — prompt sweep"
 layout: "1x3"
-budget_cap_usd: 0.50
+budget_cap_usd: 2.00
 cells:
   - generate:
-      config: examples/configs/grids/wan21-1_3b-base.yaml
+      config: examples/configs/grids/runpod-diffusers-wan-2_2-14b-base.yaml
       overrides:
         prompt: "Photorealistic, cinematic 5-second shot on anamorphic lenses with shallow depth of field and subtle lens flare. A slow push-in toward a young woman in a sweeping alpine meadow of wildflowers; behind her, a tall waterfall tumbles down moss-covered cliffs into a misting pool. Warm golden-hour light rakes across the field, backlighting her glowing silhouette and igniting floating pollen and mist that drift like tiny embers of light. Her simple but vividly colored dress ripples in the breeze, strands of hair lifting. Facing away, she turns to glance over her shoulder with a coy, gentle smile as the camera glides into an intimate close-up on her eyes. Around her, friendly magical creatures move with slow grace — luminous butterflies and glowing wisps trailing ribbons of soft light. The sky is clear and radiant, brushed with wisps of cloud. Filmic color grade, warm highlights, soft shadows, fine film grain, volumetric god rays cutting through the mist. Serene, ethereal, breathtaking."
     caption: "realistic"
   - generate:
-      config: examples/configs/grids/wan21-1_3b-base.yaml
+      config: examples/configs/grids/runpod-diffusers-wan-2_2-14b-base.yaml
       overrides:
         prompt: "Photorealistic yet dreamlike cinematic 5-second shot, anamorphic lenses, soft diffusion blooming highlights into halos. Slow, weightless push-in toward a young woman in an enchanted, sun-drenched meadow where wildflowers glow violet, rose, and gold. Behind her, a waterfall spills down moss-draped cliffs, its mist scattering into a prismatic rainbow. Warm, hazy golden light backlights her edges, igniting glowing spores and pollen. Her simple, vividly colored, iridescent dress ripples in slow motion, hair lifting as if underwater. Facing away, she glances back over her shoulder with a coy smile as the camera settles into a glowing close-up of her eyes. Around her, friendly fae creatures drift — luminescent deer, stained-glass dragonflies, and wisps of light trailing ribbons. The sky is clear and radiant, opalescent with wisps of cloud. Jewel-tone color grade, heavy bloom, soft halation, dreamy haze, fine film grain. Ethereal, enchanted, otherworldly — like a half-remembered dream."
     caption: "dreamlike"
   - generate:
-      config: examples/configs/grids/wan21-1_3b-base.yaml
+      config: examples/configs/grids/runpod-diffusers-wan-2_2-14b-base.yaml
       overrides:
-        prompt: "A dense old-growth forest at first light. Mist coils between the trunks, backlit by a low golden sun. Camera drifts slowly forward through the underbrush; ferns brush the lens; a single shaft of light pierces the canopy."
-    caption: "forest"
+        prompt: "Aerial drone shot at dawn. The camera lifts off the surface of a still lake, water beading on the lens, then climbs above a ridge line as the first sun strikes the peaks. The horizon glows orange-pink. Slow forward motion. Cinematic, photoreal."
+    caption: "dawn-flight"

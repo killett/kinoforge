@@ -1,5 +1,5 @@
 {
-  "spec": "examples/configs/grids/wan21-model-sweep.grid.yaml",
+  "spec": "examples/configs/grids/wan-2_1-model-sweep.grid.yaml",
   "captured_at": "2026-06-28T01:36:00-07:00",
   "grid_capability": "cap #5 — intra-family model sweep (1.3B vs 5B vs 14B) → 3 distinct capability keys → 3 parallel pods",
   "model_family": "Wan 2.1 T2V",

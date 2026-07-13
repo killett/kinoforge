@@ -1,22 +1,22 @@
 allow_in_repo: true
-title: "Wan 2.1 1.3B — LoRA strength sweep"
+title: "Wan 2.2 14B — Arcane LoRA strength sweep"
 layout: "1x3"
-budget_cap_usd: 0.50
+budget_cap_usd: 2.00
 cells:
   - generate:
-      config: examples/configs/grids/wan21-1_3b-base.yaml
+      config: examples/configs/grids/runpod-diffusers-wan-2_2-14b-base.yaml
       overrides:
         loras[0].strength: 0.5
         loras[1].strength: 0.5
     caption: "strength=0.5"
   - generate:
-      config: examples/configs/grids/wan21-1_3b-base.yaml
+      config: examples/configs/grids/runpod-diffusers-wan-2_2-14b-base.yaml
       overrides:
         loras[0].strength: 1.0
         loras[1].strength: 1.0
     caption: "strength=1.0"
   - generate:
-      config: examples/configs/grids/wan21-1_3b-base.yaml
+      config: examples/configs/grids/runpod-diffusers-wan-2_2-14b-base.yaml
       overrides:
         loras[0].strength: 1.5
         loras[1].strength: 1.5

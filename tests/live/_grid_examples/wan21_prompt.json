@@ -1,5 +1,5 @@
 {
-  "spec": "examples/configs/grids/wan21-1_3b-prompt-sweep.grid.yaml",
+  "spec": "examples/configs/grids/wan-2_1-1_3b-prompt-sweep.grid.yaml",
   "captured_at": "2026-06-28T00:14:00-07:00",
   "grid_capability": "cap #3 — prompt sweep (3 prompts, generate cells)",
   "model": "Wan 2.1 T2V 1.3B (diffusers)",

@@ -1,0 +1,14 @@
+allow_in_repo: true
+title: "Wan 2.1 — model sweep (1.3B vs 5B vs 14B)"
+layout: "1x3"
+budget_cap_usd: 2.00
+cells:
+  - generate:
+      config: examples/configs/grids/runpod-diffusers-wan-2_1-1_3b-base-no-loras.yaml
+    caption: "Wan 2.1 1.3B"
+  - generate:
+      config: examples/configs/grids/runpod-comfyui-wan-2_1-5b-base-no-loras.yaml
+    caption: "Wan 2.1 5B"
+  - generate:
+      config: examples/configs/grids/runpod-comfyui-wan-2_1-14b-base-no-loras.yaml
+    caption: "Wan 2.1 14B"

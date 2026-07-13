@@ -170,7 +170,7 @@ pods (~$0.30).
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan21-1_3b-strength-sweep.grid.yaml \
+        --spec examples/configs/grids/wan-2_1-1_3b-strength-sweep.grid.yaml \
         --out output/wan21-1_3b-strength.mp4
 )
 ```
@@ -187,7 +187,7 @@ pod via server-side `/lora/set_stack` swap. Cell-to-cell wall ~35s vs
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan21-1_3b-loras-swap.grid.yaml \
+        --spec examples/configs/grids/wan-2_1-1_3b-loras-swap.grid.yaml \
         --out output/wan21-1_3b-loras-swap.mp4
 )
 ```
@@ -204,7 +204,7 @@ forest text. 3 cold-boot RTX A5000 pods (generate cells force
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan21-1_3b-prompt-sweep.grid.yaml \
+        --spec examples/configs/grids/wan-2_1-1_3b-prompt-sweep.grid.yaml \
         --out output/wan21-1_3b-prompt.mp4
 )
 ```
@@ -221,7 +221,7 @@ above + 1 `generate:` cell renders fresh. Path cells skip compute.
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan21-mixed-path-plus-generate.grid.yaml \
+        --spec examples/configs/grids/wan-2_1-mixed-path-plus-generate.grid.yaml \
         --out output/wan21-mixed-path.mp4
 )
 ```
@@ -237,7 +237,7 @@ pods (1.3B diffusers + 5B comfyui + 14B comfyui). No LoRAs. ~$0.50.
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan21-model-sweep.grid.yaml \
+        --spec examples/configs/grids/wan-2_1-model-sweep.grid.yaml \
         --out output/wan21-model-sweep.mp4
 )
 ```
@@ -254,7 +254,7 @@ PCIe ($1.49/hr). 3 cold-boot pods (generate cells force `--no-reuse`).
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan22-14b-strength-sweep.grid.yaml \
+        --spec examples/configs/grids/wan-2_2-14b-strength-sweep.grid.yaml \
         --out output/wan22-14b-strength.mp4
 )
 ```
@@ -271,7 +271,7 @@ branches). Group wall ~8.5min for 3 cells. ~$0.20.
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan22-14b-loras-swap.grid.yaml \
+        --spec examples/configs/grids/wan-2_2-14b-loras-swap.grid.yaml \
         --out output/wan22-14b-loras-swap.mp4
 )
 ```
@@ -289,7 +289,7 @@ pods stall on HF weight DL or pip install). ~$1.35.
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan22-14b-prompt-sweep.grid.yaml \
+        --spec examples/configs/grids/wan-2_2-14b-prompt-sweep.grid.yaml \
         --out output/wan22-14b-prompt.mp4
 )
 ```
@@ -305,7 +305,7 @@ above) + 1 fresh `generate:` cell. ~$0.35.
 (
     eval "$(pixi shell-hook)"
     python -m kinoforge grid \
-        --spec examples/configs/grids/wan22-14b-mixed-path-plus-generate.grid.yaml \
+        --spec examples/configs/grids/wan-2_2-14b-mixed-path-plus-generate.grid.yaml \
         --out output/wan22-14b-mixed-path.mp4
 )
 ```

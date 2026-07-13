@@ -1,5 +1,5 @@
 {
-  "spec": "examples/configs/grids/wan22-14b-mixed-path-plus-generate.grid.yaml",
+  "spec": "examples/configs/grids/wan-2_2-14b-mixed-path-plus-generate.grid.yaml",
   "captured_at": "2026-06-28T04:54:00-07:00",
   "grid_capability": "cap #9 — Wan 2.2 mixed path + generate (2 path cells from T10+T12 + 1 fresh generate on A100 80GB)",
   "model": "Wan 2.2 T2V A14B (diffusers, generate cell only)",

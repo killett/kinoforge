@@ -1,5 +1,5 @@
 {
-  "spec": "examples/configs/grids/wan21-1_3b-strength-sweep.grid.yaml",
+  "spec": "examples/configs/grids/wan-2_1-1_3b-strength-sweep.grid.yaml",
   "captured_at": "2026-06-27T23:35:00-07:00",
   "grid_capability": "cap #1 — LoRA strength sweep (single-pod warm-reuse, generate cells)",
   "model": "Wan 2.1 T2V 1.3B (diffusers)",
