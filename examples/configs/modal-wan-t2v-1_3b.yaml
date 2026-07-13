@@ -32,6 +32,10 @@ engine:
       - "fastapi>=0.115"
       - "uvicorn>=0.30"
       - "imageio[ffmpeg]>=2.34"
+      # Util-probe deps: psutil -> cpu/mem/disk %, nvidia-ml-py -> pynvml GPU%
+      # (nvidia-smi fallback covers GPU with zero deps; these populate the rest).
+      - "psutil>=5.9"
+      - "nvidia-ml-py>=12"
     base_url: "http://localhost:8000"
     prompt_body_key: "prompt"
     embed_modules: ["kinoforge.engines.diffusers.servers"]
