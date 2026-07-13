@@ -42,21 +42,32 @@ first unchecked task without redoing committed work.
   Teardown gotcha: `kinoforge destroy --id eph-…` MUST run `-e live-modal` (default env lacks the
   `modal` binary → orphan probe skipped → "not found in ledger"); live-modal destroy works via the
   orphan path ("destroyed orphan: … (no ledger entry, provider=modal)"), app stopped + index row
-  removed + ledger clean. Stale runpod row `kfmdxf0749x0nh` (2026-06-28) remains in the index —
-  EM3 sweeper GC_404 material. Next in plan: Task 6 (ModalProvider.probe_runtime + note_endpoints).
+  removed + ledger clean.
+  **EM3 done (LIVE-GREEN 2026-07-12) — WORKSTREAM CLOSED:** `ModalProvider.probe_runtime` +
+  `note_endpoints` reaper-priming seam (`c66dd22`, guard fix `e54d575`) + offline sweeper
+  GC_404/STALL_REAP tests (`e5f0112`, `68032af`) + live proof (scaffold `ec8f81c`): bare
+  `--ephemeral` gen left idle app `kinoforge-eph-a9460e2c` + index row; sweep driver (real
+  ModalProvider + real `/util`, stall-tight window 60s/interval 30s) — tick 1 `LIVE`
+  (`probe_state=ok gpu=0.0 cpu=0.0`, REAL util probe on the idle app), tick 3 **`STALL_REAP` →
+  ACTION `destroyed_and_forgot`** → app stopped in `modal app list`, index row gone, ledger clean.
+  BONUS tick-1: the stale 2026-06-28 runpod row `kfmdxf0749x0nh` was live-GC_404'd (real GraphQL
+  404 → `gc_404_removed`) — index now fully converged (empty). Gen output frame-QA PASS. All 9
+  plan tasks complete; every task passed two-stage review (spec + quality) with fixes applied.
+  NO successful-generations entries (all runs ephemeral).
 - **SINGLE NEXT ACTION:** **Modal roadmap M1–M5 + util-probe + 1080p height-target all COMPLETE + live-green** (§22–§26 + util-probe): engine matrix (t2v/upscale/interpolate) + warm-reuse + HF-cache + util probe all proven. No unchecked task remains in any active plan. Next work is operator-directed — pick a new roadmap item (roadmap `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`; remaining candidates: i2v/flf2v on Modal) or a new brief. (Superseded next action, kept for context:) **Unblock Modal M3 Task 5 (FlashVSR live proof) by making the Modal boot fast + preemption-resilient.** M3 offline work is DONE + committed: the cp313 BSA wheel is built (on Modal, `tools/build_bsa_wheel_modal.py`) + hosted (`killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1`, `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl`, 526 MB); the Modal cfg (`examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml`), `HF_HOME=/cache/hf` provider wiring, offline tests, and the RED live scaffold are all committed. **BLOCKER (2026-07-09):** the live `kinoforge upscale` never converged — the kinoforge Modal transport provisions at RUNTIME (pip torch+BSA-wheel+FlashVSR-weights via the boot script, ~15 min), and Modal **preempted the pooled A100 repeatedly mid-boot** ("Worker disappeared, in-progress inputs will be re-scheduled"); each preempt restarts the boot from scratch (no caching for the BSA wheel / FlashVSR weights), so `/health` never bound and the run **accumulated 10 containers** before teardown (~$1.5 est). Torn down clean (app stopped, ledger `forget`, verified `No running instances`). **FIX (the next action):** bake the heavy pip deps + BSA wheel INTO the Modal image at build time (`ModalProvider`/`build_modal_app` `Image.pip_install(...)` instead of runtime boot-script installs) so container start is seconds, not ~15 min → no preemption window, no container pile-up. Then re-run Task 5 (`pixi run -e live-modal kinoforge upscale --config examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse`), frame-QA, log §24. Note: M1 (§22, 1.3B ~5 min boot) + M2 (§23, A14B ~30 min HF boot) survived preemption on lucky windows; FlashVSR's mix of a 526 MB non-HF wheel + weights is the worst case and forces the image-bake fix. [[reference_modal_provider_gotchas]] · [[reference_modal_add_python_clang_link]]. Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
 
 ## RESUME SNAPSHOT (updated 2026-07-12 — read this, then STOP; below is history)
 
-**State (updated 2026-07-12 Modal ephemeral parity session — EM1):** main green;
-ledger clean; zero pods/running Modal apps (eph apps stopped). **EM1 LIVE-GREEN** —
-opaque `kinoforge-eph-{8hex}` naming + capability entries + live `--ephemeral
-upscale --no-reuse` proof (1080², frame-QA PASS, empty ledger, no store residue,
-opaque stopped app). Live-caught fix `607787e`: `max_containers=1` (Modal autoscale
-had broken the stateful-pod contract — round-robin 404s across 2 containers; see
-workstream pointer above). Plan continues at Task 3 (EM2: shared
-`_ephemeral_index_add`, modal row discovery, live warm-attach; then EM3 sweeper
-reap). Ephemeral runs NEVER logged to successful-generations.md.
+**State (updated 2026-07-12 Modal ephemeral parity session — CLOSED):** main green;
+ledger clean; zero running Modal apps (all eph apps stopped); ephemeral index EMPTY
+(fully converged). **Modal ephemeral parity EM1+EM2+EM3 ALL LIVE-GREEN — workstream
+CLOSED** (see pointer above for the full evidence chain). Three live-caught
+production fixes shipped along the way: `max_containers=1` (`607787e`, Modal
+autoscale broke the stateful-pod contract), `HEARTBEAT_SUBSTRATE_MISSING`
+force-bypassable (`e25c82e`, Modal index rows were undiscoverable), and
+`note_endpoints` URL-presence guard (`e54d575`). Operational gotchas recorded:
+ephemeral destroy needs `-e live-modal`; plan GEN_CMDs need `--mode t2v`.
+Ephemeral runs NEVER logged to successful-generations.md.
 
 **State (updated 2026-07-12 Modal 1080p height-target session):** main green;
 ledger clean; zero pods/running Modal apps. **Modal FlashVSR 1080p height-target
