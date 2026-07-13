@@ -1361,7 +1361,20 @@ def _classify_for_status(
 
 
 _FORCE_BYPASSABLE_VERDICTS: frozenset[str] = frozenset(
-    {"HEARTBEAT_UNKNOWN", "IDLE_REAP", "ORPHAN_REAP"}
+    {
+        "HEARTBEAT_UNKNOWN",
+        "IDLE_REAP",
+        "ORPHAN_REAP",
+        # B5a's substrate gate: providers without a wire-level
+        # HeartbeatEndpoint (e.g. modal, skypilot) can NEVER produce
+        # heartbeat data, so the missing snapshot is even less actionable
+        # than HEARTBEAT_UNKNOWN — classify Row 1 already confirmed the pod
+        # live via list_instances. Without this, Modal ephemeral-index rows
+        # are undiscoverable by _scan_warm_candidates (index-only entries
+        # rely on the force_attach bypass; exposed by
+        # tests/integration/test_ephemeral_modal_row_discovery.py).
+        "HEARTBEAT_SUBSTRATE_MISSING",
+    }
 )
 
 
@@ -1534,9 +1547,11 @@ def _scan_warm_candidates(
         # B4 cheap-first chain — force_attach=False (D3
         # conservative-on-ignorance). Index-only entries (ephemeral
         # process #1 wrote them; no ledger row) carry no heartbeat
-        # snapshot, so classify would return HEARTBEAT_UNKNOWN; bypass
-        # via force_attach + supply the entry so _resolve_warm_instance
-        # does not re-fetch from the empty disk ledger.
+        # snapshot, so classify would return HEARTBEAT_UNKNOWN (or
+        # HEARTBEAT_SUBSTRATE_MISSING for providers without a heartbeat
+        # satisfier, e.g. modal); bypass via force_attach + supply the
+        # entry so _resolve_warm_instance does not re-fetch from the
+        # empty disk ledger.
         is_index_only = instance_id in index_only_ids
         instance, rc = _resolve_warm_instance(
             ctx,
@@ -1924,7 +1939,7 @@ def _resolve_warm_instance(
             file=sys.stderr,
         )
         return (None, 2)
-    else:  # UNROUTABLE / HEARTBEAT_SUBSTRATE_MISSING / unknown
+    else:  # UNROUTABLE / unknown
         print(
             f"classify verdict {v_name} blocks attach for {instance_id}.",
             file=sys.stderr,
