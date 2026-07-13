@@ -55,10 +55,10 @@
     {
       "id": 8,
       "subject": "Task 8: EM3 live proof — sweeper reaps an idle ephemeral Modal app",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5, 6, 7],
       "description": "**Goal:** Live-prove the sweeper reaps an idle bare---ephemeral Modal app (destroy fired, index row gone, app stopped).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em3_sweeper.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em3_sweeper.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"bare ephemeral run leaves live eph app + index row\", \"sweeper verdict reaps it (log captured)\", \"modal app list stopped + index row gone + ledger clean\", \"PROGRESS updated + workstream closed; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live\", \"deployed\", \"idle\"], [\"reaped\", \"stopped\", \"STALL_REAP\", \"OVERAGE_REAP\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-12T23:25:32"
+  "lastUpdated": "2026-07-12T23:31:20"
 }
