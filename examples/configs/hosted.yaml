@@ -9,7 +9,7 @@
 # No public provider (fal.ai, Replicate, HuggingFace) implements this contract.
 # Use HostedAPIEngine when you have deployed your OWN inference shim that wraps a
 # real backend with the contract above.  For real public providers, see the
-# per-provider engines (e.g. examples/configs/fal.yaml).
+# per-provider engines (e.g. examples/configs/fal-t2v.yaml).
 
 engine:
   kind: hosted

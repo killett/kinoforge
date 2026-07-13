@@ -434,7 +434,7 @@ Spec: `docs/superpowers/specs/2026-07-03-luma-image-keyframes-design.md`
 
 `image_engines/luma_agents/` — raw-REST ImageEngine for the Luma
 agents API (`agents.lumalabs.ai/v1`, UNI-1), registry slug
-`luma_agents`, 10 offline tests; `keyframe-luma.yaml` example (fal
+`luma_agents`, 10 offline tests; `fal-luma-keyframe-i2v.yaml` example (fal
 i2v host, Luma keyframe); env-gated live smoke.
 
 Live smoke GREEN: `1 passed in 125.60s`, model `uni-1`, PNG
@@ -1976,7 +1976,7 @@ xfail is a follow-up:
   404 (local-fake, cost, batch-prompts, diffusers, hosted, fal).
 - 4 cfgs (skypilot×3, wan) point at `hf:Wan-AI/Wan2.2-T2V-A14B:wan2.2_14b.safetensors`
   which 404s on HF Hub — actual filename likely differs.
-- `nova-reel.yaml` engine kind not in `KNOWN_ENGINES`; either fix
+- `bedrock-nova-reel-t2v.yaml` engine kind not in `KNOWN_ENGINES`; either fix
   the cfg or add `nova_reel` to the engine registry.
 - `runpod-comfyui-wan-manifest.yaml` is a batch manifest (top-level
   list), not a Config mapping — doctor needs a manifest-aware path
@@ -2014,7 +2014,7 @@ main at time of writing). Five edits unblocked all 12 entries:
      `idle_timeout_vs_heartbeat` rule (3 * heartbeat must fit within
      the 60 s idle_timeout). Commit `a013277`; comment softening
      follow-up `e41ca88`.
-  4. `nova-reel.yaml` collapsed onto the registered `bedrock_video`
+  4. `bedrock-nova-reel-t2v.yaml` collapsed onto the registered `bedrock_video`
      engine (no new engine module). The `nova_reel:` sub-block was
      replaced with `bedrock_video.model_input_template` carrying
      the real Bedrock Nova Reel API shape (`taskType`,
@@ -2043,7 +2043,7 @@ Filed follow-ups (anchored 2026-06-19, do NOT drift):
       writing to it) before the next Nova Reel live smoke fires
       under `KINOFORGE_SAVE_FIXTURES=1`.
 - Stale `wan2.2_14b.safetensors` refs still present in
-  `examples/configs/fal.yaml:20`, `examples/configs/hosted.yaml:29`,
+  `examples/configs/fal-t2v.yaml:20`, `examples/configs/hosted.yaml:29`,
   `tests/test_examples.py:161,182`, and
   `successful-generations.md:74`. The cfgs do NOT break doctor (Task
   1's `_NON_FETCHING_ENGINES` filter skips `fal` + `hosted`), but the
@@ -3016,14 +3016,14 @@ Track B — Veo on Vertex AI (us-central1):
 - [x] Task 9: UX A compute preflight + marker — commit `4d573b5`
 - [x] Task 10: FalEngineConfig pydantic block — commits `96d45a8` + `2680b22`
 - [x] Task 11: FalEngine + FalBackend + wire — commits `7e3327a` + `0d324dc`
-- [x] Task 12: _adapters + fal.yaml + invariant + tooling — commit `9be6e67`
+- [x] Task 12: _adapters + fal-t2v.yaml + invariant + tooling — commit `9be6e67`
 - [x] Task 13: Live opt-in test + manual smoke — commit `bf3841f`
 - [x] Merge to main via `--no-ff` — merge commit `0b2a8d7`
 
-**First real artifact:** `/tmp/kinoforge-fal-smoke/smoke-i-1/n9TG4YoyIIkzR1rouhQCw_tmpykhkugmc.mp4` — 3,073,440 bytes, MP4 (`ftyp isom`), produced by `fal-ai/wan-t2v` via `examples/configs/fal.yaml` (capability_key `2820ed10e74fbea4bb4ab8e3d338f716db8d86383869ebf793bed423f507caaa`, git SHA `9be6e67` at smoke time).
+**First real artifact:** `/tmp/kinoforge-fal-smoke/smoke-i-1/n9TG4YoyIIkzR1rouhQCw_tmpykhkugmc.mp4` — 3,073,440 bytes, MP4 (`ftyp isom`), produced by `fal-ai/wan-t2v` via `examples/configs/fal-t2v.yaml` (capability_key `2820ed10e74fbea4bb4ab8e3d338f716db8d86383869ebf793bed423f507caaa`, git SHA `9be6e67` at smoke time).
 
 **Live-smoke bug catches integrated into Task 13:**
-- `examples/configs/fal.yaml` endpoint changed `fal-ai/wan/v2.2/t2v` (404 on result URL — fal.ai rewrites the family path back to `fal-ai/wan/...` which 404s on GET) → `fal-ai/wan-t2v` (queue family matches; status/response URLs round-trip cleanly).
+- `examples/configs/fal-t2v.yaml` endpoint changed `fal-ai/wan/v2.2/t2v` (404 on result URL — fal.ai rewrites the family path back to `fal-ai/wan/...` which 404s on GET) → `fal-ai/wan-t2v` (queue family matches; status/response URLs round-trip cleanly).
 - `FalBackend.submit` now falls back to `segments[0].prompt` when `job.spec` lacks `"prompt"` — the orchestrator places the user prompt on the Segment, not in the engine spec, so without this the fal POST body contained only `_audio_mode` and fal silently completed a no-op job that 422'd on result fetch.
 - `FalEngine.validate_spec` widened to accept a non-empty prompt on `segments[0]` as well as `job.spec` (mirrors the new submit fallback).
 - `GenerateClipStage._artifact_bytes` now resolves `uri` → local file read → `url` → HTTP download → synthetic-fallback (FakeEngine path).  Hosted/queue engines that return `Artifact(url="https://...mp4")` previously had their bytes silently replaced with debug-stub bytes.
@@ -4347,7 +4347,7 @@ Plan:
 
 - [x] Task 0: `NovaReelEngineConfig` pydantic + wire onto `EngineConfig` — commit `3ca3d77`
 - [x] Task 1: `engines/nova_reel/` package + 10 offline unit tests — commit `1e2dd1a`
-- [x] Task 2: `examples/configs/nova-reel.yaml` + parse test — commit `6b941e7`
+- [x] Task 2: `examples/configs/bedrock-nova-reel-t2v.yaml` + parse test — commit `6b941e7`
 - [x] Task 3: `.aws/policies/bedrock-nova-reel.json` IAM policy doc — commit `e8902d2`
 - [x] Task 4: Attach IAM policy + create S3 output bucket (real cloud mutation) — commit `71a41c6`
 - [x] Task 5: `probe_hosted --check-bedrock-model-access` flag + 3 tests — commit `018213a`
@@ -4421,7 +4421,7 @@ No spend incurred. All failures were pre-submit.
   updated for Luma Ray shape; new `test_bedrock_video_submit_substitutes_prompt_in_template`
   (2-level nesting) and `test_bedrock_video_submit_does_not_mutate_template_config`.
   12 tests total.
-- `examples/configs/nova-reel.yaml` → `luma-ray.yaml` (Luma Ray v2, us-west-2).
+- `examples/configs/bedrock-nova-reel-t2v.yaml` → `bedrock-luma-ray-t2v.yaml` (Luma Ray v2, us-west-2).
 - `.aws/policies/bedrock-nova-reel.json` → `bedrock-luma-ray.json`
   (Luma Ray ARNs in us-west-2; bucket `bedrock-video-generation-us-west-2-nw51wr`).
 - `test_examples.py`: `test_nova_reel_example_config_parses` →
@@ -4781,7 +4781,7 @@ Plan: `docs/superpowers/plans/2026-06-09-layer-8-model-identity-abc.md`
 **Test count delta:** +~45 net (per-engine unit tests +22, ABC contract test +11 parametrized, orchestrator wiring tests +3, integration regression lock +12 parametrized — minus 2 deselected for `cfg.engine.kind == "fake"` and 4 static skips for non-Config / unregistered-engine YAMLs).
 
 **Carry-forwards / known follow-ups:**
-- `nova-reel.yaml` is skip-listed in the regression lock (`nova_reel` engine kind not registered; planned for Layer 3 reactivation). Skip-list comment forward-points to Layer 3.
+- `bedrock-nova-reel-t2v.yaml` is skip-listed in the regression lock (`nova_reel` engine kind not registered; planned for Layer 3 reactivation). Skip-list comment forward-points to Layer 3.
 - `mode_identity` / `precision_identity` / `lora_stack_identity` sibling ABC methods would let the filename schema grow more facets (e.g. `t2v` / `i2v` / `flf2v` in the slug). Not in scope for Layer 8.
 - Code-quality review observation: `_CapturingSink` is duplicated across orchestrator tests T2 and T3. Acceptable for two sites; promote to a module-level helper if a third site appears.
 - WARNING template `engine %s returned empty model identity ...` is structurally duplicated across clip + keyframe stages. Two sites only; helper extraction premature.

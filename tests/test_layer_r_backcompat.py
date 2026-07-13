@@ -23,9 +23,9 @@ def test_existing_examples_have_no_keyframe_block() -> None:
     from kinoforge.core.config import load_config
 
     excluded = {
-        "keyframe-fal-i2v.yaml",
-        "keyframe-fal-flf2v.yaml",
-        "keyframe-luma.yaml",
+        "fal-keyframe-i2v.yaml",
+        "fal-keyframe-flf2v.yaml",
+        "fal-luma-keyframe-i2v.yaml",
     }
     yamls = sorted(Path("examples/configs").glob("*.yaml"))
     assert yamls, "examples/configs should not be empty"

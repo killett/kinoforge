@@ -2,7 +2,7 @@
 #
 # Setup (one-time, automated in Layer 3 plan Tasks 4-5):
 #   1. Attach .aws/policies/bedrock-nova-reel.json to the kinoforge-ci IAM user
-#   2. Verify Nova Reel model access via `pixi run probe-hosted --config examples/configs/nova-reel.yaml`
+#   2. Verify Nova Reel model access via `pixi run probe-hosted --config examples/configs/bedrock-nova-reel-t2v.yaml`
 #
 # Live smoke: `KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_nova_reel_live.py -v`
 #

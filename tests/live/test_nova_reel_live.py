@@ -60,7 +60,7 @@ def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
             "probe-hosted",
             "--",
             "--config",
-            "examples/configs/nova-reel.yaml",
+            "examples/configs/bedrock-nova-reel-t2v.yaml",
             "--check-bedrock-model-access",
             "amazon.nova-reel-v1:1",
         ],
@@ -72,7 +72,7 @@ def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     )
 
     # Load config
-    cfg = load_config("examples/configs/nova-reel.yaml")
+    cfg = load_config("examples/configs/bedrock-nova-reel-t2v.yaml")
     # Verify shape
     assert cfg.engine.kind == "bedrock_video"
 
@@ -83,7 +83,9 @@ def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     # Build engine + backend (via raw cfg dict — Nova Reel adapter consumes dict).
     import yaml
 
-    cfg_dict = yaml.safe_load(Path("examples/configs/nova-reel.yaml").read_text())
+    cfg_dict = yaml.safe_load(
+        Path("examples/configs/bedrock-nova-reel-t2v.yaml").read_text()
+    )
     engine_factory = get_engine("bedrock_video")
     engine = engine_factory()
     engine.provision(None, cfg_dict)

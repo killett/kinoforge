@@ -56,7 +56,7 @@ def test_luma_ray_live_e2e_smoke(tmp_path: Path) -> None:
     from kinoforge.core.registry import get_engine
 
     # Load config
-    cfg = load_config("examples/configs/luma-ray.yaml")
+    cfg = load_config("examples/configs/bedrock-luma-ray-t2v.yaml")
     # Verify shape
     assert cfg.engine.kind == "bedrock_video"
 
@@ -67,7 +67,9 @@ def test_luma_ray_live_e2e_smoke(tmp_path: Path) -> None:
     # Build engine + backend (via raw cfg dict — BedrockVideoEngine adapter consumes dict).
     import yaml
 
-    cfg_dict = yaml.safe_load(Path("examples/configs/luma-ray.yaml").read_text())
+    cfg_dict = yaml.safe_load(
+        Path("examples/configs/bedrock-luma-ray-t2v.yaml").read_text()
+    )
     engine_factory = get_engine("bedrock_video")
     engine = engine_factory()
     engine.provision(None, cfg_dict)
