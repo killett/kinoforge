@@ -42,13 +42,13 @@
     {
       "id": 6,
       "subject": "Task 6: ModalProvider.probe_runtime + note_endpoints + reaper threading",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Modal runtime-probe substrate: existence from list_instances, util from /util, reaper primes URL via note_endpoints.\n\n**Files:**\n- Modify: src/kinoforge/providers/modal/__init__.py\n- Modify: src/kinoforge/core/reaper_actor.py:380-390\n- Test: tests/providers/modal/test_probe_runtime.py\n\n**Verify:** pixi run test -- tests/providers/modal/test_probe_runtime.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"src/kinoforge/core/reaper_actor.py\", \"tests/providers/modal/test_probe_runtime.py\"], \"verifyCommand\": \"pixi run test -- tests/providers/modal/test_probe_runtime.py -v\", \"acceptanceCriteria\": [\"absent app -> found=False\", \"active+util -> full field mapping\", \"unknown URL / util raise / util 404 -> partial probe with error, found=True\", \"lister failure propagates\", \"reaper primes note_endpoints duck-typed\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: Sweeper end-to-end classification of Modal ephemeral rows (offline)",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [6],
       "description": "**Goal:** Prove Modal rows flow sweep -> probe -> verdict -> action (GC_404 gone; STALL_REAP idle -> destroy).\n\n**Files:**\n- Test: tests/integration/test_sweeper_reaps_ephemeral_modal.py\n\n**Verify:** pixi run test -- tests/integration/test_sweeper_reaps_ephemeral_modal.py -v\n\n```json:metadata\n{\"files\": [\"tests/integration/test_sweeper_reaps_ephemeral_modal.py\"], \"verifyCommand\": \"pixi run test -- tests/integration/test_sweeper_reaps_ephemeral_modal.py -v\", \"acceptanceCriteria\": [\"gone app -> GC_404, row removed, no destroy\", \"idle app -> STALL_REAP, destroy called, row removed\"], \"modelTier\": \"standard\"}\n```"
     },
@@ -60,5 +60,5 @@
       "description": "**Goal:** Live-prove the sweeper reaps an idle bare---ephemeral Modal app (destroy fired, index row gone, app stopped).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em3_sweeper.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em3_sweeper.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"bare ephemeral run leaves live eph app + index row\", \"sweeper verdict reaps it (log captured)\", \"modal app list stopped + index row gone + ledger clean\", \"PROGRESS updated + workstream closed; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live\", \"deployed\", \"idle\"], [\"reaped\", \"stopped\", \"STALL_REAP\", \"OVERAGE_REAP\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-12T23:01:33"
+  "lastUpdated": "2026-07-12T23:25:32"
 }
