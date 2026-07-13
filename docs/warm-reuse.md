@@ -37,7 +37,7 @@ salvageable verdicts:
 | STALE_LEDGER | refuse | refuse (pod is gone) |
 | OVERAGE_REAP | refuse | refuse (max_lifetime policy) |
 | UNROUTABLE | refuse | refuse (provider unreachable) |
-| HEARTBEAT_SUBSTRATE_MISSING | refuse | refuse (no wire substrate) |
+| HEARTBEAT_SUBSTRATE_MISSING | refuse | attach (no wire substrate; pod confirmed live via list_instances) |
 
 Capability_key mismatch is never bypassable — use a cfg matching the
 pod or `kinoforge destroy --id <id>` to free the slot.

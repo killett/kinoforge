@@ -57,7 +57,12 @@ class _FakeModalProvider:
     """
 
     def list_instances(self) -> list[Instance]:
-        """Report the ephemeral pod live so classify Row 1 passes."""
+        """Report the ephemeral pod live.
+
+        classify's liveness gate checks the entry id against the provider's
+        list_instances result; an absent id yields STALE_LEDGER, which is
+        never force-bypassable and would mask the replay path under test.
+        """
         return [self.get_instance(_POD_ID)]
 
     def get_instance(self, iid: str) -> Instance:

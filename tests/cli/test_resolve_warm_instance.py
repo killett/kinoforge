@@ -29,7 +29,8 @@ def _entry(
     cap_key lives at entry['tags']['kinoforge_key'] (orchestrator.py:492,1015).
     Default provider="local" so classify() Row-7 substrate gate resolves to
     HEARTBEAT_UNKNOWN (local is in _HEARTBEAT_SUPPORTED), not
-    HEARTBEAT_SUBSTRATE_MISSING.
+    HEARTBEAT_SUBSTRATE_MISSING. Pass provider="modal" (no heartbeat
+    satisfier) to reach the HEARTBEAT_SUBSTRATE_MISSING branch instead.
     """
     e: dict[str, Any] = {
         "id": eid,
@@ -412,6 +413,33 @@ def test_passes_on_HEARTBEAT_UNKNOWN_with_force_attach(
 ) -> None:
     cfg = _fake_cfg()
     entry = _entry(heartbeat_thread_tick=None)
+    ctx = _ctx(entry, cfg)
+    inst, rc = _resolve_warm_instance(ctx, cfg, "i-1", force_attach=True)
+    assert rc is None and inst is not None
+
+
+def test_returns_2_on_HEARTBEAT_SUBSTRATE_MISSING_without_force(
+    patched_registry: dict[str, Any],
+    fixed_clock: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No hb data + provider without heartbeat satisfier (modal) → substrate gate."""
+    cfg = _fake_cfg(provider="modal")
+    entry = _entry(provider="modal", last_heartbeat=None, heartbeat_thread_tick=None)
+    ctx = _ctx(entry, cfg)
+    inst, rc = _resolve_warm_instance(ctx, cfg, "i-1", force_attach=False)
+    assert (inst, rc) == (None, 2)
+    err = capsys.readouterr().err
+    assert "HEARTBEAT_SUBSTRATE_MISSING" in err
+
+
+def test_passes_on_HEARTBEAT_SUBSTRATE_MISSING_with_force_attach(
+    patched_registry: dict[str, Any],
+    fixed_clock: None,
+) -> None:
+    """Modal ephemeral-index rows rely on this bypass (no substrate can exist)."""
+    cfg = _fake_cfg(provider="modal")
+    entry = _entry(provider="modal", last_heartbeat=None, heartbeat_thread_tick=None)
     ctx = _ctx(entry, cfg)
     inst, rc = _resolve_warm_instance(ctx, cfg, "i-1", force_attach=True)
     assert rc is None and inst is not None
