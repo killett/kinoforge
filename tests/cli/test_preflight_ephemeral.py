@@ -52,6 +52,23 @@ def _write_fal_yaml(tmp_path: Path) -> Path:
     return cfg_path
 
 
+def _write_modal_diffusers_yaml(tmp_path: Path) -> Path:
+    cfg_path = tmp_path / "modal-diffusers.yaml"
+    cfg_path.write_text(
+        "engine:\n"
+        "  kind: diffusers\n"
+        "  precision: fp16\n"
+        "  diffusers:\n"
+        "    server_cmd: ['python', '-m', 'diffusers_server']\n"
+        "models:\n  - ref: 'hf:org/m'\n    kind: base\n    target: diffusion_models\n"
+        "compute:\n"
+        "  provider: modal\n"
+        "  image: 'python:3.13-slim'\n"
+        "  lifecycle:\n    budget: 2.0\n",
+    )
+    return cfg_path
+
+
 def test_ephemeral_fal_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -115,6 +132,18 @@ def test_ephemeral_runway_passes_preflight(tmp_path: Path) -> None:
     its concrete ``_delete`` impl from Task 17.
     """
     cfg = _write_runway_yaml(tmp_path)
+    assert _preflight_for_config(tmp_path, cfg) is None
+
+
+def test_ephemeral_modal_passes_preflight(tmp_path: Path) -> None:
+    """``--ephemeral`` + engine=diffusers on provider=modal → pre-flight ``None``.
+
+    Would-fail-bug: a missing ``("diffusers", "modal")`` capability entry
+    would keep --ephemeral refused on Modal even after the opaque
+    ``kinoforge-eph-{8hex}`` app-naming work shipped (EM1, plan
+    2026-07-12-modal-ephemeral-parity).
+    """
+    cfg = _write_modal_diffusers_yaml(tmp_path)
     assert _preflight_for_config(tmp_path, cfg) is None
 
 
