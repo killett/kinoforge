@@ -35,7 +35,7 @@
     {
       "id": 5,
       "subject": "Task 5: EM2 live proof — bare --ephemeral cross-CLI warm-attach on Modal",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2, 3, 4],
       "description": "**Goal:** Live-prove bare---ephemeral cross-CLI warm-attach on Modal (run2 attaches run1's eph app via the index), then explicit teardown.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em2_warm_attach.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** rg 'warm' <run2 log> && pixi run kinoforge list\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em2_warm_attach.py\", \"PROGRESS.md\"], \"verifyCommand\": \"rg 'warm' <run2 log> && pixi run kinoforge list\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"run1 leaves live app + index row\", \"run2 warm-attaches run1 app (log line + faster wall-clock)\", \"explicit destroy -> app stopped + index row gone + ledger clean\", \"PROGRESS updated; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"run1\", \"cold\"], [\"run2\", \"warm-attach\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     },
@@ -60,5 +60,5 @@
       "description": "**Goal:** Live-prove the sweeper reaps an idle bare---ephemeral Modal app (destroy fired, index row gone, app stopped).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em3_sweeper.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em3_sweeper.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"bare ephemeral run leaves live eph app + index row\", \"sweeper verdict reaps it (log captured)\", \"modal app list stopped + index row gone + ledger clean\", \"PROGRESS updated + workstream closed; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live\", \"deployed\", \"idle\"], [\"reaped\", \"stopped\", \"STALL_REAP\", \"OVERAGE_REAP\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-12T22:51:22"
+  "lastUpdated": "2026-07-12T23:01:33"
 }
