@@ -2,7 +2,7 @@ r"""Capture /object_info from a brief RunPod pod for a kinoforge workflow YAML.
 
 Usage:
     pixi run python tools/capture_object_info.py \\
-        --workflow-yaml examples/configs/runpod-comfyui-wan.yaml \\
+        --workflow-yaml examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml \\
         [--out tests/fixtures/comfyui/object_info/<hash>.json] \\
         [--env-file .env]
 

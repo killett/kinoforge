@@ -9,10 +9,10 @@ of N cold-boots.
 Canonical refs:
 - Tier-3 (Wan 2.1 1.3B, single LoRA, single transformer): Pokemon +
   static-rotation pair, ``branch=auto`` (no MoE).
-  Source: ``examples/configs/wan21-1_3b-strength-grid.yaml``.
+  Source: ``examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid.yaml``.
 - Tier-4 (Wan 2.2 14B Arcane, MoE pair): high-noise + low-noise
   tensors on ``branch=high_noise`` / ``branch=low_noise``.
-  Source: ``examples/configs/wan22-14b-strength-grid.yaml``.
+  Source: ``examples/configs/runpod-diffusers-wan-2_2-14b-t2v-strength-grid.yaml``.
 """
 
 from __future__ import annotations

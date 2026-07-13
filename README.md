@@ -68,7 +68,7 @@ Sends the job to fal.ai's hosted inference. The `--no-reuse` flag tears down the
 
 ### Step 3 — production (RunPod + Wan 14B)
 
-Use `examples/configs/runpod-comfyui-wan-t2v-14b-2_2.yaml` as the starting point, then read:
+Use `examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml` as the starting point, then read:
 
 - [docs/engines.md](docs/engines.md) — choose ComfyUI vs. Diffusers vs. hosted
 - [docs/credentials.md](docs/credentials.md) — set `RUNPOD_API_KEY`, `HF_TOKEN`, `CIVITAI_TOKEN`
@@ -347,8 +347,8 @@ Canonical example configs in `examples/configs/`:
 |------|---------|
 | `local-fake.yaml` | Offline smoke test; FakeEngine + LocalProvider; no credentials |
 | `fal.yaml` | Hosted inference via fal.ai; `FAL_KEY` only |
-| `runpod-comfyui-wan-t2v-14b-2_2.yaml` | RunPod + ComfyUI + Wan 2.2 14B t2v (recommended production config) |
-| `runpod-diffusers-wan-t2v-14b-2_2.yaml` | RunPod + Diffusers + Wan 2.2 14B t2v |
+| `runpod-comfyui-wan-2_2-14b-t2v.yaml` | RunPod + ComfyUI + Wan 2.2 14B t2v (recommended production config) |
+| `runpod-diffusers-wan-2_2-14b-t2v.yaml` | RunPod + Diffusers + Wan 2.2 14B t2v |
 | `hosted.yaml` | Multi-provider hosted comparison (Replicate / Runway / Luma) |
 | `nova-reel.yaml` | AWS Nova Reel hosted engine |
 | `luma-ray.yaml` | Luma Ray hosted engine |

@@ -30,7 +30,7 @@ CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 # ---------------------------------------------------------------------------
 
 EXAMPLE_CONFIGS = [
-    "wan.yaml",
+    "runpod-comfyui-wan-2_2-14b-t2v.yaml",
     "diffusers.yaml",
     "hosted.yaml",
     "local-fake.yaml",
@@ -381,8 +381,8 @@ def test_diffusers_yaml_has_non_empty_spec() -> None:
 
 
 def test_wan_yaml_has_non_empty_spec() -> None:
-    """examples/configs/wan.yaml ships graph+node_overrides in spec:."""
-    cfg = load_config(EXAMPLES_DIR / "wan.yaml")
+    """examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml ships graph+node_overrides in spec:."""
+    cfg = load_config(EXAMPLES_DIR / "runpod-comfyui-wan-2_2-14b-t2v.yaml")
     assert "graph" in cfg.spec
     assert "node_overrides" in cfg.spec
 
@@ -437,13 +437,13 @@ def test_batch_prompts_example_uses_valid_modes() -> None:
 
 
 def test_runpod_comfyui_wan_yaml_loads() -> None:
-    """examples/configs/runpod-comfyui-wan.yaml loads and reports Layer N cost caps."""
+    """examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml loads and reports Layer N cost caps."""
     from kinoforge.core.config import load_config
 
-    cfg = load_config(Path("examples/configs/runpod-comfyui-wan.yaml"))
+    cfg = load_config(Path("examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml"))
     assert cfg.engine.kind == "comfyui"
     assert cfg.compute is not None, (
-        "runpod-comfyui-wan.yaml must populate the compute block; "
+        "runpod-comfyui-wan-2_1-14b-i2v.yaml must populate the compute block; "
         "got None which means the YAML schema dropped it silently"
     )
     assert cfg.compute.provider == "runpod"
@@ -483,10 +483,10 @@ def test_runpod_comfyui_wan_manifest_yaml_loads() -> None:
 
 
 def test_runpod_comfyui_wan_yaml_loads_with_graph_file_resolution() -> None:
-    """runpod-comfyui-wan.yaml loads cleanly; Task 1 graph_file resolver inlines JSON."""
+    """runpod-comfyui-wan-2_1-14b-i2v.yaml loads cleanly; Task 1 graph_file resolver inlines JSON."""
     from kinoforge.core.config import load_config
 
-    cfg = load_config(Path("examples/configs/runpod-comfyui-wan.yaml"))
+    cfg = load_config(Path("examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml"))
 
     assert cfg.engine.kind == "comfyui"
     assert cfg.compute is not None
@@ -536,12 +536,12 @@ class TestOutputBlockExamples:
     @pytest.mark.parametrize(
         "filename",
         [
-            "wan.yaml",
+            "runpod-comfyui-wan-2_2-14b-t2v.yaml",
             "diffusers.yaml",
             "fal.yaml",
             "hosted.yaml",
             "local-fake.yaml",
-            "runpod-comfyui-wan.yaml",
+            "runpod-comfyui-wan-2_1-14b-i2v.yaml",
         ],
     )
     def test_example_loads_with_default_output_block(self, filename: str) -> None:
@@ -626,7 +626,7 @@ def test_diffusers_wan_t2v_14b_cfg_pins_server_module() -> None:
 
     from kinoforge.core.config import load_config
 
-    cfg = load_config(Path("examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml"))
+    cfg = load_config(Path("examples/configs/runpod-diffusers-wan-2_2-14b-t2v.yaml"))
     assert cfg.engine.kind == "diffusers"
     assert cfg.engine.precision == "bf16"
     assert cfg.engine.diffusers is not None
@@ -657,9 +657,9 @@ def test_diffusers_wan_t2v_14b_cap_key_differs_from_kijai_5b() -> None:
     from kinoforge.core.config import load_config
 
     cfg_14b = load_config(
-        Path("examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml")
+        Path("examples/configs/runpod-diffusers-wan-2_2-14b-t2v.yaml")
     )
-    cfg_5b = load_config(Path("examples/configs/runpod-comfyui-wan-t2v-5b.yaml"))
+    cfg_5b = load_config(Path("examples/configs/runpod-comfyui-wan-2_2-5b-t2v.yaml"))
     assert cfg_14b.capability_key().derive() != cfg_5b.capability_key().derive()
 
 

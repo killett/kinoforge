@@ -6,7 +6,7 @@
 # when the pod tier can't reach SM80+ (RTX A4000 / A5000 / T4) or when
 # FlashVSR's BSA compile is timing-critical.
 #
-# Derived from runpod-diffusers-wan-t2v-14b-2_2.yaml; adds the
+# Derived from runpod-diffusers-wan-2_2-14b-t2v.yaml; adds the
 # `upscale:` block so the orchestrator appends UpscaleStage after
 # GenerateClipStage. Same pod runs both stages (LRU model registry
 # in wan_t2v_server handles VRAM swap between Wan + spandrel).

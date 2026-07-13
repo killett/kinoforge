@@ -425,11 +425,11 @@ None this run. (Historical Layer-4 bugs documented in PROGRESS.md Phase 43, comm
 KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_comfyui_wan_live.py -v -s
 ```
 
-(End-to-end smoke harness because the orchestrator path requires a pre-warmed `JsonProfileCache` for the kijai workflow's i2v probe shape; the test sets it up around `orchestrator.generate()` rather than invoking the CLI. Equivalent CLI command would be `pixi run kinoforge generate --config examples/configs/runpod-comfyui-wan.yaml --mode i2v --prompt "..." --init-image tests/providers/fixtures/runpod/sample_init_frame.png` but the CLI doesn't yet expose `--init-image`; tracked as a separate UX follow-up.)
+(End-to-end smoke harness because the orchestrator path requires a pre-warmed `JsonProfileCache` for the kijai workflow's i2v probe shape; the test sets it up around `orchestrator.generate()` rather than invoking the CLI. Equivalent CLI command would be `pixi run kinoforge generate --config examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml --mode i2v --prompt "..." --init-image tests/providers/fixtures/runpod/sample_init_frame.png` but the CLI doesn't yet expose `--init-image`; tracked as a separate UX follow-up.)
 
 ### YAML config(s)
 
-**`examples/configs/runpod-comfyui-wan.yaml`** at SHA `8aa7ae92d3d447598c476d977bf4fb0e835cc102` — see file at that ref for the kijai custom-node pins, Wan 2.1 14B / VAE / T5 / CLIP-vision models, RunPod compute block (`max_usd_per_hr: 0.50`, RTX 4090 → A5000 → 3090 preference), and 25/15/5/50/30-min lifecycle.
+**`examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml`** at SHA `8aa7ae92d3d447598c476d977bf4fb0e835cc102` — see file at that ref for the kijai custom-node pins, Wan 2.1 14B / VAE / T5 / CLIP-vision models, RunPod compute block (`max_usd_per_hr: 0.50`, RTX 4090 → A5000 → 3090 preference), and 25/15/5/50/30-min lifecycle.
 
 ### Prompt
 
@@ -515,7 +515,7 @@ KINOFORGE_LIVE_TESTS=1 pixi run pytest tests/live/test_comfyui_wan_t2v_live.py -
 
 ### YAML config(s)
 
-**`examples/configs/runpod-comfyui-wan-t2v.yaml`** at SHA `4c6ea68` — derived from `runpod-comfyui-wan.yaml` (i2v) with: I2V → T2V diffusion checkpoint (`Wan2_1-T2V-14B_fp8_e4m3fn.safetensors`), no CLIP-vision model entry, no `init_image` asset wiring, lifecycle budget doubled (2.0 → 4.0) and `max_lifetime` extended (50 m → 90 m) to cover two consecutive generations.
+**`examples/configs/runpod-comfyui-wan-2_1-14b-t2v.yaml`** at SHA `4c6ea68` — derived from `runpod-comfyui-wan-2_1-14b-i2v.yaml` (i2v) with: I2V → T2V diffusion checkpoint (`Wan2_1-T2V-14B_fp8_e4m3fn.safetensors`), no CLIP-vision model entry, no `init_image` asset wiring, lifecycle budget doubled (2.0 → 4.0) and `max_lifetime` extended (50 m → 90 m) to cover two consecutive generations.
 
 **`examples/configs/runpod-comfyui-wan-t2v.graph.json`** — hand-authored from the i2v graph: nodes 58/59/63/65/68 (`LoadImage` / `CLIPVisionLoader` / `WanVideoImageToVideoEncode` / `WanVideoClipVisionEncode` / `ImageResizeKJv2`) dropped; node 80 (`WanVideoEmptyEmbeds` with `width=480`, `height=480`, `num_frames=81`) added to feed `WanVideoSampler.image_embeds`. Graph-shape lockdown lives in `tests/engines/test_comfyui_wan_t2v_graph_shape.py` (6 offline assertions that trip before any RunPod spend).
 
@@ -726,14 +726,14 @@ lookup, no `--force-attach`, no manual ledger inspection between.
 
 ```bash
 pixi run kinoforge generate \
-  --config examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml \
+  --config examples/configs/runpod-comfyui-wan-2_1-1_3b-t2v.yaml \
   --prompt "$(cat examples/configs/prompts/forest.txt)" \
   --mode t2v
 ```
 
 ```bash
 pixi run kinoforge generate \
-  --config examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml \
+  --config examples/configs/runpod-comfyui-wan-2_1-1_3b-t2v.yaml \
   --prompt "$(cat examples/configs/prompts/dawn-flight.md)" \
   --mode t2v
 ```
@@ -743,7 +743,7 @@ The CLI auto-loads `/workspace/.env` for `RUNPOD_API_KEY`,
 
 ### YAML config
 
-**`examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml`** at blob SHA
+**`examples/configs/runpod-comfyui-wan-2_1-1_3b-t2v.yaml`** at blob SHA
 `61f158cc30fee00d7c234eca5037a5733e28d8e7` — sibling of the 14B t2v
 cfg with the diffusion checkpoint swapped to
 `Wan2_1-T2V-1_3B_fp8_e4m3fn.safetensors` (1.47 GB vs 17 GB), VAE +
@@ -970,7 +970,7 @@ documented under entry #5 lineage.
 
 ### YAML config
 
-**`examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml`** at SHA `365ab00`:
+**`examples/configs/runpod-diffusers-wan-2_2-14b-t2v.yaml`** at SHA `365ab00`:
 
 ```yaml
 engine:
@@ -1096,7 +1096,7 @@ visually.** The pytest assertion that the 5B leg cold-created pod
 cap_key `5dff86b4f44e`) and that no warm-reuse log fired on the 5B
 invocation both passed — proving the cross-cap-key isolation
 mechanism — but the 5B MP4 bytes themselves are gone. The 5B cfg
-(`runpod-comfyui-wan-t2v-5b.yaml`) is the Kijai/ComfyUI path
+(`runpod-comfyui-wan-2_2-5b-t2v.yaml`) is the Kijai/ComfyUI path
 (separate engine from this entry's DiffusersEngine path) and any
 future re-fire would land under its own entry.
 
@@ -1279,7 +1279,7 @@ which does `POST /lora/set_stack` → `kinoforge generate
 
 ### YAML config
 
-`examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`
+`examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml`
 (committed at HEAD `53d5777`). Salient knobs:
 
 ```yaml
@@ -1470,7 +1470,7 @@ a focused commit, and pinned by a unit test:
   3.0, Flux) inherit them by import — none of them should ever
   rediscover any of these.
 - The repo-canonical Wan 2.1 1.3B LoRA pair lives in
-  `examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`
+  `examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml`
   + the README "Default test LoRAs (Wan 2.1 1.3B T2V)" section. The
   pair is operator-specified (2026-06-21) to give cross-style mp4
   shas in the matrix.
@@ -1606,7 +1606,7 @@ mp4. Manual release gate — no automated cron trigger.
 
 ### YAML config
 
-`examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml`
+`examples/configs/runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release.yaml`
 (committed at HEAD `53d5777`). Salient knobs:
 
 ```yaml
@@ -1854,7 +1854,7 @@ KINOFORGE_LIVE_TESTS=1 pixi run pytest \
 
 ### YAML config
 
-`examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml` at HEAD `2a7d6f0`. Differences vs §10's HEAD-`53d5777` snapshot:
+`examples/configs/runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release.yaml` at HEAD `2a7d6f0`. Differences vs §10's HEAD-`53d5777` snapshot:
 
 - `gpu_preference`: SXM-first (`NVIDIA A100-SXM4-80GB` ahead of `NVIDIA A100 80GB PCIe`). Driven by 2 consecutive cold-boot pod kills (8h91rjnslmzwab, 9e2dsucq33zron) on A100 PCIe — RunPod's GraphQL probe reports `stockStatus="Low"` for PCIe at $1.39/hr vs `stockStatus="High"` for SXM at $1.49/hr. The $0.10/hr premium bought reliability.
 - `lifecycle.idle_timeout`: 30m → 90m. The 7-case matrix needs more runway than the 4-step swap-matrix smoke; bumped headroom does not impact §10's existing test path.

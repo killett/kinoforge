@@ -14,7 +14,7 @@ from kinoforge.cli._main import _build_parser
 
 def _make_args(**overrides: Any) -> argparse.Namespace:
     base: dict[str, Any] = {
-        "config": "examples/configs/wan21-1_3b-strength-grid.yaml",
+        "config": "examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid.yaml",
         "prompt": "test",
         "mode": "t2v",
         "run_id": None,

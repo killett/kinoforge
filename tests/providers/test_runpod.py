@@ -466,7 +466,7 @@ def test_create_pod_populates_endpoints_eagerly_from_spec_ports() -> None:
     deterministic from pod_id + port. ``wait_for_ready`` then raises
     ``ProvisionFailed("pod has no endpoints — cannot construct ready URL")``
     on the very first poll, before the pod has any chance to boot.
-    Observed live: T4 third attempt against runpod-comfyui-wan.yaml at
+    Observed live: T4 third attempt against runpod-comfyui-wan-2_1-14b-i2v.yaml at
     HEAD 4bbc94b — pod ``i2k0dixescr5eu`` created, immediately killed by
     this check, finally-clause destroyed pod, $0.02 wasted.
 

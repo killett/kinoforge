@@ -278,7 +278,7 @@ def test_orchestrator_polling_loop_preserves_endpoints_when_get_instance_strips_
     `engine.wait_for_ready(instance, ...)` raised
     `ProvisionFailed("pod has no endpoints")` on the very first poll.
 
-    Observed live: T4 attempt 4 against runpod-comfyui-wan.yaml at HEAD
+    Observed live: T4 attempt 4 against runpod-comfyui-wan-2_1-14b-i2v.yaml at HEAD
     7c12002 (which had the _create_pod endpoints fix) — pod
     'ksjnnad3xxvq10' created with endpoints populated, then immediately
     stripped by the polling loop, then killed by wait_for_ready's

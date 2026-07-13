@@ -292,7 +292,7 @@ import, not by rediscovery.
 ## Default test LoRAs (Wan 2.1 1.3B T2V)
 
 This repo's canonical LoRA-pair test default for **Wan 2.1 T2V-1.3B** (the cheap
-weekly Tier-3 smoke target, `../examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`)
+weekly Tier-3 smoke target, `../examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml`)
 is two single-LoRA refs picked for cross-style coverage. Both ship explicitly
 on the **Wan Video 1.3B t2v** base so they're guaranteed compatible. Wan 2.1
 is single-transformer, so each ref is a single tensor (no high/low pair).
@@ -326,7 +326,7 @@ is single-transformer, so each ref is a single tensor (no high/low pair).
 ### How to use it
 
 The pair is committed in
-[`../examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml`](../examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml)
+[`../examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml`](../examples/configs/runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml)
 under the `smoke:` block:
 
 ```yaml
@@ -403,7 +403,7 @@ loras:
 ```
 
 The same pair is committed (commented-out, behind the placeholder discussion)
-in [`../examples/configs/wan.yaml`](../examples/configs/wan.yaml) and
+in [`../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml`](../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml) and
 [`../examples/vault/example.yaml`](../examples/vault/example.yaml) so a fresh clone
 has the canonical refs locally.
 

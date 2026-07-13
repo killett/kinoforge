@@ -8,7 +8,7 @@ Render N clips on one shared deployed instance with continue-on-error
 semantics:
 
 ```bash
-kinoforge batch -c ../examples/configs/wan.yaml \
+kinoforge batch -c ../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml \
                 --manifest ../examples/configs/manifests/batch-prompts.yaml
 ```
 

@@ -16,11 +16,11 @@
 #
 # Usage:
 #   pixi run kinoforge generate \
-#     --config examples/configs/runpod-comfyui-wan-t2v-5b.yaml \
+#     --config examples/configs/runpod-comfyui-wan-2_2-5b-t2v.yaml \
 #     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
 #     --mode t2v
 #   pixi run kinoforge generate \
-#     --config examples/configs/runpod-comfyui-wan-t2v-5b.yaml \
+#     --config examples/configs/runpod-comfyui-wan-2_2-5b-t2v.yaml \
 #     --prompt "$(cat examples/configs/prompts/field-dreamlike.txt)" \
 #     --mode t2v
 #

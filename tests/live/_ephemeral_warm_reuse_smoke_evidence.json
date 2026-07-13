@@ -2,7 +2,7 @@
   "task": "Task 7 (#12) — Live smoke: RunPod cross-session warm-reuse",
   "plan": "docs/superpowers/plans/2026-06-27-ephemeral-warm-reuse-discovery.md",
   "captured_at_local": "2026-06-27T17:53:15-07:00",
-  "config": "examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml",
+  "config": "examples/configs/runpod-comfyui-wan-2_1-1_3b-t2v.yaml",
   "prompt_source": "/workspace/examples/configs/prompts/field-realistic.txt",
   "pod_id": "d3q7ejf6e910jv",
   "gpu": "NVIDIA GeForce RTX 4090",

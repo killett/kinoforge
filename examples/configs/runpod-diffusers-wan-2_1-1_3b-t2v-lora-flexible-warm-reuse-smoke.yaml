@@ -1,6 +1,6 @@
 # Wan 2.1 T2V-1.3B + LoRA-flexible warm-reuse smoke cfg (Tier 3)
 #
-# Smaller-sibling counterpart to wan22-14b-lora-flexible-warm-reuse-release.yaml.
+# Smaller-sibling counterpart to runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release.yaml.
 # Runs weekly via .github/workflows/smoke-wan21-weekly.yml (Mon 04:00 PT) on a
 # RunPod A5000 24GB pod. Validates the real-diffusers LoRA-swap matrix
 # (single-LoRA per Wan 2.1's single-transformer architecture) at ~$0.20/fire.

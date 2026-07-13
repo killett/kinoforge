@@ -7,7 +7,7 @@ low-noise transformer LoRAs). Bug coverage: whether
 ``set_adapters(adapter_weights=)`` reaches BOTH transformers — the same
 strength override key list is applied to ``loras[0]`` AND ``loras[1]``,
 mirroring the canonical Arcane high+low pair shape from
-``examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml``.
+``examples/configs/runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release.yaml``.
 
 Two entry points share the harness:
 
@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 REPO = Path(__file__).resolve().parents[3]
-CFG = REPO / "examples/configs/wan22-14b-strength-grid.yaml"
+CFG = REPO / "examples/configs/runpod-diffusers-wan-2_2-14b-t2v-strength-grid.yaml"
 PROMPT_FILE = REPO / "examples/configs/prompts/field-realistic.txt"
 
 _TAG = "kinoforge-smoke-tier-4-strength"

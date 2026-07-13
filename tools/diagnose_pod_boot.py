@@ -18,7 +18,7 @@ Cost: ``--max-minutes`` × ``costPerHr`` of the cheapest offer. Default
 Usage::
 
     pixi run python tools/diagnose_pod_boot.py \\
-        --workflow-yaml examples/configs/runpod-comfyui-wan.yaml \\
+        --workflow-yaml examples/configs/runpod-comfyui-wan-2_1-14b-i2v.yaml \\
         [--max-minutes 5]
 
 The bootstrap is rendered from the same ``ComfyUIEngine.render_provision``
