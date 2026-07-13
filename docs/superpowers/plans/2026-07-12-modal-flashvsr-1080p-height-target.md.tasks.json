@@ -10,7 +10,7 @@
     {
       "id": 1,
       "subject": "Task 1: Live Modal 1080p smoke + frame-QA + log",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0],
       "description": "**Goal:** Run the Modal 1080p upscale live, prove the output is 1080x1080, frame-QA it, tear down clean, log to successful-generations.md.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Modify: successful-generations.md\n- Modify: PROGRESS.md\n\n**Verify:** ffprobe output -> 1080,1080; kinoforge list -> no running instances + empty ledger.\n\n```json:metadata\n{\"files\": [\"successful-generations.md\", \"PROGRESS.md\"], \"verifyCommand\": \"ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 <output.mp4>\", \"acceptanceCriteria\": [\"preflight exits 0 pre-spend\", \"output ffprobe reports 1080x1080 not 1920x1920\", \"frame-QA verdict recorded\", \"kinoforge list shows no running instances AND empty ledger\", \"successful-generations.md entry added\", \"PROGRESS.md updated\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     }
