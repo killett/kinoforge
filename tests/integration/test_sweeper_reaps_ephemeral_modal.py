@@ -13,6 +13,7 @@ from kinoforge.core.clock import FakeClock
 from kinoforge.core.lifecycle import Ledger
 from kinoforge.core.reaper import DEFAULT_APPLY_POLICY, Verdict
 from kinoforge.core.reaper_actor import reset_warning_dedup, sweep
+from kinoforge.core.util_endpoints import UtilSnapshot
 from kinoforge.core.warm_reuse.ephemeral_index import (
     EphemeralIndex,
     EphemeralIndexRow,
@@ -53,7 +54,7 @@ def _add_modal_row(index: EphemeralIndex, eph_id: str = _EPH_ID) -> None:
     )
 
 
-def test_gone_modal_app_row_is_gc404(tmp_path: Any, monkeypatch: Any) -> None:
+def test_gone_modal_app_row_is_gc404(tmp_path: Any) -> None:
     """Bug caught: Modal rows stuck at SKIP_NO_PROBE forever (no probe
     substrate) — dead rows accumulate and the index never converges.
 
@@ -113,22 +114,23 @@ def test_idle_modal_app_is_stall_reaped(tmp_path: Any, monkeypatch: Any) -> None
 
     # Stateful lister: returns the active app until the stopper fires, then
     # returns empty so destroy_instance's post-stop poll loop exits cleanly.
-    stopper_called = False
     stopper_calls: list[str] = []
 
     def _fake_lister() -> list[dict[str, Any]]:
-        if stopper_called:
+        if stopper_calls:
             return []
         return [{"name": _APP_NAME, "state": "deployed"}]
 
     def _fake_stopper(app_name: str) -> None:
-        nonlocal stopper_called
-        stopper_called = True
         stopper_calls.append(app_name)
 
     # Monkeypatch ModalUtilEndpoint.read_util to return a zero-util snapshot.
-    from kinoforge.core.util_endpoints import UtilSnapshot
-
+    # This patch IS reachable: sweep's _probe_with_cache calls
+    # note_endpoints(row.id, row.endpoints) BEFORE probe_runtime, priming the
+    # provider's URL cache from the index row, so probe_runtime takes the
+    # url-known branch and hits ModalUtilEndpoint.read_util (a reviewer once
+    # misjudged this patch dead because the provider was built with no
+    # deployments — the priming happens inside the sweep, not here).
     idle_snap = UtilSnapshot(
         gpu_util_percent=0.0,
         cpu_percent=0.0,
@@ -155,9 +157,9 @@ def test_idle_modal_app_is_stall_reaped(tmp_path: Any, monkeypatch: Any) -> None
 
     # Pre-fill stall_history with enough consecutive zero-util samples to
     # trigger STALL_REAP. Required samples = ceil(stall_window_s /
-    # heartbeat_interval_s) = ceil(90 / 30) = 3. The running sweep adds one
-    # more sample implicitly (reaper classify sees the history + current probe),
-    # so pre-loading 3 samples covers the window.
+    # heartbeat_interval_s) = ceil(90 / 30) = 3. classify READS the mapping
+    # as passed — it does not append the current probe's sample (that is
+    # SweeperLoop's job between ticks) — so all 3 must be pre-loaded here.
     history: dict[str, Any] = {
         _EPH_ID: deque([(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)], maxlen=3),
     }
