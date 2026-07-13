@@ -382,6 +382,9 @@ def _probe_with_cache(
     if key in cache:
         return cache[key]
     try:
+        note = getattr(provider, "note_endpoints", None)
+        if note is not None and row.endpoints:
+            note(row.id, row.endpoints)
         result: RuntimeProbe | None | str = provider.probe_runtime(row.id)
     except Exception as exc:  # noqa: BLE001 — TransportError or unknown
         _log.warning("probe_runtime failed for %s/%s: %s", row.provider, row.id, exc)
