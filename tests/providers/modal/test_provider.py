@@ -120,3 +120,66 @@ def test_destroy_returns_early_when_app_gone():
     )
     provider._deployments["r"] = {"url": "u", "name": "kinoforge-r"}
     provider.destroy_instance("r")  # returns immediately, no sleep
+
+
+def test_create_instance_uses_opaque_name_under_ephemeral():
+    """Bug caught: ephemeral Modal apps named kinoforge-{run_id} leak the
+    subcommand + local timestamp (e.g. upscale-20260712-200409) into
+    `modal app list`, where stopped apps linger forever."""
+    import re
+
+    from kinoforge.core.ephemeral import EphemeralSession
+    from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer
+
+    captured = {}
+
+    def fake_factory(req, modal_mod):
+        captured["req"] = req
+        return ("APP", "SERVERFN")
+
+    def fake_deploy(app, server_fn):
+        return "https://ws--kinoforge-eph-server.modal.run"
+
+    provider = ModalProvider(app_factory=fake_factory, deployer=fake_deploy)
+    spec = InstanceSpec(
+        image="python:3.13-slim",
+        offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
+        run_id="upscale-20260712-200409",  # the leaky id ephemeral must hide
+        provision_script="echo hi",
+        run_cmd=["python", "-m", "server"],
+        lifecycle=Lifecycle(idle_timeout_s=300),
+    )
+    with EphemeralSession(enabled=True):
+        inst = provider.create_instance(spec)
+
+    assert re.fullmatch(r"eph-[0-9a-f]{8}", inst.id), inst.id
+    assert "upscale" not in inst.id and "2026" not in inst.id
+    # the Modal app request + deployments record carry the opaque id too
+    assert captured["req"].run_id == inst.id
+    rec = provider._deployments[inst.id]
+    assert rec["name"] == f"kinoforge-{inst.id}"
+
+
+def test_create_instance_name_unchanged_without_ephemeral():
+    """Bug caught: opaque naming accidentally applied to normal runs would
+    break warm-attach ledger keys and every log/teardown that names the app."""
+    from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer
+
+    def fake_factory(req, modal_mod):
+        return ("APP", "SERVERFN")
+
+    def fake_deploy(app, server_fn):
+        return "https://ws--kinoforge-run777-server.modal.run"
+
+    provider = ModalProvider(app_factory=fake_factory, deployer=fake_deploy)
+    spec = InstanceSpec(
+        image="python:3.13-slim",
+        offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
+        run_id="run777",
+        provision_script="echo hi",
+        run_cmd=["python", "-m", "server"],
+        lifecycle=Lifecycle(idle_timeout_s=300),
+    )
+    inst = provider.create_instance(spec)
+    assert inst.id == "run777"
+    assert provider._deployments["run777"]["name"] == "kinoforge-run777"
