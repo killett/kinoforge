@@ -1,0 +1,112 @@
+# FlashVSR v1.1 HEIGHT-TARGET upscale to 1080p on Modal serverless GPU.
+# Height-target variant of modal-diffusers-flashvsr-x4-upscale.yaml: instead of a
+# raw 4x factor, `upscale.scale: 1080p` asks for a 1080-pixel vertical deliverable.
+#
+# FlashVSR is 4x-native, so UpscaleStage resolves 1080p on a 480² source to 4x
+# (→1920²) and the orchestrator materialize boundary lanczos-downscales 1920→1080
+# (aspect preserved → 1080×1080 square). The downscale runs on the CONTROLLER after
+# fetching the upscaled bytes — height-target is provider-agnostic pipeline logic,
+# identical to the RunPod 1080p path. Wan is NOT involved (upscale_only) — supply
+# the source clip via --video.
+#
+# See docs/superpowers/specs/2026-07-05-height-target-upscale-design.md and
+# docs/superpowers/specs/2026-07-12-modal-flashvsr-1080p-height-target-design.md.
+#
+# BSA note: Modal's serialized web-server fn forces a py3.13 image, but FlashVSR's
+# Block-Sparse-Attention prebuilt wheels are cp311. This cfg points bsa_wheel_url
+# at a cp313 wheel (torch2.6+cu124, BSA 3453bbb1) built on Modal; see
+# tools/build_bsa_wheel_modal.py.
+#
+# NO `cloud:` key — that field is SkyPilot-only and fails validation here.
+#
+# Usage (upscale-only; supply the source clip via --video):
+#   pixi run -e live-modal kinoforge upscale \
+#     --config examples/configs/modal-diffusers-flashvsr-1080p-upscale.yaml \
+#     --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
+#     --no-reuse
+
+engine:
+  kind: diffusers
+  precision: bfloat16
+  diffusers:
+    # Modal serialized web_server fn requires image-Python == controller (3.13).
+    # python:3.13-slim matches; provision pip-installs torch 2.6 cu124 (cp313
+    # wheels bundle the CUDA runtime + libgomp the BSA wheel needs at runtime).
+    image: "python:3.13-slim"
+    server_cmd:
+      - "python"
+      - "-m"
+      - "kinoforge.engines.diffusers.servers.wan_t2v_server"
+    pip:
+      # torch 2.6.0+cu124 trio — the cp313 BSA wheel below links against exactly
+      # this torch (ABI lockstep: a mismatch surfaces as a c10 undefined-symbol
+      # at inference, not at install). Do NOT bump without rebuilding the wheel.
+      - "torch==2.6.0"
+      - "torchvision==0.21.0"
+      - "torchaudio==2.6.0"
+      - "fastapi>=0.115"
+      - "uvicorn>=0.30"
+      - "imageio[ffmpeg]>=2.34"
+      # diffsynth (FlashVSR upstream) does a module-top
+      # `from modelscope import snapshot_download` even for HF weights.
+      - "modelscope"
+      # FlashVSR is pip-installed from git+https; its setup.py imports
+      # pkg_resources at build. python:3.13-slim's pip ships no setuptools, and
+      # modern setuptools (>=81) REMOVED pkg_resources — bare "setuptools" pulled
+      # 81+ from Modal's mirror and still failed ("No module named
+      # 'pkg_resources'", live 2026-07-10). Pin <81 (last series that bundles
+      # pkg_resources). wheel too, for the PEP 517 build backend.
+      - "setuptools<81"
+      - "wheel"
+    embed_modules:
+      - "kinoforge.engines.diffusers.servers"
+      - "kinoforge.upscalers.flashvsr"
+    embed_files:
+      - "kinoforge.core.errors"
+      - "kinoforge.core.scale_target"
+    # Skip eager WanPipeline load — pod runs only the on-demand FlashVSR runtime.
+    upscale_only: true
+
+models: []
+
+compute:
+  provider: modal
+  image: "python:3.13-slim"
+  mode: pod
+  requirements:
+    # FlashVSR 480->1920 4x peaks ~42-46 GB with tile_size=512 (RunPod x4 cfg
+    # history) — an 80GB card runs the full 81f clip without the §21 downscale.
+    min_vram_gb: 80
+    min_cuda: "12.4"
+    max_usd_per_hr: 4.00
+    disk_gb: 60
+    gpu_preference:
+      - "A100-80GB"
+      - "H100"
+  lifecycle:
+    # BSA wheel fetch+install ~60s; FlashVSR pip+weights ~5min; first-call setup.
+    # 45m mirrors M2 and gives wide headroom over the ~8min happy path.
+    idle_timeout: 30m
+    job_timeout: 15m
+    time_buffer: 3m
+    max_lifetime: 90m
+    boot_timeout: 45m
+    budget: 2.0
+
+spec:
+  model: "flashvsr-wan21-bfloat16"
+
+upscale:
+  # Height target: resolve to FlashVSR's native 4x (480→1920), then lanczos-
+  # downscale 1920→1080 at the orchestrator materialize boundary.
+  engine: flashvsr
+  scale: 1080p
+  flashvsr:
+    weights_bundle: "hf:JunhaoZhuang/FlashVSR-v1.1"
+    # cp313 BSA wheel — built on Modal (tools/build_bsa_wheel_modal.py) against
+    # torch 2.6.0+cu124 / BSA 3453bbb1, hosted on killett/kinoforge-artifacts.
+    bsa_wheel_url: "https://github.com/killett/kinoforge-artifacts/releases/download/bsa-cu124-torch2.6-cp313-v1/block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl"
+    precision: bfloat16
+    window_size: 24
+    tile_size: 512
+    long_video_mode: false
