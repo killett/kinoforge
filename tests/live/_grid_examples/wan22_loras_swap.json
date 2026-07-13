@@ -1,5 +1,5 @@
 {
-  "spec": "examples/configs/grids/wan22-14b-loras-swap.grid.yaml",
+  "spec": "examples/configs/grids/wan-2_2-14b-loras-swap.grid.yaml",
   "captured_at": "2026-06-28T03:23:00-07:00",
   "grid_capability": "cap #7 — Wan 2.2 14B Arcane LoRA stack swap on A100 80GB (single-pod warm-reuse via /lora/set_stack)",
   "model": "Wan 2.2 T2V A14B (diffusers)",

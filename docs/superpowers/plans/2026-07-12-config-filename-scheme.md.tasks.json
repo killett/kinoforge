@@ -45,7 +45,7 @@
     {
       "id": 6,
       "subject": "Task 6: Grid cells + grid sweep specs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [5],
       "description": "**Goal:** Rename 5 grid base cells (full prefix) + 9 .grid.yaml sweep specs (version-normalize); update sweep-spec config: cell paths and _grid_examples/*.json spec: paths. Cells swept BEFORE sweep-spec files renamed. See plan doc Task 6.\n\n**Verify:** `pixi run pytest tests/core/test_grid_spec.py tests/core/test_grid_errors.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/grids/wan21-14b-base-no-loras.yaml\", \"examples/configs/grids/wan21-1_3b-base-no-loras.yaml\", \"examples/configs/grids/wan21-1_3b-base.yaml\", \"examples/configs/grids/wan21-5b-base-no-loras.yaml\", \"examples/configs/grids/wan22-14b-base.yaml\", \"examples/configs/grids/wan21-model-sweep.grid.yaml\", \"examples/configs/grids/wan22-14b-strength-sweep.grid.yaml\", \"tests/live/_grid_examples\", \"tests/core/test_grid_spec.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_grid_spec.py tests/core/test_grid_errors.py -q\", \"acceptanceCriteria\": [\"14 git mv renames\", \"sweep config: points at new cells\", \"_grid_examples spec: updated\", \"old basenames zero non-frozen hits\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
     },

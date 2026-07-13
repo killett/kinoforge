@@ -1,5 +1,5 @@
 {
-  "spec": "examples/configs/grids/wan22-14b-prompt-sweep.grid.yaml",
+  "spec": "examples/configs/grids/wan-2_2-14b-prompt-sweep.grid.yaml",
   "captured_at": "2026-06-28T04:34:00-07:00",
   "grid_capability": "cap #8 — Wan 2.2 14B prompt sweep on A100 80GB (generate cells, --no-reuse, 3 cold-boot pods required)",
   "model": "Wan 2.2 T2V A14B (diffusers)",
