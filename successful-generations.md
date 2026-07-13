@@ -55,6 +55,7 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 24. `2026-07-10 23:52:23` — [FlashVSR v1.1 4x upscale on Modal A100-80GB via image-bake fast boot (Milestone 3) — upscale](#24-2026-07-10-235223--flashvsr-v11-4x-upscale-on-modal-a100-80gb-via-image-bake-fast-boot-milestone-3--upscale)
 25. `2026-07-11 17:59:51` — [RIFE v4.26 frame interpolation (16fps→60fps) on Modal T4 via image-bake fast boot (Milestone 4) — interpolate](#25-2026-07-11-175951--rife-v426-frame-interpolation-16fps60fps-on-modal-t4-via-image-bake-fast-boot-milestone-4--interpolate)
 26. `2026-07-12 01:08:08` — [Cross-CLI warm-reuse + HF Volume weight-cache on Modal (Wan 2.1 1.3B / A10, Milestone 5) — t2v](#26-2026-07-12-010808--cross-cli-warm-reuse--hf-volume-weight-cache-on-modal-wan-21-13b--a10-milestone-5--t2v)
+27. `2026-07-12 20:13:28` — [FlashVSR height-target upscale (scale=1080p → 4x+downscale) on Modal A100-80GB — upscale](#27-2026-07-12-201328--flashvsr-height-target-upscale-scale1080p--4xdownscale-on-modal-a100-80gb--upscale)
 
 ---
 
@@ -2789,3 +2790,46 @@ pixi run -e live-modal kinoforge generate \
 - **Warm window = `lifecycle.idle_timeout` (5 min here).** RUN 3 must fire within the idle window of RUN 2's last generation or the container scales down (Modal `scaledown_window = idle_timeout_s`). Fire the second process promptly.
 - **Artifacts land in `.kinoforge/<run-id>/` under default warm-reuse**, not `output/` (contrast the `--no-reuse` §24/§25 runs which publish to `output/`).
 - **Teardown verified** post-run: `kinoforge destroy --id run-20260712-010548` → `destroyed`; then `kinoforge list` → `No running instances` + `No instances recorded in ledger`; `modal app list` → no RUNNING kinoforge app. (Destroy MUST run under `-e live-modal` — the `modal` binary is absent in the default env; a `default`-env destroy fails `FileNotFoundError: 'modal'`.)
+
+## 27. `2026-07-12 20:13:28` — FlashVSR height-target upscale (scale=1080p → 4x+downscale) on Modal A100-80GB — upscale
+
+| Field | Value |
+|---|---|
+| **Stack triple** | `Modal / DiffusersEngine (FlashVSR upscaler, composed) / JunhaoZhuang/FlashVSR-v1.1` |
+| **Mode** | upscale — **height-target** (`scale: 1080p`): 480×480 → FlashVSR native 4x → 1920×1920 → controller lanczos-downscale → 1080×1080 |
+| **New capability axis** | **Modal + height-target upscale.** First 1080p (`ScaleTarget(kind="height")`) run on Modal. Height-target is provider-agnostic controller logic (`pipeline/upscale.py:_run_height` → `core/scale_resolver.resolve_height_target` picks FlashVSR's native 4x, then the `materialize` boundary `pipeline/downscale.py:downscale_video_bytes` lanczos-downscales 1920→1080 — the remote GPU server only ever sees `kind="factor"`). Proven live on RunPod (§19); Modal's x4 factor path proven live (§24). This entry closes the gap: the same height-target path runs end-to-end on Modal with NO production code change — only a new config. Confirmed by the log line `downscaling upscaled artifact to 1080p` and the 1080² output (a 1920² output would mean the downscale never ran). |
+| **First-success SHA** | `7433cb08` (config + offline guard + RED live scaffold; run at HEAD `c0eed28`) |
+| **Date (local TZ)** | 2026-07-12 20:13:28 -0700 (PDT) |
+| **GPU** | Modal `A100-80GB` (80 GB), serverless; preference-first offer from the Modal catalog |
+| **Wall clock** | Image bake (one-time, first build this session, CPU builder): **423 s** for the deps/wheel/weights layer + apt. Then boot: app deployed 20:04:09→20:11 (deploy 426 s incl. bake), provision 20:11:20 → materialize 20:13:22 → published 20:13:28. GPU-live inference ~2 min. NO preemption loop, NO container pile-up. |
+| **Est. spend** | ~$0.10–0.15 GPU (A100-80GB, ~2–3 min live). Cumulative well under $1 — within the Modal credit. |
+| **Layer / phase** | Modal FlashVSR 1080p height-target — plan `docs/superpowers/plans/2026-07-12-modal-flashvsr-1080p-height-target.md` Task 1 (spec `docs/superpowers/specs/2026-07-12-modal-flashvsr-1080p-height-target-design.md`). |
+
+### Exact command
+
+```bash
+pixi run -e live-modal kinoforge upscale \
+  --config examples/configs/modal-diffusers-flashvsr-1080p-upscale.yaml \
+  --video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4 \
+  --no-reuse
+```
+
+### Artifact
+
+| Field | Value |
+|---|---|
+| **Published path** | `output/20260712-201328_upscaled_flashvsr_flashvsr-wan21-bfloat16_upscale.mp4` |
+| **Source (480² sibling)** | `output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4` (§23-lineage Wan 2.2 A14B) |
+| **Dimensions** | **1080×1080**, 77 frames, ~4.81 s, 16 fps (imageio: shape=(77, 1080, 1080, 3)). NOT 1920×1920 — proves the materialize downscale ran. |
+| **Size / SHA-256** | 2,355,479 B / `b7b4d3e930a6e97e93d0e4bc07cceb7a6d7a224af3e9735f8854d8e879bdfe7c` |
+
+### Frame-QA verdict (mandatory visual review)
+
+**PASS — clearly high quality.** 5 frames extracted; frames 1/3/5 eyeballed. Alpine meadow of yellow/white wildflowers, tall waterfall down moss cliffs, golden-hour backlight, glowing butterflies + light-wisp ribbons; young woman in a red/blue dress, back-to-camera turning toward camera across the clip. Sharp flower/hair/dress/water detail at 1080², clean temporal coherence, prompt-adherent, NO invented content, NO false-color or corruption. Consistent with the §24 1920² sibling (same scene, downscaled deliverable). Frames at `/tmp/.../scratchpad/qa_{0..4}.png`.
+
+### Reproduction recipe / deviations (read before re-firing)
+
+- **Config is a pure clone of the §24 Modal x4 cfg** (`examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml`) with the single semantic change `upscale.scale: 4x` → `1080p` (verified via non-comment `diff`: that one line is the only difference). All bake mechanics, slim-image gaps, cp313 BSA wheel, and teardown behavior are exactly as documented in §24 — see that entry for the fast-boot details.
+- **Height-target is controller-side, provider-agnostic.** No production code changed. The 1920→1080 lanczos downscale runs on the kinoforge controller after fetching the upscaled bytes over the `.modal.run` HTTP seam — identical to the RunPod path (§19). An offline guard (`tests/test_modal_config.py::test_flashvsr_1080p_config_is_height_target`) asserts the cfg parses to `ScaleTarget(kind="height", value=1080)` so a future copy-paste can't silently revert it to a factor.
+- **Util-poll gap (noted honestly):** the background `/util` monitor never captured a live sample — its URL regex `https://[a-z0-9-]+\.modal\.run` did not match Modal's `emmykillett--kinoforge-…` double-dash host (and the URL is TTY-wrapped across lines in the run log), and GPU-live inference was only ~2 min between 75 s poll ticks. No stall occurred (run exited 0, clean teardown); a future monitor must allow `--`/`_` in the host and de-wrap the log line. The dead-pod safety outcome was still satisfied structurally (short converged run, no pile-up).
+- **Teardown verified** post-run: log `--no-reuse: destroyed + forgot pod upscale-20260712-200409`; then `kinoforge list` → `[instance overview] No running instances.` + `No instances recorded in ledger.` together.
