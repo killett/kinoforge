@@ -24,7 +24,7 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-_CFG = "examples/configs/modal-wan-t2v-1_3b.yaml"
+_CFG = "examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml"
 
 # Prompt text verbatim from examples/configs/prompts/field-realistic.txt
 _PROMPT_A = (

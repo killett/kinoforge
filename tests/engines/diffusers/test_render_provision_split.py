@@ -15,8 +15,8 @@ from kinoforge.core.interfaces import RenderedProvision
 from kinoforge.engines.diffusers import DiffusersEngine
 
 _GOLDEN = json.loads(Path("tests/engines/diffusers/_golden_provision.json").read_text())
-_FLASHVSR = "examples/configs/modal-flashvsr-x4.yaml"
-_WAN = "examples/configs/modal-wan-t2v-1_3b.yaml"
+_FLASHVSR = "examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml"
+_WAN = "examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml"
 
 
 def _render(path: str) -> RenderedProvision:

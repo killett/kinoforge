@@ -17,7 +17,7 @@
     {
       "id": 2,
       "subject": "Task 2: Modal configs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** Rename the 4 Modal configs (add explicit diffusers engine + operation-last). See plan doc Task 2.\n\n**Verify:** `pixi run pytest tests/test_modal_config.py tests/test_modal_rife_config.py tests/engines/diffusers/test_render_provision_split.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-wan-t2v-1_3b.yaml\", \"examples/configs/modal-wan-t2v-14b-2_2.yaml\", \"examples/configs/modal-flashvsr-x4.yaml\", \"examples/configs/modal-rife-60fps.yaml\", \"tests/engines/diffusers/_golden_provision.json\", \"pixi.toml\"], \"verifyCommand\": \"pixi run pytest tests/test_modal_config.py tests/test_modal_rife_config.py tests/engines/diffusers/test_render_provision_split.py -q\", \"acceptanceCriteria\": [\"4 git mv renames\", \"4 old basenames zero non-frozen hits\", \"golden json updated\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
     },

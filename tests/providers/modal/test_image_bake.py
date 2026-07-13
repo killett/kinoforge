@@ -211,7 +211,9 @@ def test_baked_flashvsr_boot_payload_has_no_heavy_installs() -> None:
     from kinoforge.engines.diffusers import DiffusersEngine
 
     rendered = DiffusersEngine().render_provision(
-        load_config("examples/configs/modal-flashvsr-x4.yaml").model_dump()
+        load_config(
+            "examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml"
+        ).model_dump()
     )
     captured: dict[str, Any] = {}
     provider = ModalProvider(

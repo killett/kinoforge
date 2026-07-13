@@ -112,7 +112,9 @@ def test_empty_build_script_threads_as_none() -> None:
     assert spec.runtime_provision_script == "exec server"
 
 
-@pytest.mark.parametrize("cfg_path", ["examples/configs/modal-flashvsr-x4.yaml"])
+@pytest.mark.parametrize(
+    "cfg_path", ["examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml"]
+)
 def test_flashvsr_cfg_threads_real_split(cfg_path: str) -> None:
     # End-to-end with the real engine + real cfg: the FlashVSR split reaches the
     # spec with pip/BSA in build and the server exec in runtime.

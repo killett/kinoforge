@@ -7,9 +7,9 @@ from kinoforge.core.config import load_config
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.providers.modal._catalog import modal_offers
 
-CFG = Path("examples/configs/modal-wan-t2v-1_3b.yaml")
-CFG_A14B = Path("examples/configs/modal-wan-t2v-14b-2_2.yaml")
-CFG_FLASHVSR = Path("examples/configs/modal-flashvsr-x4.yaml")
+CFG = Path("examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml")
+CFG_A14B = Path("examples/configs/modal-diffusers-wan-2_2-14b-t2v.yaml")
+CFG_FLASHVSR = Path("examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml")
 
 
 def test_config_resolves_to_modal_provider():
