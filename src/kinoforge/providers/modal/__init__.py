@@ -8,11 +8,13 @@ and subprocess touchpoints sit behind injected callables for offline testing.
 
 from __future__ import annotations
 
+import secrets
 import time
 from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core import registry
+from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.interfaces import (
     ComputeProvider,
     HardwareRequirements,
@@ -97,6 +99,19 @@ class ModalProvider(ComputeProvider):
         if spec.offer is None:
             raise ValueError("ModalProvider requires spec.offer (GPU selection)")
 
+        # Ephemeral runs must not leak the subcommand/timestamp-bearing
+        # run_id into the app name: `modal app stop` only STOPS an app, and
+        # stopped apps linger in `modal app list` forever. Mirror RunPod's
+        # pod_name_includes_alias handling (runpod/__init__.py:814-821)
+        # with an opaque token. The opaque id becomes the Instance.id so
+        # ledger (memory-only), ephemeral-index, destroy and probe all key
+        # off one consistent identifier.
+        _eph = EphemeralSession.current()
+        if _eph is not None and not _eph.policy.pod_name_includes_alias:
+            app_run_id = f"eph-{secrets.token_hex(4)}"
+        else:
+            app_run_id = spec.run_id
+
         volume_mount = spec.volume_mount or "/cache/hf"
         env = dict(spec.env)
         # Persist the HF cache onto the Modal Volume so a preempted/cold
@@ -112,7 +127,7 @@ class ModalProvider(ComputeProvider):
         boot_script = spec.runtime_provision_script or spec.provision_script
 
         req = ModalAppRequest(
-            run_id=spec.run_id,
+            run_id=app_run_id,
             image=spec.image,
             gpu=spec.offer.gpu_type,
             provision_script=boot_script,
@@ -125,13 +140,13 @@ class ModalProvider(ComputeProvider):
         )
         app, server_fn = self._app_factory(req, self._modal_mod())
         url = self._deployer(app, server_fn)
-        self._deployments[spec.run_id] = {
+        self._deployments[app_run_id] = {
             "app": app,
             "url": url,
-            "name": f"kinoforge-{spec.run_id}",
+            "name": f"kinoforge-{app_run_id}",
         }
         return Instance(
-            id=spec.run_id,
+            id=app_run_id,
             provider=self.name,
             status="starting",
             created_at=self._clock(),
