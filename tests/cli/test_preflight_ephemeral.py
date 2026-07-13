@@ -36,7 +36,7 @@ def _write_replicate_yaml(tmp_path: Path) -> Path:
 
 
 def _write_fal_yaml(tmp_path: Path) -> Path:
-    cfg_path = tmp_path / "fal.yaml"
+    cfg_path = tmp_path / "fal-t2v.yaml"
     cfg_path.write_text(
         "engine:\n"
         "  kind: fal\n"

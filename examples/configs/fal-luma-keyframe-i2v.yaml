@@ -2,7 +2,7 @@
 #
 # The keyframe block routes to LumaAgentsImageEngine (agents API, UNI-1). The resulting image is injected as the
 # init_image conditioning asset for the fal wan-i2v model — identical
-# plumbing to keyframe-fal-i2v.yaml with the image side swapped.
+# plumbing to fal-keyframe-i2v.yaml with the image side swapped.
 #
 # Set LUMAAI_API_KEY (and FAL_KEY for the video half) in .env.
 #

@@ -25,7 +25,7 @@ if not (os.getenv("KINOFORGE_LIVE_TESTS") == "1" and os.getenv("FAL_KEY")):
     )
 
 
-_CONFIG = "examples/configs/fal.yaml"
+_CONFIG = "examples/configs/fal-t2v.yaml"
 
 
 def _run_cli(
@@ -43,7 +43,7 @@ def _run_cli(
 
 
 def test_fal_provision_real(tmp_path: Path) -> None:
-    """`kinoforge provision -c fal.yaml` succeeds against real fal.ai."""
+    """`kinoforge provision -c fal-t2v.yaml` succeeds against real fal.ai."""
     result = _run_cli(["--state-dir", str(tmp_path), "provision", "--config", _CONFIG])
     assert result.returncode == 0, (
         f"provision failed (exit {result.returncode}):\n"
@@ -52,7 +52,7 @@ def test_fal_provision_real(tmp_path: Path) -> None:
 
 
 def test_fal_generate_short_t2v_real(tmp_path: Path) -> None:
-    """`kinoforge generate -c fal.yaml` produces a real MP4 artifact."""
+    """`kinoforge generate -c fal-t2v.yaml` produces a real MP4 artifact."""
     result = _run_cli(
         [
             "--state-dir",

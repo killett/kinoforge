@@ -31,7 +31,7 @@
     {
       "id": 4,
       "subject": "Task 4: Bedrock + fal + keyframe configs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [3],
       "description": "**Goal:** Rename the 6 hosted-provider generation configs. See plan doc Task 4.\n\n**Verify:** `pixi run pytest tests/test_examples.py tests/engines/test_bedrock_video.py tests/test_layer_r_backcompat.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/luma-ray.yaml\", \"examples/configs/nova-reel.yaml\", \"examples/configs/fal.yaml\", \"examples/configs/keyframe-fal-i2v.yaml\", \"examples/configs/keyframe-fal-flf2v.yaml\", \"examples/configs/keyframe-luma.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/engines/test_bedrock_video.py tests/test_layer_r_backcompat.py -q\", \"acceptanceCriteria\": [\"6 git mv renames\", \"test_examples.py bare refs updated\", \"old basenames zero non-frozen hits\", \"fal.yaml anchored check clean\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
     },

@@ -13,11 +13,11 @@ via fal's queue API.
    ```
    FAL_KEY=fal-XXXXXXXX
    ```
-2. Pick a model — `../examples/configs/fal.yaml` defaults to Wan2.2 T2V.
+2. Pick a model — `../examples/configs/fal-t2v.yaml` defaults to Wan2.2 T2V.
 3. Run:
    ```bash
    pixi run python -m kinoforge --env-file .env generate \
-     -c ../examples/configs/fal.yaml \
+     -c ../examples/configs/fal-t2v.yaml \
      --prompt "a cat sitting on a fence" --mode t2v
    ```
 4. Artifact lands under `.kinoforge/run/<run-id>/`.
@@ -126,7 +126,7 @@ Open a case via the AWS Support Center for the target model + region.
 Before spending on a live smoke, verify catalog + invocation access in one shot:
 
 ```bash
-pixi run probe-hosted -- --config ../examples/configs/luma-ray.yaml \
+pixi run probe-hosted -- --config ../examples/configs/bedrock-luma-ray-t2v.yaml \
     --check-bedrock-model-access luma.ray-v2:0
 ```
 
@@ -228,8 +228,8 @@ choice; a future layer may promote `validate_request` itself into a Stage to mak
 the ordering explicit.
 
 See ready-to-run examples:
-- [`../examples/configs/keyframe-fal-i2v.yaml`](../examples/configs/keyframe-fal-i2v.yaml)
-- [`../examples/configs/keyframe-fal-flf2v.yaml`](../examples/configs/keyframe-fal-flf2v.yaml)
+- [`../examples/configs/fal-keyframe-i2v.yaml`](../examples/configs/fal-keyframe-i2v.yaml)
+- [`../examples/configs/fal-keyframe-flf2v.yaml`](../examples/configs/fal-keyframe-flf2v.yaml)
 
 ## Real providers — RunPod
 

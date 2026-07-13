@@ -73,14 +73,14 @@ in `docs/superpowers/specs/2026-06-08-successful-generations-log-design.md`.
 
 ```bash
 pixi run kinoforge generate \
-  --config examples/configs/fal.yaml \
+  --config examples/configs/fal-t2v.yaml \
   --prompt "$(cat prompt-field-realistic.txt)" \
   --mode t2v
 ```
 
 ### YAML config(s)
 
-**`examples/configs/fal.yaml`** at SHA `f6045ab1293e92e43f514fb1bbd660285afc5115`:
+**`examples/configs/fal-t2v.yaml`** at SHA `f6045ab1293e92e43f514fb1bbd660285afc5115`:
 
 ```yaml
 # kinoforge example: FalEngine (fal.ai queue API)
@@ -2205,7 +2205,7 @@ KINOFORGE_LIVE_SPEND=1 pixi run pytest \
 
 ### Cfg
 
-- Engine driven directly (registry `"luma_agents"`); example cfg `examples/configs/keyframe-luma.yaml` pins the same block: `keyframe.engine=luma_agents`, `spec.model=uni-1`, `params.aspect_ratio="16:9"`.
+- Engine driven directly (registry `"luma_agents"`); example cfg `examples/configs/fal-luma-keyframe-i2v.yaml` pins the same block: `keyframe.engine=luma_agents`, `spec.model=uni-1`, `params.aspect_ratio="16:9"`.
 - Wire: `POST https://agents.lumalabs.ai/v1/generations` body `{"prompt", "model": "uni-1", "type": "image", "aspect_ratio": "16:9"}`; poll `GET /v1/generations/{id}`; image at `output[0].url` (pre-signed S3, ~1 h expiry).
 
 ### Input
@@ -2229,7 +2229,7 @@ KINOFORGE_LIVE_SPEND=1 pixi run pytest \
 ### Notes
 
 - First `(luma_agents, t2i)` tuple and the first image-keyframe capability in the log; unlocks Layer-R `keyframe:` flows (i2v/flf2v openers) with a second hosted image provider next to fal + replicate.
-- E21 (keyframe → hosted i2v end-to-end upload) remains the known gap before the full `keyframe-luma.yaml` i2v pipeline runs unattended.
+- E21 (keyframe → hosted i2v end-to-end upload) remains the known gap before the full `fal-luma-keyframe-i2v.yaml` i2v pipeline runs unattended.
 
 ---
 
@@ -2248,7 +2248,7 @@ KINOFORGE_LIVE_SPEND=1 pixi run pytest \
 
 ```bash
 pixi run -e live-hosted kinoforge generate \
-  --config <scratch copy of examples/configs/keyframe-luma.yaml \
+  --config <scratch copy of examples/configs/fal-luma-keyframe-i2v.yaml \
             with keyframe.prompt = the standard prompt> \
   --mode i2v \
   --prompt "$(cat examples/configs/prompts/field-realistic.txt)"
@@ -2256,7 +2256,7 @@ pixi run -e live-hosted kinoforge generate \
 
 ### Cfg
 
-- `examples/configs/keyframe-luma.yaml` (scratch copy differed ONLY in prompts — both video + keyframe slots set to the standard prompt for coherence). Key blocks: `keyframe.engine=luma_agents` / `spec.model=uni-1` / `aspect_ratio 16:9`; `engine.fal.endpoint=fal-ai/wan-i2v` with `asset_paths: {init_image: image_url}` (the E21 fix — without it the keyframe never reached the video request).
+- `examples/configs/fal-luma-keyframe-i2v.yaml` (scratch copy differed ONLY in prompts — both video + keyframe slots set to the standard prompt for coherence). Key blocks: `keyframe.engine=luma_agents` / `spec.model=uni-1` / `aspect_ratio 16:9`; `engine.fal.endpoint=fal-ai/wan-i2v` with `asset_paths: {init_image: image_url}` (the E21 fix — without it the keyframe never reached the video request).
 - Hand-off mechanics: KeyframeStage stores the PNG locally → FalBackend inlines it as a `data:image/png;base64,…` (~7.9 MB body) at submit — accepted by fal first try.
 
 ### Input
@@ -2273,7 +2273,7 @@ pixi run -e live-hosted kinoforge generate \
 ### Notes
 
 - Spend: one Luma generation (~cents) + one fal wan-i2v run (fal does not return cost on the wire; list price ~$0.2-0.4 for a 5 s 720p clip).
-- flf2v role→field mapping in `keyframe-fal-flf2v.yaml` remains docs-derived and NOT live-verified — only the i2v leg is proven here.
+- flf2v role→field mapping in `fal-keyframe-flf2v.yaml` remains docs-derived and NOT live-verified — only the i2v leg is proven here.
 - The published keyframe filename carries the `keyframe-init_luma_agents_uni-1` token chain — Layer 4 sink naming worked unmodified with the new image engine.
 
 ---
@@ -2293,14 +2293,14 @@ pixi run -e live-hosted kinoforge generate \
 
 ```bash
 pixi run -e live-hosted kinoforge generate \
-  --config examples/configs/keyframe-fal-flf2v.yaml \
+  --config examples/configs/fal-keyframe-flf2v.yaml \
   --mode flf2v \
   --prompt "a cat morphing into a tiger, smooth transition"
 ```
 
 ### Cfg
 
-- `examples/configs/keyframe-fal-flf2v.yaml` verbatim (committed shape). Per-role keyframe overrides: first_frame = cat (seed 42), last_frame = tiger (seed 43), both `fal-ai/flux/schnell`.
+- `examples/configs/fal-keyframe-flf2v.yaml` verbatim (committed shape). Per-role keyframe overrides: first_frame = cat (seed 42), last_frame = tiger (seed 43), both `fal-ai/flux/schnell`.
 - Standard-prompt deviation, deliberate: flf2v needs a COHERENT first/last pair; the single-scene standard prompt cannot decompose into two frame prompts. The cfg's purpose-built cat→tiger pair is the test.
 
 ### Output
@@ -2361,7 +2361,7 @@ Manifests: `tests/live/evidence/2026-07-04_luma_matrix_manifest_run{1,2}.json`.
 ### Notes
 
 - Spend: 9 generations total (~$0.3-0.7 of the $20 credit; Luma does not return per-generation cost on the wire).
-- **Revised recommendation** (metrics said tie; eyes disagree): `uni-1-max` is the safer keyframe default — fewer destructive artifacts and better subject clarity at +15 % latency. Cfg stays on `uni-1` for now ONLY because max-tier per-image pricing is unverifiable on the wire; flip `keyframe-luma.yaml` to `uni-1-max` once the dashboard confirms the price delta is acceptable.
+- **Revised recommendation** (metrics said tie; eyes disagree): `uni-1-max` is the safer keyframe default — fewer destructive artifacts and better subject clarity at +15 % latency. Cfg stays on `uni-1` for now ONLY because max-tier per-image pricing is unverifiable on the wire; flip `fal-luma-keyframe-i2v.yaml` to `uni-1-max` once the dashboard confirms the price delta is acceptable.
 - Artifact caution for keyframe→i2v flows: inspect keyframes before spending on the video leg — uni-1's dawn-flight blobs would have seeded a ruined clip.
 
 ---

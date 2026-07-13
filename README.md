@@ -58,7 +58,7 @@ Uses `FakeEngine` + `LocalProvider`. No cloud account needed. Confirms the insta
 cp .env.example .env
 # Edit .env: set FAL_KEY=<your key from fal.ai>
 pixi run kinoforge generate \
-  --config examples/configs/fal.yaml \
+  --config examples/configs/fal-t2v.yaml \
   --prompt "ocean waves at sunset" \
   --mode t2v \
   --no-reuse
@@ -331,7 +331,7 @@ injects the result as a conditioning asset (`init_image` for i2v; `first_frame`/
 flf2v, per-role prompts + seeds supported). Image engines: `fal` (flux et al.), `replicate`,
 `luma_agents` (Luma UNI-1 via the agents API). Local keyframes hand off to hosted video engines
 as inline data URIs — no storage round-trip. Both flows are live-verified end-to-end
-(`keyframe-luma.yaml` → fal wan-i2v; `keyframe-fal-flf2v.yaml` → fal wan-flf2v).
+(`fal-luma-keyframe-i2v.yaml` → fal wan-i2v; `fal-keyframe-flf2v.yaml` → fal wan-flf2v).
 
 ## Configuration at a glance
 
@@ -346,16 +346,16 @@ Canonical example configs in `examples/configs/`:
 | File | Use-case |
 |------|---------|
 | `local-fake.yaml` | Offline smoke test; FakeEngine + LocalProvider; no credentials |
-| `fal.yaml` | Hosted inference via fal.ai; `FAL_KEY` only |
+| `fal-t2v.yaml` | Hosted inference via fal.ai; `FAL_KEY` only |
 | `runpod-comfyui-wan-2_2-14b-t2v.yaml` | RunPod + ComfyUI + Wan 2.2 14B t2v (recommended production config) |
 | `runpod-diffusers-wan-2_2-14b-t2v.yaml` | RunPod + Diffusers + Wan 2.2 14B t2v |
 | `hosted.yaml` | Multi-provider hosted comparison (Replicate / Runway / Luma) |
-| `nova-reel.yaml` | AWS Nova Reel hosted engine |
-| `luma-ray.yaml` | Luma Ray hosted engine |
+| `bedrock-nova-reel-t2v.yaml` | AWS Nova Reel hosted engine |
+| `bedrock-luma-ray-t2v.yaml` | Luma Ray hosted engine |
 | `skypilot-lambda.yaml` | SkyPilot on Lambda Labs GPU |
 | `runpod-diffusers-flashvsr-x4-upscale.yaml` | Standalone FlashVSR 4x video upscale (RunPod A100 80GB) |
 | `runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` | Wan 2.2 t2v + FlashVSR 4x co-resident multi-stage |
-| `keyframe-luma.yaml` | Luma UNI-1 keyframe → fal wan-i2v |
+| `fal-luma-keyframe-i2v.yaml` | Luma UNI-1 keyframe → fal wan-i2v |
 
 Full reference (all keys, precedence, override flags): [docs/configuration.md](docs/configuration.md).
 

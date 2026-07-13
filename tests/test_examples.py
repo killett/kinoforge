@@ -140,10 +140,10 @@ def test_hosted_yaml_loads_under_new_validators() -> None:
 
 
 def test_fal_yaml_loads_under_new_validators() -> None:
-    """examples/configs/fal.yaml must satisfy Layer I Task 10 validators."""
+    """examples/configs/fal-t2v.yaml must satisfy Layer I Task 10 validators."""
     from kinoforge.core.config import load_config
 
-    cfg = load_config("examples/configs/fal.yaml")
+    cfg = load_config("examples/configs/fal-t2v.yaml")
     assert cfg.engine.kind == "fal"
     assert cfg.engine.fal is not None
     assert cfg.engine.fal.endpoint == "fal-ai/wan-t2v"
@@ -153,10 +153,10 @@ def test_fal_yaml_loads_under_new_validators() -> None:
 
 
 def test_luma_ray_example_config_parses() -> None:
-    """examples/configs/luma-ray.yaml must satisfy Layer 3 (pivot) validators."""
+    """examples/configs/bedrock-luma-ray-t2v.yaml must satisfy Layer 3 (pivot) validators."""
     from kinoforge.core.config import load_config
 
-    cfg = load_config("examples/configs/luma-ray.yaml")
+    cfg = load_config("examples/configs/bedrock-luma-ray-t2v.yaml")
     assert cfg.engine.kind == "bedrock_video"
     assert cfg.engine.bedrock_video is not None
     assert cfg.engine.bedrock_video.region_name == "us-west-2"
@@ -388,8 +388,8 @@ def test_wan_yaml_has_non_empty_spec() -> None:
 
 
 def test_fal_and_local_fake_yaml_have_empty_spec() -> None:
-    """fal.yaml + local-fake.yaml keep cfg.spec = {} (no required spec keys)."""
-    fal_cfg = load_config(EXAMPLES_DIR / "fal.yaml")
+    """fal-t2v.yaml + local-fake.yaml keep cfg.spec = {} (no required spec keys)."""
+    fal_cfg = load_config(EXAMPLES_DIR / "fal-t2v.yaml")
     fake_cfg = load_config(EXAMPLES_DIR / "local-fake.yaml")
     assert fal_cfg.spec == {}
     assert fake_cfg.spec == {}
@@ -538,7 +538,7 @@ class TestOutputBlockExamples:
         [
             "runpod-comfyui-wan-2_2-14b-t2v.yaml",
             "diffusers.yaml",
-            "fal.yaml",
+            "fal-t2v.yaml",
             "hosted.yaml",
             "local-fake.yaml",
             "runpod-comfyui-wan-2_1-14b-i2v.yaml",
@@ -569,7 +569,7 @@ def test_keyframe_fal_i2v_example_loads() -> None:
     """
     from kinoforge.core.config import load_config
 
-    cfg = load_config("examples/configs/keyframe-fal-i2v.yaml")
+    cfg = load_config("examples/configs/fal-keyframe-i2v.yaml")
     assert cfg.mode == "i2v"
     assert cfg.keyframe is not None
     assert cfg.keyframe.engine == "fal"
@@ -581,7 +581,7 @@ def test_keyframe_fal_flf2v_example_loads() -> None:
     """Bug guard: flf2v with per-role overrides must round-trip and preserve distinct prompts."""
     from kinoforge.core.config import load_config
 
-    cfg = load_config("examples/configs/keyframe-fal-flf2v.yaml")
+    cfg = load_config("examples/configs/fal-keyframe-flf2v.yaml")
     assert cfg.mode == "flf2v"
     assert cfg.keyframe is not None
     assert "first_frame" in cfg.keyframe.roles
@@ -598,8 +598,8 @@ def test_keyframe_examples_in_master_loader() -> None:
 
     yamls = sorted(Path("examples/configs").glob("*.yaml"))
     names = {p.name for p in yamls}
-    assert "keyframe-fal-i2v.yaml" in names
-    assert "keyframe-fal-flf2v.yaml" in names
+    assert "fal-keyframe-i2v.yaml" in names
+    assert "fal-keyframe-flf2v.yaml" in names
 
 
 def test_keyframe_examples_have_no_compute() -> None:
@@ -609,7 +609,7 @@ def test_keyframe_examples_have_no_compute() -> None:
     """
     from kinoforge.core.config import load_config
 
-    for name in ("keyframe-fal-i2v.yaml", "keyframe-fal-flf2v.yaml"):
+    for name in ("fal-keyframe-i2v.yaml", "fal-keyframe-flf2v.yaml"):
         cfg = load_config(f"examples/configs/{name}")
         assert cfg.compute is None, f"{name}: expected compute=null"
 

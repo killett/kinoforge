@@ -116,7 +116,7 @@ it raises `ValidationError` and tears down any provisioned compute before
 re-raising (mirroring the existing `CapabilityMismatch` branch). A typo in
 your config will not cost idle pod time.
 
-See `../examples/configs/hosted.yaml`, `../examples/configs/diffusers.yaml`, `../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml`, and `../examples/configs/fal.yaml`
+See `../examples/configs/hosted.yaml`, `../examples/configs/diffusers.yaml`, `../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml`, and `../examples/configs/fal-t2v.yaml`
 for working `spec:` + `params:` shapes per engine.
 
 
