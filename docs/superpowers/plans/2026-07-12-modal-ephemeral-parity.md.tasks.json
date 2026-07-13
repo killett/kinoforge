@@ -4,13 +4,13 @@
     {
       "id": 0,
       "subject": "Task 0: Opaque Modal app name under ephemeral",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** ModalProvider.create_instance deploys as kinoforge-eph-{8hex} under an active ephemeral session; non-ephemeral naming byte-identical.\n\n**Files:**\n- Modify: src/kinoforge/providers/modal/__init__.py\n- Test: tests/providers/modal/test_provider.py\n\n**Verify:** pixi run test -- tests/providers/modal/test_provider.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/modal/__init__.py\", \"tests/providers/modal/test_provider.py\"], \"verifyCommand\": \"pixi run test -- tests/providers/modal/test_provider.py -v\", \"acceptanceCriteria\": [\"ephemeral create names app kinoforge-eph-{8hex} and Instance.id is the eph token\", \"deployments keyed by opaque id; destroy resolves it\", \"non-ephemeral naming byte-identical (existing tests green)\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 1,
       "subject": "Task 1: Capability entries + preflight message",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** --ephemeral passes preflight for (diffusers|comfyui, modal); refusal message names modal among pod providers.\n\n**Files:**\n- Modify: src/kinoforge/core/ephemeral.py:81-97\n- Modify: src/kinoforge/cli/_main.py:233-248\n- Test: tests/core/test_ephemeral.py\n\n**Verify:** pixi run test -- tests/core/test_ephemeral.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/ephemeral.py\", \"src/kinoforge/cli/_main.py\", \"tests/core/test_ephemeral.py\"], \"verifyCommand\": \"pixi run test -- tests/core/test_ephemeral.py -v\", \"acceptanceCriteria\": [\"both modal combos True in EPHEMERAL_CAPABILITIES\", \"preflight error block names modal\", \"capability-table test updated + green\"], \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -60,5 +60,5 @@
       "description": "**Goal:** Live-prove the sweeper reaps an idle bare---ephemeral Modal app (destroy fired, index row gone, app stopped).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em3_sweeper.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em3_sweeper.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"bare ephemeral run leaves live eph app + index row\", \"sweeper verdict reaps it (log captured)\", \"modal app list stopped + index row gone + ledger clean\", \"PROGRESS updated + workstream closed; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live\", \"deployed\", \"idle\"], [\"reaped\", \"stopped\", \"STALL_REAP\", \"OVERAGE_REAP\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-12"
+  "lastUpdated": "2026-07-12T21:40:22"
 }
