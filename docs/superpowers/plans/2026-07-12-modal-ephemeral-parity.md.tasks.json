@@ -23,13 +23,13 @@
     {
       "id": 3,
       "subject": "Task 3: Shared _ephemeral_index_add helper, called by all three handlers",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Extract the generate-only EphemeralIndex.add into a CLI helper called by generate/upscale/interpolate.\n\n**Files:**\n- Modify: src/kinoforge/cli/_commands.py\n- Test: tests/test_ephemeral_index_add_helper.py\n\n**Verify:** pixi run test -- tests/test_ephemeral_index_add_helper.py tests/test_ephemeral_index_write_gated.py -v\n\n```json:metadata\n{\"files\": [\"src/kinoforge/cli/_commands.py\", \"tests/test_ephemeral_index_add_helper.py\"], \"verifyCommand\": \"pixi run test -- tests/test_ephemeral_index_add_helper.py tests/test_ephemeral_index_write_gated.py -v\", \"acceptanceCriteria\": [\"helper session-gated + None-safe\", \"generate inline block replaced, behavior unchanged\", \"upscale + interpolate call helper under cold-create gate\", \"AST invariant green\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Warm-attach discovery accepts a Modal index row (offline)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Prove the matcher/scan warm-attaches from a Modal EphemeralIndexRow (verbatim endpoint replay).\n\n**Files:**\n- Test: tests/integration/test_ephemeral_modal_row_discovery.py\n\n**Verify:** pixi run test -- tests/integration/test_ephemeral_modal_row_discovery.py -v\n\n```json:metadata\n{\"files\": [\"tests/integration/test_ephemeral_modal_row_discovery.py\"], \"verifyCommand\": \"pixi run test -- tests/integration/test_ephemeral_modal_row_discovery.py -v\", \"acceptanceCriteria\": [\"modal row surfaced by warm scan with endpoints replayed verbatim\", \"zero (or minimal, named) production change\"], \"modelTier\": \"standard\"}\n```"
     },
     {
@@ -60,5 +60,5 @@
       "description": "**Goal:** Live-prove the sweeper reaps an idle bare---ephemeral Modal app (destroy fired, index row gone, app stopped).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em3_sweeper.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em3_sweeper.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"bare ephemeral run leaves live eph app + index row\", \"sweeper verdict reaps it (log captured)\", \"modal app list stopped + index row gone + ledger clean\", \"PROGRESS updated + workstream closed; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live\", \"deployed\", \"idle\"], [\"reaped\", \"stopped\", \"STALL_REAP\", \"OVERAGE_REAP\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-12T22:05:37"
+  "lastUpdated": "2026-07-12T22:51:22"
 }
