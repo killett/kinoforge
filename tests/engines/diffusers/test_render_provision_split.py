@@ -7,12 +7,16 @@ the image at build time. RunPod still provisions at runtime and must see the
 combined ``script`` unchanged — hence the golden byte-identity test.
 """
 
+import importlib.resources
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from kinoforge.core.config import load_config
 from kinoforge.core.interfaces import RenderedProvision
-from kinoforge.engines.diffusers import DiffusersEngine
+from kinoforge.engines.diffusers import DiffusersEngine, _render_embed_lines
 
 _GOLDEN = json.loads(Path("tests/engines/diffusers/_golden_provision.json").read_text())
 _FLASHVSR = "examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml"
@@ -78,6 +82,52 @@ def test_flashvsr_build_script_embeds_before_weights_fetch():
     assert pythonpath_pos < fetch_pos, "PYTHONPATH must be set before the fetch"
     # The embed is ALSO in runtime (the server needs it) — appears in both.
     assert "export PYTHONPATH=/tmp/kfsrv" in _render(_FLASHVSR).runtime_script
+
+
+class _FakeResource:
+    """Stands in for an importlib.resources traversable file entry."""
+
+    def __init__(self, name: str, is_file: bool = True) -> None:
+        self.name = name
+        self._is_file = is_file
+
+    def is_file(self) -> bool:
+        return self._is_file
+
+    def read_bytes(self) -> bytes:
+        return b"# " + self.name.encode()
+
+
+def test_embed_lines_written_in_sorted_name_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug caught: an unsorted pkg_root.iterdir() makes the embed order follow
+    # filesystem enumeration order, so the same commit renders a different
+    # script on different machines (2026-07-11..13 CI reds: GitHub runners
+    # enumerated the servers package alphabetically while the golden was
+    # captured in this container's inode order). Dropping the sort brings
+    # that per-machine golden flake straight back.
+    scrambled = [
+        _FakeResource("wan_t2v_server.py"),
+        _FakeResource("_video_io.py"),
+        _FakeResource("notes.txt"),  # non-.py: must never be embedded
+        _FakeResource("_util_stats.py"),
+        _FakeResource("__init__.py"),
+    ]
+    monkeypatch.setattr(
+        importlib.resources,
+        "files",
+        lambda mod_name: SimpleNamespace(iterdir=lambda: list(scrambled)),
+    )
+    lines = _render_embed_lines(["kinoforge.engines.diffusers.servers"])
+    targets = [line.rsplit("> ", 1)[1] for line in lines if line.startswith("echo '")]
+    prefix = "/tmp/kfsrv/kinoforge/engines/diffusers/servers/"
+    assert targets == [
+        prefix + "__init__.py",
+        prefix + "_util_stats.py",
+        prefix + "_video_io.py",
+        prefix + "wan_t2v_server.py",
+    ]
 
 
 def test_wan_cfg_without_upscaler_has_no_build_script():

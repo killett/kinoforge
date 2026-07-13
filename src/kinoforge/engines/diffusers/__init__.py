@@ -180,8 +180,11 @@ def _render_embed_lines(modules: list[str]) -> list[str]:
                 written_inits.add(init_path)
 
         # Walk the package and emit base64 writes for each .py file.
+        # Sorted by name: iterdir() yields filesystem enumeration order,
+        # which differs across machines and would make the rendered script
+        # (and the golden byte-identity test) host-dependent.
         pkg_root = importlib.resources.files(mod_name)
-        for resource in pkg_root.iterdir():
+        for resource in sorted(pkg_root.iterdir(), key=lambda r: r.name):
             if not resource.is_file() or not resource.name.endswith(".py"):
                 continue
             rel = mod_name.replace(".", "/") + "/" + resource.name
