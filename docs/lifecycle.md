@@ -261,8 +261,12 @@ Each `SweeperLoop._tick_once()`:
 2. For each ephemeral-only row, calls `provider.probe_runtime(pod_id)`
    with a per-tick cache so two rows for the same provider share one
    call. Provider's `probe_runtime` is the new ABC method
-   (default returns `None`); only `RunPodProvider` overrides it today
-   via the existing C26 GraphQL substrate.
+   (default returns `None`); `RunPodProvider` overrides it via the
+   existing C26 GraphQL substrate, and `ModalProvider` via app-list
+   existence + the M5 `GET /util` route. For providers exposing
+   `note_endpoints` (Modal), `_probe_with_cache` first primes the
+   provider's URL cache from the index row's persisted endpoints —
+   Modal `.modal.run` URLs are not rebuildable cross-process.
 3. Synthesises a ledger-shape entry flagged `kinoforge_ephemeral=True`
    with a `probe_state` of `ok` / `not_found` / `no_substrate` /
    `failed` and dispatches `classify()`.

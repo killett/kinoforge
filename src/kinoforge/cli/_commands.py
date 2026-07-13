@@ -1814,7 +1814,8 @@ def _resolve_warm_instance(
       5. list_instances() → (None, 2) on raise.
       6. classify(entry, live_ids, now, ...) verdict gate per D3:
            LIVE: pass.
-           HEARTBEAT_UNKNOWN / IDLE_REAP / ORPHAN_REAP: pass IFF force_attach.
+           HEARTBEAT_UNKNOWN / HEARTBEAT_SUBSTRATE_MISSING / IDLE_REAP /
+           ORPHAN_REAP: pass IFF force_attach.
            STALE_LEDGER / OVERAGE_REAP / UNROUTABLE: refuse always.
       7. provider.get_instance(instance_id) → (None, 2) on KeyError.
     """
@@ -2037,6 +2038,8 @@ def _refuse_reason_for_verdict(
         )
     if verdict == "HEARTBEAT_UNKNOWN":
         return "no sentinel data in ledger entry"
+    if verdict == "HEARTBEAT_SUBSTRATE_MISSING":
+        return "provider has no heartbeat wire substrate"
     return verdict
 
 
