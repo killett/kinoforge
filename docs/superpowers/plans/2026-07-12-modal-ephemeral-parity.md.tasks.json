@@ -16,7 +16,7 @@
     {
       "id": 2,
       "subject": "Task 2: EM1 live proof — --ephemeral --no-reuse upscale on Modal",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [0, 1],
       "description": "**Goal:** Live-prove EM1: ephemeral Modal upscale end-to-end — opaque app, no persistent records, scrubbed store, surviving output/ artifact.\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em1.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em1.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold committed pre-spend\", \"preflight exit 0\", \"run exit 0 + output/ artifact present\", \"opaque stopped app in modal app list; no timestamped app\", \"kinoforge list: no instances + empty ledger\", \"store run dir scrubbed\", \"PROGRESS updated; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     },
@@ -60,5 +60,5 @@
       "description": "**Goal:** Live-prove the sweeper reaps an idle bare---ephemeral Modal app (destroy fired, index row gone, app stopped).\n\n**USER-ORDERED GATE — NON-SKIPPABLE.**\n\n**Files:**\n- Create: tests/live/test_modal_ephemeral_em3_sweeper.py (RED, pre-spend)\n- Modify: PROGRESS.md\n\n**Verify:** pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\n\n```json:metadata\n{\"files\": [\"tests/live/test_modal_ephemeral_em3_sweeper.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run kinoforge list && pixi run -e live-modal modal app list | rg kinoforge-eph-\", \"acceptanceCriteria\": [\"RED scaffold pre-spend + preflight 0\", \"bare ephemeral run leaves live eph app + index row\", \"sweeper verdict reaps it (log captured)\", \"modal app list stopped + index row gone + ledger clean\", \"PROGRESS updated + workstream closed; NO successful-generations entry\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"requireEvidenceTokens\": [[\"live\", \"deployed\", \"idle\"], [\"reaped\", \"stopped\", \"STALL_REAP\", \"OVERAGE_REAP\"]], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-12T21:40:22"
+  "lastUpdated": "2026-07-12T22:05:37"
 }
