@@ -8,6 +8,7 @@ pytestmark = pytest.mark.live
 GEN_CMD = (
     "pixi run -e live-modal kinoforge --ephemeral generate "
     "--config examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml "
+    "--mode t2v "
     '--prompt "$(cat examples/configs/prompts/field-realistic.txt)"'
 )
 # Run GEN_CMD twice as SEPARATE processes. Expect run 2 to warm-attach run 1's
