@@ -34,7 +34,7 @@ _CFG = (
     Path(__file__).parent.parent.parent
     / "examples"
     / "configs"
-    / "upscale-spandrel-x2.yaml"
+    / "runpod-diffusers-spandrel-x2-upscale.yaml"
 )
 
 

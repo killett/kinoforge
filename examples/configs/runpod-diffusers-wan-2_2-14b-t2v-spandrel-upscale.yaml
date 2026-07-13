@@ -1,6 +1,6 @@
 # Wan 2.2 T2V-A14B + in-pipeline spandrel 2x upscale (multi-stage).
 #
-# FALLBACK CFG — prefer wan-with-upscale-flashvsr.yaml (v1 default). spandrel
+# FALLBACK CFG — prefer runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml (v1 default). spandrel
 # is a per-frame per-image SR runtime; FlashVSR is a streaming diffusion VSR
 # that keeps temporal coherence across the whole clip. Use this cfg only
 # when the pod tier can't reach SM80+ (RTX A4000 / A5000 / T4) or when
@@ -13,7 +13,7 @@
 #
 # Usage:
 #   pixi run kinoforge generate \
-#     --config examples/configs/wan-with-upscale-spandrel.yaml \
+#     --config examples/configs/runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale.yaml \
 #     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
 #     --mode t2v
 

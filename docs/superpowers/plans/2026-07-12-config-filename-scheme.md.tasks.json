@@ -24,7 +24,7 @@
     {
       "id": 3,
       "subject": "Task 3: Upscale / interpolate / two-stage configs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [2],
       "description": "**Goal:** Rename the 6 upscale/interpolate configs + 4 two-stage pipeline configs (RunPod diffusers). See plan doc Task 3.\n\n**Verify:** `pixi run pytest tests/test_examples.py tests/core/test_config.py tests/core/test_config_upscale.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/upscale-flashvsr-x4.yaml\", \"examples/configs/upscale-flashvsr-x4-torch26.yaml\", \"examples/configs/upscale-flashvsr-1080p.yaml\", \"examples/configs/upscale-spandrel-x2.yaml\", \"examples/configs/interpolate-rife-60fps.yaml\", \"examples/configs/extras/upscale-seedvr2-3b.yaml\", \"examples/configs/wan-with-upscale-flashvsr.yaml\", \"examples/configs/wan-with-upscale-flashvsr-1080p.yaml\", \"examples/configs/wan-with-upscale-spandrel.yaml\", \"examples/configs/extras/wan-with-upscale-seedvr2.yaml\", \"src/kinoforge/cli/_commands.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/core/test_config.py tests/core/test_config_upscale.py -q\", \"acceptanceCriteria\": [\"10 git mv renames\", \"cli _commands.py refs updated\", \"10 old basenames zero non-frozen hits\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
     },

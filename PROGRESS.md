@@ -289,7 +289,7 @@ SHIPPED + LIVE-GREEN (entry #20).
 All 13 tasks committed (`4e5e201`..`13ec94d`). First interpolate-mode
 generation: 480²/16fps Wan fixture → **480²/60.000fps/304 frames** via
 `kinoforge interpolate --video … --fps 60 --no-reuse` on an RTX A4000
-(`interpolate-rife-60fps.yaml`). Frame-QA PASS (real synthesized midpoints,
+(`runpod-diffusers-rife-60fps-interpolate.yaml`). Frame-QA PASS (real synthesized midpoints,
 no ghosting — entry #20). RifeEngine (HTTP client, self-registered "rife") +
 on-pod RifeRuntime (pad-to-64 → IFNet → crop → mux) + server /interpolate
 endpoints; engine-agnostic `fps_resolver` (arbitrary-timestep schedule). Six
@@ -390,7 +390,7 @@ Root-cause session total spend ≈ $1.00 of the $20 authorization.
 - **Debug instrumentation kept:** `FlashVSRParams.pipe_overrides` /
   `attention_impl="dense"` (fp32 q-chunked BSA-bypass) / `debug_stats`
   (`cbbe957`, `093535c`); `tools/flashvsr_debug_matrix.py` drives variant
-  A/Bs against a warm pod; `examples/configs/upscale-flashvsr-x4-torch26.yaml`
+  A/Bs against a warm pod; `examples/configs/runpod-diffusers-flashvsr-x4-torch26-upscale.yaml`
   is the torch-2.6 upscale-only stack for future A/Bs.
 
 **Frame-extraction QA — DONE 2026-07-04 (was the user-directed next action):**
@@ -575,7 +575,7 @@ surfaced and fixed — see commit history `50beca2..af212dc`.
 
 ### Cfg + runtime state at session end
 
-- `examples/configs/upscale-flashvsr-x4.yaml`: 80GB VRAM tier
+- `examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml`: 80GB VRAM tier
   (A100/H100), torch 2.8/cu128 via `pytorch_extra_index_url`, matched
   `engine.diffusers.image` = compute image, tile_size=512, precision
   bfloat16, `pip:` block with modelscope + imageio[pyav] + av.
@@ -651,8 +651,8 @@ target). Output is a bfloat16 tensor → uint8 → imageio writer.
   `validate_spec` update (reject non-4x targets), remove native_scale=2
   assumption.
 - `examples/configs/upscale-flashvsr-x2.yaml` → rename to
-  `upscale-flashvsr-x4.yaml`; update spec/tests to expect 4x dims.
-- `examples/configs/wan-with-upscale-flashvsr.yaml` — same 4x update
+  `runpod-diffusers-flashvsr-x4-upscale.yaml`; update spec/tests to expect 4x dims.
+- `examples/configs/runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` — same 4x update
   (480×480 → 1920×1920 pixel doubling implicit in spec).
 - `tests/upscalers/flashvsr/test_runtime.py` — rewrite the 6 tests
   against `FlashVSRFullPipeline`. Delete the `StreamingDMDPipeline`
@@ -754,7 +754,7 @@ image, or (c) FlashVSR-provided wheels. Total T8 live spend across
 attempts: ~$0.44 (all pods destroyed, ledger clean).
 
 Video upscaling P3 (spandrel per-frame VSR) remains SHIPPED and is the
-working fallback wired in `wan-with-upscale-spandrel.yaml`. The FlashVSR
+working fallback wired in `runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale.yaml`. The FlashVSR
 code path is fully unit-covered (75 tests across 4 modules) and ready to
 re-fire the moment the BSA wheel blocker is unblocked.
 
@@ -867,7 +867,7 @@ Two implementation choices to weigh up-front:
 2. The on-pod bootstrap script size budget is **~64KB after base64-encoding** —
    any new `embed_modules` / `embed_files` additions must check via
    `len(rp.script)` against 64KB before going live.
-3. `examples/configs/upscale-spandrel-x2.yaml` already has `lifecycle.boot_timeout:
+3. `examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml` already has `lifecycle.boot_timeout:
    30m` to absorb fresh-pod torch + spandrel cold-install. Don't drop below 20m.
 4. `.env` is at `/workspace/.env`; the worktree has a symlink `.env →
    /workspace/.env` (created during T15 debugging) so `pixi run preflight` works.

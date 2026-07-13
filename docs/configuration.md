@@ -135,5 +135,5 @@ flag `--scale` overrides `upscale.scale` for one-off runs.
 | `seedvr2.tile_size` | int \| null | `null` | engine default |
 | `seedvr2.steps` | int \| null | `null` | engine default |
 
-See `../examples/configs/upscale-seedvr2-3b.yaml` (standalone) and
+See `../examples/configs/runpod-diffusers-seedvr2-3b-upscale.yaml` (standalone) and
 `../examples/configs/wan-with-upscale.yaml` (multi-stage).

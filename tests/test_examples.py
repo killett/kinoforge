@@ -670,7 +670,9 @@ def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
     the SM80+ GPU tier from the allowlist so RunPod picks a T4 that fails
     BSA compile at cold boot.
     """
-    with (EXAMPLES_DIR / "wan-with-upscale-flashvsr.yaml").open() as f:
+    with (
+        EXAMPLES_DIR / "runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml"
+    ).open() as f:
         raw = yaml.safe_load(f)
     assert raw["upscale"]["engine"] == "flashvsr"
     assert raw["upscale"]["scale"] == "4x"
@@ -699,7 +701,7 @@ def test_upscale_flashvsr_x4_marks_upscale_only_and_a100_first() -> None:
     A6000 48GB at 480×480 → 1920×1920 4x. Upstream infer script
     targets H100 80GB; A100 is the cheaper 80GB tier on RunPod.
     """
-    with (EXAMPLES_DIR / "upscale-flashvsr-x4.yaml").open() as f:
+    with (EXAMPLES_DIR / "runpod-diffusers-flashvsr-x4-upscale.yaml").open() as f:
         raw = yaml.safe_load(f)
     assert raw["engine"]["diffusers"]["upscale_only"] is True
     assert raw["upscale"]["engine"] == "flashvsr"
@@ -709,4 +711,4 @@ def test_upscale_flashvsr_x4_marks_upscale_only_and_a100_first() -> None:
     # 80 GB required — A6000 48GB OOMs.
     assert raw["compute"]["requirements"]["min_vram_gb"] == 80
     # Load through full validator to catch schema regressions.
-    load_config(EXAMPLES_DIR / "upscale-flashvsr-x4.yaml")
+    load_config(EXAMPLES_DIR / "runpod-diffusers-flashvsr-x4-upscale.yaml")

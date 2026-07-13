@@ -1,6 +1,6 @@
 # Upscale-only HEIGHT-TARGET cfg for `kinoforge upscale` → 1080p deliverable.
 #
-# Height-target variant of upscale-flashvsr-x4.yaml: instead of a raw 4x factor,
+# Height-target variant of runpod-diffusers-flashvsr-x4-upscale.yaml: instead of a raw 4x factor,
 # `upscale.scale: 1080p` asks for a 1080-pixel vertical deliverable. FlashVSR is
 # 4x-native, so UpscaleStage resolves 1080p on a 480² source to 4x (→1920²) and
 # the orchestrator materialize boundary lanczos-downscales 1920→1080 (aspect
@@ -12,7 +12,7 @@
 #
 # Usage:
 #   pixi run kinoforge upscale \
-#     --config examples/configs/upscale-flashvsr-1080p.yaml \
+#     --config examples/configs/runpod-diffusers-flashvsr-1080p-upscale.yaml \
 #     --video /path/to/480sq_clip.mp4 \
 #     --no-reuse
 

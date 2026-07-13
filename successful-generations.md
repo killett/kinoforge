@@ -1977,8 +1977,8 @@ pixi run pytest tests/live/test_wan_then_spandrel_warm_reuse_smoke.py -v -m live
 
 ### YAML configs
 
-- T15 single-shot: `examples/configs/upscale-spandrel-x2.yaml` — `engine.kind=diffusers`, `spec.model=spandrel-realesrgan-fp16`, `upscale.engine=spandrel`, `upscale.scale=2x`, `spandrel.arch=realesrgan`, `spandrel.precision=fp16`, `spandrel.model_url=hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth`.
-- T16 multi-stage: `examples/configs/wan-with-upscale-spandrel.yaml` — Wan 2.2 T2V-A14B (models[0]) + same spandrel upscale block. Prompt sourced from `examples/configs/prompts/field-realistic.txt` per the standard-test-prompt policy.
+- T15 single-shot: `examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml` — `engine.kind=diffusers`, `spec.model=spandrel-realesrgan-fp16`, `upscale.engine=spandrel`, `upscale.scale=2x`, `spandrel.arch=realesrgan`, `spandrel.precision=fp16`, `spandrel.model_url=hf:ai-forever/Real-ESRGAN/RealESRGAN_x2.pth`.
+- T16 multi-stage: `examples/configs/runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale.yaml` — Wan 2.2 T2V-A14B (models[0]) + same spandrel upscale block. Prompt sourced from `examples/configs/prompts/field-realistic.txt` per the standard-test-prompt policy.
 
 ### Fixture (T15)
 
@@ -2029,7 +2029,7 @@ KINOFORGE_LIVE_SPEND=1 pixi run pytest \
 
 ### Cfg
 
-- `examples/configs/upscale-flashvsr-x4.yaml` — engine=`diffusers`, upscaler=`flashvsr`, scale=`4x`, precision=`bfloat16`, tile_size=`512`, GPU tier=A100/H100 80GB, image=`runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`.
+- `examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml` — engine=`diffusers`, upscaler=`flashvsr`, scale=`4x`, precision=`bfloat16`, tile_size=`512`, GPU tier=A100/H100 80GB, image=`runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`.
 
 ### Input
 
@@ -2122,7 +2122,7 @@ KINOFORGE_LIVE_SPEND=1 pixi run pytest \
 
 ### Cfg
 
-- `examples/configs/wan-with-upscale-flashvsr.yaml` — engine=`diffusers` (Wan 2.2 A14B eager), upscale block engine=`flashvsr`, scale=`4x`, precision=`bfloat16`, tile_size=`512`, `bsa_wheel_url`=`bsa-cu124-torch2.6-v1` wheel, torch trio pinned `2.6.0` (cu124), image `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` on BOTH `engine.diffusers.image` and `compute.image`, `compute.cloud_type: secure`.
+- `examples/configs/runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` — engine=`diffusers` (Wan 2.2 A14B eager), upscale block engine=`flashvsr`, scale=`4x`, precision=`bfloat16`, tile_size=`512`, `bsa_wheel_url`=`bsa-cu124-torch2.6-v1` wheel, torch trio pinned `2.6.0` (cu124), image `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` on BOTH `engine.diffusers.image` and `compute.image`, `compute.cloud_type: secure`.
 
 ### Input
 
@@ -2386,7 +2386,7 @@ KINOFORGE_LIVE_SPEND=1 pixi run pytest \
 
 ### Cfg
 
-- `examples/configs/upscale-flashvsr-1080p.yaml` — engine=`diffusers` (upscale_only), upscaler=`flashvsr`, **scale=`1080p`** (height target, NOT a raw factor), precision=`bfloat16`, tile_size=`512`, cloud_type=`secure`, GPU tier=A100/H100 80GB, image=`runpod/pytorch:2.8.0-...cuda12.8.1`.
+- `examples/configs/runpod-diffusers-flashvsr-1080p-upscale.yaml` — engine=`diffusers` (upscale_only), upscaler=`flashvsr`, **scale=`1080p`** (height target, NOT a raw factor), precision=`bfloat16`, tile_size=`512`, cloud_type=`secure`, GPU tier=A100/H100 80GB, image=`runpod/pytorch:2.8.0-...cuda12.8.1`.
 
 ### Input
 
@@ -2443,14 +2443,14 @@ Equivalent standalone CLI (what the smoke drives):
 
 ```bash
 pixi run kinoforge interpolate \
-  --config examples/configs/interpolate-rife-60fps.yaml \
+  --config examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml \
   --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
   --fps 60 --no-reuse
 ```
 
 ### Cfg
 
-- `examples/configs/interpolate-rife-60fps.yaml` — engine=`diffusers` (`upscale_only: true` = skip eager Wan load), interpolator=`rife`, **fps=`60.0`**, `rife.weights_ref=hf:hzwer/RIFE`, `model=rife426`, precision=`fp16`, `compute.cloud_type=secure`, GPU tier RTX A4000/4090/A5000, image=`runpod/pytorch:2.4.0-...cuda12.4.1`.
+- `examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml` — engine=`diffusers` (`upscale_only: true` = skip eager Wan load), interpolator=`rife`, **fps=`60.0`**, `rife.weights_ref=hf:hzwer/RIFE`, `model=rife426`, precision=`fp16`, `compute.cloud_type=secure`, GPU tier RTX A4000/4090/A5000, image=`runpod/pytorch:2.4.0-...cuda12.4.1`.
 - `embed_modules` includes `kinoforge.interpolators.rife`; `embed_files` add `kinoforge.core.fps_resolver` + `kinoforge.core.frames`.
 
 ### Input

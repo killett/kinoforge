@@ -318,11 +318,11 @@ Evidence: [`tests/live/_grid_examples/wan22_mixed_path.json`](tests/live/_grid_e
 subcommand. `flashvsr` (v1 default) is a streaming diffusion 4× upscaler (Wan 2.1 1.3B backbone,
 Block-Sparse-Attention prebuilt wheel, 80 GB tier) that preserves temporal coherence across the
 clip; `spandrel` is per-frame architecture-agnostic SR (RealESRGAN et al., 2×, fits 48 GB).
-`wan-with-upscale-flashvsr.yaml` chains generate → upscale on ONE pod: the server's LRU registry
+`runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` chains generate → upscale on ONE pod: the server's LRU registry
 swaps Wan ↔ FlashVSR so both fit, and warm-reuse re-generates reload Wan from the pod-local cache.
 
 ```bash
-pixi run kinoforge upscale --config examples/configs/upscale-flashvsr-x4.yaml \
+pixi run kinoforge upscale --config examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml \
   --video clip.mp4 --no-reuse
 ```
 
@@ -353,8 +353,8 @@ Canonical example configs in `examples/configs/`:
 | `nova-reel.yaml` | AWS Nova Reel hosted engine |
 | `luma-ray.yaml` | Luma Ray hosted engine |
 | `skypilot-lambda.yaml` | SkyPilot on Lambda Labs GPU |
-| `upscale-flashvsr-x4.yaml` | Standalone FlashVSR 4x video upscale (RunPod A100 80GB) |
-| `wan-with-upscale-flashvsr.yaml` | Wan 2.2 t2v + FlashVSR 4x co-resident multi-stage |
+| `runpod-diffusers-flashvsr-x4-upscale.yaml` | Standalone FlashVSR 4x video upscale (RunPod A100 80GB) |
+| `runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` | Wan 2.2 t2v + FlashVSR 4x co-resident multi-stage |
 | `keyframe-luma.yaml` | Luma UNI-1 keyframe → fal wan-i2v |
 
 Full reference (all keys, precedence, override flags): [docs/configuration.md](docs/configuration.md).

@@ -7,7 +7,7 @@
 #
 # Usage:
 #   pixi run kinoforge upscale \
-#     --config examples/configs/upscale-spandrel-x2.yaml \
+#     --config examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml \
 #     --video /path/to/clip.mp4 \
 #     --no-reuse
 

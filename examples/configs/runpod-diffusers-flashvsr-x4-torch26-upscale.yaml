@@ -1,16 +1,16 @@
 # Upscale-only FlashVSR cfg on the TORCH 2.6 stack (F-multi's engine stack,
 # entry #14) — created for the 2026-07-04 corruption root-cause session so
-# the new-stack upscale path can be A/B'd against upscale-flashvsr-x4.yaml
+# the new-stack upscale path can be A/B'd against runpod-diffusers-flashvsr-x4-upscale.yaml
 # (the torch 2.4.1 / bsa-cu128 stack of entry #13) without booting a full
 # co-resident Wan pod.
 #
-# Engine block mirrors wan-with-upscale-flashvsr.yaml exactly (image,
+# Engine block mirrors runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml exactly (image,
 # torch trio, bsa-cu124-torch2.6-v1 wheel); everything else mirrors
-# upscale-flashvsr-x4.yaml (upscale_only, no models, A100 80GB).
+# runpod-diffusers-flashvsr-x4-upscale.yaml (upscale_only, no models, A100 80GB).
 #
 # Usage:
 #   pixi run kinoforge upscale \
-#     --config examples/configs/upscale-flashvsr-x4-torch26.yaml \
+#     --config examples/configs/runpod-diffusers-flashvsr-x4-torch26-upscale.yaml \
 #     --video /path/to/clip.mp4
 
 engine:
@@ -18,7 +18,7 @@ engine:
   precision: bfloat16
   diffusers:
     # MUST match compute.image below (BSA torch-ABI lockstep — see
-    # wan-with-upscale-flashvsr.yaml for the full T8 history).
+    # runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml for the full T8 history).
     image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
     server_cmd:
       - "python"

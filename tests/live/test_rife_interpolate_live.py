@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 _LIVE_SPEND_ENV = "KINOFORGE_LIVE_SPEND"
-_CFG = "examples/configs/interpolate-rife-60fps.yaml"
+_CFG = "examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml"
 # 480x480 / 81-frame 16fps Wan clip generated 2026-06-30 (F-single fixture).
 _SOURCE = Path(
     "/workspace/output/"
