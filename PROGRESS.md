@@ -58,6 +58,31 @@ first unchecked task without redoing committed work.
 
 ## RESUME SNAPSHOT (updated 2026-07-12 — read this, then STOP; below is history)
 
+**State (updated 2026-07-12/13 CI-failure triage session):** (1) **CI-on-push RED
+since Jul 9 → FIXED + pushed + verified green** (`22da877`): golden "drift" was
+`_render_embed_lines` walking `pkg_root.iterdir()` unsorted — filesystem enumeration
+order differs per host, so GitHub runners rendered a different (reordered-only)
+provision script than the locally-captured golden. Fix: sort by name + regenerate
+golden (proven pure-reorder by line-multiset comparison). (2) **smoke-wan21-weekly
+(Monday cron) 3/3 failures ROOT-CAUSED, fix NOT yet implemented:** every failing
+step is `/lora/set_stack` needing the 350 MB `sttcrttn.safetensors` civitai download
+to finish inside hard wall budgets — ~100 s RunPod proxy response ceiling for the
+branch-routing tests (raw POSTs, NO 502-recovery) and ~700 s (100 s + 600 s fixed
+inventory-convergence) for the matrix. Pods were healthy throughout (teardown sweep
+found+destroyed them each run; `/health` 200'd pre-POST; cold-boot generate green
+every time) — NOT community reap, NOT selfterm, NOT a bad `CIVITAI_TOKEN` secret
+(bad/absent token → instant 401 → instant server JSON 502, contradicted by the
+observed proxy HTML "Waiting for service to respond" pages). Off-peak probe
+(`tools/probe_civitai_throughput.py`, pod `5u1yfn2em9chqr`, Sun 07:30 UTC): full
+350 MB in 33 s @ 10.6 MB/s — pipe is fine off-peak; Monday-cron-window throughput
+(cheapest `ALL`-pool pod egress and/or civitai peak) drops below the required
+~0.5 MB/s. Fix candidates (operator to pick; needs brainstorm→plan): pre-fetch
+LoRAs at provision so set_stack is load-only; add 502-convergence recovery to
+branch tests; size-scaled convergence deadline + non-ambiguous poll logging
+(current `last observed []` can't distinguish dead server from empty inventory —
+`HTTPError` is swallowed by the `URLError` catch); `cloud_type: secure` pin;
+smaller test LoRA (lora_b is 87 MB; lora_a 350 MB is the step that always dies).
+
 **State (updated 2026-07-12 Modal ephemeral parity session — CLOSED):** main green;
 ledger clean; zero running Modal apps (all eph apps stopped); ephemeral index EMPTY
 (fully converged). **Modal ephemeral parity EM1+EM2+EM3 ALL LIVE-GREEN — workstream
