@@ -4,7 +4,7 @@
     {
       "id": 0,
       "subject": "Task 0: Config + offline parse-guard + RED live scaffold (pre-spend commit)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add the Modal 1080p config, an offline test proving it parses to a height ScaleTarget, and the RED live scaffold — all committed atomically before any live spend.\n\n**Files:**\n- Create: examples/configs/modal-diffusers-flashvsr-1080p-upscale.yaml\n- Modify: tests/test_modal_config.py (append two tests)\n- Create: tests/live/test_modal_flashvsr_1080p.py\n\n**Verify:** pixi run test -- tests/test_modal_config.py -k 1080p -v -> two new tests PASS; live scaffold xfails.\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-diffusers-flashvsr-1080p-upscale.yaml\", \"tests/test_modal_config.py\", \"tests/live/test_modal_flashvsr_1080p.py\"], \"verifyCommand\": \"pixi run test -- tests/test_modal_config.py -k 1080p -v\", \"acceptanceCriteria\": [\"1080p cfg parses to ScaleTarget(kind=height, value=1080)\", \"cfg is modal/flashvsr/upscale_only\", \"RED live scaffold xfails cleanly\", \"all three files committed pre-spend\"], \"modelTier\": \"standard\"}\n```"
     },
     {
