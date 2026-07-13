@@ -1,0 +1,61 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-12-config-filename-scheme.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 0: Baseline capture",
+      "status": "pending",
+      "description": "**Goal:** Record a green offline baseline so every later task compares against a known-good state.\n\n**Files:** none modified.\n\n**Acceptance Criteria:**\n- [ ] Offline suite result captured to scratchpad/baseline.txt.\n- [ ] Working tree clean at start.\n\n**Verify:** `git status --porcelain` empty; `pixi run test` exit 0 captured.\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"git status --porcelain; pixi run test\", \"acceptanceCriteria\": [\"baseline.txt captured\", \"tree clean\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 1: RunPod generation configs + delete DEAD",
+      "status": "pending",
+      "blockedBy": [0],
+      "description": "**Goal:** Rename the 10 RunPod text/image-gen configs to the new scheme and delete the DEAD collision config. See plan doc Task 1 for full git mv list + sweep commands.\n\n**Verify:** `pixi run pytest tests/test_examples.py tests/engines/test_comfyui_wan_t2v_graph_shape.py tests/examples/test_runpod_comfyui_wan_graph.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/wan.yaml\", \"examples/configs/runpod-comfyui-wan-t2v.yaml\", \"examples/configs/runpod-comfyui-wan.yaml\", \"examples/configs/runpod-comfyui-wan-t2v-1_3b.yaml\", \"examples/configs/runpod-comfyui-wan-t2v-5b.yaml\", \"examples/configs/runpod-comfyui-wan-t2v-14b-2_2.yaml\", \"examples/configs/runpod-diffusers-wan-t2v-14b-2_2.yaml\", \"examples/configs/wan21-1_3b-lora-flexible-warm-reuse-smoke.yaml\", \"examples/configs/wan21-1_3b-strength-grid.yaml\", \"examples/configs/wan22-14b-lora-flexible-warm-reuse-release.yaml\", \"examples/configs/wan22-14b-strength-grid.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/engines/test_comfyui_wan_t2v_graph_shape.py tests/examples/test_runpod_comfyui_wan_graph.py -q\", \"acceptanceCriteria\": [\"10 git mv renames\", \"DEAD deleted zero refs\", \"10 old basenames zero non-frozen hits\", \"test_examples.py resolves\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Modal configs",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Rename the 4 Modal configs (add explicit diffusers engine + operation-last). See plan doc Task 2.\n\n**Verify:** `pixi run pytest tests/test_modal_config.py tests/test_modal_rife_config.py tests/engines/diffusers/test_render_provision_split.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/modal-wan-t2v-1_3b.yaml\", \"examples/configs/modal-wan-t2v-14b-2_2.yaml\", \"examples/configs/modal-flashvsr-x4.yaml\", \"examples/configs/modal-rife-60fps.yaml\", \"tests/engines/diffusers/_golden_provision.json\", \"pixi.toml\"], \"verifyCommand\": \"pixi run pytest tests/test_modal_config.py tests/test_modal_rife_config.py tests/engines/diffusers/test_render_provision_split.py -q\", \"acceptanceCriteria\": [\"4 git mv renames\", \"4 old basenames zero non-frozen hits\", \"golden json updated\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Upscale / interpolate / two-stage configs",
+      "status": "pending",
+      "blockedBy": [2],
+      "description": "**Goal:** Rename the 6 upscale/interpolate configs + 4 two-stage pipeline configs (RunPod diffusers). See plan doc Task 3.\n\n**Verify:** `pixi run pytest tests/test_examples.py tests/core/test_config.py tests/core/test_config_upscale.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/upscale-flashvsr-x4.yaml\", \"examples/configs/upscale-flashvsr-x4-torch26.yaml\", \"examples/configs/upscale-flashvsr-1080p.yaml\", \"examples/configs/upscale-spandrel-x2.yaml\", \"examples/configs/interpolate-rife-60fps.yaml\", \"examples/configs/extras/upscale-seedvr2-3b.yaml\", \"examples/configs/wan-with-upscale-flashvsr.yaml\", \"examples/configs/wan-with-upscale-flashvsr-1080p.yaml\", \"examples/configs/wan-with-upscale-spandrel.yaml\", \"examples/configs/extras/wan-with-upscale-seedvr2.yaml\", \"src/kinoforge/cli/_commands.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/core/test_config.py tests/core/test_config_upscale.py -q\", \"acceptanceCriteria\": [\"10 git mv renames\", \"cli _commands.py refs updated\", \"10 old basenames zero non-frozen hits\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Bedrock + fal + keyframe configs",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** Rename the 6 hosted-provider generation configs. See plan doc Task 4.\n\n**Verify:** `pixi run pytest tests/test_examples.py tests/engines/test_bedrock_video.py tests/test_layer_r_backcompat.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/luma-ray.yaml\", \"examples/configs/nova-reel.yaml\", \"examples/configs/fal.yaml\", \"examples/configs/keyframe-fal-i2v.yaml\", \"examples/configs/keyframe-fal-flf2v.yaml\", \"examples/configs/keyframe-luma.yaml\", \"tests/test_examples.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/engines/test_bedrock_video.py tests/test_layer_r_backcompat.py -q\", \"acceptanceCriteria\": [\"6 git mv renames\", \"test_examples.py bare refs updated\", \"old basenames zero non-frozen hits\", \"fal.yaml anchored check clean\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: SkyPilot + tool/demo configs",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Rename the 4 SkyPilot configs + diffusers.yaml; leave pure-tool configs untouched. See plan doc Task 5.\n\n**Verify:** `pixi run pytest tests/test_examples.py tests/core/test_config.py tests/providers/test_skypilot.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/skypilot.yaml\", \"examples/configs/skypilot-lambda.yaml\", \"examples/configs/skypilot-lambda-flashvsr.yaml\", \"examples/configs/skypilot-vast-flashvsr.yaml\", \"examples/configs/diffusers.yaml\", \"tests/test_examples.py\", \"src/kinoforge/providers/skypilot/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/core/test_config.py tests/providers/test_skypilot.py -q\", \"acceptanceCriteria\": [\"5 git mv renames\", \"EXAMPLE_CONFIGS + skypilot fns updated\", \"skypilot-gpu NOT renamed\", \"no corruption of sibling names\", \"old basenames zero non-frozen hits\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Grid cells + grid sweep specs",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** Rename 5 grid base cells (full prefix) + 9 .grid.yaml sweep specs (version-normalize); update sweep-spec config: cell paths and _grid_examples/*.json spec: paths. Cells swept BEFORE sweep-spec files renamed. See plan doc Task 6.\n\n**Verify:** `pixi run pytest tests/core/test_grid_spec.py tests/core/test_grid_errors.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/grids/wan21-14b-base-no-loras.yaml\", \"examples/configs/grids/wan21-1_3b-base-no-loras.yaml\", \"examples/configs/grids/wan21-1_3b-base.yaml\", \"examples/configs/grids/wan21-5b-base-no-loras.yaml\", \"examples/configs/grids/wan22-14b-base.yaml\", \"examples/configs/grids/wan21-model-sweep.grid.yaml\", \"examples/configs/grids/wan22-14b-strength-sweep.grid.yaml\", \"tests/live/_grid_examples\", \"tests/core/test_grid_spec.py\"], \"verifyCommand\": \"pixi run pytest tests/core/test_grid_spec.py tests/core/test_grid_errors.py -q\", \"acceptanceCriteria\": [\"14 git mv renames\", \"sweep config: points at new cells\", \"_grid_examples spec: updated\", \"old basenames zero non-frozen hits\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Manifest rename + final global verification",
+      "status": "pending",
+      "blockedBy": [6],
+      "description": "**Goal:** Rename the model-bearing manifest and prove the whole refactor clean: zero stale basenames outside frozen archives, full suite green, pre-commit green. See plan doc Task 7.\n\n**Verify:** `pixi run test` PASS (>= baseline); global stale-grep no MISS; `pixi run pre-commit run --all-files` clean.\n\n```json:metadata\n{\"files\": [\"examples/configs/manifests/runpod-comfyui-wan-manifest.yaml\", \"tests/test_examples.py\", \"README.md\", \"PROGRESS.md\", \"successful-generations.md\"], \"verifyCommand\": \"pixi run test && pixi run pytest tests/test_examples.py -q && pixi run pre-commit run --all-files\", \"acceptanceCriteria\": [\"manifest renamed zero refs\", \"global stale-grep no MISS\", \"full suite PASS >= baseline\", \"pre-commit clean\", \"docstring corrected\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-12"
+}
