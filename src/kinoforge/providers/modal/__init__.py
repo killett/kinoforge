@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import Any
 
 from kinoforge.core import registry
@@ -22,6 +23,7 @@ from kinoforge.core.interfaces import (
     InstanceSpec,
     Offer,
 )
+from kinoforge.core.runtime_probe import RuntimeProbe
 from kinoforge.providers.modal._app import (
     ModalAppRequest,
     build_modal_app,
@@ -251,6 +253,118 @@ class ModalProvider(ComputeProvider):
         Off-ABC but REQUIRED: ``HeartbeatLoop._tick_once`` calls it every tick.
         """
         return None
+
+    # -- sweeper-ephemeral-reap substrate ------------------------------------
+    def note_endpoints(self, instance_id: str, endpoints: Mapping[str, str]) -> None:
+        """Prime the URL cache for a cross-process probe (reaper seam).
+
+        Modal ``.modal.run`` URLs are NOT rebuildable from the app name
+        (M5 lesson, commit 1cb4299) — in the sweeper process the only
+        source is the EphemeralIndexRow's persisted endpoints, threaded
+        here by ``reaper_actor._probe_with_cache``. Never overwrites a
+        live deployment record.
+
+        Args:
+            instance_id: The short run-id (without the ``kinoforge-`` prefix).
+            endpoints: Port -> URL mapping from the EphemeralIndexRow.
+        """
+        url = endpoints.get("8000")
+        if url and instance_id not in self._deployments:
+            self._deployments[instance_id] = {
+                "app": None,
+                "url": url,
+                "name": f"kinoforge-{instance_id}",
+            }
+
+    def probe_runtime(self, pod_id: str) -> RuntimeProbe | None:
+        """Live runtime probe: app existence + /util snapshot.
+
+        Outcomes:
+          * app not in the active list → ``found=False`` (reaper: GC_404)
+          * active, URL known, /util ok → fully populated probe
+          * active, URL unknown or /util raised → ``found=True`` with util
+            fields None + ``error`` set (partial probe — conservative, the
+            reaper cannot false-reap on it)
+
+        A lister failure PROPAGATES (reaper classifies PROBE_FAILED) —
+        fabricating ``found=False`` there would GC rows of live apps.
+
+        Args:
+            pod_id: The short instance id (without the ``kinoforge-`` prefix).
+
+        Returns:
+            A :class:`~kinoforge.core.runtime_probe.RuntimeProbe`.
+
+        Raises:
+            Exception: Any exception raised by the lister propagates; the
+                reaper catches and records PROBE_FAILED.
+        """
+        from kinoforge.providers.modal.util import ModalUtilEndpoint
+
+        now_local = datetime.now().isoformat()
+        active_ids = {inst.id for inst in self.list_instances()}
+        if pod_id not in active_ids:
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=False,
+                container_uptime_s=None,
+                gpu_util_pct=None,
+                cpu_pct=None,
+                cost_per_hr=None,
+                probed_at_local=now_local,
+            )
+        rec = self._deployments.get(pod_id)
+        url = rec.get("url") if rec else None
+        if not url:
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=True,
+                container_uptime_s=None,
+                gpu_util_pct=None,
+                cpu_pct=None,
+                cost_per_hr=None,
+                probed_at_local=now_local,
+                error="no endpoint known for /util (note_endpoints not primed)",
+            )
+        try:
+            snapshot = ModalUtilEndpoint(resolve_endpoint=lambda _id: url).read_util(
+                pod_id
+            )
+        except Exception as exc:  # noqa: BLE001 — TransportError et al.
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=True,
+                container_uptime_s=None,
+                gpu_util_pct=None,
+                cpu_pct=None,
+                cost_per_hr=None,
+                probed_at_local=now_local,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        if snapshot is None:
+            return RuntimeProbe(
+                pod_id=pod_id,
+                found=True,
+                container_uptime_s=None,
+                gpu_util_pct=None,
+                cpu_pct=None,
+                cost_per_hr=None,
+                probed_at_local=now_local,
+                error="/util returned 404 on an active app",
+            )
+        return RuntimeProbe(
+            pod_id=pod_id,
+            found=True,
+            container_uptime_s=(
+                float(snapshot.uptime_seconds)
+                if snapshot.uptime_seconds is not None
+                else None
+            ),
+            gpu_util_pct=snapshot.gpu_util_percent,
+            cpu_pct=snapshot.cpu_percent,
+            cost_per_hr=None,
+            probed_at_local=now_local,
+        )
 
 
 registry.register_provider("modal", lambda: ModalProvider())
