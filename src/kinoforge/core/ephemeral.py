@@ -82,9 +82,11 @@ EPHEMERAL_CAPABILITIES: dict[tuple[str, str | None], bool] = {
     ("comfyui", "runpod"): True,
     ("comfyui", "local"): True,
     ("comfyui", "skypilot"): True,
+    ("comfyui", "modal"): True,
     ("diffusers", "runpod"): True,
     ("diffusers", "local"): True,
     ("diffusers", "skypilot"): True,
+    ("diffusers", "modal"): True,
     # Fake engine: offline test backbone, no provider-side state ever
     # exists to scrub, so ephemeral is trivially supported under any
     # in-process provider.
