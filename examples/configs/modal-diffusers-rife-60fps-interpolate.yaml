@@ -8,7 +8,7 @@
 #
 # Usage (interpolate-only; supply the source clip via --video):
 #   pixi run -e live-modal kinoforge interpolate \
-#     --config examples/configs/modal-rife-60fps.yaml \
+#     --config examples/configs/modal-diffusers-rife-60fps-interpolate.yaml \
 #     --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
 #     --fps 60 --no-reuse
 

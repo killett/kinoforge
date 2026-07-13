@@ -7,7 +7,7 @@ pytestmark = pytest.mark.live
 
 GENERATE_CMD = (
     "pixi run -e live-modal kinoforge generate "
-    "--config examples/configs/modal-wan-t2v-14b-2_2.yaml --mode t2v "
+    "--config examples/configs/modal-diffusers-wan-2_2-14b-t2v.yaml --mode t2v "
     '--prompt "$(cat examples/configs/prompts/field-realistic.txt)" --no-reuse'
 )
 

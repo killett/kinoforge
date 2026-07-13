@@ -2550,7 +2550,7 @@ pixi run -e live-skypilot kinoforge upscale \
 
 ```bash
 pixi run -e live-modal kinoforge generate \
-  --config examples/configs/modal-wan-t2v-1_3b.yaml \
+  --config examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml \
   --mode t2v \
   --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
   --no-reuse
@@ -2597,7 +2597,7 @@ pixi run -e live-modal kinoforge generate \
 
 ```bash
 pixi run -e live-modal kinoforge generate \
-  --config examples/configs/modal-wan-t2v-14b-2_2.yaml \
+  --config examples/configs/modal-diffusers-wan-2_2-14b-t2v.yaml \
   --mode t2v \
   --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
   --no-reuse
@@ -2643,7 +2643,7 @@ pixi run -e live-modal kinoforge generate \
 
 ```bash
 pixi run -e live-modal kinoforge upscale \
-  --config examples/configs/modal-flashvsr-x4.yaml \
+  --config examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml \
   --video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4 \
   --no-reuse
 ```
@@ -2693,14 +2693,14 @@ The fast-boot mechanism + every slim-image gap it exposed (one failed CPU build 
 
 ```bash
 pixi run -e live-modal kinoforge interpolate \
-  --config examples/configs/modal-rife-60fps.yaml \
+  --config examples/configs/modal-diffusers-rife-60fps-interpolate.yaml \
   --video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_Photorealistic-cinem.mp4 \
   --fps 60 --no-reuse
 ```
 
 ### Cfg
 
-- `examples/configs/modal-rife-60fps.yaml` — `compute.provider=modal` (NO `cloud:` key — SkyPilot-only), `image=python:3.13-slim`, interpolator=`rife`, **fps=`60.0`**, `rife.weights_ref=hf:hzwer/RIFE`, `model=rife426`, precision=`fp16`, `upscale_only: true` (skip eager Wan load — pod runs only the on-demand RIFE runtime), `models: []`.
+- `examples/configs/modal-diffusers-rife-60fps-interpolate.yaml` — `compute.provider=modal` (NO `cloud:` key — SkyPilot-only), `image=python:3.13-slim`, interpolator=`rife`, **fps=`60.0`**, `rife.weights_ref=hf:hzwer/RIFE`, `model=rife426`, precision=`fp16`, `upscale_only: true` (skip eager Wan load — pod runs only the on-demand RIFE runtime), `models: []`.
 - **torch is ADDED vs the RunPod RIFE cfg** (§20): slim ships no torch, so `pip:` carries `torch==2.6.0` + `torchvision==0.21.0` (cu124 cp313, stack-consistent with M3). No ABI lock (RIFE has no compiled ext like BSA).
 - **`embed_files` must include `kinoforge.core.frames`** — see the deviation below; the RIFE runtime imports `ffprobe_fps` from it. Also embeds `kinoforge.core.errors` + `kinoforge.core.fps_resolver`; `embed_modules` = `kinoforge.engines.diffusers.servers` + `kinoforge.interpolators.rife`.
 
@@ -2750,12 +2750,12 @@ pixi run -e live-modal kinoforge interpolate \
 ```bash
 # RUN 2 — cold boot, weights served from the /cache/hf Volume (cache hit)
 pixi run -e live-modal kinoforge generate \
-  --config examples/configs/modal-wan-t2v-1_3b.yaml --mode t2v \
+  --config examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml --mode t2v \
   --prompt "$(cat examples/configs/prompts/field-realistic.txt)"
 
 # RUN 3 — a fresh process warm-attaches to RUN 2's live container
 pixi run -e live-modal kinoforge generate \
-  --config examples/configs/modal-wan-t2v-1_3b.yaml --mode t2v \
+  --config examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml --mode t2v \
   --prompt "$(cat examples/configs/prompts/field-dreamlike.txt)"
 ```
 

@@ -6,7 +6,7 @@ Driven manually via the controller; this file records the contract. Marked
 Runbook:
   1. Start a warm gen (default reuse): pod stays up, ledger carries endpoints.
      pixi run -e live-modal kinoforge generate \
-       --config examples/configs/modal-wan-t2v-1_3b.yaml --mode t2v \
+       --config examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml --mode t2v \
        --prompt "$(cat examples/configs/prompts/field-realistic.txt)"
   2. Resolve the instance id from `pixi run kinoforge list`, then poll read_util
      via ModalUtilEndpoint (ledger-resolved) DURING a second gen; assert

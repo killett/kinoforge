@@ -9,7 +9,7 @@ pytestmark = pytest.mark.live
 
 INTERPOLATE_CMD = (
     "pixi run -e live-modal kinoforge interpolate "
-    "--config examples/configs/modal-rife-60fps.yaml "
+    "--config examples/configs/modal-diffusers-rife-60fps-interpolate.yaml "
     "--video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_"
     "Photorealistic-cinem.mp4 "
     "--fps 60 "

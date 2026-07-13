@@ -7,7 +7,7 @@ build_script (baked into the image) and the server exec in runtime_script.
 from kinoforge.core.config import load_config
 from kinoforge.engines.diffusers import DiffusersEngine
 
-_CFG = "examples/configs/modal-rife-60fps.yaml"
+_CFG = "examples/configs/modal-diffusers-rife-60fps-interpolate.yaml"
 _SERVER_EXEC = "python -m kinoforge.engines.diffusers.servers.wan_t2v_server"
 
 

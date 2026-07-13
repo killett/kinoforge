@@ -7,7 +7,7 @@ pytestmark = pytest.mark.live
 
 UPSCALE_CMD = (
     "pixi run -e live-modal kinoforge upscale "
-    "--config examples/configs/modal-flashvsr-x4.yaml "
+    "--config examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml "
     "--video output/20260630-221857_diffusers_Wan2.2-T2V-A14B-Diffuser_"
     "Photorealistic-cinem.mp4 "
     "--no-reuse"
