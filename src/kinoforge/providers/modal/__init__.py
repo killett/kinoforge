@@ -261,20 +261,26 @@ class ModalProvider(ComputeProvider):
         Modal ``.modal.run`` URLs are NOT rebuildable from the app name
         (M5 lesson, commit 1cb4299) — in the sweeper process the only
         source is the EphemeralIndexRow's persisted endpoints, threaded
-        here by ``reaper_actor._probe_with_cache``. Never overwrites a
-        live deployment record.
+        here by ``reaper_actor._probe_with_cache``. Priming is skipped
+        only when an existing record already carries a URL — a live
+        deployment's URL is never clobbered, but a URL-less stub record
+        (e.g. from a partial attach) still gets primed.
 
         Args:
             instance_id: The short run-id (without the ``kinoforge-`` prefix).
             endpoints: Port -> URL mapping from the EphemeralIndexRow.
         """
         url = endpoints.get("8000")
-        if url and instance_id not in self._deployments:
-            self._deployments[instance_id] = {
-                "app": None,
-                "url": url,
-                "name": f"kinoforge-{instance_id}",
-            }
+        existing = self._deployments.get(instance_id)
+        if url and not (existing and existing.get("url")):
+            if existing is not None:
+                existing["url"] = url
+            else:
+                self._deployments[instance_id] = {
+                    "app": None,
+                    "url": url,
+                    "name": f"kinoforge-{instance_id}",
+                }
 
     def probe_runtime(self, pod_id: str) -> RuntimeProbe | None:
         """Live runtime probe: app existence + /util snapshot.
@@ -296,8 +302,11 @@ class ModalProvider(ComputeProvider):
             A :class:`~kinoforge.core.runtime_probe.RuntimeProbe`.
 
         Raises:
-            Exception: Any exception raised by the lister propagates; the
-                reaper catches and records PROBE_FAILED.
+            RuntimeError: The injected lister failed (e.g. ``modal`` CLI
+                absent or ``modal app list`` crashed); propagates so the
+                reaper records PROBE_FAILED.
+            OSError: Subprocess/IO failure inside the lister; propagates
+                for the same reason.
         """
         from kinoforge.providers.modal.util import ModalUtilEndpoint
 
@@ -327,6 +336,10 @@ class ModalProvider(ComputeProvider):
                 error="no endpoint known for /util (note_endpoints not primed)",
             )
         try:
+            # Per-call endpoint (unlike RunPod's cached self._util_endpoint):
+            # the URL comes from the primed deployment record, not an
+            # id-resolvable source, so a throwaway endpoint bound to that
+            # URL is the simplest correct seam.
             snapshot = ModalUtilEndpoint(resolve_endpoint=lambda _id: url).read_util(
                 pod_id
             )

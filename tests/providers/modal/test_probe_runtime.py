@@ -83,6 +83,59 @@ def test_util_transport_error_is_partial_probe(monkeypatch):
     assert probe.error and "502" in probe.error
 
 
+def test_util_404_none_is_partial_probe(monkeypatch):
+    """Bug caught: read_util returning None (route 404 on an active app)
+    crashing the mapping or fabricating found=False -> false GC of a live app."""
+    provider = ModalProvider(lister=_active_lister("kinoforge-eph-cafef00d"))
+    provider.note_endpoints(
+        "eph-cafef00d", {"8000": "https://a--kinoforge-eph-cafef00d-f.modal.run"}
+    )
+    monkeypatch.setattr(
+        "kinoforge.providers.modal.util.ModalUtilEndpoint.read_util",
+        lambda self, instance_id: None,
+    )
+    probe = provider.probe_runtime("eph-cafef00d")
+    assert probe is not None and probe.found is True
+    assert probe.gpu_util_pct is None
+    assert probe.error and "404" in probe.error
+
+
+def test_note_endpoints_primes_over_url_none_record():
+    """Bug caught: an existence-only overwrite guard leaves a url=None record
+    permanently unprimed -> probe loops the 'no endpoint known' partial path
+    forever."""
+    provider = ModalProvider(lister=_active_lister("kinoforge-eph-cafef00d"))
+    provider._deployments["eph-cafef00d"] = {
+        "app": None,
+        "url": None,
+        "name": "kinoforge-eph-cafef00d",
+    }
+    provider.note_endpoints(
+        "eph-cafef00d", {"8000": "https://a--kinoforge-eph-cafef00d-f.modal.run"}
+    )
+    assert (
+        provider._deployments["eph-cafef00d"]["url"]
+        == "https://a--kinoforge-eph-cafef00d-f.modal.run"
+    )
+
+
+def test_note_endpoints_never_overwrites_live_url():
+    """Bug caught: a stale index row clobbering the URL of a live in-process
+    deployment record breaks endpoints()/probe for the active session."""
+    provider = ModalProvider(lister=_active_lister("kinoforge-eph-cafef00d"))
+    provider._deployments["eph-cafef00d"] = {
+        "app": "LIVE-APP",
+        "url": "https://live--kinoforge-eph-cafef00d-f.modal.run",
+        "name": "kinoforge-eph-cafef00d",
+    }
+    provider.note_endpoints(
+        "eph-cafef00d", {"8000": "https://stale--kinoforge-eph-cafef00d-f.modal.run"}
+    )
+    rec = provider._deployments["eph-cafef00d"]
+    assert rec["url"] == "https://live--kinoforge-eph-cafef00d-f.modal.run"
+    assert rec["app"] == "LIVE-APP"
+
+
 def test_lister_failure_propagates():
     """Bug caught: swallowing a lister crash into found=False would GC live
     rows on a transient `modal app list` failure."""
