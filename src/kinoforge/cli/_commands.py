@@ -864,6 +864,10 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
         skip_clip_stage=True,
         initial_clip=input_artifact,
     )
+    # Known gap, deliberately deferred (plan 2026-07-12-modal-ephemeral-parity
+    # Task 3): unlike _cmd_upscale's T11 block above, interpolate never
+    # ledger-stamps its cold-created pod, so NON-ephemeral warm scan cannot
+    # rediscover it. Pre-existing and independent of ephemeral indexing.
     if returned_instance is not None and instance is None and not args.no_reuse:
         _ephemeral_index_add(ctx, cfg, returned_instance)
     print(f"interpolated: uri={artifact.uri!r}")
