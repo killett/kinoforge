@@ -617,22 +617,7 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         # Under STRICT_POLICY the ledger entry above lives only in
         # session.in_memory_ledger; this index row is what lets the next
         # CLI process discover the surviving pod.
-        from kinoforge.core.warm_reuse.ephemeral_index import (
-            EphemeralIndex,
-            EphemeralIndexRow,
-        )
-
-        if EphemeralSession.current() is not None:
-            EphemeralIndex(store=ctx.store()).add(
-                EphemeralIndexRow(
-                    id=returned_instance.id,
-                    warm_attach_key=cfg_wak,
-                    kinoforge_key=cfg.capability_key().derive()[:12],
-                    endpoints=dict(returned_instance.endpoints),
-                    provider=returned_instance.provider,
-                    created_at_local=datetime.now().isoformat(),
-                )
-            )
+        _ephemeral_index_add(ctx, cfg, returned_instance)
         if emit_record_path is not None:
             _write_provision_record(
                 emit_record_path,
@@ -782,6 +767,7 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
             kinoforge_upscaler=cfg.upscale.engine,
             kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
         )
+        _ephemeral_index_add(ctx, cfg, returned_instance)
 
     print(f"upscaled: uri={artifact.uri!r}")
     return 0
@@ -878,7 +864,8 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
         skip_clip_stage=True,
         initial_clip=input_artifact,
     )
-    del returned_instance
+    if returned_instance is not None and instance is None and not args.no_reuse:
+        _ephemeral_index_add(ctx, cfg, returned_instance)
     print(f"interpolated: uri={artifact.uri!r}")
     return 0
 
@@ -1591,6 +1578,42 @@ def _cfg_warm_attach_key(cfg: Config) -> str:
         engine=engine.kind if engine is not None else "",
         precision=engine.precision if engine is not None else "",
     ).derive()
+
+
+def _ephemeral_index_add(
+    ctx: SessionContext, cfg: Config, instance: Instance | None
+) -> None:
+    """Index a surviving ephemeral pod for cross-CLI discovery.
+
+    No-op when no EphemeralSession is active or when the run produced no
+    compute instance.  Under STRICT_POLICY the ledger entry lives only in
+    session.in_memory_ledger; this disk row is what lets the NEXT CLI
+    process discover the surviving pod (spec 2026-06-27, extended to
+    upscale/interpolate + modal by spec 2026-07-12-modal-ephemeral-parity).
+
+    Args:
+        ctx: The current SessionContext (carries the ArtifactStore).
+        cfg: Loaded Config — used to derive capability and warm-attach keys.
+        instance: The cold-created compute instance, or None for hosted paths.
+    """
+    from kinoforge.core.warm_reuse.ephemeral_index import (
+        EphemeralIndex,
+        EphemeralIndexRow,
+    )
+
+    if instance is None:
+        return
+    if EphemeralSession.current() is not None:
+        EphemeralIndex(store=ctx.store()).add(
+            EphemeralIndexRow(
+                id=instance.id,
+                warm_attach_key=_cfg_warm_attach_key(cfg),
+                kinoforge_key=cfg.capability_key().derive()[:12],
+                endpoints=dict(instance.endpoints),
+                provider=instance.provider,
+                created_at_local=datetime.now().isoformat(),
+            )
+        )
 
 
 def _resolve_attach_pod(

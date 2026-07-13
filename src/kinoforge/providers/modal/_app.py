@@ -140,6 +140,11 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         # server blocks on inference), and the Modal proxy then round-robins
         # requests across containers -> intermittent 404s on /status and a
         # fatal 404 on the artifact GET (live EM1, 2026-07-12). Pin to one.
+        # NOTE: this is a correctness guard AND a throughput ceiling. If the
+        # in-container servers ever stop blocking their event loop (36s
+        # status execution observed live; asyncio.to_thread fix pending),
+        # revisit whether the pin should relax — today removing it re-opens
+        # the stateful-pod split-brain above.
         max_containers=1,
         volumes={req.volume_mount: volume},
         secrets=[secret],
