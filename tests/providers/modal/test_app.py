@@ -130,6 +130,17 @@ def test_function_startup_timeout_governs_container_init(fake_modal):
     assert kw["timeout"] == 1800  # startup_timeout defaults to timeout if unset
 
 
+def test_function_pins_single_container(fake_modal):
+    """Bug caught (live, 2026-07-12 EM1): without max_containers=1 Modal
+    autoscales a second web-server container when polls queue behind a
+    blocking request; job state + artifacts are per-container, so requests
+    round-robin into intermittent 404s and the unretried artifact GET dies
+    (status alternated 200/404; GET /artifacts -> 404; exit 1)."""
+    build_modal_app(_req(), fake_modal)
+    kw = fake_modal.app.function_kwargs
+    assert kw["max_containers"] == 1
+
+
 def test_secret_payload_contains_provision_and_run_cmd(fake_modal):
     # Bug caught: dropping run_cmd (server never launches) or the provision
     # script (deps/weights never installed) → dead container at startup.

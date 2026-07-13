@@ -134,6 +134,13 @@ def build_modal_app(req: ModalAppRequest, modal_mod: Any) -> tuple[Any, Any]:  #
         # downloaded under 300s, which is why this only surfaced at A14B).
         startup_timeout=req.startup_timeout_s,
         timeout=req.startup_timeout_s,
+        # kinoforge treats this web server as ONE stateful pod: job state and
+        # artifact files live in the container. Modal's default autoscaler
+        # adds containers when requests queue (e.g. polls arriving while the
+        # server blocks on inference), and the Modal proxy then round-robins
+        # requests across containers -> intermittent 404s on /status and a
+        # fatal 404 on the artifact GET (live EM1, 2026-07-12). Pin to one.
+        max_containers=1,
         volumes={req.volume_mount: volume},
         secrets=[secret],
     )
