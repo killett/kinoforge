@@ -2,8 +2,8 @@
 # inference server (kinoforge.engines.diffusers.servers.wan_t2v_server).
 #
 # Why this cfg exists:
-#   The earlier runpod-comfyui-wan-t2v-14b-2_2.yaml tried to run
-#   Kijai's I2V-A14B HIGH+LOW pair as T2V via WanVideoEmptyEmbeds and
+#   An earlier ComfyUI-based Wan 2.2 14B t2v cfg (since removed) tried
+#   to run Kijai's I2V-A14B HIGH+LOW pair as T2V via WanVideoEmptyEmbeds and
 #   failed at the patch_embedding layer with a 36-vs-16 channel
 #   mismatch — Wan 2.2 14B I2V has image conditioning baked into its
 #   convolution shape. The actual T2V-A14B model is published in

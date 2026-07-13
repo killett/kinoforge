@@ -1,7 +1,7 @@
 """Tests for Task 23: example configs, README, and CI workflow.
 
 Verifies that:
-- All 4 example configs load without raising.
+- All 9 example configs load without raising.
 - Config-only swaps (provider swap, engine swap) both parse.
 - README.md exists and contains the 6 required headings.
 - .github/workflows/ci.yml is valid YAML and references the 3 OSes + 3 tasks.
@@ -26,7 +26,7 @@ README_PATH = REPO_ROOT / "README.md"
 CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 # ---------------------------------------------------------------------------
-# AC1 — All 4 example configs load without raising
+# AC1 — All 9 example configs load without raising
 # ---------------------------------------------------------------------------
 
 EXAMPLE_CONFIGS = [
@@ -456,12 +456,12 @@ def test_runpod_comfyui_wan_yaml_loads() -> None:
 
 
 def test_runpod_comfyui_wan_manifest_yaml_loads() -> None:
-    """examples/configs/manifests/runpod-comfyui-wan-manifest.yaml loads via load_manifest.
+    """examples/configs/manifests/runpod-comfyui-wan-2_1-14b-i2v-manifest.yaml loads via load_manifest.
 
     Verifies the single i2v entry with an assets block is schema-valid and
     that load_manifest collapses run_id correctly.
     """
-    path = EXAMPLES_DIR / "manifests" / "runpod-comfyui-wan-manifest.yaml"
+    path = EXAMPLES_DIR / "manifests" / "runpod-comfyui-wan-2_1-14b-i2v-manifest.yaml"
     assert path.exists(), f"manifest not found: {path}"
     m = load_manifest(path)
     assert len(m.entries) == 1
