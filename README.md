@@ -352,7 +352,7 @@ Canonical example configs in `examples/configs/`:
 | `hosted.yaml` | Multi-provider hosted comparison (Replicate / Runway / Luma) |
 | `bedrock-nova-reel-t2v.yaml` | AWS Nova Reel hosted engine |
 | `bedrock-luma-ray-t2v.yaml` | Luma Ray hosted engine |
-| `skypilot-lambda.yaml` | SkyPilot on Lambda Labs GPU |
+| `skypilot-lambda-comfyui.yaml` | SkyPilot on Lambda Labs GPU |
 | `runpod-diffusers-flashvsr-x4-upscale.yaml` | Standalone FlashVSR 4x video upscale (RunPod A100 80GB) |
 | `runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml` | Wan 2.2 t2v + FlashVSR 4x co-resident multi-stage |
 | `fal-luma-keyframe-i2v.yaml` | Luma UNI-1 keyframe → fal wan-i2v |

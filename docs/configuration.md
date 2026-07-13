@@ -19,7 +19,7 @@ Browse ready-to-use examples in [`../examples/configs/`](../examples/configs/):
 | File | Engine | Provider | Use case |
 |------|--------|----------|----------|
 | [`runpod-comfyui-wan-2_2-14b-t2v.yaml`](../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml) | ComfyUI | RunPod pod | Production Wan2.2 + CivitAI LoRA |
-| [`diffusers.yaml`](../examples/configs/diffusers.yaml) | Diffusers | RunPod serverless | SVD serverless |
+| [`runpod-diffusers-serverless.yaml`](../examples/configs/runpod-diffusers-serverless.yaml) | Diffusers | RunPod serverless | SVD serverless |
 | [`hosted.yaml`](../examples/configs/hosted.yaml) | Hosted API | fal.ai | Zero-infra hosted |
 | [`local-fake.yaml`](../examples/configs/local-fake.yaml) | Fake | Local | Offline / CI smoke test |
 
@@ -116,7 +116,7 @@ it raises `ValidationError` and tears down any provisioned compute before
 re-raising (mirroring the existing `CapabilityMismatch` branch). A typo in
 your config will not cost idle pod time.
 
-See `../examples/configs/hosted.yaml`, `../examples/configs/diffusers.yaml`, `../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml`, and `../examples/configs/fal-t2v.yaml`
+See `../examples/configs/hosted.yaml`, `../examples/configs/runpod-diffusers-serverless.yaml`, `../examples/configs/runpod-comfyui-wan-2_2-14b-t2v.yaml`, and `../examples/configs/fal-t2v.yaml`
 for working `spec:` + `params:` shapes per engine.
 
 

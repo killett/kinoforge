@@ -167,8 +167,8 @@ unit-tested; the live proof landed on **Lambda A100** (see pivot below).
   A100 despite `compute.cloud=[vast]`).
 - **Component C — provisioning guard (Task 3):** characterization test locks
   provision_script→setup (exec-stripped) + run_cmd→run + offer→accelerators.
-- **Cfgs (Task 4):** `examples/configs/skypilot-vast-flashvsr.yaml` (vast) +
-  `skypilot-lambda-flashvsr.yaml` (the live-proof cloud).
+- **Cfgs (Task 4):** `examples/configs/skypilot-vast-diffusers-flashvsr-upscale.yaml` (vast) +
+  `skypilot-lambda-diffusers-flashvsr-upscale.yaml` (the live-proof cloud).
 - **Live proof (Task 5, USER-GATE):** see `successful-generations.md` §21 —
   FlashVSR upscale → **1080×1080**, frame-QA PASS, on a Lambda A100 via the
   ssh-tunnel. Ledger verified clean after.
@@ -1700,7 +1700,7 @@ on `main`:
   `tests/core/test_deploy_polling_preserves_instance_fields.py` lock
   in the contract. PROGRESS's "Stage E follow-ups (filed 2026-06-18)"
   section never received the close marker.
-- **Follow-up B — image placeholder swap in `skypilot.yaml` +
+- **Follow-up B — image placeholder swap in `skypilot-cpu.yaml` +
   `skypilot-gpu.yaml`** landed in commit `2e03ad4` ("swap broken
   Docker Hub image placeholders in 2 skypilot cfgs"). Both cfgs now
   pin pullable images (CPU → `ubuntu:22.04`, GPU →
@@ -2008,8 +2008,8 @@ main at time of writing). Five edits unblocked all 12 entries:
      `9771b18`; docstring follow-up `677f59f`).
   3. Wan2.2 refs repointed to a real sharded HF file
      (`high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors`)
-     in all four cfgs (`wan.yaml`, `skypilot.yaml`, `skypilot-gpu.yaml`,
-     `skypilot-lambda.yaml`). Plus `skypilot.yaml` `heartbeat_interval_s`
+     in all four cfgs (`wan.yaml`, `skypilot-cpu.yaml`, `skypilot-gpu.yaml`,
+     `skypilot-lambda-comfyui.yaml`). Plus `skypilot-cpu.yaml` `heartbeat_interval_s`
      lowered 30 → 20 to satisfy the cfg-validation Check Registry's
      `idle_timeout_vs_heartbeat` rule (3 * heartbeat must fit within
      the 60 s idle_timeout). Commit `a013277`; comment softening
@@ -2022,7 +2022,7 @@ main at time of writing). Five edits unblocked all 12 entries:
      Live smoke + integration-skip entry updated. Commit `9bef7cd`.
   5. `_KNOWN_BROKEN` dict deleted from
      `tests/live/test_doctor_examples_live.py`. In-task discoveries:
-     `cost.yaml` + `diffusers.yaml` STATIC validation tripped on
+     `cost.yaml` + `runpod-diffusers-serverless.yaml` STATIC validation tripped on
      missing `heartbeat_interval_s` once their xfail markers were
      gone; both cfgs received `heartbeat_interval_s: 30` (cost is
      RunPod, diffusers is RunPod serverless — both warm-reuse-attach
@@ -2102,8 +2102,8 @@ the fix.
   skypilot-cluster` cleared the row cleanly. File as a Layer-S
   follow-up before any next skypilot deploy that needs operator-
   facing list/cost UX.
-- **Same image placeholder in `skypilot.yaml` + `skypilot-gpu.yaml`.**
-  Commit `05fc93d` scope-limited the fix to `skypilot-lambda.yaml`.
+- **Same image placeholder in `skypilot-cpu.yaml` + `skypilot-gpu.yaml`.**
+  Commit `05fc93d` scope-limited the fix to `skypilot-lambda-comfyui.yaml`.
   Apply the same swap (or document the operator-supplied image
   expectation) to the other two cfgs before either is used live.
 - **Stale RunPod ghost ledger entries. CLOSED 2026-06-18.**
@@ -2766,7 +2766,7 @@ Queued candidates (operator picks; not ranked):
      parity with the now-GREEN Diffusers `/lora/set_stack` path. C24
      is GREEN via Diffusers; C23 still open on ComfyUI side.
   4. **Phase 53 Stage E — end-to-end `kinoforge deploy` on Lambda.**
-     `kinoforge deploy examples/configs/skypilot-lambda.yaml` against a
+     `kinoforge deploy examples/configs/skypilot-lambda-comfyui.yaml` against a
      real FakeEngine to verify kinoforge → SkyPilotProvider → sky →
      Lambda. ~$0.15 budget. Stages A-C CLOSED; Stage D BLOCKED on
      upstream sky vast adapter (vastai-sdk ≥ 0.2 incompat).
@@ -3382,7 +3382,7 @@ finds all its CLI prereqs.
 - Plan: `docs/superpowers/plans/2026-06-03-skypilot-real-cloud.md`
 - T1 (pixi feature env): `ed0dbda`
 - T2 (recording proxy + 8 Ring-2 tests): `005eca2` + `fd8cac9` (review fixup)
-- T3 (skypilot.yaml + parse test): `eedf7db`
+- T3 (skypilot-cpu.yaml + parse test): `eedf7db`
 - T4 (preflight SkyPilot check + 3 tests): `6dd3530` + `90a6452` (review fixup)
 - T5 (RED live-smoke scaffold, pre-spend): `c3beb96` + `44101f2` (tasks.json sync)
 - T5.5 (live-env mypy hygiene — preflight + recorder typing): `f1a684e`
@@ -4763,7 +4763,7 @@ Plan: `docs/superpowers/plans/2026-06-09-layer-8-model-identity-abc.md`
 - [x] Task 1: Per-engine unit tests + cross-engine ABC contract test — commits `08ea661` + `306a6ce`
 - [x] Task 2: Orchestrator clip-stage wiring (`session.engine.model_identity(_cfg_dict(cfg))` + WARNING) — commits `3156267` + `4ac3017`
 - [x] Task 3: Orchestrator keyframe-stage wiring (`resolved_image_engine.model_identity(kf_cfg_dict)` + WARNING) — commit `412aee2`
-- [x] Task 4: Integration regression lock — `tests/integration/test_no_unknown_slug_for_example_configs.py` (12 parametrized cases incl. `examples/configs/comparison/*.yaml`). Caught + fixed 2 real YAML bugs along the way: `diffusers.yaml` missing `spec.model`, `skypilot-gpu.yaml` had wrong lifecycle field names silently dropped by pydantic — commits `1f28118` + `61e765c`
+- [x] Task 4: Integration regression lock — `tests/integration/test_no_unknown_slug_for_example_configs.py` (12 parametrized cases incl. `examples/configs/comparison/*.yaml`). Caught + fixed 2 real YAML bugs along the way: `runpod-diffusers-serverless.yaml` missing `spec.model`, `skypilot-gpu.yaml` had wrong lifecycle field names silently dropped by pydantic — commits `1f28118` + `61e765c`
 - [x] Task 5: PROGRESS + README + final gate — this commit
 
 **Key design decisions:**
@@ -4773,7 +4773,7 @@ Plan: `docs/superpowers/plans/2026-06-09-layer-8-model-identity-abc.md`
 - `ImageEngine` gets its own copy of the abstract method (parallel ABCs do not share a parent today; introducing one is out of scope).
 
 **Bug catches during execution:**
-- `diffusers.yaml` shipped without `spec.model` — silently produced `"unknown"` slug. T4 regression lock caught this; fix in `1f28118`.
+- `runpod-diffusers-serverless.yaml` shipped without `spec.model` — silently produced `"unknown"` slug. T4 regression lock caught this; fix in `1f28118`.
 - `skypilot-gpu.yaml` shipped with wrong lifecycle field names (`budget_usd` vs `budget`; `idle_timeout_s` vs `idle_timeout`; etc.) — pydantic was silently dropping them as extras, leaving `budget` unset. T4 regression lock surfaced the load failure; fix in `1f28118`.
 - Code-quality review caught `_cfg_dict` local in T2 shadowing the module-level helper `_cfg_dict(cfg)` at orchestrator.py:142. Latent landmine (no live failure today); fix in `4ac3017`.
 - Code-quality review caught `_adapters.py` only importing `image_engines.replicate`, silently hiding `fake` and `fal` image engines from production-side registry iteration. Fix in `306a6ce`.
@@ -5320,7 +5320,7 @@ won on price** for any non-tiny GPU.
   Integration test
   `tests/core/test_orchestrator.py::test_resolve_provider_threads_skypilot_cloud_pin`
   locks in the orchestrator wiring.
-- [x] **C3**: New `examples/configs/skypilot-lambda.yaml` ships
+- [x] **C3**: New `examples/configs/skypilot-lambda-comfyui.yaml` ships
   `compute.cloud: ["lambda"]`, `max_usd_per_hr: 2.00`, idle/budget
   envelope sized for Stage E live smoke. Lockdown test
   `test_skypilot_lambda_example_pins_lambda_cloud` in
@@ -5365,7 +5365,7 @@ Spend: $0.00 (provision failed before any compute billed).
 #### Stage E — end-to-end `kinoforge deploy` on Lambda (CLOSED 2026-07-04)
 
 GREEN 2026-07-04 02:26 PDT: `kinoforge deploy --config
-examples/configs/skypilot-lambda.yaml` → `deployed:
+examples/configs/skypilot-lambda-comfyui.yaml` → `deployed:
 instance='skypilot-cluster'` (status=ready). Lambda us-east-1
 gpu_1x_a10 ($1.29/hr), docker container up, ~6 min wall, spend ~$0.15.
 Full kinoforge → build_provider_for(cloud pin) → SkyPilotProvider →

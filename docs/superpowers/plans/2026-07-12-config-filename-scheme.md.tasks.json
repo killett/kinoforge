@@ -38,7 +38,7 @@
     {
       "id": 5,
       "subject": "Task 5: SkyPilot + tool/demo configs",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [4],
       "description": "**Goal:** Rename the 4 SkyPilot configs + diffusers.yaml; leave pure-tool configs untouched. See plan doc Task 5.\n\n**Verify:** `pixi run pytest tests/test_examples.py tests/core/test_config.py tests/providers/test_skypilot.py -q` PASS; stale-grep empty; `pixi run test` PASS.\n\n```json:metadata\n{\"files\": [\"examples/configs/skypilot.yaml\", \"examples/configs/skypilot-lambda.yaml\", \"examples/configs/skypilot-lambda-flashvsr.yaml\", \"examples/configs/skypilot-vast-flashvsr.yaml\", \"examples/configs/diffusers.yaml\", \"tests/test_examples.py\", \"src/kinoforge/providers/skypilot/__init__.py\"], \"verifyCommand\": \"pixi run pytest tests/test_examples.py tests/core/test_config.py tests/providers/test_skypilot.py -q\", \"acceptanceCriteria\": [\"5 git mv renames\", \"EXAMPLE_CONFIGS + skypilot fns updated\", \"skypilot-gpu NOT renamed\", \"no corruption of sibling names\", \"old basenames zero non-frozen hits\", \"verify gate passes\"], \"modelTier\": \"mechanical\"}\n```"
     },

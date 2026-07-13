@@ -31,12 +31,12 @@ CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 EXAMPLE_CONFIGS = [
     "runpod-comfyui-wan-2_2-14b-t2v.yaml",
-    "diffusers.yaml",
+    "runpod-diffusers-serverless.yaml",
     "hosted.yaml",
     "local-fake.yaml",
-    "skypilot.yaml",
+    "skypilot-cpu.yaml",
     "skypilot-gpu.yaml",
-    "skypilot-lambda.yaml",
+    "skypilot-lambda-comfyui.yaml",
     "cost.yaml",
     "sweeper.yaml",
 ]
@@ -56,13 +56,13 @@ def test_example_config_loads(filename: str) -> None:
 
 
 def test_skypilot_example_parses() -> None:
-    """examples/configs/skypilot.yaml loads and carries the Phase 31 SkyPilot knobs.
+    """examples/configs/skypilot-cpu.yaml loads and carries the Phase 31 SkyPilot knobs.
 
     Bug catch: a future edit drops the compute.provider key or rewrites
     idle_timeout into a non-60 s value, silently breaking the SkyPilot
     autostop=1-minute contract documented in the live-smoke spec §3.3.
     """
-    cfg = load_config(Path("examples/configs/skypilot.yaml"))
+    cfg = load_config(Path("examples/configs/skypilot-cpu.yaml"))
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
     # idle_timeout_s == 60 maps to SkyPilot autostop=1 (minute) per spec §3.3.
@@ -71,7 +71,7 @@ def test_skypilot_example_parses() -> None:
 
 
 def test_skypilot_example_uses_pullable_image() -> None:
-    """examples/configs/skypilot.yaml must reference an image that exists
+    """examples/configs/skypilot-cpu.yaml must reference an image that exists
     on Docker Hub.
 
     Stage-E live smoke 2026-06-18 surfaced that the template's original
@@ -86,7 +86,7 @@ def test_skypilot_example_uses_pullable_image() -> None:
     Bug catch: a future edit reintroduces the ``skypilot/skypilot*``
     placeholder (or any other Docker-Hub-404 string).
     """
-    cfg = load_config(Path("examples/configs/skypilot.yaml"))
+    cfg = load_config(Path("examples/configs/skypilot-cpu.yaml"))
     assert cfg.compute is not None
     assert cfg.compute.image == "ubuntu:22.04"
 
@@ -109,7 +109,7 @@ def test_skypilot_gpu_example_uses_pullable_image() -> None:
 
 
 def test_skypilot_lambda_example_pins_lambda_cloud() -> None:
-    """examples/configs/skypilot-lambda.yaml is the Phase 53 Stage C
+    """examples/configs/skypilot-lambda-comfyui.yaml is the Phase 53 Stage C
     operator template for Lambda-only sky launches.
 
     Bug catches:
@@ -118,7 +118,7 @@ def test_skypilot_lambda_example_pins_lambda_cloud() -> None:
       - max_usd_per_hr stays at the pre-Stage-C 1.00 → Lambda A6000
         ($1.09/hr) is filtered out and the YAML fails at provision.
     """
-    cfg = load_config(Path("examples/configs/skypilot-lambda.yaml"))
+    cfg = load_config(Path("examples/configs/skypilot-lambda-comfyui.yaml"))
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
     assert cfg.compute.cloud == ["lambda"]
@@ -374,8 +374,8 @@ def test_layer_m_hosted_yaml_no_engine_hosted_model() -> None:
 
 
 def test_diffusers_yaml_has_non_empty_spec() -> None:
-    """examples/configs/diffusers.yaml ships pipeline+scheduler in spec:."""
-    cfg = load_config(EXAMPLES_DIR / "diffusers.yaml")
+    """examples/configs/runpod-diffusers-serverless.yaml ships pipeline+scheduler in spec:."""
+    cfg = load_config(EXAMPLES_DIR / "runpod-diffusers-serverless.yaml")
     assert "pipeline" in cfg.spec
     assert "scheduler" in cfg.spec
 
@@ -537,7 +537,7 @@ class TestOutputBlockExamples:
         "filename",
         [
             "runpod-comfyui-wan-2_2-14b-t2v.yaml",
-            "diffusers.yaml",
+            "runpod-diffusers-serverless.yaml",
             "fal-t2v.yaml",
             "hosted.yaml",
             "local-fake.yaml",

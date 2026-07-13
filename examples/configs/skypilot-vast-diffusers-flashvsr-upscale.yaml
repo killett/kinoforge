@@ -8,7 +8,7 @@
 #
 # Usage:
 #   pixi run -e live-skypilot kinoforge upscale \
-#     --config examples/configs/skypilot-vast-flashvsr.yaml \
+#     --config examples/configs/skypilot-vast-diffusers-flashvsr-upscale.yaml \
 #     --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
 #     --no-reuse
 

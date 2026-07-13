@@ -1,6 +1,6 @@
 # Upscale-only FlashVSR on Lambda Cloud via SkyPilot (slice-1 live proof).
 #
-# Lambda variant of skypilot-vast-flashvsr.yaml. Proves the SAME
+# Lambda variant of skypilot-vast-diffusers-flashvsr-upscale.yaml. Proves the SAME
 # provider-internal SSH-tunnel HTTP path (SkyPilotProvider launches a GPU, opens
 # ssh -L to the diffusers server's :8000, and the upscale path drives it over
 # http://127.0.0.1:<port> unchanged) — but on Lambda, which sky supports
@@ -12,7 +12,7 @@
 #
 # Usage:
 #   pixi run -e live-skypilot kinoforge upscale \
-#     --config examples/configs/skypilot-lambda-flashvsr.yaml \
+#     --config examples/configs/skypilot-lambda-diffusers-flashvsr-upscale.yaml \
 #     --video output/20260630-221857_..._Photorealistic-cinem.mp4 \
 #     --no-reuse
 

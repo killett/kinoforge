@@ -1934,7 +1934,9 @@ def test_skypilot_vast_flashvsr_cfg_loads() -> None:
 
     from kinoforge.core.config import load_config
 
-    cfg = load_config(Path("examples/configs/skypilot-vast-flashvsr.yaml"))
+    cfg = load_config(
+        Path("examples/configs/skypilot-vast-diffusers-flashvsr-upscale.yaml")
+    )
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
     assert cfg.compute.cloud == ["vast"]
@@ -1963,7 +1965,9 @@ def test_skypilot_lambda_flashvsr_cfg_loads() -> None:
 
     from kinoforge.core.config import load_config
 
-    cfg = load_config(Path("examples/configs/skypilot-lambda-flashvsr.yaml"))
+    cfg = load_config(
+        Path("examples/configs/skypilot-lambda-diffusers-flashvsr-upscale.yaml")
+    )
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
     assert cfg.compute.cloud == ["lambda"]
