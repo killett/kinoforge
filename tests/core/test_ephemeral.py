@@ -151,7 +151,17 @@ def test_capability_table_contents() -> None:
     assert EPHEMERAL_CAPABILITIES[("luma", None)] is False
     assert EPHEMERAL_CAPABILITIES[("hosted", None)] is False
     assert EPHEMERAL_CAPABILITIES[("fake", "local")] is True
-    assert len(EPHEMERAL_CAPABILITIES) == 12
+    assert EPHEMERAL_CAPABILITIES[("comfyui", "modal")] is True
+    assert EPHEMERAL_CAPABILITIES[("diffusers", "modal")] is True
+    assert len(EPHEMERAL_CAPABILITIES) == 14
+
+
+def test_modal_combos_are_ephemeral_capable() -> None:
+    """Bug caught: forgetting the table flip keeps --ephemeral refused on
+    Modal even after the opaque-naming work shipped (preflight gates on
+    this exact lookup, cli/_main.py:_preflight_ephemeral)."""
+    assert EPHEMERAL_CAPABILITIES[("diffusers", "modal")] is True
+    assert EPHEMERAL_CAPABILITIES[("comfyui", "modal")] is True
 
 
 def test_policy_dataclass_fields_count() -> None:

@@ -240,8 +240,8 @@ def _preflight_error_block(engine: str, provider: str | None) -> str:
         "  Use one of these instead:\n"
         "    engine: replicate     (DELETE /v1/predictions/{id})\n"
         "    engine: runway        (DELETE /v1/tasks/{id})\n"
-        "    engine: comfyui       (any pod-based provider)\n"
-        "    engine: diffusers     (any pod-based provider)\n"
+        "    engine: comfyui       (any pod-based provider: runpod, skypilot, modal, local)\n"
+        "    engine: diffusers     (any pod-based provider: runpod, skypilot, modal, local)\n"
         "\n"
         "  Or drop --ephemeral to allow provider-side record retention."
     )
