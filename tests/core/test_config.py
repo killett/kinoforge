@@ -1909,7 +1909,9 @@ def test_flashvsr_widened_config_loads() -> None:
 
     from kinoforge.core.config import load_config
 
-    cfg = load_config(Path("examples/configs/upscale-flashvsr-1080p.yaml"))
+    cfg = load_config(
+        Path("examples/configs/runpod-diffusers-flashvsr-1080p-upscale.yaml")
+    )
     assert cfg.compute is not None
     reqs = cfg.compute.requirements
     assert list(reqs.gpu_preference) == [

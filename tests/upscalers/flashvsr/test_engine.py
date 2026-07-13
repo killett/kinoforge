@@ -434,7 +434,7 @@ def test_model_identity_bfloat16_default() -> None:
 
 
 def _cfg_coresident(**kw: Any) -> dict[str, Any]:
-    """Cfg shaped like wan-with-upscale-flashvsr.yaml: Wan co-resident."""
+    """Cfg shaped like runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml: Wan co-resident."""
     cfg = _cfg(**kw)
     cfg["engine"] = {"kind": "diffusers", "diffusers": {}}
     cfg["models"] = [{"ref": "hf:Wan-AI/Wan2.2-T2V-A14B-Diffusers"}]

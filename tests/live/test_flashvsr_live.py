@@ -41,8 +41,8 @@ def _require_live_spend_env() -> None:
 
 _STANDARD_PROMPT_PATH = Path("/workspace/examples/configs/prompts/field-realistic.txt")
 
-_MULTI_CFG = "examples/configs/wan-with-upscale-flashvsr.yaml"
-_UPSCALE_ONLY_CFG = "examples/configs/upscale-flashvsr-x4.yaml"
+_MULTI_CFG = "examples/configs/runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml"
+_UPSCALE_ONLY_CFG = "examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml"
 
 # 480x480 Wan 2.2 clip generated locally on 2026-06-30 as the T8 fixture.
 # Small enough (~800 KB) to stream over the pod's PUT /upload path in

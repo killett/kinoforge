@@ -36,7 +36,7 @@ _CFG = (
     Path(__file__).parent.parent.parent
     / "examples"
     / "configs"
-    / "wan-with-upscale-spandrel.yaml"
+    / "runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale.yaml"
 )
 
 

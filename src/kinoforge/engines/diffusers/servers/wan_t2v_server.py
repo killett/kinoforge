@@ -1291,7 +1291,7 @@ def _startup() -> None:
     fires when ``/upscale`` is called. ``/health`` reports ready
     immediately so wait_for_ready clears. Used by ``kinoforge upscale``
     cfgs that don't reference a Wan model (``examples/configs/
-    upscale-spandrel-x2.yaml``).
+    runpod-diffusers-spandrel-x2-upscale.yaml``).
     """
     global pipe, _worker_thread
     if os.environ.get("KINOFORGE_SKIP_WAN_LOAD"):

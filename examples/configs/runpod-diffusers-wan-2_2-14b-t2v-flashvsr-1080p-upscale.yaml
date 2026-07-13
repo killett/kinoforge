@@ -1,5 +1,5 @@
 # Wan 2.2 T2V-A14B + in-pipeline FlashVSR v1.1 HEIGHT-TARGET upscale to 1080p.
-# Height-target variant of wan-with-upscale-flashvsr.yaml: instead of a raw 4x
+# Height-target variant of runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml: instead of a raw 4x
 # factor, `upscale.scale: 1080p` asks for a 1080-pixel vertical deliverable.
 #
 # Resolution math (source render is 480x480):
@@ -12,7 +12,7 @@
 #
 # Usage:
 #   pixi run kinoforge generate \
-#     --config examples/configs/wan-with-upscale-flashvsr-1080p.yaml \
+#     --config examples/configs/runpod-diffusers-wan-2_2-14b-t2v-flashvsr-1080p-upscale.yaml \
 #     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
 #     --mode t2v --no-reuse
 

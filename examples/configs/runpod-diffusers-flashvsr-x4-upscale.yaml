@@ -4,7 +4,7 @@
 # wrapped in StreamingDMDPipeline) at 4x native scale. Distinct from spandrel's
 # per-frame per-image SR: FlashVSR runs a streaming attention window across
 # frames so temporal coherence stays intact across the whole clip. Preferred
-# over upscale-spandrel-x2.yaml for any clip where flicker or texture drift is
+# over runpod-diffusers-spandrel-x2-upscale.yaml for any clip where flicker or texture drift is
 # a concern.
 #
 # Requires SM80+ (Block-Sparse-Attention). Cheapest-first GPU allowlist
@@ -17,7 +17,7 @@
 #
 # Usage:
 #   pixi run kinoforge upscale \
-#     --config examples/configs/upscale-flashvsr-x4.yaml \
+#     --config examples/configs/runpod-diffusers-flashvsr-x4-upscale.yaml \
 #     --video /path/to/clip.mp4 \
 #     --no-reuse
 

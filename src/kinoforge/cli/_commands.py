@@ -691,7 +691,7 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
     if cfg.upscale is None:
         print(
             "error: --config must contain an `upscale:` block; "
-            "see examples/configs/upscale-spandrel-x2.yaml",
+            "see examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml",
             file=sys.stderr,
         )
         return 2
@@ -813,7 +813,7 @@ def _cmd_interpolate(args: argparse.Namespace, ctx: SessionContext) -> int:
     if cfg.interpolate is None:
         print(
             "error: --config must contain an `interpolate:` block; "
-            "see examples/configs/interpolate-rife-60fps.yaml",
+            "see examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml",
             file=sys.stderr,
         )
         return 2

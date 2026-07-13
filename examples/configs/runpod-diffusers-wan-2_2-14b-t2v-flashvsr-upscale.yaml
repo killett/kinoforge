@@ -1,5 +1,5 @@
 # Wan 2.2 T2V-A14B + in-pipeline FlashVSR v1.1 4x streaming diffusion upscale.
-# v1 default multi-stage cfg — supersedes wan-with-upscale-spandrel.yaml
+# v1 default multi-stage cfg — supersedes runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale.yaml
 # (kept as fallback).
 #
 # FlashVSR wraps a Wan 2.1 1.3B backbone through FlashVSRFullPipeline; runs
@@ -19,7 +19,7 @@
 #
 # Usage:
 #   pixi run kinoforge generate \
-#     --config examples/configs/wan-with-upscale-flashvsr.yaml \
+#     --config examples/configs/runpod-diffusers-wan-2_2-14b-t2v-flashvsr-upscale.yaml \
 #     --prompt "$(cat examples/configs/prompts/field-realistic.txt)" \
 #     --mode t2v
 

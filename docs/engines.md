@@ -467,9 +467,9 @@ upscaling (SeedVR2) waits on Phase 2 vendoring of an unpackaged
 upstream. Operators who need temporal coherence should hold for the
 `[seedvr]` extras path.
 
-**Cfg surface.** See `examples/configs/upscale-spandrel-x2.yaml`
+**Cfg surface.** See `examples/configs/runpod-diffusers-spandrel-x2-upscale.yaml`
 (upscale-only, for `kinoforge upscale`) and
-`examples/configs/wan-with-upscale-spandrel.yaml` (Wan T2V → spandrel
+`examples/configs/runpod-diffusers-wan-2_2-14b-t2v-spandrel-upscale.yaml` (Wan T2V → spandrel
 multi-stage warm-reuse, for `kinoforge generate`). Per-engine knobs
 live under `cfg.upscale.spandrel`:
 

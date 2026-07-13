@@ -2,7 +2,7 @@
 #
 # Used as:
 #   pixi run kinoforge upscale \
-#     --config examples/configs/upscale-seedvr2-3b.yaml \
+#     --config examples/configs/runpod-diffusers-seedvr2-3b-upscale.yaml \
 #     --video file:///path/to/clip.mp4 \
 #     --no-reuse
 #

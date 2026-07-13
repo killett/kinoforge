@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 _LIVE_SPEND_ENV = "KINOFORGE_LIVE_SPEND"
-_CFG = "examples/configs/upscale-flashvsr-1080p.yaml"
+_CFG = "examples/configs/runpod-diffusers-flashvsr-1080p-upscale.yaml"
 # 480x480 / 81-frame Wan clip generated 2026-06-30 (also the F-single fixture).
 _SOURCE = Path(
     "/workspace/output/"
