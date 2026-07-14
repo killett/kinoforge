@@ -106,41 +106,54 @@ def _warmup_proxy(pod_proxy_url: str, *, deadline_s: float = 60.0) -> None:
     )
 
 
-def _wait_for_inventory_convergence(
-    *,
+def _poll_swap_job(
     pod_proxy_url: str,
-    target: list[str],
-    deadline_s: float,
+    job_id: str,
+    *,
     step_name: str,
-) -> list[str]:
-    """Poll /lora/inventory until refs match ``target`` (or deadline).
+    deadline_s: float,
+) -> None:
+    """Poll ``/lora/set_stack/status/{job_id}`` until terminal.
 
-    Called from run_matrix when /lora/set_stack returns a proxy 502 —
-    the upstream wan server may still be processing the download. We
-    poll every 10s for up to ``deadline_s`` and return the converged
-    inventory; if convergence never happens, raise AssertionError with
-    the last observed state so the caller's matrix step fails with
-    actionable signal.
+    HTTPError and URLError are caught in SEPARATE branches: a real HTTP
+    error (e.g. 500) must surface, not be absorbed as a transient
+    transport blip the way the retired ``_wait_for_inventory_convergence``
+    swallowed it (the defect that made every failure read as
+    ``last observed []``).
+
+    Args:
+        pod_proxy_url: Base URL of the pod proxy.
+        job_id: Job ID returned by the set_stack POST.
+        step_name: Matrix step name — included in error messages.
+        deadline_s: Polling deadline in seconds; raise on expiry.
+
+    Raises:
+        AssertionError: On ``error`` terminal state (carries the server
+            ``error`` payload) or deadline expiry.
+        urllib.error.HTTPError: On a genuine HTTP error from the status
+            GET (never swallowed).
     """
-    target_sorted = sorted(target)
+    url = f"{pod_proxy_url.rstrip('/')}/lora/set_stack/status/{job_id}"
     deadline = time.monotonic() + deadline_s
-    last_observed: list[str] = []
     while time.monotonic() < deadline:
-        time.sleep(10.0)
         try:
-            resp = http.get_json(
-                f"{pod_proxy_url.rstrip('/')}/lora/inventory",
-                timeout=30,
-            )
+            data = http.get_json(url, timeout=30)
+        except urllib.error.HTTPError:
+            raise  # real HTTP error — never swallow
         except urllib.error.URLError:
-            # Treat transient probe failures as "still working".
+            time.sleep(5.0)  # genuine transient transport blip
             continue
-        last_observed = sorted(e["ref"] for e in resp.get("inventory", []))
-        if last_observed == target_sorted:
-            return last_observed
+        state = data.get("state")
+        if state == "done":
+            return
+        if state == "error":
+            raise AssertionError(f"{step_name}: swap job failed — {data.get('error')}")
+        # "queued" and "running" fall through here — keep polling. Do NOT add a
+        # catch-all `else: raise` for unknown states: it would break this loop
+        # for the two legitimate non-terminal states.
+        time.sleep(5.0)
     raise AssertionError(
-        f"{step_name}: set_stack 502 + inventory did not converge to "
-        f"{target_sorted} within {deadline_s}s — last observed {last_observed}"
+        f"{step_name}: swap job {job_id} did not finish within {deadline_s}s"
     )
 
 
@@ -188,32 +201,21 @@ def run_matrix(
     for step in steps:
         t0 = time.monotonic()
         sliced = {ref: download_specs[ref] for ref in step.target_stack}
-        try:
-            resp = http.post_json(
-                f"{pod_proxy_url.rstrip('/')}/lora/set_stack",
-                {
-                    "target_refs": step.target_stack,
-                    "download_specs": sliced,
-                },
-                timeout=900,
-            )
-            observed = sorted(e["ref"] for e in resp.get("inventory", []))
-        except urllib.error.HTTPError as exc:
-            # RunPod proxy 502s long downloads (~100s ceiling) even
-            # when the upstream wan server is still streaming bytes.
-            # Recover by polling /lora/inventory until it converges to
-            # the target stack (or we give up). Treats proxy timeout
-            # as a soft failure — the actual set_stack handler keeps
-            # running pod-side until _download_one returns or the
-            # in-handler 600s timeout fires.
-            if exc.code != 502:
-                raise
-            observed = _wait_for_inventory_convergence(
-                pod_proxy_url=pod_proxy_url,
-                target=step.target_stack,
-                deadline_s=600.0,
-                step_name=step.name,
-            )
+        submit = http.post_json(
+            f"{pod_proxy_url.rstrip('/')}/lora/set_stack",
+            {
+                "target_refs": step.target_stack,
+                "download_specs": sliced,
+            },
+            timeout=120,
+        )
+        job_id = submit["job_id"]
+        _poll_swap_job(pod_proxy_url, job_id, step_name=step.name, deadline_s=1800.0)
+        inv_resp = http.get_json(
+            f"{pod_proxy_url.rstrip('/')}/lora/inventory",
+            timeout=30,
+        )
+        observed = sorted(e["ref"] for e in inv_resp.get("inventory", []))
         assert observed == sorted(step.expected_inventory), (
             f"{step.name}: inventory mismatch — "
             f"expected {sorted(step.expected_inventory)}, got {observed}"
