@@ -190,3 +190,43 @@ def test_resolve_unknown_value_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     pipe = _MoEStub()
     with pytest.raises(wan_t2v_server.BranchUnknown):
         wan_t2v_server._resolve_transformer(pipe, "medium")
+
+
+# ---------------------------------------------------------------------------
+# Task 0 — _check_branch_legal pure gate (submit/load parity)
+# ---------------------------------------------------------------------------
+
+from kinoforge.engines.diffusers.servers.wan_t2v_server import (  # noqa: E402
+    BranchAutoNotAllowedOnMoE,
+    BranchUnknown,
+    BranchUnsupportedOnSingleTransformer,
+    _check_branch_legal,
+)
+
+
+def test_check_branch_legal_arity1_allows_auto():
+    # Bug caught: a regression that rejects auto on Wan 2.1 breaks every
+    # single-transformer deployment.
+    _check_branch_legal("auto", 1)  # must not raise
+
+
+def test_check_branch_legal_arity1_rejects_explicit():
+    # Bug caught: single-transformer pipe silently accepts high_noise
+    # (Q5 strict-reject violation).
+    with pytest.raises(BranchUnsupportedOnSingleTransformer):
+        _check_branch_legal("high_noise", 1)
+
+
+def test_check_branch_legal_moe_rejects_auto():
+    with pytest.raises(BranchAutoNotAllowedOnMoE):
+        _check_branch_legal("auto", 2)
+
+
+def test_check_branch_legal_moe_allows_explicit():
+    _check_branch_legal("high_noise", 2)
+    _check_branch_legal("low_noise", 2)
+
+
+def test_check_branch_legal_moe_rejects_unknown():
+    with pytest.raises(BranchUnknown):
+        _check_branch_legal("sideways", 2)

@@ -622,12 +622,36 @@ def _detect_moe_arity(pipe_obj: Any) -> int:  # noqa: ANN401
 _pipe_arity: int = 1
 
 
+def _check_branch_legal(branch: str, arity: int) -> None:
+    """Raise if ``branch`` is illegal for a pipeline with ``arity`` transformers.
+
+    Pure legality gate — no pipe object needed. Shared by the submit-time
+    hoist in ``set_stack`` and the load-time ``_resolve_transformer`` dispatch,
+    so a request that passes the submit-time check can never be rejected by the
+    branch gate at load (spec §Risks — branch-gate hoist).
+
+    Raises:
+        BranchUnsupportedOnSingleTransformer: explicit branch on ``arity == 1``.
+        BranchAutoNotAllowedOnMoE: ``branch == "auto"`` on ``arity > 1``.
+        BranchUnknown: off-Literal value on ``arity > 1``.
+    """
+    if arity == 1:
+        if branch != "auto":
+            raise BranchUnsupportedOnSingleTransformer(branch=branch, arity=arity)
+        return
+    if branch == "auto":
+        raise BranchAutoNotAllowedOnMoE(arity=arity)
+    if branch not in ("high_noise", "low_noise"):
+        raise BranchUnknown(branch=branch)
+
+
 def _resolve_transformer(pipe_obj: Any, branch: str) -> Any:  # noqa: ANN401
     """Map ``(pipe_obj, branch)`` to the target transformer attribute.
 
     Single dispatch point — every LoRA-load call site (``/lora/set_stack``
     handler, cold-boot loop, VRAM-OOM rollback) routes through this
-    helper. No branch-aware duck typing scattered elsewhere.
+    helper. Legality is delegated to ``_check_branch_legal`` so submit-time
+    and load-time reject identically.
 
     Raises:
         BranchAutoNotAllowedOnMoE: ``branch="auto"`` on a MoE pipe.
@@ -637,17 +661,12 @@ def _resolve_transformer(pipe_obj: Any, branch: str) -> Any:  # noqa: ANN401
             (defensive — Pydantic should reject these earlier).
     """
     arity = _pipe_arity
+    _check_branch_legal(branch, arity)
     if arity == 1:
-        if branch == "auto":
-            return pipe_obj.transformer
-        raise BranchUnsupportedOnSingleTransformer(branch=branch, arity=arity)
-    if branch == "auto":
-        raise BranchAutoNotAllowedOnMoE(arity=arity)
+        return pipe_obj.transformer
     if branch == "high_noise":
         return pipe_obj.transformer
-    if branch == "low_noise":
-        return pipe_obj.transformer_2
-    raise BranchUnknown(branch=branch)
+    return pipe_obj.transformer_2  # low_noise — the only legal remainder
 
 
 _BRANCH_SHORT: dict[str, str] = {
