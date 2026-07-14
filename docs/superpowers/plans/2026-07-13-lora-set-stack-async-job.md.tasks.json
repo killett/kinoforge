@@ -25,7 +25,7 @@
     {
       "id": 3,
       "subject": "Task 3: Harness submit+poll driver + logging fix",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** `matrix.run_matrix` drives set_stack via submit+poll; split `except URLError` that swallowed `HTTPError`; failures assert with the real `status.error` payload not `last observed []`.\n\n**Files:** Modify `tests/_smoke_harness/matrix.py` (add `_poll_swap_job`, retire `_wait_for_inventory_convergence`); Test `tests/_smoke_harness/test_matrix.py`.\n\n**Acceptance Criteria:** run_matrix submits→polls→asserts inventory; error payload string surfaced in AssertionError; HTTPError not swallowed as URLError (separate branches); obsolete 502-recovery test replaced.\n\n**Verify:** `pixi run pytest tests/_smoke_harness/test_matrix.py -q`\n\n```json:metadata\n{\"files\": [\"tests/_smoke_harness/matrix.py\", \"tests/_smoke_harness/test_matrix.py\"], \"verifyCommand\": \"pixi run pytest tests/_smoke_harness/test_matrix.py -q\", \"acceptanceCriteria\": [\"run_matrix polls swap job then asserts inventory\", \"real error string surfaced\", \"HTTPError not swallowed as URLError\", \"obsolete 502-recovery test replaced\"], \"modelTier\": \"standard\"}\n```"
     },

@@ -39,22 +39,34 @@ def test_run_matrix_happy_path_inventory_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bug: runner forgets /lora/set_stack response → can't catch a pod
-    that ack'd set_stack but didn't actually load."""
+    that ack'd set_stack but didn't actually load.
+
+    POST now returns ``{"job_id"}``; the runner polls
+    ``/lora/set_stack/status/{job_id}`` to done, then reads
+    ``/lora/inventory`` for the post-step state.
+    """
     set_stack_calls: list[dict[str, Any]] = []
     health_calls: list[str] = []
+    step_counter = {"n": 0}
 
     def _post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
         set_stack_calls.append(body)
-        return {
-            "inventory": [{"ref": r} for r in body["target_refs"]],
-            "free_bytes": 9,
-        }
+        job_id = f"j-{len(set_stack_calls)}"
+        return {"job_id": job_id}
 
     def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
         if "/health" in url:
             health_calls.append(url)
             return {"ready": True, "model": "stub"}
-        return {"inventory": [], "free_bytes": 9}
+        if "set_stack/status" in url:
+            # Return done immediately; inventory is confirmed separately.
+            return {"state": "done", "inventory": [], "free_bytes": 9}
+        # /lora/inventory — return refs matching the current step's target.
+        idx = step_counter["n"]
+        step_counter["n"] += 1
+        refs_by_step = [["civitai:A@1"], ["civitai:B@2"]]
+        refs = refs_by_step[idx] if idx < len(refs_by_step) else []
+        return {"inventory": [{"ref": r} for r in refs], "free_bytes": 9}
 
     monkeypatch.setattr(f"{_HTTP}.post_json", _post)
     monkeypatch.setattr(f"{_HTTP}.get_json", _get)
@@ -87,12 +99,20 @@ def test_run_matrix_raises_on_inventory_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bug: runner accepts wrong post-state → smoke passes against
-    broken pod."""
+    broken pod.
+
+    POST returns ``{"job_id"}``, status GET returns done, but
+    ``/lora/inventory`` returns the wrong refs — runner must still
+    raise AssertionError naming the step.
+    """
 
     def _post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
-        return {"inventory": [{"ref": "wrong"}], "free_bytes": 9}
+        return {"job_id": "j-mismatch"}
 
     def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        if "set_stack/status" in url:
+            return {"state": "done", "inventory": [], "free_bytes": 9}
+        # /lora/inventory + /health — always "wrong"
         return {"inventory": [{"ref": "wrong"}], "free_bytes": 9}
 
     monkeypatch.setattr(f"{_HTTP}.post_json", _post)
@@ -110,78 +130,34 @@ def test_run_matrix_raises_on_inventory_mismatch(
         )
 
 
-def test_run_matrix_recovers_from_proxy_502_via_inventory_poll(
+def test_run_matrix_propagates_http_error_from_status_poll(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bug: a proxy 502 on /lora/set_stack aborts the matrix even when
-    the upstream wan server is still processing the download. Runner
-    must catch 502 + poll /lora/inventory until it matches the target.
+    """Bug: the retired 502-recovery swallowed any URLError (which in
+    Python's urllib also catches HTTPError). A genuine HTTP error on the
+    status GET (e.g. 500 Internal Server Error) must propagate, not be
+    absorbed as a transient transport blip.
+
+    The new ``_poll_swap_job`` catches HTTPError and URLError in separate
+    branches; only URLError is swallowed (transient transport); HTTPError
+    is re-raised immediately.
     """
     import email.message
     import urllib.error
 
-    set_stack_calls: list[int] = []
-    inventory_calls: list[int] = []
-    inventory_response_idx = iter(
-        [
-            {"inventory": [], "free_bytes": 9},  # 1st poll: still downloading
-            {
-                "inventory": [{"ref": "civitai:A@1"}],
-                "free_bytes": 9,
-            },  # 2nd: converged
-        ]
+    monkeypatch.setattr(
+        f"{_HTTP}.post_json",
+        lambda u, b, *, timeout: {"job_id": "j-http-err"},  # noqa: ARG005
     )
 
-    def _post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
-        set_stack_calls.append(1)
+    def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        if "/health" in url:
+            return {"ready": True}
+        # Status poll raises a genuine 500.
         raise urllib.error.HTTPError(
-            url, 502, "Bad Gateway", email.message.Message(), None
+            url, 500, "Internal Server Error", email.message.Message(), None
         )
 
-    def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
-        inventory_calls.append(1)
-        return next(inventory_response_idx)
-
-    monkeypatch.setattr(f"{_HTTP}.post_json", _post)
-    monkeypatch.setattr(f"{_HTTP}.get_json", _get)
-    # Compress the poll interval so the test stays fast.
-    monkeypatch.setattr("tests._smoke_harness.matrix.time.sleep", lambda s: None)
-    report = matrix.run_matrix(
-        cfg_path=Path("/x"),
-        pod_proxy_url="http://stub",
-        steps=[
-            matrix.MatrixStep(
-                name="step-1-load-a",
-                target_stack=["civitai:A@1"],
-                expected_inventory=["civitai:A@1"],
-            ),
-        ],
-        download_specs={"civitai:A@1": _spec("a")},
-        generate_per_step=False,
-    )
-    assert len(report.steps) == 1
-    assert report.steps[0].inventory_after == ["civitai:A@1"]
-    assert len(set_stack_calls) == 1
-    assert len(inventory_calls) == 2
-
-
-def test_run_matrix_propagates_non_502_http_errors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Bug: 502-recovery accidentally swallows 4xx (e.g. 403 auth failure)
-    that should fail loud immediately."""
-    import email.message
-    import urllib.error
-
-    def _post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
-        raise urllib.error.HTTPError(
-            url, 403, "Forbidden", email.message.Message(), None
-        )
-
-    def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
-        return {"ready": True}  # satisfies the warmup /health probe
-
-    monkeypatch.setattr(f"{_HTTP}.post_json", _post)
     monkeypatch.setattr(f"{_HTTP}.get_json", _get)
     with pytest.raises(urllib.error.HTTPError) as exc:
         matrix.run_matrix(
@@ -197,7 +173,7 @@ def test_run_matrix_propagates_non_502_http_errors(
             download_specs={"civitai:A@1": _spec("a")},
             generate_per_step=False,
         )
-    assert exc.value.code == 403
+    assert exc.value.code == 500
 
 
 def test_run_matrix_distinct_sha_assertion(
@@ -209,15 +185,30 @@ def test_run_matrix_distinct_sha_assertion(
     fixed_mp4.write_bytes(b"identical")
 
     def _post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
-        return {
-            "inventory": [{"ref": r} for r in body["target_refs"]],
-            "free_bytes": 9,
-        }
+        return {"job_id": "j-sha-test"}
 
     def _generate(cfg: Path, pod_id: str, prompt: str) -> Path:  # noqa: ARG001
         return fixed_mp4
 
+    step_refs = [["civitai:A@1"], ["civitai:B@2"]]
+    status_call_n = {"n": 0}
+    inv_call_n = {"n": 0}
+
     def _get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        if "set_stack/status" in url:
+            idx = status_call_n["n"]
+            status_call_n["n"] += 1
+            refs = step_refs[idx] if idx < len(step_refs) else []
+            return {
+                "state": "done",
+                "inventory": [{"ref": r} for r in refs],
+                "free_bytes": 9,
+            }
+        if "lora/inventory" in url:
+            idx = inv_call_n["n"]
+            inv_call_n["n"] += 1
+            refs = step_refs[idx] if idx < len(step_refs) else []
+            return {"inventory": [{"ref": r} for r in refs], "free_bytes": 9}
         return {"ready": True}
 
     monkeypatch.setattr(f"{_HTTP}.post_json", _post)
@@ -235,4 +226,86 @@ def test_run_matrix_distinct_sha_assertion(
             generate_per_step=True,
             sha_distinct_required=True,
             pod_id="pod-x",
+        )
+
+
+def test_run_matrix_polls_swap_job_to_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug caught: harness never learns the swap finished because it polls
+    the wrong signal — POST response inventory vs job status endpoint."""
+    posts: list[dict[str, Any]] = []
+
+    def fake_post(url: str, body: dict[str, Any], *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        posts.append(body)
+        return {"job_id": "s-1"}
+
+    swap_status: list[dict[str, Any]] = [
+        {"state": "running"},
+        {"state": "done", "inventory": [{"ref": "civitai:A@1"}], "free_bytes": 9},
+    ]
+
+    def fake_get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        if "set_stack/status" in url:
+            return swap_status.pop(0)
+        if "/health" in url:
+            return {"ready": True}
+        return {"inventory": [{"ref": "civitai:A@1"}], "free_bytes": 9}
+
+    monkeypatch.setattr(f"{_HTTP}.post_json", fake_post)
+    monkeypatch.setattr(f"{_HTTP}.get_json", fake_get)
+    monkeypatch.setattr("tests._smoke_harness.matrix.time.sleep", lambda s: None)
+    report = matrix.run_matrix(
+        cfg_path=Path("x"),
+        pod_proxy_url="http://pod:8000",
+        steps=[
+            matrix.MatrixStep(
+                name="s",
+                target_stack=["civitai:A@1"],
+                expected_inventory=["civitai:A@1"],
+            )
+        ],
+        download_specs={"civitai:A@1": _spec("a")},
+        generate_per_step=False,
+    )
+    assert report.steps[0].inventory_after == ["civitai:A@1"]
+
+
+def test_run_matrix_surfaces_real_error_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug caught: the 3-week misdiagnosis — a real failure logged as
+    `last observed []` instead of the server's error string.  Now the
+    job error payload must surface verbatim in the AssertionError."""
+    monkeypatch.setattr(
+        f"{_HTTP}.post_json",
+        lambda u, b, *, timeout: {"job_id": "s-9"},  # noqa: ARG005
+    )
+
+    def fake_get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        if "set_stack/status" in url:
+            return {
+                "state": "error",
+                "error": {
+                    "error": "lora_download_failed",
+                    "status": 502,
+                    "underlying": "connection reset",
+                },
+            }
+        return {"ready": True}
+
+    monkeypatch.setattr(f"{_HTTP}.get_json", fake_get)
+    with pytest.raises(AssertionError, match="connection reset"):
+        matrix.run_matrix(
+            cfg_path=Path("x"),
+            pod_proxy_url="http://pod:8000",
+            steps=[
+                matrix.MatrixStep(
+                    name="s",
+                    target_stack=["civitai:A@1"],
+                    expected_inventory=["civitai:A@1"],
+                )
+            ],
+            download_specs={"civitai:A@1": _spec("a")},
+            generate_per_step=False,
         )
