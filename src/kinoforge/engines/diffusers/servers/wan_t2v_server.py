@@ -512,6 +512,11 @@ _inventory: dict[tuple[str, str], dict[str, Any]] = {}
 # duration of (diff + evict + download + reload).
 _swap_lock: asyncio.Lock = asyncio.Lock()
 
+# Async /lora/set_stack jobs. Keyed by job_id; mutated by _run_swap_job.
+# In-memory + volatile like _upscale_jobs / _interpolate_jobs — a pod
+# restart implies cold-boot, so lost job state is acceptable.
+_swap_jobs: dict[str, dict[str, Any]] = {}
+
 
 # ---------------------------------------------------------------------------
 # P2 — pipeline arity detection + per-transformer LoRA routing.
@@ -650,8 +655,7 @@ def _resolve_transformer(pipe_obj: Any, branch: str) -> Any:  # noqa: ANN401
 
     Single dispatch point — every LoRA-load call site (``/lora/set_stack``
     handler, cold-boot loop, VRAM-OOM rollback) routes through this
-    helper. Legality is delegated to ``_check_branch_legal`` so submit-time
-    and load-time reject identically.
+    helper. No branch-aware duck typing scattered elsewhere.
 
     Raises:
         BranchAutoNotAllowedOnMoE: ``branch="auto"`` on a MoE pipe.
@@ -661,12 +665,17 @@ def _resolve_transformer(pipe_obj: Any, branch: str) -> Any:  # noqa: ANN401
             (defensive — Pydantic should reject these earlier).
     """
     arity = _pipe_arity
-    _check_branch_legal(branch, arity)
     if arity == 1:
-        return pipe_obj.transformer
+        if branch == "auto":
+            return pipe_obj.transformer
+        raise BranchUnsupportedOnSingleTransformer(branch=branch, arity=arity)
+    if branch == "auto":
+        raise BranchAutoNotAllowedOnMoE(arity=arity)
     if branch == "high_noise":
         return pipe_obj.transformer
-    return pipe_obj.transformer_2  # low_noise — the only legal remainder
+    if branch == "low_noise":
+        return pipe_obj.transformer_2
+    raise BranchUnknown(branch=branch)
 
 
 _BRANCH_SHORT: dict[str, str] = {
@@ -1492,222 +1501,26 @@ async def inventory() -> InventoryResponse:
 
 
 @app.post("/lora/set_stack")
-async def set_stack(req: SetStackRequest) -> SetStackResponse:
-    """Apply ``req.target`` as the pod's active LoRA stack.
+async def set_stack(req: SetStackRequest) -> dict[str, str]:
+    """Validate synchronously, enqueue the swap job, return its id.
 
-    Idempotent in the no-op case (target == current). On a partial-overlap
-    request the handler downloads only the new refs, optionally evicting
-    LRU losers first if free disk is insufficient, then reloads the
-    pipeline so ``set_adapters`` matches ``req.target`` order.
+    Branch-legality is checked here (before any download) so an
+    unsupported-branch request gets a 400 immediately rather than
+    after a 350 MB download.  All other work (evict / download /
+    reload) runs in ``_run_swap_job`` as an asyncio background task.
+    Poll ``GET /lora/set_stack/status/{job_id}`` for the result.
 
     Args:
         req: Declarative target stack + per-new-ref download specs.
 
     Returns:
-        Post-swap inventory snapshot + free disk bytes. ``swap_rejected``
-        stays ``None`` on the happy path; failure-path subclasses set it in
-        Task 8.
-
-    Raises:
-        RuntimeError: When even evicting every eligible candidate would not
-            free enough disk for the requested downloads. The matcher is
-            expected to catch this upstream; reaching it here indicates a
-            matcher / pod inventory drift.
+        ``{"job_id": str}`` — poll the status endpoint for completion.
     """
-    async with _swap_lock:
-        # P2 (2026-06-22): inventory is keyed by composite (ref, branch);
-        # so are every diff/eviction set. The download_specs map stays
-        # keyed by ref (one download serves multiple branches of the same
-        # ref) — we dedup downloads by ref but track inventory entries
-        # by composite key.
-        target_keys_list = [(t.ref, t.branch) for t in req.target]
-        target_keys = set(target_keys_list)
-
-        # Swap-gap fix (2026-06-23): seed pending inventory entries for
-        # every target (ref, branch) whose ref already has any (ref, *)
-        # entry on disk, BEFORE computing mandatory_evict. This anchors
-        # the on-disk file via a surviving sibling so the file-aware
-        # unlink in `_evict_one` does NOT delete artifacts the new
-        # branches still need. See
-        # docs/superpowers/specs/2026-06-23-p2-swap-gap-design.md §3.3.
-        on_disk_by_ref: dict[str, dict[str, Any]] = {}
-        for (ref, _br), entry in _inventory.items():
-            on_disk_by_ref.setdefault(ref, entry)
-        for tref, tbranch in target_keys_list:
-            if (tref, tbranch) in _inventory:
-                continue
-            source = on_disk_by_ref.get(tref)
-            if source is None:
-                continue
-            now = datetime.now().isoformat()
-            _inventory[(tref, tbranch)] = {
-                "ref": tref,
-                "filename": source["filename"],
-                "size_bytes": source["size_bytes"],
-                "loras_dir_path": source["loras_dir_path"],
-                "downloaded_at_local": source["downloaded_at_local"],
-                "last_used_at_local": now,
-                "adapter_name": f"lora_pending_{tref}_{_BRANCH_SHORT[tbranch]}",
-                "branch": tbranch,
-            }
-
-        current_keys = set(_inventory.keys())
-        mandatory_evict = current_keys - target_keys
-        already_downloaded_refs = {ref for (ref, _br) in current_keys}
-        to_download_refs: list[str] = []
-        _seen_dl: set[str] = set()
-        for ref, _br in target_keys_list:
-            if ref in already_downloaded_refs or ref in _seen_dl:
-                continue
-            to_download_refs.append(ref)
-            _seen_dl.add(ref)
-
-        initial_free = _disk_free_bytes(LORAS_DIR)
-        target_dl_bytes = sum(
-            (req.download_specs[r].size_hint or 0) for r in to_download_refs
-        )
-        # mandatory_freed only counts bytes that are actually reclaimable
-        # — i.e. evicted (ref, branch) entries whose ref will NOT survive
-        # in any other inventory key (target-seeded sibling or current
-        # non-evicted key). Without this guard, a same-ref branch swap
-        # would double-count the shared file's size as freed even though
-        # `_evict_one`'s file-aware unlink correctly keeps it on disk.
-        post_evict_keys = (current_keys - mandatory_evict) | target_keys
-        mandatory_freed = sum(
-            _inventory[k]["size_bytes"]
-            for k in mandatory_evict
-            if not any(other_ref == k[0] for other_ref, _ in post_evict_keys)
-        )
-        # Snapshot pre-swap state for VRAM-OOM rollback (P1: refs AND
-        # strengths; P2: AND branch — _snapshot_inventory_as_targets emits
-        # full LoraTarget triples so rollback is fully reversible).
-        previous_state = _snapshot_inventory_as_targets()
-        previous_keys = {(t.ref, t.branch) for t in previous_state}
-
-        for key in mandatory_evict:
-            await _evict_one(key[0], key[1])
-
-        post_mandatory_free = initial_free + mandatory_freed
-        evict_completed: list[str] = [ref for (ref, _br) in mandatory_evict]
-        if target_dl_bytes > post_mandatory_free:
-            picked = _pick_lru_evict(
-                set(_inventory.keys()) - target_keys,
-                _inventory,
-                need=target_dl_bytes - post_mandatory_free,
-            )
-            if picked is None:
-                raise HTTPException(
-                    status_code=507,
-                    detail={
-                        "error": "disk_full",
-                        "phase": "plan",
-                        "evict_completed": evict_completed,
-                        "download_completed": [],
-                        "download_failed": None,
-                        "underlying": "insufficient disk even after full eviction",
-                    },
-                )
-            for key in picked:
-                await _evict_one(key[0], key[1])
-                evict_completed.append(key[0])
-
-        download_completed: list[str] = []
-        _log.info(
-            "set_stack handler: target=%s evict=%s download=%s",
-            target_keys_list,
-            list(mandatory_evict),
-            to_download_refs,
-        )
-        for ref in to_download_refs:
-            spec = req.download_specs[ref]
-            _log.info(
-                "set_stack download starting: ref=%s url=%s filename=%s size_hint=%s",
-                ref,
-                spec.url[:80],
-                spec.filename,
-                spec.size_hint,
-            )
-            try:
-                # asyncio.to_thread: _download_one is sync urllib +
-                # blocking file IO. Running it inline blocks the FastAPI
-                # event loop for the duration of the download, causing
-                # /health requests to time out and RunPod's edge proxy
-                # to return "Waiting for service to respond" (HTTP 502)
-                # even though uvicorn is alive. Offloading to a thread
-                # keeps the event loop responsive.
-                path, actual_bytes = await asyncio.to_thread(
-                    _download_one, spec, LORAS_DIR
-                )
-            except OSError as e:
-                if e.errno == 28:  # ENOSPC
-                    raise HTTPException(
-                        status_code=507,
-                        detail={
-                            "error": "disk_full",
-                            "phase": "download",
-                            "evict_completed": evict_completed,
-                            "download_completed": download_completed,
-                            "download_failed": ref,
-                            "underlying": str(e),
-                        },
-                    ) from e
-                raise HTTPException(
-                    status_code=502,
-                    detail={
-                        "error": "lora_download_failed",
-                        "phase": "download",
-                        "evict_completed": evict_completed,
-                        "download_completed": download_completed,
-                        "download_failed": ref,
-                        "underlying": str(e),
-                    },
-                ) from e
-            except Exception as e:
-                # Log before raising so the bootstrap sidecar log carries
-                # the failure cause (raised HTTPException only travels in
-                # the response body which the harness's HTTPError catch
-                # path discards by default).
-                _log.warning("set_stack download failed for ref=%s: %r", ref, e)
-                raise HTTPException(
-                    status_code=502,
-                    detail={
-                        "error": "lora_download_failed",
-                        "phase": "download",
-                        "evict_completed": evict_completed,
-                        "download_completed": download_completed,
-                        "download_failed": ref,
-                        "underlying": str(e),
-                    },
-                ) from e
-            now = datetime.now().isoformat()
-            # P2: write one inventory entry per (ref, branch) that the
-            # target stack asks for. ``branch`` is stamped with the
-            # target's value; ``_replace_adapter_stack`` will overwrite
-            # ``adapter_name`` + ``last_strength`` + ``branch`` once the
-            # actual load runs.
-            for tref, tbranch in target_keys_list:
-                if tref != ref:
-                    continue
-                if (tref, tbranch) in _inventory:
-                    continue
-                _inventory[(tref, tbranch)] = {
-                    "ref": tref,
-                    "filename": spec.filename,
-                    "size_bytes": actual_bytes,
-                    "loras_dir_path": path,
-                    "downloaded_at_local": now,
-                    "last_used_at_local": now,
-                    "adapter_name": f"lora_pending_{tref}_{_BRANCH_SHORT[tbranch]}",
-                    "branch": tbranch,
-                }
-            download_completed.append(ref)
-
+    # Branch-legality gate hoisted before any download.
+    for t in req.target:
         try:
-            await asyncio.to_thread(_replace_adapter_stack, req.target)
+            _check_branch_legal(t.branch, _pipe_arity)
         except BranchAutoNotAllowedOnMoE as e:
-            # Pre-load gate atomic-reject. _replace_adapter_stack raised
-            # BEFORE any unload/load fired, so inventory + pipeline are
-            # untouched and no rollback is needed.
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -1727,7 +1540,6 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
                 },
             ) from e
         except BranchUnknown as e:
-            # Defensive — Pydantic Literal should make this unreachable.
             raise HTTPException(
                 status_code=500,
                 detail={
@@ -1736,59 +1548,390 @@ async def set_stack(req: SetStackRequest) -> SetStackResponse:
                     "branch": e.branch,
                 },
             ) from e
-        except (RuntimeError, ValueError) as e:
-            msg = str(e).lower()
-            is_oom = "out of memory" in msg or "oom" in msg
-            is_value = isinstance(e, ValueError)
-            if not (is_oom or is_value):
-                raise
-            dropped_keys = [k for k in target_keys_list if k not in previous_keys]
-            dropped = [ref for (ref, _br) in dropped_keys]
-            for key in dropped_keys:
-                _inventory.pop(key, None)
-            # Files are keyed by ref (one download serves multiple branch
-            # entries). Only unlink each ref's file once, after every
-            # branch entry that referenced it has been popped.
-            dropped_refs_unique = {ref for (ref, _br) in dropped_keys}
-            for ref in dropped_refs_unique:
-                if any(k[0] == ref for k in _inventory):
-                    continue  # another branch still references the file
-                dropped_spec = req.download_specs.get(ref)
-                if dropped_spec is not None:
-                    try:
-                        (LORAS_DIR / dropped_spec.filename).unlink(missing_ok=True)
-                    except OSError:
-                        pass
+
+    plan_507 = _plan_disk_infeasible(req)
+    if plan_507 is not None:
+        raise HTTPException(status_code=507, detail=plan_507)
+
+    job_id = f"s-{uuid.uuid4().hex}"
+    _swap_jobs[job_id] = {
+        "state": "queued",
+        "inventory": None,
+        "free_bytes": None,
+        "swap_rejected": None,
+        "error": None,
+    }
+    asyncio.create_task(_run_swap_job(job_id, req))
+    return {"job_id": job_id}
+
+
+@app.get("/lora/set_stack/status/{job_id}")
+def set_stack_status(job_id: str) -> dict[str, Any]:
+    """Return the swap job record; 404 if unknown.
+
+    States: ``queued`` → ``running`` → ``done`` | ``error``.
+    On ``done``: ``inventory``, ``free_bytes``, ``swap_rejected`` are set.
+    On ``error``: ``error`` dict carries ``status`` + ``error`` fields.
+    """
+    payload = _swap_jobs.get(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
+    return payload
+
+
+def _plan_disk_infeasible(req: SetStackRequest) -> dict[str, Any] | None:
+    """Return a 507 ``phase:"plan"`` detail if ``req`` cannot fit on disk.
+
+    Pure feasibility pre-check — reads ``_disk_free_bytes`` + ``_inventory``
+    sizes only; performs NO eviction, acquires NO lock, downloads nothing.
+    Hoisted to the synchronous ``set_stack`` submit path so a plan that cannot
+    fit even after evicting every non-target LoRA is rejected with HTTP 507 at
+    POST, before any job is enqueued (spec §2 — plan-time-disk sync-raise).
+
+    The inequality ``target_dl_bytes > initial_free + total_reclaimable`` is
+    exactly the ``picked is None`` condition the in-job plan check would hit:
+    ``total_reclaimable`` is every on-disk ``(ref, branch)`` entry whose ref is
+    NOT a target ref (target-ref files survive a full eviction via sibling
+    seeding, so they are never reclaimable), summed per-entry to mirror the
+    in-job ``mandatory_freed`` accounting.
+
+    Args:
+        req: The declarative target stack + per-new-ref download specs.
+
+    Returns:
+        The 507 ``disk_full`` / ``phase:"plan"`` detail dict when infeasible,
+        else ``None``.
+    """
+    target_refs = {t.ref for t in req.target}
+    on_disk_refs = {ref for (ref, _br) in _inventory}
+    to_download_refs = [
+        r for r in dict.fromkeys(t.ref for t in req.target) if r not in on_disk_refs
+    ]
+    target_dl_bytes = sum(
+        (req.download_specs[r].size_hint or 0) for r in to_download_refs
+    )
+    initial_free = _disk_free_bytes(LORAS_DIR)
+    total_reclaimable = sum(
+        entry["size_bytes"]
+        for (ref, _br), entry in _inventory.items()
+        if ref not in target_refs
+    )
+    if target_dl_bytes > initial_free + total_reclaimable:
+        return {
+            "error": "disk_full",
+            "phase": "plan",
+            "evict_completed": [],
+            "download_completed": [],
+            "download_failed": None,
+            "underlying": "insufficient disk even after full eviction",
+        }
+    return None
+
+
+async def _run_swap_job(job_id: str, req: SetStackRequest) -> None:
+    """Apply ``req.target`` as the pod's active LoRA stack (background task).
+
+    Called via ``asyncio.create_task`` from ``set_stack``; mutates
+    ``_swap_jobs[job_id]`` with state + result. Branch legality was already
+    validated at submit time; this function only raises HTTPException for
+    disk/download/VRAM errors which are caught and stored in the job record.
+
+    Args:
+        job_id: Key into ``_swap_jobs``.
+        req: Declarative target stack + per-new-ref download specs.
+    """
+    _swap_jobs[job_id]["state"] = "running"
+    try:
+        async with _swap_lock:
+            # P2 (2026-06-22): inventory is keyed by composite (ref, branch);
+            # so are every diff/eviction set. The download_specs map stays
+            # keyed by ref (one download serves multiple branches of the same
+            # ref) — we dedup downloads by ref but track inventory entries
+            # by composite key.
+            target_keys_list = [(t.ref, t.branch) for t in req.target]
+            target_keys = set(target_keys_list)
+
+            # Swap-gap fix (2026-06-23): seed pending inventory entries for
+            # every target (ref, branch) whose ref already has any (ref, *)
+            # entry on disk, BEFORE computing mandatory_evict. This anchors
+            # the on-disk file via a surviving sibling so the file-aware
+            # unlink in `_evict_one` does NOT delete artifacts the new
+            # branches still need. See
+            # docs/superpowers/specs/2026-06-23-p2-swap-gap-design.md §3.3.
+            on_disk_by_ref: dict[str, dict[str, Any]] = {}
+            for (ref, _br), entry in _inventory.items():
+                on_disk_by_ref.setdefault(ref, entry)
+            for tref, tbranch in target_keys_list:
+                if (tref, tbranch) in _inventory:
+                    continue
+                source = on_disk_by_ref.get(tref)
+                if source is None:
+                    continue
+                now = datetime.now().isoformat()
+                _inventory[(tref, tbranch)] = {
+                    "ref": tref,
+                    "filename": source["filename"],
+                    "size_bytes": source["size_bytes"],
+                    "loras_dir_path": source["loras_dir_path"],
+                    "downloaded_at_local": source["downloaded_at_local"],
+                    "last_used_at_local": now,
+                    "adapter_name": f"lora_pending_{tref}_{_BRANCH_SHORT[tbranch]}",
+                    "branch": tbranch,
+                }
+
+            current_keys = set(_inventory.keys())
+            mandatory_evict = current_keys - target_keys
+            already_downloaded_refs = {ref for (ref, _br) in current_keys}
+            to_download_refs: list[str] = []
+            _seen_dl: set[str] = set()
+            for ref, _br in target_keys_list:
+                if ref in already_downloaded_refs or ref in _seen_dl:
+                    continue
+                to_download_refs.append(ref)
+                _seen_dl.add(ref)
+
+            initial_free = _disk_free_bytes(LORAS_DIR)
+            target_dl_bytes = sum(
+                (req.download_specs[r].size_hint or 0) for r in to_download_refs
+            )
+            # mandatory_freed only counts bytes that are actually reclaimable
+            # — i.e. evicted (ref, branch) entries whose ref will NOT survive
+            # in any other inventory key (target-seeded sibling or current
+            # non-evicted key). Without this guard, a same-ref branch swap
+            # would double-count the shared file's size as freed even though
+            # `_evict_one`'s file-aware unlink correctly keeps it on disk.
+            post_evict_keys = (current_keys - mandatory_evict) | target_keys
+            mandatory_freed = sum(
+                _inventory[k]["size_bytes"]
+                for k in mandatory_evict
+                if not any(other_ref == k[0] for other_ref, _ in post_evict_keys)
+            )
+            # Snapshot pre-swap state for VRAM-OOM rollback (P1: refs AND
+            # strengths; P2: AND branch — _snapshot_inventory_as_targets emits
+            # full LoraTarget triples so rollback is fully reversible).
+            previous_state = _snapshot_inventory_as_targets()
+            previous_keys = {(t.ref, t.branch) for t in previous_state}
+
+            for key in mandatory_evict:
+                await _evict_one(key[0], key[1])
+
+            post_mandatory_free = initial_free + mandatory_freed
+            evict_completed: list[str] = [ref for (ref, _br) in mandatory_evict]
+            if target_dl_bytes > post_mandatory_free:
+                picked = _pick_lru_evict(
+                    set(_inventory.keys()) - target_keys,
+                    _inventory,
+                    need=target_dl_bytes - post_mandatory_free,
+                )
+                if picked is None:
+                    raise HTTPException(
+                        status_code=507,
+                        detail={
+                            "error": "disk_full",
+                            "phase": "plan",
+                            "evict_completed": evict_completed,
+                            "download_completed": [],
+                            "download_failed": None,
+                            "underlying": "insufficient disk even after full eviction",
+                        },
+                    )
+                for key in picked:
+                    await _evict_one(key[0], key[1])
+                    evict_completed.append(key[0])
+
+            download_completed: list[str] = []
+            _log.info(
+                "set_stack handler: target=%s evict=%s download=%s",
+                target_keys_list,
+                list(mandatory_evict),
+                to_download_refs,
+            )
+            for ref in to_download_refs:
+                spec = req.download_specs[ref]
+                _log.info(
+                    "set_stack download starting: ref=%s url=%s filename=%s size_hint=%s",
+                    ref,
+                    spec.url[:80],
+                    spec.filename,
+                    spec.size_hint,
+                )
+                try:
+                    # asyncio.to_thread: _download_one is sync urllib +
+                    # blocking file IO. Running it inline blocks the FastAPI
+                    # event loop for the duration of the download, causing
+                    # /health requests to time out and RunPod's edge proxy
+                    # to return "Waiting for service to respond" (HTTP 502)
+                    # even though uvicorn is alive. Offloading to a thread
+                    # keeps the event loop responsive.
+                    path, actual_bytes = await asyncio.to_thread(
+                        _download_one, spec, LORAS_DIR
+                    )
+                except OSError as e:
+                    if e.errno == 28:  # ENOSPC
+                        raise HTTPException(
+                            status_code=507,
+                            detail={
+                                "error": "disk_full",
+                                "phase": "download",
+                                "evict_completed": evict_completed,
+                                "download_completed": download_completed,
+                                "download_failed": ref,
+                                "underlying": str(e),
+                            },
+                        ) from e
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "error": "lora_download_failed",
+                            "phase": "download",
+                            "evict_completed": evict_completed,
+                            "download_completed": download_completed,
+                            "download_failed": ref,
+                            "underlying": str(e),
+                        },
+                    ) from e
+                except Exception as e:
+                    # Log before raising so the bootstrap sidecar log carries
+                    # the failure cause (raised HTTPException only travels in
+                    # the response body which the harness's HTTPError catch
+                    # path discards by default).
+                    _log.warning("set_stack download failed for ref=%s: %r", ref, e)
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "error": "lora_download_failed",
+                            "phase": "download",
+                            "evict_completed": evict_completed,
+                            "download_completed": download_completed,
+                            "download_failed": ref,
+                            "underlying": str(e),
+                        },
+                    ) from e
+                now = datetime.now().isoformat()
+                # P2: write one inventory entry per (ref, branch) that the
+                # target stack asks for. ``branch`` is stamped with the
+                # target's value; ``_replace_adapter_stack`` will overwrite
+                # ``adapter_name`` + ``last_strength`` + ``branch`` once the
+                # actual load runs.
+                for tref, tbranch in target_keys_list:
+                    if tref != ref:
+                        continue
+                    if (tref, tbranch) in _inventory:
+                        continue
+                    _inventory[(tref, tbranch)] = {
+                        "ref": tref,
+                        "filename": spec.filename,
+                        "size_bytes": actual_bytes,
+                        "loras_dir_path": path,
+                        "downloaded_at_local": now,
+                        "last_used_at_local": now,
+                        "adapter_name": f"lora_pending_{tref}_{_BRANCH_SHORT[tbranch]}",
+                        "branch": tbranch,
+                    }
+                download_completed.append(ref)
+
             try:
-                await asyncio.to_thread(_replace_adapter_stack, previous_state)
-            except Exception as rb_err:  # noqa: BLE001
-                # Rollback ITSELF failed — pod state unknown. Surface
-                # explicitly so the orchestrator destroys + cold-boots
-                # rather than trusting an inventory we can't validate.
+                await asyncio.to_thread(_replace_adapter_stack, req.target)
+            except BranchAutoNotAllowedOnMoE as e:
+                # Pre-load gate atomic-reject. _replace_adapter_stack raised
+                # BEFORE any unload/load fired, so inventory + pipeline are
+                # untouched and no rollback is needed.
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "branch_routing",
+                        "reason": "branch_auto_disallowed_on_moe",
+                        "arity": e.arity,
+                    },
+                ) from e
+            except BranchUnsupportedOnSingleTransformer as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "branch_routing",
+                        "reason": "branch_unsupported_single_transformer",
+                        "branch": e.branch,
+                        "arity": e.arity,
+                    },
+                ) from e
+            except BranchUnknown as e:
+                # Defensive — Pydantic Literal should make this unreachable.
                 raise HTTPException(
                     status_code=500,
                     detail={
-                        "error": "rollback_failed",
-                        "phase": "rollback",
-                        "rollback_failed": True,
-                        "underlying": str(e),
-                        "rollback_error": str(rb_err),
+                        "error": "branch_routing",
+                        "reason": "branch_unknown",
+                        "branch": e.branch,
                     },
-                ) from rb_err
-            return SetStackResponse(
-                inventory=_inventory_snapshot(),
-                free_bytes=_disk_free_bytes(LORAS_DIR),
-                swap_rejected=SwapRejectedDetails(
-                    reason="vram_oom" if is_oom else "set_adapters_value_error",
-                    target_refs_dropped=dropped,
-                ),
-            )
+                ) from e
+            except (RuntimeError, ValueError) as e:
+                msg = str(e).lower()
+                is_oom = "out of memory" in msg or "oom" in msg
+                is_value = isinstance(e, ValueError)
+                if not (is_oom or is_value):
+                    raise
+                dropped_keys = [k for k in target_keys_list if k not in previous_keys]
+                dropped = [ref for (ref, _br) in dropped_keys]
+                for key in dropped_keys:
+                    _inventory.pop(key, None)
+                # Files are keyed by ref (one download serves multiple branch
+                # entries). Only unlink each ref's file once, after every
+                # branch entry that referenced it has been popped.
+                dropped_refs_unique = {ref for (ref, _br) in dropped_keys}
+                for ref in dropped_refs_unique:
+                    if any(k[0] == ref for k in _inventory):
+                        continue  # another branch still references the file
+                    dropped_spec = req.download_specs.get(ref)
+                    if dropped_spec is not None:
+                        try:
+                            (LORAS_DIR / dropped_spec.filename).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                try:
+                    await asyncio.to_thread(_replace_adapter_stack, previous_state)
+                except Exception as rb_err:  # noqa: BLE001
+                    # Rollback ITSELF failed — pod state unknown. Surface
+                    # explicitly so the orchestrator destroys + cold-boots
+                    # rather than trusting an inventory we can't validate.
+                    raise HTTPException(
+                        status_code=500,
+                        detail={
+                            "error": "rollback_failed",
+                            "phase": "rollback",
+                            "rollback_failed": True,
+                            "underlying": str(e),
+                            "rollback_error": str(rb_err),
+                        },
+                    ) from rb_err
+                _swap_jobs[job_id]["inventory"] = [
+                    e.model_dump() for e in _inventory_snapshot()
+                ]
+                _swap_jobs[job_id]["free_bytes"] = _disk_free_bytes(LORAS_DIR)
+                _swap_jobs[job_id]["swap_rejected"] = {
+                    "reason": "vram_oom" if is_oom else "set_adapters_value_error",
+                    "target_refs_dropped": dropped,
+                }
+                _swap_jobs[job_id]["state"] = "done"
+                return
 
-        return SetStackResponse(
-            inventory=_inventory_snapshot(),
-            free_bytes=_disk_free_bytes(LORAS_DIR),
-            swap_rejected=None,
-        )
+            _swap_jobs[job_id]["inventory"] = [
+                e.model_dump() for e in _inventory_snapshot()
+            ]
+            _swap_jobs[job_id]["free_bytes"] = _disk_free_bytes(LORAS_DIR)
+            _swap_jobs[job_id]["swap_rejected"] = None
+            _swap_jobs[job_id]["state"] = "done"
+    except HTTPException as he:
+        detail = he.detail if isinstance(he.detail, dict) else {"error": str(he.detail)}
+        _swap_jobs[job_id]["error"] = {**detail, "status": he.status_code}
+        _swap_jobs[job_id]["state"] = "error"
+    except Exception as e:  # noqa: BLE001
+        _log.exception("swap job %s failed", job_id)
+        _swap_jobs[job_id]["error"] = {
+            "error": "lora_swap_failed",
+            "status": 500,
+            "underlying": str(e),
+        }
+        _swap_jobs[job_id]["state"] = "error"
 
 
 # --- T12: /upscale + /upscale/status/{id} ---------------------------------
