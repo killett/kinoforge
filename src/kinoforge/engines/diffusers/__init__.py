@@ -652,6 +652,10 @@ class DiffusersBackend(GenerationBackend):
             LoraSwapPodUnreachableError,
             LoraSwapVramOomError,
         )
+        from kinoforge.engines._proxy_retry import (
+            RUNPOD_PROXY_POLICY,
+            retry_proxy_call,
+        )
 
         url = f"{self._base_url}/lora/set_stack"
         # P1 (2026-06-21): wire shape is tagged objects
@@ -671,33 +675,108 @@ class DiffusersBackend(GenerationBackend):
             ],
             "download_specs": download_specs,
         }
-        from kinoforge.engines._proxy_retry import (
-            RUNPOD_PROXY_POLICY,
-            retry_proxy_call,
-        )
 
         try:
-            resp = retry_proxy_call(
+            submit = retry_proxy_call(
                 "diffusers.lora.set_stack",
                 url,
                 lambda: self._http_post(url, body),
                 self._sleep,
                 RUNPOD_PROXY_POLICY,
             )
-        except Exception as e:
-            status = getattr(e, "status", None)
-            body_attr = getattr(e, "body", None)
-            if status is not None and isinstance(body_attr, dict):
-                self._raise_lora_swap_error(int(status), body_attr, pod_id)
+        except urllib.error.HTTPError as e:
+            # Server-side synchronous rejection (branch 400/500, plan-disk 507).
+            # FastAPI serializes HTTPException(status, detail=<dict>) as
+            # {"detail": <dict>}; decode it and route through the shared mapper
+            # so a plan-disk 507 raises LoraSwapDiskFullError (NOT the
+            # misleading PodUnreachable — the misclassification this plan kills).
+            status = getattr(e, "status", None) or getattr(e, "code", None)
+            detail: Any = None
+            try:
+                raw = e.read()
+                if raw:
+                    parsed = json.loads(raw)
+                    detail = parsed.get("detail") if isinstance(parsed, dict) else None
+            except Exception:  # noqa: BLE001 — undecodable body -> treat as transport
+                detail = None
+            if status is not None and isinstance(detail, dict):
+                self._raise_lora_swap_error(int(status), detail, pod_id)
+            raise LoraSwapPodUnreachableError(pod_id=pod_id, underlying=str(e)) from e
+        except Exception as e:  # noqa: BLE001 — genuine transport failure
             raise LoraSwapPodUnreachableError(pod_id=pod_id, underlying=str(e)) from e
 
-        sr = resp.get("swap_rejected") if isinstance(resp, dict) else None
+        job_id = str(submit["job_id"])
+        result = self._poll_set_stack(job_id, pod_id)
+        sr = result.get("swap_rejected")
         if isinstance(sr, dict) and sr.get("reason") == "vram_oom":
             raise LoraSwapVramOomError(
                 pod_id=pod_id,
                 dropped_refs=list(sr.get("target_refs_dropped", [])),
             )
-        return resp
+        return result
+
+    def _poll_set_stack(self, job_id: str, pod_id: str) -> dict[str, Any]:
+        """Poll ``/lora/set_stack/status/{job_id}`` to a terminal state.
+
+        Mirrors the transient-absorption + wall-clock-timeout structure of
+        :meth:`result`.  Returns the reconstructed
+        ``{inventory, free_bytes, swap_rejected}`` dict on ``done``; routes
+        the ``error`` payload through :meth:`_raise_lora_swap_error`; raises
+        :exc:`~kinoforge.core.errors.LoraSwapPodUnreachableError` on
+        wall-clock timeout.
+
+        Args:
+            job_id: The job ID returned by the submit POST.
+            pod_id: Pod identifier; threaded into every raised exception.
+
+        Returns:
+            Dict with keys ``inventory``, ``free_bytes``, and
+            ``swap_rejected`` extracted from the ``done`` status record.
+
+        Raises:
+            LoraSwapDiskFullError: ``error.status == 507``.
+            LoraSwapDegradedPodError: ``error.status == 502`` with non-empty
+                ``evict_completed``.
+            LoraSwapDownloadError: ``error.status == 502`` with empty
+                ``evict_completed``.
+            LoraSwapPodUnreachableError: Wall-clock timeout exceeded.
+        """
+        from kinoforge.core.errors import LoraSwapPodUnreachableError
+        from kinoforge.engines._proxy_retry import (
+            RUNPOD_PROXY_POLICY,
+            interpoll_wait,
+            retry_proxy_call,
+        )
+
+        url = f"{self._base_url}/lora/set_stack/status/{job_id}"
+        start = time.monotonic()
+        while True:
+            elapsed = time.monotonic() - start
+            if elapsed > self._poll_timeout_s:
+                raise LoraSwapPodUnreachableError(
+                    pod_id=pod_id,
+                    underlying=(
+                        f"set_stack job {job_id} poll timed out after {elapsed:.1f}s"
+                    ),
+                )
+            data = retry_proxy_call(
+                "diffusers.lora.set_stack.status",
+                url,
+                lambda: self._http_get(url),
+                self._sleep,
+                RUNPOD_PROXY_POLICY,
+            )
+            state = data.get("state")
+            if state == "done":
+                return {
+                    "inventory": data.get("inventory"),
+                    "free_bytes": data.get("free_bytes"),
+                    "swap_rejected": data.get("swap_rejected"),
+                }
+            if state == "error":
+                err = data.get("error") or {}
+                self._raise_lora_swap_error(int(err.get("status", 500)), err, pod_id)
+            interpoll_wait(self._poll_interval_s, None, self._sleep)
 
     def _raise_lora_swap_error(
         self, status: int, body: dict[str, Any], pod_id: str
