@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._smoke_harness import budget, civitai, http, runpod_lifecycle
+from tests._smoke_harness import budget, civitai, http, matrix, runpod_lifecycle
 
 pytestmark = [
     pytest.mark.skipif(
@@ -141,15 +141,26 @@ def test_auto_branch_succeeds_on_wan21(
     cfg = __import__("yaml").safe_load(CFG.read_text())
     lora_a: str = cfg["smoke"]["lora_a"]
     spec = civitai.resolve(lora_a)
-    resp = http.post_json(
+    submit = http.post_json(
         f"{base_url.rstrip('/')}/lora/set_stack",
         {
             "target": [{"ref": lora_a, "strength": 1.0, "branch": "auto"}],
             "download_specs": {lora_a: spec},
         },
-        timeout=900,
+        timeout=120,
     )
-    inv = resp["inventory"]
+    job_id = submit["job_id"]
+    matrix._poll_swap_job(
+        base_url,
+        job_id,
+        step_name="auto-branch",
+        deadline_s=1800.0,
+    )
+    inv_resp = http.get_json(
+        f"{base_url.rstrip('/')}/lora/inventory",
+        timeout=30,
+    )
+    inv = inv_resp.get("inventory", [])
     assert len(inv) == 1, f"expected exactly 1 inventory row, got {inv}"
     assert inv[0]["ref"] == lora_a
     assert inv[0]["branch"] == "auto"
