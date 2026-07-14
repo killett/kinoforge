@@ -20,9 +20,9 @@ case_7 violated on 2026-06-23 (HEAD ``2a7d6f0``):
   the only ref must NOT be unlinked when the only change is the branch
   field on a single inventory key.
 
-Each test drives the FastAPI handler directly via
-``asyncio.run(s.set_stack(req))`` mirroring the precedent in
-``tests/engines/test_wan_t2v_server_set_stack.py``.
+Each test drives ``_run_swap_job`` directly (the async background task
+that ``set_stack`` enqueues) so the job runs synchronously inside the
+test's event loop. Results are read from ``s._swap_jobs[job_id]``.
 
 The MoE pipe stub is intentionally minimal — a per-transformer
 recorder pair on a single object, plus ``load_lora_weights`` that
@@ -41,6 +41,34 @@ from typing import Any
 import pytest
 
 import kinoforge.engines.diffusers.servers.wan_t2v_server as s
+
+
+def _run_set_stack(req: s.SetStackRequest) -> dict[str, Any]:
+    """Run the swap job synchronously and return the job result dict.
+
+    The refactored ``set_stack`` enqueues ``_run_swap_job`` as an asyncio
+    background task. For tests that don't use ``TestClient`` we drive the
+    job function directly so it runs inside ``asyncio.run``.
+    """
+    job_id = "test-job"
+    s._swap_jobs[job_id] = {
+        "state": "queued",
+        "inventory": None,
+        "free_bytes": None,
+        "swap_rejected": None,
+        "error": None,
+    }
+    asyncio.run(s._run_swap_job(job_id, req))
+    result = s._swap_jobs.pop(job_id)
+    if result["state"] == "error":
+        err = result["error"]
+        from fastapi import HTTPException  # noqa: PLC0415
+
+        raise HTTPException(
+            status_code=err.get("status", 500),
+            detail={k: v for k, v in err.items() if k != "status"},
+        )
+    return result
 
 
 class _Recorder:
@@ -205,10 +233,10 @@ def test_two_ref_branch_swap_preserves_files_and_inventory(
             "LOW": _spec("low.safetensors"),
         },
     )
-    resp = asyncio.run(s_mod.set_stack(req))
+    resp = _run_set_stack(req)
 
-    assert resp.swap_rejected is None, (
-        f"swap unexpectedly rejected: {resp.swap_rejected}"
+    assert resp["swap_rejected"] is None, (
+        f"swap unexpectedly rejected: {resp['swap_rejected']}"
     )
     assert high_file.exists(), (
         "HIGH file unlinked — _evict_one ignored the surviving "
@@ -218,7 +246,7 @@ def test_two_ref_branch_swap_preserves_files_and_inventory(
         "LOW file unlinked — _evict_one ignored the surviving (LOW, high_noise) sibling"
     )
 
-    inv_keys = {(row.ref, row.branch) for row in resp.inventory}
+    inv_keys = {(row["ref"], row["branch"]) for row in resp["inventory"]}
     assert inv_keys == {("HIGH", "low_noise"), ("LOW", "high_noise")}, (
         f"inventory keys not swapped to target: {inv_keys}"
     )
@@ -273,27 +301,31 @@ def test_same_ref_two_branches_yields_two_inventory_rows(
         ],
         download_specs={"HIGH": _spec("high.safetensors")},
     )
-    resp = asyncio.run(s_mod.set_stack(req))
+    resp = _run_set_stack(req)
 
-    assert resp.swap_rejected is None, (
-        f"swap unexpectedly rejected: {resp.swap_rejected}"
+    assert resp["swap_rejected"] is None, (
+        f"swap unexpectedly rejected: {resp['swap_rejected']}"
     )
 
     assert download_log == ["high.safetensors"], (
         f"download dedup broken — expected one download, got {download_log}"
     )
 
-    keys = sorted((row.ref, row.branch) for row in resp.inventory)
+    keys = sorted((row["ref"], row["branch"]) for row in resp["inventory"])
     assert keys == [("HIGH", "high_noise"), ("HIGH", "low_noise")], (
         f"composite-key inventory wrong: {keys}"
     )
 
-    strength_by_branch = {row.branch: row.last_strength for row in resp.inventory}
+    strength_by_branch = {
+        row["branch"]: row["last_strength"] for row in resp["inventory"]
+    }
     assert strength_by_branch == {"high_noise": 1.0, "low_noise": 0.8}, (
         f"per-branch strength wrong: {strength_by_branch}"
     )
 
-    adapter_by_branch = {row.branch: row.adapter_name for row in resp.inventory}
+    adapter_by_branch = {
+        row["branch"]: row["adapter_name"] for row in resp["inventory"]
+    }
     assert adapter_by_branch == {"high_noise": "lora_0_h", "low_noise": "lora_1_l"}, (
         f"adapter naming collision across branches: {adapter_by_branch}"
     )
@@ -349,9 +381,9 @@ def test_single_ref_branch_swap_keeps_file_on_disk(
         target=[{"ref": "HIGH", "strength": 1.0, "branch": "low_noise"}],
         download_specs={"HIGH": _spec("high.safetensors")},
     )
-    resp = asyncio.run(s_mod.set_stack(req))
+    resp = _run_set_stack(req)
 
-    assert resp.swap_rejected is None
+    assert resp["swap_rejected"] is None
     assert high_file.exists(), (
         "HIGH file unlinked — single-ref branch swap deleted the underlying artifact"
     )
@@ -359,7 +391,7 @@ def test_single_ref_branch_swap_keeps_file_on_disk(
         f"single-ref branch swap should not re-download: {download_log}"
     )
 
-    keys = {(row.ref, row.branch) for row in resp.inventory}
+    keys = {(row["ref"], row["branch"]) for row in resp["inventory"]}
     assert keys == {("HIGH", "low_noise")}, (
         f"inventory should reflect swapped branch: {keys}"
     )
