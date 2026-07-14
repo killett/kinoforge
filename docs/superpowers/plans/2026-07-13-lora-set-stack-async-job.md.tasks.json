@@ -18,7 +18,7 @@
     {
       "id": 2,
       "subject": "Task 2: Client set_lora_stack submits + polls internally",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1],
       "description": "**Goal:** `DiffusersEngine.set_lora_stack` posts, reads `{job_id}`, polls status (mirroring `result()`), maps terminal states to today's return / exceptions. Signature + callers unchanged.\n\n**Files:** Modify `src/kinoforge/engines/diffusers/__init__.py` (add `_poll_set_stack`); Test `tests/engines/test_diffusers_set_lora_stack.py`.\n\n**Acceptance Criteria:** done no reject returns dict; vram_oom raises LoraSwapVramOomError; error 502 empty/nonempty evict → Download/Degraded; 507 → DiskFull; poll timeout → PodUnreachable; submit 507 sync → DiskFull.\n\n**Verify:** `pixi run pytest tests/engines/test_diffusers_set_lora_stack.py -q`\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"tests/engines/test_diffusers_set_lora_stack.py\"], \"verifyCommand\": \"pixi run pytest tests/engines/test_diffusers_set_lora_stack.py -q\", \"acceptanceCriteria\": [\"done returns inventory dict\", \"vram_oom raises\", \"502 empty/nonempty -> Download/Degraded\", \"507 -> DiskFull\", \"poll timeout -> PodUnreachable\"], \"modelTier\": \"standard\"}\n```"
     },
