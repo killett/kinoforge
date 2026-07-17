@@ -729,7 +729,6 @@ def _build_parser(state_dir_default: str = ".kinoforge") -> argparse.ArgumentPar
     p_gc = sub.add_parser("gc", help="garbage-collect stored artifacts")
     p_gc.add_argument("--config", required=True, metavar="PATH")
     p_gc.add_argument("--run", default=None, metavar="RUN_ID")
-    p_gc.add_argument("--older-than", default=None, metavar="DUR")
 
     p_cost = sub.add_parser(
         "cost",
