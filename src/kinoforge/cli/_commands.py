@@ -429,6 +429,161 @@ def _dry_run_swap_preview(ctx: SessionContext) -> int:
     return 0
 
 
+def _resolve_warm_attach_chain(
+    args: argparse.Namespace,
+    ctx: SessionContext,
+    cfg: Config,
+    *,
+    attach_pod_id: str | None = None,
+    emit_record_path: Path | None = None,
+) -> tuple[Instance | None, bool, int | None]:
+    """Resolve the B3 / B4 warm-attach precedence chain.
+
+    Validates the flag mutexes in order (``--no-reuse``/``--force-attach``,
+    then ``--attach-pod``/``--no-reuse``, then
+    ``--attach-pod``/``--emit-provision-record``), then walks the resolution
+    ladder: ``--attach-pod`` > ``--instance-id`` (honouring
+    ``--force-attach``) > bare ``--force-attach`` (error) > ``--no-reuse``
+    (skip the warm scan) > cfg-gated ``warm_reuse_auto_attach`` scan.
+
+    Shared by :func:`_cmd_generate` and :func:`_cmd_batch`. ``batch`` has no
+    ``--attach-pod`` / ``--emit-provision-record`` CLI surface, so it leaves
+    both keyword arguments at ``None`` and those rungs are inert.
+    :func:`_cmd_upscale` and :func:`_cmd_interpolate` deliberately run a
+    different, simpler chain (different mutex message and exit code, no
+    ``--instance-id`` / ``--force-attach``, no ``warm_reuse_auto_attach``
+    gate) and do NOT route through this helper.
+
+    Args:
+        args: Parsed CLI arguments.
+        ctx: Per-invocation session context.
+        cfg: Loaded config for this run.
+        attach_pod_id: Value of ``--attach-pod`` for subcommands that
+            support it; ``None`` otherwise.
+        emit_record_path: Value of ``--emit-provision-record`` for
+            subcommands that support it; only mutex-checked against
+            ``--attach-pod`` here.
+
+    Returns:
+        ``(instance, single, rc)``: the resolved warm instance (``None``
+        means cold create), the ``--no-reuse`` single-shot flag, and an
+        exit code the caller must return immediately when not ``None``.
+    """
+    if getattr(args, "no_reuse", False) and getattr(args, "force_attach", False):
+        print(
+            "error: --no-reuse and --force-attach are mutually exclusive "
+            "(--no-reuse forces cold create; --force-attach bypasses verdicts "
+            "for warm attach)",
+            file=sys.stderr,
+        )
+        return None, False, 2
+
+    if attach_pod_id is not None and getattr(args, "no_reuse", False):
+        print(
+            "error: --attach-pod and --no-reuse are mutually exclusive "
+            "(--attach-pod implies pod survival; --no-reuse forces destroy)",
+            file=sys.stderr,
+        )
+        return None, False, 1
+    if attach_pod_id is not None and emit_record_path is not None:
+        print(
+            "error: --attach-pod and --emit-provision-record are mutually "
+            "exclusive: attach does not provision",
+            file=sys.stderr,
+        )
+        return None, False, 1
+
+    single = bool(getattr(args, "no_reuse", False))
+    auto_attach_cfg = (
+        getattr(cfg.compute, "warm_reuse_auto_attach", True)
+        if cfg.compute is not None
+        else False
+    )
+
+    instance: Instance | None = None
+    if attach_pod_id is not None:
+        instance, rc = _resolve_attach_pod(ctx, cfg, attach_pod_id)
+        if rc is not None:
+            return instance, single, rc
+    elif getattr(args, "instance_id", None) is not None:
+        instance, rc = _resolve_warm_instance(
+            ctx,
+            cfg,
+            args.instance_id,
+            force_attach=bool(getattr(args, "force_attach", False)),
+        )
+        if rc is not None:
+            return instance, single, rc
+    elif getattr(args, "force_attach", False):
+        print(
+            "error: --force-attach has no effect without --instance-id",
+            file=sys.stderr,
+        )
+        return None, single, 2
+    elif single:
+        logger.info(
+            "--no-reuse: skipping warm-reuse scan; cold create + destroy on exit"
+        )
+    elif auto_attach_cfg:
+        instance, report = _scan_warm_candidates(ctx, cfg)
+        summary = report.summarize()
+        if summary:
+            logger.info(summary)
+
+    return instance, single, None
+
+
+def _stamp_cold_created_instance(
+    ctx: SessionContext, cfg: Config, returned_instance: Instance
+) -> str:
+    """Ledger-record a cold-created instance and stamp warm-attach metadata.
+
+    B3 — records the instance so the next CLI invocation's
+    ``_scan_warm_candidates`` can find it, stamps the ``warm_attach_key``
+    (plus stage / upscaler tags) so a downstream ``kinoforge generate
+    --attach-pod`` can validate identity without a full-CapabilityKey
+    matcher round-trip (the ``find_pods_by_warm_attach_key`` index also
+    gates on this field), and adds the 2026-06-27 ephemeral disk-index row
+    (Option B) that lets the next CLI process discover the surviving pod
+    under STRICT_POLICY, where the ledger entry above lives only in
+    ``session.in_memory_ledger``.
+
+    Shared by :func:`_cmd_generate` and :func:`_cmd_upscale` (T11 symmetric
+    stamp, resolving the T7 deferral). :func:`_cmd_interpolate` deliberately
+    does NOT call this — interpolate never ledger-stamps its cold-created
+    pod (known gap, plan 2026-07-12-modal-ephemeral-parity Task 3) and only
+    performs the ephemeral index add.
+
+    Args:
+        ctx: Per-invocation session context.
+        cfg: Loaded config for this run.
+        returned_instance: Cold-created instance returned by the
+            orchestrator.
+
+    Returns:
+        The config's warm-attach key, for callers that need it downstream
+        (e.g. ``--emit-provision-record``).
+    """
+    ledger = ctx.ledger()
+    if ledger.read(returned_instance.id) is None:
+        lc = cfg.lifecycle()
+        ledger.record(
+            returned_instance,
+            idle_timeout_s=int(lc.idle_timeout_s),
+            max_age_s=int(lc.max_lifetime_s),
+        )
+    cfg_wak = _cfg_warm_attach_key(cfg)
+    ledger.touch(
+        returned_instance.id,
+        warm_attach_key=cfg_wak,
+        kinoforge_stages=",".join(_cfg_want_stages(cfg)),
+        kinoforge_upscaler=cfg.upscale.engine if cfg.upscale else "",
+        kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
+    )
+    _ephemeral_index_add(ctx, cfg, returned_instance)
+    return cfg_wak
+
+
 def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     """Handle ``generate`` subcommand.
 
@@ -506,68 +661,17 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
         run_id = f"run-{ts}"
 
     # B3 / B4 — warm-attach precedence chain.
-    if getattr(args, "no_reuse", False) and getattr(args, "force_attach", False):
-        print(
-            "error: --no-reuse and --force-attach are mutually exclusive "
-            "(--no-reuse forces cold create; --force-attach bypasses verdicts "
-            "for warm attach)",
-            file=sys.stderr,
-        )
-        return 2
-
     attach_pod_id: str | None = getattr(args, "attach_pod", None)
     emit_record_path: Path | None = getattr(args, "emit_provision_record", None)
-    if attach_pod_id is not None and getattr(args, "no_reuse", False):
-        print(
-            "error: --attach-pod and --no-reuse are mutually exclusive "
-            "(--attach-pod implies pod survival; --no-reuse forces destroy)",
-            file=sys.stderr,
-        )
-        return 1
-    if attach_pod_id is not None and emit_record_path is not None:
-        print(
-            "error: --attach-pod and --emit-provision-record are mutually "
-            "exclusive: attach does not provision",
-            file=sys.stderr,
-        )
-        return 1
-
-    single = bool(getattr(args, "no_reuse", False))
-    auto_attach_cfg = (
-        getattr(cfg.compute, "warm_reuse_auto_attach", True)
-        if cfg.compute is not None
-        else False
+    instance, single, chain_rc = _resolve_warm_attach_chain(
+        args,
+        ctx,
+        cfg,
+        attach_pod_id=attach_pod_id,
+        emit_record_path=emit_record_path,
     )
-
-    instance: Instance | None = None
-    if attach_pod_id is not None:
-        instance, rc = _resolve_attach_pod(ctx, cfg, attach_pod_id)
-        if rc is not None:
-            return rc
-    elif getattr(args, "instance_id", None) is not None:
-        instance, rc = _resolve_warm_instance(
-            ctx,
-            cfg,
-            args.instance_id,
-            force_attach=bool(getattr(args, "force_attach", False)),
-        )
-        if rc is not None:
-            return rc
-    elif getattr(args, "force_attach", False):
-        print(
-            "error: --force-attach has no effect without --instance-id",
-            file=sys.stderr,
-        )
-        return 2
-    elif single:
-        logger.info(
-            "--no-reuse: skipping warm-reuse scan; cold create + destroy on exit"
-        )
-    elif auto_attach_cfg:
-        instance, report = _scan_warm_candidates(ctx, cfg)
-        summary = report.summarize()
-        if summary:
-            logger.info(summary)
+    if chain_rc is not None:
+        return chain_rc
 
     try:
         artifact, returned_instance = _generate(
@@ -593,31 +697,7 @@ def _cmd_generate(args: argparse.Namespace, ctx: SessionContext) -> int:
     # was supplied (warm-attach path; entry already in ledger) or when the
     # generate path tore the pod down (--no-reuse).
     if returned_instance is not None and instance is None and not single:
-        ledger = ctx.ledger()
-        if ledger.read(returned_instance.id) is None:
-            lc = cfg.lifecycle()
-            ledger.record(
-                returned_instance,
-                idle_timeout_s=int(lc.idle_timeout_s),
-                max_age_s=int(lc.max_lifetime_s),
-            )
-        # Stamp the warm_attach_key so a downstream `kinoforge generate
-        # --attach-pod` invocation can validate identity without a
-        # full-CapabilityKey matcher round-trip. The find_pods_by_warm_attach_key
-        # index also gates on this field.
-        cfg_wak = _cfg_warm_attach_key(cfg)
-        ledger.touch(
-            returned_instance.id,
-            warm_attach_key=cfg_wak,
-            kinoforge_stages=",".join(_cfg_want_stages(cfg)),
-            kinoforge_upscaler=cfg.upscale.engine if cfg.upscale else "",
-            kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
-        )
-        # 2026-06-27 — ephemeral warm-reuse discovery (Option B disk index).
-        # Under STRICT_POLICY the ledger entry above lives only in
-        # session.in_memory_ledger; this index row is what lets the next
-        # CLI process discover the surviving pod.
-        _ephemeral_index_add(ctx, cfg, returned_instance)
+        cfg_wak = _stamp_cold_created_instance(ctx, cfg, returned_instance)
         if emit_record_path is not None:
             _write_provision_record(
                 emit_record_path,
@@ -751,23 +831,7 @@ def _cmd_upscale(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     # T11 — symmetric ledger stamp with _cmd_generate (resolves T7 deferral).
     if returned_instance is not None and instance is None and not args.no_reuse:
-        ledger = ctx.ledger()
-        if ledger.read(returned_instance.id) is None:
-            lc = cfg.lifecycle()
-            ledger.record(
-                returned_instance,
-                idle_timeout_s=int(lc.idle_timeout_s),
-                max_age_s=int(lc.max_lifetime_s),
-            )
-        cfg_wak = _cfg_warm_attach_key(cfg)
-        ledger.touch(
-            returned_instance.id,
-            warm_attach_key=cfg_wak,
-            kinoforge_stages=",".join(_cfg_want_stages(cfg)),
-            kinoforge_upscaler=cfg.upscale.engine,
-            kinoforge_upscaler_precision=_upscaler_precision_tag(cfg),
-        )
-        _ephemeral_index_add(ctx, cfg, returned_instance)
+        _stamp_cold_created_instance(ctx, cfg, returned_instance)
 
     print(f"upscaled: uri={artifact.uri!r}")
     return 0
@@ -1029,46 +1093,9 @@ def _cmd_batch(args: argparse.Namespace, ctx: SessionContext) -> int:
         print(header)
 
     # B3 / B4 — warm-attach precedence chain.
-    if getattr(args, "no_reuse", False) and getattr(args, "force_attach", False):
-        print(
-            "error: --no-reuse and --force-attach are mutually exclusive "
-            "(--no-reuse forces cold create; --force-attach bypasses verdicts "
-            "for warm attach)",
-            file=sys.stderr,
-        )
-        return 2
-    single = bool(getattr(args, "no_reuse", False))
-    auto_attach_cfg = (
-        getattr(cfg.compute, "warm_reuse_auto_attach", True)
-        if cfg.compute is not None
-        else False
-    )
-
-    instance: Instance | None = None
-    if getattr(args, "instance_id", None) is not None:
-        instance, rc = _resolve_warm_instance(
-            ctx,
-            cfg,
-            args.instance_id,
-            force_attach=bool(getattr(args, "force_attach", False)),
-        )
-        if rc is not None:
-            return rc
-    elif getattr(args, "force_attach", False):
-        print(
-            "error: --force-attach has no effect without --instance-id",
-            file=sys.stderr,
-        )
-        return 2
-    elif single:
-        logger.info(
-            "--no-reuse: skipping warm-reuse scan; cold create + destroy on exit"
-        )
-    elif auto_attach_cfg:
-        instance, report = _scan_warm_candidates(ctx, cfg)
-        summary = report.summarize()
-        if summary:
-            logger.info(summary)
+    instance, single, chain_rc = _resolve_warm_attach_chain(args, ctx, cfg)
+    if chain_rc is not None:
+        return chain_rc
 
     try:
         result = batch_generate(
