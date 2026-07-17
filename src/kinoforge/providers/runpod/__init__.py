@@ -765,6 +765,44 @@ class RunPodProvider(ComputeProvider):
         Returns:
             Instance with ``status="starting"``.
         """
+        env = self._assemble_create_env(spec)
+        docker_args = self._encode_provision_script(env, spec.provision_script)
+
+        gpu_type_id = spec.offer.gpu_type if spec.offer else ""
+        # Under ephemeral mode, suppress the alias-laden run_id from the
+        # provider-visible pod name and stamp ``kinoforge-ephemeral=true``
+        # on the Instance tags. Default mode is unchanged.
+        _eph = EphemeralSession.current()
+        if _eph is not None and not _eph.policy.pod_name_includes_alias:
+            pod_name = f"kinoforge-{secrets.token_hex(4)}"
+        else:
+            pod_name = spec.run_id or "kinoforge-pod"
+        body = self._build_create_pod_body(
+            spec,
+            gpu_type_id=gpu_type_id,
+            pod_name=pod_name,
+            docker_args=docker_args,
+            env=env,
+        )
+
+        resp = self._http_post(self._base_url, body)
+        self._classify_capacity_error(resp, gpu_type_id=gpu_type_id)
+        return self._instance_from_create_response(spec, resp, _eph)
+
+    def _assemble_create_env(self, spec: InstanceSpec) -> dict[str, str]:
+        """Assemble the pod env payload for the create-pod mutation.
+
+        Combines user-supplied vars, the C28 diagnostic overlay, the scoped
+        terminate-only key, and the rendered self-terminator script. The main
+        ``RUNPOD_API_KEY`` is never included.
+
+        Args:
+            spec: Instance specification.
+
+        Returns:
+            The env dict to serialize into the mutation's ``env`` field
+            (insertion order is preserved on the wire).
+        """
         # Build env dict: user-supplied vars + self-terminator key + script.
         env: dict[str, str] = dict(spec.env)
 
@@ -792,15 +830,31 @@ class RunPodProvider(ComputeProvider):
 
         # Safety: NEVER put the main API key in the pod env
         env.pop("RUNPOD_API_KEY", None)
+        return env
 
-        if spec.provision_script is not None:
+    @staticmethod
+    def _encode_provision_script(
+        env: dict[str, str], provision_script: str | None
+    ) -> str:
+        """Encode ``provision_script`` into ``env`` and return ``dockerArgs``.
+
+        Args:
+            env: Env dict to receive ``KINOFORGE_PROVISION_SCRIPT`` (mutated
+                in place when a script is present).
+            provision_script: The raw provision script, or None.
+
+        Returns:
+            The ``dockerArgs`` string that decodes + runs the script at pod
+            boot, or ``""`` when no script is set (pre-Layer-Q default).
+        """
+        if provision_script is not None:
             # Gzip BEFORE base64: RunPod's podFindAndDeployOnDemand mutation
             # returns a raw HTTP 500 (not a GraphQL error) once the total env
             # payload exceeds ~101 KB. The wan+flashvsr bootstrap is ~74 KB raw
             # → 98.8 KB plain base64, which alone pushed total env to 101,971
             # bytes and 500'd every create (root-caused live 2026-07-05). Gzip
             # cuts it to ~72 KB base64 (~4× headroom for future script growth).
-            compressed = gzip.compress(spec.provision_script.encode("utf-8"))
+            compressed = gzip.compress(provision_script.encode("utf-8"))
             encoded = base64.b64encode(compressed).decode("ascii")
             env["KINOFORGE_PROVISION_SCRIPT"] = encoded
             docker_args = (
@@ -809,16 +863,34 @@ class RunPodProvider(ComputeProvider):
             )
         else:
             docker_args = ""
+        return docker_args
 
-        gpu_type_id = spec.offer.gpu_type if spec.offer else ""
-        # Under ephemeral mode, suppress the alias-laden run_id from the
-        # provider-visible pod name and stamp ``kinoforge-ephemeral=true``
-        # on the Instance tags. Default mode is unchanged.
-        _eph = EphemeralSession.current()
-        if _eph is not None and not _eph.policy.pod_name_includes_alias:
-            pod_name = f"kinoforge-{secrets.token_hex(4)}"
-        else:
-            pod_name = spec.run_id or "kinoforge-pod"
+    @staticmethod
+    def _build_create_pod_body(
+        spec: InstanceSpec,
+        *,
+        gpu_type_id: str,
+        pod_name: str,
+        docker_args: str,
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        """Build the ``podFindAndDeployOnDemand`` GraphQL mutation body.
+
+        Field ordering is preserved exactly — the wire shape is
+        payload-size-sensitive (see the gzip note in
+        :meth:`_encode_provision_script`).
+
+        Args:
+            spec: Instance specification.
+            gpu_type_id: GPU type ID from the selected offer (may be ``""``).
+            pod_name: Provider-visible pod name.
+            docker_args: ``dockerArgs`` string (see
+                :meth:`_encode_provision_script`).
+            env: Fully assembled pod env dict.
+
+        Returns:
+            The GraphQL request body dict.
+        """
         # spec.cloud_type pins the host pool — "secure" for long-running
         # one-shot workloads (community interruption deletes zero-volume
         # pods outright; 3 BSA builds lost 2026-07-03).
@@ -906,28 +978,66 @@ class RunPodProvider(ComputeProvider):
                     "behaviour (success and failure alike)",
                     _RUNPOD_SCHEMA_SIDECAR,
                 )
+        return body
 
-        resp = self._http_post(self._base_url, body)
-        if "errors" in resp:
-            error_msgs = [str(e.get("message", e)) for e in resp.get("errors", [])]
-            assembled = "RunPod create-pod mutation returned errors:\n" + "\n".join(
-                f"  - {m}" for m in error_msgs
-            )
-            value_error = ValueError(assembled)
-            joined_lower = "\n".join(error_msgs).lower()
-            # Capacity exhaustion has three observed phrasings; all mean "the
-            # offer find_offers listed is gone by create time" and are transient
-            # (2026-07-07). Classify them so _create_with_offer_retry + the
-            # capacity-wait loop retry instead of failing the whole run.
-            _CAPACITY_MARKERS = (
-                "resources to deploy",
-                "no longer any instances available",
-            )
-            if any(marker in joined_lower for marker in _CAPACITY_MARKERS):
-                raise CapacityError(
-                    f"RunPod has no current capacity for {gpu_type_id!r}: {assembled}"
-                ) from value_error
-            raise value_error
+    @staticmethod
+    def _classify_capacity_error(resp: dict[str, Any], *, gpu_type_id: str) -> None:
+        """Classify GraphQL ``errors`` in a create-pod response and raise.
+
+        No-op when ``resp`` carries no ``errors`` key.
+
+        Args:
+            resp: Decoded GraphQL response of the create-pod mutation.
+            gpu_type_id: GPU type ID, for the capacity-error message.
+
+        Raises:
+            CapacityError: A known transient capacity-exhaustion phrasing was
+                matched (retryable by ``_create_with_offer_retry`` + the
+                capacity-wait loop).
+            ValueError: Any other GraphQL error.
+        """
+        if "errors" not in resp:
+            return
+        error_msgs = [str(e.get("message", e)) for e in resp.get("errors", [])]
+        assembled = "RunPod create-pod mutation returned errors:\n" + "\n".join(
+            f"  - {m}" for m in error_msgs
+        )
+        value_error = ValueError(assembled)
+        joined_lower = "\n".join(error_msgs).lower()
+        # Capacity exhaustion has three observed phrasings; all mean "the
+        # offer find_offers listed is gone by create time" and are transient
+        # (2026-07-07). Classify them so _create_with_offer_retry + the
+        # capacity-wait loop retry instead of failing the whole run.
+        _CAPACITY_MARKERS = (
+            "resources to deploy",
+            "no longer any instances available",
+        )
+        if any(marker in joined_lower for marker in _CAPACITY_MARKERS):
+            raise CapacityError(
+                f"RunPod has no current capacity for {gpu_type_id!r}: {assembled}"
+            ) from value_error
+        raise value_error
+
+    def _instance_from_create_response(
+        self,
+        spec: InstanceSpec,
+        resp: dict[str, Any],
+        eph: EphemeralSession | None,
+    ) -> Instance:
+        """Assemble the ``Instance`` from a create-pod GraphQL response.
+
+        Args:
+            spec: Instance specification.
+            resp: Decoded GraphQL response of the create-pod mutation.
+            eph: Active ephemeral session, if any (stamps
+                ``kinoforge-ephemeral=true`` on the Instance tags).
+
+        Returns:
+            Instance with ``status="starting"``.
+
+        Raises:
+            ValueError: The response carried no pod id.
+        """
         pod_data: dict[str, Any] = resp.get("data", {}).get(
             "podFindAndDeployOnDemand", {}
         )
@@ -958,7 +1068,7 @@ class RunPodProvider(ComputeProvider):
         instance_tags: dict[str, str] = {k: v for k, v in spec.tags.items()}
         if resolved_ports and "ports" not in instance_tags:
             instance_tags["ports"] = ",".join(resolved_ports)
-        if _eph is not None and not _eph.policy.pod_name_includes_alias:
+        if eph is not None and not eph.policy.pod_name_includes_alias:
             instance_tags["kinoforge-ephemeral"] = "true"
         return Instance(
             id=pod_id,
