@@ -29,15 +29,13 @@ Specs:
 
 from __future__ import annotations
 
-import json
 import re
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 from kinoforge.core.errors import TransportError
+from kinoforge.providers.runpod._transport import bearer_graphql_post
 
 __all__ = ["RunPodGraphQLHeartbeatEndpoint"]
 
@@ -81,38 +79,8 @@ _READ_RE: re.Pattern[str] = re.compile(
 
 
 def _default_http_post(api_key: str) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
-    """Build a stdlib-urllib POST callable with Bearer auth."""
-
-    def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(  # noqa: S310
-            url,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "kinoforge-heartbeat/0.1",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
-                data: bytes = resp.read()
-        except urllib.error.HTTPError as exc:
-            raise TransportError(
-                f"RunPod GraphQL HTTP {exc.code}: {exc.reason}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise TransportError(
-                f"RunPod GraphQL transport error: {exc.reason}"
-            ) from exc
-        try:
-            decoded: dict[str, Any] = json.loads(data)
-        except json.JSONDecodeError as exc:
-            raise TransportError(f"RunPod GraphQL non-JSON response: {exc}") from exc
-        return decoded
-
-    return _post
+    """Shared Bearer-auth closure (see ``_transport``) with the heartbeat UA."""
+    return bearer_graphql_post(api_key, "kinoforge-heartbeat/0.1")
 
 
 def _merge_marker(base: str, ts_local: datetime) -> str:
