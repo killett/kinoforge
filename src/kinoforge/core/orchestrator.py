@@ -1186,22 +1186,20 @@ def deploy_session(
             if creds is not None
             else None
         )
-        _stall_window_s: float | None = None
-        _stall_gpu_threshold = 5.0
-        _stall_cpu_threshold = 20.0
-        _restart_loop_window_s: float | None = None
-        _restart_loop_uptime_threshold_s = 90.0
-        _provider_kind: str | None = None
-        if cfg.compute is not None:
-            _provider_kind = cfg.compute.provider
-            _lc = cfg.compute.lifecycle
-            if _lc is not None and _lc.stall_reap_enabled:
-                _stall_window_s = _lc.stall_window_s
-                _stall_gpu_threshold = _lc.stall_gpu_threshold
-                _stall_cpu_threshold = _lc.stall_cpu_threshold
-            if _lc is not None and _lc.restart_loop_reap_enabled:
-                _restart_loop_window_s = _lc.restart_loop_window_s
-                _restart_loop_uptime_threshold_s = _lc.restart_loop_uptime_threshold_s
+        # Single source of truth for stall/restart-loop knobs: Config.lifecycle()
+        # already applies the enabled-gating (window is None when the reap is
+        # disabled — thresholds are then inert) and the Lifecycle defaults.
+        # Re-deriving from cfg.compute.lifecycle here had triplicated the
+        # default values across interfaces.py / config.py / this block.
+        _lc_eff = cfg.lifecycle()
+        _stall_window_s = _lc_eff.stall_window_s
+        _stall_gpu_threshold = _lc_eff.stall_gpu_threshold
+        _stall_cpu_threshold = _lc_eff.stall_cpu_threshold
+        _restart_loop_window_s = _lc_eff.restart_loop_window_s
+        _restart_loop_uptime_threshold_s = _lc_eff.restart_loop_uptime_threshold_s
+        _provider_kind: str | None = (
+            cfg.compute.provider if cfg.compute is not None else None
+        )
         _factory: Callable[..., HeartbeatLoopProtocol] = (
             heartbeat_loop_factory or HeartbeatLoop
         )
