@@ -307,10 +307,9 @@ async def _ensure_on_gpu(name: str) -> LoadedModel:
     """Ensure ``name`` is on CUDA with sufficient headroom.
 
     LRU CPU eviction is opportunistic; hard-floor refusal happens when the
-    target's ``vram_bytes`` exceeds GPU capacity minus the headroom margin.
+    target's ``vram_bytes`` exceeds GPU capacity minus the headroom margin
+    (``VRAMEvictionFailed``, raised by ``_enforce_headroom``).
     """
-    from kinoforge.core.errors import VRAMEvictionFailed  # noqa: F401
-
     async with _REGISTRY_LOCK:
         entry = _LOADED.get(name)
         if entry is not None and entry["on_device"] == "cuda":
@@ -1325,8 +1324,6 @@ def _startup() -> None:
     LORAS_DIR.mkdir(parents=True, exist_ok=True)
     stack_path = os.environ.get("KINOFORGE_INITIAL_LORA_STACK_JSON")
     if stack_path and Path(stack_path).exists():
-        import json
-
         raw = json.loads(Path(stack_path).read_text())
         # P2: env file may carry either the canonical dict shape
         # (``{"ref":..., "download_spec":..., "strength":..., "branch":...}``)
