@@ -1,5 +1,24 @@
 # Hygiene audit — 2026-07-16 (whole repo, AUDIT-ONLY)
 
+> **Un-red pass executed same day (operator-approved):** Finding #0 fully resolved —
+> suite green (4070 passed, 0 failed). Commits: `95f10eb` (pollution), `b314f67`
+> (AC8 scanner Load-ctx), `366b95b` (client ref registration), `f007391` (fixture
+> teardown), port+delete of stale set_stack files, `6a32535` (matrix submit+poll
+> migration). Note: the AC8 wan_t2v_server resolution took the SCANNER-PRECISION
+> route, not the exempt tag — the tag budget (max 1 src file,
+> `test_ac8_exempt_tag_count_is_audit_friendly`) was already spent by
+> `core/grid/executor.py`.
+>
+> **New finding from the port (add to NEEDS DISCUSSION):** the in-job LRU-evict
+> branch (`wan_t2v_server.py:1738-1740`) is unreachable by set algebra —
+> `mandatory_evict = current − target` removes every non-target key first, so the
+> LRU candidate pool `set(_inventory) − target_keys` is always empty and
+> `_pick_lru_evict` can only return None (→ the 507 backstop). Either the LRU
+> sub-branch is dead code to delete, or the intended design was to LRU-evict
+> BEFORE mandatory eviction ordering constraints — decide, then delete or fix.
+> The ported tight-disk test pins the reachable behavior (mandatory evict funds
+> the download).
+
 Scope: whole repo. Mode: audit-only — **no code changed**. Five parallel read-only audit
 agents (engines / providers+core / cli+pipeline+rest / tests / tools+docs); every file:line
 verified by the reporting agent; the two highest-stakes claims (graphifyy dep, capability-prefix

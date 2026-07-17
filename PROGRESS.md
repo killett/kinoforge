@@ -58,6 +58,16 @@ first unchecked task without redoing committed work.
 
 ## RESUME SNAPSHOT (updated 2026-07-16 — read this, then STOP; below is history)
 
+**Suite un-red pass (2026-07-16, after the whole-repo hygiene audit — `docs/hygiene-audit-2026-07-16.md`):**
+the 8d88e0b job migration had left 14 tests red on HEAD (stale sync-contract set_stack files
+failing NONDETERMINISTICALLY, an AC8 scanner false positive, and reload-pollution in
+test_resolve_transformer). All fixed; **suite green: 4070 passed / 0 failed** (commits
+`95f10eb`,`b314f67`,`366b95b`,`f007391`, port+delete of test_wan_t2v_server_set_stack{,_failures}.py,
+`6a32535`). Five behaviors got ported to job-based tests in test_set_stack_async_job.py;
+`_poll_swap_job` now returns the terminal record. Audit's bug list (14 bugs incl. warm-reuse
+capability-prefix mismatch + RunPod GraphQL unwrap bypass + unused `graphifyy` dep) remains OPEN —
+see the audit doc's P1-P3 tables + NEEDS DISCUSSION items.
+
 **State (updated 2026-07-16 — job-based `/lora/set_stack` async submit+poll):**
 main green; ledger clean; zero pods. **Spec:** `docs/superpowers/specs/2026-07-13-lora-set-stack-async-job-design.md`.
 **Plan:** `docs/superpowers/plans/2026-07-13-lora-set-stack-async-job.md` (+ `.tasks.json`,
