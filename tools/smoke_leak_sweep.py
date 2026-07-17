@@ -63,7 +63,22 @@ def _post_issue(*, pod_id: str, tag: str | None, age_h: float, spend: float) -> 
         "--label",
         "leaked-smoke-pod",
     ]  # noqa: S607 — gh on $PATH; resolved at runtime
-    subprocess.run(cmd, check=False, timeout=60)  # noqa: S603
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd, check=False, timeout=60, capture_output=True, text=True
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # gh missing from PATH / hung: the reap already happened — losing
+        # the notification silently would defeat this tool's audit purpose.
+        _log.error("gh issue create failed for pod %s: %r", pod_id, exc)
+        return
+    if result.returncode != 0:
+        _log.error(
+            "gh issue create exited %d for pod %s: %s",
+            result.returncode,
+            pod_id,
+            (result.stderr or "").strip(),
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
