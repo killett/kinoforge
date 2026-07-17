@@ -194,3 +194,44 @@ def test_evict_one_removes_inventory_and_unloads(
     assert ("A", "auto") not in s._inventory
     assert not lora_file.exists()
     assert stub.unloaded == ["lora_3"]
+
+
+def test_failed_download_cleans_up_partial_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bug: download wrapper leaves *.partial files on disk after failure,
+    leaking space + confusing future operators.
+
+    (Relocated 2026-07-16 from the deleted synchronous-contract file
+    tests/engines/test_wan_t2v_server_set_stack_failures.py — it tests
+    ``_download_one`` directly and never touched the retired endpoint.)
+    """
+    import urllib.request
+
+    import kinoforge.engines.diffusers.servers.wan_t2v_server as s
+
+    class _FakeResp:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        def __enter__(self) -> _FakeResp:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def read(self, n: int) -> bytes:
+            self._calls += 1
+            if self._calls > 1:
+                raise RuntimeError("connection reset")
+            return b"x" * 1024
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _FakeResp())
+
+    spec = s.ArtifactDownloadSpec(
+        url="https://x/z.s", headers={}, filename="z.s", size_hint=100
+    )
+    with pytest.raises(RuntimeError):
+        s._download_one(spec, tmp_path)
+    assert not (tmp_path / "z.s.partial").exists()
+    assert not (tmp_path / "z.s").exists()
