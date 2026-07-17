@@ -649,6 +649,56 @@ def _check_branch_legal(branch: str, arity: int) -> None:
         raise BranchUnknown(branch=branch)
 
 
+def _branch_error_to_http(e: Exception) -> HTTPException:
+    """Map a branch-routing exception onto its wire-shape ``HTTPException``.
+
+    One decision — the ``branch_routing`` error body — raised identically
+    at submit time (pre-download gate in ``set_stack``) and at load time
+    (``_replace_adapter_stack`` inside ``_run_swap_job``); keeping both
+    call sites on this helper stops the two copies drifting.
+
+    Args:
+        e: One of the three branch-routing exceptions.
+
+    Returns:
+        The 400 (legality) or 500 (defensive ``BranchUnknown``)
+        ``HTTPException`` carrying the structured ``branch_routing`` detail.
+
+    Raises:
+        TypeError: ``e`` is not a branch-routing exception (caller bug).
+    """
+    if isinstance(e, BranchAutoNotAllowedOnMoE):
+        return HTTPException(
+            status_code=400,
+            detail={
+                "error": "branch_routing",
+                "reason": "branch_auto_disallowed_on_moe",
+                "arity": e.arity,
+            },
+        )
+    if isinstance(e, BranchUnsupportedOnSingleTransformer):
+        return HTTPException(
+            status_code=400,
+            detail={
+                "error": "branch_routing",
+                "reason": "branch_unsupported_single_transformer",
+                "branch": e.branch,
+                "arity": e.arity,
+            },
+        )
+    if isinstance(e, BranchUnknown):
+        # Defensive — Pydantic Literal should make this unreachable.
+        return HTTPException(
+            status_code=500,
+            detail={
+                "error": "branch_routing",
+                "reason": "branch_unknown",
+                "branch": e.branch,
+            },
+        )
+    raise TypeError(f"not a branch-routing exception: {e!r}")
+
+
 def _resolve_transformer(pipe_obj: Any, branch: str) -> Any:  # noqa: ANN401
     """Map ``(pipe_obj, branch)`` to the target transformer attribute.
 
@@ -1509,34 +1559,12 @@ async def set_stack(req: SetStackRequest) -> dict[str, str]:
     for t in req.target:
         try:
             _check_branch_legal(t.branch, _pipe_arity)
-        except BranchAutoNotAllowedOnMoE as e:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "branch_routing",
-                    "reason": "branch_auto_disallowed_on_moe",
-                    "arity": e.arity,
-                },
-            ) from e
-        except BranchUnsupportedOnSingleTransformer as e:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "branch_routing",
-                    "reason": "branch_unsupported_single_transformer",
-                    "branch": e.branch,
-                    "arity": e.arity,
-                },
-            ) from e
-        except BranchUnknown as e:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": "branch_routing",
-                    "reason": "branch_unknown",
-                    "branch": e.branch,
-                },
-            ) from e
+        except (
+            BranchAutoNotAllowedOnMoE,
+            BranchUnsupportedOnSingleTransformer,
+            BranchUnknown,
+        ) as e:
+            raise _branch_error_to_http(e) from e
 
     plan_507 = _plan_disk_infeasible(req)
     if plan_507 is not None:
@@ -1821,38 +1849,15 @@ async def _run_swap_job(job_id: str, req: SetStackRequest) -> None:
 
             try:
                 await asyncio.to_thread(_replace_adapter_stack, req.target)
-            except BranchAutoNotAllowedOnMoE as e:
+            except (
+                BranchAutoNotAllowedOnMoE,
+                BranchUnsupportedOnSingleTransformer,
+                BranchUnknown,
+            ) as e:
                 # Pre-load gate atomic-reject. _replace_adapter_stack raised
                 # BEFORE any unload/load fired, so inventory + pipeline are
                 # untouched and no rollback is needed.
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "branch_routing",
-                        "reason": "branch_auto_disallowed_on_moe",
-                        "arity": e.arity,
-                    },
-                ) from e
-            except BranchUnsupportedOnSingleTransformer as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "branch_routing",
-                        "reason": "branch_unsupported_single_transformer",
-                        "branch": e.branch,
-                        "arity": e.arity,
-                    },
-                ) from e
-            except BranchUnknown as e:
-                # Defensive — Pydantic Literal should make this unreachable.
-                raise HTTPException(
-                    status_code=500,
-                    detail={
-                        "error": "branch_routing",
-                        "reason": "branch_unknown",
-                        "branch": e.branch,
-                    },
-                ) from e
+                raise _branch_error_to_http(e) from e
             except (RuntimeError, ValueError) as e:
                 msg = str(e).lower()
                 is_oom = "out of memory" in msg or "oom" in msg
