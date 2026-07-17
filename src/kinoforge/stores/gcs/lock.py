@@ -15,19 +15,18 @@ retry.
 from __future__ import annotations
 
 import json
-import time as _time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from kinoforge.core.clock import Clock, RealClock
-from kinoforge.core.errors import LockTimeout
+from kinoforge.core.clock import Clock
 from kinoforge.core.locks import LockToken, _sanitize_key
+from kinoforge.stores._lease import _LeaseLockBase
 
 if TYPE_CHECKING:
     from kinoforge.stores.gcs import GCSArtifactStore
 
 
-class GCSCloudLock:
+class GCSCloudLock(_LeaseLockBase):
     """Lock backed by a GCS object created via if_generation_match=0.
 
     Args:
@@ -43,6 +42,8 @@ class GCSCloudLock:
         poll_interval_s: Seconds between blocking-acquire polls.
     """
 
+    _blocking_none_message = "acquire() returned None in blocking mode"
+
     def __init__(
         self,
         *,
@@ -55,18 +56,19 @@ class GCSCloudLock:
         poll_interval_s: float = 0.05,
     ) -> None:
         """Initialise the lock; see class-level docstring for parameter docs."""
+        super().__init__(
+            key=key,
+            ttl_s=ttl_s,
+            clock=clock,
+            sleep=sleep,
+            poll_interval_s=poll_interval_s,
+        )
         self._store = store
-        self._key = key
-        self._ttl_s = ttl_s
-        self._clock: Clock = clock or RealClock()
         if precondition_failed_exc is None:
             import google.api_core.exceptions as _gax_exc  # noqa: PLC0415 — lazy: tests inject the class and never trip this
 
             precondition_failed_exc = _gax_exc.PreconditionFailed
         self._precondition_failed: type[BaseException] = precondition_failed_exc
-        self._sleep: Callable[[float], None] = sleep or _time.sleep
-        self._poll_interval_s = poll_interval_s
-        self._held_token: LockToken | None = None
         self._held_generation: int | None = None
 
     # ------------------------------------------------------------------
@@ -124,40 +126,6 @@ class GCSCloudLock:
         self._held_generation = blob.generation
         return token
 
-    def acquire(
-        self,
-        *,
-        blocking: bool = True,
-        timeout_s: float | None = None,
-    ) -> LockToken | None:
-        """Acquire the lock, optionally blocking until success or timeout.
-
-        Args:
-            blocking: When ``False``, returns ``None`` immediately on contention.
-            timeout_s: Maximum seconds to block; raises :class:`LockTimeout` when
-                elapsed.  ``None`` means block indefinitely.
-
-        Returns:
-            A :class:`LockToken` on success, or ``None`` when ``blocking=False``
-            and the lock is held.
-
-        Raises:
-            LockTimeout: When ``blocking=True``, ``timeout_s`` is set, and the
-                deadline elapses without acquiring the lock.
-        """
-        if not blocking:
-            return self._try_take()
-        deadline = self._clock.now() + timeout_s if timeout_s is not None else None
-        while True:
-            token = self._try_take()
-            if token is not None:
-                return token
-            if deadline is not None and self._clock.now() >= deadline:
-                raise LockTimeout(
-                    f"failed to acquire lock {self._key!r} within {timeout_s}s"
-                )
-            self._sleep(self._poll_interval_s)
-
     def release(self, token: LockToken) -> None:
         """Conditional-delete the lock object; silent on stolen-after-TTL or NotFound.
 
@@ -181,17 +149,3 @@ class GCSCloudLock:
             pass
         self._held_token = None
         self._held_generation = None
-
-    def __enter__(self) -> LockToken:
-        """Acquire and return the token; blocks indefinitely."""
-        token = self.acquire()
-        if (
-            token is None
-        ):  # pragma: no cover — blocking acquire only returns None on non-blocking
-            raise RuntimeError("acquire() returned None in blocking mode")
-        return token
-
-    def __exit__(self, *exc: object) -> None:
-        """Release the lock on context-manager exit."""
-        if self._held_token is not None:
-            self.release(self._held_token)

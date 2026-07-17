@@ -15,19 +15,18 @@ then retry the CAS PUT.  Loser-of-the-steal-race retries the full loop.
 from __future__ import annotations
 
 import json
-import time as _time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from kinoforge.core.clock import Clock, RealClock
-from kinoforge.core.errors import LockTimeout
+from kinoforge.core.clock import Clock
 from kinoforge.core.locks import LockToken, _sanitize_key
+from kinoforge.stores._lease import _LeaseLockBase
 
 if TYPE_CHECKING:
     from kinoforge.stores.s3 import S3ArtifactStore
 
 
-class S3CloudLock:
+class S3CloudLock(_LeaseLockBase):
     """Lock backed by an S3 object created via conditional PUT.
 
     Args:
@@ -61,13 +60,14 @@ class S3CloudLock:
             sleep: Injectable sleep callable for blocking poll loops.
             poll_interval_s: Seconds between blocking-acquire polls.
         """
+        super().__init__(
+            key=key,
+            ttl_s=ttl_s,
+            clock=clock,
+            sleep=sleep,
+            poll_interval_s=poll_interval_s,
+        )
         self._store = store
-        self._key = key
-        self._ttl_s = ttl_s
-        self._clock: Clock = clock or RealClock()
-        self._sleep: Callable[[float], None] = sleep or _time.sleep
-        self._poll_interval_s = poll_interval_s
-        self._held_token: LockToken | None = None
         self._held_etag: str | None = None
 
     # ------------------------------------------------------------------
@@ -131,39 +131,6 @@ class S3CloudLock:
         self._held_etag = resp["ETag"]
         return token
 
-    def acquire(
-        self,
-        *,
-        blocking: bool = True,
-        timeout_s: float | None = None,
-    ) -> LockToken | None:
-        """Acquire the lock, optionally blocking until timeout.
-
-        Args:
-            blocking: If ``False``, return ``None`` immediately on contention.
-            timeout_s: When blocking, raise ``LockTimeout`` after this many
-                seconds.  ``None`` means poll forever.
-
-        Returns:
-            A ``LockToken`` on success, or ``None`` if ``blocking=False`` and
-            the lock is held.
-
-        Raises:
-            LockTimeout: If ``blocking=True`` and the timeout elapsed.
-        """
-        if not blocking:
-            return self._try_take()
-        deadline = self._clock.now() + timeout_s if timeout_s is not None else None
-        while True:
-            token = self._try_take()
-            if token is not None:
-                return token
-            if deadline is not None and self._clock.now() >= deadline:
-                raise LockTimeout(
-                    f"failed to acquire lock {self._key!r} within {timeout_s}s"
-                )
-            self._sleep(self._poll_interval_s)
-
     def release(self, token: LockToken) -> None:
         """Conditional-delete the lock object; silent on stolen-after-TTL.
 
@@ -188,19 +155,3 @@ class S3CloudLock:
             # Stolen after TTL — best-effort: log via stdlib in production.
         self._held_token = None
         self._held_etag = None
-
-    def __enter__(self) -> LockToken:
-        """Acquire the lock and return the token.
-
-        Returns:
-            The :class:`~kinoforge.core.locks.LockToken` for this lease.
-        """
-        token = self.acquire()
-        if token is None:  # pragma: no cover — blocking acquire never returns None
-            raise RuntimeError("acquire() returned None in blocking context manager")
-        return token
-
-    def __exit__(self, *exc: object) -> None:
-        """Release the lock on context exit."""
-        if self._held_token is not None:
-            self.release(self._held_token)

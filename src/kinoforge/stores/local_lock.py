@@ -18,16 +18,15 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import time as _time
 from collections.abc import Callable
 from pathlib import Path
 
-from kinoforge.core.clock import Clock, RealClock
-from kinoforge.core.errors import LockTimeout
+from kinoforge.core.clock import Clock
 from kinoforge.core.locks import LockToken
+from kinoforge.stores._lease import _LeaseLockBase
 
 
-class FileLock:
+class FileLock(_LeaseLockBase):
     """fcntl-backed Lock implementation for LocalArtifactStore.
 
     Args:
@@ -63,15 +62,16 @@ class FileLock:
             sleep: Injectable sleep callable for blocking poll loops.
             poll_interval_s: Seconds between blocking-acquire polls.
         """
+        super().__init__(
+            key=key,
+            ttl_s=ttl_s,
+            clock=clock,
+            sleep=sleep,
+            poll_interval_s=poll_interval_s,
+        )
         self._path = path
-        self._key = key
-        self._ttl_s = ttl_s
-        self._clock: Clock = clock or RealClock()
         self._flock: Callable[[int, int], None] = flock_fn or fcntl.flock
-        self._sleep: Callable[[float], None] = sleep or _time.sleep
-        self._poll_interval_s = poll_interval_s
         self._fd: int | None = None
-        self._held_token: LockToken | None = None
 
     def _try_take(self) -> LockToken | None:
         """One-shot non-blocking acquire; returns token on success else None."""
@@ -101,42 +101,6 @@ class FileLock:
         self._fd = fd
         self._held_token = token
         return token
-
-    def acquire(
-        self,
-        *,
-        blocking: bool = True,
-        timeout_s: float | None = None,
-    ) -> LockToken | None:
-        """Acquire the file lock.
-
-        Args:
-            blocking: If ``False``, return ``None`` immediately on contention.
-                If ``True``, poll until the lock is obtained or *timeout_s*
-                elapses.
-            timeout_s: Maximum seconds to wait when *blocking* is ``True``.
-                ``None`` means wait indefinitely.
-
-        Returns:
-            A :class:`~kinoforge.core.locks.LockToken` on success, or ``None``
-            when *blocking* is ``False`` and the lock is held.
-
-        Raises:
-            LockTimeout: When *blocking* is ``True`` and *timeout_s* elapses
-                without obtaining the lock.
-        """
-        if not blocking:
-            return self._try_take()
-        deadline = self._clock.now() + timeout_s if timeout_s is not None else None
-        while True:
-            token = self._try_take()
-            if token is not None:
-                return token
-            if deadline is not None and self._clock.now() >= deadline:
-                raise LockTimeout(
-                    f"failed to acquire lock {self._key!r} within {timeout_s}s"
-                )
-            self._sleep(self._poll_interval_s)
 
     def release(self, token: LockToken) -> None:
         """Release the OS lock; the sidecar file persists (inode-stable).
@@ -168,23 +132,3 @@ class FileLock:
         # lost updates (CI run 28700621336, ephemeral-index add lost
         # under contention). The empty file is inert and inode-stable.
         self._held_token = None
-
-    def __enter__(self) -> LockToken:
-        """Acquire the lock and return the token.
-
-        Returns:
-            The :class:`~kinoforge.core.locks.LockToken` for this lease.
-        """
-        token = self.acquire()
-        if token is None:  # pragma: no cover — blocking acquire never returns None
-            raise RuntimeError("acquire() returned None in blocking context manager")
-        return token
-
-    def __exit__(self, *exc: object) -> None:
-        """Release the lock on context-manager exit.
-
-        Args:
-            *exc: Exception info (ignored).
-        """
-        if self._held_token is not None:
-            self.release(self._held_token)
