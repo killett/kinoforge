@@ -727,6 +727,28 @@ def _resolve_transformer(pipe_obj: Any, branch: str) -> Any:  # noqa: ANN401
     raise BranchUnknown(branch=branch)
 
 
+def _resolve_transformer_attr(pipe_obj: Any, branch: str) -> tuple[Any, str]:  # noqa: ANN401
+    """Resolve ``(transformer, attribute_name)`` for ``branch`` on ``pipe_obj``.
+
+    Companion to :func:`_resolve_transformer` (the declared single dispatch
+    point): the attr-name decision is the same routing decision, and
+    re-deriving it at call sites had duplicated the identity test.
+
+    Returns:
+        ``(transformer, "transformer" | "transformer_2")``.
+
+    Raises:
+        Same as :func:`_resolve_transformer`.
+    """
+    target = _resolve_transformer(pipe_obj, branch)
+    attr = (
+        "transformer_2"
+        if target is getattr(pipe_obj, "transformer_2", None)
+        else "transformer"
+    )
+    return target, attr
+
+
 _BRANCH_SHORT: dict[str, str] = {
     "high_noise": "h",
     "low_noise": "l",
@@ -1116,12 +1138,7 @@ def _replace_adapter_stack(target: list[LoraTarget]) -> None:
     # branch leaves inventory + pipeline untouched.
     resolved: list[tuple[LoraTarget, Any, str]] = []
     for t in target:
-        target_transformer = _resolve_transformer(pipe, t.branch)
-        target_attr = (
-            "transformer_2"
-            if target_transformer is getattr(pipe, "transformer_2", None)
-            else "transformer"
-        )
+        target_transformer, target_attr = _resolve_transformer_attr(pipe, t.branch)
         resolved.append((t, target_transformer, target_attr))
 
     pipe.unload_lora_weights()
@@ -1244,12 +1261,7 @@ def _load_pipeline(
             raise RuntimeError(f"failed to download LoRA {ref}: {e}") from e
         adapter_name = _adapter_name(i, branch)
         # Task 0 Q1 LOCKED: boolean kwarg on diffusers WanLoraLoaderMixin.
-        target_transformer = _resolve_transformer(pipe_obj, branch)
-        target_attr = (
-            "transformer_2"
-            if target_transformer is getattr(pipe_obj, "transformer_2", None)
-            else "transformer"
-        )
+        _target_transformer, target_attr = _resolve_transformer_attr(pipe_obj, branch)
         pipe_obj.load_lora_weights(
             path,
             adapter_name=adapter_name,

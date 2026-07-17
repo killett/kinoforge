@@ -203,6 +203,32 @@ def test_resolve_unknown_value_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_resolve_transformer_attr_pairs_object_with_attr_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: the attr-name half of the routing decision drifts from the
+    object half (e.g. returns "transformer" for low_noise) — the LoRA then
+    loads with load_into_transformer_2=False into the wrong branch while
+    activation buckets file it under the right one, silently splitting
+    load and activation."""
+    monkeypatch.setattr(wan_t2v_server, "_pipe_arity", 2)
+    moe = _MoEStub()
+    assert wan_t2v_server._resolve_transformer_attr(moe, "high_noise") == (
+        moe.transformer,
+        "transformer",
+    )
+    assert wan_t2v_server._resolve_transformer_attr(moe, "low_noise") == (
+        moe.transformer_2,
+        "transformer_2",
+    )
+    monkeypatch.setattr(wan_t2v_server, "_pipe_arity", 1)
+    single = _SingleTransformerStub()
+    assert wan_t2v_server._resolve_transformer_attr(single, "auto") == (
+        single.transformer,
+        "transformer",
+    )
+
+
 def test_check_branch_legal_arity1_allows_auto() -> None:
     """Bug: a regression that rejects auto on Wan 2.1 breaks every
     single-transformer deployment."""
