@@ -54,9 +54,62 @@ first unchecked task without redoing committed work.
   404 → `gc_404_removed`) — index now fully converged (empty). Gen output frame-QA PASS. All 9
   plan tasks complete; every task passed two-stage review (spec + quality) with fixes applied.
   NO successful-generations entries (all runs ephemeral).
-- **SINGLE NEXT ACTION:** **Modal roadmap M1–M5 + util-probe + 1080p height-target all COMPLETE + live-green** (§22–§26 + util-probe): engine matrix (t2v/upscale/interpolate) + warm-reuse + HF-cache + util probe all proven. No unchecked task remains in any active plan. Next work is operator-directed — pick a new roadmap item (roadmap `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`; remaining candidates: i2v/flf2v on Modal) or a new brief. (Superseded next action, kept for context:) **Unblock Modal M3 Task 5 (FlashVSR live proof) by making the Modal boot fast + preemption-resilient.** M3 offline work is DONE + committed: the cp313 BSA wheel is built (on Modal, `tools/build_bsa_wheel_modal.py`) + hosted (`killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1`, `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl`, 526 MB); the Modal cfg (`examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml`), `HF_HOME=/cache/hf` provider wiring, offline tests, and the RED live scaffold are all committed. **BLOCKER (2026-07-09):** the live `kinoforge upscale` never converged — the kinoforge Modal transport provisions at RUNTIME (pip torch+BSA-wheel+FlashVSR-weights via the boot script, ~15 min), and Modal **preempted the pooled A100 repeatedly mid-boot** ("Worker disappeared, in-progress inputs will be re-scheduled"); each preempt restarts the boot from scratch (no caching for the BSA wheel / FlashVSR weights), so `/health` never bound and the run **accumulated 10 containers** before teardown (~$1.5 est). Torn down clean (app stopped, ledger `forget`, verified `No running instances`). **FIX (the next action):** bake the heavy pip deps + BSA wheel INTO the Modal image at build time (`ModalProvider`/`build_modal_app` `Image.pip_install(...)` instead of runtime boot-script installs) so container start is seconds, not ~15 min → no preemption window, no container pile-up. Then re-run Task 5 (`pixi run -e live-modal kinoforge upscale --config examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse`), frame-QA, log §24. Note: M1 (§22, 1.3B ~5 min boot) + M2 (§23, A14B ~30 min HF boot) survived preemption on lucky windows; FlashVSR's mix of a 526 MB non-HF wheel + weights is the worst case and forces the image-bake fix. [[reference_modal_provider_gotchas]] · [[reference_modal_add_python_clang_link]]. Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
+- **SINGLE NEXT ACTION:** **Job-based `/lora/set_stack` (async submit+poll) COMPLETE + code live-validated (Tasks 0–4, commits `14fa285`..`015a4e5`).** Only remaining gap: the live matrix 4-step clean-pass, BLOCKED-UPSTREAM by a civitai per-token full-download 401 on `lora_a` (`civitai:1479320@1673265`) — NOT code. **To close it:** refresh/rotate `CIVITAI_TOKEN` (or restore its civitai download entitlement/quota), then re-run `KINOFORGE_LIVE_TESTS=1 pixi run python -m pytest tests/smoke/live_wan21/test_lora_swap_matrix.py -v -s` (preflight first; poll GPU-util; frame-QA; verify `kinoforge list` clean after). See the 2026-07-16 snapshot block below for the full evidence. (Superseded next action:) **Modal roadmap M1–M5 + util-probe + 1080p height-target all COMPLETE + live-green** (§22–§26 + util-probe): engine matrix (t2v/upscale/interpolate) + warm-reuse + HF-cache + util probe all proven. No unchecked task remains in any active plan. Next work is operator-directed — pick a new roadmap item (roadmap `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`; remaining candidates: i2v/flf2v on Modal) or a new brief. (Superseded next action, kept for context:) **Unblock Modal M3 Task 5 (FlashVSR live proof) by making the Modal boot fast + preemption-resilient.** M3 offline work is DONE + committed: the cp313 BSA wheel is built (on Modal, `tools/build_bsa_wheel_modal.py`) + hosted (`killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1`, `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl`, 526 MB); the Modal cfg (`examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml`), `HF_HOME=/cache/hf` provider wiring, offline tests, and the RED live scaffold are all committed. **BLOCKER (2026-07-09):** the live `kinoforge upscale` never converged — the kinoforge Modal transport provisions at RUNTIME (pip torch+BSA-wheel+FlashVSR-weights via the boot script, ~15 min), and Modal **preempted the pooled A100 repeatedly mid-boot** ("Worker disappeared, in-progress inputs will be re-scheduled"); each preempt restarts the boot from scratch (no caching for the BSA wheel / FlashVSR weights), so `/health` never bound and the run **accumulated 10 containers** before teardown (~$1.5 est). Torn down clean (app stopped, ledger `forget`, verified `No running instances`). **FIX (the next action):** bake the heavy pip deps + BSA wheel INTO the Modal image at build time (`ModalProvider`/`build_modal_app` `Image.pip_install(...)` instead of runtime boot-script installs) so container start is seconds, not ~15 min → no preemption window, no container pile-up. Then re-run Task 5 (`pixi run -e live-modal kinoforge upscale --config examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse`), frame-QA, log §24. Note: M1 (§22, 1.3B ~5 min boot) + M2 (§23, A14B ~30 min HF boot) survived preemption on lucky windows; FlashVSR's mix of a 526 MB non-HF wheel + weights is the worst case and forces the image-bake fix. [[reference_modal_provider_gotchas]] · [[reference_modal_add_python_clang_link]]. Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
 
-## RESUME SNAPSHOT (updated 2026-07-12 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-07-16 — read this, then STOP; below is history)
+
+**State (updated 2026-07-16 — job-based `/lora/set_stack` async submit+poll):**
+main green; ledger clean; zero pods. **Spec:** `docs/superpowers/specs/2026-07-13-lora-set-stack-async-job-design.md`.
+**Plan:** `docs/superpowers/plans/2026-07-13-lora-set-stack-async-job.md` (+ `.tasks.json`,
+5 tasks 0–4, all committed). Built via subagent-driven-development (fresh implementer +
+two-stage spec/quality review per task; all green).
+
+**What shipped (Tasks 0–4):** turned `/lora/set_stack` from a synchronous long-blocking
+endpoint into a job-based submit+poll one matching `/generate`·`/upscale`·`/interpolate`,
+so a 350 MB LoRA download can no longer blow the RunPod proxy's ~100 s response ceiling.
+- `14fa285` T0 — extracted pure `_check_branch_legal(branch, arity)` gate (submit/load parity).
+- `8d88e0b` T1 — split `set_stack` → thin submit (sync 422/400/500 + **synchronous plan-disk
+  507** via pure `_plan_disk_infeasible`, algebraically = the in-job `picked is None`) + async
+  `_run_swap_job` under `_swap_lock` writing terminal `_swap_jobs` records payload-first/state-last
+  (`done{inventory,free_bytes,swap_rejected}` | `error{...,status:int}`) + `GET
+  /lora/set_stack/status/{job_id}` (404 unknown). Mirrors `_run_upscale_job`.
+- `589cd21` T2 — `DiffusersBackend.set_lora_stack` submits + polls (`_poll_set_stack`, mirrors
+  `result()`); signature + callers unchanged. **Also fixed a pre-existing latent bug:** the submit
+  `except` used `getattr(e,'body')` which a real `urllib.error.HTTPError` never carries, so a
+  genuine server 507 degraded to `PodUnreachableError`; now decodes `e.read()->{'detail':...}` →
+  `_raise_lora_swap_error` so submit-time 507 → `LoraSwapDiskFullError`.
+- `42cb84a` T3 — `run_matrix` submit+poll driver (`_poll_swap_job`); **URLError/HTTPError split**
+  so a real HTTP error surfaces instead of being swallowed as a transient blip — kills the
+  `last observed []` blindness that caused the 3-week weekly-smoke misdiagnosis. Retired
+  `_wait_for_inventory_convergence`.
+- `015a4e5` T4 — RED scaffold (live smoke → submit+poll), committed pre-spend.
+
+**LIVE VALIDATION 2026-07-13 (RunPod A5000/4090, Wan 2.1 1.3B, ~$0.16 total, 5 pods, EVERY
+teardown verified clean via `kinoforge list`):**
+- ✅ **Job-based swap live-proven:** run-1 `test_auto_branch_succeeds_on_wan21` downloaded the
+  350 MB `lora_a` via submit+poll and asserted inventory — **no proxy 502**. This is the core fix.
+- ✅ `test_explicit_high_noise_branch_rejected_on_wan21` → synchronous HTTP 400, no download.
+- ✅ **Logging fix live-proven:** the matrix failure surfaced as
+  `lora_download_failed … HTTP Error 401: Unauthorized … phase:download` — a legible payload, NOT
+  `last observed []`. The very failure below is the proof the misdiagnosis defect is dead.
+- ✅ GPU-util polled every run (harness `PodStatPoller` + a controller watchdog that kills only on
+  GPU 0% **AND** CPU-idle post-grace, never mid-download). ✅ output frame-QA'd (coherent Wan 2.1
+  1.3B 480² render, soft figure = model ceiling, no artifacts).
+
+**OPEN — matrix 4-step clean-pass BLOCKED-UPSTREAM (not code):** `test_lora_swap_matrix` fails at
+step-2 on a **civitai HTTP 401** for `lora_a` (`civitai:1479320@1673265`, the 350 MB
+`sttcrttn.safetensors`). Persistent across 3 attempts (20:22 / 20:31 / 22:53) INCLUDING one after
+a **2h21m cooldown** (per operator "retry if >1h" — disproves a rate-limit). A direct container
+probe with the correct UA + token returns **206 on a 2 KB ranged read** (token valid) while full
+pod downloads 401 → a **civitai per-token full-download quota/entitlement** exhausted by the
+repeated 350 MB pulls (run-1's full download succeeded, then all subsequent ones 401). Corrects the
+2026-07-13 weekly-smoke root-cause note (which had RULED OUT a 401): under quota the failure IS a
+401, now instantly diagnosable thanks to the T3 logging fix. **Operator accepted the code-validated
+state (2026-07-16, option 2).** Re-run the matrix once `CIVITAI_TOKEN` quota/entitlement is
+refreshed to close the last criterion. NO `successful-generations.md` entry (repro-fix, not a new
+capability axis).
+
+
 
 **State (updated 2026-07-12/13 CI-failure triage session):** (1) **CI-on-push RED
 since Jul 9 → FIXED + pushed + verified green** (`22da877`): golden "drift" was
