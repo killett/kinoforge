@@ -82,6 +82,10 @@ def test_happy_submit_returns_job_id_and_downloads_in_job(
     monkeypatch.setattr(srv, "_download_one", _fake_download)
     monkeypatch.setattr(srv, "_replace_adapter_stack", lambda target: None)
     monkeypatch.setattr(srv, "_disk_free_bytes", lambda _: 10_000_000)
+    # Deterministic drain: with real to_thread the TestClient loop only
+    # SOMETIMES completes the two-hop (download + apply) job before the
+    # status GET — observed flaking cold on 2026-07-16.
+    monkeypatch.setattr(asyncio, "to_thread", _direct)
     resp = client.post(
         "/lora/set_stack",
         json={
