@@ -15,6 +15,7 @@ against a checked-in baseline.
 from __future__ import annotations
 
 import time
+import urllib.error
 import urllib.request
 from abc import abstractmethod
 from collections.abc import Callable
@@ -51,6 +52,22 @@ def _urllib_get_bytes(url: str) -> bytes:
     """Default HTTP GET returning raw bytes."""
     with urllib.request.urlopen(url) as resp:  # noqa: S310
         return bytes(resp.read())
+
+
+def _urllib_delete(url: str, headers: dict[str, str]) -> int:
+    """Default stdlib HTTP DELETE returning the response status code.
+
+    Shared default for every ``RemoteSubmitPollBackend`` ``http_delete``
+    seam (replicate, runway) — timeout/UA policy is one decision here.
+    """
+    req = urllib.request.Request(  # noqa: S310 — schemes hardcoded by caller
+        url, method="DELETE", headers=headers
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            return int(resp.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
 
 
 class RemoteSubmitPollBackend(GenerationBackend):

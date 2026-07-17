@@ -11,8 +11,6 @@ Wire-shape note:
 
 from __future__ import annotations
 
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from typing import Any
 
@@ -34,6 +32,7 @@ from kinoforge.core.prompt_routing import resolve_prompt
 from kinoforge.core.remote_backend import (
     RemoteSubmitPollBackend,
     RemoteSubmitPollEngine,
+    _urllib_delete,
 )
 
 _PROBE = ModelProfile(
@@ -45,18 +44,6 @@ _PROBE = ModelProfile(
     supports_native_extension=False,
     supports_joint_audio=False,
 )
-
-
-def _urllib_delete(url: str, headers: dict[str, str]) -> int:
-    """Default stdlib HTTP DELETE returning the response status code."""
-    req = urllib.request.Request(  # noqa: S310 — schemes hardcoded by caller
-        url, method="DELETE", headers=headers
-    )
-    try:
-        with urllib.request.urlopen(req) as resp:  # noqa: S310
-            return int(resp.status)
-    except urllib.error.HTTPError as exc:
-        return int(exc.code)
 
 
 class RunwayBackend(RemoteSubmitPollBackend):
