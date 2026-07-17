@@ -411,7 +411,11 @@ def _reads_lora_inventory(tree: ast.AST) -> bool:
           ``resp.inventory``).
         - Literal ``.get('inventory'...)`` or ``.get('lora_inventory'...)``
           call.
-        - Literal subscript ``["inventory"]`` or ``["lora_inventory"]``.
+        - Literal subscript ``["inventory"]`` or ``["lora_inventory"]`` in
+          **Load context only** (2026-07-16): a Store-context subscript is
+          a job-record WRITE (e.g. the pod server finalising
+          ``_swap_jobs[job_id]["inventory"] = ...``), which is AC9's
+          jurisdiction, not observation.
         - **P1 (2026-06-21):** any function whose signature carries a
           ``LoraInventoryEntry`` annotation. The matcher's
           ``is_stack_match(active: list[LoraInventoryEntry], ...)``
@@ -439,6 +443,7 @@ def _reads_lora_inventory(tree: ast.AST) -> bool:
             return True
         if (
             isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
             and isinstance(node.slice, ast.Constant)
             and node.slice.value in {"inventory", "lora_inventory"}
         ):
@@ -605,6 +610,41 @@ def test_ac8_lora_inventory_entry_branch_field_param_trips_scan() -> None:
     assert _reads_lora_inventory(tree) is True, (
         "Scan must detect functions taking LoraInventoryEntry as a "
         "parameter even when they consume .branch (P2) alongside .ref."
+    )
+
+
+def test_ac8_store_context_inventory_subscript_does_not_trip_scan() -> None:
+    """A Store-context ``["inventory"]`` subscript (writing into a job
+    record) is not inventory OBSERVATION and must not classify the module
+    as a reader.
+
+    Bug this catches (2026-07-16): the pod-side ``wan_t2v_server`` writes
+    ``_swap_jobs[job_id]["inventory"] = [...]`` when finalising a swap job
+    record — it produces the inventory, it never observes one. Matching
+    Store-context subscripts forces every such writer to either import the
+    controller-side registration helper (impossible in the standalone
+    stdlib+fastapi pod file) or spend the 1-file exempt-tag budget — both
+    wrong. Writes are AC9's jurisdiction; AC8 is the observer invariant.
+    """
+    store_only = (
+        "def finalize(jobs: dict, job_id: str, snap: list) -> None:\n"
+        "    jobs[job_id]['inventory'] = snap\n"
+    )
+    assert _reads_lora_inventory(ast.parse(store_only)) is False, (
+        "Store-context ['inventory'] subscript (job-record write) must "
+        "not classify a module as an inventory reader."
+    )
+
+    # Positive control: a Load-context subscript is genuine observation —
+    # dropping Subscript matching entirely (over-correction) would let
+    # `inv = snapshot['inventory']` + ref logging bypass AC8.
+    load = (
+        "def render(snapshot: dict) -> None:\n"
+        "    for e in snapshot['inventory']:\n"
+        "        print(e['ref'])\n"
+    )
+    assert _reads_lora_inventory(ast.parse(load)) is True, (
+        "Load-context ['inventory'] subscript must still trip the scan."
     )
 
 
