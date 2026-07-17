@@ -109,6 +109,15 @@ state (2026-07-16, option 2).** Re-run the matrix once `CIVITAI_TOKEN` quota/ent
 refreshed to close the last criterion. NO `successful-generations.md` entry (repro-fix, not a new
 capability axis).
 
+**Follow-ups (non-blocking, from the final holistic review — SHIP-WITH-NITS):**
+(a) `DiffusersBackend._raise_lora_swap_error` doesn't map a `branch_routing` 400/500 body, so a
+submit-time branch rejection (explicit `high_noise`/`low_noise` sent to a single-transformer pod,
+or the narrow mid-job `_pipe_arity`-reload window) surfaces as a generic
+`RuntimeError("unknown /lora/set_stack error body")` instead of a structured `LoraSwap*` error.
+Fails LOUD (raises, never silently succeeds) — low-frequency UX nit. Fix: add a `branch_routing`
+case to `_raise_lora_swap_error`. (b) `SetStackResponse` in `wan_t2v_server.py` is now dead code
+post-migration to `{"job_id"}` — delete when convenient (regen golden after).
+
 
 
 **State (updated 2026-07-12/13 CI-failure triage session):** (1) **CI-on-push RED
