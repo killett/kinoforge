@@ -907,26 +907,9 @@ class SkyPilotProvider(ComputeProvider):
         """
         # Autostop is set at launch time; no heartbeat mechanism is needed.
 
-    def last_heartbeat(self, instance_id: str) -> float | None:
-        """Return ``None`` — SkyPilot has no wire-level heartbeat read substrate.
-
-        ``HeartbeatLoop._tick_once`` calls ``provider.last_heartbeat`` every
-        tick (validation auto-sets ``heartbeat_interval_s``, which starts the
-        loop even when ``heartbeat_mode`` is ``"none"``). This method is NOT on
-        the ``ComputeProvider`` ABC, so a provider lacking it raised
-        ``AttributeError`` every tick — cosmetic during a run, but the loop then
-        never contributes a real ``last_heartbeat`` and, worse, the error was
-        observed alongside a hung ``--no-reuse`` teardown. Returning ``None``
-        mirrors RunPod's disabled-read fallback: the loop substitutes the
-        orchestrator clock, and the ledger stays consistent.
-
-        Args:
-            instance_id: Unused — SkyPilot autostop owns cluster liveness.
-
-        Returns:
-            ``None`` (no provider-side heartbeat timestamp).
-        """
-        return None
+    # last_heartbeat: inherited ComputeProvider default (None). The 2026-06
+    # AttributeError-every-tick incident that motivated adding it (and now
+    # the ABC default) is summarized on ComputeProvider.last_heartbeat.
 
     def endpoints(self, instance: Instance) -> dict[str, str]:
         """Return the SSH endpoint for ``instance``.
