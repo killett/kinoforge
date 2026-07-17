@@ -16,14 +16,12 @@ Spec: docs/superpowers/specs/2026-06-13-c26-runpod-util-aware-stall-classify-des
 
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from typing import Any
 
 from kinoforge.core.errors import TransportError
 from kinoforge.core.util_endpoints import UtilSnapshot
+from kinoforge.providers.runpod._transport import bearer_graphql_post
 
 __all__ = ["RunPodGraphQLUtilEndpoint"]
 
@@ -54,38 +52,8 @@ def _build_runtime_query(pod_id: str) -> str:
 
 
 def _default_http_post(api_key: str) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
-    """stdlib-urllib POST with Bearer auth; sister of C25 heartbeat closure."""
-
-    def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(  # noqa: S310
-            url,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "kinoforge-util/0.1",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
-                data: bytes = resp.read()
-        except urllib.error.HTTPError as exc:
-            raise TransportError(
-                f"RunPod GraphQL HTTP {exc.code}: {exc.reason}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise TransportError(
-                f"RunPod GraphQL transport error: {exc.reason}"
-            ) from exc
-        try:
-            decoded: dict[str, Any] = json.loads(data)
-        except json.JSONDecodeError as exc:
-            raise TransportError(f"RunPod GraphQL non-JSON response: {exc}") from exc
-        return decoded
-
-    return _post
+    """Shared Bearer-auth closure (see ``_transport``) with the util UA."""
+    return bearer_graphql_post(api_key, "kinoforge-util/0.1")
 
 
 class RunPodGraphQLUtilEndpoint:
@@ -134,41 +102,11 @@ class RunPodGraphQLUtilEndpoint:
         Raises:
             TransportError: GraphQL ``errors`` or HTTP / JSON transport fault.
         """
-        payload = {"query": _build_runtime_query(instance_id)}
-        try:
-            resp = self._http_post(self._graphql_url, payload)
-        except TransportError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise TransportError(f"RunPod runtime query failure: {exc}") from exc
-        if "errors" in resp:
-            raise TransportError(f"RunPod runtime query failed: {resp['errors']}")
-        pod = (resp.get("data") or {}).get("pod")
-        if pod is None:
-            return None
-        runtime = pod.get("runtime")
-        if runtime is None:
-            return None
-        gpus = runtime.get("gpus") or []
-        gpu_util = max(
-            (
-                float(g["gpuUtilPercent"])
-                for g in gpus
-                if g.get("gpuUtilPercent") is not None
-            ),
-            default=None,
-        )
-        container = runtime.get("container") or {}
-        cpu = container.get("cpuPercent")
-        mem = container.get("memoryPercent")
-        uptime = runtime.get("uptimeInSeconds")
-        return UtilSnapshot(
-            gpu_util_percent=gpu_util,
-            cpu_percent=float(cpu) if cpu is not None else None,
-            memory_percent=float(mem) if mem is not None else None,
-            disk_percent=None,
-            uptime_seconds=int(uptime) if uptime is not None else None,
-        )
+        # read_util(id) is definitionally probe(id)[1]: it collapses both
+        # "pod gone" and "early boot, runtime null" to None. Delegate so
+        # the query+parse logic has exactly one home.
+        _found, snapshot = self.probe(instance_id)
+        return snapshot
 
     def probe(self, instance_id: str) -> tuple[bool, UtilSnapshot | None]:
         """Like :meth:`read_util` but distinguishes 404 from early-boot.
