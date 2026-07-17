@@ -742,6 +742,7 @@ class DiffusersBackend(GenerationBackend):
             LoraSwapPodUnreachableError: Wall-clock timeout exceeded.
         """
         from kinoforge.core.errors import LoraSwapPodUnreachableError
+        from kinoforge.core.warm_reuse.redaction import _register_observed_lora_refs
         from kinoforge.engines._proxy_retry import (
             RUNPOD_PROXY_POLICY,
             interpoll_wait,
@@ -768,6 +769,12 @@ class DiffusersBackend(GenerationBackend):
             )
             state = data.get("state")
             if state == "done":
+                # Tokenise refs the moment they cross the pod->controller
+                # boundary (AC8): callers render/log this inventory, and
+                # the render-boundary registrations (integration.py,
+                # cli/_commands.py) don't cover every consumer of this
+                # return value. Idempotent; no-op on empty inventory.
+                _register_observed_lora_refs({"inventory": data.get("inventory") or []})
                 return {
                     "inventory": data.get("inventory"),
                     "free_bytes": data.get("free_bytes"),
