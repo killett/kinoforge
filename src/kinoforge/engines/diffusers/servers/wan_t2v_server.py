@@ -834,14 +834,6 @@ class SetStackRequest(BaseModel):
         return data
 
 
-class SetStackResponse(BaseModel):
-    """Post-swap pod inventory + free disk + optional rejection details."""
-
-    inventory: list[LoraInventoryEntry]
-    free_bytes: int
-    swap_rejected: SwapRejectedDetails | None = None
-
-
 def _snapshot_inventory_as_targets() -> list[LoraTarget]:
     """Return the current inventory as an ordered ``LoraTarget`` list.
 

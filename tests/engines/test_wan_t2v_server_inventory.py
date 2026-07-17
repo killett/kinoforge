@@ -52,10 +52,14 @@ def test_inventory_with_entries(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_inventory_response_shape_matches_set_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Inventory and set_stack responses must share the LoraInventoryEntry shape.
+    """Inventory and set_stack surfaces must share the LoraInventoryEntry shape.
 
-    Bug: callers parse both endpoints via the same model; if either drifts,
+    Bug: callers parse both surfaces via the same model; if either drifts,
     the orchestrator's response parsing breaks for half the warm pods.
+
+    Post-8d88e0b the set_stack side is the job record: _run_swap_job dumps
+    ``_inventory_snapshot()`` rows into the terminal ``done`` payload (the
+    retired SetStackResponse model asserted here previously is deleted).
     """
     s._inventory.clear()
     s._inventory[("A", "auto")] = {
@@ -70,9 +74,13 @@ def test_inventory_response_shape_matches_set_stack(
     }
     monkeypatch.setattr(s, "_disk_free_bytes", lambda _: 1)
     inv_resp = asyncio.run(s.inventory())
-    # Both responses must use the LoraInventoryEntry shape — caller code
-    # parses the rows through one model in both endpoints.
+    # Both surfaces must use the LoraInventoryEntry shape — caller code
+    # parses the rows through one model on both paths.
     assert isinstance(inv_resp.inventory[0], s.LoraInventoryEntry)
-    set_stack_field_type = s.SetStackResponse.model_fields["inventory"].annotation
+    snapshot = s._inventory_snapshot()
+    assert [type(e) for e in snapshot] == [s.LoraInventoryEntry]
     inv_field_type = s.InventoryResponse.model_fields["inventory"].annotation
-    assert set_stack_field_type == inv_field_type == list[s.LoraInventoryEntry]
+    assert inv_field_type == list[s.LoraInventoryEntry]
+    # The job record serializes exactly the model's fields (no extra keys
+    # like loras_dir_path leaking to the client).
+    assert set(snapshot[0].model_dump()) == set(s.LoraInventoryEntry.model_fields)
