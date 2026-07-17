@@ -1,9 +1,10 @@
 """Grid executor: subprocess-per-cell, group-parallel, partial-failure-tolerant.
 
 Each cell launches ``pixi run kinoforge generate`` as a subprocess. Same-
-group cells run sequentially so the existing warm-reuse matcher reuses
-the pod across calls (no ``--no-reuse`` on cells 0..N-2 of a group;
-``--no-reuse`` on cell N-1 so the pod auto-destroys on group exit).
+group cells run sequentially; EVERY cell passes ``--no-reuse`` (cold-boot,
+generate, destroy) — see ``_run_group``'s docstring for the 2026-06-25
+matcher-race rationale that retired the reuse-cells-0..N-2 design this
+docstring used to describe.
 
 Cross-group cells run in parallel under a semaphore. A cell failure
 ABORTS the rest of its group (pod state is unknown) but does NOT touch

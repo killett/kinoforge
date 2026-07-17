@@ -174,7 +174,10 @@ def run_preflight(
     pod_lister: Callable[[], list[dict[str, Any]]],
     git_dirty: Callable[[], str],
 ) -> tuple[int, list[str]]:
-    """Run all four preflight checks; return (exit_code, checklist_lines).
+    """Run the three core preflight checks; return (exit_code, checklist_lines).
+
+    Covers creds/env, active pods, and git cleanliness. The optional
+    fourth check (SkyPilot cluster scan) runs in :func:`main`, not here.
 
     Args:
         env_getter: Lookup function for environment variables (signature

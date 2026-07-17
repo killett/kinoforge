@@ -71,7 +71,7 @@ class OutputSink(Protocol):
             namespace: Optional sub-directory under the sink's root; used
                 by ``batch_generate`` to group entries by ``batch_id``.
             provider: Engine registry key (``replicate`` / ``runway`` /
-                ``luma`` / ``fal``). ``None`` or empty falls back to the
+                ``fal``). ``None`` or empty falls back to the
                 literal ``"unknown"``.
             model: ``cfg["spec"]["model"]`` slugified to max 24 chars.
                 ``None`` or empty falls back to the literal ``"unknown"``.

@@ -401,7 +401,11 @@ class BedrockVideoEngine(GenerationEngine):
         return {}
 
     def validate_spec(self, job: GenerationJob) -> None:
-        """No-op spec validation — Bedrock video only requires a prompt.
+        """No-op spec validation — nothing is checked client-side.
+
+        Bedrock validates the request server-side at submit; an absent
+        prompt reaches ``submit`` as ``""`` and surfaces there as a
+        Bedrock validation error rather than being pre-screened here.
 
         Args:
             job: The :class:`~kinoforge.core.interfaces.GenerationJob` to check.
