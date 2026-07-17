@@ -256,7 +256,9 @@ def _build_diagnostic_env(run_id: str) -> dict[str, str]:
         import boto3
 
         creds = boto3.Session().get_credentials()
-    except (ImportError, Exception):  # pragma: no cover - boto3 always present
+    except Exception:  # pragma: no cover — best-effort overlay: a missing
+        # boto3 OR any cred-chain fault must degrade to "no AWS creds in
+        # the pod env" (diag upload disabled), never block provisioning.
         creds = None
     if creds is not None:
         frozen = creds.get_frozen_credentials()
