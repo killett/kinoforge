@@ -164,16 +164,18 @@ class LocalOutputSink:
         Returns:
             A :class:`~pathlib.Path` that does not currently exist.
         """
-        kind_part = f"{kind}_" if kind else ""
-        base = f"{ts}_{kind_part}{provider}_{model}_{slug}"
-        primary = target_dir / format_filename(
+        # Derive the collision base from format_filename (extension-less) so
+        # the filename schema has exactly one home — hand-rebuilding it here
+        # let a schema change diverge collision candidates from the primary.
+        base = format_filename(
             ts=ts,
             provider=provider,
             model=model,
             slug=slug,
-            extension=ext,
+            extension="",
             kind=kind,
         )
+        primary = target_dir / f"{base}{ext}"
         if not primary.exists():
             return primary
 
