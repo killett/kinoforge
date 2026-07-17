@@ -58,6 +58,16 @@ first unchecked task without redoing committed work.
 
 ## RESUME SNAPSHOT (updated 2026-07-16 — read this, then STOP; below is history)
 
+**Hygiene FIX NOW batch (2026-07-16, operator-approved):** all ~30 behavior-preserving items
+from the audit executed — 26 commits `bd8817d`..`66a65ea`; **suite 4071 passed / 0 failed**,
+pre-commit green throughout. Highlights: `_run_swap_job` 281→67 lines, runpod `_create_pod`
+222→39, shared pod-HTTP client (`engines/_pod_http.py`), lock lease template
+(`stores/_lease.py`), `last_heartbeat` on the ComputeProvider ABC, dead `SetStackResponse` +
+`gc --older-than` removed. Provision golden regenerated 5×. Audit doc addendum records two
+audit corrections + new follow-ups. **Still OPEN from the audit:** the 14-bug list (P1: warm-reuse
+capability-prefix mismatch, `_promote_wan_if_evicted` LoRA-less regen, RunPod GraphQL
+read-path unwrap bypass, selfterm dead-man; P3: `graphifyy` dep) and 16 NEEDS DISCUSSION items.
+
 **Suite un-red pass (2026-07-16, after the whole-repo hygiene audit — `docs/hygiene-audit-2026-07-16.md`):**
 the 8d88e0b job migration had left 14 tests red on HEAD (stale sync-contract set_stack files
 failing NONDETERMINISTICALLY, an AC8 scanner false positive, and reload-pollution in
