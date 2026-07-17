@@ -625,16 +625,16 @@ class FalEngine(GenerationEngine):
             ValidationError: Neither ``job.spec["prompt"]`` nor
                 ``job.segments[0].prompt`` is a non-empty string.
         """
-        prompt = job.spec.get("prompt", "")
-        if isinstance(prompt, str) and prompt:
-            return
-        if job.segments:
-            seg_prompt = getattr(job.segments[0], "prompt", "")
-            if isinstance(seg_prompt, str) and seg_prompt:
-                return
-        raise ValidationError(
-            "fal engine requires a non-empty prompt in job.spec or segments[0]"
+        from kinoforge.core.prompt_routing import (
+            resolve_prompt,  # local — avoid circular at module load
         )
+
+        # Same resolver submit() routes through — validate/submit cannot
+        # drift on where the prompt is allowed to live.
+        if resolve_prompt(job) is None:
+            raise ValidationError(
+                "fal engine requires a non-empty prompt in job.spec or segments[0]"
+            )
 
     def model_identity(self, cfg: dict[str, object]) -> str:
         """Fal identity is the queue endpoint (e.g. ``fal-ai/wan-t2v``)."""
