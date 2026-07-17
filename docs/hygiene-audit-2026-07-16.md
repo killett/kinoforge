@@ -18,6 +18,26 @@
 > BEFORE mandatory eviction ordering constraints — decide, then delete or fix.
 > The ported tight-disk test pins the reachable behavior (mandatory evict funds
 > the download).
+>
+> **FIX NOW batch executed same day (operator-approved, 26 commits
+> `bd8817d`..`66a65ea`, suite 4071 passed / 0 failed after):** every item in the
+> "FIX NOW hygiene" section below is DONE — docstring corrections, dead-code
+> drops (SetStackResponse + parity-test retarget, gc --older-than, skypilot
+> vestigials, unused server imports), dedups (_branch_error_to_http,
+> _resolve_transformer_attr, runpod _transport + read_util→probe, _urllib_delete,
+> fal resolve_prompt, outputs format_filename base, validation _head +
+> _run_gated, cli warm-attach ladder + cold-create stamp, wait_for_ready
+> poll_until_ready, lock _LeaseLockBase, pod-HTTP _pod_http), structural
+> decompositions (_run_swap_job 281→67, _create_pod 222→39, _run_swap_group
+> nesting 5→3), last_heartbeat on the ABC, cfg.lifecycle() knob unification,
+> modal 0.0 created_at sentinel, leak-sweep gh returncode logging. Two audit
+> corrections surfaced during execution: (a) the AC8 exempt-tag route was
+> blocked by the 1-file tag budget — resolved via scanner Load-ctx precision
+> instead; (b) the warm-attach duplication was generate↔batch, NOT
+> generate↔upscale (upscale/interpolate run a deliberately different chain).
+> New follow-ups recorded: SwapRejectedDetails now producer-less in the server;
+> core/locks.py in-memory lock shares the lease shape but a core→stores import
+> would invert layering.
 
 Scope: whole repo. Mode: audit-only — **no code changed**. Five parallel read-only audit
 agents (engines / providers+core / cli+pipeline+rest / tests / tools+docs); every file:line
