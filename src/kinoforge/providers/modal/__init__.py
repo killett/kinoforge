@@ -200,7 +200,11 @@ class ModalProvider(ComputeProvider):
             id=run_id,
             provider=self.name,
             status="ready",
-            created_at=self._clock(),
+            # 0.0 sentinel, matching the RunPod list path: `modal app list`
+            # does not return creation time, and stamping "now" would make
+            # listed instances look forever-new to any age-based consumer
+            # (the inverse failure of the conservative over-age 0.0).
+            created_at=0.0,
         )
 
     def list_instances(self) -> list[Instance]:
