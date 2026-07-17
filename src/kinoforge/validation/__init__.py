@@ -154,36 +154,11 @@ def validate_for_generate(
         ValidationError: At least one ERROR-severity check failed and
             had no successful auto-fix.
     """
-    reg = registry or default_registry()
-    results: list[CheckResult] = []
-
-    for check in reg.applicable(cfg, categories=frozenset({CheckCategory.STATIC})):
-        result, cfg = _run_with_autofix(check, cfg)
-        results.append(result)
-
-    for check in reg.applicable(cfg, categories=frozenset({CheckCategory.PREFLIGHT})):
-        results.append(check.run(cfg))
-
-    for check in reg.applicable(cfg, categories=frozenset({CheckCategory.NETWORK})):
-        results.append(check.run(cfg))
-
-    auto_fixes, errors, warnings = _categorise(results)
-    report = ValidationReport(
-        cfg=cfg,
-        results=results,
-        auto_fixes=auto_fixes,
-        errors=errors,
-        warnings=warnings,
+    return _run_gated(
+        cfg,
+        registry or default_registry(),
+        extra_categories=(CheckCategory.PREFLIGHT, CheckCategory.NETWORK),
     )
-
-    for af in auto_fixes:
-        _log.info("auto-fixed: %s — %s", af.name, af.message)
-    for w in warnings:
-        _log.warning("%s: %s", w.name, w.message)
-
-    if errors:
-        raise ValidationError(f"cfg validation failed\n{report.format()}")
-    return report
 
 
 def validate_for_load(
@@ -201,12 +176,35 @@ def validate_for_load(
     results that survive auto-fix raise ``ValidationError`` carrying
     the formatted report.
     """
-    reg = registry or default_registry()
+    return _run_gated(cfg, registry or default_registry(), extra_categories=())
+
+
+def _run_gated(
+    cfg: object,
+    reg: CheckRegistry,
+    *,
+    extra_categories: tuple[CheckCategory, ...],
+) -> ValidationReport:
+    """STATIC-with-autofix + ``extra_categories``, then log and gate.
+
+    The shared body of :func:`validate_for_generate` (PREFLIGHT +
+    NETWORK) and :func:`validate_for_load` (STATIC only) — the report
+    build, auto-fix/warn log lines, and the ERROR raise are one policy.
+    ``validate_for_doctor`` deliberately does not use this: it skips
+    auto-fix and never raises.
+
+    Raises:
+        ValidationError: An ERROR-severity result survived auto-fix.
+    """
     results: list[CheckResult] = []
 
     for check in reg.applicable(cfg, categories=frozenset({CheckCategory.STATIC})):
         result, cfg = _run_with_autofix(check, cfg)
         results.append(result)
+
+    for cat in extra_categories:
+        for check in reg.applicable(cfg, categories=frozenset({cat})):
+            results.append(check.run(cfg))
 
     auto_fixes, errors, warnings = _categorise(results)
     report = ValidationReport(
