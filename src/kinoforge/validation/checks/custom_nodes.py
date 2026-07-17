@@ -9,26 +9,20 @@ blocked.
 from __future__ import annotations
 
 import logging
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 
 from kinoforge.core.config import Config
+from kinoforge.validation.checks._head import default_http_head
 from kinoforge.validation.protocol import CheckCategory, CheckResult, Severity
 from kinoforge.validation.registry import register
 
 _log = logging.getLogger(__name__)
 
+# Deliberately NOT _head.PASS_CODES_AUTH_OK: a 401 on a public GitHub
+# commit URL means a bad ref, not an auth-gated-but-existing resource.
 _PASS_CODES = frozenset({200, 301, 302})
 
-
-def _default_http_head(url: str) -> int:
-    req = urllib.request.Request(url, method="HEAD")  # noqa: S310
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
-            return int(resp.status)
-    except urllib.error.HTTPError as exc:
-        return int(exc.code)
+_default_http_head = default_http_head
 
 
 def _commit_url(git_url: str, ref: str) -> str:
