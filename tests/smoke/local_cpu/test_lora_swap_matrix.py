@@ -77,35 +77,48 @@ def test_vram_oom_rollback_restores_previous_stack(
 ) -> None:
     """Target=[A,bigs] exceeds stub VRAM → server rolls back to [A].
 
-    Bug: server returns 5xx instead of 200 with swap_rejected /
-    inventory does not restore the previous stack / dropped specs'
-    files are not cleaned up.
+    Bug: server job errors instead of finishing done + swap_rejected /
+    the terminal record's inventory does not restore the previous stack /
+    /lora/inventory disagrees with the rollback snapshot.
+
+    Migrated 2026-07-16 to the job-based submit+poll contract (8d88e0b):
+    the POST returns only ``{job_id}``; the swap outcome lives in the
+    terminal job record returned by ``matrix._poll_swap_job`` (same
+    driver the 4-step matrix uses).
     """
+
+    def _swap(body: dict[str, Any], step: str) -> dict[str, Any]:
+        submit = http.post_json(f"{uvicorn_server}/lora/set_stack", body, timeout=30)
+        return matrix._poll_swap_job(
+            uvicorn_server, submit["job_id"], step_name=step, deadline_s=60.0
+        )
+
     a_spec = _spec("civitai:A@1", tmp_path)
-    resp = http.post_json(
-        f"{uvicorn_server}/lora/set_stack",
+    record = _swap(
         {
             "target_refs": ["civitai:A@1"],
             "download_specs": {"civitai:A@1": a_spec},
         },
-        timeout=30,
+        "load-a",
     )
-    assert [e["ref"] for e in resp["inventory"]] == ["civitai:A@1"]
+    assert [e["ref"] for e in record["inventory"]] == ["civitai:A@1"]
 
     # Keep A in target so it is NOT mandatorily evicted; add enough
     # new refs to bust the stub's 80GB budget (201 × 500MB > 80GB).
     big_specs = {
         f"civitai:big-{i}@1": _spec(f"civitai:big-{i}@1", tmp_path) for i in range(200)
     }
-    body = {
-        "target_refs": ["civitai:A@1", *big_specs.keys()],
-        "download_specs": {"civitai:A@1": a_spec, **big_specs},
-    }
-    resp = http.post_json(f"{uvicorn_server}/lora/set_stack", body, timeout=60)
-    assert resp["swap_rejected"] is not None
-    assert resp["swap_rejected"]["reason"] == "vram_oom"
-    assert set(resp["swap_rejected"]["target_refs_dropped"]) == set(big_specs)
-    assert [e["ref"] for e in resp["inventory"]] == ["civitai:A@1"]
+    record = _swap(
+        {
+            "target_refs": ["civitai:A@1", *big_specs.keys()],
+            "download_specs": {"civitai:A@1": a_spec, **big_specs},
+        },
+        "oom-swap",
+    )
+    assert record["swap_rejected"] is not None
+    assert record["swap_rejected"]["reason"] == "vram_oom"
+    assert set(record["swap_rejected"]["target_refs_dropped"]) == set(big_specs)
+    assert [e["ref"] for e in record["inventory"]] == ["civitai:A@1"]
 
     # /lora/inventory agrees with the rollback snapshot.
     resp = http.get_json(f"{uvicorn_server}/lora/inventory", timeout=10)

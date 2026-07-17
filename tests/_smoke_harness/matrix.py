@@ -112,7 +112,7 @@ def _poll_swap_job(
     *,
     step_name: str,
     deadline_s: float,
-) -> None:
+) -> dict[str, Any]:
     """Poll ``/lora/set_stack/status/{job_id}`` until terminal.
 
     HTTPError and URLError are caught in SEPARATE branches: a real HTTP
@@ -126,6 +126,11 @@ def _poll_swap_job(
         job_id: Job ID returned by the set_stack POST.
         step_name: Matrix step name — included in error messages.
         deadline_s: Polling deadline in seconds; raise on expiry.
+
+    Returns:
+        The terminal ``done`` job record (``inventory`` / ``free_bytes`` /
+        ``swap_rejected``) so callers can assert on the swap outcome
+        without re-fetching state that may have moved on.
 
     Raises:
         AssertionError: On ``error`` terminal state (carries the server
@@ -145,7 +150,7 @@ def _poll_swap_job(
             continue
         state = data.get("state")
         if state == "done":
-            return
+            return data
         if state == "error":
             raise AssertionError(f"{step_name}: swap job failed — {data.get('error')}")
         # "queued" and "running" fall through here — keep polling. Do NOT add a
