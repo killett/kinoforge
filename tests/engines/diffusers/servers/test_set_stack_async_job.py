@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -12,14 +13,25 @@ from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
 
 
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """TestClient with a single-transformer pipe (Wan 2.1, arity=1)."""
+def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """TestClient with a single-transformer pipe (Wan 2.1, arity=1).
+
+    Restores ``ready`` and re-clears ``_inventory`` / ``_swap_jobs`` on
+    teardown: pytest-randomly is active, so a test elsewhere that depends
+    on the not-ready state (or on an empty inventory) must not inherit
+    this fixture's leaked module state.
+    """
     # Single-transformer pipe (Wan 2.1): arity 1.
     monkeypatch.setattr(srv, "_pipe_arity", 1)
     srv._inventory.clear()
     srv._swap_jobs.clear()
+    was_ready = srv.ready.is_set()
     srv.ready.set()
-    return TestClient(srv.app)
+    yield TestClient(srv.app)
+    srv._inventory.clear()
+    srv._swap_jobs.clear()
+    if not was_ready:
+        srv.ready.clear()
 
 
 def _spec(size: int = 10) -> dict[str, Any]:
