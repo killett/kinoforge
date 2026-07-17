@@ -462,6 +462,259 @@ async def _run_swap_cell_once(
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
+def _cell_result(
+    cell: _ResolvedCell,
+    status: _CellStatus,
+    *,
+    mp4_path: Path | None = None,
+    sha256: str | None = None,
+    cost_usd: float | None = None,
+    error: GridCellFailure | None = None,
+) -> GridCellResult:
+    """Build a :class:`GridCellResult` for ``cell``.
+
+    Factory with keyword defaults so call sites only spell the fields
+    that deviate from the empty outcome.
+
+    Args:
+        cell: The resolved cell the result describes.
+        status: Cell outcome status literal.
+        mp4_path: Produced artifact path, when any.
+        sha256: Artifact digest, when any.
+        cost_usd: Attributed cell cost, when known.
+        error: Failure breadcrumb, when the cell did not succeed.
+
+    Returns:
+        The populated result record.
+    """
+    return GridCellResult(
+        idx=cell.idx,
+        caption=cell.caption,
+        status=status,
+        mp4_path=mp4_path,
+        sha256=sha256,
+        cost_usd=cost_usd,
+        error=error,
+    )
+
+
+@dataclass
+class _SwapPodHandle:
+    """Mutable pod-id slot shared between the swap-group driver and helpers.
+
+    ``pod_id`` is assigned the moment the cold-boot provision record is
+    parsed — BEFORE the provision-ts parse and the sidecar group
+    registration run — so an exception escaping anywhere after that
+    point still leaves the pod id visible to :func:`_run_swap_group`'s
+    ``finally`` destroy block (no pod leak).
+    """
+
+    pod_id: str | None = None
+
+
+async def _cold_boot_swap_cell(
+    cell: _ResolvedCell,
+    *,
+    grid_id: str,
+    output_dir: Path,
+    record_path: Path,
+    pod: _SwapPodHandle,
+    sidecar: CostSidecarBuilder,
+) -> tuple[int, str]:
+    """Run cell-1's cold boot and register the provisioned pod.
+
+    On a clean exit with a provision record present, parses the record,
+    publishes the pod id via ``pod``, and registers the sidecar group.
+
+    Args:
+        cell: Cell-1 of the swap group.
+        grid_id: Stable grid identifier.
+        output_dir: Top-level grid output dir.
+        record_path: Where ``--emit-provision-record`` writes the
+            pod_id + endpoint_url JSON.
+        pod: Shared pod-id slot; set on cold-boot success.
+        sidecar: Cost sidecar; group registered via ``start_group``.
+
+    Returns:
+        The subprocess ``(returncode, stderr)`` pair.
+    """
+    rc, _stdout, stderr = await _run_swap_cell_once(
+        cell,
+        grid_id=grid_id,
+        output_dir=output_dir,
+        attach_pod_id=None,
+        emit_provision_record=record_path,
+    )
+    if rc == 0 and record_path.exists():
+        rec = json.loads(record_path.read_text())
+        pod_id = str(rec["pod_id"])
+        pod.pod_id = pod_id
+        provision_ts_raw = rec.get("provision_ts")
+        provision_ts = (
+            datetime.fromisoformat(provision_ts_raw)
+            if isinstance(provision_ts_raw, str)
+            else None
+        )
+        sidecar.start_group(
+            pod_id,
+            pod_id=pod_id,
+            provider=str(rec.get("provider", "")),
+            cost_per_hr=float(rec.get("cost_per_hr_usd", 0.0)),
+            provision_ts=provision_ts,
+        )
+    return rc, stderr
+
+
+def _swap_cell_success_result(
+    cell: _ResolvedCell,
+    *,
+    cell_out: Path,
+    pod_id: str | None,
+    sidecar: CostSidecarBuilder,
+) -> GridCellResult:
+    """Turn a clean swap-cell exit into its result record.
+
+    A zero exit without an mp4 in the per-cell output dir is still a
+    failure. On success the cell is recorded on the sidecar (when the
+    cold-boot landed a pod id).
+
+    Args:
+        cell: The cell whose subprocess just exited 0.
+        cell_out: Per-cell output dir to scan for the artifact.
+        pod_id: Group pod id, when cold-boot landed one.
+        sidecar: Cost sidecar; success recorded via ``record_cell``.
+
+    Returns:
+        A ``success`` result, or ``failed`` when no mp4 materialised.
+    """
+    mp4s = sorted(cell_out.glob("*.mp4"))
+    if not mp4s:
+        return _cell_result(
+            cell,
+            "failed",
+            error=GridCellFailure(
+                idx=cell.idx,
+                cfg_repr=f"cfg={cell.cfg_path}",
+                exception_chain=FileNotFoundError(
+                    f"swap cell exit 0 but no mp4 in {cell_out}"
+                ),
+            ),
+        )
+    mp4 = mp4s[-1]
+    sha = _sha256_file(mp4)
+    result = _cell_result(cell, "success", mp4_path=mp4, sha256=sha)
+    if pod_id is not None:
+        sidecar.record_cell(
+            pod_id,
+            cell_idx=cell.idx,
+            gen_wall_time_s=0.0,
+            swap_wall_time_s=0.0,
+            status="success",
+            mp4_sha256=sha,
+            size_bytes=mp4.stat().st_size,
+        )
+    return result
+
+
+async def _run_swap_cell_attempts(
+    cell: _ResolvedCell,
+    *,
+    is_first: bool,
+    pod: _SwapPodHandle,
+    cell_out: Path,
+    grid_id: str,
+    output_dir: Path,
+    on_swap_failure: Literal["strict", "continue", "classify"],
+    sidecar: CostSidecarBuilder,
+) -> tuple[GridCellResult, bool]:
+    """Drive one swap cell's attempt loop (cold-boot or attach + retries).
+
+    Cell-1 cold-boots the pod (``--emit-provision-record``); later cells
+    attach to it (``--attach-pod``). Non-zero exits are classified via
+    :func:`_classify_swap_failure` into RETRY (bounded backoff loop),
+    CONTINUE (fail this cell, keep the group), or ABORT (fail this cell
+    AND the rest of the group).
+
+    Args:
+        cell: The cell to run.
+        is_first: True for cell-1 (cold-boot); False for attach cells.
+        pod: Shared pod-id slot; written by cell-1's cold boot, read by
+            attach cells and the caller's teardown.
+        cell_out: Per-cell output dir (already created).
+        grid_id: Stable grid identifier.
+        output_dir: Top-level grid output dir.
+        on_swap_failure: Spec-level failure policy.
+        sidecar: Cost sidecar for group/cell records.
+
+    Returns:
+        ``(result, aborted)`` — the cell's result and whether the rest
+        of the group must be marked ``aborted``.
+
+    Raises:
+        RuntimeError: If an attach cell runs without a pod id (cell-1
+            produced no provision record).
+    """
+    from kinoforge.core.grid.swap_failures import (
+        RETRY_BACKOFF_S,
+        RETRY_MAX_ATTEMPTS,
+        SwapFailureAction,
+        _classify_swap_failure,
+    )
+
+    attempt = 0
+    while True:
+        attempt += 1
+        if is_first:
+            record_path = cell_out / ".provision.json"
+            rc, stderr = await _cold_boot_swap_cell(
+                cell,
+                grid_id=grid_id,
+                output_dir=output_dir,
+                record_path=record_path,
+                pod=pod,
+                sidecar=sidecar,
+            )
+        else:
+            if pod.pod_id is None:
+                raise RuntimeError(
+                    "swap-group invariant: cell-1 produced no pod_id; "
+                    f"cannot attach for cell {cell.idx}"
+                )
+            rc, _stdout, stderr = await _run_swap_cell_once(
+                cell,
+                grid_id=grid_id,
+                output_dir=output_dir,
+                attach_pod_id=pod.pod_id,
+                emit_provision_record=None,
+            )
+
+        if rc == 0:
+            return (
+                _swap_cell_success_result(
+                    cell, cell_out=cell_out, pod_id=pod.pod_id, sidecar=sidecar
+                ),
+                False,
+            )
+
+        action = _classify_swap_failure(stderr, rc, on_swap_failure)
+        if action is SwapFailureAction.RETRY and attempt < RETRY_MAX_ATTEMPTS:
+            await asyncio.sleep(RETRY_BACKOFF_S)
+            continue
+        failure = GridCellFailure(
+            idx=cell.idx,
+            cfg_repr=f"cfg={cell.cfg_path}",
+            exception_chain=RuntimeError(stderr[-500:]),
+        )
+        if action is SwapFailureAction.CONTINUE:
+            return _cell_result(cell, "failed", error=failure), False
+        # ABORT
+        _log.warning(
+            "swap cell %d unrecoverable; aborting remaining cells",
+            cell.idx,
+        )
+        return _cell_result(cell, "failed", error=failure), True
+
+
 async def _run_swap_group(
     group_cells: list[_ResolvedCell],
     *,
@@ -503,44 +756,19 @@ async def _run_swap_group(
         residual-probe status (if dirty) is stamped onto every
         result's ``teardown_breadcrumb``.
     """
-    from kinoforge.core.grid.swap_failures import (
-        RETRY_BACKOFF_S,
-        RETRY_MAX_ATTEMPTS,
-        SwapFailureAction,
-        _classify_swap_failure,
-    )
-
     results: list[GridCellResult] = []
-    pod_id: str | None = None
+    pod = _SwapPodHandle()
     aborted = False
     try:
         for i, cell in enumerate(group_cells):
             if aborted:
-                results.append(
-                    GridCellResult(
-                        idx=cell.idx,
-                        caption=cell.caption,
-                        status="aborted",
-                        mp4_path=None,
-                        sha256=None,
-                        cost_usd=None,
-                    )
-                )
+                results.append(_cell_result(cell, "aborted"))
                 continue
 
-            if pod_id is not None and sidecar.total_cost_usd() >= budget_cap_usd:
-                results.append(
-                    GridCellResult(
-                        idx=cell.idx,
-                        caption=cell.caption,
-                        status="budget_killed",
-                        mp4_path=None,
-                        sha256=None,
-                        cost_usd=None,
-                    )
-                )
+            if pod.pod_id is not None and sidecar.total_cost_usd() >= budget_cap_usd:
+                results.append(_cell_result(cell, "budget_killed"))
                 sidecar.mark_cell_error(
-                    pod_id,  # group key == pod_id once cold-boot landed
+                    pod.pod_id,  # group key == pod_id once cold-boot landed
                     cell_idx=cell.idx,
                     status="budget_killed",
                     error=f"budget cap ${budget_cap_usd:.4f} reached",
@@ -550,137 +778,19 @@ async def _run_swap_group(
             cell_out = _cell_output_dir(grid_id, cell.idx, output_dir)
             cell_out.mkdir(parents=True, exist_ok=True)
 
-            attempt = 0
-            while True:
-                attempt += 1
-                if i == 0:
-                    record_path = cell_out / ".provision.json"
-                    rc, _stdout, stderr = await _run_swap_cell_once(
-                        cell,
-                        grid_id=grid_id,
-                        output_dir=output_dir,
-                        attach_pod_id=None,
-                        emit_provision_record=record_path,
-                    )
-                    if rc == 0 and record_path.exists():
-                        rec = json.loads(record_path.read_text())
-                        pod_id = str(rec["pod_id"])
-                        provision_ts_raw = rec.get("provision_ts")
-                        provision_ts = (
-                            datetime.fromisoformat(provision_ts_raw)
-                            if isinstance(provision_ts_raw, str)
-                            else None
-                        )
-                        sidecar.start_group(
-                            pod_id,
-                            pod_id=pod_id,
-                            provider=str(rec.get("provider", "")),
-                            cost_per_hr=float(rec.get("cost_per_hr_usd", 0.0)),
-                            provision_ts=provision_ts,
-                        )
-                else:
-                    if pod_id is None:
-                        raise RuntimeError(
-                            "swap-group invariant: cell-1 produced no pod_id; "
-                            f"cannot attach for cell {cell.idx}"
-                        )
-                    rc, _stdout, stderr = await _run_swap_cell_once(
-                        cell,
-                        grid_id=grid_id,
-                        output_dir=output_dir,
-                        attach_pod_id=pod_id,
-                        emit_provision_record=None,
-                    )
-
-                if rc == 0:
-                    mp4s = sorted(cell_out.glob("*.mp4"))
-                    if not mp4s:
-                        results.append(
-                            GridCellResult(
-                                idx=cell.idx,
-                                caption=cell.caption,
-                                status="failed",
-                                mp4_path=None,
-                                sha256=None,
-                                cost_usd=None,
-                                error=GridCellFailure(
-                                    idx=cell.idx,
-                                    cfg_repr=f"cfg={cell.cfg_path}",
-                                    exception_chain=FileNotFoundError(
-                                        f"swap cell exit 0 but no mp4 in {cell_out}"
-                                    ),
-                                ),
-                            )
-                        )
-                    else:
-                        mp4 = mp4s[-1]
-                        sha = _sha256_file(mp4)
-                        results.append(
-                            GridCellResult(
-                                idx=cell.idx,
-                                caption=cell.caption,
-                                status="success",
-                                mp4_path=mp4,
-                                sha256=sha,
-                                cost_usd=None,
-                            )
-                        )
-                        if pod_id is not None:
-                            sidecar.record_cell(
-                                pod_id,
-                                cell_idx=cell.idx,
-                                gen_wall_time_s=0.0,
-                                swap_wall_time_s=0.0,
-                                status="success",
-                                mp4_sha256=sha,
-                                size_bytes=mp4.stat().st_size,
-                            )
-                    break
-
-                action = _classify_swap_failure(stderr, rc, on_swap_failure)
-                if action is SwapFailureAction.RETRY and attempt < RETRY_MAX_ATTEMPTS:
-                    await asyncio.sleep(RETRY_BACKOFF_S)
-                    continue
-                if action is SwapFailureAction.CONTINUE:
-                    results.append(
-                        GridCellResult(
-                            idx=cell.idx,
-                            caption=cell.caption,
-                            status="failed",
-                            mp4_path=None,
-                            sha256=None,
-                            cost_usd=None,
-                            error=GridCellFailure(
-                                idx=cell.idx,
-                                cfg_repr=f"cfg={cell.cfg_path}",
-                                exception_chain=RuntimeError(stderr[-500:]),
-                            ),
-                        )
-                    )
-                    break
-                # ABORT
-                results.append(
-                    GridCellResult(
-                        idx=cell.idx,
-                        caption=cell.caption,
-                        status="failed",
-                        mp4_path=None,
-                        sha256=None,
-                        cost_usd=None,
-                        error=GridCellFailure(
-                            idx=cell.idx,
-                            cfg_repr=f"cfg={cell.cfg_path}",
-                            exception_chain=RuntimeError(stderr[-500:]),
-                        ),
-                    )
-                )
-                aborted = True
-                _log.warning(
-                    "swap cell %d unrecoverable; aborting remaining cells",
-                    cell.idx,
-                )
-                break
+            result, aborted = await _run_swap_cell_attempts(
+                cell,
+                is_first=i == 0,
+                pod=pod,
+                cell_out=cell_out,
+                grid_id=grid_id,
+                output_dir=output_dir,
+                on_swap_failure=on_swap_failure,
+                sidecar=sidecar,
+            )
+            results.append(result)
     finally:
+        pod_id = pod.pod_id
         if pod_id is not None:
             await asyncio.to_thread(
                 subprocess.run,
