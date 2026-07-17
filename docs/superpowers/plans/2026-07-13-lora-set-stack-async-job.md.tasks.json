@@ -32,10 +32,11 @@
     {
       "id": 4,
       "subject": "Task 4: Live re-validation (RED scaffold before spend, then gated smoke)",
-      "status": "pending",
+      "status": "completed",
+      "note": "6/7 criteria live-green. Matrix 4-step clean-pass BLOCKED-UPSTREAM: civitai per-token full-download 401 on lora_a (civitai:1479320@1673265) across 3 attempts incl. after 2h21m cooldown; container ranged probe 206 (token valid, full-download quota exhausted). Code + logging live-validated (run-1 auto-branch submit+poll 350MB no-502; sync-400 no-download; matrix logging surfaced the real 401 not last-observed-[]). User accepted (option 2, 2026-07-16). Re-run matrix once civitai token/quota refreshed.",
       "blockedBy": [2, 3],
       "description": "**USER-ORDERED GATE — NON-SKIPPABLE.** Close only after every acceptanceCriteria item is re-validated independently with output captured.\n\n**Goal:** Update live smoke files to submit+poll, commit RED scaffold BEFORE spend, then run `smoke-21b-live` on a real A5000 and prove the 350MB swap completes via poll with no 502.\n\n**Files:** Modify `tests/smoke/live_wan21/test_branch_routing.py`, `tests/smoke/live_wan21/test_lora_swap_matrix.py`, `PROGRESS.md`.\n\n**Acceptance Criteria:** RED scaffold committed before run; preflight exit 0 before spend; matrix 4 steps pass no 502 distinct shas; auto-branch submit+poll passes + high_noise sync 400 no download; GPU-util polled during run; every output frame-QA'd with recorded verdict; `kinoforge list` shows no running instances + empty ledger after.\n\n**Verify:** `pixi run preflight && KINOFORGE_LIVE_TESTS=1 pixi run smoke-21b-live && pixi run kinoforge list`\n\n```json:metadata\n{\"files\": [\"tests/smoke/live_wan21/test_branch_routing.py\", \"tests/smoke/live_wan21/test_lora_swap_matrix.py\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run preflight && KINOFORGE_LIVE_TESTS=1 pixi run smoke-21b-live && pixi run kinoforge list\", \"acceptanceCriteria\": [\"RED scaffold committed before spend\", \"preflight exit 0 before spend\", \"matrix 4 steps pass no 502 distinct shas\", \"auto-branch submit+poll passes, high_noise sync 400 no download\", \"GPU-util polled during run\", \"every output frame-QA'd with recorded verdict\", \"kinoforge list no running instances + empty ledger after\"], \"userGate\": true, \"tags\": [\"user-gate\"], \"gateScope\": \"live-smoke\", \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-13T15:30:00"
+  "lastUpdated": "2026-07-16T00:00:00"
 }
