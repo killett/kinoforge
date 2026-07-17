@@ -1,23 +1,19 @@
 """RifeEngine — HTTP-aware InterpolatorEngine impl backed by the RIFE runtime.
 
 Talks to the embedded server's /interpolate + /interpolate/status/{id} + /upload
-endpoints. Reuses :func:`kinoforge.engines._proxy_retry.retry_proxy_call` for
-RunPod proxy startup-window 404/502 tolerance. Mirrors
-:mod:`kinoforge.upscalers.flashvsr._engine`.
+endpoints. Pod-HTTP client machinery (submit/poll loop, PUT /upload, Cloudflare
+UA gate) is shared via :mod:`kinoforge.engines._pod_http`, which wraps
+:func:`kinoforge.engines._proxy_retry.retry_proxy_call` for RunPod proxy
+startup-window 404/502 tolerance.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json as _json
-import time
-import urllib.request
 from pathlib import Path
-from typing import IO, Any, cast
-from urllib.error import HTTPError
+from typing import Any, cast
 
 from kinoforge.core.cancel import CancelToken
-from kinoforge.core.errors import InterpolationError, UploadIntegrityError
+from kinoforge.core.errors import InterpolationError
 from kinoforge.core.fps_resolver import InterpCapability
 from kinoforge.core.interfaces import (
     Artifact,
@@ -27,9 +23,9 @@ from kinoforge.core.interfaces import (
     InterpolatorEngine,
     RenderedProvision,
 )
-from kinoforge.engines._proxy_retry import interpoll_wait, retry_proxy_call
+from kinoforge.engines._pod_http import PodHTTPClientMixin, http_json, submit_and_poll
 
-_DEFAULT_SERVER_PORT = "8000"
+_USER_AGENT = "kinoforge-rife/0.1"
 
 # Practical-RIFE: the arbitrary-timestep RIFE v4 inference repo. Pinned to the
 # latest commit as of 2026-07-05 (verified via the GitHub commits API). RIFE is
@@ -45,13 +41,14 @@ _RIFE_REPO_DIR = "/workspace/Practical-RIFE"
 _RIFE_MODEL_ZIP = "RIFEv4.26_0921.zip"
 
 
-class RifeEngine(InterpolatorEngine):
+class RifeEngine(PodHTTPClientMixin, InterpolatorEngine):
     """RIFE v4 arbitrary-timestep frame interpolator (pod-side)."""
 
     name = "rife"
     requires_compute = True
     requires_local_weights = True
     capability = InterpCapability.ARBITRARY_TIMESTEP
+    _pod_user_agent = _USER_AGENT
 
     def validate_spec(self, job: InterpolateJob) -> None:
         """Refuse a non-positive target frame rate."""
@@ -157,139 +154,38 @@ class RifeEngine(InterpolatorEngine):
             "engine": "rife",
             "rife": block,
         }
-        submit_resp = retry_proxy_call(
-            label="rife.submit",
-            url=f"{base}/interpolate",
-            fn=lambda: _http_json(
-                method="POST", url=f"{base}/interpolate", payload=submit_payload
+        result, elapsed_s = submit_and_poll(
+            label_prefix="rife",
+            base_url=base,
+            endpoint="/interpolate",
+            payload=submit_payload,
+            http_json=_http_json,
+            make_error=lambda job_id, server_error: InterpolationError(
+                job_id=job_id, server_error=server_error
             ),
-            sleep=time.sleep,
             cancel_token=cancel_token,
         )
-        job_id: str = submit_resp["job_id"]
-
-        t0 = time.monotonic()
-        while True:
-            if cancel_token is not None:
-                cancel_token.raise_if_set()
-            status = retry_proxy_call(
-                label="rife.status",
-                url=f"{base}/interpolate/status/{job_id}",
-                fn=lambda: _http_json(
-                    method="GET", url=f"{base}/interpolate/status/{job_id}"
-                ),
-                sleep=time.sleep,
-                cancel_token=cancel_token,
-            )
-            state = status["state"]
-            if state == "done":
-                result = status["result"]
-                return InterpolateResult(
-                    artifact=Artifact(
-                        uri=f"{base}/artifacts/{result['filename']}",
-                        sha256=result["sha256"],
-                        size=result["size"],
-                    ),
-                    input_fps=result["input_fps"],
-                    output_fps=result["output_fps"],
-                    input_frame_count=result["input_frame_count"],
-                    output_frame_count=result["output_frame_count"],
-                    elapsed_s=time.monotonic() - t0,
-                    engine_meta=result.get("engine_meta", {}),
-                )
-            if state == "error":
-                raise InterpolationError(
-                    job_id=job_id, server_error=status.get("error", "")
-                )
-            interpoll_wait(2.0, cancel_token, time.sleep)
-
-    def _put_upload(
-        self,
-        url: str,
-        data: IO[bytes],
-        headers: dict[str, str],
-        timeout: int,
-    ) -> dict[str, Any]:
-        """Single PUT /upload — mirrors FlashVSREngine._put_upload."""
-        req = urllib.request.Request(  # noqa: S310 — http/https only (pod proxy URL)
-            url, data=data, method="PUT", headers=headers
+        return InterpolateResult(
+            artifact=Artifact(
+                uri=f"{base}/artifacts/{result['filename']}",
+                sha256=result["sha256"],
+                size=result["size"],
+            ),
+            input_fps=result["input_fps"],
+            output_fps=result["output_fps"],
+            input_frame_count=result["input_frame_count"],
+            output_frame_count=result["output_frame_count"],
+            elapsed_s=elapsed_s,
+            engine_meta=result.get("engine_meta", {}),
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            return cast(dict[str, Any], _json.loads(resp.read().decode("utf-8")))
-
-    def _upload_source(self, instance: Instance, local_path: Path) -> str:
-        """Upload ``local_path`` mp4 via PUT /upload; return file:// URL.
-
-        Mirrors FlashVSREngine._upload_source: computes sha256, streams the
-        body, verifies the server's reported sha, recovers once from a proxy
-        cold-warmup 502.
-        """
-        body = local_path.read_bytes()
-        local_sha = hashlib.sha256(body).hexdigest()
-        short = local_sha[:8]
-        url = f"{self._base_url(instance)}/upload"
-        headers = {
-            "Content-Type": "video/mp4",
-            "X-Filename": f"{short}.mp4",
-            "Content-Length": str(len(body)),
-            "User-Agent": "kinoforge-rife/0.1",
-        }
-
-        last_error: HTTPError | None = None
-        payload: dict[str, Any] | None = None
-        for attempt in range(2):
-            with local_path.open("rb") as fobj:
-                try:
-                    payload = self._put_upload(url, fobj, headers, timeout=600)
-                    last_error = None
-                    break
-                except HTTPError as exc:
-                    last_error = exc
-                    if exc.code == 502 and attempt == 0:
-                        continue
-                    raise
-        if payload is None:
-            raise RuntimeError(
-                f"_upload_source loop completed without payload "
-                f"(last_error={last_error!r})"
-            )
-
-        server_sha = str(payload.get("sha256", ""))
-        if server_sha != local_sha:
-            raise UploadIntegrityError(
-                local_sha256=local_sha,
-                server_sha256=server_sha,
-                bytes_sent=len(body),
-            )
-        return f"file://{payload['path']}"
-
-    @staticmethod
-    def _base_url(instance: Instance) -> str:
-        endpoints = instance.endpoints or {}
-        url = endpoints.get(_DEFAULT_SERVER_PORT) or next(iter(endpoints.values()), "")
-        if not url:
-            raise ValueError(
-                f"RifeEngine: instance {instance.id} has no endpoint for "
-                f"port {_DEFAULT_SERVER_PORT}; endpoints={endpoints!r}"
-            )
-        return url.rstrip("/")
 
 
 def _http_json(
     *, method: str, url: str, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    data = _json.dumps(payload).encode("utf-8") if payload is not None else None
-    # Cloudflare (RunPod's proxy edge) 403s the default Python-urllib UA — a
-    # plain kinoforge UA clears the gate (same fix as FlashVSREngine).
-    headers: dict[str, str] = {"User-Agent": "kinoforge-rife/0.1"}
-    if payload is not None:
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(  # noqa: S310 — http/https only (pod proxy URL)
-        url,
-        data=data,
-        method=method,
-        headers=headers,
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
-        body = resp.read()
-    return cast(dict[str, Any], _json.loads(body))
+    """Pod JSON call with the rife User-Agent.
+
+    Module-level seam — tests monkeypatch this name; keep it stable.
+    Delegates to :func:`kinoforge.engines._pod_http.http_json`.
+    """
+    return http_json(method=method, url=url, payload=payload, user_agent=_USER_AGENT)
