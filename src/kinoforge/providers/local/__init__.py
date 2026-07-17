@@ -183,7 +183,7 @@ class LocalProvider(ComputeProvider):
         return {"generate": f"local://{instance.id}"}
 
     # ------------------------------------------------------------------
-    # Extra accessor (not on base interface — exposed for tests / T17/18)
+    # Real-read override of ComputeProvider.last_heartbeat (default None)
     # ------------------------------------------------------------------
 
     def last_heartbeat(self, instance_id: str) -> float | None:

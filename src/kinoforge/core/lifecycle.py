@@ -337,7 +337,7 @@ class LifecycleManager:
                 return True
 
         # Condition 2: dead-man heartbeat window
-        raw_hb = self._provider.last_heartbeat(instance_id)  # type: ignore[attr-defined]
+        raw_hb = self._provider.last_heartbeat(instance_id)
         last_signal = max(raw_hb if raw_hb is not None else 0.0, state.created_at)
         dead_man_window = 2 * self._lifecycle.idle_timeout_s
         return (now - last_signal) <= dead_man_window

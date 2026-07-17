@@ -251,6 +251,26 @@ class ComputeProvider(ABC):
     @abstractmethod
     def heartbeat(self, instance_id: str) -> None: ...  # noqa: D102
 
+    def last_heartbeat(self, instance_id: str) -> float | None:
+        """Return the last recorded heartbeat POSIX epoch, or ``None``.
+
+        Load-bearing even though it was historically off-ABC:
+        ``HeartbeatLoop._tick_once`` calls it on every provider each tick,
+        so a provider lacking it raised ``AttributeError`` every tick (the
+        SkyPilot incident — see the 2026-06 no-reuse teardown notes that
+        used to live on SkyPilotProvider.last_heartbeat). Default ``None``
+        = "no wire-level heartbeat read substrate"; the loop substitutes
+        the orchestrator clock. Providers with a real read (local, runpod)
+        override.
+
+        Args:
+            instance_id: Provider-side instance identifier.
+
+        Returns:
+            Seconds-since-epoch of the last heartbeat, or ``None``.
+        """
+        return None
+
     def probe_runtime(self, pod_id: str) -> RuntimeProbe | None:  # noqa: B027
         """Live runtime probe for sweeper-ephemeral-reap.
 

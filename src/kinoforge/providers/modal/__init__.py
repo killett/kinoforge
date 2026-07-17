@@ -251,12 +251,8 @@ class ModalProvider(ComputeProvider):
         """No-op — Modal manages container liveness."""
         return None
 
-    def last_heartbeat(self, instance_id: str) -> float | None:
-        """Return ``None`` — Modal exposes no wire-level heartbeat read.
-
-        Off-ABC but REQUIRED: ``HeartbeatLoop._tick_once`` calls it every tick.
-        """
-        return None
+    # last_heartbeat: inherited ComputeProvider default (None — Modal
+    # exposes no wire-level heartbeat read; loop substitutes its clock).
 
     # -- sweeper-ephemeral-reap substrate ------------------------------------
     def note_endpoints(self, instance_id: str, endpoints: Mapping[str, str]) -> None:
