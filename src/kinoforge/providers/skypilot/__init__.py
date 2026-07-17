@@ -60,7 +60,7 @@ import socket
 import subprocess
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from kinoforge.core import registry
 from kinoforge.core.errors import KinoforgeError, ProvisionFailed
@@ -77,9 +77,6 @@ from kinoforge.providers.skypilot.vast_compat import apply_vast_sdk_compat
 # Bridge sky's vast adapter to vastai-sdk >= 0.2 as soon as the provider is
 # imported; no-op when vastai_sdk is absent (default env) or already correct.
 apply_vast_sdk_compat()
-
-if TYPE_CHECKING:
-    pass  # No runtime-conditional imports needed here
 
 # ---------------------------------------------------------------------------
 # Lazy-import helper (the ONLY place sky may be referenced in kinoforge)
@@ -331,7 +328,8 @@ def _strip_trailing_exec(script: str) -> str:
     if not lines:
         return script
     last = lines[-1]
-    if " exec " in last or last.startswith("exec ") or " && exec " in last:
+    # " && exec " would be subsumed by the " exec " substring check.
+    if " exec " in last or last.startswith("exec "):
         return "\n".join(lines[:-1])
     return script
 
