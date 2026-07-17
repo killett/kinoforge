@@ -271,6 +271,39 @@ def test_run_matrix_polls_swap_job_to_done(
     assert report.steps[0].inventory_after == ["civitai:A@1"]
 
 
+def test_poll_swap_job_returns_terminal_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug caught: ``_poll_swap_job`` discards the terminal ``done`` record,
+    so a caller asserting on its payload (the OOM-rollback smoke needs
+    ``swap_rejected`` + the rollback ``inventory``) has nothing to read and
+    must re-fetch state that may have moved on by the next request."""
+    records: list[dict[str, Any]] = [
+        {"state": "running"},
+        {
+            "state": "done",
+            "inventory": [{"ref": "civitai:A@1"}],
+            "free_bytes": 9,
+            "swap_rejected": {
+                "reason": "vram_oom",
+                "target_refs_dropped": ["civitai:B@2"],
+            },
+        },
+    ]
+
+    def fake_get(url: str, *, timeout: int) -> dict[str, Any]:  # noqa: ARG001
+        return records.pop(0)
+
+    monkeypatch.setattr(f"{_HTTP}.get_json", fake_get)
+    monkeypatch.setattr("tests._smoke_harness.matrix.time.sleep", lambda s: None)
+    rec = matrix._poll_swap_job(
+        "http://pod:8000", "j-1", step_name="s", deadline_s=60.0
+    )
+    assert rec["swap_rejected"]["reason"] == "vram_oom"
+    assert rec["swap_rejected"]["target_refs_dropped"] == ["civitai:B@2"]
+    assert [e["ref"] for e in rec["inventory"]] == ["civitai:A@1"]
+
+
 def test_run_matrix_surfaces_real_error_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
