@@ -40,11 +40,17 @@ def _fake_cuda(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 def _reset_registry() -> Any:
     from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
 
+    saved_inventory = srv._inventory.copy()
+    saved_arity = srv._pipe_arity
     srv._LOADED.clear()
     srv._WAN_REGISTRY_NAME = None
+    srv._inventory.clear()
     yield
     srv._LOADED.clear()
     srv._WAN_REGISTRY_NAME = None
+    srv._inventory.clear()
+    srv._inventory.update(saved_inventory)
+    srv._pipe_arity = saved_arity
 
 
 def _wan_pipe() -> MagicMock:
@@ -287,6 +293,132 @@ class TestPromotionDropsVictimsToDisk:
         assert entry["on_device"] == "disk"
         assert entry["pipe"] is None
         flash.to.assert_not_called()
+
+    def test_promote_reattaches_inventory_lora_stack(
+        self, _fake_cuda: dict[str, Any]
+    ) -> None:
+        """Bug caught (audit B2): the disk-reload path calls a bare
+        ``_load_pipeline()`` — no LoRA stack — while ``_inventory`` still
+        lists the adapters. Every generate after an /upscale eviction
+        then renders WITHOUT the LoRAs, yet ``/lora/inventory`` and the
+        warm-attach matcher both report the stack as active: wrong pixels,
+        no error, and nothing in the logs to catch it.
+        """
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        wan = MagicMock()
+        srv._register_eager_wan(wan)
+        assert srv._WAN_REGISTRY_NAME is not None
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] = "disk"
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["pipe"] = None
+        srv.pipe = None
+        _fake_cuda["free"] = 75 * 1024**3
+
+        srv._pipe_arity = 1
+        srv._inventory[("civitai:1@2", "auto")] = {
+            "ref": "civitai:1@2",
+            "filename": "x.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/workspace/loras/x.safetensors",
+            "downloaded_at_local": "t",
+            "last_used_at_local": "t",
+            "adapter_name": "lora_0a",
+            "last_strength": 0.7,
+            "branch": "auto",
+        }
+
+        reloaded = MagicMock()
+        reloaded.transformer = MagicMock(name="transformer")
+        del reloaded.transformer_2  # Wan-2.1 shape: single transformer
+
+        with patch.object(srv, "_load_pipeline", return_value=reloaded):
+            srv._promote_wan_if_evicted()
+
+        assert reloaded.load_lora_weights.call_count == 1
+        args, kwargs = reloaded.load_lora_weights.call_args
+        assert args[0] == "/workspace/loras/x.safetensors"
+        assert kwargs["load_into_transformer_2"] is False
+        # Strength must survive the reload: an adapter loaded but never
+        # activated (or activated at 1.0) is a different render.
+        names, weights = reloaded.transformer.set_adapters.call_args[0]
+        assert weights == [0.7]
+        assert names == [kwargs["adapter_name"]]
+
+    def test_promote_with_empty_inventory_loads_no_adapters(
+        self, _fake_cuda: dict[str, Any]
+    ) -> None:
+        """Bug caught: a re-attach fix that fires unconditionally makes
+        every LoRA-less pod pay adapter work (or crash on an empty
+        target list) on each post-upscale generate.
+        """
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        wan = MagicMock()
+        srv._register_eager_wan(wan)
+        assert srv._WAN_REGISTRY_NAME is not None
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] = "disk"
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["pipe"] = None
+        srv.pipe = None
+        _fake_cuda["free"] = 75 * 1024**3
+
+        reloaded = MagicMock()
+        with patch.object(srv, "_load_pipeline", return_value=reloaded):
+            srv._promote_wan_if_evicted()
+
+        reloaded.load_lora_weights.assert_not_called()
+        assert srv.pipe is reloaded
+        assert srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] == "cuda"
+
+    def test_promote_rolls_back_to_disk_when_reattach_fails(
+        self, _fake_cuda: dict[str, Any]
+    ) -> None:
+        """Bug caught: a re-attach that fails (LoRA file gone, peft
+        error) leaves a CUDA-resident LoRA-less pipe marked ``cuda`` —
+        the failed job surfaces the error, but the NEXT generate skips
+        promotion entirely and silently renders without the stack. The
+        entry must fall back to the disk state so a retry redoes the
+        full reload + re-attach.
+        """
+        from kinoforge.engines.diffusers.servers import wan_t2v_server as srv
+
+        wan = MagicMock()
+        srv._register_eager_wan(wan)
+        assert srv._WAN_REGISTRY_NAME is not None
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["on_device"] = "disk"
+        srv._LOADED[srv._WAN_REGISTRY_NAME]["pipe"] = None
+        srv.pipe = None
+        _fake_cuda["free"] = 75 * 1024**3
+
+        srv._pipe_arity = 1
+        srv._inventory[("civitai:1@2", "auto")] = {
+            "ref": "civitai:1@2",
+            "filename": "x.safetensors",
+            "size_bytes": 1,
+            "loras_dir_path": "/workspace/loras/gone.safetensors",
+            "downloaded_at_local": "t",
+            "last_used_at_local": "t",
+            "adapter_name": "lora_0a",
+            "last_strength": 1.0,
+            "branch": "auto",
+        }
+
+        reloaded = MagicMock()
+        reloaded.transformer = MagicMock(name="transformer")
+        del reloaded.transformer_2
+        reloaded.load_lora_weights.side_effect = FileNotFoundError(
+            "/workspace/loras/gone.safetensors"
+        )
+
+        with (
+            patch.object(srv, "_load_pipeline", return_value=reloaded),
+            pytest.raises(FileNotFoundError),
+        ):
+            srv._promote_wan_if_evicted()
+
+        entry = srv._LOADED[srv._WAN_REGISTRY_NAME]
+        assert entry["on_device"] == "disk"
+        assert entry["pipe"] is None
+        assert srv.pipe is None
 
     def test_ensure_on_gpu_reloads_disk_dropped_entry(
         self, _fake_cuda: dict[str, Any]

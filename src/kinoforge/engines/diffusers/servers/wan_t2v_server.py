@@ -495,6 +495,27 @@ def _promote_wan_if_evicted() -> None:
             new_pipe = _load_pipeline()
             entry["pipe"] = new_pipe
             pipe = new_pipe
+            # The reloaded pipe carries NO adapters, but ``_inventory``
+            # still advertises the stack to /lora/inventory and to the
+            # warm-attach matcher. Re-attach from the on-disk LoRA files
+            # (already downloaded — the disk evictor pops inventory and
+            # files together) so the render matches what the pod claims.
+            targets = _snapshot_inventory_as_targets()
+            if targets:
+                _log.info(
+                    "generate: re-attaching %d lora(s) after reload", len(targets)
+                )
+                try:
+                    _replace_adapter_stack(targets)
+                except Exception:
+                    # Leave the entry in its disk state: a CUDA-resident
+                    # but LoRA-less pipe marked "cuda" would make the NEXT
+                    # generate skip promotion and silently render without
+                    # the stack. Retry redoes reload + re-attach.
+                    entry["pipe"] = None
+                    entry["on_device"] = "disk"
+                    pipe = None
+                    raise
         else:
             entry["pipe"].to("cuda")
         entry["on_device"] = "cuda"
