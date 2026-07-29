@@ -89,6 +89,27 @@ Baseline: `pixi run pre-commit run --all-files` **green**; working tree clean at
 
 ## Bugs (separate from hygiene; audit-only — none fixed)
 
+> **STATUS UPDATE 2026-07-28.** 13 of the 14 bugs are FIXED on `main`, each with
+> red/green tests and its own commit: B1 `8ecd5775`, B2 `36fa89e1`, B3 `f044cc71`,
+> B5 `74d02d9e`, B6 `a0afd78d`, B7 `43ff1ffd`, B8 `4b7678e6`, B9 `65c13fc4`,
+> B10+B11 `5d84c2da`, B12 `b42325ef`, B13+B14 `bf2a18f1`. **B4 remains OPEN** —
+> operator asked for it to be investigated next session; the findings are written
+> up in `PROGRESS.md` (SINGLE NEXT ACTION). Two corrections to the tables below
+> came out of the fixes:
+>
+> - **B1 scope was narrower than stated.** `_cfg_want_stages` returns an empty
+>   tuple for pure-t2v cfgs, and `_health_preflight_ok` short-circuits to True on
+>   an empty tuple. The defeat therefore hit cfgs with an upscale stage attached
+>   (`("t2v","upscale")`), not literally every warm-attach.
+> - **B12 was not a typosquat.** `graphifyy` is a real MIT package (module
+>   `graphify`, an AI-coding-assistant knowledge-graph tool). It was still unused,
+>   unpinned, and dragging ~20 tree-sitter deps into every env, so it was removed.
+>
+> New follow-up surfaced while fixing B9: the VRAM-OOM rollback restores adapters
+> but not inventory rows, so after a mandatory-evict + OOM the real
+> `_replace_adapter_stack` KeyErrors on the evicted key and surfaces
+> `rollback_failed` (pod thrown away, not silent corruption). Recorded in PROGRESS.
+
 ### P1 — cost money or corrupt output
 
 | # | Location | Bug |

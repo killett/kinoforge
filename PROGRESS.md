@@ -54,30 +54,93 @@ first unchecked task without redoing committed work.
   404 → `gc_404_removed`) — index now fully converged (empty). Gen output frame-QA PASS. All 9
   plan tasks complete; every task passed two-stage review (spec + quality) with fixes applied.
   NO successful-generations entries (all runs ephemeral).
-- **SINGLE NEXT ACTION (updated 2026-07-17): work the OPEN hygiene-audit bug list.** The
-  2026-07-16 whole-repo audit (`docs/hygiene-audit-2026-07-16.md`) left **14 confirmed bugs
-  UNFIXED** (operator deferred, 2026-07-17 — "remind me next session"). Fix order = the audit's
-  P1→P3 tables; every entry there has verified file:line refs. Headliners:
-  - **B1 warm-reuse silently defeated** — `wan_t2v_server.py` registers `wan-eager-{MODEL_ID}` but
-    `_capability_for_model` maps only `wan-t2v-*` → `t2v` never advertised → every warm-attach
-    refused, cold-boot cost every run. (Controller-verified; tests mask it by seeding `_LOADED`.)
-  - **B2 silent LoRA-less generation** — `_promote_wan_if_evicted` reloads Wan without the LoRA
-    stack while `_inventory` still claims adapters.
-  - **B3 RunPod GraphQL read paths bypass `_unwrap_graphql_response`** → false "confirmed gone"
-    from `list_instances` on error-shaped responses → pod-leak class; `stop_instance` discards
-    its response.
-  - **B12 supply chain:** `graphifyy = "*"` in `pixi.toml:86` — unpinned, imported nowhere,
-    typosquat-shaped, in every env lock. Review + remove.
-  - Rest of the list (B4 selfterm dead-man kills >4h jobs, B5 busy-spin ready-poll, B6 SIGINT
-    allowlist, B7 status endpoints, B8 hf @rev validation, B9 rollback snapshot timing,
-    B10/B11 client error mapping, B13 README license MIT-vs-Apache, B14 README BQ guidance) +
-    **16 NEEDS DISCUSSION** items (incl. the unreachable in-job LRU-evict branch): see the audit
-    doc's tables. Use TDD per bug; B1/B2 want a live warm-reuse proof after fix.
+- **SINGLE NEXT ACTION (updated 2026-07-28): investigate B4 — the in-pod selfterm dead-man
+  switch.** It is the ONLY audit bug still open (13 of 14 fixed today, see the 2026-07-28 block
+  in the RESUME SNAPSHOT). Operator decision 2026-07-28: "record this in PROGRESS as the next
+  item to investigate." Everything learned so far, so the next session does not re-derive it:
+
+  **What the code does.** `src/kinoforge/providers/runpod/selfterm.py` renders a standalone
+  Python watchdog into `KINOFORGE_SELFTERM_SCRIPT` (provider `_build_env`,
+  `providers/runpod/__init__.py:831`, params from `spec.lifecycle`). Both engines write it to
+  `/tmp/selfterm.py` and `nohup python3` it during boot (`engines/comfyui/__init__.py:1298-1301`,
+  `engines/diffusers/__init__.py:1122-1125`). Its loop (`_check_and_reap`, 15 s tick) terminates
+  the pod via `DELETE https://rest.runpod.io/v1/pods/{id}` with the scoped
+  `RUNPOD_TERMINATE_KEY` when ANY of three conditions fires.
+
+  **The defect.** Conditions 2 and 3 are broken as rendered:
+  - `heartbeat()` (template line ~76) is defined but NEVER called anywhere in the rendered
+    script, and nothing else in the pod writes `_last_heartbeat`. The orchestrator's heartbeat
+    writes to RunPod pod TAGS (`providers/runpod/heartbeat.py`), which this script never reads.
+    So `_last_heartbeat` stays at `_start_time` and condition 2
+    (`now - _last_heartbeat > 2*idle_timeout`) fires unconditionally at `2*idle_timeout` after
+    BOOT, regardless of activity.
+  - `_job_start` is never assigned, so condition 3 (`job_timeout`) is unreachable dead code.
+
+  **Consequence.** Effective pod lifetime is `min(2*idle_timeout, max_lifetime - time_buffer)`.
+  At `Lifecycle()` defaults (`core/interfaces.py:83-86`: idle 7200 s, max_lifetime 18000 s,
+  time_buffer 1800 s) that is `min(4 h, 4.5 h)` = **4 h**. A legitimate render longer than 4 h
+  is killed mid-job by the pod itself, and the controller sees a pod that vanished. The module
+  docstring (`selfterm.py:13-15`) and the rendered script header both describe condition 2 as a
+  heartbeat dead-man's switch, which is wrong either way.
+
+  **Provenance.** Dates to `1be572d`, i.e. before the C33 heartbeat write-disable. It may since
+  have become a de-facto orphan backstop (the thing that reaps a pod when the controller dies),
+  which is why it should not be deleted casually.
+
+  **Three candidate resolutions (weigh, then decide with the operator):**
+  1. *Wire a real in-pod heartbeat* — have the pod server touch e.g.
+     `/tmp/kinoforge.heartbeat` on each request/tick and have `_check_and_reap` read its mtime
+     instead of the in-process `_last_heartbeat`. Idle-reaping becomes real, long jobs survive,
+     the cost backstop is preserved. Most work; wants a live proof (a >4 h or artificially
+     short-`idle_timeout` run).
+  2. *Keep the cap, fix the docs* — declare the `2*idle_timeout` timer an intentional hard
+     money backstop, correct the docstring + rendered header to say "fixed boot-relative cap",
+     and delete the unreachable `job_timeout` branch.
+  3. *Drop condition 2* — rely on `max_lifetime - time_buffer` plus the orchestrator
+     reaper/sweeper. Simplest, but loses the pod-side backstop when the controller dies.
+
+  Note the tests only assert substring presence in the rendered template (the script is never
+  executed), so none of them constrain this behavior today — whichever option is chosen needs
+  new tests that pin the reap CONDITIONS, not the text.
+
+  **Also still open (surfaced 2026-07-28 while fixing B9):** the VRAM-OOM rollback restores
+  adapters but not inventory rows. After a mandatory-evict + OOM the real
+  `_replace_adapter_stack(previous_state)` looks up `_inventory[(ref, branch)]` for a key the
+  evict pass already removed → KeyError → HTTP 500 `rollback_failed` → pod destroyed + cold
+  boot. Not silent corruption, but a thrown-away warm pod. See
+  `tests/engines/diffusers/servers/test_set_stack_swap_gaps.py::test_rollback_snapshot_excludes_swap_gap_seeded_entries`
+  (the NOTE comment marks the exact spot).
+
   Also still open (pre-audit): matrix 4-step clean-pass blocked on `CIVITAI_TOKEN`
   quota/entitlement refresh — see the block below.
+  (Superseded next action:) work the OPEN hygiene-audit bug list — 13 of 14 done 2026-07-28.
   (Superseded next action:) **Job-based `/lora/set_stack` (async submit+poll) COMPLETE + code live-validated (Tasks 0–4, commits `14fa285`..`015a4e5`).** Only remaining gap: the live matrix 4-step clean-pass, BLOCKED-UPSTREAM by a civitai per-token full-download 401 on `lora_a` (`civitai:1479320@1673265`) — NOT code. **To close it:** refresh/rotate `CIVITAI_TOKEN` (or restore its civitai download entitlement/quota), then re-run `KINOFORGE_LIVE_TESTS=1 pixi run python -m pytest tests/smoke/live_wan21/test_lora_swap_matrix.py -v -s` (preflight first; poll GPU-util; frame-QA; verify `kinoforge list` clean after). See the 2026-07-16 snapshot block below for the full evidence. (Superseded next action:) **Modal roadmap M1–M5 + util-probe + 1080p height-target all COMPLETE + live-green** (§22–§26 + util-probe): engine matrix (t2v/upscale/interpolate) + warm-reuse + HF-cache + util probe all proven. No unchecked task remains in any active plan. Next work is operator-directed — pick a new roadmap item (roadmap `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`; remaining candidates: i2v/flf2v on Modal) or a new brief. (Superseded next action, kept for context:) **Unblock Modal M3 Task 5 (FlashVSR live proof) by making the Modal boot fast + preemption-resilient.** M3 offline work is DONE + committed: the cp313 BSA wheel is built (on Modal, `tools/build_bsa_wheel_modal.py`) + hosted (`killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1`, `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl`, 526 MB); the Modal cfg (`examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml`), `HF_HOME=/cache/hf` provider wiring, offline tests, and the RED live scaffold are all committed. **BLOCKER (2026-07-09):** the live `kinoforge upscale` never converged — the kinoforge Modal transport provisions at RUNTIME (pip torch+BSA-wheel+FlashVSR-weights via the boot script, ~15 min), and Modal **preempted the pooled A100 repeatedly mid-boot** ("Worker disappeared, in-progress inputs will be re-scheduled"); each preempt restarts the boot from scratch (no caching for the BSA wheel / FlashVSR weights), so `/health` never bound and the run **accumulated 10 containers** before teardown (~$1.5 est). Torn down clean (app stopped, ledger `forget`, verified `No running instances`). **FIX (the next action):** bake the heavy pip deps + BSA wheel INTO the Modal image at build time (`ModalProvider`/`build_modal_app` `Image.pip_install(...)` instead of runtime boot-script installs) so container start is seconds, not ~15 min → no preemption window, no container pile-up. Then re-run Task 5 (`pixi run -e live-modal kinoforge upscale --config examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse`), frame-QA, log §24. Note: M1 (§22, 1.3B ~5 min boot) + M2 (§23, A14B ~30 min HF boot) survived preemption on lucky windows; FlashVSR's mix of a 526 MB non-HF wheel + weights is the worst case and forces the image-bake fix. [[reference_modal_provider_gotchas]] · [[reference_modal_add_python_clang_link]]. Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
 
-## RESUME SNAPSHOT (updated 2026-07-16 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-07-28 — read this, then STOP; below is history)
+
+**Audit bug list CLEARED except B4 (2026-07-28).** 13 of the 14 confirmed bugs from
+`docs/hygiene-audit-2026-07-16.md` are fixed on `main`, each red/green-tested and committed on
+its own: B1 `8ecd5775` (eager Wan now advertises `t2v`), B2 `36fa89e1` (LoRA stack re-attached
+after a disk-evicted Wan reload, with rollback-to-disk on re-attach failure), B3 `f044cc71`
+(RunPod GraphQL read paths + `stop_instance` unwrap errors), B5 `74d02d9e`
+(`_wait_for_provider_ready`: sleeps between polls, raises `ProvisionTimeout` at
+`boot_timeout_s`), B6 `a0afd78d` (SIGINT handler for upscale/interpolate), B7 `43ff1ffd`
+(`status` passes the Instance to `provider.endpoints`), B8 `4b7678e6` (`hf:repo@rev:path`
+resolves via `_parse_hf_ref`), B9 `65c13fc4` (rollback snapshot precedes swap-gap seeding;
+strength 0.0 survives), B10+B11 `5d84c2da` (poll transients + `branch_routing` map to
+`LoraSwapError`; new `LoraSwapBranchRoutingError`, also added to the grid recoverable
+catalogue), B12 `b42325ef` (`graphifyy` removed, lock re-solved), B13+B14 `bf2a18f1` (README
+license + BigQuery cost claims). Suite green throughout; pre-commit clean on every commit.
+
+Two audit corrections worth remembering: **B1's blast radius was narrower than the audit said**
+— `_cfg_want_stages` returns `()` for pure-t2v cfgs and `_health_preflight_ok` short-circuits on
+that, so only upscale-attached cfgs were refused; and **`graphifyy` was not a typosquat** — it is
+a real MIT package (module `graphify`), just unused and unpinned, so it was removed anyway.
+
+**B4 is the SINGLE NEXT ACTION** — full investigation write-up is in the Pointers block above.
+
+**Still not attempted:** the audit's 16 NEEDS DISCUSSION items and the docs/config mismatches
+(README omits Modal from the providers list, missing "Project structure" section).
 
 **Hygiene FIX NOW batch (2026-07-16, operator-approved):** all ~30 behavior-preserving items
 from the audit executed — 26 commits `bd8817d`..`66a65ea`; **suite 4071 passed / 0 failed**,
