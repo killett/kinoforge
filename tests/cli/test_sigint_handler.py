@@ -16,6 +16,7 @@ tests in the same pytest process.
 from __future__ import annotations
 
 import signal
+from pathlib import Path
 
 import pytest
 
@@ -64,3 +65,71 @@ def test_second_signal_reraises_and_restores_default() -> None:
         assert signal.getsignal(signal.SIGINT) is signal.SIG_DFL
     finally:
         signal.signal(signal.SIGINT, prior)
+
+
+# ---------------------------------------------------------------------------
+# Audit B6: the handler must be installed for EVERY cancellable subcommand
+# ---------------------------------------------------------------------------
+
+
+_STUB_CFG = """\
+engine:
+  kind: diffusers
+  precision: fp8
+models:
+  - kind: base
+    ref: hf:Wan-AI/Wan2.2-T2V
+    target: diffusion_models
+compute:
+  provider: fake
+  image: fake:latest
+upscale:
+  engine: seedvr2
+  scale: 2x
+  seedvr2:
+    variant: 3B
+    precision: fp8
+"""
+
+
+@pytest.mark.parametrize("cmd", ["generate", "batch", "upscale", "interpolate"])
+def test_handler_installed_for_every_cancel_token_command(
+    cmd: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every subcommand that threads ``ctx.cancel_token`` gets the handler.
+
+    Bug caught (audit B6): ``_INTERRUPTIBLE_CMDS`` listed only
+    generate/batch, but ``_cmd_upscale`` and ``_cmd_interpolate`` both
+    pass ``ctx.cancel_token`` into the orchestrator. Ctrl-C on those two
+    raised straight through the Phase-50 cooperative drain, skipping the
+    teardown that destroys the pod — on exactly the ``--no-reuse``
+    one-shot paths where nothing else reaps it.
+
+    The parametrization is derived from the handlers that accept a
+    cancel token, not copied from the allowlist, so a future cancellable
+    subcommand that forgets to register fails here.
+    """
+    from kinoforge.cli import _main
+
+    installed: list[object] = []
+    monkeypatch.setattr(
+        _main, "_install_sigint_handler", lambda token: installed.append(token)
+    )
+    monkeypatch.setitem(_main._DISPATCH, cmd, lambda _args, _ctx: 0)
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(_STUB_CFG)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"\x00")
+    manifest = tmp_path / "m.yaml"
+    manifest.write_text("jobs: []\n")
+
+    argv = {
+        "generate": [cmd, "--config", str(cfg), "--mode", "t2v", "--prompt", "p"],
+        "batch": [cmd, "--config", str(cfg), "--manifest", str(manifest)],
+        "upscale": [cmd, "--config", str(cfg), "--video", str(video)],
+        "interpolate": [cmd, "--config", str(cfg), "--video", str(video)],
+    }[cmd]
+
+    assert _main.main(argv) == 0
+    assert len(installed) == 1, f"{cmd} dispatched without the SIGINT handler"

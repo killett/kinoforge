@@ -83,7 +83,14 @@ class _LorasOnceAction(argparse.Action):
 # graceful-interrupt SIGINT handler installed before dispatch. Every
 # other subcommand keeps the default Ctrl-C behavior (read-only
 # operations should exit immediately on the first press).
-_INTERRUPTIBLE_CMDS: frozenset[str] = frozenset({"generate", "batch"})
+#
+# Membership rule: every handler that threads ``ctx.cancel_token`` into
+# the orchestrator belongs here. upscale/interpolate did thread it but
+# were missing from the set, so Ctrl-C bypassed the Phase-50 cooperative
+# drain on exactly the ``--no-reuse`` one-shot paths (audit B6).
+_INTERRUPTIBLE_CMDS: frozenset[str] = frozenset(
+    {"generate", "batch", "upscale", "interpolate"}
+)
 
 # Subcommands that never trigger orchestration. ``--ephemeral`` is a no-op
 # for them; emit a one-line stderr note rather than running pre-flight.
