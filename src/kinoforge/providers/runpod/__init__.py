@@ -831,7 +831,6 @@ class RunPodProvider(ComputeProvider):
         env["KINOFORGE_SELFTERM_SCRIPT"] = selfterm.RENDER(
             idle_timeout=spec.lifecycle.idle_timeout_s,
             max_lifetime=spec.lifecycle.max_lifetime_s,
-            job_timeout=spec.lifecycle.job_timeout_s,
             time_buffer=spec.lifecycle.time_buffer_s,
         )
 

@@ -54,10 +54,36 @@ first unchecked task without redoing committed work.
   404 → `gc_404_removed`) — index now fully converged (empty). Gen output frame-QA PASS. All 9
   plan tasks complete; every task passed two-stage review (spec + quality) with fixes applied.
   NO successful-generations entries (all runs ephemeral).
-- **SINGLE NEXT ACTION (updated 2026-07-28): investigate B4 — the in-pod selfterm dead-man
-  switch.** It is the ONLY audit bug still open (13 of 14 fixed today, see the 2026-07-28 block
-  in the RESUME SNAPSHOT). Operator decision 2026-07-28: "record this in PROGRESS as the next
-  item to investigate." Everything learned so far, so the next session does not re-derive it:
+- **B4 CLOSED 2026-07-28 (option 2 — keep the cap, stop the code lying).** Operator decision after
+  reviewing the project's heartbeat history: no kinoforge render approaches 4 h, so wiring a real
+  in-pod heartbeat buys nothing and adds a third in-pod liveness notion with terminate authority to
+  a codebase where two prior ones already cost pods and days (C33). The `2*idle_timeout` timer is
+  now named and documented as what it always was — `boot_cap_deadline()`, a fixed boot-relative
+  money backstop that survives the controller dying. Deleted: the never-called `heartbeat()`, the
+  never-written `_last_heartbeat`, the never-assigned `_job_start`, the unreachable `job_timeout`
+  branch, and `job_timeout` from the `RENDER` signature (an unused param is the next lie). Effective
+  lifetime is unchanged: `min(2*idle_timeout, max_lifetime - time_buffer)` = 4 h at `Lifecycle()`
+  defaults, and a render past that is still killed mid-job — accepted, documented in the module
+  docstring and the rendered script header.
+  **Test posture changed:** `tests/providers/runpod/test_selfterm_reap_conditions.py` (15 tests)
+  `exec`s the rendered script against a fake clock and fake transport, so it pins the reap
+  CONDITIONS — not substring presence, which is what let B4 survive since `1be572d`. Two gotchas
+  worth keeping: the script's own `import os` / `import time` rebind over a pre-seeded namespace
+  (patch `os.environ` *during* exec; swap `time` *after*), and mutation-testing caught a defect in
+  the tests themselves — `pytest.approx` against a ~1.7e9 POSIX timestamp has a ±1700 s relative
+  tolerance, wide enough to pass a flipped `time_buffer` sign, so deadline assertions compare
+  deltas. Both mutations (tick-side deadline refresh = the B4 defect itself; `time_buffer` sign
+  flip) verified to fail the suite before revert.
+- **SINGLE NEXT ACTION (updated 2026-07-28): fix the VRAM-OOM rollback inventory KeyError.**
+  Surfaced while fixing B9. After a mandatory-evict + OOM, `_replace_adapter_stack(previous_state)`
+  looks up `_inventory[(ref, branch)]` for a key the evict pass already removed → KeyError → HTTP
+  500 `rollback_failed` → pod destroyed + cold boot. Not silent corruption, but a thrown-away warm
+  pod. Exact spot marked by the NOTE comment in
+  `tests/engines/diffusers/servers/test_set_stack_swap_gaps.py::test_rollback_snapshot_excludes_swap_gap_seeded_entries`.
+  Then: the audit's 16 NEEDS DISCUSSION items, and the docs mismatches (README omits Modal from the
+  providers list, missing "Project structure" section).
+  (Superseded next action, kept for the reasoning:) investigate B4 — the in-pod selfterm dead-man
+  switch. Findings that drove the decision above:
 
   **What the code does.** `src/kinoforge/providers/runpod/selfterm.py` renders a standalone
   Python watchdog into `KINOFORGE_SELFTERM_SCRIPT` (provider `_build_env`,
@@ -87,7 +113,7 @@ first unchecked task without redoing committed work.
   have become a de-facto orphan backstop (the thing that reaps a pod when the controller dies),
   which is why it should not be deleted casually.
 
-  **Three candidate resolutions (weigh, then decide with the operator):**
+  **Three candidate resolutions (operator chose 2 on 2026-07-28):**
   1. *Wire a real in-pod heartbeat* — have the pod server touch e.g.
      `/tmp/kinoforge.heartbeat` on each request/tick and have `_check_and_reap` read its mtime
      instead of the in-process `_last_heartbeat`. Idle-reaping becomes real, long jobs survive,
@@ -101,7 +127,7 @@ first unchecked task without redoing committed work.
 
   Note the tests only assert substring presence in the rendered template (the script is never
   executed), so none of them constrain this behavior today — whichever option is chosen needs
-  new tests that pin the reap CONDITIONS, not the text.
+  new tests that pin the reap CONDITIONS, not the text. (Done — see the B4 CLOSED entry above.)
 
   **Also still open (surfaced 2026-07-28 while fixing B9):** the VRAM-OOM rollback restores
   adapters but not inventory rows. After a mandatory-evict + OOM the real
@@ -137,7 +163,12 @@ Two audit corrections worth remembering: **B1's blast radius was narrower than t
 that, so only upscale-attached cfgs were refused; and **`graphifyy` was not a typosquat** — it is
 a real MIT package (module `graphify`), just unused and unpinned, so it was removed anyway.
 
-**B4 is the SINGLE NEXT ACTION** — full investigation write-up is in the Pointers block above.
+**B4 CLOSED 2026-07-28 — audit bug list now fully cleared (14 of 14).** Resolved as option 2:
+the `2*idle_timeout` selfterm timer is kept as a boot-relative money backstop, renamed
+`boot_cap_deadline()`, and the dead heartbeat/job-timeout surface is deleted. Operator's basis:
+no render approaches the 4 h cap, and C33 is the standing argument against adding another in-pod
+liveness notion that can terminate compute. New behavioral tests execute the rendered script
+instead of grepping it. Full write-up + the two testing gotchas in the Pointers block above.
 
 **Still not attempted:** the audit's 16 NEEDS DISCUSSION items and the docs/config mismatches
 (README omits Modal from the providers list, missing "Project structure" section).

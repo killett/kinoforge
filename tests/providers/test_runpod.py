@@ -1129,16 +1129,22 @@ def test_instance_tags_contain_no_terminate_key(pod_spec: InstanceSpec) -> None:
 
 
 def test_selfterm_render_contains_required_substrings() -> None:
-    """AC8: RENDER() produces a script with max_lifetime, effective_deadline, heartbeat."""
+    """AC8: RENDER() produces a script with both boot-relative cap helpers.
+
+    The former ``"heartbeat" in script`` assertion was dropped on
+    2026-07-28 (audit B4): it pinned a ``heartbeat()`` helper that nothing
+    ever called, which is how a boot-relative cap passed as a dead-man's
+    switch for two months. Reap CONDITIONS are pinned behaviorally in
+    tests/providers/runpod/test_selfterm_reap_conditions.py.
+    """
     script = RENDER(
         idle_timeout=1800,
         max_lifetime=7200,
-        job_timeout=900,
         time_buffer=300,
     )
     assert "max_lifetime" in script
     assert "effective_deadline" in script
-    assert "heartbeat" in script
+    assert "boot_cap_deadline" in script
 
 
 def test_selfterm_render_embeds_values() -> None:
@@ -1146,7 +1152,6 @@ def test_selfterm_render_embeds_values() -> None:
     script = RENDER(
         idle_timeout=999,
         max_lifetime=8888,
-        job_timeout=777,
         time_buffer=111,
     )
     assert "999" in script
@@ -1167,12 +1172,13 @@ def test_selfterm_terminate_url_uses_rest_v1_pods_delete() -> None:
 
     Lockdown for the rendered script string: must contain the correct
     REST URL pattern + DELETE method, must NOT contain the broken
-    ``/v2/.../stop`` URL.
+    ``/v2/.../stop`` URL. The negative half is the point — the positive
+    half is also covered behaviorally in
+    tests/providers/runpod/test_selfterm_reap_conditions.py.
     """
     script = RENDER(
         idle_timeout=1800,
         max_lifetime=7200,
-        job_timeout=900,
         time_buffer=300,
     )
     assert "https://rest.runpod.io/v1/pods/" in script

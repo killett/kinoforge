@@ -261,7 +261,6 @@ def main() -> int:
     selfterm_script = render_selfterm(
         idle_timeout=30.0,
         max_lifetime=60.0,
-        job_timeout=10.0,
         time_buffer=10.0,
     )
     spec = InstanceSpec(
