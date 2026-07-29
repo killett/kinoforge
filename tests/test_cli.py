@@ -955,12 +955,15 @@ class _StatusFakeProvider:
         )
         self.endpoints_impl = lambda iid: {"http": "https://example/"}
 
-    # ComputeProvider methods used by _cmd_status:
+    # ComputeProvider methods used by _cmd_status. ``endpoints`` takes an
+    # ``Instance`` — the ABC signature every real provider implements
+    # (audit B7: the fake used to accept an id, which is why the string
+    # that _cmd_status actually passed went unnoticed).
     def get_instance(self, instance_id):
         return self.get_instance_impl(instance_id)
 
-    def endpoints(self, instance_id):
-        return self.endpoints_impl(instance_id)
+    def endpoints(self, instance):
+        return self.endpoints_impl(instance)
 
 
 @pytest.fixture
@@ -1114,6 +1117,46 @@ def test_cmd_status_unknown_adapter_exits_2(
     captured = capsys.readouterr()
     assert rc == 2
     assert "unknown provider" in captured.out
+
+
+def test_cmd_status_calls_endpoints_with_instance_not_id(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    status_fake_provider: _StatusFakeProvider,
+) -> None:
+    """``endpoints()`` receives the ``Instance``, per the ComputeProvider ABC.
+
+    Bug caught (audit B7): ``_cmd_status`` called
+    ``provider.endpoints(args.id)`` — a string — while every provider
+    implements ``endpoints(self, instance: Instance)`` and dereferences
+    ``instance.tags`` / ``instance.endpoints``. The resulting
+    AttributeError was swallowed by the broad except below it, so
+    ``kinoforge status`` printed ``endpoints=unknown (AttributeError)``
+    for EVERY healthy pod and the operator could never read the proxy
+    URL they came to the command for.
+    """
+    from kinoforge.core.interfaces import Instance
+
+    seen: list[object] = []
+
+    def record_endpoints(instance):
+        seen.append(instance)
+        return {"8000": "https://pod-8000.proxy.runpod.net"}
+
+    status_fake_provider.endpoints_impl = record_endpoints
+
+    state_dir = _seed_ledger_with(tmp_path, _runpod_entry())
+
+    rc = _call(["status", "--id", "i-runpod"], state_dir)
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert len(seen) == 1
+    assert isinstance(seen[0], Instance)
+    assert seen[0].id == "i-runpod"
+    # And the URL actually reaches stdout — an "unknown (...)" placeholder
+    # would satisfy a laxer assertion.
+    assert "https://pod-8000.proxy.runpod.net" in captured.out
 
 
 def test_cmd_status_endpoints_raises_still_exit_0(

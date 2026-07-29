@@ -2173,7 +2173,11 @@ def _cmd_status(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     provider_block = {"provider_status": instance.status}
     try:
-        provider_block["endpoints"] = json.dumps(provider.endpoints(args.id))
+        # ComputeProvider.endpoints takes the Instance, not the id: every
+        # implementation dereferences instance.tags / instance.endpoints
+        # (audit B7 — passing args.id AttributeError'd into the except
+        # below, so every healthy pod rendered endpoints=unknown).
+        provider_block["endpoints"] = json.dumps(provider.endpoints(instance))
     except Exception as exc:  # noqa: BLE001
         provider_block["endpoints"] = f"unknown ({exc.__class__.__name__})"
 
