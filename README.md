@@ -402,9 +402,11 @@ Luma's direct video API is retired — Luma lives on as the `luma_agents` IMAGE 
 keyframes). Each video engine exposes the same `generate()` interface; image engines plug into
 the `keyframe:` block. Switching is a config-only change.
 
-**Cost and spend** ([docs/cost-and-spend.md](docs/cost-and-spend.md)) — `kinoforge cost` pulls
-runtime spend from provider APIs and (optionally) BigQuery billing export. Budget caps in the
-YAML config stop runaway pods before they accrue surprise charges.
+**Cost and spend** ([docs/cost-and-spend.md](docs/cost-and-spend.md)) — `kinoforge cost` walks the
+run ledger, classifies each entry against the reaper verdict set, and renders accrued spend plus a
+provider balance read-out (RunPod today). Budget caps in the YAML config stop runaway pods before
+they accrue surprise charges. Month-to-date cloud billing from the GCP BigQuery export is a
+separate operator tool (`tools/quota_burn.py snapshot`), not part of `kinoforge cost`.
 
 **Batch and grid** ([docs/batch-and-grid.md](docs/batch-and-grid.md)) — `batch` runs a list of
 independent jobs sequentially or in parallel; `grid` expands a parameter sweep (LoRA strengths,
@@ -436,7 +438,7 @@ for upcoming releases.
 | ComfyUI poll timeout (~10 min default) | Wan 14B t2v can take ~6 min/step | Raise `engine.comfyui.poll_timeout_s` in YAML |
 | `cli-loras-bypass-vault` WARNING | `--loras` override fired while `vault.loras` was non-empty | Intentional; vault file on disk is unchanged |
 | `error: cfg.store ({…}) differs from sidecar` | Switched to/from cloud ledger backend | See [docs/cloud-stores.md](docs/cloud-stores.md) |
-| `gcp_status: export-not-ready` on `kinoforge cost` | <24 h since BigQuery billing export was enabled | Wait for first table (up to 24 h) |
+| `gcp_status: export-not-ready` from `tools/quota_burn.py snapshot` | <24 h since BigQuery billing export was enabled | Wait for the first table (6–24 h). `kinoforge cost` is unaffected — it never reads BigQuery |
 | GPU sits 0% during live smoke | Worker died silently | Kill pod immediately; see [docs/troubleshooting.md](docs/troubleshooting.md) deep section |
 
 Full catalogue: [docs/troubleshooting.md](docs/troubleshooting.md).
@@ -454,4 +456,4 @@ See [docs/releasing.md](docs/releasing.md) for the full release checklist and ve
 
 ## License
 
-SPDX-License-Identifier: MIT — see [LICENSE](LICENSE).
+SPDX-License-Identifier: Apache-2.0 — see [LICENSE](LICENSE).
