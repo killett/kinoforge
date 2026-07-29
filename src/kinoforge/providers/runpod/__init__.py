@@ -395,7 +395,8 @@ class RunPodProvider(ComputeProvider):
             objects.
         """
         response = self._http_post(self._base_url, {"query": _GPU_TYPES_QUERY})
-        gpu_types: list[dict[str, Any]] = response.get("data", {}).get("gpuTypes", [])
+        data = _unwrap_graphql_response(response, context="find offers")
+        gpu_types: list[dict[str, Any]] = data.get("gpuTypes") or []
         raw_offers: list[Offer] = []
         for gpu in gpu_types:
             gpu_id: str = str(gpu.get("id", ""))
@@ -470,7 +471,8 @@ class RunPodProvider(ComputeProvider):
             KeyError: No pod found for ``instance_id``.
         """
         resp = self._http_post(self._base_url, {"query": _get_pod_query(instance_id)})
-        pod: dict[str, Any] = resp.get("data", {}).get("pod", {})
+        data = _unwrap_graphql_response(resp, context=f"get pod {instance_id}")
+        pod: dict[str, Any] = data.get("pod") or {}
         if not pod:
             raise KeyError(f"no RunPod pod found: {instance_id!r}")
         return _pod_to_instance(pod)
@@ -482,9 +484,8 @@ class RunPodProvider(ComputeProvider):
             A (possibly empty) list of :class:`~kinoforge.core.interfaces.Instance`.
         """
         resp = self._http_post(self._base_url, {"query": _LIST_PODS_QUERY})
-        pods: list[dict[str, Any]] = (
-            resp.get("data", {}).get("myself", {}).get("pods", [])
-        )
+        data = _unwrap_graphql_response(resp, context="list pods")
+        pods: list[dict[str, Any]] = (data.get("myself") or {}).get("pods") or []
         return [_pod_to_instance(p) for p in pods]
 
     def find_instance_by_tag(self, key: str, value: str) -> Instance | None:
@@ -531,11 +532,17 @@ class RunPodProvider(ComputeProvider):
 
         Args:
             instance_id: The pod ID to stop.
+
+        Raises:
+            RunPodGraphQLError: The stop mutation was rejected. Discarding
+                the response made a failed pause-billing call look exactly
+                like a successful one while the pod kept billing.
         """
-        self._http_post(
+        resp = self._http_post(
             self._base_url,
             {"query": _stop_pod_mutation(instance_id)},
         )
+        _unwrap_graphql_response(resp, context=f"stop pod {instance_id}")
 
     def destroy_instance(self, instance_id: str) -> None:
         """Terminate a pod and poll until it is confirmed gone.

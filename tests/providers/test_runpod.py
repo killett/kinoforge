@@ -1720,3 +1720,132 @@ def test_runpod_last_heartbeat_returns_none_on_endpoint_returning_none(
     )
     # never wrote — endpoint.read returns None
     assert p.last_heartbeat("never-written") is None
+
+
+# ---------------------------------------------------------------------------
+# Audit B3: GraphQL READ paths must unwrap errors too (2026-07-28)
+#
+# ``_unwrap_graphql_response`` was built for the 2026-06-23 destroy money
+# leak but only wired into destroy_instance. The read paths kept using
+# ``resp.get("data", {}).get(...)``, which on the real errors shape
+# ``{"errors": [...], "data": null}`` returns None (the key EXISTS, so the
+# ``{}`` default never applies) and then either AttributeErrors or —
+# worse — degrades to an empty list that reads as "account has no pods".
+# ---------------------------------------------------------------------------
+
+_ERRORS_SHAPE: dict[str, Any] = {
+    "errors": [{"message": "Something went wrong. Please try again later."}],
+    "data": None,
+}
+
+
+def test_list_instances_raises_on_graphql_errors_instead_of_empty_list() -> None:
+    """Errors-shaped list response must raise, not report zero pods.
+
+    Bug catch: the money-leak class the unwrap helper exists to kill.
+    ``list_instances`` returning ``[]`` on a transient GraphQL error is
+    indistinguishable from a genuinely empty account, so
+    ``lifecycle.destroy_confirmed`` reads it as "pod confirmed gone",
+    the reaper stops chasing the pod, and it bills on unattended.
+    """
+    from kinoforge.providers.runpod import RunPodGraphQLError, RunPodProvider
+
+    provider = RunPodProvider(http_post=HttpPostSpy(response=_ERRORS_SHAPE))
+    with pytest.raises(RunPodGraphQLError) as excinfo:
+        provider.list_instances()
+    assert "Something went wrong" in str(excinfo.value)
+
+
+def test_list_instances_returns_empty_for_genuinely_empty_account() -> None:
+    """A clean response with zero pods still returns ``[]``.
+
+    Bug catch: an over-broad fix that raises whenever ``pods`` is empty
+    would break every teardown-verification path (``kinoforge list`` on a
+    clean ledger) — the exact "No running instances" state we require
+    after each live smoke.
+    """
+    from kinoforge.providers.runpod import RunPodProvider
+
+    provider = RunPodProvider(
+        http_post=HttpPostSpy(response={"data": {"myself": {"pods": []}}})
+    )
+    assert provider.list_instances() == []
+
+
+def test_get_instance_raises_graphql_error_not_attribute_error() -> None:
+    """Errors-shaped get-pod response surfaces as ``RunPodGraphQLError``.
+
+    Bug catch: ``resp.get("data", {}).get("pod", {})`` raises
+    ``AttributeError: 'NoneType' object has no attribute 'get'`` on the
+    real errors shape — an opaque crash that broad ``except Exception``
+    call sites (status rendering, heartbeat) swallow into "unknown"
+    instead of the documented TransportError contract.
+    """
+    from kinoforge.providers.runpod import RunPodGraphQLError, RunPodProvider
+
+    provider = RunPodProvider(http_post=HttpPostSpy(response=_ERRORS_SHAPE))
+    with pytest.raises(RunPodGraphQLError) as excinfo:
+        provider.get_instance("pod-abc123")
+    assert "pod-abc123" in str(excinfo.value)
+
+
+def test_get_instance_still_raises_keyerror_when_pod_absent() -> None:
+    """Clean response with ``pod: null`` keeps the documented KeyError.
+
+    Bug catch: routing through the unwrap helper must not reclassify a
+    genuinely-missing pod as a transport failure — ``kinoforge forget``
+    and the GC_404 sweeper verdict both key off KeyError meaning "gone".
+    """
+    from kinoforge.providers.runpod import RunPodProvider
+
+    provider = RunPodProvider(http_post=HttpPostSpy(response={"data": {"pod": None}}))
+    with pytest.raises(KeyError):
+        provider.get_instance("pod-abc123")
+
+
+def test_find_offers_raises_graphql_error_not_attribute_error() -> None:
+    """Errors-shaped gpuTypes response surfaces as ``RunPodGraphQLError``.
+
+    Bug catch: same ``data: null`` AttributeError, at the front of the
+    deploy path — the operator sees a NoneType traceback instead of the
+    RunPod message that explains why offers could not be fetched.
+    """
+    from kinoforge.core.interfaces import HardwareRequirements
+    from kinoforge.providers.runpod import RunPodGraphQLError, RunPodProvider
+
+    provider = RunPodProvider(http_post=HttpPostSpy(response=_ERRORS_SHAPE))
+    with pytest.raises(RunPodGraphQLError):
+        provider.find_offers(HardwareRequirements(min_vram_gb=24))
+
+
+def test_stop_instance_raises_on_graphql_errors() -> None:
+    """A failed stop mutation must not return silently.
+
+    Bug catch: ``stop_instance`` discarded its response entirely, so a
+    rejected pause-billing call (quota, auth, pod already gone) looked
+    identical to success — the pod keeps billing at full rate while the
+    caller believes it is paused.
+    """
+    from kinoforge.providers.runpod import RunPodGraphQLError, RunPodProvider
+
+    spy = HttpPostSpy(response=_ERRORS_SHAPE)
+    provider = RunPodProvider(http_post=spy)
+    with pytest.raises(RunPodGraphQLError) as excinfo:
+        provider.stop_instance("pod-abc123")
+    assert "pod-abc123" in str(excinfo.value)
+    assert len(spy.calls) == 1
+
+
+def test_stop_instance_returns_none_on_clean_response() -> None:
+    """Happy path stays a silent no-return.
+
+    Bug catch: an unwrap wired in with the wrong polarity (raise unless
+    ``errors`` present) would break every legitimate pause.
+    """
+    from kinoforge.providers.runpod import RunPodProvider
+
+    spy = HttpPostSpy(response={"data": {"podStop": {"id": "pod-abc123"}}})
+    provider = RunPodProvider(http_post=spy)
+    provider.stop_instance("pod-abc123")
+    assert len(spy.calls) == 1
+    assert "pod-abc123" in spy.calls[0][1]["query"]
