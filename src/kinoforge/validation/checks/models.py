@@ -19,6 +19,7 @@ import logging
 from collections.abc import Callable
 
 from kinoforge.core.config import Config, ModelEntry
+from kinoforge.sources.huggingface import _parse_hf_ref
 from kinoforge.validation.checks._head import PASS_CODES_AUTH_OK, default_http_head
 from kinoforge.validation.protocol import CheckCategory, CheckResult, Severity
 from kinoforge.validation.registry import register
@@ -30,15 +31,22 @@ _default_http_head = default_http_head
 
 
 def _resolve_ref_to_url(ref: str) -> str:
-    """Translate a kinoforge model ref into an HTTP-able URL."""
+    """Translate a kinoforge model ref into an HTTP-able URL.
+
+    ``hf:`` refs are parsed with the same grammar the downloader uses
+    (:func:`~kinoforge.sources.huggingface._parse_hf_ref`) so a pinned
+    ``@<revision>`` resolves to that revision instead of HEAD-ing a
+    ``/resolve/main/<repo>@<rev>/...`` URL that is always a 404 (audit
+    B8). A bare repo ref HEADs the repo page; the revision is not part
+    of that URL.
+    """
     if ref.startswith(("https://", "http://")):
         return ref
     if ref.startswith("hf:"):
-        body = ref[3:]
-        if ":" not in body:
-            return f"https://huggingface.co/{body}"
-        repo, file_ = body.split(":", 1)
-        return f"https://huggingface.co/{repo}/resolve/main/{file_}"
+        repo, revision, path = _parse_hf_ref(ref)
+        if path is None:
+            return f"https://huggingface.co/{repo}"
+        return f"https://huggingface.co/{repo}/resolve/{revision}/{path}"
     return ref
 
 
