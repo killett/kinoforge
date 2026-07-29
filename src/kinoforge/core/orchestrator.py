@@ -593,6 +593,56 @@ def _create_with_capacity_wait[T](
             sleep(retry_interval_s)
 
 
+_READY_POLL_INTERVAL_S: float = 2.0
+
+
+def _wait_for_provider_ready(
+    provider: ComputeProvider,
+    instance: Instance,
+    *,
+    boot_timeout_s: float,
+    clock: Clock | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    interval_s: float = _READY_POLL_INTERVAL_S,
+) -> str:
+    """Poll ``provider.get_instance`` until the pod reports ``ready``.
+
+    Only the status is returned: ``created_at``, ``tags``, and
+    ``cost_rate_usd_per_hr`` are authoritative on the ``create_instance``
+    result and would be clobbered by the impoverished Instances that
+    RunPod/SkyPilot list APIs return (Stage E live smoke 2026-06-18).
+
+    Args:
+        provider: Provider to poll.
+        instance: The just-created instance (its status seeds the loop).
+        boot_timeout_s: Give-up deadline. A pod that never leaves
+            "starting" (image-pull hang, wedged host) otherwise holds the
+            CLI forever while billing (audit B5).
+        clock: Injected clock (defaults to RealClock).
+        sleep: Injected sleep seam.
+        interval_s: Delay between polls. Pre-fix ``deploy()`` had none and
+            hammered the provider API in a hot loop.
+
+    Returns:
+        The terminal status (always ``"ready"``).
+
+    Raises:
+        ProvisionTimeout: ``boot_timeout_s`` elapsed before ready.
+    """
+    the_clock = clock if clock is not None else RealClock()
+    deadline = the_clock.now() + boot_timeout_s
+    status = instance.status
+    while status != "ready":
+        if the_clock.now() >= deadline:
+            raise ProvisionTimeout(
+                f"instance {instance.id!r} never reached ready within "
+                f"{boot_timeout_s:.0f}s (last status={status!r})"
+            )
+        sleep(interval_s)
+        status = provider.get_instance(instance.id).status
+    return status
+
+
 def _build_start_heartbeat_closure(
     *,
     ledger: Ledger,
@@ -831,10 +881,14 @@ def _provision_instance_and_build_backend(
     # stripped. Without the replace, instance.endpoints goes from
     # populated-by-_create_pod to empty-by-_pod_to_instance, and the
     # downstream wait_for_ready raises ProvisionFailed immediately.
-    while instance.status != "ready":
-        time.sleep(2.0)
-        refreshed = resolved_provider.get_instance(instance.id)
-        instance = dataclasses.replace(instance, status=refreshed.status)
+    instance = dataclasses.replace(
+        instance,
+        status=_wait_for_provider_ready(
+            resolved_provider,
+            instance,
+            boot_timeout_s=lifecycle.boot_timeout_s,
+        ),
+    )
 
     # NEW — Layer Q: wire provider.get_instance onto engine before engine.provision
     resolved_engine.attach_get_instance(resolved_provider.get_instance)
@@ -1584,9 +1638,11 @@ def deploy(
         # fields and surface as ``age=~56y``, ``est_spend=$0.00``, and
         # ``capability_key=<unknown>`` in the ledger (Stage E live smoke
         # 2026-06-18 regression).
-        while instance.status != "ready":
-            polled = resolved_provider.get_instance(instance.id)
-            instance.status = polled.status
+        instance.status = _wait_for_provider_ready(
+            resolved_provider,
+            instance,
+            boot_timeout_s=lifecycle.boot_timeout_s,
+        )
 
         endpoints = resolved_provider.endpoints(instance)
         _log.info(
