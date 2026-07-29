@@ -557,3 +557,167 @@ def test_set_lora_stack_poll_timeout_raises_pod_unreachable() -> None:
     with pytest.raises(LoraSwapPodUnreachableError) as ei:
         backend.set_lora_stack(pod_id="pod-7", active_stack=[], download_specs={})
     assert "s-abc6" in ei.value.underlying
+
+
+# ---------------------------------------------------------------------------
+# Audit B10: the poll loop must honour the transient-absorption contract its
+# docstring advertises (LoraSwapPodUnreachableError, not a raw urllib error)
+# ---------------------------------------------------------------------------
+
+
+def test_poll_exhausted_transient_burst_raises_pod_unreachable() -> None:
+    """A sustained 502 burst while polling surfaces as LoraSwapPodUnreachableError.
+
+    Bug caught (audit B10): ``_poll_set_stack`` documented that it mirrors
+    ``result()``'s transient absorption but had no surrounding catch, so
+    once ``retry_proxy_call`` exhausted its retries — the known RunPod
+    proxy behaviour during a long LoRA download — a raw ``HTTPError``
+    escaped past every ``except LoraSwapError`` handler in the matcher
+    and the grid driver, and the swap failure was reported as an unknown
+    crash instead of an unreachable pod.
+    """
+
+    def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"job_id": "s-transient"}
+
+    def _get(url: str) -> dict[str, Any]:
+        raise _http_error(502, {"detail": "Waiting for service to respond"})
+
+    backend = _backend_with_get(_post, _get, poll_timeout_s=0.5)
+    with pytest.raises(LoraSwapPodUnreachableError) as ei:
+        backend.set_lora_stack(
+            pod_id="pod-t", active_stack=[_entry("r1")], download_specs={}
+        )
+    assert ei.value.pod_id == "pod-t"
+    # The proxy status must survive into the message — "timed out" alone
+    # sends the operator hunting a slow download that never happened.
+    assert "502" in str(ei.value)
+
+
+def test_poll_transport_error_burst_raises_pod_unreachable() -> None:
+    """URLError/OSError bursts map to the same documented exception.
+
+    Bug caught: the transport-class branch is the one that fires when the
+    pod dies mid-swap (connection refused), i.e. exactly the case the
+    matcher needs classified as unreachable so it cold-boots elsewhere.
+    """
+
+    def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"job_id": "s-transport"}
+
+    def _get(url: str) -> dict[str, Any]:
+        raise urllib.error.URLError("connection refused")
+
+    backend = _backend_with_get(_post, _get, poll_timeout_s=0.5)
+    with pytest.raises(LoraSwapPodUnreachableError) as ei:
+        backend.set_lora_stack(
+            pod_id="pod-u", active_stack=[_entry("r1")], download_specs={}
+        )
+    assert "connection refused" in str(ei.value)
+
+
+def test_poll_non_transient_http_error_raises_pod_unreachable() -> None:
+    """A 404 on the status URL (pod restarted, job forgotten) maps too.
+
+    Bug caught: a non-transient status code escaped raw as well. 404 here
+    means the pod no longer knows the job — an unreachable-pod condition
+    the caller can act on, not an unhandled urllib exception.
+    """
+
+    def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"job_id": "s-gone"}
+
+    def _get(url: str) -> dict[str, Any]:
+        raise _http_error(404, {"detail": "unknown job"})
+
+    backend = _backend_with_get(_post, _get, poll_timeout_s=5.0)
+    with pytest.raises(LoraSwapPodUnreachableError) as ei:
+        backend.set_lora_stack(
+            pod_id="pod-g", active_stack=[_entry("r1")], download_specs={}
+        )
+    assert "404" in str(ei.value)
+
+
+# ---------------------------------------------------------------------------
+# Audit B11: branch_routing error bodies must map to a typed exception
+# ---------------------------------------------------------------------------
+
+
+def _branch_error_backend(detail: dict[str, Any], status: int) -> DiffusersBackend:
+    def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"job_id": "s-branch"}
+
+    def _get(url: str) -> dict[str, Any]:
+        return {
+            "state": "error",
+            "inventory": None,
+            "free_bytes": None,
+            "swap_rejected": None,
+            "error": {**detail, "status": status},
+        }
+
+    return _backend_with_get(_post, _get)
+
+
+def test_branch_routing_400_raises_typed_branch_error() -> None:
+    """``branch_routing`` bodies raise LoraSwapBranchRoutingError.
+
+    Bug caught (audit B11): ``_raise_lora_swap_error`` had no
+    ``branch_routing`` case, so a cfg-level routing mistake (branch=auto
+    against a Wan-2.2 MoE pipe) surfaced as
+    ``RuntimeError("unknown /lora/set_stack error body: ...")`` — not a
+    LoraSwapError, so every ``except LoraSwapError`` recovery path missed
+    it, and the reason string was buried in a dict repr.
+    """
+    from kinoforge.core.errors import LoraSwapBranchRoutingError
+
+    backend = _branch_error_backend(
+        {
+            "error": "branch_routing",
+            "reason": "branch_auto_disallowed_on_moe",
+            "arity": 2,
+        },
+        400,
+    )
+    with pytest.raises(LoraSwapBranchRoutingError) as ei:
+        backend.set_lora_stack(
+            pod_id="pod-b", active_stack=[_entry("r1")], download_specs={}
+        )
+    assert ei.value.pod_id == "pod-b"
+    assert ei.value.reason == "branch_auto_disallowed_on_moe"
+    assert ei.value.arity == 2
+    assert "branch_auto_disallowed_on_moe" in str(ei.value)
+
+
+def test_branch_routing_500_branch_unknown_also_typed() -> None:
+    """The defensive 500 shape routes through the same case.
+
+    Bug catch: a fix keyed on ``status == 400`` would leave the
+    ``branch_unknown`` 500 body falling through to the generic
+    RuntimeError again.
+    """
+    from kinoforge.core.errors import LoraSwapBranchRoutingError
+
+    backend = _branch_error_backend(
+        {"error": "branch_routing", "reason": "branch_unknown", "branch": "sideways"},
+        500,
+    )
+    with pytest.raises(LoraSwapBranchRoutingError) as ei:
+        backend.set_lora_stack(
+            pod_id="pod-b2", active_stack=[_entry("r1")], download_specs={}
+        )
+    assert ei.value.branch == "sideways"
+
+
+def test_unrecognised_error_body_still_raises_runtime_error() -> None:
+    """Unknown shapes keep failing loudly.
+
+    Bug catch: an over-broad branch_routing case that swallowed every
+    unmapped body would turn future server-side error shapes into a
+    misleading branch-routing report.
+    """
+    backend = _branch_error_backend({"error": "something_new"}, 418)
+    with pytest.raises(RuntimeError, match="unknown /lora/set_stack error body"):
+        backend.set_lora_stack(
+            pod_id="pod-b3", active_stack=[_entry("r1")], download_specs={}
+        )

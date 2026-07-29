@@ -373,6 +373,41 @@ class LoraSwapDiskFullError(LoraSwapError):
         )
 
 
+class LoraSwapBranchRoutingError(LoraSwapError):
+    """Pod refused the stack because a ``branch`` cannot route on its pipe.
+
+    Raised for the server's ``branch_routing`` error body — ``branch=auto``
+    against a Wan-2.2 MoE pipe, an explicit ``h``/``l`` branch against a
+    single-transformer Wan 2.1, or the defensive ``branch_unknown``. The
+    pod is healthy and its inventory is untouched: the fault is in the
+    request, so retrying the same stack elsewhere will fail identically.
+    """
+
+    def __init__(
+        self,
+        *,
+        pod_id: str,
+        reason: str,
+        branch: str | None = None,
+        arity: int | None = None,
+    ) -> None:
+        """Carry the server's reason plus the branch/arity that produced it."""
+        super().__init__(pod_id=pod_id)
+        self.reason = reason
+        self.branch = branch
+        self.arity = arity
+
+    def __str__(self) -> str:
+        """Render the reason + routing context; pod stays healthy."""
+        where = f" branch={self.branch}" if self.branch is not None else ""
+        arity = f" arity={self.arity}" if self.arity is not None else ""
+        return (
+            f"LoRA branch_routing rejected on pod {self.pod_id}: "
+            f"{self.reason}{where}{arity}. Pod inventory unchanged — fix the "
+            f"cfg's branch routing; a different pod will reject it the same way."
+        )
+
+
 class LoraStackConflict(KinoforgeError):
     """``cfg.loras`` and ``vault.loras`` both populated with diverging refs.
 

@@ -48,6 +48,10 @@ _RECOVERABLE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"BranchUnsupportedOnSingleTransformer", re.IGNORECASE),
     re.compile(r"BranchAutoNotAllowedOnMoE", re.IGNORECASE),
     re.compile(r"BranchUnknown", re.IGNORECASE),
+    # Client-side surface of the same three server exceptions. The swap
+    # runs through the async job endpoint now, so the cell subprocess dies
+    # with this exception rather than the server class name.
+    re.compile(r"LoraSwapBranchRoutingError", re.IGNORECASE),
 )
 
 _UNRECOVERABLE_PATTERNS: tuple[re.Pattern[str], ...] = (

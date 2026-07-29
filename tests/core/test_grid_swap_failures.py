@@ -152,3 +152,21 @@ def test_zero_exit_returns_continue_defensively() -> None:
     fallback returns CONTINUE so a buggy caller doesn't accidentally
     abort the whole group on a successful subprocess."""
     assert _classify_swap_failure("", 0, "classify") is SwapFailureAction.CONTINUE
+
+
+def test_classify_client_side_branch_routing_error_returns_continue() -> None:
+    """The client-side branch-routing exception classifies as recoverable.
+
+    Bug caught (audit B11 follow-on): the recoverable catalogue matches
+    the SERVER exception names, which only reach stderr on the direct
+    HTTP path. Since the swap moved to the async job endpoint, the cell
+    subprocess dies with the CLIENT exception instead — pre-fix a bare
+    ``RuntimeError("unknown /lora/set_stack error body: ...")``, matching
+    nothing, so a single per-cell cfg mistake aborted every remaining
+    cell of the grid (and its already-warm pod).
+    """
+    stderr = (
+        "kinoforge.core.errors.LoraSwapBranchRoutingError: LoRA branch_routing "
+        "rejected on pod pod-x: branch_auto_disallowed_on_moe arity=2."
+    )
+    assert _classify_swap_failure(stderr, 1, "classify") is SwapFailureAction.CONTINUE

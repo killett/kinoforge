@@ -742,22 +742,59 @@ class DiffusersBackend(GenerationBackend):
 
         url = f"{self._base_url}/lora/set_stack/status/{job_id}"
         start = time.monotonic()
+        last_transient: BaseException | None = None
         while True:
             elapsed = time.monotonic() - start
             if elapsed > self._poll_timeout_s:
-                raise LoraSwapPodUnreachableError(
-                    pod_id=pod_id,
-                    underlying=(
-                        f"set_stack job {job_id} poll timed out after {elapsed:.1f}s"
-                    ),
+                cause = (
+                    f"{type(last_transient).__name__}: {last_transient}"
+                    if last_transient is not None
+                    else f"set_stack job {job_id} poll timed out after {elapsed:.1f}s"
                 )
-            data = retry_proxy_call(
-                "diffusers.lora.set_stack.status",
-                url,
-                lambda: self._http_get(url),
-                self._sleep,
-                RUNPOD_PROXY_POLICY,
-            )
+                raise LoraSwapPodUnreachableError(pod_id=pod_id, underlying=cause)
+            try:
+                data = retry_proxy_call(
+                    "diffusers.lora.set_stack.status",
+                    url,
+                    lambda: self._http_get(url),
+                    self._sleep,
+                    RUNPOD_PROXY_POLICY,
+                )
+            except urllib.error.HTTPError as exc:
+                # Transient burst (the proxy's 502s during a long download):
+                # absorb and keep polling until the wall clock gives up, then
+                # surface the LAST transient as the unreachable cause. Any
+                # other status means the pod no longer knows this job —
+                # also an unreachable-pod condition, not a raw urllib
+                # exception the LoraSwapError handlers would miss (audit B10).
+                if exc.code not in RUNPOD_PROXY_POLICY.transient_codes:
+                    raise LoraSwapPodUnreachableError(
+                        pod_id=pod_id,
+                        underlying=(
+                            f"HTTP {exc.code} polling set_stack job {job_id}: {exc}"
+                        ),
+                    ) from exc
+                _log.warning(
+                    "[diffusers.lora.set_stack.status] transient HTTPError "
+                    "exhausted elapsed=%.1fs job=%s code=%d",
+                    elapsed,
+                    job_id,
+                    exc.code,
+                )
+                last_transient = exc
+                interpoll_wait(self._poll_interval_s, None, self._sleep)
+                continue
+            except RUNPOD_PROXY_POLICY.catch_classes as exc:
+                _log.warning(
+                    "[diffusers.lora.set_stack.status] transient transport-error "
+                    "exhausted elapsed=%.1fs job=%s type=%s",
+                    elapsed,
+                    job_id,
+                    type(exc).__name__,
+                )
+                last_transient = exc
+                interpoll_wait(self._poll_interval_s, None, self._sleep)
+                continue
             state = data.get("state")
             if state == "done":
                 # Tokenise refs the moment they cross the pod->controller
@@ -792,15 +829,29 @@ class DiffusersBackend(GenerationBackend):
                 non-empty ``evict_completed``.
             LoraSwapDownloadError: For 502 + ``lora_download_failed`` with no
                 eviction in progress.
+            LoraSwapBranchRoutingError: For ``error="branch_routing"`` (400
+                legality refusals and the defensive 500 ``branch_unknown``).
             RuntimeError: For an unrecognised body shape.
         """
         from kinoforge.core.errors import (
+            LoraSwapBranchRoutingError,
             LoraSwapDegradedPodError,
             LoraSwapDiskFullError,
             LoraSwapDownloadError,
         )
 
         err = body.get("error")
+        if err == "branch_routing":
+            # Keyed on the body, not the status: the server emits this
+            # shape at 400 (legality) AND at 500 (defensive branch_unknown)
+            # — see wan_t2v_server._branch_error_to_http.
+            arity = body.get("arity")
+            raise LoraSwapBranchRoutingError(
+                pod_id=pod_id,
+                reason=str(body.get("reason", "branch_routing")),
+                branch=body.get("branch"),
+                arity=int(arity) if arity is not None else None,
+            )
         evict = list(body.get("evict_completed", []))
         failed = body.get("download_failed", "") or ""
         underlying = body.get("underlying", "") or ""
