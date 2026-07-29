@@ -83,7 +83,6 @@ vermin = ">=1.8.0,<2"
 
 [pypi-dependencies]
 # Group-derived PyPI-only packages are inserted on the line below.
-graphifyy = "*"
 google-cloud-bigquery = ">=3.11"
 google-cloud-billing = ">=1.13"
 google-cloud-billing-budgets = ">=1.16"
