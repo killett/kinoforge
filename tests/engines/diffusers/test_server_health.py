@@ -41,6 +41,7 @@ def loaded_client(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     srv._LOADED.clear()
     srv.ready.clear()
+    srv._WAN_REGISTRY_NAME = None
 
 
 def _entry(
@@ -185,6 +186,37 @@ class TestUploadCapability:
         _srv, client, _set_loaded = loaded_client
         caps = client.get("/health").json()["capabilities"]
         assert "upload" in caps
+
+
+class TestEagerWanCapability:
+    def test_eager_registered_wan_yields_t2v(self, loaded_client: Any) -> None:
+        # Bug caught (audit B1): ``_register_eager_wan`` — the ONLY path
+        # that registers Wan on a real cold-booted pod — names the entry
+        # "wan-eager-{MODEL_ID}", while ``_capability_for_model`` matches
+        # only the "wan-t2v-" prefix. /health then omits "t2v", so
+        # ``_health_preflight_ok`` refuses every warm-attach with
+        # stage-mismatch and each run pays the cold-boot cost again.
+        # Registration runs through the production helper (not a
+        # hand-written slug) so the name and the capability map cannot
+        # drift apart a second time.
+        srv, client, set_loaded = loaded_client
+        set_loaded({})
+        srv._register_eager_wan(MagicMock())
+        assert client.get("/health").json()["capabilities"] == ["t2v", "upload"]
+
+    def test_eager_wan_and_upscaler_yield_both(self, loaded_client: Any) -> None:
+        # Bug caught: a fix that special-cases the eager pipe by clobbering
+        # the derived set (e.g. returning ["t2v", "upload"] whenever an
+        # eager Wan exists) hides a co-resident upscaler → the matcher
+        # refuses upscale work the pod can actually do.
+        srv, client, set_loaded = loaded_client
+        set_loaded({"spandrel-realesrgan-fp16": _entry("spandrel-realesrgan-fp16")})
+        srv._register_eager_wan(MagicMock())
+        assert client.get("/health").json()["capabilities"] == [
+            "t2v",
+            "upload",
+            "upscale",
+        ]
 
 
 class TestSpandrelCapability:

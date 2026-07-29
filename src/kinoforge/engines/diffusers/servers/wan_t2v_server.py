@@ -123,6 +123,12 @@ _REGISTRY_LOCK = asyncio.Lock()
 # Registry name of the eager-loaded Wan pipeline (set by
 # ``_register_eager_wan`` during startup; None on upscale-only pods).
 _WAN_REGISTRY_NAME: str | None = None
+# Registry-name prefixes that mean "this entry is the Wan t2v pipeline".
+# ``wan-eager-`` is the one a real cold boot produces (_register_eager_wan);
+# ``wan-t2v-`` is the lazily-loadable slug shape. Both must map to the
+# ``t2v`` capability or /health under-reports and warm-attach is refused.
+_WAN_EAGER_PREFIX = "wan-eager-"
+_WAN_NAME_PREFIXES = ("wan-t2v-", _WAN_EAGER_PREFIX)
 # threading lock for the sync promotion path (the generate worker is a
 # plain thread and cannot take the asyncio lock). Stages run strictly
 # sequentially through the orchestrator, so the two locks never guard
@@ -435,7 +441,7 @@ def _register_eager_wan(wan_pipe: Any) -> None:  # noqa: ANN401 — diffusers pi
         # _load_pipeline; 0 only weakens promotion sizing there.
         vram_bytes = 0
 
-    name = f"wan-eager-{MODEL_ID}"
+    name = f"{_WAN_EAGER_PREFIX}{MODEL_ID}"
     _LOADED[name] = LoadedModel(
         name=name,
         pipe=wan_pipe,
@@ -1411,7 +1417,7 @@ def _capability_for_model(name: str) -> str | None:
     ``capabilities`` field — the matcher's pre-flight (T14) treats
     that list as a closed vocabulary and breaks on stray values.
     """
-    if name.startswith("wan-t2v-"):
+    if name.startswith(_WAN_NAME_PREFIXES):
         return "t2v"
     if (
         name.startswith("seedvr2-")
