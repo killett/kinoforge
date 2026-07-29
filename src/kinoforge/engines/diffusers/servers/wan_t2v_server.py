@@ -944,7 +944,10 @@ def _snapshot_inventory_as_targets() -> list[LoraTarget]:
     return [
         LoraTarget(
             ref=v["ref"],
-            strength=v.get("last_strength") or 1.0,
+            # Explicit None test, not `or`: strength 0.0 is legal (schema
+            # allows -2.0..2.0) and a falsy default silently restored a
+            # deliberately-disabled adapter at full strength (audit B9).
+            strength=1.0 if v.get("last_strength") is None else v["last_strength"],
             branch=v.get("branch", "auto"),
         )
         for v in _inventory.values()
@@ -2065,13 +2068,18 @@ async def _run_swap_job(job_id: str, req: SetStackRequest) -> None:
             ]
             target_keys = set(target_keys_list)
 
-            _seed_swap_gap_siblings(target_keys_list)
-
-            plan = _plan_swap(req, target_keys_list, target_keys)
             # Snapshot pre-swap state for VRAM-OOM rollback (P1: refs AND
             # strengths; P2: AND branch — _snapshot_inventory_as_targets emits
             # full LoraTarget triples so rollback is fully reversible).
+            # MUST precede _seed_swap_gap_siblings: the seeded rows are
+            # placeholders for adapters that were never loaded, so a
+            # snapshot taken after them rolls the pod back to a stack it
+            # never had, and target_refs_dropped under-reports (audit B9).
             previous_state = _snapshot_inventory_as_targets()
+
+            _seed_swap_gap_siblings(target_keys_list)
+
+            plan = _plan_swap(req, target_keys_list, target_keys)
             previous_keys: set[tuple[str, str]] = {
                 (t.ref, t.branch) for t in previous_state
             }

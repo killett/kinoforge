@@ -400,3 +400,86 @@ def test_single_ref_branch_swap_keeps_file_on_disk(
     assert routing_by_name == {"lora_0_l": True}, (
         f"single-ref swap routing wrong: {stub.loaded}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Audit B9 — the rollback snapshot must predate the swap-gap seeding loop
+# ---------------------------------------------------------------------------
+
+
+def test_rollback_snapshot_excludes_swap_gap_seeded_entries(
+    moe_server: tuple[Any, _MoEStub, list[str]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VRAM-OOM rollback restores only what was actually loaded.
+
+    Bug caught (audit B9): ``previous_state`` was snapshotted AFTER
+    ``_seed_swap_gap_siblings`` wrote pending ``(ref, new_branch)`` rows
+    into ``_inventory``. Those rows are placeholders — no adapter was
+    ever loaded for them (their ``adapter_name`` is ``lora_pending_*``)
+    — yet the rollback replayed them as if they had been active, so a
+    pod recovering from an OOM ended up with a stack it never had, and
+    ``target_refs_dropped`` under-reported what the caller lost.
+
+    Sequence: (A, high_noise) exists at strength 0.5; target moves A to
+    low_noise; the target apply OOMs. The rollback must restore exactly
+    [(A, high_noise, 0.5)], the seeded (A, low_noise) row must be gone
+    from inventory, and A's file must survive (it is still anchored by
+    the surviving high_noise row).
+    """
+    s, _stub, _log = moe_server
+    file_a = _seed_existing(
+        tmp_path, ref="A", branch="high_noise", filename="a.safetensors"
+    )
+    s._inventory[("A", "high_noise")]["last_strength"] = 0.5
+
+    calls: list[list[Any]] = []
+
+    def _fake_replace(target: list[Any]) -> None:
+        calls.append(list(target))
+        if len(calls) == 1:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 1.44 GiB")
+
+    monkeypatch.setattr(s, "_replace_adapter_stack", _fake_replace)
+    result = _run_set_stack(
+        s.SetStackRequest(
+            target=[{"ref": "A", "strength": 1.0, "branch": "low_noise"}],
+            download_specs={},
+        )
+    )
+
+    assert len(calls) == 2, "expected target apply then rollback"
+    rollback_arg = calls[1]
+    assert [(t.ref, t.branch, t.strength) for t in rollback_arg] == [
+        ("A", "high_noise", 0.5)
+    ]
+    assert ("A", "low_noise") not in s._inventory
+    # NOTE: (A, high_noise) is gone too — the swap's mandatory-evict pass
+    # removed it before the OOM, and the rollback restores adapters but
+    # not inventory rows. That is a separate, pre-existing gap (a real
+    # rollback would KeyError inside _replace_adapter_stack and surface
+    # `rollback_failed`); it is recorded in PROGRESS, not fixed here.
+    assert result["swap_rejected"]["reason"] == "vram_oom"
+    assert result["swap_rejected"]["target_refs_dropped"] == ["A"]
+    assert file_a.exists(), "surviving branch row must keep the file anchored"
+
+
+def test_snapshot_preserves_zero_strength(
+    moe_server: tuple[Any, _MoEStub, list[str]], tmp_path: Path
+) -> None:
+    """``last_strength`` of 0.0 survives the rollback snapshot.
+
+    Bug caught (audit B9): ``v.get("last_strength") or 1.0`` is falsy-
+    triggered, so a deliberately-disabled adapter (strength 0.0 — a
+    legal value, the schema allows -2.0..2.0) came back from a rollback
+    at FULL strength. The pod then renders with a LoRA the operator had
+    switched off, and nothing reports the change.
+    """
+    s, _stub, _log = moe_server
+    _seed_existing(tmp_path, ref="Z", branch="auto", filename="z.safetensors")
+    s._inventory[("Z", "auto")]["last_strength"] = 0.0
+
+    snapshot = s._snapshot_inventory_as_targets()
+
+    assert [(t.ref, t.strength) for t in snapshot] == [("Z", 0.0)]
