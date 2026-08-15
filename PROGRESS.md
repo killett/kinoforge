@@ -74,6 +74,43 @@ first unchecked task without redoing committed work.
   tolerance, wide enough to pass a flipped `time_buffer` sign, so deadline assertions compare
   deltas. Both mutations (tick-side deadline refresh = the B4 defect itself; `time_buffer` sign
   flip) verified to fail the suite before revert.
+- **Cloud-layer findings verification (COMPLETE 2026-08-15, read-only — NO remediation opened):**
+  `docs/superpowers/research/2026-08-15-cloud-layer-findings-verification.md`. Verified all 12
+  findings F1–F12 of an external SkyPilot/cloud-layer review against HEAD `67627cd0`. Verdicts:
+  **10 CONFIRMED** (F2, F4, F5, F6, F7, F8, F9, F10, F11, F12), **1 CHANGED** (F3),
+  **1 split** (F1: job-queue mechanism CONFIRMED, ssh mechanism REFUTED). Sky pin is
+  `skypilot-0.12.3.post1` (pixi.lock; `pixi.toml:195` declares `version = "*"`); autostop semantics
+  were read from the INSTALLED `sky/skylet/{events,autostop_lib,job_lib}.py`, not from docs.
+  Three Critical items compose into one failure mode — a SkyPilot cluster can outlive every
+  mechanism meant to kill it:
+  - **F1** `idle_minutes_to_autostop` is inert for server-mode: `spec.run_cmd` becomes `Task.run`,
+    a never-terminating job, so `job_lib.is_cluster_idle()` is permanently False and the 60 s
+    `AutostopEvent` tick resets the timer forever. The ssh half of the finding is REFUTED at this
+    pin — `has_active_ssh_sessions()` requires a `/dev/pts/*` PTY tracing to sshd, and kinoforge's
+    tunnel is `ssh -N -T` (no PTY). So switching `wait_for` would fix nothing.
+  - **F3** the reviewer's mechanism is WRONG but the conclusion holds. `HEARTBEAT_SUBSTRATE_MISSING`
+    does NOT gate skypilot on the normal path: `HeartbeatIntervalRequiredCheck` auto-fixes
+    `heartbeat_interval_s: 30` at load, the loop starts, and `_tick_once` writes both
+    `last_heartbeat` (orchestrator-clock fallback) and `heartbeat_thread_tick`. The real blocker is
+    that `sky` lives only in the `live-skypilot` feature env, so a default-env `reap`/`sweeper`
+    hits `_get_sky()` → `KinoforgeError` → every skypilot row marked `UNROUTABLE` → never
+    destroyed. Only `pixi run -e live-skypilot kinoforge reap --apply` past `max_lifetime`
+    (`OVERAGE_REAP`, the sole default-policy verdict that fires) actually reaps.
+  - **F12** no durable record exists before `sky.launch`; ledger/index writes are all
+    `on_instance_created` callbacks. A kill during the multi-minute launch leaves a billing cluster
+    invisible to every kinoforge command.
+  Also worth carrying forward: **F11** warm-attach (`cli/_commands.py:2024-2026`) is wrong on BOTH
+  branches for skypilot — ledger-replay hands back a dead process's `127.0.0.1:<port>`, and the
+  fallback hands `_wait_ready` an `ssh://` URL to HTTP. **F10** is wider than reported — the real
+  GCP project id `<GCP_PROJECT>` is in 9 tracked files including a code default
+  (`tools/quota_burn_lib.py:266`), while `tests/stores/test_recording.py` already establishes the
+  `kinoforge-prod-deadbeef` fake convention. **F7** the three credential-regex lists disagree; the
+  user-scope hook matches `AKIA` only, missing STS `ASIA…` temp creds that a SkyPilot
+  instance-profile session produces, and only the hook↔`tools/_redact.py` pairing is parity-tested.
+  Recommended order + the three "not worth fixing" calls (F9 policy validation, F5 spec split,
+  F8 guard) are in the doc's final section. Sidebar: the user-scope redact hook false-positives on
+  benign identifiers (`idle_minutes_to_autostop`, `SkyPilotProvider(`, `skypilot-minimal`) and
+  corrupts `rg` output — all quotes in the doc were taken via `Read`, not grep.
 - **SINGLE NEXT ACTION (updated 2026-07-28): fix the VRAM-OOM rollback inventory KeyError.**
   Surfaced while fixing B9. After a mandatory-evict + OOM, `_replace_adapter_stack(previous_state)`
   looks up `_inventory[(ref, branch)]` for a key the evict pass already removed → KeyError → HTTP
