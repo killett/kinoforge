@@ -1,0 +1,345 @@
+# SkyPilot instance-side deadline watchdog — design
+
+- **Date:** 2026-08-15
+- **Status:** validated (operator-approved 2026-08-15), implementation pending
+- **Brief:** "guarantee a SkyPilot cluster dies without the client"
+- **Depends on:** `docs/superpowers/research/2026-08-15-cloud-layer-findings-verification.md`
+  (findings F1, F2, F12)
+- **Sky pin:** `skypilot-0.12.3.post1` (`pixi.lock`); every SkyPilot-internal claim below was
+  read from the INSTALLED sources under
+  `.pixi/envs/live-skypilot/lib/python3.12/site-packages/sky/`, not from docs.
+
+---
+
+## 1. Premise check
+
+The brief assumes F1, F2 and F12 were confirmed. Against HEAD `cdded908`:
+
+| Finding | Verdict | Effect on this design |
+|---|---|---|
+| F1 — autostop inert for server-mode | **CONFIRMED** for the job-queue mechanism; **REFUTED** for the ssh mechanism | Design proceeds. See correction below. |
+| F2 — autostop stops rather than terminates | **CONFIRMED** | `down=True` is in scope. |
+| F12 — no durable record before `sky.launch` | **CONFIRMED** | Pre-launch ledger row is in scope. |
+
+**Correction to the brief's problem statement.** The brief says "an open ssh tunnel resets the
+idleness timer independently". That is not true at this pin. `autostop_lib.has_active_ssh_sessions()`
+(`sky/skylet/autostop_lib.py:236-279`) walks `/dev/pts/*` PTYs and asks whether any traces back to
+`sshd`. kinoforge's tunnel is `ssh -N -T` (`providers/skypilot/__init__.py:369-382`) — `-T`
+disables PTY allocation, `-N` runs no remote command, so no `/dev/pts` entry exists and the check
+returns `False` for kinoforge's tunnel.
+
+The conclusion survives on the other mechanism alone: `spec.run_cmd` becomes `Task.run`, which is
+submitted as a cluster job and stays non-terminal forever, so `job_lib.is_cluster_idle()` is
+permanently `False` and the 60 s `AutostopEvent` tick resets `last_active_time` on every pass
+(`sky/skylet/events.py:241-243`). `idle_minutes_to_autostop` therefore has no effect on any
+server-mode deploy. The practical consequence of the correction: switching `wait_for` to `jobs`
+would fix nothing, and is not part of this design.
+
+---
+
+## 2. Goal and non-goals
+
+**Goal.** Every SkyPilot cluster carries a wall-clock deadline enforced ON the instance, armed
+during `setup`, before the heavy installs, surviving the death of the orchestrator process.
+
+**Non-goals** (other briefs own these): `ComputeProvider`'s ABC, the reaper's verdict tree, the
+YAML config schema. Everything here is additive.
+
+---
+
+## 3. Architecture
+
+Three pieces. Piece 1 is new, pieces 2 and 3 are edits to `create_instance`.
+
+```
+controller (dies at any time)              instance (must die anyway)
+─────────────────────────────              ──────────────────────────
+compute_deadline(...)  ──┐
+ledger.record(provisional)│  ← F12 fix: durable BEFORE launch
+sky.launch(              │
+  setup = RENDER_ARM(deadline) + provision_script   ──► arm watchdog (first line of setup)
+  down  = True,          │                                  │
+  idle_minutes_to_autostop = ...)                           │  poll every 15 s
+ledger.forget(provisional)│  ← success path only            ▼
+                          ┘                            now >= deadline
+                                                            │
+                                            1. skylet autodown-now  → real terminate
+                                            2. sudo shutdown -h now → halt (fallback)
+                                            3. sudo shutdown -h +N  → kernel timer (arm-failure fallback)
+```
+
+### 3.1 `src/kinoforge/providers/skypilot/watchdog.py` (new)
+
+Modelled on `providers/runpod/selfterm.py`: a template module with pure render functions and no
+imports of anything heavier than `string.Template`. Three public names.
+
+#### `compute_deadline(*, launch_epoch, max_lifetime_s, budget_usd, rate_usd_per_hr) -> float`
+
+Pure, unit-testable, no clock read of its own.
+
+```
+lifetime_bound = launch_epoch + max_lifetime_s
+budget_bound   = launch_epoch + (budget_usd / rate_usd_per_hr) * 3600.0   # only when rate > 0
+deadline       = min(lifetime_bound, budget_bound)                        # budget_bound optional
+```
+
+Decisions baked in:
+
+- **The deadline is measured from launch, not from boot.** It therefore covers the multi-minute
+  provisioning window — which is precisely the F12 window where the controller can die with no
+  durable record.
+- **No `time_buffer_s` arithmetic.** `time_buffer_s` is a controller-side reap concept; folding it
+  in here would make the instance-side backstop tighter than the configured policy and turn a
+  backstop into a scheduler. At `Lifecycle()` defaults the deadline is `launch + 5 h`.
+- **`rate_usd_per_hr <= 0` (unknown rate) drops the budget bound**, rather than producing a zero or
+  infinite deadline. `budget_usd <= 0` likewise drops it: `Lifecycle.budget_usd` defaults to `0.0`
+  and a zero budget must not mean "die immediately".
+- A non-positive `max_lifetime_s` is a caller error; the function raises `ValueError` rather than
+  rendering a script that kills the instance on the first tick.
+
+#### `RENDER_WATCHDOG(*, poll_interval_s: float = 15.0, grace_before_halt_s: float = 120.0) -> str`
+
+Renders the standalone python program that runs on the instance. Behaviour per tick:
+
+1. Read the deadline from `$KF_WD_DIR/deadline` **every tick** (not once at startup). A setup
+   re-run on cluster reuse rewrites that file, so the deadline is *replaced*, never stacked — this
+   is half of the idempotency guarantee.
+2. `now < deadline` → sleep and loop.
+3. `now >= deadline` → fire, once:
+   - **Stage 1 — skylet autodown-now (real terminate).** Resolve the node's own SkyPilot python
+     from `~/.sky/python_path` (`sky/skylet/constants.py:68`, `SKY_PYTHON_PATH_FILE`) and run:
+
+     ```python
+     from sky.skylet import autostop_lib
+     autostop_lib.set_autostop(0, 'CloudVmRayBackend',
+                               autostop_lib.AutostopWaitFor.NONE, True)
+     ```
+
+     `wait_for=NONE` sets `ignore_idle_check=True` in `AutostopEvent`
+     (`sky/skylet/events.py:220-232`), so the idle check that F1 showed is permanently `False` is
+     bypassed entirely; `idle_minutes=0` makes the next ≤60 s tick fire `_stop_cluster`, and
+     `down=True` routes it through the provisioner terminator — the instance AND its disk go away,
+     and SkyPilot's own state stays consistent (a plain halt would leave sky believing the cluster
+     is UP).
+
+     **No credential is embedded by kinoforge.** This path uses the cloud credentials SkyPilot
+     itself already places on the head node for exactly this purpose — the same ones `_stop_cluster`
+     uses on the normal autostop path. Signature verified at this pin
+     (`autostop_lib.set_autostop(idle_minutes, backend, wait_for, down, hook=None, hook_timeout=None)`,
+     `autostop_lib.py:165-170`).
+   - **Stage 2 — halt (fallback).** If the process is still alive `grace_before_halt_s` (120 s)
+     after stage 1 — skylet missing, sky version drift, terminate API refusing — run
+     `sudo shutdown -h now`, then `sudo halt -f`. Credential-free and local. Passwordless sudo is
+     standard on SkyPilot's cloud images (the whole provisioning path depends on it).
+4. Every stage is best-effort and swallows exceptions; the loop keeps running so a transient
+   failure retries on the next tick.
+
+**Billing semantics of stage 2, stated plainly.** A halt is not a terminate:
+
+| Cloud | after stage 1 | after stage 2 only |
+|---|---|---|
+| AWS | instance terminated, EBS deleted | `stopped` — EBS still billed |
+| GCP | instance deleted, PD deleted | `TERMINATED` (stopped) — PD still billed |
+| Lambda / Vast | instance released | VM halted, **still billed at full rate** |
+
+So on rented-GPU clouds stage 2 alone does not stop the money. That is the honest limit of a
+credential-free local action, and it is why stage 1 leads. Clusters that reach only stage 2 remain
+discoverable via the pre-launch ledger row (§3.3) and are killable by
+`pixi run -e live-skypilot kinoforge destroy --id <cluster>`.
+
+#### `RENDER_ARM(*, deadline_epoch: float, poll_interval_s: float = 15.0, ...) -> str`
+
+Renders the bash prelude that becomes the first lines of `Task.setup`:
+
+```bash
+KF_WD_DIR="${KF_WD_DIR:-$HOME/.kinoforge-watchdog}"
+mkdir -p "$KF_WD_DIR"
+printf '%s\n' "<deadline_epoch>" > "$KF_WD_DIR/deadline.tmp"
+mv -f "$KF_WD_DIR/deadline.tmp" "$KF_WD_DIR/deadline"       # atomic replace
+cat > "$KF_WD_DIR/watchdog.py" <<'KF_WD_EOF'
+<RENDER_WATCHDOG output>
+KF_WD_EOF
+if [ -f "$KF_WD_DIR/pid" ] && kill -0 "$(cat "$KF_WD_DIR/pid")" 2>/dev/null; then
+  echo "[kinoforge-watchdog] already armed (pid $(cat "$KF_WD_DIR/pid")); deadline refreshed"
+else
+  setsid nohup "${KF_WD_PYTHON:-python3}" "$KF_WD_DIR/watchdog.py" \
+      >> "$KF_WD_DIR/watchdog.log" 2>&1 &
+  echo $! > "$KF_WD_DIR/pid"
+  echo "[kinoforge-watchdog] armed pid $(cat "$KF_WD_DIR/pid") deadline=<deadline_epoch>"
+fi
+```
+
+- **Idempotent on cluster reuse.** Setup re-runs; the pid-file + `kill -0` guard means the second
+  run refreshes the deadline file and spawns nothing. Two watchdogs never race.
+- **`setsid`** detaches the watchdog from setup's process group, so it survives the setup shell
+  exiting and any group-directed signal aimed at the launch.
+- **Arm-failure fallback.** If the spawn fails (no `python3`, no writable `$HOME`), the snippet
+  best-effort schedules `sudo shutdown -h +N` — a kernel/systemd timer needing no daemon — where
+  `N` is minutes-to-deadline rounded up. Weaker than the watchdog (no skylet terminate, not
+  refreshable) but it still bounds the money. The snippet does **not** `exit 1`: a failed setup
+  leaves the cluster up for debugging (documented sky behaviour — "if errors occur during
+  provisioning/data syncing/setting up, the cluster will not be torn down"), so aborting would
+  produce exactly the unbounded-billing cluster this design exists to prevent.
+- **`KF_WD_DIR` / `KF_WD_PYTHON` env overrides** exist so the unit test can run the real snippet
+  twice in a temp directory with a stub interpreter — no cloud, no mocking of the thing under test.
+
+### 3.2 `create_instance` — arming and `down=True`
+
+Both edits are inside `SkyPilotProvider.create_instance`
+(`src/kinoforge/providers/skypilot/__init__.py:677-815`).
+
+**Arming.** Today `task_config["setup"]` is set only when `spec.provision_script` is truthy. After
+the change the key is **always** set, with the arming snippet first:
+
+```python
+setup_parts = [watchdog.RENDER_ARM(deadline_epoch=deadline, ...)]
+if spec.provision_script:
+    setup_parts.append(_strip_trailing_exec(spec.provision_script))
+task_config["setup"] = "\n".join(setup_parts)
+```
+
+A server-less deploy (the CPU smoke) previously had no `setup` at all and now gets one containing
+only the arming step. Arming ahead of `_strip_trailing_exec(...)` output is what satisfies "a
+cluster that dies during a 20-minute pip install must still be covered".
+
+**`down=True`.** New ctor arg `autodown: bool = True`, passed as `launch_kwargs["down"]`.
+
+Verified at this pin that `down` and `idle_minutes_to_autostop` compose rather than conflict:
+`sky/client/sdk.py:707-725` feeds both into a single `resource.override_autostop_config(down=...,
+idle_minutes=..., wait_for=...)`, and the docstring states "If `--idle-minutes-to-autostop` is also
+set, the cluster will be torn down after the specified idle time"
+(`sdk.py:637-643`). On the skylet side `_stop_cluster` reads `autostop_config.down` and routes to
+the terminating provisioner (`sky/skylet/events.py:270-298`).
+
+Attached disks: autodown **terminates**, so the boot disk is deleted with the instance; autostop
+(`down=False`) stops it and keeps billing the disk. No kinoforge workflow depends on
+stop-and-restart onto the same disk — `stop_instance` is a documented no-op
+(`providers/skypilot/__init__.py:849-858`) and F2 established that nothing consumes a stopped
+cluster — so the safe default is `True`. The ctor arg is the escape hatch for a future workflow
+that genuinely wants stop-restart; the YAML schema is deliberately untouched (Brief 5's territory).
+
+`idle_minutes_to_autostop` keeps being passed. It is inert for server-mode (F1) but correct for the
+one-shot configs (`skypilot-cpu.yaml`, `skypilot-gpu.yaml`) whose `run` terminates, and with
+`down=True` those now autodown instead of autostopping.
+
+### 3.3 Pre-launch durable record (F12)
+
+`create_instance` writes a **provisional ledger row before `sky.launch`** and removes it on the
+success path, letting the orchestrator's existing post-create `Ledger.record` write the final row.
+
+```python
+recorder.record_provisional(...)      # BEFORE sky.launch
+raw = sky.launch(task, **launch_kwargs)
+...
+recorder.forget(cluster_name)         # success path only
+return Instance(...)                  # orchestrator's on_instance_created records the real row
+```
+
+Row contents — enough for a later sweep to find and destroy the cluster:
+
+| field | source |
+|---|---|
+| `id` | `cluster_name` (`spec.run_id`), which is the `sky down` handle |
+| `provider` | `"skypilot"` |
+| `cost_rate_usd_per_hr` | `spec.offer.cost_rate_usd_per_hr` — known before launch |
+| `tags.kf_launch_phase` | `"launching"` |
+| `tags.kf_cloud` | the pinned cloud (`self._clouds`) or `"auto"` |
+| `tags.kf_run_id` | `spec.run_id` |
+| `tags.kf_launched_at` | launch epoch |
+| `tags.kf_deadline_epoch` | the watchdog deadline |
+
+Choices:
+
+- **Reuse `Ledger`, not a new journal file.** Every existing consumer — `kinoforge list`,
+  `kinoforge destroy`, `kinoforge reap` — already reads the ledger, so an orphan becomes visible
+  with no new plumbing. A dedicated journal would need read paths added to each of those, which is
+  Brief 5's scope.
+- **`forget` on success rather than an upsert.** `Ledger.record` appends; making it upsert-by-id
+  would change behaviour for every provider. Forget-then-let-the-orchestrator-record keeps the
+  change local and cannot produce a duplicate row.
+- **The tunnel-failure path deliberately keeps the row.** When `_ssh_spawn` raises, the existing
+  code best-effort `sky.down`s and raises `ProvisionFailed`. If that `down` fails the cluster is
+  alive and orphaned — exactly the row's reason to exist — so `forget` is not called there.
+- **Injected seam, no-op default.** `SkyPilotProvider(launch_recorder=...)`; default is a no-op so
+  every existing test construction keeps working and the provider never reaches for a filesystem
+  path it was not given. Production wiring lives in `_adapters.build_provider_for`, the same
+  function that already pins `cfg.compute.cloud` onto the provider — so `cfg` (and therefore the
+  configured store) is in hand and the config schema stays untouched.
+
+### 3.4 Documentation correctness
+
+The provider module docstring (`__init__.py:43-51`) advertises autostop as the SkyPilot cost model.
+That is the load-bearing false claim identified by F1; it is replaced with the watchdog contract
+plus the per-cloud stage-2 billing table. `test_ac4_create_instance_passes_idle_minutes_to_autostop`
+keeps its assertion (the kwarg is still passed, and is still correct for one-shot configs) but its
+docstring stops calling it the cost backstop.
+
+---
+
+## 4. Testing
+
+### 4.1 Unit — no cloud
+
+| # | Test | Bug it catches |
+|---|---|---|
+| U1 | `compute_deadline` returns `launch + max_lifetime_s` when no rate is known | buffer arithmetic creeping back in; boot-relative instead of launch-relative |
+| U2 | `compute_deadline` returns the budget bound when `budget/rate < max_lifetime` | budget bound ignored, or applied as a max instead of a min |
+| U3 | `compute_deadline` ignores the budget bound at `rate <= 0` / `budget <= 0`; raises on `max_lifetime_s <= 0` | zero-budget default rendering an already-expired deadline |
+| U4 | generated setup contains the arming step, and its index precedes the first line of the provision script | arming placed after the 20-minute install |
+| U5 | setup key is present even with no provision script | server-less deploys shipping unarmed |
+| U6 | running the real arm snippet twice in a temp `KF_WD_DIR` with a stub `KF_WD_PYTHON` leaves exactly one live pid, unchanged across runs, and a deadline file holding the second run's value | two watchdogs racing on cluster reuse; deadline not refreshed |
+| U7 | rendered watchdog `exec`'d against a fake clock + fake `subprocess`: no action before the deadline; stage-1 skylet command issued at the deadline; stage-2 `shutdown -h now` only after the grace window | watchdog firing early (kills healthy work) or never firing |
+| U8 | `down=True` reaches `sky.launch` kwargs by default; `autodown=False` sends `down=False` | F2 regression |
+| U9 | fake sky client and fake recorder share one call-sequence list; `record_provisional` appears before `launch` | F12 regression — record written after the launch returns |
+| U10 | success path calls `forget`; the tunnel-failure path does not | orphan row deleted precisely when it matters |
+
+U6 and U7 execute the real rendered artefacts rather than asserting on substrings — the lesson from
+audit B4, where substring-presence tests let a mislabelled RunPod timer survive since `1be572d`
+(`tests/providers/runpod/test_selfterm_reap_conditions.py` is the pattern being copied).
+
+### 4.2 Live smoke — cheapest CPU SKU, AWS `us-west-2`
+
+`tests/live/test_skypilot_watchdog_smoke.py`, opt-in via the project's existing live-test marker.
+
+- Drive `SkyPilotProvider.create_instance` directly with a synthetic CPU offer and
+  `Lifecycle(max_lifetime_s=300)`; `run_cmd = ["sleep", "3600"]` so the workload runs well past the
+  deadline and the job queue never goes idle (the F1 shape).
+- After launch returns, kill the tunnel handle and drop the provider reference — the client is gone;
+  nothing in-process will ever destroy this cluster.
+- Poll AWS directly every 30 s: `aws ec2 describe-instances`, matched on the SkyPilot cluster tag.
+  **Pass condition: the instance's state is `shutting-down` or `terminated` in the EC2 API** — not
+  merely absent from `sky status`. Record wall-clock from launch to termination.
+- `finally`: `sky down --yes <cluster>` (idempotent when already gone), kill any surviving tunnel,
+  and clear the ledger row. A test for a cost guardrail must not itself leak a cluster.
+- Budget: cheapest CPU SKU is ~$0.01/hr; deadline 5 min + ≤60 s skylet tick + polling → **under
+  $0.05**, EBS negligible against a terminate.
+
+Live-spend rules per `CLAUDE.md`: the RED scaffold is committed before any spend, and
+`pixi run preflight` runs first.
+
+### 4.3 Smoke result
+
+*(Filled in after the live run — cluster id, wall-clock from launch to EC2 `terminated`, actual
+cost, and which stage fired.)*
+
+---
+
+## 5. Risks
+
+| Risk | Mitigation |
+|---|---|
+| Sky's `autostop_lib.set_autostop` signature drifts on upgrade | Stage 1 is best-effort inside `try`; stage 2 halts regardless. Signature pinned by U7 and re-verified on any sky bump. |
+| Passwordless sudo absent on some image | Stage 1 needs no sudo. Stage 2 tries `shutdown`, then `halt -f`; failure is logged to `watchdog.log`, which the tunnel-less debugging path can still reach via `sky logs`. |
+| Deadline eats the provisioning window on a very slow GPU launch | Intentional — that window is the F12 failure window. Default `max_lifetime_s` is 5 h against a worst observed boot of ~30 min. |
+| Halt-only clouds (Lambda / Vast) keep billing | Documented in §3.1 and in the module docstring; pre-launch ledger row keeps the cluster discoverable for `destroy`. |
+| `watchdog.log` grows unbounded on a long-lived cluster | Log lines are emitted only on state changes and on fire, not per tick. |
+
+---
+
+## 6. Out of scope
+
+- Reaper verdicts for a `kf_launch_phase=launching` row (Brief 5).
+- `ComputeProvider` ABC changes so other providers get the same pre-launch seam (Brief 2).
+- A YAML surface for `autodown` / deadline overrides (Brief 5).
+- F11's broken warm-attach endpoint replay for skypilot — noted by the verification doc, untouched
+  here.
