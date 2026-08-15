@@ -19,6 +19,8 @@ Design: ``docs/superpowers/specs/2026-08-15-skypilot-instance-deadline-watchdog-
 
 from __future__ import annotations
 
+from string import Template
+
 _SECONDS_PER_HOUR: float = 3600.0
 
 
@@ -67,3 +69,151 @@ def compute_deadline(
         budget_bound = launch_epoch + (budget_usd / rate_usd_per_hr) * _SECONDS_PER_HOUR
         deadline = min(deadline, budget_bound)
     return deadline
+
+
+#: On-instance watchdog program. ``$``-placeholders are substituted by
+#: :func:`RENDER_WATCHDOG`; the script itself contains no other ``$``.
+_WATCHDOG_TEMPLATE = Template(
+    '''\
+#!/usr/bin/env python3
+"""Kinoforge SkyPilot instance-side deadline watchdog.
+
+Polls a deadline file every $poll_interval_s seconds. Once the deadline has
+passed it terminates the instance in two stages:
+
+  stage 1  ask the on-node skylet to autodown NOW (idle_minutes=0,
+           wait_for=NONE, down=True). This is a REAL cloud terminate: it
+           runs through SkyPilot's own provisioner using the credentials
+           SkyPilot already placed on this node. Instance and disk go away
+           and sky's cluster state stays consistent.
+  stage 2  after $grace_before_halt_s seconds without dying, fall back to
+           `sudo shutdown -h now`. Credential-free and local. NOTE: a halt
+           is not a terminate — on AWS/GCP the instance stops and its disk
+           keeps billing, and on rented-GPU clouds (Lambda, Vast) billing
+           continues at the full rate. Stage 2 is the last resort, not the
+           plan.
+
+The deadline is re-read on EVERY tick, so a setup re-run on cluster reuse
+replaces it rather than stacking a second watchdog.
+"""
+import os
+import subprocess
+import time
+
+_WD_DIR = os.environ.get("KF_WD_DIR", os.path.expanduser("~/.kinoforge-watchdog"))
+_DEADLINE_FILE = os.path.join(_WD_DIR, "deadline")
+_SKY_PYTHON_PATH_FILE = os.path.expanduser("~/.sky/python_path")
+_POLL_INTERVAL_S = $poll_interval_s
+_GRACE_BEFORE_HALT_S = $grace_before_halt_s
+
+_SKYLET_AUTODOWN_CODE = (
+    "from sky.skylet import autostop_lib; "
+    "autostop_lib.set_autostop(0, 'CloudVmRayBackend', "
+    "autostop_lib.AutostopWaitFor.NONE, True)"
+)
+
+
+def log(message):
+    """Print a tagged line; the caller redirects stdout to watchdog.log."""
+    print("[kinoforge-watchdog] " + str(message), flush=True)
+
+
+def read_deadline():
+    """Return the deadline epoch from disk, or None when unreadable."""
+    try:
+        with open(_DEADLINE_FILE) as handle:
+            return float(handle.read().strip())
+    except Exception as exc:
+        log("deadline unreadable: " + repr(exc))
+        return None
+
+
+def run_command(command):
+    """Run a shell command best-effort; return its exit code, -1 on failure."""
+    try:
+        completed = subprocess.run(
+            command, shell=True, capture_output=True, timeout=120
+        )
+        return completed.returncode
+    except Exception as exc:
+        log("command failed: " + command + " " + repr(exc))
+        return -1
+
+
+def skylet_autodown():
+    """Stage 1 - ask the on-node skylet to autodown now (real terminate)."""
+    try:
+        with open(_SKY_PYTHON_PATH_FILE) as handle:
+            sky_python = handle.read().strip()
+    except Exception:
+        sky_python = ""
+    if not sky_python:
+        log("no skylet python at " + _SKY_PYTHON_PATH_FILE + "; skipping stage 1")
+        return -1
+    code = run_command(sky_python + ' -c "' + _SKYLET_AUTODOWN_CODE + '"')
+    log("stage 1 skylet autodown rc=" + str(code))
+    return code
+
+
+def halt():
+    """Stage 2 - credential-free local halt."""
+    code = run_command("sudo shutdown -h now")
+    log("stage 2 shutdown rc=" + str(code))
+    if code != 0:
+        code = run_command("sudo halt -f")
+        log("stage 2 halt -f rc=" + str(code))
+    return code
+
+
+def main():
+    """Poll until the deadline, then terminate in two stages."""
+    log("watchdog started; deadline file " + _DEADLINE_FILE)
+    fired_at = None
+    while True:
+        now = time.time()
+        deadline = read_deadline()
+        if deadline is None:
+            pass
+        elif now < deadline:
+            fired_at = None
+        elif fired_at is None:
+            log("deadline reached; firing stage 1")
+            skylet_autodown()
+            fired_at = now
+        elif now - fired_at >= _GRACE_BEFORE_HALT_S:
+            log("still alive after stage 1; firing stage 2")
+            halt()
+            fired_at = now
+        time.sleep(_POLL_INTERVAL_S)
+
+
+if __name__ == "__main__":
+    main()
+'''
+)
+
+
+def RENDER_WATCHDOG(  # noqa: N802 — public, used as RENDER_WATCHDOG(...)
+    *,
+    poll_interval_s: float = 15.0,
+    grace_before_halt_s: float = 120.0,
+) -> str:
+    """Render the on-instance watchdog program.
+
+    Args:
+        poll_interval_s: Seconds between deadline checks.
+        grace_before_halt_s: Seconds to wait after the stage-1 skylet
+            autodown before falling back to a local halt.
+
+    Returns:
+        A self-contained python program (stdlib only) to be written to the
+        instance and run with ``nohup``.
+
+    Example:
+        >>> "def main()" in RENDER_WATCHDOG()
+        True
+    """
+    return _WATCHDOG_TEMPLATE.substitute(
+        poll_interval_s=poll_interval_s,
+        grace_before_halt_s=grace_before_halt_s,
+    )
