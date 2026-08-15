@@ -19,6 +19,7 @@ Design: ``docs/superpowers/specs/2026-08-15-skypilot-instance-deadline-watchdog-
 
 from __future__ import annotations
 
+import math
 from string import Template
 
 _SECONDS_PER_HOUR: float = 3600.0
@@ -232,4 +233,86 @@ def RENDER_WATCHDOG(  # noqa: N802 — public, used as RENDER_WATCHDOG(...)
     return _WATCHDOG_TEMPLATE.substitute(
         poll_interval_s=poll_interval_s,
         grace_before_halt_s=grace_before_halt_s,
+    )
+
+
+class _BashTemplate(Template):
+    """Template with an ``@`` delimiter so bash's own ``$`` survives intact."""
+
+    delimiter = "@"
+
+
+#: Arming prelude prepended to ``Task.setup``. ``@``-placeholders only.
+_ARM_TEMPLATE = _BashTemplate(
+    """\
+# --- kinoforge watchdog arm (must stay first in setup) ---------------------
+KF_WD_DIR="${KF_WD_DIR:-$HOME/.kinoforge-watchdog}"
+KF_WD_PYTHON="${KF_WD_PYTHON:-python3}"
+mkdir -p "$KF_WD_DIR"
+printf '%s\\n' '@deadline_epoch' > "$KF_WD_DIR/deadline.tmp"
+mv -f "$KF_WD_DIR/deadline.tmp" "$KF_WD_DIR/deadline"
+cat > "$KF_WD_DIR/watchdog.py" <<'KF_WD_PY_EOF'
+@watchdog_source
+KF_WD_PY_EOF
+if [ -f "$KF_WD_DIR/pid" ] && kill -0 "$(cat "$KF_WD_DIR/pid")" 2>/dev/null; then
+  echo "[kinoforge-watchdog] already armed (pid $(cat "$KF_WD_DIR/pid")); deadline refreshed to @deadline_epoch"
+else
+  setsid nohup "$KF_WD_PYTHON" "$KF_WD_DIR/watchdog.py" >> "$KF_WD_DIR/watchdog.log" 2>&1 &
+  echo $! > "$KF_WD_DIR/pid"
+  echo "[kinoforge-watchdog] armed pid $(cat "$KF_WD_DIR/pid") deadline=@deadline_epoch"
+fi
+if ! kill -0 "$(cat "$KF_WD_DIR/pid" 2>/dev/null)" 2>/dev/null; then
+  echo "[kinoforge-watchdog] spawn failed; scheduling kernel poweroff in @fallback_minutes min"
+  sudo shutdown -h +@fallback_minutes || true
+fi
+# --- end kinoforge watchdog arm -------------------------------------------
+"""
+)
+
+
+def RENDER_ARM(  # noqa: N802 — public, used as RENDER_ARM(...)
+    *,
+    deadline_epoch: float,
+    now: float,
+    poll_interval_s: float = 15.0,
+    grace_before_halt_s: float = 120.0,
+) -> str:
+    """Render the bash prelude that arms the watchdog on the instance.
+
+    The prelude is prepended to ``Task.setup`` so the deadline is armed
+    before the heavy installs: a cluster that dies during a 20-minute pip
+    install is still covered.
+
+    Idempotent by construction — ``Task.setup`` re-runs on cluster reuse, so
+    the snippet refreshes the deadline file and skips the spawn when a live
+    watchdog pid is already recorded. Never leaves two watchdogs racing.
+
+    Failure of the spawn does NOT abort setup: SkyPilot deliberately leaves a
+    cluster up when setup fails ("for debugging purposes"), so aborting would
+    produce precisely the unbounded-billing cluster this exists to prevent.
+    Instead the snippet best-effort schedules ``sudo shutdown -h +N``, a
+    kernel-timed poweroff needing no daemon.
+
+    Args:
+        deadline_epoch: Absolute POSIX epoch from :func:`compute_deadline`.
+        now: POSIX epoch at render time; used only to size the
+            ``shutdown -h +N`` fallback.
+        poll_interval_s: Passed through to :func:`RENDER_WATCHDOG`.
+        grace_before_halt_s: Passed through to :func:`RENDER_WATCHDOG`.
+
+    Returns:
+        A bash snippet, safe to concatenate ahead of a provision script.
+
+    Example:
+        >>> RENDER_ARM(deadline_epoch=60.0, now=0.0).lstrip()[:26]
+        '# --- kinoforge watchdog a'
+    """
+    fallback_minutes = max(1, math.ceil((deadline_epoch - now) / 60.0))
+    return _ARM_TEMPLATE.substitute(
+        deadline_epoch=repr(float(deadline_epoch)),
+        watchdog_source=RENDER_WATCHDOG(
+            poll_interval_s=poll_interval_s,
+            grace_before_halt_s=grace_before_halt_s,
+        ),
+        fallback_minutes=fallback_minutes,
     )
