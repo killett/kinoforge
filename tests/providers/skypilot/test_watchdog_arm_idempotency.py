@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -25,12 +26,34 @@ _STUB = """#!/bin/sh
 sleep 300
 """
 
+_ENV_DUMP_STUB = """#!/bin/sh
+# Stands in for python3 for the export test: snapshots its OWN inherited
+# environment next to the watchdog.py path it was given, then sleeps like a
+# real watchdog so the pid stays alive for the guard check.
+env > "$(dirname "$1")/child-env.txt" 2>/dev/null
+sleep 300
+"""
+
+# A pid outside any realistic pid_max (Linux caps well under 1e9) - never a
+# live process, used to exercise the "truly dead pid" respawn path without
+# depending on which pids happen to be free on the test host.
+_DEAD_PID = 999_999_937
+
 
 @pytest.fixture
 def stub_python(tmp_path: Path) -> Path:
     """A tiny long-running executable used instead of python3."""
     path = tmp_path / "stub-python"
     path.write_text(_STUB)
+    path.chmod(0o755)
+    return path
+
+
+@pytest.fixture
+def env_dump_python(tmp_path: Path) -> Path:
+    """A stub interpreter that snapshots the environment it was spawned with."""
+    path = tmp_path / "env-dump-python"
+    path.write_text(_ENV_DUMP_STUB)
     path.chmod(0o755)
     return path
 
@@ -129,3 +152,134 @@ def test_arm_schedules_kernel_poweroff_fallback(tmp_path: Path) -> None:
     """
     script = RENDER_ARM(deadline_epoch=1_000_600.0, now=1_000_000.0)
     assert "shutdown -h +10" in script, script
+
+
+def test_dead_pid_triggers_respawn(tmp_path: Path, stub_python: Path) -> None:
+    """A `pid` file naming a truly dead process must trigger a fresh spawn.
+
+    A bug this catches: a guard that trusts the pid FILE's mere presence
+    (e.g. `[ -f pid ]` with no liveness check at all) would report "already
+    armed" for a dead watchdog and leave the instance with no enforcement.
+    """
+    wd_dir = tmp_path / "wd"
+    wd_dir.mkdir()
+    (wd_dir / "pid").write_text(str(_DEAD_PID))
+    try:
+        out = _arm(wd_dir, stub_python, deadline=2_000_000_000.0, now=1_999_999_000.0)
+        assert "armed pid" in out, out
+        assert "already armed" not in out, out
+        pid = int((wd_dir / "pid").read_text().strip())
+        assert pid != _DEAD_PID
+        os.kill(pid, 0)  # raises if not alive
+    finally:
+        _kill(wd_dir)
+
+
+def test_recycled_pid_does_not_suppress_arming(
+    tmp_path: Path, stub_python: Path
+) -> None:
+    """A `pid` file naming a live but UNRELATED process must not block arming.
+
+    A bug this catches: trusting `kill -0 "$(cat pid)"` alone treats any
+    live process with that pid number as "the watchdog". If the real
+    watchdog died and the OS recycled its pid onto an unrelated process
+    (a decoy here), that check reports "already armed" AND the trailing
+    fallback-shutdown check also sees a "live" pid and skips its
+    `shutdown -h +N` too — zero enforcement, silently. The fix must
+    identify the watchdog by command line (script path in the process
+    table), not by pid number alone, so a same-numbered stranger can't
+    impersonate it.
+    """
+    wd_dir = tmp_path / "wd"
+    wd_dir.mkdir()
+    decoy = subprocess.Popen([str(stub_python)])
+    try:
+        (wd_dir / "pid").write_text(str(decoy.pid))
+        out = _arm(wd_dir, stub_python, deadline=2_000_000_000.0, now=1_999_999_000.0)
+        assert "armed pid" in out, out
+        assert "already armed" not in out, out
+        real_pid = int((wd_dir / "pid").read_text().strip())
+        assert real_pid != decoy.pid, "guard was fooled by the decoy's pid"
+        os.kill(real_pid, 0)  # the REAL watchdog must be alive
+    finally:
+        decoy.kill()
+        decoy.wait(timeout=5)
+        _kill(wd_dir)
+
+
+def test_unwritable_dir_does_not_abort_under_set_euo_pipefail(
+    tmp_path: Path, stub_python: Path
+) -> None:
+    """The prelude must self-defend even when the caller's shell is strict.
+
+    A bug this catches: an unguarded `mkdir`/`printf`/`mv`/`cat`/`echo`
+    chain aborts under the CALLER's `set -e` (SkyPilot's own setup script
+    may run under one) the moment any step fails against an unwritable
+    directory. `Task.setup` then exits non-zero, and SkyPilot deliberately
+    leaves a cluster UP when setup fails ("for debugging") — exactly the
+    unbounded-billing cluster this watchdog exists to prevent. The prelude
+    must swallow every internal failure and still exit 0.
+    """
+    parent = tmp_path / "locked"
+    parent.mkdir()
+    parent.chmod(0o500)  # read + execute only: no write, no create
+    wd_dir = parent / "wd"
+    script = RENDER_ARM(deadline_epoch=2_000_000_000.0, now=1_999_999_000.0)
+    try:
+        completed = subprocess.run(
+            ["bash", "-c", "set -euo pipefail\n" + script],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "KF_WD_DIR": str(wd_dir),
+                "KF_WD_PYTHON": str(stub_python),
+                "HOME": str(parent),
+            },
+            timeout=30,
+        )
+        assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    finally:
+        parent.chmod(0o700)
+        _kill(wd_dir)
+
+
+def test_watchdog_process_inherits_kf_wd_dir_via_export(
+    tmp_path: Path, env_dump_python: Path
+) -> None:
+    """The spawned watchdog must see the SAME `KF_WD_DIR` the arm step wrote to.
+
+    A bug this catches: the arm step resolves `KF_WD_DIR="${KF_WD_DIR:-...}"`
+    as a plain (never `export`ed) shell variable when the caller didn't set
+    one. `setsid nohup` then spawns the interpreter without it in its
+    environment, so the daemon falls back to ITS OWN default and polls a
+    DIFFERENT directory than the one the arm step just wrote `deadline` and
+    `watchdog.py` into — `read_deadline()` returns None forever and the
+    watchdog silently never fires, even though everything LOOKS armed.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    wd_dir = home / ".kinoforge-watchdog"  # KF_WD_DIR left unset -> this default
+    script = RENDER_ARM(deadline_epoch=2_000_000_000.0, now=1_999_999_000.0)
+    env = {**os.environ, "KF_WD_PYTHON": str(env_dump_python), "HOME": str(home)}
+    env.pop("KF_WD_DIR", None)
+    try:
+        completed = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert "armed pid" in completed.stdout, completed.stdout
+
+        child_env_file = wd_dir / "child-env.txt"
+        deadline = time.time() + 5
+        while time.time() < deadline and not child_env_file.exists():
+            time.sleep(0.1)
+        assert child_env_file.exists(), "watchdog never wrote its env snapshot"
+        child_env = child_env_file.read_text()
+        assert f"KF_WD_DIR={wd_dir}\n" in child_env, child_env
+    finally:
+        _kill(wd_dir)

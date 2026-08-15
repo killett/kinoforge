@@ -243,28 +243,57 @@ class _BashTemplate(Template):
 
 
 #: Arming prelude prepended to ``Task.setup``. ``@``-placeholders only.
+#:
+#: The whole body runs inside ``( set +e +u; ...; ) || true`` so it can never
+#: propagate a non-zero exit into the CALLER's shell, regardless of whether
+#: that caller runs under ``set -e`` / ``set -u`` (SkyPilot's own setup
+#: wrapper, or an unset ``$HOME``) — a failed arm must never abort
+#: ``Task.setup``, because SkyPilot deliberately leaves a cluster UP when
+#: setup fails, which is exactly the unbounded-billing cluster this exists
+#: to prevent.
+#:
+#: The live-watchdog guard identifies the daemon by COMMAND LINE
+#: (``pgrep -f "$KF_WD_DIR/watchdog.py"``), never by trusting the pid number
+#: recorded in the ``pid`` file alone: a stale pid can be silently recycled
+#: onto an unrelated live process (which would fool a bare ``kill -0``), and
+#: ``$!`` after ``setsid nohup ... &`` can name the short-lived ``setsid``
+#: wrapper rather than the daemon it forked. Matching by script path in the
+#: live process table sidesteps both.
 _ARM_TEMPLATE = _BashTemplate(
     """\
 # --- kinoforge watchdog arm (must stay first in setup) ---------------------
+(
+set +e +u
 KF_WD_DIR="${KF_WD_DIR:-$HOME/.kinoforge-watchdog}"
 KF_WD_PYTHON="${KF_WD_PYTHON:-python3}"
-mkdir -p "$KF_WD_DIR"
-printf '%s\\n' '@deadline_epoch' > "$KF_WD_DIR/deadline.tmp"
-mv -f "$KF_WD_DIR/deadline.tmp" "$KF_WD_DIR/deadline"
-cat > "$KF_WD_DIR/watchdog.py" <<'KF_WD_PY_EOF'
+export KF_WD_DIR
+export KF_WD_PYTHON
+mkdir -p "$KF_WD_DIR" 2>/dev/null
+printf '%s\\n' '@deadline_epoch' > "$KF_WD_DIR/deadline.tmp" 2>/dev/null
+mv -f "$KF_WD_DIR/deadline.tmp" "$KF_WD_DIR/deadline" 2>/dev/null
+cat > "$KF_WD_DIR/watchdog.py" <<'KF_WD_PY_EOF' 2>/dev/null
 @watchdog_source
 KF_WD_PY_EOF
-if [ -f "$KF_WD_DIR/pid" ] && kill -0 "$(cat "$KF_WD_DIR/pid")" 2>/dev/null; then
-  echo "[kinoforge-watchdog] already armed (pid $(cat "$KF_WD_DIR/pid")); deadline refreshed to @deadline_epoch"
+_kf_live_pid="$(pgrep -f "$KF_WD_DIR/watchdog.py" 2>/dev/null | head -n1)"
+if [ -n "$_kf_live_pid" ]; then
+  echo "$_kf_live_pid" > "$KF_WD_DIR/pid" 2>/dev/null
+  echo "[kinoforge-watchdog] already armed (pid $_kf_live_pid); deadline refreshed to @deadline_epoch"
 else
   setsid nohup "$KF_WD_PYTHON" "$KF_WD_DIR/watchdog.py" >> "$KF_WD_DIR/watchdog.log" 2>&1 &
-  echo $! > "$KF_WD_DIR/pid"
-  echo "[kinoforge-watchdog] armed pid $(cat "$KF_WD_DIR/pid") deadline=@deadline_epoch"
+  sleep 0.2
+  _kf_live_pid="$(pgrep -f "$KF_WD_DIR/watchdog.py" 2>/dev/null | head -n1)"
+  if [ -n "$_kf_live_pid" ]; then
+    echo "$_kf_live_pid" > "$KF_WD_DIR/pid" 2>/dev/null
+    echo "[kinoforge-watchdog] armed pid $_kf_live_pid deadline=@deadline_epoch"
+  fi
 fi
-if ! kill -0 "$(cat "$KF_WD_DIR/pid" 2>/dev/null)" 2>/dev/null; then
+if [ -n "$_kf_live_pid" ]; then
+  sudo shutdown -c >/dev/null 2>&1
+else
   echo "[kinoforge-watchdog] spawn failed; scheduling kernel poweroff in @fallback_minutes min"
-  sudo shutdown -h +@fallback_minutes || true
+  sudo shutdown -h +@fallback_minutes >/dev/null 2>&1
 fi
+) || true
 # --- end kinoforge watchdog arm -------------------------------------------
 """
 )
@@ -285,13 +314,31 @@ def RENDER_ARM(  # noqa: N802 — public, used as RENDER_ARM(...)
 
     Idempotent by construction — ``Task.setup`` re-runs on cluster reuse, so
     the snippet refreshes the deadline file and skips the spawn when a live
-    watchdog pid is already recorded. Never leaves two watchdogs racing.
+    watchdog is already found running. The live-watchdog check matches by
+    COMMAND LINE (``pgrep -f ".../watchdog.py"``), not by trusting a
+    recorded pid number: a pid can be silently recycled onto an unrelated
+    live process, and ``$!`` right after ``setsid nohup ... &`` can name the
+    short-lived ``setsid`` wrapper rather than the daemon it forked. Either
+    mistake would either falsely report "already armed" with no watchdog
+    actually running, or spawn a second watchdog racing the first — this
+    closes both by construction rather than by trusting either number.
+    ``KF_WD_DIR``/``KF_WD_PYTHON`` are exported before the spawn so the
+    daemon resolves the SAME directory the arm step just wrote to, even when
+    the caller never set them. Whenever a live watchdog is confirmed
+    (freshly spawned or already running) a stale ``shutdown -h +N`` kernel
+    timer from an earlier failed spawn is cancelled (``shutdown -c``), so a
+    healthy re-arm can't be killed by a doomsday timer nobody living
+    remembers scheduling.
 
-    Failure of the spawn does NOT abort setup: SkyPilot deliberately leaves a
-    cluster up when setup fails ("for debugging purposes"), so aborting would
-    produce precisely the unbounded-billing cluster this exists to prevent.
-    Instead the snippet best-effort schedules ``sudo shutdown -h +N``, a
-    kernel-timed poweroff needing no daemon.
+    The whole body runs inside a ``( set +e +u; ...; ) || true`` block:
+    failure of ANY step — including resolving ``$HOME`` when it is unset —
+    must never abort setup, regardless of the shell options the surrounding
+    ``Task.setup`` happens to run under. SkyPilot deliberately leaves a
+    cluster UP when setup fails ("for debugging purposes"), so aborting here
+    would produce precisely the unbounded-billing cluster this exists to
+    prevent. Instead the snippet best-effort schedules
+    ``sudo shutdown -h +N``, a kernel-timed poweroff needing no daemon, as
+    the backstop for a spawn that could not be confirmed.
 
     Args:
         deadline_epoch: Absolute POSIX epoch from :func:`compute_deadline`.
