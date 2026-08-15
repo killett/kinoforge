@@ -53,14 +53,19 @@ class _FakeSky:
         return []
 
 
-def test_create_instance_without_provision_script_omits_setup_run() -> None:
-    """Default callers (pre-Layer-Q) keep working: no setup/run keys in task_config."""
+def test_create_instance_without_provision_script_omits_run() -> None:
+    """No provision_script: no ``run`` key, but ``setup`` still carries the watchdog arm.
+
+    Setup is no longer conditional on ``provision_script`` (2026-08-15
+    instance-deadline design) — every launched cluster is armed, including
+    provision-script-less deploys like the CPU smoke.
+    """
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
     spec = InstanceSpec(image="img:latest")
     p.create_instance(spec)
     task_config = sky.launches[0][0]
-    assert "setup" not in task_config
+    assert "# --- kinoforge watchdog arm" in task_config["setup"]
     assert "run" not in task_config
 
 
@@ -73,7 +78,8 @@ def test_create_instance_with_provision_script_maps_to_setup() -> None:
     )
     p.create_instance(spec)
     task_config = sky.launches[0][0]
-    assert task_config["setup"] == "set -e\necho hi\n"
+    assert task_config["setup"].endswith("set -e\necho hi\n")
+    assert "# --- kinoforge watchdog arm" in task_config["setup"]
     assert "run" not in task_config
 
 
@@ -112,24 +118,26 @@ def test_create_instance_with_empty_run_cmd_omits_run_key() -> None:
     assert "run" not in task_config
 
 
-def test_create_instance_with_empty_provision_script_omits_setup_key() -> None:
-    """Empty provision_script is treated as 'not set' — no `setup` key emitted."""
+def test_create_instance_with_empty_provision_script_still_carries_watchdog_arm() -> (
+    None
+):
+    """Empty provision_script contributes nothing extra, but ``setup`` is still armed."""
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
     spec = InstanceSpec(image="img:latest", provision_script="")
     p.create_instance(spec)
     task_config = sky.launches[0][0]
-    assert "setup" not in task_config
+    assert "# --- kinoforge watchdog arm" in task_config["setup"]
 
 
-def test_create_instance_with_only_run_cmd_omits_setup_key() -> None:
-    """Setting run_cmd alone produces only the `run` key — no spurious `setup`."""
+def test_create_instance_with_only_run_cmd_still_carries_watchdog_arm() -> None:
+    """Setting run_cmd alone still arms the watchdog in `setup` — no spurious script content."""
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
     spec = InstanceSpec(image="img:latest", run_cmd=["python", "main.py"])
     p.create_instance(spec)
     task_config = sky.launches[0][0]
-    assert "setup" not in task_config
+    assert "# --- kinoforge watchdog arm" in task_config["setup"]
     assert task_config["run"] == "python main.py"
 
 
@@ -155,13 +163,13 @@ def test_create_instance_strips_trailing_exec_from_setup_script() -> None:
 
 
 def test_create_instance_preserves_script_without_trailing_exec() -> None:
-    """provision_script without a trailing exec line is passed through unchanged."""
+    """provision_script without a trailing exec line is appended after the watchdog arm unchanged."""
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
     script = "set -euo pipefail\necho preparing\n"
     spec = InstanceSpec(image="img:latest", provision_script=script)
     p.create_instance(spec)
-    assert sky.launches[0][0]["setup"] == script
+    assert sky.launches[0][0]["setup"].endswith(script)
 
 
 def test_create_instance_strips_diffusers_bare_exec_line() -> None:

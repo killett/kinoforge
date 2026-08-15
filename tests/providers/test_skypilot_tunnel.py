@@ -223,8 +223,11 @@ def test_task_carries_provision_setup_and_server_run() -> None:
     provider.create_instance(spec)
 
     cfg = captured["cfg"]
-    # setup == provision_script with the trailing exec line removed (Component C).
-    assert cfg["setup"] == "#!/bin/sh\nsetup-step"
+    # setup ends with provision_script with the trailing exec line removed
+    # (Component C); it is preceded by the watchdog arming step (2026-08-15
+    # instance-deadline design).
+    assert cfg["setup"].endswith("#!/bin/sh\nsetup-step")
+    assert "# --- kinoforge watchdog arm" in cfg["setup"]
     assert "exec" not in cfg["setup"]
     assert cfg["run"] == "python -m server"  # shlex-quoted join of run_cmd
     assert cfg["resources"]["accelerators"] == "RTX_A6000:1"

@@ -40,15 +40,20 @@ with a test double.  The interface expected of ``sky_client`` is:
 When ``sky_client is None`` the real path is taken: every method calls
 :func:`_get_sky` on-demand to obtain the real ``sky`` module.
 
-Autostop trade-off
-------------------
-SkyPilotProvider maps ``spec.lifecycle.idle_timeout_s`` to SkyPilot's native
-``autostop`` parameter (converted from seconds to minutes).  This delegates
-cluster termination to SkyPilot's built-in auto-stop mechanism, providing
-multi-cloud reach but **cannot** replicate the fine-grained in-pod self-terminator
-model used by RunPodProvider (no dead-man heartbeat, no job-in-flight awareness).
-That is the cost of inheriting SkyPilot's cloud-portability: the timer model is
-provider-owned, not kinoforge-owned.
+Cost model
+----------
+``idle_timeout_s`` is still mapped to SkyPilot's ``idle_minutes_to_autostop``,
+but that mechanism is INERT for kinoforge's server-mode deploys: ``run_cmd``
+becomes ``Task.run``, a job that never terminates, so ``is_cluster_idle()``
+is permanently False and the 60 s ``AutostopEvent`` tick resets the idleness
+timer forever (finding F1, verified against skypilot-0.12.3.post1). It
+remains correct for the one-shot configs whose ``run`` terminates.
+
+The real guardrail is the instance-side deadline watchdog
+(:mod:`kinoforge.providers.skypilot.watchdog`), armed at the top of
+``Task.setup`` and enforced on the machine, so it survives the orchestrator
+process dying. ``down=True`` makes any autostop that DOES fire terminate
+rather than stop (a stopped cluster keeps billing its disk — finding F2).
 
 Self-registers under ``"skypilot"`` when this module is imported.
 """
@@ -72,6 +77,7 @@ from kinoforge.core.interfaces import (
     Offer,
 )
 from kinoforge.core.offers import filter_offers
+from kinoforge.providers.skypilot import watchdog
 from kinoforge.providers.skypilot.vast_compat import apply_vast_sdk_compat
 
 # Bridge sky's vast adapter to vastai-sdk >= 0.2 as soon as the provider is
@@ -486,8 +492,10 @@ class SkyPilotProvider(ComputeProvider):
     and no ``sky_client`` has been injected.  Inject ``sky_client=<fake>`` to run
     without SkyPilot installed (all tests use this path).
 
-    ``idle_timeout_s`` is mapped to SkyPilot's ``autostop`` (in minutes).  See
-    module docstring for the trade-off versus RunPodProvider's in-pod self-terminator.
+    ``idle_timeout_s`` is mapped to SkyPilot's ``autostop`` (in minutes), but
+    the real cost guardrail is the instance-side deadline watchdog armed at
+    the top of every launched cluster's ``Task.setup``. See the module
+    docstring's "Cost model" section for why.
 
     Args:
         sky_client: Optional injectable sky-SDK stub.  When ``None``, every
@@ -511,6 +519,7 @@ class SkyPilotProvider(ComputeProvider):
         clouds: list[str] | None = None,
         region: str | None = None,
         retry_until_up: bool = False,
+        autodown: bool = True,
         sleep: Callable[[float], None] = time.sleep,
         ssh_spawn: Callable[[str, int, int], Any] | None = None,
         port_allocator: Callable[[], int] | None = None,
@@ -544,6 +553,12 @@ class SkyPilotProvider(ComputeProvider):
                 default-False single-attempt path bails on the first
                 ``ResourcesUnavailableError`` and is only safe when the
                 operator knows capacity is currently available.
+            autodown: When ``True`` (default) ``down=True`` is passed to
+                ``sky.launch`` so an autostop TERMINATES the cluster instead
+                of stopping it — a stopped cluster keeps billing its disk
+                (finding F2). Set ``False`` only for a workflow that
+                genuinely needs stop-and-restart onto the same disk;
+                kinoforge has none today (``stop_instance`` is a no-op).
             sleep: Injectable sleep used between destroy-poll iterations.
             ssh_spawn: Injectable ``(cluster_name, local_port, remote_port) ->
                 proc`` seam opening the provider-internal ``ssh -L`` tunnel;
@@ -555,6 +570,7 @@ class SkyPilotProvider(ComputeProvider):
         self._clouds = clouds
         self._region = region
         self._retry_until_up = retry_until_up
+        self._autodown = autodown
         self._sleep = sleep
         self._ssh_spawn: Callable[[str, int, int], Any] = (
             ssh_spawn if ssh_spawn is not None else _spawn_ssh_tunnel
@@ -694,11 +710,16 @@ class SkyPilotProvider(ComputeProvider):
           * Otherwise, if ``spec.offer.gpu_type`` is non-empty, the task
             requests ``accelerators="<gpu_type>:1"``.
 
-        When ``spec.provision_script`` is set, it is mapped to ``setup``
-        (after :func:`_strip_trailing_exec` removes RunPod's trailing
-        ``exec`` line so the setup phase can terminate). When ``spec.run_cmd``
-        is set, it is shell-quoted via :func:`shlex.quote` and joined into
-        ``run``. Empty values for either field omit the key.
+        ``setup`` always starts with the instance-side deadline watchdog's
+        arming step (:func:`kinoforge.providers.skypilot.watchdog.RENDER_ARM`)
+        — present even when ``spec.provision_script`` is empty, so a
+        provision-script-less deploy (e.g. the CPU smoke) still carries a
+        deadline. When ``spec.provision_script`` is set, it is appended
+        after the arming step (after :func:`_strip_trailing_exec` removes
+        RunPod's trailing ``exec`` line so the setup phase can terminate).
+        When ``spec.run_cmd`` is set, it is shell-quoted via
+        :func:`shlex.quote` and joined into ``run``; empty ``run_cmd``
+        omits the key.
 
         Args:
             spec: Instance specification.
@@ -761,8 +782,25 @@ class SkyPilotProvider(ComputeProvider):
         # ``exec <run_cmd>`` line is stripped before it becomes Task.setup so
         # setup can terminate normally; spec.run_cmd carries the long-running
         # process into Task.run.
+        launch_epoch = time.time()
+        deadline_epoch = watchdog.compute_deadline(
+            launch_epoch=launch_epoch,
+            max_lifetime_s=spec.lifecycle.max_lifetime_s,
+            budget_usd=spec.lifecycle.budget_usd,
+            rate_usd_per_hr=(
+                spec.offer.cost_rate_usd_per_hr if spec.offer is not None else 0.0
+            ),
+        )
+        # The watchdog is armed at the TOP of setup, before the provision
+        # script's installs: SkyPilot autostop cannot fire for a server-mode
+        # deploy (F1), so this is the only guardrail that survives the
+        # orchestrator dying.
+        setup_parts: list[str] = [
+            watchdog.RENDER_ARM(deadline_epoch=deadline_epoch, now=launch_epoch)
+        ]
         if spec.provision_script:
-            task_config["setup"] = _strip_trailing_exec(spec.provision_script)
+            setup_parts.append(_strip_trailing_exec(spec.provision_script))
+        task_config["setup"] = "\n".join(setup_parts)
         if spec.run_cmd:
             task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
 
@@ -774,6 +812,7 @@ class SkyPilotProvider(ComputeProvider):
         launch_kwargs: dict[str, Any] = {
             "cluster_name": cluster_name,
             "idle_minutes_to_autostop": autostop_minutes,
+            "down": self._autodown,
         }
         if self._retry_until_up:
             launch_kwargs["retry_until_up"] = True

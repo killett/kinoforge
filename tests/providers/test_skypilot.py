@@ -386,6 +386,11 @@ def test_ac3_find_offers_gpu_path_still_calls_list_accelerators() -> None:
 def test_ac4_create_instance_passes_idle_minutes_to_autostop() -> None:
     """create_instance maps ``idle_timeout_s`` → ``idle_minutes_to_autostop`` (int minutes).
 
+    This kwarg is still forwarded because it is correct for the one-shot
+    configs whose ``run`` terminates — but it is NOT the SkyPilot cost
+    backstop for server-mode deploys (see the module docstring's "Cost
+    model" section): the instance-side deadline watchdog fills that role.
+
     A bug that would catch: passing ``autostop=`` (the pre-T7b kwarg name)
     or a float fraction would raise ``TypeError`` on the live path because
     modern :func:`sky.launch` only accepts the ``idle_minutes_to_autostop:
@@ -1217,3 +1222,121 @@ def test_t4_fixture_shape() -> None:
         "down.json missing the UUID-scrub placeholder; either the recording "
         "proxy regressed (leak risk) or someone hand-edited the fixture"
     )
+
+
+# ---------------------------------------------------------------------------
+# Watchdog arming + autodown (2026-08-15 instance-deadline design)
+# ---------------------------------------------------------------------------
+
+
+def _watchdog_spec(**overrides: Any) -> InstanceSpec:
+    """Build a minimal InstanceSpec for the watchdog-wiring tests."""
+    base: dict[str, Any] = {
+        "run_id": "kf-watchdog-unit",
+        "image": "",
+        "env": {},
+        "tags": {},
+        "lifecycle": Lifecycle(idle_timeout_s=600, max_lifetime_s=18000),
+        "offer": Offer(
+            id="sky-cpu-auto",
+            gpu_type="",
+            vram_gb=0,
+            cuda="0.0",
+            cost_rate_usd_per_hr=0.0,
+            mode="pod",
+        ),
+        "provision_script": "",
+        "run_cmd": [],
+    }
+    base.update(overrides)
+    return InstanceSpec(**base)
+
+
+def test_setup_is_always_present_and_carries_the_arming_step() -> None:
+    """Even a provision-script-less spec ships with an armed watchdog.
+
+    A bug this catches: keeping the old ``if spec.provision_script:`` guard,
+    which leaves server-less deploys (and the CPU smoke) with no setup at all
+    and therefore no deadline.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.create_instance(_watchdog_spec())
+    config = fake.Task.from_yaml_config_calls[-1]
+    assert "setup" in config, f"no setup key in {sorted(config)!r}"
+    assert "# --- kinoforge watchdog arm" in config["setup"]
+
+
+def test_arming_precedes_the_provision_script() -> None:
+    """The watchdog is armed before the heavy installs, not after.
+
+    A bug this catches: appending the arming step, so a cluster that dies
+    during a 20-minute pip install is never covered — the exact window the
+    design calls out.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.create_instance(
+        _watchdog_spec(provision_script="pip install --quiet torch\n")
+    )
+    setup = fake.Task.from_yaml_config_calls[-1]["setup"]
+    assert setup.index("# --- kinoforge watchdog arm") < setup.index(
+        "pip install --quiet torch"
+    ), setup
+
+
+def test_setup_deadline_matches_compute_deadline() -> None:
+    """The baked deadline is launch + max_lifetime_s for an unknown rate.
+
+    A bug this catches: passing ``idle_timeout_s`` or a boot-relative
+    duration into the arming step instead of the computed absolute epoch.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    before = time.time()
+    provider.create_instance(_watchdog_spec())
+    after = time.time()
+    setup = fake.Task.from_yaml_config_calls[-1]["setup"]
+    match = re.search(r"deadline=([0-9.]+)", setup)
+    assert match is not None, setup
+    baked = float(match.group(1))
+    assert before + 18000 <= baked <= after + 18000, (
+        f"baked deadline {baked} outside [launch+18000] window "
+        f"[{before + 18000}, {after + 18000}]"
+    )
+
+
+def test_create_instance_passes_down_true_by_default() -> None:
+    """Autodown terminates; plain autostop leaves a billing disk (F2).
+
+    A bug this catches: shipping ``down`` unset, so any autostop that does
+    fire stops the instance and keeps paying for its disk.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.create_instance(_watchdog_spec())
+    _, kwargs = fake.launch_calls[-1]
+    assert kwargs.get("down") is True, kwargs
+    assert "idle_minutes_to_autostop" in kwargs, kwargs
+
+
+def test_autodown_false_opts_out() -> None:
+    """A workflow needing stop-and-restart can turn autodown off.
+
+    A bug this catches: hard-coding ``down=True`` with no escape hatch.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake, autodown=False)
+    provider.create_instance(_watchdog_spec())
+    _, kwargs = fake.launch_calls[-1]
+    assert kwargs.get("down") is False, kwargs
