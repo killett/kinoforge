@@ -190,3 +190,39 @@ def test_missing_skylet_python_skips_stage_one_and_still_halts(tmp_path: Path) -
         f"stage 1 must not run without a skylet python: {sub.calls!r}"
     )
     assert "shutdown -h now" in sub.calls[0], sub.calls[0]
+
+
+def test_tick_exception_does_not_kill_the_loop(tmp_path: Path) -> None:
+    """A mid-tick exception (e.g. from ``log()``) must not escape ``main()``.
+
+    A bug this catches: an unguarded loop body where ``log()``'s ``print()``
+    raises ``OSError`` on a full disk or a broken/closed stdout — a realistic
+    path on this project, which routinely fills instance disks with 70 GB
+    model downloads. If that propagates out of ``while True``, the watchdog
+    process dies silently while the instance keeps billing with no deadline
+    enforcement left at all. Here ``log`` raises on the first call (the
+    "deadline reached; firing stage 1" line) and succeeds on the second; the
+    watchdog must survive the failed tick, sleep, and still fire stage 1 on
+    the next tick.
+    """
+    ns, sub, _ = _load(tmp_path, deadline=1000.0, times=[1000.0, 1000.0])
+    original_log = ns["log"]
+    raised = {"done": False}
+
+    def _flaky_log(message: str) -> None:
+        # Only the in-loop "firing stage 1" line is made to raise, so the
+        # one-time startup log ahead of the loop is unaffected.
+        if not raised["done"] and "deadline reached" in message:
+            raised["done"] = True
+            raise OSError("disk full")
+        original_log(message)
+
+    ns["log"] = _flaky_log
+    _run(ns)
+    assert len(sub.calls) == 1, (
+        f"watchdog must still fire stage 1 after a mid-tick exception: {sub.calls!r}"
+    )
+    assert "autostop_lib.set_autostop" in sub.calls[0], sub.calls[0]
+    assert len(ns["time"].sleeps) == 2, (
+        f"a failed tick must still reach time.sleep(), not spin: {ns['time'].sleeps!r}"
+    )

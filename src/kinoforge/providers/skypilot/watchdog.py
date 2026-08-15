@@ -114,8 +114,15 @@ _SKYLET_AUTODOWN_CODE = (
 
 
 def log(message):
-    """Print a tagged line; the caller redirects stdout to watchdog.log."""
-    print("[kinoforge-watchdog] " + str(message), flush=True)
+    """Print a tagged line; the caller redirects stdout to watchdog.log.
+
+    Best-effort: a full disk or a broken/closed stdout raises ``OSError`` out
+    of ``print``, and this function must never be the reason a tick dies.
+    """
+    try:
+        print("[kinoforge-watchdog] " + str(message), flush=True)
+    except Exception:
+        pass
 
 
 def read_deadline():
@@ -166,24 +173,33 @@ def halt():
 
 
 def main():
-    """Poll until the deadline, then terminate in two stages."""
+    """Poll until the deadline, then terminate in two stages.
+
+    Every tick's body is exception-guarded: no single bad tick (a raising
+    ``log()``, a transient ``read_deadline()`` failure, anything) may escape
+    the loop, or the watchdog dies silently while the instance keeps
+    billing with no deadline enforcement left.
+    """
     log("watchdog started; deadline file " + _DEADLINE_FILE)
     fired_at = None
     while True:
         now = time.time()
-        deadline = read_deadline()
-        if deadline is None:
-            pass
-        elif now < deadline:
-            fired_at = None
-        elif fired_at is None:
-            log("deadline reached; firing stage 1")
-            skylet_autodown()
-            fired_at = now
-        elif now - fired_at >= _GRACE_BEFORE_HALT_S:
-            log("still alive after stage 1; firing stage 2")
-            halt()
-            fired_at = now
+        try:
+            deadline = read_deadline()
+            if deadline is None:
+                pass
+            elif now < deadline:
+                fired_at = None
+            elif fired_at is None:
+                log("deadline reached; firing stage 1")
+                skylet_autodown()
+                fired_at = now
+            elif now - fired_at >= _GRACE_BEFORE_HALT_S:
+                log("still alive after stage 1; firing stage 2")
+                halt()
+                fired_at = now
+        except Exception as exc:
+            log("tick failed: " + repr(exc))
         time.sleep(_POLL_INTERVAL_S)
 
 
