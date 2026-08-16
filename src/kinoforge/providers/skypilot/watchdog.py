@@ -118,6 +118,11 @@ _DEADLINE_FILE = os.path.join(_WD_DIR, "deadline")
 _SKY_PYTHON_PATH_FILE = os.path.expanduser("~/.sky/python_path")
 _POLL_INTERVAL_S = $poll_interval_s
 _GRACE_BEFORE_HALT_S = $grace_before_halt_s
+#: Overridable so tests (and any host with passwordless sudo) never have to
+#: let this daemon invoke the REAL privileged binary. The arming prelude
+#: exports ``KF_WD_SUDO`` alongside ``KF_WD_DIR``/``KF_WD_PYTHON`` before
+#: spawning this script, so a test's recording stub travels with it.
+_SUDO_BIN = os.environ.get("KF_WD_SUDO", "sudo")
 
 #: A 2026-08-15 live AWS run (cluster kinoforge-wd-6722c3f1) proved stage 1
 #: has NEVER been able to terminate an instance: `_stop_cluster`
@@ -194,10 +199,10 @@ def skylet_autodown():
 
 def halt():
     """Stage 2 - credential-free local halt."""
-    code = run_command("sudo shutdown -h now")
+    code = run_command(_SUDO_BIN + " shutdown -h now")
     log("stage 2 shutdown rc=" + str(code))
     if code != 0:
-        code = run_command("sudo halt -f")
+        code = run_command(_SUDO_BIN + " halt -f")
         log("stage 2 halt -f rc=" + str(code))
     return code
 
@@ -305,8 +310,10 @@ _ARM_TEMPLATE = _BashTemplate(
 set +e +u
 KF_WD_DIR="${KF_WD_DIR:-$HOME/.kinoforge-watchdog}"
 KF_WD_PYTHON="${KF_WD_PYTHON:-python3}"
+KF_WD_SUDO="${KF_WD_SUDO:-sudo}"
 export KF_WD_DIR
 export KF_WD_PYTHON
+export KF_WD_SUDO
 mkdir -p "$KF_WD_DIR" 2>/dev/null
 printf '%s\\n' '@deadline_epoch' > "$KF_WD_DIR/deadline.tmp" 2>/dev/null
 mv -f "$KF_WD_DIR/deadline.tmp" "$KF_WD_DIR/deadline" 2>/dev/null
@@ -324,14 +331,21 @@ else
   if [ -n "$_kf_live_pid" ]; then
     echo "$_kf_live_pid" > "$KF_WD_DIR/pid" 2>/dev/null
     echo "[kinoforge-watchdog] armed pid $_kf_live_pid deadline=@deadline_epoch"
+  else
+    echo "[kinoforge-watchdog] spawn failed; kernel poweroff backstop is the only enforcement left"
   fi
 fi
-if [ -n "$_kf_live_pid" ]; then
-  sudo shutdown -c >/dev/null 2>&1
-else
-  echo "[kinoforge-watchdog] spawn failed; scheduling kernel poweroff in @fallback_minutes min"
-  sudo shutdown -h +@fallback_minutes >/dev/null 2>&1
-fi
+# F3 — the kernel poweroff timer is now UNCONDITIONAL: armed on every run
+# whether or not the daemon spawn was confirmed above. A live daemon can
+# still die later (OOM-kill, crash) and nothing re-arms it, because
+# Task.setup never re-runs on a cluster that is already up. Cancel any
+# previous timer FIRST so a re-arm never stacks two, then schedule fresh —
+# sized (see @fallback_minutes in RENDER_ARM) to land AFTER this arm's own
+# deadline plus its stage-2 grace window, so a healthy daemon always gets
+# first crack and this is a pure backstop, never a race against stage 1/2.
+$KF_WD_SUDO shutdown -c >/dev/null 2>&1
+echo "[kinoforge-watchdog] kernel poweroff backstop armed in @fallback_minutes min"
+$KF_WD_SUDO shutdown -h +@fallback_minutes >/dev/null 2>&1
 ) || true
 # --- end kinoforge watchdog arm -------------------------------------------
 """
@@ -361,13 +375,31 @@ def RENDER_ARM(  # noqa: N802 — public, used as RENDER_ARM(...)
     mistake would either falsely report "already armed" with no watchdog
     actually running, or spawn a second watchdog racing the first — this
     closes both by construction rather than by trusting either number.
-    ``KF_WD_DIR``/``KF_WD_PYTHON`` are exported before the spawn so the
-    daemon resolves the SAME directory the arm step just wrote to, even when
-    the caller never set them. Whenever a live watchdog is confirmed
-    (freshly spawned or already running) a stale ``shutdown -h +N`` kernel
-    timer from an earlier failed spawn is cancelled (``shutdown -c``), so a
-    healthy re-arm can't be killed by a doomsday timer nobody living
-    remembers scheduling.
+    ``KF_WD_DIR``/``KF_WD_PYTHON``/``KF_WD_SUDO`` are exported before the
+    spawn so the daemon resolves the SAME directory the arm step just wrote
+    to, and the same (possibly stubbed) privileged-command indirection, even
+    when the caller never set them.
+
+    F2 — every privileged call in this prelude goes through
+    ``$KF_WD_SUDO`` (default ``sudo``) rather than the literal binary, so a
+    test can point it at a recording stub instead of letting the REAL prelude
+    call ``sudo shutdown -c`` / ``sudo shutdown -h +N`` on whatever host runs
+    the suite. The on-instance daemon (:func:`RENDER_WATCHDOG`) is exported
+    the same override for its stage-2 ``shutdown -h now`` / ``halt -f``.
+
+    F3 — the ``shutdown -h +N`` kernel poweroff timer is UNCONDITIONAL: it is
+    cancelled (``shutdown -c``) and rescheduled on EVERY arm, whether or not
+    the daemon spawn was confirmed. This closes the residual single point of
+    failure where a live daemon dies later (OOM-kill, crash): there is no
+    re-arm on a live cluster (``Task.setup`` never re-runs), so the timer
+    scheduled at first arm is the only thing left standing between a dead
+    daemon and unbounded billing. ``fallback_minutes`` is sized to
+    ``deadline_epoch + grace_before_halt_s + a fixed safety margin`` — i.e.
+    to fire strictly AFTER the daemon's own stage-2 halt would have fired —
+    so a healthy daemon always gets first crack and this kernel timer never
+    races stage 1/2, it only catches their absence. Cancelling first, every
+    time, keeps repeated re-arms (cluster reuse across multiple ``setup``
+    runs) from stacking timers.
 
     The whole body runs inside a ``( set +e +u; ...; ) || true`` block:
     failure of ANY step — including resolving ``$HOME`` when it is unset —
@@ -375,16 +407,16 @@ def RENDER_ARM(  # noqa: N802 — public, used as RENDER_ARM(...)
     ``Task.setup`` happens to run under. SkyPilot deliberately leaves a
     cluster UP when setup fails ("for debugging purposes"), so aborting here
     would produce precisely the unbounded-billing cluster this exists to
-    prevent. Instead the snippet best-effort schedules
-    ``sudo shutdown -h +N``, a kernel-timed poweroff needing no daemon, as
-    the backstop for a spawn that could not be confirmed.
+    prevent.
 
     Args:
         deadline_epoch: Absolute POSIX epoch from :func:`compute_deadline`.
         now: POSIX epoch at render time; used only to size the
-            ``shutdown -h +N`` fallback.
-        poll_interval_s: Passed through to :func:`RENDER_WATCHDOG`.
-        grace_before_halt_s: Passed through to :func:`RENDER_WATCHDOG`.
+            ``shutdown -h +N`` backstop.
+        poll_interval_s: Passed through to :func:`RENDER_WATCHDOG`; also
+            factored into the backstop's safety margin.
+        grace_before_halt_s: Passed through to :func:`RENDER_WATCHDOG`; also
+            factored into the backstop's timing so it lands after stage 2.
 
     Returns:
         A bash snippet, safe to concatenate ahead of a provision script.
@@ -393,7 +425,15 @@ def RENDER_ARM(  # noqa: N802 — public, used as RENDER_ARM(...)
         >>> RENDER_ARM(deadline_epoch=60.0, now=0.0).lstrip()[:26]
         '# --- kinoforge watchdog a'
     """
-    fallback_minutes = max(1, math.ceil((deadline_epoch - now) / 60.0))
+    # F3: the backstop must fire strictly AFTER the daemon's own stage-2 halt
+    # would have — i.e. after (deadline + grace) — not merely at the same
+    # instant. The margin covers the daemon's worst-case additional delay
+    # past that instant: up to one more poll tick before it notices grace has
+    # elapsed, plus run_command's subprocess timeout (120s) if the halt
+    # command itself hangs.
+    backstop_margin_s = poll_interval_s + 120.0
+    backstop_after_s = (deadline_epoch - now) + grace_before_halt_s + backstop_margin_s
+    fallback_minutes = max(1, math.ceil(backstop_after_s / 60.0))
     return _ARM_TEMPLATE.substitute(
         deadline_epoch=repr(float(deadline_epoch)),
         watchdog_source=RENDER_WATCHDOG(

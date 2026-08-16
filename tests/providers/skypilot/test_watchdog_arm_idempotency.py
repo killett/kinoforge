@@ -34,6 +34,19 @@ env > "$(dirname "$1")/child-env.txt" 2>/dev/null
 sleep 300
 """
 
+# F2 — the arming prelude used to call the REAL `sudo` binary directly
+# (`sudo shutdown -c`, `sudo shutdown -h +N`). On any host with passwordless
+# sudo (CI, a dev laptop) that cancels the operator's real scheduled
+# shutdowns and then schedules a real poweroff — this suite must never let
+# that happen. Every test below points KF_WD_SUDO at this recording stub
+# instead: it never touches privileged state, always "succeeds" (exit 0) so
+# it doesn't perturb the prelude's control flow, and records exactly what it
+# was called with so tests can assert on it.
+_SUDO_STUB = """#!/bin/sh
+echo "$*" >> "${KF_WD_DIR:-/tmp}/sudo-calls.log"
+exit 0
+"""
+
 # A pid outside any realistic pid_max (Linux caps well under 1e9) - never a
 # live process, used to exercise the "truly dead pid" respawn path without
 # depending on which pids happen to be free on the test host.
@@ -58,7 +71,24 @@ def env_dump_python(tmp_path: Path) -> Path:
     return path
 
 
-def _arm(wd_dir: Path, stub: Path, deadline: float, now: float) -> str:
+@pytest.fixture
+def sudo_stub(tmp_path: Path) -> Path:
+    """A recording stand-in for `sudo` — see the F2 note above `_SUDO_STUB`."""
+    path = tmp_path / "stub-sudo"
+    path.write_text(_SUDO_STUB)
+    path.chmod(0o755)
+    return path
+
+
+def _sudo_calls(wd_dir: Path) -> list[str]:
+    """Return the argv strings the sudo stub recorded, in call order."""
+    log = wd_dir / "sudo-calls.log"
+    if not log.exists():
+        return []
+    return [line for line in log.read_text().splitlines() if line]
+
+
+def _arm(wd_dir: Path, stub: Path, deadline: float, now: float, sudo: Path) -> str:
     """Run the rendered arming snippet; return its combined output."""
     script = RENDER_ARM(deadline_epoch=deadline, now=now)
     completed = subprocess.run(
@@ -69,6 +99,7 @@ def _arm(wd_dir: Path, stub: Path, deadline: float, now: float) -> str:
             **os.environ,
             "KF_WD_DIR": str(wd_dir),
             "KF_WD_PYTHON": str(stub),
+            "KF_WD_SUDO": str(sudo),
             "HOME": str(wd_dir.parent),
         },
         timeout=30,
@@ -88,27 +119,39 @@ def _kill(wd_dir: Path) -> None:
 
 
 def test_arming_writes_state_and_spawns_one_watchdog(
-    tmp_path: Path, stub_python: Path
+    tmp_path: Path, stub_python: Path, sudo_stub: Path
 ) -> None:
     """A single arm run leaves deadline, program, and a live pid.
 
     A bug this catches: writing the deadline but never spawning (a cluster
     that believes it is protected and is not).
+
+    Also asserts (F2/F3) exactly what the prelude invoked through the sudo
+    indirection: a cancel followed by an unconditional kernel-backstop
+    schedule, even though the spawn succeeded here.
     """
     wd_dir = tmp_path / "wd"
     try:
-        out = _arm(wd_dir, stub_python, deadline=2_000_000_000.0, now=1_999_999_000.0)
+        out = _arm(
+            wd_dir,
+            stub_python,
+            deadline=2_000_000_000.0,
+            now=1_999_999_000.0,
+            sudo=sudo_stub,
+        )
         assert "armed pid" in out, out
         assert (wd_dir / "watchdog.py").exists()
         assert float((wd_dir / "deadline").read_text().strip()) == 2_000_000_000.0
         pid = int((wd_dir / "pid").read_text().strip())
         os.kill(pid, 0)  # raises if not alive
+        calls = _sudo_calls(wd_dir)
+        assert calls == ["shutdown -c", "shutdown -h +29"], calls
     finally:
         _kill(wd_dir)
 
 
 def test_second_arm_refreshes_deadline_without_second_watchdog(
-    tmp_path: Path, stub_python: Path
+    tmp_path: Path, stub_python: Path, sudo_stub: Path
 ) -> None:
     """Re-running setup replaces the deadline and reuses the live watchdog.
 
@@ -117,10 +160,22 @@ def test_second_arm_refreshes_deadline_without_second_watchdog(
     """
     wd_dir = tmp_path / "wd"
     try:
-        _arm(wd_dir, stub_python, deadline=2_000_000_000.0, now=1_999_999_000.0)
+        _arm(
+            wd_dir,
+            stub_python,
+            deadline=2_000_000_000.0,
+            now=1_999_999_000.0,
+            sudo=sudo_stub,
+        )
         first_pid = (wd_dir / "pid").read_text().strip()
 
-        out = _arm(wd_dir, stub_python, deadline=2_000_000_500.0, now=1_999_999_000.0)
+        out = _arm(
+            wd_dir,
+            stub_python,
+            deadline=2_000_000_500.0,
+            now=1_999_999_000.0,
+            sudo=sudo_stub,
+        )
 
         assert "already armed" in out, out
         assert (wd_dir / "pid").read_text().strip() == first_pid
@@ -130,6 +185,17 @@ def test_second_arm_refreshes_deadline_without_second_watchdog(
         )
         pids = [line for line in alive.stdout.split() if line]
         assert len(pids) == 1, f"expected exactly one watchdog, got {pids!r}"
+        # F3: each arm cancels-then-reschedules the backstop, so two arms
+        # leave FOUR recorded calls, not a stacked pile of timers. The second
+        # backstop is later than the first because it's sized off the second,
+        # farther-out deadline — proof it isn't a leftover from the first arm.
+        calls = _sudo_calls(wd_dir)
+        assert calls == [
+            "shutdown -c",
+            "shutdown -h +29",
+            "shutdown -c",
+            "shutdown -h +38",
+        ], calls
     finally:
         _kill(wd_dir)
 
@@ -144,17 +210,24 @@ def test_arm_snippet_is_the_first_content_it_renders(tmp_path: Path) -> None:
     assert script.lstrip().startswith("# --- kinoforge watchdog arm"), script[:120]
 
 
-def test_arm_schedules_kernel_poweroff_fallback(tmp_path: Path) -> None:
-    """The snippet carries a `shutdown -h +N` fallback for a failed spawn.
+def test_arm_schedules_kernel_poweroff_backstop_past_the_deadline(
+    tmp_path: Path,
+) -> None:
+    """The snippet carries a `shutdown -h +N` backstop sized past the deadline.
 
-    A bug this catches: dropping the fallback, so an instance with no usable
-    python3 gets no bound at all.
+    A bug this catches: dropping the backstop, so an instance with no usable
+    python3 (or a daemon that later dies) gets no bound at all. N must land
+    strictly after `deadline + grace_before_halt_s` (F3) — not merely at the
+    deadline itself, which is what an unrelated regression back to the old
+    "cover only until the deadline" sizing would produce.
     """
     script = RENDER_ARM(deadline_epoch=1_000_600.0, now=1_000_000.0)
-    assert "shutdown -h +10" in script, script
+    assert "shutdown -h +23" in script, script
 
 
-def test_dead_pid_triggers_respawn(tmp_path: Path, stub_python: Path) -> None:
+def test_dead_pid_triggers_respawn(
+    tmp_path: Path, stub_python: Path, sudo_stub: Path
+) -> None:
     """A `pid` file naming a truly dead process must trigger a fresh spawn.
 
     A bug this catches: a guard that trusts the pid FILE's mere presence
@@ -165,7 +238,13 @@ def test_dead_pid_triggers_respawn(tmp_path: Path, stub_python: Path) -> None:
     wd_dir.mkdir()
     (wd_dir / "pid").write_text(str(_DEAD_PID))
     try:
-        out = _arm(wd_dir, stub_python, deadline=2_000_000_000.0, now=1_999_999_000.0)
+        out = _arm(
+            wd_dir,
+            stub_python,
+            deadline=2_000_000_000.0,
+            now=1_999_999_000.0,
+            sudo=sudo_stub,
+        )
         assert "armed pid" in out, out
         assert "already armed" not in out, out
         pid = int((wd_dir / "pid").read_text().strip())
@@ -176,7 +255,7 @@ def test_dead_pid_triggers_respawn(tmp_path: Path, stub_python: Path) -> None:
 
 
 def test_recycled_pid_does_not_suppress_arming(
-    tmp_path: Path, stub_python: Path
+    tmp_path: Path, stub_python: Path, sudo_stub: Path
 ) -> None:
     """A `pid` file naming a live but UNRELATED process must not block arming.
 
@@ -184,7 +263,7 @@ def test_recycled_pid_does_not_suppress_arming(
     live process with that pid number as "the watchdog". If the real
     watchdog died and the OS recycled its pid onto an unrelated process
     (a decoy here), that check reports "already armed" AND the trailing
-    fallback-shutdown check also sees a "live" pid and skips its
+    backstop-shutdown check also sees a "live" pid and skips its
     `shutdown -h +N` too — zero enforcement, silently. The fix must
     identify the watchdog by command line (script path in the process
     table), not by pid number alone, so a same-numbered stranger can't
@@ -195,7 +274,13 @@ def test_recycled_pid_does_not_suppress_arming(
     decoy = subprocess.Popen([str(stub_python)])
     try:
         (wd_dir / "pid").write_text(str(decoy.pid))
-        out = _arm(wd_dir, stub_python, deadline=2_000_000_000.0, now=1_999_999_000.0)
+        out = _arm(
+            wd_dir,
+            stub_python,
+            deadline=2_000_000_000.0,
+            now=1_999_999_000.0,
+            sudo=sudo_stub,
+        )
         assert "armed pid" in out, out
         assert "already armed" not in out, out
         real_pid = int((wd_dir / "pid").read_text().strip())
@@ -208,7 +293,7 @@ def test_recycled_pid_does_not_suppress_arming(
 
 
 def test_unwritable_dir_does_not_abort_under_set_euo_pipefail(
-    tmp_path: Path, stub_python: Path
+    tmp_path: Path, stub_python: Path, sudo_stub: Path
 ) -> None:
     """The prelude must self-defend even when the caller's shell is strict.
 
@@ -234,6 +319,7 @@ def test_unwritable_dir_does_not_abort_under_set_euo_pipefail(
                 **os.environ,
                 "KF_WD_DIR": str(wd_dir),
                 "KF_WD_PYTHON": str(stub_python),
+                "KF_WD_SUDO": str(sudo_stub),
                 "HOME": str(parent),
             },
             timeout=30,
@@ -245,7 +331,7 @@ def test_unwritable_dir_does_not_abort_under_set_euo_pipefail(
 
 
 def test_watchdog_process_inherits_kf_wd_dir_via_export(
-    tmp_path: Path, env_dump_python: Path
+    tmp_path: Path, env_dump_python: Path, sudo_stub: Path
 ) -> None:
     """The spawned watchdog must see the SAME `KF_WD_DIR` the arm step wrote to.
 
@@ -261,7 +347,12 @@ def test_watchdog_process_inherits_kf_wd_dir_via_export(
     home.mkdir()
     wd_dir = home / ".kinoforge-watchdog"  # KF_WD_DIR left unset -> this default
     script = RENDER_ARM(deadline_epoch=2_000_000_000.0, now=1_999_999_000.0)
-    env = {**os.environ, "KF_WD_PYTHON": str(env_dump_python), "HOME": str(home)}
+    env = {
+        **os.environ,
+        "KF_WD_PYTHON": str(env_dump_python),
+        "KF_WD_SUDO": str(sudo_stub),
+        "HOME": str(home),
+    }
     env.pop("KF_WD_DIR", None)
     try:
         completed = subprocess.run(

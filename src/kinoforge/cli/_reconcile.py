@@ -25,7 +25,17 @@ class _ForgetLedger(Protocol):
 # KeyError reliably means "this pod no longer exists". Only these are auto-
 # reconciled. ``local`` is excluded: its instance table is in-process, so a
 # fresh CLI invocation always KeyErrors on a valid pod.
-_RECONCILABLE_PROVIDERS: frozenset[str] = frozenset({"runpod"})
+#
+# ``skypilot`` joined 2026-08-15 (F1): SkyPilotProvider.get_instance() calls
+# ``sky_client.status()``, which is cross-process authoritative the same way
+# RunPod's API is, and KeyErrors reliably for a cluster that never came up
+# (e.g. ``sky.launch`` raised ``ResourcesUnavailableError`` after the
+# provisional F12 ledger row was already written). Without this, a routine
+# launch failure leaves a permanent ghost row whose ``est_spend`` inflates
+# forever and that the sweeper later tries (and fails) to destroy — the same
+# "$210 phantom pod" failure mode this reconciler was built to close for
+# RunPod.
+_RECONCILABLE_PROVIDERS: frozenset[str] = frozenset({"runpod", "skypilot"})
 
 
 def _reconcile_dead_ledger_entries(

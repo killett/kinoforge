@@ -198,6 +198,26 @@ def test_stage_two_halts_after_the_grace_window(tmp_path: Path) -> None:
     assert "shutdown -h now" in sub.calls[1], sub.calls[1]
 
 
+def test_stage_two_halt_honours_kf_wd_sudo_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stage 2 resolves its privileged binary from ``KF_WD_SUDO``, not a literal.
+
+    F2 — the daemon used to hardcode ``"sudo shutdown -h now"`` /
+    ``"sudo halt -f"``. The arming prelude now exports ``KF_WD_SUDO``
+    alongside ``KF_WD_DIR``/``KF_WD_PYTHON`` so a test (or an operator on a
+    sudo-less image) can point the daemon at a different binary. A bug this
+    catches: reverting to the hardcoded string would silently drop this
+    override and reintroduce the real-`sudo` hazard F2 exists to close.
+    """
+    monkeypatch.setenv("KF_WD_SUDO", "/opt/stub/kf-sudo-stub")
+    ns, sub, _ = _load(tmp_path, deadline=1000.0, times=[1000.0, 1000.0 + _GRACE_S + 1])
+    _run(ns)
+    assert len(sub.calls) == 2, f"expected stage 1 then stage 2, got {sub.calls!r}"
+    assert sub.calls[1].startswith("/opt/stub/kf-sudo-stub "), sub.calls[1]
+    assert "shutdown -h now" in sub.calls[1], sub.calls[1]
+
+
 def test_default_grace_matches_600s_not_shorter(tmp_path: Path) -> None:
     """The un-parametrized default must not halt before 600s post-stage-1.
 

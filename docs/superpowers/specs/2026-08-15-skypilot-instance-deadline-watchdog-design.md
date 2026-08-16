@@ -211,15 +211,28 @@ fi
   run refreshes the deadline file and spawns nothing. Two watchdogs never race.
 - **`setsid`** detaches the watchdog from setup's process group, so it survives the setup shell
   exiting and any group-directed signal aimed at the launch.
-- **Arm-failure fallback.** If the spawn fails (no `python3`, no writable `$HOME`), the snippet
-  best-effort schedules `sudo shutdown -h +N` — a kernel/systemd timer needing no daemon — where
-  `N` is minutes-to-deadline rounded up. Weaker than the watchdog (no skylet terminate, not
-  refreshable) but it still bounds the money. The snippet does **not** `exit 1`: a failed setup
-  leaves the cluster up for debugging (documented sky behaviour — "if errors occur during
-  provisioning/data syncing/setting up, the cluster will not be torn down"), so aborting would
-  produce exactly the unbounded-billing cluster this design exists to prevent.
-- **`KF_WD_DIR` / `KF_WD_PYTHON` env overrides** exist so the unit test can run the real snippet
-  twice in a temp directory with a stub interpreter — no cloud, no mocking of the thing under test.
+- **Kernel poweroff backstop is UNCONDITIONAL (F3, final-review fix wave, 2026-08-15).** The
+  original design scheduled `sudo shutdown -h +N` only on a failed spawn. Verified gap: the python
+  daemon can die AFTER a successful arm (OOM-kill, crash) with zero enforcement left — `Task.setup`
+  never re-runs on a live cluster, so there is no later re-arm to notice. The prelude now cancels
+  any previous timer (`shutdown -c`) and reschedules `shutdown -h +N` on **every** arm, success or
+  failure alike. `N` is no longer "minutes to deadline" — it is sized to
+  `deadline_epoch + grace_before_halt_s + backstop_margin_s` (margin = one poll interval + the
+  daemon's `run_command` subprocess timeout), so the kernel timer always fires strictly AFTER the
+  daemon's own stage-1/stage-2 sequence would have finished. This makes it a pure backstop that
+  never races a healthy daemon — it only fires when the daemon isn't there (or didn't spawn) to beat
+  it to the punch. Cancelling first, every time, is what keeps repeated re-arms (cluster reuse
+  across multiple `setup` runs) from stacking timers.
+- **Privileged calls are indirected through `KF_WD_SUDO` (F2, final-review fix wave, 2026-08-15).**
+  Both `shutdown -c` / `shutdown -h +N` in this prelude and the daemon's own stage-2 `shutdown -h
+  now` / `halt -f` resolve the sudo binary from `KF_WD_SUDO` (default `sudo`), exported alongside
+  `KF_WD_DIR` / `KF_WD_PYTHON`. This exists so unit tests can point it at a recording stub instead
+  of ever invoking the real privileged binary — the original tests ran the real prelude verbatim,
+  which would schedule/cancel a REAL poweroff on any host with passwordless sudo (harmless only
+  because this container has none).
+- **`KF_WD_DIR` / `KF_WD_PYTHON` / `KF_WD_SUDO` env overrides** exist so the unit test can run the
+  real snippet twice in a temp directory with stub interpreter + stub sudo — no cloud, no mocking
+  of the thing under test.
 
 ### 3.2 `create_instance` — arming and `down=True`
 
@@ -428,6 +441,20 @@ rather than remove the fallback.
 - A YAML surface for `autodown` / deadline overrides (Brief 5).
 - F11's broken warm-attach endpoint replay for skypilot — noted by the verification doc, untouched
   here.
+- **`deploy()`'s missing F12 protection (F4, final-review fix wave, 2026-08-15) — re-flagged, still
+  unwired.** The review confirmed the gap this doc already called out below: `deploy()`
+  (`core/orchestrator.py:1520`, the entry point `cli/_commands.py:223` calls for the one-shot
+  `kinoforge deploy` command — arguably the command most likely to eat a mid-launch Ctrl-C) takes no
+  `store` or `state_dir` parameter, so it has no way to build the same `Ledger` the CLI's
+  `SessionContext.ledger()` builds (which honours `cfg.store` / sidecar / `--state-dir`
+  precedence). Wiring `set_launch_ledger` here without a store would mean either (a) adding a
+  `store` parameter to `deploy()`'s public signature, or (b) constructing a store internally from a
+  hardcoded default path — which risks silently writing the provisional ledger row to a location
+  `kinoforge list` / the sweeper never reads, i.e. fake protection that looks wired but isn't. The
+  fix-wave instructions were explicit: if closing this requires a signature change, stop and report
+  rather than make it — so it was left as-is. Closing it for real needs a maintainer decision on
+  whether `deploy()` gains a `store: ArtifactStore | None = None` parameter (mirroring
+  `deploy_session`) with `_cmd_deploy` passing `ctx.store()`.
 
 **Implementation deviation (Task 4):** §3.3 sketched an injected `launch_recorder` constructor
 seam wired from `_adapters.build_provider_for`. The task-4 brief instead specified a duck-typed
@@ -439,3 +466,11 @@ seam that is a no-op unless a ledger is installed — but the wiring point is `d
 constructor kwarg. `deploy_session` is the CLI path and the one that matters; the bare `deploy()`
 entry point (no `store` in scope there) is left unwired, matching §3.3's use of the configured
 store.
+
+**F1 reconciliation (final-review fix wave, 2026-08-15):** `cli/_reconcile.py`'s
+`_RECONCILABLE_PROVIDERS` now includes `"skypilot"` alongside `"runpod"`. Without it, a `sky.launch`
+that raises (e.g. `ResourcesUnavailableError`) after the F12 provisional row was written left a
+permanent ghost ledger row — nothing ever forgot it, since auto-reconcile was runpod-only.
+`SkyPilotProvider.get_instance()` is backed by `sky_client.status()`, the same cross-process
+authoritative signal RunPod's API provides, so a `KeyError` reliably means the cluster never came
+up (or is long gone) and the row is safe to forget.

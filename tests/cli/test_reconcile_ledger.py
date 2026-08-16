@@ -74,6 +74,29 @@ def test_non_cloud_provider_never_reconciled() -> None:
     assert ledger.forgotten == []
 
 
+def test_skypilot_gone_cluster_forgotten_live_cluster_kept() -> None:
+    # Bug caught (F1, 2026-08-15): sky.launch raising ResourcesUnavailableError
+    # after the provisional F12 ledger row was recorded left a permanent ghost
+    # row — skypilot was not in _RECONCILABLE_PROVIDERS, so a routine launch
+    # failure's ledger row never self-healed and est_spend inflated forever.
+    # SkyPilotProvider.get_instance() is backed by ``sky status``, which is
+    # cross-process authoritative the same way RunPod's API is, so it must be
+    # reconciled: a row for a cluster the provider does not know about is
+    # forgotten, and a row for a live cluster is left untouched.
+    ledger = _FakeLedger()
+    entries = [
+        {"id": "gone-cluster", "provider": "skypilot"},
+        {"id": "live-1", "provider": "skypilot"},
+    ]
+
+    gone = _reconcile_dead_ledger_entries(
+        ledger, entries, get_provider=_runpod_factory()
+    )
+
+    assert gone == ["gone-cluster"]
+    assert ledger.forgotten == ["gone-cluster"]
+
+
 def test_never_raises_on_bad_provider() -> None:
     # Best-effort: an unresolvable provider must not break `list`.
     ledger = _FakeLedger()
