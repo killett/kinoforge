@@ -357,8 +357,55 @@ Live-spend rules per `CLAUDE.md`: the RED scaffold is committed before any spend
 
 ### 4.3 Smoke result
 
-*(Filled in after the live run — cluster id, wall-clock from launch to EC2 `terminated`, actual
-cost, and which stage fired.)*
+**GREEN on 2026-08-15, run 4** — `tests/live/test_skypilot_watchdog_smoke.py` → `1 passed` in
+981 s (16:21).
+
+| | |
+|---|---|
+| Cluster | `kinoforge-wd-02a20304` (EC2 `i-0b27bf5c8710c0b30`, `c6i.large`, us-west-2) |
+| Deadline | `max_lifetime_s = 900`, armed at launch (epoch `1786847760.7`) |
+| Workload | `sleep 3600` — never terminates, so SkyPilot autostop is inert by construction (F1) |
+| Client | tunnel killed and every handle dropped after launch; `destroy` never called |
+| Stage that fired | **Stage 1** — skylet autodown, a real provisioner terminate |
+| Wall clock, deadline → EC2 `terminated` | ~50 s (detected on the first poll after the deadline) |
+| Final state | `aws ec2 describe-instances` → `terminated`; `sky status` empty; `kinoforge list` → no instances, empty ledger |
+| Cost | ~$0.12 across all four runs (`c6i.large` @ $0.0864/hr); run 4 alone ~$0.023 |
+
+Four runs were needed. The three that failed each found a real defect, and all three are the kind
+that only a live run can surface:
+
+1. **Run 1** (`kinoforge-wd-13b6aaeb`, ~$0.033) — stage 1 fired `rc=0`, but 120 s later stage 2's
+   halt preempted the in-flight terminate and the instance ended `stopped` (compute billing
+   stopped, EBS still billing) instead of terminated. `grace_before_halt_s` raised 120 → 600 s
+   (`9d923da6`). This also exposed that the smoke's EC2 filter used an exact `ray-cluster-name`
+   match while SkyPilot tags `<cluster>-<8 hex>` — the oracle could never have matched.
+2. **Run 2** (`kinoforge-wd-168d7225`, ~$0.019) — aborted at t+791 s, before the deadline, on a
+   single transient `aws ec2 describe-instances` failure (`rc=255`, botocore XML parse error).
+   The "raise on non-zero rc" hardening had no retry. Fixed with a bounded 3× retry; the teardown
+   survivor check also had to learn to wait out the `stopping` → `terminated` transition
+   (`d0b05ae1`).
+3. **Run 3** (`kinoforge-wd-6722c3f1`, ~$0.037) — **the root cause of the stage-1 failure.** With
+   the longer grace, stage 1 had time to be observed properly, and the skylet's own log showed:
+
+   ```
+   5.0 minute(s) since last active; threshold: 0 minutes. Stopping.
+   AutostopEvent error: ... sky/skylet/events.py, line 364, in _stop_cluster
+       raise NotImplementedError
+   ```
+
+   The autostop *decision* worked exactly as designed — `wait_for=NONE` plus `idle_minutes=0`
+   bypassed the permanently-False idle check that F1 identified. The *dispatch* failed:
+   `_stop_cluster` compares `autostop_config.backend` against
+   `cloud_vm_ray_backend.CloudVmRayBackend.NAME`, whose value is `'cloudvmray'`, and this design
+   specified the class name `'CloudVmRayBackend'`. Every non-matching backend falls through to
+   `else: raise NotImplementedError`. Stage 1 had therefore never been able to terminate on any
+   run; only stage 2's halt was killing the instance. The payload now imports the constant rather
+   than hardcoding a string (`b9cb8edc`).
+
+The lesson worth carrying: `rc=0` from the stage-1 command proves the *command* ran, not that the
+terminate happened. The watchdog cannot see the skylet's asynchronous failure, which is precisely
+why stage 2 exists — and why run 1's "stage 2 preempted stage 1" fix had to lengthen the grace
+rather than remove the fallback.
 
 ---
 

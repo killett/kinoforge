@@ -111,6 +111,35 @@ first unchecked task without redoing committed work.
   F8 guard) are in the doc's final section. Sidebar: the user-scope redact hook false-positives on
   benign identifiers (`idle_minutes_to_autostop`, `SkyPilotProvider(`, `skypilot-minimal`) and
   corrupts `rg` output — all quotes in the doc were taken via `Read`, not grep.
+- **SkyPilot instance-side deadline watchdog (COMPLETE + LIVE-GREEN 2026-08-15):**
+  `docs/superpowers/specs/2026-08-15-skypilot-instance-deadline-watchdog-design.md` +
+  `docs/superpowers/plans/2026-08-15-skypilot-instance-deadline-watchdog.md` (7 tasks 0-6,
+  `.tasks.json` co-located). Closes the F1/F2/F12 composite: a SkyPilot cluster can no longer
+  outlive its client. Commits `aded8e1` (deadline math) · `363b7bb`+`62cd336` (on-instance
+  watchdog program + tick guard) · `1193d34`+`0136235` (idempotent arming prelude, cmdline-identity
+  pid guard) · `83b862a` (arm at top of `Task.setup` + `down=True`) · `dfafe4e`+`71cc849`
+  (pre-launch provisional ledger row) · `2a9021c`+`ae1951c` (live smoke) · `9d923da`, `d0b05ae`,
+  `b9cb8ed` (three live-caught fixes).
+  **What ships:** `providers/skypilot/watchdog.py` renders (a) `compute_deadline` —
+  `min(launch + max_lifetime_s, launch + budget/rate*3600)`, launch-relative so it also bounds the
+  provisioning window; (b) a stdlib-only python daemon that polls a deadline file every 15 s and at
+  the deadline asks the node's own skylet to autodown NOW (`idle_minutes=0`, `wait_for=NONE`,
+  `down=True`), falling back to `sudo shutdown -h now` after a 600 s grace; (c) a bash prelude
+  prepended to `Task.setup`, idempotent via a `pgrep -f watchdog.py` identity check, defended by
+  `( set +e +u; … ) || true` so it can never abort setup. No kinoforge-supplied credential is on
+  the instance — stage 1 uses the credentials SkyPilot itself already places there.
+  **Live proof (run 4, `kinoforge-wd-02a20304`, c6i.large us-west-2):** launch → client dropped →
+  EC2 `terminated` ~50 s after the 900 s deadline, `sky status` empty, ledger clean; ~$0.12 across
+  four runs. §4.3 of the design doc has the full evidence.
+  **Three defects only a live run could find:** stage 2's halt preempting an in-flight stage-1
+  terminate (grace 120 → 600 s); a single transient `aws` CLI failure aborting a 15-min run (no
+  retry); and — the big one — stage 1 passing the backend as `'CloudVmRayBackend'` when
+  `CloudVmRayBackend.NAME == 'cloudvmray'`, so the skylet's `_stop_cluster` hit
+  `raise NotImplementedError` and stage 1 had never once terminated anything. `rc=0` from the
+  stage-1 command proves the command ran, not that the terminate happened.
+  **Deliberately out of scope (Brief 2/5):** reaper verdicts for a `kf_launch_phase=launching` row;
+  the bare `deploy()` entry point (no `store` in scope) stays unwired; a YAML surface for
+  `autodown`.
 - **SINGLE NEXT ACTION (updated 2026-07-28): fix the VRAM-OOM rollback inventory KeyError.**
   Surfaced while fixing B9. After a mandatory-evict + OOM, `_replace_adapter_stack(previous_state)`
   looks up `_inventory[(ref, branch)]` for a key the evict pass already removed → KeyError → HTTP
