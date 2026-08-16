@@ -20,7 +20,7 @@ class _Src(ModelSource):
 
 
 def test_provider_factory_round_trips():
-    registry.register_provider("dummy", lambda: "P")  # type: ignore[arg-type, return-value]
+    registry.register_provider("dummy", lambda: "P", object)  # type: ignore[arg-type, return-value]
     # Bug this catches: get_provider returning the constructed value instead of the factory.
     assert registry.get_provider("dummy")() == "P"  # type: ignore[comparison-overlap]
 
@@ -58,8 +58,8 @@ def test_unknown_ref_raises_named():
 
 
 def test_provider_re_registration_overwrites():
-    registry.register_provider("dup", lambda: "first")  # type: ignore[arg-type, return-value]
-    registry.register_provider("dup", lambda: "second")  # type: ignore[arg-type, return-value]
+    registry.register_provider("dup", lambda: "first", object)  # type: ignore[arg-type, return-value]
+    registry.register_provider("dup", lambda: "second", object)  # type: ignore[arg-type, return-value]
     # Bug this catches: append-only registry that returns the first registration.
     assert registry.get_provider("dup")() == "second"  # type: ignore[comparison-overlap]
 

@@ -975,14 +975,19 @@ def status_fake_provider():
     # Lambda returns a duck-typed fake, not a ComputeProvider subclass;
     # registry only stores the factory and the runtime type is not enforced
     # (matches `tests/core/test_registry.py` `lambda: "P"` pattern).
-    registry.register_provider("fake-status", lambda: inst)  # type: ignore[arg-type, return-value]
+    registry.register_provider(
+        "fake-status",
+        lambda: inst,  # type: ignore[arg-type, return-value]
+        _StatusFakeProvider,  # type: ignore[arg-type]
+    )
     try:
         yield inst
     finally:
         # The registry has no public unregister API; pop the private dict
-        # entry so the registration does not leak across tests. Test-only
-        # escape hatch (private module attr).
+        # entries so the registration does not leak across tests. Test-only
+        # escape hatch (private module attrs).
         registry._providers.pop("fake-status", None)
+        registry._provider_classes.pop("fake-status", None)
 
 
 def _seed_ledger_with(tmp_path: Path, entry: dict[str, object]) -> Path:

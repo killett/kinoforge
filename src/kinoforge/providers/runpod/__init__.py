@@ -1364,7 +1364,7 @@ def _default_factory() -> RunPodProvider:
     return RunPodProvider(creds=EnvCredentialProvider())
 
 
-registry.register_provider("runpod", _default_factory)
+registry.register_provider("runpod", _default_factory, RunPodProvider)
 
 
 # ---------------------------------------------------------------------------

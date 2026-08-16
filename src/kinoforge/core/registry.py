@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from kinoforge.core.interfaces import ImageEngine
 
 _providers: dict[str, Callable[[], ComputeProvider]] = {}
+_provider_classes: dict[str, type[ComputeProvider]] = {}
 _engines: dict[str, Callable[[], GenerationEngine]] = {}
 _sources: list[ModelSource] = []
 _artifact_stores: dict[str, Callable[[], ArtifactStore]] = {}
@@ -39,14 +40,33 @@ _upscalers: dict[str, Callable[[], UpscalerEngine]] = {}
 _interpolators: dict[str, Callable[[], InterpolatorEngine]] = {}
 
 
-def register_provider(name: str, factory: Callable[[], ComputeProvider]) -> None:
-    """Register a compute provider factory under ``name`` (overwrites).
+def register_provider(
+    name: str,
+    factory: Callable[[], ComputeProvider],
+    provider_cls: type[ComputeProvider],
+) -> None:
+    """Register a compute provider factory + class under ``name`` (overwrites).
+
+    The class is stored alongside the factory so capability lookups can be
+    answered by name without constructing a provider — the reaper must be
+    able to ask in a process that cannot reach the provider at all.
 
     Args:
         name: The registry key for this provider.
         factory: Zero-arg callable that returns a ``ComputeProvider`` instance.
+        provider_cls: The class itself, for class-level capability lookup.
     """
     _providers[name] = factory
+    _provider_classes[name] = provider_cls
+
+
+def provider_class(name: str) -> type[ComputeProvider] | None:
+    """Return the registered class for ``name``, or None if unregistered.
+
+    Unlike :func:`get_provider` this never raises — callers (capability
+    lookup) treat an unknown provider as "declares nothing".
+    """
+    return _provider_classes.get(name)
 
 
 def provider_names() -> list[str]:

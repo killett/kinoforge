@@ -204,4 +204,4 @@ class LocalProvider(ComputeProvider):
 # Self-registration
 # ---------------------------------------------------------------------------
 
-registry.register_provider("local", lambda: LocalProvider())
+registry.register_provider("local", lambda: LocalProvider(), LocalProvider)

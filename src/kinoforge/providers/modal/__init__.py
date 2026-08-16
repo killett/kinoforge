@@ -380,4 +380,4 @@ class ModalProvider(ComputeProvider):
         )
 
 
-registry.register_provider("modal", lambda: ModalProvider())
+registry.register_provider("modal", lambda: ModalProvider(), ModalProvider)

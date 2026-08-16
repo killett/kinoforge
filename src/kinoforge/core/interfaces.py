@@ -12,8 +12,17 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    Protocol,
+    Self,
+    runtime_checkable,
+)
 
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.fps_resolver import InterpCapability
 from kinoforge.core.scale_target import ScaleTarget
 
@@ -229,6 +238,30 @@ class ComputeProvider(ABC):
     """A place to run GPU workloads. Instances created with cost guardrails."""
 
     name: str
+
+    #: False for providers that cost nothing (LocalProvider). Spend-risk
+    #: validation rows are skipped for unbilled providers; liveness rows
+    #: still apply.
+    billed: ClassVar[bool] = True
+
+    @classmethod
+    def capabilities(
+        cls, shape: WorkloadShape = WorkloadShape.SERVER
+    ) -> frozenset[Capability]:
+        """Return the guardrails this provider can itself enforce.
+
+        Default is EMPTY on purpose: a provider that has not declared
+        claims nothing, so config validation refuses it loudly instead of
+        silently trusting it. Declaring is part of writing a provider.
+
+        Args:
+            shape: Workload shape. Only matters where a capability is
+                genuinely shape-dependent (skypilot's IDLE_AUTOSTOP).
+
+        Returns:
+            The declared capability set.
+        """
+        return frozenset()
 
     @abstractmethod
     def find_offers(self, reqs: HardwareRequirements) -> list[Offer]: ...  # noqa: D102

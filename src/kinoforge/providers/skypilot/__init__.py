@@ -1072,7 +1072,7 @@ class SkyPilotProvider(ComputeProvider):
 # Self-registration
 # ---------------------------------------------------------------------------
 
-registry.register_provider("skypilot", lambda: SkyPilotProvider())
+registry.register_provider("skypilot", lambda: SkyPilotProvider(), SkyPilotProvider)
 
 
 # ---------------------------------------------------------------------------
