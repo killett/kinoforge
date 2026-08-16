@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 
 from kinoforge.core import registry
+from kinoforge.core.errors import ProvisionFailed
 from kinoforge.core.interfaces import (
     HardwareRequirements,
     Instance,
@@ -1340,3 +1341,137 @@ def test_autodown_false_opts_out() -> None:
     provider.create_instance(_watchdog_spec())
     _, kwargs = fake.launch_calls[-1]
     assert kwargs.get("down") is False, kwargs
+
+
+class _RecordingLedger:
+    """Ledger-shaped fake sharing one call-sequence list with the fake sky."""
+
+    def __init__(self, sequence: list[str]) -> None:
+        self.sequence = sequence
+        self.recorded: list[Any] = []
+        self.forgotten: list[str] = []
+
+    def record(self, instance: Any, **kwargs: Any) -> None:
+        self.sequence.append("record")
+        self.recorded.append(instance)
+
+    def forget(self, instance_id: str) -> None:
+        self.sequence.append("forget")
+        self.forgotten.append(instance_id)
+
+
+def test_ledger_row_is_written_before_launch() -> None:
+    """The durable record exists BEFORE sky.launch is entered (F12).
+
+    A bug this catches: recording after ``create_instance`` returns — which
+    is what HEAD does via ``on_instance_created`` — leaving a SIGKILL during
+    the multi-minute launch with a billing cluster no kinoforge command can
+    see.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    sequence: list[str] = []
+    fake = _FakeSky()
+    original_launch = fake.launch
+
+    def _recording_launch(task: Any, **kwargs: Any) -> Any:
+        sequence.append("launch")
+        return original_launch(task, **kwargs)
+
+    fake.launch = _recording_launch  # type: ignore[method-assign]
+    ledger = _RecordingLedger(sequence)
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.set_launch_ledger(ledger)
+
+    provider.create_instance(_watchdog_spec())
+
+    assert sequence[:2] == ["record", "launch"], sequence
+
+
+def test_provisional_row_carries_enough_to_find_and_destroy() -> None:
+    """The row names the cluster, its cloud, its rate and its deadline.
+
+    A bug this catches: a row with only an id — a later sweep could not tell
+    which cloud to reach, what the run cost, or whether it is already past
+    its deadline.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    ledger = _RecordingLedger([])
+    provider = SkyPilotProvider(sky_client=fake, clouds=["aws"])
+    provider.set_launch_ledger(ledger)
+
+    provider.create_instance(_watchdog_spec(run_id="kf-provisional"))
+
+    row = ledger.recorded[0]
+    assert row.id == "kf-provisional"
+    assert row.provider == "skypilot"
+    assert row.tags["kf_launch_phase"] == "launching"
+    assert row.tags["kf_cloud"] == "aws"
+    assert row.tags["kf_run_id"] == "kf-provisional"
+    assert float(row.tags["kf_deadline_epoch"]) > float(row.tags["kf_launched_at"])
+
+
+def test_success_path_forgets_the_provisional_row() -> None:
+    """On success the provisional row is removed, avoiding a duplicate.
+
+    The orchestrator's ``on_instance_created`` writes the real row; Ledger
+    .record appends, so leaving both would show one cluster twice in
+    ``kinoforge list``.
+
+    A bug this catches: skipping the forget and shipping duplicate rows.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    ledger = _RecordingLedger([])
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.set_launch_ledger(ledger)
+
+    provider.create_instance(_watchdog_spec(run_id="kf-forget-me"))
+
+    assert ledger.forgotten == ["kf-forget-me"]
+
+
+def test_tunnel_failure_keeps_the_provisional_row() -> None:
+    """A cluster whose tunnel failed stays recorded — it may still be alive.
+
+    ``create_instance`` best-effort ``sky.down``s on tunnel failure; if that
+    down also fails the cluster bills on. That is exactly the orphan the row
+    exists for.
+
+    A bug this catches: forgetting in a blanket ``finally``, deleting the
+    record precisely when it matters most.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    def _boom(cluster: str, local_port: int, remote_port: int) -> Any:
+        raise OSError("ssh refused")
+
+    fake = _FakeSky()
+    ledger = _RecordingLedger([])
+    provider = SkyPilotProvider(sky_client=fake, ssh_spawn=_boom)
+    provider.set_launch_ledger(ledger)
+
+    with pytest.raises(ProvisionFailed):
+        provider.create_instance(
+            _watchdog_spec(run_id="kf-orphan", run_cmd=["sleep", "1"])
+        )
+
+    assert ledger.forgotten == [], ledger.forgotten
+    assert ledger.recorded and ledger.recorded[0].id == "kf-orphan"
+
+
+def test_no_ledger_installed_is_a_no_op() -> None:
+    """Without a ledger the provider still launches normally.
+
+    A bug this catches: an unconditional ledger call, breaking every existing
+    construction of the provider (all unit tests, the live smokes).
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    inst = provider.create_instance(_watchdog_spec(run_id="kf-no-ledger"))
+    assert inst.id == "kf-no-ledger"

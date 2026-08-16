@@ -1141,6 +1141,12 @@ def deploy_session(
     resolved_provider: ComputeProvider | None = None
     if resolved_engine.requires_compute:
         resolved_provider = _resolve_provider(cfg, provider)
+        # F12 — hand the provider a ledger so it can write a durable row
+        # BEFORE its (multi-minute) create call. Duck-typed: core must not
+        # import provider modules, and ComputeProvider's ABC is out of scope.
+        _install_launch_ledger = getattr(resolved_provider, "set_launch_ledger", None)
+        if _install_launch_ledger is not None:
+            _install_launch_ledger(Ledger(store=store))
 
     # ------------------------------------------------------------------
     # Step 2.5 — UX A hosted preflight (Layer I)

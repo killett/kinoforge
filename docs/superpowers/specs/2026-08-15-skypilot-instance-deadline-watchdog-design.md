@@ -343,3 +343,14 @@ cost, and which stage fired.)*
 - A YAML surface for `autodown` / deadline overrides (Brief 5).
 - F11's broken warm-attach endpoint replay for skypilot — noted by the verification doc, untouched
   here.
+
+**Implementation deviation (Task 4):** §3.3 sketched an injected `launch_recorder` constructor
+seam wired from `_adapters.build_provider_for`. The task-4 brief instead specified a duck-typed
+`provider.set_launch_ledger(ledger)` setter, installed by `deploy_session` in
+`core/orchestrator.py` (immediately after `resolved_provider = _resolve_provider(cfg, provider)`)
+via `getattr(resolved_provider, "set_launch_ledger", None)`. Net effect is the same — an opt-in
+seam that is a no-op unless a ledger is installed — but the wiring point is `deploy_session`, not
+`_adapters.build_provider_for`, and the seam is a post-construction setter rather than a
+constructor kwarg. `deploy_session` is the CLI path and the one that matters; the bare `deploy()`
+entry point (no `store` in scope there) is left unwired, matching §3.3's use of the configured
+store.

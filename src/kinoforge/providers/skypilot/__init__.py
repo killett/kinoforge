@@ -480,6 +480,16 @@ def _normalize_image_id(image: str) -> str:
     return f"docker:{image}"
 
 
+class _LaunchLedger(Protocol):
+    """The slice of :class:`~kinoforge.core.lifecycle.Ledger` used pre-launch."""
+
+    def record(self, instance: Instance, **kwargs: Any) -> None:  # noqa: ANN401
+        """Append a row for *instance*."""
+
+    def forget(self, instance_id: str) -> None:
+        """Remove the row for *instance_id*."""
+
+
 # ---------------------------------------------------------------------------
 # SkyPilotProvider
 # ---------------------------------------------------------------------------
@@ -580,6 +590,23 @@ class SkyPilotProvider(ComputeProvider):
         )
         #: cluster_name -> live tunnel subprocess handle (killed on destroy).
         self._tunnels: dict[str, Any] = {}
+        #: Optional ledger for the pre-launch provisional row (F12). ``None``
+        #: until :meth:`set_launch_ledger` is called; every existing
+        #: construction of this provider leaves it unset, so behaviour is
+        #: unchanged without an explicit opt-in.
+        self._launch_ledger: _LaunchLedger | None = None
+
+    def set_launch_ledger(self, ledger: _LaunchLedger) -> None:
+        """Install the ledger used for the pre-launch provisional row.
+
+        Duck-typed rather than an ABC method: :class:`ComputeProvider` is out
+        of scope for this change, and ``kinoforge.core`` must not import
+        provider modules. The orchestrator calls this via ``getattr``.
+
+        Args:
+            ledger: A :class:`~kinoforge.core.lifecycle.Ledger`-shaped object.
+        """
+        self._launch_ledger = ledger
 
     # ------------------------------------------------------------------
     # Private helper — resolve sky seam
@@ -816,6 +843,33 @@ class SkyPilotProvider(ComputeProvider):
         }
         if self._retry_until_up:
             launch_kwargs["retry_until_up"] = True
+
+        # F12 — durable record BEFORE the launch. sky.launch is a multi-minute
+        # call; a SIGKILL inside it would otherwise leave a billing cluster
+        # that no kinoforge command can see. Forgotten on the success path so
+        # the orchestrator's post-create record is the only surviving row.
+        provisional = Instance(
+            id=cluster_name,
+            provider=self.name,
+            status="starting",
+            created_at=launch_epoch,
+            endpoints={},
+            tags={
+                **dict(spec.tags),
+                "kf_launch_phase": "launching",
+                "kf_cloud": ",".join(self._clouds) if self._clouds else "auto",
+                "kf_run_id": spec.run_id or cluster_name,
+                "kf_launched_at": repr(launch_epoch),
+                "kf_deadline_epoch": repr(deadline_epoch),
+            },
+            cost_rate_usd_per_hr=(
+                spec.offer.cost_rate_usd_per_hr if spec.offer is not None else 0.0
+            ),
+        )
+        if self._launch_ledger is not None:
+            self._launch_ledger.record(
+                provisional, max_age_s=int(spec.lifecycle.max_lifetime_s)
+            )
         raw = sky.launch(task, **launch_kwargs)
         # Resolve a possible RequestId — the launch payload itself is not used
         # because the cluster name we passed *is* the canonical id and the
@@ -841,6 +895,12 @@ class SkyPilotProvider(ComputeProvider):
                 ) from exc
             self._tunnels[cluster_name] = tunnel
             endpoints = {"8000": f"http://127.0.0.1:{local_port}"}
+        # Success: hand the record over to the orchestrator's post-create
+        # write. Deliberately NOT in a finally — the tunnel-failure path
+        # must keep its row, because a failed best-effort ``sky.down``
+        # leaves a live cluster that only this row can surface.
+        if self._launch_ledger is not None:
+            self._launch_ledger.forget(cluster_name)
         return Instance(
             id=cluster_name,
             provider=self.name,
