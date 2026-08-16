@@ -120,6 +120,24 @@ _HALTED_STATES = {"stopping", "stopped"}
 #: rather than "never came up" (wrong region, tag-key drift, expired creds).
 _LIVE_STATES = {"pending", "running"}
 
+#: A single `aws ec2 describe-instances` call has been observed to fail
+#: transiently mid-run (2026-08-15 run 2: rc=255, a malformed/truncated XML
+#: response from the EC2 API, ~13 minutes into a 15-minute-deadline poll
+#: loop). Retrying a handful of times absorbs that kind of blip without
+#: masking a genuine, persistent failure (bad region, expired creds), which
+#: still exhausts the budget and raises within roughly a minute.
+_EC2_QUERY_RETRIES = 3
+_EC2_QUERY_RETRY_BACKOFF_S = 5.0
+
+#: After `sky.down` returns, the EC2 instance can still be caught mid
+#: state-transition (``running`` -> ``shutting-down`` -> ``terminated``) for
+#: a few seconds. Poll instead of single-shot re-checking so that window
+#: isn't misread as a survivor (2026-08-15 run 2: the immediate re-check
+#: caught the instance still ``running`` a moment before it reached
+#: ``terminated``).
+_TEARDOWN_POLL_TIMEOUT_S = 180.0
+_TEARDOWN_POLL_INTERVAL_S = 15.0
+
 #: Default kinoforge state dir (matches the CLI's ``--state-dir`` default),
 #: so a ledger row this test leaves behind is exactly where
 #: ``kinoforge list`` / ``kinoforge forget`` already look for it.
@@ -139,12 +157,17 @@ def _ec2_states(cluster_name: str) -> list[str]:
         means AWS reports zero instances tagged with this cluster name.
 
     Raises:
-        RuntimeError: The ``aws`` CLI call itself failed (non-zero exit —
-            wrong region, expired creds, throttling, ...). Raising here
-            instead of returning ``[]`` matters: a swallowed failure is
-            indistinguishable from "genuinely no instances", which would
-            let a live instance queried under broken credentials read as
-            "already reaped" — a false PASS with the meter still running.
+        RuntimeError: The ``aws`` CLI call itself failed on every one of
+            ``_EC2_QUERY_RETRIES`` attempts (non-zero exit — wrong region,
+            expired creds, throttling, ... — or output that fails to parse
+            as JSON). Raising here instead of returning ``[]`` matters: a
+            swallowed failure is indistinguishable from "genuinely no
+            instances", which would let a live instance queried under
+            broken credentials read as "already reaped" — a false PASS
+            with the meter still running. A single transient failure (a
+            malformed/truncated API response, observed live 2026-08-15) is
+            NOT raised immediately — see ``_EC2_QUERY_RETRIES`` — so a
+            one-off blip can't kill an otherwise-healthy 15-minute run.
     """
     # SkyPilot tags instances `ray-cluster-name = <cluster_name>-<8 hex>`,
     # NOT the bare cluster name (observed live 2026-08-15:
@@ -155,30 +178,58 @@ def _ec2_states(cluster_name: str) -> list[str]:
     # observed. The trailing `*` wildcard (verified against the live API)
     # matches the suffixed tag while still being specific to this run's
     # cluster name.
-    completed = subprocess.run(
-        [
-            "aws",
-            "ec2",
-            "describe-instances",
-            "--region",
-            _REGION,
-            "--filters",
-            f"Name=tag:ray-cluster-name,Values={cluster_name}*",
-            "--query",
-            "Reservations[].Instances[].State.Name",
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
+    args = [
+        "aws",
+        "ec2",
+        "describe-instances",
+        "--region",
+        _REGION,
+        "--filters",
+        f"Name=tag:ray-cluster-name,Values={cluster_name}*",
+        "--query",
+        "Reservations[].Instances[].State.Name",
+        "--output",
+        "json",
+    ]
+    last_error = ""
+    last_rc = 0
+    for attempt in range(1, _EC2_QUERY_RETRIES + 1):
+        # `capture_output=True` gives separate `.stdout` / `.stderr` pipes
+        # (no merging) — the JSON we parse below comes from `.stdout` only,
+        # so any `DEBUG - ...` logging the aws CLI writes to `.stderr` on a
+        # failure (confirmed at awscli/logger.py: `set_stream_logger`
+        # defaults its handler to `sys.stderr`) can never land inside the
+        # parsed payload.
+        completed = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        if completed.returncode != 0:
+            last_rc = completed.returncode
+            last_error = completed.stderr.strip()
+            _log.warning(
+                "aws ec2 describe-instances attempt %d/%d failed (rc=%d): %s",
+                attempt,
+                _EC2_QUERY_RETRIES,
+                last_rc,
+                last_error,
+            )
+        else:
+            try:
+                return list(json.loads(completed.stdout or "[]"))
+            except json.JSONDecodeError as exc:
+                last_rc = completed.returncode
+                last_error = f"non-JSON stdout ({exc}): {completed.stdout!r}"
+                _log.warning(
+                    "aws ec2 describe-instances attempt %d/%d returned unparseable "
+                    "stdout: %s",
+                    attempt,
+                    _EC2_QUERY_RETRIES,
+                    last_error,
+                )
+        if attempt < _EC2_QUERY_RETRIES:
+            time.sleep(_EC2_QUERY_RETRY_BACKOFF_S)
+    raise RuntimeError(
+        f"aws ec2 describe-instances failed on all {_EC2_QUERY_RETRIES} attempts "
+        f"(last rc={last_rc}): {last_error}"
     )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"aws ec2 describe-instances failed (rc={completed.returncode}): "
-            f"{completed.stderr.strip()}"
-        )
-    return list(json.loads(completed.stdout or "[]"))
 
 
 def _classify(states: list[str], *, observed_live: bool) -> str:
@@ -217,6 +268,13 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
     ``[]``) on a broken query, so a failing describe-instances call can no
     longer be misread as a clean teardown either.
 
+    ``sky.down`` returning does not mean the EC2 instance has finished its
+    state transition — it can still be caught ``running``/``pending`` for a
+    few seconds afterwards (observed live 2026-08-15: an immediate re-check
+    read a genuinely-tearing-down instance as a survivor). So the survivor
+    check polls for up to ``_TEARDOWN_POLL_TIMEOUT_S``, waiting out any
+    transient ``_LIVE_STATES`` snapshot, before deciding.
+
     Args:
         cluster_name: SkyPilot cluster name to tear down.
         tunnel: SSH tunnel handle to kill first, or ``None`` if already
@@ -225,10 +283,10 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
     Raises:
         RuntimeError: An EC2 instance tagged with ``cluster_name`` is still
             alive or merely halted (not ``shutting-down``/``terminated``)
-            after both teardown attempts — a stopped-but-not-terminated
-            instance still bills its EBS volume, so it counts as a survivor
-            here even though the poll loop treats "halted" as a legitimate
-            stage-2 outcome.
+            after both teardown attempts and the poll window above — a
+            stopped-but-not-terminated instance still bills its EBS volume,
+            so it counts as a survivor here even though the main test's
+            poll loop treats "halted" as a legitimate stage-2 outcome.
     """
     if tunnel is not None:
         try:
@@ -239,7 +297,21 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
         sky.down(cluster_name, purge=True)
     except Exception as exc:  # noqa: BLE001
         _log.warning("sky.down raised (expected when already gone): %r", exc)
-    survivors = [s for s in _ec2_states(cluster_name) if s not in _DEAD_STATES]
+
+    states = _ec2_states(cluster_name)
+    poll_deadline = time.time() + _TEARDOWN_POLL_TIMEOUT_S
+    while any(s in _LIVE_STATES for s in states) and time.time() < poll_deadline:
+        _log.info(
+            "teardown poll: cluster=%s still transitioning states=%r — "
+            "waiting up to %.0fs more",
+            cluster_name,
+            states,
+            poll_deadline - time.time(),
+        )
+        time.sleep(_TEARDOWN_POLL_INTERVAL_S)
+        states = _ec2_states(cluster_name)
+
+    survivors = [s for s in states if s not in _DEAD_STATES]
     if survivors:
         raise RuntimeError(
             f"cluster {cluster_name!r} survived teardown with states {survivors!r} "
