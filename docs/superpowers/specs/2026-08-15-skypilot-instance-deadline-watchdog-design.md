@@ -1,7 +1,8 @@
 # SkyPilot instance-side deadline watchdog — design
 
 - **Date:** 2026-08-15
-- **Status:** validated (operator-approved 2026-08-15), implementation pending
+- **Status:** IMPLEMENTED + LIVE-GREEN 2026-08-15 (see §4.3). Plan:
+  `docs/superpowers/plans/2026-08-15-skypilot-instance-deadline-watchdog.md`
 - **Brief:** "guarantee a SkyPilot cluster dies without the client"
 - **Depends on:** `docs/superpowers/research/2026-08-15-cloud-layer-findings-verification.md`
   (findings F1, F2, F12)
@@ -454,7 +455,18 @@ rather than remove the fallback.
   fix-wave instructions were explicit: if closing this requires a signature change, stop and report
   rather than make it — so it was left as-is. Closing it for real needs a maintainer decision on
   whether `deploy()` gains a `store: ArtifactStore | None = None` parameter (mirroring
-  `deploy_session`) with `_cmd_deploy` passing `ctx.store()`.
+  `deploy_session`) with `_cmd_deploy` passing `ctx.store()`. The final re-review noted a third
+  option: `deploy()` already accepts `provider: ComputeProvider | None` and `_resolve_provider`
+  returns an injected provider as-is, so `_cmd_deploy` could build the provider, install the ledger,
+  and pass it in — but that path skips the heartbeat wiring at `orchestrator.py:193-198` and would
+  silently drop `heartbeat_mode`, so it is not a free win either.
+- **The reconciler can forget an in-flight `launching` row (narrow F12 residue).** With `"skypilot"`
+  now in `_RECONCILABLE_PROVIDERS`, a `kinoforge list` run in another process *while* a `sky.launch`
+  is still provisioning can see the not-yet-registered cluster, treat the provisional row as dead,
+  and forget it — reopening the exact window the row exists to cover, though only for the seconds a
+  concurrent `list` overlaps a launch. `_reconcile_dead_ledger_entries` has no `kf_launch_phase`
+  guard; adding one (skip rows whose phase is `launching` and whose `kf_launched_at` is younger than
+  `boot_timeout_s`) is the natural fix and belongs with Brief 5's reaper work.
 
 **Implementation deviation (Task 4):** §3.3 sketched an injected `launch_recorder` constructor
 seam wired from `_adapters.build_provider_for`. The task-4 brief instead specified a duck-typed
