@@ -69,6 +69,7 @@ from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 from kinoforge.core import registry
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.errors import KinoforgeError, ProvisionFailed
 from kinoforge.core.interfaces import (
     ComputeProvider,
@@ -532,6 +533,23 @@ class SkyPilotProvider(ComputeProvider):
     """
 
     name: str = "skypilot"
+
+    @classmethod
+    def capabilities(
+        cls, shape: WorkloadShape = WorkloadShape.SERVER
+    ) -> frozenset[Capability]:
+        """Instance-side deadline always; autostop only for batch specs.
+
+        ON_INSTANCE_DEADLINE is the watchdog armed at the top of ``Task.setup``
+        (providers/skypilot/watchdog.py). IDLE_AUTOSTOP holds only at BATCH:
+        a server spec's ``run_cmd`` becomes a never-terminating ``Task.run``,
+        so ``job_lib.is_cluster_idle()`` is permanently False (verification
+        doc F1) and the 60 s AutostopEvent tick resets the timer forever.
+        """
+        caps = {Capability.ON_INSTANCE_DEADLINE}
+        if shape is WorkloadShape.BATCH:
+            caps.add(Capability.IDLE_AUTOSTOP)
+        return frozenset(caps)
 
     def __init__(
         self,

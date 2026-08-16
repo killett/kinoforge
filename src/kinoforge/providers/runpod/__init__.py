@@ -40,6 +40,7 @@ from typing import Any, Protocol
 
 from kinoforge.core import registry
 from kinoforge.core.boot_liveness import BootVerdict, classify_boot_liveness
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.errors import CapacityError, TeardownError, TransportError
@@ -318,6 +319,28 @@ class RunPodProvider(ComputeProvider):
     """
 
     name: str = "runpod"
+
+    @classmethod
+    def capabilities(
+        cls, shape: WorkloadShape = WorkloadShape.SERVER
+    ) -> frozenset[Capability]:
+        """Richest provider. Deliberately NOT IDLE_AUTOSTOP.
+
+        ``selfterm.py`` is a boot-relative money cap (audit B4, 67627cd0), not
+        idle detection — RunPod idle reaping is controller-side only, which the
+        design doc rules out as risk coverage.
+        """
+        return frozenset(
+            {
+                Capability.HEARTBEAT_READ,
+                Capability.RUNTIME_PROBE,
+                Capability.UTIL_SNAPSHOT,
+                Capability.ON_INSTANCE_DEADLINE,
+                Capability.JOB_TIMEOUT,
+                Capability.PAUSE_BILLING,
+                Capability.BALANCE_QUERY,
+            }
+        )
 
     def __init__(
         self,

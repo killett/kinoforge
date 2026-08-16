@@ -7,8 +7,10 @@ Self-registers under ``"local"`` when this module is imported.  Inject a
 from __future__ import annotations
 
 import uuid
+from typing import ClassVar
 
 from kinoforge.core import registry
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.interfaces import (
     ComputeProvider,
@@ -67,6 +69,27 @@ class LocalProvider(ComputeProvider):
     """
 
     name: str = "local"
+
+    billed: ClassVar[bool] = False
+
+    @classmethod
+    def capabilities(
+        cls, shape: WorkloadShape = WorkloadShape.SERVER
+    ) -> frozenset[Capability]:
+        """In-process provider: real heartbeat dict, real stop, scripted util.
+
+        UTIL_SNAPSHOT is ``providers/local/util.py`` — a scripted in-process
+        seam, not a measurement. It stays declared because the endpoint does
+        return snapshots and LocalProvider is unbilled, so no money decision
+        rides on it.
+        """
+        return frozenset(
+            {
+                Capability.HEARTBEAT_READ,
+                Capability.UTIL_SNAPSHOT,
+                Capability.PAUSE_BILLING,
+            }
+        )
 
     def __init__(self, clock: Clock | None = None) -> None:
         """Initialise the provider.

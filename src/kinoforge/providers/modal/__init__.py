@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from kinoforge.core import registry
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.interfaces import (
     ComputeProvider,
@@ -40,6 +41,26 @@ class ModalProvider(ComputeProvider):
     """Compute provider backed by Modal serverless GPUs."""
 
     name: str = "modal"
+
+    @classmethod
+    def capabilities(
+        cls, shape: WorkloadShape = WorkloadShape.SERVER
+    ) -> frozenset[Capability]:
+        """Container-level idle scaledown + a function timeout deadline.
+
+        IDLE_AUTOSTOP is ``_app.py`` ``scaledown_window`` (default 300 s);
+        ON_INSTANCE_DEADLINE is the ``@app.function(timeout=...)`` cap. Modal
+        does NOT honour cfg's ``lifecycle.job_timeout``, so JOB_TIMEOUT is
+        absent, and there is no wire-level heartbeat read.
+        """
+        return frozenset(
+            {
+                Capability.RUNTIME_PROBE,
+                Capability.UTIL_SNAPSHOT,
+                Capability.IDLE_AUTOSTOP,
+                Capability.ON_INSTANCE_DEADLINE,
+            }
+        )
 
     def __init__(
         self,
