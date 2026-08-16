@@ -140,6 +140,29 @@ first unchecked task without redoing committed work.
   **Deliberately out of scope (Brief 2/5):** reaper verdicts for a `kf_launch_phase=launching` row;
   the bare `deploy()` entry point (no `store` in scope) stays unwired; a YAML surface for
   `autodown`.
+- **Provider capability declaration (Brief 2) — DESIGNED + PLANNED 2026-08-16, not yet implemented:**
+  `docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md` +
+  `docs/superpowers/plans/2026-08-16-provider-capability-declaration.md` (8 tasks 0-7;
+  `.tasks.json` co-located; commits `f9aac6a8` spec, `be1e9de7` plan). Providers declare what they
+  can actually enforce (`Capability` StrEnum + `ComputeProvider.capabilities(shape)` classmethod);
+  config validation compares the declaration against what a cfg asks for and reports every guardrail
+  the provider cannot honour, before launch. **Premise correction worth carrying:** the brief assumed
+  F3 confirmed; F3's verdict was CHANGED. The `heartbeat_interval_s` config comment is ACCURATE and
+  `HEARTBEAT_SUBSTRATE_MISSING` does not gate skypilot on the normal path. The real dishonesty is
+  **fake-satisfied** guardrails — `HeartbeatLoop._tick_once` writes `last_heartbeat` from the
+  orchestrator clock, so a skypilot ledger row is indistinguishable from one backed by a real
+  wire-level read, and the reaper's liveness signal means "the controller is alive", not "the cluster
+  is alive". Decisions: severity by risk coverage (fatal only when NO declared capability bounds the
+  same risk, WARN naming the substitute otherwise); `IDLE_AUTOSTOP` parameterised by workload shape
+  (BATCH `run_cmd=[]` reaches idle, SERVER never does — F1); the five existing provider-string tables
+  (`_HEARTBEAT_SUPPORTED`, `_UTIL_SUPPORTED`, balance `_SUPPORTED`, `EPHEMERAL_CAPABILITIES`,
+  `_RECONCILABLE_PROVIDERS`) derive from the declaration instead of drifting beside it; reaper splits
+  expected from unexpected heartbeat absence with NO verdict becoming destructive
+  (`DEFAULT_APPLY_POLICY` unchanged, `ORPHAN_REAP` still opt-in). Also lands two honest refusals:
+  `SkyPilotProvider.stop_instance` currently reports success while the cluster keeps billing, and
+  `ModalProvider.stop_instance` aliases destroy — both become `NotImplementedError` + a CLI
+  `PAUSE_BILLING` pre-check. No live spend. Explicitly NOT closed: the F3 env-routing gap (`sky` only
+  in the `live-skypilot` env, so default-env sweeps still mark skypilot rows `UNROUTABLE`).
 - **SINGLE NEXT ACTION (updated 2026-07-28): fix the VRAM-OOM rollback inventory KeyError.**
   Surfaced while fixing B9. After a mandatory-evict + OOM, `_replace_adapter_stack(previous_state)`
   looks up `_inventory[(ref, branch)]` for a key the evict pass already removed → KeyError → HTTP
