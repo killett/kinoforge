@@ -21,7 +21,7 @@ import pytest
 from kinoforge.providers.skypilot.watchdog import RENDER_WATCHDOG
 
 _POLL_S = 15.0
-_GRACE_S = 120.0
+_GRACE_S = 600.0
 
 
 class _StopLoop(Exception):
@@ -150,6 +150,66 @@ def test_stage_two_halts_after_the_grace_window(tmp_path: Path) -> None:
     _run(ns)
     assert len(sub.calls) == 2, f"expected stage 1 then stage 2, got {sub.calls!r}"
     assert "shutdown -h now" in sub.calls[1], sub.calls[1]
+
+
+def test_default_grace_matches_600s_not_shorter(tmp_path: Path) -> None:
+    """The un-parametrized default must not halt before 600s post-stage-1.
+
+    Exercises ``RENDER_WATCHDOG()`` with NO ``grace_before_halt_s`` argument,
+    unlike the other fire-condition tests here which pass ``_GRACE_S``
+    explicitly and would keep passing even if the real default silently
+    drifted back down. A bug this catches: a future edit that lowers the
+    keyword default (e.g. back to 120.0) while leaving ``_GRACE_S`` in this
+    test file unchanged — a live 2026-08-15 AWS run showed SkyPilot's
+    autodown teardown (AutostopEvent tick + `_stop_cluster` + provisioner
+    terminate) taking longer than 120s end to end; a halt firing inside
+    that window downgrades a clean terminate into a `stopped` instance
+    with a billing disk.
+    """
+    deadline_file = tmp_path / "deadline"
+    deadline_file.write_text("1000.0\n")
+    source = RENDER_WATCHDOG()
+    ns: dict[str, Any] = {"__name__": "kf_watchdog_default_grace_under_test"}
+    exec(compile(source, "watchdog.py", "exec"), ns)  # noqa: S102 — the artefact IS the SUT
+    fake_sub = _FakeSubprocess(returncode=0)
+    ns["time"] = _FakeTime([1000.0, 1000.0 + 599.0])
+    ns["subprocess"] = fake_sub
+    ns["_DEADLINE_FILE"] = str(deadline_file)
+    path_file = tmp_path / "python_path"
+    path_file.write_text("/opt/skypilot-runtime/bin/python\n")
+    ns["_SKY_PYTHON_PATH_FILE"] = str(path_file)
+    _run(ns)
+    assert len(fake_sub.calls) == 1, (
+        f"expected stage 1 only 599s after firing (default grace is 600s): "
+        f"{fake_sub.calls!r}"
+    )
+
+
+def test_default_grace_halts_once_600s_elapse(tmp_path: Path) -> None:
+    """The un-parametrized default must halt once 600s have elapsed.
+
+    Companion to :func:`test_default_grace_matches_600s_not_shorter`: proves
+    stage 2 is still reachable at the real default, not just deferred
+    forever by the fix.
+    """
+    deadline_file = tmp_path / "deadline"
+    deadline_file.write_text("1000.0\n")
+    source = RENDER_WATCHDOG()
+    ns: dict[str, Any] = {"__name__": "kf_watchdog_default_grace_under_test"}
+    exec(compile(source, "watchdog.py", "exec"), ns)  # noqa: S102 — the artefact IS the SUT
+    fake_sub = _FakeSubprocess(returncode=0)
+    ns["time"] = _FakeTime([1000.0, 1000.0 + 601.0])
+    ns["subprocess"] = fake_sub
+    ns["_DEADLINE_FILE"] = str(deadline_file)
+    path_file = tmp_path / "python_path"
+    path_file.write_text("/opt/skypilot-runtime/bin/python\n")
+    ns["_SKY_PYTHON_PATH_FILE"] = str(path_file)
+    _run(ns)
+    assert len(fake_sub.calls) == 2, (
+        f"expected stage 1 then stage 2 after the default 600s grace: "
+        f"{fake_sub.calls!r}"
+    )
+    assert "shutdown -h now" in fake_sub.calls[1], fake_sub.calls[1]
 
 
 def test_deadline_is_reread_every_tick(tmp_path: Path) -> None:

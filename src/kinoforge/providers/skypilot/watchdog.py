@@ -92,7 +92,19 @@ passed it terminates the instance in two stages:
            is not a terminate — on AWS/GCP the instance stops and its disk
            keeps billing, and on rented-GPU clouds (Lambda, Vast) billing
            continues at the full rate. Stage 2 is the last resort, not the
-           plan.
+           plan: firing it while stage 1's terminate is still in flight
+           DOWNGRADES a clean terminate into a stopped instance with a
+           billing disk, which is strictly worse than waiting longer. The
+           grace default (600 s) is sized off a real run, not a guess: a
+           2026-08-15 live AWS smoke (cluster kinoforge-wd-13b6aaeb) logged
+           "stage 1 skylet autodown rc=0" — the autodown call itself
+           succeeded — but the underlying teardown (SkyPilot's
+           AutostopEvent tick, <=60s, followed by `_stop_cluster` and the
+           provisioner terminate) had not finished 120s later when stage 2
+           fired, so the halt landed on a still-terminating instance and
+           the box ended up `stopped`, not `terminated`. 600 s gives that
+           end-to-end path room to finish before stage 2 is allowed to
+           preempt it, while still catching a genuinely wedged stage 1.
 
 The deadline is re-read on EVERY tick, so a setup re-run on cluster reuse
 replaces it rather than stacking a second watchdog.
@@ -213,14 +225,24 @@ if __name__ == "__main__":
 def RENDER_WATCHDOG(  # noqa: N802 — public, used as RENDER_WATCHDOG(...)
     *,
     poll_interval_s: float = 15.0,
-    grace_before_halt_s: float = 120.0,
+    grace_before_halt_s: float = 600.0,
 ) -> str:
     """Render the on-instance watchdog program.
 
     Args:
         poll_interval_s: Seconds between deadline checks.
         grace_before_halt_s: Seconds to wait after the stage-1 skylet
-            autodown before falling back to a local halt.
+            autodown before falling back to a local halt. Default is 600 s,
+            not a round-number guess: a 2026-08-15 live AWS run showed
+            SkyPilot's autodown path (AutostopEvent tick <=60s ->
+            `_stop_cluster` -> provisioner terminate) needing more than
+            120 s end to end, and a stage-2 halt that preempts an
+            in-flight stage-1 terminate downgrades it into a `stopped`
+            instance whose disk keeps billing — the exact outcome stage 1
+            exists to avoid. Stage 2 stays as a backstop for a genuinely
+            wedged stage 1 (missing skylet, sky version drift, terminate
+            API refusing); it must simply wait long enough not to race a
+            healthy one.
 
     Returns:
         A self-contained python program (stdlib only) to be written to the
@@ -304,7 +326,7 @@ def RENDER_ARM(  # noqa: N802 — public, used as RENDER_ARM(...)
     deadline_epoch: float,
     now: float,
     poll_interval_s: float = 15.0,
-    grace_before_halt_s: float = 120.0,
+    grace_before_halt_s: float = 600.0,
 ) -> str:
     """Render the bash prelude that arms the watchdog on the instance.
 

@@ -97,7 +97,7 @@ Decisions baked in:
 - A non-positive `max_lifetime_s` is a caller error; the function raises `ValueError` rather than
   rendering a script that kills the instance on the first tick.
 
-#### `RENDER_WATCHDOG(*, poll_interval_s: float = 15.0, grace_before_halt_s: float = 120.0) -> str`
+#### `RENDER_WATCHDOG(*, poll_interval_s: float = 15.0, grace_before_halt_s: float = 600.0) -> str`
 
 Renders the standalone python program that runs on the instance. Behaviour per tick:
 
@@ -127,12 +127,22 @@ Renders the standalone python program that runs on the instance. Behaviour per t
      uses on the normal autostop path. Signature verified at this pin
      (`autostop_lib.set_autostop(idle_minutes, backend, wait_for, down, hook=None, hook_timeout=None)`,
      `autostop_lib.py:165-170`).
-   - **Stage 2 — halt (fallback).** If the process is still alive `grace_before_halt_s` (120 s)
+   - **Stage 2 — halt (fallback).** If the process is still alive `grace_before_halt_s` (600 s)
      after stage 1 — skylet missing, sky version drift, terminate API refusing — run
      `sudo shutdown -h now`, then `sudo halt -f`. Credential-free and local. Passwordless sudo is
      standard on SkyPilot's cloud images (the whole provisioning path depends on it).
 4. Every stage is best-effort and swallows exceptions; the loop keeps running so a transient
    failure retries on the next tick.
+
+**Why 600 s, not the original 120 s.** The first live AWS run (2026-08-15, cluster
+`kinoforge-wd-13b6aaeb`, us-west-2) proved stage 1 firing was not enough by itself: the log showed
+`stage 1 skylet autodown rc=0` — the autodown call succeeded — but stage 2 fired ~120 s later while
+SkyPilot's teardown (`AutostopEvent` tick, ≤60 s, → `_stop_cluster` → provisioner terminate) was
+still in flight, and the local halt killed the box mid-teardown. The instance ended up `stopped`,
+not `terminated`: compute billing stopped but the EBS volume kept billing — exactly the outcome
+stage 1 exists to avoid. The grace was raised to 600 s so a healthy stage-1 terminate has room to
+finish before stage 2 is allowed to preempt it; stage 2 itself is unchanged — it still exists to
+catch a genuinely wedged stage 1.
 
 **Billing semantics of stage 2, stated plainly.** A halt is not a terminate:
 

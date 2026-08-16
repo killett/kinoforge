@@ -28,7 +28,8 @@ Gated by (module-level skip if any is missing):
   - the ``aws`` CLI binary on PATH (the EC2-oracle queries shell out to it)
   - ``import sky`` succeeds (use ``pixi run -e live-skypilot``)
 
-Cost: < $0.05 (cheapest CPU SKU ~$0.01/hr, <= ~25 min wall-clock).
+Cost: < $0.05 (cheapest CPU SKU ~$0.01/hr, <= ~31 min wall-clock — the
+worst-case ``_KILL_TIMEOUT_S`` if the smoke lands in the stage-2-only path).
 Design: docs/superpowers/specs/2026-08-15-skypilot-instance-deadline-watchdog-design.md
 """
 
@@ -100,8 +101,11 @@ _log = logging.getLogger(__name__)
 
 _REGION = "us-west-2"
 _DEADLINE_S = 900.0
-#: Deadline + skylet tick (<=60 s) + stage-2 grace (120 s) + generous slack.
-_KILL_TIMEOUT_S = _DEADLINE_S + 60.0 + 120.0 + 300.0  # 1380 s (23 min)
+#: Deadline + skylet tick (<=60 s) + stage-2 grace (600 s, see
+#: ``watchdog.RENDER_WATCHDOG``'s ``grace_before_halt_s`` default — raised
+#: from 120 s after the 2026-08-15 live run showed the autodown teardown
+#: taking longer than that end to end) + generous slack.
+_KILL_TIMEOUT_S = _DEADLINE_S + 60.0 + 600.0 + 300.0  # 1860 s (31 min)
 _POLL_INTERVAL_S = 30.0
 #: Fully torn down — compute AND disk gone (or on the way).
 _DEAD_STATES = {"shutting-down", "terminated"}
@@ -142,6 +146,15 @@ def _ec2_states(cluster_name: str) -> list[str]:
             let a live instance queried under broken credentials read as
             "already reaped" — a false PASS with the meter still running.
     """
+    # SkyPilot tags instances `ray-cluster-name = <cluster_name>-<8 hex>`,
+    # NOT the bare cluster name (observed live 2026-08-15:
+    # `kinoforge-wd-13b6aaeb-a01d6e69` for cluster `kinoforge-wd-13b6aaeb`).
+    # An exact-match filter therefore NEVER matches and every poll silently
+    # returns an empty list, driving the test straight to the "unknown"
+    # verdict after burning the entire poll budget with no instance ever
+    # observed. The trailing `*` wildcard (verified against the live API)
+    # matches the suffixed tag while still being specific to this run's
+    # cluster name.
     completed = subprocess.run(
         [
             "aws",
@@ -150,7 +163,7 @@ def _ec2_states(cluster_name: str) -> list[str]:
             "--region",
             _REGION,
             "--filters",
-            f"Name=tag:ray-cluster-name,Values={cluster_name}",
+            f"Name=tag:ray-cluster-name,Values={cluster_name}*",
             "--query",
             "Reservations[].Instances[].State.Name",
             "--output",
