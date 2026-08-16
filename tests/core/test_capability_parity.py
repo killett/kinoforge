@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import pytest
 
-from kinoforge.core.capabilities import Capability, WorkloadShape
+from kinoforge.core.balance_endpoints import provider_balance_supported
+from kinoforge.core.capabilities import Capability, WorkloadShape, capabilities_for
+from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
 from kinoforge.core.interfaces import ComputeProvider
+from kinoforge.core.util_endpoints import provider_util_supported
 from kinoforge.providers.local import LocalProvider
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.providers.runpod import RunPodProvider
 from kinoforge.providers.skypilot import SkyPilotProvider
 
 PROVIDERS = [LocalProvider, ModalProvider, RunPodProvider, SkyPilotProvider]
+REGISTERED = ["local", "runpod", "skypilot", "modal"]
 
 
 def _overrides(cls: type, method: str) -> bool:
@@ -127,3 +131,34 @@ def test_parity_check_catches_a_declaration_without_an_implementation() -> None:
     assert _overrides(LyingProvider, "probe_runtime") is False
     # Parity would be violated -> the real parametrized test would fail.
     assert declared is not _overrides(LyingProvider, "probe_runtime")
+
+
+@pytest.mark.parametrize("name", REGISTERED)
+def test_heartbeat_predicate_equals_the_declaration(name: str) -> None:
+    """Catches the derivation diverging from the declaration it replaced."""
+    assert provider_heartbeat_supported(name) is (
+        Capability.HEARTBEAT_READ in capabilities_for(name)
+    )
+
+
+@pytest.mark.parametrize("name", REGISTERED)
+def test_util_predicate_equals_the_declaration(name: str) -> None:
+    """Catches the derivation diverging from the declaration it replaced."""
+    assert provider_util_supported(name) is (
+        Capability.UTIL_SNAPSHOT in capabilities_for(name)
+    )
+
+
+def test_predicate_answers_are_unchanged_from_the_string_tables() -> None:
+    """Pins the pre-change behaviour: a derivation that silently widens or
+    narrows support would change reaper verdicts on live rows."""
+    assert {n for n in REGISTERED if provider_heartbeat_supported(n)} == {
+        "local",
+        "runpod",
+    }
+    assert {n for n in REGISTERED if provider_util_supported(n)} == {
+        "local",
+        "modal",
+        "runpod",
+    }
+    assert {n for n in REGISTERED if provider_balance_supported(n)} == {"runpod"}

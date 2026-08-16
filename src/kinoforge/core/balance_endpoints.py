@@ -9,6 +9,12 @@ The substrate ships one real satisfier today (RunPod GraphQL); every
 other provider / engine kind resolves to :class:`NoBalanceEndpoint`,
 which makes :func:`provider_balance_supported` False and the renderer
 pick the ``balance: N/A`` literal.
+
+The source of truth for which providers ship a real satisfier is now each
+provider's own declaration in ``core/capabilities.py`` (Brief 2):
+:func:`provider_balance_supported` derives its answer from
+:func:`kinoforge.core.capabilities.capabilities_for` instead of an
+independent string table.
 """
 
 from __future__ import annotations
@@ -88,16 +94,16 @@ class NoBalanceEndpoint:
         return None
 
 
-_SUPPORTED: frozenset[str] = frozenset({"runpod"})
-
-
 def provider_balance_supported(provider_kind: str) -> bool:
-    """True iff a real satisfier ships for ``provider_kind``.
+    """True iff ``provider_kind`` declares BALANCE_QUERY.
 
     Sister to B5a's
     :func:`kinoforge.core.heartbeat_endpoints.provider_heartbeat_supported`.
     Renderer uses this to pick ``balance: N/A`` (no satisfier) vs
     ``balance: ? (no credential)`` (no cred) vs ``balance: $X`` (success).
+
+    Derived from the provider's own declaration (Brief 2) rather than a
+    string table.
 
     Args:
         provider_kind: Lowercase provider kind string from
@@ -108,4 +114,9 @@ def provider_balance_supported(provider_kind: str) -> bool:
         True only when a balance satisfier module ships for that kind.
         Today this is ``"runpod"`` only.
     """
-    return provider_kind in _SUPPORTED
+    from kinoforge.core.capabilities import (  # noqa: PLC0415 — avoids an import cycle
+        Capability,
+        capabilities_for,
+    )
+
+    return Capability.BALANCE_QUERY in capabilities_for(provider_kind)

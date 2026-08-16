@@ -6,10 +6,13 @@ satisfiers live under ``kinoforge.providers.<name>.heartbeat``; this module
 must never import them (core-import-ban invariant — see
 PROGRESS.md §"Key decisions").
 
-The B5a-shipped set in :data:`_HEARTBEAT_SUPPORTED` is the source of truth
-for which providers have a wire-level satisfier. B5b adds ``"skypilot"`` in
-one line; downstream consumers (Layer V classify, B1 sweeper, B3 warm-reuse)
-gate destructive verdicts via :func:`provider_heartbeat_supported`.
+The source of truth for which providers have a wire-level satisfier is now
+each provider's own declaration in ``core/capabilities.py`` (Brief 2):
+:func:`provider_heartbeat_supported` derives its answer from
+:func:`kinoforge.core.capabilities.capabilities_for` instead of an
+independent string table. Downstream consumers (Layer V classify, B1
+sweeper, B3 warm-reuse) gate destructive verdicts via
+:func:`provider_heartbeat_supported`.
 """
 
 from __future__ import annotations
@@ -72,31 +75,18 @@ class HeartbeatEndpoint(Protocol):
         ...
 
 
-# B5a-shipped set. Membership means "a heartbeat substrate is available
-# for this provider", not "a wire-level write satisfier ships for this
-# provider". Specifically for ``"runpod"``: post-C33 the wire-level
-# write substrate (RunPodGraphQLHeartbeatEndpoint.write) is a no-op,
-# and the local Ledger serves as the same-host substrate per the B5b
-# deferral spec (docs/superpowers/specs/2026-06-18-b5b-deferred-design.md).
-# Downstream consumers consult this via provider_heartbeat_supported()
-# before treating HEARTBEAT_UNKNOWN as actionable on cloud providers;
-# removing ``"runpod"`` would cascade into HEARTBEAT_SUBSTRATE_MISSING
-# verdicts from reaper.classify for every RunPod pod — a behaviour
-# regression with no compensating safety win.
-#
-# Future B5b resumption (cross-machine scope) would add ``"skypilot"``
-# here once a satisfier ships.
-_HEARTBEAT_SUPPORTED: frozenset[str] = frozenset({"local", "runpod"})
-
-
 def provider_heartbeat_supported(provider_kind: str) -> bool:
-    """Whether a wire-level :class:`HeartbeatEndpoint` ships for ``provider_kind``.
+    """Return True iff ``provider_kind`` declares HEARTBEAT_READ.
 
     Used by :func:`kinoforge.core.reaper.classify` to emit the new
     ``HEARTBEAT_SUBSTRATE_MISSING`` verdict on providers whose substrate
     has not yet shipped (e.g. SkyPilot pre-B5b). Consumers
     (:func:`kinoforge.core.reaper_actor.act_on_verdict`) hard-pin that
     verdict to no-destroy + WARN-once.
+
+    Derived from the provider's own declaration (Brief 2) rather than a
+    string table, so a provider whose ``last_heartbeat`` is the inherited
+    ``None`` default cannot be listed as supported.
 
     Args:
         provider_kind: The ``compute.provider`` field value
@@ -106,4 +96,9 @@ def provider_heartbeat_supported(provider_kind: str) -> bool:
         ``True`` when a wire-level :class:`HeartbeatEndpoint` satisfier
         is shipped for this provider; ``False`` otherwise.
     """
-    return provider_kind in _HEARTBEAT_SUPPORTED
+    from kinoforge.core.capabilities import (  # noqa: PLC0415 — avoids an import cycle
+        Capability,
+        capabilities_for,
+    )
+
+    return Capability.HEARTBEAT_READ in capabilities_for(provider_kind)

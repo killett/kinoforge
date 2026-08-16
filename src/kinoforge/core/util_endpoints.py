@@ -5,8 +5,11 @@ per-tick util read rests on. Concrete satisfiers live under
 ``kinoforge.providers.<name>.util``; this module must never import them
 (core-import-ban invariant).
 
-The C26-shipped set in :data:`_UTIL_SUPPORTED` mirrors B5a's
-``_HEARTBEAT_SUPPORTED``. Downstream consumers (Layer V classify,
+The source of truth for which providers have a wire-level satisfier is now
+each provider's own declaration in ``core/capabilities.py`` (Brief 2):
+:func:`provider_util_supported` derives its answer from
+:func:`kinoforge.core.capabilities.capabilities_for` instead of an
+independent string table. Downstream consumers (Layer V classify,
 ``_adapters.build_util_endpoint_for``) gate util-aware behaviour via
 :func:`provider_util_supported`.
 """
@@ -63,11 +66,11 @@ class UtilSnapshotEndpoint(Protocol):
         ...
 
 
-_UTIL_SUPPORTED: frozenset[str] = frozenset({"local", "modal", "runpod"})
-
-
 def provider_util_supported(provider_kind: str) -> bool:
-    """Whether a wire-level :class:`UtilSnapshotEndpoint` satisfier ships.
+    """Return True iff ``provider_kind`` declares UTIL_SNAPSHOT.
+
+    Derived from the provider's own declaration (Brief 2) rather than a
+    string table.
 
     Args:
         provider_kind: The ``compute.provider`` field value.
@@ -75,4 +78,9 @@ def provider_util_supported(provider_kind: str) -> bool:
     Returns:
         ``True`` when a wire-level satisfier is shipped; ``False`` otherwise.
     """
-    return provider_kind in _UTIL_SUPPORTED
+    from kinoforge.core.capabilities import (  # noqa: PLC0415 — avoids an import cycle
+        Capability,
+        capabilities_for,
+    )
+
+    return Capability.UTIL_SNAPSHOT in capabilities_for(provider_kind)
