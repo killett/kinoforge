@@ -118,13 +118,19 @@ def test_unknown_provider_name_returns_empty_not_raises() -> None:
     assert provider_billed("nope") is True
 
 
-def test_lookup_works_in_a_process_that_never_imported_providers() -> None:
-    """Catches the reaper answering False for every provider when the
-    composition root was never imported — a silent, total gate disabling."""
+def test_lookup_resolves_in_a_process_that_never_imported_providers() -> None:
+    """Catches the reaper answering 'nothing is supported' for every provider
+    when the composition root was never imported — a silent, total gate
+    disabling. Asserts the MECHANISM only: at Task 0 every provider still
+    inherits the empty ABC default, so the capability CONTENT assertion
+    belongs to Task 1.
+    """
     code = (
-        "from kinoforge.core.capabilities import Capability, capabilities_for;"
+        "from kinoforge.core import registry;"
+        "assert registry.provider_class('runpod') is None, 'pre-imported';"
+        "from kinoforge.core.capabilities import capabilities_for;"
         "caps = capabilities_for('runpod');"
-        "print(Capability.HEARTBEAT_READ in caps)"
+        "print(registry.provider_class('runpod') is not None, isinstance(caps, frozenset))"
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
@@ -132,7 +138,7 @@ def test_lookup_works_in_a_process_that_never_imported_providers() -> None:
         text=True,
         check=True,
     )
-    assert out.stdout.strip() == "True"
+    assert out.stdout.strip() == "True True"
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -395,6 +401,7 @@ git commit -m "feat(core): add the provider capability vocabulary and lookup"
 - [ ] `LocalProvider.billed is False`; the other three are `True`.
 - [ ] Parity test derives expectations from method identity / wire behaviour, never from a second hardcoded capability list.
 - [ ] A synthetic provider that declares `RUNTIME_PROBE` without overriding it makes the parity assertion fail.
+- [ ] Declared capabilities resolve through the lazy composition-root import (fresh interpreter: runpod has `HEARTBEAT_READ`, skypilot does not).
 
 **Verify:** `pixi run python -m pytest tests/core/test_capability_parity.py -v` → all pass
 
@@ -485,6 +492,24 @@ def test_skypilot_idle_autostop_is_batch_only() -> None:
     batch = SkyPilotProvider.capabilities(WorkloadShape.BATCH)
     assert Capability.IDLE_AUTOSTOP not in server
     assert Capability.IDLE_AUTOSTOP in batch
+
+
+def test_declared_capabilities_survive_a_lazy_composition_root_import() -> None:
+    """The Task 0 lookup test pinned the mechanism; this pins the CONTENT
+    through the same lazy path. Catches a declaration that only resolves
+    when something else has already imported the providers."""
+    import subprocess
+    import sys
+
+    code = (
+        "from kinoforge.core.capabilities import Capability, capabilities_for;"
+        "print(Capability.HEARTBEAT_READ in capabilities_for('runpod'),"
+        " Capability.HEARTBEAT_READ in capabilities_for('skypilot'))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "True False"
 
 
 def test_billed_flags() -> None:
