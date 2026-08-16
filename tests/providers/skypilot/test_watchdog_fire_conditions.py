@@ -121,9 +121,55 @@ def test_stage_one_issues_skylet_autodown_at_deadline(tmp_path: Path) -> None:
     )
     cmd = sub.calls[0]
     assert "/opt/skypilot-runtime/bin/python" in cmd, cmd
-    assert "autostop_lib.set_autostop(0, 'CloudVmRayBackend'" in cmd, cmd
+    assert "autostop_lib.set_autostop(0, _backend," in cmd, cmd
     assert "autostop_lib.AutostopWaitFor.NONE" in cmd, cmd
     assert "True)" in cmd, cmd
+
+
+def test_stage_one_backend_argument_is_the_name_constant_not_the_class_name(
+    tmp_path: Path,
+) -> None:
+    """The backend argument must be ``CloudVmRayBackend.NAME`` (``'cloudvmray'``).
+
+    Concrete bug this catches: a 2026-08-15 live AWS run (cluster
+    ``kinoforge-wd-6722c3f1``) proved that passing the literal class name
+    ``'CloudVmRayBackend'`` as the backend argument makes the skylet's own
+    ``_stop_cluster`` (``sky/skylet/events.py:364``) raise
+    ``NotImplementedError`` — it compares the payload against
+    ``cloud_vm_ray_backend.CloudVmRayBackend.NAME``, whose runtime value is
+    the string ``'cloudvmray'``, not the class name. Every non-matching
+    backend falls through to ``else: raise NotImplementedError``, so stage 1
+    silently never terminates the instance and it survives until the
+    stage-2 halt (600 s later) — the watchdog log showed
+    ``stage 1 skylet autodown rc=0`` even though the dispatch inside
+    ``_stop_cluster`` was raising the whole time. The rc=0 return of the
+    outer ``-c`` invocation cannot see this: the exception is raised and
+    logged deep inside the skylet's autostop tick, not by the ``-c``
+    subprocess itself. Only pinning the actual backend VALUE reaching
+    ``set_autostop`` catches it.
+
+    The prior version of this test asserted the substring
+    ``"autostop_lib.set_autostop(0, 'CloudVmRayBackend'"`` and would have
+    stayed green through this exact regression — it pinned the wrong
+    string on purpose being wrong.
+    """
+    ns, sub, _ = _load(tmp_path, deadline=1000.0, times=[1000.0])
+    _run(ns)
+    cmd = sub.calls[0]
+    assert "'CloudVmRayBackend'" not in cmd, (
+        f"backend argument must not be the class-name literal: {cmd!r}"
+    )
+    assert "cloud_vm_ray_backend" in cmd, (
+        f"expected the payload to import cloud_vm_ray_backend to resolve "
+        f"the real NAME constant, got: {cmd!r}"
+    )
+    assert "CloudVmRayBackend.NAME" in cmd, (
+        f"expected the payload to read CloudVmRayBackend.NAME rather than "
+        f"hardcode the class name, got: {cmd!r}"
+    )
+    assert "'cloudvmray'" in cmd, (
+        f"expected a literal 'cloudvmray' fallback for a failed import, got: {cmd!r}"
+    )
 
 
 def test_no_halt_inside_the_grace_window(tmp_path: Path) -> None:

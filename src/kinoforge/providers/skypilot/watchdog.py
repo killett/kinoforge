@@ -119,9 +119,26 @@ _SKY_PYTHON_PATH_FILE = os.path.expanduser("~/.sky/python_path")
 _POLL_INTERVAL_S = $poll_interval_s
 _GRACE_BEFORE_HALT_S = $grace_before_halt_s
 
+#: A 2026-08-15 live AWS run (cluster kinoforge-wd-6722c3f1) proved stage 1
+#: has NEVER been able to terminate an instance: `_stop_cluster`
+#: (sky/skylet/events.py:364) compares `autostop_config.backend` against
+#: `cloud_vm_ray_backend.CloudVmRayBackend.NAME`, whose runtime value is the
+#: string 'cloudvmray' -- NOT the class name 'CloudVmRayBackend' this literal
+#: used to pass. Every non-matching backend falls through to
+#: `else: raise NotImplementedError`, so the skylet's own log showed the
+#: autodown call return rc=0 (the RPC itself succeeded) while the actual
+#: dispatch inside `_stop_cluster` raised and the instance stayed `running`.
+#: Importing the NAME constant on the instance (with the literal as a
+#: fallback for an import failure) ties this to sky's own source of truth
+#: instead of a hand-copied string that can silently drift again.
 _SKYLET_AUTODOWN_CODE = (
-    "from sky.skylet import autostop_lib; "
-    "autostop_lib.set_autostop(0, 'CloudVmRayBackend', "
+    "from sky.skylet import autostop_lib\\n"
+    "try:\\n"
+    "    from sky.backends import cloud_vm_ray_backend as _b\\n"
+    "    _backend = _b.CloudVmRayBackend.NAME\\n"
+    "except Exception:\\n"
+    "    _backend = 'cloudvmray'\\n"
+    "autostop_lib.set_autostop(0, _backend, "
     "autostop_lib.AutostopWaitFor.NONE, True)"
 )
 

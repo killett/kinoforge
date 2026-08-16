@@ -111,7 +111,12 @@ Renders the standalone python program that runs on the instance. Behaviour per t
 
      ```python
      from sky.skylet import autostop_lib
-     autostop_lib.set_autostop(0, 'CloudVmRayBackend',
+     try:
+         from sky.backends import cloud_vm_ray_backend as _b
+         _backend = _b.CloudVmRayBackend.NAME
+     except Exception:
+         _backend = 'cloudvmray'
+     autostop_lib.set_autostop(0, _backend,
                                autostop_lib.AutostopWaitFor.NONE, True)
      ```
 
@@ -122,11 +127,34 @@ Renders the standalone python program that runs on the instance. Behaviour per t
      and SkyPilot's own state stays consistent (a plain halt would leave sky believing the cluster
      is UP).
 
+     The backend argument must be the runtime VALUE of `CloudVmRayBackend.NAME`
+     (`sky/backends/cloud_vm_ray_backend.py:3087`), which is the string `'cloudvmray'` — not the
+     class name `'CloudVmRayBackend'`. `_stop_cluster` (`sky/skylet/events.py:364`) compares the
+     payload's backend field against that constant and `raise NotImplementedError`s on any
+     non-match, so the class-name literal fails on every run (see "Live evidence" below). The code
+     imports the constant on the instance and ties the payload to sky's own source of truth, with
+     the literal string as a fallback for an import failure across a sky version bump.
+
      **No credential is embedded by kinoforge.** This path uses the cloud credentials SkyPilot
      itself already places on the head node for exactly this purpose — the same ones `_stop_cluster`
      uses on the normal autostop path. Signature verified at this pin
      (`autostop_lib.set_autostop(idle_minutes, backend, wait_for, down, hook=None, hook_timeout=None)`,
      `autostop_lib.py:165-170`).
+
+     **Live evidence (2026-08-15, cluster `kinoforge-wd-6722c3f1`, 900 s deadline, run 3).** The
+     on-instance watchdog log showed the expected sequence — `deadline reached; firing stage 1`
+     followed by `stage 1 skylet autodown rc=0` — proving the autostop DECISION path (the
+     `wait_for=NONE` / `idle_minutes=0` bypass of the permanently-False idle check) works exactly
+     as designed. The instance nonetheless stayed `running`: the skylet's own `~/.sky/skylet.log`
+     showed `_stop_cluster` raising `NotImplementedError` because the payload's backend string
+     (`'CloudVmRayBackend'`) never matched `CloudVmRayBackend.NAME` (`'cloudvmray'`). Stage 1 has
+     therefore never been able to terminate an instance, on any run to date — the earlier "first
+     live AWS run" analysis below, which credited stage 1 with a successful-but-slow terminate,
+     was itself observing this same silent no-op. Stage 2 was confirmed doing its job as designed:
+     the local halt fired at +600 s and the instance transitioned to `stopped`, the exact
+     stage-2-only outcome this design accepts as a fallback. Fixed by reading the NAME constant at
+     runtime instead of hardcoding the class name (this section, and
+     `kinoforge.providers.skypilot.watchdog._SKYLET_AUTODOWN_CODE`).
    - **Stage 2 — halt (fallback).** If the process is still alive `grace_before_halt_s` (600 s)
      after stage 1 — skylet missing, sky version drift, terminate API refusing — run
      `sudo shutdown -h now`, then `sudo halt -f`. Credential-free and local. Passwordless sudo is

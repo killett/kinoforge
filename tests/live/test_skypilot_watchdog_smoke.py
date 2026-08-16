@@ -258,6 +258,22 @@ def _classify(states: list[str], *, observed_live: bool) -> str:
     return "alive"
 
 
+def _is_terminal(states: list[str]) -> bool:
+    """Return whether every tagged instance has reached a genuinely dead state.
+
+    Empty ``states`` (no matching instance found at all) also counts as
+    terminal — nothing left to poll for.
+
+    Args:
+        states: Current ``_ec2_states`` result.
+
+    Returns:
+        ``True`` when ``states`` is empty or every entry is in
+        ``_DEAD_STATES``.
+    """
+    return not states or all(s in _DEAD_STATES for s in states)
+
+
 def _teardown(cluster_name: str, tunnel: Any) -> None:
     """Teardown that must run whatever the assertions did.
 
@@ -269,11 +285,29 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
     longer be misread as a clean teardown either.
 
     ``sky.down`` returning does not mean the EC2 instance has finished its
-    state transition — it can still be caught ``running``/``pending`` for a
-    few seconds afterwards (observed live 2026-08-15: an immediate re-check
-    read a genuinely-tearing-down instance as a survivor). So the survivor
-    check polls for up to ``_TEARDOWN_POLL_TIMEOUT_S``, waiting out any
-    transient ``_LIVE_STATES`` snapshot, before deciding.
+    state transition. Two distinct in-progress shapes have been observed
+    live, and neither is a survivor by itself:
+
+    - ``running``/``pending`` for a few seconds right after ``sky.down``
+      returns (observed live 2026-08-15 run 2: an immediate re-check read a
+      genuinely-tearing-down instance as a survivor).
+    - ``stopping``/``stopped`` when the smoke's own poll loop landed the
+      stage-2-only halt outcome (a local ``shutdown -h now``, not a
+      terminate — see ``_HALTED_STATES``): from there ``sky.down`` still has
+      to drive the instance through ``shutting-down`` -> ``terminated``, so
+      those states are ALSO still-in-progress, not an immediate survivor
+      (observed live 2026-08-15 run 3: the poll used to stop the moment
+      ``states`` left ``_LIVE_STATES``, i.e. the instant it saw
+      ``stopping``, and raised ``RuntimeError("... survived teardown with
+      states ['stopping']")`` even though ``sky.down`` had been issued and
+      the instance terminated moments later).
+
+    So the survivor check polls for up to ``_TEARDOWN_POLL_TIMEOUT_S``,
+    waiting out any transient non-terminal snapshot (``_LIVE_STATES`` OR
+    ``_HALTED_STATES``) via :func:`_is_terminal`, before deciding. The
+    window still raises loudly if it expires with the instance in any
+    non-terminal state — a stuck ``stopping`` is a real survivor, just not
+    an instant one.
 
     Args:
         cluster_name: SkyPilot cluster name to tear down.
@@ -300,7 +334,7 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
 
     states = _ec2_states(cluster_name)
     poll_deadline = time.time() + _TEARDOWN_POLL_TIMEOUT_S
-    while any(s in _LIVE_STATES for s in states) and time.time() < poll_deadline:
+    while not _is_terminal(states) and time.time() < poll_deadline:
         _log.info(
             "teardown poll: cluster=%s still transitioning states=%r — "
             "waiting up to %.0fs more",
