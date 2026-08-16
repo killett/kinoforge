@@ -2107,6 +2107,68 @@ def test_deploy_session_tags_empty_dict_is_noop(tmp_path: Path) -> None:
     assert set(created_spec.tags.keys()) == {"kinoforge_engine", "kinoforge_key"}
 
 
+class _LaunchLedgerSpyProvider(LocalProvider):
+    """LocalProvider spy recording every ledger installed via ``set_launch_ledger``.
+
+    F12's pre-launch ledger row (see ``tests/providers/test_skypilot.py``)
+    depends on ``deploy_session`` actually calling this duck-typed setter in
+    production — the SkyPilot unit tests only prove the provider's own
+    behavior *given* an installed ledger, never that the orchestrator wires
+    one in. This spy is provider-agnostic (any ``ComputeProvider`` exposing
+    the setter) so it exercises the orchestrator's wiring in isolation.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.installed_ledgers: list[Any] = []
+
+    def set_launch_ledger(self, ledger: Any) -> None:  # noqa: ANN401
+        self.installed_ledgers.append(ledger)
+
+
+def test_deploy_session_installs_launch_ledger_bound_to_session_store(
+    tmp_path: Path,
+) -> None:
+    """deploy_session wires a ledger into any provider exposing set_launch_ledger (F12).
+
+    A bug this catches: a rename on either side of the
+    ``getattr(resolved_provider, "set_launch_ledger", None)`` duck-typed
+    lookup in ``deploy_session`` — or moving ``_resolve_provider`` out of
+    the ``requires_compute`` branch that lookup lives in — makes the
+    ``getattr`` silently return ``None`` and no-op. F12's pre-launch
+    protection would then be missing in production while every
+    SkyPilotProvider unit test (which calls ``set_launch_ledger`` directly,
+    bypassing the orchestrator) stays green.
+    """
+    from kinoforge.core.lifecycle import Ledger
+
+    cfg = _compute_cfg()
+    store = LocalArtifactStore(tmp_path)
+    spy = _LaunchLedgerSpyProvider()
+    engine = _CountingFakeEngine()
+
+    with deploy_session(cfg, store=store, provider=spy, engine=engine, tags={}):
+        pass
+
+    assert len(spy.installed_ledgers) == 1
+    installed = spy.installed_ledgers[0]
+    assert isinstance(installed, Ledger)
+    # "Bound to the session store": a row written through the installed
+    # ledger must be visible through a fresh Ledger over the same store —
+    # proving it is not some disconnected/default-constructed store.
+    installed.record(
+        Instance(
+            id="f12-wiring-probe",
+            provider="probe",
+            status="starting",
+            created_at=0.0,
+        )
+    )
+    assert any(
+        entry["id"] == "f12-wiring-probe" for entry in Ledger(store=store).entries()
+    )
+
+
 def test_deploy_session_tags_ignored_when_instance_supplied(
     tmp_path: Path,
 ) -> None:

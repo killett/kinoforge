@@ -1475,3 +1475,86 @@ def test_no_ledger_installed_is_a_no_op() -> None:
     provider = SkyPilotProvider(sky_client=fake)
     inst = provider.create_instance(_watchdog_spec(run_id="kf-no-ledger"))
     assert inst.id == "kf-no-ledger"
+
+
+def test_ledger_record_failure_does_not_fail_the_launch() -> None:
+    """A ledger write fault must never fail a launch that would have succeeded.
+
+    A bug this catches: letting a transient store fault (S3/GCS 5xx, a
+    lock-lease timeout, an unwritable local path) from ``Ledger.record``
+    propagate out of ``create_instance`` — the launch would raise even
+    though ``sky.launch`` was never even reached.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    class _BoomOnRecord(_RecordingLedger):
+        def record(self, instance: Any, **kwargs: Any) -> None:
+            raise OSError("simulated store 5xx on record")
+
+    fake = _FakeSky()
+    ledger = _BoomOnRecord([])
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.set_launch_ledger(ledger)
+
+    inst = provider.create_instance(_watchdog_spec(run_id="kf-record-boom"))
+
+    assert inst.id == "kf-record-boom"
+    assert fake.launch_calls, "sky.launch must still be reached"
+
+
+def test_ledger_forget_failure_does_not_fail_the_launch() -> None:
+    """A forget fault is the damaging direction: the cluster is already UP.
+
+    A bug this catches: letting ``Ledger.forget`` raise out of
+    ``create_instance`` on the success path — the cluster and its tunnel are
+    already live at that point, so failing the call here would surface an
+    exception for what is actually a successful launch, and the caller would
+    never reach the orchestrator's post-create record.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    class _BoomOnForget(_RecordingLedger):
+        def forget(self, instance_id: str) -> None:
+            raise OSError("simulated store 5xx on forget")
+
+    fake = _FakeSky()
+    ledger = _BoomOnForget([])
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.set_launch_ledger(ledger)
+
+    inst = provider.create_instance(_watchdog_spec(run_id="kf-forget-boom"))
+
+    assert inst.id == "kf-forget-boom"
+    assert inst.status == "starting"
+
+
+def test_ledger_protocol_matches_the_real_ledger(tmp_path: Path) -> None:
+    """:class:`Ledger` structurally satisfies ``_LaunchLedger`` — proven live.
+
+    A bug this catches: narrowing (or drifting) ``_LaunchLedger``'s
+    signature away from ``Ledger.record``'s actual keyword surface would
+    previously pass silently, because the old ``**kwargs: Any`` Protocol
+    type-checked against anything and the orchestrator's ``getattr(...)``
+    lookup is untyped (``Any``), so nothing ever exercised a *typed* call
+    through the seam. This test installs a real ``Ledger`` (not
+    ``_RecordingLedger``) via ``set_launch_ledger`` and round-trips a row
+    through it and back out through a second ``Ledger`` over the same
+    store — proving the real class satisfies the Protocol at runtime, which
+    mypy checks statically via the ``_launch_ledger: _LaunchLedger | None``
+    annotation the ``set_launch_ledger`` call below flows through.
+    """
+    from kinoforge.core.lifecycle import Ledger
+    from kinoforge.providers.skypilot import SkyPilotProvider
+    from kinoforge.stores.local import LocalArtifactStore
+
+    store = LocalArtifactStore(tmp_path)
+    ledger = Ledger(store=store)
+    fake = _FakeSky()
+    provider = SkyPilotProvider(sky_client=fake)
+    provider.set_launch_ledger(ledger)  # mypy: Ledger must satisfy _LaunchLedger
+
+    provider.create_instance(_watchdog_spec(run_id="kf-real-ledger"))
+
+    # The provisional row was recorded then forgotten on the success path —
+    # a fresh Ledger over the same store sees no lingering row.
+    assert Ledger(store=store).entries() == []

@@ -60,6 +60,7 @@ Self-registers under ``"skypilot"`` when this module is imported.
 
 from __future__ import annotations
 
+import logging
 import shlex
 import socket
 import subprocess
@@ -79,6 +80,8 @@ from kinoforge.core.interfaces import (
 from kinoforge.core.offers import filter_offers
 from kinoforge.providers.skypilot import watchdog
 from kinoforge.providers.skypilot.vast_compat import apply_vast_sdk_compat
+
+logger = logging.getLogger(__name__)
 
 # Bridge sky's vast adapter to vastai-sdk >= 0.2 as soon as the provider is
 # imported; no-op when vastai_sdk is absent (default env) or already correct.
@@ -481,9 +484,17 @@ def _normalize_image_id(image: str) -> str:
 
 
 class _LaunchLedger(Protocol):
-    """The slice of :class:`~kinoforge.core.lifecycle.Ledger` used pre-launch."""
+    """The slice of :class:`~kinoforge.core.lifecycle.Ledger` used pre-launch.
 
-    def record(self, instance: Instance, **kwargs: Any) -> None:  # noqa: ANN401
+    Narrowed to the exact keyword the provider calls (``max_age_s``) rather
+    than a permissive ``**kwargs: Any`` — the latter type-checks against
+    anything and would never catch a signature drift on either side. See
+    ``tests/providers/test_skypilot.py::test_ledger_protocol_matches_the_real_ledger``
+    for the mypy-visible proof that :class:`~kinoforge.core.lifecycle.Ledger`
+    still satisfies this Protocol.
+    """
+
+    def record(self, instance: Instance, *, max_age_s: int | None = None) -> None:
         """Append a row for *instance*."""
 
     def forget(self, instance_id: str) -> None:
@@ -867,9 +878,26 @@ class SkyPilotProvider(ComputeProvider):
             ),
         )
         if self._launch_ledger is not None:
-            self._launch_ledger.record(
-                provisional, max_age_s=int(spec.lifecycle.max_lifetime_s)
-            )
+            # Bookkeeping must never be able to fail a launch that would
+            # otherwise have succeeded: a transient store 5xx, a lock-lease
+            # timeout, or an unwritable local path must not propagate out of
+            # create_instance. Unlike the ``forget`` failure below, a failed
+            # ``record`` here is not dangerous — it just silently forfeits
+            # F12 protection for *this* launch — but it is still logged
+            # loudly rather than passed, since a quiet failure here is
+            # indistinguishable from "the ledger is fine and simply chose
+            # not to write."
+            try:
+                self._launch_ledger.record(
+                    provisional, max_age_s=int(spec.lifecycle.max_lifetime_s)
+                )
+            except Exception:  # noqa: BLE001 — ledger fault must not block launch
+                logger.warning(
+                    "F12 provisional ledger record failed for %r; this launch "
+                    "has no pre-launch orphan protection until it completes",
+                    cluster_name,
+                    exc_info=True,
+                )
         raw = sky.launch(task, **launch_kwargs)
         # Resolve a possible RequestId — the launch payload itself is not used
         # because the cluster name we passed *is* the canonical id and the
@@ -899,8 +927,26 @@ class SkyPilotProvider(ComputeProvider):
         # write. Deliberately NOT in a finally — the tunnel-failure path
         # must keep its row, because a failed best-effort ``sky.down``
         # leaves a live cluster that only this row can surface.
+        #
+        # This is the damaging failure direction: the cluster is already UP
+        # and its tunnel handle is already in ``self._tunnels``. A ``forget``
+        # exception must not propagate — that would fail a launch that
+        # actually succeeded, and the caller would never reach the
+        # orchestrator's post-create record, leaving a stale
+        # ``kf_launch_phase=launching`` row as the only (misleading) trace
+        # of a healthy cluster. Bookkeeping must never be able to fail the
+        # launch, so this is logged loudly rather than passed.
         if self._launch_ledger is not None:
-            self._launch_ledger.forget(cluster_name)
+            try:
+                self._launch_ledger.forget(cluster_name)
+            except Exception:  # noqa: BLE001 — ledger fault must not block launch
+                logger.warning(
+                    "F12 provisional ledger forget failed for %r; the "
+                    "provisional 'launching' row may linger alongside the "
+                    "real post-create record",
+                    cluster_name,
+                    exc_info=True,
+                )
         return Instance(
             id=cluster_name,
             provider=self.name,
