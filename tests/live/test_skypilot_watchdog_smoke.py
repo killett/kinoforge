@@ -1,18 +1,34 @@
 """Opt-in live smoke: a SkyPilot cluster dies without its client.
 
-Launches the cheapest AWS CPU SKU in us-west-2 with a 5-minute deadline and
+Launches the cheapest AWS CPU SKU in us-west-2 with a 15-minute deadline and
 a run command that sleeps far past it, then drops every in-process handle —
 no destroy call is ever made. Pass condition: EC2 itself reports the instance
-``shutting-down`` or ``terminated``. ``sky status`` is deliberately NOT the
-oracle: the cluster vanishing from sky's local state would prove nothing
-about the money.
+``shutting-down``/``terminated`` (or, for a stage-2-only rescue,
+``stopping``/``stopped`` — see ``_HALTED_STATES``). ``sky status`` is
+deliberately NOT the oracle: the cluster vanishing from sky's local state
+would prove nothing about the money.
+
+Deadline rationale (900 s, not the workstream's usual few-minute smoke
+window): the watchdog must prove the FULL claim end-to-end, not just that it
+fires. At ~900 s the cluster has finished provisioning and reached RUNNING,
+``sleep 3600`` has started as PID 1, the client handle has already been
+dropped (tunnel killed, no destroy call) — and only THEN does the on-instance
+deadline watchdog fire. A shorter deadline risks firing mid-provision, which
+would prove nothing about a client-abandoned *running* cluster, the actual
+risk this workstream exists to close. ``retry_until_up`` is deliberately
+NOT passed: it would let ``sky.launch`` retry across a capacity miss,
+re-arming the on-instance deadline on each attempt while this test's
+Python-side wall clock keeps counting from the first attempt — the two
+clocks would drift apart. A capacity miss here is routed into the EC2 poll
+(see ``create_failed`` below) rather than silently retried.
 
 Gated by (module-level skip if any is missing):
   - ``KINOFORGE_LIVE_TESTS=1``
   - AWS credentials reachable by boto3/awscli
+  - the ``aws`` CLI binary on PATH (the EC2-oracle queries shell out to it)
   - ``import sky`` succeeds (use ``pixi run -e live-skypilot``)
 
-Cost: < $0.05 (cheapest CPU SKU ~$0.01/hr, <= ~12 min wall-clock).
+Cost: < $0.05 (cheapest CPU SKU ~$0.01/hr, <= ~25 min wall-clock).
 Design: docs/superpowers/specs/2026-08-15-skypilot-instance-deadline-watchdog-design.md
 """
 
@@ -22,8 +38,10 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -50,6 +68,13 @@ elif boto3.Session().get_credentials() is None:
         "(see AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE)"
     )
 
+if shutil.which("aws") is None:
+    # The EC2 oracle (_ec2_states) and teardown both shell out to the aws
+    # CLI directly (not boto3) — a present boto3 credential chain does not
+    # guarantee the binary is on PATH, and without it every oracle query
+    # would fail with a confusing FileNotFoundError instead of a clean skip.
+    _REASONS.append("aws CLI binary not found on PATH")
+
 try:
     import sky  # type: ignore[import-not-found, unused-ignore]  # noqa: F401
 except ImportError:
@@ -67,16 +92,34 @@ from kinoforge.core.interfaces import (  # noqa: E402
     InstanceSpec,
     Lifecycle,
 )
+from kinoforge.core.lifecycle import Ledger  # noqa: E402
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
+from kinoforge.stores.local import LocalArtifactStore  # noqa: E402
 
 _log = logging.getLogger(__name__)
 
 _REGION = "us-west-2"
-_DEADLINE_S = 300.0
-#: Deadline + skylet tick (<=60 s) + terminate + generous slack.
-_KILL_TIMEOUT_S = 900.0
+_DEADLINE_S = 900.0
+#: Deadline + skylet tick (<=60 s) + stage-2 grace (120 s) + generous slack.
+_KILL_TIMEOUT_S = _DEADLINE_S + 60.0 + 120.0 + 300.0  # 1380 s (23 min)
 _POLL_INTERVAL_S = 30.0
+#: Fully torn down — compute AND disk gone (or on the way).
 _DEAD_STATES = {"shutting-down", "terminated"}
+#: Stage-2 rescue landed a HALT (``sudo shutdown -h now``) rather than a
+#: terminate. AWS's default ``InstanceInitiatedShutdownBehavior`` is "stop",
+#: so an in-instance ``shutdown -h`` yields ``stopping``/``stopped``, not
+#: ``terminated``. Compute billing stops here; the EBS volume does not —
+#: this is a distinct, loggable outcome, not a silent pass or fail.
+_HALTED_STATES = {"stopping", "stopped"}
+#: A snapshot in one of these states proves the instance genuinely existed —
+#: required before an empty/dead snapshot may be trusted as "was reaped"
+#: rather than "never came up" (wrong region, tag-key drift, expired creds).
+_LIVE_STATES = {"pending", "running"}
+
+#: Default kinoforge state dir (matches the CLI's ``--state-dir`` default),
+#: so a ledger row this test leaves behind is exactly where
+#: ``kinoforge list`` / ``kinoforge forget`` already look for it.
+_STATE_DIR = Path(".kinoforge")
 
 
 def _ec2_states(cluster_name: str) -> list[str]:
@@ -89,8 +132,15 @@ def _ec2_states(cluster_name: str) -> list[str]:
 
     Returns:
         List of EC2 ``State.Name`` strings for matching instances. Empty
-        when the AWS CLI call fails or no instances match (both are
-        treated as "already reaped" by the caller).
+        means AWS reports zero instances tagged with this cluster name.
+
+    Raises:
+        RuntimeError: The ``aws`` CLI call itself failed (non-zero exit —
+            wrong region, expired creds, throttling, ...). Raising here
+            instead of returning ``[]`` matters: a swallowed failure is
+            indistinguishable from "genuinely no instances", which would
+            let a live instance queried under broken credentials read as
+            "already reaped" — a false PASS with the meter still running.
     """
     completed = subprocess.run(
         [
@@ -111,9 +161,37 @@ def _ec2_states(cluster_name: str) -> list[str]:
         timeout=120,
     )
     if completed.returncode != 0:
-        _log.warning("describe-instances failed: %s", completed.stderr.strip())
-        return []
+        raise RuntimeError(
+            f"aws ec2 describe-instances failed (rc={completed.returncode}): "
+            f"{completed.stderr.strip()}"
+        )
     return list(json.loads(completed.stdout or "[]"))
+
+
+def _classify(states: list[str], *, observed_live: bool) -> str:
+    """Classify one EC2 poll snapshot.
+
+    Args:
+        states: Current ``_ec2_states`` result.
+        observed_live: Whether a prior snapshot in this same poll loop ever
+            contained a ``pending``/``running`` state — the only evidence
+            that the instance genuinely existed before it (maybe) vanished.
+
+    Returns:
+        ``"terminated"`` — all states dead, or the tag query is empty AND a
+        live state was observed earlier (real reap, not a no-op query).
+        ``"halted"`` — all states are a stage-2 HALT outcome.
+        ``"unknown"`` — empty query with no prior live observation; this is
+        NOT evidence of death, it is evidence of nothing.
+        ``"alive"`` — anything else (still pending/running, or mixed).
+    """
+    if not states:
+        return "terminated" if observed_live else "unknown"
+    if all(s in _DEAD_STATES for s in states):
+        return "terminated"
+    if all(s in _HALTED_STATES for s in states):
+        return "halted"
+    return "alive"
 
 
 def _teardown(cluster_name: str, tunnel: Any) -> None:
@@ -121,7 +199,10 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
 
     Idempotent: ``sky.down`` on an already-terminated cluster raises, and
     that exception is swallowed so it never masks the test's own result.
-    A genuine survivor still fails loudly via the final ``RuntimeError``.
+    A genuine survivor still fails loudly via the final ``RuntimeError`` —
+    note that ``_ec2_states`` itself now raises (rather than returning
+    ``[]``) on a broken query, so a failing describe-instances call can no
+    longer be misread as a clean teardown either.
 
     Args:
         cluster_name: SkyPilot cluster name to tear down.
@@ -129,9 +210,12 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
             killed (or never opened).
 
     Raises:
-        RuntimeError: An EC2 instance tagged with ``cluster_name`` is
-            still alive (not ``shutting-down``/``terminated``) after both
-            teardown attempts.
+        RuntimeError: An EC2 instance tagged with ``cluster_name`` is still
+            alive or merely halted (not ``shutting-down``/``terminated``)
+            after both teardown attempts — a stopped-but-not-terminated
+            instance still bills its EBS volume, so it counts as a survivor
+            here even though the poll loop treats "halted" as a legitimate
+            stage-2 outcome.
     """
     if tunnel is not None:
         try:
@@ -151,7 +235,7 @@ def _teardown(cluster_name: str, tunnel: Any) -> None:
 
 
 def test_skypilot_cluster_dies_without_its_client() -> None:
-    """A 5-minute deadline kills the instance with no client involvement.
+    """A 15-minute deadline kills the instance with no client involvement.
 
     A bug this catches: the arming step never reaching the instance, the
     watchdog dying with the setup shell, or stage 1 firing with no stage 2
@@ -159,7 +243,19 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
     gone.
     """
     cluster_name = f"kinoforge-wd-{secrets.token_hex(4)}"
-    provider = SkyPilotProvider(clouds=["aws"], region=_REGION, retry_until_up=True)
+    # Breadcrumb for a hard process kill mid-poll that skips the `finally`
+    # entirely (e.g. SIGKILL): the cluster name lands in pytest's captured
+    # stdout even without `-s`, so it can still be found and destroyed by
+    # hand instead of existing only inside a variable no one can read.
+    print(cluster_name, flush=True)
+
+    provider = SkyPilotProvider(clouds=["aws"], region=_REGION)
+    # F12 — durable provisional row BEFORE the multi-minute sky.launch, so a
+    # process death during provisioning still leaves something `kinoforge
+    # list` / `kinoforge forget` can find and name. Rooted at the CLI's
+    # default state dir so it is discoverable without special flags.
+    provider.set_launch_ledger(Ledger(store=LocalArtifactStore(_STATE_DIR)))
+
     tunnel: Any = None
     try:
         offers = provider.find_offers(
@@ -185,34 +281,87 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
             _DEADLINE_S,
         )
         launched_at = time.time()
-        provider.create_instance(spec)
 
-        # The client is now gone: kill the tunnel, never call destroy.
-        tunnel = provider._tunnels.pop(cluster_name, None)  # noqa: SLF001
-        if tunnel is not None:
+        create_failed: Exception | None = None
+        try:
+            provider.create_instance(spec)
+        except Exception as exc:  # noqa: BLE001
+            # Don't abort: a cluster that came up and then died mid-create
+            # (e.g. the RPC timed out after the instance was already
+            # running) must still be verified via EC2, not silently lost.
+            create_failed = exc
+            _log.warning(
+                "create_instance raised %r for cluster=%s — falling through "
+                "to the EC2 poll instead of aborting",
+                exc,
+                cluster_name,
+            )
+        else:
+            # The client is now gone: kill the tunnel, never call destroy.
+            tunnel = provider._tunnels.pop(cluster_name, None)  # noqa: SLF001
+            assert tunnel is not None, (
+                f"no tunnel found for {cluster_name!r} in provider._tunnels "
+                "after a successful create_instance — cannot prove the "
+                "client actually disconnected, which is the exact property "
+                "this smoke exists to prove"
+            )
             tunnel.kill()
             tunnel = None
 
         deadline = time.time() + _KILL_TIMEOUT_S
         states: list[str] = []
+        observed_live = False
+        elapsed = 0.0
+        verdict = "alive"
         while time.time() < deadline:
             states = _ec2_states(cluster_name)
-            _log.info("t+%.0fs ec2 states=%r", time.time() - launched_at, states)
-            if states and all(s in _DEAD_STATES for s in states):
-                break
-            if not states:
-                break  # already reaped and de-registered
+            elapsed = time.time() - launched_at
+            if any(s in _LIVE_STATES for s in states):
+                observed_live = True
+            _log.info(
+                "t+%.0fs ec2 states=%r observed_live=%s", elapsed, states, observed_live
+            )
+            if elapsed >= _DEADLINE_S:
+                verdict = _classify(states, observed_live=observed_live)
+                if verdict in {"terminated", "halted"}:
+                    break
             time.sleep(_POLL_INTERVAL_S)
+        else:
+            elapsed = time.time() - launched_at
+            verdict = _classify(states, observed_live=observed_live)
 
-        elapsed = time.time() - launched_at
-        assert states == [] or all(s in _DEAD_STATES for s in states), (
+        if verdict == "unknown":
+            reason = (
+                f"create_instance raised {create_failed!r}; " if create_failed else ""
+            )
+            pytest.fail(
+                f"{reason}never observed a live (pending/running) EC2 instance "
+                f"for {cluster_name!r} after {elapsed:.0f}s — cannot distinguish "
+                f"'terminated' from 'never launched'; last states={states!r}"
+            )
+        assert elapsed >= _DEADLINE_S, (
+            f"verdict {verdict!r} reached at {elapsed:.0f}s, before the "
+            f"{_DEADLINE_S:.0f}s deadline — too early to credit the watchdog"
+        )
+        assert verdict in {"terminated", "halted"}, (
             f"instance still alive {elapsed:.0f}s after launch: states={states!r}"
         )
-        _log.info(
-            "SMOKE RESULT cluster=%s wall_clock_to_termination=%.0fs states=%r",
-            cluster_name,
-            elapsed,
-            states,
-        )
+        if verdict == "halted":
+            _log.warning(
+                "SMOKE RESULT (STAGE-2-ONLY HALT, not terminated) cluster=%s "
+                "wall_clock=%.0fs states=%r — compute stopped billing, EBS "
+                "volume may still exist; teardown will attempt full "
+                "termination via sky.down",
+                cluster_name,
+                elapsed,
+                states,
+            )
+        else:
+            _log.info(
+                "SMOKE RESULT cluster=%s wall_clock_to_termination=%.0fs states=%r",
+                cluster_name,
+                elapsed,
+                states,
+            )
     finally:
         _teardown(cluster_name, tunnel)
