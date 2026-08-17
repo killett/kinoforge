@@ -1220,7 +1220,14 @@ def evaluate_capability_gaps(cfg: Config, shape: WorkloadShape) -> list[Gap]:
                 risk=risk,
                 missing=primary,
                 substitute=covering,
-                severity=Severity.WARN if covering else Severity.ERROR,
+                # ERROR only when a MONEY guardrail has no enforcement at all.
+                # The liveness rows (heartbeat_interval_s, stall_window_s)
+                # degrade a signal, not the spend bound, so they warn.
+                severity=(
+                    Severity.ERROR
+                    if (covering is None and spend_risk)
+                    else Severity.WARN
+                ),
                 detail=_DETAIL[primary]
                 + (
                     f"; bounded instead by {covering.value}"

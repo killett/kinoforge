@@ -181,7 +181,16 @@ It works from a risk table, not a per-key capability table:
 | `lifecycle.stall_window_s` | GPU idle mid-job | `UTIL_SNAPSHOT` | none |
 
 Resolution per row: primary declared → silent pass. Substitute declared → **WARN naming the substitute
-and the numeric bound it actually enforces**. Neither → **ERROR, load refused**.
+and the numeric bound it actually enforces**. Neither declared → **ERROR (load refused) when the row is
+a spend risk**, WARN otherwise.
+
+The spend-risk qualifier is what makes the severity rule match the outcomes in §6.1. `max_lifetime`,
+`idle_timeout` and `job_timeout` bound money: a config that asks for one where nothing can honour it is
+asking for a protection that does not exist, and refusing the load is the honest answer. The liveness
+rows — `heartbeat_interval_s` and `stall_window_s` — degrade a *signal*, not the spend bound: on
+skypilot the heartbeat still runs and warm-attach still works, it just proves the controller is alive
+rather than the cluster. Refusing those would break every shipped skypilot config to report something
+that costs no money.
 
 `max_usd_per_hr` is deliberately absent from the table. It binds only at offer selection
 (`core/offers.py:38`, F4) and is provider-independent; making it a capability row would misrepresent a
