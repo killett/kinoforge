@@ -309,6 +309,21 @@ absence:
   `is_session_busy` for exactly this question; the row also carries `session_start` and
   `kf_launch_phase`. A stranded row with no open claim still gets judged on its age evidence, which is
   the point of the change.
+
+  **`is_session_busy` alone is not sufficient** — established by the round-2 re-review. `session_start`
+  has exactly one writer (`orchestrator.py:1510-1514`) and it sits inside the heartbeat-loop branch, so
+  it exists only when a loop is running; and when a loop runs it writes both sentinel fields
+  (`heartbeat_loop.py:236-256`, substituting the orchestrator clock when the provider read returns
+  `None`), which means the gate is never reached at all. Whenever the gate IS reachable with a live
+  driver — heartbeat disabled, or the pre-loop launch window — the row carries no `session_start` and
+  the busy check returns `False`. The guard would have been correct code that never fires.
+
+  The fall-through therefore requires **`session_end is not None`**: positive evidence that a session
+  ran and finished, rather than the absence of evidence that one is running. A row measuring grace from
+  `pod_age` alone — including the provisional `kf_launch_phase=launching` row — stays
+  `HEARTBEAT_SUBSTRATE_MISSING`, non-destructive, exactly as before. Every row this change was written
+  to unstrand (ephemeral index rows and cross-process warm rows from completed sessions) carries
+  `session_end`, so the goal survives.
 * Capability **declared** + fields missing → `HEARTBEAT_UNKNOWN`, unchanged. This is now a genuine
   anomaly: the provider says it can read a heartbeat and the row has none.
 
