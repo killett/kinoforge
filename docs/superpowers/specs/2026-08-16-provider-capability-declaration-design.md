@@ -205,8 +205,13 @@ selection filter as a runtime guardrail.
   the orchestrator clock, so it proves the controller is alive, not the cluster". **No errors — nothing
   that ships today breaks.**
 * `skypilot-lambda-diffusers-flashvsr-upscale.yaml`,
-  `skypilot-vast-diffusers-flashvsr-upscale.yaml` (BATCH): `idle_timeout` passes — autostop genuinely
-  fires.
+  `skypilot-vast-diffusers-flashvsr-upscale.yaml`: **also SERVER**, and they warn exactly like the three
+  above. Corrected 2026-08-16 during Task 4 review — an earlier draft of this section called them BATCH
+  on the mistaken belief that `upscale_only: true` produces an empty `run_cmd`. It does not:
+  `engines/diffusers/__init__.py:1274` always sets `run_cmd=server_cmd`, and `upscale_only` only adds
+  `KINOFORGE_SKIP_WAN_LOAD=1`. The `run_cmd=[]` renders in `upscalers/*/_engine.py` and
+  `interpolators/rife/_engine.py` belong to pipeline STAGES that run against an already-provisioned
+  instance (`orchestrator.py:2008-2022`, `:2031-2035`) — they never provision a pod.
 * Had Brief 1 not landed, skypilot would declare no `ON_INSTANCE_DEADLINE` and `max_lifetime` would be
   a hard ERROR. The fatal path is reachable and fires where money actually escapes.
 * RunPod configs setting `idle_timeout` gain a WARN (see §7, runpod has no idle autostop). New warning
@@ -214,12 +219,21 @@ selection filter as a runtime guardrail.
 
 ### 6.2 Shape inference
 
-At load, shape is derived from engine kind plus the upscale-only / interpolate-only path — the same
-inputs that decide whether the rendered provision carries `run_cmd=[]`. Inference can be wrong, so the
-check **re-runs at launch** inside `deploy_session`, where `spec.run_cmd` is authoritative. The
-launch-time verdict wins; an ERROR there aborts before `create_instance`. A load-time pass that becomes
-a launch-time error is logged as an inference miss rather than swallowed, so the derivation gets
-corrected instead of drifting.
+**Every spec kinoforge provisions today is SERVER.** No shipped path renders an empty `run_cmd` into an
+`InstanceSpec`, so load-time inference returns `SERVER` unconditionally and says so in its docstring —
+inventing a heuristic for a shape nothing produces would be exactly the aspirational modelling this
+design bans elsewhere.
+
+`WorkloadShape` is kept rather than deleted because the capability claim it guards is real and
+verifiable: SkyPilot autostop genuinely does fire for a spec whose job terminates, and
+`providers/skypilot/__init__.py:908-910` already branches on an empty `run_cmd`. Declaring
+`IDLE_AUTOSTOP` unconditionally would be a lie about server deploys; declaring it never would be a lie
+about the substrate.
+
+The check therefore **re-runs at launch** inside `deploy_session`, where `spec.run_cmd` is
+authoritative — that is the only place `BATCH` can arise today. The launch-time verdict wins; an ERROR
+there aborts before `create_instance`. A load-time/launch-time disagreement is logged as an inference
+miss rather than swallowed, so the day a batch-shaped deploy does appear, it announces itself.
 
 ---
 
@@ -314,10 +328,13 @@ half: this heartbeat is orchestrator-clock, so it proves the controller is alive
 (minute)", and `:47-50` repeats the mapping as if it enforced something; one of the four locks does not
 exist for this shape. Corrected the same way. `skypilot-lambda-comfyui.yaml:57-62` likewise.
 
-The two `*-flashvsr-upscale.yaml` get the **opposite** comment: BATCH shape, `run_cmd=[]`, autostop
-genuinely fires — stated explicitly so nobody later "fixes" them into the server pattern. Both
-currently omit `heartbeat_interval_s` and receive `30` by auto-fix at load; the key is written in
-explicitly, because an invisible auto-fix is the same category of problem as an unenforced guardrail.
+The two `*-flashvsr-upscale.yaml` get the **same** correction as the three above, not an opposite one:
+`upscale_only: true` does not empty `run_cmd`, so these are server deploys and autostop is inert for
+them too. Their comment additionally records why the intuition fails — the upscaler runs as a pipeline
+stage against an already-provisioned pod, so the `run_cmd=[]` in `upscalers/flashvsr/_engine.py` never
+reaches an `InstanceSpec`. Both currently omit `heartbeat_interval_s` and receive `30` by auto-fix at
+load; the key is written in explicitly, because an invisible auto-fix is the same category of problem
+as an unenforced guardrail.
 
 Docs: `docs/warm-reuse.md` and the sweeper verdict tables encode the pre-change gate behaviour (already
 flagged stale in F3's blast radius) and are rewritten against §8. `docs/lifecycle.md` gains the §7.1
@@ -355,9 +372,9 @@ provider with neither primary nor substitute → `load_config` raises, message n
 provider (catches a missing risk row letting an unbounded-spend config launch). Local config with
 `idle_timeout` loads clean (catches `billed` being ignored). Check exposes no `auto_fix` and
 `load_config` leaves guardrail values byte-identical (catches a future auto-fix that silences the
-diagnostic by rewriting the guardrail). Shape pair: skypilot SERVER cfg WARNs on `idle_timeout`, the
-upscale-only BATCH cfg passes (catches inverted derivation, which would silence the server case — the
-dangerous direction). Launch-time re-check fed a spec whose `run_cmd` contradicts the load-time
+diagnostic by rewriting the guardrail). `infer_shape` returns SERVER for an upscale-only cfg (catches a
+heuristic that guesses BATCH from `upscale_only` and thereby reports `idle_timeout` as enforced on a
+cluster where autostop is inert — the dangerous direction, and the actual Task 4 review finding). Launch-time re-check fed a spec whose `run_cmd` contradicts the load-time
 inference asserts the diagnostic follows the **spec** (catches a re-check that re-reads cfg and can
 never catch an inference miss).
 

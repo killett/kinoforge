@@ -1239,18 +1239,29 @@ def evaluate_capability_gaps(cfg: Config, shape: WorkloadShape) -> list[Gap]:
     return gaps
 
 
-def _infer_shape(cfg: Config) -> WorkloadShape:
-    """Infer the workload shape from cfg (see Task 5 for the launch re-check).
+def infer_shape(cfg: Config) -> WorkloadShape:
+    """Return the workload shape a cfg will deploy at.
 
-    BATCH iff the rendered provision will carry ``run_cmd=[]`` — upscale-only
-    diffusers cfgs and interpolate-only cfgs. Mirrors the upscale-only
-    predicate already used in ``core/config.py``.
+    Always ``SERVER``: no path in kinoforge today renders an empty
+    ``run_cmd`` into an ``InstanceSpec``. ``engines/diffusers/__init__.py``
+    always sets ``run_cmd=server_cmd``, and ``upscale_only`` only adds
+    ``KINOFORGE_SKIP_WAN_LOAD=1``. The ``run_cmd=[]`` renders in
+    ``upscalers/*/_engine.py`` and ``interpolators/rife/_engine.py`` belong
+    to pipeline STAGES that run against an already-provisioned instance
+    (``orchestrator.py:2008-2022``, ``:2031-2035``) — they never provision.
+
+    Guessing BATCH from ``upscale_only`` would report ``idle_timeout`` as
+    enforced on skypilot clusters where autostop is provably inert (F1),
+    which is the dishonesty this whole design exists to end. ``BATCH``
+    arises only in :func:`assert_launch_capabilities` (Task 5), from the
+    real ``spec.run_cmd``.
+
+    Args:
+        cfg: The loaded Config.
+
+    Returns:
+        :attr:`WorkloadShape.SERVER`.
     """
-    diffusers = cfg.engine.diffusers if cfg.engine is not None else None
-    if diffusers is not None and diffusers.upscale_only:
-        return WorkloadShape.BATCH
-    if cfg.interpolate is not None and not cfg.models:
-        return WorkloadShape.BATCH
     return WorkloadShape.SERVER
 
 
@@ -1447,7 +1458,7 @@ def assert_launch_capabilities(
             capability and no substitute at the authoritative shape.
     """
     shape = WorkloadShape.BATCH if not run_cmd else WorkloadShape.SERVER
-    inferred = _infer_shape(cfg)
+    inferred = infer_shape(cfg)
     if inferred is not shape:
         logger.warning(
             "[capabilities] shape inference miss: load-time inferred %s, "
@@ -1669,7 +1680,7 @@ SERVER_SKY = [
     "skypilot-cpu.yaml",
     "skypilot-lambda-comfyui.yaml",
 ]
-BATCH_SKY = [
+UPSCALE_SKY = [
     "skypilot-lambda-diffusers-flashvsr-upscale.yaml",
     "skypilot-vast-diffusers-flashvsr-upscale.yaml",
 ]
@@ -1699,13 +1710,16 @@ def test_server_skypilot_configs_warn_on_exactly_these_fields(name: str) -> None
     } - _unset_fields(cfg)
 
 
-@pytest.mark.parametrize("name", BATCH_SKY)
-def test_batch_skypilot_configs_have_no_idle_gap(name: str) -> None:
-    """Autostop genuinely fires for run_cmd=[] specs — warning here would be
-    the under-claim the shape parameter exists to avoid."""
+@pytest.mark.parametrize("name", UPSCALE_SKY)
+def test_upscale_skypilot_configs_are_server_and_warn_on_idle(name: str) -> None:
+    """`upscale_only: true` does NOT empty run_cmd — the upscaler runs as a
+    pipeline stage against an already-provisioned pod. These deploy SERVER,
+    so autostop is inert for them too. Catches a regression that reinstates
+    the BATCH guess and reports idle_timeout as enforced when it is not."""
     cfg = load_config(CONFIG_DIR / name)
-    gaps = evaluate_capability_gaps(cfg, WorkloadShape.BATCH)
-    assert all(g.field != "compute.lifecycle.idle_timeout" for g in gaps)
+    assert infer_shape(cfg) is WorkloadShape.SERVER
+    gaps = evaluate_capability_gaps(cfg, infer_shape(cfg))
+    assert any(g.field == "compute.lifecycle.idle_timeout" for g in gaps)
     assert cfg.compute.lifecycle.heartbeat_interval_s == 30
 ```
 
