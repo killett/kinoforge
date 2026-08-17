@@ -1504,9 +1504,21 @@ git commit -m "feat(orchestrator): re-check capability gaps against the launch s
 
 ---
 
-## Task 6: Capability-aware reaper gate
+## Task 6: Capability-aware reaper gate — ATTEMPTED, WITHDRAWN 2026-08-17
 
-**Goal:** An expected heartbeat absence stops masking the age and grace evidence that never depended on heartbeat.
+**Outcome:** implemented, reviewed three times, and reverted (`b1d110f6`). `reaper.py` is byte-identical
+to its pre-task state. The acceptance criteria below describe the WITHDRAWN behaviour and are retained
+only as the record of what was tried — design §8 is the authority on why fail-open survives.
+
+**Why:** on a capability-less provider the ledger cannot distinguish a stranded row from an
+actively-driven one. A warm-reused pod mid-render carries exactly `{created_at, session_end}` — the
+same shape as the orphan the change existed to catch — because warm re-attach writes nothing and
+`session_start`'s only writer is gated on a heartbeat loop skypilot cannot have. Two progressively
+tighter guards (`is_session_busy`, then `+ session_end is not None`) were disproved by review before
+this conclusion. Kept from the task: the `--strict` exit-code tests in `tests/cli/test_cmd_reap.py`,
+which cover a CLI path that had no coverage in either direction.
+
+**Goal (withdrawn):** An expected heartbeat absence stops masking the age and grace evidence that never depended on heartbeat.
 
 **Files:**
 - Modify: `src/kinoforge/core/reaper.py:432-452`
