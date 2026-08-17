@@ -153,6 +153,58 @@ $ kinoforge forget --id ia66l3rlto5x66
 forgot: ia66l3rlto5x66
 ```
 
+## Provider capability matrix
+
+Every guardrail kinoforge can offer — an idle autostop, an on-instance
+deadline watchdog, a per-job timeout, a real heartbeat read, a util
+snapshot — is only as real as the provider that claims to enforce it.
+`kinoforge.core.capabilities.Capability` is the vocabulary; each provider's
+`capabilities(shape)` classmethod declares, per `WorkloadShape`
+(`SERVER` — a long-lived process, autostop can never fire; `BATCH` — the
+provision script exits, autostop can fire), which of these it actually
+implements. A guardrail a cfg asserts that the selected provider cannot
+enforce, and that no declared capability substitutes for, is either an
+ERROR (spend-risk guardrail, nothing bounds it — load is refused) or a
+WARN (naming the substitute and the numeric bound it actually enforces)
+at config load and again at launch. See
+`src/kinoforge/validation/checks/capabilities.py` and design doc
+`docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md`
+§6–§7.
+
+| | local | runpod | skypilot | modal |
+|---|---|---|---|---|
+| `HEARTBEAT_READ` | ✓ | ✓ | ✗ | ✗ |
+| `RUNTIME_PROBE` | ✗ | ✓ | ✗ | ✓ |
+| `UTIL_SNAPSHOT` | ✓ (scripted, in-process test seam — not a measurement) | ✓ | ✗ | ✓ |
+| `IDLE_AUTOSTOP` | ✗ | ✗ | ✓ **BATCH shape only** | ✓ |
+| `ON_INSTANCE_DEADLINE` | ✗ | ✓ | ✓ | ✓ |
+| `JOB_TIMEOUT` | ✗ | ✓ | ✗ | ✗ |
+| `PAUSE_BILLING` | ✓ | ✓ | ✗ | ✗ |
+| `BALANCE_QUERY` | ✗ | ✓ | ✗ | ✗ |
+| `billed` | `False` | `True` | `True` | `True` |
+
+Two cells whose caveat matters more than the checkmark:
+
+- **`local` `UTIL_SNAPSHOT`** is a scripted in-process test seam, not a
+  real measurement. It stays declared because the endpoint does return
+  snapshots and `local` is unbilled, so no money decision rides on it.
+- **`runpod` has no `IDLE_AUTOSTOP`.** `selfterm.py` is a boot-relative
+  money cap, not idle detection — RunPod idle reaping is controller-side
+  only, which does not count as provider-enforced coverage.
+- **`skypilot` `IDLE_AUTOSTOP` holds only at `BATCH`.** A `SERVER`-shape
+  deploy's `run_cmd` is a never-terminating `Task.run`, so
+  `is_cluster_idle()` is permanently `False` and autostop cannot fire —
+  see `providers/skypilot/watchdog.py` for the guardrail that actually
+  holds on that shape (`ON_INSTANCE_DEADLINE`).
+
+A guardrail with no declared capability on the selected provider **and**
+no declared substitute refuses the config load outright (`ERROR`,
+spend-risk rows only); everything else downgrades to a `WARN` naming what
+actually bounds the run instead. `kinoforge doctor` and config load both
+run this check; nothing here changes what a provider is actually capable
+of — it only stops the config from claiming a capability the provider does
+not have.
+
 ## Sweeper daemon (B1 / Layer W)
 
 The sweeper is a long-running foreground daemon that calls the same

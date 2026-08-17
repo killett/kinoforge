@@ -10,6 +10,7 @@ kinoforge's registry lets you add a new adapter in a single file without touchin
 
 ```python
 # src/kinoforge/providers/myprovider/__init__.py
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.interfaces import (
     ComputeProvider, GpuOffer, InstanceSpec, Instance, Lifecycle,
 )
@@ -24,6 +25,19 @@ class MyProvider(ComputeProvider):
     def destroy_instance(self, instance_id: str) -> None: ...
     def heartbeat(self, instance_id: str) -> None: ...
     def endpoints(self, instance: Instance) -> dict[str, str]: ...
+
+    @classmethod
+    def capabilities(cls, shape: WorkloadShape = WorkloadShape.SERVER) -> frozenset[Capability]:
+        # ComputeProvider.capabilities() defaults to an EMPTY frozenset.
+        # A provider that does not override this declares NOTHING, and
+        # config validation refuses (ERROR) any cfg that asserts a
+        # spend-risk guardrail (idle_timeout, max_lifetime, job_timeout)
+        # against it — silently trusting an undeclared provider is exactly
+        # the dishonesty this check exists to prevent. Declaring your
+        # provider's real guardrails (see docs/lifecycle.md's capability
+        # matrix and kinoforge.core.capabilities.Capability) is part of
+        # writing a provider, not an optional follow-up.
+        return frozenset({Capability.ON_INSTANCE_DEADLINE})
 
 register_provider("myprovider", MyProvider)
 ```

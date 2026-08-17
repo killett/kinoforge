@@ -4,9 +4,11 @@
 # Phase 31 real-cloud verification smoke (spec §3.3, plan T3):
 #   - Smallest CPU SKU on GCP us-central1 (SkyPilot picks SKU from
 #     cpus/memory requirements; no GPU)
-#   - Quadruple-locked cleanup: idle_timeout 60 s -> SkyPilot
-#     autostop=1 (minute), plus orchestrator try/finally, preflight
-#     guard, and gcloud nuclear fallback
+#   - idle_timeout 60 s -> SkyPilot autostop=1 (minute), which is INERT for
+#     this server-mode deploy: run_cmd becomes a never-terminating
+#     Task.run, so is_cluster_idle() is permanently False. Real cleanup is
+#     orchestrator try/finally, preflight guard, gcloud nuclear fallback,
+#     and the instance-side deadline watchdog at max_lifetime below.
 #   - Engine-on-SkyPilot smoke is deferred (spec §7); the engine
 #     block below is a comfyui placeholder for schema completeness
 #
@@ -44,19 +46,30 @@ compute:
     max_usd_per_hr: 0.50
     disk_gb: 50
   lifecycle:
-    # idle_timeout (seconds) -> SkyPilot autostop (minutes) via
-    # InterfaceLifecycle.idle_timeout_s in SkyPilotProvider.create_instance.
-    # 60 s == autostop=1 minute, the tightest reliable cleanup window.
+    # Maps to SkyPilot autostop (idle_timeout seconds -> autostop minutes via
+    # InterfaceLifecycle.idle_timeout_s in SkyPilotProvider.create_instance),
+    # but autostop cannot fire for a server-mode deploy (see the header).
+    # Kept for provider portability; on skypilot the protection comes from
+    # max_lifetime below.
     idle_timeout: 60
+    # Not enforced on skypilot — only RunPod passes this through
+    # (executionTimeoutMs). Used here for budget estimation only.
     job_timeout: 25m
     time_buffer: 5m
+    # THE guardrail on this provider: the instance-side deadline watchdog
+    # (providers/skypilot/watchdog.py) arms at the top of Task.setup and
+    # autodowns the cluster at launch + max_lifetime, surviving controller death.
     max_lifetime: 30m
     boot_timeout: 10m
     max_in_flight: 1
     # Per-run ceiling; the layer-wide $0.50 envelope is enforced
     # externally by the smoke harness.
     budget: 0.50
-    heartbeat_interval_s: 20  # required when warm_reuse_auto_attach=true; 3*heartbeat must fit within idle_timeout=60s
+    # Required when warm_reuse_auto_attach=true (HeartbeatIntervalRequiredCheck),
+    # and genuinely required. Note what it does NOT do: skypilot has no
+    # wire-level heartbeat read, so last_heartbeat is the orchestrator clock —
+    # it proves the controller is alive, not that the cluster is.
+    heartbeat_interval_s: 20
 
 # Engine-on-SkyPilot smoke is deferred (spec §7) — these blocks are
 # kept minimal so the example parses end-to-end without claiming a

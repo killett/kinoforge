@@ -39,6 +39,15 @@ salvageable verdicts:
 | UNROUTABLE | refuse | refuse (provider unreachable) |
 | HEARTBEAT_SUBSTRATE_MISSING | refuse | attach (no wire substrate; pod confirmed live via list_instances) |
 
+`HEARTBEAT_SUBSTRATE_MISSING` is fail-open **by design**, not by omission:
+`classify` cannot tell a stranded row from a mid-session warm-reused pod on
+a provider with no `HEARTBEAT_READ` satisfier (a capability-declaration
+brief attempted a capability-aware reaper gate here and withdrew it
+(`docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md`
+§8) because both shapes write the same ledger row. The
+sweeper's `act_on_verdict` hard-pins this verdict to no-destroy + WARN-once;
+nothing falls through to a destructive verdict.
+
 Capability_key mismatch is never bypassable — use a cfg matching the
 pod or `kinoforge destroy --id <id>` to free the slot.
 

@@ -54,9 +54,22 @@ compute:
     max_usd_per_hr: 2.00
     disk_gb: 100
   lifecycle:
+    # Maps to SkyPilot autostop, but autostop cannot fire for this
+    # server-mode deploy: run_cmd becomes a never-terminating Task.run, so
+    # is_cluster_idle() is permanently False. Kept for provider portability;
+    # on skypilot the protection comes from max_lifetime below.
     idle_timeout: 180
+    # THE guardrail on this provider: the instance-side deadline watchdog
+    # (providers/skypilot/watchdog.py) arms at the top of Task.setup and
+    # autodowns the cluster at launch + max_lifetime, surviving controller death.
     max_lifetime: 1800
+    # Not enforced on skypilot — only RunPod passes this through
+    # (executionTimeoutMs). Used here for budget estimation only.
     job_timeout: 600
     boot_timeout: 900
     budget: 0.30
-    heartbeat_interval_s: 30  # required when warm_reuse_auto_attach=true
+    # Required when warm_reuse_auto_attach=true (HeartbeatIntervalRequiredCheck),
+    # and genuinely required. Note what it does NOT do: skypilot has no
+    # wire-level heartbeat read, so last_heartbeat is the orchestrator clock —
+    # it proves the controller is alive, not that the cluster is.
+    heartbeat_interval_s: 30

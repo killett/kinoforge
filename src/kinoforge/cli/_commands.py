@@ -3281,8 +3281,9 @@ def _cmd_sweeper_start(args: argparse.Namespace, ctx: SessionContext) -> int:
     logger.info(
         "B5a heartbeat-substrate gate is ACTIVE: providers with no "
         "shipped HeartbeatEndpoint satisfier emit HEARTBEAT_SUBSTRATE_MISSING "
-        "and are NEVER reaped. SkyPilot is the only such provider today; "
-        "B5b ships the satisfier when GPU quota lands. WARN-once-per-"
+        "and are NEVER reaped. SkyPilot and Modal are the providers with no "
+        "such satisfier today (neither declares HEARTBEAT_READ); "
+        "B5b ships the SkyPilot satisfier when GPU quota lands. WARN-once-per-"
         "(provider,instance_id) deduped."
     )
     logger.info(
