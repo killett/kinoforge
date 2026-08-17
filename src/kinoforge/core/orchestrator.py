@@ -844,7 +844,12 @@ def _provision_instance_and_build_backend(
         ProvisionFailed: Engine boot script crashed; instance already destroyed.
         ProvisionTimeout: Ready check timed out; instance already destroyed.
         CapabilityMismatch: Engine rejected its own capability key; instance destroyed.
-        ValidationError: Spec validation failed; instance destroyed.
+        ValidationError: Two distinct sites. (1) ``assert_launch_capabilities``
+            finds an ERROR-severity capability gap inside ``_build_spec``,
+            before ``create_instance`` is ever called — nothing exists yet to
+            destroy. (2) Spec validation fails inside ``_provision_compute_once``
+            after the instance is already created — that instance is destroyed
+            before the exception propagates.
     """
     hw_reqs = cfg.hardware_requirements()
     lifecycle = cfg.lifecycle()
