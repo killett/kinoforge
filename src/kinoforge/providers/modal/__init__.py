@@ -248,8 +248,22 @@ class ModalProvider(ComputeProvider):
         raise KeyError(f"no modal deployment for run_id={instance_id!r}")
 
     def stop_instance(self, instance_id: str) -> None:
-        """Stop (== destroy for Modal) the named deployment."""
-        self.destroy_instance(instance_id)
+        """Refuse: stopping a Modal app destroys it.
+
+        This used to alias ``destroy_instance``, so a pause request silently
+        destroyed the app and threw away the warm container.
+
+        Args:
+            instance_id: The run-id the caller wanted paused.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            f"modal cannot pause billing for {instance_id!r}; stopping an app "
+            f"destroys it — use `kinoforge destroy --id {instance_id}` if that "
+            f"is what you want"
+        )
 
     def destroy_instance(self, instance_id: str) -> None:
         """Stop the deployment and poll until gone (bounded)."""

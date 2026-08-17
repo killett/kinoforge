@@ -1010,15 +1010,23 @@ class SkyPilotProvider(ComputeProvider):
         return [_cluster_record_to_instance(c) for c in clusters]
 
     def stop_instance(self, instance_id: str) -> None:
-        """No-op for SkyPilot: use destroy_instance or rely on autostop.
+        """Refuse: SkyPilot has no pause-billing primitive.
 
-        SkyPilot's autostop handles idle termination.  There is no separate
-        'pause billing' primitive without tearing down the cluster.
+        A cluster is either UP or torn down. This used to be a silent no-op,
+        so ``kinoforge stop --id`` reported success while the cluster kept
+        billing. PAUSE_BILLING is not declared; the honest answer is a
+        refusal that names the operation that does work.
 
         Args:
-            instance_id: Unused.
+            instance_id: The cluster name the caller wanted paused.
+
+        Raises:
+            NotImplementedError: Always.
         """
-        # SkyPilot clusters are either UP or torn down; no intermediate pause.
+        raise NotImplementedError(
+            f"skypilot cannot pause billing for {instance_id!r}; "
+            f"use `kinoforge destroy --id {instance_id}` to tear the cluster down"
+        )
 
     @staticmethod
     def _kill_tunnel(tunnel: Any) -> None:  # noqa: ANN401

@@ -2381,8 +2381,17 @@ def _cmd_stop(args: argparse.Namespace, ctx: SessionContext) -> int:
     provider_name = entry.get("provider", "local")
     try:
         from kinoforge.core import registry
+        from kinoforge.core.capabilities import Capability, capabilities_for
 
         provider = registry.get_provider(str(provider_name))()
+        if Capability.PAUSE_BILLING not in capabilities_for(str(provider_name)):
+            print(
+                f"{provider_name} cannot pause billing; instances are either "
+                f"running or destroyed.\n"
+                f"  To tear it down:  kinoforge destroy --id {args.id}",
+                file=sys.stderr,
+            )
+            return 1
         provider.stop_instance(args.id)
         print(f"stopped: {args.id}")
         return 0

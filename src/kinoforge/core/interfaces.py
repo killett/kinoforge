@@ -320,16 +320,16 @@ class ComputeProvider(ABC):
         """
         return None
 
-    def set_heartbeat_endpoint(  # noqa: B027
+    def set_heartbeat_endpoint(
         self,
         endpoint: object | None,
     ) -> None:
         """Install a HeartbeatEndpoint post-construction (B5a).
 
-        Default implementation is a no-op so providers that do not yet
-        support the heartbeat substrate (e.g. SkyPilot pre-B5b, Local)
-        silently accept the call. RunPodProvider overrides to wire the
-        endpoint into its ``heartbeat()`` / ``last_heartbeat()`` paths.
+        Providers that declare HEARTBEAT_READ override this to wire the
+        endpoint. The default accepts ``None`` (the clear path) and REJECTS a
+        real endpoint: silently discarding one that a caller built is a
+        wiring bug, not a capability gap.
 
         ``endpoint`` is typed as ``object | None`` (not
         ``HeartbeatEndpoint | None``) to keep ``core/interfaces.py`` free
@@ -339,8 +339,17 @@ class ComputeProvider(ABC):
         Args:
             endpoint: A :class:`HeartbeatEndpoint`-Protocol-satisfying
                 instance, or ``None`` to clear.
+
+        Raises:
+            ValueError: ``endpoint`` is not None on a provider that does not
+                declare ``Capability.HEARTBEAT_READ``.
         """
-        # Default: ignore. Providers that wire heartbeat override.
+        if endpoint is None:
+            return
+        raise ValueError(
+            f"{type(self).__name__} does not declare Capability.HEARTBEAT_READ; "
+            f"refusing to silently discard the endpoint {endpoint!r}"
+        )
 
     @abstractmethod
     def endpoints(self, instance: Instance) -> dict[str, str]: ...  # noqa: D102
