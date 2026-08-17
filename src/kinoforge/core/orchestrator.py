@@ -17,17 +17,19 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import logging
 import os
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
+from kinoforge.core.capabilities import WorkloadShape
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.config import Config
 from kinoforge.core.credentials import EnvCredentialProvider
@@ -81,6 +83,13 @@ from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
 from kinoforge.pipeline.keyframe import KeyframeStage
 from kinoforge.stores.base import ArtifactStore
+from kinoforge.validation.protocol import Severity
+
+if TYPE_CHECKING:
+    # Type-only: the runtime import lives inside assert_launch_capabilities
+    # to avoid a module-scope import cycle (validation.checks.capabilities
+    # imports kinoforge.core.config).
+    from kinoforge.validation.checks.capabilities import Gap
 
 _log = get_logger("orchestrator")
 
@@ -712,6 +721,62 @@ def _build_start_heartbeat_closure(
     return start_heartbeat
 
 
+def assert_launch_capabilities(
+    cfg: Config,
+    *,
+    run_cmd: Sequence[str] | None,
+    logger: logging.Logger = _log,
+) -> list[Gap]:
+    """Re-evaluate capability gaps against the authoritative workload shape.
+
+    Load-time inference reads engine kind + the upscale/interpolate-only
+    path; here ``run_cmd`` is the real thing, so a wrong inference is caught
+    rather than trusted.
+
+    Args:
+        cfg: The loaded Config.
+        run_cmd: The rendered provision's run command. Empty/None -> BATCH.
+        logger: Injected for testability.
+
+    Returns:
+        The gaps at the authoritative shape (WARN-severity ones only; ERROR
+        gaps raise).
+
+    Raises:
+        ValidationError: A guardrail the cfg asserts has no declared
+            capability and no substitute at the authoritative shape.
+    """
+    # Function-local import: kinoforge.validation.checks.capabilities imports
+    # kinoforge.core.config, and core/orchestrator.py importing back into
+    # validation at module scope risks a cycle. noqa: PLC0415 — avoids an
+    # import cycle, matching the pattern used elsewhere in this plan.
+    from kinoforge.validation.checks.capabilities import (  # noqa: PLC0415
+        evaluate_capability_gaps,
+        infer_shape,
+    )
+
+    shape = WorkloadShape.BATCH if not run_cmd else WorkloadShape.SERVER
+    inferred = infer_shape(cfg)
+    if inferred is not shape:
+        logger.warning(
+            "[capabilities] shape inference miss: load-time inferred %s, "
+            "spec.run_cmd says %s — the launch-time shape wins",
+            inferred.value,
+            shape.value,
+        )
+    gaps: list[Gap] = evaluate_capability_gaps(cfg, shape)
+    fatal = [g for g in gaps if g.severity is Severity.ERROR]
+    if fatal:
+        detail = "; ".join(f"{g.field} needs {g.missing.value}" for g in fatal)
+        raise ValidationError(
+            f"{cfg.compute.provider if cfg.compute else '?'} cannot enforce "
+            f"guardrails this cfg asserts at shape={shape.value}: {detail}"
+        )
+    for gap in gaps:
+        logger.warning("[capabilities] %s: %s", gap.field, gap.detail)
+    return gaps
+
+
 def _provision_instance_and_build_backend(
     *,
     resolved_engine: GenerationEngine,
@@ -824,6 +889,7 @@ def _provision_instance_and_build_backend(
         restart_policy: Literal["always", "never"] = (
             "never" if cfg.diagnostic_mode else "always"
         )
+        assert_launch_capabilities(cfg, run_cmd=rendered.run_cmd)
         return InstanceSpec(
             image=rendered.image or image,
             offer=offer,

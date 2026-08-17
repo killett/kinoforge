@@ -9,14 +9,57 @@ without sleeps.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
+
+import pytest
 
 from kinoforge.core.cancel import CancelToken
+from kinoforge.core.config import Config, load_config
 from kinoforge.core.interfaces import (
     Artifact,
     GenerationBackend,
     GenerationJob,
     ModelProfile,
 )
+
+#: Same minimal skypilot cfg template used by Task 4's
+#: tests/validation/test_capability_check.py — a billed provider with the
+#: lifecycle fields the capability-gap risk rows key off of.
+_MINIMAL_SKYPILOT_CFG_YAML = """\
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+compute:
+  provider: skypilot
+  image: "example/image:latest"
+  mode: pod
+  lifecycle:
+    idle_timeout: 180
+    max_lifetime: 1800
+    budget: 0.10
+    heartbeat_interval_s: 30
+"""
+
+
+@pytest.fixture
+def minimal_skypilot_cfg(tmp_path: Path) -> Config:
+    """Load a minimal, valid skypilot cfg with lifecycle guardrails set.
+
+    Args:
+        tmp_path: pytest tmp_path fixture directory to write the YAML into.
+
+    Returns:
+        The loaded :class:`Config`, pinned to ``compute.provider: skypilot``.
+    """
+    path = tmp_path / "skypilot.yaml"
+    path.write_text(_MINIMAL_SKYPILOT_CFG_YAML)
+    return load_config(path)
 
 
 class BlockingFakeBackend(GenerationBackend):
