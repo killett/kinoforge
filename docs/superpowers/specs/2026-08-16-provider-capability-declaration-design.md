@@ -294,9 +294,21 @@ heartbeat loop: ephemeral index rows, cross-process warm rows, and (since Brief 
 `provider_heartbeat_supported`, so the call site is unchanged) and stops returning early on expected
 absence:
 
-* Capability **not** declared + fields missing → fall through to the grace evaluation at `:499-507`.
-  Past `grace_after_session_s` → `ORPHAN_REAP`; within grace → `HEARTBEAT_SUBSTRATE_MISSING`, exactly
-  as today.
+* Capability **not** declared + fields missing → fall through to the grace evaluation at `:499-507`,
+  **guarded by a liveness precondition**. Past `grace_after_session_s` **and no open session claim** →
+  `ORPHAN_REAP`; otherwise → `HEARTBEAT_SUBSTRATE_MISSING`, exactly as today.
+
+  The precondition was added 2026-08-16 after the Task 6 review found that the grace rule's safety
+  premise does not transfer to this call site. On the rows-5-and-6 path, grace is only consulted after
+  `sent_age > sentinel_window` has already proven the driver is dead. Here the heartbeat fields are
+  simply *absent*, so age alone would be asserting orphanhood with no liveness evidence at all. With
+  `compute.heartbeat_mode: none` the gate condition is true for every row permanently, and
+  `session_end` is written only at teardown — so an actively-generating skypilot or modal pod would
+  classify `ORPHAN_REAP` at 30 minutes of pod age and be destroyed by a sweeper running
+  `include_orphans`, where before it was immune. `core/lifecycle.py:60-98` already implements
+  `is_session_busy` for exactly this question; the row also carries `session_start` and
+  `kf_launch_phase`. A stranded row with no open claim still gets judged on its age evidence, which is
+  the point of the change.
 * Capability **declared** + fields missing → `HEARTBEAT_UNKNOWN`, unchanged. This is now a genuine
   anomaly: the provider says it can read a heartbeat and the row has none.
 
