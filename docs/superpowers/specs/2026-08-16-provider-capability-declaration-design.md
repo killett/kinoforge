@@ -280,7 +280,50 @@ Two cells whose caveat must survive into the code, not just this table:
 
 ---
 
-## 8. Reaper
+## 8. Reaper — ATTEMPTED, REVERTED 2026-08-17
+
+**Outcome: the gate is unchanged. `HEARTBEAT_SUBSTRATE_MISSING` stays fail-open.** The brief asked
+whether fail-open should survive now that capabilities are explicit. Three rounds of implementation and
+adversarial review answered it empirically, and the answer is yes — for a reason that is worth more
+than the change would have been.
+
+**On a capability-less provider, the ledger cannot distinguish a stranded row from an actively-driven
+one.** The two shapes are byte-identical:
+
+```
+{"id": "sky-1", "provider": "skypilot", "created_at": t0, "session_end": t1}
+```
+
+That is *both* the orphan this change set out to unstrand *and* a warm-reused pod midway through a
+second render. Warm re-attach — kinoforge's default flow — writes nothing to the row: `Ledger.record`
+runs only on cold create, and `session_start`'s single writer (`orchestrator.py:1509-1514`) is gated on
+a heartbeat loop that skypilot can never have, because `_adapters.py:185-189` forces
+`heartbeat_mode: none` on that provider. So grace keeps measuring from the *previous* session's
+`session_end`, and a render that starts 25 minutes later is classified `ORPHAN_REAP` five minutes in.
+
+Two weaker guards were tried and disproved before this conclusion:
+
+1. **`is_session_busy` alone** — inert. `session_start` exists only when a heartbeat loop runs, and when
+   one runs it writes both sentinel fields, so the gate is never reached. On every row where the gate
+   *is* reachable with a live driver, the guard reads `False`.
+2. **`is_session_busy` + `session_end is not None`** — closes the first-session case, and the warm
+   re-attach case walks straight through it, because `session_end` is exactly the field a warm row
+   carries.
+
+No predicate over the current ledger fields separates the two, so this cannot be fixed inside
+`classify`. The upstream fixes that would work are real but out of scope here: write `session_start`
+unconditionally on attach (drop the `hb_loop` gate), or run the heartbeat loop on capability-less
+providers so those rows leave the row-7 path entirely. Either belongs to whoever owns the attach path
+and the B5b heartbeat substrate.
+
+**What this costs:** stranded rows — ephemeral index rows, cross-process warm rows, the provisional
+`kf_launch_phase=launching` row — stay a dead end and still need `kinoforge forget`. That is the price
+of not having a destroy path that cannot tell a live pod from an abandoned one, and it is the right
+trade for a component whose only power is destruction.
+
+The design below is retained as the record of what was attempted and why it was withdrawn.
+
+### 8.1 The withdrawn design
 
 Target: the Row-7 gate at `core/reaper.py:446-452`.
 
