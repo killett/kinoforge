@@ -19,9 +19,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from kinoforge.core.capabilities import provider_registered
 from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
-from kinoforge.core.session_busy import is_session_busy
 from kinoforge.core.util_endpoints import provider_util_supported
 
 
@@ -38,16 +36,7 @@ class Verdict(StrEnum):
     OVERAGE_REAP = "OVERAGE_REAP"
     STALE_LEDGER = "STALE_LEDGER"
     HEARTBEAT_UNKNOWN = "HEARTBEAT_UNKNOWN"
-    # B5a. Narrowed by Brief 2 Task 6 to "expected absence, still inside
-    # grace": the provider does not declare HEARTBEAT_READ, the row has no
-    # heartbeat fields, and it is not yet past grace. Past grace the same
-    # row now classifies ORPHAN_REAP. The NAME and VALUE are retained
-    # deliberately — they are a serialized public contract (see the class
-    # docstring; the string also appears in _FORCE_BYPASSABLE_VERDICTS,
-    # DEFAULT_STRICT_VERDICTS, the sweeper tables and docs/warm-reuse.md),
-    # and behaviour inside grace is identical, so nothing downstream
-    # migrates.
-    HEARTBEAT_SUBSTRATE_MISSING = "HEARTBEAT_SUBSTRATE_MISSING"
+    HEARTBEAT_SUBSTRATE_MISSING = "HEARTBEAT_SUBSTRATE_MISSING"  # B5a
     UNROUTABLE = "UNROUTABLE"
     STALL_REAP = "STALL_REAP"  # C26
     RESTART_LOOP_REAP = "RESTART_LOOP_REAP"  # C27
@@ -144,48 +133,6 @@ def _resolve(entry: Mapping[str, Any], field: str, default: float) -> float:
         return float(val)
     except (TypeError, ValueError):
         return float(default)
-
-
-def _time_since_drive(
-    entry: Mapping[str, Any],
-    *,
-    created_at: float,
-    pod_age: float,
-    now: float,
-) -> float:
-    """Seconds since the pod was last driven, for the grace comparison.
-
-    Grace is measured from the last driver detach (``session_end``), not
-    from pod creation: ``grace_after_session_s`` is named and documented
-    (interfaces.py:65) as the POST-SESSION warm-reuse window. Between CLI
-    invocations the in-process HeartbeatLoop is dead, so the sentinel
-    necessarily goes stale — that is normal, not orphan.
-
-    Fallbacks:
-      * ``session_end`` absent → never driven yet (or pre-Layer-B3 legacy
-        entry); fall back to ``pod_age`` so brand-new pods still get the
-        full grace window from creation and ancient orphan entries still
-        get reaped.
-      * ``max(created_at, session_end)`` guards against an out-of-order
-        write where ``session_end`` somehow predates the pod itself; we
-        never measure from a marker older than the pod.
-
-    Shared by rows 5 & 6 (sentinel stale) and by the row-7 expected-
-    absence fall-through, so the two cannot drift apart.
-
-    Args:
-        entry: The ledger entry being classified.
-        created_at: The entry's ``created_at``, already coerced to float.
-        pod_age: ``now - created_at``, the no-``session_end`` fallback.
-        now: Wall-clock seconds.
-
-    Returns:
-        Seconds elapsed since the drive marker.
-    """
-    session_end = entry.get("session_end")
-    if session_end is None:
-        return pod_age
-    return now - max(created_at, float(session_end))
 
 
 def _stall_reap_predicate(
@@ -393,13 +340,7 @@ def classify(
     """Classify a single ledger entry against the current world state.
 
     Pure function. No I/O. See spec §3.3 for the row-by-row decision
-    tree this implements (rows 1–7). Row 7 has since been superseded by
-    §8 of the 2026-08-16 provider-capability-declaration design: an
-    EXPECTED heartbeat absence (provider declares no
-    ``Capability.HEARTBEAT_READ``) no longer terminates the tree, it
-    falls through to the rows-5-and-6 grace rule under a liveness
-    precondition. Only an absence the provider's own declaration cannot
-    explain still returns HEARTBEAT_UNKNOWN there.
+    tree this implements (rows 1–7).
 
     Args:
         entry: A ledger-shaped dict. Must carry ``id``. May carry
@@ -490,10 +431,9 @@ def classify(
 
     # Row 7 — heartbeat data unavailable.
     # B5a: gate on provider substrate support. When the entry's provider
-    # does not declare Capability.HEARTBEAT_READ (e.g. SkyPilot), the
-    # absence is EXPECTED and says nothing on its own — so the gate no
-    # longer short-circuits, it falls through to the same grace evidence
-    # rows 5 & 6 use (Brief 2 §8). Layer S Ledger.record writes the
+    # has no wire-level HeartbeatEndpoint shipped yet (e.g. SkyPilot
+    # pre-B5b), emit HEARTBEAT_SUBSTRATE_MISSING so consumers do not
+    # treat the absence as actionable. Layer S Ledger.record writes the
     # provider kind under the key ``"provider"`` (lifecycle.py:504);
     # earlier B5a iterations of this gate read ``"provider_kind"`` which
     # the ledger never writes, making the new verdict unreachable on
@@ -505,84 +445,11 @@ def classify(
     # opted-in dead-man fallback applies.
     if hb_tick is None or hb is None or heartbeat_interval_s is None:
         provider_kind = entry.get("provider_kind") or entry.get("provider")
-        # ``provider_registered`` separates "declares no HEARTBEAT_READ" from
-        # "name we do not recognise": capabilities_for returns an empty set
-        # for both, and only the first is an EXPECTED absence. An unknown
-        # name has no declaration to reason from, so it keeps the strict,
-        # non-destructive HEARTBEAT_UNKNOWN rather than being handed the
-        # fall-through. Unreachable via ``sweep`` today (provider lookup
-        # fails first and assigns UNROUTABLE), but classify is a public
-        # pure function called directly by the CLI warm-attach path too.
-        expected_absence = (
-            provider_kind is not None
-            and provider_registered(str(provider_kind))
-            and not provider_heartbeat_supported(str(provider_kind))
-        )
-        if not expected_absence:
-            # The provider DECLARES a heartbeat read and the row has none —
-            # a real anomaly, kept strict and non-destructive.
-            return Verdict.HEARTBEAT_UNKNOWN
-        # Expected absence (the provider never had HEARTBEAT_READ). Do NOT
-        # return here: the age + grace evidence below never depended on
-        # heartbeat, and short-circuiting it is what made these rows a dead
-        # end. Falls through to the same grace evaluation rows 5 & 6 use;
-        # within grace the row still classifies HEARTBEAT_SUBSTRATE_MISSING,
-        # past grace it becomes ORPHAN_REAP (still not in
-        # DEFAULT_APPLY_POLICY, so plain ``--apply`` is unchanged).
-        #
-        # LIVENESS PRECONDITION (design §8, added after the Task 6 review
-        # and tightened after its round-2 re-review).
-        #
-        # Rows 5 & 6 may read age as orphanhood only because they are
-        # reached after ``sent_age > sentinel_window`` has already PROVEN
-        # the driver is dead. Here the heartbeat fields are merely absent,
-        # so age alone would assert orphanhood on no liveness evidence at
-        # all: with ``compute.heartbeat_mode: none`` this branch is taken
-        # for every row permanently, and an actively-generating pod would
-        # age into ORPHAN_REAP and be destroyed mid-render by a sweeper
-        # running include_orphans.
-        #
-        # Two conditions, and BOTH are load-bearing:
-        #
-        #   1. ``session_end`` present — POSITIVE evidence that a session
-        #      ran and closed. ``is_session_busy`` alone is not enough:
-        #      ``session_start`` has exactly one writer
-        #      (``orchestrator.py:1510-1514``) and it sits inside the
-        #      ``hb_loop is not None`` branch, so it exists only while a
-        #      heartbeat loop runs — and a running loop writes BOTH
-        #      sentinel fields (``heartbeat_loop.py:236-256`` substitutes
-        #      the orchestrator clock when the provider read returns
-        #      ``None``), which means this gate is never even reached.
-        #      Whenever the gate IS reachable with a live driver —
-        #      heartbeat disabled, or the pre-loop launch window — the row
-        #      has no ``session_start`` at all and a busy check answers
-        #      ``False``. Requiring ``session_end`` is what makes the guard
-        #      fire on the rows that actually exist. A row measuring grace
-        #      from ``pod_age`` alone — including the provisional
-        #      ``kf_launch_phase=launching`` row — therefore stays
-        #      HEARTBEAT_SUBSTRATE_MISSING and non-destructive.
-        #   2. ``not is_session_busy`` — the row was reopened by a later
-        #      session that is still live (``session_start`` newer than
-        #      ``session_end`` with a fresh sentinel). Reuses the project's
-        #      existing answer to "is another session claiming this row"
-        #      rather than growing a second notion of busy.
-        #
-        # Every row this change exists to unstrand — ephemeral index rows
-        # and cross-process warm rows from completed sessions — carries
-        # ``session_end``, so the unstranding still happens.
-        time_since_drive = _time_since_drive(
-            entry, created_at=created_at, pod_age=pod_age, now=now
-        )
-        session_closed = entry.get("session_end") is not None
-        if (
-            time_since_drive > grace
-            and session_closed
-            and not is_session_busy(
-                entry, now=now, heartbeat_interval_s=heartbeat_interval_s
-            )
+        if provider_kind is not None and not provider_heartbeat_supported(
+            str(provider_kind)
         ):
-            return Verdict.ORPHAN_REAP
-        return Verdict.HEARTBEAT_SUBSTRATE_MISSING
+            return Verdict.HEARTBEAT_SUBSTRATE_MISSING
+        return Verdict.HEARTBEAT_UNKNOWN
 
     sentinel_window = 3.0 * heartbeat_interval_s
     sent_age = now - float(hb_tick)
@@ -613,13 +480,28 @@ def classify(
             return Verdict.LIVE
         return Verdict.IDLE_REAP
 
-    # Rows 5 & 6 — sentinel stale. As long as the last detach is within
-    # grace the pod is still inside the warm-reuse window and classifies
-    # LIVE; see :func:`_time_since_drive` for why grace is measured from
-    # the detach marker rather than pod creation.
-    time_since_drive = _time_since_drive(
-        entry, created_at=created_at, pod_age=pod_age, now=now
-    )
+    # Rows 5 & 6 — sentinel stale. Measure grace from the last driver detach
+    # (``session_end``), not pod creation: ``grace_after_session_s`` is named
+    # and documented (interfaces.py:65) as the POST-SESSION warm-reuse window.
+    # Between CLI invocations the in-process HeartbeatLoop is dead, so the
+    # sentinel necessarily goes stale — that is normal, not orphan. As long
+    # as the last detach is within grace the pod is still inside the
+    # warm-reuse window and must classify LIVE.
+    #
+    # Fallbacks:
+    #   * ``session_end`` absent → never driven yet (or pre-Layer-B3 legacy
+    #     entry); fall back to ``pod_age`` so brand-new pods still get the
+    #     full grace window from creation and ancient orphan entries still
+    #     get reaped.
+    #   * ``max(created_at, session_end)`` guards against an out-of-order
+    #     write where ``session_end`` somehow predates the pod itself; we
+    #     never measure from a marker older than the pod.
+    session_end = entry.get("session_end")
+    if session_end is None:
+        time_since_drive = pod_age
+    else:
+        drive_marker = max(created_at, float(session_end))
+        time_since_drive = now - drive_marker
     if time_since_drive > grace:
         return Verdict.ORPHAN_REAP
     return Verdict.LIVE

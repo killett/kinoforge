@@ -479,15 +479,7 @@ def test_classify_emits_substrate_missing_on_unsupported_provider() -> None:
     """SkyPilot pre-B5b: provider_kind='skypilot', last_heartbeat=None.
     Must NOT emit HEARTBEAT_UNKNOWN — that would let a future B1 sweeper
     reap a live working SkyPilot pod once HEARTBEAT_UNKNOWN is added to
-    the apply policy. Emit the dedicated verdict instead.
-
-    Brief 2 Task 6 — verdict UNCHANGED, and the reason is now load-bearing:
-    this row carries no ``session_end``, i.e. no evidence any session ever
-    closed, so the row-7 fall-through is not entitled to read its age as
-    orphanhood. A pod being actively driven with heartbeat disabled looks
-    exactly like this. The ORPHAN_REAP half of the gate is exercised in
-    tests/core/test_reaper_capability_gate.py on a row that does carry
-    ``session_end``."""
+    the apply policy. Emit the dedicated verdict instead."""
     entry = {
         "id": "cluster-x",
         "provider_kind": "skypilot",
@@ -564,10 +556,7 @@ def test_classify_reads_provider_key_when_provider_kind_absent() -> None:
 
     Bug catch: an earlier B5a iteration read only ``"provider_kind"`` and
     silently fell through to HEARTBEAT_UNKNOWN on every production entry.
-    Caught by the final cross-task review (2026-06-12).
-
-    Brief 2 Task 6 — verdict unchanged: the row has no ``session_end``, so
-    the fall-through added by that task does not apply to it."""
+    Caught by the final cross-task review (2026-06-12)."""
     entry = {
         "id": "cluster-x",
         "provider": "skypilot",  # the actual Ledger.record schema key
