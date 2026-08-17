@@ -165,3 +165,189 @@ def test_check_never_auto_fixes_and_load_preserves_guardrail_values(
     assert cfg.compute.lifecycle is not None
     assert cfg.compute.lifecycle.idle_timeout == 180.0
     assert cfg.compute.lifecycle.max_lifetime == 1800.0
+
+
+_MODAL_CFG = """\
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+compute:
+  provider: modal
+  image: "example/image:latest"
+  mode: pod
+  lifecycle:
+    idle_timeout: 180
+    max_lifetime: 5400
+    boot_timeout: 2700
+    budget: 0.10
+    heartbeat_interval_s: 30
+"""
+
+
+def test_modal_deadline_bound_is_boot_timeout_and_the_mismatch_warns(
+    tmp_path: Path,
+) -> None:
+    """Modal's deadline is derived from ``boot_timeout``, never ``max_lifetime``.
+
+    ``ModalProvider`` wires only ``scaledown_window_s`` and
+    ``startup_timeout_s``; ``max_lifetime`` is never sent to Modal. Bug
+    caught (and the reason this test exists): ``_substitute_bound``
+    formatting ``max_lifetime`` unconditionally, so a cfg asking for 90 min
+    was told its run was "bounded ... at max_lifetime=5400.0s" when Modal
+    kills the container at 2700 s. Both numbers must appear, and the WARN
+    must say which one is enforced.
+    """
+    path = tmp_path / "modal.yaml"
+    path.write_text(_MODAL_CFG)
+    cfg = load_config(path)
+    gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+
+    deadline = [g for g in gaps if g.field == "compute.lifecycle.max_lifetime"]
+    assert len(deadline) == 1
+    assert deadline[0].severity is Severity.WARN
+    assert "boot_timeout=2700.0s" in deadline[0].detail
+    assert "max_lifetime=5400.0s" in deadline[0].detail
+    assert "capped at 2700.0s" in deadline[0].detail
+    # The declaration itself is honest and stays: Modal's function timeout
+    # really does terminate the container.
+    assert [g for g in gaps if g.severity is Severity.ERROR] == []
+    rendered = deadline[0].render("modal")
+    assert "modal cannot enforce ON_INSTANCE_DEADLINE" not in rendered
+    assert "but not at max_lifetime" in rendered
+
+
+def test_runpod_deadline_bound_stays_max_lifetime(tmp_path: Path) -> None:
+    """The per-provider bound must not become "boot_timeout everywhere".
+
+    runpod keys its instance-side deadline to ``max_lifetime``
+    (``selfterm.RENDER(max_lifetime=...)``), so the ``idle_timeout`` WARN it
+    earns — runpod declares no ``IDLE_AUTOSTOP`` — must still name
+    ``max_lifetime``. Bug caught: the C2 fix over-correcting and reporting
+    Modal's field for every provider.
+    """
+    cfg = load_config(_write_cfg(tmp_path, provider="runpod"))
+    gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+    idle = [g for g in gaps if g.field == "compute.lifecycle.idle_timeout"]
+    assert len(idle) == 1
+    assert idle[0].substitute is Capability.ON_INSTANCE_DEADLINE
+    assert "at max_lifetime=1800.0s" in idle[0].detail
+
+
+def test_unresolvable_bound_prints_no_number_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A provider with no known deadline field prints NO bound.
+
+    Design decision this pins: a bare omission is more honest than a wrong
+    number. Bug caught: a future provider added to the matrix but not to
+    ``_DEADLINE_BOUND`` silently inheriting some other provider's field.
+    """
+    from kinoforge.validation.checks import capabilities as mod
+
+    monkeypatch.delitem(mod._DEADLINE_BOUND, "skypilot")
+    cfg = load_config(_write_cfg(tmp_path, provider="skypilot"))
+    idle = [
+        g
+        for g in evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+        if g.field == "compute.lifecycle.idle_timeout"
+    ]
+    assert len(idle) == 1
+    assert "ON_INSTANCE_DEADLINE" in idle[0].detail
+    assert " at max_lifetime" not in idle[0].detail
+    assert "1800" not in idle[0].detail
+
+
+_UTIL_GUARDRAIL_CFG = """\
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+compute:
+  provider: skypilot
+  image: "example/image:latest"
+  mode: pod
+  lifecycle:
+    idle_timeout: 180
+    max_lifetime: 1800
+    budget: 0.10
+    heartbeat_interval_s: 30
+    stall_reap_enabled: true
+    restart_loop_reap_enabled: true
+"""
+
+
+def test_util_gated_reap_guardrails_warn_on_a_provider_with_no_util_wire(
+    tmp_path: Path,
+) -> None:
+    """Both util-gated reap predicates need a risk row, keyed on the ENABLE flag.
+
+    ``_stall_reap_predicate`` and ``_restart_loop_reap_predicate`` both
+    return False outright when ``provider_util_supported`` is False, so on
+    skypilot both guardrails are silently inert. Two bugs caught:
+
+    1. ``restart_loop_*`` having no risk row at all — an operator turning on
+       crash-loop reaping on skypilot got zero diagnostic.
+    2. The stall row keyed only on ``stall_window_s``, a tuning parameter.
+       This cfg leaves the window at its default and writes only
+       ``stall_reap_enabled``, which is the field that actually asserts the
+       guardrail — so a row keyed on the window alone reports nothing here.
+    """
+    path = tmp_path / "util.yaml"
+    path.write_text(_UTIL_GUARDRAIL_CFG)
+    cfg = load_config(path)
+    gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+    by_field = {g.field: g for g in gaps}
+
+    for field in (
+        "compute.lifecycle.stall_window_s",
+        "compute.lifecycle.restart_loop_window_s",
+    ):
+        assert field in by_field, sorted(by_field)
+        assert by_field[field].missing is Capability.UTIL_SNAPSHOT
+        # Not spend risk -> never refuses a load that ships today.
+        assert by_field[field].severity is Severity.WARN
+        assert "util" in by_field[field].detail
+
+
+def test_every_gap_line_carries_its_own_severity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mixed ERROR+WARN result must say which line refused the load.
+
+    The check aggregates every gap into ONE CheckResult carrying only the
+    worst severity. Bug caught: identical-looking lines, so an operator
+    facing a refused load cannot tell the fatal row from the advisory ones
+    and has to guess which guardrail to drop.
+    """
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    # Load with the real declaration in effect (ON_INSTANCE_DEADLINE covers
+    # max_lifetime), THEN strip it so the mixed-severity result exists to be
+    # rendered rather than refusing the load before we can look at it.
+    cfg = load_config(_write_cfg(tmp_path, provider="skypilot"))
+    monkeypatch.setattr(
+        SkyPilotProvider,
+        "capabilities",
+        classmethod(lambda cls, shape=WorkloadShape.SERVER: frozenset()),
+    )
+    gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+    assert {g.severity for g in gaps} == {Severity.ERROR, Severity.WARN}
+
+    message = ProviderCapabilityCheck().run(cfg).message
+    lines = [ln for ln in message.splitlines() if "compute.lifecycle." in ln]
+    assert len(lines) == len(gaps)
+    for gap, line in zip(gaps, lines, strict=True):
+        assert line.strip().startswith(f"[{gap.severity.name}]")
+    assert any(ln.strip().startswith("[ERROR]") for ln in lines)
+    assert any(ln.strip().startswith("[WARN]") for ln in lines)

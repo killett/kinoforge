@@ -37,9 +37,18 @@ class MyProvider(ComputeProvider):
         # provider's real guardrails (see docs/lifecycle.md's capability
         # matrix and kinoforge.core.capabilities.Capability) is part of
         # writing a provider, not an optional follow-up.
-        return frozenset({Capability.ON_INSTANCE_DEADLINE})
+        #
+        # Declaring nothing is the honest starting point: add a capability
+        # here only once the enforcement above it exists and a test pins the
+        # wire behaviour (see tests/core/test_capability_parity.py, which
+        # asserts e.g. that runpod's JOB_TIMEOUT declaration coincides with
+        # an `executionTimeoutMs` in the create payload).
+        return frozenset()
 
-register_provider("myprovider", MyProvider)
+# register_provider takes (name, zero-arg factory, class). The class is
+# stored alongside the factory so capability lookups can be answered by
+# name without constructing a provider.
+register_provider("myprovider", lambda: MyProvider(), MyProvider)
 ```
 
 Set `compute.provider: myprovider` in your YAML — no other changes.

@@ -17,8 +17,13 @@ The design defends against silent thread death (Layer U spec §3.4):
    :meth:`kinoforge.core.lifecycle.Ledger.touch`.
 3. The thread is ``daemon=True`` and ``stop()`` calls
    ``join(timeout=join_timeout_s)`` — a wedged thread cannot block
-   process exit.  Provider-native cleanup (RunPod selfterm, SkyPilot
-   autostop, LocalProvider process containment) catches any orphan pod.
+   process exit.  Provider-native cleanup (RunPod selfterm, the SkyPilot
+   instance-side deadline watchdog, LocalProvider process containment)
+   catches any orphan pod.  NOT SkyPilot autostop: a server spec's
+   ``run_cmd`` is a never-terminating ``Task.run``, so
+   ``is_cluster_idle()`` never becomes True and autostop cannot fire
+   (verification doc F1) — which is why ``SkyPilotProvider.capabilities``
+   declines ``IDLE_AUTOSTOP`` at SERVER shape.
 """
 
 from __future__ import annotations

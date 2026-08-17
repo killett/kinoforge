@@ -2383,7 +2383,12 @@ def _cmd_stop(args: argparse.Namespace, ctx: SessionContext) -> int:
         from kinoforge.core import registry
         from kinoforge.core.capabilities import Capability, capabilities_for
 
-        provider = registry.get_provider(str(provider_name))()
+        # Resolve the factory (raises UnknownAdapter for an unknown name) but
+        # do NOT call it yet. The capability check runs BEFORE construction:
+        # whether a provider can pause billing is answerable from the class,
+        # and a provider whose __init__ needs credentials would otherwise
+        # traceback on a question that never required reaching it.
+        factory = registry.get_provider(str(provider_name))
         if Capability.PAUSE_BILLING not in capabilities_for(str(provider_name)):
             print(
                 f"{provider_name} cannot pause billing; instances are either "
@@ -2392,6 +2397,7 @@ def _cmd_stop(args: argparse.Namespace, ctx: SessionContext) -> int:
                 file=sys.stderr,
             )
             return 1
+        provider = factory()
         provider.stop_instance(args.id)
         print(f"stopped: {args.id}")
         return 0

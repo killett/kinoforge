@@ -41,7 +41,7 @@ salvageable verdicts:
 
 `HEARTBEAT_SUBSTRATE_MISSING` is fail-open **by design**, not by omission:
 `classify` cannot tell a stranded row from a mid-session warm-reused pod on
-a provider with no `HEARTBEAT_READ` satisfier (a capability-declaration
+a provider with no `HEARTBEAT_READ` satisfier. A capability-declaration
 brief attempted a capability-aware reaper gate here and withdrew it
 (`docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md`
 §8) because both shapes write the same ledger row. The

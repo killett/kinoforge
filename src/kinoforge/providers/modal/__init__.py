@@ -281,9 +281,19 @@ class ModalProvider(ComputeProvider):
         finally:
             self._deployments.pop(instance_id, None)
 
-    # -- heartbeat (Modal owns liveness) ------------------------------------
+    # -- heartbeat (no-op; HEARTBEAT_READ not declared) ----------------------
     def heartbeat(self, instance_id: str) -> None:
-        """No-op — Modal manages container liveness."""
+        """No-op by design; ``HEARTBEAT_READ`` is not declared.
+
+        ``HeartbeatLoop`` calls this on every provider unconditionally, so
+        the method must exist — but Modal exposes no wire-level liveness
+        read or write. What bounds a Modal run is the
+        ``@app.function(timeout=...)`` deadline (``ON_INSTANCE_DEADLINE``)
+        and ``scaledown_window`` (``IDLE_AUTOSTOP``), not this call.
+
+        Args:
+            instance_id: Unused.
+        """
         return None
 
     # last_heartbeat: inherited ComputeProvider default (None — Modal

@@ -1071,12 +1071,22 @@ class SkyPilotProvider(ComputeProvider):
                 self._kill_tunnel(tunnel)
 
     def heartbeat(self, instance_id: str) -> None:
-        """No-op: SkyPilot manages cluster liveness via autostop.
+        """No-op by design; ``HEARTBEAT_READ`` is not declared.
+
+        ``HeartbeatLoop`` calls this on every provider unconditionally, so
+        the method must exist — but nothing is written to or read from the
+        cluster. SkyPilot exposes no wire-level liveness signal, and
+        autostop cannot stand in for one at SERVER shape: a server spec's
+        ``run_cmd`` becomes a never-terminating ``Task.run``, so
+        ``is_cluster_idle()`` is permanently False (verification doc F1),
+        which is exactly why :meth:`capabilities` refuses to declare
+        ``IDLE_AUTOSTOP`` at that shape. What actually bounds a skypilot run
+        is the instance-side watchdog (``ON_INSTANCE_DEADLINE``, see
+        ``providers/skypilot/watchdog.py``).
 
         Args:
             instance_id: Unused.
         """
-        # Autostop is set at launch time; no heartbeat mechanism is needed.
 
     # last_heartbeat: inherited ComputeProvider default (None). The 2026-06
     # AttributeError-every-tick incident that motivated adding it (and now

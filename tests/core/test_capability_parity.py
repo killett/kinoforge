@@ -2,16 +2,31 @@
 
 The regression guard that matters: adding a no-op override, or deleting a
 real implementation, without editing the declaration must fail here.
+
+Two kinds of guard live in this module and they are not interchangeable:
+
+* **Method-identity parity** (``HEARTBEAT_READ``, ``RUNTIME_PROBE``) — the
+  declaration is checked against whether an ABC default was overridden.
+* **Wire-behaviour parity** (``JOB_TIMEOUT``, ``IDLE_AUTOSTOP``,
+  ``ON_INSTANCE_DEADLINE``) — the declaration is checked against the bytes
+  the provider actually sends. These three have no ABC method to compare
+  against, so a table of expected declarations cannot cover them: it would
+  be a copy of the declarations sitting beside the declarations, which is
+  the string-table-beside-the-code pattern this brief exists to remove. The
+  failure mode they guard is the F1 one: the declaration stays true while
+  the enforcement it names quietly stops being wired.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
 from kinoforge.core.balance_endpoints import provider_balance_supported
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
-from kinoforge.core.interfaces import ComputeProvider
+from kinoforge.core.interfaces import ComputeProvider, InstanceSpec, Lifecycle, Offer
 from kinoforge.core.util_endpoints import provider_util_supported
 from kinoforge.providers.local import LocalProvider
 from kinoforge.providers.modal import ModalProvider
@@ -47,8 +62,15 @@ def test_runtime_probe_declared_iff_probe_runtime_overridden(
 
 
 def test_declared_matrix_matches_the_design_doc() -> None:
-    """Pins the whole §7.1 matrix so a silent widening is caught even where
-    no ABC method exists to compare against."""
+    """Pins the whole §7.1 matrix so a silent *widening* is caught.
+
+    This is a copy of the declarations and cannot, on its own, tell whether
+    any of them is true — it catches "someone added a capability" and
+    nothing else. The declarations it cannot verify (``JOB_TIMEOUT``,
+    ``IDLE_AUTOSTOP``, ``ON_INSTANCE_DEADLINE``) are verified against the
+    wire by the three ``*_declaration_matches_*`` tests below; do not treat
+    this test as covering them.
+    """
     assert LocalProvider.capabilities() == frozenset(
         {
             Capability.HEARTBEAT_READ,
@@ -87,6 +109,132 @@ def test_skypilot_idle_autostop_is_batch_only() -> None:
     batch = SkyPilotProvider.capabilities(WorkloadShape.BATCH)
     assert Capability.IDLE_AUTOSTOP not in server
     assert Capability.IDLE_AUTOSTOP in batch
+
+
+def test_runpod_job_timeout_declaration_matches_the_create_payload() -> None:
+    """``JOB_TIMEOUT`` on runpod <-> ``executionTimeoutMs`` on the wire.
+
+    RunPod is the only provider declaring JOB_TIMEOUT, and the only thing
+    that makes the declaration true is this field on the serverless-endpoint
+    create mutation. Bug caught: someone drops ``executionTimeoutMs`` from
+    the payload (or stops deriving it from ``lifecycle.job_timeout_s``, e.g.
+    hardcoding a constant) while the declaration keeps telling config
+    validation that ``compute.lifecycle.job_timeout`` is enforced — so a cfg
+    asking for a 10-minute job cap launches with no cap and no diagnostic.
+    """
+    captured: list[dict[str, Any]] = []
+
+    def _post(url: str, body: dict[str, Any]) -> dict[str, Any]:
+        del url
+        captured.append(body)
+        return {"data": {"saveTemplate": {"id": "ep-1"}}}
+
+    provider = RunPodProvider(creds=None, http_post=_post, http_get=lambda _: {})
+    provider.create_instance(
+        InstanceSpec(
+            image="runpod/pytorch:latest",
+            offer=Offer(
+                id="NVIDIA A100 80GB PCIe",
+                gpu_type="NVIDIA A100 80GB PCIe",
+                vram_gb=80,
+                cuda="12.4",
+                cost_rate_usd_per_hr=1.64,
+                mode="serverless",
+            ),
+            lifecycle=Lifecycle(job_timeout_s=1234.0),
+            tags={"mode": "serverless"},
+        )
+    )
+    payload = captured[-1]["variables"]["input"]
+    declared = Capability.JOB_TIMEOUT in RunPodProvider.capabilities()
+    assert declared is ("executionTimeoutMs" in payload)
+    assert payload["executionTimeoutMs"] == 1234 * 1000
+
+
+def test_modal_idle_autostop_declaration_matches_the_built_app_request() -> None:
+    """``IDLE_AUTOSTOP`` on modal <-> ``scaledown_window`` on the app request.
+
+    Modal's declaration rests entirely on ``scaledown_window`` reaching
+    ``@app.function``; the provider's only job is to derive it from
+    ``lifecycle.idle_timeout_s``. Bug caught: that derivation is dropped or
+    replaced by ``_app.py``'s 300 s default while modal keeps declaring
+    IDLE_AUTOSTOP, so a cfg asking for a 7-minute idle cap silently runs on
+    a 5-minute one — or, if the field is dropped outright, on none.
+    """
+    captured: dict[str, Any] = {}
+
+    def _factory(req: Any, modal_mod: Any) -> tuple[Any, Any]:
+        del modal_mod
+        captured["req"] = req
+        return (object(), object())
+
+    provider = ModalProvider(
+        app_factory=_factory,
+        deployer=lambda _app, _fn: "https://x--kinoforge-r1-server.modal.run",
+    )
+    provider.create_instance(
+        InstanceSpec(
+            image="img:latest",
+            offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
+            run_id="r1",
+            provision_script="echo hi",
+            run_cmd=["python", "-m", "server"],
+            lifecycle=Lifecycle(idle_timeout_s=420.0),
+        )
+    )
+    declared = Capability.IDLE_AUTOSTOP in ModalProvider.capabilities()
+    assert declared is (captured["req"].scaledown_window_s == 420)
+
+
+def test_skypilot_on_instance_deadline_declaration_matches_the_rendered_setup() -> None:
+    """``ON_INSTANCE_DEADLINE`` on skypilot <-> the watchdog arm prelude.
+
+    This declaration is load-bearing beyond skypilot itself: it is the ONLY
+    reason ``max_lifetime`` does not ERROR every shipped skypilot config, and
+    the only substitute that downgrades the ``idle_timeout`` / ``job_timeout``
+    rows from ERROR to WARN. Nothing else on a skypilot cluster bounds spend.
+
+    Bug caught: the arm block stops being prepended to ``Task.setup`` — moved
+    below the provision script (where a failing provision skips it), made
+    conditional on ``provision_script`` again, or dropped in a refactor —
+    while the declaration keeps five configs loading clean. Asserted on the
+    setup PREFIX, not by substring: Brief 1's post-mortem has the watchdog's
+    stage-1 terminate returning rc=0 without terminating anything, which is
+    exactly how an arm block that merely exists somewhere gets trusted.
+    """
+
+    class _FakeTask:
+        def __init__(self, config: dict[str, Any]) -> None:
+            self.config = config
+
+    class _FakeTaskNamespace:
+        def from_yaml_config(self, config: dict[str, Any]) -> _FakeTask:
+            return _FakeTask(config)
+
+    class _FakeSky:
+        def __init__(self) -> None:
+            self.launches: list[dict[str, Any]] = []
+            self.Task = _FakeTaskNamespace()  # noqa: N815 — mirrors sky.Task
+
+        def launch(self, task: Any, **kwargs: Any) -> tuple[None, None]:
+            del kwargs
+            self.launches.append(task.config)
+            return (None, None)
+
+        def status(self) -> list[dict[str, Any]]:
+            return []
+
+        def down(self, name: str) -> None: ...
+
+    sky = _FakeSky()
+    SkyPilotProvider(sky_client=sky).create_instance(
+        InstanceSpec(image="img:latest", provision_script="echo provision")
+    )
+    setup = sky.launches[0]["setup"]
+    declared = Capability.ON_INSTANCE_DEADLINE in SkyPilotProvider.capabilities()
+    assert declared is setup.startswith("# --- kinoforge watchdog arm")
+    # The provision script still runs, i.e. arming did not displace it.
+    assert "echo provision" in setup
 
 
 def test_declared_capabilities_survive_a_lazy_composition_root_import() -> None:

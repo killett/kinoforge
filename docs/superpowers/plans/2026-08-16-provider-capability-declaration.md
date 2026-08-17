@@ -1831,7 +1831,9 @@ git commit -m "docs(configs): say what actually protects a skypilot run"
 
 ## Self-Review
 
-**Spec coverage:** §4 vocabulary → Task 0. §5 declaration surface + registry → Task 0. §6 validator + risk table → Task 4; §6.2 shape inference → Tasks 4 (load) and 5 (launch). §7 audit → Task 1 (declarations) and Task 3 (refusals). §7.1 matrix → Task 1. §8 reaper → Task 6. §9 configs + docs → Task 7. §10 test plan A→Task 1, B→Task 4/5, C→Task 7, D→Task 6, E→Task 2, F→Task 3. No spec section is unclaimed.
+**Spec coverage:** §4 vocabulary → Task 0. §5 declaration surface + registry → Task 0. §6 validator + risk table → Task 4; §6.2 shape inference → Tasks 4 (load) and 5 (launch). §7 audit → Task 1 (declarations) and Task 3 (refusals). §7.1 matrix → Task 1. ~~§8 reaper → Task 6~~ **WITHDRAWN.** §9 configs + docs → Task 7. §10 test plan A→Task 1, B→Task 4/5, C→Task 7, ~~D→Task 6~~ **WITHDRAWN**, E→Task 2, F→Task 3.
+
+**Correction (post-implementation).** The sentence that stood here — "No spec section is unclaimed" — is no longer true and is left corrected rather than deleted. §8 (the capability-aware reaper gate) and its test-plan section D were implemented, reviewed three times, and **reverted**: `core/reaper.py` is byte-identical to its pre-brief state and design §8 records why (a stranded row and a mid-session warm-reused pod write the same ledger row, so the gate could not tell them apart). §8 and test-plan D are therefore deliberately unclaimed. Do not revive them from this plan.
 
 **Type consistency:** `capabilities(shape: WorkloadShape) -> frozenset[Capability]` is used identically in Tasks 0, 1, 4, 5. `evaluate_capability_gaps(cfg, shape) -> list[Gap]` is used identically in Tasks 4, 5, 7. `Gap` fields (`field`, `risk`, `missing`, `substitute`, `severity`, `detail`) match every consumer. `capabilities_for(name, shape)` and `provider_billed(name)` match Tasks 0, 2, 3, 4.
 

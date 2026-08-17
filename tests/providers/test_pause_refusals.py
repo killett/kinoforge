@@ -28,10 +28,37 @@ def test_modal_stop_refuses_instead_of_destroying() -> None:
 
 def test_set_heartbeat_endpoint_rejects_a_wired_endpoint_it_would_discard() -> None:
     """Catches the uniform install path silently dropping an endpoint that
-    someone deliberately built."""
+    someone deliberately built.
+
+    Skypilot does NOT declare HEARTBEAT_READ, so the message must say
+    exactly that — this is the call-site-bug arm.
+    """
     provider = SkyPilotProvider()
-    with pytest.raises(ValueError, match="HEARTBEAT_READ"):
+    with pytest.raises(ValueError, match="does not declare Capability.HEARTBEAT_READ"):
         provider.set_heartbeat_endpoint(object())
+
+
+def test_refusal_message_does_not_contradict_a_declaring_provider() -> None:
+    """A provider that DECLARES HEARTBEAT_READ and still hits the ABC default
+    is a different, louder bug — and must not be told it does not declare it.
+
+    Bug caught: the guard is "did not override", but the message asserted
+    "does not declare". ``LocalProvider`` declares ``HEARTBEAT_READ`` and
+    inherits this method today, so the old message would have accused a
+    class of not declaring a capability its own ``capabilities()`` returns —
+    sending whoever debugs it to the declaration instead of to the missing
+    ``set_heartbeat_endpoint`` implementation.
+    """
+    from kinoforge.core.capabilities import Capability
+    from kinoforge.providers.local import LocalProvider
+
+    assert Capability.HEARTBEAT_READ in LocalProvider.capabilities()
+    with pytest.raises(ValueError) as exc:
+        LocalProvider().set_heartbeat_endpoint(object())
+    message = str(exc.value)
+    assert "declares Capability.HEARTBEAT_READ" in message
+    assert "does not implement set_heartbeat_endpoint" in message
+    assert "does not declare" not in message
 
 
 def test_set_heartbeat_endpoint_none_still_passes() -> None:
@@ -170,3 +197,46 @@ def test_cli_stop_on_modal_row_refuses_without_destroying(
     assert "modal" in stderr
     assert "cannot pause billing" in stderr
     assert "kinoforge destroy --id eph-abc123" in stderr
+
+
+def test_cli_stop_answers_from_the_class_without_constructing_the_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The PAUSE_BILLING pre-check must run BEFORE the provider is built.
+
+    Whether a provider can pause billing is a class-level question. Bug
+    caught: constructing the provider first, so a provider whose ``__init__``
+    needs credentials (or any other environment the operator does not have)
+    tracebacks out of ``kinoforge stop`` instead of printing the routed
+    "use destroy" message — an unhandled exception in place of a diagnostic,
+    on a question that never required reaching the provider at all.
+    """
+    from kinoforge.cli import _commands
+    from kinoforge.core import registry as core_registry
+
+    constructed: list[str] = []
+
+    class _CredHungryProvider:
+        name = "skypilot"
+
+        def __init__(self) -> None:
+            constructed.append("init")
+            raise RuntimeError("SKYPILOT_API_KEY is not set")
+
+        @classmethod
+        def capabilities(cls, shape: object = None) -> frozenset[Any]:
+            from kinoforge.core.capabilities import Capability
+
+            return frozenset({Capability.ON_INSTANCE_DEADLINE})
+
+    monkeypatch.setattr(core_registry, "get_provider", lambda name: _CredHungryProvider)
+    monkeypatch.setattr(
+        core_registry, "provider_class", lambda name: _CredHungryProvider
+    )
+
+    rc = _commands._cmd_stop(_stop_args("kf-cluster"), _stop_ctx_with_skypilot_row())
+
+    assert rc != 0
+    assert constructed == []
+    assert "cannot pause billing" in capsys.readouterr().err

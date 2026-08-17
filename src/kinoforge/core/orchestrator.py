@@ -729,9 +729,11 @@ def assert_launch_capabilities(
 ) -> list[Gap]:
     """Re-evaluate capability gaps against the authoritative workload shape.
 
-    Load-time inference reads engine kind + the upscale/interpolate-only
-    path; here ``run_cmd`` is the real thing, so a wrong inference is caught
-    rather than trusted.
+    Load-time ``infer_shape`` reads nothing and returns SERVER
+    unconditionally — it refuses to guess (see its docstring for why every
+    heuristic it could use guesses in the dangerous direction). Here
+    ``run_cmd`` is the authoritative, rendered thing, so a spec that really
+    is BATCH is caught rather than mis-reported, and the mismatch is logged.
 
     Args:
         cfg: The loaded Config.
@@ -875,6 +877,14 @@ def _provision_instance_and_build_backend(
             raise AuthError(f"missing required env var: {var}")
         rendered_env[var] = value
 
+    # Capability re-check against the AUTHORITATIVE rendered run_cmd, hoisted
+    # above the offer-retry / capacity-wait loops on purpose: it depends only
+    # on (cfg, rendered.run_cmd), neither of which varies per offer. Inside
+    # _build_spec it re-raised the same ERROR and re-emitted every WARN line
+    # once per offer AND again per capacity-wait retry, which reads to an
+    # operator as several distinct guardrail problems instead of one.
+    assert_launch_capabilities(cfg, run_cmd=rendered.run_cmd)
+
     def _build_spec(offer: Offer) -> InstanceSpec:
         merged_tags: dict[str, str] = {
             "kinoforge_engine": resolved_engine.name,
@@ -894,7 +904,6 @@ def _provision_instance_and_build_backend(
         restart_policy: Literal["always", "never"] = (
             "never" if cfg.diagnostic_mode else "always"
         )
-        assert_launch_capabilities(cfg, run_cmd=rendered.run_cmd)
         return InstanceSpec(
             image=rendered.image or image,
             offer=offer,

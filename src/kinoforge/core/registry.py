@@ -65,6 +65,12 @@ def provider_class(name: str) -> type[ComputeProvider] | None:
 
     Unlike :func:`get_provider` this never raises — callers (capability
     lookup) treat an unknown provider as "declares nothing".
+
+    What comes back is whatever :func:`register_provider` was handed; nothing
+    enforces that it is a ``ComputeProvider`` subclass at runtime (tests
+    register bare ``object``). Callers must therefore read ``capabilities`` /
+    ``billed`` off it defensively — ``core/capabilities.py`` does, via
+    ``getattr`` with the documented defaults.
     """
     return _provider_classes.get(name)
 

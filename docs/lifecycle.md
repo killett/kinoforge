@@ -183,7 +183,7 @@ at config load and again at launch. See
 | `BALANCE_QUERY` | ✗ | ✓ | ✗ | ✗ |
 | `billed` | `False` | `True` | `True` | `True` |
 
-Two cells whose caveat matters more than the checkmark:
+Four cells whose caveat matters more than the checkmark:
 
 - **`local` `UTIL_SNAPSHOT`** is a scripted in-process test seam, not a
   real measurement. It stays declared because the endpoint does return
@@ -196,6 +196,14 @@ Two cells whose caveat matters more than the checkmark:
   `is_cluster_idle()` is permanently `False` and autostop cannot fire —
   see `providers/skypilot/watchdog.py` for the guardrail that actually
   holds on that shape (`ON_INSTANCE_DEADLINE`).
+- **`modal` `ON_INSTANCE_DEADLINE` is not keyed to `max_lifetime`.** Modal
+  really does terminate the container at its `@app.function(timeout=...)`
+  deadline — the declaration is honest — but that timeout is derived from
+  `boot_timeout`, and `max_lifetime` is never sent to Modal at all. `runpod`
+  and `skypilot` both key their instance-side deadline to `max_lifetime`;
+  Modal does not. A modal cfg that writes `max_lifetime` gets a `WARN` at
+  load naming both numbers, so an operator who asked for 90 m and is capped
+  at 45 m learns it before the run rather than after.
 
 A guardrail with no declared capability on the selected provider **and**
 no declared substitute refuses the config load outright (`ERROR`,

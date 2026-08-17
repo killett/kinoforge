@@ -113,7 +113,15 @@ def capabilities_for(
     cls = _provider_class(provider_kind)
     if cls is None:
         return frozenset()
-    caps: frozenset[Capability] = cls.capabilities(shape)
+    # getattr default, not a bare cls.capabilities(shape): registry.register_provider
+    # accepts whatever it is handed (tests register `object`), so a registered
+    # non-ComputeProvider must answer "declares nothing" — the documented
+    # contract — rather than AttributeError out of a lookup the reaper makes
+    # on every sweep.
+    declare = getattr(cls, "capabilities", None)
+    if declare is None:
+        return frozenset()
+    caps: frozenset[Capability] = declare(shape)
     return caps
 
 
@@ -145,4 +153,7 @@ def provider_billed(provider_kind: str) -> bool:
     cls = _provider_class(provider_kind)
     if cls is None:
         return True
-    return bool(cls.billed)
+    # getattr default matches capabilities_for: a registered object that is
+    # not a ComputeProvider must fall back to the conservative answer rather
+    # than raise AttributeError.
+    return bool(getattr(cls, "billed", True))

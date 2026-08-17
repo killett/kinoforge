@@ -336,18 +336,34 @@ class ComputeProvider(ABC):
         of any heartbeat-module import — the Protocol satisfaction is
         verified at the call site, not the type-system seam.
 
+        Two different bugs reach this default, and the message must not
+        conflate them. A provider that does not declare ``HEARTBEAT_READ``
+        was wired an endpoint it never claimed to read — a call-site bug. A
+        provider that DOES declare it and still lands here (LocalProvider
+        declares ``HEARTBEAT_READ`` and inherits this method) is a broken
+        declaration: the parity guard passes on ``last_heartbeat`` while the
+        install seam was never implemented. Reporting the first message for
+        the second case would contradict the class's own declaration.
+
         Args:
             endpoint: A :class:`HeartbeatEndpoint`-Protocol-satisfying
                 instance, or ``None`` to clear.
 
         Raises:
-            ValueError: ``endpoint`` is not None on a provider that does not
-                declare ``Capability.HEARTBEAT_READ``.
+            ValueError: ``endpoint`` is not None and this provider did not
+                override ``set_heartbeat_endpoint``.
         """
         if endpoint is None:
             return
+        cls_name = type(self).__name__
+        if Capability.HEARTBEAT_READ in type(self).capabilities():
+            raise ValueError(
+                f"{cls_name} declares Capability.HEARTBEAT_READ but does not "
+                f"implement set_heartbeat_endpoint; refusing to silently "
+                f"discard the endpoint {endpoint!r}"
+            )
         raise ValueError(
-            f"{type(self).__name__} does not declare Capability.HEARTBEAT_READ; "
+            f"{cls_name} does not declare Capability.HEARTBEAT_READ; "
             f"refusing to silently discard the endpoint {endpoint!r}"
         )
 
