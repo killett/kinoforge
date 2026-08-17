@@ -27,6 +27,13 @@ from kinoforge.core.config import Config
 from kinoforge.validation.protocol import CheckCategory, CheckResult, Severity
 from kinoforge.validation.registry import register
 
+__all__ = [
+    "Gap",
+    "ProviderCapabilityCheck",
+    "evaluate_capability_gaps",
+    "infer_shape",
+]
+
 
 @dataclass(frozen=True)
 class Gap:
@@ -92,13 +99,16 @@ _RISK_ROWS: tuple[tuple[str, str, Capability, tuple[Capability, ...], bool], ...
 
 _ALWAYS_EVALUATED = frozenset({"compute.lifecycle.max_lifetime"})
 
+#: primary capability -> operator-facing prose. ``{shape}`` is substituted
+#: with the evaluated WorkloadShape so a shape-conditional declaration says
+#: WHICH shape it was judged at.
 _DETAIL: dict[Capability, str] = {
     Capability.HEARTBEAT_READ: (
         "no wire-level heartbeat read; last_heartbeat is the orchestrator "
         "clock, so it proves the controller is alive, not the instance"
     ),
     Capability.IDLE_AUTOSTOP: (
-        "provider-side autostop does not fire for this workload shape"
+        "provider-side autostop does not fire at workload shape {shape}"
     ),
     Capability.JOB_TIMEOUT: "the provider does not enforce a per-job timeout",
     Capability.UTIL_SNAPSHOT: "no utilisation wire path; stall detection cannot run",
@@ -111,23 +121,27 @@ _DETAIL: dict[Capability, str] = {
 def _substitute_bound(cfg: Config, substitute: Capability) -> str:
     """Return the numeric bound ``substitute`` actually enforces, if knowable.
 
+    Design doc §6 requires a WARN to name the substitute *and the numeric
+    bound it actually enforces* — "bounded instead by ON_INSTANCE_DEADLINE"
+    alone still leaves the operator guessing what caps the run.
+
+    ``ON_INSTANCE_DEADLINE`` is the only capability any ``_RISK_ROWS``
+    substitute column lists, so it is the only arm here; add a branch when a
+    row adds a substitute, not before.
+
     Args:
         cfg: The loaded Config whose lifecycle carries the bound.
         substitute: The covering capability.
 
     Returns:
-        A short parenthetical such as ``" at max_lifetime=1800.0s"``, or the
-        empty string when no numeric bound maps onto the capability.
+        A short suffix such as ``" at max_lifetime=1800.0s"``, or the empty
+        string when no numeric bound maps onto the capability.
     """
     lifecycle = cfg.compute.lifecycle if cfg.compute is not None else None
     if lifecycle is None:
         return ""
     if substitute is Capability.ON_INSTANCE_DEADLINE:
         return f" at max_lifetime={lifecycle.max_lifetime}s"
-    if substitute is Capability.IDLE_AUTOSTOP:
-        return f" at idle_timeout={lifecycle.idle_timeout}s"
-    if substitute is Capability.JOB_TIMEOUT:
-        return f" at job_timeout={lifecycle.job_timeout}s"
     return ""
 
 
@@ -174,7 +188,7 @@ def evaluate_capability_gaps(cfg: Config, shape: WorkloadShape) -> list[Gap]:
                 severity=(
                     Severity.ERROR if covering is None and spend_risk else Severity.WARN
                 ),
-                detail=_DETAIL[primary]
+                detail=_DETAIL[primary].format(shape=shape.value)
                 + (
                     f"; bounded instead by {covering.value}"
                     f"{_substitute_bound(cfg, covering)}"
@@ -186,24 +200,39 @@ def evaluate_capability_gaps(cfg: Config, shape: WorkloadShape) -> list[Gap]:
     return gaps
 
 
-def _infer_shape(cfg: Config) -> WorkloadShape:
-    """Infer the workload shape from cfg (see Task 5 for the launch re-check).
+def infer_shape(cfg: Config) -> WorkloadShape:
+    """Infer the workload shape from cfg — always SERVER, deliberately.
 
-    BATCH iff the rendered provision will carry ``run_cmd=[]`` — upscale-only
-    diffusers cfgs and interpolate-only cfgs. Mirrors the upscale-only
-    predicate already used in ``core/config.py``.
+    Nothing in kinoforge renders an empty ``run_cmd`` into the InstanceSpec
+    that *provisions* an instance:
+
+    * ``engines/diffusers/__init__.py:1274`` sets ``run_cmd=server_cmd``
+      unconditionally; ``upscale_only`` only adds ``KINOFORGE_SKIP_WAN_LOAD=1``
+      to the env, leaving the long-lived server process in place.
+    * The ``run_cmd=[]`` renders in ``upscalers/*/_engine.py`` and
+      ``interpolators/rife/_engine.py`` belong to pipeline STAGES, which the
+      orchestrator constructs with ``instance=session.instance``
+      (``core/orchestrator.py:2008-2022`` and ``:2031-2035``) — an
+      already-provisioned instance. They never provision a pod.
+
+    So guessing BATCH from ``upscale_only`` or an interpolate block reports a
+    guardrail as ENFORCED on a cluster where it is provably inert — on
+    ``skypilot-lambda-diffusers-flashvsr-upscale.yaml`` it silently passed
+    ``idle_timeout`` even though skypilot autostop cannot fire against a
+    never-terminating ``Task.run``. That is precisely the dishonesty this
+    design exists to end, so the inference refuses to guess.
+
+    :class:`WorkloadShape` and skypilot's BATCH-only ``IDLE_AUTOSTOP``
+    declaration stay: the substrate claim is real, and BATCH arises in Task 5
+    from the authoritative ``spec.run_cmd`` at launch rather than from a cfg
+    guess here.
 
     Args:
         cfg: The loaded Config.
 
     Returns:
-        The inferred workload shape.
+        Always :attr:`WorkloadShape.SERVER`.
     """
-    diffusers = cfg.engine.diffusers if cfg.engine is not None else None
-    if diffusers is not None and diffusers.upscale_only:
-        return WorkloadShape.BATCH
-    if cfg.interpolate is not None and not cfg.models:
-        return WorkloadShape.BATCH
     return WorkloadShape.SERVER
 
 
@@ -239,7 +268,7 @@ class ProviderCapabilityCheck:
         Returns:
             One CheckResult; ``severity`` is ERROR iff any gap is ERROR.
         """
-        gaps = evaluate_capability_gaps(cfg, _infer_shape(cfg))
+        gaps = evaluate_capability_gaps(cfg, infer_shape(cfg))
         provider = cfg.compute.provider if cfg.compute is not None else "?"
         if not gaps:
             return CheckResult(

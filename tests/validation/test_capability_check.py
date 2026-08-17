@@ -12,6 +12,7 @@ from kinoforge.core.errors import ValidationError
 from kinoforge.validation.checks.capabilities import (
     ProviderCapabilityCheck,
     evaluate_capability_gaps,
+    infer_shape,
 )
 from kinoforge.validation.protocol import Severity
 
@@ -69,12 +70,22 @@ def test_heartbeat_gap_on_skypilot_is_a_warn_naming_the_clock(tmp_path: Path) ->
 
 def test_idle_timeout_gap_names_the_substitute_and_its_bound(tmp_path: Path) -> None:
     """Catches a WARN that says 'unsupported' without telling the operator
-    what actually bounds the run."""
+    what actually bounds the run.
+
+    The bound assertion specifically catches `_substitute_bound` regressing
+    to `return ""`: design §6 requires the WARN to name the substitute AND
+    the numeric bound it actually enforces, and naming the capability alone
+    still leaves the operator guessing what caps the run.
+    """
     cfg = load_config(_write_cfg(tmp_path, provider="skypilot"))
     gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
     idle = [g for g in gaps if g.field == "compute.lifecycle.idle_timeout"]
+    assert len(idle) == 1
     assert idle[0].substitute is Capability.ON_INSTANCE_DEADLINE
     assert idle[0].severity is Severity.WARN
+    assert "ON_INSTANCE_DEADLINE" in idle[0].detail
+    assert "max_lifetime=1800.0s" in idle[0].detail
+    assert "max_lifetime=1800.0s" in ProviderCapabilityCheck().run(cfg).message
 
 
 def test_uncovered_spend_risk_is_fatal(
@@ -98,8 +109,10 @@ def test_uncovered_spend_risk_is_fatal(
 def test_unbilled_provider_skips_the_spend_rows(tmp_path: Path) -> None:
     """Catches `billed` being ignored, which would error every local run."""
     cfg = load_config(_write_cfg(tmp_path, provider="local"))
-    gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
-    assert [g.field for g in gaps if "max_lifetime" in g.field] == []
+    # Stronger than filtering for max_lifetime: local declares HEARTBEAT_READ
+    # and UTIL_SNAPSHOT, so with the spend rows correctly skipped NOTHING is
+    # left to report. Any gap at all is a regression.
+    assert evaluate_capability_gaps(cfg, WorkloadShape.SERVER) == []
 
 
 def test_unregistered_provider_is_not_a_capability_gap(tmp_path: Path) -> None:
@@ -110,6 +123,34 @@ def test_unregistered_provider_is_not_a_capability_gap(tmp_path: Path) -> None:
     cfg = load_config(_write_cfg(tmp_path, provider="not-a-real-provider"))
     assert evaluate_capability_gaps(cfg, WorkloadShape.SERVER) == []
     assert ProviderCapabilityCheck().applies_to(cfg) is False
+
+
+def test_upscale_only_cfg_is_server_shaped_and_still_warns_on_idle_timeout() -> None:
+    """Catches `infer_shape` guessing BATCH from `upscale_only`.
+
+    `engines/diffusers/__init__.py:1274` sets `run_cmd=server_cmd`
+    unconditionally, so an upscale-only cfg still provisions a long-lived
+    server; the `run_cmd=[]` renders live in pipeline STAGES that run against
+    an already-provisioned instance (`orchestrator.py:2008-2022`, `:2031-2035`)
+    and never provision anything. Guessing BATCH made this cfg report
+    idle_timeout as ENFORCED on a cluster where skypilot autostop is provably
+    inert — a guardrail claimed but not held, which is the exact failure this
+    check exists to surface.
+    """
+    cfg = load_config(
+        Path("examples/configs/skypilot-lambda-diffusers-flashvsr-upscale.yaml")
+    )
+    assert cfg.engine.diffusers is not None
+    assert cfg.engine.diffusers.upscale_only is True
+    assert infer_shape(cfg) is WorkloadShape.SERVER
+
+    gaps = evaluate_capability_gaps(cfg, infer_shape(cfg))
+    idle = [g for g in gaps if g.field == "compute.lifecycle.idle_timeout"]
+    assert len(idle) == 1
+    assert idle[0].missing is Capability.IDLE_AUTOSTOP
+    assert idle[0].substitute is Capability.ON_INSTANCE_DEADLINE
+    assert idle[0].severity is Severity.WARN
+    assert "server" in idle[0].detail
 
 
 def test_check_never_auto_fixes_and_load_preserves_guardrail_values(
