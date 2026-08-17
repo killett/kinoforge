@@ -140,7 +140,33 @@ first unchecked task without redoing committed work.
   **Deliberately out of scope (Brief 2/5):** reaper verdicts for a `kf_launch_phase=launching` row;
   the bare `deploy()` entry point (no `store` in scope) stays unwired; a YAML surface for
   `autodown`.
-- **Provider capability declaration (Brief 2) — DESIGNED + PLANNED 2026-08-16, not yet implemented:**
+- **Provider capability declaration (Brief 2) — SHIPPED 2026-08-17 (8 tasks; task 6 withdrawn):**
+  Design `docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md` + plan
+  `docs/superpowers/plans/2026-08-16-provider-capability-declaration.md` (`.tasks.json` co-located).
+  Commits `f9aac6a8` (spec) · `be1e9de7` (plan) · `f649c9d5` · `bfe35deb` · `dcb696a6`+`653bb075` ·
+  `63ca3600`+`59e22312` · `ab04f10e`+`fa76ca64` · `d9bfe701`+`eb81dcb2` · `b1d110f6` (revert) ·
+  `368b1f9a`. **What shipped:** `core/capabilities.py` — `Capability` (8 members), `WorkloadShape`,
+  `capabilities_for`, `provider_billed`, `provider_registered`; `ComputeProvider.capabilities()` is a
+  classmethod defaulting to EMPTY (an undeclared provider claims nothing) plus a `billed` ClassVar.
+  All four providers declare, guarded by a parity test keyed to method identity and wire behaviour.
+  `provider_heartbeat_supported` / `provider_util_supported` / the balance predicate now DERIVE from
+  the declaration — those three frozensets are deleted. `stop_instance` raises `NotImplementedError`
+  on skypilot (was a silent no-op while the cluster billed) and modal (was a destroy alias), with a
+  `PAUSE_BILLING` pre-check in `kinoforge stop`. `validation/checks/capabilities.py` maps each
+  asserted guardrail to the risk it prevents: ERROR when a SPEND-RISK row has no enforcement at all,
+  WARN naming the substitute and its bound otherwise, no auto-fix. `assert_launch_capabilities`
+  re-derives the shape from the real `spec.run_cmd` and aborts before `create_instance`.
+  **NOT done (explicit non-goals, design §11):** `EPHEMERAL_CAPABILITIES` and `_RECONCILABLE_PROVIDERS`
+  still stand apart — only three of the five tables derive. The F3 env-routing gap is untouched.
+  **Task 6 (capability-aware reaper gate) was implemented, reviewed three times and REVERTED**
+  (`b1d110f6`; `reaper.py` is byte-identical to its pre-brief state). Design §8 records the finding:
+  on a capability-less provider the ledger cannot distinguish a stranded row from an actively-driven
+  one — a warm-reused pod mid-render carries the same `{created_at, session_end}` shape as the orphan,
+  because warm re-attach writes nothing and `session_start`'s only writer is gated on a heartbeat loop
+  skypilot cannot have. So `HEARTBEAT_SUBSTRATE_MISSING` stays fail-open, stranded rows still need
+  `kinoforge forget`, and the fixes that would work (write `session_start` on attach, or run the loop
+  on capability-less providers) belong to whoever owns the attach path.
+  (Superseded planning entry:) **DESIGNED + PLANNED 2026-08-16:**
   `docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md` +
   `docs/superpowers/plans/2026-08-16-provider-capability-declaration.md` (8 tasks 0-7;
   `.tasks.json` co-located; commits `f9aac6a8` spec, `be1e9de7` plan). Providers declare what they
