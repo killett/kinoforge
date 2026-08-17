@@ -44,14 +44,14 @@ def test_set_heartbeat_endpoint_none_still_passes() -> None:
     SkyPilotProvider().set_heartbeat_endpoint(None)  # must not raise
 
 
-def _stop_ctx_with_skypilot_row() -> Any:
-    """Fake SessionContext exposing a single skypilot ledger row.
+def _stop_ctx_with_ledger_row(instance_id: str, provider_name: str) -> Any:
+    """Fake SessionContext exposing a single ledger row.
 
     Mirrors the ``_FakeCtx`` pattern used in ``tests/cli/test_cmd_reap.py``:
     a MagicMock ``ledger()`` accessor whose ``entries()`` returns a fixed
     list of ledger-row dicts.
     """
-    entries = [{"id": "kf-cluster", "provider": "skypilot"}]
+    entries = [{"id": instance_id, "provider": provider_name}]
     ledger = MagicMock()
     ledger.entries.return_value = entries
     ctx = MagicMock()
@@ -59,44 +59,114 @@ def _stop_ctx_with_skypilot_row() -> Any:
     return ctx
 
 
+def _stop_ctx_with_skypilot_row() -> Any:
+    """Fake SessionContext exposing a single skypilot ledger row."""
+    return _stop_ctx_with_ledger_row("kf-cluster", "skypilot")
+
+
 def _stop_args(instance_id: str) -> argparse.Namespace:
     """Build the ``argparse.Namespace`` ``_cmd_stop`` expects."""
     return argparse.Namespace(id=instance_id)
 
 
+def _fake_pause_provider_class(name: str, calls: list[str]) -> type:
+    """Build a fake provider class recording stop/destroy calls.
+
+    Declares only ``ON_INSTANCE_DEADLINE`` — never ``PAUSE_BILLING`` — so the
+    CLI's capability pre-check must be what refuses the call. If the
+    pre-check were deleted or fell through, ``stop_instance`` would run and
+    (per the real skypilot/modal implementations) raise
+    ``NotImplementedError`` instead of returning cleanly, which would also
+    surface as a non-clean exit — the pre-check is what keeps ``calls``
+    empty and produces the routed message, not incidental luck.
+
+    Args:
+        name: The provider name to stamp on the fake (``"skypilot"`` or
+            ``"modal"``).
+        calls: Shared list the fake mutates so the test can assert on call
+            order/absence.
+
+    Returns:
+        A fake provider class usable as ``registry.get_provider`` /
+        ``registry.provider_class``'s return value.
+    """
+
+    class _FakeProvider:
+        pass
+
+    _FakeProvider.name = name  # type: ignore[attr-defined]
+
+    def _capabilities(cls: type, shape: object = None) -> frozenset[Any]:
+        from kinoforge.core.capabilities import Capability
+
+        return frozenset({Capability.ON_INSTANCE_DEADLINE})
+
+    def _stop_instance(self: object, instance_id: str) -> None:
+        calls.append(f"stop:{instance_id}")
+        raise NotImplementedError("use destroy")
+
+    def _destroy_instance(self: object, instance_id: str) -> None:
+        calls.append(f"destroy:{instance_id}")
+
+    _FakeProvider.capabilities = classmethod(_capabilities)  # type: ignore[attr-defined]
+    _FakeProvider.stop_instance = _stop_instance  # type: ignore[attr-defined]
+    _FakeProvider.destroy_instance = _destroy_instance  # type: ignore[attr-defined]
+    return _FakeProvider
+
+
 def test_cli_stop_on_skypilot_row_refuses_without_destroying(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Catches a pre-check that falls through and turns a pause request into
-    a teardown."""
+    a teardown — and catches a pre-check that refuses silently (deleted or
+    garbled print), which the pre-fix version of this test could not."""
     from kinoforge.cli import _commands
     from kinoforge.core import registry as core_registry
 
     calls: list[str] = []
-
-    class _FakeProvider:
-        name = "skypilot"
-
-        @classmethod
-        def capabilities(cls, shape=None):  # noqa: ANN001, ANN206
-            from kinoforge.core.capabilities import Capability
-
-            return frozenset({Capability.ON_INSTANCE_DEADLINE})
-
-        def stop_instance(self, instance_id: str) -> None:
-            calls.append(f"stop:{instance_id}")
-            raise NotImplementedError("use destroy")
-
-        def destroy_instance(self, instance_id: str) -> None:
-            calls.append(f"destroy:{instance_id}")
+    fake_provider = _fake_pause_provider_class("skypilot", calls)
 
     # `_cmd_stop` and `capabilities_for` each do their own lazy
     # `from kinoforge.core import registry` inside the function body, so the
     # patch target is the real `kinoforge.core.registry` module — not a
     # `_commands.registry` module-level attribute, which does not exist.
-    monkeypatch.setattr(core_registry, "get_provider", lambda name: _FakeProvider)
-    monkeypatch.setattr(core_registry, "provider_class", lambda name: _FakeProvider)
+    monkeypatch.setattr(core_registry, "get_provider", lambda name: fake_provider)
+    monkeypatch.setattr(core_registry, "provider_class", lambda name: fake_provider)
 
     rc = _commands._cmd_stop(_stop_args("kf-cluster"), _stop_ctx_with_skypilot_row())
+
     assert rc != 0
     assert calls == []
+    stderr = capsys.readouterr().err
+    assert "skypilot" in stderr
+    assert "cannot pause billing" in stderr
+    assert "kinoforge destroy --id kf-cluster" in stderr
+
+
+def test_cli_stop_on_modal_row_refuses_without_destroying(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Modal-side analog: the pause pre-check must refuse a modal ledger row
+    the same way it refuses a skypilot one — non-zero exit, zero destroy
+    calls, and a routed stderr message naming ``destroy``. Nothing exercised
+    the modal side of this pre-check before this test."""
+    from kinoforge.cli import _commands
+    from kinoforge.core import registry as core_registry
+
+    calls: list[str] = []
+    fake_provider = _fake_pause_provider_class("modal", calls)
+
+    monkeypatch.setattr(core_registry, "get_provider", lambda name: fake_provider)
+    monkeypatch.setattr(core_registry, "provider_class", lambda name: fake_provider)
+
+    ctx = _stop_ctx_with_ledger_row("eph-abc123", "modal")
+    rc = _commands._cmd_stop(_stop_args("eph-abc123"), ctx)
+
+    assert rc != 0
+    assert calls == []
+    stderr = capsys.readouterr().err
+    assert "modal" in stderr
+    assert "cannot pause billing" in stderr
+    assert "kinoforge destroy --id eph-abc123" in stderr
