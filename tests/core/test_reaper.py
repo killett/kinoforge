@@ -476,10 +476,19 @@ def test_partition_returns_independent_dicts() -> None:
 
 
 def test_classify_emits_substrate_missing_on_unsupported_provider() -> None:
-    """SkyPilot pre-B5b: provider_kind='skypilot', last_heartbeat=None.
+    """SkyPilot: provider_kind='skypilot', last_heartbeat=None.
     Must NOT emit HEARTBEAT_UNKNOWN — that would let a future B1 sweeper
     reap a live working SkyPilot pod once HEARTBEAT_UNKNOWN is added to
-    the apply policy. Emit the dedicated verdict instead."""
+    the apply policy.
+
+    Brief 2 Task 6 — this row is PAST grace (pod_age 1000 s vs
+    grace_after_session_s 300 s, no session_end). The gate used to return
+    HEARTBEAT_SUBSTRATE_MISSING early, which masked that age evidence and
+    made the row a dead end. It now falls through to the grace evaluation
+    and classifies ORPHAN_REAP — still absent from DEFAULT_APPLY_POLICY,
+    so still not reapable without --include-orphans. The within-grace half
+    (HEARTBEAT_SUBSTRATE_MISSING, unchanged) lives in
+    tests/core/test_reaper_capability_gate.py."""
     entry = {
         "id": "cluster-x",
         "provider_kind": "skypilot",
@@ -496,7 +505,7 @@ def test_classify_emits_substrate_missing_on_unsupported_provider() -> None:
         heartbeat_interval_s=30.0,
         grace_after_session_s=300.0,
     )
-    assert v == Verdict.HEARTBEAT_SUBSTRATE_MISSING
+    assert v == Verdict.ORPHAN_REAP  # Brief 2 Task 6 — was SUBSTRATE_MISSING
 
 
 def test_classify_emits_heartbeat_unknown_on_supported_provider_with_no_data() -> None:
@@ -556,7 +565,13 @@ def test_classify_reads_provider_key_when_provider_kind_absent() -> None:
 
     Bug catch: an earlier B5a iteration read only ``"provider_kind"`` and
     silently fell through to HEARTBEAT_UNKNOWN on every production entry.
-    Caught by the final cross-task review (2026-06-12)."""
+    Caught by the final cross-task review (2026-06-12).
+
+    Brief 2 Task 6 — the row is past grace, so the expected-absence path
+    now ends in ORPHAN_REAP rather than returning early. The bug this test
+    catches is unchanged: misreading the key still yields the
+    supported-provider verdict HEARTBEAT_UNKNOWN, which ORPHAN_REAP
+    discriminates against exactly as HEARTBEAT_SUBSTRATE_MISSING did."""
     entry = {
         "id": "cluster-x",
         "provider": "skypilot",  # the actual Ledger.record schema key
@@ -573,7 +588,7 @@ def test_classify_reads_provider_key_when_provider_kind_absent() -> None:
         heartbeat_interval_s=30.0,
         grace_after_session_s=300.0,
     )
-    assert v == Verdict.HEARTBEAT_SUBSTRATE_MISSING
+    assert v == Verdict.ORPHAN_REAP  # Brief 2 Task 6 — was SUBSTRATE_MISSING
 
 
 def test_classify_provider_kind_takes_precedence_over_provider() -> None:
@@ -583,10 +598,16 @@ def test_classify_provider_kind_takes_precedence_over_provider() -> None:
     ``entry.get("provider_kind") or entry.get("provider")`` evaluates
     provider_kind first, which means a future Ledger schema migration
     that adds ``"provider_kind"`` alongside ``"provider"`` does not
-    silently change verdicts when the two disagree."""
+    silently change verdicts when the two disagree.
+
+    Brief 2 Task 6 — the row is past grace, so the expected-absence
+    (skypilot) branch now ends in ORPHAN_REAP instead of returning
+    HEARTBEAT_SUBSTRATE_MISSING early. Precedence is still what is under
+    test: reading ``provider`` first would give the runpod verdict
+    HEARTBEAT_UNKNOWN."""
     entry = {
         "id": "pod-x",
-        "provider_kind": "skypilot",  # would emit SUBSTRATE_MISSING
+        "provider_kind": "skypilot",  # expected absence → ORPHAN_REAP past grace
         "provider": "runpod",  # would emit UNKNOWN
         "created_at": 1_000.0,
         "heartbeat_thread_tick": None,
@@ -601,7 +622,7 @@ def test_classify_provider_kind_takes_precedence_over_provider() -> None:
         heartbeat_interval_s=30.0,
         grace_after_session_s=300.0,
     )
-    assert v == Verdict.HEARTBEAT_SUBSTRATE_MISSING
+    assert v == Verdict.ORPHAN_REAP  # Brief 2 Task 6 — was SUBSTRATE_MISSING
 
 
 def test_classify_emits_live_with_fresh_heartbeat_on_runpod() -> None:
