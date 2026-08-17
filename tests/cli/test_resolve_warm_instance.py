@@ -28,9 +28,10 @@ def _entry(
 
     cap_key lives at entry['tags']['kinoforge_key'] (orchestrator.py:492,1015).
     Default provider="local" so classify() Row-7 substrate gate resolves to
-    HEARTBEAT_UNKNOWN (local is in _HEARTBEAT_SUPPORTED), not
-    HEARTBEAT_SUBSTRATE_MISSING. Pass provider="modal" (no heartbeat
-    satisfier) to reach the HEARTBEAT_SUBSTRATE_MISSING branch instead.
+    HEARTBEAT_UNKNOWN (local declares Capability.HEARTBEAT_READ per
+    core/capabilities.py), not HEARTBEAT_SUBSTRATE_MISSING. Pass
+    provider="modal" (no heartbeat satisfier) to reach the
+    HEARTBEAT_SUBSTRATE_MISSING branch instead.
     """
     e: dict[str, Any] = {
         "id": eid,

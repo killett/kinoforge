@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from kinoforge.core.balance_endpoints import provider_balance_supported
-from kinoforge.core.capabilities import Capability, WorkloadShape, capabilities_for
+from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
 from kinoforge.core.interfaces import ComputeProvider
 from kinoforge.core.util_endpoints import provider_util_supported
@@ -133,20 +133,34 @@ def test_parity_check_catches_a_declaration_without_an_implementation() -> None:
     assert declared is not _overrides(LyingProvider, "probe_runtime")
 
 
-@pytest.mark.parametrize("name", REGISTERED)
-def test_heartbeat_predicate_equals_the_declaration(name: str) -> None:
-    """Catches the derivation diverging from the declaration it replaced."""
-    assert provider_heartbeat_supported(name) is (
-        Capability.HEARTBEAT_READ in capabilities_for(name)
-    )
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("local", True), ("runpod", True), ("skypilot", False), ("modal", False)],
+)
+def test_heartbeat_predicate_per_provider(name: str, expected: bool) -> None:
+    """Catches the derivation diverging from the declaration it replaced.
+
+    Asserts hardcoded per-provider expectations, NOT
+    ``HEARTBEAT_READ in capabilities_for(name)`` — the predicate's body is
+    that same expression, so comparing the two would be a tautology that
+    cannot fail.
+    """
+    assert provider_heartbeat_supported(name) is expected
 
 
-@pytest.mark.parametrize("name", REGISTERED)
-def test_util_predicate_equals_the_declaration(name: str) -> None:
-    """Catches the derivation diverging from the declaration it replaced."""
-    assert provider_util_supported(name) is (
-        Capability.UTIL_SNAPSHOT in capabilities_for(name)
-    )
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("local", True), ("modal", True), ("runpod", True), ("skypilot", False)],
+)
+def test_util_predicate_per_provider(name: str, expected: bool) -> None:
+    """Catches the derivation diverging from the declaration it replaced.
+
+    Asserts hardcoded per-provider expectations, NOT
+    ``UTIL_SNAPSHOT in capabilities_for(name)`` — the predicate's body is
+    that same expression, so comparing the two would be a tautology that
+    cannot fail.
+    """
+    assert provider_util_supported(name) is expected
 
 
 def test_predicate_answers_are_unchanged_from_the_string_tables() -> None:

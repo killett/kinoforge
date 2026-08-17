@@ -680,19 +680,27 @@ from kinoforge.core.util_endpoints import provider_util_supported
 REGISTERED = ["local", "runpod", "skypilot", "modal"]
 
 
-@pytest.mark.parametrize("name", REGISTERED)
-def test_heartbeat_predicate_equals_the_declaration(name: str) -> None:
-    """Catches the derivation diverging from the declaration it replaced."""
-    assert provider_heartbeat_supported(name) is (
-        Capability.HEARTBEAT_READ in capabilities_for(name)
-    )
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("local", True), ("runpod", True), ("skypilot", False), ("modal", False)],
+)
+def test_heartbeat_predicate_per_provider(name: str, expected: bool) -> None:
+    """Catches the derivation diverging from the declaration it replaced.
+
+    Asserts hardcoded per-provider expectations, NOT
+    ``HEARTBEAT_READ in capabilities_for(name)`` — the predicate's body is
+    that same expression, so comparing the two would be a tautology that
+    cannot fail.
+    """
+    assert provider_heartbeat_supported(name) is expected
 
 
-@pytest.mark.parametrize("name", REGISTERED)
-def test_util_predicate_equals_the_declaration(name: str) -> None:
-    assert provider_util_supported(name) is (
-        Capability.UTIL_SNAPSHOT in capabilities_for(name)
-    )
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("local", True), ("modal", True), ("runpod", True), ("skypilot", False)],
+)
+def test_util_predicate_per_provider(name: str, expected: bool) -> None:
+    assert provider_util_supported(name) is expected
 
 
 def test_predicate_answers_are_unchanged_from_the_string_tables() -> None:
