@@ -23,6 +23,7 @@ __all__ = [
     "WorkloadShape",
     "capabilities_for",
     "provider_billed",
+    "provider_registered",
 ]
 
 
@@ -114,6 +115,25 @@ def capabilities_for(
         return frozenset()
     caps: frozenset[Capability] = cls.capabilities(shape)
     return caps
+
+
+def provider_registered(provider_kind: str) -> bool:
+    """Return whether ``provider_kind`` names a registered provider at all.
+
+    :func:`capabilities_for` deliberately conflates "unknown provider" with
+    "declares nothing" — correct for the boolean support predicates it
+    backs. A caller that *refuses* on an empty declaration needs the two
+    apart: an unknown name has no declaration to compare against, and
+    ``registry.get_provider`` already refuses it at launch with an accurate
+    message. Use this to skip rather than to misattribute.
+
+    Args:
+        provider_kind: Registry key, e.g. ``"skypilot"``.
+
+    Returns:
+        True iff a provider class is registered under ``provider_kind``.
+    """
+    return _provider_class(provider_kind) is not None
 
 
 def provider_billed(provider_kind: str) -> bool:
