@@ -9,15 +9,29 @@ rows, cross-process warm rows, and the provisional
 Before this task the gate returned EARLY on an expected absence, so the
 age + grace evidence below it — which never depended on heartbeat — was
 never consulted and such a row was a permanent dead end. These tests pin
-the narrowed contract: expected absence falls through to grace, declared
-capability + missing fields stays the strict anomaly.
+the narrowed contract: expected absence falls through to grace UNDER A
+LIVENESS PRECONDITION, declared capability + missing fields stays the
+strict anomaly.
+
+The liveness precondition (design §8) is the safety half. Rows 5 & 6 earn
+the right to read age as orphanhood by first proving the driver is dead
+(``sent_age > sentinel_window``); this call site has no such proof, only
+absent fields. Without the precondition an actively-generating pod on a
+capability-less provider ages into ORPHAN_REAP and is destroyed
+mid-render by a sweeper running ``include_orphans``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from kinoforge.core.reaper import DEFAULT_APPLY_POLICY, Verdict, classify, partition
+from kinoforge.core.reaper import (
+    DEFAULT_APPLY_POLICY,
+    Verdict,
+    classify,
+    partition,
+    policy_from_cli_flags,
+)
 
 NOW = 1_800_000_000.0
 GRACE = 1800.0
@@ -58,12 +72,24 @@ def _row(
     }
 
 
-def _classify(entry: dict[str, Any], *, now: float = NOW) -> Verdict:
+def _classify(
+    entry: dict[str, Any],
+    *,
+    now: float = NOW,
+    heartbeat_interval_s: float | None = 30.0,
+) -> Verdict:
     """Classify ``entry`` with the row live and cfg-shaped thresholds.
+
+    ``grace_after_session_s`` is passed as :data:`GRACE` so it matches the
+    per-row override :func:`_row` writes — a reader can derive the boundary
+    every test in this module works against from either place.
 
     Args:
         entry: Ledger-shaped dict under test.
         now: Wall-clock seconds passed through to ``classify``.
+        heartbeat_interval_s: Cfg heartbeat cadence. ``None`` models
+            ``compute.heartbeat_mode: none``, which makes the row-7 gate
+            condition true for every row permanently.
 
     Returns:
         The verdict ``classify`` assigns.
@@ -74,8 +100,8 @@ def _classify(entry: dict[str, Any], *, now: float = NOW) -> Verdict:
         now=now,
         idle_timeout_s=600.0,
         max_lifetime_s=18_000.0,
-        heartbeat_interval_s=30.0,
-        grace_after_session_s=300.0,
+        heartbeat_interval_s=heartbeat_interval_s,
+        grace_after_session_s=GRACE,
     )
 
 
@@ -164,9 +190,116 @@ def test_dead_row_still_precedes_the_gate() -> None:
     assert verdict is Verdict.STALE_LEDGER
 
 
+# ---------------------------------------------------------------------------
+# Liveness precondition (design §8, added after the Task 6 review)
+# ---------------------------------------------------------------------------
+
+
+def test_heartbeat_mode_none_with_open_claim_is_not_an_orphan() -> None:
+    """THE regression this precondition exists to prevent.
+
+    ``compute.heartbeat_mode: none`` leaves ``heartbeat_interval_s=None``,
+    so the row-7 gate condition is true for every row forever, and
+    ``session_end`` is only written at teardown — so an actively-generating
+    pod measures its grace from ``pod_age`` and sails past 1800 s while the
+    render is still running. Without the liveness precondition this row
+    classifies ORPHAN_REAP and a sweeper with ``include_orphans`` destroys
+    the pod mid-render. It must stay HEARTBEAT_SUBSTRATE_MISSING.
+    """
+    entry = _row("skypilot", session_end_age=0.0, pod_age=10_000.0)
+    del entry["session_end"]  # written only at teardown
+    entry["session_start"] = NOW - 9_000.0  # claimed, still generating
+    assert _classify(entry, heartbeat_interval_s=None) is (
+        Verdict.HEARTBEAT_SUBSTRATE_MISSING
+    )
+
+
+def test_open_claim_with_fresh_sentinel_past_grace_is_not_an_orphan() -> None:
+    """The ordinary shape on a capability-less provider with heartbeat ON:
+    the orchestrator-clock sentinel ticks, but ``last_heartbeat`` stays None
+    because the provider cannot read one — so the gate fires while the
+    session is demonstrably alive. Age must not override that."""
+    entry = _row("skypilot", session_end_age=0.0, pod_age=10_000.0)
+    del entry["session_end"]
+    entry["session_start"] = NOW - 9_000.0
+    entry["heartbeat_thread_tick"] = NOW - 5.0  # fresh, well inside 3×30 s
+    assert _classify(entry) is Verdict.HEARTBEAT_SUBSTRATE_MISSING
+
+
+def test_closed_session_past_grace_is_still_an_orphan() -> None:
+    """AC1 must survive the precondition. A row whose session closed
+    cleanly is genuinely undriven, so the age evidence stands and the row
+    is reapable again. Catches the guard being widened into blanket
+    immunity for any row that ever carried claim fields."""
+    entry = _row("skypilot", session_end_age=GRACE + 1)
+    entry["session_start"] = entry["session_end"] - 100.0  # closed cleanly
+    assert _classify(entry) is Verdict.ORPHAN_REAP
+
+
+def test_stale_claim_past_grace_is_still_an_orphan() -> None:
+    """A claim whose sentinel went stale is a crashed writer, not a live
+    session — ``is_session_busy`` auto-clears it via sentinel freshness.
+    Catches the guard trusting ``session_start`` on its own, which would
+    make any crashed run permanently unreapable."""
+    entry = _row("skypilot", session_end_age=0.0, pod_age=10_000.0)
+    del entry["session_end"]
+    entry["session_start"] = NOW - 9_000.0
+    entry["heartbeat_thread_tick"] = NOW - 5_000.0  # far past 3×30 s
+    assert _classify(entry) is Verdict.ORPHAN_REAP
+
+
+def test_claimant_that_never_ticked_past_grace_is_still_an_orphan() -> None:
+    """Claim opened, sentinel never written, heartbeat enabled → the
+    claimant died before its loop started. ``is_session_busy`` treats that
+    as crashed; the row must remain reapable."""
+    entry = _row("skypilot", session_end_age=0.0, pod_age=10_000.0)
+    del entry["session_end"]
+    entry["session_start"] = NOW - 9_000.0
+    assert _classify(entry) is Verdict.ORPHAN_REAP
+
+
+def test_unregistered_provider_name_stays_unknown() -> None:
+    """``capabilities_for`` returns an empty set both for "declares no
+    HEARTBEAT_READ" and for "name we do not recognise"; only the first is
+    an EXPECTED absence. A typo'd or third-party provider name must not be
+    handed the fall-through on the strength of a declaration it never
+    made."""
+    entry = _row("not-a-registered-provider", session_end_age=GRACE + 1)
+    assert _classify(entry) is Verdict.HEARTBEAT_UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# Policy — both directions
+# ---------------------------------------------------------------------------
+
+
 def test_default_policy_does_not_act_on_the_new_orphans() -> None:
     """Catches ORPHAN_REAP being added to the default policy while wiring
     this, which would silently make the change destructive."""
     to_act, to_skip = partition({"i-1": Verdict.ORPHAN_REAP}, DEFAULT_APPLY_POLICY)
     assert to_act == {}
     assert to_skip == {"i-1": Verdict.ORPHAN_REAP}
+
+
+def test_include_orphans_now_acts_on_a_past_grace_expected_absence_row() -> None:
+    """The DESTRUCTIVE direction, stated explicitly rather than implied.
+
+    This classifier holds destroy authority, so the change must be pinned
+    from the side that ends in a destroy, not only from the safe side. An
+    operator who asks for orphan reaping now gets this row: it is fed
+    through the real ``classify`` and the real
+    ``policy_from_cli_flags(apply=True, include_orphans=True)``, and lands
+    in ``to_act``. Before this task the same row produced
+    HEARTBEAT_SUBSTRATE_MISSING, which no policy can act on — hence the
+    plain-``--apply`` half, which must stay empty.
+    """
+    verdict = _classify(_row("skypilot", session_end_age=GRACE + 1))
+    assert verdict is Verdict.ORPHAN_REAP
+
+    opted_in = policy_from_cli_flags(apply=True, include_orphans=True)
+    to_act, to_skip = partition({"i-1": verdict}, opted_in)
+    assert to_act == {"i-1": Verdict.ORPHAN_REAP}
+    assert to_skip == {}
+
+    plain_apply = policy_from_cli_flags(apply=True)
+    assert partition({"i-1": verdict}, plain_apply) == ({}, {"i-1": verdict})

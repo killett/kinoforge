@@ -475,7 +475,7 @@ def test_partition_returns_independent_dicts() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_classify_emits_substrate_missing_on_unsupported_provider() -> None:
+def test_classify_reaps_past_grace_row_on_unsupported_provider() -> None:
     """SkyPilot: provider_kind='skypilot', last_heartbeat=None.
     Must NOT emit HEARTBEAT_UNKNOWN — that would let a future B1 sweeper
     reap a live working SkyPilot pod once HEARTBEAT_UNKNOWN is added to

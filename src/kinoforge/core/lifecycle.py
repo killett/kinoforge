@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import logging
 import time as _time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from kinoforge.core.clock import Clock
 from kinoforge.core.errors import BudgetExceeded, TeardownError
 from kinoforge.core.interfaces import Instance, InstanceSpec, Lifecycle
 from kinoforge.core.redaction import RedactionRegistry
+from kinoforge.core.session_busy import is_session_busy as is_session_busy
 
 if TYPE_CHECKING:
     from kinoforge.core.interfaces import ComputeProvider
@@ -57,46 +58,15 @@ def effective_deadline(
     return num_segments * job_timeout_s + time_buffer_s
 
 
-def is_session_busy(
-    entry: Mapping[str, Any],
-    *,
-    now: float,
-    heartbeat_interval_s: float | None,
-) -> bool:
-    """Whether a ledger entry has an active in-flight session.
-
-    B3 — cross-CLI session-busy gate. Busy iff ``session_start`` is more
-    recent than ``session_end`` (or ``session_end`` absent) AND the
-    heartbeat sentinel is fresh per the Layer V
-    ``3 * heartbeat_interval_s`` window. Stale-busy (writer process
-    crashed) auto-clears via the sentinel-freshness gate — no separate
-    timeout knob.
-
-    Args:
-        entry: A ledger-shaped dict. May carry ``session_start``,
-            ``session_end``, ``heartbeat_thread_tick``.
-        now: Wall-clock seconds.
-        heartbeat_interval_s: Cfg heartbeat cadence; ``None`` means HB
-            feature disabled this invocation — fall back to trusting
-            the marker (treat as busy).
-
-    Returns:
-        True iff entry should be skipped as a warm-attach candidate
-        because another live session is claiming it.
-    """
-    s_start = entry.get("session_start")
-    s_end = entry.get("session_end")
-    if s_start is None:
-        return False
-    if s_end is not None and float(s_end) >= float(s_start):
-        return False  # cleanly closed
-    if heartbeat_interval_s is None:
-        return True  # no HB → trust the marker
-    tick = entry.get("heartbeat_thread_tick")
-    if tick is None:
-        return False  # claimant never started ticking; treat as crashed
-    sentinel_window = 3.0 * heartbeat_interval_s
-    return (now - float(tick)) <= sentinel_window
+# B3's session-busy predicate now lives in the leaf module
+# :mod:`kinoforge.core.session_busy` and is re-exported here so every
+# existing ``from kinoforge.core.lifecycle import is_session_busy`` keeps
+# working. It moved because ``core/reaper.py`` needs the SAME predicate as
+# the liveness precondition on its row-7 fall-through (design §8), and
+# ``tests/test_core_invariant.py::test_core_reaper_module_is_pure``
+# forbids reaper importing this module. Re-export rather than a second
+# copy: two notions of "busy" is exactly the failure worth avoiding here.
+# (The import itself is at the top of the module.)
 
 
 # ---------------------------------------------------------------------------

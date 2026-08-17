@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from kinoforge.core.capabilities import provider_registered
 from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
+from kinoforge.core.session_busy import is_session_busy
 from kinoforge.core.util_endpoints import provider_util_supported
 
 
@@ -391,7 +393,13 @@ def classify(
     """Classify a single ledger entry against the current world state.
 
     Pure function. No I/O. See spec §3.3 for the row-by-row decision
-    tree this implements (rows 1–7).
+    tree this implements (rows 1–7). Row 7 has since been superseded by
+    §8 of the 2026-08-16 provider-capability-declaration design: an
+    EXPECTED heartbeat absence (provider declares no
+    ``Capability.HEARTBEAT_READ``) no longer terminates the tree, it
+    falls through to the rows-5-and-6 grace rule under a liveness
+    precondition. Only an absence the provider's own declaration cannot
+    explain still returns HEARTBEAT_UNKNOWN there.
 
     Args:
         entry: A ledger-shaped dict. Must carry ``id``. May carry
@@ -497,8 +505,18 @@ def classify(
     # opted-in dead-man fallback applies.
     if hb_tick is None or hb is None or heartbeat_interval_s is None:
         provider_kind = entry.get("provider_kind") or entry.get("provider")
-        expected_absence = provider_kind is not None and not (
-            provider_heartbeat_supported(str(provider_kind))
+        # ``provider_registered`` separates "declares no HEARTBEAT_READ" from
+        # "name we do not recognise": capabilities_for returns an empty set
+        # for both, and only the first is an EXPECTED absence. An unknown
+        # name has no declaration to reason from, so it keeps the strict,
+        # non-destructive HEARTBEAT_UNKNOWN rather than being handed the
+        # fall-through. Unreachable via ``sweep`` today (provider lookup
+        # fails first and assigns UNROUTABLE), but classify is a public
+        # pure function called directly by the CLI warm-attach path too.
+        expected_absence = (
+            provider_kind is not None
+            and provider_registered(str(provider_kind))
+            and not provider_heartbeat_supported(str(provider_kind))
         )
         if not expected_absence:
             # The provider DECLARES a heartbeat read and the row has none —
@@ -511,10 +529,26 @@ def classify(
         # within grace the row still classifies HEARTBEAT_SUBSTRATE_MISSING,
         # past grace it becomes ORPHAN_REAP (still not in
         # DEFAULT_APPLY_POLICY, so plain ``--apply`` is unchanged).
+        #
+        # LIVENESS PRECONDITION (design §8, added after the Task 6 review).
+        # Rows 5 & 6 may read age as orphanhood only because they are
+        # reached after ``sent_age > sentinel_window`` has already PROVEN
+        # the driver is dead. Here the heartbeat fields are merely absent,
+        # so age alone would assert orphanhood on no liveness evidence at
+        # all — and with ``compute.heartbeat_mode: none`` this branch is
+        # taken for every row permanently while ``session_end`` is written
+        # only at teardown, so an actively-generating pod would age into
+        # ORPHAN_REAP and be destroyed mid-render by a sweeper running
+        # include_orphans. ``is_session_busy`` is the project's existing
+        # answer to "is another session claiming this row", reused rather
+        # than duplicated. A row with no open claim is still judged on its
+        # age evidence, which is the point of the change.
         time_since_drive = _time_since_drive(
             entry, created_at=created_at, pod_age=pod_age, now=now
         )
-        if time_since_drive > grace:
+        if time_since_drive > grace and not is_session_busy(
+            entry, now=now, heartbeat_interval_s=heartbeat_interval_s
+        ):
             return Verdict.ORPHAN_REAP
         return Verdict.HEARTBEAT_SUBSTRATE_MISSING
 

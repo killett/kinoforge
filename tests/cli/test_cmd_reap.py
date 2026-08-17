@@ -198,6 +198,104 @@ def test_reap_strict_no_uncertainty_exits_0() -> None:
     assert code == 0
 
 
+def _capability_less_row(*, session_end_age: float) -> dict[str, Any]:
+    """A skypilot ledger row with no heartbeat fields, aged past/inside grace.
+
+    Args:
+        session_end_age: Seconds between the last driver detach and ``now``.
+
+    Returns:
+        A ledger-shaped dict for a provider that declares no
+        ``Capability.HEARTBEAT_READ``.
+    """
+    now = 1_800_000_000.0
+    return {
+        "id": "i-1",
+        "provider": "skypilot",
+        "created_at": now - (session_end_age + 60.0),
+        "session_end": now - session_end_age,
+        "grace_after_session_s": 1800.0,
+    }
+
+
+def _real_verdict(entry: dict[str, Any]) -> Any:
+    """Classify ``entry`` with the real classifier, not a hand-picked value.
+
+    Args:
+        entry: Ledger-shaped dict.
+
+    Returns:
+        The Verdict ``kinoforge.core.reaper.classify`` assigns.
+    """
+    from kinoforge.core.reaper import classify
+
+    return classify(
+        entry,
+        live_pod_ids={"i-1"},
+        now=1_800_000_000.0,
+        idle_timeout_s=600.0,
+        max_lifetime_s=18_000.0,
+        heartbeat_interval_s=30.0,
+        grace_after_session_s=1800.0,
+    )
+
+
+def test_reap_strict_expected_absence_within_grace_exits_3() -> None:
+    """--strict on a capability-less row still inside grace → exit 3.
+
+    HEARTBEAT_SUBSTRATE_MISSING is in DEFAULT_STRICT_VERDICTS, and Brief 2
+    Task 6 left the within-grace half of the gate untouched, so this exit
+    code must not move. Verdict comes from the real classifier so the test
+    breaks if the gate stops producing it.
+    """
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.reaper_actor import SweepReport
+
+    entry = _capability_less_row(session_end_age=1799.0)
+    verdict = _real_verdict(entry)
+    assert verdict == Verdict.HEARTBEAT_SUBSTRATE_MISSING  # precondition
+
+    ctx = _ctx([entry])
+    with patch("kinoforge.cli._commands.sweep") as mock_sweep:
+        mock_sweep.return_value = SweepReport(
+            snapshot={"i-1": (entry, verdict)}, actions=[]
+        )
+        code = _cmd_reap(_args(strict=True), ctx)
+    assert code == 3
+
+
+def test_reap_strict_expected_absence_past_grace_exits_0() -> None:
+    """--strict on a capability-less row PAST grace → exit 0. Deliberate.
+
+    Brief 2 Task 6 moved this row from HEARTBEAT_SUBSTRATE_MISSING (in
+    DEFAULT_STRICT_VERDICTS → exit 3) to ORPHAN_REAP (not in it → exit 0),
+    so the exit code changes. That is the shipped choice: ``--strict``
+    means "the reaper is UNCERTAIN", and the whole point of the task is
+    that this row is no longer uncertain — the reaper now has a definite
+    answer for it, printed in the verdict table. Adding ORPHAN_REAP to
+    DEFAULT_STRICT_VERDICTS would instead flip the exit code for EVERY
+    provider's orphan rows, including RunPod's, which is a separate
+    decision about a published contract and not this task's to make.
+
+    This test exists so the change is pinned rather than silent: a CI gate
+    watching for exit 3 on these rows will fail here first, with a reason.
+    """
+    from kinoforge.core.reaper import Verdict
+    from kinoforge.core.reaper_actor import SweepReport
+
+    entry = _capability_less_row(session_end_age=1801.0)
+    verdict = _real_verdict(entry)
+    assert verdict == Verdict.ORPHAN_REAP  # precondition
+
+    ctx = _ctx([entry])
+    with patch("kinoforge.cli._commands.sweep") as mock_sweep:
+        mock_sweep.return_value = SweepReport(
+            snapshot={"i-1": (entry, verdict)}, actions=[]
+        )
+        code = _cmd_reap(_args(strict=True), ctx)
+    assert code == 0
+
+
 def test_reap_id_flag_restricts_sweep_to_one_entry() -> None:
     """--id X passes a ledger that surfaces only one entry to sweep."""
     from kinoforge.core.reaper_actor import SweepReport
