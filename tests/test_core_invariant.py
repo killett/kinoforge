@@ -35,6 +35,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SRC_ROOT = Path(__file__).parent.parent / "src" / "kinoforge"
 CORE_ROOT = SRC_ROOT / "core"
 
@@ -334,26 +336,40 @@ _REAPER_FORBIDDEN_IMPORTS: list[re.Pattern[str]] = [
 ]
 
 
-def test_core_reaper_module_is_pure() -> None:
-    """Layer V: core/reaper.py is pure — no I/O, no Ledger, no adapters.
+# Every module ``core/reaper.py`` is allowed to pull into ``classify`` must
+# itself be pure, or the contract is only as strong as its weakest import.
+# ``core/session_busy.py`` was added by the 2026-08-16 capability-declaration
+# work precisely so the reaper could reach B3's session-busy predicate without
+# importing ``core/lifecycle.py``; scanning only ``reaper.py`` would let a
+# future contributor re-open that door one module along.
+_PURE_CORE_MODULES: tuple[str, ...] = ("reaper.py", "session_busy.py")
+
+
+@pytest.mark.parametrize("module_name", _PURE_CORE_MODULES)
+def test_core_reaper_module_is_pure(module_name: str) -> None:
+    """Layer V: the reaper's decision path is pure — no I/O, no Ledger.
 
     The sentinel-gate decision logic lives in classify(). Any I/O
     import here would let a future contributor reach into the ledger
     or a provider from inside classify(), violating the purity
     contract documented in spec §3.4. The contract is enforced
     architecturally so docstring vigilance is not load-bearing.
+
+    Args:
+        module_name: File under ``src/kinoforge/core`` that classify's
+            call graph depends on and that must therefore stay pure.
     """
-    reaper_path = SRC_ROOT / "core" / "reaper.py"
+    module_path = SRC_ROOT / "core" / module_name
     violations: list[str] = []
-    for lineno, line in enumerate(reaper_path.read_text().splitlines(), start=1):
+    for lineno, line in enumerate(module_path.read_text().splitlines(), start=1):
         for pattern in _REAPER_FORBIDDEN_IMPORTS:
             if pattern.match(line):
-                violations.append(f"{reaper_path}:{lineno}: {line.strip()}")
+                violations.append(f"{module_path}:{lineno}: {line.strip()}")
                 break
     if violations:
         detail = "\n  ".join(violations)
         raise AssertionError(
-            f"core/reaper.py must be pure — forbidden import(s) found:\n  {detail}"
+            f"core/{module_name} must be pure — forbidden import(s) found:\n  {detail}"
         )
 
 

@@ -530,24 +530,56 @@ def classify(
         # past grace it becomes ORPHAN_REAP (still not in
         # DEFAULT_APPLY_POLICY, so plain ``--apply`` is unchanged).
         #
-        # LIVENESS PRECONDITION (design §8, added after the Task 6 review).
+        # LIVENESS PRECONDITION (design §8, added after the Task 6 review
+        # and tightened after its round-2 re-review).
+        #
         # Rows 5 & 6 may read age as orphanhood only because they are
         # reached after ``sent_age > sentinel_window`` has already PROVEN
         # the driver is dead. Here the heartbeat fields are merely absent,
         # so age alone would assert orphanhood on no liveness evidence at
-        # all — and with ``compute.heartbeat_mode: none`` this branch is
-        # taken for every row permanently while ``session_end`` is written
-        # only at teardown, so an actively-generating pod would age into
-        # ORPHAN_REAP and be destroyed mid-render by a sweeper running
-        # include_orphans. ``is_session_busy`` is the project's existing
-        # answer to "is another session claiming this row", reused rather
-        # than duplicated. A row with no open claim is still judged on its
-        # age evidence, which is the point of the change.
+        # all: with ``compute.heartbeat_mode: none`` this branch is taken
+        # for every row permanently, and an actively-generating pod would
+        # age into ORPHAN_REAP and be destroyed mid-render by a sweeper
+        # running include_orphans.
+        #
+        # Two conditions, and BOTH are load-bearing:
+        #
+        #   1. ``session_end`` present — POSITIVE evidence that a session
+        #      ran and closed. ``is_session_busy`` alone is not enough:
+        #      ``session_start`` has exactly one writer
+        #      (``orchestrator.py:1510-1514``) and it sits inside the
+        #      ``hb_loop is not None`` branch, so it exists only while a
+        #      heartbeat loop runs — and a running loop writes BOTH
+        #      sentinel fields (``heartbeat_loop.py:236-256`` substitutes
+        #      the orchestrator clock when the provider read returns
+        #      ``None``), which means this gate is never even reached.
+        #      Whenever the gate IS reachable with a live driver —
+        #      heartbeat disabled, or the pre-loop launch window — the row
+        #      has no ``session_start`` at all and a busy check answers
+        #      ``False``. Requiring ``session_end`` is what makes the guard
+        #      fire on the rows that actually exist. A row measuring grace
+        #      from ``pod_age`` alone — including the provisional
+        #      ``kf_launch_phase=launching`` row — therefore stays
+        #      HEARTBEAT_SUBSTRATE_MISSING and non-destructive.
+        #   2. ``not is_session_busy`` — the row was reopened by a later
+        #      session that is still live (``session_start`` newer than
+        #      ``session_end`` with a fresh sentinel). Reuses the project's
+        #      existing answer to "is another session claiming this row"
+        #      rather than growing a second notion of busy.
+        #
+        # Every row this change exists to unstrand — ephemeral index rows
+        # and cross-process warm rows from completed sessions — carries
+        # ``session_end``, so the unstranding still happens.
         time_since_drive = _time_since_drive(
             entry, created_at=created_at, pod_age=pod_age, now=now
         )
-        if time_since_drive > grace and not is_session_busy(
-            entry, now=now, heartbeat_interval_s=heartbeat_interval_s
+        session_closed = entry.get("session_end") is not None
+        if (
+            time_since_drive > grace
+            and session_closed
+            and not is_session_busy(
+                entry, now=now, heartbeat_interval_s=heartbeat_interval_s
+            )
         ):
             return Verdict.ORPHAN_REAP
         return Verdict.HEARTBEAT_SUBSTRATE_MISSING

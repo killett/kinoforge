@@ -19,6 +19,15 @@ the right to read age as orphanhood by first proving the driver is dead
 absent fields. Without the precondition an actively-generating pod on a
 capability-less provider ages into ORPHAN_REAP and is destroyed
 mid-render by a sweeper running ``include_orphans``.
+
+The precondition is POSITIVE evidence of a closed session
+(``session_end`` present) plus ``not is_session_busy``. The second half
+alone is not enough, and the tests below are anchored to row shapes
+production actually emits: whenever this gate is reachable with a live
+driver — heartbeat disabled, or the pre-loop launch window — the row
+carries no ``session_start``, because its only writer sits inside the
+heartbeat-loop branch. A test built on a row no code path can produce is
+not coverage of anything.
 """
 
 from __future__ import annotations
@@ -142,20 +151,22 @@ def test_legacy_row_without_provider_stays_unknown() -> None:
     assert _classify(entry) is Verdict.HEARTBEAT_UNKNOWN
 
 
-def test_missing_session_end_measures_from_pod_age() -> None:
-    """The provisional ``kf_launch_phase=launching`` row is written before
-    ``sky.launch`` and has no ``session_end``. The fall-through must reuse
-    the rows-5-and-6 ``pod_age`` fallback, so a young launching row is not
-    an orphan while an ancient one is. Catches a fall-through that treats a
-    missing ``session_end`` as age zero (never reapable) or as epoch
-    (instantly reapable)."""
+def test_missing_session_end_is_never_an_orphan_at_any_age() -> None:
+    """A row with no ``session_end`` has no evidence a session ever closed,
+    only that it is old. Neither age makes it reapable.
+
+    Supersedes an earlier version of this test that asserted the ancient
+    half becomes ORPHAN_REAP via the ``pod_age`` fallback — the round-2
+    re-review showed that is precisely the live-pod destroy path, because
+    a driver that is mid-render writes no ``session_end`` until teardown.
+    """
     young = _row("skypilot", session_end_age=0.0, pod_age=GRACE - 1)
     del young["session_end"]
     assert _classify(young) is Verdict.HEARTBEAT_SUBSTRATE_MISSING
 
     ancient = _row("skypilot", session_end_age=0.0, pod_age=GRACE + 1)
     del ancient["session_end"]
-    assert _classify(ancient) is Verdict.ORPHAN_REAP
+    assert _classify(ancient) is Verdict.HEARTBEAT_SUBSTRATE_MISSING
 
 
 def test_out_of_order_session_end_measures_from_creation() -> None:
@@ -195,67 +206,72 @@ def test_dead_row_still_precedes_the_gate() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_heartbeat_mode_none_with_open_claim_is_not_an_orphan() -> None:
-    """THE regression this precondition exists to prevent.
+def test_heartbeat_disabled_live_pod_past_grace_is_not_an_orphan() -> None:
+    """THE regression this precondition exists to prevent, in the exact
+    shape production emits.
 
-    ``compute.heartbeat_mode: none`` leaves ``heartbeat_interval_s=None``,
-    so the row-7 gate condition is true for every row forever, and
-    ``session_end`` is only written at teardown — so an actively-generating
-    pod measures its grace from ``pod_age`` and sails past 1800 s while the
-    render is still running. Without the liveness precondition this row
-    classifies ORPHAN_REAP and a sweeper with ``include_orphans`` destroys
-    the pod mid-render. It must stay HEARTBEAT_SUBSTRATE_MISSING.
+    ``compute.heartbeat_mode: none`` (the default) leaves
+    ``heartbeat_interval_s=None``, so the row-7 gate condition is true for
+    every row forever. No heartbeat loop runs, so nothing writes
+    ``session_start`` — its only writer, ``orchestrator.py:1510-1514``,
+    sits inside the ``hb_loop is not None`` branch. And ``session_end`` is
+    written only at teardown. An actively-generating pod is therefore a
+    bare row with NEITHER claim field, measuring grace from ``pod_age``,
+    which sails past 1800 s mid-render.
+
+    An earlier fix guarded this with ``is_session_busy`` alone; on this row
+    that returns False and the guard never fired. Requiring positive
+    evidence of a CLOSED session is what makes it fire. If this test fails
+    with ORPHAN_REAP, a sweeper running ``--include-orphans`` destroys live
+    pods mid-render.
     """
-    entry = _row("skypilot", session_end_age=0.0, pod_age=10_000.0)
-    del entry["session_end"]  # written only at teardown
-    entry["session_start"] = NOW - 9_000.0  # claimed, still generating
+    entry = {
+        "id": "i-1",
+        "provider": "skypilot",
+        "created_at": NOW - 2_000.0,  # past the 1800 s grace on pod_age
+    }
     assert _classify(entry, heartbeat_interval_s=None) is (
         Verdict.HEARTBEAT_SUBSTRATE_MISSING
     )
 
 
-def test_open_claim_with_fresh_sentinel_past_grace_is_not_an_orphan() -> None:
-    """The ordinary shape on a capability-less provider with heartbeat ON:
-    the orchestrator-clock sentinel ticks, but ``last_heartbeat`` stays None
-    because the provider cannot read one — so the gate fires while the
-    session is demonstrably alive. Age must not override that."""
-    entry = _row("skypilot", session_end_age=0.0, pod_age=10_000.0)
-    del entry["session_end"]
-    entry["session_start"] = NOW - 9_000.0
-    entry["heartbeat_thread_tick"] = NOW - 5.0  # fresh, well inside 3×30 s
+def test_launching_row_past_grace_is_not_an_orphan() -> None:
+    """The provisional ``kf_launch_phase=launching`` row is written before
+    ``sky.launch`` and carries no session fields at all. A slow launch
+    (``--retry-until-up`` can exceed 30 minutes) must not make the cluster
+    it is still provisioning reapable."""
+    entry = {
+        "id": "i-1",
+        "provider": "skypilot",
+        "created_at": NOW - 2_000.0,
+        "kf_launch_phase": "launching",
+    }
     assert _classify(entry) is Verdict.HEARTBEAT_SUBSTRATE_MISSING
 
 
 def test_closed_session_past_grace_is_still_an_orphan() -> None:
-    """AC1 must survive the precondition. A row whose session closed
-    cleanly is genuinely undriven, so the age evidence stands and the row
-    is reapable again. Catches the guard being widened into blanket
-    immunity for any row that ever carried claim fields."""
+    """AC1 must survive the precondition. A cross-process warm row from a
+    completed session carries ``session_end`` — positive evidence the
+    session closed — so the age evidence stands and the row is reapable
+    again. This is the shape the whole task exists to unstrand; catches a
+    guard so wide that nothing is ever reapable."""
     entry = _row("skypilot", session_end_age=GRACE + 1)
     entry["session_start"] = entry["session_end"] - 100.0  # closed cleanly
     assert _classify(entry) is Verdict.ORPHAN_REAP
 
 
-def test_stale_claim_past_grace_is_still_an_orphan() -> None:
-    """A claim whose sentinel went stale is a crashed writer, not a live
-    session — ``is_session_busy`` auto-clears it via sentinel freshness.
-    Catches the guard trusting ``session_start`` on its own, which would
-    make any crashed run permanently unreapable."""
-    entry = _row("skypilot", session_end_age=0.0, pod_age=10_000.0)
-    del entry["session_end"]
-    entry["session_start"] = NOW - 9_000.0
-    entry["heartbeat_thread_tick"] = NOW - 5_000.0  # far past 3×30 s
-    assert _classify(entry) is Verdict.ORPHAN_REAP
-
-
-def test_claimant_that_never_ticked_past_grace_is_still_an_orphan() -> None:
-    """Claim opened, sentinel never written, heartbeat enabled → the
-    claimant died before its loop started. ``is_session_busy`` treats that
-    as crashed; the row must remain reapable."""
-    entry = _row("skypilot", session_end_age=0.0, pod_age=10_000.0)
-    del entry["session_end"]
-    entry["session_start"] = NOW - 9_000.0
-    assert _classify(entry) is Verdict.ORPHAN_REAP
+def test_reopened_session_with_heartbeat_disabled_is_not_an_orphan() -> None:
+    """The second condition, on a row production can emit: an older session
+    closed (``session_end``), a later one reopened the row
+    (``session_start`` newer) and did not close it, and the reap runs from a
+    cfg with heartbeat disabled — where ``is_session_busy`` trusts the
+    marker. ``session_end`` alone would clear this row for reaping; the
+    ``is_session_busy`` half is what holds it."""
+    entry = _row("skypilot", session_end_age=GRACE + 1)
+    entry["session_start"] = float(entry["session_end"]) + 10.0  # reopened
+    assert _classify(entry, heartbeat_interval_s=None) is (
+        Verdict.HEARTBEAT_SUBSTRATE_MISSING
+    )
 
 
 def test_unregistered_provider_name_stays_unknown() -> None:

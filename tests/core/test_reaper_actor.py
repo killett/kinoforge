@@ -484,13 +484,7 @@ def test_act_on_verdict_substrate_missing_does_not_destroy(
     entry = {
         "id": "pod-x",
         "provider_kind": "skypilot",
-        # Brief 2 Task 6: act_on_verdict re-classifies under the lock, and
-        # the row-7 gate no longer returns early on an expected heartbeat
-        # absence — past grace_after_session_s (300 s) the same row now
-        # classifies ORPHAN_REAP. Age the pod 100 s instead of 1000 s so the
-        # recheck still yields HEARTBEAT_SUBSTRATE_MISSING, which is the arm
-        # this test is about.
-        "created_at": 1_900.0,
+        "created_at": 1_000.0,
         "heartbeat_thread_tick": None,
         "last_heartbeat": None,
     }
@@ -568,11 +562,7 @@ def test_act_on_verdict_substrate_missing_warns_once_per_pair(
     entry = {
         "id": "cluster-x",
         "provider_kind": "skypilot",
-        # Brief 2 Task 6: within grace_after_session_s (300 s) the under-lock
-        # recheck still yields HEARTBEAT_SUBSTRATE_MISSING, so the WARN-once
-        # arm is reached. At the previous 1_000.0 the row is past grace and
-        # now classifies ORPHAN_REAP, which never warns.
-        "created_at": 1_900.0,
+        "created_at": 1_000.0,
         "heartbeat_thread_tick": None,
         "last_heartbeat": None,
     }
