@@ -166,6 +166,49 @@ first unchecked task without redoing committed work.
   skypilot cannot have. So `HEARTBEAT_SUBSTRATE_MISSING` stays fail-open, stranded rows still need
   `kinoforge forget`, and the fixes that would work (write `session_start` on attach, or run the loop
   on capability-less providers) belong to whoever owns the attach path.
+  **UNBLOCKING THE REAPER CHANGE — candidate next work, written 2026-08-18 so the reasoning survives
+  a context clear.** The problem in one sentence: `classify` cannot tell a warm pod that is idle from
+  a warm pod that is rendering, because on a capability-less provider (skypilot, modal — neither
+  declares `Capability.HEARTBEAT_READ`) nothing writes to the ledger row between the end of one
+  session and the end of the next. Concretely, both states are the same row:
+  `{"id":…, "provider":"skypilot", "created_at": t0, "session_end": t1}`. `Ledger.record` runs only on
+  cold create; `session_end` is written at teardown (`core/orchestrator.py:1550`); and `session_start`
+  — the one field that would prove a session is in flight — has a single writer
+  (`core/orchestrator.py:1510-1514`) sitting inside `if hb_loop is not None and instance is not None:`.
+  A heartbeat loop only exists when `lifecycle.heartbeat_interval_s > 0`, and `_adapters.py:185-189`
+  hard-rejects any non-`none` `heartbeat_mode` on skypilot, so that branch never runs there. Net: warm
+  re-attach (`kinoforge generate --instance-id … --force-attach`, the only attach path for such a row
+  since auto-scan refuses `HEARTBEAT_SUBSTRATE_MISSING`) leaves grace measuring from the PREVIOUS
+  session's `session_end`, and a render starting 25 min later is past the 1800 s
+  `grace_after_session_s` five minutes in. Two candidate fixes, either of which makes the withdrawn
+  §8 design safe to re-land:
+  1. **Write `session_start` unconditionally on attach** — hoist it out of the `hb_loop` guard at
+     `orchestrator.py:1509` so every driven session stamps the row whether or not a heartbeat loop
+     runs. Smaller change, and it makes the `is_session_busy` predicate (`core/lifecycle.py:60-98`,
+     already written and already used by `cli/_commands.py:1523`) load-bearing instead of near-dead.
+     Needs care because `session_start` is read elsewhere; wants its own tests.
+  2. **Run the heartbeat loop on capability-less providers** — set `lifecycle.heartbeat_interval_s`
+     in the shipped skypilot/modal configs. Verified viable during Task 6:
+     `SkyPilotProvider.heartbeat` is a benign no-op and `HeartbeatLoop._tick_once` substitutes the
+     orchestrator clock when the provider read returns `None`, so the loop writes `last_heartbeat`,
+     `heartbeat_thread_tick` AND `session_start` — those rows then leave the row-7 gate entirely and
+     the fall-through stops mattering. Weaker guarantee: the liveness signal is the controller's
+     clock, so it protects only while the controller lives.
+  If either lands, re-read design §8 (it retains the withdrawn design and both disproved guards —
+  `is_session_busy` alone was inert; `+ session_end is not None` closed the first-session case but not
+  warm re-attach) before re-implementing, and re-derive the row shapes rather than trusting the old
+  tests: the round-1 and round-2 attempts both passed tests built on rows production cannot emit.
+  **Deferred minors from the brief's reviews (none blocking, all in the shipped code):**
+  `Gap` (`validation/checks/capabilities.py`) carries neither the provider nor `spend_risk`, so a
+  consumer cannot tell a substituted WARN from a liveness WARN without re-deriving from `_RISK_ROWS`;
+  `provider_registered` deliberately skips unknown provider names, so a typo'd `compute.provider`
+  still escapes load-time capability validation and surfaces later at `registry.get_provider`; the
+  grid executor's `model_dump()` round trip (`core/grid/dotted_path.py:61,95`) repopulates
+  `model_fields_set`, so grid cells report gaps the operator never wrote (verified noise-only — no
+  ERROR flip is reachable on any of the four providers); and `WorkloadShape.BATCH` is unreachable in
+  production because no shipped path renders an empty `run_cmd` into a provisioning `InstanceSpec`,
+  so skypilot's BATCH-only `IDLE_AUTOSTOP` branch is exercised only by direct unit calls — keep it on
+  the residual list rather than letting it drift into "supported".
   (Superseded planning entry:) **DESIGNED + PLANNED 2026-08-16:**
   `docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md` +
   `docs/superpowers/plans/2026-08-16-provider-capability-declaration.md` (8 tasks 0-7;
