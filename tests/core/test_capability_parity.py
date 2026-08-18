@@ -152,14 +152,20 @@ def test_runpod_job_timeout_declaration_matches_the_create_payload() -> None:
 
 
 def test_modal_idle_autostop_declaration_matches_the_built_app_request() -> None:
-    """``IDLE_AUTOSTOP`` on modal <-> ``scaledown_window`` on the app request.
+    """``IDLE_AUTOSTOP`` on modal <-> ``scaledown_window_s`` on the app request.
 
-    Modal's declaration rests entirely on ``scaledown_window`` reaching
-    ``@app.function``; the provider's only job is to derive it from
-    ``lifecycle.idle_timeout_s``. Bug caught: that derivation is dropped or
-    replaced by ``_app.py``'s 300 s default while modal keeps declaring
-    IDLE_AUTOSTOP, so a cfg asking for a 7-minute idle cap silently runs on
-    a 5-minute one — or, if the field is dropped outright, on none.
+    Scope, stated precisely because the factory is stubbed here: this asserts
+    the PROVIDER half of the wiring — that ``ModalProvider`` derives
+    ``ModalAppRequest.scaledown_window_s`` from ``lifecycle.idle_timeout_s``
+    rather than leaving it at ``_app.py``'s 300 s default. It does NOT reach
+    ``@app.function``; the request-to-decorator hop
+    (``scaledown_window=req.scaledown_window_s``) is covered by
+    ``tests/providers/modal/test_app.py``, which drives the real
+    ``build_modal_app`` against a fake modal module.
+
+    Bug caught: the derivation dropped or hardcoded while modal keeps
+    declaring IDLE_AUTOSTOP, so a cfg asking for a 7-minute idle cap silently
+    runs on a 5-minute one — or, if the field is dropped outright, on none.
     """
     captured: dict[str, Any] = {}
 

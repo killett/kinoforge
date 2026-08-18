@@ -25,15 +25,19 @@ UPSCALE_SKY = [
     "skypilot-vast-diffusers-flashvsr-upscale.yaml",
 ]
 
-#: Risk-row leaf field names this module pins expectations against.
-_RISK_LEAVES = ("idle_timeout", "job_timeout", "heartbeat_interval_s")
+#: Risk-row leaf field names this module pins expectations against whose
+#: evaluation is CONDITIONAL on the operator having written them. The spend
+#: rows (``max_lifetime``, ``idle_timeout``, ``job_timeout``) are in
+#: ``_ALWAYS_EVALUATED`` and so are deliberately absent from this tuple —
+#: they are reported whether or not the YAML mentions them.
+_CONDITIONAL_RISK_LEAVES = ("heartbeat_interval_s",)
 
 
 def _unset_fields(cfg: Config) -> set[str]:
-    """Dotted risk-row fields the operator did not write in the cfg's YAML.
+    """Dotted CONDITIONAL risk-row fields the operator did not write.
 
-    ``evaluate_capability_gaps`` only reports a gap for a risk-row field
-    that is present in ``lifecycle.model_fields_set`` — a field left at its
+    ``evaluate_capability_gaps`` reports a conditional risk-row field only
+    when it appears in ``lifecycle.model_fields_set`` — a field left at its
     Pydantic default was never asserted, so there is nothing to warn about.
     This mirrors that same-Config-instance check (both this helper and
     ``evaluate_capability_gaps`` read ``model_fields_set`` off the *same*
@@ -42,6 +46,11 @@ def _unset_fields(cfg: Config) -> set[str]:
     auto-fix injecting ``heartbeat_interval_s=30``) counts as "set" here
     too, exactly as it would for a second `evaluate_capability_gaps` call
     against the same returned cfg.
+
+    Only conditional leaves are subtracted. Subtracting a spend-row leaf
+    would silently weaken the expectation the moment a config stopped
+    writing it, while the gap kept being reported — the caller would then be
+    asserting against a set that no longer describes the check.
 
     Args:
         cfg: A loaded Config with a compute block.
@@ -55,7 +64,9 @@ def _unset_fields(cfg: Config) -> set[str]:
     assert lifecycle is not None
     set_leaves = set(lifecycle.model_fields_set)
     return {
-        f"compute.lifecycle.{leaf}" for leaf in _RISK_LEAVES if leaf not in set_leaves
+        f"compute.lifecycle.{leaf}"
+        for leaf in _CONDITIONAL_RISK_LEAVES
+        if leaf not in set_leaves
     }
 
 

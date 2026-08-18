@@ -14,7 +14,9 @@ to remember it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from kinoforge.core.capabilities import (
     Capability,
@@ -143,37 +145,151 @@ _RISK_ROWS: tuple[
     ),
 )
 
-#: Rows evaluated even when the operator wrote nothing.
+#: Lifecycle rows evaluated even when the operator wrote nothing.
 #:
-#: ``max_lifetime`` is the only one, and the asymmetry is deliberate rather
-#: than an oversight. It is the LAST bound on spend: a cfg that never mentions
-#: it still gets the 5 h pydantic default, and every provisioned instance is
-#: therefore asserting a wall-clock cap whether or not the YAML says so. So
-#: the question "does anything on this instance enforce that cap?" is always
-#: worth answering. ``idle_timeout`` / ``job_timeout`` also carry defaults,
-#: but reporting them unasked would ERROR configs that never asked for them.
+#: All three spend rows are here. Every one of them carries a pydantic default
+#: (``max_lifetime`` 5 h, ``idle_timeout`` 2 h, ``job_timeout`` 30 m), so every
+#: provisioned instance asserts all three caps whether or not the YAML mentions
+#: them — and the question "does anything actually enforce this cap?" is worth
+#: answering in exactly the case where the operator never thought about it.
 #:
-#: The asymmetry has a real cost, recorded here rather than papered over: a
-#: skypilot cfg that omits ``idle_timeout`` still gets ``autostop=120`` set on
-#: a cluster where it provably cannot fire (F1), with zero diagnostic. Adding
-#: ``idle_timeout`` to this set is the fix; it is not made here because §6.1
-#: requires that nothing shipping today is refused, and the row is spend-risk
-#: (ERROR) on any provider declaring neither ``IDLE_AUTOSTOP`` nor a
-#: substitute.
-_ALWAYS_EVALUATED = frozenset({"compute.lifecycle.max_lifetime"})
+#: The concrete gap this closes: a skypilot cfg that omits ``idle_timeout``
+#: still gets ``autostop=120`` set on a cluster where it provably cannot fire
+#: (F1). Before ``idle_timeout`` joined this set that shipped with zero
+#: diagnostic.
+#:
+#: This does NOT refuse anything that ships today, and the reason is
+#: structural rather than lucky: ``ON_INSTANCE_DEADLINE`` is an accepted
+#: substitute on both the ``idle_timeout`` and ``job_timeout`` rows, every
+#: BILLED provider declares it, and ``local`` is unbilled so the spend rows
+#: skip it entirely. A gap with a substitute is WARN by construction, so no
+#: registered provider can produce an ERROR from these two rows. Measured
+#: across all four registered providers x both WorkloadShapes: zero ERRORs,
+#: WARN only. Re-run that sweep before adding a row here — the property that
+#: makes this safe is the substitute column, not the field list.
+_ALWAYS_EVALUATED = frozenset(
+    {
+        "compute.lifecycle.max_lifetime",
+        "compute.lifecycle.idle_timeout",
+        "compute.lifecycle.job_timeout",
+    }
+)
 
-#: provider kind -> (lifecycle field the instance-side deadline is keyed to,
-#: the mechanism that reads it). Design §6 requires an ON_INSTANCE_DEADLINE
-#: WARN to name the numeric bound it actually enforces — and that bound is NOT
-#: ``max_lifetime`` on every provider. Modal wires only ``scaledown_window``
-#: and ``startup_timeout``/``timeout``; ``max_lifetime`` never reaches Modal at
-#: all, so printing it would name a cap that does not exist. A provider absent
-#: from this table prints no bound: a bare omission is more honest than a
-#: wrong number.
-_DEADLINE_BOUND: dict[str, tuple[str, str]] = {
-    "runpod": ("max_lifetime", "the selfterm watchdog (selfterm.RENDER)"),
-    "skypilot": ("max_lifetime", "the instance-side watchdog (compute_deadline)"),
-    "modal": ("boot_timeout", "Modal's @app.function(timeout=...)"),
+
+def _runpod_deadline_phrase(lifecycle: Any) -> str:  # noqa: ANN401 — LifecycleConfig
+    """Render runpod's real selfterm bound, which is NOT ``max_lifetime``.
+
+    ``providers/runpod/selfterm.py`` states its own contract: two independent
+    BOOT-RELATIVE caps, ``start + max_lifetime - time_buffer`` and
+    ``start + 2 * idle_timeout``, whichever elapses first. So the enforced
+    lifetime is ``min(2 * idle_timeout, max_lifetime - time_buffer)`` and
+    printing ``max_lifetime`` overstates it — by an unbounded margin, and on
+    common configs by all of it.
+
+    Args:
+        lifecycle: The cfg's ``LifecycleConfig``.
+
+    Returns:
+        A phrase naming the formula and the value it evaluates to.
+    """
+    effective = min(
+        2.0 * lifecycle.idle_timeout, lifecycle.max_lifetime - lifecycle.time_buffer
+    )
+    phrase = f"at min(2*idle_timeout, max_lifetime-time_buffer)={effective}s"
+    if effective <= 0:
+        # Not a rounding curiosity: max_lifetime <= time_buffer means the pod's
+        # own deadline is already past the moment it boots. Say so rather than
+        # let "=0.0s" read as "unbounded".
+        phrase += " — already elapsed at boot, so selfterm reaps immediately"
+    return phrase
+
+
+def _skypilot_deadline_phrase(lifecycle: Any) -> str:  # noqa: ANN401 — LifecycleConfig
+    """Render skypilot's bound as a CEILING, not an exact deadline.
+
+    ``watchdog.compute_deadline`` returns the EARLIER of the lifetime bound and
+    a budget bound (``budget_usd / rate_usd_per_hr``). The offer's rate is not
+    knowable at config-load time, so ``max_lifetime`` is an upper bound on the
+    enforced deadline and nothing stronger — hence "at most".
+
+    Args:
+        lifecycle: The cfg's ``LifecycleConfig``.
+
+    Returns:
+        A phrase naming the ceiling.
+    """
+    return f"at most max_lifetime={lifecycle.max_lifetime}s"
+
+
+def _modal_deadline_phrase(lifecycle: Any) -> str:  # noqa: ANN401 — LifecycleConfig
+    """Render modal's bound, which derives from ``boot_timeout``.
+
+    Args:
+        lifecycle: The cfg's ``LifecycleConfig``.
+
+    Returns:
+        A phrase naming the field the function timeout is derived from.
+    """
+    return f"at boot_timeout={lifecycle.boot_timeout}s"
+
+
+@dataclass(frozen=True)
+class _DeadlineBound:
+    """How one provider's instance-side deadline is really derived.
+
+    Attributes:
+        mechanism: Operator-facing name of the thing that terminates.
+        derives_from_max_lifetime: Whether cfg's ``max_lifetime`` is an input
+            to the enforced deadline at all. False triggers the
+            :func:`_deadline_mismatch_gap` WARN — the operator wrote a
+            guardrail value that never reaches the provider.
+        source_field: The lifecycle field the deadline is derived from, used
+            by that WARN. Only meaningful when the flag above is False.
+        phrase: ``LifecycleConfig -> str``; renders the bound for the WARN
+            line. Kept a callable, not a field name, because two of the three
+            providers do not have a single field to name.
+    """
+
+    mechanism: str
+    derives_from_max_lifetime: bool
+    source_field: str
+    phrase: Callable[[Any], str]
+
+
+#: provider kind -> how its ON_INSTANCE_DEADLINE bound is really computed.
+#:
+#: Design §6 requires an ON_INSTANCE_DEADLINE WARN to name the numeric bound it
+#: actually enforces. No two providers compute it the same way, and NONE of
+#: them simply enforces ``max_lifetime``:
+#:
+#: * runpod takes ``min(2 * idle_timeout, max_lifetime - time_buffer)``.
+#: * skypilot takes the earlier of ``max_lifetime`` and a budget bound whose
+#:   rate is unknown at load, so ``max_lifetime`` is a ceiling.
+#: * modal never receives ``max_lifetime`` at all; its function timeout is
+#:   derived from ``boot_timeout``.
+#:
+#: A provider absent from this table prints NO bound: a bare omission is more
+#: honest than a wrong number, and that rule applies to the entries here too —
+#: which is why none of them prints a bare ``max_lifetime``.
+_DEADLINE_BOUND: dict[str, _DeadlineBound] = {
+    "runpod": _DeadlineBound(
+        mechanism="the in-pod selfterm watchdog (selfterm.RENDER)",
+        derives_from_max_lifetime=True,
+        source_field="max_lifetime",
+        phrase=_runpod_deadline_phrase,
+    ),
+    "skypilot": _DeadlineBound(
+        mechanism="the instance-side watchdog (watchdog.compute_deadline)",
+        derives_from_max_lifetime=True,
+        source_field="max_lifetime",
+        phrase=_skypilot_deadline_phrase,
+    ),
+    "modal": _DeadlineBound(
+        mechanism="Modal's @app.function(timeout=...)",
+        derives_from_max_lifetime=False,
+        source_field="boot_timeout",
+        phrase=_modal_deadline_phrase,
+    ),
 }
 
 #: primary capability -> operator-facing prose. ``{shape}`` is substituted
@@ -199,17 +315,19 @@ _DETAIL: dict[Capability, str] = {
 
 
 def _substitute_bound(cfg: Config, substitute: Capability, provider: str) -> str:
-    """Return the numeric bound ``substitute`` actually enforces, if knowable.
+    """Return the bound ``substitute`` actually enforces, if knowable.
 
-    Design doc §6 requires a WARN to name the substitute *and the numeric
-    bound it actually enforces* — "bounded instead by ON_INSTANCE_DEADLINE"
-    alone still leaves the operator guessing what caps the run.
+    Design doc §6 requires a WARN to name the substitute *and the bound it
+    actually enforces* — "bounded instead by ON_INSTANCE_DEADLINE" alone
+    still leaves the operator guessing what caps the run.
 
-    The bound is resolved PER PROVIDER via :data:`_DEADLINE_BOUND`, because
-    the deadline is not keyed to the same cfg field everywhere: runpod and
-    skypilot both key theirs to ``max_lifetime``, Modal's derives from
-    ``boot_timeout``. Printing ``max_lifetime`` unconditionally reported a cap
-    Modal never received.
+    The bound is resolved PER PROVIDER via :data:`_DEADLINE_BOUND`, because no
+    two providers compute it the same way and none of them simply enforces
+    ``max_lifetime``: runpod takes
+    ``min(2 * idle_timeout, max_lifetime - time_buffer)``, skypilot's is
+    ``max_lifetime`` OR an earlier budget bound, and modal never receives
+    ``max_lifetime`` at all. Printing ``max_lifetime`` unconditionally named a
+    cap that no provider enforces.
 
     ``ON_INSTANCE_DEADLINE`` is the only capability any ``_RISK_ROWS``
     substitute column lists, so it is the only arm here; add a branch when a
@@ -221,8 +339,8 @@ def _substitute_bound(cfg: Config, substitute: Capability, provider: str) -> str
         provider: The provider kind whose enforcement is being described.
 
     Returns:
-        A short suffix such as ``" at max_lifetime=1800.0s"``, or the empty
-        string when no numeric bound is known for this provider/capability.
+        A short suffix such as ``" at most max_lifetime=1800.0s"``, or the
+        empty string when no bound is known for this provider/capability.
     """
     lifecycle = cfg.compute.lifecycle if cfg.compute is not None else None
     if lifecycle is None or substitute is not Capability.ON_INSTANCE_DEADLINE:
@@ -230,17 +348,13 @@ def _substitute_bound(cfg: Config, substitute: Capability, provider: str) -> str
     entry = _DEADLINE_BOUND.get(provider)
     if entry is None:
         return ""
-    bound_field, _mechanism = entry
-    value = getattr(lifecycle, bound_field, None)
-    if value is None:
-        return ""
-    return f" at {bound_field}={value}s"
+    return f" {entry.phrase(lifecycle)}"
 
 
 def _deadline_mismatch_gap(
     cfg: Config, provider: str, set_fields: set[str]
 ) -> Gap | None:
-    """Return a WARN when a declared deadline is not keyed to ``max_lifetime``.
+    """Return a WARN when ``max_lifetime`` is not an input to the deadline.
 
     Modal genuinely terminates the container at its ``@app.function(timeout=)``
     deadline, so ``ON_INSTANCE_DEADLINE`` stays declared. But that timeout is
@@ -248,24 +362,28 @@ def _deadline_mismatch_gap(
     An operator who writes ``max_lifetime: 90m`` and is capped at 45 m should
     learn it at load, with both numbers, rather than after the container dies.
 
+    The trigger is ``derives_from_max_lifetime``, not "the bound equals
+    ``max_lifetime``". runpod's bound is not ``max_lifetime`` either, but
+    ``max_lifetime`` IS one of its inputs and the WARN line already prints the
+    real formula — so there is nothing here the operator has not been told.
+
     Args:
         cfg: The loaded Config.
         provider: The provider kind.
         set_fields: Lifecycle field names the operator wrote explicitly.
 
     Returns:
-        A WARN Gap, or None when the provider keys its deadline to
-        ``max_lifetime``, has no known bound, or the cfg never wrote
+        A WARN Gap, or None when ``max_lifetime`` reaches the provider at all,
+        the provider has no known bound, or the cfg never wrote
         ``max_lifetime``.
     """
     lifecycle = cfg.compute.lifecycle if cfg.compute is not None else None
     entry = _DEADLINE_BOUND.get(provider)
     if lifecycle is None or entry is None or "max_lifetime" not in set_fields:
         return None
-    bound_field, mechanism = entry
-    if bound_field == "max_lifetime":
+    if entry.derives_from_max_lifetime:
         return None
-    bound_value = getattr(lifecycle, bound_field, None)
+    bound_value = getattr(lifecycle, entry.source_field, None)
     if bound_value is None:
         return None
     return Gap(
@@ -276,8 +394,8 @@ def _deadline_mismatch_gap(
         severity=Severity.WARN,
         headline=(f"{provider} enforces ON_INSTANCE_DEADLINE, but not at max_lifetime"),
         detail=(
-            f"the enforced deadline is {mechanism}, derived from "
-            f"{bound_field}={bound_value}s; this cfg's "
+            f"the enforced deadline is {entry.mechanism}, derived from "
+            f"{entry.source_field}={bound_value}s; this cfg's "
             f"max_lifetime={lifecycle.max_lifetime}s never reaches {provider}, "
             f"so the instance is capped at {bound_value}s"
         ),

@@ -84,8 +84,8 @@ def test_idle_timeout_gap_names_the_substitute_and_its_bound(tmp_path: Path) -> 
     assert idle[0].substitute is Capability.ON_INSTANCE_DEADLINE
     assert idle[0].severity is Severity.WARN
     assert "ON_INSTANCE_DEADLINE" in idle[0].detail
-    assert "max_lifetime=1800.0s" in idle[0].detail
-    assert "max_lifetime=1800.0s" in ProviderCapabilityCheck().run(cfg).message
+    assert "at most max_lifetime=1800.0s" in idle[0].detail
+    assert "at most max_lifetime=1800.0s" in ProviderCapabilityCheck().run(cfg).message
 
 
 def test_uncovered_spend_risk_is_fatal(
@@ -222,21 +222,79 @@ def test_modal_deadline_bound_is_boot_timeout_and_the_mismatch_warns(
     assert "but not at max_lifetime" in rendered
 
 
-def test_runpod_deadline_bound_stays_max_lifetime(tmp_path: Path) -> None:
-    """The per-provider bound must not become "boot_timeout everywhere".
+def test_runpod_deadline_bound_is_the_real_selfterm_formula(tmp_path: Path) -> None:
+    """runpod's selfterm bound is NOT ``max_lifetime`` and must not print it.
 
-    runpod keys its instance-side deadline to ``max_lifetime``
-    (``selfterm.RENDER(max_lifetime=...)``), so the ``idle_timeout`` WARN it
-    earns — runpod declares no ``IDLE_AUTOSTOP`` — must still name
-    ``max_lifetime``. Bug caught: the C2 fix over-correcting and reporting
-    Modal's field for every provider.
+    ``providers/runpod/selfterm.py`` states its own contract: two BOOT-RELATIVE
+    caps, ``max_lifetime - time_buffer`` and ``2 * idle_timeout``, whichever
+    elapses first. On this very cfg (idle_timeout 180, max_lifetime 1800,
+    time_buffer at its 1800 s default) the real lifetime is
+    ``min(360, 0) == 0`` — the pod's deadline is already past at boot.
+
+    Bug caught, and it is the one this test previously CAUSED: printing
+    ``at max_lifetime=1800.0s``, which overstated the enforced bound by the
+    whole of it and was asserted as correct here. The WARN must name the
+    formula and its value, and must not claim ``max_lifetime`` is the cap.
     """
     cfg = load_config(_write_cfg(tmp_path, provider="runpod"))
     gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
     idle = [g for g in gaps if g.field == "compute.lifecycle.idle_timeout"]
     assert len(idle) == 1
     assert idle[0].substitute is Capability.ON_INSTANCE_DEADLINE
-    assert "at max_lifetime=1800.0s" in idle[0].detail
+    detail = idle[0].detail
+    assert "min(2*idle_timeout, max_lifetime-time_buffer)=0.0s" in detail
+    assert "already elapsed at boot" in detail
+    # The overstatement must be gone, in every phrasing.
+    assert "at max_lifetime=1800.0s" not in detail
+    assert "at most max_lifetime" not in detail
+
+
+def test_runpod_bound_tracks_idle_timeout_when_that_is_the_binding_cap(
+    tmp_path: Path,
+) -> None:
+    """The other arm of runpod's ``min``: ``2 * idle_timeout`` binds.
+
+    Catches the formula being hardcoded to one arm — a renderer that always
+    reports ``max_lifetime - time_buffer`` would print 5400.0s here while
+    selfterm actually reaps at 600.0s.
+    """
+    path = tmp_path / "runpod-idle.yaml"
+    path.write_text(
+        _CFG_TEMPLATE.format(provider="runpod").replace(
+            "    idle_timeout: 180\n    max_lifetime: 1800\n",
+            "    idle_timeout: 300\n    max_lifetime: 7200\n    time_buffer: 1800\n",
+        )
+    )
+    cfg = load_config(path)
+    idle = [
+        g
+        for g in evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+        if g.field == "compute.lifecycle.idle_timeout"
+    ]
+    assert len(idle) == 1
+    # min(2*300, 7200-1800) == 600, not 5400.
+    assert "=600.0s" in idle[0].detail
+    assert "already elapsed at boot" not in idle[0].detail
+
+
+def test_skypilot_bound_is_phrased_as_a_ceiling_not_an_exact_deadline(
+    tmp_path: Path,
+) -> None:
+    """``compute_deadline`` returns the EARLIER of lifetime and budget bounds.
+
+    The offer's ``rate_usd_per_hr`` is unknowable at config-load time, so
+    ``max_lifetime`` is an upper bound on the enforced deadline and nothing
+    stronger. Bug caught: the WARN asserting ``max_lifetime`` as the exact
+    deadline, which a budget-bounded cluster falsifies.
+    """
+    cfg = load_config(_write_cfg(tmp_path, provider="skypilot"))
+    idle = [
+        g
+        for g in evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+        if g.field == "compute.lifecycle.idle_timeout"
+    ]
+    assert len(idle) == 1
+    assert "at most max_lifetime=1800.0s" in idle[0].detail
 
 
 def test_unresolvable_bound_prints_no_number_at_all(
@@ -351,3 +409,78 @@ def test_every_gap_line_carries_its_own_severity(
         assert line.strip().startswith(f"[{gap.severity.name}]")
     assert any(ln.strip().startswith("[ERROR]") for ln in lines)
     assert any(ln.strip().startswith("[WARN]") for ln in lines)
+
+
+_SKYPILOT_NO_IDLE_CFG = """\
+engine:
+  kind: comfyui
+  precision: fp16
+  comfyui:
+    version: "0.3.10"
+models:
+  - ref: "https://example.com/fake.safetensors"
+    kind: base
+    target: checkpoints
+compute:
+  provider: skypilot
+  image: "example/image:latest"
+  mode: pod
+  lifecycle:
+    max_lifetime: 28800
+    budget: 0.10
+"""
+
+
+def test_unwritten_spend_guardrails_are_still_reported(tmp_path: Path) -> None:
+    """The spend rows are evaluated whether or not the YAML writes them.
+
+    This is the gap ``_ALWAYS_EVALUATED`` was extended to close. A skypilot
+    cfg that never mentions ``idle_timeout`` still gets ``autostop=120`` set
+    on a cluster where autostop provably cannot fire (F1) — the operator did
+    not ask for the guardrail, but the guardrail is set on their behalf and
+    is inert, and before the extension that shipped with zero diagnostic.
+
+    Same for ``job_timeout``: skypilot enforces no per-job timeout, and the
+    cfg carries the 30 m pydantic default regardless.
+    """
+    path = tmp_path / "no-idle.yaml"
+    path.write_text(_SKYPILOT_NO_IDLE_CFG)
+    cfg = load_config(path)
+    assert cfg.compute is not None
+    assert cfg.compute.lifecycle is not None
+    # The operator genuinely did not write these.
+    assert "idle_timeout" not in cfg.compute.lifecycle.model_fields_set
+    assert "job_timeout" not in cfg.compute.lifecycle.model_fields_set
+
+    gaps = evaluate_capability_gaps(cfg, WorkloadShape.SERVER)
+    fields = {g.field for g in gaps}
+    assert "compute.lifecycle.idle_timeout" in fields
+    assert "compute.lifecycle.job_timeout" in fields
+
+
+def test_always_evaluated_spend_rows_never_error_on_any_registered_provider(
+    tmp_path: Path,
+) -> None:
+    """The property that makes ``_ALWAYS_EVALUATED`` safe, asserted directly.
+
+    Reporting a guardrail the operator never wrote must never REFUSE their
+    config (design §6.1: nothing shipping today is refused). That holds for a
+    structural reason, not by luck: ``ON_INSTANCE_DEADLINE`` is an accepted
+    substitute on both the ``idle_timeout`` and ``job_timeout`` rows, every
+    billed provider declares it, and ``local`` is unbilled so the spend rows
+    skip it entirely — and a gap with a substitute is WARN by construction.
+
+    Bug caught: a future provider added without ``ON_INSTANCE_DEADLINE``, or
+    the substitute column being emptied on either row, which would turn every
+    config that omits these fields into a hard load failure.
+    """
+    for provider in ("local", "runpod", "skypilot", "modal"):
+        path = tmp_path / f"{provider}-bare.yaml"
+        path.write_text(_SKYPILOT_NO_IDLE_CFG.replace("skypilot", provider))
+        cfg = load_config(path)
+        for shape in (WorkloadShape.SERVER, WorkloadShape.BATCH):
+            gaps = evaluate_capability_gaps(cfg, shape)
+            errors = [
+                (g.field, g.severity) for g in gaps if g.severity is Severity.ERROR
+            ]
+            assert errors == [], f"{provider}/{shape.value} produced {errors}"

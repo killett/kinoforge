@@ -196,14 +196,22 @@ Four cells whose caveat matters more than the checkmark:
   `is_cluster_idle()` is permanently `False` and autostop cannot fire —
   see `providers/skypilot/watchdog.py` for the guardrail that actually
   holds on that shape (`ON_INSTANCE_DEADLINE`).
-- **`modal` `ON_INSTANCE_DEADLINE` is not keyed to `max_lifetime`.** Modal
-  really does terminate the container at its `@app.function(timeout=...)`
-  deadline — the declaration is honest — but that timeout is derived from
-  `boot_timeout`, and `max_lifetime` is never sent to Modal at all. `runpod`
-  and `skypilot` both key their instance-side deadline to `max_lifetime`;
-  Modal does not. A modal cfg that writes `max_lifetime` gets a `WARN` at
-  load naming both numbers, so an operator who asked for 90 m and is capped
-  at 45 m learns it before the run rather than after.
+- **No provider's `ON_INSTANCE_DEADLINE` is simply `max_lifetime`.** All
+  three declarations are honest — something on the instance really does
+  terminate it — but each computes the deadline differently, and the
+  capability WARN prints the real one per provider:
+  - `runpod` — `min(2 * idle_timeout, max_lifetime - time_buffer)`, two
+    independent boot-relative caps (`providers/runpod/selfterm.py`).
+    Note the second term: with `max_lifetime <= time_buffer` the pod's own
+    deadline is already past at boot, so selfterm reaps immediately.
+  - `skypilot` — the **earlier** of `max_lifetime` and a budget bound
+    (`budget_usd / rate_usd_per_hr`, `watchdog.compute_deadline`). The
+    offer's rate is unknowable at load, so `max_lifetime` is reported as a
+    ceiling ("at most"), not as the enforced deadline.
+  - `modal` — derived from `boot_timeout`; `max_lifetime` is never sent to
+    Modal at all. A modal cfg that writes `max_lifetime` therefore gets an
+    extra `WARN` at load naming both numbers, so an operator who asked for
+    90 m and is capped at 45 m learns it before the run rather than after.
 
 A guardrail with no declared capability on the selected provider **and**
 no declared substitute refuses the config load outright (`ERROR`,
