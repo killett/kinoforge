@@ -23,6 +23,18 @@ stderr, none of which runs at `git commit`:
 | `tools/_redact.py` | 5 | `tools/` debug + error paths (`safe_print`) |
 | `~/.claude/hooks/redact_secrets.py` | 13 | Claude Code PostToolUse transcript scrub |
 | `tests/providers/conftest_runpod.py` | 7 | fixture-recording leak assertion |
+| `tests/test_source_audit.py` | 4 | source-tree lockdown over a hand-listed path subset |
+
+The brief names three; there are four. `tests/test_source_audit.py` carries a private
+"scanner-grade" set (canonical-length `sk-`, `AKIA\|ASIA`, full PEM span, `hf_` at 32+) and walks
+`docs/superpowers/**.md`, `tests/**.py`, and five repo-root files. It is the closest thing the repo
+has to a standing guard — but it covers a hand-listed subset, not the tracked tree, so a credential
+pasted into `examples/`, `tools/`, `src/`, or any config never reaches it.
+
+Its docstring also records the fact that governs this whole design:
+
+> Applying [the loose production patterns] source-tree-wide trips on ~90 unrelated internal test
+> tokens and shape examples.
 
 The lists disagree, and the disagreement runs the wrong way: the weakest list is the one wired into
 repo tooling, and the best-defended path is the test fixtures. `tools/_redact.py` catches **no AWS
@@ -71,15 +83,37 @@ package's dependency graph.
 class CredentialPattern(NamedTuple):
     name: str            # snake_case identifier, used in <REDACTED:{name}> markers
     regex: re.Pattern[str]
+    strict: bool         # True = safe to block a commit on; False = redaction-only
 
-CREDENTIAL_PATTERNS: list[CredentialPattern]
+CREDENTIAL_PATTERNS: list[CredentialPattern]           # every pattern, declaration order
+STRICT_PATTERNS: list[CredentialPattern]               # the strict subset, same order
 PLACEHOLDER_MARKERS: frozenset[str]
 ALLOW_PRAGMA: str = "kinoforge: allow-secret"
 
-def redact_string(text: str) -> str: ...
-def iter_findings(text: str, *, skip_placeholders: bool = True) -> Iterator[Finding]: ...
+def redact_string(text: str) -> str: ...               # uses CREDENTIAL_PATTERNS (all)
+def iter_findings(text: str, *, patterns=STRICT_PATTERNS,
+                  skip_placeholders: bool = True) -> Iterator[Finding]: ...
 def looks_like_placeholder(match_text: str, line: str) -> bool: ...
 ```
+
+### Two tiers, and why
+
+`tests/test_source_audit.py` already learned the lesson the hard way: the loose patterns trip ~90
+times when applied tree-wide. The asymmetry is the reason — **a false redaction is cosmetic, a false
+commit block is workflow-damaging.** A scrubber that over-redacts costs a confusing log line. A
+scanner that over-blocks costs the habit of `--no-verify`, and after that it protects nothing.
+
+So one list, two tiers:
+
+- **loose** (`strict=False`) — aggressive shapes: `Bearer\s+…{8,}`, `hf_…{8,}` with punctuation in
+  the tail, `rpa_…{8,}`. Used by the redactors, which should over-match by design.
+- **strict** (`strict=True`) — canonical lengths and unambiguous prefixes, the shapes GitHub Secret
+  Scanning actually flags, plus `credential_assignment`. Used by anything that **blocks**: the
+  pre-commit scanner and the all-tracked guard.
+
+A pattern is strict only if a match is overwhelmingly likely to be a real credential. Membership is
+recorded per-pattern in the table below and is tunable during implementation against the acceptance
+bar (`--all-tracked` returns zero).
 
 `Finding` carries `pattern_name`, `line_no`, `col`, and `redacted_excerpt` — never the matched
 value. Everything downstream (scanner output, test failure messages) prints the excerpt, so a
@@ -95,26 +129,32 @@ Ordering is significant and preserved from `tools/_redact.py`: `bearer_auth` is 
 `Bearer rpa_…` header collapses to `<REDACTED:bearer_auth>` rather than leaking the word `Bearer`
 around a redacted body.
 
-| name | shape | source |
-| --- | --- | --- |
-| `bearer_auth` | `Bearer\s+[A-Za-z0-9._\-]{8,}` | all three lists |
-| `rpa_token` | `\brpa_[A-Za-z0-9_\-]{8,}\b` | RunPod, all three |
-| `hf_token` | `\bhf_[A-Za-z0-9_\-]{8,}\b` | HF, all three |
-| `fal_key` | `\bfal_key_[A-Za-z0-9_\-]{8,}\b` | fal, all three |
-| `sk_token` | `\bsk-[A-Za-z0-9_\-]{20,}\b` | all three |
-| `aws_access_key` | `\b(?:AKIA\|ASIA)[0-9A-Z]{16}\b` | **conftest variant wins** — closes the STS gap (F7) |
-| `pem_private_key` | full `BEGIN…END PRIVATE KEY` span | **conftest variant wins** — hook's marker-only form leaves the body |
-| `github_token` | `\bghp_[A-Za-z0-9]{36,}\b` | hook |
-| `github_app` | `\b(?:gho\|ghu\|ghs)_[A-Za-z0-9]{36,}\b` | hook |
-| `replicate_token` | `\br8_[A-Za-z0-9]{30,}\b` | hook |
-| `runway_key` | `\bkey[-_][A-Za-z0-9]{30,}\b` | hook, widened to Runway's real `key_<hex>` form |
-| `slack_token` | `\bxox[bpars]-[A-Za-z0-9-]{10,}\b` | hook |
-| `jwt` | `\beyJ[A-Za-z0-9._=-]{20,}\b` | hook |
-| `luma_key` | `\bluma-[A-Za-z0-9-]{20,}\b` | new — `LUMAAI_API_KEY` |
-| `modal_token` | `\b(?:ak\|as)-[A-Za-z0-9]{20,}\b` | new — `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` |
-| `lambda_key` | `\bsecret_[A-Za-z0-9]+_[0-9a-f]{32,}\b` | new — `LAMBDA_API_KEY` |
-| `gcp_access_token` | `\bya29\.[A-Za-z0-9._\-]{20,}\b` | new — `gcloud auth print-access-token` output |
-| `credential_assignment` | `\b(?:AWS_SECRET_ACCESS_KEY\|RUNPOD_API_KEY\|…)\s*[=:]\s*["']?[^\s"'#]{8,}` | new — see below |
+| name | tier | shape | source |
+| --- | --- | --- | --- |
+| `bearer_auth` | loose | `Bearer\s+[A-Za-z0-9._\-]{8,}` | all three lists |
+| `rpa_token_loose` | loose | `\brpa_[A-Za-z0-9_\-]{8,}\b` | RunPod, all three |
+| `hf_token_loose` | loose | `\bhf_[A-Za-z0-9_\-]{8,}\b` | HF, all three |
+| `rpa_token` | strict | `\brpa_[A-Za-z0-9]{24,}\b` | new — RunPod's canonical length |
+| `hf_token` | strict | `\bhf_[A-Za-z0-9]{32,}\b` | `test_source_audit` variant |
+| `fal_key` | strict | `\bfal_key_[A-Za-z0-9_\-]{8,}\b` | fal, all three |
+| `sk_token` | strict | `\bsk-[A-Za-z0-9_\-]{20,}\b` | all three |
+| `aws_access_key` | strict | `\b(?:AKIA\|ASIA)[0-9A-Z]{16}\b` | **conftest variant wins** — closes the STS gap (F7) |
+| `pem_private_key` | strict | full `BEGIN…END PRIVATE KEY` span | **conftest variant wins** — hook's marker-only form leaves the body |
+| `github_token` | strict | `\bghp_[A-Za-z0-9]{36,}\b` | hook |
+| `github_app` | strict | `\b(?:gho\|ghu\|ghs)_[A-Za-z0-9]{36,}\b` | hook |
+| `replicate_token` | strict | `\br8_[A-Za-z0-9]{30,}\b` | hook |
+| `runway_key` | strict | `\bkey[-_][A-Za-z0-9]{30,}\b` | hook, widened to Runway's real `key_<hex>` form |
+| `slack_token` | strict | `\bxox[bpars]-[A-Za-z0-9-]{10,}\b` | hook |
+| `jwt` | strict | `\beyJ[A-Za-z0-9._=-]{20,}\b` | hook |
+| `luma_key` | strict | `\bluma-[A-Za-z0-9-]{20,}\b` | new — `LUMAAI_API_KEY` |
+| `modal_token` | strict | `\b(?:ak\|as)-[A-Za-z0-9]{20,}\b` | new — `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` |
+| `lambda_key` | strict | `\bsecret_[A-Za-z0-9]+_[0-9a-f]{32,}\b` | new — `LAMBDA_API_KEY` |
+| `gcp_access_token` | strict | `\bya29\.[A-Za-z0-9._\-]{20,}\b` | new — `gcloud auth print-access-token` output |
+| `credential_assignment` | strict | `\b(?:AWS_SECRET_ACCESS_KEY\|RUNPOD_API_KEY\|…)\s*[=:]\s*["']?[^\s"'#]{8,}` | new — see below |
+
+The loose/strict pairs (`rpa_token`, `hf_token`) are not redundant: the loose member exists so the
+redactors keep today's aggressive scrub behaviour, the strict member is what may block a commit.
+Redaction applies both, so a `hf_short` still scrubs.
 
 `credential_assignment` is the pattern that actually addresses this brief's stated leak vector. A
 pasted `export AWS_SECRET_ACCESS_KEY=<40 chars>` line has no distinctive token prefix to key off, so
@@ -140,9 +180,14 @@ trade, recorded here so a future reader does not mistake it for an oversight.**
 
 - `tools/_redact.py` — keeps `redact_string` / `safe_print` as its public surface, re-exports
   `_CREDENTIAL_PATTERNS` from the shared module. No caller changes.
-- `tests/providers/conftest_runpod.py` — imports the shared list. Its two strong patterns are now
-  in the shared list, so nothing is lost and drift becomes structurally impossible.
-- `tools/scan_secrets.py` — Unit 2.
+- `tests/providers/conftest_runpod.py` — imports the full list (loose tier included; fixture capture
+  should over-scrub). Its two strong patterns are now in the shared list, so nothing is lost and
+  drift becomes structurally impossible.
+- `tests/test_source_audit.py` — imports `STRICT_PATTERNS` in place of its private four. Its
+  hand-listed path walk is **replaced** by `--all-tracked` (Unit 5), which is a strict superset of
+  the paths it covered. Its reverse-test (plant a known credential, assert exactly one hit) is kept
+  — without it, the guard could no-op forever.
+- `tools/scan_secrets.py` — Unit 2, strict tier.
 - `.claude/hooks/*.py` — **cannot** import (Unit 4); duplicates the list, guarded by Unit 5.
 
 ## Unit 2 — `tools/scan_secrets.py` (staged-content scanner)
@@ -172,6 +217,9 @@ diff output is read as UTF-8 with `errors="replace"`.
 | `scan_secrets.py <paths…>` | scan staged added-lines for those paths (pre-commit passes filenames) |
 | `scan_secrets.py --all-tracked` | scan the working-tree content of every file listed by `git ls-files -z`, skipping any file whose bytes are not valid UTF-8 (binary); used by the standing-guard test |
 | `scan_secrets.py --stdin` | scan text on stdin; used by unit tests and ad-hoc checks |
+
+All modes scan with the **strict** tier. `--tier all` opts into the loose patterns for an ad-hoc
+sweep; it is never what the pre-commit hook or the standing guard runs.
 
 Exit 0 = clean, 1 = findings, 2 = usage/git error. A git error is **not** silently treated as clean.
 
@@ -285,9 +333,12 @@ Denial returns the documented `PreToolUse` deny payload
    genuinely does not apply (CI runners, containers without Claude Code). The variable name is
    asserted to appear in `CLAUDE.md`, so the opt-out cannot become folklore.
 
-Plus the standing guard: a test invoking `scan_secrets.py --all-tracked` and asserting zero
-findings. This is what makes the work a guard rather than a one-time cleanup — a credential pasted
-into `PROGRESS.md` fails the suite even if the committer used `--no-verify`.
+Plus the standing guard: `tests/test_source_audit.py` is rewritten to call the scanner's
+`--all-tracked` path (in-process, via the shared module — no subprocess) and assert zero findings
+over every tracked file. This is what makes the work a guard rather than a one-time cleanup — a
+credential pasted into `PROGRESS.md` fails the suite even if the committer used `--no-verify` — and
+it widens today's hand-listed walk (`docs/superpowers/**.md`, `tests/**.py`, five root files) to all
+1377 tracked files. The existing reverse-test survives the rewrite.
 
 ### Test list (all offline, no live spend)
 
@@ -333,8 +384,9 @@ control that actually works is not putting the credential there.
 
 ## Rollout order
 
-1. Unit 1 (shared list) + rewire `tools/_redact.py` and `conftest_runpod.py` — pure refactor, suite
-   stays green.
+1. Unit 1 (shared list, two tiers) + rewire `tools/_redact.py` and `conftest_runpod.py` — pure
+   refactor, suite stays green. (`test_source_audit.py` is rewired in step 5, together with the
+   guard that replaces its walk.)
 2. Unit 2 + 3 (scanner + suppression), TDD, then tune against `--all-tracked` until zero.
 3. Wire the pre-commit hook (after the tree is proven clean — otherwise the first commit of this
    work blocks itself).
