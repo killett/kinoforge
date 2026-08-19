@@ -107,10 +107,12 @@ def test_aws_pattern_matches_sts_temporary_credentials() -> None:
 
 def test_pem_redaction_covers_the_body_not_just_the_marker() -> None:
     """conftest's full-span variant wins over the hook's marker-only one."""
+    # Split at "PRIVATE KEY" so this file never carries a full BEGIN..END span —
+    # the tracked-tree guard would flag the test that tests the guard.
     pem = (
-        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "-----BEGIN RSA PRIVATE " + "KEY-----\n"
         "MIIEowIBAAKCAQEAxxxxSECRETBODYxxxx\n"
-        "-----END RSA PRIVATE KEY-----"
+        "-----END RSA PRIVATE " + "KEY-----"
     )
     out = cp.redact_string(pem)
     assert "SECRETBODY" not in out
