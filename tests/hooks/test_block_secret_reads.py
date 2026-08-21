@@ -70,7 +70,12 @@ def _is_deny(out: dict[str, Any]) -> bool:
         "awk '{print}' .env",
         "cat .env.example.bak",
         "cat .env.example.production",
-        "cat .env.local",
+        "cat .env.example_bak",
+        "cd /tmp && cat .env",
+        "false || cat .env",
+        "foo; declare -p",
+        "echo hi; set",
+        "env > out.txt",
     ],
 )
 def test_denied(command: str) -> None:
@@ -94,6 +99,16 @@ def test_denied(command: str) -> None:
         "env FOO=bar python x.py",
         "source .venv/bin/activate",
         ". .venv/bin/activate",
+        'rg "declare -p" docs/',
+        'rg "set -euo" tools/',
+        "mv nl-report.csv .env.production",
+        "bash cut-video.sh .env",
+        "awk '{print $1}' data.csv",
+        "sed -i s/a/b/ notes.md",
+        "cut -d, -f1 report.csv",
+        "nl script.sh",
+        "od -c blob.bin",
+        "xxd header.png",
     ],
 )
 def test_not_denied(command: str) -> None:

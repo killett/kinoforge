@@ -49,6 +49,17 @@ SAFE_ALTERNATIVE = '[ -n "${VAR:-}" ] && echo set'
 
 _CRED_WORD = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)"
 
+# Statement-start anchor: matches at the very beginning of the command, or
+# immediately after a command separator (;, &, |). This also covers `&&`
+# and `||` without a dedicated alternative — `.search()` tries every start
+# position, so the *second* character of a two-char operator satisfies the
+# `[;&|]\s*` branch on its own (e.g. in "a && b" the match starts at the
+# second `&`). An UNanchored command-name test matches inside quoted
+# strings and filenames too (`rg "declare -p" docs/`, `nl-report.csv`,
+# `bash cut-video.sh .env`) — this fragment is what rules those out while
+# still catching the command wherever it legitimately starts a statement.
+_STMT = r"(?:^|[;&|]\s*)"
+
 # Matches ".env" only when it is NOT the ".env.example" template — and
 # "not the template" is anchored: ".example" must end the filename, not
 # merely appear next. `.env.example.bak` / `.env.example.production`
@@ -70,8 +81,10 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # (grep, rg, head, ...) can filter straight to a credential and
         # is functionally identical to `printenv SOME_TOKEN`, so it
         # denies too. `env FOO=bar cmd` (env as a command prefix) is
-        # unaffected — it never reaches end-of-statement or a pipe.
-        re.compile(r"(?:^|[;&|]\s*)(?:env|printenv)\s*(?:$|[;&]|\|(?!\s*wc\b))"),
+        # unaffected — it never reaches end-of-statement, a pipe, or a
+        # redirect. `>` is a terminator too: `env > out.txt` writes the
+        # whole environment to a file just as surely as printing it.
+        re.compile(rf"{_STMT}(?:env|printenv)\s*(?:$|[;&>]|\|(?!\s*wc\b))"),
     ),
     (
         "credential variable echo",
@@ -87,15 +100,32 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # pipefail` (or any other flag/arg) is ordinary script hygiene
         # and must stay allowed — only the bare, boundary-anchored form
         # matches.
-        re.compile(r"(?:^|[;&|]\s*)set\s*(?:$|[;&|])"),
+        re.compile(rf"{_STMT}set\s*(?:$|[;&|])"),
     ),
     (
         "declare/typeset dump",
-        re.compile(r"\b(?:declare|typeset)\s+-p\b"),
+        # Statement-anchored: an unanchored `\bdeclare\s+-p\b` matches
+        # `declare -p` anywhere, including inside a quoted string (a
+        # verification command like `rg "declare -p" docs/` does not run
+        # it) — the anchor is what tells "run this" apart from "mention
+        # this".
+        re.compile(rf"{_STMT}(?:sudo\s+)?(?:declare|typeset)\s+-p\b"),
     ),
     (
         "dotenv read",
-        re.compile(rf"\b{_DOTENV_READ_CMDS}\b[^;&|]*{_DOTENV_NOT_EXAMPLE}"),
+        # Statement-anchored for the same reason as declare/typeset:
+        # without it, a short read-command token (`nl`, `cut`, `od`, ...)
+        # matches as a *substring of an unrelated filename* anywhere
+        # earlier in the statement — `mv nl-report.csv .env.production`
+        # and `bash cut-video.sh .env` are renames/script-runs, not
+        # reads, and must not deny. Anchoring the command to a statement
+        # start closes that without narrowing what still gets caught:
+        # the rule still fires whenever the read command genuinely
+        # starts a statement, including after `;`, `&&`, `||`, and as
+        # the right-hand side of a pipe.
+        re.compile(
+            rf"{_STMT}(?:sudo\s+)?{_DOTENV_READ_CMDS}\b[^;&|]*{_DOTENV_NOT_EXAMPLE}"
+        ),
     ),
     (
         "dotenv source",
@@ -103,7 +133,7 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # current shell for a later leak, even though nothing prints
         # yet. `source .venv/bin/activate` (or any path without a
         # literal `.env` component) is unaffected.
-        re.compile(rf"(?:^|[;&|]\s*)(?:source|\.)\s+\S*{_DOTENV_NOT_EXAMPLE}"),
+        re.compile(rf"{_STMT}(?:source|\.)\s+\S*{_DOTENV_NOT_EXAMPLE}"),
     ),
     (
         "cloud token print",
