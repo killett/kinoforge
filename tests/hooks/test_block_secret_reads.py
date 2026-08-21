@@ -59,6 +59,18 @@ def _is_deny(out: dict[str, Any]) -> bool:
         "aws configure get aws_secret_access_key",
         "modal token show",
         "echo hello && cat .env",
+        "printenv | grep -i token",
+        "env | rg RUNPOD",
+        "set",
+        "declare -p",
+        "declare -p SOME_VAR",
+        "typeset -p",
+        "source .env",
+        ". .env",
+        "awk '{print}' .env",
+        "cat .env.example.bak",
+        "cat .env.example.production",
+        "cat .env.local",
     ],
 )
 def test_denied(command: str) -> None:
@@ -78,6 +90,10 @@ def test_denied(command: str) -> None:
         "echo $PIXI_PROJECT_ROOT",
         "aws sts get-caller-identity",
         "git status",
+        "set -euo pipefail",
+        "env FOO=bar python x.py",
+        "source .venv/bin/activate",
+        ". .venv/bin/activate",
     ],
 )
 def test_not_denied(command: str) -> None:
