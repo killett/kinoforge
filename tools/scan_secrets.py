@@ -6,11 +6,16 @@ already-tracked file — the realistic leak vector in a repo where
 ``PROGRESS.md`` is hundreds of KB of pasted terminal output. This scanner
 closes that gap at ``git commit``.
 
-It reads **staged** content (``git diff --cached --unified=0``), not the
-working tree, so ``git add -p`` is handled correctly: only the hunks
-actually being committed are scanned. Binary files are skipped
-structurally — git emits ``Binary files … differ`` and no ``+`` lines, so
-there is nothing to decode and nothing to crash on.
+It reads **staged** content, not the working tree, so ``git add -p`` is
+handled correctly: only the hunks actually being committed are scanned.
+The staged diff (``git diff --cached --unified=0``) is used only to learn
+*which line ranges changed* — from the ``@@ -a,b +c,d @@`` hunk-header
+counts, never from the content of the added lines themselves, so a staged
+line that happens to read like a diff header (e.g. literally ``++
+KEY=...``, which becomes ``+++ KEY=...`` once git prepends its own ``+``
+marker) cannot be misread as one. The actual text scanned comes from
+``git show :<path>`` — the staged blob — sliced to those ranges. Binary
+files are skipped by that read: their bytes are not valid UTF-8.
 
 Patterns come from :mod:`kinoforge.core.credential_patterns`, strict tier
 only. The loose tier exists for redaction, where over-matching is
@@ -38,9 +43,40 @@ from kinoforge.core.credential_patterns import (
     redact_string,
 )
 
-_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 ScanResult = list[tuple[str, Finding]]
+
+
+def _run_git_bytes(repo: Path, args: list[str]) -> bytes:
+    """Run a git command in *repo* and return raw stdout bytes.
+
+    Always passes ``-c core.quotePath=false`` so a non-ASCII path comes
+    back as literal UTF-8 rather than an escaped, double-quoted C-string
+    (git's default) — callers that parse ``+++ b/<path>`` headers or path
+    listings need the literal path, not its quoted form.
+
+    Args:
+        repo: Repository working directory.
+        args: Arguments after ``git``.
+
+    Returns:
+        Raw stdout bytes, undecoded.
+
+    Raises:
+        RuntimeError: If git exits non-zero. The message carries git's
+            stderr passed through :func:`redact_string`.
+    """
+    proc = subprocess.run(  # noqa: S603
+        ["git", "-c", "core.quotePath=false", *args],  # noqa: S607
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"git {' '.join(args)} failed: {redact_string(stderr)}")
+    return proc.stdout
 
 
 def _run_git(repo: Path, args: list[str]) -> str:
@@ -52,26 +88,66 @@ def _run_git(repo: Path, args: list[str]) -> str:
 
     Returns:
         stdout decoded as UTF-8 with ``errors="replace"`` — diff output can
-        legitimately carry undecodable bytes.
+        legitimately carry undecodable bytes (e.g. binary hunks); precise
+        decoding of a specific staged blob is :func:`_read_staged_file`'s
+        job, not this general-purpose helper's.
 
     Raises:
-        RuntimeError: If git exits non-zero. The message carries git's
-            stderr passed through :func:`redact_string`.
+        RuntimeError: If git exits non-zero. See :func:`_run_git_bytes`.
     """
-    proc = subprocess.run(  # noqa: S603
-        ["git", *args],  # noqa: S607
-        cwd=repo,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        stderr = proc.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"git {' '.join(args)} failed: {redact_string(stderr)}")
-    return proc.stdout.decode("utf-8", errors="replace")
+    return _run_git_bytes(repo, args).decode("utf-8", errors="replace")
 
 
-def iter_staged_added_lines(repo: Path, paths: list[str]) -> list[tuple[str, int, str]]:
-    """Collect every line the staged diff **adds**.
+def _read_staged_file(repo: Path, path: str) -> str | None:
+    """Read *path*'s STAGED (index) content as text.
+
+    Uses ``git show :<path>`` rather than the working tree. The working
+    tree can differ from what is about to be committed — partial staging
+    (``git add -p``) depends on that divergence, so the scanner must read
+    the same bytes ``git commit`` would.
+
+    Args:
+        repo: Repository working directory.
+        path: Repo-relative path, as reported by the staged diff.
+
+    Returns:
+        The decoded text, or ``None`` when the path cannot be resolved in
+        the index (``git show`` fails), or its bytes are not valid UTF-8.
+        The UTF-8 check is the binary guard: a binary blob cannot decode
+        as text, so there is nothing to scan and nothing to crash on.
+    """
+    try:
+        raw = _run_git_bytes(repo, ["show", f":{path}"])
+    except RuntimeError:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def iter_staged_added_ranges(
+    repo: Path, paths: list[str]
+) -> list[tuple[str, int, int]]:
+    """Learn which ``(path, start_line, count)`` ranges the staged diff adds.
+
+    Parses ONLY the diff's structural headers — ``diff --git``, ``+++ ``,
+    and ``@@ ... @@`` — never the content of an added line. That makes it
+    immune to a staged line whose text happens to look like a header: git
+    renders a staged line that literally starts with ``++ `` as
+    ``+++ ...`` once it prepends its own added-line marker, which a
+    naive ``line.startswith("+++ ")`` check misreads as a ``+++ b/path``
+    file header. The distinguishing signal used here instead: a genuine
+    ``+++ `` header for a file appears exactly once, immediately after
+    that file's ``diff --git`` line and before its first ``@@`` hunk
+    header. Any ``+++ ``-shaped line seen *after* a hunk header has
+    already been seen for that file is added content, not a header, and
+    is deliberately ignored.
+
+    ``@@ -a,b +c,d @@`` means exactly ``d`` added lines starting at line
+    ``c`` of the new file (``d`` omitted means 1; ``d == 0`` means a pure
+    deletion — no added-line range). Those counts are trusted directly;
+    the lines that follow a hunk header are not re-inspected here at all.
 
     Args:
         repo: Repository working directory.
@@ -79,23 +155,27 @@ def iter_staged_added_lines(repo: Path, paths: list[str]) -> list[tuple[str, int
             staged filenames). Empty means the whole staged diff.
 
     Returns:
-        ``(path, line_no, text)`` triples, where ``line_no`` is the line
-        number in the post-commit file. Deleted lines are excluded —
-        removing a credential is a fix, not a leak. Binary files
-        contribute nothing, since git emits no ``+`` lines for them.
+        ``(path, start_line, count)`` triples in diff order. A
+        deletion-only hunk, a deleted file (``+++ /dev/null``), or a
+        binary file (git reports ``Binary files … differ`` with no hunk
+        headers at all) contributes nothing.
     """
     args = ["diff", "--cached", "--unified=0", "--no-color", "--no-ext-diff"]
     if paths:
         args += ["--", *paths]
     diff = _run_git(repo, args)
 
-    added: list[tuple[str, int, str]] = []
-    current = ""
-    line_no = 0
+    ranges: list[tuple[str, int, int]] = []
+    current_file = ""
+    seen_hunk_for_file = False
     for raw in diff.splitlines():
-        if raw.startswith("+++ "):
+        if raw.startswith("diff --git "):
+            current_file = ""
+            seen_hunk_for_file = False
+            continue
+        if raw.startswith("+++ ") and not seen_hunk_for_file:
             target = raw[4:].strip()
-            current = (
+            current_file = (
                 ""
                 if target == "/dev/null"
                 else target[2:]
@@ -103,20 +183,33 @@ def iter_staged_added_lines(repo: Path, paths: list[str]) -> list[tuple[str, int
                 else target
             )
             continue
-        if raw.startswith("--- "):
-            continue
         hunk = _HUNK_RE.match(raw)
         if hunk:
-            line_no = int(hunk.group(1))
+            seen_hunk_for_file = True
+            start = int(hunk.group(1))
+            count = 1 if hunk.group(2) is None else int(hunk.group(2))
+            if count > 0 and current_file:
+                ranges.append((current_file, start, count))
             continue
-        if raw.startswith("+") and current:
-            added.append((current, line_no, raw[1:]))
-            line_no += 1
-    return added
+    return ranges
 
 
 def scan_staged(repo: Path, paths: list[str], *, strict: bool = True) -> ScanResult:
-    """Scan staged added-lines for credential shapes.
+    r"""Scan staged added-line RUNS for credential shapes.
+
+    Each contiguous run of added lines (one per diff hunk) is scanned as
+    a SINGLE block — its lines joined with ``"\n"`` and passed to
+    :func:`iter_findings` once — rather than line by line. A per-line
+    scan can never see a match that spans lines (``pem_private_key``
+    needs its BEGIN and END markers in the same match), so a pasted
+    private key would be reported clean even though it is exactly the
+    shape this scanner most needs to catch.
+
+    Run content is read from the STAGED blob
+    (:func:`_read_staged_file`), sliced by the ``(start, count)`` range
+    :func:`iter_staged_added_ranges` reports — never taken from the diff
+    text directly, which is what keeps range-finding immune to added
+    content shaped like a diff header.
 
     Args:
         repo: Repository working directory.
@@ -125,13 +218,28 @@ def scan_staged(repo: Path, paths: list[str], *, strict: bool = True) -> ScanRes
             pattern, including the deliberately loose redaction ones.
 
     Returns:
-        ``(path, Finding)`` pairs in diff order. Empty means clean.
+        ``(path, Finding)`` pairs, with ``Finding.line_no`` mapped back
+        to the absolute line number in the post-commit file. Empty means
+        clean. A path whose staged blob cannot be read or is not valid
+        UTF-8 is skipped — see :func:`_read_staged_file`.
     """
     patterns = STRICT_PATTERNS if strict else CREDENTIAL_PATTERNS
+    ranges_by_file: dict[str, list[tuple[int, int]]] = {}
+    for path, start, count in iter_staged_added_ranges(repo, paths):
+        ranges_by_file.setdefault(path, []).append((start, count))
+
     results: ScanResult = []
-    for path, line_no, text in iter_staged_added_lines(repo, paths):
-        for finding in iter_findings(text, patterns=patterns):
-            results.append((path, finding._replace(line_no=line_no)))
+    for path, ranges in ranges_by_file.items():
+        text = _read_staged_file(repo, path)
+        if text is None:
+            continue
+        lines = text.split("\n")
+        for start, count in ranges:
+            block = "\n".join(lines[start - 1 : start - 1 + count])
+            for finding in iter_findings(block, patterns=patterns):
+                results.append(
+                    (path, finding._replace(line_no=start + finding.line_no - 1))
+                )
     return results
 
 

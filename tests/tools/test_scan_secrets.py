@@ -17,6 +17,15 @@ from tools import scan_secrets
 AWS_KEY = "AKIA" + "QWERTYUIOPASDFGH"
 OTHER_KEY = "ASIA" + "ZXCVBNMASDFGHJKL"
 
+# Split at "PRIVATE KEY" so this file never carries a full BEGIN..END span —
+# tests/test_source_audit.py's tracked-tree guard would flag the test that
+# tests the guard. Mirrors tests/core/test_credential_patterns.py.
+PEM_BLOCK = (
+    "-----BEGIN RSA PRIVATE " + "KEY-----\n"
+    "MIIEowIBAAKCAQEAxxxxSECRETBODYxxxx\n"
+    "-----END RSA PRIVATE " + "KEY-----"
+)
+
 
 def _git(repo: Path, *args: str) -> str:
     """Run a git command inside *repo* and return stdout."""
@@ -109,15 +118,97 @@ def test_binary_file_is_skipped_without_crashing(repo: Path) -> None:
 
 
 def test_deleted_lines_are_not_findings(repo: Path) -> None:
-    """Removing a credential is a fix, not a leak."""
-    (repo / "notes.md").write_text(
-        f"clean line\nKEY={AWS_KEY}  # kinoforge: allow-secret\n"
-    )
+    """Removing a credential is a fix, not a leak.
+
+    Uses a BARE, unmarked credential — no placeholder marker, no pragma.
+    The original fixture planted the credential WITH the allow-secret
+    pragma, which suppresses it regardless of whether deleted lines are
+    scanned; that made the test pass even if deletion-handling were
+    broken. This version actually discriminates: if scan_staged ever
+    started reporting removed lines, this would fail.
+    """
+    (repo / "notes.md").write_text(f"clean line\nKEY={AWS_KEY}\n")
     _git(repo, "add", "notes.md")
     _git(repo, "commit", "-qm", "planted")
     (repo / "notes.md").write_text("clean line\n")
     _git(repo, "add", "notes.md")
     assert scan_secrets.scan_staged(repo, paths=[]) == []
+
+
+def test_staged_multiline_pem_is_detected(repo: Path) -> None:
+    """A pasted private key spans lines (Critical 1).
+
+    A per-added-line scan can never see the whole BEGIN..END span, so
+    STRICT_PATTERNS' pem_private_key — the pattern that most needs to
+    block a commit — would silently never fire through this path.
+    """
+    (repo / "notes.md").write_text(f"clean line\n{PEM_BLOCK}\n")
+    _git(repo, "add", "notes.md")
+    findings = scan_secrets.scan_staged(repo, paths=[])
+    assert [f.pattern_name for _p, f in findings] == ["pem_private_key"]
+    _path, finding = findings[0]
+    assert "SECRETBODY" not in finding.redacted_excerpt
+    assert "MIIEow" not in finding.redacted_excerpt
+    assert scan_secrets.main(["--repo", str(repo)]) == 1
+
+
+def test_double_plus_prefixed_credential_is_found(repo: Path) -> None:
+    """A staged line literally starting with "++ " must still be scanned (Critical 2).
+
+    Git renders such a line as "+++ KEY=..." once its own "+" added-line
+    marker is prepended — indistinguishable, by naive prefix-sniffing,
+    from a "+++ b/path" file header. The reviewer confirmed this made a
+    real staged AWS-shaped key report clean.
+    """
+    (repo / "notes.md").write_text(f"clean line\n++ KEY={AWS_KEY}\n")
+    _git(repo, "add", "notes.md")
+    findings = scan_secrets.scan_staged(repo, paths=[])
+    assert [(p, f.pattern_name) for p, f in findings] == [
+        ("notes.md", "aws_access_key")
+    ]
+
+
+def test_double_plus_prefixed_line_does_not_corrupt_later_findings(repo: Path) -> None:
+    """A "++ "-prefixed line before a credential must not misattribute it.
+
+    Regression guard for the other half of Critical 2: prefix-sniffing
+    that misreads "++ ..." as a "+++ " header also resets what the
+    scanner believes the current file/line is, so a real finding a few
+    lines later reports a garbage path.
+    """
+    (repo / "notes.md").write_text(
+        f"clean line\n++ just noise, not a header\nKEY={AWS_KEY}\n"
+    )
+    _git(repo, "add", "notes.md")
+    findings = scan_secrets.scan_staged(repo, paths=[])
+    assert len(findings) == 1
+    path, finding = findings[0]
+    assert path == "notes.md"
+    assert finding.line_no == 3
+    assert finding.pattern_name == "aws_access_key"
+
+
+def test_multi_hunk_single_file_reports_correct_absolute_lines(repo: Path) -> None:
+    """Two separate hunks in one file must both be found at the right lines.
+
+    This is where the run-start-plus-offset arithmetic breaks if it is
+    wrong: the second hunk's finding must not be reported relative to the
+    first hunk's start, or relative to line 1 of the whole file.
+    """
+    (repo / "notes.md").write_text("a\nb\nc\nd\ne\n")
+    _git(repo, "add", "notes.md")
+    _git(repo, "commit", "-qm", "baseline")
+    new_content = f"a\nKEY1={AWS_KEY}\nb\nc\nd\nKEY2={OTHER_KEY}\ne\n"
+    (repo / "notes.md").write_text(new_content)
+    _git(repo, "add", "notes.md")
+
+    findings = scan_secrets.scan_staged(repo, paths=[])
+
+    got = sorted((path, f.line_no, f.pattern_name) for path, f in findings)
+    assert got == [
+        ("notes.md", 2, "aws_access_key"),
+        ("notes.md", 6, "aws_access_key"),
+    ]
 
 
 def test_pragma_suppresses_a_bare_synthetic_token(repo: Path) -> None:
