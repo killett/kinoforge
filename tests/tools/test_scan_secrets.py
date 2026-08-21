@@ -211,6 +211,66 @@ def test_multi_hunk_single_file_reports_correct_absolute_lines(repo: Path) -> No
     ]
 
 
+def test_stray_invalid_utf8_byte_does_not_drop_the_whole_file(repo: Path) -> None:
+    """One bad byte must cost one garbled character, not the whole file (NEW-1).
+
+    Strict UTF-8 decoding of the staged blob made a single invalid byte
+    anywhere in an otherwise-text file make the WHOLE file look binary and
+    be skipped — including a real credential elsewhere in it. This repo's
+    realistic leak vector is a large pasted-terminal-output file, which
+    routinely carries a stray mis-encoded byte without being remotely
+    binary. The fix must decode with errors="replace" for anything that
+    isn't actually binary (no NUL byte), so the credential later in the
+    file is still found.
+    """
+    content = (
+        b"line with a stray invalid byte: \xff\n"
+        b"clean line\n" + f"KEY={AWS_KEY}\n".encode()
+    )
+    (repo / "notes.md").write_bytes(content)
+    _git(repo, "add", "notes.md")
+    findings = scan_secrets.scan_staged(repo, paths=[])
+    assert [f.pattern_name for _p, f in findings] == ["aws_access_key"]
+
+
+def test_binary_blob_is_recognized_by_nul_byte_not_strict_utf8(repo: Path) -> None:
+    """`_read_staged_file`'s binary guard is a NUL-byte check (matches git's
+    own binary-file heuristic), not "does strict UTF-8 decoding fail" —
+    the fix for NEW-1 must not reintroduce a decode-based skip through
+    the back door. Exercises the helper directly so this holds regardless
+    of whether the diff layer ever hands it a binary path.
+    """
+    (repo / "blob.bin").write_bytes(bytes(range(256)) * 8)
+    _git(repo, "add", "blob.bin")
+    assert scan_secrets._read_staged_file(repo, "blob.bin") is None
+
+
+def test_git_show_failure_for_a_scanned_path_exits_2_not_0(monkeypatch, repo):
+    """A `git show` failure on a path this scanner is supposed to scan is a
+    hard error, never "clean" (NEW-2).
+
+    The old `_read_staged_file` caught RuntimeError internally and
+    returned None, silently dropping the file with zero findings and zero
+    warning — the exact failure class this round of review was meant to
+    close. "Nothing to scan" (a path with no added ranges, e.g. a pure
+    deletion) stays quiet; "could not scan something I was supposed to
+    scan" must reach main()'s exit-2 handling instead.
+    """
+    (repo / "notes.md").write_text(f"clean line\nKEY={AWS_KEY}\n")
+    _git(repo, "add", "notes.md")
+
+    real_run_git_bytes = scan_secrets._run_git_bytes
+
+    def _flaky_git_bytes(repo_arg: Path, args: list[str]) -> bytes:
+        if args and args[0] == "show":
+            raise RuntimeError("git show :notes.md failed: simulated corruption")
+        return real_run_git_bytes(repo_arg, args)
+
+    monkeypatch.setattr(scan_secrets, "_run_git_bytes", _flaky_git_bytes)
+
+    assert scan_secrets.main(["--repo", str(repo)]) == 2
+
+
 def test_pragma_suppresses_a_bare_synthetic_token(repo: Path) -> None:
     """Escape hatch, line-scoped and visible in review."""
     (repo / "notes.md").write_text(f"KEY={OTHER_KEY}  # kinoforge: allow-secret\n")

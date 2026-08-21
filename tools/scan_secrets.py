@@ -14,8 +14,13 @@ counts, never from the content of the added lines themselves, so a staged
 line that happens to read like a diff header (e.g. literally ``++
 KEY=...``, which becomes ``+++ KEY=...`` once git prepends its own ``+``
 marker) cannot be misread as one. The actual text scanned comes from
-``git show :<path>`` — the staged blob — sliced to those ranges. Binary
-files are skipped by that read: their bytes are not valid UTF-8.
+``git show :<path>`` — the staged blob — sliced to those ranges. A blob
+is treated as binary (and skipped) when it carries a NUL byte in its
+first 8000 bytes, mirroring git's own binary-file heuristic; anything
+else is decoded leniently (``errors="replace"``) so a stray mis-encoded
+byte costs one garbled character, not the whole file's scan coverage. A
+path git itself cannot read back is a hard error, not a skip — see
+``_read_staged_file``.
 
 Patterns come from :mod:`kinoforge.core.credential_patterns`, strict tier
 only. The loose tier exists for redaction, where over-matching is
@@ -106,24 +111,41 @@ def _read_staged_file(repo: Path, path: str) -> str | None:
     (``git add -p``) depends on that divergence, so the scanner must read
     the same bytes ``git commit`` would.
 
+    Binary detection mirrors git's own heuristic rather than strict UTF-8
+    decoding: a NUL byte anywhere in the blob's first 8000 bytes marks it
+    binary (git's core binary-file detection uses the same signal and the
+    same threshold). Everything else is decoded with ``errors="replace"``.
+    Strict decoding was tried first and rejected: this repo's realistic
+    leak vector is a large pasted-terminal-output file, which can carry a
+    handful of stray mis-encoded bytes without being remotely binary — a
+    single bad byte anywhere in an otherwise-text file made strict
+    decoding drop the ENTIRE file, including a real credential elsewhere
+    in it. Replacement costs one garbled character, not full scan
+    coverage.
+
     Args:
         repo: Repository working directory.
         path: Repo-relative path, as reported by the staged diff.
 
     Returns:
-        The decoded text, or ``None`` when the path cannot be resolved in
-        the index (``git show`` fails), or its bytes are not valid UTF-8.
-        The UTF-8 check is the binary guard: a binary blob cannot decode
-        as text, so there is nothing to scan and nothing to crash on.
+        The decoded text, or ``None`` when the blob looks binary (a NUL
+        byte in its first 8000 bytes) — there is nothing to scan and
+        nothing meaningful to decode.
+
+    Raises:
+        RuntimeError: If ``git show :<path>`` fails to resolve the path
+            (corrupted object, an unmerged/conflicted stage, a gitlink
+            oddity, a race between the diff that produced this path's
+            added ranges and this read). This is deliberately NOT caught
+            here: a path only reaches this function because the staged
+            diff says it has content to scan, so failing to read it is a
+            hard error, not "clean" — callers let it propagate up to
+            :func:`main`'s exit-2 handling.
     """
-    try:
-        raw = _run_git_bytes(repo, ["show", f":{path}"])
-    except RuntimeError:
+    raw = _run_git_bytes(repo, ["show", f":{path}"])
+    if b"\x00" in raw[:8000]:
         return None
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    return raw.decode("utf-8", errors="replace")
 
 
 def iter_staged_added_ranges(
@@ -220,8 +242,15 @@ def scan_staged(repo: Path, paths: list[str], *, strict: bool = True) -> ScanRes
     Returns:
         ``(path, Finding)`` pairs, with ``Finding.line_no`` mapped back
         to the absolute line number in the post-commit file. Empty means
-        clean. A path whose staged blob cannot be read or is not valid
-        UTF-8 is skipped — see :func:`_read_staged_file`.
+        clean. A path whose staged blob looks binary (NUL byte in the
+        first 8000 bytes) is skipped — see :func:`_read_staged_file`.
+
+    Raises:
+        RuntimeError: Propagated from :func:`_read_staged_file` when a
+            path with added ranges cannot be read. A path is only asked
+            for here because it has something to scan, so this is never
+            swallowed as "no findings" — see :func:`main`'s exit-2
+            handling.
     """
     patterns = STRICT_PATTERNS if strict else CREDENTIAL_PATTERNS
     ranges_by_file: dict[str, list[tuple[int, int]]] = {}
