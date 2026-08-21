@@ -15,6 +15,16 @@ Two tiers, because the two consumers have opposite cost asymmetries:
   tracked-tree guard). Over-matching there teaches ``--no-verify``,
   after which the scanner protects nothing.
 
+Naming rule where a loose and a strict pattern cover the same secret
+family (currently ``rpa_`` and ``hf_``): the **plain name belongs to
+the loose pattern** — ``rpa_token``, ``hf_token`` — because that is the
+name the redactors have always emitted in their ``<REDACTED:{name}>``
+markers, and tool-stderr output carrying that marker is a human-visible
+contract external callers grep for. The **strict variant takes the
+``_strict`` suffix** — ``rpa_token_strict``, ``hf_token_strict``. Do
+not swap this: a strict-tier addition must never silently rename what
+the loose tier has always been called.
+
 Declaration order matters: ``bearer_auth`` is first so a
 ``Bearer rpa_…`` header collapses to ``<REDACTED:bearer_auth>`` rather
 than leaking the word ``Bearer`` around a redacted body.
@@ -94,23 +104,28 @@ CREDENTIAL_ENV_VARS: tuple[str, ...] = (
 )
 
 _ASSIGNMENT_RE = re.compile(
-    r"\b(?:" + "|".join(CREDENTIAL_ENV_VARS) + r")\s*[=:]\s*[\"']?[^\s\"'#]{8,}"
+    r"\b(?:"
+    + "|".join(CREDENTIAL_ENV_VARS)
+    + r")\s*[=:]\s*[\"']?(?!<REDACTED)[^\s\"'#]{8,}"
 )
 
 CREDENTIAL_PATTERNS: list[CredentialPattern] = [
     # ---- loose tier: redaction only, over-matches by design ----------------
+    # Plain names (rpa_token, hf_token) belong here, not to the strict
+    # variants below — see the naming-rule paragraph in the module
+    # docstring. redact_string() runs every pattern in this declaration
+    # order, so these fire and claim the marker name before their
+    # _strict counterparts get a chance to.
     CredentialPattern(
         "bearer_auth", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{8,}"), False
     ),
-    CredentialPattern(
-        "rpa_token_loose", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b"), False
-    ),
-    CredentialPattern(
-        "hf_token_loose", re.compile(r"\bhf_[A-Za-z0-9_\-]{8,}\b"), False
-    ),
+    CredentialPattern("rpa_token", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b"), False),
+    CredentialPattern("hf_token", re.compile(r"\bhf_[A-Za-z0-9_\-]{8,}\b"), False),
     # ---- strict tier: may block a commit -----------------------------------
-    CredentialPattern("rpa_token", re.compile(r"\brpa_[A-Za-z0-9]{24,}\b"), True),
-    CredentialPattern("hf_token", re.compile(r"\bhf_[A-Za-z0-9]{32,}\b"), True),
+    CredentialPattern(
+        "rpa_token_strict", re.compile(r"\brpa_[A-Za-z0-9]{24,}\b"), True
+    ),
+    CredentialPattern("hf_token_strict", re.compile(r"\bhf_[A-Za-z0-9]{32,}\b"), True),
     CredentialPattern("fal_key", re.compile(r"\bfal_key_[A-Za-z0-9_\-]{8,}\b"), True),
     CredentialPattern(
         "sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]*[A-Za-z0-9]{16,}\b"), True
@@ -135,7 +150,19 @@ CREDENTIAL_PATTERNS: list[CredentialPattern] = [
     CredentialPattern(
         "slack_token", re.compile(r"\bxox[bpars]-[A-Za-z0-9-]{10,}\b"), True
     ),
-    CredentialPattern("jwt", re.compile(r"\beyJ[A-Za-z0-9._=-]{20,}\b"), True),
+    # Requires all three dot-separated base64url segments (header.payload.
+    # signature). A bare `eyJ...` prefix is just base64 for `{"` and matches
+    # ANY base64-encoded JSON body — this repo's GCS fixtures are full of
+    # them (e.g. `eyJraW5kIjoic3RvcmFnZSNvYmplY3Rz` decodes to
+    # `{"kind":"storage#object...`, not a token). The dots are what make a
+    # JWT structurally distinct from arbitrary base64 JSON.
+    CredentialPattern(
+        "jwt",
+        re.compile(
+            r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"
+        ),
+        True,
+    ),
     CredentialPattern("luma_key", re.compile(r"\bluma-[A-Za-z0-9-]{20,}\b"), True),
     CredentialPattern(
         "modal_token", re.compile(r"\b(?:ak|as)-[A-Za-z0-9]{20,}\b"), True

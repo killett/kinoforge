@@ -179,3 +179,46 @@ def test_every_pattern_has_a_unique_snake_case_name() -> None:
     names = [p.name for p in cp.CREDENTIAL_PATTERNS]
     assert len(names) == len(set(names))
     assert all(re.fullmatch(r"[a-z][a-z0-9_]*", n) for n in names)
+
+
+def test_jwt_pattern_finds_a_real_three_segment_token() -> None:
+    """A genuine JWT — three dot-separated base64url segments — must still block."""
+    header = "eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    payload = "eyJ" + "zdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ"
+    signature = "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    token = f"{header}.{payload}.{signature}"
+    names = {f.pattern_name for f in cp.iter_findings(token)}
+    assert "jwt" in names
+
+
+def test_jwt_pattern_ignores_base64_json_bodies() -> None:
+    """Regression guard: bare `eyJ...` with no dots is base64 for `{"`, not a JWT.
+
+    This exact literal comes from a committed GCS fixture
+    (tests/stores/fixtures/gcs/test_gcs_hot_path.json) and decodes to
+    `{"kind":"storage#object...` — an ordinary API response body, not a
+    credential. The old pattern (`\\beyJ[A-Za-z0-9._=-]{20,}\\b`, no dot
+    requirement) matched it and four other committed fixtures, which is
+    what `tests/providers/test_fixtures_audit.py` caught. A JWT always has
+    exactly two dots separating header/payload/signature; requiring them
+    is what tells a real token apart from arbitrary base64 JSON.
+    """
+    base64_json_body = "eyJraW5kIjoic3RvcmFnZSNvYmplY3Rz"
+    assert not list(cp.iter_findings(base64_json_body))
+
+
+def test_redact_string_is_idempotent() -> None:
+    """redact_string(redact_string(s)) must equal redact_string(s).
+
+    Regression guard for two related bugs: (1) ``credential_assignment``
+    re-matching its own ``<REDACTED:...>`` output because the marker text
+    is 8+ non-whitespace characters, collapsing a specific marker like
+    ``<REDACTED:hf_token>`` into the generic ``<REDACTED:credential_assignment>``
+    on a second pass; (2) a loose/strict pair racing to claim the same
+    marker name. A single pass already redacts every credential shape, so
+    running redact_string again on its own output must be a no-op.
+    """
+    text = f"HF_TOKEN={HF_KEY} key={AWS_KEY} Authorization: Bearer {RPA_KEY}"
+    once = cp.redact_string(text)
+    twice = cp.redact_string(once)
+    assert twice == once

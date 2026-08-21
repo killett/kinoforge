@@ -1,65 +1,56 @@
 """Credential-pattern scrubber for ``tools/`` debug + error paths.
 
-Mirrors the credential regex vocabulary in
-:mod:`tests.providers.conftest_runpod` (which itself was hardened by
-PROGRESS:213 / Layer P bug-fix #1) but lives under ``tools/`` so a live
-capture script can scrub stdout/stderr without importing test
-fixtures.
+Lives under ``tools/`` so a live capture script can scrub stdout/stderr
+without importing test fixtures. The pattern vocabulary itself now
+lives in :mod:`kinoforge.core.credential_patterns` — that module is the
+single source of truth; this one is just the ``tools/`` entry point.
 
-Pattern declaration order matters: the first matching pattern for a
-given substring wins (``re.sub`` is applied in order). ``Bearer …`` is
+Declaration order in the shared list matters: ``bearer_auth`` is
 declared before the inner token patterns so a ``Bearer rpa_xxx`` header
 collapses to ``<REDACTED:bearer_auth>`` rather than
 ``Bearer <REDACTED:rpa_token>``. This keeps the header's structural
 shape from leaking the prefix word ``Bearer`` while still hiding the
 token body.
 
-Single source of truth for ``tools/``. If a third consumer of
-credential redaction lands (e.g. an SDK adapter), factor this module
-into ``kinoforge.core.redaction`` and re-import here.
+Keep in sync with the Claude Code user-scope hook at
+``~/.claude/hooks/redact_secrets.py`` (``CREDENTIAL_PATTERNS``). That
+hook scrubs tool output before the bytes reach the conversation
+transcript, and it carries a SUPERSET of this list (project shapes +
+extra cloud-key shapes the project itself doesn't need to redact
+internally). Drift caught by
+``/workspace/tests/test_redact_hook_parity.py``.
 """
 
 from __future__ import annotations
 
-import re
 import sys
 
-# ---------------------------------------------------------------------------
-# _CREDENTIAL_PATTERNS — keep in sync with the Claude Code user-scope hook at
-# ~/.claude/hooks/redact_secrets.py (CREDENTIAL_PATTERNS). That hook scrubs
-# tool output before the bytes reach the conversation transcript, and it
-# carries a SUPERSET of this list (project shapes + extra cloud-key shapes
-# the project itself doesn't need to redact internally).
-#
-# Drift caught by /workspace/tests/test_redact_hook_parity.py — that test
-# asserts the hook's pattern set ⊇ this one. Rule when adding a new pattern:
-# add HERE first, then mirror to the hook file, then re-run the parity test.
-# ---------------------------------------------------------------------------
-_CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("bearer_auth", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{8,}")),
-    ("rpa_token", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b")),
-    ("hf_token", re.compile(r"\bhf_[A-Za-z0-9_\-]{8,}\b")),
-    ("fal_key", re.compile(r"\bfal_key_[A-Za-z0-9_\-]{8,}\b")),
-    ("sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b")),
-]
+from kinoforge.core.credential_patterns import CREDENTIAL_PATTERNS
+from kinoforge.core.credential_patterns import redact_string as _shared_redact
+
+# Backward-compatible alias. The list itself now lives in
+# kinoforge.core.credential_patterns — see that module's docstring for
+# the loose/strict tier split. Callers that imported this name keep
+# working; new code should import from the shared module directly.
+_CREDENTIAL_PATTERNS = CREDENTIAL_PATTERNS
 
 
 def redact_string(s: str) -> str:
     """Replace every credential-pattern match in *s* with a named marker.
 
+    Thin delegate to
+    :func:`kinoforge.core.credential_patterns.redact_string`; kept as
+    ``tools``' public surface so live-capture scripts do not need to
+    know where the list lives.
+
     Args:
         s: Arbitrary text — log line, exception ``repr``, JSON body.
 
     Returns:
-        A copy of *s* with each match of every pattern in
-        :data:`_CREDENTIAL_PATTERNS` (in declaration order) replaced by
-        ``<REDACTED:{pattern_name}>``. Non-matching text is preserved
-        verbatim, including surrounding punctuation, whitespace, and
-        unrelated identifiers.
+        A copy of *s* with each match replaced by
+        ``<REDACTED:{pattern_name}>``.
     """
-    for name, pattern in _CREDENTIAL_PATTERNS:
-        s = pattern.sub(f"<REDACTED:{name}>", s)
-    return s
+    return _shared_redact(s)
 
 
 def safe_print(msg: str) -> None:

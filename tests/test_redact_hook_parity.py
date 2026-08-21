@@ -74,7 +74,7 @@ def test_hook_patterns_superset_of_project_redact() -> None:
     from tools import _redact as proj
 
     hook_sources = {pat.pattern for _name, pat in hook.CREDENTIAL_PATTERNS}
-    proj_sources = {pat.pattern for _name, pat in proj._CREDENTIAL_PATTERNS}
+    proj_sources = {p.regex.pattern for p in proj._CREDENTIAL_PATTERNS}
 
     missing = proj_sources - hook_sources
     assert not missing, (

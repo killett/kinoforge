@@ -27,6 +27,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from kinoforge.core.credential_patterns import (
+    CREDENTIAL_PATTERNS as _CREDENTIAL_PATTERNS,
+)
+
 _FIXTURE_DIR: Path = Path(__file__).parent / "fixtures" / "runpod"
 
 # Splits a camelCase / snake_case / kebab-case identifier into lower-cased
@@ -184,24 +188,10 @@ def _redact_kv_shape(obj: Any) -> Any:
     return obj
 
 
-# Layer P Task 7 bug-fix #1 — Pass 3 (value-side credential-pattern sweep).
-# Each entry is ``(pattern_name, compiled_regex)``.  The ``pattern_name`` is the
-# canonical snake_case identifier used by Task 4 audit primitives and Task 5
-# backstop tests; do not rename without coordinating those callers.
-_CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("rpa_token", re.compile(r"\brpa_[A-Za-z0-9_\-]{8,}\b")),
-    ("hf_token", re.compile(r"\bhf_[A-Za-z0-9_\-]{8,}\b")),
-    ("fal_key", re.compile(r"\bfal_key_[A-Za-z0-9_\-]{8,}\b")),
-    ("bearer_auth", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{8,}")),
-    ("sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b")),
-    ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    (
-        "pem_private_key",
-        re.compile(
-            r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?-----END [A-Z ]{0,40}PRIVATE KEY-----"
-        ),
-    ),
-]
+# Credential vocabulary lives in kinoforge.core.credential_patterns (imported
+# at module top) — the full list (loose tier included), because fixture
+# capture should over-scrub rather than under-scrub. The two patterns this
+# module used to own outright (AKIA|ASIA, full-span PEM) are in that list.
 
 
 def _redact_string(s: str) -> str:
@@ -220,8 +210,8 @@ def _redact_string(s: str) -> str:
         ``<REDACTED>``.  Non-matching strings pass through unchanged.
     """
     out = s
-    for _name, pattern in _CREDENTIAL_PATTERNS:
-        out = pattern.sub("<REDACTED>", out)
+    for pattern in _CREDENTIAL_PATTERNS:
+        out = pattern.regex.sub("<REDACTED>", out)
     return out
 
 
@@ -304,11 +294,11 @@ def _audit_for_leaks(obj: Any, _pointer: str = "") -> list[LeakHit]:
     """
     hits: list[LeakHit] = []
     if isinstance(obj, str):
-        for name, pattern in _CREDENTIAL_PATTERNS:
-            for match in pattern.finditer(obj):
+        for pattern in _CREDENTIAL_PATTERNS:
+            for match in pattern.regex.finditer(obj):
                 hits.append(
                     LeakHit(
-                        pattern_name=name,
+                        pattern_name=pattern.name,
                         json_pointer=_pointer or "/",
                         match_snippet=match.group(0)[:32],
                     )
