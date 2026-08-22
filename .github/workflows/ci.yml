@@ -16,6 +16,14 @@ jobs:
           - ubuntu-latest
           - macos-latest
           # windows-latest declined — see windows-migration-cancelled.md
+    env:
+      # Claude Code (and its ~/.claude/hooks/redact_secrets.py dotfile) is
+      # not installed on these runners — it's a Claude Code dotfile, not
+      # part of the checkout. This opts test_redact_hook_parity.py out of
+      # ONLY the user-scope hook *presence* check; it does not touch the
+      # in-repo hook parity test, the pre-commit scan-secrets hook, or the
+      # tracked-tree guard in test_source_audit.py, all of which still run.
+      KINOFORGE_SKIP_USER_REDACT_HOOK: "1"
 
     steps:
       - uses: actions/checkout@v6

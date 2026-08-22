@@ -23,12 +23,31 @@ scanning every tracked file with the shared strict tier via
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
-from kinoforge.core.credential_patterns import STRICT_PATTERNS, iter_findings
+from kinoforge.core.credential_patterns import STRICT_PATTERNS
 from tools.scan_secrets import scan_all_tracked
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[1]
+
+
+def _run_git(repo: Path, *args: str) -> None:
+    """Run a git command in *repo*, raising on failure.
+
+    Args:
+        repo: Working directory to run git in.
+        *args: Arguments after ``git`` (e.g. ``"init", "-q"``).
+
+    Raises:
+        subprocess.CalledProcessError: If git exits non-zero.
+    """
+    subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
 
 
 def test_no_tracked_file_contains_a_credential() -> None:
@@ -60,12 +79,34 @@ def test_audit_fires_on_a_planted_credential(tmp_path: Path) -> None:
     Inherited from the original source audit — the single most valuable
     test in this file, because a guard that passes vacuously looks
     identical to a guard that works.
+
+    Goes through :func:`scan_all_tracked` end-to-end against a real
+    throwaway git repo, rather than calling ``iter_findings`` on a
+    hardcoded string directly. A version that bypasses the wrapper would
+    still pass even if ``scan_all_tracked`` itself regressed to
+    vacuously return ``[]`` (wrong cwd, ``git ls-files`` returning
+    empty, a bad repo root) — exactly the silent-rot scenario this test
+    exists to catch, and exactly what a direct ``iter_findings`` call
+    cannot see. Pins the whole path: git invocation, file enumeration,
+    decoding, and pattern application together.
     """
+    _run_git(tmp_path, "init", "-q")
+    _run_git(tmp_path, "config", "user.email", "test@example.invalid")
+    _run_git(tmp_path, "config", "user.name", "Test")
+
+    leak_file = tmp_path / "rogue.md"
     planted = "Some prose.\n\nA literal: " + "AKIA" + "QWERTYUIOPASDFGH" + "\n\nMore.\n"
-    findings = list(iter_findings(planted, patterns=STRICT_PATTERNS))
+    leak_file.write_text(planted)
+    _run_git(tmp_path, "add", "rogue.md")
+    _run_git(tmp_path, "commit", "-q", "-m", "plant a credential-shaped literal")
+
+    findings = scan_all_tracked(tmp_path)
     assert len(findings) == 1
-    assert findings[0].pattern_name == "aws_access_key"
-    assert findings[0].line_no == 3
+    path, finding = findings[0]
+    assert path == "rogue.md"
+    assert finding.pattern_name == "aws_access_key"
+    assert finding.line_no == 3
+    assert "AKIA" not in finding.redacted_excerpt
 
 
 def test_strict_tier_covers_the_canonical_scanner_shapes() -> None:
