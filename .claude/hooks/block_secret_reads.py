@@ -14,14 +14,25 @@ direction: credentials that *arrive* in tool output nobody requested.
 Quoting model: before matching, the command is rewritten into an
 "executable context" string (see `_executable_context`) — single-quoted
 spans are masked out entirely (bash never expands anything inside
-them), and double-quoted spans are masked except for the `$(...)`,
+them), double-quoted spans are masked except for the `$(...)`,
 `` `...` ``, `$VAR`, and `${VAR}` regions that bash actually expands or
-runs even inside double quotes. Every rule below matches against that
-rewritten string, not the raw one. This is what tells "this text runs a
-command" apart from "this text merely mentions one" — `echo "(cat .env
-config) is an example"` and ``echo 'See `cat .env` for the pattern'``
-are prose, not execution, and the quoting they use is exactly how bash
-tells the difference too.
+runs even inside double quotes, and a character escaped by a leading
+backslash outside any quotes — an escaped quote character, for
+instance — is passed through as its own literal pair rather than
+treated as a quote-open. Every rule below
+matches against that rewritten string, not the raw one. This is what
+tells "this text runs a command" apart from "this text merely mentions
+one" — `echo "(cat .env config) is an example"` and ``echo 'See `cat
+.env` for the pattern'`` are prose, not execution, and the quoting they
+use is exactly how bash tells the difference too.
+
+Statement-start anchoring (`_STMT`) additionally requires that a
+keyword/prefix word (`if`, `then`, `sudo`, `!`, ...) only counts as a
+statement start when it is ITSELF preceded by a real punctuation
+boundary or another such prefix word — a bare keyword anywhere in the
+text is not enough. This is what tells `if cat .env; then ...` (a real
+statement) apart from `echo Please do cat .env inspection later`
+(ordinary prose that happens to contain the word `do`).
 
 Known, accepted gaps this hook does not cover:
 - Arbitrary interpreter one-liners that read a credential another way,
@@ -35,9 +46,20 @@ Known, accepted gaps this hook does not cover:
   instead of through a Bash heredoc.
 - The quoting model above is a linear scan, not a real shell parser: it
   does not track nested/mismatched quotes across separate arguments,
-  ANSI-C `$'...'` quoting, or arithmetic `$(( ))` beyond incidentally
-  handling it as nested `$(`. These are judged rare enough in practice
-  not to be worth a bespoke shell grammar here.
+  or arithmetic `$(( ))` beyond incidentally handling it as nested
+  `$(`. These are judged rare enough in practice not to be worth a
+  bespoke shell grammar here.
+- ANSI-C quoting (`$'...'`) is not recognised at all — bash decodes
+  hex/octal/unicode escape sequences inside `$'...'` (a hex-encoded
+  `.env` payload decodes to the literal text `.env`), but this hook
+  sees only an ordinary `$VAR`-shaped token check (`$` followed by a
+  word character doesn't match a single quote, so the leading `$'` is
+  passed through as regular text and nothing inside is ever decoded).
+  A hex-encoded `.env` payload passed to `cat` is NOT denied even
+  though real bash runs it as a plain `.env` read. Confirmed live.
+  Recognised, not fixed this round — decoding ANSI-C escapes correctly
+  would need real unescaping logic, a materially bigger change than the
+  quoting model above.
 
 Contract (Claude Code PreToolUse):
 - stdin:  JSON with `tool_name` and `tool_input`.
@@ -83,17 +105,32 @@ _CRED_WORD = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)"
 # `bash cut-video.sh .env`) — this fragment is what rules those out
 # (neither a space nor a quote is in the class) while still catching the
 # command wherever it legitimately starts a statement.
-#
-# Also a statement start: a shell keyword that itself precedes a command
-# (`if`, `then`, `elif`, `else`, `do`, `while`, `until`, `time`, `nohup`,
-# `command`) or the `!` negation operator — `if cat .env; then ...`,
-# `time cat .env`, `nohup cat .env &`, `do cat .env; done` are all
-# ordinary commands, not text about one, and were previously missed
-# entirely. Each keyword requires trailing whitespace (not just a `\b`)
-# so `iffy_script.sh` and `timestamp.py` don't match — `\s+` can't
-# consume the non-whitespace character that continues those words.
-_STMT_KEYWORDS = r"(?:if|then|elif|else|do|while|until|time|nohup|command)"
-_STMT = rf"(?:^|[\n;&|(`{{]\s*|\$\(\s*|!\s*|\b{_STMT_KEYWORDS}\s+)"
+_PUNCT = r"(?:^|[\n;&|(`{]\s*|\$\(\s*)"
+
+# Prefix words that can chain after a real punctuation anchor without
+# themselves being "the" command: shell keywords (`if`, `then`, `elif`,
+# `else`, `do`, `while`, `until`, `time`, `nohup`, `command`), `sudo`,
+# and the `!` negation operator (kept out of the word list since it is
+# punctuation, not a word — `\b` doesn't apply to it the same way).
+# `!` requires trailing whitespace (`\s+`, not `\s*`): real bash parses
+# `!cat` with no space as a single command-not-found token, not
+# negation, so an unspaced `!cat .env` must not deny either.
+_STMT_PREFIX = r"(?:(?:if|then|elif|else|do|while|until|time|nohup|command|sudo)|!)\s+"
+
+# Statement-start anchor: a real punctuation boundary (see `_PUNCT`),
+# optionally followed by a CHAIN of prefix words — `if sudo cat .env`,
+# `; then cat .env`, `do cat .env; done`. The chain only starts once a
+# genuine `_PUNCT` boundary has been found; a prefix word is not itself
+# an anchor. This is what tells "if cat .env; then ..." (real statement,
+# `if` sits at position 0) apart from "echo Please do cat .env later"
+# (ordinary prose — `do` is preceded by `Please `, not by any `_PUNCT`
+# boundary, so the chain can never reach it, and "the command cat .env
+# dumps secrets" is caught the same way even though `command` is itself
+# one of the chain words: nothing anchors it either). Command
+# substitution, backticks, subshells and newlines are ordinary
+# exfiltration idioms (`echo "$(cat .env)"`, `` echo `cat .env` ``,
+# `(cat .env)`, `x=$(declare -p)`) and MUST stay covered.
+_STMT = rf"(?:{_PUNCT}(?:{_STMT_PREFIX})*)"
 
 # Matches ".env" only when it is NOT the ".env.example" template — and
 # "not the template" is anchored: ".example" must end the filename, not
@@ -115,8 +152,9 @@ def _executable_context(command: str) -> str:
         command: The raw Bash command text.
 
     Returns:
-        A same-length-or-shorter string where every DENY_RULES pattern
-        should be matched instead of the raw command. Single-quoted
+        A string the same length as *command* (see the offset-safety
+        note below) where every DENY_RULES pattern should be matched
+        instead of the raw command. Single-quoted
         spans are replaced with spaces — bash performs zero expansion
         inside single quotes, not even backticks, so nothing there can
         run. Double-quoted spans are replaced with spaces EXCEPT for
@@ -125,14 +163,31 @@ def _executable_context(command: str) -> str:
         verbatim. Text outside any quotes is passed through unchanged.
         A backslash-escaped character inside double quotes is masked
         together with its backslash, since bash treats the pair as the
-        literal character, not an expansion. Quote characters themselves
-        are kept in the output; they carry no keyword meaning to any
-        rule below.
+        literal character, not an expansion. OUTSIDE any quotes, a
+        character escaped by a leading backslash is passed through
+        verbatim (as its own two literal characters) rather than
+        examined as a possible quote-open — an escaped single or double
+        quote character is itself a literal character, not the start of
+        a quoted span, and treating it as a quote-open previously masked
+        everything from that point to end-of-string, including any
+        command after it (for example, an escaped single quote followed
+        by `; cat .env` really does run `cat .env` in bash). Quote
+        characters themselves are kept in the output; they carry no
+        keyword meaning to any rule below. The return value is always
+        exactly the same length as *command*: every branch below
+        replaces N input characters with exactly N output characters
+        (masked to spaces or kept verbatim), which keeps character
+        offsets — and therefore newline-anchored multi-line matching —
+        valid after the rewrite.
     """
     out: list[str] = []
     i, n = 0, len(command)
     while i < n:
         ch = command[i]
+        if ch == "\\" and i + 1 < n:
+            out.append(command[i : i + 2])
+            i += 2
+            continue
         if ch == "'":
             end = command.find("'", i + 1)
             end = n if end == -1 else end + 1
@@ -205,8 +260,8 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # unaffected — it never reaches end-of-statement, a pipe, or a
         # redirect. `>` is a terminator too: `env > out.txt` writes the
         # whole environment to a file just as surely as printing it.
-        # Optional `sudo` prefix tolerated so `sudo env` still denies.
-        re.compile(rf"{_STMT}(?:sudo\s+)?(?:env|printenv)\s*(?:$|[;&>]|\|(?!\s*wc\b))"),
+        # `sudo env` denies too, via `_STMT`'s prefix chain.
+        re.compile(rf"{_STMT}(?:env|printenv)\s*(?:$|[;&>]|\|(?!\s*wc\b))"),
     ),
     (
         "credential variable echo",
@@ -221,9 +276,8 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # Argument-less `set` dumps every shell variable. `set -euo
         # pipefail` (or any other flag/arg) is ordinary script hygiene
         # and must stay allowed — only the bare, boundary-anchored form
-        # matches. Optional `sudo` prefix tolerated so `sudo set` still
-        # denies.
-        re.compile(rf"{_STMT}(?:sudo\s+)?set\s*(?:$|[;&|])"),
+        # matches. `sudo set` denies too, via `_STMT`'s prefix chain.
+        re.compile(rf"{_STMT}set\s*(?:$|[;&|])"),
     ),
     (
         "declare/typeset dump",
@@ -231,8 +285,9 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # `declare -p` anywhere, including inside a quoted string (a
         # verification command like `rg "declare -p" docs/` does not run
         # it) — the anchor is what tells "run this" apart from "mention
-        # this".
-        re.compile(rf"{_STMT}(?:sudo\s+)?(?:declare|typeset)\s+-p\b"),
+        # this". `sudo declare -p` denies too, via `_STMT`'s prefix
+        # chain.
+        re.compile(rf"{_STMT}(?:declare|typeset)\s+-p\b"),
     ),
     (
         "dotenv read",
@@ -245,22 +300,21 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # start closes that without narrowing what still gets caught:
         # the rule still fires whenever the read command genuinely
         # starts a statement, including after `;`, `&&`, `||`, and as
-        # the right-hand side of a pipe.
-        re.compile(
-            rf"{_STMT}(?:sudo\s+)?{_DOTENV_READ_CMDS}\b[^;&|]*{_DOTENV_NOT_EXAMPLE}"
-        ),
+        # the right-hand side of a pipe. `sudo cat .env` denies too, via
+        # `_STMT`'s prefix chain.
+        re.compile(rf"{_STMT}{_DOTENV_READ_CMDS}\b[^;&|]*{_DOTENV_NOT_EXAMPLE}"),
     ),
     (
         "dotenv source",
         # `source .env` / `. .env` load every credential into the
         # current shell for a later leak, even though nothing prints
         # yet. `source .venv/bin/activate` (or any path without a
-        # literal `.env` component) is unaffected. `sudo` tolerance
-        # added for consistency with every other rule that takes it —
+        # literal `.env` component) is unaffected. `sudo` is handled by
+        # `_STMT`'s prefix chain along with every other anchored rule —
         # `source` is a shell builtin so `sudo source` isn't really
         # meaningful, but a rule silently missing the tolerance invites
         # the next reader to assume there's a reason it's exempt.
-        re.compile(rf"{_STMT}(?:sudo\s+)?(?:source|\.)\s+\S*{_DOTENV_NOT_EXAMPLE}"),
+        re.compile(rf"{_STMT}(?:source|\.)\s+\S*{_DOTENV_NOT_EXAMPLE}"),
     ),
     (
         "cloud token print",
