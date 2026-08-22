@@ -107,7 +107,8 @@ CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
                     "VAST_API_KEY",
                 ]
             )
-            + r")[ \t]*[=:][ \t]*[\"']?(?!<)(?!\$[A-Z_])[^\s\"'#]{8,}"
+            + r")[ \t]*[=:][ \t]*[\"']?"
+            r"(?!<REDACTED)(?!<[a-z][a-z_-]*(?:\s|>))(?!\$[A-Z_])[^\s\"'#]{8,}"
         ),
     ),
 ]

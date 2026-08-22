@@ -93,6 +93,63 @@ def test_empty_assignment_in_env_example_does_not_match() -> None:
     assert not list(cp.iter_findings("AWS_SECRET_ACCESS_KEY="))
 
 
+def test_dollar_var_reference_is_not_a_finding() -> None:
+    """Tuning boundary: `VAR=$OTHER_VAR` is a shell variable *reference*.
+
+    Docs show `RUNPOD_API_KEY=$RUNPOD_API_KEY pixi run ...` as the standard
+    "pass your own key here" convention (docs/engines.md and several
+    plans). No real credential is spelled as a bare `$UPPER_CASE_NAME`
+    token, so this must not block a commit.
+    """
+    assert not list(cp.iter_findings("RUNPOD_API_KEY=$RUNPOD_API_KEY"))
+
+
+def test_literal_value_after_dollar_var_style_name_is_still_a_finding() -> None:
+    """Contrast case for the `$VAR` exclusion above.
+
+    The exclusion must be narrow to the `$UPPER_CASE_NAME` shape — a
+    literal (non-reference) value of comparable length assigned to the
+    same variable name must still be caught.
+    """
+    literal_value = "B" * 40
+    finding = f"RUNPOD_API_KEY={literal_value}"  # kinoforge: allow-secret
+    assert list(cp.iter_findings(finding))
+
+
+def test_bracket_prose_placeholder_is_not_a_finding() -> None:
+    """Tuning boundary: `<lowercase word(s)>` in angle brackets is doc
+    prose (`HF_TOKEN=<huggingface token>`, `CIVITAI_TOKEN=<value>`,
+    `RUNPOD_TERMINATE_KEY=<scoped>`), not a secret, and must not block.
+    """
+    assert not list(cp.iter_findings("HF_TOKEN=<huggingface token>"))
+    assert not list(cp.iter_findings("CIVITAI_TOKEN=<value>"))
+    assert not list(cp.iter_findings("RUNPOD_TERMINATE_KEY=<scoped>"))
+
+
+def test_bracketed_credential_shaped_value_is_still_caught() -> None:
+    """Regression guard for the bracket-prose exclusion above.
+
+    A first attempt at that exclusion used a blanket `(?!<)`, which also
+    hid a real credential someone wrapped in `<...>` (mistakenly thinking
+    the brackets marked it as fake) — mixed-case/digit content inside
+    brackets, with no internal space, is not prose and must still block.
+    """
+    bracketed_credential = "<Zm9vYmFyMTIzNDU2Nzg5MDEyMzQ1Njc4OTA+ab>"
+    finding = f"AWS_SECRET_ACCESS_KEY={bracketed_credential}"  # kinoforge: allow-secret
+    assert list(cp.iter_findings(finding))
+
+
+def test_luma_api_prefix_is_required_to_match() -> None:
+    """Tuning boundary: the real Luma key shape is `luma-api-...` (see the
+    docstring of `LumaAgentsImageEngine`). The formerly-bare `luma-`
+    prefix collided with doc filenames/anchors like
+    `luma-image-keyframes-design.md`, which are not credentials.
+    """
+    tail = "N3q7Zk2Ht8Vw1Ry4Xs6L"  # 20 mixed-case/digit chars, no marker words
+    assert list(cp.iter_findings("luma-api-" + tail))
+    assert not list(cp.iter_findings("luma-" + tail))
+
+
 def test_placeholder_marker_suppresses_a_real_shaped_match() -> None:
     """STRONG markers suppress line-wide. Keeps .env.example + docs clean."""
     assert list(cp.iter_findings(AWS_KEY))  # baseline: it does match

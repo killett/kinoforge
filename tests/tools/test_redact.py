@@ -71,12 +71,16 @@ def test_multiple_independent_secret_classes_in_one_string() -> None:
     """
     from tools._redact import redact_string
 
+    # fal_key value carries an `example` suffix rather than a pragma comment —
+    # same convention as the aws_akia/aws_asia EXAMPLE-suffixed fixtures in
+    # tests/providers/test_runpod_conftest.py, picked for consistency across
+    # the suite's bare fal_key-shaped test literals.
     msg = (
-        "ConnectionError: provider=fal key=fal_key_QwErTyUiOpAsDfGhJk "  # kinoforge: allow-secret
+        "ConnectionError: provider=fal key=fal_key_QwErTyUiOpAsDfGhJkexample "
         "and HF_TOKEN=hf_AbCdEfGhIjKlMnOpQrStUv in pod env"  # kinoforge: allow-secret
     )
     out = redact_string(msg)
-    assert "fal_key_QwErTyUiOpAsDfGhJk" not in out  # kinoforge: allow-secret
+    assert "fal_key_QwErTyUiOpAsDfGhJkexample" not in out
     assert "hf_AbCdEfGhIjKlMnOpQrStUv" not in out
     assert "<REDACTED:fal_key>" in out
     assert "<REDACTED:hf_token>" in out
