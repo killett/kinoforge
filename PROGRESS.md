@@ -140,6 +140,18 @@ first unchecked task without redoing committed work.
   **Deliberately out of scope (Brief 2/5):** reaper verdicts for a `kf_launch_phase=launching` row;
   the bare `deploy()` entry point (no `store` in scope) stays unwired; a YAML surface for
   `autodown`.
+- **Credential scanning at the commit boundary (COMPLETE 2026-08-18):**
+  `docs/superpowers/specs/2026-08-18-credential-scanning-commit-boundary-design.md` +
+  `docs/superpowers/plans/2026-08-18-credential-scanning-commit-boundary.md` (7 tasks 0-6;
+  `.tasks.json` co-located). Closes verification findings F7 + F8. Four disagreeing credential
+  lists collapsed into `src/kinoforge/core/credential_patterns.py` with a loose tier (redaction,
+  over-matches by design) and a strict tier (blocking). `tools/scan_secrets.py` scans STAGED
+  added-lines at pre-commit; `tests/test_source_audit.py` runs the same scan over every tracked
+  file, so `--no-verify` does not get past it. `.claude/hooks/{block_secret_reads,redact_secrets}.py`
+  + `.claude/settings.json` are committed, so a fresh clone has both a PreToolUse deny and a
+  PostToolUse scrub. The parity test lost its skip path — a missing hook now FAILS
+  (`KINOFORGE_SKIP_USER_REDACT_HOOK=1` is the documented opt-out for the user-scope hook only).
+  No live spend.
 - **Provider capability declaration (Brief 2) — SHIPPED 2026-08-17 (8 tasks; task 6 withdrawn):**
   Design `docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md` + plan
   `docs/superpowers/plans/2026-08-16-provider-capability-declaration.md` (`.tasks.json` co-located).

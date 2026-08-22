@@ -1,5 +1,12 @@
 # AGENTS.md — Contributor guide
 
+## Credential safety
+
+See `CLAUDE.md` → **Credential safety** for the full rules (never echo a
+credential variable, never paste one into a tracked file, rotate before
+cleaning) and for what the three enforcement layers do and do not catch.
+Deliberately not duplicated here — two copies drift.
+
 ## Credential safety in tests
 
 **Rule:** secrets enter kinoforge tests via `.env` only. Never wire a raw credential into any test

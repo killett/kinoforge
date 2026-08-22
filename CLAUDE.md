@@ -56,6 +56,61 @@ a design or plan exists (see Durability rules).
 
 - Use `rg` instead of `grep`, `fd` instead of `find`.
 
+## Credential safety
+
+Three layers protect credentials here, and none of them is the control that
+actually works:
+
+1. `.gitignore` — keeps `.env`, `.gcp/`, `.aws/` untracked. Matches **paths**;
+   blind to a credential pasted into a tracked file.
+2. `tools/scan_secrets.py` at pre-commit — scans **staged content** (added
+   lines only, so `git add -p` is respected) with the strict tier of
+   `src/kinoforge/core/credential_patterns.py`. Blocks the commit on a hit.
+   `tests/test_source_audit.py` runs the same scan over every tracked file, so
+   `--no-verify` does not get you past it.
+3. `.claude/hooks/` — `block_secret_reads.py` denies credential-printing Bash
+   before it runs; `redact_secrets.py` scrubs tool output before it reaches the
+   transcript. Both are committed and registered in `.claude/settings.json`, so
+   a fresh clone has them.
+
+### Rules a hook cannot enforce
+
+- **Never echo a credential variable.** Print length and shape only:
+  `[ -n "${HF_TOKEN:-}" ] && echo "HF_TOKEN set len=${#HF_TOKEN}"`.
+- **Never paste a credential into a config, fixture, test, commit message, or
+  design doc** — including "just to check the shape". Use the synthetic
+  conventions already in the repo (`kinoforge-prod-deadbeef` and friends), or
+  mark the line with `kinoforge: allow-secret` if the exact bytes matter.
+- **Prefer identity probes over key inspection:** `aws sts get-caller-identity`,
+  `gcloud config list account` — not `aws configure get aws_secret_access_key`.
+- **Claude never Writes/Edits a secret-bearing file.** Even an empty template
+  puts the path in the file tracker, and later operator edits leak into the
+  transcript. The operator creates it; Claude only references the path.
+- **If a credential does reach a file, a terminal, or a transcript: rotate
+  first, clean second.** The value has already been somewhere durable.
+
+### Opt-out
+
+`KINOFORGE_SKIP_USER_REDACT_HOOK=1` skips the check that the *user-scope*
+Claude Code hook (`~/.claude/hooks/redact_secrets.py`) is installed. Set it only
+where Claude Code genuinely is not installed — a CI runner, a bare container.
+It does not disable the in-repo hooks, the pre-commit scan, or the tracked-tree
+guard, none of which have an opt-out.
+
+### Residual risk — stated plainly
+
+A regex filter **reduces exposure; it does not eliminate it.** The scanner
+catches named shapes and assignments to known credential variables. It does not
+catch a new provider's format, a value split across lines, a base64-wrapped
+blob, a credential paraphrased into prose, or one that simply does not look like
+a credential. `CIVITAI_TOKEN`, `VAST_API_KEY`, and `B2_APPLICATION_KEY` have no
+distinguishing prefix and are only caught next to their variable name — a
+deliberate trade, because bare 32/64-hex patterns would match every digest in
+`pixi.lock`.
+
+The layers buy time and catch mistakes. The control that works is not putting
+the credential there.
+
 ## Cloud CLI invocation (`gcloud`, `aws`, `sky`)
 
 `gcloud` and `aws` binaries live ONLY in the `live-skypilot` pixi env, NOT
