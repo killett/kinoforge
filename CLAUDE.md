@@ -79,8 +79,14 @@ actually works:
   `[ -n "${HF_TOKEN:-}" ] && echo "HF_TOKEN set len=${#HF_TOKEN}"`.
 - **Never paste a credential into a config, fixture, test, commit message, or
   design doc** — including "just to check the shape". Use the synthetic
-  conventions already in the repo (`kinoforge-prod-deadbeef` and friends), or
-  mark the line with `kinoforge: allow-secret` if the exact bytes matter.
+  conventions already in the repo (`kinoforge-prod-deadbeef` and friends).
+  Suppression has three mechanisms, not one: a **strong** marker
+  (`placeholder`, `changeme`, `deadbeef`, `xxxx`, …) suppresses anywhere on
+  the line; a **weak** marker (`example`, `sample`, `fake`, `dummy`, `test`)
+  suppresses only when it sits *inside the matched value itself* — a trailing
+  `# example` comment next to a real key does **not** suppress it, so a real
+  key beside a chatty comment still blocks. For the exact-bytes case, use the
+  `kinoforge: allow-secret` pragma instead.
 - **Prefer identity probes over key inspection:** `aws sts get-caller-identity`,
   `gcloud config list account` — not `aws configure get aws_secret_access_key`.
 - **Claude never Writes/Edits a secret-bearing file.** Even an empty template
@@ -106,7 +112,22 @@ blob, a credential paraphrased into prose, or one that simply does not look like
 a credential. `CIVITAI_TOKEN`, `VAST_API_KEY`, and `B2_APPLICATION_KEY` have no
 distinguishing prefix and are only caught next to their variable name — a
 deliberate trade, because bare 32/64-hex patterns would match every digest in
-`pixi.lock`.
+`pixi.lock`. A bracketed value of pure lowercase letters/hyphens/underscores
+(`<lambda-secret-key-token>`) reads as prose to the scanner and is not flagged.
+
+**The PreToolUse blocker (`block_secret_reads.py`) is defence in depth, not a
+control** — it matches command TEXT, not what bash actually executes. Known,
+confirmed gaps:
+- An interpreter one-liner bypasses it entirely, e.g.
+  `python -c 'import os;print(os.environ["HF_TOKEN"])'`.
+- A keyword inside a heredoc body is not distinguished from one that would
+  actually run.
+- ANSI-C quoting is not recognised — `cat $'\x2e\x65\x6e\x76'` reads `.env` in
+  real bash and is **not** denied. Confirmed live.
+
+The load-bearing protections are the pre-commit scanner, the tracked-tree
+guard (`tests/test_source_audit.py`), and `.gitignore` — not the blocker,
+which only ever covers one command shape at a time.
 
 The layers buy time and catch mistakes. The control that works is not putting
 the credential there.
