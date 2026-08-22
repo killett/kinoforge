@@ -263,8 +263,12 @@ class LeakHit(NamedTuple):
         pattern_name: The canonical name from :data:`_CREDENTIAL_PATTERNS`
             (e.g. ``"rpa_token"``, ``"bearer_auth"``).
         json_pointer: RFC 6901 pointer to the offending location.
-        match_snippet: First 32 chars of the matched substring.  Enough for
-            shape diagnosis without re-emitting the full secret.
+        match_snippet: The matched substring passed through
+            :func:`_redact_string` and truncated to 32 chars.  Never a raw
+            credential character — this value flows straight into a pytest
+            assertion message, which lands in a CI log.  Enough for shape
+            diagnosis (which pattern fired, roughly how long the match was)
+            without re-emitting the secret itself.
     """
 
     pattern_name: str
@@ -300,7 +304,7 @@ def _audit_for_leaks(obj: Any, _pointer: str = "") -> list[LeakHit]:
                     LeakHit(
                         pattern_name=pattern.name,
                         json_pointer=_pointer or "/",
-                        match_snippet=match.group(0)[:32],
+                        match_snippet=_redact_string(match.group(0))[:32],
                     )
                 )
         return hits

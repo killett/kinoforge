@@ -318,3 +318,56 @@ def test_all_tracked_scans_the_repo(repo: Path) -> None:
     _git(repo, "commit", "-qm", "planted")
     findings = scan_secrets.scan_all_tracked(repo)
     assert [f.pattern_name for _p, f in findings] == ["aws_access_key"]
+
+
+def test_all_tracked_stray_invalid_utf8_byte_does_not_drop_the_whole_file(
+    repo: Path,
+) -> None:
+    """Mirrors the NEW-1 fix for the staged-content scanner (`_read_staged_file`,
+    commit 8f1f4307), propagated here for Finding 2 of the 2026-08-18
+    whole-branch review.
+
+    `scan_all_tracked` previously caught `UnicodeDecodeError` and skipped
+    the whole file on ANY invalid byte. This is the guard with no layer
+    behind it — it is what still catches a credential committed with
+    `--no-verify` — so a single stray mis-encoded byte silently hiding a
+    real credential elsewhere in the same file is exactly the failure
+    class this test pins shut.
+    """
+    content = (
+        b"line with a stray invalid byte: \xff\n"
+        b"clean line\n" + f"KEY={AWS_KEY}\n".encode()
+    )
+    (repo / "notes.md").write_bytes(content)
+    _git(repo, "add", "notes.md")
+    _git(repo, "commit", "-qm", "planted with a stray invalid byte")
+    findings = scan_secrets.scan_all_tracked(repo)
+    assert [f.pattern_name for _p, f in findings] == ["aws_access_key"]
+
+
+def test_all_tracked_unreadable_file_raises_rather_than_reporting_clean(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tracked file that EXISTS but cannot be read must be a hard error,
+    not silently "no findings" (Finding 2). This is the identical bug
+    `_read_staged_file` was already fixed for (a `git show` failure on a
+    path with content to scan reaches `main()`'s exit-2 handling, not a
+    quiet empty result) — `scan_all_tracked` must make the same
+    distinction: a MISSING tracked file (mid-rebase, a legitimate state)
+    is skipped, but an unreadable one is raised.
+    """
+    (repo / "notes.md").write_text(f"KEY={AWS_KEY}\n")
+    _git(repo, "add", "notes.md")
+    _git(repo, "commit", "-qm", "planted")
+
+    real_read_bytes = Path.read_bytes
+
+    def _flaky_read_bytes(self: Path) -> bytes:
+        if self.name == "notes.md":
+            raise PermissionError("simulated permission denial")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", _flaky_read_bytes)
+
+    with pytest.raises(RuntimeError, match="notes.md"):
+        scan_secrets.scan_all_tracked(repo)

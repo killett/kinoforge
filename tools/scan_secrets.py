@@ -233,6 +233,17 @@ def scan_staged(repo: Path, paths: list[str], *, strict: bool = True) -> ScanRes
     text directly, which is what keeps range-finding immune to added
     content shaped like a diff header.
 
+    Blind spot, by design, not a bug to "fix": a ``pem_private_key`` whose
+    BEGIN and END markers land in two separate, non-adjacent hunks of the
+    *same commit* is invisible here — each hunk is scanned as its own
+    block (see above), so neither half alone matches the whole-span
+    pattern. This composes correctly with :func:`scan_all_tracked` (the
+    tracked-tree guard in ``tests/test_source_audit.py``), which scans
+    each file's full post-commit content in one pass and *does* see the
+    reassembled key. The two-layer design is intentional — this function
+    only needs to be immune to `--no-verify` failing *silently*, not to
+    catch every shape, because the tracked-tree guard is the backstop.
+
     Args:
         repo: Repository working directory.
         paths: Pathspec limiting the diff; empty scans everything staged.
@@ -275,14 +286,35 @@ def scan_staged(repo: Path, paths: list[str], *, strict: bool = True) -> ScanRes
 def scan_all_tracked(repo: Path, *, strict: bool = True) -> ScanResult:
     """Scan the working-tree content of every tracked file.
 
+    Binary detection and decoding mirror :func:`_read_staged_file` exactly
+    (same NUL-byte-in-first-8000-bytes heuristic, same ``errors="replace"``
+    decode) and for the same reason: this is the standing guard with no
+    layer behind it — it is what still catches a credential committed with
+    ``--no-verify``, so a single stray mis-encoded byte must cost one
+    garbled character, not the whole file's scan coverage. The sibling bug
+    (strict UTF-8 decoding silently dropping a whole file on one bad byte)
+    was fixed here in commit ``8f1f4307`` for the staged-content path and
+    never propagated to this function — this is that propagation.
+
+    A tracked path *absent* from the working tree (``FileNotFoundError``)
+    is skipped, not an error: that is a legitimate state mid-rebase or
+    mid-stash-pop, and there is nothing to scan. A tracked path that
+    *exists* but cannot be read for any other reason (permissions, a race,
+    an unreadable special file) is a hard error — silently treating an
+    unreadable file as "no findings" is exactly the fail-open this guard
+    exists to prevent.
+
     Args:
         repo: Repository working directory.
         strict: See :func:`scan_staged`.
 
     Returns:
-        ``(path, Finding)`` pairs. Files whose bytes are not valid UTF-8
-        are skipped — they are binary, and a binary blob cannot carry a
-        pasted terminal line.
+        ``(path, Finding)`` pairs. A tracked file that looks binary (a NUL
+        byte in its first 8000 bytes) is skipped — there is nothing
+        text-shaped to scan.
+
+    Raises:
+        RuntimeError: A tracked file exists but could not be read.
     """
     patterns = STRICT_PATTERNS if strict else CREDENTIAL_PATTERNS
     listing = _run_git(repo, ["ls-files", "-z"])
@@ -292,9 +324,14 @@ def scan_all_tracked(repo: Path, *, strict: bool = True) -> ScanResult:
             continue
         target = repo / rel
         try:
-            text = target.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+            raw = target.read_bytes()
+        except FileNotFoundError:
             continue
+        except OSError as exc:
+            raise RuntimeError(f"cannot read tracked file {rel}: {exc}") from exc
+        if b"\x00" in raw[:8000]:
+            continue
+        text = raw.decode("utf-8", errors="replace")
         results.extend(
             (rel, finding) for finding in iter_findings(text, patterns=patterns)
         )

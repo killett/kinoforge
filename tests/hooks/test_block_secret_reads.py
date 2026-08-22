@@ -171,6 +171,14 @@ def test_denied(command: str) -> None:
         "echo This time cat .env matters a lot",
         "echo the command cat .env dumps secrets",
         "# do cat .env cleanup later",
+        # Unspaced `!cat .env` — bash treats `!cat` (no space before `!`) as
+        # history expansion of an event named "cat .env", not a `!` negation
+        # of the `cat .env` pipeline; real bash reports "event not found"
+        # rather than running `cat .env`. Hand-verified 2026-08-18 whole-
+        # branch review (Finding 6): the hook does not deny it, matching
+        # bash's own command-not-found-equivalent behavior. Pinned here so
+        # that behavior stays intentional rather than an unpinned accident.
+        "!cat .env",
     ],
 )
 def test_not_denied(command: str) -> None:

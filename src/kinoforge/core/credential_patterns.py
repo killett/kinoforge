@@ -159,6 +159,22 @@ CREDENTIAL_PATTERNS: list[CredentialPattern] = [
     ),
     CredentialPattern("hf_token_strict", re.compile(r"\bhf_[A-Za-z0-9]{32,}\b"), True),
     CredentialPattern("fal_key", re.compile(r"\bfal_key_[A-Za-z0-9_\-]{8,}\b"), True),
+    # 2026-08-18 whole-branch review (Finding 1) proposed widening this to
+    # `\bsk-(?:[A-Za-z0-9_\-]{20,}|[A-Za-z0-9_\-]*[A-Za-z0-9]{16,})\b` — a
+    # union with the old pre-Task-5 alternative — to recover coverage on
+    # separator-dense real keys (`sk-ant-api03-Ab3_Ab3_...`,
+    # `sk-proj-x_x_x_...`) that the current narrow form misses. Verified
+    # and NOT applied: the union re-matches
+    # `generate-sk-thumbnail-preview-cache-key`
+    # (tests/core/test_credential_patterns.py::
+    # test_sk_token_ignores_ordinary_kebab_case_identifiers), the exact
+    # false positive Task 5 narrowed this pattern to fix — confirmed with
+    # `re.search` before touching this file, not asserted from the
+    # finding text. The finding's own fallback for this case is "say so
+    # and stop rather than deleting that test," so the pattern is
+    # unchanged pending a maintainer decision on which failure mode to
+    # accept: under-match separator-dense real keys, or over-match
+    # kebab-case identifiers containing "sk-".
     CredentialPattern(
         "sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]*[A-Za-z0-9]{16,}\b"), True
     ),

@@ -401,13 +401,19 @@ def test_audit_for_leaks_returns_empty_for_clean_payload() -> None:
 
 
 def test_audit_for_leaks_reports_pattern_name_and_pointer() -> None:
+    """Also pins Finding 4 of the 2026-08-18 whole-branch review: match_snippet
+    must carry the pattern's redaction marker, never the raw credential
+    value — this string flows straight into a pytest assertion message,
+    which lands in a CI log.
+    """
     payload = {"data": {"deep": {"k": "rpa_REAL_TOKEN_12345"}}}
     hits = _audit_for_leaks(payload)
     assert len(hits) == 1
     hit = hits[0]
     assert hit.pattern_name == "rpa_token"
     assert hit.json_pointer == "/data/deep/k"
-    assert hit.match_snippet.startswith("rpa_")
+    assert hit.match_snippet == "<REDACTED>"
+    assert "REAL_TOKEN" not in hit.match_snippet
     assert len(hit.match_snippet) <= 32
 
 

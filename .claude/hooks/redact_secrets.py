@@ -40,6 +40,36 @@ from pathlib import Path
 # "Bearer". See the docstring of src/kinoforge/core/credential_patterns.py
 # for the full naming-tier rationale (loose vs. _strict variants).
 # ---------------------------------------------------------------------------
+# Credential-bearing .env var names. Mirrors
+# src/kinoforge/core/credential_patterns.py's CREDENTIAL_ENV_VARS exactly —
+# GOOGLE_APPLICATION_CREDENTIALS (a path) and DOCKERHUB_USERNAME (a
+# username) are deliberately absent. Used both to build the
+# credential_assignment pattern below and to filter _load_env_values, so a
+# non-credential .env value can never be substituted out of ordinary tool
+# output (see _load_env_values for why that filter exists).
+_CREDENTIAL_ENV_VARS: tuple[str, ...] = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AZURE_CLIENT_SECRET",
+    "B2_APPLICATION_KEY",
+    "CIVITAI_TOKEN",
+    "DOCKERHUB_TOKEN",
+    "FAL_KEY",
+    "GH_TOKEN",
+    "HF_TOKEN",
+    "KINOFORGE_R2_ACCESS_KEY_ID",
+    "KINOFORGE_R2_SECRET_ACCESS_KEY",
+    "LAMBDA_API_KEY",
+    "LUMAAI_API_KEY",
+    "MODAL_TOKEN_ID",
+    "MODAL_TOKEN_SECRET",
+    "REPLICATE_API_TOKEN",
+    "RUNPOD_API_KEY",
+    "RUNPOD_TERMINATE_KEY",
+    "RUNWAYML_API_SECRET",
+    "VAST_API_KEY",
+)
+
 CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # ---- loose tier: redaction only, over-matches by design ----------------
     ("bearer_auth", re.compile(r"Bearer\s+[A-Za-z0-9._\-]{8,}")),
@@ -82,32 +112,7 @@ CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "credential_assignment",
         re.compile(
-            r"\b(?:"
-            + "|".join(
-                [
-                    "AWS_ACCESS_KEY_ID",
-                    "AWS_SECRET_ACCESS_KEY",
-                    "AZURE_CLIENT_SECRET",
-                    "B2_APPLICATION_KEY",
-                    "CIVITAI_TOKEN",
-                    "DOCKERHUB_TOKEN",
-                    "FAL_KEY",
-                    "GH_TOKEN",
-                    "HF_TOKEN",
-                    "KINOFORGE_R2_ACCESS_KEY_ID",
-                    "KINOFORGE_R2_SECRET_ACCESS_KEY",
-                    "LAMBDA_API_KEY",
-                    "LUMAAI_API_KEY",
-                    "MODAL_TOKEN_ID",
-                    "MODAL_TOKEN_SECRET",
-                    "REPLICATE_API_TOKEN",
-                    "RUNPOD_API_KEY",
-                    "RUNPOD_TERMINATE_KEY",
-                    "RUNWAYML_API_SECRET",
-                    "VAST_API_KEY",
-                ]
-            )
-            + r")[ \t]*[=:][ \t]*[\"']?"
+            r"\b(?:" + "|".join(_CREDENTIAL_ENV_VARS) + r")[ \t]*[=:][ \t]*[\"']?"
             r"(?!<REDACTED)(?!<[a-z][a-z_-]*(?:\s|>))(?!\$[A-Z_])[^\s\"'#]{8,}"
         ),
     ),
@@ -118,9 +123,16 @@ def _load_env_values() -> dict[str, str]:
     """Read project-root .env if present; return ``{value: VARNAME}`` map.
 
     Tries ``/workspace/.env`` first (current dev container), then
-    ``cwd/.env``. Values shorter than 8 chars are skipped — too noisy.
-    All exceptions swallowed; failed read returns empty dict (fail-open
-    at the data layer too).
+    ``cwd/.env``. Only names in :data:`_CREDENTIAL_ENV_VARS` are kept — a
+    non-credential .env value (e.g. ``DOCKERHUB_USERNAME``,
+    ``AWS_DEFAULT_REGION``) must never be substituted, because this hook
+    scrubs the output of EVERY tool call, including ``Read``. Over-scrub
+    is cosmetic for a log line but corrupting for file content: Claude
+    reads a config file, sees a marker in place of an ordinary value like
+    "us-west-2", and can write that marker straight back through an
+    ``Edit``. Values shorter than 8 chars are skipped — too noisy. All
+    exceptions swallowed; failed read returns empty dict (fail-open at
+    the data layer too).
     """
     for p in (Path("/workspace/.env"), Path.cwd() / ".env"):
         if not p.is_file():
@@ -133,6 +145,8 @@ def _load_env_values() -> dict[str, str]:
                     continue
                 key, _, val = line.partition("=")
                 key = key.strip()
+                if key not in _CREDENTIAL_ENV_VARS:
+                    continue
                 val = val.strip().strip("'\"")
                 if len(val) >= 8:
                     values[val] = key
