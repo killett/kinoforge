@@ -150,8 +150,21 @@ first unchecked task without redoing committed work.
   file, so `--no-verify` does not get past it. `.claude/hooks/{block_secret_reads,redact_secrets}.py`
   + `.claude/settings.json` are committed, so a fresh clone has both a PreToolUse deny and a
   PostToolUse scrub. The parity test lost its skip path — a missing hook now FAILS
-  (`KINOFORGE_SKIP_USER_REDACT_HOOK=1` is the documented opt-out for the user-scope hook only).
-  No live spend.
+  (`KINOFORGE_SKIP_USER_REDACT_HOOK=1` is the documented opt-out for the user-scope hook only,
+  wired into the `test` job in `.github/workflows/ci.yml` — GitHub runners have no Claude Code).
+  No live spend. **Commits** `9c67af52`+`0c63df27` (spec) · `6c5eb24e`+`886120f0` (plan) ·
+  `0a91093a` · `5da5ea55` · `4b8f59c5`..`8f1f4307` · `b7553e53`+`e99f23de` ·
+  `843ca312`..`32f00cee` · `dd3ca450`+`8441bd6c` · `056f863a`+`329e918e` · `f93ef9a0`+`e0df81e0`.
+  **Two seams the whole-branch review caught that per-task review structurally could not:**
+  (1) `sk_token` had been NARROWED relative to both lists it replaced, so separator-dense keys
+  (`sk-ant-api03-Ab3_Ab3_…`) evaded it — fixed by a union plus a token-start lookbehind
+  `(?<![A-Za-z0-9_\-])`, which also keeps kebab-case identifiers (`generate-sk-thumbnail-…`) out;
+  (2) `scan_all_tracked` still failed OPEN on a decode/OS error after the identical bug had been
+  fixed in its sibling `_read_staged_file` — one stray byte in `PROGRESS.md` would have made the
+  whole file invisible to the guard that reports clean. **Gotcha for the next reader:** the
+  PreToolUse blocker matches command TEXT, so a heredoc writing prose *about* a credential echo is
+  denied too; use Write/Edit for such docs. Accepted gaps (interpreter one-liners, heredoc bodies,
+  ANSI-C `$'\x2e\x65\x6e\x76'`) are listed in the hook docstring and `CLAUDE.md` residual risk.
 - **Provider capability declaration (Brief 2) — SHIPPED 2026-08-17 (8 tasks; task 6 withdrawn):**
   Design `docs/superpowers/specs/2026-08-16-provider-capability-declaration-design.md` + plan
   `docs/superpowers/plans/2026-08-16-provider-capability-declaration.md` (`.tasks.json` co-located).
