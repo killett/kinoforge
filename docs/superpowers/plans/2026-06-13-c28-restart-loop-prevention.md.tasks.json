@@ -26,7 +26,7 @@
       "subject": "Task 2: A1 — S3 ingest bucket + scoped IAM",
       "status": "pending",
       "blockedBy": [0],
-      "description": "Idempotent provisioner for <DIAG_BUCKET> bucket (us-west-2, 7-day lifecycle) + PutObject-only IAM policy attached to kinoforge-ci. Full body: see plan §Task 2 + native task #10.\n\n```json:metadata\n{\"files\":[\"tools/c28_provision_s3_diagnostics.py\",\"tests/tools/test_c28_provision_s3_diagnostics.py\"],\"verifyCommand\":\"pixi run pytest tests/tools/test_c28_provision_s3_diagnostics.py -v && pixi run -e live-skypilot aws s3 ls s3://<DIAG_BUCKET>/\",\"acceptanceCriteria\":[\"bucket us-west-2\",\"7-day lifecycle on boot-logs/\",\"PutObject-only policy attached to kinoforge-ci\",\"idempotent\"]}\n```"
+      "description": "Idempotent provisioner for <DIAG_BUCKET> bucket (us-west-2, 7-day lifecycle) + PutObject-only IAM policy attached to kinoforge-ci. Full body: see plan §Task 2 + native task #10.\n\n```json:metadata\n{\"files\":[\"tools/c28_provision_s3_diagnostics.py\",\"tests/tools/test_c28_provision_s3_diagnostics.py\"],\"verifyCommand\":\"pixi run pytest tests/tools/test_c28_provision_s3_diagnostics.py -v && pixi run -e live-skypilot aws s3 ls s3://<S3_BUCKET>/\",\"acceptanceCriteria\":[\"bucket us-west-2\",\"7-day lifecycle on boot-logs/\",\"PutObject-only policy attached to kinoforge-ci\",\"idempotent\"]}\n```"
     },
     {
       "id": 3,

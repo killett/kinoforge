@@ -31,7 +31,7 @@ def test_gcp_submit_quota_submits_both_metrics() -> None:
     client = FakeGcpQuotaClient()
     result = gcp_submit_quota(
         client,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         justification_text="reason text",
     )
@@ -50,14 +50,14 @@ def test_gcp_submit_quota_falls_back_to_console_url_on_failure() -> None:
     client = FakeGcpQuotaClient(fail=True)
     result = gcp_submit_quota(
         client,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         justification_text="reason text",
     )
     assert result.submitted is False
     assert result.request_ids == []
     assert result.console_url is not None
-    assert "<GCP_PROJECT>" in result.console_url
+    assert "kinoforge-prod-deadbeef" in result.console_url
     assert "NVIDIA_T4_GPUS" in result.console_url
 
 

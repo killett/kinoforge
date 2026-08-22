@@ -24,7 +24,7 @@ predicates only protect the steady-state phase. During boot, only `boot_timeout`
   $0.16/hr.
 - C28 Phase A v4/v5: chronic restart loop ran undetected for the entire boot window
   because heartbeat couldn't see it. S3 diag snapshot at
-  `s3://<DIAG_BUCKET>/boot-logs/c28-phase-a-20260613T235704-a1/`.
+  `s3://<S3_BUCKET>/boot-logs/c28-phase-a-20260613T235704-a1/`.
 - `kinoforge status --id <pod>` shows zero liveness info during boot.
 
 ### Non-goals

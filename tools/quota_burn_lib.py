@@ -263,7 +263,7 @@ def gcp_mtd_spend(
     client: Any,  # noqa: ANN401
     *,
     project_id: str,
-    billing_dataset: str = "<GCP_PROJECT>.all_billing_data",
+    billing_dataset: str = "kinoforge-prod-deadbeef.all_billing_data",
 ) -> dict[str, float]:
     """Return month-to-date spend grouped by service, in USD.
 

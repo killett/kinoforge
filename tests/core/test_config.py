@@ -1470,14 +1470,12 @@ def test_bedrock_video_engine_config_loads_required_fields() -> None:
     cfg = BedrockVideoEngineConfig(
         region_name="us-west-2",
         model_id="luma.ray-v2:0",
-        output_s3_uri="s3://<S3_OUTPUT_BUCKET>/kinoforge-output/",
+        output_s3_uri="s3://bkt/kinoforge-output/",
         model_input_template=_LUMA_RAY_TEMPLATE,
     )
     assert cfg.region_name == "us-west-2"
     assert cfg.model_id == "luma.ray-v2:0"
-    assert cfg.output_s3_uri == (
-        "s3://<S3_OUTPUT_BUCKET>/kinoforge-output/"
-    )
+    assert cfg.output_s3_uri == ("s3://bkt/kinoforge-output/")
     assert cfg.model_input_template == _LUMA_RAY_TEMPLATE
     assert cfg.declared_flags_map == {}
     assert cfg.output_kms_key_id is None
@@ -1507,7 +1505,7 @@ def test_bedrock_video_engine_config_forbids_unknown_keys() -> None:
             {
                 "region_name": "us-west-2",
                 "model_id": "luma.ray-v2:0",
-                "output_s3_uri": "s3://<S3_OUTPUT_BUCKET>/",
+                "output_s3_uri": "s3://bkt/",
                 "model_input_template": _LUMA_RAY_TEMPLATE,
                 "unknown_field": "oops",
             }
@@ -1523,7 +1521,7 @@ def test_engine_config_bedrock_video_optional() -> None:
         bedrock_video=BedrockVideoEngineConfig(
             region_name="us-west-2",
             model_id="luma.ray-v2:0",
-            output_s3_uri="s3://<S3_OUTPUT_BUCKET>/kinoforge-output/",
+            output_s3_uri="s3://bkt/kinoforge-output/",
             model_input_template=_LUMA_RAY_TEMPLATE,
         ),
     )

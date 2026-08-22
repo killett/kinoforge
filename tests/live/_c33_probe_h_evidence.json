@@ -4,7 +4,7 @@
   "date_utc": "2026-06-17",
   "date_local_pdt": "2026-06-16",
   "run_id": "run-20260616-171950",
-  "s3_prefix": "s3://<DIAG_BUCKET>/boot-logs/run-20260616-171950/",
+  "s3_prefix": "s3://<S3_BUCKET>/boot-logs/run-20260616-171950/",
   "pod_id": "xbynlkmzil8k26",
   "gpu": "NVIDIA GeForce RTX 3090 (community-cloud) @ $0.22/hr (RTX 4090 first-choice was out of capacity; fell through to A5000/3090 per cfg gpu_preference)",
   "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",

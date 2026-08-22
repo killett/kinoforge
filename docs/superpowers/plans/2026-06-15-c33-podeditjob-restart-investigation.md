@@ -1492,11 +1492,11 @@ Insert near the top of the C-series block (after existing C30/C31/C32 entries; b
 
 **P0 verdict.** `<orphan_quirk | orphan_real_restart | ambiguous>`
   - Sidecar: `tests/live/_c33_probe_p0_evidence.json`
-  - S3 prefix: `s3://<DIAG_BUCKET>/boot-logs/c33-p0-<ts>/`
+  - S3 prefix: `s3://<S3_BUCKET>/boot-logs/c33-p0-<ts>/`
 
 **P1 verdict.** `<confirmed | denied | ambiguous | N/A — short-circuited by P0>`
   - Sidecar: `tests/live/_c33_probe_p1_evidence.json` (or "absent — short-circuited")
-  - S3 prefix: `s3://<DIAG_BUCKET>/boot-logs/c33-p1-<ts>/` (or "N/A")
+  - S3 prefix: `s3://<S3_BUCKET>/boot-logs/c33-p1-<ts>/` (or "N/A")
 
 **Denial branch.** `<outcome from _c33_denial_branch_evidence.json | N/A>`
 

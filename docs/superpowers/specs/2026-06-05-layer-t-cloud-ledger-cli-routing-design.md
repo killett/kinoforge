@@ -287,7 +287,7 @@ Host B with a fresh `state_dir` and no sidecar sees `LocalArtifactStore` and an 
 
 Mitigation under Layer T: documented as a hard constraint — **first command on every new host must be cfg-bearing** (e.g. `kinoforge deploy --dry-run --config kinoforge.yaml`). This writes the sidecar before any state-mutating command runs. README adds an explicit "Multi-host setup" section calling out the constraint and the safety implication.
 
-Layer T+1 candidate: `--store-uri s3://kf-prod` global flag or `KINOFORGE_STORE_URI` env var that lets non-cfg commands bootstrap their sidecar in memory. Non-breaking, additive — `SessionContext.from_args` learns one new source.
+Layer T+1 candidate: `--store-uri s3://<S3_BUCKET>` global flag or `KINOFORGE_STORE_URI` env var that lets non-cfg commands bootstrap their sidecar in memory. Non-breaking, additive — `SessionContext.from_args` learns one new source.
 
 ## 9. Error handling matrix
 

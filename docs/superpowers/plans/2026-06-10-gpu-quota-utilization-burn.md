@@ -303,7 +303,7 @@ def test_gcp_spin_up_returns_resource_ids() -> None:
     clients = _make_clients()
     out = gcp_spin_up(
         clients,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
@@ -321,7 +321,7 @@ def test_gcp_spin_up_tags_every_resource() -> None:
     clients = _make_clients()
     gcp_spin_up(
         clients,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
@@ -336,7 +336,7 @@ def test_gcp_spin_up_arms_kernel_shutdown() -> None:
     clients = _make_clients()
     gcp_spin_up(
         clients,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
@@ -352,7 +352,7 @@ def test_gcp_spin_up_uses_e2_small_in_zone() -> None:
     clients = _make_clients()
     gcp_spin_up(
         clients,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
@@ -666,7 +666,7 @@ def test_gcp_tear_down_deletes_every_resource() -> None:
     deleted = gcp_tear_down(
         clients,
         _teardown_manifest(),
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         zone="us-west1-a",
     )
     assert "kinoforge-burn-xyz" in deleted
@@ -690,7 +690,7 @@ def test_gcp_tear_down_is_idempotent_on_missing() -> None:
     deleted = gcp_tear_down(
         clients,
         _teardown_manifest(),
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         zone="us-west1-a",
     )
     assert deleted == []
@@ -715,7 +715,7 @@ def test_gcp_tear_down_raises_on_unexpected_error() -> None:
         gcp_tear_down(
             clients,
             _teardown_manifest(),
-            project_id="<GCP_PROJECT>",
+            project_id="kinoforge-prod-deadbeef",
             zone="us-west1-a",
         )
 
@@ -741,7 +741,7 @@ def test_gcp_mtd_spend_groups_by_service() -> None:
             {"service_description": "BigQuery", "cost_usd": 1.50},
         ]
     )
-    spend = gcp_mtd_spend(client, project_id="<GCP_PROJECT>")
+    spend = gcp_mtd_spend(client, project_id="kinoforge-prod-deadbeef")
     assert spend == {"Compute Engine": 2.0, "Cloud Storage": 0.5, "BigQuery": 1.5}
 ```
 
@@ -826,7 +826,7 @@ def gcp_mtd_spend(client: Any, *, project_id: str) -> dict[str, float]:
     sql = (
         "SELECT service.description AS service_description, "
         "SUM(cost) AS cost_usd "
-        "FROM `<GCP_PROJECT>.all_billing_data.gcp_billing_export_v1_*` "
+        "FROM `kinoforge-prod-deadbeef.all_billing_data.gcp_billing_export_v1_*` "
         f"WHERE project.id = '{project_id}' "
         "AND DATE(_PARTITIONTIME) >= DATE_TRUNC(CURRENT_DATE(), MONTH) "
         "GROUP BY service_description"
@@ -1595,7 +1595,7 @@ def test_gcp_submit_quota_submits_both_metrics() -> None:
     client = FakeGcpQuotaClient()
     result = gcp_submit_quota(
         client,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         justification_text="reason text",
     )
@@ -1612,14 +1612,14 @@ def test_gcp_submit_quota_falls_back_to_console_url_on_failure() -> None:
     client = FakeGcpQuotaClient(fail=True)
     result = gcp_submit_quota(
         client,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         justification_text="reason text",
     )
     assert result.submitted is False
     assert result.request_ids == []
     assert result.console_url is not None
-    assert "<GCP_PROJECT>" in result.console_url
+    assert "kinoforge-prod-deadbeef" in result.console_url
     assert "NVIDIA_T4_GPUS" in result.console_url
 
 
@@ -2033,7 +2033,7 @@ def test_cli_spinup_writes_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPa
             [
                 "spinup",
                 "--project-id",
-                "<GCP_PROJECT>",
+                "kinoforge-prod-deadbeef",
                 "--region",
                 "us-west1",
                 "--zone",
@@ -2079,7 +2079,7 @@ def test_cli_teardown_reads_manifest_then_deletes_it(tmp_path: Path, monkeypatch
     ):
         rc = main([
             "teardown",
-            "--project-id", "<GCP_PROJECT>",
+            "--project-id", "kinoforge-prod-deadbeef",
             "--zone", "us-west1-a",
         ])
     assert rc == 0
@@ -2416,7 +2416,7 @@ persistent. No production traffic.
 
 Active pay-as-you-go customer since 2026-06-07. Month-to-date spend
 across Compute Engine, Cloud Storage, BigQuery, and other services on
-project `<GCP_PROJECT>`: **$MTD_SPEND_USD$**.
+project `kinoforge-prod-deadbeef`: **$MTD_SPEND_USD$**.
 
 ## Cost controls
 
@@ -2519,13 +2519,13 @@ git commit -m "docs(quota-burn): justification draft templates + Phase 52 PROGRE
 **Acceptance Criteria:**
 - [ ] `pixi run preflight` passes (env, creds, clean tree) before any cloud call. Per CLAUDE.md durability.
 - [ ] `python -m tools.quota_burn spinup ...` exits 0; manifest exists at `.quota_burn/manifest.json`.
-- [ ] `gcloud compute instances list --project <GCP_PROJECT> --filter='labels.kinoforge-quota-burn=true'` lists exactly one VM.
+- [ ] `gcloud compute instances list --project kinoforge-prod-deadbeef --filter='labels.kinoforge-quota-burn=true'` lists exactly one VM.
 - [ ] `aws ec2 describe-instances --region us-west-2 --filters Name=tag:kinoforge-quota-burn,Values=true --query 'Reservations[].Instances[].InstanceId'` lists exactly one instance.
 - [ ] Both budget alarms visible in their respective consoles.
 - [ ] PROGRESS Phase 52 Task 10 checkbox flipped; resource IDs (non-sensitive: VM name, bucket name, table name, budget name) logged inline; manifest path mentioned.
 
 **Verify:**
-1. `gcloud compute instances list --project <GCP_PROJECT> --filter='labels.kinoforge-quota-burn=true' --format='value(name)'` → exactly 1 line.
+1. `gcloud compute instances list --project kinoforge-prod-deadbeef --filter='labels.kinoforge-quota-burn=true' --format='value(name)'` → exactly 1 line.
 2. `aws ec2 describe-instances --region us-west-2 --filters Name=tag:kinoforge-quota-burn,Values=true --query 'length(Reservations[].Instances[])'` → `1`.
 
 **Steps:**
@@ -2546,7 +2546,7 @@ If fails, do NOT proceed. Fix preflight issues first.
 ```bash
 cd /workspace
 pixi run python -m tools.quota_burn spinup \
-  --project-id <GCP_PROJECT> \
+  --project-id kinoforge-prod-deadbeef \
   --region us-west1 \
   --zone us-west1-a \
   --aws-region us-west-2 \
@@ -2559,7 +2559,7 @@ Expected: exits 0; final stdout line `manifest written: .quota_burn/manifest.jso
 
 ```bash
 gcloud compute instances list \
-  --project <GCP_PROJECT> \
+  --project kinoforge-prod-deadbeef \
   --filter='labels.kinoforge-quota-burn=true' \
   --format='value(name,zone,status)'
 
@@ -2572,7 +2572,7 @@ aws s3api list-buckets \
   --query 'Buckets[?starts_with(Name,`kinoforge-quota-burn-aws-`)].Name'
 
 gcloud storage buckets list \
-  --project <GCP_PROJECT> \
+  --project kinoforge-prod-deadbeef \
   --filter='labels.kinoforge-quota-burn=true' \
   --format='value(name)'
 ```
@@ -2603,7 +2603,7 @@ git commit -m "docs(quota-burn): Phase 52 Task 10 — day-0 spinup complete; man
 **Acceptance Criteria:**
 - [ ] Each day's snapshot is captured: GCP total, AWS total, sum, days elapsed, pacing-vs-cap.
 - [ ] If sum ever crosses $10 mid-burn (spec §5 pause point), STOP and request reauthorization before continuing.
-- [ ] If sum ever crosses $15, RUN TEARDOWN IMMEDIATELY (`python -m tools.quota_burn teardown --project-id <GCP_PROJECT> --zone us-west1-a`) and report.
+- [ ] If sum ever crosses $15, RUN TEARDOWN IMMEDIATELY (`python -m tools.quota_burn teardown --project-id kinoforge-prod-deadbeef --zone us-west1-a`) and report.
 
 **Verify:** At the end of day 4, `git log --oneline | rg 'Phase 52' | wc -l` shows ≥ 4 daily PROGRESS commits.
 
@@ -2614,7 +2614,7 @@ git commit -m "docs(quota-burn): Phase 52 Task 10 — day-0 spinup complete; man
 ```bash
 cd /workspace
 pixi run python -m tools.quota_burn snapshot \
-  --project-id <GCP_PROJECT> \
+  --project-id kinoforge-prod-deadbeef \
   | tee /tmp/quota-burn-snapshot-day-N.json
 ```
 
@@ -2655,7 +2655,7 @@ git commit -m "docs(quota-burn): Phase 52 day-N snapshot — total \$Z.ZZ"
 ```bash
 cd /workspace
 pixi run python -m tools.quota_burn snapshot \
-  --project-id <GCP_PROJECT> \
+  --project-id kinoforge-prod-deadbeef \
   > /tmp/quota-burn-snapshot-day-4.json
 ```
 
@@ -2666,7 +2666,7 @@ Replace the line containing `$MTD_SPEND_USD$` with the formatted services list. 
 ```markdown
 Active pay-as-you-go customer since 2026-06-07. Month-to-date spend
 across Compute Engine ($2.02), Cloud Storage ($0.50), BigQuery ($1.50)
-on project `<GCP_PROJECT>`: **$4.02 total**.
+on project `kinoforge-prod-deadbeef`: **$4.02 total**.
 ```
 
 - [ ] **Step 3: Substitute in `docs/quota-justification-aws.md`**
@@ -2708,7 +2708,7 @@ git commit -m "docs(quota-burn): populate day-4 MTD spend figures in justificati
 - [ ] PROGRESS Phase 52 marked closed with total spend ≤ $20, submission state, and next-step pointer ("await approval emails; on approval kick off A3 + A4").
 
 **Verify:**
-1. `gcloud compute instances list --project <GCP_PROJECT> --filter='labels.kinoforge-quota-burn=true' --format='value(name)'` → empty.
+1. `gcloud compute instances list --project kinoforge-prod-deadbeef --filter='labels.kinoforge-quota-burn=true' --format='value(name)'` → empty.
 2. `aws ec2 describe-instances --region us-west-2 --filters Name=tag:kinoforge-quota-burn,Values=true --query 'length(Reservations[].Instances[])'` → `0`.
 3. `aws s3api list-buckets --query 'Buckets[?starts_with(Name,\`kinoforge-quota-burn-aws-\`)]' --output json` → `[]`.
 
@@ -2719,7 +2719,7 @@ git commit -m "docs(quota-burn): populate day-4 MTD spend figures in justificati
 ```bash
 cd /workspace
 pixi run preflight
-pixi run python -m tools.quota_burn snapshot --project-id <GCP_PROJECT> \
+pixi run python -m tools.quota_burn snapshot --project-id kinoforge-prod-deadbeef \
   > /tmp/quota-burn-snapshot-day-5-pre.json
 ```
 
@@ -2728,7 +2728,7 @@ pixi run python -m tools.quota_burn snapshot --project-id <GCP_PROJECT> \
 ```bash
 cd /workspace
 pixi run python -m tools.quota_burn submit-quota \
-  --project-id <GCP_PROJECT> \
+  --project-id kinoforge-prod-deadbeef \
   --region us-west1 \
   --aws-region us-west-2 \
   --justification-gcp docs/quota-justification-gcp.md \
@@ -2744,7 +2744,7 @@ If GCP fallback URL printed: surface it to operator with 1-sentence instruction.
 ```bash
 cd /workspace
 pixi run python -m tools.quota_burn teardown \
-  --project-id <GCP_PROJECT> \
+  --project-id kinoforge-prod-deadbeef \
   --zone us-west1-a
 ```
 
@@ -2753,7 +2753,7 @@ Expected: lists deleted resources; manifest file removed.
 - [ ] **Step 4: Verify zero remaining**
 
 ```bash
-gcloud compute instances list --project <GCP_PROJECT> \
+gcloud compute instances list --project kinoforge-prod-deadbeef \
   --filter='labels.kinoforge-quota-burn=true' --format='value(name)'
 # Expected: empty
 
@@ -2767,7 +2767,7 @@ aws s3api list-buckets \
   --output json
 # Expected: []
 
-gcloud storage buckets list --project <GCP_PROJECT> \
+gcloud storage buckets list --project kinoforge-prod-deadbeef \
   --filter='labels.kinoforge-quota-burn=true' --format='value(name)'
 # Expected: empty
 ```
@@ -2779,7 +2779,7 @@ If anything non-empty, STOP and investigate; do not declare Phase 52 closed.
 ```bash
 cd /workspace
 # Spend reporting can lag by a few hours; snapshot anyway and note the lag in PROGRESS.
-pixi run python -m tools.quota_burn snapshot --project-id <GCP_PROJECT> \
+pixi run python -m tools.quota_burn snapshot --project-id kinoforge-prod-deadbeef \
   > /tmp/quota-burn-snapshot-day-5-post.json
 ```
 

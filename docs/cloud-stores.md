@@ -28,7 +28,7 @@ models:
     target: checkpoints
 store:
   kind: s3
-  bucket: kf-prod
+  bucket: <S3_BUCKET>
   prefix: kinoforge
 ```
 
@@ -62,7 +62,7 @@ cloud ledger, and the duplicate-instance guard in `kinoforge deploy`
 may not fire.
 
 This is a documented v1 constraint. A future layer will add
-`--store-uri s3://kf-prod` (or `KINOFORGE_STORE_URI`) so that any
+`--store-uri s3://<S3_BUCKET>` (or `KINOFORGE_STORE_URI`) so that any
 command can bootstrap its own sidecar from a single flag.
 
 ## Migration from a local ledger

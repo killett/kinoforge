@@ -96,6 +96,8 @@ from tools.scan_identifiers import (
 _REAL_ACCOUNT = "9" + "18273645" + "019"
 _REAL_PROJECT = "kinoforge-prod-" + "0dd" + "b375e"
 _REAL_UUID = "4b0dbe0c-" + "3a76-401a-" + "ac2e-" + "d0d949b9fa3e"
+_REAL_BUCKET_GS = "acme" + "-render-output"
+_REAL_BUCKET_S3 = "acme" + "-prod"
 
 
 def _run_git(repo: Path, *args: str) -> None:
@@ -145,8 +147,16 @@ def test_pattern_names_are_the_six_declared_classes() -> None:
             _REAL_PROJECT,
         ),
         (f"billing_dataset = '{_REAL_PROJECT}.all_billing_data'", "gcp_project_id", _REAL_PROJECT),
-        ("gs://acme-render-output/x", "cloud_bucket_uri", "acme-render-output"),
-        ("s3://acme-prod/artifacts", "cloud_bucket_uri", "acme-prod"),
+        (
+            f"gs://{_REAL_BUCKET_GS}/x",
+            "cloud_bucket_uri",
+            _REAL_BUCKET_GS,
+        ),
+        (
+            f"s3://{_REAL_BUCKET_S3}/artifacts",
+            "cloud_bucket_uri",
+            _REAL_BUCKET_S3,
+        ),
     ],
 )
 def test_concrete_identifier_is_found(

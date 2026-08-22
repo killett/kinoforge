@@ -210,7 +210,7 @@ git commit -m "live(c28): A0 RunPod input schema probe — restart_policy/networ
 - [ ] Policy attached to `kinoforge-ci` user.
 - [ ] Tool is idempotent: re-running succeeds without error when state is already correct.
 
-**Verify:** `pixi run pytest tests/tools/test_c28_provision_s3_diagnostics.py -v` → 4+ passed; then `pixi run -e live-skypilot aws s3 ls s3://<DIAG_BUCKET>/` → empty listing (no auth error).
+**Verify:** `pixi run pytest tests/tools/test_c28_provision_s3_diagnostics.py -v` → 4+ passed; then `pixi run -e live-skypilot aws s3 ls s3://<S3_BUCKET>/` → empty listing (no auth error).
 
 **Steps:**
 
@@ -409,7 +409,7 @@ Expected: `OK: bucket=<DIAG_BUCKET> policy=kinoforge-c28-diag-put user=kinoforge
 
 - [ ] **Step 6: Verify access.**
 
-Run: `pixi run -e live-skypilot aws s3 ls s3://<DIAG_BUCKET>/`
+Run: `pixi run -e live-skypilot aws s3 ls s3://<S3_BUCKET>/`
 Expected: empty listing, no `AccessDenied` error.
 
 - [ ] **Step 7: Commit.**
@@ -1112,7 +1112,7 @@ Expected: 1 passed (or skipped if the smoke encountered an unrecoverable infra e
 
 ```bash
 pixi run -e live-skypilot aws s3 cp \
-  "s3://<DIAG_BUCKET>/$(jq -r .s3_key tests/live/_c28_phase_a_evidence.json)" \
+  "s3://<S3_BUCKET>/$(jq -r .s3_key tests/live/_c28_phase_a_evidence.json)" \
   /tmp/c28_phase_a_diag.txt
 less /tmp/c28_phase_a_diag.txt
 ```

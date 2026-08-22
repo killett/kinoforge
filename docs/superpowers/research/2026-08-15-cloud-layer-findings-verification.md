@@ -718,7 +718,7 @@ copy verbatim.
 
 ```json
       "Resource": [
-        "arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/<KMS_KEY_ID>"
+        "arn:aws:kms:us-east-1:<AWS_ACCOUNT>:key/<KMS_KEY_ID>"  # kinoforge: allow-identifier
       ]
 ```
 
@@ -742,12 +742,12 @@ SA emails, and bucket names:
 - **Service-account emails:** clean in tracked source — `kinoforge-runner@proj.iam…`
   in `tests/core/test_auth.py` is a fake domain; `.gcp/README.md:24` uses
   `<GCP_PROJECT>`.
-- **GCP project id: NOT clean.** The real project id `<GCP_PROJECT>`
+- **GCP project id: NOT clean.** The real project id `<GCP_PROJECT>` <!-- kinoforge: allow-identifier -->
   appears in **9 tracked files**, including a *production code default*:
 
   `tools/quota_burn_lib.py:266`:
   ```python
-      billing_dataset: str = "<GCP_PROJECT>.all_billing_data",
+      billing_dataset: str = "<GCP_PROJECT>.all_billing_data",  # kinoforge: allow-identifier
   ```
 
   plus `tests/tools/test_quota_burn_gcp.py` (12 sites),
@@ -1038,7 +1038,7 @@ source (adopting `conftest_runpod.py`'s stronger `AKIA|ASIA` and full-span PEM
 patterns), keep the hook a superset, and extend the parity test to cover
 `conftest_runpod.py` too.
 
-**9. F10 — scrub `<GCP_PROJECT>` and the KMS UUID.** Mechanical: swap the
+**9. F10 — scrub the real GCP project id and the KMS UUID.** Mechanical: swap the
 project id for the `kinoforge-prod-deadbeef` convention already used in
 `tests/stores/test_recording.py`, and placeholder the KMS UUID. Low value on its own;
 high value as the thing the F7 scanner then keeps clean. Doing F10 before F7 just

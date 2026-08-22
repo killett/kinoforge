@@ -103,7 +103,7 @@ def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     # Wait for result (Nova Reel typically completes in 1-3 minutes for 6s clips).
     artifact = backend.result(submitted)
     _log.info("nova reel artifact: %s", artifact.uri)
-    assert artifact.uri.startswith("s3://<S3_OUTPUT_BUCKET>/")
+    assert artifact.uri.startswith("s3://<S3_BUCKET>/")
     assert artifact.filename == "output.mp4"
 
     # Download + verify MP4 ftyp signature.

@@ -31,7 +31,7 @@ container.
 **Success criteria.**
 
 - GCP `GPUS_ALL_REGIONS` ≥ 1 (global) AND `NVIDIA_T4_GPUS` ≥ 1 in `us-west1`
-  on project `<GCP_PROJECT>`.
+  on project `kinoforge-prod-deadbeef`.
 - AWS service quota `L-DB2E81BA` ("Running On-Demand G/VT instance vCPUs")
   ≥ 4 in `us-west-2`. The prior AWS case `cd3e0e81…I2kxtcvR` was filed in
   `us-east-1`; this spec recommends filing fresh in `us-west-2` to align
@@ -46,7 +46,7 @@ container.
 
 ### 2.1 GCP — target $5, ceiling $7
 
-Region `us-west1`, project `<GCP_PROJECT>`. All resources tagged
+Region `us-west1`, project `kinoforge-prod-deadbeef`. All resources tagged
 `kinoforge-quota-burn=true`.
 
 - 1× `e2-small` VM (2 vCPU, 2 GB) running 24/7 × 5 days ≈ $2.02.
@@ -188,7 +188,7 @@ The replacement template has four load-bearing blocks.
 >
 > Account context: Active pay-as-you-go customer since 2026-06-07. Month-to-date
 > spend across Compute Engine, Cloud Storage, BigQuery: $X.XX (insert from
-> day-4 snapshot). Project `<GCP_PROJECT>`.
+> day-4 snapshot). Project `kinoforge-prod-deadbeef`.
 >
 > Cost controls: Cloud Billing budget alarm at $50/month notifies project
 > owner via email. SkyPilot's `autostop=10m` flag terminates idle instances.

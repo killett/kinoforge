@@ -70,10 +70,10 @@ def test_nova_reel_engine_config_loads_required_fields() -> None:
 
     cfg = NovaReelEngineConfig(
         region_name="us-east-1",
-        output_s3_uri="s3://<S3_OUTPUT_BUCKET>/",
+        output_s3_uri="s3://<S3_BUCKET>/",
     )
     assert cfg.region_name == "us-east-1"
-    assert cfg.output_s3_uri == "s3://<S3_OUTPUT_BUCKET>/"
+    assert cfg.output_s3_uri == "s3://<S3_BUCKET>/"
     # Defaults
     assert cfg.model_id == "amazon.nova-reel-v1:1"
     assert cfg.duration_seconds == 6
@@ -102,7 +102,7 @@ def test_nova_reel_engine_config_forbids_unknown_keys() -> None:
     with pytest.raises(pydantic.ValidationError, match="extra"):
         NovaReelEngineConfig(
             region_name="us-east-1",
-            output_s3_uri="s3://<S3_OUTPUT_BUCKET>/",
+            output_s3_uri="s3://<S3_BUCKET>/",
             unknown_field="oops",
         )
 
@@ -115,7 +115,7 @@ def test_engine_config_nova_reel_optional() -> None:
         precision="fp16",
         nova_reel=NovaReelEngineConfig(
             region_name="us-east-1",
-            output_s3_uri="s3://<S3_OUTPUT_BUCKET>/",
+            output_s3_uri="s3://<S3_BUCKET>/",
         ),
     )
     assert cfg.kind == "nova_reel"
@@ -330,7 +330,7 @@ def _build_cfg(**overrides: Any) -> dict[str, Any]:
             "nova_reel": {
                 "region_name": "us-east-1",
                 "model_id": "amazon.nova-reel-v1:1",
-                "output_s3_uri": "s3://<S3_OUTPUT_BUCKET>/",
+                "output_s3_uri": "s3://<S3_BUCKET>/",
                 "duration_seconds": 6,
                 "fps": 24,
                 "dimension": "1280x720",
@@ -429,7 +429,7 @@ def test_nova_reel_backend_submit_calls_start_async_invoke() -> None:
     assert call["modelInput"]["videoGenerationConfig"]["durationSeconds"] == 6
     assert call["modelInput"]["videoGenerationConfig"]["fps"] == 24
     assert call["modelInput"]["videoGenerationConfig"]["dimension"] == "1280x720"
-    assert call["outputDataConfig"]["s3OutputDataConfig"]["s3Uri"] == "s3://<S3_OUTPUT_BUCKET>/"
+    assert call["outputDataConfig"]["s3OutputDataConfig"]["s3Uri"] == "s3://<S3_BUCKET>/"
 
 
 def test_nova_reel_backend_submit_with_kms_key_passes_kms_to_output_config() -> None:
@@ -459,7 +459,7 @@ def test_nova_reel_backend_result_polls_until_completed() -> None:
 
     assert isinstance(artifact, Artifact)
     assert artifact.uri == (
-        "s3://<S3_OUTPUT_BUCKET>/inv-1/output.mp4"
+        "s3://<S3_BUCKET>/inv-1/output.mp4"
     )
     assert artifact.filename == "output.mp4"
     assert artifact.url is None
@@ -824,7 +824,7 @@ engine:
   nova_reel:
     region_name: us-east-1
     model_id: amazon.nova-reel-v1:1
-    output_s3_uri: s3://<S3_OUTPUT_BUCKET>/
+    output_s3_uri: s3://<S3_BUCKET>/
     duration_seconds: 6
     fps: 24
     dimension: 1280x720
@@ -1090,7 +1090,7 @@ chore(aws): attach Bedrock Nova Reel IAM policy + create S3 output bucket
 REAL CLOUD MUTATION (Layer 3 Task 4). Both operations are reversible:
 
   1. Created S3 bucket arn:aws:s3:::<S3_OUTPUT_BUCKET> in
-     us-east-1 (delete with: aws s3 rb s3://<S3_OUTPUT_BUCKET>)
+     us-east-1 (delete with: aws s3 rb s3://<S3_BUCKET>)
   2. Attached inline policy 'kinoforge-nova-reel' to IAM user
      'kinoforge-ci' (delete with: aws iam delete-user-policy
      --user-name kinoforge-ci --policy-name kinoforge-nova-reel)
@@ -1360,7 +1360,7 @@ EOF
 - [ ] Without `KINOFORGE_LIVE_TESTS=1`, the test is skipped (does not fail collection)
 - [ ] With the env set, the test would actually try to run AWS calls (verified by collecting it, NOT executing)
 - [ ] Test loads `examples/configs/nova-reel.yaml` and reads the prompt from `/workspace/prompt-field-realistic.txt`
-- [ ] Test asserts: `artifact.uri` starts with `s3://<S3_OUTPUT_BUCKET>/`; bytes read from S3 start with one of the MP4 ftyp prefixes; commit BEFORE Task 7 fires.
+- [ ] Test asserts: `artifact.uri` starts with `s3://<S3_BUCKET>/`; bytes read from S3 start with one of the MP4 ftyp prefixes; commit BEFORE Task 7 fires.
 
 **Verify:** `pixi run test tests/live/test_nova_reel_live.py --collect-only 2>&1 | tail -5` → collects 1 test (or skips at module level with no error).
 With env unset: `pixi run test tests/live/test_nova_reel_live.py -v 2>&1 | tail -5` → 1 skipped.
@@ -1475,7 +1475,7 @@ def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     # Wait for result (Nova Reel typically completes in 1-3 minutes for 6s clips).
     artifact = backend.result(submitted)
     _log.info("nova reel artifact: %s", artifact.uri)
-    assert artifact.uri.startswith("s3://<S3_OUTPUT_BUCKET>/")
+    assert artifact.uri.startswith("s3://<S3_BUCKET>/")
     assert artifact.filename == "output.mp4"
 
     # Download + verify MP4 ftyp signature.
@@ -1549,7 +1549,7 @@ EOF
 
 **Acceptance Criteria:**
 - [ ] Smoke test exits 0
-- [ ] A real MP4 lands at the recorded `s3://<S3_OUTPUT_BUCKET>/<inv-id>/output.mp4`
+- [ ] A real MP4 lands at the recorded `s3://<S3_BUCKET>/<inv-id>/output.mp4`
 - [ ] `tests/engines/fixtures/nova_reel/last_smoke.json` exists with: `git_sha`, `captured_at`, `artifact_uri`, `filename`, `model_id`, `region`
 - [ ] Total spend ≤ $1.50 (verified after by AWS Cost Explorer if needed; smoke itself logs the invocation count)
 
@@ -1596,7 +1596,7 @@ If the smoke fails AFTER submit (e.g. polling timeout, MP4 verification failure)
 cat /workspace/tests/engines/fixtures/nova_reel/last_smoke.json
 ```
 
-Confirm: valid JSON, `artifact_uri` starts with `s3://<S3_OUTPUT_BUCKET>/`, `git_sha` matches the Task 6 commit (or a slightly later one if a retry was needed).
+Confirm: valid JSON, `artifact_uri` starts with `s3://<S3_BUCKET>/`, `git_sha` matches the Task 6 commit (or a slightly later one if a retry was needed).
 
 - [ ] **Step 4: Commit fixture**
 

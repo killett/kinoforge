@@ -17,7 +17,7 @@ persistent. No production traffic.
 Active pay-as-you-go customer since 2026-06-07. Month-to-date spend
 across Compute Engine ($2.20), Networking ($0.36), Cloud KMS ($0.02),
 Cloud Storage ($0.00), BigQuery ($0.00), Cloud Logging ($0.00) on
-project `<GCP_PROJECT>`: **$2.58 total**.
+project `kinoforge-prod-deadbeef`: **$2.58 total**.
 
 ## Cost controls
 

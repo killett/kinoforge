@@ -102,9 +102,10 @@ first unchecked task without redoing committed work.
   Also worth carrying forward: **F11** warm-attach (`cli/_commands.py:2024-2026`) is wrong on BOTH
   branches for skypilot — ledger-replay hands back a dead process's `127.0.0.1:<port>`, and the
   fallback hands `_wait_ready` an `ssh://` URL to HTTP. **F10** is wider than reported — the real
-  GCP project id `<GCP_PROJECT>` is in 9 tracked files including a code default
+  GCP project id was in 9 tracked files including a code default
   (`tools/quota_burn_lib.py:266`), while `tests/stores/test_recording.py` already establishes the
-  `kinoforge-prod-deadbeef` fake convention. **F7** the three credential-regex lists disagree; the
+  `kinoforge-prod-deadbeef` fake convention (now applied at every site — see Task 2, this phase).
+  **F7** the three credential-regex lists disagree; the
   user-scope hook matches `AKIA` only, missing STS `ASIA…` temp creds that a SkyPilot
   instance-profile session produces, and only the hook↔`tools/_redact.py` pairing is parity-tested.
   Recommended order + the three "not worth fixing" calls (F9 policy validation, F5 spec split,
@@ -3133,7 +3134,7 @@ happens when a concrete next-step is identified.
 - **E25.** `kinoforge ledger migrate` helper for legacy entries.
 
 #### Phase 34 — Layer T (cloud ledger CLI routing)
-- **E26.** `--store-uri s3://kf-prod` / `KINOFORGE_STORE_URI` cross-machine bootstrap (README:426).
+- **E26.** `--store-uri s3://<S3_BUCKET>` / `KINOFORGE_STORE_URI` cross-machine bootstrap (README:426).
 - **E27.** Lock-contention surfacing in non-batch handlers (`LockTimeout` catch-arm beyond `_cmd_batch`).
 
 #### Phase 38 — Layer W (S3 / GCS real-cloud)
@@ -5535,7 +5536,7 @@ Task 10 will abort at GCP budget creation unless these are set in `/workspace/.e
 
 Live resources (manifest at `.quota_burn/manifest.json`):
 
-- **GCP project `<GCP_PROJECT>`** (zone us-west1-a):
+- **GCP project `kinoforge-prod-deadbeef`** (zone us-west1-a):
   - VM `kinoforge-burn-upddv3` (e2-small, status RUNNING)
   - Boot disk `kinoforge-burn-upddv3-disk` (10 GB pd-balanced, auto-delete=True)
   - GCS bucket `kinoforge-quota-burn-gcp-upddv3`
@@ -5594,7 +5595,7 @@ instance because the 8h `shutdown -h +480` predated commit `72bfda8` that extend
 window to 8d for the 5-day burn). GCP resources unchanged (`upddv3` suffix).
 
 **Live snapshot output** (`pixi run python -m tools.quota_burn snapshot --project-id
-<GCP_PROJECT>`, post-hardening commit `977fafa`):
+kinoforge-prod-deadbeef`, post-hardening commit `977fafa`):
 
 - `gcp_status: export-not-ready` — BQ billing-export dataset `all_billing_data`
   created 2026-06-13 12:13 PDT, first `gcp_billing_export_v1_*` table not yet landed
@@ -5614,7 +5615,7 @@ unavailable):
     operator enabled 2026-06-13 12:13 PDT after dataset pre-created via
     `bq mk --dataset --location=US all_billing_data`.
 14. `kinoforge-runner` SA lacked `bigquery.datasets.create` → self-granted
-    `roles/bigquery.admin` on `<GCP_PROJECT>` (covers create + manage).
+    `roles/bigquery.admin` on `kinoforge-prod-deadbeef` (covers create + manage).
 15. `kinoforge-ci` AWS IAM user lacked `ce:GetCostAndUsage` → self-attached managed
     policy `AWSBillingReadOnlyAccess`.
 16. `_do_snapshot` blew up at GCP fetch when export not ready → commit `977fafa`
@@ -5626,7 +5627,7 @@ unavailable):
 **Final MTD snapshot** (`pixi run python -m tools.quota_burn snapshot`, as of
 `2026-06-17T06:49:53` local):
 
-- GCP `<GCP_PROJECT>`: **$2.58** total. Compute Engine $2.20,
+- GCP `kinoforge-prod-deadbeef`: **$2.58** total. Compute Engine $2.20,
   Networking $0.36, Cloud KMS $0.02, Cloud Storage $0.00, BigQuery $0.00.
   `gcp_status: ok` — BQ billing-export now live, no partial-report fallback.
 - AWS `<AWS_ACCOUNT>`: **$1.76** total. VPC $0.57, EC2-compute $0.48,
@@ -5656,13 +5657,13 @@ in non-compute over six days.
   shape the lib targets — the broad `except Exception` in
   `gcp_submit_quota` catches the AttributeError and emits the pre-filled
   console URL. **Operator action**: click
-  `https://console.cloud.google.com/iam-admin/quotas?project=<GCP_PROJECT>&filter=metric%3Acompute.googleapis.com%2FNVIDIA_T4_GPUS+OR+compute.googleapis.com%2Fgpus_all_regions`,
+  `https://console.cloud.google.com/iam-admin/quotas?project=kinoforge-prod-deadbeef&filter=metric%3Acompute.googleapis.com%2FNVIDIA_T4_GPUS+OR+compute.googleapis.com%2Fgpus_all_regions`,
   paste the body of `docs/quota-justification-gcp.md` into the request
   reason, submit both global `gpus_all_regions=1` and regional
   `nvidia_t4_gpus=1` (us-west1).
 
 **Teardown:** `pixi run python -m tools.quota_burn teardown --project-id
-<GCP_PROJECT> --zone us-west1-a` returned:
+kinoforge-prod-deadbeef --zone us-west1-a` returned:
 
 - GCP deleted: VM `kinoforge-burn-upddv3`, bucket
   `kinoforge-quota-burn-gcp-upddv3`, budget

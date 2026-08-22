@@ -93,7 +93,7 @@ def test_gcp_spin_up_returns_resource_ids() -> None:
     clients = _make_clients()
     out = gcp_spin_up(
         clients,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
@@ -112,7 +112,7 @@ def test_gcp_spin_up_tags_every_resource() -> None:
     clients = _make_clients()
     gcp_spin_up(
         clients,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
@@ -143,7 +143,7 @@ def test_gcp_spin_up_arms_kernel_shutdown() -> None:
     clients = _make_clients()
     gcp_spin_up(
         clients,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
@@ -159,7 +159,7 @@ def test_gcp_spin_up_uses_e2_small_in_zone() -> None:
     clients = _make_clients()
     gcp_spin_up(
         clients,
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         region="us-west1",
         zone="us-west1-a",
         tag="kinoforge-quota-burn",
@@ -295,7 +295,7 @@ def test_gcp_tear_down_deletes_every_resource() -> None:
     deleted = gcp_tear_down(
         clients,
         _teardown_manifest(),
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         zone="us-west1-a",
     )
     assert "kinoforge-burn-xyz" in deleted
@@ -328,7 +328,7 @@ def test_gcp_tear_down_is_idempotent_on_missing() -> None:
     deleted = gcp_tear_down(
         clients,
         _teardown_manifest(),
-        project_id="<GCP_PROJECT>",
+        project_id="kinoforge-prod-deadbeef",
         zone="us-west1-a",
     )
     assert deleted == []
@@ -353,7 +353,7 @@ def test_gcp_tear_down_raises_on_unexpected_error() -> None:
         gcp_tear_down(
             clients,
             _teardown_manifest(),
-            project_id="<GCP_PROJECT>",
+            project_id="kinoforge-prod-deadbeef",
             zone="us-west1-a",
         )
 
@@ -378,7 +378,7 @@ def test_gcp_mtd_spend_groups_by_service() -> None:
             {"service_description": "BigQuery", "cost_usd": 1.50},
         ]
     )
-    spend = gcp_mtd_spend(client, project_id="<GCP_PROJECT>")
+    spend = gcp_mtd_spend(client, project_id="kinoforge-prod-deadbeef")
     assert spend == {"Compute Engine": 2.0, "Cloud Storage": 0.5, "BigQuery": 1.5}
 
 
@@ -398,7 +398,7 @@ def test_gcp_mtd_spend_raises_billing_export_not_ready_when_dataset_missing() ->
 
         def __iter__(self) -> Any:
             raise gerr.NotFound(
-                "Dataset <GCP_PROJECT>:all_billing_data was not found"
+                "Dataset kinoforge-prod-deadbeef:all_billing_data was not found"
             )
 
     class _Client:
@@ -406,7 +406,7 @@ def test_gcp_mtd_spend_raises_billing_export_not_ready_when_dataset_missing() ->
             return _NotFoundOnIter()
 
     with pytest.raises(BillingExportNotReady) as exc_info:
-        gcp_mtd_spend(_Client(), project_id="<GCP_PROJECT>")
+        gcp_mtd_spend(_Client(), project_id="kinoforge-prod-deadbeef")
     assert "all_billing_data" in str(exc_info.value)
 
 
@@ -424,7 +424,7 @@ def test_gcp_mtd_spend_raises_billing_export_not_ready_when_table_glob_empty() -
     class _BadRequestOnIter:
         def __iter__(self) -> Any:
             raise gerr.BadRequest(
-                "<GCP_PROJECT>:all_billing_data.gcp_billing_export_v1_* "
+                "kinoforge-prod-deadbeef:all_billing_data.gcp_billing_export_v1_* "
                 "does not match any table."
             )
 
@@ -433,7 +433,7 @@ def test_gcp_mtd_spend_raises_billing_export_not_ready_when_table_glob_empty() -
             return _BadRequestOnIter()
 
     with pytest.raises(BillingExportNotReady) as exc_info:
-        gcp_mtd_spend(_Client(), project_id="<GCP_PROJECT>")
+        gcp_mtd_spend(_Client(), project_id="kinoforge-prod-deadbeef")
     assert "does not match any table" in str(exc_info.value)
 
 
@@ -454,7 +454,7 @@ def test_gcp_mtd_spend_propagates_unrelated_errors() -> None:
             return _ForbiddenOnIter()
 
     with pytest.raises(gerr.Forbidden):
-        gcp_mtd_spend(_Client(), project_id="<GCP_PROJECT>")
+        gcp_mtd_spend(_Client(), project_id="kinoforge-prod-deadbeef")
 
 
 def test_gcp_mtd_spend_propagates_other_bad_requests() -> None:
@@ -474,4 +474,4 @@ def test_gcp_mtd_spend_propagates_other_bad_requests() -> None:
             return _SqlBadRequest()
 
     with pytest.raises(gerr.BadRequest):
-        gcp_mtd_spend(_Client(), project_id="<GCP_PROJECT>")
+        gcp_mtd_spend(_Client(), project_id="kinoforge-prod-deadbeef")

@@ -381,7 +381,7 @@ engine:
   bedrock_video:
     region_name: us-east-1
     model_id: amazon.nova-reel-v1:1
-    output_s3_uri: s3://<S3_OUTPUT_BUCKET>/
+    output_s3_uri: s3://<S3_BUCKET>/
     duration_seconds: 6
     fps: 24
     dimension: 1280x720

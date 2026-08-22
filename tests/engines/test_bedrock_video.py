@@ -64,7 +64,7 @@ def _build_cfg(**overrides: Any) -> dict[str, Any]:
             "bedrock_video": {
                 "region_name": "us-west-2",
                 "model_id": "luma.ray-v2:0",
-                "output_s3_uri": "s3://<S3_OUTPUT_BUCKET>/kinoforge-output/",
+                "output_s3_uri": "s3://bkt/kinoforge-output/",
                 "model_input_template": {
                     "prompt": "${PROMPT}",
                     "duration": 5,
@@ -170,7 +170,7 @@ def test_bedrock_video_backend_submit_calls_start_async_invoke() -> None:
     assert call["modelInput"]["resolution"] == "720p"
     assert (
         call["outputDataConfig"]["s3OutputDataConfig"]["s3Uri"]
-        == "s3://<S3_OUTPUT_BUCKET>/kinoforge-output/"
+        == "s3://bkt/kinoforge-output/"
     )
     # job_id is a non-empty string
     assert isinstance(job_id, str) and job_id
@@ -204,9 +204,7 @@ def test_bedrock_video_backend_result_polls_until_completed() -> None:
     artifact = backend.result(job_id)
 
     assert isinstance(artifact, Artifact)
-    assert artifact.uri == (
-        "s3://<S3_OUTPUT_BUCKET>/kinoforge-output/inv-1/output.mp4"
-    )
+    assert artifact.uri == ("s3://bkt/kinoforge-output/inv-1/output.mp4")
     assert artifact.filename == "output.mp4"
     assert artifact.url is None or artifact.url == ""
     assert artifact.headers is None or artifact.headers == {}

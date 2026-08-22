@@ -10,10 +10,10 @@ deterministically in CI — no AWS environment needed.
 Fixture schema::
 
     {
-        "artifact_uri": "s3://bedrock-video-generation-us-west-2-<id>/kinoforge-output/<inv-id>/output.mp4",
+        "artifact_uri": "s3://bkt/kinoforge-output/<inv-id>/output.mp4",
         "invocation_arn": "arn:aws:bedrock:us-west-2:...",
         "model_id": "luma.ray-v2:0",
-        "output_s3_uri": "s3://bedrock-video-generation-us-west-2-<id>/kinoforge-output/",
+        "output_s3_uri": "s3://bkt/kinoforge-output/",
         "prompt": "...",
         "region_name": "us-west-2"
     }

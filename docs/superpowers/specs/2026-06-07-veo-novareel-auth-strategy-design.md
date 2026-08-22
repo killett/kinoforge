@@ -379,7 +379,7 @@ Layer 2 plan executes these via `gcloud` from inside the container:
 gcloud services enable aiplatform.googleapis.com
 gcloud projects add-iam-policy-binding $PID \
   --member=serviceAccount:$SA --role=roles/aiplatform.user
-gcloud storage buckets create gs://kinoforge-veo-output-${PID}
+gcloud storage buckets create gs://<GCS_BUCKET>-${PID}
 ```
 
 **Probe (`tools/probe_hosted.py`) verifies post-enable**:
@@ -430,8 +430,8 @@ Both engines reuse existing creds:
 
 | Service | Purpose | Auth | Region | Output sink |
 |---|---|---|---|---|
-| Vertex AI Veo 2 | t2v/i2v hosted | GCP SA | us-central1 | `gs://kinoforge-veo-output-${PID}/` |
-| Bedrock Nova Reel 1.1 | t2v hosted | AWS SigV4 | us-east-1 | `s3://<S3_OUTPUT_BUCKET>/` |
+| Vertex AI Veo 2 | t2v/i2v hosted | GCP SA | us-central1 | `gs://<GCS_BUCKET>-${PID}/` |
+| Bedrock Nova Reel 1.1 | t2v hosted | AWS SigV4 | us-east-1 | `s3://<S3_BUCKET>/` |
 
 Plus per-service subsections covering model-access status, attached IAM
 policies, and probe history.
@@ -624,7 +624,7 @@ engine:
     project_id: ${GCP_PROJECT_ID}
     location: us-central1
     model: veo-2.0-generate-001
-    output_gcs_uri: gs://kinoforge-veo-output-${GCP_PROJECT_ID}/
+    output_gcs_uri: gs://<GCS_BUCKET>-${GCP_PROJECT_ID}/
     duration_seconds: 5
     aspect_ratio: "16:9"
     auth:
@@ -647,7 +647,7 @@ engine:
   nova_reel:
     region_name: us-east-1
     model_id: amazon.nova-reel-v1:1
-    output_s3_uri: s3://<S3_OUTPUT_BUCKET>/
+    output_s3_uri: s3://<S3_BUCKET>/
     duration_seconds: 6
     fps: 24
     dimension: "1280x720"

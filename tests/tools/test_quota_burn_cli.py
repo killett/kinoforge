@@ -48,7 +48,7 @@ def test_cli_spinup_writes_manifest(
             [
                 "spinup",
                 "--project-id",
-                "<GCP_PROJECT>",
+                "kinoforge-prod-deadbeef",
                 "--region",
                 "us-west1",
                 "--zone",
@@ -104,7 +104,7 @@ def test_cli_teardown_reads_manifest_then_deletes_it(
             [
                 "teardown",
                 "--project-id",
-                "<GCP_PROJECT>",
+                "kinoforge-prod-deadbeef",
                 "--zone",
                 "us-west1-a",
             ]
@@ -136,7 +136,7 @@ def test_cli_snapshot_tolerates_billing_export_not_ready(
         patch(
             "tools.quota_burn.gcp_mtd_spend",
             side_effect=BillingExportNotReady(
-                "Dataset <GCP_PROJECT>:all_billing_data was not found"
+                "Dataset kinoforge-prod-deadbeef:all_billing_data was not found"
             ),
         ),
         patch(
@@ -152,7 +152,7 @@ def test_cli_snapshot_tolerates_billing_export_not_ready(
         ),
         patch("google.cloud.bigquery.Client", return_value=MagicMock(), create=True),
     ):
-        rc = main(["snapshot", "--project-id", "<GCP_PROJECT>"])
+        rc = main(["snapshot", "--project-id", "kinoforge-prod-deadbeef"])
     assert rc == 0
     captured = capsys.readouterr()
     # Parse stdout JSON; gcp_status must surface the export-not-ready signal
