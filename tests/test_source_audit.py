@@ -1,151 +1,84 @@
-"""Lockdown: no committed text-source file may contain a credential-prefix literal.
+"""Lockdown: no tracked file in the repo may contain a credential-shaped literal.
 
-Walks documentation, tests, and repo-root markdown for scanner-grade credential
-prefixes (sk-proj-, sk-ant-api03-, AKIA/ASIA, PEM, hf_ tokens). Fail-closed:
-raises a single AssertionError listing every hit so a future spec or test
-draft that quotes a literal credential string fails fast before it can reach
-main.
+Fail-closed standing guard over `git ls-files`, not a hand-listed path
+subset. Fires even when the committer used `--no-verify`, which the
+pre-commit hook cannot see.
 
 Pairs with:
-- _RecordingHTTPSeam.flush() in tests/providers/conftest_runpod.py (runtime
-  backstop for NEW leaks at fixture-capture time).
+- `tools/scan_secrets.py` (the same strict tier, applied to staged
+  content at commit time via the pre-commit hook).
+- `_RecordingHTTPSeam.flush()` in tests/providers/conftest_runpod.py
+  (runtime backstop for NEW leaks at fixture-capture time).
 - tests/providers/test_fixtures_audit.py (walks tests/**/*.json with the
-  loose production _CREDENTIAL_PATTERNS).
+  loose production credential patterns).
 
-Why a separate, scanner-grade pattern set:
-- Production _CREDENTIAL_PATTERNS in tests/providers/conftest_runpod.py is
-  intentionally loose (8-char minimum on prefix tails, generic Bearer match)
-  to catch test-time leaks aggressively. Applying it source-tree-wide trips
-  on ~90 unrelated internal test tokens and shape examples.
-- This audit instead targets what GitHub Secret Scanning actually flags:
-  AWS access keys, OpenAI/Anthropic sk- tokens, PEM private keys, and
-  HuggingFace tokens at canonical length.
+Previously this walked a hand-listed subset (docs/superpowers/**.md,
+tests/**.py, five root files) with a private 4-pattern copy. That could
+not see a credential pasted into examples/, tools/, src/, or a config
+file, and the pattern list could silently drift from
+`src/kinoforge/core/credential_patterns.py`. Both problems are closed by
+scanning every tracked file with the shared strict tier via
+`tools.scan_secrets.scan_all_tracked`.
 """
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
 from pathlib import Path
+
+from kinoforge.core.credential_patterns import STRICT_PATTERNS, iter_findings
+from tools.scan_secrets import scan_all_tracked
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 
-_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}\b")),
-    ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    (
-        "pem_private_key",
-        re.compile(
-            r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?-----END [A-Z ]{0,40}PRIVATE KEY-----"
-        ),
-    ),
-    ("hf_token", re.compile(r"\bhf_[A-Za-z0-9]{32,}\b")),
-]
 
+def test_no_tracked_file_contains_a_credential() -> None:
+    """Every tracked file must be free of strict-tier credential shapes.
 
-@dataclass(frozen=True)
-class SourceLeakHit:
-    """Single credential-shaped match in a source file."""
+    Widened from a hand-listed walk (docs/superpowers/**.md, tests/**.py,
+    five root files) to `git ls-files` — the previous version could not
+    see a credential pasted into examples/, tools/, src/, or a config.
 
-    path: Path
-    line: int
-    column: int
-    pattern_name: str
-    match_snippet: str
-
-
-def _walked_paths() -> list[Path]:
-    """Enumerate the files the audit walks.
-
-    Order is deterministic for stable assertion messages: globs first
-    (sorted), then the explicit repo-root files.
+    This is the standing guard: it fails even when the committer used
+    `--no-verify`, which the pre-commit hook cannot.
     """
-    paths: list[Path] = []
-    paths.extend(sorted((_REPO_ROOT / "docs" / "superpowers").rglob("*.md")))
-    paths.extend(sorted((_REPO_ROOT / "tests").rglob("*.py")))
-    for name in ("README.md", "AGENTS.md", "PROGRESS.md", "CLAUDE.md", ".env.example"):
-        candidate = _REPO_ROOT / name
-        if candidate.exists():
-            paths.append(candidate)
-    return paths
-
-
-def _audit_text(text: str, path: Path) -> list[SourceLeakHit]:
-    """Apply every `_PATTERNS` regex to *text* and collect every match."""
-    hits: list[SourceLeakHit] = []
-    for name, pattern in _PATTERNS:
-        for m in pattern.finditer(text):
-            line = text.count("\n", 0, m.start()) + 1
-            column = m.start() - (text.rfind("\n", 0, m.start()) + 1) + 1
-            snippet = m.group(0)
-            if len(snippet) > 40:
-                snippet = snippet[:40] + "..."
-            hits.append(
-                SourceLeakHit(
-                    path=path,
-                    line=line,
-                    column=column,
-                    pattern_name=name,
-                    match_snippet=snippet,
-                )
-            )
-    return hits
-
-
-def _format_offenders(hits: list[SourceLeakHit]) -> str:
-    """Build a human-readable multi-line block describing every leak."""
-    if not hits:
-        return ""
-    lines = [f"Found {len(hits)} credential-prefix literal(s) in source files:"]
-    for h in hits:
-        rel = h.path.relative_to(_REPO_ROOT)
-        lines.append(
-            f"  {rel}:{h.line}:{h.column} [{h.pattern_name}] {h.match_snippet!r}"
-        )
-    lines.append(
-        "Either rewrite the literal as runtime concatenation (tests) or a "
-        "shape-describing placeholder (docs), or — if the hit is intentional "
-        "and shape-matches the regex — tighten the regex in _PATTERNS."
+    findings = scan_all_tracked(_REPO_ROOT)
+    detail = "\n".join(
+        f"  {path}:{f.line_no}:{f.col} [{f.pattern_name}] {f.redacted_excerpt}"
+        for path, f in findings
     )
-    return "\n".join(lines)
-
-
-def test_no_committed_source_contains_a_credential() -> None:
-    """Every walked source file must be free of scanner-grade credential literals."""
-    all_hits: list[SourceLeakHit] = []
-    for path in _walked_paths():
-        try:
-            text = path.read_text()
-        except UnicodeDecodeError:
-            continue
-        all_hits.extend(_audit_text(text, path))
-    assert not all_hits, _format_offenders(all_hits)
-
-
-def test_credential_patterns_cover_expected() -> None:
-    """Audit's pattern set must cover the canonical scanner-grade names.
-
-    Guards against a future refactor that empties the list (which would
-    silently disable the lockdown).
-    """
-    assert len(_PATTERNS) >= 4
-    names = {name for name, _ in _PATTERNS}
-    expected = {"sk_token", "aws_access_key", "pem_private_key", "hf_token"}
-    missing = expected - names
-    assert not missing, f"_PATTERNS missing canonical names: {missing}"
-
-
-def test_audit_walker_fires_on_known_credential(tmp_path: Path) -> None:
-    """Reverse-test: planting a known credential literal must produce one hit.
-
-    Confirms the audit's matcher logic still works even if every real file
-    in the repo passes — without this, the main test could no-op forever.
-    """
-    leak_file = tmp_path / "rogue.md"
-    leak_file.write_text(
-        "Some prose.\n\nA literal: AKIA" + "IOSFODNN7EXAMPLE\n\nMore prose.\n"
+    assert not findings, (
+        f"Found {len(findings)} credential-shaped literal(s) in tracked files:\n"
+        f"{detail}\n"
+        "If real: ROTATE first, then remove. If synthetic: add a placeholder "
+        "marker, or the `kinoforge: allow-secret` pragma on that line."
     )
-    hits = _audit_text(leak_file.read_text(), leak_file)
-    assert len(hits) == 1
-    assert hits[0].pattern_name == "aws_access_key"
-    assert "AKIA" in hits[0].match_snippet
+
+
+def test_audit_fires_on_a_planted_credential(tmp_path: Path) -> None:
+    """Reverse-test: without it, the guard above could no-op forever.
+
+    Inherited from the original source audit — the single most valuable
+    test in this file, because a guard that passes vacuously looks
+    identical to a guard that works.
+    """
+    planted = "Some prose.\n\nA literal: " + "AKIA" + "QWERTYUIOPASDFGH" + "\n\nMore.\n"
+    findings = list(iter_findings(planted, patterns=STRICT_PATTERNS))
+    assert len(findings) == 1
+    assert findings[0].pattern_name == "aws_access_key"
+    assert findings[0].line_no == 3
+
+
+def test_strict_tier_covers_the_canonical_scanner_shapes() -> None:
+    """Guards against a refactor that empties or guts the strict tier.
+
+    ``hf_token`` (unsuffixed) is a *loose*-tier name only — the naming
+    rule in ``credential_patterns.py`` reserves the plain name for the
+    redactor pattern and puts the strict variant under ``hf_token_strict``
+    — so the canonical strict-tier name asserted here is the ``_strict``
+    form, not the bare one.
+    """
+    names = {p.name for p in STRICT_PATTERNS}
+    expected = {"sk_token", "aws_access_key", "pem_private_key", "hf_token_strict"}
+    assert not expected - names, (
+        f"strict tier missing canonical names: {expected - names}"
+    )
