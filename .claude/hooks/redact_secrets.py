@@ -79,7 +79,16 @@ CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("rpa_token_strict", re.compile(r"\brpa_[A-Za-z0-9]{24,}\b")),
     ("hf_token_strict", re.compile(r"\bhf_[A-Za-z0-9]{32,}\b")),
     ("fal_key", re.compile(r"\bfal_key_[A-Za-z0-9_\-]{8,}\b")),
-    ("sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]*[A-Za-z0-9]{16,}\b")),
+    # Negative lookbehind (not `\b`) anchors the token start — see the
+    # module docstring of src/kinoforge/core/credential_patterns.py for
+    # why: `\b` alone matches inside a hyphenated identifier like
+    # `generate-sk-thumbnail-...`, which is not a credential.
+    (
+        "sk_token",
+        re.compile(
+            r"(?<![A-Za-z0-9_\-])sk-(?:[A-Za-z0-9_\-]{20,}|[A-Za-z0-9_\-]*[A-Za-z0-9]{16,})\b"
+        ),
+    ),
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     (
         "pem_private_key",

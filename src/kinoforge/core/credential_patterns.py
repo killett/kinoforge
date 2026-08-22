@@ -159,24 +159,44 @@ CREDENTIAL_PATTERNS: list[CredentialPattern] = [
     ),
     CredentialPattern("hf_token_strict", re.compile(r"\bhf_[A-Za-z0-9]{32,}\b"), True),
     CredentialPattern("fal_key", re.compile(r"\bfal_key_[A-Za-z0-9_\-]{8,}\b"), True),
-    # 2026-08-18 whole-branch review (Finding 1) proposed widening this to
-    # `\bsk-(?:[A-Za-z0-9_\-]{20,}|[A-Za-z0-9_\-]*[A-Za-z0-9]{16,})\b` — a
-    # union with the old pre-Task-5 alternative — to recover coverage on
+    # 2026-08-18 whole-branch review, Finding 1: the plain `\b`-anchored
+    # narrow form (`\bsk-[A-Za-z0-9_\-]*[A-Za-z0-9]{16,}\b`) was a
+    # NARROWING of the two lists it replaced, not a superset — it missed
     # separator-dense real keys (`sk-ant-api03-Ab3_Ab3_...`,
-    # `sk-proj-x_x_x_...`) that the current narrow form misses. Verified
-    # and NOT applied: the union re-matches
-    # `generate-sk-thumbnail-preview-cache-key`
-    # (tests/core/test_credential_patterns.py::
-    # test_sk_token_ignores_ordinary_kebab_case_identifiers), the exact
-    # false positive Task 5 narrowed this pattern to fix — confirmed with
-    # `re.search` before touching this file, not asserted from the
-    # finding text. The finding's own fallback for this case is "say so
-    # and stop rather than deleting that test," so the pattern is
-    # unchanged pending a maintainer decision on which failure mode to
-    # accept: under-match separator-dense real keys, or over-match
-    # kebab-case identifiers containing "sk-".
+    # `sk-proj-x_x_x_...yyyy`) that need the old pre-Task-5 alternative
+    # (`\bsk-[A-Za-z0-9_\-]{20,}\b`, no contiguous-run requirement) to
+    # match. A first attempt at unioning the two alternatives verbatim
+    # re-broke `test_sk_token_ignores_ordinary_kebab_case_identifiers`
+    # (`generate-sk-thumbnail-preview-cache-key` matched again), because
+    # `\b` alone is satisfied by ANY word/non-word transition — including
+    # the `-` right before the `sk` inside that hyphenated identifier,
+    # which is not a token start at all.
+    #
+    # Fix: replace the leading `\b` with a negative lookbehind for
+    # `[A-Za-z0-9_\-]` — i.e. "not immediately preceded by an
+    # identifier-or-hyphen character". A real credential's `sk-` is
+    # always at a genuine token start (start of string, after `=`/`:`/
+    # whitespace/quote, or after prose punctuation); a kebab-case
+    # fragment's `sk-` is always preceded by a hyphen from the identifier
+    # itself. This is the one condition that tells them apart:
+    # `generate-sk-...` has `-` immediately before `sk`, so the
+    # lookbehind excludes it, while `OPENAI_API_KEY=sk-...`, a quoted
+    # `"sk-..."`, and a bare `sk-...` all pass. With the anchor fixed,
+    # the union restores the `{20,}` alternative that both pre-existing
+    # lists (`tests/test_source_audit.py`, `tests/providers/
+    # conftest_runpod.py`) carried before this branch — so this is no
+    # longer a narrowing of what it replaced, it is the intended
+    # superset.
+    # Tests: test_sk_token_ignores_ordinary_kebab_case_identifiers (must
+    # keep passing unmodified), test_sk_token_matches_separator_dense_
+    # real_key_shapes, test_sk_token_ignores_kebab_case_in_a_path_or_
+    # branch_name.
     CredentialPattern(
-        "sk_token", re.compile(r"\bsk-[A-Za-z0-9_\-]*[A-Za-z0-9]{16,}\b"), True
+        "sk_token",
+        re.compile(
+            r"(?<![A-Za-z0-9_\-])sk-(?:[A-Za-z0-9_\-]{20,}|[A-Za-z0-9_\-]*[A-Za-z0-9]{16,})\b"
+        ),
+        True,
     ),
     CredentialPattern(
         "aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), True

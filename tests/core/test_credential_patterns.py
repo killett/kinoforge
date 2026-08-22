@@ -231,6 +231,50 @@ def test_sk_token_matches_real_anthropic_and_openai_shapes() -> None:
     assert "sk_token" in names_b
 
 
+def test_sk_token_matches_separator_dense_real_key_shapes() -> None:
+    """Union regression guard (2026-08-18 whole-branch review, Finding 1).
+
+    Real Anthropic/OpenAI keys often break the alnum run into <16-char
+    chunks via underscores (`sk-ant-api03-Ab3_Ab3_...`,
+    `sk-proj-x_x_x_...yyyy`), which the narrow contiguous-run alternative
+    alone misses — only the restored `{20,}` alternative (any run of
+    `[A-Za-z0-9_\\-]`, no contiguous-alnum requirement) catches these. Both
+    literals built by runtime concatenation so this file itself carries
+    no matchable credential shape.
+    """
+
+    def _dense(prefix: str, n: int) -> str:
+        return prefix + "Ab3_" * n
+
+    anthropic_dense = _dense("sk-ant-api03-", 10)
+    openai_dense = _dense("sk-proj-", 10)
+    names_a = {f.pattern_name for f in cp.iter_findings(anthropic_dense)}
+    names_b = {f.pattern_name for f in cp.iter_findings(openai_dense)}
+    assert "sk_token" in names_a
+    assert "sk_token" in names_b
+
+
+def test_sk_token_ignores_kebab_case_in_a_path_or_branch_name() -> None:
+    """Pins the token-start anchor itself, not just the one identifier string.
+
+    The fix for the union regression (see
+    test_sk_token_matches_separator_dense_real_key_shapes) replaces the
+    leading `\\b` with a negative lookbehind for
+    `[A-Za-z0-9_\\-]` — a real credential's `sk-` is always at a genuine
+    token start, while a kebab-case fragment's `sk-` is always preceded
+    by a hyphen from the identifier itself. Both variants below embed the
+    same kebab-case identifier from
+    test_sk_token_ignores_ordinary_kebab_case_identifiers inside realistic
+    surrounding contexts (a doc path, a branch name) to confirm the
+    anchor holds regardless of what comes before the leading hyphen.
+    """
+    tail = "generate-sk-thumbnail-" + "preview-cache-key"
+    as_path = "docs/" + tail + ".md"
+    as_branch = "feature/" + tail
+    assert not list(cp.iter_findings(as_path))
+    assert not list(cp.iter_findings(as_branch))
+
+
 def test_every_pattern_has_a_unique_snake_case_name() -> None:
     """Names appear in <REDACTED:{name}> markers and in parity assertions."""
     names = [p.name for p in cp.CREDENTIAL_PATTERNS]
