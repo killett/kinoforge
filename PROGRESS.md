@@ -324,6 +324,27 @@ first unchecked task without redoing committed work.
   quota/entitlement refresh — see the block below.
   (Superseded next action:) work the OPEN hygiene-audit bug list — 13 of 14 done 2026-07-28.
   (Superseded next action:) **Job-based `/lora/set_stack` (async submit+poll) COMPLETE + code live-validated (Tasks 0–4, commits `14fa285`..`015a4e5`).** Only remaining gap: the live matrix 4-step clean-pass, BLOCKED-UPSTREAM by a civitai per-token full-download 401 on `lora_a` (`civitai:1479320@1673265`) — NOT code. **To close it:** refresh/rotate `CIVITAI_TOKEN` (or restore its civitai download entitlement/quota), then re-run `KINOFORGE_LIVE_TESTS=1 pixi run python -m pytest tests/smoke/live_wan21/test_lora_swap_matrix.py -v -s` (preflight first; poll GPU-util; frame-QA; verify `kinoforge list` clean after). See the 2026-07-16 snapshot block below for the full evidence. (Superseded next action:) **Modal roadmap M1–M5 + util-probe + 1080p height-target all COMPLETE + live-green** (§22–§26 + util-probe): engine matrix (t2v/upscale/interpolate) + warm-reuse + HF-cache + util probe all proven. No unchecked task remains in any active plan. Next work is operator-directed — pick a new roadmap item (roadmap `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`; remaining candidates: i2v/flf2v on Modal) or a new brief. (Superseded next action, kept for context:) **Unblock Modal M3 Task 5 (FlashVSR live proof) by making the Modal boot fast + preemption-resilient.** M3 offline work is DONE + committed: the cp313 BSA wheel is built (on Modal, `tools/build_bsa_wheel_modal.py`) + hosted (`killett/kinoforge-artifacts@bsa-cu124-torch2.6-cp313-v1`, `block_sparse_attn-0.0.1-cp313-cp313-linux_x86_64.whl`, 526 MB); the Modal cfg (`examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml`), `HF_HOME=/cache/hf` provider wiring, offline tests, and the RED live scaffold are all committed. **BLOCKER (2026-07-09):** the live `kinoforge upscale` never converged — the kinoforge Modal transport provisions at RUNTIME (pip torch+BSA-wheel+FlashVSR-weights via the boot script, ~15 min), and Modal **preempted the pooled A100 repeatedly mid-boot** ("Worker disappeared, in-progress inputs will be re-scheduled"); each preempt restarts the boot from scratch (no caching for the BSA wheel / FlashVSR weights), so `/health` never bound and the run **accumulated 10 containers** before teardown (~$1.5 est). Torn down clean (app stopped, ledger `forget`, verified `No running instances`). **FIX (the next action):** bake the heavy pip deps + BSA wheel INTO the Modal image at build time (`ModalProvider`/`build_modal_app` `Image.pip_install(...)` instead of runtime boot-script installs) so container start is seconds, not ~15 min → no preemption window, no container pile-up. Then re-run Task 5 (`pixi run -e live-modal kinoforge upscale --config examples/configs/modal-diffusers-flashvsr-x4-upscale.yaml --video output/20260630-221857_..._Photorealistic-cinem.mp4 --no-reuse`), frame-QA, log §24. Note: M1 (§22, 1.3B ~5 min boot) + M2 (§23, A14B ~30 min HF boot) survived preemption on lucky windows; FlashVSR's mix of a 526 MB non-HF wheel + weights is the worst case and forces the image-bake fix. [[reference_modal_provider_gotchas]] · [[reference_modal_add_python_clang_link]]. Roadmap: `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md` (M4 RIFE remains after M3).
+- **Least-privilege onboarding (PLANNED 2026-08-21, 0/10 tasks done):**
+  `docs/superpowers/specs/2026-08-21-least-privilege-onboarding-design.md` +
+  `docs/superpowers/plans/2026-08-21-least-privilege-onboarding.md` (10 tasks 0-9;
+  `.tasks.json` co-located; spec `333f4bbe`, plan `72e61054`). Closes **F9** and **F10** of the
+  2026-08-15 cloud-layer verification: the scoped AWS policy is referenced by nothing while
+  `.env.example` and `.aws/README.md` both lead with FullAccess, `roles/iam.securityAdmin` is
+  annotated as a self-grant *feature*, and the KMS UUID is committed while `.gitignore` excludes
+  the file that holds it. Two investigation findings changed the brief's scope: (1) the tracked
+  policy already carries `<AWS_ACCOUNT>` placeholders, so `put-user-policy --policy-document
+  file://…` has never been able to work against it — hence `tools/render_aws_policy.py`;
+  (2) **bucket names were NOT clean**, contrary to F10's sweep — 6 concrete names across 20
+  tracked files including two shipped `examples/configs/bedrock-*.yaml`. AWS account ids *are*
+  clean once the pattern is ARN/label-anchored (a bare `\d{12}` hits `pixi.lock` 53 times).
+  `compute.admin → compute.instanceAdmin.v1` is grounded in `tools/cloud_perms_probe.py:315-318`,
+  which is what the project's own permission gate has always required; `securityAdmin` has zero
+  code references and is bootstrap-only. **Operator decisions:** validation is IAM-simulate only
+  (no EC2/GCE launch, zero compute spend — a live launch's permission-denied loop is unbounded
+  spend on the surface Phase 53 abandoned 2026-06-17); the identifier sweep covers **all** tracked
+  files, forcing the project-id rename in the `tools/quota_burn_lib.py:266` production default;
+  the escape hatch is a `kinoforge: allow-identifier` line pragma, never a directory exclusion.
+  **Next action:** execute Task 0 (`tools/scan_identifiers.py` + its tests).
 
 ## RESUME SNAPSHOT (updated 2026-07-28 — read this, then STOP; below is history)
 
