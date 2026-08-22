@@ -406,7 +406,13 @@ IDENTIFIER_PATTERNS: tuple[IdentifierPattern, ...] = (
     ),
     IdentifierPattern(
         name="gcp_project_id",
-        regex=re.compile(r"\b(kinoforge-prod-[0-9a-z]{8})\b"),
+        # The negative lookahead hands a project id embedded in a service
+        # account email to `gcp_service_account_email`, which is the more
+        # specific pattern. Without it one such line yields two findings for
+        # a single identifier -- noise in the lockdown test's failure list.
+        regex=re.compile(
+            r"\b(kinoforge-prod-[0-9a-z]{8})\b(?!\.iam\.gserviceaccount\.com)"
+        ),
         allowed=frozenset({"kinoforge-prod-deadbeef"}),
     ),
     IdentifierPattern(
