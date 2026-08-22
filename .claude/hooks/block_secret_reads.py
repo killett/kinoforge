@@ -11,20 +11,33 @@ fires on ordinary work gets disabled, and a disabled blocker protects
 nothing. Its companion `redact_secrets.py` (PostToolUse) covers the other
 direction: credentials that *arrive* in tool output nobody requested.
 
-Known, accepted gap: this hook pattern-matches enumerated shell shapes
-(env dumps, dotenv reads, cloud token prints, ...). It does not and
-cannot cover arbitrary interpreter one-liners that read a credential
-another way, e.g. `python -c 'import os;print(os.environ["HF_TOKEN"])'`.
-That is a different problem class — the PostToolUse scrubber is the
-second line of defence there, not this hook.
+Quoting model: before matching, the command is rewritten into an
+"executable context" string (see `_executable_context`) — single-quoted
+spans are masked out entirely (bash never expands anything inside
+them), and double-quoted spans are masked except for the `$(...)`,
+`` `...` ``, `$VAR`, and `${VAR}` regions that bash actually expands or
+runs even inside double quotes. Every rule below matches against that
+rewritten string, not the raw one. This is what tells "this text runs a
+command" apart from "this text merely mentions one" — `echo "(cat .env
+config) is an example"` and ``echo 'See `cat .env` for the pattern'``
+are prose, not execution, and the quoting they use is exactly how bash
+tells the difference too.
 
-Also inherent to text matching: the hook reasons about command TEXT,
-not what the shell will actually execute. A heredoc or string literal
-that merely *writes prose about* a credential-echoing command (e.g. a
-progress note documenting this very deny surface) can match and be
-denied even though nothing would have leaked. This is a known false
-positive, considered acceptable — write such prose to a file via
-Write/Edit instead of through a Bash heredoc.
+Known, accepted gaps this hook does not cover:
+- Arbitrary interpreter one-liners that read a credential another way,
+  e.g. `python -c 'import os;print(os.environ["HF_TOKEN"])'`. Different
+  problem class — the PostToolUse scrubber is the second line of
+  defence there, not this hook.
+- A keyword or command name appearing inside a multi-line heredoc body
+  (`cat <<EOF` ... `EOF`) is not distinguished from one that would
+  actually run; the heredoc body is ordinary command text as far as
+  this hook is concerned. Write such prose to a file via Write/Edit
+  instead of through a Bash heredoc.
+- The quoting model above is a linear scan, not a real shell parser: it
+  does not track nested/mismatched quotes across separate arguments,
+  ANSI-C `$'...'` quoting, or arithmetic `$(( ))` beyond incidentally
+  handling it as nested `$(`. These are judged rare enough in practice
+  not to be worth a bespoke shell grammar here.
 
 Contract (Claude Code PreToolUse):
 - stdin:  JSON with `tool_name` and `tool_input`.
@@ -70,7 +83,17 @@ _CRED_WORD = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)"
 # `bash cut-video.sh .env`) — this fragment is what rules those out
 # (neither a space nor a quote is in the class) while still catching the
 # command wherever it legitimately starts a statement.
-_STMT = r"(?:^|[\n;&|(`{]\s*|\$\(\s*)"
+#
+# Also a statement start: a shell keyword that itself precedes a command
+# (`if`, `then`, `elif`, `else`, `do`, `while`, `until`, `time`, `nohup`,
+# `command`) or the `!` negation operator — `if cat .env; then ...`,
+# `time cat .env`, `nohup cat .env &`, `do cat .env; done` are all
+# ordinary commands, not text about one, and were previously missed
+# entirely. Each keyword requires trailing whitespace (not just a `\b`)
+# so `iffy_script.sh` and `timestamp.py` don't match — `\s+` can't
+# consume the non-whitespace character that continues those words.
+_STMT_KEYWORDS = r"(?:if|then|elif|else|do|while|until|time|nohup|command)"
+_STMT = rf"(?:^|[\n;&|(`{{]\s*|\$\(\s*|!\s*|\b{_STMT_KEYWORDS}\s+)"
 
 # Matches ".env" only when it is NOT the ".env.example" template — and
 # "not the template" is anchored: ".example" must end the filename, not
@@ -83,6 +106,92 @@ _DOTENV_NOT_EXAMPLE = r"\.env(?!\.example(?![\w.-]))\b"
 _DOTENV_READ_CMDS = (
     r"(?:cat|less|more|head|tail|bat|rg|grep|strings|awk|sed|od|xxd|nl|cut)"
 )
+
+
+def _executable_context(command: str) -> str:
+    """Rewrite *command* into the text bash would actually treat as live.
+
+    Args:
+        command: The raw Bash command text.
+
+    Returns:
+        A same-length-or-shorter string where every DENY_RULES pattern
+        should be matched instead of the raw command. Single-quoted
+        spans are replaced with spaces — bash performs zero expansion
+        inside single quotes, not even backticks, so nothing there can
+        run. Double-quoted spans are replaced with spaces EXCEPT for
+        `$(...)`, `` `...` ``, `${...}`, and `$VAR` regions, which bash
+        expands or runs even inside double quotes and so are kept
+        verbatim. Text outside any quotes is passed through unchanged.
+        A backslash-escaped character inside double quotes is masked
+        together with its backslash, since bash treats the pair as the
+        literal character, not an expansion. Quote characters themselves
+        are kept in the output; they carry no keyword meaning to any
+        rule below.
+    """
+    out: list[str] = []
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if ch == "'":
+            end = command.find("'", i + 1)
+            end = n if end == -1 else end + 1
+            out.append(" " * (end - i))
+            i = end
+            continue
+        if ch == '"':
+            out.append('"')
+            i += 1
+            while i < n and command[i] != '"':
+                if command[i] == "\\" and i + 1 < n:
+                    out.append("  ")
+                    i += 2
+                    continue
+                if command[i] == "`":
+                    j = command.find("`", i + 1)
+                    j = n if j == -1 else j + 1
+                    out.append(command[i:j])
+                    i = j
+                    continue
+                if command[i] == "$" and i + 1 < n and command[i + 1] == "(":
+                    depth = 1
+                    j = i + 2
+                    while j < n and depth:
+                        if command[j] == "(":
+                            depth += 1
+                        elif command[j] == ")":
+                            depth -= 1
+                        j += 1
+                    out.append(command[i:j])
+                    i = j
+                    continue
+                if command[i] == "$" and i + 1 < n and command[i + 1] == "{":
+                    j = command.find("}", i + 2)
+                    j = n if j == -1 else j + 1
+                    out.append(command[i:j])
+                    i = j
+                    continue
+                if (
+                    command[i] == "$"
+                    and i + 1 < n
+                    and (command[i + 1].isalpha() or command[i + 1] == "_")
+                ):
+                    j = i + 1
+                    while j < n and (command[j].isalnum() or command[j] == "_"):
+                        j += 1
+                    out.append(command[i:j])
+                    i = j
+                    continue
+                out.append(" ")
+                i += 1
+            if i < n:
+                out.append('"')
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
 
 DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
@@ -146,8 +255,12 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # `source .env` / `. .env` load every credential into the
         # current shell for a later leak, even though nothing prints
         # yet. `source .venv/bin/activate` (or any path without a
-        # literal `.env` component) is unaffected.
-        re.compile(rf"{_STMT}(?:source|\.)\s+\S*{_DOTENV_NOT_EXAMPLE}"),
+        # literal `.env` component) is unaffected. `sudo` tolerance
+        # added for consistency with every other rule that takes it —
+        # `source` is a shell builtin so `sudo source` isn't really
+        # meaningful, but a rule silently missing the tolerance invites
+        # the next reader to assume there's a reason it's exempt.
+        re.compile(rf"{_STMT}(?:sudo\s+)?(?:source|\.)\s+\S*{_DOTENV_NOT_EXAMPLE}"),
     ),
     (
         "cloud token print",
@@ -173,10 +286,14 @@ def deny_reason(command: str) -> str | None:
         or None when no rule matches. Only shapes that would put a live
         credential into the transcript match; shape probes that name no
         credential variable (``env | wc -l``) and reads of ``.env.example``
-        deliberately do not.
+        deliberately do not. Matching happens against
+        :func:`_executable_context`'s rewrite of *command*, not the raw
+        text, so quoted prose that merely mentions a denied shape (a
+        commit message, a doc search) does not match it.
     """
+    context = _executable_context(command)
     for label, pattern in DENY_RULES:
-        if pattern.search(command):
+        if pattern.search(context):
             return (
                 f"Blocked by .claude/hooks/block_secret_reads.py ({label}). "
                 "This would put a live credential into the conversation "

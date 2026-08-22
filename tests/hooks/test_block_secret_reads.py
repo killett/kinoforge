@@ -84,6 +84,13 @@ def _is_deny(out: dict[str, Any]) -> bool:
         "sudo env",
         "sudo set",
         "{ cat .env; }",
+        "if cat .env; then echo x; fi",
+        "! cat .env",
+        "time cat .env",
+        "nohup cat .env &",
+        "do cat .env; done",
+        "if [ -f .env ]; then cat .env; fi",
+        'echo "`cat .env`"',
     ],
 )
 def test_denied(command: str) -> None:
@@ -119,6 +126,12 @@ def test_denied(command: str) -> None:
         "xxd header.png",
         'echo "use $(git rev-parse HEAD)"',
         "files=$(ls src/)",
+        "echo 'See `cat .env` for the pattern'",
+        'echo "(cat .env config) is an example"',
+        "printf '%s\\n' \"Steps: { cat .env; } to inspect\" > doc.txt",
+        "echo 'the env command dumps everything'",
+        'git commit -m "wire up cat .env guard"',
+        'printf "run set or declare -p to inspect\\n"',
     ],
 )
 def test_not_denied(command: str) -> None:
