@@ -103,10 +103,29 @@ CREDENTIAL_ENV_VARS: tuple[str, ...] = (
     "VAST_API_KEY",
 )
 
+# Tuning notes (2026-08-18, Task 3 — see docs/superpowers/sdd/
+# 2026-08-18-credential-scanning-commit-boundary/task-3-report.md):
+#
+# 1. `[ \t]*` (not `\s*`) around the `=`/`:` — `\s*` matches a newline, so
+#    an EMPTY assignment (`AWS_ACCESS_KEY_ID=` immediately followed by
+#    another `VAR=` line, exactly the shape of `.env.example`) let the
+#    match skip the blank value and swallow the *next line's variable
+#    name* as if it were this line's secret. Restricting to same-line
+#    whitespace makes an empty assignment correctly match nothing.
+# 2. `(?!<)` replaces the narrower `(?!<REDACTED)` — no real credential
+#    shape in this module starts with a literal `<`, and doc/spec prose
+#    is full of angle-bracket placeholders (`HF_TOKEN=<huggingface
+#    token>`, `CIVITAI_TOKEN=<value>`) that the old lookahead let
+#    through. `(?!<)` also subsumes the `<REDACTED...>` case it replaces.
+# 3. `(?!\$[A-Z_])` — a value of the form `$RUNPOD_API_KEY` is a shell
+#    variable *reference*, not a literal secret; it is the standard way
+#    this repo's docs show "pass your own key here" (e.g.
+#    `RUNPOD_API_KEY=$RUNPOD_API_KEY pixi run ...`). No real credential
+#    is spelled as a bare `$UPPER_CASE_NAME` token.
 _ASSIGNMENT_RE = re.compile(
     r"\b(?:"
     + "|".join(CREDENTIAL_ENV_VARS)
-    + r")\s*[=:]\s*[\"']?(?!<REDACTED)[^\s\"'#]{8,}"
+    + r")[ \t]*[=:][ \t]*[\"']?(?!<)(?!\$[A-Z_])[^\s\"'#]{8,}"
 )
 
 CREDENTIAL_PATTERNS: list[CredentialPattern] = [
@@ -163,7 +182,15 @@ CREDENTIAL_PATTERNS: list[CredentialPattern] = [
         ),
         True,
     ),
-    CredentialPattern("luma_key", re.compile(r"\bluma-[A-Za-z0-9-]{20,}\b"), True),
+    # Narrowed from `\bluma-[A-Za-z0-9-]{20,}\b` (Task 3, 2026-08-18): the
+    # real credential shape is `luma-api-...` (see the docstring of
+    # `LumaAgentsImageEngine` in src/kinoforge/image_engines/luma_agents/
+    # __init__.py). The old bare `luma-` prefix collided with ordinary
+    # kebab-case doc filenames and markdown anchors — `luma-image-
+    # keyframes-design.md`, `#luma-uni-1-image-keyframe-via-agents-api`
+    # — which are 20+ chars of `[A-Za-z0-9-]` right after `luma-` and are
+    # not credentials at all.
+    CredentialPattern("luma_key", re.compile(r"\bluma-api-[A-Za-z0-9_-]{8,}\b"), True),
     CredentialPattern(
         "modal_token", re.compile(r"\b(?:ak|as)-[A-Za-z0-9]{20,}\b"), True
     ),

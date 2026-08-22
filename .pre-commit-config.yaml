@@ -56,3 +56,15 @@ repos:
         entry: 'pixi run python -c ''import sys,tomllib;[tomllib.load(open(f,"rb")) for f in sys.argv[1:]]'''
         language: system
         types: [toml]
+
+      # Credential scan over STAGED content (not the working tree, so
+      # `git add -p` partial staging is respected). .gitignore matches paths
+      # and cannot stop a credential pasted into an already-tracked file —
+      # this hook is that gap. Strict-tier patterns only; placeholder markers
+      # and the `kinoforge: allow-secret` line pragma suppress synthetic
+      # values. See src/kinoforge/core/credential_patterns.py.
+      - id: scan-secrets
+        name: scan-secrets (staged content)
+        entry: pixi run python tools/scan_secrets.py
+        language: system
+        types: [text]

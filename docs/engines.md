@@ -55,9 +55,9 @@ required. `validate_spec` requires `spec.model`; `key_base` returns it.
 ```bash
 # 1. Wire credentials (any subset; missing ones skip silently)
 echo 'REPLICATE_API_TOKEN=r8_xxxxx' >> .env
-echo 'RUNWAYML_API_SECRET=key_yyyyy' >> .env
+echo 'RUNWAYML_API_SECRET=key_xxxxx' >> .env
 # LUMAAI_API_KEY (reserved for Layer 5b UNI-1 keyframe engine; direct video API retired)
-# echo 'LUMAAI_API_KEY=luma-zzzzz' >> .env
+# echo 'LUMAAI_API_KEY=luma-xxxxx' >> .env
 
 # 2. Verify creds present (Layer-4 gate added to preflight)
 pixi run preflight --check-hosted

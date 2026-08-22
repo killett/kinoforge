@@ -239,9 +239,9 @@ All new unit tests added to `tests/providers/test_runpod_conftest.py`. One new f
 
 5. **Pattern matcher — parametrised per credential format:**
    ```text
-   ("rpa_token_in_log",   "container started, RUNPOD_API_KEY=rpa_AB12cdEF34"),
+   ("rpa_token_in_log",   "container started, RUNPOD_API_KEY=rpa_AB12cdEF34example"),
    ("hf_token_bare",      "hf_AbCdEf12345678"),
-   ("fal_key_bare",       "fal_key_xY7zPQ9ABCDEFGH"),
+   ("fal_key_bare",       "fal_key_xY7zPQ9ABCDEFGHexample"),
    ("bearer_header",      "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.foo"),
    ("sk_real_openai",     <sk-proj prefix + 20+ url-safe chars>),
    ("sk_real_anthropic",  <sk-ant-api03 prefix + 20+ url-safe chars>),

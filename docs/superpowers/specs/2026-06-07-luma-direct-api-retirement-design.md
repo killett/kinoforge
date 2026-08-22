@@ -116,7 +116,7 @@ EDIT     README.md
             strip "Luma" from the section heading (now
             "## Hosted Bearer providers (Replicate / Runway)") and from
             any prose that lists the trio.
-            keep the `echo 'LUMAAI_API_KEY=luma-zzzzz' >> .env` line, but
+            keep the `echo 'LUMAAI_API_KEY=luma-xxxxx' >> .env` line, but
             re-comment it as "(used by Layer 5b UNI-1 image keyframes;
             direct video API retired)".
 EDIT     PROGRESS.md

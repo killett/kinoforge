@@ -83,7 +83,7 @@ def test_bearer_declared_first_so_header_collapses_whole() -> None:
 def test_credential_assignment_catches_a_pasted_export_line() -> None:
     """The actual leak vector: a terminal line pasted into a tracked file."""
     secret_value = "wJalrXUtnFEMIK7MDENGbPxRfiCYzcvKQ7" + "MDENG"
-    line = f"export AWS_SECRET_ACCESS_KEY={secret_value}"
+    line = f"export AWS_SECRET_ACCESS_KEY={secret_value}"  # kinoforge: allow-secret
     names = {f.pattern_name for f in cp.iter_findings(line)}
     assert "credential_assignment" in names
 
@@ -218,7 +218,7 @@ def test_redact_string_is_idempotent() -> None:
     marker name. A single pass already redacts every credential shape, so
     running redact_string again on its own output must be a no-op.
     """
-    text = f"HF_TOKEN={HF_KEY} key={AWS_KEY} Authorization: Bearer {RPA_KEY}"
+    text = f"HF_TOKEN={HF_KEY} key={AWS_KEY} Authorization: Bearer {RPA_KEY}"  # kinoforge: allow-secret
     once = cp.redact_string(text)
     twice = cp.redact_string(once)
     assert twice == once

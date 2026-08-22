@@ -27,7 +27,9 @@ def test_hf_token_replaced_with_named_marker() -> None:
     """
     from tools._redact import redact_string
 
-    out = redact_string("HF_TOKEN=hf_AbCdEfGhIjKlMnOpQrStUv;next=field")
+    out = redact_string(
+        "HF_TOKEN=hf_AbCdEfGhIjKlMnOpQrStUv;next=field"  # kinoforge: allow-secret
+    )
 
     assert "hf_AbCdEfGhIjKlMnOpQrStUv" not in out
     assert re.search(r"<REDACTED:hf_token>", out) is not None
@@ -70,11 +72,11 @@ def test_multiple_independent_secret_classes_in_one_string() -> None:
     from tools._redact import redact_string
 
     msg = (
-        "ConnectionError: provider=fal key=fal_key_QwErTyUiOpAsDfGhJk "
-        "and HF_TOKEN=hf_AbCdEfGhIjKlMnOpQrStUv in pod env"
+        "ConnectionError: provider=fal key=fal_key_QwErTyUiOpAsDfGhJk "  # kinoforge: allow-secret
+        "and HF_TOKEN=hf_AbCdEfGhIjKlMnOpQrStUv in pod env"  # kinoforge: allow-secret
     )
     out = redact_string(msg)
-    assert "fal_key_QwErTyUiOpAsDfGhJk" not in out
+    assert "fal_key_QwErTyUiOpAsDfGhJk" not in out  # kinoforge: allow-secret
     assert "hf_AbCdEfGhIjKlMnOpQrStUv" not in out
     assert "<REDACTED:fal_key>" in out
     assert "<REDACTED:hf_token>" in out

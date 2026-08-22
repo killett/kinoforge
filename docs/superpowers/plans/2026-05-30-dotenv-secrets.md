@@ -227,7 +227,7 @@ def test_env_file_fills_unset_keys(
     monkeypatch.setenv("FAL_KEY", "shell")
     monkeypatch.delenv("CIVITAI_TOKEN", raising=False)
     env_file = tmp_path / ".env"
-    _write_env(env_file, "FAL_KEY=file\nCIVITAI_TOKEN=fromfile")
+    _write_env(env_file, "FAL_KEY=file\nCIVITAI_TOKEN=fromfile")  # kinoforge: allow-secret
 
     load_env_file(env_file)
 
@@ -268,7 +268,7 @@ def test_info_log_shows_count_and_path_not_values(
     monkeypatch.delenv("FAL_KEY", raising=False)
     monkeypatch.delenv("CIVITAI_TOKEN", raising=False)
     env_file = tmp_path / ".env"
-    _write_env(env_file, "FAL_KEY=secret_value_abc\nCIVITAI_TOKEN=tok_xyz")
+    _write_env(env_file, "FAL_KEY=secret_value_abc\nCIVITAI_TOKEN=tok_xyz")  # kinoforge: allow-secret
     caplog.set_level(logging.INFO, logger="kinoforge.core.dotenv_loader")
 
     load_env_file(env_file)

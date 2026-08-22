@@ -276,7 +276,7 @@ test tree.
 
 | # | Test | Bug it catches |
 |---|---|---|
-| 9 | `test_cli_loads_env_from_cwd_default` | `monkeypatch.chdir(tmp_path)`, write `.env` with `FAL_KEY=cwd-val`, run `main(["status"])`, assert `os.environ["FAL_KEY"] == "cwd-val"`.  Catches: CLI not calling loader. |
+| 9 | `test_cli_loads_env_from_cwd_default` | `monkeypatch.chdir(tmp_path)`, write `.env` with `FAL_KEY=cwd-val`, run `main(["status"])`, assert `os.environ["FAL_KEY"] == "cwd-val"`.  Catches: CLI not calling loader. (kinoforge: allow-secret) |
 | 10 | `test_cli_env_file_flag_overrides_default` | Pass `--env-file <other>`, assert that file loaded not the cwd one.  Catches: flag plumbing broken. |
 
 ### 9.3 What is NOT tested

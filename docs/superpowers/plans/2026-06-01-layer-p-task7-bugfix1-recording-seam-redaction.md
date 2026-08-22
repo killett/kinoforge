@@ -272,7 +272,7 @@ from tests.providers.conftest_runpod import (
     [
         ("rpa_token", "rpa_AB12cdEF34GhIj"),
         ("hf_token", "hf_AbCdEf12345678"),
-        ("fal_key", "fal_key_xY7zPQ9ABCDEFGH"),
+        ("fal_key", "fal_key_xY7zPQ9ABCDEFGHexample"),
         ("bearer_auth", "Bearer eyJhbGciOiJIUzI1NiJ9.foo"),
         ("sk_openai", <sk-proj prefix + 20+ url-safe chars>),
         ("sk_anthropic", <sk-ant-api03 prefix + 20+ url-safe chars>),

@@ -128,7 +128,7 @@ def test_bearer_declared_first_so_header_collapses_whole() -> None:
 
 def test_credential_assignment_catches_a_pasted_export_line() -> None:
     """The actual leak vector: a terminal line pasted into a tracked file."""
-    line = "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYzcvKQ7MDENG"
+    line = "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYzcvKQ7MDENG"  # kinoforge: allow-secret
     names = {f.pattern_name for f in cp.iter_findings(line)}
     assert "credential_assignment" in names
 

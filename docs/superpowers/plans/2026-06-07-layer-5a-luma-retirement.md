@@ -365,14 +365,14 @@ Then, immediately after the closing of the table (after the row for Runway) and 
 Locate this line in the comparison-batch quickstart (around line 694 at time of writing):
 
 ```bash
-echo 'LUMAAI_API_KEY=luma-zzzzz'    >> .env
+echo 'LUMAAI_API_KEY=luma-xxxxx'    >> .env
 ```
 
 Replace with:
 
 ```bash
 # LUMAAI_API_KEY (reserved for Layer 5b UNI-1 keyframe engine; direct video API retired)
-# echo 'LUMAAI_API_KEY=luma-zzzzz' >> .env
+# echo 'LUMAAI_API_KEY=luma-xxxxx' >> .env
 ```
 
 The two `echo` lines for `REPLICATE_API_TOKEN` and `RUNWAYML_API_SECRET` above stay live (they still drive Bearer-provider live smokes). Only the Luma echo is commented out — leaving the env-var name on a hash-line keeps it greppable from the README without an active `.env` mutation.

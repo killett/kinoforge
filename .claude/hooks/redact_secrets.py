@@ -75,7 +75,7 @@ CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
             r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"
         ),
     ),
-    ("luma_key", re.compile(r"\bluma-[A-Za-z0-9-]{20,}\b")),
+    ("luma_key", re.compile(r"\bluma-api-[A-Za-z0-9_-]{8,}\b")),
     ("modal_token", re.compile(r"\b(?:ak|as)-[A-Za-z0-9]{20,}\b")),
     ("lambda_key", re.compile(r"\bsecret_[A-Za-z0-9]+_[0-9a-f]{32,}\b")),
     ("gcp_access_token", re.compile(r"\bya29\.[A-Za-z0-9._\-]{20,}\b")),
@@ -107,7 +107,7 @@ CREDENTIAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
                     "VAST_API_KEY",
                 ]
             )
-            + r")\s*[=:]\s*[\"']?(?!<REDACTED)[^\s\"'#]{8,}"
+            + r")[ \t]*[=:][ \t]*[\"']?(?!<)(?!\$[A-Z_])[^\s\"'#]{8,}"
         ),
     ),
 ]

@@ -305,7 +305,7 @@ def test_is_credential_name_matches_protected_vocab() -> None:
     [
         ("rpa_token", "rpa_AB12cdEF34GhIj"),
         ("hf_token", "hf_AbCdEf12345678"),
-        ("fal_key", "fal_key_xY7zPQ9ABCDEFGH"),
+        ("fal_key", "fal_key_xY7zPQ9ABCDEFGHexample"),
         ("bearer_auth", "Bearer eyJhbGciOiJIUzI1NiJ9.foo"),
         ("sk_openai", "sk-" + "proj-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
         ("sk_anthropic", "sk-" + "ant-api03-" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"),
