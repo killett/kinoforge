@@ -76,6 +76,14 @@ def _is_deny(out: dict[str, Any]) -> bool:
         "foo; declare -p",
         "echo hi; set",
         "env > out.txt",
+        'echo "$(cat .env)"',
+        "echo `cat .env`",
+        "(cat .env)",
+        "x=$(declare -p)",
+        "foo\ncat .env",
+        "sudo env",
+        "sudo set",
+        "{ cat .env; }",
     ],
 )
 def test_denied(command: str) -> None:
@@ -109,6 +117,8 @@ def test_denied(command: str) -> None:
         "nl script.sh",
         "od -c blob.bin",
         "xxd header.png",
+        'echo "use $(git rev-parse HEAD)"',
+        "files=$(ls src/)",
     ],
 )
 def test_not_denied(command: str) -> None:

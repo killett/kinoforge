@@ -50,15 +50,27 @@ SAFE_ALTERNATIVE = '[ -n "${VAR:-}" ] && echo set'
 _CRED_WORD = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)"
 
 # Statement-start anchor: matches at the very beginning of the command, or
-# immediately after a command separator (;, &, |). This also covers `&&`
-# and `||` without a dedicated alternative — `.search()` tries every start
-# position, so the *second* character of a two-char operator satisfies the
-# `[;&|]\s*` branch on its own (e.g. in "a && b" the match starts at the
-# second `&`). An UNanchored command-name test matches inside quoted
-# strings and filenames too (`rg "declare -p" docs/`, `nl-report.csv`,
-# `bash cut-video.sh .env`) — this fragment is what rules those out while
-# still catching the command wherever it legitimately starts a statement.
-_STMT = r"(?:^|[;&|]\s*)"
+# immediately after anything that starts a new shell statement — a
+# separator (;, &, |; this also covers `&&` and `||` without a dedicated
+# alternative, since `.search()` tries every start position and the
+# *second* character of a two-char operator satisfies the single-char
+# branch on its own, e.g. in "a && b" the match starts at the second `&`),
+# a newline (multi-line commands), or anything that opens a nested
+# execution context: `(` (subshell), `` ` `` (backtick command
+# substitution), `{` (brace group), or `$(` (command substitution — `(`
+# alone already covers this via the same second-character trick, `\$\(`
+# is kept explicit for clarity/robustness). Command substitution,
+# backticks, subshells and newlines are ordinary exfiltration idioms
+# (`echo "$(cat .env)"`, `` echo `cat .env` ``, `(cat .env)`,
+# `x=$(declare -p)`) and MUST stay covered — an anchor that only
+# recognised `;`/`&`/`|` let all of these bypass the rules below it.
+#
+# An UNanchored command-name test matches inside quoted strings and
+# filenames too (`rg "declare -p" docs/`, `nl-report.csv`,
+# `bash cut-video.sh .env`) — this fragment is what rules those out
+# (neither a space nor a quote is in the class) while still catching the
+# command wherever it legitimately starts a statement.
+_STMT = r"(?:^|[\n;&|(`{]\s*|\$\(\s*)"
 
 # Matches ".env" only when it is NOT the ".env.example" template — and
 # "not the template" is anchored: ".example" must end the filename, not
@@ -84,7 +96,8 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # unaffected — it never reaches end-of-statement, a pipe, or a
         # redirect. `>` is a terminator too: `env > out.txt` writes the
         # whole environment to a file just as surely as printing it.
-        re.compile(rf"{_STMT}(?:env|printenv)\s*(?:$|[;&>]|\|(?!\s*wc\b))"),
+        # Optional `sudo` prefix tolerated so `sudo env` still denies.
+        re.compile(rf"{_STMT}(?:sudo\s+)?(?:env|printenv)\s*(?:$|[;&>]|\|(?!\s*wc\b))"),
     ),
     (
         "credential variable echo",
@@ -99,8 +112,9 @@ DENY_RULES: list[tuple[str, re.Pattern[str]]] = [
         # Argument-less `set` dumps every shell variable. `set -euo
         # pipefail` (or any other flag/arg) is ordinary script hygiene
         # and must stay allowed — only the bare, boundary-anchored form
-        # matches.
-        re.compile(rf"{_STMT}set\s*(?:$|[;&|])"),
+        # matches. Optional `sudo` prefix tolerated so `sudo set` still
+        # denies.
+        re.compile(rf"{_STMT}(?:sudo\s+)?set\s*(?:$|[;&|])"),
     ),
     (
         "declare/typeset dump",
