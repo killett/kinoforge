@@ -94,6 +94,22 @@ S3 access scoped to `<S3_BUCKET_PREFIX>-*` and `skypilot-*`
 prefixes + KMS access scoped to the existing CMEK key
 (`alias/<KMS_ALIAS>`).
 
+> **UNVALIDATED** against a real SkyPilot launch — simulate-validated only
+> (`tools/validate_scoped_policy.py`). The tracked file carries
+> `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`, and `<S3_BUCKET_PREFIX>` placeholders and
+> cannot be pasted into the console or passed to `put-user-policy` as-is —
+> AWS rejects a malformed ARN. Render it first with
+> `tools/render_aws_policy.py`; do not attach `.aws/policies/skypilot-minimal.json`
+> directly.
+>
+> This warning previously lived as a `_comment` key inside the policy JSON
+> itself. It was moved here because IAM's documented policy grammar
+> (`policy = { <version_block?>, <id_block?>, <statement_block> }`) has no
+> slot for an arbitrary top-level key, and identity-based policies
+> explicitly forbid even the optional `Id` block — so an unrecognized
+> top-level key is a plausible `MalformedPolicyDocument` rejection, not a
+> safe bet to embed in the attachable artifact.
+
 To attach it to the existing `kinoforge-ci` IAM user:
 
 1. Open the [AWS IAM Console → Users](https://us-west-2.console.aws.amazon.com/iam/home#/users) — account `<AWS_ACCOUNT>`.
