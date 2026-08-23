@@ -7,6 +7,7 @@ style of `tests/tools/test_cloud_perms_probe.py`.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -329,7 +330,12 @@ def test_detail_retains_records_for_ungranted_actions_too() -> None:
     silently drops the per-resource records for actions in `ungranted` --
     precisely the KMS-optional-render scenario where an operator most
     needs to see what the simulator actually said about the "*"-scoped
-    evaluation, not just that the action was ungranted.
+    evaluation, not just that the action was ungranted. Asserting mere
+    key presence is not enough here: `{a: (v if a in denied else []) for
+    a, v in detail.items()}` also has `"kms:Encrypt" in result["detail"]`
+    true, with an EMPTY record list -- which reads as "evidence exists"
+    when there is none, worse than the key being absent. Assert the
+    actual record content, not just that the key is there.
     """
     policy = json.loads(_sample_policy_document())
     policy["Statement"] = [s for s in policy["Statement"] if s["Sid"] != "KMSLayerW"]
@@ -340,8 +346,15 @@ def test_detail_retains_records_for_ungranted_actions_too() -> None:
         user_name="probe",
         confirm_live=True,
     )
-    assert "kms:Encrypt" in result["detail"]
-    assert "kms:Decrypt" in result["detail"]
+    # Dropped from the policy entirely -> simulated against "*" (no
+    # ResourceArns), one record with resource=None and the fake's default
+    # decision "allowed" (decisions={} means no override was configured).
+    assert result["detail"]["kms:Encrypt"] == [
+        {"resource": None, "decision": "allowed"}
+    ]
+    assert result["detail"]["kms:Decrypt"] == [
+        {"resource": None, "decision": "allowed"}
+    ]
 
 
 def test_ungranted_actions_are_reported_separately_from_denied() -> None:
@@ -677,6 +690,36 @@ def test_read_gcp_roles_includes_storage_admin() -> None:
     assert all(not r.startswith("#") for r in roles)
 
 
+class _RefusingBoto3Module:
+    """Stand-in for the `boto3` module installed into `sys.modules`.
+
+    `main()`'s aws branch does a lazy `import boto3` then
+    `boto3.client("iam")`; that `import` is a `sys.modules` lookup, so
+    installing this object under the "boto3" key intercepts it without
+    requiring the real SDK to be present -- keeping these tests SDK-free
+    exactly like every other test in this file.
+
+    Without this, whether these gate tests are actually safe against a
+    mutation that removes the --confirm-live check depends on *where*
+    `validate_aws` happens to raise internally (today: `json.loads("")`
+    on the empty `/dev/null` policy body, before `create_user`) --
+    "safe by accident of statement order," not by construction. A future
+    refactor that reorders `validate_aws`'s body could turn that same
+    mutation into a REAL `create_user` call under a real `boto3.client`
+    the next time these tests run. `.client(...)` here raises immediately
+    instead, so any code path that reaches it fails the test loudly with
+    a clear assertion -- never a live API call -- regardless of internal
+    ordering in either `main()` or `validate_aws`.
+    """
+
+    @staticmethod
+    def client(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        raise AssertionError(
+            "boto3.client() was called -- the --confirm-live gate should have "
+            "raised SystemExit before main() ever reached this line"
+        )
+
+
 def test_main_refuses_without_confirm_live(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -685,9 +728,13 @@ def test_main_refuses_without_confirm_live(
     A bug that would fail this: reaching `import boto3` / client
     construction under only ambient credentials as the gate -- exactly the
     accident that produced a real CreateUser/DeleteUser call during this
-    tool's own self-review.
+    tool's own self-review. The fake boto3 module makes this fail loudly
+    (AssertionError, caught as "not SystemExit") rather than silently
+    succeed via a real API call, regardless of how `main()`/`validate_aws`
+    are internally ordered.
     """
     monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
+    monkeypatch.setitem(sys.modules, "boto3", _RefusingBoto3Module())
     with pytest.raises(SystemExit):
         main(["--cloud", "aws", "--policy-file", "/dev/null"])
     assert "confirm-live" in capsys.readouterr().err
@@ -704,10 +751,15 @@ def test_main_ignores_the_old_kinoforge_live_env_var(
     session exporting it for that purpose must not silently open this
     tool's IAM-mutation gate too. Every other gate test here only ever
     unsets KINOFORGE_VALIDATE_SCOPED_LIVE, which holds under either
-    env-var name -- this is the one that actually pins the rename.
+    env-var name -- this is the one that actually pins the rename. See
+    `_RefusingBoto3Module` for why boto3 is faked here too: this test's
+    whole point is proving a real boto3 client is unreachable, so it must
+    not depend on internal statement order to stay safe if the mutation
+    it's designed to catch actually lands.
     """
     monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
     monkeypatch.setenv("KINOFORGE_LIVE", "1")
+    monkeypatch.setitem(sys.modules, "boto3", _RefusingBoto3Module())
     with pytest.raises(SystemExit):
         main(["--cloud", "aws", "--policy-file", "/dev/null"])
     assert "confirm-live" in capsys.readouterr().err
