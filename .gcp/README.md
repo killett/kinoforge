@@ -25,14 +25,20 @@ CLI both auto-discover these.
 - Project: `<GCP_PROJECT>`
 - Operator account: `<OPERATOR_EMAIL>`
 - Billing account: `<GCP_BILLING_ACCOUNT>`
-- Roles (granted on the project):
-  - `roles/compute.admin`
-  - `roles/iam.securityAdmin` ← self-grant capability; additional roles can be added without re-auth.
-  - `roles/iam.serviceAccountAdmin`
+- Roles — see `.gcp/policies/roles.txt` for the authoritative list and the
+  rationale. Runtime set:
+  - `roles/compute.instanceAdmin.v1`
   - `roles/iam.serviceAccountUser`
-  - `roles/serviceusage.serviceUsageAdmin`
-  - `roles/storage.admin` ← covers all GCS bucket + object ops.
-  - `roles/viewer`
+  - `roles/storage.admin`
+- **Bootstrap-only, revoke after binding:** `roles/iam.securityAdmin`,
+  `roles/iam.serviceAccountAdmin`, `roles/serviceusage.serviceUsageAdmin`.
+
+  `roles/iam.securityAdmin` can modify IAM bindings, so an identity holding
+  it can grant itself any role in the project — project-owner under a
+  quieter name, with the key sitting in a `.env` on a laptop. It is required
+  only while binding the runtime roles and never at runtime; nothing in
+  `src/` or `tools/` calls `setIamPolicy`. The revoke command is in
+  `.gcp/policies/roles.txt`. **If it is still bound, revoke it now.**
 
 ## Real-cloud test bucket
 

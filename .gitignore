@@ -44,6 +44,7 @@ htmlcov/
 !.aws/README.md
 !.azure/README.md
 !.aws/policies/
+!.gcp/policies/
 
 # Layer O — user-facing output directory (configurable per-run via --output-dir)
 output/
