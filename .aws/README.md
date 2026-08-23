@@ -38,11 +38,22 @@ print(boto3.client('sts').get_caller_identity())"` — should print the
 "SkyPilot policy — apply instructions" below to attach the scoped policy
 before running the test bucket creation, lifecycle, or S3 store smoke.
 
-## Scoped IAM policy (optional follow-up)
+## Scoped IAM policy — S3-only alternative (optional, narrower than the SkyPilot template)
 
-`AmazonS3FullAccess` is broad. Once the test bucket name is known, swap it for
-this scoped policy (can be created + attached via the bootstrap access
-key):
+Bootstrap step 1 above attaches nothing by default, so there is no wide grant
+here to "swap out." This section is for a narrower case: if you only need S3
+test-bucket access — not SkyPilot compute launches — this JSON is a lighter
+alternative to the SkyPilot template below, since the template's own S3
+statements already cover this exact scope
+(`<S3_BUCKET_PREFIX>-*` and `skypilot-*` prefixes) plus everything SkyPilot
+needs. If you're also going to run SkyPilot launches, skip this section and
+go straight to "SkyPilot policy — apply instructions" below — attaching both
+would be redundant.
+
+Attach the same way as any inline policy: IAM console → `kinoforge-ci` →
+Permissions → **Add permissions** → **Create inline policy** → JSON tab,
+using an admin/operator identity — the bare `kinoforge-ci` user created in
+Bootstrap has no IAM permissions of its own to self-attach a policy.
 
 ```json
 {
@@ -109,7 +120,17 @@ prefixes + KMS access scoped to the existing CMEK key
 
 To attach it to the existing `kinoforge-ci` IAM user:
 
-1. Render the template — this is not optional, see the warning above:
+1. Render the template — this is not optional, see the warning above. First
+   time only, the renderer needs a KMS key id: either bootstrap the
+   workspace's test key once (writes the gitignored `.aws/kms-test-key.arn`,
+   which the renderer reads by default) —
+
+   ```bash
+   pixi run python tools/bootstrap_kms.py
+   ```
+
+   — or skip that and pass `--kms-key-id <key-id>` to the render command
+   below:
 
    ```bash
    pixi run python tools/render_aws_policy.py \
