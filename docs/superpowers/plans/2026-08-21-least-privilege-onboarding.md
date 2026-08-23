@@ -2303,8 +2303,8 @@ both artifacts stay marked UNVALIDATED for that reason."
 - Modify: `PROGRESS.md` (RESUME SNAPSHOT entry)
 
 **Acceptance Criteria:**
-- [ ] `pixi run python tools/validate_scoped_policy.py --cloud aws --policy-file <rendered>` was run against real AWS and its JSON output captured verbatim
-- [ ] `pixi run python tools/validate_scoped_policy.py --cloud gcp --project <project>` was run against real GCP and its JSON output captured verbatim
+- [ ] `pixi run python tools/validate_scoped_policy.py --cloud aws --policy-file <rendered> --confirm-live` was run against real AWS and its JSON output captured verbatim
+- [ ] `pixi run python tools/validate_scoped_policy.py --cloud gcp --project <project> --confirm-live` was run against real GCP and its JSON output captured verbatim
 - [ ] Every action listed under `denied` (AWS) and every permission under `missing` (GCP) is either fixed in the policy/role list or written down as a known gap with the reason
 - [ ] The throwaway IAM user does not exist afterwards: `aws iam get-user --user-name kinoforge-scope-probe` returns `NoSuchEntity`
 - [ ] The rendered policy file under `/tmp` is deleted
@@ -2314,9 +2314,9 @@ both artifacts stay marked UNVALIDATED for that reason."
 **Verify:**
 ```bash
 pixi run python tools/validate_scoped_policy.py --cloud aws \
-  --policy-file /tmp/skypilot-minimal.rendered.json ; echo "aws rc=$?"
+  --policy-file /tmp/skypilot-minimal.rendered.json --confirm-live ; echo "aws rc=$?"
 pixi run python tools/validate_scoped_policy.py --cloud gcp \
-  --project "$(pixi run -e live-skypilot gcloud config get-value project)" ; echo "gcp rc=$?"
+  --project "$(pixi run -e live-skypilot gcloud config get-value project)" --confirm-live ; echo "gcp rc=$?"
 aws iam get-user --user-name kinoforge-scope-probe 2>&1 | tail -2
 ```
 Expected: two JSON reports with `denied: []` / `missing: []` (rc=0) or an explicit list, and `NoSuchEntity` for the probe user.
@@ -2358,7 +2358,7 @@ syntactically valid ARN to scope pass 2.
 
 ```bash
 pixi run python tools/validate_scoped_policy.py --cloud aws \
-  --policy-file /tmp/skypilot-minimal.rendered.json
+  --policy-file /tmp/skypilot-minimal.rendered.json --confirm-live
 ```
 
 Capture the full JSON. Expect denials — this policy has never been attached
@@ -2375,7 +2375,7 @@ was quietly widened to pass its own test is worse than an honest failing one.
 
 ```bash
 PID=$(pixi run -e live-skypilot gcloud config get-value project)
-pixi run python tools/validate_scoped_policy.py --cloud gcp --project "$PID"
+pixi run python tools/validate_scoped_policy.py --cloud gcp --project "$PID" --confirm-live
 ```
 
 Note the caveat this measures against: the calling identity today holds
