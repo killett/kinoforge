@@ -7,6 +7,7 @@ style of `tests/tools/test_cloud_perms_probe.py`.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,6 +15,7 @@ import pytest
 from tools.cloud_perms_probe import _REQUIRED_AWS_ACTIONS
 from tools.validate_scoped_policy import (
     GCP_REQUIRED_PERMISSIONS,
+    _lookup_action,
     _read_gcp_roles,
     main,
     validate_aws,
@@ -164,10 +166,14 @@ def test_all_allowed_reports_exit_zero() -> None:
     """
     iam = _FakeIam(decisions={})
     result = validate_aws(
-        iam, policy_document=_sample_policy_document(), user_name="probe"
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
     )
     assert result["exit_code"] == 0
     assert result["denied"] == []
+    assert result["ungranted"] == []
     assert result["missing"] == []
 
 
@@ -179,7 +185,10 @@ def test_denied_actions_are_reported_by_name() -> None:
     """
     iam = _FakeIam(decisions={"ec2:RunInstances": "implicitDeny"})
     result = validate_aws(
-        iam, policy_document=_sample_policy_document(), user_name="probe"
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
     )
     assert result["exit_code"] == 1
     assert result["denied"] == ["ec2:RunInstances"]
@@ -194,7 +203,12 @@ def test_kms_actions_are_simulated_against_the_key_arn_from_the_policy() -> None
     under test says. Mirrors `tools/cloud_perms_probe.py:201-241`.
     """
     iam = _FakeIam(decisions={})
-    validate_aws(iam, policy_document=_sample_policy_document(), user_name="probe")
+    validate_aws(
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
+    )
 
     kms_calls = [c for c in iam.simulate_calls if "kms:Encrypt" in c["ActionNames"]]
     assert len(kms_calls) == 1
@@ -213,7 +227,12 @@ def test_resource_scoped_non_kms_action_gets_a_resource_scoped_pass() -> None:
     `kms_calls[0]["ResourceArns"]` below would KeyError.
     """
     iam = _FakeIam(decisions={})
-    validate_aws(iam, policy_document=_sample_policy_document(), user_name="probe")
+    validate_aws(
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
+    )
 
     iam_calls = [c for c in iam.simulate_calls if "iam:CreateRole" in c["ActionNames"]]
     assert len(iam_calls) == 1
@@ -240,7 +259,10 @@ def test_all_required_actions_are_simulated() -> None:
     """
     iam = _FakeIam(decisions={})
     result = validate_aws(
-        iam, policy_document=_sample_policy_document(), user_name="probe"
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
     )
     assert set(result["simulated"]) == set(_REQUIRED_AWS_ACTIONS)
     assert result["missing"] == []
@@ -263,9 +285,98 @@ def test_a_deny_on_one_resource_is_not_masked_by_an_allow_on_another() -> None:
         }
     )
     result = validate_aws(
-        iam, policy_document=_sample_policy_document(), user_name="probe"
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
     )
     assert "iam:CreateRole" in result["denied"]
+
+
+def test_denied_detail_preserves_per_resource_decisions() -> None:
+    """An operator needs to see WHICH resource in a scoped group denied.
+
+    A bug that would fail this: collapsing straight to a single verdict
+    per action without exposing the raw per-resource records -- "
+    s3:PutObject is denied" cannot tell an operator whether all 4 ARNs in
+    the group deny it or just 1.
+    """
+    role_arn = f"arn:aws:iam::{_ACCOUNT}:role/skypilot-*"
+    profile_arn = f"arn:aws:iam::{_ACCOUNT}:instance-profile/skypilot-*"
+    iam = _FakeIam(
+        decisions={
+            ("iam:CreateRole", role_arn): "implicitDeny",
+            ("iam:CreateRole", profile_arn): "allowed",
+        }
+    )
+    result = validate_aws(
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
+    )
+    detail = result["denied_detail"]["iam:CreateRole"]
+    by_resource = {record["resource"]: record["decision"] for record in detail}
+    assert by_resource[role_arn] == "implicitDeny"
+    assert by_resource[profile_arn] == "allowed"
+
+
+def test_ungranted_actions_are_reported_separately_from_denied() -> None:
+    """An action the policy never mentions is not the same bug as a scoping error.
+
+    Mirrors the real KMS-optional scenario: `render_aws_policy.render()`
+    can drop the entire `KMSLayerW` statement when no KMS key id is
+    configured -- a deliberate, documented choice, not a bug. A bug that
+    would fail this: folding "no statement grants this action at all"
+    into `denied`, which reads identically to a real scoping bug and
+    tempts an operator to widen the policy to silence it -- the exact
+    failure this tool exists to prevent.
+    """
+    policy = json.loads(_sample_policy_document())
+    policy["Statement"] = [s for s in policy["Statement"] if s["Sid"] != "KMSLayerW"]
+    iam = _FakeIam(decisions={})
+    result = validate_aws(
+        iam,
+        policy_document=json.dumps(policy),
+        user_name="probe",
+        confirm_live=True,
+    )
+    assert result["ungranted"] == ["kms:Decrypt", "kms:Encrypt"]
+    assert result["denied"] == []
+    assert result["exit_code"] == 1
+
+
+def test_missing_actions_from_a_short_response_cause_a_nonzero_exit() -> None:
+    """A short (non-truncated) response must not report a false green.
+
+    A bug that would fail this: computing `exit_code` as `1 if denied else
+    0`, ignoring `missing` entirely -- every one of the other 17 tests in
+    this file asserts `missing == []` against a fixture where nothing goes
+    missing, so none of them would catch that regression. Here the client
+    silently returns one fewer EvaluationResult than actions requested (no
+    IsTruncated flag -- that path is covered separately), which must still
+    fail the run and name the absent action.
+    """
+
+    class _DroppingIam(_FakeIam):
+        def simulate_principal_policy(self, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+            result = super().simulate_principal_policy(**kwargs)
+            result["EvaluationResults"] = [
+                r
+                for r in result["EvaluationResults"]
+                if r["EvalActionName"] != "ec2:RunInstances"
+            ]
+            return result
+
+    iam = _DroppingIam(decisions={})
+    result = validate_aws(
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
+    )
+    assert result["exit_code"] == 1
+    assert result["missing"] == ["ec2:RunInstances"]
 
 
 def test_truncated_simulate_response_raises_loudly() -> None:
@@ -284,7 +395,12 @@ def test_truncated_simulate_response_raises_loudly() -> None:
 
     iam = _TruncatingIam(decisions={})
     with pytest.raises(RuntimeError, match="IsTruncated"):
-        validate_aws(iam, policy_document=_sample_policy_document(), user_name="probe")
+        validate_aws(
+            iam,
+            policy_document=_sample_policy_document(),
+            user_name="probe",
+            confirm_live=True,
+        )
 
 
 def test_put_user_policy_attaches_the_policy_under_test() -> None:
@@ -297,7 +413,7 @@ def test_put_user_policy_attaches_the_policy_under_test() -> None:
     """
     iam = _FakeIam(decisions={})
     policy_doc = _sample_policy_document()
-    validate_aws(iam, policy_document=policy_doc, user_name="probe")
+    validate_aws(iam, policy_document=policy_doc, user_name="probe", confirm_live=True)
 
     assert len(iam.put_calls) == 1
     assert iam.put_calls[0]["UserName"] == "probe"
@@ -316,7 +432,12 @@ def test_throwaway_user_is_deleted_even_when_simulation_raises() -> None:
     """
     iam = _FakeIam(decisions={}, raise_on_simulate=True)
     with pytest.raises(RuntimeError, match="simulate exploded"):
-        validate_aws(iam, policy_document=_sample_policy_document(), user_name="probe")
+        validate_aws(
+            iam,
+            policy_document=_sample_policy_document(),
+            user_name="probe",
+            confirm_live=True,
+        )
     assert iam.deleted == ["probe"]
 
 
@@ -334,7 +455,61 @@ def test_delete_user_failure_does_not_mask_the_original_exception() -> None:
 
     iam = _FailDeleteIam(decisions={}, raise_on_simulate=True)
     with pytest.raises(RuntimeError, match="simulate exploded"):
+        validate_aws(
+            iam,
+            policy_document=_sample_policy_document(),
+            user_name="probe",
+            confirm_live=True,
+        )
+
+
+def test_validate_aws_refuses_without_confirm_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An in-process caller must opt in explicitly -- not just main()'s CLI gate.
+
+    A bug that would fail this: only `main()` checking `--confirm-live` /
+    the env var, leaving `validate_aws()` itself reachable -- and reaching
+    a real `create_user` -- from any caller that imports it directly and
+    skips `main()` entirely. Precisely what a Task 9 test harness would do.
+    """
+    monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
+    iam = _FakeIam(decisions={})
+    with pytest.raises(PermissionError, match="confirm_live"):
         validate_aws(iam, policy_document=_sample_policy_document(), user_name="probe")
+    assert iam.created == []
+
+
+def test_required_actions_all_resolve_against_the_real_tracked_template() -> None:
+    """Every `_REQUIRED_AWS_ACTIONS` action must be granted by the TRACKED template.
+
+    Reads `.aws/policies/skypilot-minimal.template.json` directly -- the
+    tracked SOURCE, not a rendered copy -- deliberately. A *rendered*
+    policy can legitimately omit a statement (`render_aws_policy.render()`
+    drops `KMSLayerW` entirely when no KMS key id is configured); that is
+    exactly the `ungranted` case `validate_aws` now reports separately from
+    a real scoping bug, and this test is not about that runtime choice. It
+    is about the policy AS AUTHORED still covering every action the probe
+    cares about -- if the tracked template ever drops or renames a
+    statement out from under a required action, or `_REQUIRED_AWS_ACTIONS`
+    grows one the template doesn't grant, this fails here instead of the
+    gap surfacing later as a confusing "ungranted" in a live run.
+
+    The template still carries `<AWS_ACCOUNT>`/`<KMS_KEY_ID>`/
+    `<S3_BUCKET_PREFIX>` placeholders unsubstituted -- irrelevant to this
+    test, since `_lookup_action` only inspects Action/Resource *shape*,
+    never ARN string contents.
+    """
+    template_path = (
+        Path(__file__).resolve().parents[2]
+        / ".aws"
+        / "policies"
+        / "skypilot-minimal.template.json"
+    )
+    statements = json.loads(template_path.read_text())["Statement"]
+    for action in _REQUIRED_AWS_ACTIONS:
+        granted, _ = _lookup_action(statements, action)
+        assert granted, f"{action} not granted by any statement in {template_path}"
 
 
 class _FakeProjects:
@@ -426,7 +601,7 @@ def test_main_refuses_without_confirm_live(
     accident that produced a real CreateUser/DeleteUser call during this
     tool's own self-review.
     """
-    monkeypatch.delenv("KINOFORGE_LIVE", raising=False)
+    monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
     with pytest.raises(SystemExit):
         main(["--cloud", "aws", "--policy-file", "/dev/null"])
     assert "confirm-live" in capsys.readouterr().err
@@ -436,7 +611,7 @@ def test_main_aws_missing_policy_file_errors_with_confirm_live(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """--policy-file is still required once the live gate is satisfied."""
-    monkeypatch.delenv("KINOFORGE_LIVE", raising=False)
+    monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
     with pytest.raises(SystemExit):
         main(["--cloud", "aws", "--confirm-live"])
     assert "--policy-file" in capsys.readouterr().err
@@ -453,7 +628,7 @@ def test_main_aws_refuses_an_unrendered_policy_template(
     the simulation silently evaluates a policy that grants nothing because
     every Resource entry is a literal, non-matching "<AWS_ACCOUNT>" string.
     """
-    monkeypatch.delenv("KINOFORGE_LIVE", raising=False)
+    monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
     unrendered = tmp_path / "unrendered.json"
     unrendered.write_text(
         '{"Statement": [{"Resource": "arn:aws:s3:::<S3_BUCKET_PREFIX>-*"}]}'
@@ -467,7 +642,7 @@ def test_main_gcp_missing_project_errors_with_confirm_live(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """--project is still required once the live gate is satisfied."""
-    monkeypatch.delenv("KINOFORGE_LIVE", raising=False)
+    monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
     with pytest.raises(SystemExit):
         main(["--cloud", "gcp", "--confirm-live"])
     assert "--project" in capsys.readouterr().err

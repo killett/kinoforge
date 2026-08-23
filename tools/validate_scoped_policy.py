@@ -22,10 +22,24 @@ falsely denied against `*` (mirrors, and generalizes, the KMS-only split
 documented at `tools/cloud_perms_probe.py:201-241`).
 
 Both cloud paths mutate/query a real API under ambient credentials and
-require `--confirm-live` (or `KINOFORGE_LIVE=1`) before they run — this
-tool creates and deletes a real throwaway IAM user on the AWS path, and
-calls `testIamPermissions` under whatever identity this shell already
-carries on the GCP path.
+require `--confirm-live` (or `KINOFORGE_VALIDATE_SCOPED_LIVE=1`) before
+they run — this tool creates and deletes a real throwaway IAM user on the
+AWS path, and calls `testIamPermissions` under whatever identity this
+shell already carries on the GCP path. `validate_aws` carries its own copy
+of this gate (a `confirm_live` parameter), so an in-process caller that
+imports the function directly — skipping `main()` entirely — cannot reach
+`create_user` by accident either.
+
+`validate_aws` also distinguishes two failure shapes that look identical
+in a naive implementation but need different operator responses: an action
+the policy DOES grant but IAM denies anyway (`denied` — almost always a
+scoping bug, fix the ARN) versus an action no `Allow` statement mentions at
+all (`ungranted` — e.g. `kms:Encrypt`/`kms:Decrypt` when
+`render_aws_policy.render()` drops the whole `KMSLayerW` statement because
+no KMS key id was configured, which is a deliberate, documented choice, not
+a bug). Collapsing both into one `denied` list makes an intentional gap
+look like a scoping bug, and the natural "fix" — widening the policy — is
+the exact failure this tool exists to prevent.
 
 Usage::
 
@@ -97,22 +111,28 @@ def _read_gcp_roles(path: Path = _GCP_ROLES_PATH) -> list[str]:
     return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
 
 
-def _resource_key_for_action(
+def _lookup_action(
     statements: list[dict[str, Any]], action: str
-) -> tuple[str, ...] | None:
-    """Return the resource ARNs the policy scopes *action* to, or None for "*".
+) -> tuple[bool, tuple[str, ...] | None]:
+    """Find whether *action* is granted by *statements*, and by which resources.
 
     Args:
-        statements: The rendered policy's `Statement` array.
+        statements: A policy's `Statement` array (rendered or raw template
+            — only `Action`/`Resource`/`Effect` shape is inspected, never
+            ARN string contents, so unrendered `<PLACEHOLDER>` values in
+            `Resource` do not affect the result).
         action: A single IAM action string, e.g. `iam:CreateRole`.
 
     Returns:
-        A tuple of resource ARNs if the granting statement scopes the
-        action to specific resources, or None if it grants `"*"` — or if
-        no `Allow` statement grants the action at all. The latter is
-        intentional: simulating a non-granted action against `"*"` still
-        correctly reports it as denied, rather than raising and hiding the
-        real gap.
+        `(granted, resource_key)`. `granted` is False when no `Allow`
+        statement's `Action` list matches *action* at all — e.g. the
+        `KMSLayerW` statement was dropped from a rendered policy because no
+        KMS key id was configured. That is a real, distinct state from "the
+        policy grants this but scoped to the wrong resource"; callers must
+        not conflate the two (see module docstring). `resource_key` is a
+        tuple of resource ARNs when the granting statement scopes the
+        action to specific resources, `None` when it grants `"*"` — and
+        also `None` (unused) when `granted` is False.
     """
     for stmt in statements:
         if stmt.get("Effect") != "Allow":
@@ -124,39 +144,61 @@ def _resource_key_for_action(
             continue
         resource = stmt.get("Resource", "*")
         if resource == "*":
-            return None
+            return True, None
         if isinstance(resource, str):
             resource = [resource]
-        return tuple(resource)
-    return None
+        return True, tuple(resource)
+    return False, None
 
 
-def _reduce_decisions(results: list[dict[str, Any]]) -> dict[str, str]:
-    """Collapse per-(action, resource) EvaluationResults into one decision per action.
+def _group_results_by_action(
+    results: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Group raw EvaluationResults by action, preserving each per-resource decision.
 
     A single action appears once per resource ARN in `ResourceArns` when
     that list has more than one entry — real IAM returns one
     `EvaluationResult` per (action, resource) pair, not one per action.
-    Reducing with a plain last-write-wins dict comprehension would let an
-    `allowed` decision against one resource silently mask an
-    `implicitDeny` against another. An action counts as denied here if ANY
-    evaluated resource denies it.
+    Collapsing immediately to a single verdict per action (as an earlier
+    version of this function did) discards which specific ARN denied: with
+    a 4-ARN group, `"s3:PutObject"` in `denied` cannot tell an operator
+    whether all four resources deny it or just one.
 
     Args:
         results: The `EvaluationResults` list from one simulate call.
 
     Returns:
-        Dict of action name -> `"allowed"`, or the first non-allowed
-        decision seen for that action.
+        Dict of action name -> list of `{"resource": ..., "decision": ...}`
+        records, one per resource actually evaluated for that action.
     """
-    decisions: dict[str, list[str]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for entry in results:
-        decisions.setdefault(entry["EvalActionName"], []).append(entry["EvalDecision"])
-    reduced: dict[str, str] = {}
-    for action, ds in decisions.items():
-        non_allowed = [d for d in ds if d != "allowed"]
-        reduced[action] = non_allowed[0] if non_allowed else "allowed"
-    return reduced
+        grouped.setdefault(entry["EvalActionName"], []).append(
+            {
+                "resource": entry.get("EvalResourceName"),
+                "decision": entry["EvalDecision"],
+            }
+        )
+    return grouped
+
+
+def _verdict(records: list[dict[str, Any]]) -> str:
+    """Collapse per-resource records into one verdict for an action.
+
+    An action counts as denied here if ANY evaluated resource denies it —
+    a plain last-write-wins reduction would let an `allowed` decision
+    against one resource silently mask an `implicitDeny` against another.
+
+    Args:
+        records: Per-resource `{"resource", "decision"}` records for one
+            action, as produced by `_group_results_by_action`.
+
+    Returns:
+        `"allowed"` if every record is allowed, else the first non-allowed
+        decision seen.
+    """
+    non_allowed = [r["decision"] for r in records if r["decision"] != "allowed"]
+    return non_allowed[0] if non_allowed else "allowed"
 
 
 def validate_aws(
@@ -165,6 +207,7 @@ def validate_aws(
     policy_document: str,
     user_name: str,
     required_actions: tuple[str, ...] = _REQUIRED_AWS_ACTIONS,
+    confirm_live: bool = False,
 ) -> dict[str, Any]:
     """Attach *policy_document* to a throwaway user and simulate every action.
 
@@ -180,17 +223,56 @@ def validate_aws(
             be substituted; the CLI enforces this before calling in.
         user_name: Throwaway IAM user name.
         required_actions: Actions to simulate.
+        confirm_live: Must be True (or `KINOFORGE_VALIDATE_SCOPED_LIVE=1`
+            set) or this function refuses to call `create_user` at all.
+            `main()` sets this after its own `--confirm-live`/env check
+            passes; this parameter exists so an in-process caller that
+            imports `validate_aws` directly — bypassing `main()` entirely,
+            e.g. a future Task 9 test harness — cannot reach a real
+            `create_user` by accident either. A fake `iam` in a unit test
+            is harmless regardless, but the function cannot tell a fake
+            from a real client, so the gate applies uniformly.
 
     Returns:
-        Dict with `exit_code`, `denied`, `missing`, and `simulated`.
-        `exit_code` is 0 only when `denied` and `missing` are both empty.
+        Dict with `exit_code`, `denied`, `denied_detail`, `ungranted`,
+        `missing`, and `simulated`. `exit_code` is 0 only when `denied`,
+        `ungranted`, and `missing` are all empty.
+
+        - `denied`: actions the policy DOES grant (found in >=1 `Allow`
+          statement) but IAM's simulator says no — almost always a real
+          scoping bug (wrong ARN, wrong action name).
+        - `denied_detail`: for each `denied` action, the raw per-resource
+          `{"resource", "decision"}` records that produced the verdict, so
+          an operator can tell "all 4 resources deny it" from "1 of 4
+          does".
+        - `ungranted`: actions no `Allow` statement mentions at all. This
+          is NOT automatically a bug — see the KMS example in the module
+          docstring — but it is reported (and still fails the run) because
+          the caller asked to verify these actions and the policy is
+          silent on them; that is worth a human decision either way.
+        - `missing`: actions requested but never showing up in `simulated`
+          at all, e.g. a response that silently returned fewer results
+          than requested (distinct from `IsTruncated`, handled below by
+          raising).
 
     Raises:
         Exception: Re-raises any client error after deleting the user.
+        PermissionError: *confirm_live* is False and
+            `KINOFORGE_VALIDATE_SCOPED_LIVE` is not `"1"`. Raised before
+            `create_user` is ever called.
         RuntimeError: A simulate call reports `IsTruncated: True`.
             Pagination is not implemented, so proceeding would silently
             evaluate only part of the action list.
     """
+    if not (confirm_live or os.environ.get("KINOFORGE_VALIDATE_SCOPED_LIVE") == "1"):
+        raise PermissionError(
+            "validate_aws() refuses to create/mutate a real IAM user without "
+            "confirm_live=True or KINOFORGE_VALIDATE_SCOPED_LIVE=1 -- an "
+            "in-process caller must opt in explicitly, mirroring the CLI's "
+            "--confirm-live gate. See the module docstring in "
+            "tools/validate_scoped_policy.py."
+        )
+
     statements: list[dict[str, Any]] = json.loads(policy_document).get("Statement", [])
     created = iam.create_user(UserName=user_name)
     principal_arn = created["User"]["Arn"]
@@ -202,12 +284,20 @@ def validate_aws(
             PolicyDocument=policy_document,
         )
 
+        ungranted: set[str] = set()
         groups: dict[tuple[str, ...] | None, list[str]] = {}
         for action in required_actions:
-            key = _resource_key_for_action(statements, action)
-            groups.setdefault(key, []).append(action)
+            granted, resource_key = _lookup_action(statements, action)
+            if not granted:
+                ungranted.add(action)
+            # Ungranted actions still get simulated (against "*", via the
+            # None group) rather than skipped -- keeps `simulated` a
+            # complete record of every required action for the "nothing
+            # silently dropped" invariant, even though their verdict is
+            # reported under `ungranted`, not `denied`.
+            groups.setdefault(resource_key, []).append(action)
 
-        simulated: dict[str, str] = {}
+        detail: dict[str, list[dict[str, Any]]] = {}
         for resource_key, actions in groups.items():
             if not actions:
                 continue
@@ -224,7 +314,10 @@ def validate_aws(
                     f"actions {actions}; pagination is not implemented here, "
                     "so results would silently be incomplete"
                 )
-            simulated.update(_reduce_decisions(sim["EvaluationResults"]))
+            for action, records in _group_results_by_action(
+                sim["EvaluationResults"]
+            ).items():
+                detail.setdefault(action, []).extend(records)
     finally:
         # A leaked probe user is a standing liability; delete it on every
         # path. Both deletes are individually guarded so a cleanup failure
@@ -244,11 +337,22 @@ def validate_aws(
         except Exception as exc:  # noqa: BLE001
             _log.warning("failed to delete throwaway IAM user %s: %s", user_name, exc)
 
-    denied = sorted(a for a, d in simulated.items() if d != "allowed")
+    simulated: dict[str, str] = {
+        action: _verdict(records) for action, records in detail.items()
+    }
+    denied = sorted(
+        action
+        for action, decision in simulated.items()
+        if decision != "allowed" and action not in ungranted
+    )
+    denied_detail = {action: detail[action] for action in denied}
+    ungranted_result = sorted(ungranted)
     missing = sorted(set(required_actions) - set(simulated))
     return {
-        "exit_code": 1 if (denied or missing) else 0,
+        "exit_code": 1 if (denied or ungranted_result or missing) else 0,
         "denied": denied,
+        "denied_detail": denied_detail,
+        "ungranted": ungranted_result,
         "missing": missing,
         "simulated": simulated,
     }
@@ -316,17 +420,19 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "required to proceed -- the aws path creates and deletes a real "
             "IAM user, the gcp path calls testIamPermissions under this "
-            "shell's ambient credentials. KINOFORGE_LIVE=1 has the same "
-            "effect."
+            "shell's ambient credentials. KINOFORGE_VALIDATE_SCOPED_LIVE=1 "
+            "has the same effect."
         ),
     )
     args = parser.parse_args(argv)
 
-    confirmed = args.confirm_live or os.environ.get("KINOFORGE_LIVE") == "1"
+    confirmed = (
+        args.confirm_live or os.environ.get("KINOFORGE_VALIDATE_SCOPED_LIVE") == "1"
+    )
     if not confirmed:
         parser.error(
             "refusing to run against a real cloud without --confirm-live or "
-            "KINOFORGE_LIVE=1 -- see the module docstring in "
+            "KINOFORGE_VALIDATE_SCOPED_LIVE=1 -- see the module docstring in "
             "tools/validate_scoped_policy.py"
         )
 
@@ -340,10 +446,11 @@ def main(argv: list[str] | None = None) -> int:
 
         # Two-tier check, mirroring tools/render_aws_policy.py's own
         # post-substitution guard: the named-placeholder regex first, then a
-        # generic "<" backstop. The regex alone is not enough -- it is
-        # [A-Z_]+ only, so it does not match <S3_BUCKET_PREFIX> (the digit
-        # in "S3" breaks the class), and an IAM policy document has no
-        # legitimate use for '<' regardless of what's inside it.
+        # generic "<" backstop. The named regex alone is not a safe single
+        # source of truth here even though render_aws_policy's own copy now
+        # includes digits ([A-Z0-9_]+) -- an IAM policy document has no
+        # legitimate use for '<' at all, so the backstop stays as the real
+        # guarantee regardless of what shape a future placeholder takes.
         named_survivors = sorted(set(_PLACEHOLDER_RE.findall(policy_text)))
         if named_survivors:
             parser.error(
@@ -366,6 +473,7 @@ def main(argv: list[str] | None = None) -> int:
             boto3.client("iam"),
             policy_document=policy_text,
             user_name=args.user_name,
+            confirm_live=True,  # main()'s own gate above already confirmed
         )
         print(json.dumps({"policy_file": args.policy_file, **result}, indent=2))  # noqa: T201
         return int(result["exit_code"])
