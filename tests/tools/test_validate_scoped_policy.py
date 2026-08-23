@@ -293,7 +293,7 @@ def test_a_deny_on_one_resource_is_not_masked_by_an_allow_on_another() -> None:
     assert "iam:CreateRole" in result["denied"]
 
 
-def test_denied_detail_preserves_per_resource_decisions() -> None:
+def test_detail_preserves_per_resource_decisions_for_a_denied_action() -> None:
     """An operator needs to see WHICH resource in a scoped group denied.
 
     A bug that would fail this: collapsing straight to a single verdict
@@ -315,10 +315,33 @@ def test_denied_detail_preserves_per_resource_decisions() -> None:
         user_name="probe",
         confirm_live=True,
     )
-    detail = result["denied_detail"]["iam:CreateRole"]
+    detail = result["detail"]["iam:CreateRole"]
     by_resource = {record["resource"]: record["decision"] for record in detail}
     assert by_resource[role_arn] == "implicitDeny"
     assert by_resource[profile_arn] == "allowed"
+
+
+def test_detail_retains_records_for_ungranted_actions_too() -> None:
+    """The class of action most likely to need inspection must not be discarded.
+
+    A bug that would fail this: keying the detail map off `denied` only
+    (an earlier version of this function did exactly that), which
+    silently drops the per-resource records for actions in `ungranted` --
+    precisely the KMS-optional-render scenario where an operator most
+    needs to see what the simulator actually said about the "*"-scoped
+    evaluation, not just that the action was ungranted.
+    """
+    policy = json.loads(_sample_policy_document())
+    policy["Statement"] = [s for s in policy["Statement"] if s["Sid"] != "KMSLayerW"]
+    iam = _FakeIam(decisions={})
+    result = validate_aws(
+        iam,
+        policy_document=json.dumps(policy),
+        user_name="probe",
+        confirm_live=True,
+    )
+    assert "kms:Encrypt" in result["detail"]
+    assert "kms:Decrypt" in result["detail"]
 
 
 def test_ungranted_actions_are_reported_separately_from_denied() -> None:
@@ -480,8 +503,51 @@ def test_validate_aws_refuses_without_confirm_live(
     assert iam.created == []
 
 
+def test_validate_aws_ignores_the_old_kinoforge_live_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The renamed gate must not still respond to the old, wider-blast-radius name.
+
+    A bug that would fail this: reverting the check back to KINOFORGE_LIVE
+    (or checking either name) -- the whole point of the rename was that
+    KINOFORGE_LIVE is already used elsewhere in the repo as an unrelated
+    live-test gate, so a session exporting it for THAT purpose must not
+    silently also open this tool's IAM-mutation gate. Every other test in
+    this file only ever unsets KINOFORGE_VALIDATE_SCOPED_LIVE, which holds
+    under either env-var name -- this is the one that actually pins the
+    rename.
+    """
+    monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
+    monkeypatch.setenv("KINOFORGE_LIVE", "1")
+    iam = _FakeIam(decisions={})
+    with pytest.raises(PermissionError, match="confirm_live"):
+        validate_aws(iam, policy_document=_sample_policy_document(), user_name="probe")
+    assert iam.created == []
+
+
+# The subset of _REQUIRED_AWS_ACTIONS that .aws/policies/skypilot-minimal.
+# template.json grants via a resource-SCOPED statement today (IAMForSkyPilotRoles,
+# S3KinoforgeBuckets, KMSLayerW) rather than "*" (EC2LifecycleRead/Write,
+# ServiceQuotas). Hand-maintained deliberately: this is the exact set a
+# regression that widens a statement's Resource to "*" -- precisely what
+# the plan's Step 3 forbids -- would silently flip to wildcard-scoped
+# without this test noticing, since `granted` alone stays True either way.
+_EXPECTED_RESOURCE_SCOPED_ACTIONS = frozenset(
+    {
+        "iam:CreateRole",
+        "iam:CreateInstanceProfile",
+        "iam:PassRole",
+        "s3:PutObject",
+        "s3:GetObject",
+        "kms:Encrypt",
+        "kms:Decrypt",
+    }
+)
+
+
 def test_required_actions_all_resolve_against_the_real_tracked_template() -> None:
-    """Every `_REQUIRED_AWS_ACTIONS` action must be granted by the TRACKED template.
+    """Every `_REQUIRED_AWS_ACTIONS` action must be granted, AND correctly scoped,
+    by the TRACKED template.
 
     Reads `.aws/policies/skypilot-minimal.template.json` directly -- the
     tracked SOURCE, not a rendered copy -- deliberately. A *rendered*
@@ -494,6 +560,12 @@ def test_required_actions_all_resolve_against_the_real_tracked_template() -> Non
     statement out from under a required action, or `_REQUIRED_AWS_ACTIONS`
     grows one the template doesn't grant, this fails here instead of the
     gap surfacing later as a confusing "ungranted" in a live run.
+
+    Also asserts the resolved `resource_key`, not just `granted` --
+    without this, rewriting every statement's `Resource` to `"*"` would
+    leave all 15 actions `granted=True` and this test green, even though
+    that rewrite is precisely the widening the plan's Step 3 forbids
+    ("Do NOT widen a Resource to `*` to clear a denial").
 
     The template still carries `<AWS_ACCOUNT>`/`<KMS_KEY_ID>`/
     `<S3_BUCKET_PREFIX>` placeholders unsubstituted -- irrelevant to this
@@ -508,8 +580,22 @@ def test_required_actions_all_resolve_against_the_real_tracked_template() -> Non
     )
     statements = json.loads(template_path.read_text())["Statement"]
     for action in _REQUIRED_AWS_ACTIONS:
-        granted, _ = _lookup_action(statements, action)
+        granted, resource_key = _lookup_action(statements, action)
         assert granted, f"{action} not granted by any statement in {template_path}"
+        if action in _EXPECTED_RESOURCE_SCOPED_ACTIONS:
+            assert resource_key is not None, (
+                f"{action} resolved to a wildcard ('*') resource in the "
+                f"tracked template, but is expected to be resource-scoped "
+                f"(IAM role/instance-profile, S3 bucket, or KMS key). A "
+                f"statement was likely widened to Resource: '*' -- exactly "
+                f"what the plan's Step 3 forbids doing to clear a denial."
+            )
+        else:
+            assert resource_key is None, (
+                f"{action} unexpectedly resolved to a scoped resource "
+                f"{resource_key!r}; update _EXPECTED_RESOURCE_SCOPED_ACTIONS "
+                f"if this is an intentional narrowing."
+            )
 
 
 class _FakeProjects:
@@ -602,6 +688,26 @@ def test_main_refuses_without_confirm_live(
     tool's own self-review.
     """
     monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
+    with pytest.raises(SystemExit):
+        main(["--cloud", "aws", "--policy-file", "/dev/null"])
+    assert "confirm-live" in capsys.readouterr().err
+
+
+def test_main_ignores_the_old_kinoforge_live_env_var(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CLI's renamed gate must not still respond to the old env-var name.
+
+    A bug that would fail this: reverting main()'s check back to
+    KINOFORGE_LIVE (or checking either name) -- KINOFORGE_LIVE is already
+    used elsewhere in the repo as an unrelated live-test gate, so a
+    session exporting it for that purpose must not silently open this
+    tool's IAM-mutation gate too. Every other gate test here only ever
+    unsets KINOFORGE_VALIDATE_SCOPED_LIVE, which holds under either
+    env-var name -- this is the one that actually pins the rename.
+    """
+    monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
+    monkeypatch.setenv("KINOFORGE_LIVE", "1")
     with pytest.raises(SystemExit):
         main(["--cloud", "aws", "--policy-file", "/dev/null"])
     assert "confirm-live" in capsys.readouterr().err

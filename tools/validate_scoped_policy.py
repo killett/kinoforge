@@ -234,17 +234,13 @@ def validate_aws(
             from a real client, so the gate applies uniformly.
 
     Returns:
-        Dict with `exit_code`, `denied`, `denied_detail`, `ungranted`,
-        `missing`, and `simulated`. `exit_code` is 0 only when `denied`,
+        Dict with `exit_code`, `denied`, `ungranted`, `missing`,
+        `simulated`, and `detail`. `exit_code` is 0 only when `denied`,
         `ungranted`, and `missing` are all empty.
 
         - `denied`: actions the policy DOES grant (found in >=1 `Allow`
           statement) but IAM's simulator says no — almost always a real
           scoping bug (wrong ARN, wrong action name).
-        - `denied_detail`: for each `denied` action, the raw per-resource
-          `{"resource", "decision"}` records that produced the verdict, so
-          an operator can tell "all 4 resources deny it" from "1 of 4
-          does".
         - `ungranted`: actions no `Allow` statement mentions at all. This
           is NOT automatically a bug — see the KMS example in the module
           docstring — but it is reported (and still fails the run) because
@@ -254,6 +250,13 @@ def validate_aws(
           at all, e.g. a response that silently returned fewer results
           than requested (distinct from `IsTruncated`, handled below by
           raising).
+        - `simulated`: one collapsed verdict per action that got a result
+          at all (`"allowed"` or the first non-allowed decision seen).
+        - `detail`: for EVERY action in `simulated` — not just `denied`
+          ones — the raw per-resource `{"resource", "decision"}` records
+          that produced its verdict, so an operator can tell "all 4
+          resources deny it" from "1 of 4 does", and can inspect an
+          `ungranted` action's actual `"*"`-scoped decision too.
 
     Raises:
         Exception: Re-raises any client error after deleting the user.
@@ -299,8 +302,10 @@ def validate_aws(
 
         detail: dict[str, list[dict[str, Any]]] = {}
         for resource_key, actions in groups.items():
-            if not actions:
-                continue
+            # No `if not actions: continue` guard here -- every group in
+            # `groups` was built via `setdefault(...).append(...)` above,
+            # so every value already has at least one action; a guard
+            # against an empty list is unreachable dead code, not defence.
             call_kwargs: dict[str, Any] = {
                 "PolicySourceArn": principal_arn,
                 "ActionNames": actions,
@@ -345,16 +350,22 @@ def validate_aws(
         for action, decision in simulated.items()
         if decision != "allowed" and action not in ungranted
     )
-    denied_detail = {action: detail[action] for action in denied}
     ungranted_result = sorted(ungranted)
     missing = sorted(set(required_actions) - set(simulated))
     return {
         "exit_code": 1 if (denied or ungranted_result or missing) else 0,
         "denied": denied,
-        "denied_detail": denied_detail,
         "ungranted": ungranted_result,
         "missing": missing,
         "simulated": simulated,
+        # Every simulated action's raw per-resource records, not just
+        # `denied` ones -- an `ungranted` action (e.g. kms:Encrypt when
+        # KMSLayerW was dropped from the render) is still simulated
+        # against "*" and its decision is exactly what an operator needs
+        # to see in a mixed-render situation. Keying this off `denied`
+        # only, as an earlier version did, silently discarded evidence for
+        # the class of action most likely to need it.
+        "detail": detail,
     }
 
 
