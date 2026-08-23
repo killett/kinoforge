@@ -263,7 +263,7 @@ def gcp_mtd_spend(
     client: Any,  # noqa: ANN401
     *,
     project_id: str,
-    billing_dataset: str = "kinoforge-prod-deadbeef.all_billing_data",
+    billing_dataset: str | None = None,
 ) -> dict[str, float]:
     """Return month-to-date spend grouped by service, in USD.
 
@@ -276,16 +276,20 @@ def gcp_mtd_spend(
         client: duck-typed query client (BigQuery in production, fake in tests).
         project_id: GCP project ID to filter billing rows by.
         billing_dataset: BigQuery dataset containing the billing export table,
-            e.g. ``"<project>.all_billing_data"``. Defaults to kinoforge's own
-            billing-export location; callers in other projects must override.
+            e.g. ``"<project>.all_billing_data"``. Defaults to
+            ``f"{project_id}.all_billing_data"`` — the billing export always
+            lives in the same project it bills, so no cross-project default
+            is needed or safe to hardcode. Callers with a differently-named
+            export dataset must override explicitly.
 
     Returns:
         Dict mapping service description to total USD spend for current month.
     """
+    dataset = billing_dataset or f"{project_id}.all_billing_data"
     sql = (
         "SELECT service.description AS service_description, "  # noqa: S608
         "SUM(cost) AS cost_usd "
-        f"FROM `{billing_dataset}.gcp_billing_export_v1_*` "
+        f"FROM `{dataset}.gcp_billing_export_v1_*` "
         f"WHERE project.id = '{project_id}' "
         "AND DATE(_PARTITIONTIME) >= DATE_TRUNC(CURRENT_DATE(), MONTH) "
         "GROUP BY service_description"

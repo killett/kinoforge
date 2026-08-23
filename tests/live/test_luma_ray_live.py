@@ -55,20 +55,36 @@ def test_luma_ray_live_e2e_smoke(tmp_path: Path) -> None:
     from kinoforge.core.interfaces import GenerationJob, Segment
     from kinoforge.core.registry import get_engine
 
+    # The tracked example config ships a placeholder bucket (<S3_BUCKET>) —
+    # not a legal S3 bucket name — so a real bucket must come from the
+    # operator via env var. Without it, this smoke would submit a real
+    # StartAsyncInvoke that dies with a ValidationException before the
+    # artifact-uri assertion is ever reached.
+    bucket = os.environ.get("KINOFORGE_LIVE_S3_BUCKET")
+    if not bucket:
+        pytest.skip("set KINOFORGE_LIVE_S3_BUCKET to run; cfg ships a placeholder")
+
     # Load config
     cfg = load_config("examples/configs/bedrock-luma-ray-t2v.yaml")
     # Verify shape
     assert cfg.engine.kind == "bedrock_video"
+    assert cfg.engine.bedrock_video is not None
+    cfg.engine.bedrock_video.output_s3_uri = f"s3://{bucket}/kinoforge-output/"
 
     # Load prompt from the canonical file (project directive).
     prompt = Path("/workspace/prompt-field-realistic.txt").read_text().strip()
     assert len(prompt) > 100, "prompt-field-realistic.txt unexpectedly short"
 
-    # Build engine + backend (via raw cfg dict — BedrockVideoEngine adapter consumes dict).
+    # Build engine + backend (via raw cfg dict — BedrockVideoEngine adapter
+    # consumes dict). Override the same field here too — this dict, not
+    # `cfg`, is what actually drives the submit() call below.
     import yaml
 
     cfg_dict = yaml.safe_load(
         Path("examples/configs/bedrock-luma-ray-t2v.yaml").read_text()
+    )
+    cfg_dict["engine"]["bedrock_video"]["output_s3_uri"] = (
+        cfg.engine.bedrock_video.output_s3_uri
     )
     engine_factory = get_engine("bedrock_video")
     engine = engine_factory()
@@ -87,7 +103,7 @@ def test_luma_ray_live_e2e_smoke(tmp_path: Path) -> None:
     # Wait for result (Luma Ray typically completes in 1-3 minutes for 5s clips).
     artifact = backend.result(submitted)
     _log.info("luma ray artifact: %s", artifact.uri)
-    assert artifact.uri.startswith("s3://<S3_BUCKET>/")
+    assert artifact.uri.startswith(cfg.engine.bedrock_video.output_s3_uri)
     assert artifact.filename == "output.mp4"
 
     # Download + verify MP4 ftyp signature.

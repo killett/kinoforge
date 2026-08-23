@@ -102,7 +102,7 @@ for AWS/GCS.
 - 2026-06-06: IAM user `kinoforge-ci` created by operator in account
   `<AWS_ACCOUNT>`. Policy `AmazonS3FullAccess` attached. Access key pasted
   directly into `/workspace/.aws/credentials` (gitignored).
-- 2026-06-06: bucket `s3://<S3_BUCKET>` created in
+- 2026-06-06: bucket `s3://<S3_BUCKET_LAYER_W>` created in
   `us-east-1`. Public access block enforced (all 4 flags). Lifecycle: object
   expiration + abort-incomplete-multipart, both at age 1 day.
 - 2026-06-06: end-to-end S3 smoke (boto3 default chain + bucket
@@ -122,15 +122,15 @@ models auto-activate on first invoke; no console step needed for Luma Ray v2.
 
 | Policy name | Grants | Attachment | Date | Source |
 |---|---|---|---|---|
-| `kinoforge-luma-ray` (inline) | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Luma Ray v2 ARNs in us-west-2) + ListFoundationModels + GetFoundationModelAvailability + CreateFoundationModelAgreement + S3 read/write on `<S3_BUCKET>` | Inline on `kinoforge-ci` (replaces `kinoforge-nova-reel`) | 2026-06-07 | `.aws/policies/bedrock-luma-ray.json` (extended in-situ) |
+| `kinoforge-luma-ray` (inline) | Bedrock InvokeModel + StartAsyncInvoke + GetAsyncInvoke (Luma Ray v2 ARNs in us-west-2) + ListFoundationModels + GetFoundationModelAvailability + CreateFoundationModelAgreement + S3 read/write on `<S3_BUCKET_LUMA_RAY>` | Inline on `kinoforge-ci` (replaces `kinoforge-nova-reel`) | 2026-06-07 | `.aws/policies/bedrock-luma-ray.json` (extended in-situ) |
 | `AmazonBedrockFullAccess` (managed) | Full Bedrock control-plane access; used for model-access diagnostics | Attached to `kinoforge-ci` | 2026-06-07 | AWS managed; can be detached once smoke passes |
 
 Reversible: `aws iam delete-user-policy --user-name kinoforge-ci --policy-name kinoforge-luma-ray`
 
 Old Nova Reel policy (`kinoforge-nova-reel`) removed when `kinoforge-luma-ray`
-was attached. Old `<S3_BUCKET>` bucket (us-east-1) may still
+was attached. Old `<S3_BUCKET_NOVA_REEL>` bucket (us-east-1) may still
 exist; remove with:
-`aws s3 rb s3://<S3_BUCKET> --force` (safe to run if not needed)
+`aws s3 rb s3://<S3_BUCKET_NOVA_REEL> --force` (safe to run if not needed)
 
 **Luma Ray EULA status (2026-06-07):**
 - `CreateFoundationModelAgreement` accepted offer `offer-o5smt33izgzbm`.
@@ -142,7 +142,7 @@ exist; remove with:
 
 | Bucket | Purpose | Region | Date | Notes |
 |---|---|---|---|---|
-| `<S3_BUCKET>` | Luma Ray v2 async-invoke output prefix | `us-west-2` | 2026-06-07 | Bedrock-managed bucket; Bedrock writes `{invocation_id}/output.mp4` here |
+| `<S3_BUCKET_LUMA_RAY>` | Luma Ray v2 async-invoke output prefix | `us-west-2` | 2026-06-07 | Bedrock-managed bucket; Bedrock writes `{invocation_id}/output.mp4` here |
 
 ### Scope-down follow-up (operator action recommended)
 

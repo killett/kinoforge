@@ -55,7 +55,7 @@
 - Test: `tests/tools/test_scan_identifiers.py`
 
 **Acceptance Criteria:**
-- [ ] Six named patterns exist: `aws_account_in_arn`, `aws_account_labelled`, `kms_key_uuid`, `gcp_service_account_email`, `gcp_project_id`, `cloud_bucket_uri`
+- [ ] Eight named patterns exist: `aws_account_in_arn`, `aws_account_labelled`, `aws_account_in_prose`, `kms_key_uuid`, `gcp_service_account_email`, `gcp_project_id`, `gcp_billing_account`, `cloud_bucket_uri` (the last two added in Task 2's follow-up round, per the human-approved scope addition)
 - [ ] Reserved/fake values do not fire: AWS `123456789012`, GCP project `kinoforge-prod-deadbeef`, SA project part `proj`, buckets `bkt`/`bucket`/`my-bucket`/`layer-w-test`/`probe-discard`
 - [ ] `kinoforge: allow-identifier` on a line suppresses every finding on that line
 - [ ] `scan_all_tracked_identifiers` enumerates via `git ls-files -z`, skips binary (NUL in first 8000 bytes), skips `FileNotFoundError`, raises `RuntimeError` on any other read failure
@@ -98,6 +98,7 @@ _REAL_PROJECT = "kinoforge-prod-" + "0dd" + "b375e"
 _REAL_UUID = "4b0dbe0c-" + "3a76-401a-" + "ac2e-" + "d0d949b9fa3e"
 _REAL_BUCKET_GS = "acme" + "-render-output"
 _REAL_BUCKET_S3 = "acme" + "-prod"
+_REAL_BILLING_ACCOUNT = "01522C-" + "EC9AA4-" + "64A7D5"
 
 
 def _run_git(repo: Path, *args: str) -> None:
@@ -118,15 +119,17 @@ def _run_git(repo: Path, *args: str) -> None:
     )
 
 
-def test_pattern_names_are_the_six_declared_classes() -> None:
+def test_pattern_names_are_the_eight_declared_classes() -> None:
     """Guards against a refactor that empties or renames the pattern tier."""
     names = {p.name for p in IDENTIFIER_PATTERNS}
     assert names == {
         "aws_account_in_arn",
         "aws_account_labelled",
+        "aws_account_in_prose",
         "kms_key_uuid",
         "gcp_service_account_email",
         "gcp_project_id",
+        "gcp_billing_account",
         "cloud_bucket_uri",
     }
 
@@ -156,6 +159,16 @@ def test_pattern_names_are_the_six_declared_classes() -> None:
             f"s3://{_REAL_BUCKET_S3}/artifacts",
             "cloud_bucket_uri",
             _REAL_BUCKET_S3,
+        ),
+        (
+            f"- **AWS account {_REAL_ACCOUNT}** (us-west-2):",
+            "aws_account_in_prose",
+            _REAL_ACCOUNT,
+        ),
+        (
+            f"Budget `billingAccounts/{_REAL_BILLING_ACCOUNT}/budgets/c3a`",
+            "gcp_billing_account",
+            _REAL_BILLING_ACCOUNT,
         ),
     ],
 )
@@ -188,6 +201,8 @@ def test_concrete_identifier_is_found(
         "s3://layer-w-test/x",
         "s3://probe-discard/x",
         "gs://<GCS_BUCKET>/x",
+        "- **AWS account 123456789012** (us-west-2):",
+        "Budget `billingAccounts/<GCP_BILLING_ACCOUNT>/budgets/c3a`",
     ],
 )
 def test_reserved_and_placeholder_values_do_not_fire(text: str) -> None:
@@ -401,6 +416,29 @@ IDENTIFIER_PATTERNS: tuple[IdentifierPattern, ...] = (
         name="aws_account_labelled",
         regex=re.compile(r"""(?i)account[_ -]?id["']?\s*[:=]\s*["']?(\d{12})"""),
         allowed=_RESERVED_AWS_ACCOUNTS,
+    ),
+    IdentifierPattern(
+        name="aws_account_in_prose",
+        # Bare prose, not assignment/ARN syntax: "AWS account 123456789012",
+        # "account 123456789012 (us-west-2)". Anchored to the word "account"
+        # followed directly by whitespace and 12 digits -- NOT to bare
+        # \d{12}, which matches 53 hash fragments in pixi.lock alone (see
+        # aws_account_in_arn's comment). "account_id"/"account-id" belong to
+        # aws_account_labelled above; the whitespace requirement here means
+        # this pattern never double-fires on that shape.
+        regex=re.compile(r"(?i)\baccount\s+(\d{12})\b"),
+        allowed=_RESERVED_AWS_ACCOUNTS,
+    ),
+    IdentifierPattern(
+        name="gcp_billing_account",
+        # GCP billing account resource name: billingAccounts/XXXXXX-XXXXXX-XXXXXX
+        # (three 6-character hex groups). Distinct from gcp_project_id --
+        # billing accounts are a different real-world resource with their
+        # own leak risk (F4 in the verification doc's scope-addition note).
+        regex=re.compile(
+            r"billingAccounts/([0-9A-Fa-f]{6}-[0-9A-Fa-f]{6}-[0-9A-Fa-f]{6})"
+        ),
+        allowed=frozenset(),
     ),
     IdentifierPattern(
         name="kms_key_uuid",

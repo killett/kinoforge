@@ -5541,7 +5541,7 @@ Live resources (manifest at `.quota_burn/manifest.json`):
   - Boot disk `kinoforge-burn-upddv3-disk` (10 GB pd-balanced, auto-delete=True)
   - GCS bucket `kinoforge-quota-burn-gcp-upddv3`
   - Budget `billingAccounts/<GCP_BILLING_ACCOUNT>/budgets/c3aeaec1-a1f9-410f-89a9-bebaecec238d` ($7 alert threshold)
-- **AWS account <AWS_ACCOUNT>** (us-west-2):
+- **AWS account 123456789012** (us-west-2):
   - EC2 `i-099081763c43fe593` (t4g.nano, running, kernel-side `shutdown -h +480`)
   - S3 bucket `kinoforge-quota-burn-aws-kmwsgh`
   - DynamoDB: SKIPPED (kinoforge-ci lacks `dynamodb:CreateTable`; 10c/5d signal loss acceptable)

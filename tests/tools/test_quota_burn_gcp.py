@@ -363,8 +363,10 @@ class FakeBillingClient:
     """Minimal Cloud Billing service-usage / billing-export query stub."""
 
     rows: list[dict[str, Any]] = field(default_factory=list)
+    last_query: str | None = None
 
     def query(self, *, query: str) -> list[dict[str, Any]]:
+        self.last_query = query
         return self.rows
 
 
@@ -380,6 +382,39 @@ def test_gcp_mtd_spend_groups_by_service() -> None:
     )
     spend = gcp_mtd_spend(client, project_id="kinoforge-prod-deadbeef")
     assert spend == {"Compute Engine": 2.0, "Cloud Storage": 0.5, "BigQuery": 1.5}
+
+
+def test_gcp_mtd_spend_default_dataset_derives_from_project_id() -> None:
+    """Bug catch: a hardcoded default dataset would silently query the wrong
+    project's billing export for any caller whose ``project_id`` differs from
+    that hardcoded value — and since ``_do_snapshot`` maps a missing-dataset
+    ``NotFound`` to a *partial report* (``gcp_status: export-not-ready``,
+    ``gcp_total: 0``), the caller would see a plausible-looking $0.00 instead
+    of an error. The default must be derived from ``project_id`` itself, not
+    fixed to any one project.
+    """
+    client = FakeBillingClient(rows=[])
+    gcp_mtd_spend(client, project_id="some-other-project-abcdef")
+    assert client.last_query is not None
+    assert "`some-other-project-abcdef.all_billing_data.gcp_billing_export_v1_*`" in (
+        client.last_query
+    )
+
+
+def test_gcp_mtd_spend_explicit_billing_dataset_overrides_default() -> None:
+    """An explicit ``billing_dataset`` (e.g. a shared export dataset that
+    doesn't live in the queried project) must still win over the
+    project_id-derived default."""
+    client = FakeBillingClient(rows=[])
+    gcp_mtd_spend(
+        client,
+        project_id="kinoforge-prod-deadbeef",
+        billing_dataset="shared-billing-project.central_export",
+    )
+    assert client.last_query is not None
+    assert "`shared-billing-project.central_export.gcp_billing_export_v1_*`" in (
+        client.last_query
+    )
 
 
 def test_gcp_mtd_spend_raises_billing_export_not_ready_when_dataset_missing() -> None:

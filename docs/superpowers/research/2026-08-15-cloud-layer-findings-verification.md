@@ -714,7 +714,10 @@ copy verbatim.
 .gcp/kms-test-key.name
 ```
 
-`.aws/policies/skypilot-minimal.json`, `KMSLayerW` statement:
+`.aws/policies/skypilot-minimal.json`, `KMSLayerW` statement, as of 2026-08-15
+(scrubbed in Task 2 — the tracked file itself now reads `<KMS_KEY_ID>`; this
+block is a verbatim quote of the pre-fix content, kept as evidence of what the
+finding was, not a live copy of the file):
 
 ```json
       "Resource": [
@@ -742,8 +745,9 @@ SA emails, and bucket names:
 - **Service-account emails:** clean in tracked source — `kinoforge-runner@proj.iam…`
   in `tests/core/test_auth.py` is a fake domain; `.gcp/README.md:24` uses
   `<GCP_PROJECT>`.
-- **GCP project id: NOT clean.** The real project id `<GCP_PROJECT>` <!-- kinoforge: allow-identifier -->
-  appears in **9 tracked files**, including a *production code default*:
+- **GCP project id: NOT clean, as of 2026-08-15 (scrubbed in Task 2).** The real
+  project id `<GCP_PROJECT>` <!-- kinoforge: allow-identifier -->
+  appeared in **9 tracked files**, including a *production code default*:
 
   `tools/quota_burn_lib.py:266`:
   ```python

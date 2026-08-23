@@ -26,6 +26,7 @@ _REAL_PROJECT = "kinoforge-prod-" + "0dd" + "b375e"
 _REAL_UUID = "4b0dbe0c-" + "3a76-401a-" + "ac2e-" + "d0d949b9fa3e"
 _REAL_BUCKET_GS = "acme" + "-render-output"
 _REAL_BUCKET_S3 = "acme" + "-prod"
+_REAL_BILLING_ACCOUNT = "01522C-" + "EC9AA4-" + "64A7D5"
 
 
 def _run_git(repo: Path, *args: str) -> None:
@@ -46,15 +47,17 @@ def _run_git(repo: Path, *args: str) -> None:
     )
 
 
-def test_pattern_names_are_the_six_declared_classes() -> None:
+def test_pattern_names_are_the_eight_declared_classes() -> None:
     """Guards against a refactor that empties or renames the pattern tier."""
     names = {p.name for p in IDENTIFIER_PATTERNS}
     assert names == {
         "aws_account_in_arn",
         "aws_account_labelled",
+        "aws_account_in_prose",
         "kms_key_uuid",
         "gcp_service_account_email",
         "gcp_project_id",
+        "gcp_billing_account",
         "cloud_bucket_uri",
     }
 
@@ -89,6 +92,16 @@ def test_pattern_names_are_the_six_declared_classes() -> None:
             "cloud_bucket_uri",
             _REAL_BUCKET_S3,
         ),
+        (
+            f"- **AWS account {_REAL_ACCOUNT}** (us-west-2):",
+            "aws_account_in_prose",
+            _REAL_ACCOUNT,
+        ),
+        (
+            f"Budget `billingAccounts/{_REAL_BILLING_ACCOUNT}/budgets/c3a`",
+            "gcp_billing_account",
+            _REAL_BILLING_ACCOUNT,
+        ),
     ],
 )
 def test_concrete_identifier_is_found(
@@ -120,6 +133,8 @@ def test_concrete_identifier_is_found(
         "s3://layer-w-test/x",
         "s3://probe-discard/x",
         "gs://<GCS_BUCKET>/x",
+        "- **AWS account 123456789012** (us-west-2):",
+        "Budget `billingAccounts/<GCP_BILLING_ACCOUNT>/budgets/c3a`",
     ],
 )
 def test_reserved_and_placeholder_values_do_not_fire(text: str) -> None:
@@ -142,6 +157,18 @@ def test_project_id_inside_a_service_account_email_reports_once() -> None:
     text = f"kinoforge-runner@{_REAL_PROJECT}.iam.gserviceaccount.com"
     findings = list(iter_identifier_findings(text))
     assert [f.pattern_name for f in findings] == ["gcp_service_account_email"]
+
+
+def test_account_id_assignment_does_not_also_fire_prose_pattern() -> None:
+    """`account_id = "..."` belongs to `aws_account_labelled` alone.
+
+    A bug that would fail this: loosening `aws_account_in_prose`'s
+    whitespace requirement so it also matches the underscore in
+    `account_id`, double-reporting one identifier under two pattern names.
+    """
+    text = f'account_id = "{_REAL_ACCOUNT}"'
+    findings = list(iter_identifier_findings(text))
+    assert [f.pattern_name for f in findings] == ["aws_account_labelled"]
 
 
 def test_allow_pragma_suppresses_the_line() -> None:

@@ -85,6 +85,29 @@ IDENTIFIER_PATTERNS: tuple[IdentifierPattern, ...] = (
         allowed=_RESERVED_AWS_ACCOUNTS,
     ),
     IdentifierPattern(
+        name="aws_account_in_prose",
+        # Bare prose, not assignment/ARN syntax: "AWS account 123456789012",
+        # "account 123456789012 (us-west-2)". Anchored to the word "account"
+        # followed directly by whitespace and 12 digits -- NOT to bare
+        # \d{12}, which matches 53 hash fragments in pixi.lock alone (see
+        # aws_account_in_arn's comment). "account_id"/"account-id" belong to
+        # aws_account_labelled above; the whitespace requirement here means
+        # this pattern never double-fires on that shape.
+        regex=re.compile(r"(?i)\baccount\s+(\d{12})\b"),
+        allowed=_RESERVED_AWS_ACCOUNTS,
+    ),
+    IdentifierPattern(
+        name="gcp_billing_account",
+        # GCP billing account resource name: billingAccounts/XXXXXX-XXXXXX-XXXXXX
+        # (three 6-character hex groups). Distinct from gcp_project_id --
+        # billing accounts are a different real-world resource with their
+        # own leak risk (F4 in the verification doc's scope-addition note).
+        regex=re.compile(
+            r"billingAccounts/([0-9A-Fa-f]{6}-[0-9A-Fa-f]{6}-[0-9A-Fa-f]{6})"
+        ),
+        allowed=frozenset(),
+    ),
+    IdentifierPattern(
         name="kms_key_uuid",
         regex=re.compile(
             r"key/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
