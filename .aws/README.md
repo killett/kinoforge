@@ -20,7 +20,10 @@ and `AWS_CONFIG_FILE=$PIXI_PROJECT_ROOT/.aws/config` in `[activation.env]`, so
 
 1. AWS Console → IAM → Users → **Add user**
    - User name: `kinoforge-ci`
-   - Permissions: attach **`AmazonS3FullAccess`** (simplest; scope-down below).
+   - Permissions: **none yet.** Create the user bare, then attach the scoped
+     policy via the CLI path in "SkyPilot policy — apply instructions" below.
+     `AmazonS3FullAccess` is the fallback if you are blocked, not the default —
+     see the same section.
 2. Open the new user → **Security credentials** → **Create access key**
    - Use case: **Command Line Interface (CLI)**
    - Confirm + Next + Create.
@@ -31,8 +34,9 @@ and `AWS_CONFIG_FILE=$PIXI_PROJECT_ROOT/.aws/config` in `[activation.env]`, so
 
 After paste, verify with `pixi run python -c "import boto3;
 print(boto3.client('sts').get_caller_identity())"` — should print the
-`kinoforge-ci` ARN. From there, the test bucket creation, lifecycle,
-scoped IAM policy attach, and S3 store smoke run automatically.
+`kinoforge-ci` ARN. The user has no permissions yet; continue to
+"SkyPilot policy — apply instructions" below to attach the scoped policy
+before running the test bucket creation, lifecycle, or S3 store smoke.
 
 ## Scoped IAM policy (optional follow-up)
 
@@ -122,15 +126,17 @@ To attach it to the existing `kinoforge-ci` IAM user:
 6. Review → name it `KinoforgeSkypilotMinimal` → Create policy.
 7. Confirm the policy is now attached to `kinoforge-ci`.
 
-Leave `AmazonS3FullAccess` attached until `pixi run cloud:perms-probe`
-exits 0 against AWS. Once green, detach `AmazonS3FullAccess`:
+Confirm the scoped policy is sufficient with `pixi run cloud:perms-probe`
+against AWS — it should exit 0 without `AmazonS3FullAccess` ever being
+attached. If you used the `AmazonS3FullAccess` fallback from step 1 of
+Bootstrap because you were blocked, detach it once the probe is green:
 
 > Users → `kinoforge-ci` → Permissions → checkbox `AmazonS3FullAccess` →
 > Remove.
 
 The scoped policy covers all S3 operations kinoforge needs against the
 `<S3_BUCKET_PREFIX>-*` and `skypilot-*` prefixes; broader S3
-access is no longer required.
+access is not required.
 
 ## Rotation
 
