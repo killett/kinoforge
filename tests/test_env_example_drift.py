@@ -16,11 +16,23 @@ from dotenv import dotenv_values
 _REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 _ENV_EXAMPLE: Path = _REPO_ROOT / ".env.example"
 
-_KEY_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=", re.MULTILINE)
+_KEY_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=")
 _MARKER_RE = re.compile(r"#\s*(UNIMPLEMENTED|OPTIONAL)\b")
 
-# Directories whose mention of a var does not count as consumption — a doc
-# naming a key proves nothing about whether code reads it.
+# This file's own path, relative to the repo root, as `git ls-files` would
+# report it. Excluded from its own search corpus below: every curated var
+# name and every documented key is spelled out as a string literal in this
+# file, so without the exclusion `key in source` and `v in source` are
+# trivially true for anything this file merely *mentions* — the consumed
+# check and the anti-rot guard would both pass vacuously regardless of
+# whether real code reads the var.
+_OWN_PATH_REL: str = Path(__file__).resolve().relative_to(_REPO_ROOT).as_posix()
+
+# Directories/files whose mention of a var does not count as consumption — a
+# doc naming a key proves nothing about whether code reads it. Any tracked
+# `.md` file is prose by convention (CLAUDE.md, AGENTS.md, SPEC.md, DESIGN.md,
+# per-directory READMEs, …); the explicit prefixes below additionally cover
+# non-`.md` doc surfaces (e.g. the `.tasks.json` sidecar under docs/).
 _DOC_PREFIXES = ("docs/", "PROGRESS.md", "README.md", "successful-generations.md")
 
 # Vars an operator must set to use a documented kinoforge feature. Hand
@@ -56,7 +68,8 @@ def _tracked_source_text() -> str:
 
     Returns:
         Concatenation of tracked file contents, excluding `.env.example`
-        itself and the doc surfaces in :data:`_DOC_PREFIXES`.
+        itself, this test file's own source, and the doc surfaces matched
+        by :data:`_DOC_PREFIXES` / the `.md` extension.
     """
     listing = subprocess.run(  # noqa: S603
         ["git", "ls-files", "-z"],  # noqa: S607
@@ -67,9 +80,9 @@ def _tracked_source_text() -> str:
     ).stdout
     chunks: list[str] = []
     for rel in listing.split("\0"):
-        if not rel or rel == ".env.example":
+        if not rel or rel in (".env.example", _OWN_PATH_REL):
             continue
-        if rel.startswith(_DOC_PREFIXES):
+        if rel.startswith(_DOC_PREFIXES) or rel.endswith(".md"):
             continue
         raw = _REPO_ROOT / rel
         try:
@@ -115,16 +128,39 @@ def test_env_example_parses_as_dotenv() -> None:
     assert "RUNPOD_API_KEY" in parsed
 
 
-def test_runpod_terminate_key_expands_rather_than_being_literal() -> None:
+def test_runpod_terminate_key_expands_rather_than_being_literal(tmp_path: Path) -> None:
     """The `${RUNPOD_API_KEY}` reference must actually interpolate.
 
     `.env.example` promises the terminate key reuses the main key via
-    expansion. A bug that would fail this: quoting the value so dotenv
-    treats `${RUNPOD_API_KEY}` as a literal string, which would embed the
-    seven characters `${RUNP...` into pod env instead of the key.
+    expansion. Asserting only `"$" not in parsed["RUNPOD_TERMINATE_KEY"]`
+    against the shipped template is too weak to prove that: `RUNPOD_API_KEY`
+    ships empty, so expansion, deletion of the line, hardcoding it empty,
+    and typo'ing the referenced var name all collapse to the same empty
+    string and all pass. To actually distinguish expansion from absence,
+    substitute a sentinel into a scratch copy of `RUNPOD_API_KEY` and assert
+    the terminate key resolves to that exact sentinel — only a real
+    `${RUNPOD_API_KEY}` expansion can produce it.
+
+    A bug that would fail this: quoting the value so dotenv treats
+    `${RUNPOD_API_KEY}` as a literal string (embedding `${RUNP...` into pod
+    env instead of the key), deleting the terminate-key line, hardcoding it
+    to a literal placeholder, or a typo in the referenced var name.
     """
-    parsed = dotenv_values(_ENV_EXAMPLE)
-    assert "$" not in (parsed.get("RUNPOD_TERMINATE_KEY") or "")
+    sentinel = (
+        "sentinel-runpod-key-9f3c1a"  # synthetic placeholder value, not a real key
+    )
+    original = _ENV_EXAMPLE.read_text()
+    substituted, count = re.subn(
+        r"(?m)^RUNPOD_API_KEY=.*$",
+        f"RUNPOD_API_KEY={sentinel}",  # placeholder substitution, not a real credential
+        original,
+    )
+    assert count == 1, "expected exactly one RUNPOD_API_KEY= line in .env.example"
+
+    scratch = tmp_path / ".env.example"
+    scratch.write_text(substituted)
+    parsed = dotenv_values(scratch)
+    assert parsed.get("RUNPOD_TERMINATE_KEY") == sentinel
 
 
 def test_every_documented_key_is_consumed_or_marked() -> None:
