@@ -35,7 +35,7 @@ The pattern: gitignored `<provider>/` directory + tracked entry in this file.
 | HuggingFace  | ✅ Bootstrapped               | `.env` → `HF_TOKEN`                                 | personal HF read-only token                                          |
 | CivitAI      | ✅ Bootstrapped               | `.env` → `CIVITAI_TOKEN`                            | personal CivitAI API key                                             |
 | RunPod       | ✅ Bootstrapped               | `.env` → `RUNPOD_API_KEY`, `RUNPOD_TERMINATE_KEY`   | personal RunPod API key (terminate-key reuses main; see Layer N)    |
-| SkyPilot perms (AWS) | ✅ Bootstrapped (Layer W+α) | `.aws/policies/skypilot-minimal.json`, `.aws/perms-snapshot.json` | `kinoforge-ci` + managed policies (EC2/IAM/SQ/S3FullAccess) + `kinoforge-ci-kms` |
+| SkyPilot perms (AWS) | ✅ Bootstrapped (Layer W+α) | `.aws/policies/skypilot-minimal.template.json`, `.aws/perms-snapshot.json` | `kinoforge-ci` + managed policies (EC2/IAM/SQ/S3FullAccess) + `kinoforge-ci-kms` |
 | SkyPilot perms (GCP) | ✅ Bootstrapped (Layer W+α) | `.gcp/perms-snapshot.json`                          | `kinoforge-runner` + `compute.instanceAdmin.v1` + `iam.serviceAccountUser` |
 | Azure / B2 / R2 | ❌ Not bootstrapped        | —                                                   | —                                                                    |
 
@@ -159,20 +159,22 @@ needed for the SkyPilot multi-cloud T4 smoke (Layer W+β). Spec:
 `docs/superpowers/specs/2026-06-06-layer-w-alpha-cloud-bootstrap-design.md`.
 Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
 
-- **AWS scoped policy doc:** `.aws/policies/skypilot-minimal.json` (tracked,
-  not secret). Covers EC2 lifecycle + IAM PassRole on `skypilot-*` +
-  ServiceQuotas + S3 scoped to `<GCS_KMS_KEYRING>-*`/`skypilot-*`
-  prefixes + KMS scoped to `alias/<GCS_KMS_KEYRING>`. NOT attached
-  to `kinoforge-ci` in this layer (operator opted for AWS-managed broad
-  policies instead — see "AWS — actually attached policies" below). The
-  doc stays in repo as the scope-down target for a future layer.
+- **AWS scoped policy template:** `.aws/policies/skypilot-minimal.template.json`
+  (tracked, not secret; render with `tools/render_aws_policy.py` before
+  attaching — see `.aws/policies/README.md`). Covers EC2 lifecycle + IAM
+  PassRole on `skypilot-*` + ServiceQuotas + S3 scoped to
+  `<S3_BUCKET_PREFIX>-*`/`skypilot-*` prefixes + KMS scoped to
+  `alias/<KMS_ALIAS>`. NOT attached to `kinoforge-ci` in this layer
+  (operator opted for AWS-managed broad policies instead — see "AWS —
+  actually attached policies" below). The template stays in repo as the
+  scope-down target for a future layer.
 - **AWS — actually attached policies:** `AmazonEC2FullAccess` +
   `IAMFullAccess` + `AmazonS3FullAccess` + `ServiceQuotasFullAccess`
   (AWS managed) + `kinoforge-ci-kms` (customer-managed, scoped to the
   Layer W KMS key ARN — auto-created by the probe when `kms:Encrypt`
   simulated as `implicitDeny`). The four managed policies are broader than
-  required; the scoped `.aws/policies/skypilot-minimal.json` is the
-  documented swap-in target.
+  required; the scoped `.aws/policies/skypilot-minimal.template.json` is
+  the documented swap-in target.
 - **AWS GPU quota:** `L-DB2E81BA` (Running On-Demand G/VT instance vCPUs)
   ≥ 4 in `us-east-1`. Initial value was 0; probe auto-submitted case
   `cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` via

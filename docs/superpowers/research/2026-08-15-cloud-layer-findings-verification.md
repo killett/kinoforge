@@ -10,6 +10,15 @@ so the lock is the only pin). Autostop claims below were verified against the
 **installed source** at
 `.pixi/envs/live-skypilot/lib/python3.12/site-packages/sky/`, not from docs or memory.
 
+**Note (added 2026-08-23, Task 3 of the least-privilege-onboarding plan):**
+every `.aws/policies/skypilot-minimal.json` path reference below records
+what was true on 2026-08-15 and is left as-is — this document is a
+point-in-time audit, not a live index. The file was renamed to
+`.aws/policies/skypilot-minimal.template.json` in Task 3 (the `.template`
+signals it is not directly attachable; see `.aws/policies/README.md`).
+Anyone trying to actually open the file from a reference below wants the
+new name.
+
 ---
 
 ## Summary table

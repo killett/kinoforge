@@ -103,10 +103,70 @@ def test_resolve_kms_key_id_errors_with_a_remediation_hint(tmp_path: Path) -> No
     """A missing ARN file must say what to do, not just what failed.
 
     A bug that would fail this: letting the bare FileNotFoundError escape,
-    which tells a new operator nothing about `tools/bootstrap_kms.py`.
+    which tells a new operator nothing about `tools/bootstrap_kms.py`. A
+    narrower bug that would still pass a canonical-name-only check:
+    hardcoding the canonical filename and dropping the actual *arn_file*
+    argument from the message, which would misdirect an operator who
+    passed a custom, non-default path.
     """
-    with pytest.raises(FileNotFoundError, match="kms-test-key.arn"):
-        resolve_kms_key_id(tmp_path / "absent.arn")
+    absent = tmp_path / "absent.arn"
+    with pytest.raises(FileNotFoundError) as exc_info:
+        resolve_kms_key_id(absent)
+    message = str(exc_info.value)
+    assert "kms-test-key.arn" in message
+    assert str(absent) in message
+
+
+def test_render_refuses_an_unnamed_placeholder_shape() -> None:
+    """The named-placeholder regex is deliberately narrow (`[A-Z_]` only);
+    a placeholder with a digit, hyphen, or lowercase letter must still be
+    caught, not silently rendered into legal-looking JSON.
+
+    A bug that would fail this: only checking `_PLACEHOLDER_RE` survivors
+    and returning `out` unconditionally otherwise. `<kms_key_id>` is legal
+    JSON string content and `json.loads()` would not object either, so
+    without a blanket `<` check the malformed ARN reaches
+    `put-user-policy` exactly as this module exists to prevent.
+    """
+    template = _TEMPLATE.replace("<KMS_KEY_ID>", "<kms_key_id>")
+    with pytest.raises(ValueError, match="'<' survived rendering"):
+        render(
+            template, account=_ACCOUNT, kms_key_id=_KEY_ID, bucket_prefix="kf-example"
+        )
+
+
+def test_render_rejects_a_non_12_digit_account() -> None:
+    """A malformed or wildcard account widens every ARN built from it.
+
+    A bug that would fail this: accepting `account="*"` and silently
+    producing `arn:aws:iam::*:role/skypilot-*` -- a policy far wider than
+    the operator believes, reached by a different input than the
+    empty-`bucket_prefix` case.
+    """
+    with pytest.raises(ValueError, match="account"):
+        render(_TEMPLATE, account="*", kms_key_id=_KEY_ID, bucket_prefix="kf-example")
+
+
+def test_render_rejects_a_wildcard_bucket_prefix() -> None:
+    """`bucket_prefix="*"` yields `arn:aws:s3:::*-*`, not the scope the
+    operator believes they asked for.
+
+    Reached by a different input than
+    `test_render_rejects_an_empty_bucket_prefix`, which only covers the
+    empty-string case.
+    """
+    with pytest.raises(ValueError, match="bucket_prefix"):
+        render(_TEMPLATE, account=_ACCOUNT, kms_key_id=_KEY_ID, bucket_prefix="*")
+
+
+def test_render_rejects_a_bucket_prefix_with_whitespace() -> None:
+    """Whitespace is never valid in an S3 bucket-name prefix and signals a
+    copy-paste mistake, not operator intent.
+    """
+    with pytest.raises(ValueError, match="bucket_prefix"):
+        render(
+            _TEMPLATE, account=_ACCOUNT, kms_key_id=_KEY_ID, bucket_prefix="kf example"
+        )
 
 
 def test_main_refuses_to_write_inside_the_repo(tmp_path: Path) -> None:
@@ -131,3 +191,98 @@ def test_main_refuses_to_write_inside_the_repo(tmp_path: Path) -> None:
                 str(Path(__file__).resolve().parents[2] / "rendered.json"),
             ]
         )
+
+
+def test_main_refuses_a_dot_dot_relative_path_into_the_repo() -> None:
+    """`../` traversal must not bypass the in-repo-output guard.
+
+    A bug that would fail this: comparing `args.out` textually instead of
+    calling `.resolve()` first, so a path that reads as "elsewhere"
+    syntactically actually normalizes to somewhere inside the repo.
+    """
+    from tools.render_aws_policy import main
+
+    repo_root = Path(__file__).resolve().parents[2]
+    traversal_out = str(repo_root / "tests" / ".." / "rendered.json")
+
+    with pytest.raises(ValueError, match="inside the repository"):
+        main(
+            [
+                "--account",
+                _ACCOUNT,
+                "--kms-key-id",
+                _KEY_ID,
+                "--bucket-prefix",
+                "kf-example",
+                "--out",
+                traversal_out,
+            ]
+        )
+
+
+def test_main_refuses_a_symlinked_path_into_the_repo(tmp_path: Path) -> None:
+    """A symlink whose link path is outside the repo but whose target is
+    inside it must not bypass the in-repo-output guard.
+
+    A bug that would fail this: resolving symlinks with anything other
+    than `Path.resolve()` (or not at all), so `<outside>/link/rendered.json`
+    reads as "outside" even though `link` points straight back into the
+    repo root.
+    """
+    from tools.render_aws_policy import main
+
+    repo_root = Path(__file__).resolve().parents[2]
+    link = tmp_path / "link-into-repo"
+    link.symlink_to(repo_root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="inside the repository"):
+        main(
+            [
+                "--account",
+                _ACCOUNT,
+                "--kms-key-id",
+                _KEY_ID,
+                "--bucket-prefix",
+                "kf-example",
+                "--out",
+                str(link / "rendered.json"),
+            ]
+        )
+
+
+def test_main_refuses_to_follow_a_pre_existing_symlink_at_out(
+    tmp_path: Path,
+) -> None:
+    """`--out` pointing at a pre-existing symlink must not be followed.
+
+    The symlink and its target both live outside the repo, so the
+    containment guard does not fire and this exercises the write path
+    itself. A bug that would fail this: `write_text()` (or any open
+    without `O_NOFOLLOW`) follows a pre-existing symlink at the target
+    path -- a predictable filename in a world-writable directory like
+    `/tmp` (the module's own documented usage example) is a symlink-attack
+    target. Concrete account id and KMS key id would land in the
+    attacker's file, which the old `chmod(0o600)` would then have made
+    *more* private on the attacker's behalf.
+    """
+    from tools.render_aws_policy import main
+
+    attacker_target = tmp_path / "attacker-owned-file"
+    attacker_target.write_text("do not overwrite me via a followed symlink\n")
+    out_link = tmp_path / "predictable-name.json"
+    out_link.symlink_to(attacker_target)
+
+    with pytest.raises(OSError):
+        main(
+            [
+                "--account",
+                _ACCOUNT,
+                "--kms-key-id",
+                _KEY_ID,
+                "--bucket-prefix",
+                "kf-example",
+                "--out",
+                str(out_link),
+            ]
+        )
+    assert attacker_target.read_text() == "do not overwrite me via a followed symlink\n"

@@ -11,7 +11,8 @@ snapshots to `.aws/perms-snapshot.json` and `.gcp/perms-snapshot.json`
 2 = quota gap pending (AWS auto-submits via the SDK, GCP emits a console
 URL because no SDK surface exists for compute-quota requests). See
 `docs/CLOUD-CREDS.md` for the bootstrap inventory, the scoped IAM policy
-doc at `.aws/policies/skypilot-minimal.json`, and the SkyPilot
+template at `.aws/policies/skypilot-minimal.template.json` (render with
+`tools/render_aws_policy.py` before attaching), and the SkyPilot
 permissions summary.
 
 ## Credentials

@@ -14,7 +14,7 @@ Three separate defects, one shared shape — the documented path and the secure 
 point in opposite directions, and the documented one wins because it is what gets
 pasted.
 
-1. **`.aws/policies/skypilot-minimal.json` is referenced by nothing.** `.env.example`
+1. **`.aws/policies/skypilot-minimal.template.json` is referenced by nothing.** `.env.example`
    instead instructs a new operator to attach `AmazonEC2FullAccess`,
    `AmazonS3FullAccess` and `AmazonBedrockFullAccess`, with a parenthetical to
    tighten later. `.aws/README.md` has the same shape: bootstrap step 1 says attach
@@ -30,7 +30,7 @@ pasted.
 
 3. **Scrub discipline is inconsistent.** `.gitignore:90-91` excludes
    `.aws/kms-test-key.arn` and `.gcp/kms-test-key.name` specifically to keep key
-   identifiers out of the tree, while `.aws/policies/skypilot-minimal.json` commits a
+   identifiers out of the tree, while `.aws/policies/skypilot-minimal.template.json` commits a
    literal KMS key UUID with every other identifier in the same file scrubbed to a
    `<PLACEHOLDER>`. A policy enforced by `.gitignore` for two files and by nothing at
    all for the rest is a policy that will be violated again.
@@ -50,10 +50,10 @@ Two facts were established during the brainstorm that the brief did not assume.
 The brief specifies:
 
 ```
-aws iam put-user-policy --policy-document file://.aws/policies/skypilot-minimal.json
+aws iam put-user-policy --policy-document file://.aws/policies/skypilot-minimal.template.json
 ```
 
-`skypilot-minimal.json` already carries `<AWS_ACCOUNT>` (4 sites) and
+`skypilot-minimal.template.json` already carries `<AWS_ACCOUNT>` (4 sites) and
 `<GCS_KMS_KEYRING>` (2 sites) placeholders. AWS rejects a malformed ARN, so this
 invocation fails today, before this change. Scrubbing the KMS UUID to `<KMS_KEY_ID>`
 adds a third placeholder.
@@ -110,7 +110,7 @@ Zero references in `src/` or `tools/`. No call to `setIamPolicy` or
 verification section. It is needed only while binding the other roles, and never at
 runtime.
 
-### 3.6 `skypilot-minimal.json` has never been attached
+### 3.6 `skypilot-minimal.template.json` has never been attached
 
 Per `docs/CLOUD-CREDS.md:162-175`, quoted in F9: the policy is "NOT attached to
 `kinoforge-ci` in this layer (operator opted for AWS-managed broad policies
@@ -143,7 +143,7 @@ repo tree**, so the concrete artifact is never a scrub-test candidate.
 Contract: refuses to write if any `<...>` placeholder survives substitution, and
 refuses to write inside the repo root. Both are hard errors, not warnings.
 
-### 5.2 `skypilot-minimal.json` edits
+### 5.2 `skypilot-minimal.template.json` edits
 
 - `KMSLayerW` resource: literal UUID → `<KMS_KEY_ID>`.
 - `S3KinoforgeBuckets` resource: `<GCS_KMS_KEYRING>` → `<S3_BUCKET_PREFIX>`. This is
@@ -239,7 +239,7 @@ so a regression in the sweep function itself cannot pass silently. Mirrors
 |---|---|---|
 | GCP project id | 10 | `kinoforge-prod-deadbeef` — convention already established at `tests/stores/test_recording.py:48-50` |
 | Bucket names | 20 | `<GCS_BUCKET>` / `<S3_BUCKET>` in docs and example configs; `bkt`-family doubles in tests |
-| KMS UUID | 3 (`skypilot-minimal.json`, `PROGRESS.md`, verification doc) | `<KMS_KEY_ID>`; verification doc takes the pragma instead |
+| KMS UUID | 3 (`skypilot-minimal.template.json`, `PROGRESS.md`, verification doc) | `<KMS_KEY_ID>`; verification doc takes the pragma instead |
 
 `tools/quota_burn_lib.py:266` is the one production-code site — a default parameter
 naming the real project's billing dataset. It becomes the `deadbeef` fake, which
@@ -278,7 +278,7 @@ so KMS actions need a separate resource-scoped call.
 then `projects.testIamPermissions` for the permissions those roles are claimed to
 supply.
 
-**Honest banner, in both `skypilot-minimal.json` (as a `_comment` key) and
+**Honest banner, in both `skypilot-minimal.template.json` (as a `_comment` key) and
 `roles.txt`:** simulate-validated, never exercised against a real launch. Simulation
 sees the policy's own logic; it does not see an undocumented API call SkyPilot makes
 at launch time. §6's firewall caveat is the concrete known example.

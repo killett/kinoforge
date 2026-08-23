@@ -4,7 +4,7 @@
 
 **Goal:** Make the scoped AWS policy and a new minimum GCP role list the first thing a new operator pastes, and add two tests that stop the scrub and env-doc discipline from decaying back.
 
-**Architecture:** Three independent seams. (1) A new `tools/scan_identifiers.py` mirrors the existing `tools/scan_secrets.py` shape — pattern list, `iter_*_findings`, `scan_all_tracked_*`, line pragma — and a lockdown test in `tests/` pins it over `git ls-files`. (2) A new `tools/render_aws_policy.py` substitutes the three placeholders in `.aws/policies/skypilot-minimal.json` at attach time and writes outside the repo, which is what lets the tracked file stay placeholder-clean AND be attachable. (3) `tools/validate_scoped_policy.py` exercises both scoped grants through IAM simulation only — no EC2 launch, no GCE instance, zero compute spend.
+**Architecture:** Three independent seams. (1) A new `tools/scan_identifiers.py` mirrors the existing `tools/scan_secrets.py` shape — pattern list, `iter_*_findings`, `scan_all_tracked_*`, line pragma — and a lockdown test in `tests/` pins it over `git ls-files`. (2) A new `tools/render_aws_policy.py` substitutes the three placeholders in `.aws/policies/skypilot-minimal.template.json` at attach time and writes outside the repo, which is what lets the tracked file stay placeholder-clean AND be attachable. (3) `tools/validate_scoped_policy.py` exercises both scoped grants through IAM simulation only — no EC2 launch, no GCE instance, zero compute spend.
 
 **Tech Stack:** Python 3.12+, pytest, boto3 (default pixi env), `google-cloud-resource-manager` (default pixi env), `python-dotenv`, ruff, mypy.
 
@@ -33,7 +33,7 @@
 | `tests/tools/test_scan_identifiers.py` | **Create.** Unit + planted-repo reverse tests for the scanner. | 0 |
 | `tests/test_cloud_identifier_scrub.py` | **Create.** Repo lockdown over `git ls-files`. Sits at `tests/` root beside `test_source_audit.py`, its sibling guard. | 1 |
 | ~30 tracked files | **Modify.** Scrub project id, bucket names, KMS UUID. | 2 |
-| `.aws/policies/skypilot-minimal.json` | **Modify.** `<KMS_KEY_ID>` (Task 2), `<S3_BUCKET_PREFIX>` + `_comment` banner (Task 3). | 2, 3 |
+| `.aws/policies/skypilot-minimal.template.json` | **Modify.** `<KMS_KEY_ID>` (Task 2), `<S3_BUCKET_PREFIX>` + `_comment` banner (Task 3). | 2, 3 |
 | `tools/render_aws_policy.py` | **Create.** Placeholder substitution; refuses to emit a partially-rendered policy or write inside the repo. | 3 |
 | `tests/tools/test_render_aws_policy.py` | **Create.** | 3 |
 | `.gcp/policies/roles.txt` | **Create.** Runtime role list + bootstrap-only note. | 4 |
@@ -663,7 +663,7 @@ emails are already clean once the patterns are ARN/label-anchored."
 **Goal:** Turn Task 1's lockdown green by replacing every concrete identifier with the established fake or a placeholder.
 
 **Files:**
-- Modify: `.aws/policies/skypilot-minimal.json:163` (KMS UUID → `<KMS_KEY_ID>`)
+- Modify: `.aws/policies/skypilot-minimal.template.json:163` (KMS UUID → `<KMS_KEY_ID>`)
 - Modify: `tools/quota_burn_lib.py:266` (project id → `kinoforge-prod-deadbeef`)
 - Modify: `tests/tools/test_quota_burn_gcp.py`, `tests/tools/test_quota_burn_cli.py`, `tests/tools/test_quota_burn_submit.py` (project id)
 - Modify: `PROGRESS.md`, `docs/quota-justification-gcp.md`, `docs/CLOUD-CREDS.md`, `docs/cloud-stores.md`
@@ -728,7 +728,7 @@ Tests take the existing doubles (`bkt`, `bucket`) rather than placeholders, beca
 
 - [ ] **Step 4: Scrub the KMS UUID**
 
-`.aws/policies/skypilot-minimal.json`, `KMSLayerW` statement:
+`.aws/policies/skypilot-minimal.template.json`, `KMSLayerW` statement:
 
 ```json
       "Resource": [
@@ -782,12 +782,12 @@ value there would erase the finding."
 
 ## Task 3: Placeholder-render tool for the AWS policy
 
-**Goal:** Make `.aws/policies/skypilot-minimal.json` attachable without ever writing a concrete identifier into the tree.
+**Goal:** Make `.aws/policies/skypilot-minimal.template.json` attachable without ever writing a concrete identifier into the tree.
 
 **Files:**
 - Create: `tools/render_aws_policy.py`
 - Test: `tests/tools/test_render_aws_policy.py`
-- Modify: `.aws/policies/skypilot-minimal.json` (`<GCS_KMS_KEYRING>` → `<S3_BUCKET_PREFIX>`, add `_comment` banner)
+- Modify: `.aws/policies/skypilot-minimal.template.json` (`<GCS_KMS_KEYRING>` → `<S3_BUCKET_PREFIX>`, add `_comment` banner)
 
 **Acceptance Criteria:**
 - [ ] `render()` substitutes `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`, `<S3_BUCKET_PREFIX>`
@@ -795,7 +795,7 @@ value there would erase the finding."
 - [ ] Raises `ValueError` if the output path resolves inside the repo root — a rendered policy must never become a tracked-file candidate
 - [ ] Raises `FileNotFoundError` with a remediation hint when `<KMS_KEY_ID>` is needed and `.aws/kms-test-key.arn` is absent
 - [ ] Rendered output parses as JSON and contains no `<`
-- [ ] `.aws/policies/skypilot-minimal.json` uses `<S3_BUCKET_PREFIX>` in the S3 ARNs and carries the UNVALIDATED banner
+- [ ] `.aws/policies/skypilot-minimal.template.json` uses `<S3_BUCKET_PREFIX>` in the S3 ARNs and carries the UNVALIDATED banner
 - [ ] The tracked policy file still passes the Task 1 lockdown
 
 **Verify:** `pixi run python -m pytest tests/tools/test_render_aws_policy.py -v` → all pass
@@ -955,7 +955,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'tools.render_aws_polic
 Create `tools/render_aws_policy.py`:
 
 ```python
-"""Render `.aws/policies/skypilot-minimal.json` into an attachable policy.
+"""Render `.aws/policies/skypilot-minimal.template.json` into an attachable policy.
 
 The tracked policy carries `<AWS_ACCOUNT>`, `<KMS_KEY_ID>` and
 `<S3_BUCKET_PREFIX>` placeholders, so it cannot be handed to
@@ -984,7 +984,7 @@ from pathlib import Path
 from typing import Any
 
 _REPO_ROOT: Path = Path(__file__).resolve().parents[1]
-_POLICY_PATH: Path = _REPO_ROOT / ".aws" / "policies" / "skypilot-minimal.json"
+_POLICY_PATH: Path = _REPO_ROOT / ".aws" / "policies" / "skypilot-minimal.template.json"
 _KMS_ARN_FILE: Path = _REPO_ROOT / ".aws" / "kms-test-key.arn"
 
 _PLACEHOLDER_RE = re.compile(r"<[A-Z_]+>")
@@ -1118,7 +1118,7 @@ Expected: PASS
 
 - [ ] **Step 5: Fix the policy file's placeholder names and add the banner**
 
-In `.aws/policies/skypilot-minimal.json`, `S3KinoforgeBuckets` statement, replace both `<GCS_KMS_KEYRING>` occurrences:
+In `.aws/policies/skypilot-minimal.template.json`, `S3KinoforgeBuckets` statement, replace both `<GCS_KMS_KEYRING>` occurrences:
 
 ```json
       "Resource": [
@@ -1163,7 +1163,7 @@ Expected: PASS — the policy file is still placeholder-clean.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add tools/render_aws_policy.py tests/tools/test_render_aws_policy.py .aws/policies/skypilot-minimal.json
+git add tools/render_aws_policy.py tests/tools/test_render_aws_policy.py .aws/policies/skypilot-minimal.template.json
 git commit -m "feat(aws): render the scoped policy instead of attaching it raw
 
 The tracked policy carries placeholders, so
@@ -1235,7 +1235,7 @@ Expected: `roles.txt` rc=1 (NOT ignored — it is meant to be tracked); the SA k
 ```
 # kinoforge — minimum GCP roles for a SkyPilot launch plus GCS.
 #
-# Counterpart to .aws/policies/skypilot-minimal.json. Grant these to the
+# Counterpart to .aws/policies/skypilot-minimal.template.json. Grant these to the
 # runner service account and nothing else.
 #
 # STATUS: UNVALIDATED against a real SkyPilot launch. Checked only by
@@ -1348,7 +1348,7 @@ Expected: `roles.txt` shows as untracked-and-addable; no SA key, config dir, or 
 git add .gitignore .gcp/policies/roles.txt .gcp/README.md
 git commit -m "docs(gcp): publish the minimum role set, revoke securityAdmin
 
-roles.txt is the GCP counterpart to .aws/policies/skypilot-minimal.json.
+roles.txt is the GCP counterpart to .aws/policies/skypilot-minimal.template.json.
 compute.admin drops to compute.instanceAdmin.v1 on the authority of
 tools/cloud_perms_probe.py:315-318, which is what the project's own
 permission gate has always required.
@@ -2276,7 +2276,7 @@ both artifacts stay marked UNVALIDATED for that reason."
 > **USER-ORDERED GATE — NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it "verified inline", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.
 
 **Files:**
-- Modify: `.aws/policies/skypilot-minimal.json` (banner reflects the actual result)
+- Modify: `.aws/policies/skypilot-minimal.template.json` (banner reflects the actual result)
 - Modify: `.gcp/policies/roles.txt` (same)
 - Modify: `PROGRESS.md` (RESUME SNAPSHOT entry)
 
@@ -2342,7 +2342,7 @@ pixi run python tools/validate_scoped_policy.py --cloud aws \
 Capture the full JSON. Expect denials — this policy has never been attached
 to anything. Each one is a real gap in a hand-written policy, so add the
 missing action to the appropriate `Sid` in
-`.aws/policies/skypilot-minimal.json`, re-render, re-run. Iterate until
+`.aws/policies/skypilot-minimal.template.json`, re-render, re-run. Iterate until
 `denied` is empty or the remainder is understood.
 
 Do NOT widen a `Resource` to `"*"` to clear a denial. If an action genuinely
@@ -2376,7 +2376,7 @@ worth fixing in Task 8 before closing this task.
 
 - [ ] **Step 6: Rewrite both banners with the real outcome**
 
-`.aws/policies/skypilot-minimal.json` `_comment` becomes one of:
+`.aws/policies/skypilot-minimal.template.json` `_comment` becomes one of:
 
 ```
 "_comment": "Simulate-validated 2026-08-21 (tools/validate_scoped_policy.py): all N required actions allowed. NOT exercised against a real SkyPilot launch -- simulation cannot see sky's undocumented launch-time calls. Placeholders are rendered by tools/render_aws_policy.py; do not attach this file directly."
@@ -2399,7 +2399,7 @@ the confirmation that no instance was launched, and the Step 4 caveat if it
 applied.
 
 ```bash
-git add .aws/policies/skypilot-minimal.json .gcp/policies/roles.txt PROGRESS.md
+git add .aws/policies/skypilot-minimal.template.json .gcp/policies/roles.txt PROGRESS.md
 git commit -m "docs(cloud): record the scoped-grant simulation result
 
 First time either artifact has been exercised against a real API. Both

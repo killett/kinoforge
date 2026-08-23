@@ -87,39 +87,40 @@ key):
 
 ## SkyPilot policy — apply instructions
 
-The scoped IAM policy doc lives at
-`.aws/policies/skypilot-minimal.json` (tracked, not secret). It covers
+The scoped IAM policy template lives at
+`.aws/policies/skypilot-minimal.template.json` (tracked, not secret; the
+`.template` in the name is deliberate — see below). It covers
 EC2 lifecycle + IAM PassRole on `skypilot-*` roles + ServiceQuotas +
 S3 access scoped to `<S3_BUCKET_PREFIX>-*` and `skypilot-*`
 prefixes + KMS access scoped to the existing CMEK key
 (`alias/<KMS_ALIAS>`).
 
-> **UNVALIDATED** against a real SkyPilot launch — simulate-validated only
-> (`tools/validate_scoped_policy.py`). The tracked file carries
-> `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`, and `<S3_BUCKET_PREFIX>` placeholders and
-> cannot be pasted into the console or passed to `put-user-policy` as-is —
-> AWS rejects a malformed ARN. Render it first with
-> `tools/render_aws_policy.py`; do not attach `.aws/policies/skypilot-minimal.json`
-> directly.
->
-> This warning previously lived as a `_comment` key inside the policy JSON
-> itself. It was moved here because IAM's documented policy grammar
-> (`policy = { <version_block?>, <id_block?>, <statement_block> }`) has no
-> slot for an arbitrary top-level key, and identity-based policies
-> explicitly forbid even the optional `Id` block — so an unrecognized
-> top-level key is a plausible `MalformedPolicyDocument` rejection, not a
-> safe bet to embed in the attachable artifact.
+> The template carries `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`, and
+> `<S3_BUCKET_PREFIX>` placeholders and cannot be pasted into the console or
+> passed to `put-user-policy` as-is — AWS rejects a malformed ARN. Render it
+> first with `tools/render_aws_policy.py`; never attach
+> `.aws/policies/skypilot-minimal.template.json` directly. Full
+> UNVALIDATED-against-a-real-launch warning:
+> `.aws/policies/README.md`.
 
 To attach it to the existing `kinoforge-ci` IAM user:
 
-1. Open the [AWS IAM Console → Users](https://us-west-2.console.aws.amazon.com/iam/home#/users) — account `<AWS_ACCOUNT>`.
-2. Click `kinoforge-ci`.
-3. Permissions tab → **Add permissions** → **Create inline policy**
+1. Render the template — this is not optional, see the warning above:
+
+   ```bash
+   pixi run python tools/render_aws_policy.py \
+     --bucket-prefix <your-bucket-prefix> \
+     --out /tmp/skypilot-minimal.rendered.json
+   ```
+
+2. Open the [AWS IAM Console → Users](https://us-west-2.console.aws.amazon.com/iam/home#/users) — account `<AWS_ACCOUNT>`.
+3. Click `kinoforge-ci`.
+4. Permissions tab → **Add permissions** → **Create inline policy**
    (or **Attach policies directly → Create policy**).
-4. JSON tab → paste the entire contents of
-   `.aws/policies/skypilot-minimal.json`.
-5. Review → name it `KinoforgeSkypilotMinimal` → Create policy.
-6. Confirm the policy is now attached to `kinoforge-ci`.
+5. JSON tab → paste the entire contents of the *rendered* file
+   (`/tmp/skypilot-minimal.rendered.json`) — not the tracked template.
+6. Review → name it `KinoforgeSkypilotMinimal` → Create policy.
+7. Confirm the policy is now attached to `kinoforge-ci`.
 
 Leave `AmazonS3FullAccess` attached until `pixi run cloud:perms-probe`
 exits 0 against AWS. Once green, detach `AmazonS3FullAccess`:
