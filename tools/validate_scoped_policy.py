@@ -20,9 +20,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from pathlib import Path
 from typing import Any
 
-from tools.cloud_perms_probe import (
+# A bare `python tools/validate_scoped_policy.py` invocation (the form this
+# module's own --help documents) puts only tools/ on sys.path, not the repo
+# root -- so the `tools.cloud_perms_probe` import below would otherwise raise
+# ModuleNotFoundError before argparse ever runs. Mirrors the bootstrap in
+# `tools/cloud_perms_probe.py:33-35`.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from tools.cloud_perms_probe import (  # noqa: E402
     _AWS_KMS_ACTIONS,
     _GCP_REQUIRED_ROLES,
     _REQUIRED_AWS_ACTIONS,
