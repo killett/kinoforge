@@ -2305,7 +2305,7 @@ both artifacts stay marked UNVALIDATED for that reason."
 **Acceptance Criteria:**
 - [ ] `pixi run python tools/validate_scoped_policy.py --cloud aws --policy-file <rendered> --confirm-live` was run against real AWS and its JSON output captured verbatim
 - [ ] `pixi run python tools/validate_scoped_policy.py --cloud gcp --project <project> --confirm-live` was run against real GCP and its JSON output captured verbatim
-- [ ] Every action listed under `denied` (AWS), every action listed under `ungranted` (AWS), and every permission under `missing` (GCP) is either fixed in the policy/role list, or written down as a known and accepted gap with the reason. An `ungranted` KMS action from the default no-`--kms-key-id` render (Step 2) is expected, not a policy defect — see Step 3.
+- [ ] Every action listed under `denied` (AWS), every action listed under `ungranted` (AWS), and every permission under `missing` (GCP) is either fixed in the policy/role list, or written down as a known and accepted gap with the reason — including an accepted type-mismatch `denied` entry per Step 3's disambiguation procedure, or an `ungranted` KMS action when Step 2's render resolves no KMS key id at all (not merely when `--kms-key-id` is omitted — see Step 2's fallback behavior, and the Verify block below).
 - [ ] The throwaway IAM user does not exist afterwards: `aws iam get-user --user-name kinoforge-scope-probe` returns `NoSuchEntity`
 - [ ] The rendered policy file under `/tmp` is deleted
 - [ ] Both banners state the real outcome — "simulate-clean, launch-unvalidated" or "simulate-denied on N actions" — not an aspiration
@@ -2322,19 +2322,37 @@ aws iam get-user --user-name kinoforge-scope-probe 2>&1 | tail -2
 Expected — GCP: `missing: []` (rc=0), or an explicit list to reconcile per the
 acceptance criteria above.
 
-Expected — AWS: depends on whether Step 2 rendered with `--kms-key-id`.
-- **Default render (no `--kms-key-id`, the documented default path)**:
-  `denied: []`, `ungranted: ["kms:Decrypt", "kms:Encrypt"]`, **rc=1**. This is
-  the correct outcome for that render, not a failure to chase — `KMSLayerW`
-  was deliberately dropped (see `render_aws_policy.py`'s docstring), so those
-  two actions have no statement to grant them. Record it as-is in the banner;
-  do not add a KMS statement or widen anything just to force rc=0.
-- **Rendered WITH `--kms-key-id`**: `denied: []`, `ungranted: []`, rc=0.
+Expected — AWS: `denied: []` and `ungranted: []` (rc=0), or an explicit
+list under either key to reconcile per the acceptance criteria above —
+including a `denied` entry accepted as a type-mismatch per Step 3's
+disambiguation procedure, which is a pass, not a halt condition, even
+though it leaves `denied` non-empty.
+
+Which of those two shapes to expect from `ungranted` specifically
+depends on whether Step 2's render actually resolved a KMS key id —
+**not** on whether `--kms-key-id` was passed. `render_aws_policy.py`
+falls back to `resolve_kms_key_id()` (reading `.aws/kms-test-key.arn`)
+whenever `--kms-key-id` is omitted, so omitting the flag is NOT the same
+as having no key:
+- **A key id resolved** — either `--kms-key-id` was passed, or
+  `.aws/kms-test-key.arn` exists (true in this workspace today, so this
+  is the outcome Step 2's literal command as written actually produces):
+  `KMSLayerW` is included in the render, and `ungranted: []` is the
+  expected, correct result. An `ungranted` KMS entry here would mean
+  something is actually wrong.
+- **No key id resolved** — `--kms-key-id` omitted AND
+  `.aws/kms-test-key.arn` absent (only reachable if that file is removed
+  from this workspace): `KMSLayerW` is dropped from the render, and
+  `ungranted: ["kms:Decrypt", "kms:Encrypt"]`, rc=1 is the correct,
+  expected outcome for THAT render — not a failure to chase. Record it
+  as-is; do not add a KMS statement or widen anything just to force
+  `ungranted: []`.
 
 Either way: `NoSuchEntity` for the probe user afterward, and inspect
-`detail` (present for every simulated action, including `ungranted` ones)
-if anything needs a closer look — see Step 3's disambiguation procedure
-for `denied` entries specifically.
+`detail` (present for every simulated action, including `ungranted`
+ones, carrying real per-resource records — not just the key present with
+an empty list) if anything needs a closer look — see Step 3's
+disambiguation procedure for `denied` entries specifically.
 
 ```json:metadata
 {"userGate": true, "tags": ["user-gate"], "gateScope": "task", "failurePolicy": "halt", "requireEvidenceTokens": [["aws", "SimulatePrincipalPolicy", "denied"], ["gcp", "testIamPermissions", "missing"]]}
@@ -2393,21 +2411,30 @@ object ARNs together. A denial there can mean either "the policy really
 doesn't grant this" or "one of the ARNs in the group is the wrong *type*
 for this action (e.g. `s3:PutObject` evaluated against a bucket-level ARN,
 which has no valid meaning), and the reduction (any resource denies ⇒
-denied) reported it anyway." `SimulatePrincipalPolicy` is free, so settle
-this with data, not guesswork:
+denied) reported it anyway." Settle this with data already in hand, not
+guesswork — and NOT with a fresh `simulate-principal-policy` call: by the
+time the captured JSON is being read, `validate_aws`'s `finally` has
+already deleted the probe user, so the `PolicySourceArn` that API needs
+no longer exists. Trying it produces a `NoSuchEntity`-shaped failure that
+reads as a new problem, not the disambiguation step it actually is.
 
 1. Read the denied action's entry in the JSON output's `detail` map — it
-   already carries one record per resource actually evaluated.
+   already carries one record per resource actually evaluated. This is
+   normally sufficient on its own.
 2. If every resource for that action shows a deny, it's a real gap — fix
    per the normal iterate-and-re-render flow above.
-3. If SOME resources show `allowed` alongside the deny, re-simulate that
-   one action against **each** `ResourceArns` entry in its group
-   individually (one ARN per call) to confirm which specific ARN denies it
-   and which type it is. A deny that lands only on a resource of a type the
-   action could never apply to (bucket ARN for an object action, or vice
-   versa) is the type-mismatch case, not a policy defect — record it as
-   such in the banner rather than adding a resource entry that's already
-   effectively covered by the correctly-typed ARN in the same statement.
+3. If SOME resources show `allowed` alongside the deny, that alone is
+   enough to call it a type mismatch (a deny confined to a resource of a
+   type the action could never apply to — bucket ARN for an object
+   action, or vice versa), not a policy defect. Record it as such in the
+   banner rather than adding a resource entry that's already effectively
+   covered by the correctly-typed ARN in the same statement.
+4. Only if a genuinely fresh live check is wanted beyond what `detail`
+   already shows, the right API is `aws iam simulate-custom-policy
+   --policy-input-list file:///tmp/skypilot-minimal.rendered.json
+   --action-names <action> --resource-arns <one-arn>` — evaluated against
+   the policy document directly, so it needs no principal and works
+   fine after the probe user is gone. Still free; still one ARN per call.
 
 - [ ] **Step 4: Run the GCP validation**
 
