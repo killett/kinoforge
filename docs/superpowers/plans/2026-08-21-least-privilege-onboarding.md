@@ -2317,7 +2317,7 @@ pixi run python tools/validate_scoped_policy.py --cloud aws \
   --policy-file /tmp/skypilot-minimal.rendered.json --confirm-live ; echo "aws rc=$?"
 pixi run python tools/validate_scoped_policy.py --cloud gcp \
   --project "$(pixi run -e live-skypilot gcloud config get-value project)" --confirm-live ; echo "gcp rc=$?"
-aws iam get-user --user-name kinoforge-scope-probe 2>&1 | tail -2
+pixi run -e live-skypilot aws iam get-user --user-name kinoforge-scope-probe 2>&1 | tail -2
 ```
 Expected — GCP: `missing: []` (rc=0), or an explicit list to reconcile per the
 acceptance criteria above.
@@ -2333,7 +2333,17 @@ depends on whether Step 2's render actually resolved a KMS key id —
 **not** on whether `--kms-key-id` was passed. `render_aws_policy.py`
 falls back to `resolve_kms_key_id()` (reading `.aws/kms-test-key.arn`)
 whenever `--kms-key-id` is omitted, so omitting the flag is NOT the same
-as having no key:
+as having no key. `.aws/kms-test-key.arn` is gitignored and untracked,
+so its presence is a workspace-state fact, not something this document
+can assert on your behalf — check which branch actually applies before
+running Step 3, with either of:
+
+```bash
+test -f .aws/kms-test-key.arn && echo "key resolves" || echo "no key -- KMSLayerW will be dropped"
+# or, after Step 2 has already rendered:
+grep -q KMSLayerW /tmp/skypilot-minimal.rendered.json && echo "included" || echo "dropped"
+```
+
 - **A key id resolved** — either `--kms-key-id` was passed, or
   `.aws/kms-test-key.arn` exists (true in this workspace today, so this
   is the outcome Step 2's literal command as written actually produces):
@@ -2387,6 +2397,12 @@ If `.aws/kms-test-key.arn` is absent, pass `--kms-key-id` explicitly rather
 than creating a KMS key — a new key is spend, and the simulation only needs a
 syntactically valid ARN to scope pass 2.
 
+This step is already live, not just Step 3: run without `--account`, as
+above, `render_aws_policy.py` calls `_default_account()`, which fires a
+real `sts:GetCallerIdentity` to resolve the account id for the rendered
+ARNs. Free and read-only — Step 1 already probes the same identity — but
+nothing happens live for the first time in Step 3; it happens here.
+
 - [ ] **Step 3: Run the AWS validation**
 
 ```bash
@@ -2430,11 +2446,14 @@ reads as a new problem, not the disambiguation step it actually is.
    banner rather than adding a resource entry that's already effectively
    covered by the correctly-typed ARN in the same statement.
 4. Only if a genuinely fresh live check is wanted beyond what `detail`
-   already shows, the right API is `aws iam simulate-custom-policy
-   --policy-input-list file:///tmp/skypilot-minimal.rendered.json
-   --action-names <action> --resource-arns <one-arn>` — evaluated against
-   the policy document directly, so it needs no principal and works
-   fine after the probe user is gone. Still free; still one ARN per call.
+   already shows, the right command is `pixi run -e live-skypilot aws iam
+   simulate-custom-policy --policy-input-list
+   file:///tmp/skypilot-minimal.rendered.json --action-names <action>
+   --resource-arns <one-arn>` — evaluated against the policy document
+   directly, so it needs no principal and works fine after the probe
+   user is gone. Still free; still one ARN per call. (The `aws` binary
+   lives only in the `live-skypilot` pixi env — a bare `aws` here gets
+   `command not found`.)
 
 - [ ] **Step 4: Run the GCP validation**
 
@@ -2453,7 +2472,7 @@ weaker claim in the banner rather than overstating it.
 - [ ] **Step 5: Confirm the probe user is gone and clean up**
 
 ```bash
-aws iam get-user --user-name kinoforge-scope-probe 2>&1 | tail -2
+pixi run -e live-skypilot aws iam get-user --user-name kinoforge-scope-probe 2>&1 | tail -2
 rm -f /tmp/skypilot-minimal.rendered.json
 ```
 
