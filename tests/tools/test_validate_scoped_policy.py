@@ -768,8 +768,18 @@ def test_main_ignores_the_old_kinoforge_live_env_var(
 def test_main_aws_missing_policy_file_errors_with_confirm_live(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """--policy-file is still required once the live gate is satisfied."""
+    """--policy-file is still required once the live gate is satisfied.
+
+    Same hazard class as `test_main_refuses_without_confirm_live` (see
+    `_RefusingBoto3Module`): if the `--policy-file` presence check were
+    ever removed, `Path(None).read_text()` raises `TypeError` before
+    `import boto3` -- accidental protection from `args.policy_file`
+    defaulting to `None`, not protection by construction. Faked here too
+    so that accident can't quietly become a live call if this test's
+    setup (or `main()`'s argument defaults) ever changes shape.
+    """
     monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
+    monkeypatch.setitem(sys.modules, "boto3", _RefusingBoto3Module())
     with pytest.raises(SystemExit):
         main(["--cloud", "aws", "--confirm-live"])
     assert "--policy-file" in capsys.readouterr().err
@@ -785,8 +795,18 @@ def test_main_aws_refuses_an_unrendered_policy_template(
     boundary 400s after a real throwaway user already exists, or worse,
     the simulation silently evaluates a policy that grants nothing because
     every Resource entry is a literal, non-matching "<AWS_ACCOUNT>" string.
+
+    This is the MOST dangerous of the CLI-gate tests to leave unfaked: it
+    passes --confirm-live deliberately and a syntactically VALID policy
+    body, so unlike the /dev/null-based tests there is no `json.loads("")`
+    downstream to accidentally rescue it if the placeholder guard itself
+    is what's removed. Without `_RefusingBoto3Module`, that mutation
+    reaches `boto3.client("iam")` and then `create_user` -- a real
+    CreateUser call under ambient credentials, with no protection left at
+    all.
     """
     monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
+    monkeypatch.setitem(sys.modules, "boto3", _RefusingBoto3Module())
     unrendered = tmp_path / "unrendered.json"
     unrendered.write_text(
         '{"Statement": [{"Resource": "arn:aws:s3:::<S3_BUCKET_PREFIX>-*"}]}'
@@ -796,11 +816,80 @@ def test_main_aws_refuses_an_unrendered_policy_template(
     assert "placeholder" in capsys.readouterr().err
 
 
+class _RefusingGoogleAuth:
+    """Stand-in for `google.auth`, installed into `sys.modules` AND as an
+    attribute of the real `google` package.
+
+    Same rationale as `_RefusingBoto3Module`: `main()`'s gcp branch calls
+    `google.auth.default()` before ever reaching a live
+    `test_iam_permissions` call. Needs BOTH assignments, unlike the boto3
+    case -- verified empirically that `import google.auth` short-circuits
+    straight from the `sys.modules` cache without (re)setting the `auth`
+    attribute on the real `google` package module, so a `sys.modules`
+    entry alone leaves `google.auth.default()` raising `AttributeError`
+    from a stale/never-set attribute, and an attribute set alone doesn't
+    survive a genuinely first-ever `import google.auth` in this process
+    (the real loader runs and overwrites it). Setting both closes both
+    gaps regardless of whether `google.auth` was already imported
+    elsewhere in this pytest session before this test runs.
+    """
+
+    @staticmethod
+    def default(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        raise AssertionError(
+            "google.auth.default() was called -- the --project guard should "
+            "have raised SystemExit before main() ever reached this line"
+        )
+
+
+class _RefusingResourceManagerV3:
+    """Stand-in for `google.cloud.resourcemanager_v3`, installed into
+    `sys.modules` (the `from google.cloud import resourcemanager_v3` form
+    resolves straight from `sys.modules` on its fromlist fallback, so this
+    alone is sufficient -- verified empirically -- but the attribute is
+    also set on `google.cloud` for symmetry with `_RefusingGoogleAuth`).
+    """
+
+    @staticmethod
+    def ProjectsClient(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, N802
+        raise AssertionError(
+            "resourcemanager_v3.ProjectsClient() was called -- the --project "
+            "guard should have raised SystemExit before main() ever reached "
+            "this line"
+        )
+
+
+def _install_refusing_google_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install refusing stand-ins for both GCP modules `main()`'s gcp branch touches.
+
+    Args:
+        monkeypatch: The test's monkeypatch fixture; all patches are
+            torn down automatically at test teardown.
+    """
+    fake_auth = _RefusingGoogleAuth()
+    monkeypatch.setitem(sys.modules, "google.auth", fake_auth)
+    monkeypatch.setattr("google.auth", fake_auth, raising=False)
+
+    fake_rm = _RefusingResourceManagerV3()
+    monkeypatch.setitem(sys.modules, "google.cloud.resourcemanager_v3", fake_rm)
+    monkeypatch.setattr("google.cloud.resourcemanager_v3", fake_rm, raising=False)
+
+
 def test_main_gcp_missing_project_errors_with_confirm_live(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """--project is still required once the live gate is satisfied."""
+    """--project is still required once the live gate is satisfied.
+
+    A bug that would fail this: removing/reordering the `--project` check
+    so execution reaches `google.auth.default()` and
+    `resourcemanager_v3.ProjectsClient().test_iam_permissions(...)` -- a
+    real, live, read-only GCP call against `resource="projects/None"`
+    under ambient credentials. Both modules are genuinely importable in
+    this environment, so nothing here is accidentally protected by an
+    ImportError; only the refusing stand-ins stop it.
+    """
     monkeypatch.delenv("KINOFORGE_VALIDATE_SCOPED_LIVE", raising=False)
+    _install_refusing_google_stubs(monkeypatch)
     with pytest.raises(SystemExit):
         main(["--cloud", "gcp", "--confirm-live"])
     assert "--project" in capsys.readouterr().err
