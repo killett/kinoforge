@@ -37,8 +37,14 @@ _POLICY_PATH: Path = _REPO_ROOT / ".aws" / "policies" / "skypilot-minimal.templa
 _KMS_ARN_FILE: Path = _REPO_ROOT / ".aws" / "kms-test-key.arn"
 
 # Named placeholders this module knows how to substitute. Deliberately
-# narrow ([A-Z_] only) so the error message can name the exact survivor.
-_PLACEHOLDER_RE = re.compile(r"<[A-Z_]+>")
+# narrow ([A-Z0-9_] only) so the error message can name the exact
+# survivor. Must include digits: <S3_BUCKET_PREFIX> itself contains one
+# ("S3"), so the earlier [A-Z_]-only pattern did not match it -- a
+# survived, unsubstituted <S3_BUCKET_PREFIX> would fall through to the
+# blanket "<" backstop below instead of being named specifically here,
+# which is correct as defence in depth but the wrong place to catch it
+# first.
+_PLACEHOLDER_RE = re.compile(r"<[A-Z0-9_]+>")
 
 _ACCOUNT_RE = re.compile(r"^[0-9]{12}$")
 

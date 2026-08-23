@@ -119,8 +119,8 @@ def test_resolve_kms_key_id_errors_with_a_remediation_hint(tmp_path: Path) -> No
 
 
 def test_render_refuses_an_unnamed_placeholder_shape() -> None:
-    """The named-placeholder regex is deliberately narrow (`[A-Z_]` only);
-    a placeholder with a digit, hyphen, or lowercase letter must still be
+    """The named-placeholder regex is deliberately narrow (`[A-Z0-9_]`
+    only); a placeholder with a hyphen or lowercase letter must still be
     caught, not silently rendered into legal-looking JSON.
 
     A bug that would fail this: only checking `_PLACEHOLDER_RE` survivors
@@ -131,6 +131,35 @@ def test_render_refuses_an_unnamed_placeholder_shape() -> None:
     """
     template = _TEMPLATE.replace("<KMS_KEY_ID>", "<kms_key_id>")
     with pytest.raises(ValueError, match="'<' survived rendering"):
+        render(
+            template, account=_ACCOUNT, kms_key_id=_KEY_ID, bucket_prefix="kf-example"
+        )
+
+
+def test_render_names_a_surviving_placeholder_that_contains_a_digit() -> None:
+    """A digit inside a placeholder name must not demote it to the
+    generic blanket-`<` error -- it should be named specifically, the
+    same as any other unknown survivor.
+
+    `_PLACEHOLDER_RE` used to be `<[A-Z_]+>`, which does not match
+    `<S3_BUCKET_PREFIX>` itself (the "S3" contains a digit) or any other
+    digit-bearing placeholder. A survived, unsubstituted
+    `<S3_BUCKET_PREFIX>` would then fall through to the blanket `"<" in
+    out` backstop below and raise a generic message instead of naming
+    the actual culprit -- correct as defence in depth, but the wrong
+    place to catch it first, and the gap that let an unrendered policy
+    past a guard in `tools/validate_scoped_policy.py` and into a real
+    `create_user` call in a separate incident.
+
+    A bug that would fail this: reverting `_PLACEHOLDER_RE` to
+    `<[A-Z_]+>`. The render would still raise a `ValueError` either way
+    (the blanket check catches it too), so a weaker assertion like
+    `pytest.raises(ValueError)` alone would not fail here -- this
+    asserts on the *named* message specifically, which only the widened
+    regex produces.
+    """
+    template = _TEMPLATE.replace("skypilot-*", "<UNEXPECTED_2>-*")
+    with pytest.raises(ValueError, match="<UNEXPECTED_2>"):
         render(
             template, account=_ACCOUNT, kms_key_id=_KEY_ID, bucket_prefix="kf-example"
         )
