@@ -2305,7 +2305,7 @@ both artifacts stay marked UNVALIDATED for that reason."
 **Acceptance Criteria:**
 - [ ] `pixi run python tools/validate_scoped_policy.py --cloud aws --policy-file <rendered> --confirm-live` was run against real AWS and its JSON output captured verbatim
 - [ ] `pixi run python tools/validate_scoped_policy.py --cloud gcp --project <project> --confirm-live` was run against real GCP and its JSON output captured verbatim
-- [ ] Every action listed under `denied` (AWS) and every permission under `missing` (GCP) is either fixed in the policy/role list or written down as a known gap with the reason
+- [ ] Every action listed under `denied` (AWS), every action listed under `ungranted` (AWS), and every permission under `missing` (GCP) is either fixed in the policy/role list, or written down as a known and accepted gap with the reason. An `ungranted` KMS action from the default no-`--kms-key-id` render (Step 2) is expected, not a policy defect — see Step 3.
 - [ ] The throwaway IAM user does not exist afterwards: `aws iam get-user --user-name kinoforge-scope-probe` returns `NoSuchEntity`
 - [ ] The rendered policy file under `/tmp` is deleted
 - [ ] Both banners state the real outcome — "simulate-clean, launch-unvalidated" or "simulate-denied on N actions" — not an aspiration
@@ -2319,7 +2319,22 @@ pixi run python tools/validate_scoped_policy.py --cloud gcp \
   --project "$(pixi run -e live-skypilot gcloud config get-value project)" --confirm-live ; echo "gcp rc=$?"
 aws iam get-user --user-name kinoforge-scope-probe 2>&1 | tail -2
 ```
-Expected: two JSON reports with `denied: []` / `missing: []` (rc=0) or an explicit list, and `NoSuchEntity` for the probe user.
+Expected — GCP: `missing: []` (rc=0), or an explicit list to reconcile per the
+acceptance criteria above.
+
+Expected — AWS: depends on whether Step 2 rendered with `--kms-key-id`.
+- **Default render (no `--kms-key-id`, the documented default path)**:
+  `denied: []`, `ungranted: ["kms:Decrypt", "kms:Encrypt"]`, **rc=1**. This is
+  the correct outcome for that render, not a failure to chase — `KMSLayerW`
+  was deliberately dropped (see `render_aws_policy.py`'s docstring), so those
+  two actions have no statement to grant them. Record it as-is in the banner;
+  do not add a KMS statement or widen anything just to force rc=0.
+- **Rendered WITH `--kms-key-id`**: `denied: []`, `ungranted: []`, rc=0.
+
+Either way: `NoSuchEntity` for the probe user afterward, and inspect
+`detail` (present for every simulated action, including `ungranted` ones)
+if anything needs a closer look — see Step 3's disambiguation procedure
+for `denied` entries specifically.
 
 ```json:metadata
 {"userGate": true, "tags": ["user-gate"], "gateScope": "task", "failurePolicy": "halt", "requireEvidenceTokens": [["aws", "SimulatePrincipalPolicy", "denied"], ["gcp", "testIamPermissions", "missing"]]}
@@ -2370,6 +2385,29 @@ missing action to the appropriate `Sid` in
 Do NOT widen a `Resource` to `"*"` to clear a denial. If an action genuinely
 needs a wider resource, say so in the banner instead — a scoped policy that
 was quietly widened to pass its own test is worse than an honest failing one.
+
+**Before touching the policy for any `denied` S3 or IAM action, disambiguate
+type-mismatch from a real gap.** `IAMForSkyPilotRoles` groups role AND
+instance-profile ARNs together; `S3KinoforgeBuckets` groups bucket AND
+object ARNs together. A denial there can mean either "the policy really
+doesn't grant this" or "one of the ARNs in the group is the wrong *type*
+for this action (e.g. `s3:PutObject` evaluated against a bucket-level ARN,
+which has no valid meaning), and the reduction (any resource denies ⇒
+denied) reported it anyway." `SimulatePrincipalPolicy` is free, so settle
+this with data, not guesswork:
+
+1. Read the denied action's entry in the JSON output's `detail` map — it
+   already carries one record per resource actually evaluated.
+2. If every resource for that action shows a deny, it's a real gap — fix
+   per the normal iterate-and-re-render flow above.
+3. If SOME resources show `allowed` alongside the deny, re-simulate that
+   one action against **each** `ResourceArns` entry in its group
+   individually (one ARN per call) to confirm which specific ARN denies it
+   and which type it is. A deny that lands only on a resource of a type the
+   action could never apply to (bucket ARN for an object action, or vice
+   versa) is the type-mismatch case, not a policy defect — record it as
+   such in the banner rather than adding a resource entry that's already
+   effectively covered by the correctly-typed ARN in the same statement.
 
 - [ ] **Step 4: Run the GCP validation**
 
