@@ -787,7 +787,8 @@ value there would erase the finding."
 **Files:**
 - Create: `tools/render_aws_policy.py`
 - Test: `tests/tools/test_render_aws_policy.py`
-- Modify: `.aws/policies/skypilot-minimal.template.json` (`<GCS_KMS_KEYRING>` → `<S3_BUCKET_PREFIX>`, add `_comment` banner)
+- Modify: `.aws/policies/skypilot-minimal.template.json` (`<GCS_KMS_KEYRING>` → `<S3_BUCKET_PREFIX>`)
+- Create: `.aws/policies/README.md` (UNVALIDATED banner — not a `_comment` key in the JSON; IAM's policy grammar is closed and rejects arbitrary top-level keys)
 
 **Acceptance Criteria:**
 - [ ] `render()` substitutes `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`, `<S3_BUCKET_PREFIX>`
@@ -1131,16 +1132,30 @@ In `.aws/policies/skypilot-minimal.template.json`, `S3KinoforgeBuckets` statemen
 
 A GCS-flavoured placeholder naming an S3 bucket prefix is the F10 cosmetic bug; `<S3_BUCKET_PREFIX>` is what `.aws/README.md:65,80-81,93,115` already uses.
 
-Add a banner as the first key of the top-level object (IAM ignores unknown top-level keys, and `render()`'s `json.loads` check will catch it if that ever stops being true — verify at Step 6):
+Do NOT add a `_comment` key to the JSON. IAM's policy grammar is closed
+(`policy = { <version_block?>, <id_block?>, <statement_block> }`,
+documented, and identity-based policies explicitly forbid even the
+optional `Id` block) — an arbitrary top-level key is a plausible
+`MalformedPolicyDocument` rejection, not a safe bet to embed in the
+attachable artifact. Create the sibling file instead:
 
-```json
-{
-  "_comment": "UNVALIDATED against a real SkyPilot launch. Simulate-validated only (tools/validate_scoped_policy.py). Placeholders are rendered by tools/render_aws_policy.py; do not attach this file directly.",
-  "Version": "2012-10-17",
-  ...
+`.aws/policies/README.md`:
+
+```markdown
+# AWS scoped IAM policy templates
+
+## `skypilot-minimal.template.json`
+
+**UNVALIDATED against a real SkyPilot launch.** Simulate-validated only
+(`tools/validate_scoped_policy.py`). Placeholders are rendered by
+`tools/render_aws_policy.py`; do not attach this file directly.
 ```
 
-- [ ] **Step 6: Verify the banner does not break the attach path**
+(Full text — including why the banner lives here and not as a `_comment`
+key — is written once `render_aws_policy.py` exists, so it can name it by
+path. See the shipped `.aws/policies/README.md` for the actual wording.)
+
+- [ ] **Step 6: Verify the rendered output still parses cleanly**
 
 Run:
 
@@ -1153,9 +1168,16 @@ pixi run python tools/render_aws_policy.py \
 pixi run python -c "import json;d=json.load(open('/tmp/render-check.json'));print(sorted(d))"
 ```
 
-Expected: `['Statement', 'Version', '_comment']`, no exception.
+Expected: `['Statement', 'Version']`, no exception — the JSON carries no
+banner key at all; the banner lives in `.aws/policies/README.md`. Confirm
+that file exists and states UNVALIDATED:
 
-> If `aws iam put-user-policy` later rejects `_comment` (it accepts unknown top-level keys today, but that is AWS behaviour, not a contract), move the banner into a `README` line next to the file rather than dropping the UNVALIDATED warning. Task 9 exercises the real attach and will surface this.
+```bash
+test -f .aws/policies/README.md && grep -q UNVALIDATED .aws/policies/README.md
+echo "readme ok: $?"
+```
+
+Expected: `readme ok: 0`.
 
 Run: `pixi run python -m pytest tests/test_cloud_identifier_scrub.py -v`
 Expected: PASS — the policy file is still placeholder-clean.
@@ -1163,7 +1185,7 @@ Expected: PASS — the policy file is still placeholder-clean.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add tools/render_aws_policy.py tests/tools/test_render_aws_policy.py .aws/policies/skypilot-minimal.template.json
+git add tools/render_aws_policy.py tests/tools/test_render_aws_policy.py .aws/policies/skypilot-minimal.template.json .aws/policies/README.md
 git commit -m "feat(aws): render the scoped policy instead of attaching it raw
 
 The tracked policy carries placeholders, so
