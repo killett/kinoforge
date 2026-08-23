@@ -8,6 +8,7 @@ half of that trade.
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -286,3 +287,37 @@ def test_main_refuses_to_follow_a_pre_existing_symlink_at_out(
             ]
         )
     assert attacker_target.read_text() == "do not overwrite me via a followed symlink\n"
+
+
+def test_main_chmods_a_pre_existing_regular_file_at_out(tmp_path: Path) -> None:
+    """A pre-existing *regular* file at `--out` must end up at `0o600`.
+
+    `O_CREAT`'s mode argument to `os.open()` is only applied when the
+    call actually creates the file; `O_NOFOLLOW` does not fire here
+    either -- a regular file is not a symlink. Both those earlier fixes
+    are no-ops for this case, so it needs its own guard. A bug that would
+    fail this: dropping the `chmod` call when `write_text()` +
+    `chmod(0o600)` was replaced by a single `os.open()` -- the account id
+    and KMS key id then land in a file that keeps whatever mode it already
+    had (world-writable-and-readable `0o666` here), in the same
+    predictable `/tmp` location the module's own usage example documents.
+    """
+    from tools.render_aws_policy import main
+
+    out_path = tmp_path / "predictable-name.json"
+    out_path.write_text("pre-existing content\n")
+    out_path.chmod(0o666)
+
+    main(
+        [
+            "--account",
+            _ACCOUNT,
+            "--kms-key-id",
+            _KEY_ID,
+            "--bucket-prefix",
+            "kf-example",
+            "--out",
+            str(out_path),
+        ]
+    )
+    assert stat.S_IMODE(out_path.stat().st_mode) == 0o600

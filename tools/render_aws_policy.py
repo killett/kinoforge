@@ -160,10 +160,18 @@ def _write_secure(out_path: Path, rendered: str) -> None:
     creation and the chmod call, and `write_text()` follows a pre-existing
     symlink at *out_path* — so a predictable path in a world-writable
     directory (the documented `/tmp` usage) is a symlink-attack target.
-    `O_NOFOLLOW` refuses to follow a symlink at *out_path*, and passing the
-    mode to `os.open()` means the file is created at `0o600` atomically,
-    with no window where a concrete account id and KMS key id sit
-    world-readable on disk.
+    `O_NOFOLLOW` refuses to follow a symlink at *out_path*. The mode
+    argument to `os.open()` only applies when the call actually creates
+    the file, though — if a *regular* file already exists at *out_path*
+    (mode `0o666` in a world-writable directory like `/tmp` is a
+    plausible pre-existing state, not just an attacker-planted one),
+    `O_CREAT` opens it as-is and `O_NOFOLLOW` has nothing to refuse (it's
+    not a symlink). Left uncovered, that regular-file case reaches the
+    same predictable-`/tmp`-path exposure `O_NOFOLLOW` was added for, just
+    via a pre-created file instead of a pre-created symlink. `os.fchmod()`
+    right after `open()` closes that gap unconditionally, whether this
+    call created the file or reused an existing one — no window where a
+    concrete account id and KMS key id sit at a wider mode than `0o600`.
 
     Args:
         out_path: Path to write to, exactly as the caller requested it
@@ -177,6 +185,7 @@ def _write_secure(out_path: Path, rendered: str) -> None:
             otherwise cannot be opened for exclusive, non-following write.
     """
     fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "w") as fh:
         fh.write(rendered)
 

@@ -3146,7 +3146,7 @@ happens when a concrete next-step is identified.
 - **E33.** Azure + B2 + R2 store backends.
 
 #### Phase 39 — Layer W+α (cloud bootstrap)
-- **E34.** Scope-down AWS-managed broad policies → `.aws/policies/skypilot-minimal.json`.
+- **E34.** Scope-down AWS-managed broad policies → `.aws/policies/skypilot-minimal.template.json`.
 - **E35.** AWS bucket scope-down on `AmazonS3FullAccess` (predates this layer).
 - **E36.** `skypilot[aws]` pixi pin-conflict resolution (blocks `sky check aws`).
 

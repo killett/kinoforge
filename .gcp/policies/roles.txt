@@ -1,6 +1,6 @@
 # kinoforge — minimum GCP roles for a SkyPilot launch plus GCS.
 #
-# Counterpart to .aws/policies/skypilot-minimal.json. Grant these to the
+# Counterpart to .aws/policies/skypilot-minimal.template.json. Grant these to the
 # runner service account and nothing else.
 #
 # STATUS: UNVALIDATED against a real SkyPilot launch. Checked only by

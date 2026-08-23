@@ -33,7 +33,7 @@
 | `tests/tools/test_scan_identifiers.py` | **Create.** Unit + planted-repo reverse tests for the scanner. | 0 |
 | `tests/test_cloud_identifier_scrub.py` | **Create.** Repo lockdown over `git ls-files`. Sits at `tests/` root beside `test_source_audit.py`, its sibling guard. | 1 |
 | ~30 tracked files | **Modify.** Scrub project id, bucket names, KMS UUID. | 2 |
-| `.aws/policies/skypilot-minimal.template.json` | **Modify.** `<KMS_KEY_ID>` (Task 2), `<S3_BUCKET_PREFIX>` + `_comment` banner (Task 3). | 2, 3 |
+| `.aws/policies/skypilot-minimal.template.json` | **Modify.** `<KMS_KEY_ID>` (Task 2), `<S3_BUCKET_PREFIX>` + rename to `.template.json` (Task 3). UNVALIDATED banner lives in the sibling `.aws/policies/README.md`, not a `_comment` key — IAM's policy grammar is closed and rejects arbitrary top-level keys. | 2, 3 |
 | `tools/render_aws_policy.py` | **Create.** Placeholder substitution; refuses to emit a partially-rendered policy or write inside the repo. | 3 |
 | `tests/tools/test_render_aws_policy.py` | **Create.** | 3 |
 | `.gcp/policies/roles.txt` | **Create.** Runtime role list + bootstrap-only note. | 4 |
@@ -795,7 +795,7 @@ value there would erase the finding."
 - [ ] Raises `ValueError` if the output path resolves inside the repo root — a rendered policy must never become a tracked-file candidate
 - [ ] Raises `FileNotFoundError` with a remediation hint when `<KMS_KEY_ID>` is needed and `.aws/kms-test-key.arn` is absent
 - [ ] Rendered output parses as JSON and contains no `<`
-- [ ] `.aws/policies/skypilot-minimal.template.json` uses `<S3_BUCKET_PREFIX>` in the S3 ARNs and carries the UNVALIDATED banner
+- [ ] `.aws/policies/skypilot-minimal.template.json` uses `<S3_BUCKET_PREFIX>` in the S3 ARNs; the UNVALIDATED banner lives in the sibling `.aws/policies/README.md`, not a `_comment` key inside the JSON — IAM's policy grammar is closed and rejects arbitrary top-level keys, so that was never an option once tested against the documented grammar
 - [ ] The tracked policy file still passes the Task 1 lockdown
 
 **Verify:** `pixi run python -m pytest tests/tools/test_render_aws_policy.py -v` → all pass
@@ -2376,16 +2376,27 @@ worth fixing in Task 8 before closing this task.
 
 - [ ] **Step 6: Rewrite both banners with the real outcome**
 
-`.aws/policies/skypilot-minimal.template.json` `_comment` becomes one of:
+Task 3 moved the AWS banner out of the policy JSON: IAM's policy grammar
+is closed and rejects arbitrary top-level keys, so `_comment` was never
+actually an option once tested against the documented grammar (see
+`.aws/policies/README.md`'s own explanation). Rewrite the
+`## skypilot-minimal.template.json` section of `.aws/policies/README.md`
+to one of:
 
 ```
-"_comment": "Simulate-validated 2026-08-21 (tools/validate_scoped_policy.py): all N required actions allowed. NOT exercised against a real SkyPilot launch -- simulation cannot see sky's undocumented launch-time calls. Placeholders are rendered by tools/render_aws_policy.py; do not attach this file directly."
+**UNVALIDATED against a real SkyPilot launch.** Simulate-validated 2026-08-21
+(`tools/validate_scoped_policy.py`): all N required actions allowed. NOT
+exercised against a real SkyPilot launch -- simulation cannot see sky's
+undocumented launch-time calls. Placeholders are rendered by
+`tools/render_aws_policy.py`; do not attach this file directly.
 ```
 
 …or, if denials remain:
 
 ```
-"_comment": "Simulate-validated 2026-08-21: DENIED on <actions>. Known gap, see PROGRESS.md. NOT exercised against a real launch. Render with tools/render_aws_policy.py; do not attach this file directly."
+Simulate-validated 2026-08-21: DENIED on <actions>. Known gap, see
+PROGRESS.md. NOT exercised against a real launch. Render with
+`tools/render_aws_policy.py`; do not attach this file directly.
 ```
 
 `.gcp/policies/roles.txt`'s STATUS block gets the matching treatment,
