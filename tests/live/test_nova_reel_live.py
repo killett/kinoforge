@@ -46,6 +46,17 @@ def _git_sha() -> str:
 def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     """End-to-end: load cfg → submit → MP4 in S3 → bytes start with ftyp."""
 
+    # The tracked example config ships a placeholder bucket (<S3_BUCKET>) —
+    # not a legal S3 bucket name — so a real bucket must come from the
+    # operator via env var. Without it, this smoke would submit a real
+    # StartAsyncInvoke that dies with a ValidationException before the
+    # artifact-uri assertion is ever reached. Checked before the probe
+    # subprocess (not after) so an unset var skips cleanly instead of
+    # running the probe and potentially hard-failing on it first.
+    bucket = os.environ.get("KINOFORGE_LIVE_S3_BUCKET")
+    if not bucket:
+        pytest.skip("set KINOFORGE_LIVE_S3_BUCKET to run; cfg ships a placeholder")
+
     # _adapters import first so bedrock_video registers itself
     import kinoforge._adapters  # noqa: F401
     from kinoforge.core.config import load_config
@@ -70,15 +81,6 @@ def test_nova_reel_live_e2e_smoke(tmp_path: Path) -> None:
     assert probe_proc.returncode == 0, (
         f"probe failed before any spend:\nstdout={probe_proc.stdout}\nstderr={probe_proc.stderr}"
     )
-
-    # The tracked example config ships a placeholder bucket (<S3_BUCKET>) —
-    # not a legal S3 bucket name — so a real bucket must come from the
-    # operator via env var. Without it, this smoke would submit a real
-    # StartAsyncInvoke that dies with a ValidationException before the
-    # artifact-uri assertion is ever reached.
-    bucket = os.environ.get("KINOFORGE_LIVE_S3_BUCKET")
-    if not bucket:
-        pytest.skip("set KINOFORGE_LIVE_S3_BUCKET to run; cfg ships a placeholder")
 
     # Load config
     cfg = load_config("examples/configs/bedrock-nova-reel-t2v.yaml")

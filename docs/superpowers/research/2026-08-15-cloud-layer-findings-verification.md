@@ -716,7 +716,9 @@ copy verbatim.
 
 `.aws/policies/skypilot-minimal.json`, `KMSLayerW` statement, as of 2026-08-15
 (scrubbed in Task 2 — the tracked file itself now reads `<KMS_KEY_ID>`; this
-block is a verbatim quote of the pre-fix content, kept as evidence of what the
+block quotes the pre-fix content with the scanner's `kinoforge: allow-identifier`
+pragma appended — the pragma itself was never in the file, it is what suppresses
+the `kms_key_uuid` hit on this evidence line — kept as evidence of what the
 finding was, not a live copy of the file):
 
 ```json
