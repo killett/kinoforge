@@ -15,7 +15,11 @@ Usage::
 
 `--account` defaults to the caller's own account via `sts:GetCallerIdentity`;
 `--kms-key-id` defaults to the key id parsed out of the gitignored
-`.aws/kms-test-key.arn`.
+`.aws/kms-test-key.arn` when that file exists. When neither is available,
+the rendered policy drops the `KMSLayerW` statement instead of failing --
+that statement only exists for Layer W CMEK bucket tests, a new operator
+standing up SkyPilot does not need it, and the rest of the policy is still
+valid and attachable without it.
 """
 
 from __future__ import annotations
@@ -39,15 +43,23 @@ _PLACEHOLDER_RE = re.compile(r"<[A-Z_]+>")
 _ACCOUNT_RE = re.compile(r"^[0-9]{12}$")
 
 
+_KMS_STATEMENT_SID = "KMSLayerW"
+
+
 def render(
-    policy_text: str, *, account: str, kms_key_id: str, bucket_prefix: str
+    policy_text: str, *, account: str, kms_key_id: str | None, bucket_prefix: str
 ) -> str:
     """Substitute every placeholder in *policy_text*.
 
     Args:
         policy_text: Raw contents of the tracked policy template.
         account: 12-digit AWS account id.
-        kms_key_id: Bare KMS key UUID (not the full ARN).
+        kms_key_id: Bare KMS key UUID (not the full ARN), or `None` to
+            render without the `KMSLayerW` statement -- the CMEK grant
+            only Layer W's bucket tests need, not a bare SkyPilot launch.
+            When `None`, a one-line notice naming the dropped statement
+            and `--kms-key-id` as the way to get it back is printed to
+            stderr.
         bucket_prefix: S3 bucket-name prefix the policy is scoped to.
 
     Returns:
@@ -87,11 +99,32 @@ def render(
             "built from it"
         )
 
-    out = (
-        policy_text.replace("<AWS_ACCOUNT>", account)
-        .replace("<KMS_KEY_ID>", kms_key_id)
-        .replace("<S3_BUCKET_PREFIX>", bucket_prefix)
+    if kms_key_id is None:
+        # No key available -- drop the KMSLayerW statement entirely rather
+        # than leaving <KMS_KEY_ID> unsubstituted (which the survivor check
+        # below would then correctly refuse to attach). This must happen at
+        # the JSON level, not by string-matching the Sid line, so a
+        # statement-shape change to the template doesn't silently corrupt
+        # unrelated JSON around it.
+        policy = json.loads(policy_text)
+        statements = policy.get("Statement", [])
+        kept = [s for s in statements if s.get("Sid") != _KMS_STATEMENT_SID]
+        if len(kept) != len(statements):
+            print(
+                f"render_aws_policy: no KMS key id available -- dropping the "
+                f"{_KMS_STATEMENT_SID} statement from the rendered policy "
+                "(needed only for CMEK / Layer W bucket tests; pass "
+                "--kms-key-id to include it)",
+                file=sys.stderr,
+            )
+        policy["Statement"] = kept
+        policy_text = json.dumps(policy)
+
+    out = policy_text.replace("<AWS_ACCOUNT>", account).replace(
+        "<S3_BUCKET_PREFIX>", bucket_prefix
     )
+    if kms_key_id is not None:
+        out = out.replace("<KMS_KEY_ID>", kms_key_id)
     survivors = sorted(set(_PLACEHOLDER_RE.findall(out)))
     if survivors:
         raise ValueError(
@@ -129,9 +162,10 @@ def resolve_kms_key_id(arn_file: Path = _KMS_ARN_FILE) -> str:
     """
     if not arn_file.exists():
         raise FileNotFoundError(
-            f"{arn_file} is absent. Expected the gitignored .aws/kms-test-key.arn; "
-            "create it with `pixi run python tools/bootstrap_kms.py`, or pass "
-            "--kms-key-id."
+            f"{arn_file} is absent. Expected the gitignored .aws/kms-test-key.arn. "
+            "Pass --kms-key-id directly, or omit both and the rendered policy "
+            "will drop the KMSLayerW statement instead (fine for SkyPilot; "
+            "needed only for CMEK / Layer W bucket tests)."
         )
     text = arn_file.read_text().strip()
     _, _, key_id = text.partition(":key/")
@@ -204,12 +238,18 @@ def main(argv: list[str] | None = None) -> int:
         (including tests) see the real exception.
 
     Raises:
-        ValueError: The requested output path is inside the repository,
-            or an input `render()` rejects (see `render`'s `Raises`).
-        FileNotFoundError: `--kms-key-id` was omitted and
-            `.aws/kms-test-key.arn` is absent.
+        ValueError: The requested output path is inside the repository;
+            the gitignored KMS ARN file exists but its contents are not a
+            KMS key ARN (see `resolve_kms_key_id`'s `Raises` -- an absent
+            file is NOT an error here, see below); or an input `render()`
+            rejects (see `render`'s `Raises`).
         OSError: The output path is a symlink or otherwise cannot be
             opened for exclusive write — see `_write_secure`.
+
+    Note:
+        `--kms-key-id` omitted and `.aws/kms-test-key.arn` absent is NOT
+        an error: it falls back to rendering without the `KMSLayerW`
+        statement (see `render`'s *kms_key_id* behavior).
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account", default=None)
@@ -233,7 +273,17 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     account = args.account or _default_account()
-    kms_key_id = args.kms_key_id or resolve_kms_key_id()
+    kms_key_id: str | None = args.kms_key_id
+    if not kms_key_id:
+        try:
+            kms_key_id = resolve_kms_key_id()
+        except FileNotFoundError:
+            # No explicit --kms-key-id and no bootstrapped ARN file -- fall
+            # back to rendering without the KMSLayerW statement rather than
+            # raising. A malformed (but present) ARN file still raises
+            # ValueError from resolve_kms_key_id() and is NOT caught here:
+            # that signals corrupted state, not "no key available".
+            kms_key_id = None
     rendered = render(
         _POLICY_PATH.read_text(),
         account=account,

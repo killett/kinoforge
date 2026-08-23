@@ -107,8 +107,9 @@ The scoped IAM policy template lives at
 `.template` in the name is deliberate — see below). It covers
 EC2 lifecycle + IAM PassRole on `skypilot-*` roles + ServiceQuotas +
 S3 access scoped to `<S3_BUCKET_PREFIX>-*` and `skypilot-*`
-prefixes + KMS access scoped to the existing CMEK key
-(`alias/<KMS_ALIAS>`).
+prefixes, plus — only when a KMS key id is supplied — KMS access scoped
+to the existing CMEK key. A plain SkyPilot launch does not need that KMS
+statement; the renderer drops it by default (see step 1 below).
 
 > The template carries `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`, and
 > `<S3_BUCKET_PREFIX>` placeholders and cannot be pasted into the console or
@@ -120,23 +121,20 @@ prefixes + KMS access scoped to the existing CMEK key
 
 To attach it to the existing `kinoforge-ci` IAM user:
 
-1. Render the template — this is not optional, see the warning above. First
-   time only, the renderer needs a KMS key id: either bootstrap the
-   workspace's test key once (writes the gitignored `.aws/kms-test-key.arn`,
-   which the renderer reads by default) —
-
-   ```bash
-   pixi run python tools/bootstrap_kms.py
-   ```
-
-   — or skip that and pass `--kms-key-id <key-id>` to the render command
-   below:
+1. Render the template — this is not optional, see the warning above:
 
    ```bash
    pixi run python tools/render_aws_policy.py \
      --bucket-prefix <your-bucket-prefix> \
      --out /tmp/skypilot-minimal.rendered.json
    ```
+
+   No KMS key id needed for a plain SkyPilot launch: with no
+   `--kms-key-id` and no gitignored `.aws/kms-test-key.arn` on disk, the
+   renderer drops the `KMSLayerW` statement and prints a one-line notice
+   to stderr saying so — the rest of the policy is still valid and
+   attachable. CMEK / Layer W bucket-test users pass
+   `--kms-key-id <key-id>` to keep that statement.
 
 2. Open the [AWS IAM Console → Users](https://us-west-2.console.aws.amazon.com/iam/home#/users) — account `<AWS_ACCOUNT>`.
 3. Click `kinoforge-ci`.

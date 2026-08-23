@@ -289,6 +289,128 @@ def test_main_refuses_to_follow_a_pre_existing_symlink_at_out(
     assert attacker_target.read_text() == "do not overwrite me via a followed symlink\n"
 
 
+def test_render_drops_kms_statement_when_no_key_available() -> None:
+    """No KMS key id -> a narrower, still-valid policy, not a hard failure.
+
+    The `KMSLayerW` statement only exists for Layer W CMEK bucket tests; a
+    new operator standing up SkyPilot does not need it, and forcing them to
+    provision a KMS key first -- through a broken bootstrap tool, with
+    permissions a bare new IAM user does not have -- to obtain a policy
+    they can attach is backwards. `kms_key_id=None` must drop exactly the
+    `KMSLayerW` statement and still produce valid, placeholder-free JSON.
+
+    A bug that would fail this: leaving `<KMS_KEY_ID>` unsubstituted when
+    the statement isn't dropped (the old behavior), which the placeholder
+    survivor check would catch -- or dropping the wrong statement (e.g. by
+    index instead of by Sid), which would silently narrow an unrelated
+    grant instead.
+    """
+    out = render(
+        _TEMPLATE, account=_ACCOUNT, kms_key_id=None, bucket_prefix="kf-example"
+    )
+    assert "<" not in out
+    parsed = json.loads(out)
+    sids = [s["Sid"] for s in parsed["Statement"]]
+    assert "KMSLayerW" not in sids
+    assert sids == ["IAMForSkyPilotRoles", "S3KinoforgeBuckets"]
+
+
+def test_render_keeps_kms_statement_substituted_when_key_supplied() -> None:
+    """Passing a real key id leaves behavior unchanged: statement present.
+
+    This is the "did the KMS-optional change regress the existing path"
+    check -- a bug that would fail this: making `kms_key_id=None` the
+    silent default behavior even when a real id is supplied, dropping the
+    statement operators who DO want CMEK / Layer W coverage still need.
+    """
+    out = render(
+        _TEMPLATE, account=_ACCOUNT, kms_key_id=_KEY_ID, bucket_prefix="kf-example"
+    )
+    parsed = json.loads(out)
+    kms_statements = [s for s in parsed["Statement"] if s["Sid"] == "KMSLayerW"]
+    assert len(kms_statements) == 1
+    assert kms_statements[0]["Resource"] == [
+        f"arn:aws:kms:us-east-1:{_ACCOUNT}:key/{_KEY_ID}"
+    ]
+
+
+def test_render_warns_on_stderr_when_dropping_the_kms_statement(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Silence here would be worse than the error it replaces.
+
+    An operator who actually needed CMEK coverage and didn't notice it was
+    silently dropped would find out only when a real bucket operation
+    403s, far from the render step that caused it. A bug that would fail
+    this: dropping the statement without printing anything, or printing a
+    message that doesn't name `--kms-key-id` as the way to get it back.
+    """
+    render(_TEMPLATE, account=_ACCOUNT, kms_key_id=None, bucket_prefix="kf-example")
+    stderr = capsys.readouterr().err
+    assert "KMSLayerW" in stderr
+    assert "--kms-key-id" in stderr
+
+
+def test_render_does_not_warn_on_stderr_when_key_supplied(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The stderr notice is specific to the drop path, not printed always.
+
+    A bug that would fail this: printing the drop notice unconditionally,
+    which would train operators to ignore it -- exactly the kind of
+    always-on noise that makes a real drop easy to miss.
+    """
+    render(_TEMPLATE, account=_ACCOUNT, kms_key_id=_KEY_ID, bucket_prefix="kf-example")
+    stderr = capsys.readouterr().err
+    assert stderr == ""
+
+
+def test_main_falls_back_to_no_kms_when_arn_file_is_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI path this task exists to fix: a first-time operator with no
+    `--kms-key-id` and no `.aws/kms-test-key.arn` must get a rendered,
+    attachable policy -- not a `FileNotFoundError` pointing at a broken
+    bootstrap tool the bare new IAM user has no permissions to run.
+
+    A bug that would fail this: `main()` still calling
+    `resolve_kms_key_id()` and letting `FileNotFoundError` propagate
+    instead of catching it and falling back to `kms_key_id=None`.
+
+    Monkeypatches `resolve_kms_key_id` itself rather than the module-level
+    `_KMS_ARN_FILE` constant: `resolve_kms_key_id`'s `arn_file` parameter
+    defaults to `_KMS_ARN_FILE` at function-definition time, so patching
+    the constant after import does not change the already-bound default --
+    this test would then depend on whether this checkout happens to have a
+    real `.aws/kms-test-key.arn` on disk, which is exactly the kind of
+    ambient-state dependency a deterministic test must not have.
+    """
+    import tools.render_aws_policy as render_aws_policy_module
+    from tools.render_aws_policy import main
+
+    def _raise_absent(arn_file: Path = tmp_path / "definitely-absent.arn") -> str:
+        raise FileNotFoundError(f"{arn_file} is absent")
+
+    monkeypatch.setattr(render_aws_policy_module, "resolve_kms_key_id", _raise_absent)
+    out_path = tmp_path / "rendered.json"
+
+    exit_code = main(
+        [
+            "--account",
+            _ACCOUNT,
+            "--bucket-prefix",
+            "kf-example",
+            "--out",
+            str(out_path),
+        ]
+    )
+
+    assert exit_code == 0
+    parsed = json.loads(out_path.read_text())
+    sids = [s["Sid"] for s in parsed["Statement"]]
+    assert "KMSLayerW" not in sids
+
+
 def test_main_chmods_a_pre_existing_regular_file_at_out(tmp_path: Path) -> None:
     """A pre-existing *regular* file at `--out` must end up at `0o600`.
 
