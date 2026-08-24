@@ -364,6 +364,23 @@ first unchecked task without redoing committed work.
   circular; `<GCS_KMS_KEYRING>` scrub residue cleared from `docs/CLOUD-CREDS.md` (NOT from
   `tools/bootstrap_kms.py` — ledgered pre-existing bug, documented instead in
   `.aws/policies/README.md`).
+  **Regression pins closed (`8a371498`), branch SHIPPED.** The final scoped re-review passed the
+  fix wave and named two gaps that were missing tests rather than defects; both are now pinned,
+  each verified by applying the mutation and observing the new test fail before restore.
+  (1) `cloud_perms_probe.py`'s CLI wiring — flipping `submit_quota_request=args.…` to `True` left
+  all 43 tests green and silently restored support-case filing on the *documented*
+  `pixi run cloud:perms-probe`; one token stood between that command and an unrequested AWS support
+  case. (2) `validate_scoped_policy.py`'s second excusal conjunct — deleting
+  `and not _lookup_action(...)` also left the suite green, yet it is what keeps a renamed-`Sid`
+  policy that still grants KMS in `denied` rather than excused at rc=0.
+  **Carried forward, deliberately not fixed:** `validate_scoped_policy` measures *sufficiency, not
+  narrowness* — a `{"Action":"*","Resource":"*"}` policy validates rc=0, which sits awkwardly next
+  to the new text warning operators not to widen. Task 9's eight concrete-ARN probes are what
+  actually established narrowness, and that method is recorded in `.aws/policies/README.md`.
+  `tools/bootstrap_kms.py` remains broken (literal `<GCS_KMS_KEYRING>` operational constants from
+  scrub `0016dcac`, 2026-06-09), so nothing in-repo produces `.aws/kms-test-key.arn`; the docs no
+  longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
+  as such, rather than green from a caller-evaluated `testIamPermissions`.
 
 ## RESUME SNAPSHOT (updated 2026-08-23 — read this, then STOP; below is history)
 
