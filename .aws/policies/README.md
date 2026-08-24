@@ -66,6 +66,33 @@ run hit on 2026-08-23, and it is why `tools/validate_scoped_policy.py` no
 longer attaches the policy at all (it creates the probe user bare and passes
 the document as `PolicyInputList` on each simulate call instead).
 
+**The managed-policy sequence itself is EXERCISED, not merely inferred from
+those numbers** (2026-08-23, free IAM calls, against a throwaway policy named
+`…MinimalProbe` and a throwaway user, both destroyed afterwards):
+
+- `create-policy --policy-document file://<rendered>` **succeeds** at 3,422
+  characters and returns the policy ARN.
+- `list-policies --scope Local --query "Policies[?PolicyName=='…'].Arn"`
+  captures that ARN, so no account id has to be typed by hand.
+- `attach-user-policy` succeeds; `list-attached-user-policies` confirms it.
+- Re-running `create-policy` fails with `EntityAlreadyExists: A policy called
+  … already exists. Duplicate names are not allowed.` — exactly the re-run
+  case `.aws/README.md` documents.
+- `create-policy-version --set-as-default` then returns `v2` as the default,
+  with `v1` retained and non-default.
+
+Note the contrast with `--policy-input-list` above: `file://` is **fine** for
+`--policy-document`, which is a plain string parameter. It is only the
+*list*-typed `--policy-input-list` that the AWS CLI JSON-parses into a
+structure and rejects.
+
+Not exercised: the 5-version cap. That figure is AWS's documented limit,
+cited rather than measured — only one extra version was ever created here.
+
+This proves the **attach mechanism**, nothing more. It says nothing about
+whether a SkyPilot launch succeeds under the policy; that caveat is
+unchanged and still open.
+
 **If you are adding a statement to this template, mind the 6,144 ceiling.**
 At 3,422 there is room, but it is finite — 2,722 characters of headroom, and
 the S3 and EC2 statements are the ones that grow. Re-measure after any
