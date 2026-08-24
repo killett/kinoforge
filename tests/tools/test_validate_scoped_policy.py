@@ -322,13 +322,14 @@ def test_detail_preserves_per_resource_decisions_for_a_denied_action() -> None:
     assert by_resource[profile_arn] == "allowed"
 
 
-def test_detail_retains_records_for_ungranted_actions_too() -> None:
+def test_detail_retains_records_for_unmatched_actions_too() -> None:
     """The class of action most likely to need inspection must not be discarded.
 
     A bug that would fail this: keying the detail map off `denied` only
     (an earlier version of this function did exactly that), which
-    silently drops the per-resource records for actions in `ungranted` --
-    precisely the KMS-optional-render scenario where an operator most
+    silently drops the per-resource records for every action no statement
+    grants -- whether it lands in `ungranted` or, as here, in
+    `not_applicable` -- precisely the KMS-optional-render scenario where an operator most
     needs to see what the simulator actually said about the "*"-scoped
     evaluation, not just that the action was ungranted. Asserting mere
     key presence is not enough here: `{a: (v if a in denied else []) for
@@ -360,16 +361,19 @@ def test_detail_retains_records_for_ungranted_actions_too() -> None:
 def test_ungranted_actions_are_reported_separately_from_denied() -> None:
     """An action the policy never mentions is not the same bug as a scoping error.
 
-    Mirrors the real KMS-optional scenario: `render_aws_policy.render()`
-    can drop the entire `KMSLayerW` statement when no KMS key id is
-    configured -- a deliberate, documented choice, not a bug. A bug that
-    would fail this: folding "no statement grants this action at all"
-    into `denied`, which reads identically to a real scoping bug and
-    tempts an operator to widen the policy to silence it -- the exact
-    failure this tool exists to prevent.
+    Uses `S3KinoforgeBuckets` -- an UNCONDITIONAL statement -- rather than
+    the KMS one: a dropped `KMSLayerW` is now excused into
+    `not_applicable` (see the render-default test below), so pinning the
+    ungranted/denied split on it would pin nothing. A bug that would fail
+    this: folding "no statement grants this action at all" into `denied`,
+    which reads identically to a real scoping bug and tempts an operator
+    to widen the policy to silence it -- the exact failure this tool
+    exists to prevent.
     """
     policy = json.loads(_sample_policy_document())
-    policy["Statement"] = [s for s in policy["Statement"] if s["Sid"] != "KMSLayerW"]
+    policy["Statement"] = [
+        s for s in policy["Statement"] if s["Sid"] != "S3KinoforgeBuckets"
+    ]
     iam = _FakeIam(decisions={})
     result = validate_aws(
         iam,
@@ -377,8 +381,56 @@ def test_ungranted_actions_are_reported_separately_from_denied() -> None:
         user_name="probe",
         confirm_live=True,
     )
-    assert result["ungranted"] == ["kms:Decrypt", "kms:Encrypt"]
+    assert result["ungranted"] == ["s3:GetObject", "s3:PutObject"]
     assert result["denied"] == []
+    assert result["not_applicable"] == []
+    assert result["exit_code"] == 1
+
+
+def test_dropping_an_unconditional_statement_is_never_excused() -> None:
+    """The requirement is derived from the policy only for named optional Sids.
+
+    A bug that would fail this: implementing the KMS excusal as a generic
+    "if the policy does not grant it, it was not required" rule. That
+    reading makes the validator vacuous -- ANY render that lost a
+    statement would pass -- which is a strictly worse failure than the
+    rc=1 it was introduced to fix. Here the whole EC2 write statement is
+    gone: those five actions must still fail the run.
+    """
+    policy = json.loads(_sample_policy_document())
+    policy["Statement"] = [
+        s for s in policy["Statement"] if s["Sid"] != "EC2LifecycleWrite"
+    ]
+    iam = _FakeIam(decisions={})
+    result = validate_aws(
+        iam,
+        policy_document=json.dumps(policy),
+        user_name="probe",
+        confirm_live=True,
+    )
+    assert "ec2:RunInstances" in result["ungranted"]
+    assert result["not_applicable"] == []
+    assert result["exit_code"] == 1
+
+
+def test_kms_denial_is_still_denied_when_the_kms_statement_is_present() -> None:
+    """Excusal is conditional on the statement being ABSENT, not on the action name.
+
+    A bug that would fail this: excusing `kms:*` unconditionally (e.g.
+    keying `_CONDITIONAL_ACTIONS_BY_SID` off the action prefix instead of
+    the statement Sid). The policy here DOES carry `KMSLayerW` and IAM
+    denies the action anyway -- a real scoping bug, exactly the case that
+    must keep failing loudly.
+    """
+    iam = _FakeIam(decisions={("kms:Encrypt", _KEY_ARN): "implicitDeny"})
+    result = validate_aws(
+        iam,
+        policy_document=_sample_policy_document(),
+        user_name="probe",
+        confirm_live=True,
+    )
+    assert result["denied"] == ["kms:Encrypt"]
+    assert result["not_applicable"] == []
     assert result["exit_code"] == 1
 
 
@@ -506,6 +558,53 @@ def test_the_real_rendered_template_does_not_trip_iams_inline_policy_quota() -> 
     assert result["ungranted"] == []
     assert result["exit_code"] == 0
     assert iam.deleted == ["probe"]
+
+
+def test_the_documented_default_render_without_a_kms_key_validates_clean() -> None:
+    """THE onboarding path must end in a result an operator reads as success.
+
+    `.env.example` tells a new operator to render WITHOUT `--kms-key-id`,
+    so `render()` drops `KMSLayerW` -- deliberately, so nobody is blocked
+    on provisioning a KMS key -- and then to run this validator to
+    "confirm the scope is sufficient". Before `not_applicable` existed
+    that step reported `ungranted: ['kms:Decrypt', 'kms:Encrypt']` and
+    exited 1 on the very render the line above it instructs, and an
+    operator's rational response to "your scoped policy fails validation"
+    is to widen the policy -- the exact failure this whole branch exists
+    to prevent. The live gate returned rc=0 only because this workspace
+    happens to have `.aws/kms-test-key.arn` on disk, so the measured path
+    was not the documented one.
+
+    A bug that would fail this: reverting the `ungranted - not_applicable`
+    subtraction, or counting `not_applicable` in `exit_code`. The KMS
+    decisions are forced to `implicitDeny` because that is what a real
+    bare probe user returns for a `"*"`-scoped KMS simulation -- with the
+    fake's default `"allowed"` this test would also pass against an
+    implementation that merely mis-sorts them into `denied`.
+    """
+    from tools.render_aws_policy import _POLICY_PATH, render
+
+    policy_doc = render(
+        _POLICY_PATH.read_text(),
+        account=_ACCOUNT,
+        kms_key_id=None,
+        bucket_prefix=_BUCKET_PREFIX,
+    )
+    assert "KMSLayerW" not in policy_doc, (
+        "fixture no longer exercises the dropped-statement path this test exists for"
+    )
+
+    iam = _FakeIam(
+        decisions={"kms:Encrypt": "implicitDeny", "kms:Decrypt": "implicitDeny"}
+    )
+    result = validate_aws(
+        iam, policy_document=policy_doc, user_name="probe", confirm_live=True
+    )
+    assert result["exit_code"] == 0
+    assert result["denied"] == []
+    assert result["ungranted"] == []
+    assert result["missing"] == []
+    assert result["not_applicable"] == ["kms:Decrypt", "kms:Encrypt"]
 
 
 def test_throwaway_user_is_deleted_even_when_simulation_raises() -> None:

@@ -30,16 +30,36 @@ of this gate (a `confirm_live` parameter), so an in-process caller that
 imports the function directly — skipping `main()` entirely — cannot reach
 `create_user` by accident either.
 
-`validate_aws` also distinguishes two failure shapes that look identical
-in a naive implementation but need different operator responses: an action
-the policy DOES grant but IAM denies anyway (`denied` — almost always a
-scoping bug, fix the ARN) versus an action no `Allow` statement mentions at
-all (`ungranted` — e.g. `kms:Encrypt`/`kms:Decrypt` when
-`render_aws_policy.render()` drops the whole `KMSLayerW` statement because
-no KMS key id was configured, which is a deliberate, documented choice, not
-a bug). Collapsing both into one `denied` list makes an intentional gap
-look like a scoping bug, and the natural "fix" — widening the policy — is
-the exact failure this tool exists to prevent.
+`validate_aws` also distinguishes three outcome shapes that look identical
+in a naive implementation but need different operator responses:
+
+- `denied` — the policy DOES grant the action (it appears in >=1 `Allow`
+  statement) but IAM denies it anyway. Almost always a real scoping bug;
+  fix the ARN.
+- `ungranted` — no `Allow` statement mentions the action at all, and
+  nothing in the policy explains why. A human decision either way, so it
+  fails the run.
+- `not_applicable` — no `Allow` statement mentions the action AND the
+  named statement that would have granted it is a documented *optional*
+  statement that this render deliberately dropped. Reported, but NOT a
+  finding and NOT a failure.
+
+Collapsing these into one `denied` list makes an intentional gap look
+like a scoping bug, and the natural "fix" — widening the policy — is the
+exact failure this tool exists to prevent.
+
+`not_applicable` exists because the DEFAULT documented onboarding path
+(`.env.example`) renders without `--kms-key-id`, which makes
+`render_aws_policy.render()` drop the whole `KMSLayerW` statement — a
+deliberate choice so a first-time operator is not blocked on provisioning
+a KMS key. Before `_CONDITIONAL_ACTIONS_BY_SID` existed, that default
+path reported `ungranted: ['kms:Decrypt', 'kms:Encrypt']` and exited 1,
+i.e. the documented "confirm the scope is sufficient" step failed on the
+documented render. The requirement is derived from the policy under test
+— but ONLY for the specific (statement Sid -> actions) pairs listed in
+`_CONDITIONAL_ACTIONS_BY_SID`. Deriving it wholesale ("anything the
+policy omits was not required") would make the check vacuous: a render
+that dropped the S3 or EC2 statement would pass too.
 
 Usage::
 
@@ -94,6 +114,24 @@ GCP_REQUIRED_PERMISSIONS: tuple[str, ...] = (
     "storage.objects.create",
     "storage.objects.get",
 )
+
+
+# Actions whose REQUIREMENT is conditional on a named statement actually
+# being present in the policy under test. Keyed by `Sid` deliberately, and
+# hand-maintained: the whole point is that "the policy does not grant this"
+# only stops being a finding for the specific, documented, optional
+# statements listed here. A generic "whatever the policy omits was not
+# required" rule would make this validator vacuous -- it would green-light
+# a render that dropped `S3KinoforgeBuckets` or `EC2LifecycleWrite` too.
+#
+# KMSLayerW is the only member today: `render_aws_policy.render()` drops it
+# whenever no KMS key id is available, which is what the default onboarding
+# path in `.env.example` does. Its two actions are then genuinely not
+# required, because the capability they serve (CMEK / Layer W bucket tests)
+# is not part of the render either.
+_CONDITIONAL_ACTIONS_BY_SID: dict[str, frozenset[str]] = {
+    "KMSLayerW": frozenset({"kms:Encrypt", "kms:Decrypt"}),
+}
 
 
 def _read_gcp_roles(path: Path = _GCP_ROLES_PATH) -> list[str]:
@@ -151,6 +189,42 @@ def _lookup_action(
     return False, None
 
 
+def _not_applicable_actions(
+    statements: list[dict[str, Any]], required_actions: tuple[str, ...]
+) -> set[str]:
+    """Return required actions whose optional granting statement was dropped.
+
+    An action qualifies only when BOTH hold: its `Sid` appears in
+    `_CONDITIONAL_ACTIONS_BY_SID` and that `Sid` is absent from
+    *statements*, AND no other statement grants the action anyway. The
+    second condition matters — if a future template moved `kms:Encrypt`
+    into a differently-named statement, the action is genuinely granted
+    and must be simulated and judged like any other, not excused.
+
+    Args:
+        statements: The policy-under-test's `Statement` array.
+        required_actions: The actions the caller asked to verify. Actions
+            outside this tuple are ignored, so the result never claims
+            something the caller never asked about.
+
+    Returns:
+        The subset of *required_actions* whose absence from the policy is
+        explained by a deliberately dropped optional statement, and so is
+        not a finding.
+    """
+    present_sids = {
+        stmt.get("Sid") for stmt in statements if stmt.get("Effect") == "Allow"
+    }
+    excused: set[str] = set()
+    for sid, actions in _CONDITIONAL_ACTIONS_BY_SID.items():
+        if sid in present_sids:
+            continue
+        for action in actions:
+            if action in required_actions and not _lookup_action(statements, action)[0]:
+                excused.add(action)
+    return excused
+
+
 def _group_results_by_action(
     results: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
@@ -164,12 +238,20 @@ def _group_results_by_action(
     a 4-ARN group, `"s3:PutObject"` in `denied` cannot tell an operator
     whether all four resources deny it or just one.
 
+    A wildcard-scoped group is simulated with no `ResourceArns` key at
+    all, so IAM returns exactly one result per action there and
+    `EvalResourceName` is whatever IAM chose to echo (`"*"` in a live
+    call, and `None` from the injected fakes in this repo's tests, which
+    pass no resource). Such an action therefore has a single record, not
+    one-per-ARN — "one per resource actually evaluated" is only literally
+    true of the resource-scoped groups.
+
     Args:
         results: The `EvaluationResults` list from one simulate call.
 
     Returns:
         Dict of action name -> list of `{"resource": ..., "decision": ...}`
-        records, one per resource actually evaluated for that action.
+        records, one per `EvaluationResult` returned for that action.
     """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for entry in results:
@@ -243,18 +325,26 @@ def validate_aws(
             from a real client, so the gate applies uniformly.
 
     Returns:
-        Dict with `exit_code`, `denied`, `ungranted`, `missing`,
-        `simulated`, and `detail`. `exit_code` is 0 only when `denied`,
-        `ungranted`, and `missing` are all empty.
+        Dict with `exit_code`, `denied`, `ungranted`, `not_applicable`,
+        `missing`, `simulated`, and `detail`. `exit_code` is 0 only when
+        `denied`, `ungranted`, and `missing` are all empty —
+        `not_applicable` is deliberately NOT part of that test.
 
         - `denied`: actions the policy DOES grant (found in >=1 `Allow`
           statement) but IAM's simulator says no — almost always a real
           scoping bug (wrong ARN, wrong action name).
-        - `ungranted`: actions no `Allow` statement mentions at all. This
-          is NOT automatically a bug — see the KMS example in the module
-          docstring — but it is reported (and still fails the run) because
-          the caller asked to verify these actions and the policy is
-          silent on them; that is worth a human decision either way.
+        - `ungranted`: actions no `Allow` statement mentions at all, with
+          no documented reason. Not automatically a bug, but it fails the
+          run because the caller asked to verify these actions and the
+          policy is silent on them; that is worth a human decision.
+        - `not_applicable`: actions no `Allow` statement mentions because
+          the optional statement that would have granted them was
+          deliberately dropped from this render — see
+          `_CONDITIONAL_ACTIONS_BY_SID`. This is the expected steady state
+          of the default `.env.example` onboarding render, which passes no
+          `--kms-key-id`: `not_applicable: ['kms:Decrypt', 'kms:Encrypt']`
+          with `denied: []` and rc=0. It must never be "fixed" by widening
+          the policy.
         - `missing`: actions requested but never showing up in `simulated`
           at all, e.g. a response that silently returned fewer results
           than requested (distinct from `IsTruncated`, handled below by
@@ -286,6 +376,7 @@ def validate_aws(
         )
 
     statements: list[dict[str, Any]] = json.loads(policy_document).get("Statement", [])
+    not_applicable = _not_applicable_actions(statements, tuple(required_actions))
     created = iam.create_user(UserName=user_name)
     principal_arn = created["User"]["Arn"]
     try:
@@ -295,11 +386,11 @@ def validate_aws(
             granted, resource_key = _lookup_action(statements, action)
             if not granted:
                 ungranted.add(action)
-            # Ungranted actions still get simulated (against "*", via the
-            # None group) rather than skipped -- keeps `simulated` a
+            # Actions no statement grants still get simulated (against "*",
+            # via the None group) rather than skipped -- keeps `simulated` a
             # complete record of every required action for the "nothing
             # silently dropped" invariant, even though their verdict is
-            # reported under `ungranted`, not `denied`.
+            # reported under `ungranted`/`not_applicable`, not `denied`.
             groups.setdefault(resource_key, []).append(action)
 
         detail: dict[str, list[dict[str, Any]]] = {}
@@ -356,12 +447,18 @@ def validate_aws(
         for action, decision in simulated.items()
         if decision != "allowed" and action not in ungranted
     )
-    ungranted_result = sorted(ungranted)
+    # `not_applicable` is a subset of `ungranted` by construction (both
+    # require "no Allow statement grants this"), so subtracting is enough
+    # to move an excused action out of the failing bucket without it
+    # vanishing from the report entirely.
+    ungranted_result = sorted(ungranted - not_applicable)
+    not_applicable_result = sorted(not_applicable)
     missing = sorted(set(required_actions) - set(simulated))
     return {
         "exit_code": 1 if (denied or ungranted_result or missing) else 0,
         "denied": denied,
         "ungranted": ungranted_result,
+        "not_applicable": not_applicable_result,
         "missing": missing,
         "simulated": simulated,
         # Every simulated action's raw per-resource records, not just
@@ -479,7 +576,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(
                 f"{args.policy_file} contains an unrendered '<' placeholder "
                 "that the named-placeholder pattern did not match (e.g. a "
-                "digit or lowercase letter in the name) -- render it first "
+                "hyphen or lowercase letter in the name; digits are matched "
+                "by the named pattern and reported above) -- render it first "
                 "with tools/render_aws_policy.py; refusing to simulate a "
                 "template"
             )
@@ -493,6 +591,17 @@ def main(argv: list[str] | None = None) -> int:
             confirm_live=True,  # main()'s own gate above already confirmed
         )
         print(json.dumps({"policy_file": args.policy_file, **result}, indent=2))  # noqa: T201
+        if result["not_applicable"]:
+            # stderr, so the stdout payload stays machine-parseable JSON.
+            print(
+                "note: "
+                + ", ".join(result["not_applicable"])
+                + " were not required for this render -- the optional "
+                "statement that grants them was deliberately dropped (no "
+                "--kms-key-id). This is the expected result for a plain "
+                "SkyPilot setup and is NOT a reason to widen the policy.",
+                file=sys.stderr,
+            )
         return int(result["exit_code"])
 
     if not args.project:
