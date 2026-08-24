@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from tools import cloud_perms_probe as probe
 
@@ -505,3 +508,119 @@ def test_probe_gcp_quota_gap_emits_console_url(tmp_path: Path) -> None:
     url = result["quota_request"]["console_url"]
     assert "<GCP_PROJECT>" in url
     assert "NVIDIA_T4_GPUS" in url
+
+
+class _RefusingBoto3Module:
+    """Stand-in for the `boto3` module installed into `sys.modules`.
+
+    `main()`'s only sanctioned path to a real AWS session is
+    `_real_aws_session_factory()`, which this test monkeypatches out. This
+    fake is a belt-and-suspenders backstop, not the primary seam: if a
+    future refactor ever made `main()` (or something it calls) reach
+    `import boto3` / `boto3.client(...)` directly -- bypassing the
+    monkeypatched factory -- this raises immediately with a loud
+    AssertionError instead of constructing a real client under this
+    container's live ambient AWS credentials. Mirrors
+    `tests/tools/test_validate_scoped_policy.py::_RefusingBoto3Module`.
+    """
+
+    @staticmethod
+    def client(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        raise AssertionError(
+            "boto3.client() was called directly -- main() should only reach "
+            "AWS through the monkeypatched _real_aws_session_factory seam"
+        )
+
+    @staticmethod
+    def Session(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401,N802
+        raise AssertionError(
+            "boto3.Session() was called directly -- main() should only reach "
+            "AWS through the monkeypatched _real_aws_session_factory seam"
+        )
+
+
+def _fake_quota_gap_session_factory(fake_sq: _FakeServiceQuotasWithRequest) -> Any:
+    """Build a `_real_aws_session_factory`-shaped callable around a quota-gap session.
+
+    The session is fully green up through the quota check, then reports a
+    quota below target so `probe_aws` reaches the
+    `submit_quota_request` branch -- the only branch where
+    `args.submit_quota_increase` has any observable effect.
+    """
+
+    def _factory() -> _FakeBoto3Session:
+        return _FakeBoto3Session(
+            {
+                "sts": _FakeSTSClient(
+                    identity={
+                        "UserId": "AIDA",
+                        "Account": "<AWS_ACCOUNT>",
+                        "Arn": "arn:aws:iam::<AWS_ACCOUNT>:user/kinoforge-ci",
+                    }
+                ),
+                "iam": _FakeIAMClient(
+                    {a: "allowed" for a in probe._REQUIRED_AWS_ACTIONS}
+                ),
+                "ec2": _FakeEC2Client(),
+                "service-quotas": fake_sq,
+            }
+        )
+
+    return _factory
+
+
+def test_main_does_not_submit_quota_increase_when_flag_is_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`pixi run cloud:perms-probe` (no flags) must not file an AWS support case.
+
+    Pins the CLI wiring at `tools/cloud_perms_probe.py:518`. A bug that
+    would fail this: `probe_aws(session,
+    submit_quota_request=args.submit_quota_increase)` regressing to
+    `submit_quota_request=True` (or any other way of losing the argv
+    plumbing) -- library-level test coverage
+    (`test_probe_aws_does_not_open_a_support_case_without_an_opt_in`) pins
+    only `probe_aws`'s own default and cannot see this: `main()` always
+    passes an explicit keyword, so the library default is never even
+    consulted on the CLI path. `_RefusingBoto3Module` guarantees a
+    regression fails at a loud AssertionError-free real-AWS boundary
+    rather than actually filing a case, since ambient credentials are live
+    in this container.
+    """
+    monkeypatch.setitem(sys.modules, "boto3", _RefusingBoto3Module())
+    fake_sq = _FakeServiceQuotasWithRequest(value=0.0)
+    monkeypatch.setattr(
+        probe, "_real_aws_session_factory", _fake_quota_gap_session_factory(fake_sq)
+    )
+    monkeypatch.setattr(probe, "_AWS_SNAPSHOT_PATH", tmp_path / "aws.json")
+
+    exit_code = probe.main(["--cloud", "aws"])
+
+    assert exit_code == 2
+    assert fake_sq.requests_made == []
+
+
+def test_main_submits_quota_increase_when_flag_is_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--submit-quota-increase` on the CLI must actually reach `probe_aws`.
+
+    Counterpart to `test_main_does_not_submit_quota_increase_when_flag_is_absent`
+    -- pins the other direction of the same wiring at
+    `tools/cloud_perms_probe.py:518` so a future refactor cannot satisfy
+    the absent-flag test by hardcoding `submit_quota_request=False`
+    instead of actually reading `args.submit_quota_increase`.
+    `_RefusingBoto3Module` again keeps a regression that bypasses the
+    monkeypatched factory from ever reaching a real AWS client.
+    """
+    monkeypatch.setitem(sys.modules, "boto3", _RefusingBoto3Module())
+    fake_sq = _FakeServiceQuotasWithRequest(value=0.0)
+    monkeypatch.setattr(
+        probe, "_real_aws_session_factory", _fake_quota_gap_session_factory(fake_sq)
+    )
+    monkeypatch.setattr(probe, "_AWS_SNAPSHOT_PATH", tmp_path / "aws.json")
+
+    exit_code = probe.main(["--cloud", "aws", "--submit-quota-increase"])
+
+    assert exit_code == 2
+    assert len(fake_sq.requests_made) == 1

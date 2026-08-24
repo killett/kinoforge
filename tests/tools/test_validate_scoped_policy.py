@@ -434,6 +434,49 @@ def test_kms_denial_is_still_denied_when_the_kms_statement_is_present() -> None:
     assert result["exit_code"] == 1
 
 
+def test_renamed_kms_sid_that_still_grants_the_actions_is_not_excused() -> None:
+    """Excusal requires BOTH the named Sid absent AND nothing else granting the action.
+
+    Pins the second conjunct of `_not_applicable_actions`
+    (`tools/validate_scoped_policy.py:201-203`,
+    `and not _lookup_action(statements, action)[0]`) -- the module
+    docstring calls this out explicitly: "if a future template moved
+    `kms:Encrypt` into a differently-named statement, the action is
+    genuinely granted and must be simulated and judged like any other,
+    not excused." Here `KMSLayerW` is renamed to `KMSLayerWRenamed` but
+    still grants `kms:Encrypt`/`kms:Decrypt` against the same key ARN, and
+    IAM denies both -- a real scoping bug (wrong-ARN-shaped), not a
+    deliberately-dropped-statement gap.
+
+    A bug that would fail this: deleting the `and not
+    _lookup_action(...)` conjunct, which excuses any action whose
+    *original* Sid string is missing regardless of whether a
+    renamed/other statement still grants it -- reclassifying a real
+    `denied` finding as `not_applicable` and flipping `exit_code` from 1
+    to 0.
+    """
+    policy = json.loads(_sample_policy_document())
+    for stmt in policy["Statement"]:
+        if stmt["Sid"] == "KMSLayerW":
+            stmt["Sid"] = "KMSLayerWRenamed"
+    policy_doc = json.dumps(policy)
+
+    iam = _FakeIam(
+        decisions={"kms:Encrypt": "implicitDeny", "kms:Decrypt": "implicitDeny"}
+    )
+    result = validate_aws(
+        iam,
+        policy_document=policy_doc,
+        user_name="probe",
+        confirm_live=True,
+    )
+
+    assert result["denied"] == ["kms:Decrypt", "kms:Encrypt"]
+    assert result["not_applicable"] == []
+    assert result["ungranted"] == []
+    assert result["exit_code"] == 1
+
+
 def test_missing_actions_from_a_short_response_cause_a_nonzero_exit() -> None:
     """A short (non-truncated) response must not report a false green.
 
