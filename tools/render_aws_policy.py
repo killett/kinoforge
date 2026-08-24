@@ -75,7 +75,7 @@ def render(
         ValueError: *bucket_prefix* is empty, `*`, or contains whitespace;
             *account* is not a 12-digit id; or a `<...>` placeholder
             survived substitution (named, if it matches the known
-            `<[A-Z_]+>` shape, or unnamed otherwise).
+            `<[A-Z0-9_]+>` shape, or unnamed otherwise).
         json.JSONDecodeError: The rendered text is not valid JSON — for
             example a substituted value contained an unescaped quote or
             backslash and corrupted the surrounding structure.
@@ -141,9 +141,11 @@ def render(
     if "<" in out:
         raise ValueError(
             "a '<' survived rendering that the named-placeholder pattern "
-            "<[A-Z_]+> did not match -- e.g. a placeholder with a digit, "
-            "hyphen, or lowercase letter such as <S3_BUCKET_PREFIX_2> or "
-            "<kms_key_id>. An IAM policy document has no legitimate use "
+            "<[A-Z0-9_]+> did not match -- e.g. a placeholder with a "
+            "hyphen or a lowercase letter, such as <kms_key_id> or "
+            "<s3-bucket-prefix>. (Digits ARE matched by the named pattern "
+            "now, so <S3_BUCKET_PREFIX_2> is reported above, not here.) "
+            "An IAM policy document has no legitimate use "
             "for '<'; fix the source template or teach render() about the "
             "new placeholder shape before attaching."
         )
