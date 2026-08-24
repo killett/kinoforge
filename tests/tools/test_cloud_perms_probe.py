@@ -403,6 +403,43 @@ class _FakeServiceQuotasWithRequest(_FakeServiceQuotasClient):
         return {"RequestedQuota": {"Id": case_id, "Status": "PENDING"}}
 
 
+def test_probe_aws_does_not_open_a_support_case_without_an_opt_in(
+    tmp_path: Path,
+) -> None:
+    """A quota gap must not silently open a real AWS support case.
+
+    `RequestServiceQuotaIncrease` files a case against the caller's
+    account. `.aws/README.md` used to route operators to this probe from a
+    line that reads as a read-only "confirm the scope is sufficient"
+    check, so the default had to become report-only. A bug that would fail
+    this: submitting whenever the gap is seen (what shipped first), or
+    defaulting `submit_quota_request` to True -- either way an operator
+    running a documented verification step files a support case they never
+    asked for.
+    """
+    fake_sq = _FakeServiceQuotasWithRequest(value=0.0)
+    session = _FakeBoto3Session(
+        {
+            "sts": _FakeSTSClient(
+                identity={
+                    "UserId": "AIDA",
+                    "Account": "<AWS_ACCOUNT>",
+                    "Arn": "arn:aws:iam::<AWS_ACCOUNT>:user/kinoforge-ci",
+                }
+            ),
+            "iam": _FakeIAMClient({a: "allowed" for a in probe._REQUIRED_AWS_ACTIONS}),
+            "ec2": _FakeEC2Client(),
+            "service-quotas": fake_sq,
+        }
+    )
+    result = probe.probe_aws(session, snapshot_path=tmp_path / "aws.json")
+
+    assert result["exit_code"] == 2
+    assert fake_sq.requests_made == []
+    assert "quota_request" not in result
+    assert "--submit-quota-increase" in result["quota_request_skipped"]["how_to_submit"]
+
+
 def test_probe_aws_submits_quota_request_on_gap(tmp_path: Path) -> None:
     fake_sq = _FakeServiceQuotasWithRequest(value=0.0)
     session = _FakeBoto3Session(
@@ -420,7 +457,9 @@ def test_probe_aws_submits_quota_request_on_gap(tmp_path: Path) -> None:
         }
     )
     snapshot_path = tmp_path / "aws.json"
-    result = probe.probe_aws(session, snapshot_path=snapshot_path)
+    result = probe.probe_aws(
+        session, snapshot_path=snapshot_path, submit_quota_request=True
+    )
 
     assert result["exit_code"] == 2
     assert result["quota_request"]["case_id"].startswith("case-")
@@ -446,7 +485,9 @@ def test_probe_aws_idempotent_quota_request(tmp_path: Path) -> None:
         }
     )
     snapshot_path = tmp_path / "aws.json"
-    result = probe.probe_aws(session, snapshot_path=snapshot_path)
+    result = probe.probe_aws(
+        session, snapshot_path=snapshot_path, submit_quota_request=True
+    )
 
     assert result["exit_code"] == 2
     assert result["quota_request"]["case_id"] == "case-EXISTING"

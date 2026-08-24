@@ -12,7 +12,22 @@ Usage::
 Exit codes:
     0 — all probes green
     1 — auth failure or required action denied
-    2 — quota gap (AWS request submitted; GCP needs operator console)
+    2 — quota gap (reported only; see --submit-quota-increase / GCP console)
+
+**This is not the tool that validates the scoped policy template.** It
+simulates against whatever identity the ambient credentials resolve to,
+with no policy document as input, so it answers "can THIS caller do these
+things?" — not "is `.aws/policies/skypilot-minimal.template.json` scoped
+correctly?". For the latter, render the template and run
+``tools/validate_scoped_policy.py --cloud aws``; that one takes the policy
+as input and reports `denied` / `ungranted` / `not_applicable` separately.
+Running this probe against a caller who has no KMS key configured reports
+`kms:Encrypt`/`kms:Decrypt` as **denied**, which reads as a scoping bug it
+is not.
+
+``--submit-quota-increase`` is the one side effect here: it calls
+``servicequotas:RequestServiceQuotaIncrease``, which opens a real AWS
+support case. Off by default (see ``probe_aws``).
 
 Seams (mirror tools/preflight.py) — every SDK call goes through a
 factory callable so unit tests inject fakes; no real cloud in tests.
@@ -167,6 +182,7 @@ def probe_aws(
     quota_service: str = _AWS_QUOTA_SERVICE,
     target_vcpus: float = _AWS_TARGET_QUOTA_VCPUS,
     resource_arns: list[str] | None = None,
+    submit_quota_request: bool = False,
 ) -> dict[str, Any]:
     """Run AWS probes against ``session``; write snapshot; return exit-shaped dict.
 
@@ -183,11 +199,24 @@ def probe_aws(
             (needed because the kinoforge-ci KMS policy is resource-scoped).
             Pass ``["*"]`` to force wildcard-only simulation (e.g. in tests
             that do not need the KMS ARN).
+        submit_quota_request: Opt in to calling
+            ``servicequotas:RequestServiceQuotaIncrease`` when the quota is
+            below *target_vcpus*. That call **opens a real AWS support
+            case** under the caller's account, which is not something a
+            line documented as "confirm the scope is sufficient" should do
+            silently — so it is off by default and the gap is merely
+            reported (``quota_request_skipped``) with the command that
+            submits it. Mirrors the ``--confirm-live`` gate in
+            ``tools/validate_scoped_policy.py``: every side-effecting cloud
+            call in this repo is opt-in, not opt-out.
 
     Returns:
         Dict with keys captured_at, cloud, region, identity (when reached),
         simulated, instance_type, quotas, exit_code, plus optional auth_error /
-        denied / quota_gap / *_error details on the unhappy paths.
+        denied / quota_gap / *_error details on the unhappy paths. On a quota
+        gap, exactly one of `quota_request` (a case was submitted, only under
+        *submit_quota_request*) or `quota_request_skipped` (nothing was
+        submitted; carries the command that would) is present.
     """
     from botocore.exceptions import BotoCoreError, ClientError
 
@@ -274,22 +303,34 @@ def probe_aws(
         }
         out["quotas"] = {quota_code: quota_entry}
         if quota_entry["value"] < target_vcpus:
-            case_id = _aws_submit_quota_request(
-                sq,
-                quota_service,
-                quota_code,
-                target_vcpus,
-            )
             out["exit_code"] = 2
             out["quota_gap"] = {
                 "code": quota_code,
                 "have": quota_entry["value"],
                 "want": target_vcpus,
             }
-            out["quota_request"] = {
-                "case_id": case_id,
-                "submitted_at": _now_local_iso(),
-            }
+            if submit_quota_request:
+                case_id = _aws_submit_quota_request(
+                    sq,
+                    quota_service,
+                    quota_code,
+                    target_vcpus,
+                )
+                out["quota_request"] = {
+                    "case_id": case_id,
+                    "submitted_at": _now_local_iso(),
+                }
+            else:
+                out["quota_request_skipped"] = {
+                    "reason": (
+                        "RequestServiceQuotaIncrease opens a real AWS support "
+                        "case; this probe does not do that without an explicit "
+                        "opt-in"
+                    ),
+                    "how_to_submit": (
+                        "pixi run cloud:perms-probe --cloud aws --submit-quota-increase"
+                    ),
+                }
             _write_snapshot_atomic(snapshot_path, out)
             return out
     except (ClientError, BotoCoreError) as exc:
@@ -459,13 +500,22 @@ def main(argv: list[str] | None = None) -> int:
         default="both",
         help="Which cloud to probe (default: both).",
     )
+    parser.add_argument(
+        "--submit-quota-increase",
+        action="store_true",
+        help=(
+            "on an AWS quota gap, call RequestServiceQuotaIncrease -- which "
+            "OPENS A REAL AWS SUPPORT CASE. Without this flag the gap is "
+            "reported and nothing is submitted."
+        ),
+    )
     args = parser.parse_args(argv)
 
     exit_codes: list[int] = []
 
     if args.cloud in ("aws", "both"):
         session = _real_aws_session_factory()
-        result = probe_aws(session)
+        result = probe_aws(session, submit_quota_request=args.submit_quota_increase)
         print(f"[aws] exit={result['exit_code']}")
         if "auth_error" in result:
             print(f"[aws] auth_error: {result['auth_error']}")
@@ -473,6 +523,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[aws] denied: {result['denied']}")
         if "quota_gap" in result:
             print(f"[aws] quota gap: {result['quota_gap']}")
+        if "quota_request_skipped" in result:
+            print(
+                "[aws] no quota-increase case opened; re-run with "
+                "--submit-quota-increase to submit one"
+            )
         exit_codes.append(result["exit_code"])
 
     if args.cloud in ("gcp", "both"):
