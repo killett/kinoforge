@@ -9,6 +9,11 @@ first unchecked task without redoing committed work.
 - **Design (validated):** `DESIGN.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
+- **IN FLIGHT — compute-seam portable core (Brief 3):** design doc
+  `docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md` (committed `d84dbef9`,
+  awaiting operator review). Closes F4/F5/F6/F11/F12 in one shape; staged S1–S5, one plan per
+  stage. Depends on Brief 1 (skypilot watchdog, shipped) + Brief 2 (capability declaration,
+  shipped) — both in. No plan written yet.
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
@@ -382,7 +387,27 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-08-23 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-08-24 — read this, then STOP; below is history)
+
+**Compute-seam portable core (Brief 3) — design doc written + committed `d84dbef9`, 2026-08-24.**
+`docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md`. Brainstormed against the
+brief and the F-findings verification doc; both prerequisite briefs are shipped. Two operator
+decisions are baked in: **full inversion** of the selection model (`find_offers` leaves the
+`ComputeProvider` ABC and becomes a RunPod/Modal implementation detail; providers select
+internally from stated constraints) and **capability-gated fail-closed rate verification**
+(`RATE_READBACK` vs `RATE_DETERMINISTIC`; an unreadable rate on a READBACK provider is treated as
+a violation → teardown). Two calls made without asking and accepted: hard break on
+`compute.cloud` / `compute.cloud_type` with no alias (8 example configs migrate in the same
+commit), and `region` declared `UNSUPPORTED` on runpod/modal at S2 rather than wiring new wire
+surface without a live smoke.
+**SINGLE NEXT ACTION:** operator reviews the design doc; on approval, write the S1 plan
+(portable core + `backend_options`), whose Task 0 is the golden launch-payload snapshot of all
+39 example configs — that snapshot must land BEFORE any seam change, since every later stage is
+measured against it.
+
+---
+
+### Previous snapshot (2026-08-23)
 
 **Least-privilege onboarding Task 9 — the scoped grants were finally run against real APIs
 (2026-08-23). AWS: simulate-clean. GCP: could not run, no working credential.**
