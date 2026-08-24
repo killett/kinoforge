@@ -1447,6 +1447,13 @@ Replace the FullAccess recipe with the scoped path first:
 #     --bucket-prefix <your-bucket-prefix> \
 #     --out /tmp/skypilot-minimal.rendered.json
 #
+#   # SUPERSEDED 2026-08-23 by Task 9's live run -- do NOT copy this.
+#   # `put-user-policy` is INLINE, and IAM caps a user's inline policies at
+#   # 2048 characters in aggregate; this policy renders to 3422, so this
+#   # command fails with `LimitExceeded: Maximum policy size of 2048 bytes
+#   # exceeded`. The shipped .env.example uses `create-policy` +
+#   # `attach-user-policy` (managed, 6144 ceiling) instead. See
+#   # .aws/policies/README.md for the measured sizes.
 #   aws iam put-user-policy --user-name kinoforge-runner \
 #     --policy-name KinoforgeSkypilotMinimal \
 #     --policy-document file:///tmp/skypilot-minimal.rendered.json
@@ -2446,14 +2453,48 @@ reads as a new problem, not the disambiguation step it actually is.
    banner rather than adding a resource entry that's already effectively
    covered by the correctly-typed ARN in the same statement.
 4. Only if a genuinely fresh live check is wanted beyond what `detail`
-   already shows, the right command is `pixi run -e live-skypilot aws iam
-   simulate-custom-policy --policy-input-list
-   file:///tmp/skypilot-minimal.rendered.json --action-names <action>
-   --resource-arns <one-arn>` — evaluated against the policy document
-   directly, so it needs no principal and works fine after the probe
-   user is gone. Still free; still one ARN per call. (The `aws` binary
-   lives only in the `live-skypilot` pixi env — a bare `aws` here gets
-   `command not found`.)
+   already shows, reach for `simulate-custom-policy` — evaluated against
+   the policy document directly, so it needs no principal and works fine
+   after the probe user is gone. Still free; still one ARN per call. (The
+   `aws` binary lives only in the `live-skypilot` pixi env — a bare `aws`
+   here gets `command not found`.)
+
+   **CORRECTED 2026-08-23 — the form originally written here does not
+   work.** It was
+   `--policy-input-list file:///tmp/skypilot-minimal.rendered.json`,
+   which fails twice over against real IAM:
+
+   - **The whole policy does not fit.** `SimulateCustomPolicy` caps each
+     `policyInputList` member at **2,000 characters**; the rendered policy
+     is 3,422 as IAM counts it. You get `ValidationError: Value at
+     'policyInputList' failed to satisfy constraint: Member must have
+     length less than or equal to 2000`. Extract the single `Sid` you
+     care about into its own minimal document instead (the three
+     resource-scoped statements are ~300–710 characters each).
+   - **`file://` is parsed as a structure, not a string.** For a
+     list-typed parameter the AWS CLI JSON-parses a `file://` payload
+     rather than passing it through, and the call fails with
+     `InvalidInput: Policy input list item 1 has invalid content`. Pass
+     the JSON inline.
+
+   Working invocation:
+
+   ```bash
+   pixi run -e live-skypilot aws iam simulate-custom-policy \
+     --policy-input-list "$(cat /tmp/one-statement.json)" \
+     --action-names <action> \
+     --resource-arns <one-concrete-arn> \
+     --query 'EvaluationResults[0].EvalDecision' --output text
+   ```
+
+   Use a **concrete** ARN, not a wildcard one lifted from the policy.
+   Against wildcard ARNs real IAM collapses the response to a single
+   record per action and names the resource with a template
+   (`arn:aws:s3:::${BucketName}/${KeyName}`), which tells you nothing
+   about which specific ARN matched. Concrete ARNs also let you prove the
+   policy is *narrow*: run each action once in-scope and once out
+   (`kinoforge-abc/key.txt` vs `not-kinoforge-abc/key.txt`) and expect
+   `allowed` then `implicitDeny`.
 
 - [ ] **Step 4: Run the GCP validation**
 

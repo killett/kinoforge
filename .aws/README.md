@@ -113,11 +113,18 @@ statement; the renderer drops it by default (see step 1 below).
 
 > The template carries `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`, and
 > `<S3_BUCKET_PREFIX>` placeholders and cannot be pasted into the console or
-> passed to `put-user-policy` as-is — AWS rejects a malformed ARN. Render it
+> passed to `create-policy` as-is — AWS rejects a malformed ARN. Render it
 > first with `tools/render_aws_policy.py`; never attach
 > `.aws/policies/skypilot-minimal.template.json` directly. Full
 > UNVALIDATED-against-a-real-launch warning:
 > `.aws/policies/README.md`.
+
+> **Attach it as a MANAGED policy, never an inline one.** IAM caps a user's
+> inline policies at **2048 characters in aggregate**; this policy renders
+> to ~3.4 KB, so `aws iam put-user-policy` — and the console's **Create
+> inline policy** — fail with `LimitExceeded: Maximum policy size of 2048
+> bytes exceeded`. A managed policy's ceiling is **6144**, which this fits
+> with room to spare. Measured 2026-08-23; see `.aws/policies/README.md`.
 
 To attach it to the existing `kinoforge-ci` IAM user:
 
@@ -136,14 +143,65 @@ To attach it to the existing `kinoforge-ci` IAM user:
    attachable. CMEK / Layer W bucket-test users pass
    `--kms-key-id <key-id>` to keep that statement.
 
-2. Open the [AWS IAM Console → Users](https://us-west-2.console.aws.amazon.com/iam/home#/users) — account `<AWS_ACCOUNT>`.
-3. Click `kinoforge-ci`.
-4. Permissions tab → **Add permissions** → **Create inline policy**
-   (or **Attach policies directly → Create policy**).
-5. JSON tab → paste the entire contents of the *rendered* file
-   (`/tmp/skypilot-minimal.rendered.json`) — not the tracked template.
-6. Review → name it `KinoforgeSkypilotMinimal` → Create policy.
-7. Confirm the policy is now attached to `kinoforge-ci`.
+2. Create the managed policy and attach it. The CLI path (preferred — it
+   captures the ARN for you instead of making you type an account id):
+
+   ```bash
+   aws iam create-policy --policy-name KinoforgeSkypilotMinimal \
+     --policy-document file:///tmp/skypilot-minimal.rendered.json \
+     --query 'Policy.Arn' --output text
+
+   POLICY_ARN=$(aws iam list-policies --scope Local \
+     --query "Policies[?PolicyName=='KinoforgeSkypilotMinimal'].Arn" \
+     --output text)
+
+   aws iam attach-user-policy --user-name kinoforge-ci \
+     --policy-arn "$POLICY_ARN"
+   ```
+
+   If you would rather not shell out, `sts:GetCallerIdentity` gives the
+   same account id the ARN needs:
+
+   ```bash
+   aws sts get-caller-identity --query Account --output text
+   # -> arn:aws:iam::<that>:policy/KinoforgeSkypilotMinimal
+   ```
+
+3. **Re-running this?** `create-policy` fails with `EntityAlreadyExists`
+   the second time. Publish a new default version rather than deleting and
+   recreating the policy — deleting it detaches it from every principal:
+
+   ```bash
+   aws iam create-policy-version --policy-arn "$POLICY_ARN" \
+     --policy-document file:///tmp/skypilot-minimal.rendered.json \
+     --set-as-default
+   ```
+
+   A managed policy holds at most **5 versions**. If that call errors with
+   `LimitExceeded`, drop the oldest non-default version first:
+
+   ```bash
+   aws iam list-policy-versions --policy-arn "$POLICY_ARN"
+   aws iam delete-policy-version --policy-arn "$POLICY_ARN" --version-id v1
+   ```
+
+4. Console equivalent, if you prefer clicking: [AWS IAM Console →
+   Users](https://us-west-2.console.aws.amazon.com/iam/home#/users) →
+   `kinoforge-ci` → Permissions tab → **Add permissions** → **Attach
+   policies directly** → **Create policy** → JSON tab → paste the entire
+   contents of the *rendered* file (`/tmp/skypilot-minimal.rendered.json`),
+   not the tracked template → Review → name it `KinoforgeSkypilotMinimal` →
+   Create policy → then attach it to the user.
+
+   Do **not** use **Create inline policy** here — that is the 2048-char
+   path and it will reject this policy.
+
+5. Confirm the policy is now attached to `kinoforge-ci`:
+
+   ```bash
+   aws iam list-attached-user-policies --user-name kinoforge-ci \
+     --query 'AttachedPolicies[].PolicyName' --output text
+   ```
 
 Confirm the scoped policy is sufficient with `pixi run cloud:perms-probe`
 against AWS — it should exit 0 without `AmazonS3FullAccess` ever being

@@ -41,20 +41,61 @@ limit that has nothing to do with permissions. This policy has still never
 been attached to a real principal that then launched anything, so treat it
 as **simulate-clean, launch-unvalidated**.
 
-Two AWS API limits worth knowing before re-running the validation by hand:
-`iam:PutUserPolicy` caps a user's inline policies at **2048 characters** in
-aggregate and this policy renders to 3422, so the document cannot be
-attached to the probe user — the validator passes it as
-`PolicyInputList` on the simulate call instead. `iam:SimulateCustomPolicy`
-caps each `policyInputList` member at **2000 characters**, so the whole
-policy will not fit there either; the concrete-ARN probes above were run
-one statement at a time, passed inline (the `file://` form makes the AWS
-CLI parse the document as a structure and the call fails with
-`InvalidInput`).
+### Size: attach this as a MANAGED policy, never inline
+
+Measured 2026-08-23, and the reason the onboarding path in `.aws/README.md`
+and `.env.example` uses `create-policy` + `attach-user-policy` rather than
+`put-user-policy`:
+
+| | characters |
+|---|---|
+| this policy, rendered — as IAM counts it | **3,422** |
+| this policy, rendered — raw bytes on disk | 4,847 |
+| IAM limit — a user's **inline** policies, in aggregate | 2,048 |
+| IAM limit — a **managed** policy document | 6,144 |
+| IAM limit — `SimulateCustomPolicy` `policyInputList` member | 2,000 |
+
+The two rendered figures differ because **IAM does not count whitespace**
+when sizing a policy, and the renderer writes pretty-printed JSON. Measure
+compact, not `wc -c`, or you will scare yourself with the wrong number.
+
+So `aws iam put-user-policy` — and the console's **Create inline policy** —
+fail on this document with `LimitExceeded: Maximum policy size of 2048 bytes
+exceeded`. That is not a hypothetical: it is what the first live validation
+run hit on 2026-08-23, and it is why `tools/validate_scoped_policy.py` no
+longer attaches the policy at all (it creates the probe user bare and passes
+the document as `PolicyInputList` on each simulate call instead).
+
+**If you are adding a statement to this template, mind the 6,144 ceiling.**
+At 3,422 there is room, but it is finite — 2,722 characters of headroom, and
+the S3 and EC2 statements are the ones that grow. Re-measure after any
+addition:
+
+```bash
+pixi run python tools/render_aws_policy.py \
+  --bucket-prefix kinoforge --out /tmp/p.json
+python -c "import json;print(len(json.dumps(json.load(open('/tmp/p.json')),separators=(',',':'))))"
+rm /tmp/p.json
+```
+
+The 2,000-char `SimulateCustomPolicy` limit is smaller still, so the whole
+policy never fits there — the concrete-ARN probes above were run one
+statement at a time, each passed **inline**. The `file://` form does not
+work for `--policy-input-list`: the AWS CLI parses a `file://` JSON payload
+into a structure for a list-typed parameter instead of passing it as a
+string, and the call fails with `InvalidInput: Policy input list item 1 has
+invalid content`. Corrected form:
+
+```bash
+pixi run -e live-skypilot aws iam simulate-custom-policy \
+  --policy-input-list "$(cat /tmp/one-statement.json)" \
+  --action-names s3:PutObject \
+  --resource-arns arn:aws:s3:::kinoforge-abc/key.txt
+```
 
 The `.template` in the filename is load-bearing, not decorative: the file
 carries `<AWS_ACCOUNT>`, `<KMS_KEY_ID>`, and `<S3_BUCKET_PREFIX>`
-placeholders and cannot be handed to `aws iam put-user-policy` or pasted
+placeholders and cannot be handed to `aws iam create-policy` or pasted
 into the IAM console as-is — AWS rejects a malformed ARN. Render it first:
 
 ```bash
