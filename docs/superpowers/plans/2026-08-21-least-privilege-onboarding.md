@@ -1497,6 +1497,13 @@ Replace lines 21-23:
 
 Then, in the "SkyPilot policy — apply instructions" section (currently line 88), put the CLI path above the existing console-paste steps:
 
+> **SUPERSEDED 2026-08-23 by Task 9's live run — do NOT copy this snippet.**
+> `put-user-policy` is inline, and the rendered policy (3,422 chars as IAM
+> counts it) exceeds IAM's 2,048-char aggregate inline cap. The shipped
+> `.aws/README.md` uses `create-policy` + `attach-user-policy` (managed,
+> 6,144 ceiling) instead. See `.aws/policies/README.md` for the measured
+> sizes.
+
 ```markdown
 Preferred — CLI, one command after rendering:
 
