@@ -15,9 +15,11 @@ statement (a key id resolved from `.aws/kms-test-key.arn`), so both
 rather than dropped. Free calls only: no EC2 instance was created, and the
 throwaway probe user was confirmed deleted afterwards.
 
-Six follow-up `iam:SimulateCustomPolicy` probes with *concrete* ARNs
-confirm the scoping is narrow as well as sufficient. In each pair the only
-thing that changed was the resource:
+**Eight** follow-up `iam:SimulateCustomPolicy` probes with *concrete* ARNs
+confirm the scoping is narrow as well as sufficient: the six in the table
+below, plus the KMS pair described under it. (Three of the eight are
+allow/deny *pairs* where the only thing that changed was the resource;
+the other two — `s3:GetObject`, `iam:PassRole` — are single allow probes.)
 
 | action | resource | decision |
 |---|---|---|
@@ -133,7 +135,21 @@ pixi run python tools/render_aws_policy.py \
 
 `--account` defaults to the caller's own account via
 `sts:GetCallerIdentity`; `--kms-key-id` defaults to the key id parsed out
-of the gitignored `.aws/kms-test-key.arn`. The renderer refuses to write
+of the gitignored `.aws/kms-test-key.arn`.
+
+> **That ARN file will not exist on a fresh workspace.** The only thing
+> that writes it is `pixi run cloud:bootstrap-kms`, and that task is
+> currently **broken** — `tools/bootstrap_kms.py` still carries literal
+> `<GCS_KMS_KEYRING>` placeholders as its operational constants, so it
+> cannot provision the key. Until that is fixed, either create the file by
+> hand (one line: the full `arn:aws:kms:…:key/…` ARN of an existing key)
+> or pass `--kms-key-id` explicitly. **Neither is required for a plain
+> SkyPilot setup**: with no key id available the renderer simply drops the
+> `KMSLayerW` statement, and `tools/validate_scoped_policy.py` then
+> reports `kms:Encrypt`/`kms:Decrypt` under `not_applicable` and still
+> exits 0.
+
+The renderer refuses to write
 its output inside this repository, so the rendered (concrete-identifier-
 bearing) file never becomes a tracked-file candidate.
 

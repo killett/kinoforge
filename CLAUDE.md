@@ -115,6 +115,22 @@ deliberate trade, because bare 32/64-hex patterns would match every digest in
 `pixi.lock`. A bracketed value of pure lowercase letters/hyphens/underscores
 (`<lambda-secret-key-token>`) reads as prose to the scanner and is not flagged.
 
+The **identifier** scanner (`tools/scan_identifiers.py`, enforced over every
+tracked file by `tests/test_cloud_identifier_scrub.py`) carries its own
+accepted narrowings. Each is deliberate — widening any of them floods the
+guard with false positives from `pixi.lock` — but each is a real gap:
+
+- `kms_key_uuid` requires a literal `key/` prefix. A bare KMS UUID with no
+  ARN context around it is not flagged.
+- `aws_account_in_prose` (`account <12 digits>`) is line-scoped, like every
+  pattern here: an account id wrapped onto the next line escapes it.
+- `gcp_billing_account` matches the literal `billingAccounts/` prefix
+  case-sensitively; `billingaccounts/…` escapes.
+- `gcp_project_id` only matches `kinoforge-prod-[0-9a-z]{8}`. Another
+  project's id is caught only when it appears inside a service-account
+  email (`…@<project>.iam.gserviceaccount.com`, which
+  `gcp_service_account_email` matches generically) — bare, it is invisible.
+
 **The PreToolUse blocker (`block_secret_reads.py`) is defence in depth, not a
 control** — it matches command TEXT, not what bash actually executes. Known,
 confirmed gaps:

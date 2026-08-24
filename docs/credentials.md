@@ -8,8 +8,11 @@ SkyPilot multi-cloud GPU work is gated by AWS + GCP permission and quota
 readiness. Run `pixi run cloud:perms-probe` to verify; the probe writes
 snapshots to `.aws/perms-snapshot.json` and `.gcp/perms-snapshot.json`
 (gitignored). Exit 0 = green; 1 = auth or required action denied;
-2 = quota gap pending (AWS auto-submits via the SDK, GCP emits a console
-URL because no SDK surface exists for compute-quota requests). See
+2 = quota gap (reported only — GCP emits a console URL because no SDK
+surface exists for compute-quota requests, and AWS submits a real support
+case ONLY when you pass `--submit-quota-increase`). The probe audits a
+live identity's permissions; to audit the scoped policy *document*, render
+it and run `tools/validate_scoped_policy.py --cloud aws` instead. See
 `docs/CLOUD-CREDS.md` for the bootstrap inventory, the scoped IAM policy
 template at `.aws/policies/skypilot-minimal.template.json` (render with
 `tools/render_aws_policy.py` before attaching), and the SkyPilot

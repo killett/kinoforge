@@ -346,6 +346,24 @@ first unchecked task without redoing committed work.
   files, forcing the project-id rename in the `tools/quota_burn_lib.py:266` production default;
   the escape hatch is a `kinoforge: allow-identifier` line pragma, never a directory exclusion.
   **Next action:** none — all 10 tasks committed. Task 9's live result is in the snapshot below.
+  **Final-review fix wave (2026-08-23, offline, no `aws`/`gcloud`/boto3 call).** Twelve findings;
+  report at `.superpowers/sdd/2026-08-21-least-privilege-onboarding/final-fix-report.md`. The
+  headline one: the DOCUMENTED default path failed its own validation step. `.env.example` says
+  render without `--kms-key-id`, which drops `KMSLayerW`, but `_REQUIRED_AWS_ACTIONS` still listed
+  `kms:Encrypt`/`kms:Decrypt` → `ungranted: [...]`, **rc=1** on the render the line above it
+  instructs (and `denied: [...]` via the `cloud:perms-probe` route `.aws/README.md` used to
+  recommend — the bucket the tool itself calls "almost always a real scoping bug"). The live gate
+  returned rc=0 only because this workspace has `.aws/kms-test-key.arn` on disk: the measured path
+  was not the documented path. Fix: `validate_scoped_policy._CONDITIONAL_ACTIONS_BY_SID` +
+  a fourth result bucket `not_applicable`, excusing an action only when its named optional Sid is
+  absent AND nothing else grants it — NOT a general "whatever the policy omits was not required",
+  which would make the validator vacuous. `exit_code` ignores `not_applicable`. Also:
+  `cloud_perms_probe.probe_aws` no longer opens a real AWS support case
+  (`RequestServiceQuotaIncrease`) without `--submit-quota-increase`; `.aws/README.md` now routes to
+  the right tool and states the expected clean result; the S3FullAccess escape hatch is no longer
+  circular; `<GCS_KMS_KEYRING>` scrub residue cleared from `docs/CLOUD-CREDS.md` (NOT from
+  `tools/bootstrap_kms.py` — ledgered pre-existing bug, documented instead in
+  `.aws/policies/README.md`).
 
 ## RESUME SNAPSHOT (updated 2026-08-23 — read this, then STOP; below is history)
 
@@ -363,7 +381,10 @@ reservations afterwards).
 id), which is why `kms:Encrypt`/`kms:Decrypt` were simulated against the real key ARN instead of
 landing in `ungranted` — the "key resolves" branch of the plan's Verify block. Throwaway IAM user
 `kinoforge-scope-probe` confirmed `NoSuchEntity` afterwards; rendered `/tmp` file deleted.
-Six follow-up concrete-ARN probes prove the policy is **narrow**, not just sufficient:
+Eight follow-up concrete-ARN probes prove the policy is **narrow**, not just sufficient —
+the three allow/deny pairs below, plus single allow probes on `s3:GetObject`
+(`skypilot-abc/key.txt`) and `iam:PassRole` (`role/sky-x`); see the table in
+`.aws/policies/README.md`:
 `s3:PutObject` allowed on `kinoforge-abc/key.txt` but `implicitDeny` on `not-kinoforge-abc/…`;
 `iam:CreateRole` allowed on `role/skypilot-x` but `implicitDeny` on `role/admin-x`; `kms:Encrypt`
 allowed on the resolved key but `implicitDeny` on an unrelated key id. Nothing was widened.

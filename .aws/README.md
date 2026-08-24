@@ -22,8 +22,24 @@ and `AWS_CONFIG_FILE=$PIXI_PROJECT_ROOT/.aws/config` in `[activation.env]`, so
    - User name: `kinoforge-ci`
    - Permissions: **none yet.** Create the user bare, then attach the scoped
      policy via the CLI path in "SkyPilot policy — apply instructions" below.
-     `AmazonS3FullAccess` is the fallback if you are blocked, not the default —
-     see the same section.
+   - **Blocked?** The one thing that blocks this is not being able to create
+     or attach a customer-managed policy (an operator identity without
+     `iam:CreatePolicy` / `iam:AttachUserPolicy`). Only then, and only in an
+     account holding nothing you care about, attach the AWS-managed
+     `AmazonS3FullAccess` to get moving:
+
+     ```bash
+     aws iam attach-user-policy --user-name kinoforge-ci \
+       --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+     ```
+
+     That unblocks the S3 test-bucket work only — it grants no EC2, so
+     SkyPilot launches still need the scoped policy. Detach it as soon as
+     the scoped policy is attached and validated; the exact command is in
+     "Detaching the fallback" at the end of that section. The separate
+     compute identity (`kinoforge-runner`) has its own, wider shortcut
+     documented in `.env.example` under "BOOTSTRAP SHORTCUT" — do not mix
+     the two.
 2. Open the new user → **Security credentials** → **Create access key**
    - Use case: **Command Line Interface (CLI)**
    - Confirm + Next + Create.
@@ -203,13 +219,55 @@ To attach it to the existing `kinoforge-ci` IAM user:
      --query 'AttachedPolicies[].PolicyName' --output text
    ```
 
-Confirm the scoped policy is sufficient with `pixi run cloud:perms-probe`
-against AWS — it should exit 0 without `AmazonS3FullAccess` ever being
-attached. If you used the `AmazonS3FullAccess` fallback from step 1 of
-Bootstrap because you were blocked, detach it once the probe is green:
+6. Confirm the scoped policy is sufficient — with
+   **`tools/validate_scoped_policy.py`**, which takes the rendered policy
+   as input and simulates it against a bare throwaway principal:
 
-> Users → `kinoforge-ci` → Permissions → checkbox `AmazonS3FullAccess` →
-> Remove.
+   ```bash
+   pixi run python tools/validate_scoped_policy.py --cloud aws \
+     --policy-file /tmp/skypilot-minimal.rendered.json \
+     --confirm-live
+   ```
+
+   Run this under an **admin/operator** identity, not the `kinoforge-ci`
+   key: it creates and deletes a throwaway IAM user (`iam:CreateUser`,
+   `iam:DeleteUser`, `iam:SimulatePrincipalPolicy`), none of which the
+   scoped policy grants. Free calls only; no EC2 instance.
+
+   **Expected clean result** for the default step-1 render (no
+   `--kms-key-id`): exit 0, `"denied": []`, `"ungranted": []`,
+   `"missing": []`, and `"not_applicable": ["kms:Decrypt",
+   "kms:Encrypt"]`. Those two are listed because the render dropped the
+   `KMSLayerW` statement on purpose — they were never required. **That is
+   success.** Do not add KMS grants and do not widen a `Resource` to `*`
+   to shorten a list. Rendering *with* `--kms-key-id` instead gives an
+   empty `not_applicable` and all 15 actions `allowed`.
+
+   > `pixi run cloud:perms-probe` is a **different** tool and does not
+   > answer this question. It simulates against whatever identity your
+   > shell already carries, with no policy document as input, so a KMS-less
+   > setup shows `kms:Encrypt`/`kms:Decrypt` in **`denied`** — which reads
+   > as a scoping bug it is not. It also has a `--submit-quota-increase`
+   > flag that calls `RequestServiceQuotaIncrease`, i.e. **opens a real AWS
+   > support case**; that is opt-in and never fires on a plain run, but it
+   > is a reason to know which tool you are invoking. Use the probe to
+   > audit a live identity's permissions and GPU quota; use
+   > `validate_scoped_policy.py` to audit the policy document.
+
+### Detaching the fallback
+
+If you attached `AmazonS3FullAccess` at Bootstrap step 1 because you were
+blocked, remove it now that the scoped policy is attached and validated:
+
+```bash
+aws iam detach-user-policy --user-name kinoforge-ci \
+  --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+```
+
+Console equivalent: Users → `kinoforge-ci` → Permissions → checkbox
+`AmazonS3FullAccess` → Remove. Confirm with the
+`list-attached-user-policies` command in step 5 — only
+`KinoforgeSkypilotMinimal` should remain.
 
 The scoped policy covers all S3 operations kinoforge needs against the
 `<S3_BUCKET_PREFIX>-*` and `skypilot-*` prefixes; broader S3

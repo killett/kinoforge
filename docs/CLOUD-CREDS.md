@@ -76,7 +76,7 @@ for AWS/GCS.
   **SUPERSEDED** by 2026-06-09 swap (replaced by
   `gs://<GCS_BUCKET>`, same settings, new project).
 - 2026-06-06 (Layer W T5 bootstrap): GCP Cloud KMS keyring
-  `<GCS_KMS_KEYRING>` + key `bucket-cmek` created in `us-central1`.
+  `<KMS_KEYRING>` + key `bucket-cmek` created in `us-central1`.
   `kinoforge-runner` SA + GCS service agent
   (`service-<GCP_PROJECT_NUMBER>@gs-project-accounts.iam.gserviceaccount.com`)
   granted `roles/cloudkms.cryptoKeyEncrypterDecrypter`. Key resource name
@@ -107,7 +107,7 @@ for AWS/GCS.
   expiration + abort-incomplete-multipart, both at age 1 day.
 - 2026-06-06: end-to-end S3 smoke (boto3 default chain + bucket
   put/get/delete) verified clean.
-- 2026-06-06 (Layer W T5 bootstrap): AWS KMS key `alias/<GCS_KMS_KEYRING>`
+- 2026-06-06 (Layer W T5 bootstrap): AWS KMS key `alias/<KMS_ALIAS>`
   created in `us-east-1`. ARN persisted to `.aws/kms-test-key.arn` (gitignored).
   Key policy grants `kinoforge-ci` `kms:Encrypt`, `kms:Decrypt`,
   `kms:GenerateDataKey`, `kms:DescribeKey`. Root account retains `kms:*`.
@@ -130,7 +130,11 @@ Reversible: `aws iam delete-user-policy --user-name kinoforge-ci --policy-name k
 Old Nova Reel policy (`kinoforge-nova-reel`) removed when `kinoforge-luma-ray`
 was attached. Old `<S3_BUCKET_NOVA_REEL>` bucket (us-east-1) may still
 exist; remove with:
-`aws s3 rb s3://<S3_BUCKET_NOVA_REEL> --force` (safe to run if not needed)
+`aws s3 rb s3://<S3_BUCKET_NOVA_REEL> --force` (safe to run if not needed).
+`<S3_BUCKET_NOVA_REEL>` — like `<S3_BUCKET_LAYER_W>` above — has no
+defining row in this file by design (concrete bucket names are scrubbed
+from tracked files); **resolve the real name from the AWS console**
+(S3 → Buckets, `us-east-1`) or `aws s3 ls` before running the command.
 
 **Luma Ray EULA status (2026-06-07):**
 - `CreateFoundationModelAgreement` accepted offer `offer-o5smt33izgzbm`.
@@ -148,9 +152,17 @@ exist; remove with:
 
 `AmazonS3FullAccess` is broader than required. Once the layer is shipped,
 operator should swap it for the scoped policy in `.aws/README.md` (limits
-the `kinoforge-ci` key to the `<GCS_KMS_KEYRING>-*` bucket prefix).
-This requires IAM perms that the `kinoforge-ci` key does NOT itself hold;
-the swap is done in the AWS Console.
+the `kinoforge-ci` key to the `<S3_BUCKET_PREFIX>-*` bucket prefix).
+This requires IAM perms that the `kinoforge-ci` key does NOT itself hold,
+so run the swap under an admin/operator identity.
+
+Follow `.aws/README.md` → "SkyPilot policy — apply instructions": render
+the template, `aws iam create-policy` + `attach-user-policy` (a **managed**
+policy — the rendered document is ~3.4 KB and an inline attach fails at
+IAM's 2048-character cap), validate with
+`tools/validate_scoped_policy.py`, then detach `AmazonS3FullAccess`. The
+console works too, but only via **Create policy**; do **not** use **Create
+inline policy**, which hits the same cap.
 
 ## SkyPilot permissions (Layer W+α)
 
@@ -163,8 +175,10 @@ Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
   (tracked, not secret; render with `tools/render_aws_policy.py` before
   attaching — see `.aws/policies/README.md`). Covers EC2 lifecycle + IAM
   PassRole on `skypilot-*` + ServiceQuotas + S3 scoped to
-  `<S3_BUCKET_PREFIX>-*`/`skypilot-*` prefixes + KMS scoped to
-  `alias/<KMS_ALIAS>`. NOT attached to `kinoforge-ci` in this layer
+  `<S3_BUCKET_PREFIX>-*`/`skypilot-*` prefixes + KMS scoped to the key
+  ARN (`…:key/<KMS_KEY_ID>`, not an alias — and only when a key id is
+  supplied at render time; otherwise the `KMSLayerW` statement is dropped
+  entirely). NOT attached to `kinoforge-ci` in this layer
   (operator opted for AWS-managed broad policies instead — see "AWS —
   actually attached policies" below). The template stays in repo as the
   scope-down target for a future layer.
@@ -176,7 +190,8 @@ Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
   required; the scoped `.aws/policies/skypilot-minimal.template.json` is
   the documented swap-in target.
 - **AWS GPU quota:** `L-DB2E81BA` (Running On-Demand G/VT instance vCPUs)
-  ≥ 4 in `us-east-1`. Initial value was 0; probe auto-submitted case
+  ≥ 4 in `us-east-1`. Initial value was 0; the probe auto-submitted (that
+  behaviour is now gated behind `--submit-quota-increase`) case
   `cd3e0e81b66b4055bcc189bbf8653542I2kxtcvR` via
   `service-quotas.RequestServiceQuotaIncrease`. AWS reviews
   asynchronously; status visible in the AWS Service Quotas console.
@@ -192,8 +207,10 @@ Plan: `docs/superpowers/plans/2026-06-06-layer-w-alpha-cloud-bootstrap.md`.
 Re-run with `pixi run cloud:perms-probe`. Snapshots written atomically
 via temp-file + rename so a crashed probe never leaves a half-write.
 Exit codes: 0 green; 1 auth failure or required action denied; 2 quota
-gap pending (AWS auto-submits; GCP emits console URL — neither happened
-on the green run).
+gap (reported only — GCP emits a console URL, and AWS submits a real
+support case ONLY with `--submit-quota-increase`; neither happened on the
+green run). The probe audits a live identity; to audit the scoped policy
+*document* use `tools/validate_scoped_policy.py` instead.
 
 ## Rotation policy
 
