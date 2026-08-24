@@ -77,6 +77,13 @@ is a misconfiguration the operator discovers from the invoice.**
 
 ## 2. The portable core
 
+**This block is the END STATE, after S4.** Each stage lands a subset; §11 carries the per-stage
+delta. Two fields in particular arrive later than the block suggests: `region` lands in S2 (with
+its `consumes()` declarations), and `cpus` / `memory_gb` land only when a stage needs them — no
+config surface sets either today, and SkyPilot's `cpus: "1+" / memory: "2+"` for the CPU path is
+currently hardcoded in the provider (`providers/skypilot/__init__.py:796-798`). Adding a field
+nothing sets would put an undeclared row in the §4 guard for no gain.
+
 ```python
 @dataclass(frozen=True)
 class Placement:
