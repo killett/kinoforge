@@ -439,25 +439,73 @@ def test_truncated_simulate_response_raises_loudly() -> None:
         )
 
 
-def test_put_user_policy_attaches_the_policy_under_test() -> None:
-    """The simulation must reflect the policy under test, not a bare user.
+def test_policy_under_test_rides_the_simulate_call_not_an_inline_user_policy() -> None:
+    """The simulation must reflect the policy under test, without an inline attach.
 
-    A bug that would fail this: removing the put_user_policy call (or
-    calling it with the wrong document/principal) -- nothing else would
-    catch a validator that simulates a bare/default user and stays green
-    regardless of what the policy document actually says.
+    A bug that would fail this: attaching the document with
+    `put_user_policy` (what shipped first), or dropping it from the
+    simulate call so a bare/default user is evaluated and the run stays
+    green regardless of what the policy document says. IAM caps a user's
+    inline policies at 2048 characters in aggregate, which the real
+    rendered template blows past -- see the size-realistic test below.
+    Carrying the document as `PolicyInputList` evaluates the same policy
+    against a bare, zero-permission principal with no quota in play.
     """
     iam = _FakeIam(decisions={})
     policy_doc = _sample_policy_document()
     validate_aws(iam, policy_document=policy_doc, user_name="probe", confirm_live=True)
 
-    assert len(iam.put_calls) == 1
-    assert iam.put_calls[0]["UserName"] == "probe"
-    assert iam.put_calls[0]["PolicyDocument"] == policy_doc
+    assert iam.put_calls == []
 
     principal_arn = f"arn:aws:iam::{_ACCOUNT}:user/probe"
     assert iam.simulate_calls
     assert all(c["PolicySourceArn"] == principal_arn for c in iam.simulate_calls)
+    assert all(c["PolicyInputList"] == [policy_doc] for c in iam.simulate_calls)
+
+
+def test_the_real_rendered_template_does_not_trip_iams_inline_policy_quota() -> None:
+    """Size-realistic guard: the ACTUAL template, not the small fixture above.
+
+    A bug that would fail this: routing the policy through
+    `put_user_policy`. `_sample_policy_document()` is under 2048 characters
+    and so passes IAM's inline-policy quota happily -- every other test in
+    this file would stay green while the only document that matters, the
+    rendered `.aws/policies/skypilot-minimal.template.json` (3422 chars
+    compact), died with `LimitExceeded: Maximum policy size of 2048 bytes
+    exceeded` before a single action was simulated. Observed live
+    2026-08-23; mirrors the "test seams with REALISTIC sizes" lesson from
+    the ffmpeg `pipe:0` bug.
+    """
+    from tools.render_aws_policy import _POLICY_PATH, render
+
+    policy_doc = render(
+        _POLICY_PATH.read_text(),
+        account=_ACCOUNT,
+        kms_key_id=_KEY_ARN.partition(":key/")[2],
+        bucket_prefix=_BUCKET_PREFIX,
+    )
+    assert len(policy_doc) > 2048, (
+        "fixture no longer exercises the quota this test exists for"
+    )
+
+    class _QuotaEnforcingIam(_FakeIam):
+        """Fake that enforces IAM's real 2048-char inline-policy ceiling."""
+
+        def put_user_policy(self, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+            if len(kwargs["PolicyDocument"]) > 2048:
+                raise RuntimeError(
+                    "LimitExceeded: Maximum policy size of 2048 bytes exceeded "
+                    f"for user {kwargs['UserName']}"
+                )
+            return super().put_user_policy(**kwargs)
+
+    iam = _QuotaEnforcingIam(decisions={})
+    result = validate_aws(
+        iam, policy_document=policy_doc, user_name="probe", confirm_live=True
+    )
+    assert result["ungranted"] == []
+    assert result["exit_code"] == 0
+    assert iam.deleted == ["probe"]
 
 
 def test_throwaway_user_is_deleted_even_when_simulation_raises() -> None:
@@ -791,7 +839,7 @@ def test_main_aws_refuses_an_unrendered_policy_template(
     """A template with a surviving placeholder must not reach create_user.
 
     A bug that would fail this: skipping the placeholder scan and passing
-    the raw template straight to put_user_policy -- either the AWS
+    the raw template straight into the simulate call -- either the AWS
     boundary 400s after a real throwaway user already exists, or worse,
     the simulation silently evaluates a policy that grants nothing because
     every Resource entry is a literal, non-matching "<AWS_ACCOUNT>" string.

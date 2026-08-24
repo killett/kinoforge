@@ -209,13 +209,22 @@ def validate_aws(
     required_actions: tuple[str, ...] = _REQUIRED_AWS_ACTIONS,
     confirm_live: bool = False,
 ) -> dict[str, Any]:
-    """Attach *policy_document* to a throwaway user and simulate every action.
+    """Simulate every action against *policy_document* via a throwaway principal.
 
-    The user is created bare and carries only the inline policy under test,
-    so the simulation reflects that policy alone rather than the union with
-    whatever the caller already holds. Required actions are grouped by the
-    resource set of the policy statement that grants them (see module
-    docstring) and simulated one pass per group.
+    The user is created bare — no inline policy, no attachment — and
+    *policy_document* is passed to each `simulate_principal_policy` call as
+    `PolicyInputList`, so the simulation reflects that policy alone rather
+    than the union with whatever the caller already holds. Attaching it
+    instead (`put_user_policy`, what shipped first) cannot work: IAM caps a
+    user's inline policies at 2048 characters in aggregate and the real
+    rendered `skypilot-minimal` policy is 3422, so the attach failed with
+    `LimitExceeded` before anything was simulated. A bare principal plus
+    `PolicyInputList` is equivalent in effect and has no size ceiling —
+    and leaves nothing attached to leak if cleanup goes wrong.
+
+    Required actions are grouped by the resource set of the policy
+    statement that grants them (see module docstring) and simulated one
+    pass per group.
 
     Args:
         iam: IAM client (injected so tests need no SDK).
@@ -279,14 +288,7 @@ def validate_aws(
     statements: list[dict[str, Any]] = json.loads(policy_document).get("Statement", [])
     created = iam.create_user(UserName=user_name)
     principal_arn = created["User"]["Arn"]
-    policy_name = "KinoforgeScopeProbe"
     try:
-        iam.put_user_policy(
-            UserName=user_name,
-            PolicyName=policy_name,
-            PolicyDocument=policy_document,
-        )
-
         ungranted: set[str] = set()
         groups: dict[tuple[str, ...] | None, list[str]] = {}
         for action in required_actions:
@@ -308,6 +310,16 @@ def validate_aws(
             # against an empty list is unreachable dead code, not defence.
             call_kwargs: dict[str, Any] = {
                 "PolicySourceArn": principal_arn,
+                # The policy under test rides the simulate call itself
+                # rather than being attached to the probe user first.
+                # `put_user_policy` is capped at 2048 characters per user
+                # (aggregate, and not an adjustable quota) -- the real
+                # rendered skypilot-minimal policy is 3422, so the attach
+                # died with `LimitExceeded` before a single action was
+                # simulated. `PolicyInputList` has no such ceiling, and
+                # because the probe user is created bare the effective
+                # permission set is still exactly this document.
+                "PolicyInputList": [policy_document],
                 "ActionNames": actions,
             }
             if resource_key is not None:
@@ -325,18 +337,12 @@ def validate_aws(
                 detail.setdefault(action, []).extend(records)
     finally:
         # A leaked probe user is a standing liability; delete it on every
-        # path. Both deletes are individually guarded so a cleanup failure
-        # is logged, never raised in place of (and masking) whatever
-        # exception the `try` block above is already propagating.
-        try:
-            iam.delete_user_policy(UserName=user_name, PolicyName=policy_name)
-        except Exception as exc:  # noqa: BLE001
-            _log.warning(
-                "failed to delete inline policy %s from throwaway user %s: %s",
-                policy_name,
-                user_name,
-                exc,
-            )
+        # path. The delete is guarded so a cleanup failure is logged, never
+        # raised in place of (and masking) whatever exception the `try`
+        # block above is already propagating. There is no inline policy to
+        # detach first -- the document under test never leaves the simulate
+        # call (see `PolicyInputList` above), so the user is bare from
+        # creation to deletion and nothing can survive a partial cleanup.
         try:
             iam.delete_user(UserName=user_name)
         except Exception as exc:  # noqa: BLE001

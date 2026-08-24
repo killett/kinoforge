@@ -3,10 +3,44 @@
 # Counterpart to .aws/policies/skypilot-minimal.template.json. Grant these to the
 # runner service account and nothing else.
 #
-# STATUS: UNVALIDATED against a real SkyPilot launch. Checked only by
-# tools/validate_scoped_policy.py, which calls projects.testIamPermissions --
-# that proves the roles carry the permissions claimed, not that a launch
-# succeeds under them. See the caveat below.
+# STATUS: NOT VALIDATED AT ALL. Attempted 2026-08-23 alongside the AWS half
+# (which came back simulate-clean -- see .aws/policies/README.md) and it could
+# not be run: this workspace has no working GCP credential at HEAD.
+#
+#   - The runner service account kinoforge-runner@<PROJECT> is GONE. Both
+#     google.auth (ADC, via GOOGLE_APPLICATION_CREDENTIALS) and gcloud fail
+#     to mint a token from the on-disk key:
+#       gcloud -> invalid_grant: "Invalid grant: account not found"
+#       ADC    -> gRPC UNAUTHENTICATED, "Request had invalid authentication
+#                 credentials"
+#     The key file .gcp/kinoforge-sa.json still exists (dated 2026-06-09); it
+#     is the identity behind it that no longer resolves.
+#   - The one other account in the gcloud credential store (the operator user
+#     account) is dead too: invalid_grant: Bad Request on token refresh.
+#
+# So projects.testIamPermissions was never reached, and this file has never
+# been exercised against a real API. Nothing below is measured; all of it is
+# still a claim. Phase 53 abandoned the GCP/AWS GPU surface on 2026-06-17, so
+# a lapsed credential here is expected rather than alarming -- but it does
+# mean re-authenticating is step one for whoever picks this up:
+#
+#   gcloud auth login                       # operator, interactive
+#   gcloud auth activate-service-account --key-file=<new key>
+#   pixi run python tools/validate_scoped_policy.py \
+#     --cloud gcp --project "$(gcloud config get-value project)" --confirm-live
+#
+# WHEN IT DOES RUN, READ THE RESULT NARROWLY. testIamPermissions evaluates the
+# AUTHENTICATED CALLER, not the runner service account these roles are for. If
+# the caller holds compute.admin or securityAdmin, a clean `missing: []` proves
+# only that the permission NAMES are spelled right -- not that the three roles
+# below supply them. To measure the narrow set, bind exactly these roles to a
+# second service account and run as that identity. Anything less gets recorded
+# as the weaker claim, not as validation. The tool prints the resolved caller
+# identity for exactly this reason; capture it with the result.
+#
+# And in every case this remains UNVALIDATED against a real SkyPilot launch:
+# simulation and permission-testing prove logic, never that a launch's actual
+# call sequence succeeds. See the firewall caveat below.
 
 roles/compute.instanceAdmin.v1
 roles/iam.serviceAccountUser
