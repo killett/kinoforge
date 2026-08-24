@@ -28,12 +28,14 @@ _MARKER_RE = re.compile(r"#\s*(UNIMPLEMENTED|OPTIONAL)\b")
 # whether real code reads the var.
 _OWN_PATH_REL: str = Path(__file__).resolve().relative_to(_REPO_ROOT).as_posix()
 
-# Directories/files whose mention of a var does not count as consumption — a
-# doc naming a key proves nothing about whether code reads it. Any tracked
-# `.md` file is prose by convention (CLAUDE.md, AGENTS.md, SPEC.md, DESIGN.md,
-# per-directory READMEs, …); the explicit prefixes below additionally cover
-# non-`.md` doc surfaces (e.g. the `.tasks.json` sidecar under docs/).
-_DOC_PREFIXES = ("docs/", "PROGRESS.md", "README.md", "successful-generations.md")
+# Directories whose mention of a var does not count as consumption — a doc
+# naming a key proves nothing about whether code reads it. Any tracked
+# `.md` file is prose by convention (CLAUDE.md, AGENTS.md, SPEC.md,
+# DESIGN.md, PROGRESS.md, README.md, per-directory READMEs, …) and is
+# excluded by the `.md` check below; `docs/` is the one prefix that still
+# does independent work, covering non-`.md` doc surfaces under that
+# directory (e.g. the `.tasks.json` sidecar).
+_DOC_PREFIXES = ("docs/",)
 
 # Vars an operator must set to use a documented kinoforge feature. Hand
 # curated on purpose: adding a member is a deliberate act, which is what
@@ -141,10 +143,14 @@ def test_runpod_terminate_key_expands_rather_than_being_literal(tmp_path: Path) 
     the terminate key resolves to that exact sentinel — only a real
     `${RUNPOD_API_KEY}` expansion can produce it.
 
-    A bug that would fail this: quoting the value so dotenv treats
-    `${RUNPOD_API_KEY}` as a literal string (embedding `${RUNP...` into pod
-    env instead of the key), deleting the terminate-key line, hardcoding it
-    to a literal placeholder, or a typo in the referenced var name.
+    A bug that would fail this: escaping the reference as
+    `\\${RUNPOD_API_KEY}` (verified against python-dotenv 1.2.2: this
+    prepends a stray literal backslash ahead of the still-interpolated
+    value — `\\<key>` instead of `<key>` — corrupting the pod env value
+    without failing to expand outright), deleting the terminate-key line,
+    hardcoding it to a literal placeholder, or a typo in the referenced var
+    name. Quoting alone is not the bug: bare, single-, and double-quoted
+    `${RUNPOD_API_KEY}` all interpolate identically in python-dotenv.
     """
     sentinel = (
         "sentinel-runpod-key-9f3c1a"  # synthetic placeholder value, not a real key
