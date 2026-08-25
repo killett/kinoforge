@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
@@ -63,6 +63,7 @@ from kinoforge.core.interfaces import (
     ModelProfileProvider,
     Offer,
     PipelineState,
+    RenderedProvision,
     Stage,
 )
 from kinoforge.core.lifecycle import Ledger, destroy_confirmed
@@ -78,6 +79,7 @@ from kinoforge.core.provision_state import (
 )
 from kinoforge.core.provisioner import provision as provisioner_provision
 from kinoforge.core.session_claim import hold_until_first_tick
+from kinoforge.core.spec_builder import build_instance_spec
 from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
@@ -888,45 +890,20 @@ def _provision_instance_and_build_backend(
     assert_launch_capabilities(cfg, run_cmd=rendered.run_cmd)
 
     def _build_spec(offer: Offer) -> InstanceSpec:
-        merged_tags: dict[str, str] = {
-            "kinoforge_engine": resolved_engine.name,
-            "kinoforge_key": key_hash,
-        }
-        if tags:
-            merged_tags.update(tags)
-        diagnostic_env: dict[str, str] = (
-            _build_diagnostic_env(run_id) if cfg.diagnostic_mode else {}
-        )
-        # C28 A3: diagnostic-mode runs request restart_policy=never so a
-        # crashed boot leaves the container in a STOPPED state instead of
-        # being auto-restarted by RunPod (which would obliterate the
-        # diagnostic snapshot the A2 trap is trying to upload). Effective only
-        # if the provider's input schema accepts the field; otherwise the
-        # RunPod provider warns + skips with no behaviour change.
-        restart_policy: Literal["always", "never"] = (
-            "never" if cfg.diagnostic_mode else "always"
-        )
-        return InstanceSpec(
-            image=rendered.image or image,
+        return build_instance_spec(
+            cfg=cfg,
+            rendered=rendered,
             offer=offer,
-            ports=tuple(rendered.ports),
+            engine_name=resolved_engine.name,
+            key_hash=key_hash,
+            image=image,
             lifecycle=lifecycle,
-            tags=merged_tags,
-            env=dict(rendered_env),
+            env=rendered_env,
             run_id=run_id,
-            provision_script=rendered.script,
-            # Modal fast-boot split: bake image_build_script into the image,
-            # boot with runtime_provision_script only. Empty -> None so
-            # non-splitting engines/providers see no change (RunPod uses the
-            # combined provision_script above regardless).
-            image_build_script=(rendered.build_script or None),
-            runtime_provision_script=(rendered.runtime_script or None),
-            run_cmd=rendered.run_cmd,
-            diagnostic_env=diagnostic_env,
-            restart_policy=restart_policy,
-            # cfg.compute is None on hosted-engine cfgs that still reach
-            # the compute path in tests; "any" preserves cloudType ALL.
-            cloud_type=(cfg.compute.cloud_type if cfg.compute is not None else "any"),
+            tags=tags,
+            diagnostic_env=_build_diagnostic_env(run_id)
+            if cfg.diagnostic_mode
+            else None,
         )
 
     # 2026-07-07 capacity-wait: re-query offers + retry create on CapacityError
@@ -1693,19 +1670,19 @@ def deploy(
     image = cfg.compute.image if cfg.compute is not None else ""
 
     def _build_spec(offer: Offer) -> InstanceSpec:
-        merged_tags: dict[str, str] = {
-            "kinoforge_engine": resolved_engine.name,
-            "kinoforge_key": key_hash,
-        }
-        if tags:
-            merged_tags.update(tags)
-        return InstanceSpec(
-            image=image,
+        return build_instance_spec(
+            cfg=cfg,
+            rendered=RenderedProvision(
+                script="", run_cmd=[], image=image, ports=[], env_required=[]
+            ),
             offer=offer,
+            engine_name=resolved_engine.name,
+            key_hash=key_hash,
+            image=image,
             lifecycle=lifecycle,
-            tags=merged_tags,
             env={},
             run_id="",
+            tags=tags,
         )
 
     instance, _chosen_offer = _create_with_offer_retry(
