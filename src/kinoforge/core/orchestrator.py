@@ -796,7 +796,7 @@ def _provision_instance_and_build_backend(
     on_instance_created: Callable[[Instance], None] | None = None,
     cancel_token: CancelToken | None = None,
     start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None,
-    capacity_wait_s: float = 0.0,
+    capacity_wait_s: float | None = None,
 ) -> ProvisionResult:
     """Provision a compute instance and build a backend for it.
 
@@ -838,10 +838,17 @@ def _provision_instance_and_build_backend(
             caller-supplied warm-pod recovery.
         capacity_wait_s: Seconds to keep re-querying offers and retrying
             create on ``CapacityError`` before giving up. Provider-scoped
-            (compute-seam S1): the composition root passes
-            :func:`kinoforge._adapters.build_capacity_wait_for`, which is
-            non-zero for RunPod only. Default ``0.0`` fails on the first
-            capacity miss.
+            (compute-seam S1) and non-zero for RunPod only.
+
+            **This is the single place ``None`` is resolved.** ``None``
+            (the default) derives the window from *cfg* via
+            :func:`kinoforge._adapters.build_capacity_wait_for`, exactly
+            as this function derived it from ``cfg.lifecycle()`` before
+            the window moved into the provider namespace. Pass an
+            explicit float only to override; ``0.0`` means "fail on the
+            first miss" and must be stated, never inherited from a
+            forgotten keyword — a caller that silently got ``0.0`` would
+            lose RunPod's capacity retry with no signal at all.
 
     Returns:
         :class:`ProvisionResult` ``(instance, backend, hb_loop)`` —
@@ -867,6 +874,16 @@ def _provision_instance_and_build_backend(
     hw_reqs = cfg.hardware_requirements()
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
+    # THE single resolution site for the capacity window. It sits beside the
+    # other cfg-derived values on purpose: before compute-seam S1 this
+    # function read the window off cfg.lifecycle() itself, so deriving it
+    # here restores that shape with the namespace as the new source. Every
+    # caller supplies cfg, so `None` is always resolvable — which is what
+    # makes a forgotten keyword impossible to turn into a silent 0.0.
+    if capacity_wait_s is None:
+        from kinoforge._adapters import build_capacity_wait_for
+
+        capacity_wait_s = build_capacity_wait_for(cfg)
     key_hash = _key_hash(key)
     cfg_dict = _cfg_dict(cfg)
 
@@ -1090,7 +1107,7 @@ def deploy_session(
     heartbeat_loop_factory: Callable[..., HeartbeatLoopProtocol] | None = None,
     cancel_token: CancelToken | None = None,
     single: bool = False,
-    capacity_wait_s: float = 0.0,
+    capacity_wait_s: float | None = None,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -1180,11 +1197,11 @@ def deploy_session(
             ``False`` preserves warm-reuse-friendly behavior.
         capacity_wait_s: Seconds to keep re-querying offers and retrying
             create on ``CapacityError`` before giving up (compute-seam
-            S1). Callers that own a ``Config`` — :func:`generate` and
-            :func:`kinoforge.core.batch.batch_generate` — pass
-            :func:`kinoforge._adapters.build_capacity_wait_for`, which is
-            non-zero for RunPod only. Default ``0.0`` fails on the first
-            capacity miss.
+            S1). Forwarded verbatim — including ``None`` — to
+            :func:`_provision_instance_and_build_backend`, which owns the
+            sole ``None``-resolution site. ``None`` (the default) means
+            "derive the window from *cfg*"; pass a float only to
+            override.
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -1920,11 +1937,6 @@ def generate(
         except ProfileNotCached:
             image_prof = ipp.discover(image_key, resolved_image_engine, image_backend)
 
-    # Composition root for the create-retry window: the mapping from
-    # cfg -> seconds needs the concrete provider's Options model, which
-    # core may not import (core-import-ban).
-    from kinoforge._adapters import build_capacity_wait_for
-
     with deploy_session(
         cfg,
         store=store,
@@ -1938,7 +1950,6 @@ def generate(
         tags=tags,
         cancel_token=cancel_token,
         single=single,
-        capacity_wait_s=build_capacity_wait_for(cfg),
     ) as session:
         _eph = EphemeralSession.current()
         if _eph is not None:

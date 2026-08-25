@@ -219,3 +219,170 @@ def test_non_runpod_provider_reaches_the_retry_loop_with_no_window(
         tmp_path, monkeypatch, provider="skypilot", options=""
     )
     assert window == 0.0
+
+
+# ---------------------------------------------------------------------------
+# A caller that never mentions the keyword must still get its cfg's window.
+#
+# `0.0` is a legal window, not a sentinel, so a default of 0.0 turns every
+# forgotten keyword into a silent loss of RunPod's capacity retry. That is
+# exactly what happened to tools/capture_object_info.py, which calls
+# `_provision_instance_and_build_backend` directly and went from a 300 s
+# window to 0 s without a single test noticing.
+# ---------------------------------------------------------------------------
+
+
+def _window_seen_by_provision_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, provider: str
+) -> float:
+    """Call the provision helper the way an out-of-tree tool does.
+
+    Deliberately omits ``capacity_wait_s`` — that omission IS the test.
+
+    Args:
+        tmp_path: Per-test scratch dir (config + artifact store).
+        monkeypatch: Used to spy on ``_create_with_capacity_wait``.
+        provider: ``compute.provider`` value for the generated YAML.
+
+    Returns:
+        The ``capacity_wait_s`` the retry loop was invoked with.
+    """
+    from kinoforge.core.config import load_config
+    from kinoforge.core.interfaces import ModelProfile
+    from kinoforge.engines.fake import FakeEngine
+    from kinoforge.providers.local import LocalProvider
+    from kinoforge.stores.local import LocalArtifactStore
+
+    options = (
+        "  backend_options:\n    runpod:\n      capacity_wait_s: 7\n"
+        if provider == "runpod"
+        else ""
+    )
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(_YAML.format(provider=provider, options=options))
+    cfg = load_config(cfg_path)
+
+    seen: list[float] = []
+    real = orchestrator._create_with_capacity_wait
+
+    def _spy(**kwargs: Any) -> Any:
+        seen.append(kwargs["capacity_wait_s"])
+        return real(**kwargs)
+
+    monkeypatch.setattr(orchestrator, "_create_with_capacity_wait", _spy)
+    orchestrator._provision_instance_and_build_backend(
+        resolved_engine=FakeEngine(
+            probe_profile=ModelProfile(
+                name="fake",
+                max_frames=16,
+                fps=8,
+                supported_modes={"t2v"},
+                max_resolution=(512, 512),
+                supports_native_extension=False,
+                supports_joint_audio=False,
+            ),
+            declared_flags_map={},
+            required_spec_keys=set(),
+        ),
+        resolved_provider=LocalProvider(),
+        cfg=cfg,
+        run_id="run",
+        key=cfg.capability_key(),
+        creds=None,
+        store=LocalArtifactStore(tmp_path),
+        state_dir=tmp_path,
+        for_discovery=True,
+    )
+    assert seen, "the capacity-wait loop was never reached"
+    return seen[0]
+
+
+def test_provision_helper_derives_the_window_when_the_caller_omits_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unthreaded caller still gets its cfg's RunPod window, not 0.0.
+
+    Bug caught: exactly the tools/capture_object_info.py regression — a
+    direct caller of the provision helper that never learned about the new
+    keyword silently drops from a 300 s capacity window to "abort on the
+    first miss", on a tool whose whole purpose is to walk the same
+    provisioning path production walks.
+    """
+    assert (
+        _window_seen_by_provision_helper(tmp_path, monkeypatch, provider="runpod")
+        == 7.0
+    )
+
+
+def test_provision_helper_derives_zero_for_a_non_runpod_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deriving must not hand every provider a RunPod-shaped retry loop.
+
+    Bug caught: the None-resolution ignores the provider and returns a
+    blanket 300 s, quietly undoing the S1 scoping change for skypilot and
+    modal.
+    """
+    assert (
+        _window_seen_by_provision_helper(tmp_path, monkeypatch, provider="skypilot")
+        == 0.0
+    )
+
+
+def test_an_explicit_zero_still_disables_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.0 passed on purpose must survive the None-resolution.
+
+    Bug caught: the resolution is written as a falsy test (``if not
+    capacity_wait_s``) rather than an ``is None`` test, so a caller that
+    deliberately disables retry silently gets the cfg default instead.
+    """
+    from kinoforge.core.config import load_config
+    from kinoforge.core.interfaces import ModelProfile
+    from kinoforge.engines.fake import FakeEngine
+    from kinoforge.providers.local import LocalProvider
+    from kinoforge.stores.local import LocalArtifactStore
+
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(
+        _YAML.format(
+            provider="runpod",
+            options="  backend_options:\n    runpod:\n      capacity_wait_s: 7\n",
+        )
+    )
+    cfg = load_config(cfg_path)
+
+    seen: list[float] = []
+    real = orchestrator._create_with_capacity_wait
+
+    def _spy(**kwargs: Any) -> Any:
+        seen.append(kwargs["capacity_wait_s"])
+        return real(**kwargs)
+
+    monkeypatch.setattr(orchestrator, "_create_with_capacity_wait", _spy)
+    orchestrator._provision_instance_and_build_backend(
+        resolved_engine=FakeEngine(
+            probe_profile=ModelProfile(
+                name="fake",
+                max_frames=16,
+                fps=8,
+                supported_modes={"t2v"},
+                max_resolution=(512, 512),
+                supports_native_extension=False,
+                supports_joint_audio=False,
+            ),
+            declared_flags_map={},
+            required_spec_keys=set(),
+        ),
+        resolved_provider=LocalProvider(),
+        cfg=cfg,
+        run_id="run",
+        key=cfg.capability_key(),
+        creds=None,
+        store=LocalArtifactStore(tmp_path),
+        state_dir=tmp_path,
+        for_discovery=True,
+        capacity_wait_s=0.0,
+    )
+    assert seen == [0.0]

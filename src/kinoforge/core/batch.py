@@ -662,11 +662,6 @@ def batch_generate(
                 image_key, _resolved_image_engine, _image_backend
             )
 
-    # Composition root for the create-retry window: the mapping from
-    # cfg -> seconds needs the concrete provider's Options model, which
-    # core may not import (core-import-ban).
-    from kinoforge._adapters import build_capacity_wait_for
-
     try:
         with deploy_session(
             cfg,
@@ -681,7 +676,6 @@ def batch_generate(
             tags=tags,
             cancel_token=cancel_token,
             single=single,
-            capacity_wait_s=build_capacity_wait_for(cfg),
         ) as session:
             _eph = EphemeralSession.current()
             if _eph is not None:
