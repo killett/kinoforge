@@ -299,9 +299,11 @@ def _capture_skypilot(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
     ``launch`` raises :class:`_StopLaunch` once it has recorded the call, so
     the capture never reaches the ssh-tunnel spawn that follows a real launch.
 
-    ``clouds`` is pinned from ``cfg.compute.cloud`` exactly as
-    :func:`kinoforge._adapters.build_provider_for` does — without it the
-    ``resources.cloud`` / ``resources.any_of`` keys would never appear.
+    ``clouds`` / ``retry_until_up`` are pinned from
+    ``cfg.compute.backend_options.skypilot`` exactly as
+    :func:`kinoforge._adapters.build_provider_for` does — without the cloud
+    pin the ``resources.cloud`` / ``resources.any_of`` keys would never
+    appear.
 
     Args:
         cfg: The loaded config (supplies the cloud pin).
@@ -339,9 +341,11 @@ def _capture_skypilot(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
             raise _StopLaunch
 
     assert cfg.compute is not None  # noqa: S101 — caller guarantees this
+    sky_opts = cfg.backend_options_for("skypilot")
     provider = SkyPilotProvider(
         _CapturingSky(),
-        clouds=list(cfg.compute.cloud) if cfg.compute.cloud else None,
+        clouds=list(sky_opts.clouds) if sky_opts.clouds else None,
+        retry_until_up=sky_opts.retry_until_up,
     )
     try:
         provider.create_instance(spec)

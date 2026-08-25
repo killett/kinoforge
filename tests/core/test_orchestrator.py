@@ -2866,15 +2866,19 @@ def test_resolve_provider_injects_heartbeat_endpoint_when_mode_set(
 
 
 # ---------------------------------------------------------------------------
-# Phase 53 Stage C2: _resolve_provider threads cfg.compute.cloud into skypilot
+# _resolve_provider threads compute.backend_options.skypilot into skypilot
 # ---------------------------------------------------------------------------
 
 
 def test_resolve_provider_threads_skypilot_cloud_pin() -> None:
-    """When cfg.compute.cloud is set and provider == 'skypilot',
+    """When backend_options.skypilot pins clouds and provider == 'skypilot',
     _resolve_provider must return a SkyPilotProvider whose _clouds equals
     the cfg list. Otherwise sky considers every enabled cloud and Vast.ai
-    wins on price — the entire reason Stage C exists.
+    wins on price — the entire reason the pin exists.
+
+    ``retry_until_up`` rides the same namespace and must reach the provider
+    too: it was reachable only via the constructor before S1 (F6), so a
+    cfg asking sky to keep retrying was silently launching with one shot.
     """
     import kinoforge.providers.skypilot  # noqa: F401  # registers skypilot
     from kinoforge.core.config import (
@@ -2892,7 +2896,9 @@ def test_resolve_provider_threads_skypilot_cloud_pin() -> None:
             provider="skypilot",
             image="skypilot/skypilot-gpu:latest",
             lifecycle=LifecycleConfig(budget=10.0),
-            cloud=["lambda"],
+            backend_options={
+                "skypilot": {"clouds": ["lambda"], "retry_until_up": True}
+            },
         ),
         engine=EngineConfig(kind="fake", precision="fp16"),
         models=[
@@ -2904,12 +2910,13 @@ def test_resolve_provider_threads_skypilot_cloud_pin() -> None:
     resolved = _resolve_provider(cfg, provider=None)
     assert isinstance(resolved, SkyPilotProvider)
     assert resolved._clouds == ["lambda"]
+    assert resolved._retry_until_up is True
 
 
 def test_deploy_session_threads_cloud_type_into_instance_spec(
     tmp_path: Path,
 ) -> None:
-    """cfg.compute.cloud_type="secure" → InstanceSpec.cloud_type="secure".
+    """backend_options.runpod.cloud_type reaches InstanceSpec.backend_options.
 
     Bug catch: cfg surface parses but the orchestrator never copies it
     onto the spec — RunPod keeps emitting cloudType ALL and long-running
@@ -2918,7 +2925,7 @@ def test_deploy_session_threads_cloud_type_into_instance_spec(
     """
     cfg = _compute_cfg()
     assert cfg.compute is not None
-    cfg.compute.cloud_type = "secure"
+    cfg.compute.backend_options = {"runpod": {"cloud_type": "secure"}}
     store = LocalArtifactStore(tmp_path)
     spy = _InstanceSupplyProvider()
     engine = _CountingFakeEngine()
@@ -2927,4 +2934,4 @@ def test_deploy_session_threads_cloud_type_into_instance_spec(
         pass
 
     assert len(spy.create_calls) == 1
-    assert spy.create_calls[0].cloud_type == "secure"
+    assert spy.create_calls[0].backend_options["runpod"]["cloud_type"] == "secure"

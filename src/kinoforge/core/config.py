@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, ClassVar, Literal, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -111,7 +111,6 @@ class LifecycleConfig(BaseModel):
     budget: float
     max_in_flight: int = 1
     boot_timeout: float = 900.0
-    capacity_wait: float = 300.0
     heartbeat_interval_s: float | None = None
     grace_after_session_s: float = 1800.0
     stall_reap_enabled: bool = True
@@ -128,13 +127,45 @@ class LifecycleConfig(BaseModel):
     # for warm-reuse workflows.
     lora_swap_re_probe_after_s: float = 300.0
 
+    #: Pre-S1 keys that used to live on this (portable) block, mapped to the
+    #: namespaced path each one moved to. ``LifecycleConfig`` does not forbid
+    #: extras, so without this a stale ``capacity_wait:`` would be silently
+    #: dropped — exactly the failure mode the compute-seam rework exists to
+    #: end.
+    _REMOVED_KEYS: ClassVar[dict[str, str]] = {
+        "capacity_wait": "compute.backend_options.runpod.capacity_wait_s",
+    }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_keys(cls, data: Any) -> Any:  # noqa: ANN401 — pydantic hook
+        """Refuse the pre-S1 lifecycle keys, naming where each one moved.
+
+        Args:
+            data: Raw input to ``LifecycleConfig`` validation.
+
+        Returns:
+            *data* unchanged when no removed key is present.
+
+        Raises:
+            ConfigError: A removed key is present; the message names the
+                namespaced path that replaced it.
+        """
+        if isinstance(data, dict):
+            for key, replacement in cls._REMOVED_KEYS.items():
+                if key in data:
+                    raise ConfigError(
+                        f"lifecycle.{key} was removed in the compute-seam "
+                        f"rework; it now lives at {replacement}"
+                    )
+        return data
+
     @field_validator(
         "idle_timeout",
         "job_timeout",
         "time_buffer",
         "max_lifetime",
         "boot_timeout",
-        "capacity_wait",
         mode="before",
     )
     @classmethod
@@ -809,12 +840,6 @@ class ComputeConfig(BaseModel):
             fresh-shell invocation and attaches transparently. Set to
             ``False`` per-project to disable; ``--no-reuse`` on the CLI
             overrides this on a per-invocation basis.
-        cloud: Phase 53 Stage C — optional list of sky cloud names
-            (e.g. ``["lambda"]``, ``["lambda", "vast"]``) pinned onto
-            :class:`~kinoforge.providers.skypilot.SkyPilotProvider` at
-            instantiation time. ``None`` (default) preserves pre-Stage-C
-            behaviour — sky considers every enabled cloud and picks by
-            price. Ignored by non-skypilot providers.
         backend_options: compute-seam S1 — namespaced escape hatch for
             provider-specific knobs that don't warrant a top-level field.
             Maps provider name (e.g. ``"runpod"``) to a mapping of that
@@ -822,10 +847,10 @@ class ComputeConfig(BaseModel):
             provider's ``Options`` pydantic model (``extra="forbid"``) for
             EVERY namespace present, not just the currently-selected
             provider — a typo in a block that isn't running today is
-            exactly the bug class this mechanism exists to catch. Nothing
-            consumes this yet (S1 Task 2 lands only the mechanism); S1
-            Task 3 moves ``cloud``, ``cloud_type``, ``restart_policy``, and
-            ``capacity_wait_s`` into these namespaces.
+            exactly the bug class this mechanism exists to catch. S1 Task 3
+            moved ``cloud`` -> ``backend_options.skypilot.clouds``,
+            ``cloud_type`` / ``restart_policy`` / ``capacity_wait_s`` ->
+            ``backend_options.runpod.*``.
     """
 
     provider: str
@@ -835,15 +860,42 @@ class ComputeConfig(BaseModel):
     lifecycle: LifecycleConfig | None = None
     heartbeat_mode: str = "none"
     warm_reuse_auto_attach: bool = True
-    cloud: list[str] | None = None
-    # 2026-07-03: RunPod host-pool pin. "any" = historical cloudType ALL
-    # (cheapest capacity, often community hosts — whose interruption
-    # DELETES zero-volume pods outright; three BSA wheel builds and two
-    # F-multi smoke pods died that way in one day). "secure" pins
-    # dedicated hosts for anything that must survive a long window.
-    # Ignored by non-runpod providers.
-    cloud_type: Literal["any", "secure", "community"] = "any"
     backend_options: dict[str, dict[str, Any]] = {}
+
+    #: Pre-S1 vendor keys that used to live on this (portable) block, mapped
+    #: to the namespaced path each one moved to. Present so the removal is
+    #: loud — see :meth:`_reject_removed_keys`.
+    _REMOVED_KEYS: ClassVar[dict[str, str]] = {
+        "cloud": "compute.backend_options.skypilot.clouds",
+        "cloud_type": "compute.backend_options.runpod.cloud_type",
+    }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_keys(cls, data: Any) -> Any:  # noqa: ANN401 — pydantic hook
+        """Refuse the pre-S1 vendor keys, naming where each one moved.
+
+        Deliberately not an alias: keeping both paths alive is how a
+        half-migrated seam survives across stages.
+
+        Args:
+            data: Raw input to ``ComputeConfig`` validation.
+
+        Returns:
+            *data* unchanged when no removed key is present.
+
+        Raises:
+            ConfigError: A removed key is present; the message names the
+                namespaced path that replaced it.
+        """
+        if isinstance(data, dict):
+            for key, replacement in cls._REMOVED_KEYS.items():
+                if key in data:
+                    raise ConfigError(
+                        f"compute.{key} was removed in the compute-seam rework; "
+                        f"it now lives at {replacement}"
+                    )
+        return data
 
     @field_validator("backend_options")
     @classmethod
@@ -885,29 +937,6 @@ class ComputeConfig(BaseModel):
                     f"compute.backend_options.{provider_name}{where}: "
                     f"{first_error['msg']} (accepted keys: {accepted})"
                 ) from exc
-        return v
-
-    @field_validator("cloud")
-    @classmethod
-    def _validate_cloud(cls, v: list[str] | None) -> list[str] | None:
-        """Reject empty-list cloud entries.
-
-        Operator likely meant ``cloud: null`` or forgot to populate the
-        entry; sky.launch with zero clouds would silently fall back.
-
-        The membership check (each entry must be in the supported sky
-        cloud set) moved to ``SkyPilotCloudPinSupportedCheck`` in
-        ``kinoforge.providers.skypilot`` (Task 9 of the cfg-validation
-        Check Registry plan). It now shows up in ``kinoforge doctor``
-        output alongside every other validation rule.
-        """
-        if v is None:
-            return v
-        if not v:
-            raise ValueError(
-                "cloud must be a non-empty list of sky cloud names "
-                "or null; got an empty list"
-            )
         return v
 
     @field_validator("heartbeat_mode")
@@ -1475,7 +1504,6 @@ class Config(BaseModel):
             budget_usd=lc.budget,
             max_in_flight=lc.max_in_flight,
             boot_timeout_s=lc.boot_timeout,
-            capacity_wait_s=lc.capacity_wait,
             heartbeat_interval_s=lc.heartbeat_interval_s,
             grace_after_session_s=lc.grace_after_session_s,
             stall_window_s=lc.stall_window_s if lc.stall_reap_enabled else None,

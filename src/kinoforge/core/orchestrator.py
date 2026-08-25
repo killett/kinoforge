@@ -796,6 +796,7 @@ def _provision_instance_and_build_backend(
     on_instance_created: Callable[[Instance], None] | None = None,
     cancel_token: CancelToken | None = None,
     start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None,
+    capacity_wait_s: float = 0.0,
 ) -> ProvisionResult:
     """Provision a compute instance and build a backend for it.
 
@@ -835,6 +836,12 @@ def _provision_instance_and_build_backend(
             closure that raises also falls through to ``hb_loop=None``
             (logged) — the late-start path in ``deploy_session`` handles the
             caller-supplied warm-pod recovery.
+        capacity_wait_s: Seconds to keep re-querying offers and retrying
+            create on ``CapacityError`` before giving up. Provider-scoped
+            (compute-seam S1): the composition root passes
+            :func:`kinoforge._adapters.build_capacity_wait_for`, which is
+            non-zero for RunPod only. Default ``0.0`` fails on the first
+            capacity miss.
 
     Returns:
         :class:`ProvisionResult` ``(instance, backend, hb_loop)`` —
@@ -908,8 +915,9 @@ def _provision_instance_and_build_backend(
 
     # 2026-07-07 capacity-wait: re-query offers + retry create on CapacityError
     # (empty offers OR every offer exhausted at create time) until
-    # lifecycle.capacity_wait_s elapses, then re-raise clean. Rides transient
-    # RunPod capacity droughts instead of failing the run on the first miss.
+    # capacity_wait_s elapses, then re-raise clean. Rides transient RunPod
+    # capacity droughts instead of failing the run on the first miss. S1 made
+    # the window provider-scoped — see build_capacity_wait_for.
     def _find_offers() -> list[Offer]:
         found = resolved_provider.find_offers(hw_reqs)
         if not found:
@@ -926,7 +934,7 @@ def _provision_instance_and_build_backend(
     instance, _chosen_offer = _create_with_capacity_wait(
         find_offers=_find_offers,
         create=_create,
-        capacity_wait_s=lifecycle.capacity_wait_s,
+        capacity_wait_s=capacity_wait_s,
     )
     # B7 — acquire the cooperative session-claim lock now that instance.id is
     # known, BEFORE engine.provision runs. The callback enters the outer
@@ -1082,6 +1090,7 @@ def deploy_session(
     heartbeat_loop_factory: Callable[..., HeartbeatLoopProtocol] | None = None,
     cancel_token: CancelToken | None = None,
     single: bool = False,
+    capacity_wait_s: float = 0.0,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -1169,6 +1178,13 @@ def deploy_session(
             after the yielded body returns. Hosted-engine paths and
             ``instance is None`` paths skip the destroy. Default
             ``False`` preserves warm-reuse-friendly behavior.
+        capacity_wait_s: Seconds to keep re-querying offers and retrying
+            create on ``CapacityError`` before giving up (compute-seam
+            S1). Callers that own a ``Config`` — :func:`generate` and
+            :func:`kinoforge.core.batch.batch_generate` — pass
+            :func:`kinoforge._adapters.build_capacity_wait_for`, which is
+            non-zero for RunPod only. Default ``0.0`` fails on the first
+            capacity miss.
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -1390,6 +1406,7 @@ def deploy_session(
                             on_instance_created=_record_then_install,
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
+                            capacity_wait_s=capacity_wait_s,
                         )
                         instance, backend, hb_loop = _result
                 else:
@@ -1433,6 +1450,7 @@ def deploy_session(
                             on_instance_created=_record_then_install,
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
+                            capacity_wait_s=capacity_wait_s,
                         )
                         instance, backend, hb_loop = _result
                 else:
@@ -1902,6 +1920,11 @@ def generate(
         except ProfileNotCached:
             image_prof = ipp.discover(image_key, resolved_image_engine, image_backend)
 
+    # Composition root for the create-retry window: the mapping from
+    # cfg -> seconds needs the concrete provider's Options model, which
+    # core may not import (core-import-ban).
+    from kinoforge._adapters import build_capacity_wait_for
+
     with deploy_session(
         cfg,
         store=store,
@@ -1915,6 +1938,7 @@ def generate(
         tags=tags,
         cancel_token=cancel_token,
         single=single,
+        capacity_wait_s=build_capacity_wait_for(cfg),
     ) as session:
         _eph = EphemeralSession.current()
         if _eph is not None:

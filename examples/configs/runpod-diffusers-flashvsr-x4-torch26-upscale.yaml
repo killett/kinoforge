@@ -49,7 +49,9 @@ compute:
   provider: runpod
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: pod
-  cloud_type: secure
+  backend_options:
+    runpod:
+      cloud_type: secure
   warm_reuse_auto_attach: true
   requirements:
     min_vram_gb: 80

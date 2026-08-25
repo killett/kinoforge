@@ -7,7 +7,7 @@ snapshot needs exactly that. Pure: no I/O, no orchestrator state.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any
 
 from kinoforge.core.interfaces import InstanceSpec
 
@@ -55,9 +55,20 @@ def build_instance_spec(
     }
     if tags:
         merged_tags.update(tags)
-    restart_policy: Literal["always", "never"] = (
-        "never" if cfg.diagnostic_mode else "always"
-    )
+    backend_options: dict[str, dict[str, Any]] = {
+        name: dict(opts)
+        for name, opts in (
+            cfg.compute.backend_options if cfg.compute is not None else {}
+        ).items()
+    }
+    if cfg.diagnostic_mode:
+        # C28 A3: diagnostic mode wants a failed boot to leave the container
+        # dead so its logs survive. That is a RunPod-shaped knob, so the
+        # portable flag is translated into the RunPod namespace here rather
+        # than riding a vendor field on the portable InstanceSpec. Overwrites
+        # any operator value on purpose — --diagnostic-mode is the more
+        # specific, per-invocation intent.
+        backend_options.setdefault("runpod", {})["restart_policy"] = "never"
     return InstanceSpec(
         image=rendered.image or image,
         offer=offer,
@@ -84,9 +95,5 @@ def build_instance_spec(
         diagnostic_env=(
             dict(diagnostic_env) if cfg.diagnostic_mode and diagnostic_env else {}
         ),
-        restart_policy=restart_policy,
-        cloud_type=(cfg.compute.cloud_type if cfg.compute is not None else "any"),
-        backend_options=(
-            cfg.compute.backend_options if cfg.compute is not None else {}
-        ),
+        backend_options=backend_options,
     )

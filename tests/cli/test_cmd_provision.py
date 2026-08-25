@@ -2,7 +2,7 @@
 
 Bug (pod ``forewgeluuy9qh``, 2026-07-03): the legacy ``_cmd_provision``
 path built a bare ``InstanceSpec(image=..., offer=..., lifecycle=...)``
-— no ports, no provision script, no env, no cloud_type. The pod booted
+— no ports, no provision script, no env, no backend options. The pod booted
 with no proxy endpoints and no bootstrap, and the subsequent
 ``wait_for_ready`` died with ``ProvisionFailed: ... has no endpoints``
 after money was already committed.
@@ -28,7 +28,9 @@ _CFG = (
     "compute:\n"
     "  provider: runpod\n"
     "  image: runpod/pytorch:2.4.0\n"
-    "  cloud_type: secure\n"
+    "  backend_options:\n"
+    "    runpod:\n"
+    "      cloud_type: secure\n"
     "  requirements:\n"
     "    min_vram_gb: 16\n"
     '    min_cuda: "12.4"\n'
@@ -111,9 +113,9 @@ def test_provision_spec_carries_bootstrap_script(tmp_path: Path) -> None:
     assert spy.specs[0].provision_script == "echo fake"
 
 
-def test_provision_spec_threads_cloud_type(tmp_path: Path) -> None:
+def test_provision_spec_threads_backend_options(tmp_path: Path) -> None:
     """Bug caught: cfg pins secure but the legacy path never copied it —
     long provisions land on community hosts that delete zero-volume
     pods on interruption (2026-07-03 incident class)."""
     spy = _run(tmp_path)
-    assert spy.specs[0].cloud_type == "secure"
+    assert spy.specs[0].backend_options["runpod"]["cloud_type"] == "secure"

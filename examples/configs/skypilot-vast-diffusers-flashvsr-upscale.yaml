@@ -38,8 +38,10 @@ models: []
 
 compute:
   provider: skypilot
-  cloud:
-    - "vast"
+  backend_options:
+    skypilot:
+      clouds:
+        - "vast"
   image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
   requirements:
@@ -76,7 +78,8 @@ compute:
     # autodowns the cluster at launch + max_lifetime, surviving controller death.
     max_lifetime: 90m
     budget: 1.0
-    capacity_wait: 5m
+    # NOTE: the old lifecycle.capacity_wait knob is RunPod-only now; sky's
+    # equivalent is backend_options.skypilot.retry_until_up.
     # Written explicitly rather than relying on the load-time auto-fix that
     # injects 30 — an invisible auto-fix is the same class of problem as an
     # unenforced guardrail. Required when warm_reuse_auto_attach=true

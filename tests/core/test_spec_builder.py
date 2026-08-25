@@ -118,7 +118,8 @@ def test_ports_come_from_rendered_as_a_tuple():
 def test_diagnostic_mode_off_means_no_diagnostic_env_and_restart_always():
     spec = _build()
     assert spec.diagnostic_env == {}
-    assert spec.restart_policy == "always"
+    # No overlay at all, so RunPod's Options default ("always") applies.
+    assert "restart_policy" not in spec.backend_options.get("runpod", {})
 
 
 def test_diagnostic_mode_on_sets_restart_never_and_populates_diagnostic_env():
@@ -133,11 +134,28 @@ def test_diagnostic_mode_on_sets_restart_never_and_populates_diagnostic_env():
     cfg = load_config(_CFG)
     cfg.diagnostic_mode = True
     spec = _build(cfg=cfg, diagnostic_env={"KINOFORGE_DIAGNOSTIC_RUN_ID": "run-1"})
-    assert spec.restart_policy == "never"
+    # The portable diagnostic_mode flag is translated into the vendor knob
+    # that expresses it — RunPod's restart_policy — rather than riding a
+    # vendor field on the portable InstanceSpec (compute-seam S1).
+    assert spec.backend_options["runpod"]["restart_policy"] == "never"
     assert spec.diagnostic_env != {}
 
 
-def test_cloud_type_defaults_to_any_when_cfg_has_no_compute_block():
+def test_backend_options_are_empty_when_cfg_has_no_compute_block():
     cfg = load_config(_CFG)
     cfg.compute = None
-    assert _build(cfg=cfg).cloud_type == "any"
+    assert _build(cfg=cfg).backend_options == {}
+
+
+def test_backend_options_are_copied_not_aliased_from_the_config():
+    # Bug caught: the spec shares the cfg's dicts, so the diagnostic-mode
+    # overlay (or a provider mutating its namespace) writes back into the
+    # loaded Config and leaks into every later spec built from it.
+    cfg = load_config(_CFG)
+    assert cfg.compute is not None
+    cfg.compute.backend_options = {"runpod": {"cloud_type": "secure"}}
+    cfg.diagnostic_mode = True
+    spec = _build(cfg=cfg, diagnostic_env={"KINOFORGE_DIAGNOSTIC_RUN_ID": "r"})
+    assert spec.backend_options["runpod"]["cloud_type"] == "secure"
+    assert spec.backend_options["runpod"]["restart_policy"] == "never"
+    assert cfg.compute.backend_options == {"runpod": {"cloud_type": "secure"}}

@@ -113,7 +113,7 @@ def test_skypilot_lambda_example_pins_lambda_cloud() -> None:
     operator template for Lambda-only sky launches.
 
     Bug catches:
-      - cloud key missing → sky considers every enabled cloud and Vast.ai
+      - cloud pin missing → sky considers every enabled cloud and Vast.ai
         wins on price (the bug Phase 53 Stage C exists to fix).
       - max_usd_per_hr stays at the pre-Stage-C 1.00 → Lambda A6000
         ($1.09/hr) is filtered out and the YAML fails at provision.
@@ -121,7 +121,7 @@ def test_skypilot_lambda_example_pins_lambda_cloud() -> None:
     cfg = load_config(Path("examples/configs/skypilot-lambda-comfyui.yaml"))
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
-    assert cfg.compute.cloud == ["lambda"]
+    assert cfg.backend_options_for("skypilot").clouds == ["lambda"]
     # Lambda A6000 = $1.09/hr, A10 = $1.29/hr — bump above 1.00 default.
     assert cfg.compute.requirements.max_usd_per_hr >= 2.00
 

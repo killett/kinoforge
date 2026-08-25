@@ -83,7 +83,9 @@ compute:
   # builds + 2 F-multi smoke pods in one day. The multi-stage pipeline
   # holds a pod 30-60 min; community interruption terminates zero-volume
   # pods outright.
-  cloud_type: secure
+  backend_options:
+    runpod:
+      cloud_type: secure
   warm_reuse_auto_attach: true
   requirements:
     min_vram_gb: 80

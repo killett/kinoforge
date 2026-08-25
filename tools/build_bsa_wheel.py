@@ -202,11 +202,17 @@ def _spec_for_build(release_id: int, gh_token: str) -> InstanceSpec:
     """Build the InstanceSpec for the one-shot builder pod."""
     return InstanceSpec(
         image=_BASE_IMAGE,
-        # Dedicated hosts only. Three community-cloud builds in a row
-        # (2026-07-03) were deleted mid-compile — community interruption
-        # terminates zero-volume pods outright, and a 25-45 min build is
-        # a wide interruption window.
-        cloud_type="secure",
+        backend_options={
+            "runpod": {
+                # Dedicated hosts only. Three community-cloud builds in a row
+                # (2026-07-03) were deleted mid-compile — community
+                # interruption terminates zero-volume pods outright, and a
+                # 25-45 min build is a wide interruption window.
+                "cloud_type": "secure",
+                # Single-shot; don't auto-relaunch on exit.
+                "restart_policy": "never",
+            }
+        },
         volume_gb=0,  # no persistent storage — wheel goes straight to GH.
         lifecycle=Lifecycle(
             idle_timeout_s=45 * 60,
@@ -220,7 +226,6 @@ def _spec_for_build(release_id: int, gh_token: str) -> InstanceSpec:
         tags={"mode": "pod", "kinoforge_purpose": "bsa-wheel-build"},
         run_id="bsa-wheel-builder",
         provision_script=_build_provision_script(release_id),
-        restart_policy="never",  # single-shot; don't auto-relaunch on exit.
     )
 
 

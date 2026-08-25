@@ -1,7 +1,8 @@
 # Wan 2.1 T2V-1.3B on Modal serverless GPU (Milestone 1 live proof).
 # Delivery: Option-A generic Modal app — the diffusers wan_t2v_server runs on a
 # Modal web_server(8000) via the same provision_script; exec run_cmd as RunPod.
-# NOTE: NO `cloud:` key — that field is SkyPilot-only and fails validation here.
+# NOTE: NO `backend_options.skypilot` block — those keys are SkyPilot-only and
+# fail validation here (the owning provider validates its own namespace).
 #
 # `prompt:` carries the standard video-gen smoke prompt per memory
 # `feedback_standard_test_prompt.md` (verbatim from

@@ -50,7 +50,9 @@ compute:
   mode: pod
   # Dedicated hosts — RunPod terminated community-adjacent smoke pods mid-run
   # on 2026-07-03; secure pins the host pool for the short interp job.
-  cloud_type: secure
+  backend_options:
+    runpod:
+      cloud_type: secure
   requirements:
     min_vram_gb: 16
     min_cuda: "12.1"

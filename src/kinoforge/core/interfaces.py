@@ -16,7 +16,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
-    Literal,
     Protocol,
     Self,
     runtime_checkable,
@@ -97,9 +96,6 @@ class Lifecycle:
     max_workers: int = 1
     max_in_flight: int = 1
     boot_timeout_s: float = 900.0
-    #: Max seconds to keep retrying create on a RunPod capacity miss before
-    #: giving up (2026-07-07). 0 = fail on the first miss.
-    capacity_wait_s: float = 300.0
     # C26 — populated by Config.lifecycle() from compute.lifecycle when set.
     stall_window_s: float | None = None
     stall_gpu_threshold: float = 5.0
@@ -182,23 +178,13 @@ class InstanceSpec:
     # C28 A1.5: diagnostic env overlay merged into pod env via setdefault
     # (user-supplied `env` always wins). Default empty = no behavioural change.
     diagnostic_env: dict[str, str] = field(default_factory=dict)
-    # C28 A3: when "never" AND provider schema supports it, request the
-    # provider NOT to auto-restart this pod on container exit. Default
-    # "always" preserves pre-C28 behaviour. RunPod schema probed by the A0
-    # sidecar (tests/live/_c28_runpod_input_schema_probe.json); if the field
-    # is absent the provider warns + skips on the wire.
-    restart_policy: Literal["always", "never"] = "always"
-    # 2026-07-03: host-pool pin. "any" preserves the historical
-    # cloudType=ALL behaviour (cheapest capacity, often community hosts —
-    # whose interruption DELETES zero-volume pods outright; three BSA
-    # wheel builds died that way). "secure" pins dedicated hosts for
-    # long-running one-shot workloads; "community" forces the cheap pool.
-    cloud_type: Literal["any", "secure", "community"] = "any"
-    # compute-seam S1 Task 2: provider-namespaced escape hatch, populated
-    # from cfg.compute.backend_options by build_instance_spec. Validated at
-    # config-load time against the owning provider's Options model; NOT YET
-    # consumed by any provider here — S1 Task 3 wires runpod/skypilot to
-    # read their namespace off this field.
+    # compute-seam S1: provider-namespaced escape hatch, populated from
+    # cfg.compute.backend_options by build_instance_spec and validated at
+    # config-load time against the OWNING provider's Options model. Every
+    # vendor-only knob lives here — RunPod reads ``["runpod"]`` for its
+    # ``cloudType`` / ``restartPolicy`` wire fields (S1 Task 3 moved
+    # ``cloud_type`` and ``restart_policy`` off this dataclass); SkyPilot
+    # reads ``["skypilot"]`` for its cloud pin and ``retry_until_up``.
     backend_options: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 

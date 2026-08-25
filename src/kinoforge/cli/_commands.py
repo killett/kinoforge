@@ -201,8 +201,9 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     # C28 A3: --diagnostic-mode is a per-invocation cfg override; rebuild the
     # Config with the flag set so the orchestrator's _build_spec sees it and
-    # both wires diagnostic_env AND requests restart_policy=never. Operator
-    # opts out by simply not passing the flag.
+    # both wires diagnostic_env AND overlays restart_policy=never onto the
+    # spec's runpod backend_options namespace. Operator opts out by simply
+    # not passing the flag.
     if getattr(args, "diagnostic_mode", False):
         cfg = cfg.model_copy(update={"diagnostic_mode": True})
 
@@ -270,8 +271,8 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
     cfg = ctx.cfg
 
     # Resolve provider and engine, then call provisioner.
-    # build_provider_for threads cfg.compute.cloud into SkyPilotProvider
-    # (Phase 53 Stage C) so manual `kinoforge provision` honours the same
+    # build_provider_for threads compute.backend_options.skypilot into
+    # SkyPilotProvider so manual `kinoforge provision` honours the same
     # cloud-pin contract as `kinoforge deploy` / `generate`.
     try:
         from kinoforge._adapters import build_provider_for
@@ -320,7 +321,9 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
             env=rendered_env,
             provision_script=rendered.script,
             run_cmd=rendered.run_cmd,
-            cloud_type=(cfg.compute.cloud_type if cfg.compute is not None else "any"),
+            backend_options=(
+                cfg.compute.backend_options if cfg.compute is not None else {}
+            ),
         )
         instance = provider.create_instance(spec)
         while instance.status != "ready":

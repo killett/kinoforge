@@ -326,12 +326,20 @@ class RunPodProvider(ComputeProvider):
         """Options only RunPod honours. Unknown keys are a config error.
 
         Attributes:
-            cloud_type: Host-pool pin; mirrors ``ComputeConfig.cloud_type``.
-            restart_policy: Container-restart-on-exit policy; mirrors
-                ``InstanceSpec.restart_policy``.
+            cloud_type: Host-pool pin. ``"any"`` is the historical
+                ``cloudType=ALL`` behaviour (cheapest capacity, often
+                community hosts — whose interruption DELETES zero-volume
+                pods outright; three BSA wheel builds died that way on
+                2026-07-03). ``"secure"`` pins dedicated hosts for anything
+                that must survive a long window.
+            restart_policy: Container-restart-on-exit policy. ``"never"``
+                is emitted as ``restartPolicy: NEVER`` when the RunPod
+                input schema exposes the field, and warns + falls back
+                otherwise.
             capacity_wait_s: Max seconds to keep retrying create on a
-                capacity miss before giving up; mirrors
-                ``Lifecycle.capacity_wait_s``.
+                capacity miss before giving up. ``0`` fails on the first
+                miss. Read by
+                :func:`kinoforge._adapters.build_capacity_wait_for`.
         """
 
         model_config = ConfigDict(extra="forbid")
@@ -952,11 +960,16 @@ class RunPodProvider(ComputeProvider):
         Returns:
             The GraphQL request body dict.
         """
-        # spec.cloud_type pins the host pool — "secure" for long-running
+        # Vendor knobs ride the runpod namespace of spec.backend_options
+        # (compute-seam S1) — re-validated here so a spec built outside the
+        # config loader still gets this provider's defaults rather than a
+        # silently-missing key.
+        opts = RunPodProvider.validate_options(spec.backend_options.get("runpod", {}))
+        # opts.cloud_type pins the host pool — "secure" for long-running
         # one-shot workloads (community interruption deletes zero-volume
         # pods outright; 3 BSA builds lost 2026-07-03).
         cloud_type = {"any": "ALL", "secure": "SECURE", "community": "COMMUNITY"}[
-            spec.cloud_type
+            opts.cloud_type
         ]
         body: dict[str, Any] = {
             "query": _CREATE_POD_MUTATION,
@@ -1028,12 +1041,13 @@ class RunPodProvider(ComputeProvider):
         # success and failure alike. The C33 (f) warning rewrite makes this
         # explicit so operators reading the log do not mis-read it as
         # "restart-on-failure" (which would imply clean exits stay terminated).
-        if spec.restart_policy == "never":
+        if opts.restart_policy == "never":
             if _restart_policy_supported():
                 body["variables"]["input"]["restartPolicy"] = "NEVER"
             else:
                 logging.getLogger(__name__).warning(
-                    "spec.restart_policy='never' requested but RunPod schema "
+                    "backend_options.runpod.restart_policy='never' requested "
+                    "but RunPod schema "
                     "does not expose restartPolicy (per %s); falling back to "
                     "RunPod's default always-restart-on-every-container-exit "
                     "behaviour (success and failure alike)",

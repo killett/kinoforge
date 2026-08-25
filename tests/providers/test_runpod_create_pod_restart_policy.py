@@ -1,4 +1,9 @@
-"""C28 A3 — ``InstanceSpec.restart_policy`` field + ``_create_pod`` wire branch.
+"""C28 A3 — the ``restart_policy`` knob + ``_create_pod``'s wire branch.
+
+Compute-seam S1 moved the knob off ``InstanceSpec`` into the RunPod
+namespace of ``InstanceSpec.backend_options``; the assertions on the
+``restartPolicy`` mutation field are unchanged, because what reaches the
+wire is the whole point.
 
 The wire branch consults the A0 schema sidecar before emitting
 ``restartPolicy`` to RunPod. The plan anticipates the field may not be
@@ -69,7 +74,7 @@ def test_never_with_schema_supported_emits_field_on_wire(tmp_path: Path) -> None
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        restart_policy="never",
+        backend_options={"runpod": {"restart_policy": "never"}},
     )
     with patch(
         "kinoforge.providers.runpod._RUNPOD_SCHEMA_SIDECAR",
@@ -87,7 +92,7 @@ def test_never_with_schema_unsupported_skips_field(tmp_path: Path) -> None:
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        restart_policy="never",
+        backend_options={"runpod": {"restart_policy": "never"}},
     )
     with patch(
         "kinoforge.providers.runpod._RUNPOD_SCHEMA_SIDECAR",
@@ -104,7 +109,7 @@ def test_never_with_sidecar_missing_skips_field(tmp_path: Path) -> None:
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        restart_policy="never",
+        backend_options={"runpod": {"restart_policy": "never"}},
     )
     with patch(
         "kinoforge.providers.runpod._RUNPOD_SCHEMA_SIDECAR",
@@ -139,7 +144,7 @@ def test_unsupported_schema_warning_describes_actual_default_behaviour(
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        restart_policy="never",
+        backend_options={"runpod": {"restart_policy": "never"}},
     )
 
     with (

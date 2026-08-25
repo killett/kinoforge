@@ -90,11 +90,14 @@ def build_provider_for(cfg: "Config") -> "ComputeProvider | None":
 
     Wraps :func:`kinoforge.core.registry.get_provider` and applies
     provider-specific cfg injection that the zero-arg registry factory
-    cannot do on its own. Today the only such knob is
-    ``cfg.compute.cloud`` for skypilot (Phase 53 Stage C) — pinned onto
+    cannot do on its own. Today the only such knobs are SkyPilot's, read
+    off ``compute.backend_options.skypilot``: ``clouds`` is pinned onto
     :attr:`SkyPilotProvider._clouds` so ``sky.list_accelerators`` /
     ``sky.launch`` receive a ``clouds=`` filter and the operator's
-    Lambda/Vast/etc. pin is honoured.
+    Lambda/Vast/etc. pin is honoured, and ``retry_until_up`` is pinned
+    onto :attr:`SkyPilotProvider._retry_until_up` so the operator can
+    ask ``sky.launch`` to keep retrying across zones — it was reachable
+    only via the constructor before S1 (verification finding F6).
 
     Lives here (not in core) for the same reason as
     :func:`build_heartbeat_endpoint_for`: it must import a concrete
@@ -117,16 +120,41 @@ def build_provider_for(cfg: "Config") -> "ComputeProvider | None":
     if cfg.compute is None:
         return None
     provider = registry.get_provider(cfg.compute.provider)()
-    if cfg.compute.provider == "skypilot" and cfg.compute.cloud is not None:
+    if cfg.compute.provider == "skypilot":
         from kinoforge.providers.skypilot import SkyPilotProvider
 
         if not isinstance(provider, SkyPilotProvider):
             raise TypeError(
                 f"registry returned {type(provider).__name__} for 'skypilot'; "
-                "cannot pin cfg.compute.cloud onto a non-SkyPilotProvider"
+                "cannot pin compute.backend_options.skypilot onto a "
+                "non-SkyPilotProvider"
             )
-        provider._clouds = list(cfg.compute.cloud)
+        opts = cfg.backend_options_for("skypilot")
+        if opts.clouds is not None:
+            provider._clouds = list(opts.clouds)
+        provider._retry_until_up = opts.retry_until_up
     return provider
+
+
+def build_capacity_wait_for(cfg: "Config") -> float:
+    """Return the create-retry window, in seconds, for the configured provider.
+
+    Capacity-miss retry is a RunPod behaviour: its ``find_offers`` lists an
+    offer that can vanish before create. SkyPilot's equivalent is
+    ``retry_until_up``, which its own optimizer honours, and Modal handles
+    scheduling itself. A provider that declares no ``capacity_wait_s`` gets
+    ``0.0`` — fail on the first miss.
+
+    Args:
+        cfg: The loaded kinoforge config.
+
+    Returns:
+        Seconds to keep retrying ``find_offers`` + ``create_instance`` on a
+        :class:`~kinoforge.core.errors.CapacityError`; ``0.0`` disables retry.
+    """
+    if cfg.compute is None or cfg.compute.provider != "runpod":
+        return 0.0
+    return float(cfg.backend_options_for("runpod").capacity_wait_s)
 
 
 def build_heartbeat_endpoint_for(

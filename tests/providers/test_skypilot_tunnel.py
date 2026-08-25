@@ -247,7 +247,7 @@ class _RecSky(_FakeSky):
 def test_launch_pins_single_cloud_from_clouds_filter() -> None:
     # Bug caught (live, 2026-07-07): without a cloud pin on the sky Task, the
     # optimizer picks the cheapest cloud across ALL enabled infra (observed:
-    # Lambda A100 $1.99), silently defeating a compute.cloud=["vast"] pin — the
+    # Lambda A100 $1.99), silently defeating a clouds=["vast"] pin — the
     # vast proof provisioned Lambda and blew the $1 cap. find_offers' _clouds
     # filter only narrows the CATALOG; the launch must be pinned too.
     sky = _RecSky()

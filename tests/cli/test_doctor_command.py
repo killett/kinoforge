@@ -43,8 +43,10 @@ compute:
   provider: skypilot
   image: "alpine:3"
   mode: pod
-  cloud:
-    - "nintendo-cloud"
+  backend_options:
+    skypilot:
+      clouds:
+        - "nintendo-cloud"
   lifecycle:
     budget: 1.0
 """

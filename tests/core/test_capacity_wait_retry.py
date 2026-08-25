@@ -1,11 +1,23 @@
-"""Capacity-wait retry: re-query offers + retry create on CapacityError."""
+"""Capacity-wait retry: re-query offers + retry create on CapacityError.
+
+Compute-seam S1 made the window provider-scoped: it is sourced from
+``compute.backend_options.runpod.capacity_wait_s`` and threaded from the
+composition root down to :func:`_create_with_capacity_wait`, rather than
+read off ``Lifecycle`` by every provider alike.
+"""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import pytest
 
+from kinoforge.core import orchestrator
 from kinoforge.core.errors import CapacityError
 from kinoforge.core.orchestrator import _create_with_capacity_wait
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _Clock:
@@ -95,3 +107,115 @@ def test_non_capacity_error_propagates() -> None:
             clock=_Clock([0.0, 10.0]),
             sleep=lambda _s: None,
         )
+
+
+# ---------------------------------------------------------------------------
+# The window must survive the trip from cfg to the retry loop.
+# ---------------------------------------------------------------------------
+
+_YAML = """\
+engine:
+  kind: fake
+  precision: fp16
+models:
+  - ref: "https://example.com/fake-base.safetensors"
+    kind: base
+    target: diffusion_models
+compute:
+  provider: {provider}
+  image: fake:latest
+  warm_reuse_auto_attach: false
+{options}\
+  lifecycle:
+    budget: 1.0
+"""
+
+
+def _window_seen_by_generate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, provider: str, options: str
+) -> float:
+    """Drive the real ``generate()`` and report the window the retry loop got.
+
+    Args:
+        tmp_path: Per-test scratch dir (config + artifact store).
+        monkeypatch: Used to spy on ``_create_with_capacity_wait``.
+        provider: ``compute.provider`` value for the generated YAML.
+        options: Extra ``compute:`` YAML lines (already indented).
+
+    Returns:
+        The ``capacity_wait_s`` the retry loop was invoked with.
+    """
+    from kinoforge.core.config import load_config
+    from kinoforge.core.interfaces import GenerationRequest, ModelProfile
+    from kinoforge.engines.fake import FakeEngine
+    from kinoforge.providers.local import LocalProvider
+    from kinoforge.stores.local import LocalArtifactStore
+
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(_YAML.format(provider=provider, options=options))
+    cfg = load_config(cfg_path)
+
+    seen: list[float] = []
+    real = orchestrator._create_with_capacity_wait
+
+    def _spy(**kwargs: Any) -> Any:
+        seen.append(kwargs["capacity_wait_s"])
+        return real(**kwargs)
+
+    monkeypatch.setattr(orchestrator, "_create_with_capacity_wait", _spy)
+    orchestrator.generate(
+        cfg,
+        GenerationRequest(prompt="a sunset", mode="t2v"),
+        store=LocalArtifactStore(tmp_path),
+        provider=LocalProvider(),
+        engine=FakeEngine(
+            probe_profile=ModelProfile(
+                name="fake",
+                max_frames=16,
+                fps=8,
+                supported_modes={"t2v"},
+                max_resolution=(512, 512),
+                supports_native_extension=False,
+                supports_joint_audio=False,
+            ),
+            declared_flags_map={},
+            required_spec_keys=set(),
+        ),
+    )
+    assert seen, "the capacity-wait loop was never reached"
+    return seen[0]
+
+
+def test_runpod_capacity_window_reaches_the_retry_loop_through_generate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A RunPod cfg's capacity_wait_s arrives at the retry loop intact.
+
+    Bug caught: ``generate`` is left on ``deploy_session``'s ``0.0``
+    default after the window stops living on ``Lifecycle``. Every RunPod
+    create then fails on the FIRST capacity miss — invisible in tests, a
+    failed run during any real capacity drought.
+    """
+    window = _window_seen_by_generate(
+        tmp_path,
+        monkeypatch,
+        provider="runpod",
+        options="  backend_options:\n    runpod:\n      capacity_wait_s: 42\n",
+    )
+    assert window == 42.0
+
+
+def test_non_runpod_provider_reaches_the_retry_loop_with_no_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Intended S1 behaviour change: skypilot no longer wraps create in the loop.
+
+    Bug caught: the RunPod-shaped retry is preserved "just in case" for
+    every provider, so a SkyPilot launch that cannot be satisfied burns
+    the whole window before failing — on top of sky's own
+    ``retry_until_up``, which is its real equivalent.
+    """
+    window = _window_seen_by_generate(
+        tmp_path, monkeypatch, provider="skypilot", options=""
+    )
+    assert window == 0.0

@@ -68,7 +68,7 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
@@ -540,16 +540,46 @@ class SkyPilotProvider(ComputeProvider):
         """Options only SkyPilot honours. Unknown keys are a config error.
 
         Attributes:
-            clouds: Optional list of sky cloud names pinned onto the
-                provider; mirrors ``ComputeConfig.cloud``.
+            clouds: Optional list of sky cloud names (e.g. ``["lambda"]``,
+                ``["lambda", "vast"]``) pinned onto
+                :attr:`SkyPilotProvider._clouds` by
+                :func:`kinoforge._adapters.build_provider_for`. ``None``
+                lets sky consider every enabled cloud and pick by price.
             retry_until_up: Whether ``sky.launch`` loops with backoff
                 across zones/preemption-retry until provisioning succeeds.
+                This is SkyPilot's analogue of RunPod's
+                ``capacity_wait_s`` retry loop.
         """
 
         model_config = ConfigDict(extra="forbid")
 
         clouds: list[str] | None = None
         retry_until_up: bool = False
+
+        @field_validator("clouds")
+        @classmethod
+        def _reject_empty_clouds(cls, v: list[str] | None) -> list[str] | None:
+            """Reject an empty cloud list.
+
+            The operator meant ``clouds: null`` (or forgot to populate the
+            entry); ``sky.launch`` with zero clouds silently falls back to
+            "every enabled cloud", which is the opposite of a pin.
+
+            Args:
+                v: The raw ``clouds`` value.
+
+            Returns:
+                *v* unchanged when it is ``None`` or non-empty.
+
+            Raises:
+                ValueError: *v* is an empty list.
+            """
+            if v is not None and not v:
+                raise ValueError(
+                    "clouds must be a non-empty list of sky cloud names "
+                    "or null; got an empty list"
+                )
+            return v
 
     @classmethod
     def validate_options(cls, raw: Mapping[str, Any]) -> SkyPilotProvider.Options:
@@ -851,10 +881,10 @@ class SkyPilotProvider(ComputeProvider):
                 resources["use_spot"] = True
             if self._region:
                 resources["region"] = self._region
-            # Pin the LAUNCH cloud to the operator's compute.cloud set. The
+            # Pin the LAUNCH cloud to the operator's clouds set. The
             # _clouds filter only narrows find_offers' CATALOG enumeration; sky's
             # optimizer otherwise still launches on the globally-cheapest cloud
-            # for the accelerator (observed 2026-07-07: a compute.cloud=["vast"]
+            # for the accelerator (observed 2026-07-07: a clouds=["vast"]
             # config provisioned a Lambda A100 at $1.99, defeating the vast pin
             # and the price cap). One cloud → ``cloud``; several → ``any_of``.
             if self._clouds:
@@ -1166,19 +1196,26 @@ _SUPPORTED_CLOUDS = frozenset(
 
 
 class SkyPilotCloudPinSupportedCheck:
-    """STATIC ERROR — every compute.cloud entry must be in the supported set."""
+    """STATIC ERROR — every pinned cloud must be in the supported set.
+
+    Reads ``compute.backend_options.skypilot.clouds`` (compute-seam S1;
+    the pin used to live at the portable ``compute.cloud``).
+    """
 
     name: str = "skypilot_cloud_pin_supported"
     category: _CC = _CC.STATIC
     severity: _SEV = _SEV.ERROR
 
     def applies_to(self, cfg: Any) -> bool:  # noqa: ANN401 — Check Protocol
-        """Apply iff a compute block sets cloud to a non-null list."""
-        return cfg.compute is not None and cfg.compute.cloud is not None
+        """Apply iff the skypilot namespace pins a non-null cloud list."""
+        return (
+            cfg.compute is not None
+            and cfg.backend_options_for("skypilot").clouds is not None
+        )
 
     def run(self, cfg: Any) -> _CR:  # noqa: ANN401 — Check Protocol
         """Reject any cloud entry outside _SUPPORTED_CLOUDS."""
-        clouds = cfg.compute.cloud or []
+        clouds = cfg.backend_options_for("skypilot").clouds or []
         bad = [c for c in clouds if c not in _SUPPORTED_CLOUDS]
         if bad:
             return _CR(
@@ -1186,8 +1223,9 @@ class SkyPilotCloudPinSupportedCheck:
                 passed=False,
                 severity=self.severity,
                 message=(
-                    f"compute.cloud has unsupported entr(ies): "
-                    f"{bad}; supported set is {sorted(_SUPPORTED_CLOUDS)}"
+                    f"compute.backend_options.skypilot.clouds has unsupported "
+                    f"entr(ies): {bad}; supported set is "
+                    f"{sorted(_SUPPORTED_CLOUDS)}"
                 ),
                 fix_suggestion=(
                     "remove the unsupported entries, or expand the "

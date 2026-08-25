@@ -20,7 +20,7 @@ def test_config_resolves_to_modal_provider():
     cfg = load_config(CFG)
     assert cfg.compute is not None
     assert cfg.compute.provider == "modal"
-    assert cfg.compute.cloud is None  # MUST omit cloud (non-sky)
+    assert "skypilot" not in cfg.compute.backend_options  # non-sky
     provider = build_provider_for(cfg)
     assert isinstance(provider, ModalProvider)
 
@@ -36,7 +36,7 @@ def test_a14b_config_resolves_to_modal_provider():
     cfg = load_config(CFG_A14B)
     assert cfg.compute is not None
     assert cfg.compute.provider == "modal"
-    assert cfg.compute.cloud is None  # non-sky
+    assert "skypilot" not in cfg.compute.backend_options  # non-sky
     assert isinstance(build_provider_for(cfg), ModalProvider)
 
 
@@ -63,7 +63,7 @@ def test_flashvsr_config_resolves_to_modal_provider():
     cfg = load_config(CFG_FLASHVSR)
     assert cfg.compute is not None
     assert cfg.compute.provider == "modal"
-    assert cfg.compute.cloud is None  # non-sky
+    assert "skypilot" not in cfg.compute.backend_options  # non-sky
     assert isinstance(build_provider_for(cfg), ModalProvider)
 
 
