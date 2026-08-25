@@ -4,7 +4,7 @@
     {
       "id": 0,
       "subject": "Task 0: Extract the InstanceSpec builder out of `deploy_session`",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Move the `_build_spec` closure (`core/orchestrator.py:890-930`) into a module-level\npure function so the golden snapshot in Task 1 can build a spec from a config without running a\ndeploy.\n\n**Files:**\n- Create: `src/kinoforge/core/spec_builder.py`\n- Modify: `src/kinoforge/core/orchestrator.py:890-930` (delete closure, call the new function),\n  and the second closure at `:1695-1709` (bare `deploy()` path)\n- Test: `tests/core/test_spec_builder.py`\n\n**Acceptance Criteria:**\n- [ ] `build_instance_spec` is importable from `kinoforge.core.spec_builder` and takes no\n      orchestrator state \u2014 only explicit arguments.\n- [ ] Every field the old closure set is set identically: tags merge order, `image` fallback,\n      `ports` tuple, `provision_script`, the empty-string\u2192`None` coercion on\n      `image_build_script` / `runtime_provision_script`, `diagnostic_env` gated on\n      `cfg.diagnostic_mode`, `restart_policy` gated on the same flag, `cloud_type` from\n      `cfg.compute` with `\"any\"` when `cfg.compute is None`.\n- [ ] `deploy_session` and the bare `deploy()` path both call it; neither retains a local\n      `_build_spec`.\n- [ ] Full suite green \u2014 this is a pure move, and the existing 4000+ tests are the equivalence\n      proof.\n\n**Verify:** `pixi run python -m pytest tests/core/test_spec_builder.py tests/core -q` \u2192 all pass,\nthen `pixi run test` \u2192 no new failures.\n\nFull steps + code: `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md` Task 0.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/spec_builder.py\", \"src/kinoforge/core/orchestrator.py\", \"tests/core/test_spec_builder.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/core/test_spec_builder.py tests/core -q\", \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"`build_instance_spec` is importable from `kinoforge.core.spec_builder` and takes no\", \"Every field the old closure set is set identically: tags merge order, `image` fallback,\", \"`deploy_session` and the bare `deploy()` path both call it; neither retains a local\", \"Full suite green \\u2014 this is a pure move, and the existing 4000+ tests are the equivalence\"]}\n```"
     },
     {
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-24T16:38:00"
+  "lastUpdated": "2026-08-24T21:01:16"
 }

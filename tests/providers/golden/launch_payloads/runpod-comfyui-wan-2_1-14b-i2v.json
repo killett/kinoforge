@@ -1,0 +1,36 @@
+{
+  "input": {
+    "cloudType": "ALL",
+    "containerDiskInGb": 250,
+    "dockerArgs": "bash -c \"echo $KINOFORGE_PROVISION_SCRIPT | base64 -d | gzip -d > /tmp/p.sh && chmod +x /tmp/p.sh && bash /tmp/p.sh\"",
+    "env": [
+      {
+        "key": "HF_TOKEN",
+        "value": "kinoforge-prod-deadbeef"
+      },
+      {
+        "key": "RUNPOD_TERMINATE_KEY",
+        "value": "kinoforge-prod-deadbeef"
+      },
+      {
+        "key": "KINOFORGE_SELFTERM_SCRIPT",
+        "value": "#!/usr/bin/env python3\n\"\"\"Kinoforge in-pod self-terminator.\n\nLifecycle parameters (seconds):\n  idle_timeout    = 1500.0\n  max_lifetime    = 3000.0\n  time_buffer     = 300.0\n\nBoth caps are BOOT-RELATIVE \u2014 they measure pod age, never idleness:\n  effective_deadline = start_time + max_lifetime - time_buffer\n  boot_cap           = start_time + 2 * idle_timeout\n\nThe pod is destroyed when EITHER elapses, so effective lifetime is\nmin(2 * idle_timeout, max_lifetime - time_buffer).\n\nNOTE: boot_cap is a fixed money backstop, NOT a heartbeat dead-man's\nswitch. Nothing inside this pod writes a liveness signal, so activity\ncannot extend it (audit B4, 2026-07-28 \u2014 the timer had been mislabelled\na dead-man's switch since the provider first shipped). A render longer\nthan this cap will be killed mid-job; that is accepted, and the cap is\nkept because it reaps the pod even when the controller dies.\n\nAll termination requests go to the RunPod terminate endpoint authenticated\nwith the RUNPOD_TERMINATE_KEY environment variable (scoped key \u2014 NOT the\nmain RUNPOD_API_KEY).\n\"\"\"\nimport os\nimport time\nimport urllib.request\nimport json\n\n_POD_ID: str = os.environ.get(\"RUNPOD_POD_ID\", \"\")\n_TERMINATE_KEY: str = os.environ.get(\"RUNPOD_TERMINATE_KEY\", \"\")\n_IDLE_TIMEOUT: float = 1500.0\n_MAX_LIFETIME: float = 3000.0\n_TIME_BUFFER: float = 300.0\n\n_BOOT_CAP: float = 2.0 * _IDLE_TIMEOUT\n\n_start_time: float = time.time()\n\n\ndef effective_deadline() -> float:\n    \"\"\"Return the absolute POSIX timestamp after which the pod must terminate.\n\n    effective_deadline = start_time + max_lifetime - time_buffer\n    \"\"\"\n    return _start_time + _MAX_LIFETIME - _TIME_BUFFER\n\n\ndef boot_cap_deadline() -> float:\n    \"\"\"Return the absolute POSIX timestamp of the boot-relative cap.\n\n    boot_cap_deadline = start_time + 2 * idle_timeout\n    \"\"\"\n    return _start_time + _BOOT_CAP\n\n\ndef _terminate() -> None:\n    \"\"\"Best-effort DELETE to the RunPod REST pods endpoint.\n\n    Any HTTP error or transport failure is silently swallowed; the\n    watchdog will retry on the next poll iteration.\n    \"\"\"\n    url = f\"https://rest.runpod.io/v1/pods/{_POD_ID}\"\n    req = urllib.request.Request(\n        url,\n        headers={\n            \"Authorization\": f\"Bearer {_TERMINATE_KEY}\",\n            \"User-Agent\": \"kinoforge-selfterm/0.1\",\n        },\n        method=\"DELETE\",\n    )\n    try:\n        with urllib.request.urlopen(req) as resp:  # noqa: S310\n            resp.read()\n    except Exception:  # noqa: BLE001\n        pass  # best-effort; we are terminating anyway\n\n\ndef _check_and_reap() -> None:\n    \"\"\"Terminate the pod once either boot-relative cap has elapsed.\"\"\"\n    now = time.time()\n\n    # Cap 1: max_lifetime / effective_deadline enforcement\n    if now >= effective_deadline():\n        _terminate()\n        return\n\n    # Cap 2: fixed boot-relative backstop at 2 * idle_timeout. Pod age only \u2014\n    # no activity signal exists in the pod, so nothing postpones this.\n    if now >= boot_cap_deadline():\n        _terminate()\n        return\n\n\nif __name__ == \"__main__\":\n    while True:\n        _check_and_reap()\n        time.sleep(15)\n"
+      },
+      {
+        "key": "KINOFORGE_PROVISION_SCRIPT",
+        "value": "H4sIAABvqmgC/71Y62/bNhD/7r/iahixvY2WJb8buFhbpGuWrinarv0QFAItUTZniVQoyo+l+d93lOWX8rC7AIUDSbwj7/H73VFUEqaBsFRCzGMWUB6WeABXQASUKzcX5+8v31x+/OPM/XT27s3ns49/uZ9efzz/8Pk5uS3Dt1PQEyYgXuqJFC0gHpR5FEulQSanIGMmalVLR7GVsDDQTEWNeFn9rTqv1htzxTWryaTBxIwrKa6qD/qqfquX4eQEhJyk8cZZ0S68KIhCOQbnxYkNJxDwkjvlQgZSjZnry7kIJfVrdbgpAYTSoyGkKhxW7NN8JFM9rDgbJVvEzNPMd5MJHVZuWpj9RqfllAkXs0BF+65iRsNhuYzCLaqbFYigyWsN9rONYhddXAq7tnbn3RrDmBxsw3Z9rrL7iCYMFbloWKnhVdCIoSeUleu5zkxDpbkVtCuTVGsWxdr4kWo9Ai7ABgdap+DLLEDMzpNRRIUPZAZUcep48MLy2cwSaRhmROzks7GuXKrGybBGFnYXSGIuhIahnBM5YyorkqFWKUOxJ4XmIt0dJzJkBHkmIZuxcDinSqAiSTEQtSRcYB0YzFrNeu51jwFU5QzkYfyKcZAJoz5Tw/LLFOtM8X+p5lI8h1eMKqZgZ2nB5m6N3GPWmzBvipENUU2cTne4t2BtC2HMsUOe8+VXv3/DaiD+ihpDJo5kPjK8lfEZy7e8hy+AYjpFPJq5ICsTABZmZZFNiIAExhEaum3EVGmOae3x46U5PwcAzOeZTN/C8dCZqsHIgbxD2szegzcMWy2hCeQ1EBNcbnqFwirRVfr7YReS33ZbgZfCvE0hejql4Y54JcDOwGVIFzJ3xyV8BzqfQvUmVlhqULFvq/UdC1kI5crKUBmeDY8IBiAJGYuhUqt14Jd1u9Xre1PWjbAjzMktPEazuzGv+vtAkeS3B2PxpTDe88V26bZ0sPnh+3eo0ViTMb5v0tinGnv4+jprk1zKRaKx94EsM01mp2imbuyYDaDk+WDNpZomMfVY6QqemRZ5LaNg+ff5qijHXIMXYqhYVT6L9QT3LEJGigpvAhFNcHeAidZx8tyycO4kHTUwDcszNqiQYhnJNLHWJvO78bsWoQ98aW7jvgaiEJTrlCsWMaGThl7odWhemmgZuUL6bGOUfKXiC/eZ/KpoHGM4hbjviW7K/6H8wfVHOTH96h89NYvGbF5YN9Ds922nP3KcNv6YbTf91qDZ9bq9TpMNaIu22n3a7QxGuY9Gw2o0EAASHOXOKmK3wuMuxv/P2LpyHiPk4s/3ZvzDRKzXPWr0EeB3puwB3uoOvD5lCK7f7rbtvtPym0Hg95qtTrPXHXm+M+iNuoFzJOC5m6cB/aCRYwDOKHrLQmToU4pv9yOQvpAJF1Pq4+VhM8c5e4SB++buUdFmrOd4zW7Hx/r3Bv6g62ET9Aadtu91B6w3GjT77Xb72Nov+nsaJ4etrcmJpuaESGKI0ECYWD4PgjTBF7W7EqzYCx5SW9hmjmuTc+cLsduvSLvf/OAGcd9l7agViEZCA6YZnsxU3kT3HLyhumZ5ko7HXIwD3MKRausi66l1I7vZToyZ4DFvxqyIcvED3qtQfXoKaAT/3r5xP19enL2v3gFvRlkBL5Tk9t0vL8/cUWB3fw4m97rbgnAgrkOJarbQ+MXh4UgVS2RPZ6WR7pDFIiQoIT+vMI5wuwXjhyM+BI8X8tidcVNkBXB2NLvP7uRpgGR9Ty7V2IDiOg3bzXcCVzE8EE3pmPn7ACVxyLUb8JAdGdQWrmOn70G0dz6zdo5MbMG8/CseTGTm252QkON5DA+ijeyHguzfCH273/8PS76PA6EQAAA="
+      }
+    ],
+    "gpuCount": 1,
+    "gpuTypeId": "NVIDIA GeForce RTX 4090",
+    "imageName": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+    "minMemoryInGb": 32,
+    "minVcpuCount": 2,
+    "name": "golden-run",
+    "ports": "8188/http",
+    "volumeInGb": 0,
+    "volumeMountPath": "/workspace"
+  },
+  "provider": "runpod",
+  "seam": "http_post -> podFindAndDeployOnDemand variables.input"
+}
