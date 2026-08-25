@@ -16,6 +16,7 @@ from typing import Any, Literal, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import ValidationError as PydanticValidationError
 
 from kinoforge.core.errors import ConfigError
 from kinoforge.core.interfaces import CapabilityKey
@@ -756,6 +757,39 @@ class RequirementsConfig(BaseModel):
     disk_gb: int = 100
 
 
+def _resolve_provider_class(provider_name: str) -> type[Any] | None:
+    """Return the registered compute-provider class for ``provider_name``.
+
+    Providers self-register at import time via ``registry.register_provider``.
+    A ``Config`` can be validated before any provider module has ever been
+    imported (e.g. a bare ``Config.model_validate(...)`` in a unit test), in
+    which case the registry is empty. Mirrors ``_provider_class`` in
+    ``kinoforge.core.capabilities``: retry once after importing the
+    composition root (``kinoforge._adapters``), which imports every provider
+    package and triggers their self-registration.
+
+    Kept function-local (not a module-scope import) so ``core/config.py``
+    never imports ``kinoforge.providers.*`` at load time — the core-import-ban
+    forbids ``kinoforge.core.*`` depending on providers directly; the
+    composition root is the one sanctioned, lazily-imported exception.
+
+    Args:
+        provider_name: Registry key, e.g. ``"runpod"``.
+
+    Returns:
+        The registered provider class, or ``None`` if no provider is
+        registered under that name even after importing the composition root.
+    """
+    from kinoforge.core import registry
+
+    cls = registry.provider_class(provider_name)
+    if cls is None:
+        import kinoforge._adapters  # noqa: F401 — composition root, lazy by design
+
+        cls = registry.provider_class(provider_name)
+    return cls
+
+
 class ComputeConfig(BaseModel):
     """The compute block describing where workloads run.
 
@@ -781,6 +815,17 @@ class ComputeConfig(BaseModel):
             instantiation time. ``None`` (default) preserves pre-Stage-C
             behaviour — sky considers every enabled cloud and picks by
             price. Ignored by non-skypilot providers.
+        backend_options: compute-seam S1 — namespaced escape hatch for
+            provider-specific knobs that don't warrant a top-level field.
+            Maps provider name (e.g. ``"runpod"``) to a mapping of that
+            provider's own option names. Validated against the OWNING
+            provider's ``Options`` pydantic model (``extra="forbid"``) for
+            EVERY namespace present, not just the currently-selected
+            provider — a typo in a block that isn't running today is
+            exactly the bug class this mechanism exists to catch. Nothing
+            consumes this yet (S1 Task 2 lands only the mechanism); S1
+            Task 3 moves ``cloud``, ``cloud_type``, ``restart_policy``, and
+            ``capacity_wait_s`` into these namespaces.
     """
 
     provider: str
@@ -798,6 +843,49 @@ class ComputeConfig(BaseModel):
     # dedicated hosts for anything that must survive a long window.
     # Ignored by non-runpod providers.
     cloud_type: Literal["any", "secure", "community"] = "any"
+    backend_options: dict[str, dict[str, Any]] = {}
+
+    @field_validator("backend_options")
+    @classmethod
+    def _validate_backend_options(
+        cls, v: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Reject unknown provider namespaces and unknown keys within one.
+
+        Validation is delegated to the OWNING provider class so the accepted
+        key set lives next to the code that reads it — the alternative is a
+        second list in core that drifts from the first. Every namespace
+        present is checked, not just the one named by ``provider`` above —
+        a typo'd key inside a namespace for a provider that is not currently
+        selected is exactly the bug class this rework exists to catch.
+        """
+        for provider_name, raw in v.items():
+            provider_cls = _resolve_provider_class(provider_name)
+            if provider_cls is None:
+                from kinoforge.core import registry
+
+                raise ConfigError(
+                    f"compute.backend_options.{provider_name}: unknown provider; "
+                    f"registered providers are {sorted(registry.provider_names())}"
+                )
+            validate_options = getattr(provider_cls, "validate_options", None)
+            if validate_options is None:
+                raise ConfigError(
+                    f"compute.backend_options.{provider_name}: provider declares "
+                    "no Options schema; it accepts no backend options"
+                )
+            try:
+                validate_options(raw)
+            except PydanticValidationError as exc:
+                accepted = sorted(provider_cls.Options.model_fields)
+                first_error = exc.errors()[0]
+                bad_key = ".".join(str(part) for part in first_error["loc"])
+                where = f".{bad_key}" if bad_key else ""
+                raise ConfigError(
+                    f"compute.backend_options.{provider_name}{where}: "
+                    f"{first_error['msg']} (accepted keys: {accepted})"
+                ) from exc
+        return v
 
     @field_validator("cloud")
     @classmethod
@@ -1421,6 +1509,33 @@ class Config(BaseModel):
             gpu_preference=tuple(r.gpu_preference),
             disk_gb=r.disk_gb,
         )
+
+    def backend_options_for(self, provider_name: str) -> Any:  # noqa: ANN401
+        """Return the validated ``Options`` model for ``provider_name``.
+
+        Defaults are applied when the namespace is absent from
+        ``compute.backend_options`` (or ``compute`` itself is unset), so
+        callers never need to branch on presence.
+
+        Args:
+            provider_name: Registry key of the provider, e.g. ``"runpod"``.
+
+        Returns:
+            The provider's validated ``Options`` model instance.
+
+        Raises:
+            ConfigError: ``provider_name`` is not a registered provider, or
+                the registered class declares no ``Options`` schema.
+        """
+        provider_cls = _resolve_provider_class(provider_name)
+        if provider_cls is None or not hasattr(provider_cls, "validate_options"):
+            raise ConfigError(f"unknown provider {provider_name!r}")
+        raw = (
+            {}
+            if self.compute is None
+            else self.compute.backend_options.get(provider_name, {})
+        )
+        return provider_cls.validate_options(raw)
 
 
 # ---------------------------------------------------------------------------

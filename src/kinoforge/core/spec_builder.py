@@ -86,4 +86,7 @@ def build_instance_spec(
         ),
         restart_policy=restart_policy,
         cloud_type=(cfg.compute.cloud_type if cfg.compute is not None else "any"),
+        backend_options=(
+            cfg.compute.backend_options if cfg.compute is not None else {}
+        ),
     )

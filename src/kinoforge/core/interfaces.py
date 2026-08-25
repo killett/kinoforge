@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import (
@@ -194,6 +194,12 @@ class InstanceSpec:
     # wheel builds died that way). "secure" pins dedicated hosts for
     # long-running one-shot workloads; "community" forces the cheap pool.
     cloud_type: Literal["any", "secure", "community"] = "any"
+    # compute-seam S1 Task 2: provider-namespaced escape hatch, populated
+    # from cfg.compute.backend_options by build_instance_spec. Validated at
+    # config-load time against the owning provider's Options model; NOT YET
+    # consumed by any provider here — S1 Task 3 wires runpod/skypilot to
+    # read their namespace off this field.
+    backend_options: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 @dataclass

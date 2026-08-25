@@ -33,10 +33,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict
 
 from kinoforge.core import registry
 from kinoforge.core.boot_liveness import BootVerdict, classify_boot_liveness
@@ -319,6 +321,36 @@ class RunPodProvider(ComputeProvider):
     """
 
     name: str = "runpod"
+
+    class Options(BaseModel):
+        """Options only RunPod honours. Unknown keys are a config error.
+
+        Attributes:
+            cloud_type: Host-pool pin; mirrors ``ComputeConfig.cloud_type``.
+            restart_policy: Container-restart-on-exit policy; mirrors
+                ``InstanceSpec.restart_policy``.
+            capacity_wait_s: Max seconds to keep retrying create on a
+                capacity miss before giving up; mirrors
+                ``Lifecycle.capacity_wait_s``.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+        cloud_type: Literal["any", "secure", "community"] = "any"
+        restart_policy: Literal["always", "never"] = "always"
+        capacity_wait_s: float = 300.0
+
+    @classmethod
+    def validate_options(cls, raw: Mapping[str, Any]) -> RunPodProvider.Options:
+        """Parse *raw* into this provider's Options, forbidding unknown keys.
+
+        Args:
+            raw: The ``compute.backend_options["runpod"]`` mapping.
+
+        Returns:
+            A validated :class:`RunPodProvider.Options`.
+        """
+        return cls.Options.model_validate(dict(raw))
 
     @classmethod
     def capabilities(

@@ -7,7 +7,10 @@ Self-registers under ``"local"`` when this module is imported.  Inject a
 from __future__ import annotations
 
 import uuid
-from typing import ClassVar
+from collections.abc import Mapping
+from typing import Any, ClassVar
+
+from pydantic import BaseModel, ConfigDict
 
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
@@ -71,6 +74,27 @@ class LocalProvider(ComputeProvider):
     name: str = "local"
 
     billed: ClassVar[bool] = False
+
+    class Options(BaseModel):
+        """LocalProvider accepts no backend options today — still forbids extras.
+
+        An empty model is a real declaration ("this provider accepts no
+        backend options"), not a placeholder for one that was never written.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+    @classmethod
+    def validate_options(cls, raw: Mapping[str, Any]) -> LocalProvider.Options:
+        """Parse *raw* into this provider's Options, forbidding unknown keys.
+
+        Args:
+            raw: The ``compute.backend_options["local"]`` mapping.
+
+        Returns:
+            A validated :class:`LocalProvider.Options`.
+        """
+        return cls.Options.model_validate(dict(raw))
 
     @classmethod
     def capabilities(

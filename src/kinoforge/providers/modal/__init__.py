@@ -14,6 +14,8 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.ephemeral import EphemeralSession
@@ -41,6 +43,27 @@ class ModalProvider(ComputeProvider):
     """Compute provider backed by Modal serverless GPUs."""
 
     name: str = "modal"
+
+    class Options(BaseModel):
+        """Modal accepts no backend options today — still forbids extras.
+
+        An empty model is a real declaration ("this provider accepts no
+        backend options"), not a placeholder for one that was never written.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+    @classmethod
+    def validate_options(cls, raw: Mapping[str, Any]) -> ModalProvider.Options:
+        """Parse *raw* into this provider's Options, forbidding unknown keys.
+
+        Args:
+            raw: The ``compute.backend_options["modal"]`` mapping.
+
+        Returns:
+            A validated :class:`ModalProvider.Options`.
+        """
+        return cls.Options.model_validate(dict(raw))
 
     @classmethod
     def capabilities(

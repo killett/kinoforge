@@ -65,8 +65,10 @@ import shlex
 import socket
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict
 
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
@@ -533,6 +535,33 @@ class SkyPilotProvider(ComputeProvider):
     """
 
     name: str = "skypilot"
+
+    class Options(BaseModel):
+        """Options only SkyPilot honours. Unknown keys are a config error.
+
+        Attributes:
+            clouds: Optional list of sky cloud names pinned onto the
+                provider; mirrors ``ComputeConfig.cloud``.
+            retry_until_up: Whether ``sky.launch`` loops with backoff
+                across zones/preemption-retry until provisioning succeeds.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+        clouds: list[str] | None = None
+        retry_until_up: bool = False
+
+    @classmethod
+    def validate_options(cls, raw: Mapping[str, Any]) -> SkyPilotProvider.Options:
+        """Parse *raw* into this provider's Options, forbidding unknown keys.
+
+        Args:
+            raw: The ``compute.backend_options["skypilot"]`` mapping.
+
+        Returns:
+            A validated :class:`SkyPilotProvider.Options`.
+        """
+        return cls.Options.model_validate(dict(raw))
 
     @classmethod
     def capabilities(
