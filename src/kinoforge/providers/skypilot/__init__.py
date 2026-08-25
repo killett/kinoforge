@@ -874,10 +874,11 @@ class SkyPilotProvider(ComputeProvider):
             is_gpu = bool(spec.offer is not None and spec.offer.gpu_type)
             default_disk_gb = 60 if is_gpu else 30
             resources.setdefault("disk_size", default_disk_gb)
-            # Spot/preemptible: maps spec.spot → SkyPilot's ``use_spot``.
-            # Preemptible T4 quota (``PREEMPTIBLE_NVIDIA_T4_GPUS``) is granted
-            # separately from the on-demand GPU quota (``GPUS_ALL_REGIONS``).
-            if spec.spot:
+            # Spot/preemptible: maps spec.placement.spot → SkyPilot's
+            # ``use_spot``. Preemptible T4 quota (``PREEMPTIBLE_NVIDIA_T4_GPUS``)
+            # is granted separately from the on-demand GPU quota
+            # (``GPUS_ALL_REGIONS``).
+            if spec.placement.spot:
                 resources["use_spot"] = True
             if self._region:
                 resources["region"] = self._region

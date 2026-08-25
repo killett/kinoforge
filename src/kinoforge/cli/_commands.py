@@ -321,6 +321,7 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
             env=rendered_env,
             provision_script=rendered.script,
             run_cmd=rendered.run_cmd,
+            placement=cfg.placement(),
             backend_options=(
                 cfg.compute.backend_options if cfg.compute is not None else {}
             ),

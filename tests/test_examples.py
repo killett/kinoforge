@@ -123,7 +123,7 @@ def test_skypilot_lambda_example_pins_lambda_cloud() -> None:
     assert cfg.compute.provider == "skypilot"
     assert cfg.backend_options_for("skypilot").clouds == ["lambda"]
     # Lambda A6000 = $1.09/hr, A10 = $1.29/hr — bump above 1.00 default.
-    assert cfg.compute.requirements.max_usd_per_hr >= 2.00
+    assert cfg.compute.placement.max_usd_per_hr >= 2.00
 
 
 def test_hosted_yaml_loads_under_new_validators() -> None:
@@ -448,8 +448,8 @@ def test_runpod_comfyui_wan_yaml_loads() -> None:
     )
     assert cfg.compute.provider == "runpod"
     assert cfg.compute.mode == "pod"
-    assert cfg.compute.requirements.min_vram_gb == 24
-    assert cfg.compute.requirements.max_usd_per_hr == 0.50
+    assert cfg.compute.placement.min_vram_gb == 24
+    assert cfg.compute.placement.max_usd_per_hr == 0.50
     assert cfg.compute.lifecycle is not None
     assert cfg.compute.lifecycle.budget == 2.0
     assert cfg.compute.lifecycle.idle_timeout == 1500.0  # 25m parsed via parse_duration
@@ -682,7 +682,7 @@ def test_wan_with_upscale_flashvsr_pins_engine_and_gpu_allowlist() -> None:
     # here is that the exact 4-GPU allowlist stays intact. NVIDIA-prefixed
     # names are non-negotiable: plain tokens like "A100 80GB" fall through
     # RunPod's fuzzy matcher to a no-GPU offer (T8 attempt #1 evidence).
-    assert set(raw["compute"]["requirements"]["gpu_preference"]) == {
+    assert set(raw["compute"]["placement"]["accelerators"]) == {
         "NVIDIA A100 80GB PCIe",
         "NVIDIA A100-SXM4-80GB",
         "NVIDIA H100 80GB HBM3",
@@ -705,10 +705,8 @@ def test_upscale_flashvsr_x4_marks_upscale_only_and_a100_first() -> None:
         raw = yaml.safe_load(f)
     assert raw["engine"]["diffusers"]["upscale_only"] is True
     assert raw["upscale"]["engine"] == "flashvsr"
-    assert (
-        raw["compute"]["requirements"]["gpu_preference"][0] == "NVIDIA A100 80GB PCIe"
-    )
+    assert raw["compute"]["placement"]["accelerators"][0] == "NVIDIA A100 80GB PCIe"
     # 80 GB required — A6000 48GB OOMs.
-    assert raw["compute"]["requirements"]["min_vram_gb"] == 80
+    assert raw["compute"]["placement"]["min_vram_gb"] == 80
     # Load through full validator to catch schema regressions.
     load_config(EXAMPLES_DIR / "runpod-diffusers-flashvsr-x4-upscale.yaml")

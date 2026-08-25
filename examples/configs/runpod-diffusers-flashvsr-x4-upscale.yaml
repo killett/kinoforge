@@ -78,9 +78,11 @@ compute:
   provider: runpod
   image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
-  requirements:
+  backend_options:
+    runpod:
+      min_cuda: "12.4"
+  placement:
     min_vram_gb: 80
-    min_cuda: "12.4"
     max_usd_per_hr: 2.50
     disk_gb: 60
     # SM80+ + 80GB VRAM. FlashVSR v1.1 at 480x480 → 1920x1920 (4x
@@ -88,7 +90,7 @@ compute:
     # at inference peak (17th + 18th live smokes OOM'd on A6000 48GB
     # with tile_size=512). Upstream infer script targets H100 80GB;
     # A100 80GB is the RunPod-available equivalent at ~$1.90/hr.
-    gpu_preference:
+    accelerators:
       - "NVIDIA A100 80GB PCIe"
       - "NVIDIA H100 80GB HBM3"
   lifecycle:

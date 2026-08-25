@@ -43,9 +43,14 @@ compute:
   # for a ComfyUI / PyTorch image when running real generations.
   image: "nvidia/cuda:12.2.0-base-ubuntu22.04"
   mode: pod
-  requirements:
+  backend_options:
+    runpod:
+      # RunPod-namespaced because only RunPod publishes a per-offer CUDA
+      # version to filter on; Config.hardware_requirements() still applies
+      # it to this provider's offer filter until S4 inverts selection.
+      min_cuda: "11.0"
+  placement:
     min_vram_gb: 8
-    min_cuda: "11.0"
     max_usd_per_hr: 1.00
     disk_gb: 100
   lifecycle:

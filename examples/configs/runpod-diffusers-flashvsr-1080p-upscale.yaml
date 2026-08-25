@@ -63,16 +63,16 @@ compute:
       # Ride transient RunPod capacity droughts: re-query offers + retry
       # create for up to 5m before failing (2026-07-07).
       capacity_wait_s: 300
-  requirements:
+      min_cuda: "12.4"
+  placement:
     min_vram_gb: 80
-    min_cuda: "12.4"
     # Widened 2026-07-07: 4 Ampere/Hopper 80GB types under a $3 cap makes a
     # capacity miss rarer; backend_options.runpod.capacity_wait_s rides out
     # whatever miss remains.
     # Blackwell RTX-6000 is deliberately excluded — its BSA wheel is cu124.
     max_usd_per_hr: 3.00
     disk_gb: 60
-    gpu_preference:
+    accelerators:
       - "NVIDIA A100 80GB PCIe"
       - "NVIDIA A100-SXM4-80GB"
       - "NVIDIA H100 80GB HBM3"

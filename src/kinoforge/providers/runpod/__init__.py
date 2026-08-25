@@ -340,6 +340,12 @@ class RunPodProvider(ComputeProvider):
                 capacity miss before giving up. ``0`` fails on the first
                 miss. Read by
                 :func:`kinoforge._adapters.build_capacity_wait_for`.
+            min_cuda: Minimum CUDA version an offer must report to survive
+                selection (semantic compare, e.g. ``"12.8"``). Lives here
+                rather than on the portable ``compute.placement`` block
+                because only RunPod publishes a per-offer CUDA version to
+                constrain at selection time. Read by
+                :meth:`kinoforge.core.config.Config.hardware_requirements`.
         """
 
         model_config = ConfigDict(extra="forbid")
@@ -347,6 +353,7 @@ class RunPodProvider(ComputeProvider):
         cloud_type: Literal["any", "secure", "community"] = "any"
         restart_policy: Literal["always", "never"] = "always"
         capacity_wait_s: float = 300.0
+        min_cuda: str = "12.8"
 
     @classmethod
     def validate_options(cls, raw: Mapping[str, Any]) -> RunPodProvider.Options:
@@ -983,7 +990,7 @@ class RunPodProvider(ComputeProvider):
                     # overhead). Was hardcoded 50 GB — caused
                     # `Not enough free disk space` warnings on Task 8
                     # attempt #10 once shards started landing. TODO:
-                    # thread `cfg.compute.requirements.disk_gb` through
+                    # thread `cfg.compute.placement.disk_gb` through
                     # InstanceSpec.container_disk_gb instead of this
                     # blanket bump.
                     "containerDiskInGb": 250,
@@ -997,7 +1004,7 @@ class RunPodProvider(ComputeProvider):
                     # A40 / A6000 / L40S RunPod machines ship with at
                     # least 32 GB CPU RAM, and the marginal headroom
                     # vs 15 GB is enough to clear shard-load. TODO:
-                    # thread cfg.compute.requirements.min_ram_gb
+                    # thread cfg.compute.placement.min_ram_gb
                     # through InstanceSpec.min_memory_gb (sibling of
                     # the containerDiskInGb TODO above).
                     "minMemoryInGb": 32,
@@ -1497,15 +1504,15 @@ class RunPodCapacityHintCheck:
         self._graphql_url = graphql_url
 
     def applies_to(self, cfg: Any) -> bool:  # noqa: ANN401 — Check Protocol
-        """Apply iff provider is runpod and gpu_preference is non-empty."""
+        """Apply iff provider is runpod and placement.accelerators is non-empty."""
         if cfg.compute is None or cfg.compute.provider != "runpod":
             return False
-        reqs = cfg.compute.requirements
-        return bool(reqs and reqs.gpu_preference)
+        placement = cfg.compute.placement
+        return bool(placement and placement.accelerators)
 
     def run(self, cfg: Any) -> _CR:  # noqa: ANN401 — Check Protocol
         """Query RunPod gpuTypes for current capacity on preferred GPUs."""
-        prefs = list(cfg.compute.requirements.gpu_preference)
+        prefs = list(cfg.compute.placement.accelerators)
         try:
             resp = self._http_post(
                 self._graphql_url,
@@ -1543,7 +1550,7 @@ class RunPodCapacityHintCheck:
                 f"({', '.join(prefs)}); offer-retry will exhaust"
             ),
             fix_suggestion=(
-                "either wait, add more entries to gpu_preference, "
+                "either wait, add more entries to compute.placement.accelerators, "
                 "or raise max_usd_per_hr to admit more SKUs"
             ),
         )

@@ -29,11 +29,13 @@ compute:
   provider: runpod
   image: "runpod/pytorch:latest"
   mode: pod
-  requirements:
+  backend_options:
+    runpod:
+      min_cuda: "12.4"
+  placement:
     min_vram_gb: 16
-    min_cuda: "12.4"
     max_usd_per_hr: 0.50
-    gpu_preference:
+    accelerators:
       - "NVIDIA RTX A5000"
       - "NVIDIA GeForce RTX 4090"
     disk_gb: 40

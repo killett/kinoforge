@@ -92,6 +92,10 @@ def build_instance_spec(
         image_build_script=(rendered.build_script or None),
         runtime_provision_script=(rendered.runtime_script or None),
         run_cmd=rendered.run_cmd,
+        # compute-seam S1: the portable resource block travels on the spec so
+        # a provider reads what to get from one place (SkyPilot's use_spot,
+        # S4's declarative selection) instead of re-deriving it from cfg.
+        placement=cfg.placement(),
         diagnostic_env=(
             dict(diagnostic_env) if cfg.diagnostic_mode and diagnostic_env else {}
         ),

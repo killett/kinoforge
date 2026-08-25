@@ -73,11 +73,13 @@ compute:
   #                               # attach transparently on every fresh shell.
   #                               # Set to false per-project to disable;
   #                               # --no-reuse on the CLI overrides per-call.
-  requirements:
+  backend_options:
+    runpod:
+      min_cuda: "12.4"
+  placement:
     min_vram_gb: 80
-    min_cuda: "12.4"
     max_usd_per_hr: 3.50
-    gpu_preference:
+    accelerators:
       - "A100 80GB"
       - "H100 80GB"
     disk_gb: 200

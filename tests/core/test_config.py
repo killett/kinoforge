@@ -54,7 +54,7 @@ compute:
   provider: runpod
   image: "img:tag"
   mode: pod
-  requirements: {gpu_preference: ["RTX 4090"]}
+  placement: {accelerators: ["RTX 4090"]}
   lifecycle: {idle_timeout: 2h, job_timeout: 30m, max_lifetime: 5h, budget: 25.0}
 """
 
@@ -198,7 +198,7 @@ def test_lifecycle_heartbeat_interval_s_rejects_zero():
 def test_hardware_requirements_defaults_applied():
     cfg = load_config(WAN)
     reqs = cfg.hardware_requirements()
-    # Bug this catches: dropping defaults when user only set gpu_preference.
+    # Bug this catches: dropping defaults when user only set accelerators.
     assert reqs.min_vram_gb == 48
     assert reqs.min_cuda == "12.8"
     assert reqs.max_usd_per_hr == 2.20
@@ -1057,7 +1057,7 @@ def test_spec_graph_file_relative_resolves_against_yaml_parent_dir(
             compute:
               provider: local
               image: scratch
-              requirements: {min_vram_gb: 0}
+              placement: {min_vram_gb: 0}
               lifecycle: {idle_timeout: 10m, budget: 1.0}
             spec:
               graph_file: graph.json
@@ -1086,7 +1086,7 @@ def test_spec_graph_file_both_set_raises(tmp_path: Path) -> None:
             compute:
               provider: local
               image: scratch
-              requirements: {min_vram_gb: 0}
+              placement: {min_vram_gb: 0}
               lifecycle: {idle_timeout: 10m, budget: 1.0}
             spec:
               graph_file: graph.json
@@ -1116,7 +1116,7 @@ def test_spec_graph_file_not_found_raises_with_path(tmp_path: Path) -> None:
             compute:
               provider: local
               image: scratch
-              requirements: {min_vram_gb: 0}
+              placement: {min_vram_gb: 0}
               lifecycle: {idle_timeout: 10m, budget: 1.0}
             spec:
               graph_file: nope.json
@@ -1149,7 +1149,7 @@ def test_spec_graph_file_absolute_path_used_verbatim(tmp_path: Path) -> None:
             compute:
               provider: local
               image: scratch
-              requirements: {{min_vram_gb: 0}}
+              placement: {{min_vram_gb: 0}}
               lifecycle: {{idle_timeout: 10m, budget: 1.0}}
             spec:
               graph_file: {abs_graph}
@@ -1180,7 +1180,7 @@ def test_spec_graph_file_invalid_json_raises_with_path_and_parse_error(
             compute:
               provider: local
               image: scratch
-              requirements: {min_vram_gb: 0}
+              placement: {min_vram_gb: 0}
               lifecycle: {idle_timeout: 10m}
             spec:
               graph_file: bad.json
@@ -1212,7 +1212,7 @@ def test_spec_graph_file_relative_path_with_raw_string_yaml_raises(
         compute:
           provider: local
           image: scratch
-          requirements: {min_vram_gb: 0}
+          placement: {min_vram_gb: 0}
           lifecycle: {idle_timeout: 10m, budget: 1.0}
         spec:
           graph_file: nope.json
@@ -1941,8 +1941,8 @@ def test_flashvsr_widened_config_loads() -> None:
         Path("examples/configs/runpod-diffusers-flashvsr-1080p-upscale.yaml")
     )
     assert cfg.compute is not None
-    reqs = cfg.compute.requirements
-    assert list(reqs.gpu_preference) == [
+    reqs = cfg.compute.placement
+    assert list(reqs.accelerators) == [
         "NVIDIA A100 80GB PCIe",
         "NVIDIA A100-SXM4-80GB",
         "NVIDIA H100 80GB HBM3",

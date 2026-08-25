@@ -60,6 +60,7 @@ from kinoforge.core.interfaces import (  # noqa: E402
     HardwareRequirements,
     InstanceSpec,
     Lifecycle,
+    Placement,
 )
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
 from tests.live._skypilot_recorder import _RecordingProxy  # noqa: E402
@@ -185,7 +186,8 @@ def _t4_smoke_spec(cluster_name: str, offer: Any) -> InstanceSpec:
         offer=offer,
         provision_script="",
         run_cmd=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-        spot=True,  # use preemptible — GCP GPUS_ALL_REGIONS=0; PREEMPTIBLE_T4=1
+        # use preemptible — GCP GPUS_ALL_REGIONS=0; PREEMPTIBLE_T4=1
+        placement=Placement(spot=True),
     )
 
 

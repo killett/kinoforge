@@ -52,15 +52,19 @@ models: []
 compute:
   provider: skypilot
   backend_options:
+    runpod:
+      # RunPod-namespaced because only RunPod publishes a per-offer CUDA
+      # version to filter on; Config.hardware_requirements() still applies
+      # it to this provider's offer filter until S4 inverts selection.
+      # Lambda's catalog reports a flat cuda=12.0; the 12.8 image ships its own
+      # toolkit and Lambda hosts carry a recent driver.
+      min_cuda: "12.0"
     skypilot:
       clouds:
         - "lambda"
   image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
-  requirements:
-    # Lambda's catalog reports a flat cuda=12.0; the 12.8 image ships its own
-    # toolkit and Lambda hosts carry a recent driver.
-    min_cuda: "12.0"
+  placement:
     # A100 40GB (Ampere sm_80) — Lambda's only capacity-available FlashVSR card
     # this session (A6000 48GB was persistently capacity-dry). FlashVSR's peak
     # VRAM is driven by num_frames (the whole clip is processed at once; the
@@ -71,7 +75,7 @@ compute:
     min_vram_gb: 40
     max_usd_per_hr: 2.20
     disk_gb: 60
-    gpu_preference:
+    accelerators:
       - "A100"
       - "A6000"
   lifecycle:

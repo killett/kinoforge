@@ -53,12 +53,12 @@ compute:
   backend_options:
     runpod:
       cloud_type: secure
-  requirements:
+      min_cuda: "12.1"
+  placement:
     min_vram_gb: 16
-    min_cuda: "12.1"
     max_usd_per_hr: 1.00
     disk_gb: 40
-    gpu_preference:
+    accelerators:
       - "NVIDIA RTX A4000"
       - "NVIDIA GeForce RTX 4090"
       - "NVIDIA RTX A5000"

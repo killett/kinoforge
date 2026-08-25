@@ -39,25 +39,29 @@ models: []
 compute:
   provider: skypilot
   backend_options:
+    runpod:
+      # RunPod-namespaced because only RunPod publishes a per-offer CUDA
+      # version to filter on; Config.hardware_requirements() still applies
+      # it to this provider's offer filter until S4 inverts selection.
+      # vast's catalog reports a flat cuda=12.0 for every SKU (it doesn't publish
+      # per-host driver caps), so a 12.4 floor would reject the entire catalog.
+      # The 12.8 image ships its own toolkit; the host only needs a recent driver,
+      # which A100/H100 vast hosts have. Gate on 12.0 and pick the card by pref.
+      min_cuda: "12.0"
     skypilot:
       clouds:
         - "vast"
   image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
-  requirements:
-    # vast's catalog reports a flat cuda=12.0 for every SKU (it doesn't publish
-    # per-host driver caps), so a 12.4 floor would reject the entire catalog.
-    # The 12.8 image ships its own toolkit; the host only needs a recent driver,
-    # which A100/H100 vast hosts have. Gate on 12.0 and pick the card by pref.
-    min_cuda: "12.0"
+  placement:
     # Aim a single-card 80GB Ampere/Hopper (A100 80GB ≈ $0.93/hr on vast) — the
     # exact class the FlashVSR BSA wheel (cu124/torch2.4, Ampere/Hopper) needs.
-    # gpu_preference only sorts, so keep min_vram_gb high enough that cheap
+    # accelerators only sorts, so keep min_vram_gb high enough that cheap
     # consumer MULTI-gpu aggregates (RTX3060 "48GB" = 4×12GB) can't win.
     min_vram_gb: 79
     max_usd_per_hr: 1.00
     disk_gb: 60
-    gpu_preference:
+    accelerators:
       - "A100"
       - "H100"
   lifecycle:

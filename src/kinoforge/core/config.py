@@ -4,7 +4,7 @@ Loads a YAML config into a validated model that:
 - Parses human-readable duration strings (e.g. "2h", "30m", "90s") to seconds.
 - Rejects nonsensical cross-field combinations (idle >= lifetime, etc.).
 - Derives a CapabilityKey for cache lookup.
-- Exposes Lifecycle and HardwareRequirements with defaults applied.
+- Exposes Lifecycle, Placement and HardwareRequirements with defaults applied.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from kinoforge.core.interfaces import (
     HardwareRequirements as InterfaceHardwareRequirements,
 )
 from kinoforge.core.interfaces import Lifecycle as InterfaceLifecycle
+from kinoforge.core.interfaces import Placement as InterfacePlacement
 from kinoforge.core.lora import LoraEntry
 from kinoforge.core.reaper import DEFAULT_APPLY_POLICY, Policy, Verdict
 
@@ -770,22 +771,73 @@ class ModelEntry(BaseModel):
     sha256: str | None = None
 
 
-class RequirementsConfig(BaseModel):
-    """Hardware requirements override block.
+class PlacementConfig(BaseModel):
+    """The portable resource block. See :attr:`ComputeConfig.placement`.
+
+    YAML surface for :class:`kinoforge.core.interfaces.Placement`. Replaces
+    the pre-S1 ``compute.requirements`` block: ``gpu_preference`` is renamed
+    ``accelerators``, ``spot`` arrives from ``InstanceSpec``, and ``min_cuda``
+    leaves entirely for ``compute.backend_options.runpod.min_cuda`` (only
+    RunPod can constrain a CUDA version at selection time).
+
+    ``extra="forbid"`` is load-bearing: pydantic's default would silently drop
+    a stale ``gpu_preference:`` and hand ``find_offers`` an empty preference
+    list — the operator's GPU ordering gone with no message.
 
     Attributes:
+        accelerators: Ordered accelerator preference, most-wanted first.
+        accelerator_count: Accelerators per instance.
         min_vram_gb: Minimum GPU VRAM in GB.
-        min_cuda: Minimum CUDA version string.
-        max_usd_per_hr: Ceiling on cost rate.
-        gpu_preference: Ordered list of preferred GPU types.
         disk_gb: Minimum disk in GB.
+        spot: Request a spot/preemptible instance when True.
+        max_usd_per_hr: Ceiling on cost rate.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
+    accelerators: list[str] = []
+    accelerator_count: int = 1
     min_vram_gb: int = 48
-    min_cuda: str = "12.8"
-    max_usd_per_hr: float = 2.20
-    gpu_preference: list[str] = []
     disk_gb: int = 100
+    spot: bool = False
+    max_usd_per_hr: float = 2.20
+
+    #: Pre-S1 keys of the ``requirements`` block that did not survive the
+    #: rename as-is, mapped to the message explaining where each went.
+    #: ``extra="forbid"`` already rejects them, but with pydantic's generic
+    #: ``extra_forbidden`` text, which does not tell the operator where the
+    #: value moved.
+    _MOVED_KEYS: ClassVar[dict[str, str]] = {
+        "min_cuda": (
+            "compute.placement.min_cuda is not portable — only RunPod can "
+            "constrain the CUDA version at selection time; it now lives at "
+            "compute.backend_options.runpod.min_cuda"
+        ),
+        "gpu_preference": (
+            "compute.placement.gpu_preference was renamed to "
+            "compute.placement.accelerators"
+        ),
+    }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_moved_keys(cls, data: Any) -> Any:  # noqa: ANN401 — pydantic hook
+        """Refuse the pre-S1 keys, naming where each one went.
+
+        Args:
+            data: Raw input to ``PlacementConfig`` validation.
+
+        Returns:
+            *data* unchanged when no moved key is present.
+
+        Raises:
+            ConfigError: A moved key is present under ``placement``.
+        """
+        if isinstance(data, dict):
+            for key, message in cls._MOVED_KEYS.items():
+                if key in data:
+                    raise ConfigError(message)
+        return data
 
 
 def _resolve_provider_class(provider_name: str) -> type[Any] | None:
@@ -828,7 +880,9 @@ class ComputeConfig(BaseModel):
         provider: Compute provider name (e.g. "runpod").
         image: Container image reference.
         mode: Instance mode; "pod" or "serverless".
-        requirements: Hardware requirements override.
+        placement: Portable resource block — what to get (accelerators,
+            VRAM, disk, spot, price ceiling). Replaced the pre-S1
+            ``requirements`` catalog-filter block.
         lifecycle: Lifecycle guardrails (budget required here for non-hosted).
         heartbeat_mode: Heartbeat substrate gate (B5a). Value space is the
             union across all providers; provider-mode compatibility is
@@ -856,18 +910,21 @@ class ComputeConfig(BaseModel):
     provider: str
     image: str
     mode: str = "pod"
-    requirements: RequirementsConfig = RequirementsConfig()
+    placement: PlacementConfig = PlacementConfig()
     lifecycle: LifecycleConfig | None = None
     heartbeat_mode: str = "none"
     warm_reuse_auto_attach: bool = True
     backend_options: dict[str, dict[str, Any]] = {}
 
-    #: Pre-S1 vendor keys that used to live on this (portable) block, mapped
-    #: to the namespaced path each one moved to. Present so the removal is
-    #: loud — see :meth:`_reject_removed_keys`.
+    #: Pre-S1 keys that used to live on this block, mapped to the path each
+    #: one moved to: the vendor keys into their provider namespace, and the
+    #: ``requirements`` catalog-filter block into the portable ``placement``
+    #: block. Present so the removal is loud — see
+    #: :meth:`_reject_removed_keys`.
     _REMOVED_KEYS: ClassVar[dict[str, str]] = {
         "cloud": "compute.backend_options.skypilot.clouds",
         "cloud_type": "compute.backend_options.runpod.cloud_type",
+        "requirements": "compute.placement",
     }
 
     @model_validator(mode="before")
@@ -1516,26 +1573,68 @@ class Config(BaseModel):
             lora_swap_re_probe_after_s=lc.lora_swap_re_probe_after_s,
         )
 
+    def placement(self) -> InterfacePlacement:
+        """Return the portable resource block with defaults applied.
+
+        Pulls from ``compute.placement`` when a compute block is present;
+        returns all-defaults otherwise (min_vram_gb=48, disk_gb=100,
+        max_usd_per_hr=2.20, spot=False, accelerators=(), accelerator_count=1
+        — the pre-S1 ``requirements`` defaults, so a config that sets no block
+        launches exactly what it launched before).
+
+        Returns:
+            An interfaces.Placement instance.
+        """
+        if self.compute is None:
+            return InterfacePlacement()
+
+        p = self.compute.placement
+        return InterfacePlacement(
+            accelerators=tuple(p.accelerators),
+            accelerator_count=p.accelerator_count,
+            min_vram_gb=p.min_vram_gb,
+            disk_gb=p.disk_gb,
+            spot=p.spot,
+            max_usd_per_hr=p.max_usd_per_hr,
+        )
+
+    def _runpod_min_cuda(self) -> str:
+        """Return the RunPod-namespaced CUDA floor, or its default.
+
+        Read unconditionally, not only when ``compute.provider == "runpod"``:
+        ``filter_offers`` still applies ``min_cuda`` for every provider until
+        S4 inverts selection, so a SkyPilot config that pinned a lower floor
+        to admit its 12.0-reporting catalog must keep it. The namespace read
+        cannot raise for a non-runpod config (an absent namespace yields
+        Options defaults), but it is guarded anyway: a registry that has not
+        got a ``runpod`` entry must not take down every config load.
+
+        Returns:
+            The ``compute.backend_options.runpod.min_cuda`` value, or
+            ``"12.8"`` when the namespace or the provider is unavailable.
+        """
+        try:
+            return str(self.backend_options_for("runpod").min_cuda)
+        except (ConfigError, AttributeError):
+            return InterfaceHardwareRequirements().min_cuda
+
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
         """Return HardwareRequirements with defaults applied.
 
-        Pulls from compute.requirements when present; returns all-defaults otherwise.
-        Defaults: min_vram_gb=48, min_cuda="12.8", max_usd_per_hr=2.20,
-        disk_gb=100, gpu_preference=().
+        A shim over :meth:`placement` plus the RunPod-namespaced ``min_cuda``,
+        kept because ``ComputeProvider.find_offers`` still consumes a catalog
+        filter. S4 inverts selection onto ``Placement`` and deletes this.
 
         Returns:
             An interfaces.HardwareRequirements instance.
         """
-        if self.compute is None:
-            return InterfaceHardwareRequirements()
-
-        r = self.compute.requirements
+        p = self.placement()
         return InterfaceHardwareRequirements(
-            min_vram_gb=r.min_vram_gb,
-            min_cuda=r.min_cuda,
-            max_usd_per_hr=r.max_usd_per_hr,
-            gpu_preference=tuple(r.gpu_preference),
-            disk_gb=r.disk_gb,
+            min_vram_gb=p.min_vram_gb,
+            min_cuda=self._runpod_min_cuda(),
+            max_usd_per_hr=p.max_usd_per_hr,
+            gpu_preference=p.accelerators,
+            disk_gb=p.disk_gb,
         )
 
     def backend_options_for(self, provider_name: str) -> Any:  # noqa: ANN401

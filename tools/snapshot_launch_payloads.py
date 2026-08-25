@@ -121,22 +121,22 @@ def _catalog_offer(cfg: Config) -> Offer:
     """Return the frozen synthetic offer standing in for a catalog lookup.
 
     RunPod and SkyPilot enumerate offers over a network. Both are given a
-    deterministic offer built from the config's own hardware requirements, so
-    the golden pins the spec -> payload mapping (which S1 changes) rather than
+    deterministic offer built from the config's own placement block, so the
+    golden pins the spec -> payload mapping (which S1 changes) rather than
     catalog contents (which S4 owns).
 
     Args:
         cfg: The loaded config.
 
     Returns:
-        A GPU offer named after the config's first ``gpu_preference`` entry,
-        or the synthetic CPU offer SkyPilot's ``find_offers`` returns for
-        ``min_vram_gb == 0`` — the shape that makes ``create_instance``
+        A GPU offer named after the config's first ``placement.accelerators``
+        entry, or the synthetic CPU offer SkyPilot's ``find_offers`` returns
+        for ``min_vram_gb == 0`` — the shape that makes ``create_instance``
         request ``cpus``/``memory`` instead of an accelerator.
     """
     from kinoforge.core.interfaces import Offer
 
-    reqs = cfg.hardware_requirements()
+    reqs = cfg.placement()
     if reqs.min_vram_gb == 0:
         # Mirrors SkyPilotProvider.find_offers' CPU short-circuit exactly.
         return Offer(
@@ -147,7 +147,7 @@ def _catalog_offer(cfg: Config) -> Offer:
             cost_rate_usd_per_hr=0.05,
             mode="pod",
         )
-    gpu = reqs.gpu_preference[0] if reqs.gpu_preference else "NVIDIA A100 80GB PCIe"
+    gpu = reqs.accelerators[0] if reqs.accelerators else "NVIDIA A100 80GB PCIe"
     return Offer(
         id=gpu,
         gpu_type=gpu,

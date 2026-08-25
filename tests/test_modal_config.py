@@ -28,7 +28,7 @@ def test_config_resolves_to_modal_provider():
 def test_config_targets_wan21_1_3b_cheaply():
     cfg = load_config(CFG)
     assert cfg.compute is not None
-    assert cfg.compute.requirements.min_vram_gb <= 24
+    assert cfg.compute.placement.min_vram_gb <= 24
     assert any("Wan2.1-T2V-1.3B" in m.ref for m in cfg.models)
 
 
@@ -43,7 +43,7 @@ def test_a14b_config_resolves_to_modal_provider():
 def test_a14b_config_targets_80gb_wan22():
     cfg = load_config(CFG_A14B)
     assert cfg.compute is not None
-    assert cfg.compute.requirements.min_vram_gb == 80
+    assert cfg.compute.placement.min_vram_gb == 80
     assert any("Wan2.2-T2V-A14B" in m.ref for m in cfg.models)
     assert cfg.spec is not None
     model = cfg.spec["model"]
@@ -70,7 +70,7 @@ def test_flashvsr_config_resolves_to_modal_provider():
 def test_flashvsr_config_is_upscale_only_80gb_cp313():
     cfg = load_config(CFG_FLASHVSR)
     assert cfg.compute is not None
-    assert cfg.compute.requirements.min_vram_gb == 80
+    assert cfg.compute.placement.min_vram_gb == 80
     # Upscale-only: no eager base model, server runs only the FlashVSR runtime.
     assert cfg.models == []
     assert cfg.engine.diffusers is not None

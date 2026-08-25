@@ -53,6 +53,40 @@ class HardwareRequirements:
 
 
 @dataclass(frozen=True)
+class Placement:
+    """What to get. Not which SKU to book.
+
+    compute-seam S1: the portable resource block every provider can honour.
+    ``HardwareRequirements`` above describes a CATALOG FILTER — what to
+    EXCLUDE while enumerating offers — which is a RunPod/SkyPilot-shaped
+    question. Placement states the requirement itself, so a provider that
+    schedules rather than enumerates (Modal) can honour it directly. S4
+    inverts selection onto this and deletes the filter.
+
+    Defaults deliberately match the pre-S1 ``HardwareRequirements`` defaults
+    so a config that set no block launches exactly what it launched before.
+
+    Attributes:
+        accelerators: Ordered accelerator preference, most-wanted first.
+            Empty means "no preference"; the pre-S1 name was
+            ``gpu_preference``.
+        accelerator_count: Accelerators per instance.
+        min_vram_gb: Minimum VRAM per accelerator in GB.
+        disk_gb: Minimum instance/container disk in GB.
+        spot: Request a spot/preemptible instance when True. Lived on
+            ``InstanceSpec`` before S1, where only SkyPilot ever read it.
+        max_usd_per_hr: Ceiling on the hourly rate.
+    """
+
+    accelerators: tuple[str, ...] = ()
+    accelerator_count: int = 1
+    min_vram_gb: int = 48
+    disk_gb: int = 100
+    spot: bool = False
+    max_usd_per_hr: float = 2.20
+
+
+@dataclass(frozen=True)
 class Offer:
     """A bookable compute offer returned by a provider."""
 
@@ -174,7 +208,11 @@ class InstanceSpec:
     image_build_script: str | None = None
     runtime_provision_script: str | None = None
     run_cmd: list[str] | None = None
-    spot: bool = False  # Request a spot/preemptible instance when True
+    # compute-seam S1: the portable resource block (``cfg.compute.placement``),
+    # populated by build_instance_spec. Carries the spot/preemptible request
+    # that used to be a bare ``spot`` field here; SkyPilot reads
+    # ``spec.placement.spot`` for its ``use_spot`` resource.
+    placement: Placement = field(default_factory=Placement)
     # C28 A1.5: diagnostic env overlay merged into pod env via setdefault
     # (user-supplied `env` always wins). Default empty = no behavioural change.
     diagnostic_env: dict[str, str] = field(default_factory=dict)

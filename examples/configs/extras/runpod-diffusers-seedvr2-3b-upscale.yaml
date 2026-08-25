@@ -36,7 +36,7 @@ models:
 compute:
   provider: runpod
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
-  requirements:
+  placement:
     min_vram_gb: 24
     disk_gb: 100
 
