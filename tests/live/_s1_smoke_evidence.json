@@ -1,0 +1,57 @@
+{
+  "smoke": "compute-seam S1 \u2014 migrated config launches what it launched pre-S1",
+  "task": "task-8 (S1 portable core)",
+  "config": "examples/configs/skypilot-cpu.yaml",
+  "golden": "tests/providers/golden/launch_payloads/skypilot-cpu.json",
+  "cluster_name": "kinoforge-s1-smoke-3d077623",
+  "region_requested": "us-west-2",
+  "clouds_requested": [
+    "aws"
+  ],
+  "started_at": "2026-08-27T04:14:22.146817-07:00",
+  "utilisation_samples": [],
+  "payload_comparison": {
+    "status": "mismatch",
+    "normalised_fields": [
+      "task_config.name",
+      "launch_kwargs.cluster_name",
+      "task_config.setup:<watchdog deadline epoch>",
+      "task_config.resources.cloud (smoke-only pin)",
+      "task_config.resources.region (smoke-only pin)"
+    ],
+    "live_resources": {
+      "image_id": "docker:runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+      "cpus": "1+",
+      "memory": "2+",
+      "disk_size": 30,
+      "region": "us-west-2",
+      "cloud": "aws"
+    },
+    "live_launch_kwargs": {},
+    "task_config_keys": [
+      "envs",
+      "name",
+      "resources",
+      "run",
+      "setup"
+    ],
+    "setup_sha_equal_after_normalisation": true,
+    "compared_at": "2026-08-27T04:14:22.153425-07:00"
+  },
+  "cluster_state": {
+    "observed_ready": false,
+    "statuses_seen": []
+  },
+  "launched_at": "2026-08-27T04:14:22.147095-07:00",
+  "teardown": {
+    "started_at": "2026-08-27T04:14:22.186256-07:00",
+    "nuclear_first": true,
+    "forced_instance_ids": [],
+    "destroy_instance": "raised: ClusterDoesNotExist(\"Cluster 'kinoforge-s1-smoke-3d077623' does not exist.\")",
+    "final_ec2_states": [],
+    "finished_at": "2026-08-27T04:14:59.196447-07:00",
+    "ledger_forget": "ok"
+  },
+  "finished_at": "2026-08-27T04:14:59.198229-07:00",
+  "billable_wall_clock_s": 37.1
+}

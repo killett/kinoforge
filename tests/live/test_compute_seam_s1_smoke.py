@@ -80,6 +80,7 @@ Design: .superpowers/sdd/2026-08-24-compute-seam-s1-portable-core/task-8-brief.m
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 import logging
@@ -180,6 +181,14 @@ _STALL_CONSECUTIVE_PROBES = 3
 #: A `top` idle% at or above this is read as "doing essentially nothing".
 _STALL_IDLE_PCT_FLOOR = 99.0
 
+#: Teardown is convergent, not one-shot (see :func:`_teardown` for the live
+#: leak that forced this). Ceiling on the whole settle loop, the gap between
+#: passes, and how many consecutive all-clear passes are required before the
+#: cluster is believed gone.
+_TEARDOWN_SETTLE_S = 900.0
+_TEARDOWN_PASS_INTERVAL_S = 20.0
+_TEARDOWN_CLEAN_PASSES = 2
+
 #: kinoforge status strings that mean "the cluster exists and is UP at the
 #: provider". ``_sky_status_to_kinoforge`` maps sky's ``UP`` to ``"ready"``;
 #: the others are accepted defensively in case that mapping widens.
@@ -242,15 +251,30 @@ class _InputRecordingSky:
         class _TaskProxy:
             @staticmethod
             def from_yaml_config(config: dict[str, Any]) -> Any:  # noqa: ANN401
-                """Record ``config`` verbatim, then build the real Task from it."""
-                captured["task_config"] = config
+                """Record a SNAPSHOT of ``config``, then build the real Task.
+
+                The snapshot is not defensive style, it is required.
+                ``sky.Task.from_yaml_config`` consumes its argument in place —
+                verified against sky 0.12.3: every one of ``name``/``run``/
+                ``setup``/``envs``/``resources`` is ``config.pop``-ed, leaving
+                the caller's dict EMPTY on return. Recording the reference
+                (as the first version of this smoke did) hands the golden
+                comparison a dict that the very next line guts, so what gets
+                compared depends on a thread race rather than on the payload.
+                """
+                captured["task_config"] = copy.deepcopy(config)
                 return real_task.from_yaml_config(config)
 
         return _TaskProxy
 
     def launch(self, task: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-        """Record ``kwargs``, then perform the real launch."""
-        self.captured["launch_kwargs"] = kwargs
+        """Record a snapshot of ``kwargs``, then perform the real launch.
+
+        Recorded LAST of the two captures, so a waiter that requires both
+        ``task_config`` and ``launch_kwargs`` is guaranteed to be looking at
+        a complete payload rather than a half-built one.
+        """
+        self.captured["launch_kwargs"] = copy.deepcopy(kwargs)
         return self._real.launch(task, **kwargs)
 
 
@@ -512,76 +536,96 @@ def _force_terminate(cluster_name: str) -> list[str]:
 
 
 def _teardown(
-    provider: SkyPilotProvider, cluster_name: str, *, nuclear_first: bool
+    provider: SkyPilotProvider,
+    cluster_name: str,
+    *,
+    create_thread: threading.Thread,
 ) -> dict[str, Any]:
-    """Tiered teardown: stop billing, then reconcile SkyPilot + ledger state.
+    """Tear down convergently: keep killing until nothing can come back.
+
+    A single-pass teardown is WRONG here, and the first live run proved it.
+    When the test aborts early (a failed assertion seconds after
+    ``create_thread.start()``), ``sky.launch`` is still provisioning: sky has
+    not registered the cluster yet and EC2 has no tagged instance yet, so a
+    one-shot "is anything running?" check reads clean and the teardown
+    reports success — while the SkyPilot API server, which is a SEPARATE
+    process and outlives this pytest run, goes on to create the instance
+    seconds later. Observed 2026-08-27: teardown finished at 04:14:59
+    declaring nothing alive, and ``sky status`` at 04:15:12 showed
+    ``kinoforge-s1-smoke-3d077623`` in ``INIT`` on a live ``c6i.large``.
+    "Nothing is running yet" is not the same claim as "nothing is running".
+
+    So this loops: each pass force-terminates any tagged EC2 instance
+    (immediate, and free of SkyPilot's per-cluster lock, which an in-flight
+    launch can hold), then ``sky.down``s the cluster if sky lists it at all.
+    It only concludes when BOTH oracles read clean on consecutive passes AND
+    the launch thread is no longer running to create anything new.
 
     Args:
         provider: The SkyPilot provider whose API can still be used.
         cluster_name: Cluster name for both provider and EC2 lookups.
-        nuclear_first: When ``True`` (``sky.launch`` still running on the
-            background thread), terminate the EC2 instances directly BEFORE
-            calling ``sky.down`` — an in-flight launch can hold SkyPilot's
-            cluster lock, and waiting politely for it is billed time.
+        create_thread: The thread running ``create_instance``. While it is
+            alive a launch may still materialise an instance, so a clean
+            read is not yet trustworthy.
 
     Returns:
-        A record of what each tier did, for the evidence file.
+        A record of every pass, for the evidence file.
 
     Raises:
-        RuntimeError: An EC2 instance tagged with ``cluster_name`` is still
-            alive after every tier — surfaced loudly rather than swallowed,
+        RuntimeError: Something tagged with ``cluster_name`` is still alive
+            after the settle window — surfaced loudly rather than swallowed,
             per the project's "verify teardown, don't trust a mid-run log
             line" rule.
     """
-    record: dict[str, Any] = {
-        "started_at": _now_local(),
-        "nuclear_first": nuclear_first,
-    }
+    record: dict[str, Any] = {"started_at": _now_local(), "passes": []}
+    deadline = time.time() + _TEARDOWN_SETTLE_S
+    clean_streak = 0
 
-    if nuclear_first:
-        record["forced_instance_ids"] = _force_terminate(cluster_name)
+    while time.time() < deadline:
+        entry: dict[str, Any] = {"at": _now_local()}
+        entry["forced_instance_ids"] = _force_terminate(cluster_name)
 
-    try:
-        _log.info("tearing down via provider.destroy_instance")
-        provider.destroy_instance(cluster_name)
-        record["destroy_instance"] = "ok"
-    except Exception as exc:  # noqa: BLE001
-        _log.warning("provider.destroy_instance raised: %r", exc)
-        record["destroy_instance"] = f"raised: {exc!r}"
+        sky_status = _sky_status_of(provider, cluster_name)
+        entry["sky_status"] = sky_status
+        if sky_status is not None:
+            try:
+                provider.destroy_instance(cluster_name)
+                entry["destroy_instance"] = "ok"
+            except Exception as exc:  # noqa: BLE001
+                entry["destroy_instance"] = f"raised: {exc!r}"
 
-    states = _ec2_states(cluster_name)
-    if states and not all(s in _DEAD_STATES for s in states):
-        _log.warning(
-            "provider.destroy_instance left states=%r for %s; forcing terminate",
+        states = _ec2_states(cluster_name)
+        alive = [s for s in states if s not in _DEAD_STATES]
+        entry["ec2_states"] = states
+        entry["launch_thread_alive"] = create_thread.is_alive()
+        record["passes"].append(entry)
+        _log.info(
+            "teardown pass: sky=%s ec2=%r alive=%r launching=%s",
+            sky_status,
             states,
-            cluster_name,
+            alive,
+            entry["launch_thread_alive"],
         )
-        record["forced_instance_ids_late"] = _force_terminate(cluster_name)
 
-    deadline = time.time() + 300.0
-    states = _ec2_states(cluster_name)
-    if not states:
-        # An empty read this early can also mean "the provisioner had not
-        # created the instance yet when we asked" — not the same claim as
-        # "nothing is running". Re-ask once after a grace window before
-        # believing it.
-        time.sleep(20.0)
-        states = _ec2_states(cluster_name)
-        if states and not all(s in _DEAD_STATES for s in states):
-            record["forced_instance_ids_grace"] = _force_terminate(cluster_name)
-            states = _ec2_states(cluster_name)
-    while (
-        states and not all(s in _DEAD_STATES for s in states) and time.time() < deadline
-    ):
-        time.sleep(15.0)
-        states = _ec2_states(cluster_name)
-    record["final_ec2_states"] = states
+        if not alive and sky_status is None and not entry["launch_thread_alive"]:
+            clean_streak += 1
+            if clean_streak >= _TEARDOWN_CLEAN_PASSES:
+                break
+        else:
+            clean_streak = 0
+        time.sleep(_TEARDOWN_PASS_INTERVAL_S)
+
+    final_states = _ec2_states(cluster_name)
+    final_sky = _sky_status_of(provider, cluster_name)
+    record["final_ec2_states"] = final_states
+    record["final_sky_status"] = final_sky
+    record["clean_streak"] = clean_streak
     record["finished_at"] = _now_local()
 
     # The provider writes a provisional "launching" ledger row before
     # sky.launch and only forgets it on the SUCCESS path (F12). A launch that
-    # raises — the expected outcome here — therefore leaves a row that
-    # `kinoforge list` would report as a live instance. The instance is
+    # raises — the expected outcome for this config — therefore leaves a row
+    # that `kinoforge list` would report as a live instance. The instance is
     # confirmed dead above, so the row is stale by definition; drop it so the
     # post-run ledger check is honest rather than needing a manual `forget`.
     try:
@@ -591,10 +635,11 @@ def _teardown(
         _log.warning("ledger forget failed for %s: %r", cluster_name, exc)
         record["ledger_forget"] = f"raised: {exc!r}"
 
-    survivors = [s for s in states if s not in _DEAD_STATES]
-    if survivors:
+    survivors = [s for s in final_states if s not in _DEAD_STATES]
+    if survivors or final_sky is not None:
         raise RuntimeError(
-            f"cluster {cluster_name!r} survived teardown with states {survivors!r} "
+            f"cluster {cluster_name!r} survived teardown "
+            f"(ec2 states {survivors!r}, sky status {final_sky!r}) "
             f"— destroy it by hand in {_REGION}"
         )
     _log.info("teardown complete cluster=%s", cluster_name)
@@ -693,17 +738,24 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
 
         # --- Claim 1: wire-shape parity, seconds in, before any waiting ---
         capture_deadline = time.time() + _CAPTURE_TIMEOUT_S
+        # BOTH captures are required. The golden pins task_config AND
+        # launch_kwargs; sky.launch is entered a beat after
+        # Task.from_yaml_config returns, so waiting only for task_config
+        # compares a payload whose launch_kwargs half is still ``{}`` and
+        # reports a mismatch that is purely a race in this harness.
+        needed = ("task_config", "launch_kwargs")
         while (
-            "task_config" not in recording_sky.captured
+            not all(k in recording_sky.captured for k in needed)
             and time.time() < capture_deadline
             and (create_thread.is_alive() or not create_exc)
         ):
             time.sleep(1.0)
         why = f" (create_instance raised: {create_exc[0]!r})" if create_exc else ""
-        assert "task_config" in recording_sky.captured, (
-            f"sky.Task.from_yaml_config was never reached within "
-            f"{_CAPTURE_TIMEOUT_S:.0f}s — no payload to compare against the "
-            f"golden{why}"
+        missing = [k for k in needed if k not in recording_sky.captured]
+        assert not missing, (
+            f"the sky seam was never fully reached within "
+            f"{_CAPTURE_TIMEOUT_S:.0f}s — {missing!r} never captured, so there "
+            f"is no complete payload to compare against the golden{why}"
         )
         live_payload = {
             "provider": "skypilot",
@@ -850,7 +902,7 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
     finally:
         try:
             evidence["teardown"] = _teardown(
-                provider, cluster_name, nuclear_first=create_thread.is_alive()
+                provider, cluster_name, create_thread=create_thread
             )
         except Exception as exc:  # noqa: BLE001 — recorded, then re-raised below
             evidence["teardown"] = {"error": repr(exc)}
