@@ -72,6 +72,13 @@ class Placement:
             ``gpu_preference``.
         accelerator_count: Accelerators per instance.
         min_vram_gb: Minimum VRAM per accelerator in GB.
+        min_cuda: Minimum CUDA version an offer must report (semantic
+            compare, e.g. ``"12.8"``). Portable despite reading as a vendor
+            knob: kinoforge filters client-side in
+            :func:`kinoforge.core.offers.filter_offers`, over whatever
+            catalog any enumerating provider returns, so the floor applies
+            wherever offers are enumerated — not only where the vendor API
+            can express it.
         disk_gb: Minimum instance/container disk in GB.
         spot: Request a spot/preemptible instance when True. Lived on
             ``InstanceSpec`` before S1, where only SkyPilot ever read it.
@@ -81,6 +88,7 @@ class Placement:
     accelerators: tuple[str, ...] = ()
     accelerator_count: int = 1
     min_vram_gb: int = 48
+    min_cuda: str = "12.8"
     disk_gb: int = 100
     spot: bool = False
     max_usd_per_hr: float = 2.20

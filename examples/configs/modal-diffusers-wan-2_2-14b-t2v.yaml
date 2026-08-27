@@ -48,16 +48,11 @@ compute:
   provider: modal
   image: "python:3.13-slim"
   mode: pod
-  backend_options:
-    runpod:
-      # RunPod-namespaced because only RunPod publishes a per-offer CUDA
-      # version to filter on; Config.hardware_requirements() still applies
-      # it to this provider's offer filter until S4 inverts selection.
-      min_cuda: "12.4"
   placement:
     # MoE = two 14B transformers (~56GB bf16) + UMT5-XXL T5 + VAE + activations.
     # 48GB cards OOM (RunPod Task 8 attempts #17-19); 80GB fits comfortably.
     min_vram_gb: 80
+    min_cuda: "12.4"
     max_usd_per_hr: 4.00
     accelerators:
       - "A100-80GB"

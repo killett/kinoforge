@@ -340,12 +340,6 @@ class RunPodProvider(ComputeProvider):
                 capacity miss before giving up. ``0`` fails on the first
                 miss. Read by
                 :func:`kinoforge._adapters.build_capacity_wait_for`.
-            min_cuda: Minimum CUDA version an offer must report to survive
-                selection (semantic compare, e.g. ``"12.8"``). Lives here
-                rather than on the portable ``compute.placement`` block
-                because only RunPod publishes a per-offer CUDA version to
-                constrain at selection time. Read by
-                :meth:`kinoforge.core.config.Config.hardware_requirements`.
         """
 
         model_config = ConfigDict(extra="forbid")
@@ -353,7 +347,6 @@ class RunPodProvider(ComputeProvider):
         cloud_type: Literal["any", "secure", "community"] = "any"
         restart_policy: Literal["always", "never"] = "always"
         capacity_wait_s: float = 300.0
-        min_cuda: str = "12.8"
 
     @classmethod
     def validate_options(cls, raw: Mapping[str, Any]) -> RunPodProvider.Options:

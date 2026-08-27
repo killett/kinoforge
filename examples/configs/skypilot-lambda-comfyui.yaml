@@ -45,15 +45,11 @@ compute:
   # Pin sky to Lambda only. Threaded into SkyPilotProvider._clouds via
   # kinoforge._adapters.build_provider_for.
   backend_options:
-    runpod:
-      # RunPod-namespaced because only RunPod publishes a per-offer CUDA
-      # version to filter on; Config.hardware_requirements() still applies
-      # it to this provider's offer filter until S4 inverts selection.
-      min_cuda: "12.0"
     skypilot:
       clouds: ["lambda"]
   placement:
     min_vram_gb: 24
+    min_cuda: "12.0"
     # Bumped from the legacy 1.00 ceiling so Lambda A6000 ($1.09/hr)
     # and A10 ($1.29/hr) clear filtering. Stage E live smoke holds the
     # actual spend down via the lifecycle.budget envelope below.

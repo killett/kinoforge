@@ -31,9 +31,9 @@ _CFG = (
     "  backend_options:\n"
     "    runpod:\n"
     "      cloud_type: secure\n"
-    '      min_cuda: "12.4"\n'
     "  placement:\n"
     "    min_vram_gb: 16\n"
+    '    min_cuda: "12.4"\n'
     "    max_usd_per_hr: 0.50\n"
     "    disk_gb: 40\n"
     "  lifecycle:\n"

@@ -52,13 +52,6 @@ models: []
 compute:
   provider: skypilot
   backend_options:
-    runpod:
-      # RunPod-namespaced because only RunPod publishes a per-offer CUDA
-      # version to filter on; Config.hardware_requirements() still applies
-      # it to this provider's offer filter until S4 inverts selection.
-      # Lambda's catalog reports a flat cuda=12.0; the 12.8 image ships its own
-      # toolkit and Lambda hosts carry a recent driver.
-      min_cuda: "12.0"
     skypilot:
       clouds:
         - "lambda"
@@ -73,6 +66,9 @@ compute:
     # the usage note). Cap sits below GH200 ($2.29), which is ARM (aarch64) and
     # incompatible with the amd64 runpod/pytorch image.
     min_vram_gb: 40
+    # Lambda's catalog reports a flat cuda=12.0; the 12.8 image ships its own
+    # toolkit and Lambda hosts carry a recent driver.
+    min_cuda: "12.0"
     max_usd_per_hr: 2.20
     disk_gb: 60
     accelerators:

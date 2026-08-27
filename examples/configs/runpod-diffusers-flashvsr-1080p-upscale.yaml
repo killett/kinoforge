@@ -63,9 +63,9 @@ compute:
       # Ride transient RunPod capacity droughts: re-query offers + retry
       # create for up to 5m before failing (2026-07-07).
       capacity_wait_s: 300
-      min_cuda: "12.4"
   placement:
     min_vram_gb: 80
+    min_cuda: "12.4"
     # Widened 2026-07-07: 4 Ampere/Hopper 80GB types under a $3 cap makes a
     # capacity miss rarer; backend_options.runpod.capacity_wait_s rides out
     # whatever miss remains.

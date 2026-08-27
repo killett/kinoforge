@@ -29,11 +29,9 @@ compute:
   provider: runpod
   image: "runpod/pytorch:latest"
   mode: pod
-  backend_options:
-    runpod:
-      min_cuda: "12.4"
   placement:
     min_vram_gb: 16
+    min_cuda: "12.4"
     max_usd_per_hr: 0.50
     accelerators:
       - "NVIDIA RTX A5000"

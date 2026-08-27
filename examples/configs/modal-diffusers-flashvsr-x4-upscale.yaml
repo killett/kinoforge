@@ -69,16 +69,11 @@ compute:
   provider: modal
   image: "python:3.13-slim"
   mode: pod
-  backend_options:
-    runpod:
-      # RunPod-namespaced because only RunPod publishes a per-offer CUDA
-      # version to filter on; Config.hardware_requirements() still applies
-      # it to this provider's offer filter until S4 inverts selection.
-      min_cuda: "12.4"
   placement:
     # FlashVSR 480->1920 4x peaks ~42-46 GB with tile_size=512 (RunPod x4 cfg
     # history) — an 80GB card runs the full 81f clip without the §21 downscale.
     min_vram_gb: 80
+    min_cuda: "12.4"
     max_usd_per_hr: 4.00
     disk_gb: 60
     accelerators:

@@ -53,9 +53,9 @@ compute:
   backend_options:
     runpod:
       cloud_type: secure
-      min_cuda: "12.1"
   placement:
     min_vram_gb: 16
+    min_cuda: "12.1"
     max_usd_per_hr: 1.00
     disk_gb: 40
     accelerators:

@@ -2,8 +2,10 @@
 
 ``requirements`` described a catalog filter. ``placement`` describes what to
 get, which is the thing every provider can honour. The rename is not cosmetic:
-two of the five old keys change owner, so keeping the old name over new
-semantics would leave the config surface lying.
+``gpu_preference`` becomes ``accelerators`` and ``spot`` arrives from
+``InstanceSpec``, so keeping the old name over new semantics would leave the
+config surface lying. ``min_cuda`` stays on the block — it looks like a RunPod
+knob, but kinoforge filters on it client-side for every enumerating provider.
 """
 
 from __future__ import annotations
@@ -55,6 +57,7 @@ def test_placement_defaults_match_the_old_requirements_defaults():
         2.20,
         False,
     )
+    assert p.min_cuda == "12.8"
     assert p.accelerators == ()
     assert p.accelerator_count == 1
 
@@ -65,13 +68,32 @@ def test_legacy_requirements_block_names_its_replacement():
     assert "compute.placement" in str(exc.value)
 
 
-def test_min_cuda_under_placement_is_rejected_and_points_at_the_namespace():
-    # Bug caught: min_cuda looks portable but only RunPod can filter on it, so
-    # under placement it would be an ignored field of exactly the kind S1 exists
-    # to delete.
+def test_min_cuda_is_portable_and_lives_on_placement():
+    # Bug caught: min_cuda parked in a provider namespace. It reads as a vendor
+    # knob because only the vendor APIs constrain CUDA at selection time, but
+    # kinoforge filters client-side in core/offers.py::filter_offers over
+    # whatever catalog ANY enumerating provider returns — so the floor is
+    # portable, and namespacing it would leave every non-RunPod config either
+    # unable to express it or carrying a runpod block it has no business having.
+    cfg = _load(
+        {"provider": "skypilot", "image": "i", "placement": {"min_cuda": "12.0"}}
+    )
+    assert cfg.placement().min_cuda == "12.0"
+    assert cfg.hardware_requirements().min_cuda == "12.0"
+
+
+def test_min_cuda_in_the_runpod_namespace_is_refused():
+    # Bug caught: the namespace key survives as a second spelling of the same
+    # floor, so a config can set both and only one of them steers find_offers.
     with pytest.raises(ConfigError) as exc:
-        _load({"provider": "runpod", "image": "i", "placement": {"min_cuda": "12.8"}})
-    assert "compute.backend_options.runpod.min_cuda" in str(exc.value)
+        _load(
+            {
+                "provider": "runpod",
+                "image": "i",
+                "backend_options": {"runpod": {"min_cuda": "12.1"}},
+            }
+        )
+    assert "min_cuda" in str(exc.value)
 
 
 def test_legacy_gpu_preference_key_under_placement_is_refused():
@@ -97,22 +119,20 @@ def test_hardware_requirements_shim_sources_gpu_preference_from_accelerators():
     assert cfg.hardware_requirements().gpu_preference == ("H100",)
 
 
-def test_hardware_requirements_shim_sources_min_cuda_from_the_runpod_namespace():
+def test_hardware_requirements_shim_sources_min_cuda_from_placement():
     # Bug caught: the shim keeps returning the "12.8" default, so a config that
-    # pinned a lower CUDA floor to admit older SKUs silently loses every offer.
+    # pinned a lower CUDA floor to admit older SKUs silently loses every offer —
+    # SkyPilot's catalog reports a flat cuda=12.0, so a 12.8 floor empties it.
     cfg = _load(
-        {
-            "provider": "runpod",
-            "image": "i",
-            "backend_options": {"runpod": {"min_cuda": "12.1"}},
-        }
+        {"provider": "skypilot", "image": "i", "placement": {"min_cuda": "12.0"}}
     )
-    assert cfg.hardware_requirements().min_cuda == "12.1"
+    assert cfg.hardware_requirements().min_cuda == "12.0"
 
 
-def test_hardware_requirements_shim_does_not_blow_up_on_a_non_runpod_provider():
-    cfg = _load({"provider": "skypilot", "image": "i"})
-    assert cfg.hardware_requirements().min_cuda == "12.8"
+def test_hardware_requirements_min_cuda_default_needs_no_provider_branch():
+    for provider in ("runpod", "skypilot", "modal"):
+        cfg = _load({"provider": provider, "image": "i"})
+        assert cfg.hardware_requirements().min_cuda == "12.8", provider
 
 
 def test_instance_spec_no_longer_carries_spot():

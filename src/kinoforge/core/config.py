@@ -776,9 +776,11 @@ class PlacementConfig(BaseModel):
 
     YAML surface for :class:`kinoforge.core.interfaces.Placement`. Replaces
     the pre-S1 ``compute.requirements`` block: ``gpu_preference`` is renamed
-    ``accelerators``, ``spot`` arrives from ``InstanceSpec``, and ``min_cuda``
-    leaves entirely for ``compute.backend_options.runpod.min_cuda`` (only
-    RunPod can constrain a CUDA version at selection time).
+    ``accelerators`` and ``spot`` arrives from ``InstanceSpec``. ``min_cuda``
+    stays here — it reads as a RunPod knob because only the vendor APIs
+    constrain CUDA at selection time, but kinoforge applies it client-side in
+    :func:`kinoforge.core.offers.filter_offers` over whatever catalog any
+    enumerating provider returns, so it is portable.
 
     ``extra="forbid"`` is load-bearing: pydantic's default would silently drop
     a stale ``gpu_preference:`` and hand ``find_offers`` an empty preference
@@ -788,6 +790,7 @@ class PlacementConfig(BaseModel):
         accelerators: Ordered accelerator preference, most-wanted first.
         accelerator_count: Accelerators per instance.
         min_vram_gb: Minimum GPU VRAM in GB.
+        min_cuda: Minimum CUDA version string an offer must report.
         disk_gb: Minimum disk in GB.
         spot: Request a spot/preemptible instance when True.
         max_usd_per_hr: Ceiling on cost rate.
@@ -798,6 +801,7 @@ class PlacementConfig(BaseModel):
     accelerators: list[str] = []
     accelerator_count: int = 1
     min_vram_gb: int = 48
+    min_cuda: str = "12.8"
     disk_gb: int = 100
     spot: bool = False
     max_usd_per_hr: float = 2.20
@@ -808,11 +812,6 @@ class PlacementConfig(BaseModel):
     #: ``extra_forbidden`` text, which does not tell the operator where the
     #: value moved.
     _MOVED_KEYS: ClassVar[dict[str, str]] = {
-        "min_cuda": (
-            "compute.placement.min_cuda is not portable — only RunPod can "
-            "constrain the CUDA version at selection time; it now lives at "
-            "compute.backend_options.runpod.min_cuda"
-        ),
         "gpu_preference": (
             "compute.placement.gpu_preference was renamed to "
             "compute.placement.accelerators"
@@ -1577,10 +1576,10 @@ class Config(BaseModel):
         """Return the portable resource block with defaults applied.
 
         Pulls from ``compute.placement`` when a compute block is present;
-        returns all-defaults otherwise (min_vram_gb=48, disk_gb=100,
-        max_usd_per_hr=2.20, spot=False, accelerators=(), accelerator_count=1
-        — the pre-S1 ``requirements`` defaults, so a config that sets no block
-        launches exactly what it launched before).
+        returns all-defaults otherwise (min_vram_gb=48, min_cuda="12.8",
+        disk_gb=100, max_usd_per_hr=2.20, spot=False, accelerators=(),
+        accelerator_count=1 — the pre-S1 ``requirements`` defaults, so a
+        config that sets no block launches exactly what it launched before).
 
         Returns:
             An interfaces.Placement instance.
@@ -1593,37 +1592,19 @@ class Config(BaseModel):
             accelerators=tuple(p.accelerators),
             accelerator_count=p.accelerator_count,
             min_vram_gb=p.min_vram_gb,
+            min_cuda=p.min_cuda,
             disk_gb=p.disk_gb,
             spot=p.spot,
             max_usd_per_hr=p.max_usd_per_hr,
         )
 
-    def _runpod_min_cuda(self) -> str:
-        """Return the RunPod-namespaced CUDA floor, or its default.
-
-        Read unconditionally, not only when ``compute.provider == "runpod"``:
-        ``filter_offers`` still applies ``min_cuda`` for every provider until
-        S4 inverts selection, so a SkyPilot config that pinned a lower floor
-        to admit its 12.0-reporting catalog must keep it. The namespace read
-        cannot raise for a non-runpod config (an absent namespace yields
-        Options defaults), but it is guarded anyway: a registry that has not
-        got a ``runpod`` entry must not take down every config load.
-
-        Returns:
-            The ``compute.backend_options.runpod.min_cuda`` value, or
-            ``"12.8"`` when the namespace or the provider is unavailable.
-        """
-        try:
-            return str(self.backend_options_for("runpod").min_cuda)
-        except (ConfigError, AttributeError):
-            return InterfaceHardwareRequirements().min_cuda
-
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
         """Return HardwareRequirements with defaults applied.
 
-        A shim over :meth:`placement` plus the RunPod-namespaced ``min_cuda``,
-        kept because ``ComputeProvider.find_offers`` still consumes a catalog
-        filter. S4 inverts selection onto ``Placement`` and deletes this.
+        A pure shim over :meth:`placement` — every field, ``min_cuda``
+        included, comes from the portable block. Kept because
+        ``ComputeProvider.find_offers`` still consumes a catalog filter; S4
+        inverts selection onto ``Placement`` and deletes this.
 
         Returns:
             An interfaces.HardwareRequirements instance.
@@ -1631,7 +1612,7 @@ class Config(BaseModel):
         p = self.placement()
         return InterfaceHardwareRequirements(
             min_vram_gb=p.min_vram_gb,
-            min_cuda=self._runpod_min_cuda(),
+            min_cuda=p.min_cuda,
             max_usd_per_hr=p.max_usd_per_hr,
             gpu_preference=p.accelerators,
             disk_gb=p.disk_gb,
