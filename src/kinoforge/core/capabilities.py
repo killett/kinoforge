@@ -16,12 +16,15 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from kinoforge.core.interfaces import ComputeProvider
+    from collections.abc import Mapping
+
+    from kinoforge.core.interfaces import ComputeProvider, FieldSupport
 
 __all__ = [
     "Capability",
     "WorkloadShape",
     "capabilities_for",
+    "consumes_for",
     "provider_billed",
     "provider_registered",
 ]
@@ -123,6 +126,37 @@ def capabilities_for(
         return frozenset()
     caps: frozenset[Capability] = declare(shape)
     return caps
+
+
+def consumes_for(provider_kind: str) -> Mapping[str, FieldSupport]:
+    """Return the field-support mapping ``provider_kind`` declares.
+
+    The read-side twin of :func:`capabilities_for`, and the ONLY way
+    production code should learn which portable fields a provider honours —
+    ``tests/providers/test_field_consumption_parity.py`` proves the
+    declaration against captured launch payloads, so re-deriving the matrix
+    anywhere else would create a second, unproven copy.
+
+    Args:
+        provider_kind: Registry key, e.g. ``"skypilot"``.
+
+    Returns:
+        The declared mapping, or an empty mapping for an unknown provider or
+        one that never declared. Callers that must tell those two apart use
+        :func:`provider_registered`, exactly as they do for capabilities.
+    """
+    cls = _provider_class(provider_kind)
+    if cls is None:
+        return {}
+    # getattr default, not a bare cls.consumes(): register_provider accepts
+    # whatever it is handed (tests register bare objects), so a registered
+    # non-ComputeProvider must answer "declares nothing" rather than
+    # AttributeError out of a validation pass.
+    declare = getattr(cls, "consumes", None)
+    if declare is None:
+        return {}
+    declared: Mapping[str, FieldSupport] = declare()
+    return declared
 
 
 def provider_registered(provider_kind: str) -> bool:
