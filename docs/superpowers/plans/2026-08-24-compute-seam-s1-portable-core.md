@@ -1143,8 +1143,14 @@ which only RunPod can constrain at selection time — into the RunPod namespace.
       it.
 - [ ] `gpu_preference` is renamed `accelerators` in the config surface, and
       `Config.hardware_requirements()` sources `gpu_preference` from it (S4 deletes that shim).
-- [ ] `min_cuda` moves to `compute.backend_options.runpod.min_cuda`; setting it under
-      `placement` is a `ConfigError`.
+- [ ] `min_cuda` stays PORTABLE, on `Placement`. **Plan correction, 2026-08-26, operator ruling:**
+      the design claimed only RunPod can constrain CUDA at selection time. That is wrong about
+      kinoforge — `core/offers.py::filter_offers` applies `min_cuda` client-side to the catalog of
+      every enumerating provider, and SkyPilot's catalog stamps every offer `cuda="12.0"`, so a
+      RunPod-namespaced default of `"12.8"` empties it and turns `skypilot-gpu` / `-lambda` /
+      `-vast` into `CapacityError`. It is a catalog-filter concept, so S4 deletes it with the rest
+      of the marketplace path; until then all three enumerating providers declare it CONSUMED.
+      No skypilot or modal config may carry a `backend_options.runpod` block.
 - [ ] `InstanceSpec.spot` is gone; SkyPilot reads `spec.placement.spot`.
 - [ ] Golden payloads unchanged.
 

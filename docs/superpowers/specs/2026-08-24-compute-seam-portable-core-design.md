@@ -268,8 +268,12 @@ def create_instance(self, spec: InstanceSpec) -> Instance:
    enumerated (runpod, modal) and `UNSUPPORTED` on skypilot, whose optimizer takes named
    accelerators rather than a VRAM floor. Setting it on a skypilot config is then an error
    telling the operator to name accelerators, instead of a filter that quietly does nothing to
-   the launch. `min_cuda` becomes a RunPod namespace key: neither SkyPilot nor Modal exposes a
-   CUDA-version constraint at selection time, so it is not portable. `max_usd_per_hr` stops being
+   the launch. `min_cuda` stays portable on `Placement`. (**Corrected 2026-08-26**, during S1 Task 4: this
+   section originally routed it to the RunPod namespace on the grounds that neither SkyPilot nor
+   Modal exposes a CUDA constraint at selection time. True of those APIs, false of kinoforge —
+   `core/offers.py::filter_offers` applies `min_cuda` to whatever catalog any enumerating provider
+   returns, and SkyPilot's offers carry `cuda="12.0"`, so a `"12.8"` default outside their reach
+   empties the catalog. It dies with the catalog-filter path in S4.) `max_usd_per_hr` stops being
    a catalog filter and becomes the verified cap of §6.
 7. **Modal's `create_instance` currently raises without `spec.offer` (`:122-123`).** It gains a
    `Placement`→`gpu=` mapping over its hardcoded catalog (`providers/modal/_catalog.py`), which
