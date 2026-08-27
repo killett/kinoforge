@@ -1574,9 +1574,22 @@ provider cannot honour fails before launch instead of vanishing.
 - Test: `tests/validation/test_field_support_check.py`
 
 **Acceptance Criteria:**
-- [ ] `UnsupportedFieldCheck` is `CheckCategory.STATIC`, `Severity.ERROR`, no auto-fix.
-- [ ] Setting a field the selected provider declares `UNSUPPORTED` to a NON-DEFAULT value fails
-      the check, and the message names the provider, the dotted cfg path, and the value.
+- [ ] `UnsupportedFieldCheck` is `CheckCategory.STATIC`, no auto-fix, and its severity is
+      **by risk coverage**, mirroring `validation/checks/capabilities.py::ProviderCapabilityCheck`.
+      **Plan amendment, 2026-08-27, operator ruling.** A uniform hard ERROR would refuse 15 shipped
+      configs, because Task 5's declarations found two real silent-ignores that predate this plan:
+      `disk_gb` is `UNSUPPORTED` on all four providers (RunPod hardcodes `containerDiskInGb: 250`,
+      SkyPilot hardcodes `disk_size` 60/30) and 11 configs set it; skypilot `max_usd_per_hr` is
+      F4 itself and 4 configs set it. So:
+        - **ERROR** when nothing bounds the same risk — e.g. `accelerator_count`, which no provider
+          reads and nothing substitutes for.
+        - **WARN naming the substitute and its actual bound** otherwise — `disk_gb` names the
+          provider's hardcoded value (so "you asked 100, sky gives 60" is visible at doctor time),
+          and skypilot `max_usd_per_hr` names the instance-side deadline watchdog, which bounds
+          spend via `budget_usd`/rate until S4 wires the realized-rate check.
+- [ ] Setting a field the selected provider declares `UNSUPPORTED` to a NON-DEFAULT value produces
+      a finding at the severity above, and the message names the provider, the dotted cfg path,
+      the value, and — for a WARN — the substitute and the bound it actually enforces.
 - [ ] Leaving that field at its default passes — a default the operator never wrote is not a
       misconfiguration.
 - [ ] `ForeignNamespaceCheck` is `Severity.WARN` and fires when `backend_options` carries a
