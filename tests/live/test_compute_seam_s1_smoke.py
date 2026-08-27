@@ -11,6 +11,29 @@ is CPU-only, and already has a committed golden
 a second config; it proves the SAME shape the golden ratchet already pins
 also reaches a real cloud unmodified.
 
+**This is not a workload test.** The config's engine block is a ComfyUI
+placeholder whose provision script clones ComfyUI and downloads a
+``Wan2.2-T2V-A14B`` shard. On a 2-vCPU CPU box, with the synthetic
+``HF_TOKEN`` this smoke deliberately keeps (see "Credential safety" below),
+that download is pointless and expected to fail. So the smoke asserts only
+what S1 actually risks:
+
+  1. the config loads under the new surface (``compute.placement`` /
+     ``compute.backend_options``) and builds an ``InstanceSpec``;
+  2. ``sky`` accepts the resources (cloud/region/disk/cpus) and the cluster
+     reaches ``UP`` on real AWS;
+  3. the launch payload matches the committed golden for that config;
+  4. teardown leaves no billing resource behind.
+
+Server readiness is explicitly NOT asserted. ``sky.launch`` raising because
+``Task.setup`` died on the model download is an EXPECTED outcome here, not a
+smoke failure: it is caught, the cluster state is checked directly, and the
+run proceeds to the payload comparison and teardown. Correspondingly the
+smoke stops the moment both claims are proven — as soon as the cluster is
+observed ``UP`` it tears down rather than waiting out a setup phase that
+cannot succeed. Waiting for a server that can never start would burn the
+budget for no signal.
+
 What "same config" means here: the exact ``InstanceSpec`` the golden's
 ``tools.snapshot_launch_payloads.build_spec`` builds for this config, launched
 for real instead of aborted after capture. Two things legitimately cannot be
@@ -30,8 +53,7 @@ see ``_normalize`` for the precise fields and why:
      header); this smoke pins ``clouds=["aws"], region="us-west-2"`` on the
      provider itself (exactly as the config's own comment says region
      pinning is "enforced by the smoke test itself, not by this YAML") so
-     the launch lands on a known, cheap, real SKU (``c6i.large``, the same
-     one ``test_skypilot_watchdog_smoke.py`` uses). That pin is a smoke-only
+     the launch lands on a known, cheap, real SKU. That pin is a smoke-only
      addition, not part of what the S1 shape ratchet certifies, so it is
      popped before comparison rather than asserted against.
 
@@ -41,21 +63,19 @@ credential-shaped env var to the repo-wide synthetic stub
 (``kinoforge-prod-deadbeef``) — never a real one. That keeps ``envs.HF_TOKEN``
 byte-identical to the golden with zero normalisation, and guarantees no real
 credential ever reaches the captured payload, a log line, or the evidence
-file this smoke's follow-up run writes. The tradeoff: the ComfyUI engine's
-model download in ``task_config.setup`` will almost certainly fail 401/403
-against a fake bearer token — see the module-level fragility note near
-``_STALL_CONSECUTIVE_PROBES`` below, and the Task 8 report's "expected
-fragility" section.
+file this smoke writes. The tradeoff is the expected setup failure described
+above, which this smoke is structured to tolerate rather than paper over with
+a real token on a CPU box.
 
 Gated on KINOFORGE_LIVE_TESTS=1 like every live test here, plus AWS
 credentials reachable, the ``aws`` CLI on PATH (the EC2 nuclear-teardown
 tier shells out to it, mirroring ``test_skypilot_watchdog_smoke.py``), and
 ``import sky`` succeeding (``pixi run -e live-skypilot``).
 
-Cost ceiling: < $1 (cheapest AWS CPU SKU ~$0.09/hr, 30 min max_lifetime from
-the config's own ``lifecycle.max_lifetime: 30m``, watchdog-enforced even if
-this process dies mid-run).
-Design: docs/superpowers/sdd/2026-08-24-compute-seam-s1-portable-core/task-8-brief.md
+Cost ceiling: < $1 (cheapest AWS CPU SKU ~$0.09/hr; the smoke abandons the
+launch as soon as the cluster is UP, and ``lifecycle.max_lifetime: 30m`` from
+the config arms the instance-side watchdog even if this process dies mid-run).
+Design: .superpowers/sdd/2026-08-24-compute-seam-s1-portable-core/task-8-brief.md
 """
 
 from __future__ import annotations
@@ -70,6 +90,7 @@ import shutil
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -125,25 +146,33 @@ _REGION = "us-west-2"
 _CONFIG_PATH = Path("examples/configs/skypilot-cpu.yaml")
 _GOLDEN_PATH = golden_path_for(_CONFIG_PATH)
 
+#: Raw observations from the live run, written unconditionally (success or
+#: failure) so the evidence file records what actually happened rather than
+#: only what a green run looks like.
+_EVIDENCE_PATH = Path("tests/live/_s1_smoke_evidence.json")
+
 #: Default kinoforge state dir (matches the CLI's ``--state-dir`` default),
 #: so a ledger row this test leaves behind is exactly where
 #: ``kinoforge list`` / ``kinoforge forget`` already look for it. Mirrors
 #: test_skypilot_watchdog_smoke.py.
 _STATE_DIR = Path(".kinoforge")
 
-#: How often utilisation is polled while create_instance (which may block
-#: for the full setup+run duration — see the module docstring's credential
-#: note on why the download is expected to fail fast instead) is in flight.
-#: Project rule: 60-90 s cadence, never spend/elapsed as the health signal.
+#: How often cluster status + utilisation are polled while create_instance is
+#: in flight. Project rule: 60-90 s cadence, never spend/elapsed as the health
+#: signal.
 _UTIL_POLL_INTERVAL_S = 75.0
-#: Bounds the whole create_instance() wait. Generous: a CPU box has no model
-#: download to wait out on the *success* path (the stub token makes it fail
-#: fast), but setup + apt/pip installs alone can take several minutes.
-_CREATE_TIMEOUT_S = 900.0
-#: After create_instance returns (or is abandoned to the EC2 fallback
-#: below), how long to wait for list_instances() to report ready.
-_READY_POLL_TIMEOUT_S = 300.0
-_READY_POLL_INTERVAL_S = 15.0
+#: How long to wait for the recording proxy to observe
+#: ``sky.Task.from_yaml_config``. It is the first thing create_instance does
+#: after the provisional ledger write, so this is generous by an order of
+#: magnitude; it exists only so a hang inside provider construction surfaces
+#: as a clear failure instead of blocking on the full create timeout.
+_CAPTURE_TIMEOUT_S = 120.0
+#: Bounds the whole wait for the cluster to reach UP. Sized for a cold AWS
+#: provision plus the ~7.4 GB compressed docker image this config's engine
+#: pins (``runpod/pytorch:...-cuda12.4.1-devel``), which SkyPilot pulls before
+#: it marks the cluster UP. The smoke abandons the launch the moment UP is
+#: observed, so this is a ceiling, not an expected duration.
+_CREATE_TIMEOUT_S = 1500.0
 #: Consecutive near-zero-CPU probes before a boot is treated as stalled
 #: rather than merely slow — matches the project's "0% GPU for >=3
 #: consecutive probes = dead worker" rule, ported to a CPU-only box.
@@ -151,10 +180,14 @@ _STALL_CONSECUTIVE_PROBES = 3
 #: A `top` idle% at or above this is read as "doing essentially nothing".
 _STALL_IDLE_PCT_FLOOR = 99.0
 
+#: kinoforge status strings that mean "the cluster exists and is UP at the
+#: provider". ``_sky_status_to_kinoforge`` maps sky's ``UP`` to ``"ready"``;
+#: the others are accepted defensively in case that mapping widens.
 _READY_STATUSES = {"ready", "running", "UP"}
 
 _DEADLINE_LITERAL_RE = re.compile(r"'([0-9]+\.[0-9]+)' > \"\$KF_WD_DIR/deadline\.tmp\"")
 _TOP_IDLE_RE = re.compile(r"([\d.]+)\s*id\b")
+_MEM_RE = re.compile(r"Mem:\s+(\d+)\s+(\d+)")
 _NAME_SENTINEL = "<normalized-cluster-name>"
 _DEADLINE_SENTINEL = "<normalized-launch-deadline-epoch>"
 
@@ -162,6 +195,16 @@ _DEADLINE_SENTINEL = "<normalized-launch-deadline-epoch>"
 #: every EC2 instance it provisions (see test_skypilot_watchdog_smoke.py's
 #: _ec2_states for the wildcard-suffix rationale).
 _DEAD_STATES = {"shutting-down", "terminated"}
+
+
+def _now_local() -> str:
+    """Return an ISO-8601 timestamp in the machine's LOCAL timezone.
+
+    Returns:
+        e.g. ``"2026-08-27T13:04:11.123456+01:00"``. Local, never UTC —
+        project-wide convention for every filename, id, log and doc.
+    """
+    return datetime.now().astimezone().isoformat()
 
 
 class _InputRecordingSky:
@@ -255,18 +298,28 @@ def _normalize(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _ec2_states(cluster_name: str) -> list[str]:
-    """Return EC2 instance states tagged with this sky cluster name.
+_STATE_QUERY = "Reservations[].Instances[].State.Name"
+_TYPE_QUERY = "Reservations[].Instances[].InstanceType"
+_AZ_QUERY = "Reservations[].Instances[].Placement.AvailabilityZone"
+_ID_QUERY = "Reservations[].Instances[].InstanceId"
 
-    Mirrors ``test_skypilot_watchdog_smoke.py``'s helper of the same name
+
+def _aws_ec2_query(cluster_name: str, query: str) -> list[Any]:
+    """Run one tag-filtered ``aws ec2 describe-instances`` projection.
+
+    Mirrors ``test_skypilot_watchdog_smoke.py``'s ``_ec2_states`` helper
     (including the trailing-wildcard rationale: SkyPilot tags instances
     ``ray-cluster-name = <cluster_name>-<8 hex>``, not the bare name).
 
     Args:
         cluster_name: SkyPilot cluster name.
+        query: A JMESPath projection over ``Reservations[].Instances[]``.
 
     Returns:
-        List of EC2 ``State.Name`` strings; empty means none found.
+        The parsed JSON list, or ``[]`` when the CLI call or parse fails —
+        an unreadable answer is deliberately NOT reported as "nothing is
+        running" to the teardown assertion, which re-checks rather than
+        trusting a single empty read.
     """
     completed = subprocess.run(
         [
@@ -278,7 +331,7 @@ def _ec2_states(cluster_name: str) -> list[str]:
             "--filters",
             f"Name=tag:ray-cluster-name,Values={cluster_name}*",
             "--query",
-            "Reservations[].Instances[].State.Name",
+            query,
             "--output",
             "json",
         ],
@@ -300,17 +353,35 @@ def _ec2_states(cluster_name: str) -> list[str]:
         return []
 
 
-def _probe_util(cluster_name: str) -> str | None:
-    """Best-effort CPU/memory snapshot over SSH.
+def _ec2_states(cluster_name: str) -> list[str]:
+    """Return EC2 instance states tagged with this sky cluster name.
 
     Args:
-        cluster_name: SkyPilot cluster name (also the SSH host alias sky
-            writes into ``~/.ssh/config`` once the cluster is provisioned).
+        cluster_name: SkyPilot cluster name.
 
     Returns:
-        The raw ``top``/``free`` summary line pair, or ``None`` when the
-        cluster is not yet SSH-reachable — NOT itself a stall signal, only
-        sustained near-zero CPU across ``_STALL_CONSECUTIVE_PROBES`` is.
+        List of EC2 ``State.Name`` strings; empty means none found.
+    """
+    return [str(s) for s in _aws_ec2_query(cluster_name, _STATE_QUERY)]
+
+
+def _probe_util(cluster_name: str) -> dict[str, Any]:
+    """Best-effort CPU/memory snapshot of the cluster host over SSH.
+
+    ``ssh <cluster_name>`` resolves through the ssh config SkyPilot generates
+    for the cluster and lands on the **host VM**, so this observes the docker
+    image pull and the sky runtime setup too — not only what happens inside
+    the task container.
+
+    Args:
+        cluster_name: SkyPilot cluster name (also the ssh host alias).
+
+    Returns:
+        ``{"reachable": bool, "cpu_idle_pct": float | None,
+        "mem_used_mb": int | None, "mem_total_mb": int | None,
+        "raw": str | None, "note": str | None}``. Unreachable is NOT itself
+        a stall signal — only sustained near-zero CPU on a cluster that is
+        already UP is (see :func:`_is_stalled`).
     """
     try:
         completed = subprocess.run(
@@ -325,53 +396,71 @@ def _probe_util(cluster_name: str) -> str | None:
             ],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=25,
         )
     except Exception as exc:  # noqa: BLE001 — unreachable-during-boot is expected
-        _log.info("util probe: ssh not reachable yet for %s (%r)", cluster_name, exc)
-        return None
+        return {
+            "reachable": False,
+            "cpu_idle_pct": None,
+            "mem_used_mb": None,
+            "mem_total_mb": None,
+            "raw": None,
+            "note": f"ssh not reachable yet ({exc!r})",
+        }
     if completed.returncode != 0:
-        _log.info(
-            "util probe: ssh to %s exited rc=%d stderr=%s",
-            cluster_name,
-            completed.returncode,
-            completed.stderr.strip(),
-        )
-        return None
-    return completed.stdout.strip()
+        return {
+            "reachable": False,
+            "cpu_idle_pct": None,
+            "mem_used_mb": None,
+            "mem_total_mb": None,
+            "raw": None,
+            "note": f"ssh rc={completed.returncode}: {completed.stderr.strip()[:200]}",
+        }
+    raw = completed.stdout.strip()
+    idle_match = _TOP_IDLE_RE.search(raw)
+    mem_match = _MEM_RE.search(raw)
+    return {
+        "reachable": True,
+        "cpu_idle_pct": float(idle_match.group(1)) if idle_match else None,
+        "mem_total_mb": int(mem_match.group(1)) if mem_match else None,
+        "mem_used_mb": int(mem_match.group(2)) if mem_match else None,
+        "raw": raw,
+        "note": None if idle_match else "top idle% did not parse",
+    }
 
 
-def _is_stalled(sample: str | None) -> bool:
+def _is_stalled(sample: dict[str, Any]) -> bool:
     """Return whether one utilisation sample reads as "doing essentially nothing".
 
     Args:
-        sample: A ``_probe_util`` return value.
+        sample: A :func:`_probe_util` return value.
 
     Returns:
-        ``True`` when the ``top`` idle percentage parses and is at/above
-        :data:`_STALL_IDLE_PCT_FLOOR`. An unparseable or missing sample
+        ``True`` when the ``top`` idle percentage parsed and is at/above
+        :data:`_STALL_IDLE_PCT_FLOOR`. An unreachable or unparseable sample
         returns ``False`` — absence of evidence is not evidence of a stall
         by itself (mirrors the EC2-oracle "unknown != terminated" distinction
         in the watchdog smoke).
     """
-    if sample is None:
+    idle = sample.get("cpu_idle_pct")
+    if idle is None:
         return False
-    match = _TOP_IDLE_RE.search(sample)
-    if not match:
-        return False
-    return float(match.group(1)) >= _STALL_IDLE_PCT_FLOOR
+    return float(idle) >= _STALL_IDLE_PCT_FLOOR
 
 
-def _capture_setup_log(cluster_name: str) -> None:
+def _capture_setup_log(cluster_name: str) -> str:
     """Best-effort fetch of the remote setup/run log for a stalled-boot diagnosis.
 
     Exact sky log paths are a documented unknown (see the Task 8 report's
     fragility section) — this is deliberately tolerant of failure; its only
-    job is to get *something* into the test log before teardown destroys the
-    evidence.
+    job is to get *something* into the test log and the evidence file before
+    teardown destroys the box.
 
     Args:
         cluster_name: SkyPilot cluster name.
+
+    Returns:
+        Whatever came back (possibly empty), truncated for the evidence file.
     """
     try:
         completed = subprocess.run(
@@ -382,96 +471,125 @@ def _capture_setup_log(cluster_name: str) -> None:
                 "-o",
                 "ConnectTimeout=10",
                 cluster_name,
-                "find ~/sky_logs -name '*.log' -newer /tmp 2>/dev/null "
-                "-exec tail -n 80 {} + 2>/dev/null || true",
+                "tail -n 60 ~/.sky/sky_logs/*/*.log 2>/dev/null; "
+                "tail -n 40 /var/log/cloud-init-output.log 2>/dev/null || true",
             ],
             capture_output=True,
             text=True,
-            timeout=30,
-        )
-        _log.warning(
-            "stalled-boot setup log for %s (rc=%d):\n%s\nstderr:\n%s",
-            cluster_name,
-            completed.returncode,
-            completed.stdout,
-            completed.stderr,
+            timeout=40,
         )
     except Exception as exc:  # noqa: BLE001 — best-effort only
-        _log.warning("could not fetch setup log for %s: %r", cluster_name, exc)
+        return f"<log capture failed: {exc!r}>"
+    text = (completed.stdout or "") + "\n--- stderr ---\n" + (completed.stderr or "")
+    _log.warning("remote log for %s:\n%s", cluster_name, text[-4000:])
+    return text[-4000:]
 
 
-def _teardown(provider: SkyPilotProvider, cluster_name: str) -> None:
-    """Tiered teardown: provider API, then a direct EC2 nuclear fallback.
+def _force_terminate(cluster_name: str) -> list[str]:
+    """Terminate every EC2 instance tagged with this cluster, via the aws CLI.
+
+    Used as the FIRST teardown tier whenever ``sky.launch`` is still in
+    flight: it stops billing immediately without contending for SkyPilot's
+    per-cluster lock, which a concurrent ``sky.down`` would have to wait on.
 
     Args:
-        provider: The SkyPilot provider whose API can still be used.
-        cluster_name: Cluster name for both provider and EC2 lookups.
+        cluster_name: SkyPilot cluster name.
 
-    Raises:
-        RuntimeError: An EC2 instance tagged with ``cluster_name`` is still
-            alive after both tiers — surfaced loudly rather than swallowed,
-            per the project's "verify teardown, don't trust a mid-run log
-            line" rule.
+    Returns:
+        The instance ids the terminate call was issued for (possibly empty).
     """
-    try:
-        _log.info("tearing down via provider.destroy_instance")
-        provider.destroy_instance(cluster_name)
-    except Exception as exc:  # noqa: BLE001
-        _log.warning("provider.destroy_instance raised: %r", exc)
-
-    states = _ec2_states(cluster_name)
-    if states and not all(s in _DEAD_STATES for s in states):
-        _log.warning(
-            "provider.destroy_instance left states=%r for %s; forcing "
-            "aws ec2 terminate-instances",
-            states,
-            cluster_name,
-        )
-        ids_completed = subprocess.run(
-            [
-                "aws",
-                "ec2",
-                "describe-instances",
-                "--region",
-                _REGION,
-                "--filters",
-                f"Name=tag:ray-cluster-name,Values={cluster_name}*",
-                "--query",
-                "Reservations[].Instances[].InstanceId",
-                "--output",
-                "json",
-            ],
+    ids = [str(i) for i in _aws_ec2_query(cluster_name, _ID_QUERY)]
+    if ids:
+        _log.warning("force-terminating EC2 instances %r for %s", ids, cluster_name)
+        subprocess.run(
+            ["aws", "ec2", "terminate-instances", "--region", _REGION, "--instance-ids"]
+            + ids,
             capture_output=True,
             text=True,
             timeout=120,
         )
-        try:
-            ids = list(json.loads(ids_completed.stdout or "[]"))
-        except json.JSONDecodeError:
-            ids = []
-        if ids:
-            subprocess.run(
-                [
-                    "aws",
-                    "ec2",
-                    "terminate-instances",
-                    "--region",
-                    _REGION,
-                    "--instance-ids",
-                ]
-                + ids,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
+    return ids
 
-    deadline = time.time() + 180.0
+
+def _teardown(
+    provider: SkyPilotProvider, cluster_name: str, *, nuclear_first: bool
+) -> dict[str, Any]:
+    """Tiered teardown: stop billing, then reconcile SkyPilot + ledger state.
+
+    Args:
+        provider: The SkyPilot provider whose API can still be used.
+        cluster_name: Cluster name for both provider and EC2 lookups.
+        nuclear_first: When ``True`` (``sky.launch`` still running on the
+            background thread), terminate the EC2 instances directly BEFORE
+            calling ``sky.down`` — an in-flight launch can hold SkyPilot's
+            cluster lock, and waiting politely for it is billed time.
+
+    Returns:
+        A record of what each tier did, for the evidence file.
+
+    Raises:
+        RuntimeError: An EC2 instance tagged with ``cluster_name`` is still
+            alive after every tier — surfaced loudly rather than swallowed,
+            per the project's "verify teardown, don't trust a mid-run log
+            line" rule.
+    """
+    record: dict[str, Any] = {
+        "started_at": _now_local(),
+        "nuclear_first": nuclear_first,
+    }
+
+    if nuclear_first:
+        record["forced_instance_ids"] = _force_terminate(cluster_name)
+
+    try:
+        _log.info("tearing down via provider.destroy_instance")
+        provider.destroy_instance(cluster_name)
+        record["destroy_instance"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("provider.destroy_instance raised: %r", exc)
+        record["destroy_instance"] = f"raised: {exc!r}"
+
     states = _ec2_states(cluster_name)
+    if states and not all(s in _DEAD_STATES for s in states):
+        _log.warning(
+            "provider.destroy_instance left states=%r for %s; forcing terminate",
+            states,
+            cluster_name,
+        )
+        record["forced_instance_ids_late"] = _force_terminate(cluster_name)
+
+    deadline = time.time() + 300.0
+    states = _ec2_states(cluster_name)
+    if not states:
+        # An empty read this early can also mean "the provisioner had not
+        # created the instance yet when we asked" — not the same claim as
+        # "nothing is running". Re-ask once after a grace window before
+        # believing it.
+        time.sleep(20.0)
+        states = _ec2_states(cluster_name)
+        if states and not all(s in _DEAD_STATES for s in states):
+            record["forced_instance_ids_grace"] = _force_terminate(cluster_name)
+            states = _ec2_states(cluster_name)
     while (
         states and not all(s in _DEAD_STATES for s in states) and time.time() < deadline
     ):
         time.sleep(15.0)
         states = _ec2_states(cluster_name)
+    record["final_ec2_states"] = states
+    record["finished_at"] = _now_local()
+
+    # The provider writes a provisional "launching" ledger row before
+    # sky.launch and only forgets it on the SUCCESS path (F12). A launch that
+    # raises — the expected outcome here — therefore leaves a row that
+    # `kinoforge list` would report as a live instance. The instance is
+    # confirmed dead above, so the row is stale by definition; drop it so the
+    # post-run ledger check is honest rather than needing a manual `forget`.
+    try:
+        Ledger(store=LocalArtifactStore(_STATE_DIR)).forget(cluster_name)
+        record["ledger_forget"] = "ok"
+    except Exception as exc:  # noqa: BLE001 — best-effort bookkeeping
+        _log.warning("ledger forget failed for %s: %r", cluster_name, exc)
+        record["ledger_forget"] = f"raised: {exc!r}"
 
     survivors = [s for s in states if s not in _DEAD_STATES]
     if survivors:
@@ -480,25 +598,53 @@ def _teardown(provider: SkyPilotProvider, cluster_name: str) -> None:
             f"— destroy it by hand in {_REGION}"
         )
     _log.info("teardown complete cluster=%s", cluster_name)
+    return record
+
+
+def _sky_status_of(provider: SkyPilotProvider, cluster_name: str) -> str | None:
+    """Return the kinoforge status of ``cluster_name``, or ``None`` if absent.
+
+    Args:
+        provider: Provider whose ``list_instances`` reads ``sky.status()``.
+        cluster_name: Cluster to look for.
+
+    Returns:
+        The mapped status string, ``None`` when sky does not list the
+        cluster, or ``"<error>"`` when the status call itself failed (which
+        must not be confused with "the cluster is gone").
+    """
+    try:
+        for inst in provider.list_instances():
+            if inst.id == cluster_name:
+                return str(inst.status)
+    except Exception as exc:  # noqa: BLE001 — a status read must never fail the run
+        _log.warning("sky status read failed: %r", exc)
+        return "<error>"
+    return None
 
 
 def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
-    """A live launch of ``skypilot-cpu.yaml`` matches its golden and boots.
+    """A live launch of ``skypilot-cpu.yaml`` matches its golden and reaches UP.
 
-    Two independent claims, checked separately so a boot failure (e.g. the
-    stub HF_TOKEN 401ing the model download — see the module docstring)
-    cannot mask a payload-shape regression, and vice versa:
+    Two independent claims, checked separately and in that order so a boot
+    failure cannot mask a payload-shape regression, and vice versa:
 
     1. The exact ``task_config``/``launch_kwargs`` SkyPilot puts on the wire
        for this config, captured from the REAL ``sky.Task.from_yaml_config``
        + ``sky.launch`` call site, equals the committed golden once the
        three legitimately-volatile fields are normalised (see
-       ``_normalize``). Checked as soon as the recording proxy has
-       something captured — before waiting on readiness — so a shape
-       regression fails fast regardless of what the cluster does next.
-    2. The cluster actually reaches a ready state on real AWS infrastructure
-       in us-west-2, with utilisation polled (never spend/elapsed) while
-       waiting, and torn down whether or not it got there.
+       ``_normalize``). Checked as soon as the recording proxy has something
+       captured — seconds in, before any waiting — so a shape regression
+       fails fast and cheaply regardless of what the cluster does next.
+    2. The cluster reaches ``UP`` at the provider (``sky status`` via
+       ``provider.list_instances``), in ``us-west-2``, with utilisation
+       polled on a 75 s cadence while waiting. NOT server readiness: this
+       config's ComfyUI/Wan setup script is expected to fail on a CPU box
+       with a synthetic HF token, and ``sky.launch`` raising for that reason
+       is tolerated, not treated as a smoke failure.
+
+    Teardown runs in ``finally`` either way, and the evidence file is written
+    unconditionally.
     """
     cluster_name = f"kinoforge-s1-smoke-{secrets.token_hex(4)}"
     print(cluster_name, flush=True)  # breadcrumb for a hard-kill mid-poll
@@ -515,6 +661,20 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
     provider = SkyPilotProvider(recording_sky, clouds=["aws"], region=_REGION)
     provider.set_launch_ledger(Ledger(store=LocalArtifactStore(_STATE_DIR)))
 
+    evidence: dict[str, Any] = {
+        "smoke": "compute-seam S1 — migrated config launches what it launched pre-S1",
+        "task": "task-8 (S1 portable core)",
+        "config": str(_CONFIG_PATH),
+        "golden": str(_GOLDEN_PATH),
+        "cluster_name": cluster_name,
+        "region_requested": _REGION,
+        "clouds_requested": ["aws"],
+        "started_at": _now_local(),
+        "utilisation_samples": [],
+        "payload_comparison": {"status": "not-reached"},
+        "cluster_state": {"observed_ready": False, "statuses_seen": []},
+    }
+
     create_result: dict[str, Any] = {}
     create_exc: list[BaseException] = []
 
@@ -524,39 +684,26 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
         except BaseException as exc:  # noqa: BLE001 — surfaced on the main thread below
             create_exc.append(exc)
 
+    create_thread = threading.Thread(target=_do_create, daemon=True)
+    launched_at = time.time()
     try:
-        _log.info(
-            "launching %s in %s (clouds=['aws']) — cheapest CPU SKU expected c6i.large",
-            cluster_name,
-            _REGION,
-        )
-        launched_at = time.time()
-        create_thread = threading.Thread(target=_do_create, daemon=True)
+        _log.info("launching %s in %s (clouds=['aws'])", cluster_name, _REGION)
+        evidence["launched_at"] = _now_local()
         create_thread.start()
 
-        consecutive_stalled = 0
-        create_deadline = time.time() + _CREATE_TIMEOUT_S
-        while create_thread.is_alive() and time.time() < create_deadline:
-            time.sleep(_UTIL_POLL_INTERVAL_S)
-            elapsed = time.time() - launched_at
-            sample = _probe_util(cluster_name)
-            _log.info("t+%.0fs create_instance in flight; util=%r", elapsed, sample)
-            if _is_stalled(sample):
-                consecutive_stalled += 1
-            else:
-                consecutive_stalled = 0
-            if consecutive_stalled >= _STALL_CONSECUTIVE_PROBES:
-                _capture_setup_log(cluster_name)
-                pytest.fail(
-                    f"boot appears stalled: {consecutive_stalled} consecutive "
-                    f"near-zero-CPU probes at t+{elapsed:.0f}s for {cluster_name!r}"
-                )
-        create_thread.join(timeout=max(0.0, create_deadline - time.time()))
-
-        # --- Claim 1: wire-shape parity, independent of boot success -----
+        # --- Claim 1: wire-shape parity, seconds in, before any waiting ---
+        capture_deadline = time.time() + _CAPTURE_TIMEOUT_S
+        while (
+            "task_config" not in recording_sky.captured
+            and time.time() < capture_deadline
+            and (create_thread.is_alive() or not create_exc)
+        ):
+            time.sleep(1.0)
+        why = f" (create_instance raised: {create_exc[0]!r})" if create_exc else ""
         assert "task_config" in recording_sky.captured, (
-            "sky.Task.from_yaml_config was never reached — no payload to "
-            "compare against the golden"
+            f"sky.Task.from_yaml_config was never reached within "
+            f"{_CAPTURE_TIMEOUT_S:.0f}s — no payload to compare against the "
+            f"golden{why}"
         )
         live_payload = {
             "provider": "skypilot",
@@ -564,46 +711,153 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
             "task_config": recording_sky.captured["task_config"],
             "launch_kwargs": recording_sky.captured.get("launch_kwargs", {}),
         }
-        assert _normalize(live_payload) == _normalize(golden_payload), (
+        live_norm = _normalize(live_payload)
+        golden_norm = _normalize(golden_payload)
+        evidence["payload_comparison"] = {
+            "status": "match" if live_norm == golden_norm else "mismatch",
+            "normalised_fields": [
+                "task_config.name",
+                "launch_kwargs.cluster_name",
+                "task_config.setup:<watchdog deadline epoch>",
+                "task_config.resources.cloud (smoke-only pin)",
+                "task_config.resources.region (smoke-only pin)",
+            ],
+            "live_resources": dict(live_payload["task_config"].get("resources", {})),
+            "live_launch_kwargs": dict(live_payload["launch_kwargs"]),
+            "task_config_keys": sorted(live_payload["task_config"]),
+            "setup_sha_equal_after_normalisation": (
+                live_norm["task_config"]["setup"] == golden_norm["task_config"]["setup"]
+            ),
+            "compared_at": _now_local(),
+        }
+        assert live_norm == golden_norm, (
             "live task_config/launch_kwargs diverged from the golden after "
             "normalising cluster name, deadline epoch, and the smoke-only "
             "cloud/region pins — the migrated config no longer puts the "
             "same thing on the wire"
         )
+        _log.info("PAYLOAD MATCHES GOLDEN for %s", _CONFIG_PATH)
 
-        # --- Claim 2: it actually boots -----------------------------------
+        # --- Claim 2: the cluster reaches UP on real AWS -------------------
+        consecutive_stalled = 0
+        observed_ready = False
+        create_deadline = time.time() + _CREATE_TIMEOUT_S
+        while time.time() < create_deadline:
+            time.sleep(_UTIL_POLL_INTERVAL_S)
+            elapsed = time.time() - launched_at
+            status = _sky_status_of(provider, cluster_name)
+            sample = _probe_util(cluster_name)
+            sample.update(
+                {
+                    "at": _now_local(),
+                    "elapsed_s": round(elapsed, 1),
+                    "sky_status": status,
+                    "create_thread_alive": create_thread.is_alive(),
+                }
+            )
+            evidence["utilisation_samples"].append(sample)
+            evidence["cluster_state"]["statuses_seen"].append(status)
+            _log.info(
+                "t+%.0fs status=%s reachable=%s cpu_idle=%s mem=%s/%s MB",
+                elapsed,
+                status,
+                sample["reachable"],
+                sample["cpu_idle_pct"],
+                sample["mem_used_mb"],
+                sample["mem_total_mb"],
+            )
+            print(
+                f"[poll] t+{elapsed:.0f}s status={status} "
+                f"cpu_idle={sample['cpu_idle_pct']} "
+                f"mem={sample['mem_used_mb']}/{sample['mem_total_mb']}MB",
+                flush=True,
+            )
+
+            if status in _READY_STATUSES:
+                # Both claims are now proven. Everything after this point is
+                # a ComfyUI/Wan setup phase that cannot succeed on a CPU box
+                # with a stub token — waiting it out would be pure spend.
+                observed_ready = True
+                evidence["cluster_state"]["ready_at"] = _now_local()
+                evidence["cluster_state"]["ready_after_s"] = round(elapsed, 1)
+                break
+
+            if not create_thread.is_alive():
+                # create_instance finished (almost certainly by raising) and
+                # the cluster is still not UP. One last read in case the
+                # status lagged, then stop paying to re-ask.
+                status = _sky_status_of(provider, cluster_name)
+                evidence["cluster_state"]["statuses_seen"].append(status)
+                if status in _READY_STATUSES:
+                    observed_ready = True
+                    evidence["cluster_state"]["ready_at"] = _now_local()
+                    evidence["cluster_state"]["ready_after_s"] = round(elapsed, 1)
+                break
+
+            # Stall rule: only meaningful once the box is reachable. A
+            # near-idle host while a docker pull / setup is supposedly in
+            # flight means the boot died, not that it is being patient.
+            if _is_stalled(sample):
+                consecutive_stalled += 1
+            else:
+                consecutive_stalled = 0
+            if consecutive_stalled >= _STALL_CONSECUTIVE_PROBES:
+                evidence["stall"] = {
+                    "detected_at": _now_local(),
+                    "elapsed_s": round(elapsed, 1),
+                    "consecutive_probes": consecutive_stalled,
+                    "remote_log_tail": _capture_setup_log(cluster_name),
+                }
+                pytest.fail(
+                    f"boot appears stalled: {consecutive_stalled} consecutive "
+                    f"near-zero-CPU probes at t+{elapsed:.0f}s for {cluster_name!r}"
+                )
+
+        evidence["cluster_state"]["observed_ready"] = observed_ready
+        # The SKU / AZ actually launched — read from EC2, not from what we asked
+        # for, so the evidence records reality.
+        evidence["sku_launched"] = sorted(
+            {str(t) for t in _aws_ec2_query(cluster_name, _TYPE_QUERY)}
+        )
+        evidence["availability_zones"] = sorted(
+            {str(z) for z in _aws_ec2_query(cluster_name, _AZ_QUERY)}
+        )
         if create_exc:
-            # Mirrors test_skypilot_watchdog_smoke.py: don't abort on a
-            # create_instance exception — a cluster that came up and then
-            # failed mid-create must still be verified directly, not
-            # silently written off.
+            # EXPECTED on this config: the ComfyUI/Wan setup script cannot
+            # succeed on a CPU box with a synthetic HF token. Recorded, never
+            # fatal on its own — the cluster state above is the real oracle.
+            evidence["create_instance_exception"] = repr(create_exc[0])[:600]
             _log.warning(
-                "create_instance raised %r for %s — falling through to a "
-                "direct readiness probe instead of aborting",
+                "create_instance raised %r for %s — expected for this config; "
+                "cluster state is the oracle",
                 create_exc[0],
                 cluster_name,
             )
+        if create_result:
+            evidence["create_instance_returned"] = str(create_result["instance"].status)
 
-        ready_deadline = time.time() + _READY_POLL_TIMEOUT_S
-        status: str | None = None
-        while time.time() < ready_deadline:
-            for inst in provider.list_instances():
-                if inst.id == cluster_name:
-                    status = inst.status
-            elapsed = time.time() - launched_at
-            _log.info("t+%.0fs cluster=%s status=%s", elapsed, cluster_name, status)
-            if status in _READY_STATUSES:
-                break
-            time.sleep(_READY_POLL_INTERVAL_S)
-
-        if status not in _READY_STATUSES:
-            _capture_setup_log(cluster_name)
+        if not observed_ready:
+            evidence["cluster_state"]["remote_log_tail"] = _capture_setup_log(
+                cluster_name
+            )
             reason = f"create_instance raised {create_exc[0]!r}; " if create_exc else ""
             pytest.fail(
-                f"{reason}cluster {cluster_name!r} never reached a ready state "
-                f"within {_READY_POLL_TIMEOUT_S:.0f}s of create_instance "
-                f"returning; last status={status!r}"
+                f"{reason}cluster {cluster_name!r} never reached UP within "
+                f"{_CREATE_TIMEOUT_S:.0f}s; statuses seen="
+                f"{evidence['cluster_state']['statuses_seen']!r}"
             )
-        _log.info("SMOKE RESULT cluster=%s reached status=%s", cluster_name, status)
+        _log.info("SMOKE RESULT cluster=%s reached UP", cluster_name)
     finally:
-        _teardown(provider, cluster_name)
+        try:
+            evidence["teardown"] = _teardown(
+                provider, cluster_name, nuclear_first=create_thread.is_alive()
+            )
+        except Exception as exc:  # noqa: BLE001 — recorded, then re-raised below
+            evidence["teardown"] = {"error": repr(exc)}
+            evidence["finished_at"] = _now_local()
+            _EVIDENCE_PATH.write_text(json.dumps(evidence, indent=2) + "\n")
+            raise
+        evidence["finished_at"] = _now_local()
+        evidence["billable_wall_clock_s"] = round(time.time() - launched_at, 1)
+        _EVIDENCE_PATH.write_text(json.dumps(evidence, indent=2) + "\n")
+        print(f"[evidence] wrote {_EVIDENCE_PATH}", flush=True)
