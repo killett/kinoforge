@@ -279,8 +279,17 @@ class FieldSupport(StrEnum):
     CONSUMED    — read and applied; a parity test proves it, either on the
                   launch payload or on the ``find_offers`` catalog the
                   selection fields are applied to.
-    UNSUPPORTED — cannot be honoured. Setting it to a non-default is a
-                  config-load ERROR, never a silent discard.
+    UNSUPPORTED — cannot be honoured. Setting it to a non-default value is
+                  reported before launch, never silently discarded. The
+                  severity is set by RISK COVERAGE, not by the declaration:
+                  ERROR when nothing else in the cfg bounds the same risk,
+                  WARN naming the substitute and the bound it actually
+                  enforces when something does. So declaring a field
+                  UNSUPPORTED does not by itself refuse a config — it makes
+                  the discard visible, and
+                  ``validation/checks/field_support.py`` decides how loudly
+                  (operator ruling 2026-08-27; a uniform ERROR would have
+                  refused 15 configs that ship today).
 
     Deliberately two-valued. A third "read but not enforced" member would be
     a place to hide exactly the claims this vocabulary exists to force a

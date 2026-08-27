@@ -9,8 +9,12 @@ Severity is by RISK COVERAGE, mirroring
 :mod:`kinoforge.validation.checks.capabilities`:
 
 * **ERROR** when nothing else in the cfg bounds the same risk.
-  ``accelerator_count`` is the archetype — every provider pins one
-  accelerator and no other field can deliver a second.
+  ``accelerator_count`` is the archetype, and after the 2026-08-27 review the
+  ONLY row a cfg can reach — every provider pins one accelerator and no other
+  field can deliver a second.
+  ``test_accelerator_count_is_the_only_error_row_a_cfg_can_reach`` pins that,
+  so a new row shipped without a substitute is caught rather than discovered
+  by the operator it refuses.
 * **WARN naming the substitute and the bound it actually enforces**
   otherwise. ``disk_gb`` names the provider's hardcoded value, so
   "you asked 150, sky gives 60" is visible at doctor time; skypilot's
@@ -283,6 +287,53 @@ def _skypilot_rate_cap(cfg: Config) -> str:
     )
 
 
+def _modal_timeout_s(cfg: Config) -> int:
+    """Return the seconds Modal really receives as its function timeout.
+
+    ``ModalProvider.create_instance`` sends
+    ``startup_timeout_s=int(spec.lifecycle.boot_timeout_s) or 1800``, and
+    ``_app.py`` passes that straight to ``@app.function(timeout=...)``. The
+    ``or 1800`` fallback matters: echoing a cfg's ``boot_timeout: 0`` would
+    tell the operator the container dies immediately.
+
+    Args:
+        cfg: The loaded Config.
+
+    Returns:
+        The timeout in seconds.
+    """
+    assert cfg.compute is not None  # noqa: S101 — guarded by applies_to
+    lifecycle = cfg.compute.lifecycle
+    boot = int(lifecycle.boot_timeout) if lifecycle is not None else 0
+    return boot or _MODAL_TIMEOUT_FALLBACK_S
+
+
+def _modal_spot(cfg: Config) -> str:
+    """Name the same function timeout that covers Modal's missing rate cap.
+
+    Modal has no spot pool, so ``spot: true`` never arrives — but the harm is
+    a discount the run does not get, not an unbounded run, and the bound that
+    covers ``max_usd_per_hr`` covers this identically: duration x the booked
+    rate. Two rows sharing one substitute cannot disagree on severity, which
+    is why this is a WARN rather than the ERROR it shipped as first.
+
+    Args:
+        cfg: The loaded Config.
+
+    Returns:
+        A phrase naming the timeout and being explicit that what is lost is
+        the discount, not the ceiling.
+    """
+    timeout = _modal_timeout_s(cfg)
+    return (
+        f"Modal's @app.function(timeout={timeout}s), set from "
+        f"lifecycle.boot_timeout — modal has no spot pool at all, so what is "
+        f"lost is the discount, not a bound: the run is still capped at the "
+        f"booked on-demand rate x {timeout}s, though the rate itself is "
+        f"uncapped"
+    )
+
+
 def _modal_rate_cap(cfg: Config) -> str:
     """Name Modal's function timeout, which bounds total spend but not rate.
 
@@ -294,10 +345,7 @@ def _modal_rate_cap(cfg: Config) -> str:
         seconds Modal really receives, including the ``or 1800`` fallback the
         provider applies to a zero.
     """
-    assert cfg.compute is not None  # noqa: S101 — guarded by applies_to
-    lifecycle = cfg.compute.lifecycle
-    boot = int(lifecycle.boot_timeout) if lifecycle is not None else 0
-    timeout = boot or _MODAL_TIMEOUT_FALLBACK_S
+    timeout = _modal_timeout_s(cfg)
     return (
         f"Modal's @app.function(timeout={timeout}s), set from "
         f"lifecycle.boot_timeout — it bounds total spend at the booked rate "
@@ -334,12 +382,18 @@ def _local_inert(cfg: Config) -> str:
 #: is the default claim, and it is the safe direction — adding a substitute
 #: requires pointing at the code that enforces it, while omitting one only
 #: costs an over-strict refusal that a reader can trace.
+#:
+#: Two rows may not share a substitute and disagree on severity. That was the
+#: 2026-08-27 review finding against modal: ``spot`` was refused while
+#: ``max_usd_per_hr`` warned, though ``@app.function(timeout=)`` bounds both
+#: identically — and ``spot``'s harm (a missed discount) is strictly smaller.
 _SUBSTITUTE: dict[tuple[str, str], Callable[[Config], str]] = {
     ("runpod", "disk_gb"): _runpod_disk,
     ("runpod", "spot"): _runpod_spot,
     ("skypilot", "disk_gb"): _skypilot_disk,
     ("skypilot", "max_usd_per_hr"): _skypilot_rate_cap,
     ("modal", "disk_gb"): _modal_disk,
+    ("modal", "spot"): _modal_spot,
     ("modal", "max_usd_per_hr"): _modal_rate_cap,
 }
 

@@ -374,15 +374,87 @@ def test_runpod_spot_warn_names_the_rate_cap_that_does_reach_the_catalog() -> No
     assert "0.5" in result.message
 
 
-def test_modal_spot_is_an_error_because_no_rate_bound_reaches_it() -> None:
-    """Catches ``spot`` being warned everywhere by symmetry with RunPod.
+def test_modal_spot_warns_under_the_same_timeout_bound_as_its_rate_cap() -> None:
+    """Catches an ERROR/WARN split that the stated rule cannot re-derive.
 
-    Modal has no spot pool AND declares ``max_usd_per_hr`` UNSUPPORTED, so
-    nothing bounds the rate the run pays. That is the ERROR condition.
+    ``@app.function(timeout=...)`` bounds duration x the booked rate, and it
+    does so for ``spot`` exactly as it does for ``max_usd_per_hr`` — the two
+    rows cannot disagree on severity while sharing a substitute. Modal's
+    missing spot pool costs a discount, which is a strictly smaller harm than
+    ``accelerator_count``'s wrong hardware; sharing ERROR with it was the
+    contradiction.
     """
-    result = UnsupportedFieldCheck().run(_cfg("modal", placement={"spot": True}))
-    assert result.severity is Severity.ERROR
+    cfg = _cfg(
+        "modal",
+        placement={"spot": True},
+        lifecycle={"budget": 1.0, "boot_timeout": 600},
+    )
+    result = UnsupportedFieldCheck().run(cfg)
+    assert result.severity is Severity.WARN
     assert "compute.placement.spot" in result.message
+    assert "600" in result.message
+    assert "discount" in result.message
+
+
+def test_accelerator_count_is_the_only_error_row_a_cfg_can_reach() -> None:
+    """Pins the invariant the severity table now claims.
+
+    Every UNSUPPORTED row on a registered provider must carry a substitute
+    except ``accelerator_count``, whose 1-accelerator pin nothing else can
+    cover. A new row added without a substitute — or an existing substitute
+    deleted — silently reintroduces a refusal path this ruling forbids, and
+    would show up here as a second field name.
+    """
+    from kinoforge.core.capabilities import consumes_for
+    from kinoforge.core.interfaces import FieldSupport
+
+    errored: set[str] = set()
+    for provider in ("runpod", "skypilot", "modal", "local"):
+        declared = consumes_for(provider)
+        unsupported = {
+            name
+            for name in PlacementConfig.model_fields
+            if declared.get(name) is FieldSupport.UNSUPPORTED
+        }
+        # A non-default for every unsupported field at once: the strongest
+        # probe, since one call exercises every row the provider has.
+        probe = {
+            "accelerators": ["A100"],
+            "accelerator_count": 4,
+            "min_vram_gb": 79,
+            "min_cuda": "12.9",
+            "disk_gb": 321,
+            "spot": True,
+            "max_usd_per_hr": 9.75,
+        }
+        cfg = _cfg(provider, placement={k: probe[k] for k in unsupported})
+        errored |= {
+            gap.field
+            for gap in evaluate_field_gaps(cfg)
+            if gap.severity is Severity.ERROR
+        }
+    assert errored == {"compute.placement.accelerator_count"}
+
+
+@pytest.mark.parametrize("field", ["disk_gb", "accelerator_count"])
+def test_local_placement_rows_warn_because_local_launches_nothing(field: str) -> None:
+    """Pins the blanket-WARN policy for the unbilled, launch-nothing provider.
+
+    ``local`` declares ``accelerators``, ``accelerator_count``, ``disk_gb``
+    and ``spot`` all UNSUPPORTED, and no shipped config writes a placement
+    block against it — so without this test the ``_PROVIDER_FALLBACK`` branch
+    is never entered and the policy is unpinned in BOTH directions. The
+    ``accelerator_count`` case is the sharp one: it is the ERROR row
+    everywhere else, and here it must not refuse a dry run, because the local
+    provider starts no container and allocates no hardware.
+    """
+    value = 200 if field == "disk_gb" else 4
+    result = UnsupportedFieldCheck().run(_cfg("local", placement={field: value}))
+    assert result.passed is False
+    assert result.severity is Severity.WARN
+    assert f"compute.placement.{field}" in result.message
+    assert "local starting nothing at all" in result.message
+    assert "cost_rate_usd_per_hr=0.0" in result.message
 
 
 # ---------------------------------------------------------------------------
