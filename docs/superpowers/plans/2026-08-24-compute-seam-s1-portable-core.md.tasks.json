@@ -46,7 +46,7 @@
     {
       "id": 5,
       "subject": "Task 5: `consumes()` declarations and the parity guard",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Make it impossible to add a field that some provider silently ignores.\n\n**Files:**\n- Modify: `src/kinoforge/core/interfaces.py` (`FieldSupport`, `ComputeProvider.consumes`)\n- Modify: all four provider modules (declare)\n- Test: `tests/providers/test_field_consumption_parity.py`\n\n**Acceptance Criteria:**\n- [ ] `FieldSupport` is a `StrEnum` with `CONSUMED` and `UNSUPPORTED`.\n- [ ] `ComputeProvider.consumes()` defaults to `{}` \u2014 an undeclared provider claims nothing.\n- [ ] Every registered provider declares exactly the portable field set: the fields of\n      `Placement` plus `image`, `ports`, `volume_gb`, `volume_mount`, `env`, `tags`, `run_id`,\n      `provision_script`, `run_cmd`, `image_build_script`, `runtime_provision_script`,\n      `lifecycle`, `offer`, `backend_options`, `diagnostic_env`.\n- [ ] The guard test fails when a portable field is added without a declaration on every provider,\n      AND when a field is removed but a stale declaration remains.\n- [ ] Every `CONSUMED` declaration has a wire proof in `_WIRE_PROOFS` that observes the field in a\n      captured payload; a `CONSUMED` claim with no proof fails the test.\n- [ ] `max_usd_per_hr` is declared `UNSUPPORTED` on skypilot \u2014 the honest statement of F4 until\n      S4 wires the realized-rate verification.\n- [ ] The guard is observed failing: temporarily add `foo` to `Placement`, capture the failure\n      message, revert, and quote it in the commit body.\n\n**Verify:** `pixi run python -m pytest tests/providers/test_field_consumption_parity.py -v`\n\nFull steps + code: `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md` Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/providers/runpod/__init__.py\", \"src/kinoforge/providers/skypilot/__init__.py\", \"src/kinoforge/providers/modal/__init__.py\", \"src/kinoforge/providers/local/__init__.py\", \"tests/providers/test_field_consumption_parity.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers/test_field_consumption_parity.py -v\", \"modelTier\": \"frontier\", \"acceptanceCriteria\": [\"`FieldSupport` is a `StrEnum` with `CONSUMED` and `UNSUPPORTED`.\", \"`ComputeProvider.consumes()` defaults to `{}` \\u2014 an undeclared provider claims nothing.\", \"Every registered provider declares exactly the portable field set: the fields of\", \"The guard test fails when a portable field is added without a declaration on every provider,\", \"Every `CONSUMED` declaration has a wire proof in `_WIRE_PROOFS` that observes the field in a\", \"`max_usd_per_hr` is declared `UNSUPPORTED` on skypilot \\u2014 the honest statement of F4 until\", \"The guard is observed failing: temporarily add `foo` to `Placement`, capture the failure\"]}\n```",
       "blockedBy": [
         4
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-27T00:18:46"
+  "lastUpdated": "2026-08-27T01:47:14"
 }
