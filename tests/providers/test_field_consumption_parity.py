@@ -157,13 +157,32 @@ def test_declaration_covers_exactly_the_portable_field_set(provider_name: str) -
 
 
 def test_spec_portable_set_is_not_stale() -> None:
-    """Bug caught: a field leaves ``InstanceSpec`` and ``_SPEC_PORTABLE`` keeps naming it.
+    """``_SPEC_PORTABLE`` and ``InstanceSpec`` must agree in BOTH directions.
 
-    The intersection in :func:`_expected_fields` would then quietly stop
-    requiring it of anyone.
+    Bug caught (forward): a field leaves ``InstanceSpec`` and ``_SPEC_PORTABLE``
+    keeps naming it. The intersection in :func:`_expected_fields` would then
+    quietly stop requiring it of anyone.
+
+    Bug caught (reverse): a later stage adds a field to ``InstanceSpec`` and
+    declares it nowhere. Without this direction the new field needs no
+    ``consumes()`` entry from any provider and nothing fails — a field every
+    provider can silently ignore, which is the exact hole this guard exists to
+    close. Adding the field here is the deliberate act that forces the
+    per-provider declarations in
+    :func:`test_declaration_covers_exactly_the_portable_field_set`.
+
+    ``placement`` is the one exclusion, and only because its sub-fields are
+    declared individually (``accelerators``, ``min_vram_gb``, ...) rather than
+    as one opaque blob.
     """
     spec_fields = {f.name for f in dataclasses.fields(InstanceSpec)}
     assert _SPEC_PORTABLE <= spec_fields, sorted(_SPEC_PORTABLE - spec_fields)
+    undeclared = spec_fields - {"placement"} - _SPEC_PORTABLE
+    assert spec_fields - {"placement"} <= _SPEC_PORTABLE, (
+        f"InstanceSpec fields {sorted(undeclared)} are named in neither "
+        "_SPEC_PORTABLE nor the placement exclusion; add them to _SPEC_PORTABLE "
+        "so every provider must declare how it treats them"
+    )
 
 
 def test_the_default_declaration_claims_nothing() -> None:
