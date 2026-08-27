@@ -55,7 +55,7 @@
     {
       "id": 6,
       "subject": "Task 6: Refuse an UNSUPPORTED field at load; warn on a foreign namespace",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Turn the declarations into operator-facing errors, so setting a field the selected\nprovider cannot honour fails before launch instead of vanishing.\n\n**Files:**\n- Create: `src/kinoforge/validation/checks/field_support.py`\n- Modify: `src/kinoforge/validation/checks/__init__.py` (import for self-registration, matching\n  the existing checks' pattern)\n- Test: `tests/validation/test_field_support_check.py`\n\n**Acceptance Criteria:**\n- [ ] `UnsupportedFieldCheck` is `CheckCategory.STATIC`, `Severity.ERROR`, no auto-fix.\n- [ ] Setting a field the selected provider declares `UNSUPPORTED` to a NON-DEFAULT value fails\n      the check, and the message names the provider, the dotted cfg path, and the value.\n- [ ] Leaving that field at its default passes \u2014 a default the operator never wrote is not a\n      misconfiguration.\n- [ ] `ForeignNamespaceCheck` is `Severity.WARN` and fires when `backend_options` carries a\n      namespace for a registered provider other than the selected one, naming it.\n- [ ] An undeclared provider (empty `consumes()`) fails the ERROR check, matching the\n      `capabilities()` precedent.\n- [ ] All violations aggregate into ONE `CheckResult` carrying the worst severity, as\n      `ProviderCapabilityCheck` does \u2014 the operator sees every one at once.\n- [ ] Both checks appear in `kinoforge doctor` output.\n\n**Verify:** `pixi run python -m pytest tests/validation/test_field_support_check.py -v`\n\nFull steps + code: `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md` Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/validation/checks/field_support.py\", \"src/kinoforge/validation/checks/__init__.py\", \"tests/validation/test_field_support_check.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/validation/test_field_support_check.py -v\", \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"`UnsupportedFieldCheck` is `CheckCategory.STATIC`, `Severity.ERROR`, no auto-fix.\", \"Setting a field the selected provider declares `UNSUPPORTED` to a NON-DEFAULT value fails\", \"Leaving that field at its default passes \\u2014 a default the operator never wrote is not a\", \"`ForeignNamespaceCheck` is `Severity.WARN` and fires when `backend_options` carries a\", \"An undeclared provider (empty `consumes()`) fails the ERROR check, matching the\", \"All violations aggregate into ONE `CheckResult` carrying the worst severity, as\", \"Both checks appear in `kinoforge doctor` output.\"]}\n```",
       "blockedBy": [
         5
@@ -64,7 +64,7 @@
     {
       "id": 7,
       "subject": "Task 7: Fold `diagnostic_env` into `env`",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Delete the last spec field that is an overlay rather than a distinct concept, keeping\nits `setdefault` semantics.\n\n**Files:**\n- Modify: `src/kinoforge/core/spec_builder.py`, `src/kinoforge/core/interfaces.py`\n- Modify: `src/kinoforge/providers/runpod/__init__.py` (delete the merge it does today)\n- Test: `tests/core/test_spec_builder.py` (extend), `tests/providers/test_runpod_create_pod_diagnostic_env.py` (update)\n\n**Acceptance Criteria:**\n- [ ] `InstanceSpec.diagnostic_env` no longer exists.\n- [ ] With `diagnostic_mode` on, the diagnostic variables appear in `spec.env`, and a\n      user-supplied `env` value for the same key still wins.\n- [ ] The RunPod payload for a diagnostic-mode config is byte-identical to before the change\n      (proven by adding one diagnostic-mode golden).\n- [ ] The parity guard's expected field set drops `diagnostic_env` and stays green.\n\n**Verify:** `pixi run python -m pytest tests/core/test_spec_builder.py tests/providers -q`\n\nFull steps + code: `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md` Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/spec_builder.py\", \"src/kinoforge/core/interfaces.py\", \"src/kinoforge/providers/runpod/__init__.py\", \"tests/core/test_spec_builder.py\", \"tests/providers/test_runpod_create_pod_diagnostic_env.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/core/test_spec_builder.py tests/providers -q\", \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"`InstanceSpec.diagnostic_env` no longer exists.\", \"With `diagnostic_mode` on, the diagnostic variables appear in `spec.env`, and a\", \"The RunPod payload for a diagnostic-mode config is byte-identical to before the change\", \"The parity guard's expected field set drops `diagnostic_env` and stays green.\"]}\n```",
       "blockedBy": [
         6
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-27T01:47:14"
+  "lastUpdated": "2026-08-27T03:40:13"
 }
