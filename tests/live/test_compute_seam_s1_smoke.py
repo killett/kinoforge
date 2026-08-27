@@ -136,6 +136,7 @@ if _REASONS:
 
 # Imports below are evaluated only when the skip gate above passes.
 from kinoforge.core.config import load_config  # noqa: E402
+from kinoforge.core.credential_patterns import redact_string  # noqa: E402
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
 from kinoforge.providers.skypilot import SkyPilotProvider  # noqa: E402
 from kinoforge.stores.local import LocalArtifactStore  # noqa: E402
@@ -188,6 +189,15 @@ _STALL_IDLE_PCT_FLOOR = 99.0
 _TEARDOWN_SETTLE_S = 900.0
 _TEARDOWN_PASS_INTERVAL_S = 20.0
 _TEARDOWN_CLEAN_PASSES = 2
+
+#: Ceiling on the remote-log tail that reaches the committed evidence file.
+#: Redaction runs first (see :func:`_capture_setup_log`); this bounds size.
+_REMOTE_LOG_MAX_CHARS = 4000
+
+#: The SKU this smoke expects sky's optimizer to choose from ``cpus: "1+"`` /
+#: ``memory: "2+"`` on AWS us-west-2 — the brief's cheapest-CPU target, and
+#: the SKU test_skypilot_watchdog_smoke.py uses.
+_EXPECTED_SKU = "c6i.large"
 
 #: kinoforge status strings that mean "the cluster exists and is UP at the
 #: provider". ``_sky_status_to_kinoforge`` maps sky's ``UP`` to ``"ready"``;
@@ -314,18 +324,75 @@ def _normalize(payload: dict[str, Any]) -> dict[str, Any]:
 
     resources = task_config.get("resources", {})
     # Smoke-only pins (see module docstring point 3) — never present on the
-    # golden, which captures the config as authored (cloud-agnostic).
+    # golden, which captures the config as authored (cloud-agnostic). Popped,
+    # not compared. WHERE the launch landed is therefore invisible to this
+    # function by construction, and is asserted separately by
+    # :func:`_assert_launch_target` against the LIVE payload before it gets
+    # here — otherwise a regression that launched in another region on a
+    # different SKU would satisfy every comparison in this file.
     resources.pop("cloud", None)
     resources.pop("region", None)
 
-    normalized["launch_kwargs"]["cluster_name"] = _NAME_SENTINEL
+    launch_kwargs = normalized["launch_kwargs"]
+    # Replace, never create. Assigning into a missing key would synthesise the
+    # same sentinel on BOTH sides and manufacture agreement about a field that
+    # had actually been dropped from the launch call. Normalisation may only
+    # neutralise known noise; it may never invent a value.
+    assert "cluster_name" in launch_kwargs, (
+        "launch_kwargs has no 'cluster_name' — normalising would invent one on "
+        "both sides and hide the fact that it went missing from the launch call"
+    )
+    launch_kwargs["cluster_name"] = _NAME_SENTINEL
     return normalized
+
+
+def _assert_launch_target(live_payload: dict[str, Any]) -> dict[str, str]:
+    """Assert the live launch was pinned to THIS smoke's cloud and region.
+
+    The golden is cloud-agnostic, so :func:`_normalize` pops ``cloud`` and
+    ``region`` from both sides — which means the payload comparison alone
+    proves what went on the wire but says nothing about where it landed.
+    This is the missing half.
+
+    Args:
+        live_payload: The captured live payload, BEFORE normalisation.
+
+    Returns:
+        The ``{"cloud", "region"}`` pair that was asserted, for the evidence.
+
+    Raises:
+        AssertionError: The launch was not pinned to ``aws``/``_REGION``.
+    """
+    resources = live_payload["task_config"].get("resources", {})
+    cloud = resources.get("cloud")
+    region = resources.get("region")
+    assert cloud == "aws", (
+        f"live launch was pinned to cloud {cloud!r}, not 'aws' — the smoke's "
+        f"own clouds pin is not reaching resources.cloud"
+    )
+    assert region == _REGION, (
+        f"live launch was pinned to region {region!r}, not {_REGION!r} — the "
+        f"smoke's own region pin is not reaching resources.region, so the run "
+        f"could land anywhere and the golden comparison would not notice"
+    )
+    return {"cloud": cloud, "region": region}
 
 
 _STATE_QUERY = "Reservations[].Instances[].State.Name"
 _TYPE_QUERY = "Reservations[].Instances[].InstanceType"
 _AZ_QUERY = "Reservations[].Instances[].Placement.AvailabilityZone"
 _ID_QUERY = "Reservations[].Instances[].InstanceId"
+
+
+class Ec2QueryFailed(Exception):
+    """The EC2 oracle could not be read at all.
+
+    Distinct from "queried successfully, zero instances". Collapsing the two
+    is how a teardown reports green over a live box: expired credentials or a
+    throttled API for ~40 s returns nothing, and if that reads as an empty
+    inventory then two consecutive failures satisfy the all-clear gate while
+    a ``c6i.large`` bills. Silence from the oracle is not an answer from it.
+    """
 
 
 def _aws_ec2_query(cluster_name: str, query: str) -> list[Any]:
@@ -340,41 +407,53 @@ def _aws_ec2_query(cluster_name: str, query: str) -> list[Any]:
         query: A JMESPath projection over ``Reservations[].Instances[]``.
 
     Returns:
-        The parsed JSON list, or ``[]`` when the CLI call or parse fails —
-        an unreadable answer is deliberately NOT reported as "nothing is
-        running" to the teardown assertion, which re-checks rather than
-        trusting a single empty read.
+        The parsed JSON list. An EMPTY list means the query succeeded and
+        found nothing — it never doubles as an error code.
+
+    Raises:
+        Ec2QueryFailed: The CLI exited non-zero, timed out, or returned
+            output that would not parse. Callers must treat this as "state
+            unknown", never as "nothing is running".
     """
-    completed = subprocess.run(
-        [
-            "aws",
-            "ec2",
-            "describe-instances",
-            "--region",
-            _REGION,
-            "--filters",
-            f"Name=tag:ray-cluster-name,Values={cluster_name}*",
-            "--query",
-            query,
-            "--output",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    try:
+        completed = subprocess.run(
+            [
+                "aws",
+                "ec2",
+                "describe-instances",
+                "--region",
+                _REGION,
+                "--filters",
+                f"Name=tag:ray-cluster-name,Values={cluster_name}*",
+                "--query",
+                query,
+                "--output",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        _log.warning("aws ec2 describe-instances could not run: %r", exc)
+        raise Ec2QueryFailed(f"describe-instances could not run: {exc!r}") from exc
     if completed.returncode != 0:
         _log.warning(
             "aws ec2 describe-instances failed (rc=%d): %s",
             completed.returncode,
             completed.stderr.strip(),
         )
-        return []
+        raise Ec2QueryFailed(
+            f"describe-instances rc={completed.returncode}: "
+            f"{completed.stderr.strip()[:300]}"
+        )
     try:
         return list(json.loads(completed.stdout or "[]"))
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         _log.warning("aws ec2 describe-instances returned unparseable stdout")
-        return []
+        raise Ec2QueryFailed(
+            f"describe-instances stdout did not parse: {exc!r}"
+        ) from exc
 
 
 def _ec2_states(cluster_name: str) -> list[str]:
@@ -384,7 +463,12 @@ def _ec2_states(cluster_name: str) -> list[str]:
         cluster_name: SkyPilot cluster name.
 
     Returns:
-        List of EC2 ``State.Name`` strings; empty means none found.
+        List of EC2 ``State.Name`` strings; empty means the query succeeded
+        and found none.
+
+    Raises:
+        Ec2QueryFailed: The oracle could not be read — propagated, never
+            flattened into an empty list.
     """
     return [str(s) for s in _aws_ec2_query(cluster_name, _STATE_QUERY)]
 
@@ -505,8 +589,17 @@ def _capture_setup_log(cluster_name: str) -> str:
     except Exception as exc:  # noqa: BLE001 — best-effort only
         return f"<log capture failed: {exc!r}>"
     text = (completed.stdout or "") + "\n--- stderr ---\n" + (completed.stderr or "")
-    _log.warning("remote log for %s:\n%s", cluster_name, text[-4000:])
-    return text[-4000:]
+    # Redact BEFORE the value reaches a log line or the evidence file, which
+    # is committed to git. Today this is belt-and-braces: envs.HF_TOKEN is the
+    # synthetic stub, so nothing real is on that box to leak. It is here for
+    # the day someone reopens the real-token question — at that moment this
+    # path would otherwise tail a setup log containing a live bearer token
+    # straight into a tracked JSON file, and "rotate first, clean second" is
+    # a much worse position than never writing it. Truncated too: a bounded
+    # tail keeps a runaway log from bloating the committed artifact.
+    redacted = redact_string(text)[-_REMOTE_LOG_MAX_CHARS:]
+    _log.warning("remote log for %s (redacted):\n%s", cluster_name, redacted)
+    return redacted
 
 
 def _force_terminate(cluster_name: str) -> list[str]:
@@ -521,6 +614,9 @@ def _force_terminate(cluster_name: str) -> list[str]:
 
     Returns:
         The instance ids the terminate call was issued for (possibly empty).
+
+    Raises:
+        Ec2QueryFailed: The instance-id lookup could not be read.
     """
     ids = [str(i) for i in _aws_ec2_query(cluster_name, _ID_QUERY)]
     if ids:
@@ -583,7 +679,18 @@ def _teardown(
 
     while time.time() < deadline:
         entry: dict[str, Any] = {"at": _now_local()}
-        entry["forced_instance_ids"] = _force_terminate(cluster_name)
+        # ``ec2_readable`` gates the all-clear below. A pass that could not
+        # read the EC2 oracle proves nothing about what is running, so it
+        # must reset the streak rather than contribute to it.
+        ec2_readable = True
+        states: list[str] = []
+        alive: list[str] = []
+        try:
+            entry["forced_instance_ids"] = _force_terminate(cluster_name)
+        except Ec2QueryFailed as exc:
+            ec2_readable = False
+            entry["forced_instance_ids"] = None
+            entry["ec2_query_error"] = str(exc)
 
         sky_status = _sky_status_of(provider, cluster_name)
         entry["sky_status"] = sky_status
@@ -594,20 +701,33 @@ def _teardown(
             except Exception as exc:  # noqa: BLE001
                 entry["destroy_instance"] = f"raised: {exc!r}"
 
-        states = _ec2_states(cluster_name)
-        alive = [s for s in states if s not in _DEAD_STATES]
-        entry["ec2_states"] = states
+        try:
+            states = _ec2_states(cluster_name)
+            alive = [s for s in states if s not in _DEAD_STATES]
+            entry["ec2_states"] = states
+        except Ec2QueryFailed as exc:
+            ec2_readable = False
+            entry["ec2_states"] = None
+            entry["ec2_query_error"] = str(exc)
+
+        entry["ec2_readable"] = ec2_readable
         entry["launch_thread_alive"] = create_thread.is_alive()
         record["passes"].append(entry)
         _log.info(
-            "teardown pass: sky=%s ec2=%r alive=%r launching=%s",
+            "teardown pass: sky=%s ec2=%s alive=%r launching=%s readable=%s",
             sky_status,
-            states,
+            states if ec2_readable else "<unreadable>",
             alive,
             entry["launch_thread_alive"],
+            ec2_readable,
         )
 
-        if not alive and sky_status is None and not entry["launch_thread_alive"]:
+        if (
+            ec2_readable
+            and not alive
+            and sky_status is None
+            and not entry["launch_thread_alive"]
+        ):
             clean_streak += 1
             if clean_streak >= _TEARDOWN_CLEAN_PASSES:
                 break
@@ -615,31 +735,57 @@ def _teardown(
             clean_streak = 0
         time.sleep(_TEARDOWN_PASS_INTERVAL_S)
 
-    final_states = _ec2_states(cluster_name)
+    try:
+        final_states = _ec2_states(cluster_name)
+        final_readable = True
+    except Ec2QueryFailed as exc:
+        # Unknown, not clear. Falls through to the survivor check below, which
+        # treats an unreadable final oracle as a failure — the safe direction:
+        # a false alarm costs a manual look, a false all-clear costs a live box.
+        final_states = []
+        final_readable = False
+        record["final_ec2_query_error"] = str(exc)
     final_sky = _sky_status_of(provider, cluster_name)
-    record["final_ec2_states"] = final_states
+    record["final_ec2_states"] = final_states if final_readable else None
+    record["final_ec2_readable"] = final_readable
     record["final_sky_status"] = final_sky
     record["clean_streak"] = clean_streak
     record["finished_at"] = _now_local()
 
+    survivors = [s for s in final_states if s not in _DEAD_STATES]
+    teardown_clean = final_readable and not survivors and final_sky is None
+
     # The provider writes a provisional "launching" ledger row before
     # sky.launch and only forgets it on the SUCCESS path (F12). A launch that
-    # raises — the expected outcome for this config — therefore leaves a row
-    # that `kinoforge list` would report as a live instance. The instance is
-    # confirmed dead above, so the row is stale by definition; drop it so the
-    # post-run ledger check is honest rather than needing a manual `forget`.
-    try:
-        Ledger(store=LocalArtifactStore(_STATE_DIR)).forget(cluster_name)
-        record["ledger_forget"] = "ok"
-    except Exception as exc:  # noqa: BLE001 — best-effort bookkeeping
-        _log.warning("ledger forget failed for %s: %r", cluster_name, exc)
-        record["ledger_forget"] = f"raised: {exc!r}"
+    # raises therefore leaves a row that `kinoforge list` reports as a live
+    # instance.
+    #
+    # Dropping it is correct ONLY once the instance is confirmed dead. Doing it
+    # unconditionally would erase the row in exactly the case it exists for:
+    # teardown fails, a box keeps billing, and the operator's mandated
+    # `pixi run kinoforge list` prints "No instances recorded in ledger." —
+    # a clean bill of health over a live instance. That row is Brief 1's F12
+    # protection; it must outlive a failed teardown so the ledger still names
+    # what needs killing.
+    if teardown_clean:
+        try:
+            Ledger(store=LocalArtifactStore(_STATE_DIR)).forget(cluster_name)
+            record["ledger_forget"] = "ok"
+        except Exception as exc:  # noqa: BLE001 — best-effort bookkeeping
+            _log.warning("ledger forget failed for %s: %r", cluster_name, exc)
+            record["ledger_forget"] = f"raised: {exc!r}"
+    else:
+        record["ledger_forget"] = "skipped — teardown not confirmed clean"
 
-    survivors = [s for s in final_states if s not in _DEAD_STATES]
-    if survivors or final_sky is not None:
+    if not teardown_clean:
+        detail = (
+            f"ec2 states {survivors!r}"
+            if final_readable
+            else "ec2 state UNREADABLE (query failed — treat as live)"
+        )
         raise RuntimeError(
             f"cluster {cluster_name!r} survived teardown "
-            f"(ec2 states {survivors!r}, sky status {final_sky!r}) "
+            f"({detail}, sky status {final_sky!r}) "
             f"— destroy it by hand in {_REGION}"
         )
     _log.info("teardown complete cluster=%s", cluster_name)
@@ -682,11 +828,19 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
        captured — seconds in, before any waiting — so a shape regression
        fails fast and cheaply regardless of what the cluster does next.
     2. The cluster reaches ``UP`` at the provider (``sky status`` via
-       ``provider.list_instances``), in ``us-west-2``, with utilisation
-       polled on a 75 s cadence while waiting. NOT server readiness: this
-       config's ComfyUI/Wan setup script is expected to fail on a CPU box
-       with a synthetic HF token, and ``sky.launch`` raising for that reason
-       is tolerated, not treated as a smoke failure.
+       ``provider.list_instances``), with utilisation polled on a 75 s
+       cadence while waiting. NOT server readiness: this config's ComfyUI/Wan
+       setup script is expected to fail on a CPU box with a synthetic HF
+       token, and ``sky.launch`` raising for that reason is tolerated, not
+       treated as a smoke failure.
+    3. It landed WHERE this smoke pinned it and on the SKU the cost envelope
+       assumes: ``resources.cloud``/``region`` on the live payload before
+       normalisation discards them, and the instance type / AZ EC2 actually
+       reports. Claims 1 and 2 are both blind to this — ``_normalize`` pops
+       cloud and region from both sides, and "a cluster is UP" says nothing
+       about its size or location — so without this a run that booked an
+       ``m5.4xlarge`` in ``us-east-1`` would satisfy every other assertion
+       in the file.
 
     Teardown runs in ``finally`` either way, and the evidence file is written
     unconditionally.
@@ -763,6 +917,11 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
             "task_config": recording_sky.captured["task_config"],
             "launch_kwargs": recording_sky.captured.get("launch_kwargs", {}),
         }
+        # Assert WHERE before normalisation discards it. _normalize pops
+        # cloud/region from both sides, so without this the whole file would
+        # pass for a launch that landed in another region on another SKU.
+        launch_target = _assert_launch_target(live_payload)
+        evidence["launch_target_asserted"] = launch_target
         live_norm = _normalize(live_payload)
         golden_norm = _normalize(golden_payload)
         evidence["payload_comparison"] = {
@@ -866,14 +1025,17 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
                 )
 
         evidence["cluster_state"]["observed_ready"] = observed_ready
-        # The SKU / AZ actually launched — read from EC2, not from what we asked
-        # for, so the evidence records reality.
-        evidence["sku_launched"] = sorted(
+        # The SKU / AZ actually launched — read from EC2, not from what we
+        # asked for, so this records reality rather than intent. Asserted, not
+        # merely recorded: `resources.cpus: "1+"` lets sky's optimizer pick,
+        # and a regression that quietly booked a bigger box would otherwise be
+        # invisible to every check in this file.
+        sku_launched = sorted(
             {str(t) for t in _aws_ec2_query(cluster_name, _TYPE_QUERY)}
         )
-        evidence["availability_zones"] = sorted(
-            {str(z) for z in _aws_ec2_query(cluster_name, _AZ_QUERY)}
-        )
+        azs = sorted({str(z) for z in _aws_ec2_query(cluster_name, _AZ_QUERY)})
+        evidence["sku_launched"] = sku_launched
+        evidence["availability_zones"] = azs
         if create_exc:
             # EXPECTED on this config: the ComfyUI/Wan setup script cannot
             # succeed on a CPU box with a synthetic HF token. Recorded, never
@@ -898,7 +1060,28 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
                 f"{_CREATE_TIMEOUT_S:.0f}s; statuses seen="
                 f"{evidence['cluster_state']['statuses_seen']!r}"
             )
-        _log.info("SMOKE RESULT cluster=%s reached UP", cluster_name)
+
+        # --- Claim 3: it landed WHERE we pinned it, on the SKU we costed ---
+        # An empty list must FAIL, not pass vacuously. `_aws_ec2_query` now
+        # raises rather than returning [] on an unreadable answer, but an
+        # honest empty answer here would still mean "we never saw the box we
+        # are making claims about", which is not evidence of anything.
+        assert sku_launched == [_EXPECTED_SKU], (
+            f"expected the launch to land on exactly [{_EXPECTED_SKU!r}] but EC2 "
+            f"reports {sku_launched!r} for {cluster_name!r} — an empty list means "
+            f"the instance was never observed, and any other value means sky's "
+            f"optimizer booked a SKU this smoke's cost envelope does not cover"
+        )
+        assert azs and all(z.startswith(_REGION) for z in azs), (
+            f"expected every AZ to be inside {_REGION!r} but EC2 reports {azs!r} "
+            f"for {cluster_name!r} — an empty list means no instance was observed"
+        )
+        _log.info(
+            "SMOKE RESULT cluster=%s reached UP on %r in %r",
+            cluster_name,
+            sku_launched,
+            azs,
+        )
     finally:
         try:
             evidence["teardown"] = _teardown(
