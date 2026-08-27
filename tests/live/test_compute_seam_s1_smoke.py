@@ -194,6 +194,15 @@ _TEARDOWN_CLEAN_PASSES = 2
 #: Redaction runs first (see :func:`_capture_setup_log`); this bounds size.
 _REMOTE_LOG_MAX_CHARS = 4000
 
+#: `pixi run preflight` is a listed acceptance criterion of this gate, but it
+#: is an operator-run command, not something the test can invoke: its
+#: clean-tree check would fail against the very evidence file this test is
+#: about to rewrite. The runner therefore exports its exit code and captured
+#: output here, and the evidence records them. Absent => recorded as
+#: "not-recorded", never silently as a pass.
+_PREFLIGHT_RC_ENV = "KINOFORGE_S1_PREFLIGHT_RC"
+_PREFLIGHT_LOG_ENV = "KINOFORGE_S1_PREFLIGHT_LOG"
+
 #: The SKU this smoke expects sky's optimizer to choose from ``cpus: "1+"`` /
 #: ``memory: "2+"`` on AWS us-west-2 — the brief's cheapest-CPU target, and
 #: the SKU test_skypilot_watchdog_smoke.py uses.
@@ -214,6 +223,39 @@ _DEADLINE_SENTINEL = "<normalized-launch-deadline-epoch>"
 #: every EC2 instance it provisions (see test_skypilot_watchdog_smoke.py's
 #: _ec2_states for the wildcard-suffix rationale).
 _DEAD_STATES = {"shutting-down", "terminated"}
+
+
+def _preflight_record() -> dict[str, Any]:
+    """Return what the runner reported about ``pixi run preflight``.
+
+    Returns:
+        ``{"command", "exit_code", "passed", "output"}``. ``exit_code`` is
+        ``None`` and ``passed`` is ``"not-recorded"`` when the runner did not
+        export it — an unrecorded gate is reported as unrecorded, never as a
+        pass.
+    """
+    raw_rc = os.getenv(_PREFLIGHT_RC_ENV)
+    log_path = os.getenv(_PREFLIGHT_LOG_ENV)
+    output: str | None = None
+    if log_path and Path(log_path).exists():
+        # Redacted for the same reason as the remote log tail: this text is
+        # committed. preflight prints only variable NAMES today, never values.
+        output = redact_string(Path(log_path).read_text())[-2000:]
+    try:
+        exit_code = int(raw_rc) if raw_rc is not None else None
+    except ValueError:
+        exit_code = None
+    return {
+        "command": "pixi run preflight",
+        "exit_code": exit_code,
+        "passed": "not-recorded" if exit_code is None else exit_code == 0,
+        "note": (
+            "run by the operator BEFORE this process started; it cannot be "
+            "invoked from inside the test because its clean-tree check would "
+            "fail against the evidence file this test rewrites"
+        ),
+        "output": output,
+    }
 
 
 def _now_local() -> str:
@@ -868,6 +910,8 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
         "cluster_name": cluster_name,
         "region_requested": _REGION,
         "clouds_requested": ["aws"],
+        "expected_sku": _EXPECTED_SKU,
+        "preflight": _preflight_record(),
         "started_at": _now_local(),
         "utilisation_samples": [],
         "payload_comparison": {"status": "not-reached"},
