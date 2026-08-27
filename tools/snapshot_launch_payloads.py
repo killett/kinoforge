@@ -38,10 +38,10 @@ from typing import TYPE_CHECKING, Any
 from unittest import mock
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from kinoforge.core.config import Config
-    from kinoforge.core.interfaces import InstanceSpec, Offer
+    from kinoforge.core.interfaces import Instance, InstanceSpec, Offer
 
 GOLDEN_DIR = Path("tests/providers/golden/launch_payloads")
 CONFIG_DIR = Path("examples/configs")
@@ -94,6 +94,62 @@ class _StubCreds:
 
 class _StopLaunch(Exception):
     """Abort a provider call once its payload has been captured."""
+
+
+class _RecordingLedger:
+    """Capture SkyPilot's pre-launch provisional row (finding F12).
+
+    SkyPilot builds no Instance the capture can see — :class:`_StopLaunch`
+    aborts inside ``sky.launch``, before ``create_instance`` returns. The
+    provisional row it records first is the only Instance it constructs, and
+    it is where ``spec.tags`` lands. Installing this ledger changes neither
+    ``task_config`` nor ``launch_kwargs``, so the goldens are untouched.
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing recorded."""
+        self.recorded: list[Instance] = []
+
+    def record(self, instance: Instance, *, max_age_s: int | None = None) -> None:
+        """Record *instance*.
+
+        Args:
+            instance: The provisional row.
+            max_age_s: Ignored; present to satisfy the provider's Protocol.
+        """
+        del max_age_s
+        self.recorded.append(instance)
+
+    def forget(self, instance_id: str) -> None:
+        """Ignore the forget call.
+
+        Args:
+            instance_id: Ignored; the capture never reaches the success path.
+        """
+        del instance_id
+
+
+@dataclasses.dataclass(frozen=True)
+class Launch:
+    """One captured launch: the wire payload, its spec, and the Instance.
+
+    :func:`capture_payload` returns only :attr:`payload` — the bytes the
+    golden ratchet freezes. The parity guard
+    (``tests/providers/test_field_consumption_parity.py``) needs the other
+    two as well: the spec so a proof can mutate one field and re-capture,
+    and the Instance because a couple of portable fields (``tags``) are
+    honoured on the record rather than on the wire.
+
+    Attributes:
+        payload: Exactly what :func:`capture_payload` returns.
+        spec: The InstanceSpec that produced it, after any mutation.
+        instance: The Instance the provider fabricated, or ``None`` when the
+            capture aborts before one exists.
+    """
+
+    payload: dict[str, Any]
+    spec: InstanceSpec
+    instance: Instance | None
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +266,9 @@ def build_spec(cfg: Config) -> InstanceSpec:
 # ---------------------------------------------------------------------------
 
 
-def _capture_runpod(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
+def _capture_runpod(
+    cfg: Config, spec: InstanceSpec
+) -> tuple[dict[str, Any], Instance | None]:
     """Capture RunPod's ``podFindAndDeployOnDemand`` mutation input.
 
     Seam: the injected ``http_post`` transport, the same one
@@ -224,7 +282,8 @@ def _capture_runpod(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
         spec: The spec to launch.
 
     Returns:
-        ``{"provider": ..., "seam": ..., "input": <variables.input dict>}``.
+        ``({"provider": ..., "seam": ..., "input": <variables.input dict>},
+        instance)``.
     """
     del cfg
     from kinoforge.providers.runpod import RunPodProvider
@@ -241,15 +300,20 @@ def _capture_runpod(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
         http_post=_http_post,
         http_get=lambda _url: {},
     )
-    provider.create_instance(spec)
-    return {
-        "provider": "runpod",
-        "seam": "http_post -> podFindAndDeployOnDemand variables.input",
-        "input": captured[0]["variables"]["input"],
-    }
+    instance = provider.create_instance(spec)
+    return (
+        {
+            "provider": "runpod",
+            "seam": "http_post -> podFindAndDeployOnDemand variables.input",
+            "input": captured[0]["variables"]["input"],
+        },
+        instance,
+    )
 
 
-def _capture_modal(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
+def _capture_modal(
+    cfg: Config, spec: InstanceSpec
+) -> tuple[dict[str, Any], Instance | None]:
     """Capture the ``ModalAppRequest`` Modal would build an App from.
 
     Seam: the injected ``app_factory``, as in
@@ -263,7 +327,8 @@ def _capture_modal(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
         spec: The spec to launch.
 
     Returns:
-        ``{"provider": ..., "seam": ..., "request": <ModalAppRequest asdict>}``.
+        ``({"provider": ..., "seam": ..., "request": <ModalAppRequest asdict>},
+        instance)``.
     """
     del cfg
     from kinoforge.providers.modal import ModalProvider
@@ -283,15 +348,20 @@ def _capture_modal(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
         modal_module=object(),
         clock=lambda: FROZEN_EPOCH,
     )
-    provider.create_instance(spec)
-    return {
-        "provider": "modal",
-        "seam": "app_factory -> ModalAppRequest",
-        "request": dataclasses.asdict(captured[0]),
-    }
+    instance = provider.create_instance(spec)
+    return (
+        {
+            "provider": "modal",
+            "seam": "app_factory -> ModalAppRequest",
+            "request": dataclasses.asdict(captured[0]),
+        },
+        instance,
+    )
 
 
-def _capture_skypilot(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
+def _capture_skypilot(
+    cfg: Config, spec: InstanceSpec
+) -> tuple[dict[str, Any], Instance | None]:
     """Capture SkyPilot's ``(task_config, launch_kwargs)`` pair.
 
     Seam: the injected ``sky_client``'s ``Task.from_yaml_config`` +
@@ -310,7 +380,8 @@ def _capture_skypilot(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
         spec: The spec to launch.
 
     Returns:
-        ``{"provider": ..., "seam": ..., "task_config": ..., "launch_kwargs": ...}``.
+        ``({"provider": ..., "seam": ..., "task_config": ...,
+        "launch_kwargs": ...}, provisional_instance)``.
 
     Raises:
         RuntimeError: ``sky.launch`` was never reached.
@@ -347,21 +418,28 @@ def _capture_skypilot(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
         clouds=list(sky_opts.clouds) if sky_opts.clouds else None,
         retry_until_up=sky_opts.retry_until_up,
     )
+    ledger = _RecordingLedger()
+    provider.set_launch_ledger(ledger)
     try:
         provider.create_instance(spec)
     except _StopLaunch:
         pass
     if "launch_kwargs" not in captured:
         raise RuntimeError("skypilot capture never reached sky.launch")
-    return {
-        "provider": "skypilot",
-        "seam": "sky.Task.from_yaml_config + sky.launch(**kwargs)",
-        "task_config": captured["task_config"],
-        "launch_kwargs": captured["launch_kwargs"],
-    }
+    return (
+        {
+            "provider": "skypilot",
+            "seam": "sky.Task.from_yaml_config + sky.launch(**kwargs)",
+            "task_config": captured["task_config"],
+            "launch_kwargs": captured["launch_kwargs"],
+        },
+        ledger.recorded[0] if ledger.recorded else None,
+    )
 
 
-def _capture_local(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
+def _capture_local(
+    cfg: Config, spec: InstanceSpec
+) -> tuple[dict[str, Any], Instance | None]:
     """Capture what LocalProvider records for a spec.
 
     Seam: the returned :class:`~kinoforge.core.interfaces.Instance` — the
@@ -373,26 +451,33 @@ def _capture_local(cfg: Config, spec: InstanceSpec) -> dict[str, Any]:
         spec: The spec to launch.
 
     Returns:
-        ``{"provider": ..., "seam": ..., "instance": {...}}``.
+        ``({"provider": ..., "seam": ..., "instance": {...}}, instance)``.
     """
     del cfg
     from kinoforge.core.clock import FakeClock
     from kinoforge.providers.local import LocalProvider
 
     instance = LocalProvider(clock=FakeClock(start=FROZEN_EPOCH)).create_instance(spec)
-    return {
-        "provider": "local",
-        "seam": "LocalProvider.create_instance -> Instance",
-        "instance": {
-            "image": spec.image,
-            "ports": list(spec.ports),
-            "env": dict(spec.env),
-            "run_cmd": list(spec.run_cmd or []),
-            "cost_rate_usd_per_hr": instance.cost_rate_usd_per_hr,
-            "status": instance.status,
-            "tags": dict(instance.tags),
+    return (
+        {
+            "provider": "local",
+            "seam": "LocalProvider.create_instance -> Instance",
+            "instance": {
+                # NOTE: image / ports / env / run_cmd are echoed from the SPEC,
+                # not read off the Instance — LocalProvider ignores all four.
+                # Anything proving a local declaration must observe the
+                # Instance (below), never these four keys.
+                "image": spec.image,
+                "ports": list(spec.ports),
+                "env": dict(spec.env),
+                "run_cmd": list(spec.run_cmd or []),
+                "cost_rate_usd_per_hr": instance.cost_rate_usd_per_hr,
+                "status": instance.status,
+                "tags": dict(instance.tags),
+            },
         },
-    }
+        instance,
+    )
 
 
 _CAPTURERS = {
@@ -416,6 +501,55 @@ def _frozen_clock() -> Any:  # noqa: ANN401
     return mock.patch.object(time, "time", return_value=FROZEN_EPOCH)
 
 
+def capture_launch(
+    config_path: Path,
+    *,
+    mutate_cfg: Callable[[Config], Config] | None = None,
+    mutate_spec: Callable[[InstanceSpec], InstanceSpec] | None = None,
+) -> Launch:
+    """Capture one launch, optionally with the config or spec perturbed.
+
+    The mutation hooks exist for the field-consumption parity guard: proving
+    that a provider READS a portable field means changing that field and
+    watching the payload follow. Without them a proof can only assert that
+    some key is present, which a hardcoded value satisfies just as well.
+
+    Args:
+        config_path: Path to an ``examples/configs/*.yaml`` file.
+        mutate_cfg: Applied to the loaded config before the spec is built —
+            the route for ``compute.backend_options``, whose SkyPilot
+            namespace is consumed by the composition root rather than read
+            off the spec.
+        mutate_spec: Applied to the built spec before ``create_instance``.
+
+    Returns:
+        The :class:`Launch` for this config.
+
+    Raises:
+        ValueError: The config has no ``compute`` block, or names a provider
+            with no capture seam.
+    """
+    from kinoforge.core.config import load_config
+
+    cfg = load_config(str(config_path))
+    if mutate_cfg is not None:
+        cfg = mutate_cfg(cfg)
+    compute = cfg.compute
+    if compute is None:
+        raise ValueError(f"{config_path} has no compute block")
+    capturer = _CAPTURERS.get(compute.provider)
+    if capturer is None:
+        raise ValueError(
+            f"no capture seam for provider {compute.provider!r} in {config_path}"
+        )
+    with _frozen_clock():
+        spec = build_spec(cfg)
+        if mutate_spec is not None:
+            spec = mutate_spec(spec)
+        payload, instance = capturer(cfg, spec)
+    return Launch(payload=payload, spec=spec, instance=instance)
+
+
 def capture_payload(config_path: Path) -> dict[str, Any]:
     """Return the wire payload the configured provider would send for a config.
 
@@ -430,19 +564,7 @@ def capture_payload(config_path: Path) -> dict[str, Any]:
         ValueError: The config has no ``compute`` block, or names a provider
             with no capture seam.
     """
-    from kinoforge.core.config import load_config
-
-    cfg = load_config(str(config_path))
-    if cfg.compute is None:
-        raise ValueError(f"{config_path} has no compute block")
-    capturer = _CAPTURERS.get(cfg.compute.provider)
-    if capturer is None:
-        raise ValueError(
-            f"no capture seam for provider {cfg.compute.provider!r} in {config_path}"
-        )
-    with _frozen_clock():
-        spec = build_spec(cfg)
-        return capturer(cfg, spec)
+    return capture_launch(config_path).payload
 
 
 def serialize(payload: dict[str, Any]) -> str:

@@ -50,6 +50,7 @@ from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
 from kinoforge.core.interfaces import (
     ComputeProvider,
     CredentialProvider,
+    FieldSupport,
     HardwareRequirements,
     Instance,
     InstanceSpec,
@@ -381,6 +382,61 @@ class RunPodProvider(ComputeProvider):
                 Capability.BALANCE_QUERY,
             }
         )
+
+    @classmethod
+    def consumes(cls) -> Mapping[str, FieldSupport]:
+        """Declare what the create-pod mutation and the catalog filter read.
+
+        Derived by reading :meth:`_build_create_pod_body`,
+        :meth:`_assemble_create_env` and :meth:`find_offers`, not from the
+        pre-S1 sweep.
+
+        The three UNSUPPORTED placement knobs each have a hardcoded
+        counterpart on the wire and are the F5 finding in miniature:
+        ``gpuCount`` is the literal ``1``, ``containerDiskInGb`` the literal
+        ``250``, and ``podFindAndDeployOnDemand`` books on-demand capacity
+        with no spot equivalent. Setting any of the three today changes
+        nothing an operator can observe short of the invoice.
+
+        The four selection fields are CONSUMED through ``find_offers`` ->
+        :func:`kinoforge.core.offers.filter_offers`, not through the launch
+        payload: what reaches the wire is the chosen ``Offer``.
+
+        ``run_cmd`` and the Modal fast-boot script split are UNSUPPORTED
+        because RunPod provisions at container start from the combined
+        ``provision_script``, whose convention is to end in
+        ``exec <run_cmd>``.
+
+        Returns:
+            The declared field-support mapping.
+        """
+        c, u = FieldSupport.CONSUMED, FieldSupport.UNSUPPORTED
+        return {
+            # -- placement -------------------------------------------------
+            "accelerators": c,  # find_offers ranks the catalog by preference
+            "accelerator_count": u,  # "gpuCount": 1, hardcoded
+            "min_vram_gb": c,  # filter_offers excludes below the floor
+            "min_cuda": c,  # filter_offers excludes below the floor
+            "disk_gb": u,  # "containerDiskInGb": 250, hardcoded
+            "spot": u,  # on-demand mutation only
+            "max_usd_per_hr": c,  # filter_offers excludes pod offers above it
+            # -- spec ------------------------------------------------------
+            "image": c,  # "imageName"
+            "ports": c,  # "ports", with the /http suffix defaulted in
+            "volume_gb": c,  # "volumeInGb"
+            "volume_mount": c,  # "volumeMountPath"
+            "env": c,  # "env"
+            "tags": c,  # pod-vs-serverless routing, then Instance.tags
+            "run_id": c,  # "name"
+            "provision_script": c,  # gzip+b64 into KINOFORGE_PROVISION_SCRIPT
+            "run_cmd": u,  # the provision script's trailing exec carries it
+            "image_build_script": u,  # Modal-only split
+            "runtime_provision_script": u,  # Modal-only split
+            "lifecycle": c,  # rendered into KINOFORGE_SELFTERM_SCRIPT
+            "offer": c,  # "gpuTypeId"
+            "backend_options": c,  # "cloudType" / "restartPolicy"
+            "diagnostic_env": c,  # setdefault-merged into the pod env
+        }
 
     def __init__(
         self,

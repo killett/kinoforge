@@ -75,6 +75,7 @@ from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.errors import KinoforgeError, ProvisionFailed
 from kinoforge.core.interfaces import (
     ComputeProvider,
+    FieldSupport,
     HardwareRequirements,
     Instance,
     InstanceSpec,
@@ -609,6 +610,72 @@ class SkyPilotProvider(ComputeProvider):
         if shape is WorkloadShape.BATCH:
             caps.add(Capability.IDLE_AUTOSTOP)
         return frozenset(caps)
+
+    @classmethod
+    def consumes(cls) -> Mapping[str, FieldSupport]:
+        """Declare what the Task config and the catalog filter read.
+
+        SkyPilot honours the setup/run pair and the resource block it builds
+        in :meth:`create_instance`. ``ports`` / ``volume_*`` are UNSUPPORTED
+        because the tunnel is opened by kinoforge over ssh rather than
+        declared to sky, and no volume is attached at all — declaring them
+        CONSUMED would be the exact lie this table exists to prevent.
+
+        Two rows are deliberately narrower than they look:
+
+        * ``max_usd_per_hr`` is UNSUPPORTED. ``find_offers`` does hand it to
+          :func:`~kinoforge.core.offers.filter_offers`, but the launch pins
+          only the accelerator NAME — sky's optimizer then picks cloud,
+          region and SKU on its own, and has been observed booking a $1.99
+          Lambda A100 under a $1.00 ceiling (2026-07-07). Read-and-then-
+          overridden is not honoured; this is verification finding F4 and it
+          stays UNSUPPORTED until S4 wires the realized-rate check.
+        * ``disk_gb`` is UNSUPPORTED: ``resources`` never receives the
+          operator's value, so the ``setdefault("disk_size", 60 if gpu else
+          30)`` below always wins. Shipped skypilot configs DO set
+          ``placement.disk_gb`` today; every one of them is being ignored.
+
+        ``min_vram_gb`` by contrast IS honoured: the accelerator name that
+        survives the VRAM floor is the name pinned on the wire, so wherever
+        sky books it the VRAM comes with it. It also has a second, direct
+        read — ``min_vram_gb == 0`` short-circuits to the synthetic CPU
+        offer, which is what makes the task request ``cpus``/``memory``.
+
+        ``backend_options`` is consumed by the SkyPilot namespace's owner,
+        :func:`kinoforge._adapters.build_provider_for`, which turns
+        ``clouds`` / ``retry_until_up`` into constructor arguments; this
+        provider reads them off ``self`` rather than off ``spec``.
+
+        Returns:
+            The declared field-support mapping.
+        """
+        c, u = FieldSupport.CONSUMED, FieldSupport.UNSUPPORTED
+        return {
+            # -- placement -------------------------------------------------
+            "accelerators": c,  # find_offers ranks the catalog by preference
+            "accelerator_count": u,  # accelerators=f"{gpu_type}:1", hardcoded
+            "min_vram_gb": c,  # filter_offers floor + the CPU short-circuit
+            "min_cuda": c,  # filter_offers excludes below the floor
+            "disk_gb": u,  # disk_size is 60/30 by fiat
+            "spot": c,  # resources["use_spot"]
+            "max_usd_per_hr": u,  # F4: the optimizer never sees the cap
+            # -- spec ------------------------------------------------------
+            "image": c,  # resources["image_id"], docker:-normalised
+            "ports": u,  # the tunnel is ssh-side, never declared to sky
+            "volume_gb": u,  # no volume is attached
+            "volume_mount": u,  # no volume is attached
+            "env": c,  # task_config["envs"]
+            "tags": c,  # the F12 provisional row, then Instance.tags
+            "run_id": c,  # task name + cluster_name
+            "provision_script": c,  # appended to Task.setup
+            "run_cmd": c,  # Task.run, shell-quoted
+            "image_build_script": u,  # Modal-only split
+            "runtime_provision_script": u,  # Modal-only split
+            "lifecycle": c,  # idle_minutes_to_autostop + the watchdog deadline
+            "offer": c,  # resources["accelerators"] / cpus+memory
+            "backend_options": c,  # cloud pin + retry_until_up, via _adapters
+            "diagnostic_env": u,  # RunPod-only overlay
+        }
 
     def __init__(
         self,

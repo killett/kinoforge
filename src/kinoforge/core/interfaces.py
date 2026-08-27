@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -272,6 +273,27 @@ class CredentialProvider(ABC):
         """Return the secret for ``key`` or ``None`` if unset."""
 
 
+class FieldSupport(StrEnum):
+    """Whether a provider honours a portable field.
+
+    CONSUMED    — read and applied; a parity test proves it, either on the
+                  launch payload or on the ``find_offers`` catalog the
+                  selection fields are applied to.
+    UNSUPPORTED — cannot be honoured. Setting it to a non-default is a
+                  config-load ERROR, never a silent discard.
+
+    Deliberately two-valued. A third "read but not enforced" member would be
+    a place to hide exactly the claims this vocabulary exists to force a
+    decision about: ``max_usd_per_hr`` on SkyPilot is read by
+    ``filter_offers`` while enumerating and then ignored by sky's optimizer
+    at launch (verification finding F4), and the honest answer is
+    UNSUPPORTED, not a softer word.
+    """
+
+    CONSUMED = "consumed"
+    UNSUPPORTED = "unsupported"
+
+
 class ComputeProvider(ABC):
     """A place to run GPU workloads. Instances created with cost guardrails."""
 
@@ -300,6 +322,26 @@ class ComputeProvider(ABC):
             The declared capability set.
         """
         return frozenset()
+
+    @classmethod
+    def consumes(cls) -> Mapping[str, FieldSupport]:
+        """Declare, per portable field, whether this provider reads it.
+
+        The portable field set is every field of :class:`Placement` plus the
+        provider-facing fields of :class:`InstanceSpec`;
+        ``tests/providers/test_field_consumption_parity.py`` pins the exact
+        membership and proves every CONSUMED claim against a captured launch
+        payload or the provider's own offer catalog.
+
+        Default empty on purpose, matching :meth:`capabilities`: a provider
+        that has not declared claims nothing, and validation refuses it
+        loudly instead of trusting it. Declaring is part of writing a
+        provider.
+
+        Returns:
+            The declared field-support mapping.
+        """
+        return {}
 
     @abstractmethod
     def find_offers(self, reqs: HardwareRequirements) -> list[Offer]: ...  # noqa: D102

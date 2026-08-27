@@ -17,6 +17,7 @@ from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.clock import Clock, RealClock
 from kinoforge.core.interfaces import (
     ComputeProvider,
+    FieldSupport,
     HardwareRequirements,
     Instance,
     InstanceSpec,
@@ -114,6 +115,61 @@ class LocalProvider(ComputeProvider):
                 Capability.PAUSE_BILLING,
             }
         )
+
+    @classmethod
+    def consumes(cls) -> Mapping[str, FieldSupport]:
+        """Declare the near-total non-consumption this provider is honest about.
+
+        :meth:`create_instance` reads exactly one field of the spec —
+        ``tags`` — and fabricates everything else. No container is started,
+        so ``image``, ``ports``, ``env``, ``run_cmd`` and both provision
+        scripts are genuinely dropped (see
+        ``tests/providers/test_local_ignores_provision_script.py``), and no
+        clock guardrail runs, so ``lifecycle`` is dropped too. That is not a
+        gap to be closed; it is what "local" means.
+
+        The three CONSUMED selection fields come from :meth:`find_offers`,
+        which passes them to :func:`~kinoforge.core.offers.filter_offers`
+        over the synthetic catalog: a VRAM or CUDA floor above both entries
+        empties the offer list, and a price ceiling below zero does the same
+        (LocalProvider is unbilled, so a non-negative cap is satisfied
+        vacuously — satisfied nonetheless).
+
+        ``accelerators`` is UNSUPPORTED and the reason is worth stating:
+        the preference list is passed to ``filter_offers``, but both
+        synthetic offers share the ``"LOCAL"`` gpu_type, so no ordering an
+        operator asks for can ever change the result.
+
+        Returns:
+            The declared field-support mapping.
+        """
+        c, u = FieldSupport.CONSUMED, FieldSupport.UNSUPPORTED
+        return {
+            # -- placement -------------------------------------------------
+            "accelerators": u,  # one synthetic gpu_type; ranking is inert
+            "accelerator_count": u,  # nothing is allocated
+            "min_vram_gb": c,  # filter_offers excludes below the floor
+            "min_cuda": c,  # filter_offers excludes below the floor
+            "disk_gb": u,  # nothing is allocated
+            "spot": u,  # nothing is allocated
+            "max_usd_per_hr": c,  # filter_offers applies it; local is free
+            # -- spec ------------------------------------------------------
+            "image": u,  # no container is started
+            "ports": u,  # nothing listens
+            "volume_gb": u,  # no volume
+            "volume_mount": u,  # no volume
+            "env": u,  # no process to hand it to
+            "tags": c,  # Instance.tags
+            "run_id": u,  # the id is a fresh uuid4
+            "provision_script": u,  # deliberately ignored
+            "run_cmd": u,  # nothing is executed
+            "image_build_script": u,  # Modal-only split
+            "runtime_provision_script": u,  # Modal-only split
+            "lifecycle": u,  # no guardrail runs in-process
+            "offer": u,  # cost_rate is the literal 0.0
+            "backend_options": u,  # Options is empty: no knob to consume
+            "diagnostic_env": u,  # RunPod-only overlay
+        }
 
     def __init__(self, clock: Clock | None = None) -> None:
         """Initialise the provider.
