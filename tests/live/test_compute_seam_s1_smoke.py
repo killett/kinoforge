@@ -906,10 +906,23 @@ def test_s1_migrated_cpu_config_matches_golden_and_boots_live() -> None:
             )
         except Exception as exc:  # noqa: BLE001 — recorded, then re-raised below
             evidence["teardown"] = {"error": repr(exc)}
-            evidence["finished_at"] = _now_local()
+            evidence["outcome"] = "TEARDOWN-FAILED"
+            evidence["finished_at"] = evidence["captured_at"] = _now_local()
             _EVIDENCE_PATH.write_text(json.dumps(evidence, indent=2) + "\n")
             raise
-        evidence["finished_at"] = _now_local()
+        # ``outcome`` / ``captured_at`` follow the convention the other live
+        # evidence files in this directory use (see _c26_phase_a_smoke_evidence
+        # .json). PROVEN requires BOTH claims, so a file can never read green
+        # off one of them alone.
+        evidence["outcome"] = (
+            "PROVEN"
+            if (
+                evidence["payload_comparison"].get("status") == "match"
+                and evidence["cluster_state"].get("observed_ready")
+            )
+            else "NOT-PROVEN"
+        )
+        evidence["finished_at"] = evidence["captured_at"] = _now_local()
         evidence["billable_wall_clock_s"] = round(time.time() - launched_at, 1)
         _EVIDENCE_PATH.write_text(json.dumps(evidence, indent=2) + "\n")
         print(f"[evidence] wrote {_EVIDENCE_PATH}", flush=True)
