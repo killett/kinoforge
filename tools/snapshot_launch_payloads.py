@@ -214,6 +214,45 @@ def _catalog_offer(cfg: Config) -> Offer:
     )
 
 
+def _diagnostic_env(cfg: Config) -> dict[str, str] | None:
+    """Return the synthetic diagnostic overlay for a capture, or ``None``.
+
+    Mirrors the KEY SHAPE ``orchestrator._build_diagnostic_env`` produces —
+    same bucket/region defaults, same ``boot-logs/<run_id>`` prefix — so a
+    diagnostic-mode capture is no longer invisible to this tool (the gap
+    flagged in the compute-seam S1 Task 7 review: this function used to be
+    skipped entirely, so ``build_spec`` passed ``diagnostic_env=None``
+    unconditionally regardless of ``cfg.diagnostic_mode``).
+
+    Deliberately does NOT call the real ``_build_diagnostic_env`` — that
+    function reads ``os.environ`` and resolves AWS credentials via the boto3
+    default chain, either of which would make a capture depend on the
+    calling machine's real environment/credentials. That violates this
+    tool's determinism contract (frozen clock, synthetic secrets only) and
+    risks a real credential landing in a checked-in golden file. Every value
+    that would otherwise come from ``os.environ`` or boto3 is instead the
+    synthetic :data:`STUB_SECRET`, or the same hardcoded default the
+    orchestrator falls back to when no override is set.
+
+    Args:
+        cfg: The loaded config.
+
+    Returns:
+        The overlay dict when ``cfg.diagnostic_mode`` is set, else ``None``
+        — keeping every non-diagnostic config's derivation at exactly the
+        ``None`` it was before, so none of the 31 existing goldens move.
+    """
+    if not cfg.diagnostic_mode:
+        return None
+    return {
+        "KINOFORGE_DIAG_BUCKET": "<DIAG_BUCKET>",
+        "KINOFORGE_DIAG_PREFIX": f"boot-logs/{GOLDEN_RUN_ID}",
+        "AWS_DEFAULT_REGION": "us-west-2",
+        "AWS_ACCESS_KEY_ID": STUB_SECRET,
+        "AWS_SECRET_ACCESS_KEY": STUB_SECRET,
+    }
+
+
 def build_spec(cfg: Config) -> InstanceSpec:
     """Build the InstanceSpec the orchestrator would build, deterministically.
 
@@ -257,7 +296,7 @@ def build_spec(cfg: Config) -> InstanceSpec:
         env=dict.fromkeys(rendered.env_required, STUB_SECRET),
         run_id=GOLDEN_RUN_ID,
         tags=None,
-        diagnostic_env=None,
+        diagnostic_env=_diagnostic_env(cfg),
     )
 
 
