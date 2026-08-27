@@ -517,7 +517,8 @@ compute:
   placement:
     accelerators: [A100-80GB, H100]   # was gpu_preference
     accelerator_count: 1
-    region: us-west-2                 # F6: previously unreachable from YAML
+    min_cuda: "12.8"                  # stays portable — see the 2026-08-26 correction in §5
+    region: us-west-2                 # F6: previously unreachable from YAML; lands in S2
     spot: false
     max_usd_per_hr: 1.09              # now verified after launch, not just filtered
     disk_gb: 200
@@ -526,8 +527,10 @@ compute:
 ```
 
 `compute.requirements` is renamed to `compute.placement` rather than kept as an alias: the block
-changes meaning (a filter over a catalog becomes a constraint stated to a placer) and two of its
-five keys move — `min_cuda` into the RunPod namespace, `gpu_preference` into `accelerators`.
+changes meaning (a filter over a catalog becomes a constraint stated to a placer) and one of its
+five keys is renamed — `gpu_preference` into `accelerators`. (**Corrected 2026-08-27.** This
+paragraph originally said `min_cuda` moved into the RunPod namespace too; §5 records why that was
+wrong and it stayed portable. As shipped in S1, the rename is the only key that moves.)
 Keeping the old name over new semantics is how a config surface starts lying.
 
 A deprecation shim would keep two paths alive across stages, which is the failure mode the brief
