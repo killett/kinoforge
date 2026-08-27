@@ -64,7 +64,6 @@ _SPEC_PORTABLE = {
     "lifecycle",
     "offer",
     "backend_options",
-    "diagnostic_env",
 }
 
 #: Every provider the composition root registers. Named explicitly so the
@@ -592,11 +591,6 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             lambda ln: _runpod_input(ln)["cloudType"],
             backend_options={"runpod": {"cloud_type": "community"}},
             expected="COMMUNITY",
-        ),
-        "diagnostic_env": _tracks(
-            lambda ln: _runpod_env(ln).get("KF_PROBE_DIAG"),
-            probe={"diagnostic_env": {"KF_PROBE_DIAG": "sentinel"}},
-            expected="sentinel",
         ),
         "accelerators": _orders_by_preference(),
         "min_vram_gb": _filters(_above_every_vram, axis="min_vram_gb"),

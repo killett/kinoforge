@@ -201,9 +201,9 @@ def _cmd_deploy(args: argparse.Namespace, ctx: SessionContext) -> int:
 
     # C28 A3: --diagnostic-mode is a per-invocation cfg override; rebuild the
     # Config with the flag set so the orchestrator's _build_spec sees it and
-    # both wires diagnostic_env AND overlays restart_policy=never onto the
-    # spec's runpod backend_options namespace. Operator opts out by simply
-    # not passing the flag.
+    # both merges the diagnostic overlay into spec.env AND overlays
+    # restart_policy=never onto the spec's runpod backend_options namespace.
+    # Operator opts out by simply not passing the flag.
     if getattr(args, "diagnostic_mode", False):
         cfg = cfg.model_copy(update={"diagnostic_mode": True})
 

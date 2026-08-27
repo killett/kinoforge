@@ -674,7 +674,6 @@ class SkyPilotProvider(ComputeProvider):
             "lifecycle": c,  # idle_minutes_to_autostop + the watchdog deadline
             "offer": c,  # resources["accelerators"] / cpus+memory
             "backend_options": c,  # cloud pin + retry_until_up, via _adapters
-            "diagnostic_env": u,  # RunPod-only overlay
         }
 
     def __init__(

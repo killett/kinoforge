@@ -136,7 +136,6 @@ class ModalProvider(ComputeProvider):
             "lifecycle": c,  # scaledown_window_s + startup_timeout_s
             "offer": c,  # ModalAppRequest.gpu
             "backend_options": u,  # Options is empty: no knob to consume
-            "diagnostic_env": u,  # RunPod-only overlay
         }
 
     def __init__(

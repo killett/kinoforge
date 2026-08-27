@@ -1306,9 +1306,9 @@ class Config(BaseModel):
     sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
     # C28 A1.5: opt-in diagnostic mode. When True the engine's render_provision
     # prepends an EXIT trap that captures the boot log + system snapshot and
-    # uploads to S3, AND the orchestrator overlays AWS + KINOFORGE_DIAG_* env
-    # onto spec.diagnostic_env so the trap finds the bucket. Default False =
-    # zero behavioural change.
+    # uploads to S3, AND the orchestrator's AWS + KINOFORGE_DIAG_* overlay is
+    # merged into spec.env (compute-seam S1 Task 7) so the trap finds the
+    # bucket. Default False = zero behavioural change.
     diagnostic_mode: bool = False
 
     model_config = {"populate_by_name": True}

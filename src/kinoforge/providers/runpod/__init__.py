@@ -435,7 +435,6 @@ class RunPodProvider(ComputeProvider):
             "lifecycle": c,  # rendered into KINOFORGE_SELFTERM_SCRIPT
             "offer": c,  # "gpuTypeId"
             "backend_options": c,  # "cloudType" / "restartPolicy"
-            "diagnostic_env": c,  # setdefault-merged into the pod env
         }
 
     def __init__(
@@ -918,9 +917,10 @@ class RunPodProvider(ComputeProvider):
     def _assemble_create_env(self, spec: InstanceSpec) -> dict[str, str]:
         """Assemble the pod env payload for the create-pod mutation.
 
-        Combines user-supplied vars, the C28 diagnostic overlay, the scoped
-        terminate-only key, and the rendered self-terminator script. The main
-        ``RUNPOD_API_KEY`` is never included.
+        Combines user-supplied vars (which already carry the C28 diagnostic
+        overlay merged in by ``build_instance_spec``, compute-seam S1 Task 7),
+        the scoped terminate-only key, and the rendered self-terminator
+        script. The main ``RUNPOD_API_KEY`` is never included.
 
         Args:
             spec: Instance specification.
@@ -931,14 +931,6 @@ class RunPodProvider(ComputeProvider):
         """
         # Build env dict: user-supplied vars + self-terminator key + script.
         env: dict[str, str] = dict(spec.env)
-
-        # C28 A1.5: overlay diagnostic env (S3 bucket/prefix + AWS keys for the
-        # in-pod EXIT trap) without clobbering any explicit user env. The
-        # diagnostic overlay is opt-in via cfg.diagnostic_mode → orchestrator
-        # populates spec.diagnostic_env; outside that path the dict is empty
-        # and this loop is a no-op.
-        for diag_key, diag_value in spec.diagnostic_env.items():
-            env.setdefault(diag_key, diag_value)
 
         # Inject terminate-only key (scoped; NOT the main API key)
         if self._creds is not None:

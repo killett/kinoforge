@@ -44,11 +44,16 @@ def build_instance_spec(
         run_id: Run identifier.
         tags: Caller tags, merged last so they win over the defaults.
         diagnostic_env: Diagnostic overlay; only used when
-            ``cfg.diagnostic_mode`` is set.
+            ``cfg.diagnostic_mode`` is set. Merged into ``env`` via
+            ``setdefault`` so an operator-supplied value always wins.
 
     Returns:
         The InstanceSpec to hand to ``provider.create_instance``.
     """
+    merged_env = dict(env)
+    if cfg.diagnostic_mode and diagnostic_env:
+        for key, value in diagnostic_env.items():
+            merged_env.setdefault(key, value)
     merged_tags: dict[str, str] = {
         "kinoforge_engine": engine_name,
         "kinoforge_key": key_hash,
@@ -75,7 +80,7 @@ def build_instance_spec(
         ports=tuple(rendered.ports),
         lifecycle=lifecycle,
         tags=merged_tags,
-        env=dict(env),
+        env=merged_env,
         run_id=run_id,
         # Empty -> None, matching the image_build_script / runtime_provision_script
         # coercion below. rendered.script is a required `str` (never None) on
@@ -96,8 +101,5 @@ def build_instance_spec(
         # a provider reads what to get from one place (SkyPilot's use_spot,
         # S4's declarative selection) instead of re-deriving it from cfg.
         placement=cfg.placement(),
-        diagnostic_env=(
-            dict(diagnostic_env) if cfg.diagnostic_mode and diagnostic_env else {}
-        ),
         backend_options=backend_options,
     )

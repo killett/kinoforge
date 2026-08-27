@@ -168,7 +168,6 @@ class LocalProvider(ComputeProvider):
             "lifecycle": u,  # no guardrail runs in-process
             "offer": u,  # cost_rate is the literal 0.0
             "backend_options": u,  # Options is empty: no knob to consume
-            "diagnostic_env": u,  # RunPod-only overlay
         }
 
     def __init__(self, clock: Clock | None = None) -> None:

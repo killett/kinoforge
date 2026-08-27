@@ -1,7 +1,9 @@
 """C28 A1.5 — ``_build_diagnostic_env`` orchestrator-side overlay builder.
 
-Validates the env-shape the orchestrator hands to ``InstanceSpec.diagnostic_env``
-when ``cfg.diagnostic_mode`` is True. AWS keys are resolved via the boto3
+Validates the env-shape the orchestrator hands to ``build_instance_spec`` as
+the ``diagnostic_env`` overlay (merged into ``InstanceSpec.env`` there, per
+compute-seam S1 Task 7) when ``cfg.diagnostic_mode`` is True. AWS keys are
+resolved via the boto3
 default chain (so ``AWS_SHARED_CREDENTIALS_FILE`` is honoured per
 ``cloud_creds_workspace_local``).
 """

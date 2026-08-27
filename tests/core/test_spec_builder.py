@@ -115,22 +115,24 @@ def test_ports_come_from_rendered_as_a_tuple():
     assert _build().ports == ("8000/http",)
 
 
-def test_diagnostic_mode_off_means_no_diagnostic_env_and_restart_always():
+def test_diagnostic_mode_off_means_no_diagnostic_overlay_and_restart_always():
     spec = _build()
-    assert spec.diagnostic_env == {}
+    assert not hasattr(spec, "diagnostic_env")
+    assert "OTHER" not in spec.env  # sanity: no stray overlay keys leak in
     # No overlay at all, so RunPod's Options default ("always") applies.
     assert "restart_policy" not in spec.backend_options.get("runpod", {})
 
 
-def test_diagnostic_mode_on_sets_restart_never_and_populates_diagnostic_env():
+def test_diagnostic_mode_on_sets_restart_never_and_merges_overlay_into_env():
     # Bug caught: a diagnostic run whose pod RunPod auto-restarts obliterates
     # the snapshot the trap is uploading (C28 A3).
     #
     # Design: the caller computes the diagnostic overlay (_build_diagnostic_env
     # stays in orchestrator.py) and passes it in; build_instance_spec only
-    # decides whether to honor it, gated on cfg.diagnostic_mode. So this test
-    # must supply the overlay explicitly — a diagnostic_mode=True cfg alone
-    # does not conjure one from nothing.
+    # decides whether to honor it, gated on cfg.diagnostic_mode, and merges it
+    # into spec.env (compute-seam S1 Task 7: diagnostic_env is not a distinct
+    # InstanceSpec field). So this test must supply the overlay explicitly —
+    # a diagnostic_mode=True cfg alone does not conjure one from nothing.
     cfg = load_config(_CFG)
     cfg.diagnostic_mode = True
     spec = _build(cfg=cfg, diagnostic_env={"KINOFORGE_DIAGNOSTIC_RUN_ID": "run-1"})
@@ -138,7 +140,23 @@ def test_diagnostic_mode_on_sets_restart_never_and_populates_diagnostic_env():
     # that expresses it — RunPod's restart_policy — rather than riding a
     # vendor field on the portable InstanceSpec (compute-seam S1).
     assert spec.backend_options["runpod"]["restart_policy"] == "never"
-    assert spec.diagnostic_env != {}
+    assert spec.env["KINOFORGE_DIAGNOSTIC_RUN_ID"] == "run-1"
+
+
+def test_diagnostic_env_merges_into_env_without_clobbering_user_values():
+    # Bug caught: the overlay wins over an operator-set variable, silently
+    # changing a run's behaviour (the setdefault direction is load-bearing).
+    cfg = load_config(_CFG)
+    cfg.diagnostic_mode = True
+    spec = _build(
+        cfg=cfg,
+        env={"KINOFORGE_DIAG_UPLOAD": "operator-value", "OTHER": "x"},
+        diagnostic_env={"KINOFORGE_DIAG_UPLOAD": "overlay", "KINOFORGE_DIAG_RUN": "r"},
+    )
+    assert spec.env["KINOFORGE_DIAG_UPLOAD"] == "operator-value"
+    assert spec.env["KINOFORGE_DIAG_RUN"] == "r"
+    assert spec.env["OTHER"] == "x"
+    assert not hasattr(spec, "diagnostic_env")
 
 
 def test_backend_options_are_empty_when_cfg_has_no_compute_block():

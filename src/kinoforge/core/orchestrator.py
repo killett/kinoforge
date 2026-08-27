@@ -246,8 +246,10 @@ def _build_diagnostic_env(run_id: str) -> dict[str, str]:
             so each run's diagnostic snapshots land under a distinct path.
 
     Returns:
-        Mapping of env-var name to value, ready to splat into
-        ``InstanceSpec.diagnostic_env``.
+        Mapping of env-var name to value, ready to pass as the
+        ``diagnostic_env`` overlay to ``build_instance_spec`` (compute-seam
+        S1 Task 7: merged into ``InstanceSpec.env`` there, not a distinct
+        spec field).
     """
     overlay: dict[str, str] = {
         "KINOFORGE_DIAG_BUCKET": os.environ.get(

@@ -222,9 +222,6 @@ class InstanceSpec:
     # that used to be a bare ``spot`` field here; SkyPilot reads
     # ``spec.placement.spot`` for its ``use_spot`` resource.
     placement: Placement = field(default_factory=Placement)
-    # C28 A1.5: diagnostic env overlay merged into pod env via setdefault
-    # (user-supplied `env` always wins). Default empty = no behavioural change.
-    diagnostic_env: dict[str, str] = field(default_factory=dict)
     # compute-seam S1: provider-namespaced escape hatch, populated from
     # cfg.compute.backend_options by build_instance_spec and validated at
     # config-load time against the OWNING provider's Options model. Every

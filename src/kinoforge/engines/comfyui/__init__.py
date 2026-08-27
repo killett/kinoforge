@@ -1235,8 +1235,9 @@ class ComfyUIEngine(GenerationEngine):
         # log + system snapshots and uploads to S3 on failure. Pure-additive —
         # when False/absent, the rendered script is byte-identical to the
         # pre-C28 baseline. AWS creds are NEVER named in the script body; they
-        # ride on pod env (overlaid via spec.diagnostic_env, see C28 A1.5) and
-        # are consumed by `aws s3 cp` via the boto/CLI default chain.
+        # ride on pod env (merged into spec.env by build_instance_spec, see
+        # C28 A1.5 / compute-seam S1 Task 7) and are consumed by `aws s3 cp`
+        # via the boto/CLI default chain.
         diagnostic_mode: bool = bool(cfg_dict.get("diagnostic_mode", False))
         trap_preamble: list[str] = []
         if diagnostic_mode:
