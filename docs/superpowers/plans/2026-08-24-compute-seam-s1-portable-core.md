@@ -1926,34 +1926,34 @@ git commit -m "test(live): S1 compute-seam smoke green on the cheapest CPU SKU"
 - Modify: `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md` (check off tasks)
 
 **Acceptance Criteria:**
-- [ ] `rg 'compute\.requirements|compute\.cloud\b|compute\.cloud_type' README.md examples/ docs/`
+- [x] `rg 'compute\.requirements|compute\.cloud\b|compute\.cloud_type' README.md examples/ docs/`
       returns only historical references inside dated design/research docs.
-- [ ] README documents `compute.placement` and `compute.backend_options` with a worked example.
-- [ ] `examples/configs/skypilot-gpu.yaml:38-40`'s "ComputeConfig has no region field today"
+- [x] README documents `compute.placement` and `compute.backend_options` with a worked example.
+- [x] `examples/configs/skypilot-gpu.yaml:38-40`'s "ComputeConfig has no region field today"
       comment is updated to say region lands in S2, with the design doc path.
-- [ ] PROGRESS RESUME SNAPSHOT records S1 as shipped, names the intended capacity-wait behaviour
+- [x] PROGRESS RESUME SNAPSHOT records S1 as shipped, names the intended capacity-wait behaviour
       change, and sets the single next action to the S2 plan.
 
 **Verify:** `pixi run python -m pytest -q` → full suite green; `rg` check above returns clean.
 
 **Steps:**
 
-- [ ] **Step 1: Update README's config surface section** with the before/after from design §12.
-- [ ] **Step 2: Sweep example-config comments**
+- [x] **Step 1: Update README's config surface section** with the before/after from design §12.
+- [x] **Step 2: Sweep example-config comments**
 
 ```bash
 rg -n 'requirements:|gpu_preference|no region field' examples/configs/
 ```
 
-- [ ] **Step 3: Update PROGRESS.md** — new RESUME SNAPSHOT block naming: S1 shipped, the goldens'
+- [x] **Step 3: Update PROGRESS.md** — new RESUME SNAPSHOT block naming: S1 shipped, the goldens'
       location and how to regenerate them, the capacity-wait scoping change, and the next action
       (write the S2 plan: region as first class).
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `pixi run test && pixi run typecheck && pixi run lint`
 Expected: green, green, green
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 pixi run pre-commit run --all-files
