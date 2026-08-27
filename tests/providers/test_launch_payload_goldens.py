@@ -1,4 +1,10 @@
-"""Behavior: the wire payload for every example config is frozen.
+"""Behavior: the wire payload for every top-level example config is frozen.
+
+Scope, stated precisely because it is easy to over-read: ``compute_configs()``
+globs ``examples/configs/*.yaml`` NON-recursively, so the 31 goldens cover the
+top-level configs that carry a ``compute:`` block. Configs under
+``examples/configs/grids/`` and ``examples/configs/extras/`` are NOT covered —
+a wire change for one of those does not trip this test.
 
 This is the S1..S5 ratchet. The compute-seam rework changes the SHAPE of
 ``ComputeConfig`` and ``InstanceSpec``; it must not change what any provider

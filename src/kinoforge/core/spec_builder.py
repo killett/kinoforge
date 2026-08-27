@@ -89,6 +89,16 @@ def build_instance_spec(
         # coercion; without it RunPod's `_encode_provision_script` sees a
         # non-None "" and wraps it in a base64/gzip decode-and-run docker
         # command instead of leaving dockerArgs empty.
+        # This also changes `deploy_session`, whose pre-S1 closure passed
+        # `rendered.script` through verbatim: an engine that rendered `script=""`
+        # used to get that same empty decode-and-run wrapper and now gets an
+        # empty dockerArgs. Inert today — all three engines (comfyui, diffusers,
+        # fake) render a non-empty script on that path, so no shipped config
+        # reaches the delta, which is why the golden ratchet shows no movement.
+        # It is called out because it landed in the one commit window the
+        # ratchet could not cover; a future engine that legitimately renders an
+        # empty script gets the (correct) empty-dockerArgs behaviour, not the
+        # old no-op wrapper.
         provision_script=(rendered.script or None),
         # Modal fast-boot split: bake image_build_script into the image,
         # boot with runtime_provision_script only. Empty -> None so

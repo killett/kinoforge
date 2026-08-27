@@ -395,11 +395,17 @@ reading a `doctor` WARN as "the migration broke something" — it didn't, and th
   `containerDiskInGb`; SkyPilot hardcodes its own `disk_size` by instance tier. The WARN names the
   provider's actual value so a mismatch is visible, but nothing about the run changes.
 - **SkyPilot's `max_usd_per_hr` is also a WARN**, not read by the optimizer — spend on that path is
-  bounded by the instance-side deadline watchdog (`budget_usd` / rate), not a per-SKU price
-  filter.
-- **`accelerator_count` is the one field that is a hard `ConfigError`** when set to anything but
-  its default. No provider reads it, and — unlike `disk_gb` or `max_usd_per_hr` — nothing else
-  bounds that risk, so there is no substitute to warn about.
+  bounded by the instance-side deadline watchdog, not a per-SKU price filter. Read the WARN text
+  rather than assuming a dollar bound: the watchdog kills at whichever comes first of
+  `budget_usd` ÷ the booked rate or `max_lifetime`, and **at `lifecycle.budget: 0` the budget arm
+  is inactive — nothing bounds that run in dollars, only in time**
+  (`_skypilot_rate_cap`, `validation/checks/field_support.py`).
+- **`accelerator_count` is the one field that is a hard `ConfigError` on the three billed
+  providers** (`runpod`, `skypilot`, `modal`) when set to anything but its default. No provider
+  reads it, and — unlike `disk_gb` or `max_usd_per_hr` — nothing else bounds that risk, so there is
+  no substitute to warn about. On `local` it is a WARN like every other unsupported field:
+  `_PROVIDER_FALLBACK` (`validation/checks/field_support.py`) downgrades the whole provider,
+  because `local` is unbilled and launches nothing.
 
 Canonical example configs in `examples/configs/`:
 
