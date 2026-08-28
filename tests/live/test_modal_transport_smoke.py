@@ -3,12 +3,23 @@
 Runs only under `pixi run -e live-modal`. Marked `live` so the default suite skips.
 """
 
+import os
 import time
 import urllib.request
 
 import pytest
 
-pytestmark = pytest.mark.live
+# The `live` marker alone deselects nothing (pyproject registers it but no
+# addopts filter on it), so without the skipif this module runs in the default
+# env and dies on the absent `modal` SDK. Same gate every sibling in tests/live
+# carries.
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("KINOFORGE_LIVE_TESTS") != "1",
+        reason="live tests require KINOFORGE_LIVE_TESTS=1",
+    ),
+]
 
 
 def test_modal_transport_end_to_end():

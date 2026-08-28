@@ -1,6 +1,6 @@
 # kinoforge example: SkyPilot pinned to Lambda Cloud — Phase 53 Stage C
 #
-# Demonstrates the Stage C ComputeConfig.cloud knob that pins
+# Demonstrates the compute.backend_options.skypilot.clouds knob that pins
 # sky.launch / sky.list_accelerators to a single cloud, bypassing the
 # default "consider every enabled cloud and pick by price" behaviour
 # that always lands GPU smokes on Vast.ai under the legacy
@@ -15,7 +15,7 @@
 #   - gpu_1x_a6000  $1.09 / hr (24 GB VRAM)
 #   - gpu_1x_a10    $1.29 / hr (24 GB VRAM)
 # Capacity is fluid — A6000 was unavailable when A10 worked the same
-# minute. Pass `cloud: ["lambda", "vast"]` (multi-entry) once the sky
+# minute. Pass `clouds: ["lambda", "vast"]` (multi-entry) once the sky
 # vast adapter regression against vastai-sdk ≥ 0.2 is resolved upstream
 # (Phase 53 Stage D).
 #
@@ -42,10 +42,12 @@ compute:
   # PyTorch image when running real generations.
   image: "nvidia/cuda:12.2.0-base-ubuntu22.04"
   mode: pod
-  # Phase 53 Stage C — pin sky to Lambda only. Threaded into
-  # SkyPilotProvider._clouds via kinoforge._adapters.build_provider_for.
-  cloud: ["lambda"]
-  requirements:
+  # Pin sky to Lambda only. Threaded into SkyPilotProvider._clouds via
+  # kinoforge._adapters.build_provider_for.
+  backend_options:
+    skypilot:
+      clouds: ["lambda"]
+  placement:
     min_vram_gb: 24
     min_cuda: "12.0"
     # Bumped from the legacy 1.00 ceiling so Lambda A6000 ($1.09/hr)

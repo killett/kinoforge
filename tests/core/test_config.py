@@ -6,8 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from kinoforge.core.config import OutputConfig, load_config, parse_duration
+from kinoforge.core.config import (
+    ComputeConfig,
+    OutputConfig,
+    load_config,
+    parse_duration,
+)
 from kinoforge.core.errors import ConfigError
+from kinoforge.providers.runpod import RunPodProvider
+from kinoforge.providers.skypilot import SkyPilotProvider
 
 MINIMAL_FAKE_ENGINE_YAML = """\
 engine:
@@ -47,7 +54,7 @@ compute:
   provider: runpod
   image: "img:tag"
   mode: pod
-  requirements: {gpu_preference: ["RTX 4090"]}
+  placement: {accelerators: ["RTX 4090"]}
   lifecycle: {idle_timeout: 2h, job_timeout: 30m, max_lifetime: 5h, budget: 25.0}
 """
 
@@ -191,7 +198,7 @@ def test_lifecycle_heartbeat_interval_s_rejects_zero():
 def test_hardware_requirements_defaults_applied():
     cfg = load_config(WAN)
     reqs = cfg.hardware_requirements()
-    # Bug this catches: dropping defaults when user only set gpu_preference.
+    # Bug this catches: dropping defaults when user only set accelerators.
     assert reqs.min_vram_gb == 48
     assert reqs.min_cuda == "12.8"
     assert reqs.max_usd_per_hr == 2.20
@@ -1050,7 +1057,7 @@ def test_spec_graph_file_relative_resolves_against_yaml_parent_dir(
             compute:
               provider: local
               image: scratch
-              requirements: {min_vram_gb: 0}
+              placement: {min_vram_gb: 0}
               lifecycle: {idle_timeout: 10m, budget: 1.0}
             spec:
               graph_file: graph.json
@@ -1079,7 +1086,7 @@ def test_spec_graph_file_both_set_raises(tmp_path: Path) -> None:
             compute:
               provider: local
               image: scratch
-              requirements: {min_vram_gb: 0}
+              placement: {min_vram_gb: 0}
               lifecycle: {idle_timeout: 10m, budget: 1.0}
             spec:
               graph_file: graph.json
@@ -1109,7 +1116,7 @@ def test_spec_graph_file_not_found_raises_with_path(tmp_path: Path) -> None:
             compute:
               provider: local
               image: scratch
-              requirements: {min_vram_gb: 0}
+              placement: {min_vram_gb: 0}
               lifecycle: {idle_timeout: 10m, budget: 1.0}
             spec:
               graph_file: nope.json
@@ -1142,7 +1149,7 @@ def test_spec_graph_file_absolute_path_used_verbatim(tmp_path: Path) -> None:
             compute:
               provider: local
               image: scratch
-              requirements: {{min_vram_gb: 0}}
+              placement: {{min_vram_gb: 0}}
               lifecycle: {{idle_timeout: 10m, budget: 1.0}}
             spec:
               graph_file: {abs_graph}
@@ -1173,7 +1180,7 @@ def test_spec_graph_file_invalid_json_raises_with_path_and_parse_error(
             compute:
               provider: local
               image: scratch
-              requirements: {min_vram_gb: 0}
+              placement: {min_vram_gb: 0}
               lifecycle: {idle_timeout: 10m}
             spec:
               graph_file: bad.json
@@ -1205,7 +1212,7 @@ def test_spec_graph_file_relative_path_with_raw_string_yaml_raises(
         compute:
           provider: local
           image: scratch
-          requirements: {min_vram_gb: 0}
+          placement: {min_vram_gb: 0}
           lifecycle: {idle_timeout: 10m, budget: 1.0}
         spec:
           graph_file: nope.json
@@ -1585,20 +1592,30 @@ def test_compute_config_heartbeat_mode_rejects_unknown() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 53 Stage C1: ComputeConfig.cloud validator tests
+# The sky cloud pin lives at compute.backend_options.skypilot.clouds
+# (compute-seam S1 moved it off the portable ComputeConfig.cloud field).
 # ---------------------------------------------------------------------------
 
 
-def test_compute_config_cloud_default_is_none() -> None:
-    """Backward compat: existing YAMLs without compute.cloud must load
-    unchanged with cloud=None (sky considers every enabled cloud)."""
+def _skypilot_opts(compute: ComputeConfig) -> SkyPilotProvider.Options:
+    """Re-read the skypilot namespace the way ComputeConfig validated it."""
+    from kinoforge.providers.skypilot import SkyPilotProvider
+
+    return SkyPilotProvider.validate_options(
+        compute.backend_options.get("skypilot", {})
+    )
+
+
+def test_cloud_pin_default_is_none() -> None:
+    """Backward compat: a YAML with no skypilot namespace loads with
+    clouds=None (sky considers every enabled cloud)."""
     from kinoforge.core.config import ComputeConfig
 
     cfg = ComputeConfig(
         provider="skypilot",
         image="skypilot/skypilot-gpu:latest",
     )
-    assert cfg.cloud is None
+    assert _skypilot_opts(cfg).clouds is None
 
 
 @pytest.mark.parametrize(
@@ -1610,19 +1627,19 @@ def test_compute_config_cloud_default_is_none() -> None:
         ["aws", "gcp", "azure", "lambda", "vast", "kubernetes", "runpod"],
     ],
 )
-def test_compute_config_cloud_accepts_valid_literals(clouds: list[str]) -> None:
+def test_cloud_pin_accepts_valid_literals(clouds: list[str]) -> None:
     """All sky cloud names kinoforge supports load when listed."""
     from kinoforge.core.config import ComputeConfig
 
     cfg = ComputeConfig(
         provider="skypilot",
         image="skypilot/skypilot-gpu:latest",
-        cloud=clouds,
+        backend_options={"skypilot": {"clouds": clouds}},
     )
-    assert cfg.cloud == clouds
+    assert _skypilot_opts(cfg).clouds == clouds
 
 
-def test_compute_config_cloud_accepts_unknown_entry_at_pydantic_layer() -> None:
+def test_cloud_pin_accepts_unknown_entry_at_pydantic_layer() -> None:
     """Membership moved to SkyPilotCloudPinSupportedCheck (Task 9 plan).
 
     Pydantic now only enforces the empty-list invariant. The "unknown
@@ -1635,23 +1652,22 @@ def test_compute_config_cloud_accepts_unknown_entry_at_pydantic_layer() -> None:
     cfg = ComputeConfig(
         provider="skypilot",
         image="skypilot/skypilot-gpu:latest",
-        cloud=["lambdaa"],
+        backend_options={"skypilot": {"clouds": ["lambdaa"]}},
     )
-    assert cfg.cloud == ["lambdaa"]
+    assert _skypilot_opts(cfg).clouds == ["lambdaa"]
 
 
-def test_compute_config_cloud_rejects_empty_list() -> None:
-    """An empty list is a bug — operator meant cloud=None or forgot to
+def test_cloud_pin_rejects_empty_list() -> None:
+    """An empty list is a bug — operator meant clouds=null or forgot to
     populate it; either way sky would consider zero clouds and fail."""
-    from pydantic import ValidationError as PydanticValidationError
-
     from kinoforge.core.config import ComputeConfig
+    from kinoforge.core.errors import ConfigError
 
-    with pytest.raises(PydanticValidationError, match="cloud"):
+    with pytest.raises(ConfigError, match="clouds"):
         ComputeConfig(
             provider="skypilot",
             image="skypilot/skypilot-gpu:latest",
-            cloud=[],
+            backend_options={"skypilot": {"clouds": []}},
         )
 
 
@@ -1812,12 +1828,20 @@ models:
 
 
 # ---------------------------------------------------------------------------
-# 2026-07-03: ComputeConfig.cloud_type (RunPod host-pool pin)
+# 2026-07-03: the RunPod host-pool pin. Compute-seam S1 moved it off the
+# portable ComputeConfig onto compute.backend_options.runpod.cloud_type.
 # ---------------------------------------------------------------------------
 
 
-def test_compute_config_cloud_type_default_is_any() -> None:
-    """Backward compat: YAMLs without compute.cloud_type load as "any".
+def _runpod_opts(compute: ComputeConfig) -> RunPodProvider.Options:
+    """Re-read the runpod namespace the way ComputeConfig validated it."""
+    from kinoforge.providers.runpod import RunPodProvider
+
+    return RunPodProvider.validate_options(compute.backend_options.get("runpod", {}))
+
+
+def test_runpod_cloud_type_default_is_any() -> None:
+    """Backward compat: YAMLs with no runpod namespace load as "any".
 
     Bug caught: a default flip to "secure" silently shrinks the RunPod
     capacity pool (and raises prices) for every existing cfg.
@@ -1825,11 +1849,11 @@ def test_compute_config_cloud_type_default_is_any() -> None:
     from kinoforge.core.config import ComputeConfig
 
     cfg = ComputeConfig(provider="runpod", image="runpod/pytorch:latest")
-    assert cfg.cloud_type == "any"
+    assert _runpod_opts(cfg).cloud_type == "any"
 
 
 @pytest.mark.parametrize("cloud_type", ["any", "secure", "community"])
-def test_compute_config_cloud_type_accepts_valid_literals(cloud_type: str) -> None:
+def test_runpod_cloud_type_accepts_valid_literals(cloud_type: str) -> None:
     """The three supported pool pins parse.
 
     Bug caught: "secure" rejected at cfg time would leave long-running
@@ -1842,84 +1866,90 @@ def test_compute_config_cloud_type_accepts_valid_literals(cloud_type: str) -> No
         {
             "provider": "runpod",
             "image": "runpod/pytorch:latest",
-            "cloud_type": cloud_type,
+            "backend_options": {"runpod": {"cloud_type": cloud_type}},
         }
     )
-    assert cfg.cloud_type == cloud_type
+    assert _runpod_opts(cfg).cloud_type == cloud_type
 
 
-def test_compute_config_cloud_type_rejects_unknown() -> None:
+def test_runpod_cloud_type_rejects_unknown() -> None:
     """Typos ("secur", "premium") fail at cfg load, not on the wire.
 
     Bug caught: pydantic passthrough would surface as a RunPod GraphQL
     enum error mid-deploy — after money is already committed.
     """
-    import pydantic
-
     from kinoforge.core.config import ComputeConfig
+    from kinoforge.core.errors import ConfigError
 
-    with pytest.raises(pydantic.ValidationError):
+    with pytest.raises(ConfigError, match="cloud_type"):
         ComputeConfig.model_validate(
             {
                 "provider": "runpod",
                 "image": "runpod/pytorch:latest",
-                "cloud_type": "premium",
+                "backend_options": {"runpod": {"cloud_type": "premium"}},
             }
         )
 
 
-def test_capacity_wait_parses_duration_and_defaults() -> None:
-    """capacity_wait accepts a duration string, defaults to 300s, maps to the interface.
+def test_runpod_capacity_wait_parses_and_defaults() -> None:
+    """capacity_wait_s defaults to 300s and accepts an explicit override.
 
-    Bug caught: the field is added as a bare int (no duration parse) so
-    `capacity_wait: 5m` in YAML raises, or the default drifts from 300s.
+    Bug caught: the default drifts, silently changing how long every
+    RunPod create rides out a capacity drought.
+    """
+    from kinoforge.core.config import ComputeConfig
+
+    bare = ComputeConfig(provider="runpod", image="runpod/pytorch:latest")
+    assert _runpod_opts(bare).capacity_wait_s == 300.0
+    pinned = ComputeConfig.model_validate(
+        {
+            "provider": "runpod",
+            "image": "runpod/pytorch:latest",
+            "backend_options": {"runpod": {"capacity_wait_s": 0}},
+        }
+    )
+    assert _runpod_opts(pinned).capacity_wait_s == 0.0
+
+
+def test_legacy_lifecycle_capacity_wait_is_refused_with_the_new_path() -> None:
+    """A pre-S1 ``lifecycle.capacity_wait`` names where the knob moved.
+
+    Bug caught: LifecycleConfig does not forbid extras, so without an
+    explicit rejection a stale ``capacity_wait: 5m`` is silently dropped
+    and RunPod's capacity retry quietly reverts to the default.
     """
     from kinoforge.core.config import LifecycleConfig
+    from kinoforge.core.errors import ConfigError
 
-    assert LifecycleConfig(budget=1.0).capacity_wait == 300.0
-    assert (
-        LifecycleConfig.model_validate(
-            {"budget": 1.0, "capacity_wait": "5m"}
-        ).capacity_wait
-        == 300.0
-    )
-    assert LifecycleConfig(budget=1.0, capacity_wait=0).capacity_wait == 0.0
-
-
-def test_capacity_wait_surfaces_on_interface_lifecycle() -> None:
-    """cfg.lifecycle().capacity_wait_s carries the configured value.
-
-    Bug caught: the LifecycleConfig field exists but isn't threaded into the
-    InterfaceLifecycle the orchestrator actually reads.
-    """
-    from kinoforge.core.interfaces import Lifecycle
-
-    assert Lifecycle().capacity_wait_s == 300.0
+    with pytest.raises(ConfigError) as exc:
+        LifecycleConfig.model_validate({"budget": 1.0, "capacity_wait": "5m"})
+    assert "compute.backend_options.runpod.capacity_wait_s" in str(exc.value)
 
 
 def test_flashvsr_widened_config_loads() -> None:
-    """The widened FlashVSR upscale cfg parses with 4 prefs, $3 cap, 5m capacity_wait.
+    """The widened FlashVSR upscale cfg parses with 4 prefs, $3 cap, 5m capacity wait.
 
-    Bug caught: a typo'd GPU name or an unparseable capacity_wait silently ships
-    a config that fails only on a live create.
+    Bug caught: a typo'd GPU name or a capacity_wait_s that stopped reaching
+    the orchestrator silently ships a config that fails only on a live create.
     """
     from pathlib import Path
 
+    from kinoforge._adapters import build_capacity_wait_for
     from kinoforge.core.config import load_config
 
     cfg = load_config(
         Path("examples/configs/runpod-diffusers-flashvsr-1080p-upscale.yaml")
     )
     assert cfg.compute is not None
-    reqs = cfg.compute.requirements
-    assert list(reqs.gpu_preference) == [
+    reqs = cfg.compute.placement
+    assert list(reqs.accelerators) == [
         "NVIDIA A100 80GB PCIe",
         "NVIDIA A100-SXM4-80GB",
         "NVIDIA H100 80GB HBM3",
         "NVIDIA H100 NVL",
     ]
     assert reqs.max_usd_per_hr == 3.00
-    assert cfg.lifecycle().capacity_wait_s == 300.0
+    assert build_capacity_wait_for(cfg) == 300.0
 
 
 def test_skypilot_vast_flashvsr_cfg_loads() -> None:
@@ -1937,7 +1967,7 @@ def test_skypilot_vast_flashvsr_cfg_loads() -> None:
     )
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
-    assert cfg.compute.cloud == ["vast"]
+    assert cfg.backend_options_for("skypilot").clouds == ["vast"]
     assert cfg.engine.diffusers is not None
     assert cfg.engine.diffusers.upscale_only is True
     assert cfg.upscale is not None
@@ -1968,7 +1998,7 @@ def test_skypilot_lambda_flashvsr_cfg_loads() -> None:
     )
     assert cfg.compute is not None
     assert cfg.compute.provider == "skypilot"
-    assert cfg.compute.cloud == ["lambda"]
+    assert cfg.backend_options_for("skypilot").clouds == ["lambda"]
     assert cfg.engine.diffusers is not None
     assert cfg.engine.diffusers.upscale_only is True
     assert cfg.upscale is not None

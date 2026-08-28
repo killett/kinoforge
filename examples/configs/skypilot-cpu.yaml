@@ -30,7 +30,9 @@ compute:
   # launch time; the live smoke uses the smallest CPU class GCP
   # offers (~e2-micro / n1-standard-1, ~$0.01/hr).  Region pinning
   # (us-central1) is enforced by the smoke test itself, not by this
-  # YAML — ComputeConfig has no region field today.
+  # YAML — `placement.region` lands in S2
+  # (docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md §8), so today
+  # region is only settable at the call site that builds the InstanceSpec, not from this file.
   provider: skypilot
   # Public Ubuntu base. The original `skypilot/skypilot:latest` placeholder
   # the Phase-31 template shipped with does NOT exist on Docker Hub —
@@ -40,8 +42,13 @@ compute:
   # image when running real generations.
   image: "ubuntu:22.04"
   mode: pod
-  requirements:
+  placement:
     min_vram_gb: 0
+    # Inert on this config, kept for honesty: min_vram_gb == 0 makes
+    # SkyPilotProvider.find_offers short-circuit to the synthetic
+    # `sky-cpu-auto` offer before filter_offers ever compares a CUDA version.
+    # "0" states the intent — a CPU box needs no CUDA — for the day this cfg
+    # grows a GPU or another provider stops short-circuiting.
     min_cuda: "0"
     max_usd_per_hr: 0.50
     disk_gb: 50

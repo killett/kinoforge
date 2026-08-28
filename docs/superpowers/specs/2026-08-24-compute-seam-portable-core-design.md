@@ -268,8 +268,12 @@ def create_instance(self, spec: InstanceSpec) -> Instance:
    enumerated (runpod, modal) and `UNSUPPORTED` on skypilot, whose optimizer takes named
    accelerators rather than a VRAM floor. Setting it on a skypilot config is then an error
    telling the operator to name accelerators, instead of a filter that quietly does nothing to
-   the launch. `min_cuda` becomes a RunPod namespace key: neither SkyPilot nor Modal exposes a
-   CUDA-version constraint at selection time, so it is not portable. `max_usd_per_hr` stops being
+   the launch. `min_cuda` stays portable on `Placement`. (**Corrected 2026-08-26**, during S1 Task 4: this
+   section originally routed it to the RunPod namespace on the grounds that neither SkyPilot nor
+   Modal exposes a CUDA constraint at selection time. True of those APIs, false of kinoforge —
+   `core/offers.py::filter_offers` applies `min_cuda` to whatever catalog any enumerating provider
+   returns, and SkyPilot's offers carry `cuda="12.0"`, so a `"12.8"` default outside their reach
+   empties the catalog. It dies with the catalog-filter path in S4.) `max_usd_per_hr` stops being
    a catalog filter and becomes the verified cap of §6.
 7. **Modal's `create_instance` currently raises without `spec.offer` (`:122-123`).** It gains a
    `Placement`→`gpu=` mapping over its hardcoded catalog (`providers/modal/_catalog.py`), which
@@ -513,7 +517,8 @@ compute:
   placement:
     accelerators: [A100-80GB, H100]   # was gpu_preference
     accelerator_count: 1
-    region: us-west-2                 # F6: previously unreachable from YAML
+    min_cuda: "12.8"                  # stays portable — see the 2026-08-26 correction in §5
+    region: us-west-2                 # F6: previously unreachable from YAML; lands in S2
     spot: false
     max_usd_per_hr: 1.09              # now verified after launch, not just filtered
     disk_gb: 200
@@ -522,8 +527,10 @@ compute:
 ```
 
 `compute.requirements` is renamed to `compute.placement` rather than kept as an alias: the block
-changes meaning (a filter over a catalog becomes a constraint stated to a placer) and two of its
-five keys move — `min_cuda` into the RunPod namespace, `gpu_preference` into `accelerators`.
+changes meaning (a filter over a catalog becomes a constraint stated to a placer) and one of its
+five keys is renamed — `gpu_preference` into `accelerators`. (**Corrected 2026-08-27.** This
+paragraph originally said `min_cuda` moved into the RunPod namespace too; §5 records why that was
+wrong and it stayed portable. As shipped in S1, the rename is the only key that moves.)
 Keeping the old name over new semantics is how a config surface starts lying.
 
 A deprecation shim would keep two paths alive across stages, which is the failure mode the brief

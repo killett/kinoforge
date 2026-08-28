@@ -4,7 +4,7 @@ Loads a YAML config into a validated model that:
 - Parses human-readable duration strings (e.g. "2h", "30m", "90s") to seconds.
 - Rejects nonsensical cross-field combinations (idle >= lifetime, etc.).
 - Derives a CapabilityKey for cache lookup.
-- Exposes Lifecycle and HardwareRequirements with defaults applied.
+- Exposes Lifecycle, Placement and HardwareRequirements with defaults applied.
 """
 
 from __future__ import annotations
@@ -12,10 +12,11 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, ClassVar, Literal, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import ValidationError as PydanticValidationError
 
 from kinoforge.core.errors import ConfigError
 from kinoforge.core.interfaces import CapabilityKey
@@ -23,6 +24,7 @@ from kinoforge.core.interfaces import (
     HardwareRequirements as InterfaceHardwareRequirements,
 )
 from kinoforge.core.interfaces import Lifecycle as InterfaceLifecycle
+from kinoforge.core.interfaces import Placement as InterfacePlacement
 from kinoforge.core.lora import LoraEntry
 from kinoforge.core.reaper import DEFAULT_APPLY_POLICY, Policy, Verdict
 
@@ -110,7 +112,6 @@ class LifecycleConfig(BaseModel):
     budget: float
     max_in_flight: int = 1
     boot_timeout: float = 900.0
-    capacity_wait: float = 300.0
     heartbeat_interval_s: float | None = None
     grace_after_session_s: float = 1800.0
     stall_reap_enabled: bool = True
@@ -127,13 +128,45 @@ class LifecycleConfig(BaseModel):
     # for warm-reuse workflows.
     lora_swap_re_probe_after_s: float = 300.0
 
+    #: Pre-S1 keys that used to live on this (portable) block, mapped to the
+    #: namespaced path each one moved to. ``LifecycleConfig`` does not forbid
+    #: extras, so without this a stale ``capacity_wait:`` would be silently
+    #: dropped — exactly the failure mode the compute-seam rework exists to
+    #: end.
+    _REMOVED_KEYS: ClassVar[dict[str, str]] = {
+        "capacity_wait": "compute.backend_options.runpod.capacity_wait_s",
+    }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_keys(cls, data: Any) -> Any:  # noqa: ANN401 — pydantic hook
+        """Refuse the pre-S1 lifecycle keys, naming where each one moved.
+
+        Args:
+            data: Raw input to ``LifecycleConfig`` validation.
+
+        Returns:
+            *data* unchanged when no removed key is present.
+
+        Raises:
+            ConfigError: A removed key is present; the message names the
+                namespaced path that replaced it.
+        """
+        if isinstance(data, dict):
+            for key, replacement in cls._REMOVED_KEYS.items():
+                if key in data:
+                    raise ConfigError(
+                        f"lifecycle.{key} was removed in the compute-seam "
+                        f"rework; it now lives at {replacement}"
+                    )
+        return data
+
     @field_validator(
         "idle_timeout",
         "job_timeout",
         "time_buffer",
         "max_lifetime",
         "boot_timeout",
-        "capacity_wait",
         mode="before",
     )
     @classmethod
@@ -738,22 +771,105 @@ class ModelEntry(BaseModel):
     sha256: str | None = None
 
 
-class RequirementsConfig(BaseModel):
-    """Hardware requirements override block.
+class PlacementConfig(BaseModel):
+    """The portable resource block. See :attr:`ComputeConfig.placement`.
+
+    YAML surface for :class:`kinoforge.core.interfaces.Placement`. Replaces
+    the pre-S1 ``compute.requirements`` block: ``gpu_preference`` is renamed
+    ``accelerators`` and ``spot`` arrives from ``InstanceSpec``. ``min_cuda``
+    stays here — it reads as a RunPod knob because only the vendor APIs
+    constrain CUDA at selection time, but kinoforge applies it client-side in
+    :func:`kinoforge.core.offers.filter_offers` over whatever catalog any
+    enumerating provider returns, so it is portable.
+
+    ``extra="forbid"`` is load-bearing: pydantic's default would silently drop
+    a stale ``gpu_preference:`` and hand ``find_offers`` an empty preference
+    list — the operator's GPU ordering gone with no message.
 
     Attributes:
+        accelerators: Ordered accelerator preference, most-wanted first.
+        accelerator_count: Accelerators per instance.
         min_vram_gb: Minimum GPU VRAM in GB.
-        min_cuda: Minimum CUDA version string.
-        max_usd_per_hr: Ceiling on cost rate.
-        gpu_preference: Ordered list of preferred GPU types.
+        min_cuda: Minimum CUDA version string an offer must report.
         disk_gb: Minimum disk in GB.
+        spot: Request a spot/preemptible instance when True.
+        max_usd_per_hr: Ceiling on cost rate.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
+    accelerators: list[str] = []
+    accelerator_count: int = 1
     min_vram_gb: int = 48
     min_cuda: str = "12.8"
-    max_usd_per_hr: float = 2.20
-    gpu_preference: list[str] = []
     disk_gb: int = 100
+    spot: bool = False
+    max_usd_per_hr: float = 2.20
+
+    #: Pre-S1 keys of the ``requirements`` block that did not survive the
+    #: rename as-is, mapped to the message explaining where each went.
+    #: ``extra="forbid"`` already rejects them, but with pydantic's generic
+    #: ``extra_forbidden`` text, which does not tell the operator where the
+    #: value moved.
+    _MOVED_KEYS: ClassVar[dict[str, str]] = {
+        "gpu_preference": (
+            "compute.placement.gpu_preference was renamed to "
+            "compute.placement.accelerators"
+        ),
+    }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_moved_keys(cls, data: Any) -> Any:  # noqa: ANN401 — pydantic hook
+        """Refuse the pre-S1 keys, naming where each one went.
+
+        Args:
+            data: Raw input to ``PlacementConfig`` validation.
+
+        Returns:
+            *data* unchanged when no moved key is present.
+
+        Raises:
+            ConfigError: A moved key is present under ``placement``.
+        """
+        if isinstance(data, dict):
+            for key, message in cls._MOVED_KEYS.items():
+                if key in data:
+                    raise ConfigError(message)
+        return data
+
+
+def _resolve_provider_class(provider_name: str) -> type[Any] | None:
+    """Return the registered compute-provider class for ``provider_name``.
+
+    Providers self-register at import time via ``registry.register_provider``.
+    A ``Config`` can be validated before any provider module has ever been
+    imported (e.g. a bare ``Config.model_validate(...)`` in a unit test), in
+    which case the registry is empty. Mirrors ``_provider_class`` in
+    ``kinoforge.core.capabilities``: retry once after importing the
+    composition root (``kinoforge._adapters``), which imports every provider
+    package and triggers their self-registration.
+
+    Kept function-local (not a module-scope import) so ``core/config.py``
+    never imports ``kinoforge.providers.*`` at load time — the core-import-ban
+    forbids ``kinoforge.core.*`` depending on providers directly; the
+    composition root is the one sanctioned, lazily-imported exception.
+
+    Args:
+        provider_name: Registry key, e.g. ``"runpod"``.
+
+    Returns:
+        The registered provider class, or ``None`` if no provider is
+        registered under that name even after importing the composition root.
+    """
+    from kinoforge.core import registry
+
+    cls = registry.provider_class(provider_name)
+    if cls is None:
+        import kinoforge._adapters  # noqa: F401 — composition root, lazy by design
+
+        cls = registry.provider_class(provider_name)
+    return cls
 
 
 class ComputeConfig(BaseModel):
@@ -763,7 +879,9 @@ class ComputeConfig(BaseModel):
         provider: Compute provider name (e.g. "runpod").
         image: Container image reference.
         mode: Instance mode; "pod" or "serverless".
-        requirements: Hardware requirements override.
+        placement: Portable resource block — what to get (accelerators,
+            VRAM, disk, spot, price ceiling). Replaced the pre-S1
+            ``requirements`` catalog-filter block.
         lifecycle: Lifecycle guardrails (budget required here for non-hosted).
         heartbeat_mode: Heartbeat substrate gate (B5a). Value space is the
             union across all providers; provider-mode compatibility is
@@ -775,51 +893,106 @@ class ComputeConfig(BaseModel):
             fresh-shell invocation and attaches transparently. Set to
             ``False`` per-project to disable; ``--no-reuse`` on the CLI
             overrides this on a per-invocation basis.
-        cloud: Phase 53 Stage C — optional list of sky cloud names
-            (e.g. ``["lambda"]``, ``["lambda", "vast"]``) pinned onto
-            :class:`~kinoforge.providers.skypilot.SkyPilotProvider` at
-            instantiation time. ``None`` (default) preserves pre-Stage-C
-            behaviour — sky considers every enabled cloud and picks by
-            price. Ignored by non-skypilot providers.
+        backend_options: compute-seam S1 — namespaced escape hatch for
+            provider-specific knobs that don't warrant a top-level field.
+            Maps provider name (e.g. ``"runpod"``) to a mapping of that
+            provider's own option names. Validated against the OWNING
+            provider's ``Options`` pydantic model (``extra="forbid"``) for
+            EVERY namespace present, not just the currently-selected
+            provider — a typo in a block that isn't running today is
+            exactly the bug class this mechanism exists to catch. S1 Task 3
+            moved ``cloud`` -> ``backend_options.skypilot.clouds``,
+            ``cloud_type`` / ``restart_policy`` / ``capacity_wait_s`` ->
+            ``backend_options.runpod.*``.
     """
 
     provider: str
     image: str
     mode: str = "pod"
-    requirements: RequirementsConfig = RequirementsConfig()
+    placement: PlacementConfig = PlacementConfig()
     lifecycle: LifecycleConfig | None = None
     heartbeat_mode: str = "none"
     warm_reuse_auto_attach: bool = True
-    cloud: list[str] | None = None
-    # 2026-07-03: RunPod host-pool pin. "any" = historical cloudType ALL
-    # (cheapest capacity, often community hosts — whose interruption
-    # DELETES zero-volume pods outright; three BSA wheel builds and two
-    # F-multi smoke pods died that way in one day). "secure" pins
-    # dedicated hosts for anything that must survive a long window.
-    # Ignored by non-runpod providers.
-    cloud_type: Literal["any", "secure", "community"] = "any"
+    backend_options: dict[str, dict[str, Any]] = {}
 
-    @field_validator("cloud")
+    #: Pre-S1 keys that used to live on this block, mapped to the path each
+    #: one moved to: the vendor keys into their provider namespace, and the
+    #: ``requirements`` catalog-filter block into the portable ``placement``
+    #: block. Present so the removal is loud — see
+    #: :meth:`_reject_removed_keys`.
+    _REMOVED_KEYS: ClassVar[dict[str, str]] = {
+        "cloud": "compute.backend_options.skypilot.clouds",
+        "cloud_type": "compute.backend_options.runpod.cloud_type",
+        "requirements": "compute.placement",
+    }
+
+    @model_validator(mode="before")
     @classmethod
-    def _validate_cloud(cls, v: list[str] | None) -> list[str] | None:
-        """Reject empty-list cloud entries.
+    def _reject_removed_keys(cls, data: Any) -> Any:  # noqa: ANN401 — pydantic hook
+        """Refuse the pre-S1 vendor keys, naming where each one moved.
 
-        Operator likely meant ``cloud: null`` or forgot to populate the
-        entry; sky.launch with zero clouds would silently fall back.
+        Deliberately not an alias: keeping both paths alive is how a
+        half-migrated seam survives across stages.
 
-        The membership check (each entry must be in the supported sky
-        cloud set) moved to ``SkyPilotCloudPinSupportedCheck`` in
-        ``kinoforge.providers.skypilot`` (Task 9 of the cfg-validation
-        Check Registry plan). It now shows up in ``kinoforge doctor``
-        output alongside every other validation rule.
+        Args:
+            data: Raw input to ``ComputeConfig`` validation.
+
+        Returns:
+            *data* unchanged when no removed key is present.
+
+        Raises:
+            ConfigError: A removed key is present; the message names the
+                namespaced path that replaced it.
         """
-        if v is None:
-            return v
-        if not v:
-            raise ValueError(
-                "cloud must be a non-empty list of sky cloud names "
-                "or null; got an empty list"
-            )
+        if isinstance(data, dict):
+            for key, replacement in cls._REMOVED_KEYS.items():
+                if key in data:
+                    raise ConfigError(
+                        f"compute.{key} was removed in the compute-seam rework; "
+                        f"it now lives at {replacement}"
+                    )
+        return data
+
+    @field_validator("backend_options")
+    @classmethod
+    def _validate_backend_options(
+        cls, v: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Reject unknown provider namespaces and unknown keys within one.
+
+        Validation is delegated to the OWNING provider class so the accepted
+        key set lives next to the code that reads it — the alternative is a
+        second list in core that drifts from the first. Every namespace
+        present is checked, not just the one named by ``provider`` above —
+        a typo'd key inside a namespace for a provider that is not currently
+        selected is exactly the bug class this rework exists to catch.
+        """
+        for provider_name, raw in v.items():
+            provider_cls = _resolve_provider_class(provider_name)
+            if provider_cls is None:
+                from kinoforge.core import registry
+
+                raise ConfigError(
+                    f"compute.backend_options.{provider_name}: unknown provider; "
+                    f"registered providers are {sorted(registry.provider_names())}"
+                )
+            validate_options = getattr(provider_cls, "validate_options", None)
+            if validate_options is None:
+                raise ConfigError(
+                    f"compute.backend_options.{provider_name}: provider declares "
+                    "no Options schema; it accepts no backend options"
+                )
+            try:
+                validate_options(raw)
+            except PydanticValidationError as exc:
+                accepted = sorted(provider_cls.Options.model_fields)
+                first_error = exc.errors()[0]
+                bad_key = ".".join(str(part) for part in first_error["loc"])
+                where = f".{bad_key}" if bad_key else ""
+                raise ConfigError(
+                    f"compute.backend_options.{provider_name}{where}: "
+                    f"{first_error['msg']} (accepted keys: {accepted})"
+                ) from exc
         return v
 
     @field_validator("heartbeat_mode")
@@ -1133,9 +1306,9 @@ class Config(BaseModel):
     sweeper: SweeperConfig = Field(default_factory=SweeperConfig)
     # C28 A1.5: opt-in diagnostic mode. When True the engine's render_provision
     # prepends an EXIT trap that captures the boot log + system snapshot and
-    # uploads to S3, AND the orchestrator overlays AWS + KINOFORGE_DIAG_* env
-    # onto spec.diagnostic_env so the trap finds the bucket. Default False =
-    # zero behavioural change.
+    # uploads to S3, AND the orchestrator's AWS + KINOFORGE_DIAG_* overlay is
+    # merged into spec.env (compute-seam S1 Task 7) so the trap finds the
+    # bucket. Default False = zero behavioural change.
     diagnostic_mode: bool = False
 
     model_config = {"populate_by_name": True}
@@ -1387,7 +1560,6 @@ class Config(BaseModel):
             budget_usd=lc.budget,
             max_in_flight=lc.max_in_flight,
             boot_timeout_s=lc.boot_timeout,
-            capacity_wait_s=lc.capacity_wait,
             heartbeat_interval_s=lc.heartbeat_interval_s,
             grace_after_session_s=lc.grace_after_session_s,
             stall_window_s=lc.stall_window_s if lc.stall_reap_enabled else None,
@@ -1400,27 +1572,78 @@ class Config(BaseModel):
             lora_swap_re_probe_after_s=lc.lora_swap_re_probe_after_s,
         )
 
+    def placement(self) -> InterfacePlacement:
+        """Return the portable resource block with defaults applied.
+
+        Pulls from ``compute.placement`` when a compute block is present;
+        returns all-defaults otherwise (min_vram_gb=48, min_cuda="12.8",
+        disk_gb=100, max_usd_per_hr=2.20, spot=False, accelerators=(),
+        accelerator_count=1 — the pre-S1 ``requirements`` defaults, so a
+        config that sets no block launches exactly what it launched before).
+
+        Returns:
+            An interfaces.Placement instance.
+        """
+        if self.compute is None:
+            return InterfacePlacement()
+
+        p = self.compute.placement
+        return InterfacePlacement(
+            accelerators=tuple(p.accelerators),
+            accelerator_count=p.accelerator_count,
+            min_vram_gb=p.min_vram_gb,
+            min_cuda=p.min_cuda,
+            disk_gb=p.disk_gb,
+            spot=p.spot,
+            max_usd_per_hr=p.max_usd_per_hr,
+        )
+
     def hardware_requirements(self) -> InterfaceHardwareRequirements:
         """Return HardwareRequirements with defaults applied.
 
-        Pulls from compute.requirements when present; returns all-defaults otherwise.
-        Defaults: min_vram_gb=48, min_cuda="12.8", max_usd_per_hr=2.20,
-        disk_gb=100, gpu_preference=().
+        A pure shim over :meth:`placement` — every field, ``min_cuda``
+        included, comes from the portable block. Kept because
+        ``ComputeProvider.find_offers`` still consumes a catalog filter; S4
+        inverts selection onto ``Placement`` and deletes this.
 
         Returns:
             An interfaces.HardwareRequirements instance.
         """
-        if self.compute is None:
-            return InterfaceHardwareRequirements()
-
-        r = self.compute.requirements
+        p = self.placement()
         return InterfaceHardwareRequirements(
-            min_vram_gb=r.min_vram_gb,
-            min_cuda=r.min_cuda,
-            max_usd_per_hr=r.max_usd_per_hr,
-            gpu_preference=tuple(r.gpu_preference),
-            disk_gb=r.disk_gb,
+            min_vram_gb=p.min_vram_gb,
+            min_cuda=p.min_cuda,
+            max_usd_per_hr=p.max_usd_per_hr,
+            gpu_preference=p.accelerators,
+            disk_gb=p.disk_gb,
         )
+
+    def backend_options_for(self, provider_name: str) -> Any:  # noqa: ANN401
+        """Return the validated ``Options`` model for ``provider_name``.
+
+        Defaults are applied when the namespace is absent from
+        ``compute.backend_options`` (or ``compute`` itself is unset), so
+        callers never need to branch on presence.
+
+        Args:
+            provider_name: Registry key of the provider, e.g. ``"runpod"``.
+
+        Returns:
+            The provider's validated ``Options`` model instance.
+
+        Raises:
+            ConfigError: ``provider_name`` is not a registered provider, or
+                the registered class declares no ``Options`` schema.
+        """
+        provider_cls = _resolve_provider_class(provider_name)
+        if provider_cls is None or not hasattr(provider_cls, "validate_options"):
+            raise ConfigError(f"unknown provider {provider_name!r}")
+        raw = (
+            {}
+            if self.compute is None
+            else self.compute.backend_options.get(provider_name, {})
+        )
+        return provider_cls.validate_options(raw)
 
 
 # ---------------------------------------------------------------------------

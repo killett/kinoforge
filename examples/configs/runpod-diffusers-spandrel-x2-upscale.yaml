@@ -55,14 +55,14 @@ compute:
   provider: runpod
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: pod
-  requirements:
+  placement:
     min_vram_gb: 16
     disk_gb: 40
     # Pin NVIDIA — without an explicit allowlist the offer chooser can pick
     # an AMD Instinct that RunPod's create-pod mutation rejects with HTTP
     # 500. Allowlist covers cheap 16-24GB consumer + datacenter cards that
     # comfortably run RealESRGAN-x2 inference.
-    gpu_preference:
+    accelerators:
       - "NVIDIA RTX A4000"
       - "NVIDIA RTX A5000"
       - "NVIDIA L4"

@@ -375,7 +375,8 @@ alone was 98,848 B → total env 101,971 B → every create 500'd.
   MINIMAL create body (single small env) — if that succeeds, the payload
   is the culprit. Binary-search fields; the env total is the usual suspect.
   Never conclude "RunPod is down" without ruling out payload size first.
-- RunPod pods (even `cloud_type: secure`) can be **terminated mid-run** by
+- RunPod pods (even `backend_options.runpod.cloud_type: secure` — the key moved
+  off `compute.` top level in the S1 compute-seam rework) can be **terminated mid-run** by
   the host — the driver subprocess then hangs on a dead pod until timeout.
   Poll pod existence directly (`myself { pods { id } }`); empty list mid-run
   = pod died, kill the driver + `kinoforge forget` the stale ledger entry.

@@ -10,10 +10,13 @@ first unchecked task without redoing committed work.
 - **Implementation plan:** `docs/superpowers/plans/2026-05-29-kinoforge.md`
 - **Native task snapshot:** `docs/superpowers/plans/2026-05-29-kinoforge.md.tasks.json` (28 tasks, IDs 1–28, dependencies set)
 - **IN FLIGHT — compute-seam portable core (Brief 3):** design doc
-  `docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md` (committed `d84dbef9`,
-  awaiting operator review). Closes F4/F5/F6/F11/F12 in one shape; staged S1–S5, one plan per
-  stage. Depends on Brief 1 (skypilot watchdog, shipped) + Brief 2 (capability declaration,
-  shipped) — both in. No plan written yet.
+  `docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md` (committed `d84dbef9`).
+  Closes F4/F5/F6/F11/F12 in one shape; staged S1–S5, one plan per stage. Depends on Brief 1
+  (skypilot watchdog, shipped) + Brief 2 (capability declaration, shipped) — both in.
+  **S1 (portable core + `backend_options`) SHIPPED 2026-08-27** — plan
+  `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md`, all 9 tasks done, live
+  smoke PROVEN. See the RESUME SNAPSHOT above for the full ship summary. Next: write the S2 plan
+  (region as a first-class field).
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
@@ -387,7 +390,133 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-08-24 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-08-27 — read this, then STOP; below is history)
+
+**Compute-seam S1 (portable core) — SHIPPED 2026-08-27.** Design doc
+`docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md` + plan
+`docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md` (`.tasks.json` co-located),
+all 9 tasks committed, commit range `1509d7b3`..HEAD (plus this documentation commit). Config
+surface changed shape: `compute.requirements` → `compute.placement` (portable —
+`accelerators`, `accelerator_count`, `min_vram_gb`, `min_cuda`, `disk_gb`, `spot`,
+`max_usd_per_hr`; `gpu_preference` renamed `accelerators`); `compute.cloud` /
+`compute.cloud_type` → `compute.backend_options.<provider>.*`, validated by the owning provider
+class (unknown key or unknown provider name = `ConfigError`); `lifecycle.capacity_wait` →
+`compute.backend_options.runpod.capacity_wait_s`. Every provider declares `consumes()`;
+`kinoforge doctor` reports fields the selected provider can't honour, severity by risk coverage.
+`InstanceSpec` lost exactly four vendor fields — `spot`, `cloud_type`, `restart_policy`,
+`diagnostic_env` — and gained `placement` + `backend_options`. **`offer` itself is still on
+`InstanceSpec`** and survives until S4 kills the marketplace path; do not read the line above as
+having removed it. No alias, no deprecation shim — old top-level keys raise `ConfigError` naming
+the new path.
+
+**Two design calls the plan corrected mid-flight — both contradict the design doc as originally
+written, and the doc's own text now carries the correction inline:**
+- **`min_cuda` is portable, on `Placement` — not RunPod-namespaced** (`7564c1c3`, plan correction
+  `250003ad`). The design originally reasoned only RunPod can constrain CUDA version at selection
+  time. False of kinoforge specifically: `core/offers.py::filter_offers` applies `min_cuda`
+  client-side to whatever catalog *any* enumerating provider returns, and SkyPilot's catalog
+  stamps every offer `cuda="12.0"` — a RunPod-namespaced `"12.8"` default would have emptied the
+  SkyPilot catalog outright (every `skypilot-*` config → `CapacityError`). It's a catalog-filter
+  concept, so it dies with the rest of the marketplace path in S4; until then all three
+  enumerating providers (runpod, skypilot, modal) declare it CONSUMED.
+- **The UNSUPPORTED-field refusal is severity-by-risk, not a uniform `ERROR`** (`07676b62`,
+  `5add90f9`, plan correction `741bd32c`). A blanket ERROR would have refused 15 shipped configs
+  over two real silent-ignores Task 5's `consumes()` declarations surfaced: `disk_gb` (no provider
+  reads it — RunPod hardcodes `containerDiskInGb`, SkyPilot hardcodes `disk_size` 60/30 by tier;
+  11 configs set it) and skypilot `max_usd_per_hr` (finding F4 itself; 4 configs set it). Both are
+  now a WARN naming the substitute and its real bound (the provider's hardcoded value; the
+  instance-side deadline watchdog, respectively) — the config still runs. Only `accelerator_count`
+  stays a hard ERROR: no provider reads it and nothing else bounds that risk, so there's no
+  substitute to warn about. It is the only ERROR row a config can reach
+  (`test_accelerator_count_is_the_only_error_row_a_cfg_can_reach`).
+
+**One intended behaviour change:** capacity-wait retry-on-`CapacityError` is now **RunPod-only**
+(`compute.backend_options.runpod.capacity_wait_s`). SkyPilot's own retry knob,
+`backend_options.skypilot.retry_until_up`, is a separate, newly-reachable-from-config mechanism —
+the two are not the same thing wearing two names, and nothing bridges them.
+
+**Goldens:** `tests/providers/golden/launch_payloads/` — 31 files, each a snapshot of the exact
+`task_config`/launch kwargs a provider's `create_instance` would put on the wire. Regenerate with
+`pixi run python tools/snapshot_launch_payloads.py`. **Regenerating goldens is a reviewed act,
+never a way to make a failing test pass** — a diff in the regenerated output *is* the finding;
+read it before deciding the golden or the code is wrong.
+
+**The ratchet is NOT "one golden per example config" — know its blind spot before S2 leans on
+it.** `compute_configs()` (`tools/snapshot_launch_payloads.py:171`) uses a **non-recursive**
+`CONFIG_DIR.glob("*.yaml")`, so it sees only the 39 top-level `examples/configs/*.yaml` (31 of
+which carry a `compute:` block and are not in `EXCLUDED_CONFIGS`; `runpod-diffusers-serverless.yaml`
+is the one explicit exclusion). Everything in a subdirectory is outside the ratchet entirely:
+**7 configs with `compute:` blocks — 5 under `grids/`, 2 under `extras/`** — plus 9 more `grids/`
+overlay fragments that do not load standalone. A stage that changes the wire for a `grids/` or
+`extras/` config will NOT trip a golden. Widening the glob to `rglob` is the fix; it was not done
+in S1 because it would have moved the ratchet's own baseline mid-stage.
+
+**Live smoke (Task 8, `tests/live/test_compute_seam_s1_smoke.py`): PROVEN.** SkyPilot CPU launch,
+`c6i.large` / `us-west-2a`, three attempts (`_s1_smoke_evidence.json`) — attempt 1 failed on a
+harness bug (not an S1 regression, destroyed manually), attempts 2–3 passed. Final run's
+`task_config` matched the golden for `skypilot-cpu.yaml` after normalising only smoke-only pins
+(cluster name, watchdog deadline epoch, region/cloud) — proving the migrated shape puts the same
+thing on the wire as before S1. Teardown verified clean post-exit (`kinoforge list` → both empty
+lines; `aws ec2 describe-instances` → all three instances `terminated`). Cumulative spend
+**$0.01492** across the three attempts, under the $1 envelope.
+
+**Known-stale reference, deliberately NOT fixed:**
+`src/kinoforge/engines/diffusers/servers/wan_t2v_server.py` has a comment referencing
+`requirements.disk_gb`, a name S1 removed. That file is gzip-embedded into
+`KINOFORGE_PROVISION_SCRIPT`; editing even a comment there dirties ~20 of the 31 goldens for a
+cosmetic fix, at the end of a stage whose whole discipline was keeping the wire unmoved. Leave it
+for S3, which legitimately splits setup/run and regenerates goldens as part of that work.
+
+**Deferred, worth a future reader's time (none of these block S2):**
+- `disk_gb` and skypilot/modal `max_usd_per_hr` are declared-and-warned, not wired to anything —
+  see the severity-by-risk note above.
+- `region` is still constructor-only — no config-surface field exists yet; the S1 live smoke
+  pinned it at the call site that builds the `InstanceSpec`, not from YAML.
+- The SkyPilot in-flight-launch teardown tier (killing a cluster while `sky.launch` is still
+  running, not yet `ready`) is exercised by the smoke harness's own teardown-pass logic but was
+  never hit live — all three live attempts reached `ready`/`starting` before teardown began.
+
+**S2 LINE ITEMS (carried out of the S1 final review — these are work, not notes):**
+
+1. **`compute.mode` is written by 46 shipped configs and read by nothing. Decide it, then wire or
+   delete it.** Nothing in `src/` reads `cfg.compute.mode` (`rg 'compute\.mode' src/` returns only
+   an unrelated `model_copy` in `validation/checks/heartbeat.py`). RunPod branches on
+   `spec.tags.get("mode", "pod")` (`providers/runpod/__init__.py:569`, `:860`), and
+   `core/spec_builder.py` never writes that tag — `merged_tags` is
+   `{kinoforge_engine, kinoforge_key}` plus whatever the orchestrator caller passes. So a
+   `mode: serverless` config silently takes the **pod** branch, and RunPod's `_create_serverless`
+   path is unreachable from YAML at any value. Proven by flipping the key and observing a
+   byte-for-byte identical RunPod payload. Written by 46 configs repo-wide (29
+   `examples/configs/`, 5 `grids/`, 1 `extras/`, 11 `tests/live/` fixtures), values `pod` and
+   `serverless`.
+   **Why the S1 guard cannot see this, which is the part that matters for S2's design:**
+   `consumes()` covers `Placement` plus a subset of `InstanceSpec`, and
+   `UnsupportedFieldCheck._PREFIX` is hardcoded `"compute.placement"`
+   (`validation/checks/field_support.py:57`). The whole rest of the `ComputeConfig` surface —
+   `mode`, `heartbeat_mode`, `warm_reuse_auto_attach` — is outside **both** the declaration set
+   and the doctor check. S1's write-but-never-read guard is scoped to `placement`; extending it
+   to `ComputeConfig` is what would have caught `mode`.
+2. **4 shipped configs write `compute.tags:`, a key `ComputeConfig` has never had.**
+   `runpod-diffusers-wan-2_1-1_3b-t2v-lora-flexible-warm-reuse-smoke.yaml`,
+   `runpod-diffusers-wan-2_1-1_3b-t2v-strength-grid.yaml`,
+   `runpod-diffusers-wan-2_2-14b-t2v-lora-flexible-warm-reuse-release.yaml`,
+   `runpod-diffusers-wan-2_2-14b-t2v-strength-grid.yaml` (`:53-55`). `ComputeConfig` leaves
+   pydantic's `extra` at the default `"ignore"`, so the block is dropped in silence — the same
+   class of failure the S1 rework exists to end, and `PlacementConfig` already sets
+   `extra="forbid"` against.
+   **This is the concrete blocker to putting `extra="forbid"` on `ComputeConfig`** — flipping it
+   today turns those 4 configs into load-time `ConfigError`s. **Sequence it: decide what
+   `compute.tags` should mean first** (thread it into `spec.tags`, which is what the authors
+   plainly intended, or delete the block from all 4 configs), **then** add `extra="forbid"`.
+   Doing the forbid first just breaks four configs without answering the question.
+
+**SINGLE NEXT ACTION:** write the S2 plan — region as a first-class `placement.region` field
+(design doc §8), against
+`docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md`.
+
+---
+
+### Previous snapshot (2026-08-24)
 
 **Compute-seam portable core (Brief 3) — design doc written + committed `d84dbef9`, 2026-08-24.**
 `docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md`. Brainstormed against the

@@ -57,16 +57,22 @@ compute:
   mode: pod
   # Dedicated hosts — RunPod terminated 2 community-adjacent smoke pods
   # mid-run on 2026-07-05; secure pins the host pool for the ~8min job.
-  cloud_type: secure
-  requirements:
+  backend_options:
+    runpod:
+      cloud_type: secure
+      # Ride transient RunPod capacity droughts: re-query offers + retry
+      # create for up to 5m before failing (2026-07-07).
+      capacity_wait_s: 300
+  placement:
     min_vram_gb: 80
     min_cuda: "12.4"
     # Widened 2026-07-07: 4 Ampere/Hopper 80GB types under a $3 cap makes a
-    # capacity miss rarer; capacity_wait rides out whatever miss remains.
+    # capacity miss rarer; backend_options.runpod.capacity_wait_s rides out
+    # whatever miss remains.
     # Blackwell RTX-6000 is deliberately excluded — its BSA wheel is cu124.
     max_usd_per_hr: 3.00
     disk_gb: 60
-    gpu_preference:
+    accelerators:
       - "NVIDIA A100 80GB PCIe"
       - "NVIDIA A100-SXM4-80GB"
       - "NVIDIA H100 80GB HBM3"
@@ -79,9 +85,6 @@ compute:
     max_lifetime: 90m
     budget: 1.5
     heartbeat_interval_s: 30
-    # Ride transient RunPod capacity droughts: re-query offers + retry create
-    # for up to 5m before failing (2026-07-07).
-    capacity_wait: 5m
 
 spec:
   model: "flashvsr-wan21-bfloat16"

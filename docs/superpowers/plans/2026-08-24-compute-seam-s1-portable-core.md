@@ -1143,8 +1143,14 @@ which only RunPod can constrain at selection time — into the RunPod namespace.
       it.
 - [ ] `gpu_preference` is renamed `accelerators` in the config surface, and
       `Config.hardware_requirements()` sources `gpu_preference` from it (S4 deletes that shim).
-- [ ] `min_cuda` moves to `compute.backend_options.runpod.min_cuda`; setting it under
-      `placement` is a `ConfigError`.
+- [ ] `min_cuda` stays PORTABLE, on `Placement`. **Plan correction, 2026-08-26, operator ruling:**
+      the design claimed only RunPod can constrain CUDA at selection time. That is wrong about
+      kinoforge — `core/offers.py::filter_offers` applies `min_cuda` client-side to the catalog of
+      every enumerating provider, and SkyPilot's catalog stamps every offer `cuda="12.0"`, so a
+      RunPod-namespaced default of `"12.8"` empties it and turns `skypilot-gpu` / `-lambda` /
+      `-vast` into `CapacityError`. It is a catalog-filter concept, so S4 deletes it with the rest
+      of the marketplace path; until then all three enumerating providers declare it CONSUMED.
+      No skypilot or modal config may carry a `backend_options.runpod` block.
 - [ ] `InstanceSpec.spot` is gone; SkyPilot reads `spec.placement.spot`.
 - [ ] Golden payloads unchanged.
 
@@ -1568,9 +1574,22 @@ provider cannot honour fails before launch instead of vanishing.
 - Test: `tests/validation/test_field_support_check.py`
 
 **Acceptance Criteria:**
-- [ ] `UnsupportedFieldCheck` is `CheckCategory.STATIC`, `Severity.ERROR`, no auto-fix.
-- [ ] Setting a field the selected provider declares `UNSUPPORTED` to a NON-DEFAULT value fails
-      the check, and the message names the provider, the dotted cfg path, and the value.
+- [ ] `UnsupportedFieldCheck` is `CheckCategory.STATIC`, no auto-fix, and its severity is
+      **by risk coverage**, mirroring `validation/checks/capabilities.py::ProviderCapabilityCheck`.
+      **Plan amendment, 2026-08-27, operator ruling.** A uniform hard ERROR would refuse 15 shipped
+      configs, because Task 5's declarations found two real silent-ignores that predate this plan:
+      `disk_gb` is `UNSUPPORTED` on all four providers (RunPod hardcodes `containerDiskInGb: 250`,
+      SkyPilot hardcodes `disk_size` 60/30) and 11 configs set it; skypilot `max_usd_per_hr` is
+      F4 itself and 4 configs set it. So:
+        - **ERROR** when nothing bounds the same risk — e.g. `accelerator_count`, which no provider
+          reads and nothing substitutes for.
+        - **WARN naming the substitute and its actual bound** otherwise — `disk_gb` names the
+          provider's hardcoded value (so "you asked 100, sky gives 60" is visible at doctor time),
+          and skypilot `max_usd_per_hr` names the instance-side deadline watchdog, which bounds
+          spend via `budget_usd`/rate until S4 wires the realized-rate check.
+- [ ] Setting a field the selected provider declares `UNSUPPORTED` to a NON-DEFAULT value produces
+      a finding at the severity above, and the message names the provider, the dotted cfg path,
+      the value, and — for a WARN — the substitute and the bound it actually enforces.
 - [ ] Leaving that field at its default passes — a default the operator never wrote is not a
       misconfiguration.
 - [ ] `ForeignNamespaceCheck` is `Severity.WARN` and fires when `backend_options` carries a
@@ -1907,34 +1926,34 @@ git commit -m "test(live): S1 compute-seam smoke green on the cheapest CPU SKU"
 - Modify: `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md` (check off tasks)
 
 **Acceptance Criteria:**
-- [ ] `rg 'compute\.requirements|compute\.cloud\b|compute\.cloud_type' README.md examples/ docs/`
+- [x] `rg 'compute\.requirements|compute\.cloud\b|compute\.cloud_type' README.md examples/ docs/`
       returns only historical references inside dated design/research docs.
-- [ ] README documents `compute.placement` and `compute.backend_options` with a worked example.
-- [ ] `examples/configs/skypilot-gpu.yaml:38-40`'s "ComputeConfig has no region field today"
+- [x] README documents `compute.placement` and `compute.backend_options` with a worked example.
+- [x] `examples/configs/skypilot-gpu.yaml:38-40`'s "ComputeConfig has no region field today"
       comment is updated to say region lands in S2, with the design doc path.
-- [ ] PROGRESS RESUME SNAPSHOT records S1 as shipped, names the intended capacity-wait behaviour
+- [x] PROGRESS RESUME SNAPSHOT records S1 as shipped, names the intended capacity-wait behaviour
       change, and sets the single next action to the S2 plan.
 
 **Verify:** `pixi run python -m pytest -q` → full suite green; `rg` check above returns clean.
 
 **Steps:**
 
-- [ ] **Step 1: Update README's config surface section** with the before/after from design §12.
-- [ ] **Step 2: Sweep example-config comments**
+- [x] **Step 1: Update README's config surface section** with the before/after from design §12.
+- [x] **Step 2: Sweep example-config comments**
 
 ```bash
 rg -n 'requirements:|gpu_preference|no region field' examples/configs/
 ```
 
-- [ ] **Step 3: Update PROGRESS.md** — new RESUME SNAPSHOT block naming: S1 shipped, the goldens'
+- [x] **Step 3: Update PROGRESS.md** — new RESUME SNAPSHOT block naming: S1 shipped, the goldens'
       location and how to regenerate them, the capacity-wait scoping change, and the next action
       (write the S2 plan: region as first class).
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `pixi run test && pixi run typecheck && pixi run lint`
 Expected: green, green, green
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 pixi run pre-commit run --all-files

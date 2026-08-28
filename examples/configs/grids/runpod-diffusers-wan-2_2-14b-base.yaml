@@ -43,11 +43,11 @@ compute:
   image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
   warm_reuse_auto_attach: true
-  requirements:
+  placement:
     min_vram_gb: 80
     min_cuda: "12.4"
     max_usd_per_hr: 3.00
-    gpu_preference:
+    accelerators:
       - "NVIDIA A100-SXM4-80GB"
       - "NVIDIA A100 80GB PCIe"
       - "NVIDIA H100 80GB HBM3"

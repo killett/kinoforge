@@ -51,14 +51,13 @@ models: []
 
 compute:
   provider: skypilot
-  cloud:
-    - "lambda"
+  backend_options:
+    skypilot:
+      clouds:
+        - "lambda"
   image: "runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04"
   mode: pod
-  requirements:
-    # Lambda's catalog reports a flat cuda=12.0; the 12.8 image ships its own
-    # toolkit and Lambda hosts carry a recent driver.
-    min_cuda: "12.0"
+  placement:
     # A100 40GB (Ampere sm_80) — Lambda's only capacity-available FlashVSR card
     # this session (A6000 48GB was persistently capacity-dry). FlashVSR's peak
     # VRAM is driven by num_frames (the whole clip is processed at once; the
@@ -67,9 +66,12 @@ compute:
     # the usage note). Cap sits below GH200 ($2.29), which is ARM (aarch64) and
     # incompatible with the amd64 runpod/pytorch image.
     min_vram_gb: 40
+    # Lambda's catalog reports a flat cuda=12.0; the 12.8 image ships its own
+    # toolkit and Lambda hosts carry a recent driver.
+    min_cuda: "12.0"
     max_usd_per_hr: 2.20
     disk_gb: 60
-    gpu_preference:
+    accelerators:
       - "A100"
       - "A6000"
   lifecycle:
@@ -90,7 +92,8 @@ compute:
     # autodowns the cluster at launch + max_lifetime, surviving controller death.
     max_lifetime: 90m
     budget: 2.0
-    capacity_wait: 5m
+    # NOTE: the old lifecycle.capacity_wait knob is RunPod-only now; sky's
+    # equivalent is backend_options.skypilot.retry_until_up.
     # Written explicitly rather than relying on the load-time auto-fix that
     # injects 30 — an invisible auto-fix is the same class of problem as an
     # unenforced guardrail. Required when warm_reuse_auto_attach=true

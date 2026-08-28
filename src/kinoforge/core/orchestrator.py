@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from kinoforge.core import registry
 from kinoforge.core.cancel import CancelToken
@@ -63,6 +63,7 @@ from kinoforge.core.interfaces import (
     ModelProfileProvider,
     Offer,
     PipelineState,
+    RenderedProvision,
     Stage,
 )
 from kinoforge.core.lifecycle import Ledger, destroy_confirmed
@@ -78,6 +79,7 @@ from kinoforge.core.provision_state import (
 )
 from kinoforge.core.provisioner import provision as provisioner_provision
 from kinoforge.core.session_claim import hold_until_first_tick
+from kinoforge.core.spec_builder import build_instance_spec
 from kinoforge.core.validation import validate_request
 from kinoforge.outputs.base import OutputSink
 from kinoforge.pipeline.generate_clip import GenerateClipStage
@@ -244,8 +246,10 @@ def _build_diagnostic_env(run_id: str) -> dict[str, str]:
             so each run's diagnostic snapshots land under a distinct path.
 
     Returns:
-        Mapping of env-var name to value, ready to splat into
-        ``InstanceSpec.diagnostic_env``.
+        Mapping of env-var name to value, ready to pass as the
+        ``diagnostic_env`` overlay to ``build_instance_spec`` (compute-seam
+        S1 Task 7: merged into ``InstanceSpec.env`` there, not a distinct
+        spec field).
     """
     overlay: dict[str, str] = {
         "KINOFORGE_DIAG_BUCKET": os.environ.get(
@@ -794,6 +798,7 @@ def _provision_instance_and_build_backend(
     on_instance_created: Callable[[Instance], None] | None = None,
     cancel_token: CancelToken | None = None,
     start_heartbeat: Callable[[Instance], HeartbeatLoopProtocol] | None = None,
+    capacity_wait_s: float | None = None,
 ) -> ProvisionResult:
     """Provision a compute instance and build a backend for it.
 
@@ -833,6 +838,19 @@ def _provision_instance_and_build_backend(
             closure that raises also falls through to ``hb_loop=None``
             (logged) — the late-start path in ``deploy_session`` handles the
             caller-supplied warm-pod recovery.
+        capacity_wait_s: Seconds to keep re-querying offers and retrying
+            create on ``CapacityError`` before giving up. Provider-scoped
+            (compute-seam S1) and non-zero for RunPod only.
+
+            **This is the single place ``None`` is resolved.** ``None``
+            (the default) derives the window from *cfg* via
+            :func:`kinoforge._adapters.build_capacity_wait_for`, exactly
+            as this function derived it from ``cfg.lifecycle()`` before
+            the window moved into the provider namespace. Pass an
+            explicit float only to override; ``0.0`` means "fail on the
+            first miss" and must be stated, never inherited from a
+            forgotten keyword — a caller that silently got ``0.0`` would
+            lose RunPod's capacity retry with no signal at all.
 
     Returns:
         :class:`ProvisionResult` ``(instance, backend, hb_loop)`` —
@@ -858,6 +876,16 @@ def _provision_instance_and_build_backend(
     hw_reqs = cfg.hardware_requirements()
     lifecycle = cfg.lifecycle()
     image = cfg.compute.image if cfg.compute is not None else ""
+    # THE single resolution site for the capacity window. It sits beside the
+    # other cfg-derived values on purpose: before compute-seam S1 this
+    # function read the window off cfg.lifecycle() itself, so deriving it
+    # here restores that shape with the namespace as the new source. Every
+    # caller supplies cfg, so `None` is always resolvable — which is what
+    # makes a forgotten keyword impossible to turn into a silent 0.0.
+    if capacity_wait_s is None:
+        from kinoforge._adapters import build_capacity_wait_for
+
+        capacity_wait_s = build_capacity_wait_for(cfg)
     key_hash = _key_hash(key)
     cfg_dict = _cfg_dict(cfg)
 
@@ -888,51 +916,27 @@ def _provision_instance_and_build_backend(
     assert_launch_capabilities(cfg, run_cmd=rendered.run_cmd)
 
     def _build_spec(offer: Offer) -> InstanceSpec:
-        merged_tags: dict[str, str] = {
-            "kinoforge_engine": resolved_engine.name,
-            "kinoforge_key": key_hash,
-        }
-        if tags:
-            merged_tags.update(tags)
-        diagnostic_env: dict[str, str] = (
-            _build_diagnostic_env(run_id) if cfg.diagnostic_mode else {}
-        )
-        # C28 A3: diagnostic-mode runs request restart_policy=never so a
-        # crashed boot leaves the container in a STOPPED state instead of
-        # being auto-restarted by RunPod (which would obliterate the
-        # diagnostic snapshot the A2 trap is trying to upload). Effective only
-        # if the provider's input schema accepts the field; otherwise the
-        # RunPod provider warns + skips with no behaviour change.
-        restart_policy: Literal["always", "never"] = (
-            "never" if cfg.diagnostic_mode else "always"
-        )
-        return InstanceSpec(
-            image=rendered.image or image,
+        return build_instance_spec(
+            cfg=cfg,
+            rendered=rendered,
             offer=offer,
-            ports=tuple(rendered.ports),
+            engine_name=resolved_engine.name,
+            key_hash=key_hash,
+            image=image,
             lifecycle=lifecycle,
-            tags=merged_tags,
-            env=dict(rendered_env),
+            env=rendered_env,
             run_id=run_id,
-            provision_script=rendered.script,
-            # Modal fast-boot split: bake image_build_script into the image,
-            # boot with runtime_provision_script only. Empty -> None so
-            # non-splitting engines/providers see no change (RunPod uses the
-            # combined provision_script above regardless).
-            image_build_script=(rendered.build_script or None),
-            runtime_provision_script=(rendered.runtime_script or None),
-            run_cmd=rendered.run_cmd,
-            diagnostic_env=diagnostic_env,
-            restart_policy=restart_policy,
-            # cfg.compute is None on hosted-engine cfgs that still reach
-            # the compute path in tests; "any" preserves cloudType ALL.
-            cloud_type=(cfg.compute.cloud_type if cfg.compute is not None else "any"),
+            tags=tags,
+            diagnostic_env=_build_diagnostic_env(run_id)
+            if cfg.diagnostic_mode
+            else None,
         )
 
     # 2026-07-07 capacity-wait: re-query offers + retry create on CapacityError
     # (empty offers OR every offer exhausted at create time) until
-    # lifecycle.capacity_wait_s elapses, then re-raise clean. Rides transient
-    # RunPod capacity droughts instead of failing the run on the first miss.
+    # capacity_wait_s elapses, then re-raise clean. Rides transient RunPod
+    # capacity droughts instead of failing the run on the first miss. S1 made
+    # the window provider-scoped — see build_capacity_wait_for.
     def _find_offers() -> list[Offer]:
         found = resolved_provider.find_offers(hw_reqs)
         if not found:
@@ -949,7 +953,7 @@ def _provision_instance_and_build_backend(
     instance, _chosen_offer = _create_with_capacity_wait(
         find_offers=_find_offers,
         create=_create,
-        capacity_wait_s=lifecycle.capacity_wait_s,
+        capacity_wait_s=capacity_wait_s,
     )
     # B7 — acquire the cooperative session-claim lock now that instance.id is
     # known, BEFORE engine.provision runs. The callback enters the outer
@@ -1105,6 +1109,7 @@ def deploy_session(
     heartbeat_loop_factory: Callable[..., HeartbeatLoopProtocol] | None = None,
     cancel_token: CancelToken | None = None,
     single: bool = False,
+    capacity_wait_s: float | None = None,
 ) -> Iterator[DeploySession]:
     """Yield a ready-to-dispatch :class:`DeploySession` for one or more calls.
 
@@ -1192,6 +1197,13 @@ def deploy_session(
             after the yielded body returns. Hosted-engine paths and
             ``instance is None`` paths skip the destroy. Default
             ``False`` preserves warm-reuse-friendly behavior.
+        capacity_wait_s: Seconds to keep re-querying offers and retrying
+            create on ``CapacityError`` before giving up (compute-seam
+            S1). Forwarded verbatim — including ``None`` — to
+            :func:`_provision_instance_and_build_backend`, which owns the
+            sole ``None``-resolution site. ``None`` (the default) means
+            "derive the window from *cfg*"; pass a float only to
+            override.
 
     Yields:
         A live :class:`DeploySession`.  ``session.pool`` is open with
@@ -1413,6 +1425,7 @@ def deploy_session(
                             on_instance_created=_record_then_install,
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
+                            capacity_wait_s=capacity_wait_s,
                         )
                         instance, backend, hb_loop = _result
                 else:
@@ -1456,6 +1469,7 @@ def deploy_session(
                             on_instance_created=_record_then_install,
                             cancel_token=cancel_token,
                             start_heartbeat=_start_heartbeat,
+                            capacity_wait_s=capacity_wait_s,
                         )
                         instance, backend, hb_loop = _result
                 else:
@@ -1693,19 +1707,19 @@ def deploy(
     image = cfg.compute.image if cfg.compute is not None else ""
 
     def _build_spec(offer: Offer) -> InstanceSpec:
-        merged_tags: dict[str, str] = {
-            "kinoforge_engine": resolved_engine.name,
-            "kinoforge_key": key_hash,
-        }
-        if tags:
-            merged_tags.update(tags)
-        return InstanceSpec(
-            image=image,
+        return build_instance_spec(
+            cfg=cfg,
+            rendered=RenderedProvision(
+                script="", run_cmd=[], image=image, ports=[], env_required=[]
+            ),
             offer=offer,
+            engine_name=resolved_engine.name,
+            key_hash=key_hash,
+            image=image,
             lifecycle=lifecycle,
-            tags=merged_tags,
             env={},
             run_id="",
+            tags=tags,
         )
 
     instance, _chosen_offer = _create_with_offer_retry(

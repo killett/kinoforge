@@ -65,14 +65,17 @@ import shlex
 import socket
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.errors import KinoforgeError, ProvisionFailed
 from kinoforge.core.interfaces import (
     ComputeProvider,
+    FieldSupport,
     HardwareRequirements,
     Instance,
     InstanceSpec,
@@ -534,6 +537,63 @@ class SkyPilotProvider(ComputeProvider):
 
     name: str = "skypilot"
 
+    class Options(BaseModel):
+        """Options only SkyPilot honours. Unknown keys are a config error.
+
+        Attributes:
+            clouds: Optional list of sky cloud names (e.g. ``["lambda"]``,
+                ``["lambda", "vast"]``) pinned onto
+                :attr:`SkyPilotProvider._clouds` by
+                :func:`kinoforge._adapters.build_provider_for`. ``None``
+                lets sky consider every enabled cloud and pick by price.
+            retry_until_up: Whether ``sky.launch`` loops with backoff
+                across zones/preemption-retry until provisioning succeeds.
+                This is SkyPilot's analogue of RunPod's
+                ``capacity_wait_s`` retry loop.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+        clouds: list[str] | None = None
+        retry_until_up: bool = False
+
+        @field_validator("clouds")
+        @classmethod
+        def _reject_empty_clouds(cls, v: list[str] | None) -> list[str] | None:
+            """Reject an empty cloud list.
+
+            The operator meant ``clouds: null`` (or forgot to populate the
+            entry); ``sky.launch`` with zero clouds silently falls back to
+            "every enabled cloud", which is the opposite of a pin.
+
+            Args:
+                v: The raw ``clouds`` value.
+
+            Returns:
+                *v* unchanged when it is ``None`` or non-empty.
+
+            Raises:
+                ValueError: *v* is an empty list.
+            """
+            if v is not None and not v:
+                raise ValueError(
+                    "clouds must be a non-empty list of sky cloud names "
+                    "or null; got an empty list"
+                )
+            return v
+
+    @classmethod
+    def validate_options(cls, raw: Mapping[str, Any]) -> SkyPilotProvider.Options:
+        """Parse *raw* into this provider's Options, forbidding unknown keys.
+
+        Args:
+            raw: The ``compute.backend_options["skypilot"]`` mapping.
+
+        Returns:
+            A validated :class:`SkyPilotProvider.Options`.
+        """
+        return cls.Options.model_validate(dict(raw))
+
     @classmethod
     def capabilities(
         cls, shape: WorkloadShape = WorkloadShape.SERVER
@@ -550,6 +610,71 @@ class SkyPilotProvider(ComputeProvider):
         if shape is WorkloadShape.BATCH:
             caps.add(Capability.IDLE_AUTOSTOP)
         return frozenset(caps)
+
+    @classmethod
+    def consumes(cls) -> Mapping[str, FieldSupport]:
+        """Declare what the Task config and the catalog filter read.
+
+        SkyPilot honours the setup/run pair and the resource block it builds
+        in :meth:`create_instance`. ``ports`` / ``volume_*`` are UNSUPPORTED
+        because the tunnel is opened by kinoforge over ssh rather than
+        declared to sky, and no volume is attached at all — declaring them
+        CONSUMED would be the exact lie this table exists to prevent.
+
+        Two rows are deliberately narrower than they look:
+
+        * ``max_usd_per_hr`` is UNSUPPORTED. ``find_offers`` does hand it to
+          :func:`~kinoforge.core.offers.filter_offers`, but the launch pins
+          only the accelerator NAME — sky's optimizer then picks cloud,
+          region and SKU on its own, and has been observed booking a $1.99
+          Lambda A100 under a $1.00 ceiling (2026-07-07). Read-and-then-
+          overridden is not honoured; this is verification finding F4 and it
+          stays UNSUPPORTED until S4 wires the realized-rate check.
+        * ``disk_gb`` is UNSUPPORTED: ``resources`` never receives the
+          operator's value, so the ``setdefault("disk_size", 60 if gpu else
+          30)`` below always wins. Shipped skypilot configs DO set
+          ``placement.disk_gb`` today; every one of them is being ignored.
+
+        ``min_vram_gb`` by contrast IS honoured: the accelerator name that
+        survives the VRAM floor is the name pinned on the wire, so wherever
+        sky books it the VRAM comes with it. It also has a second, direct
+        read — ``min_vram_gb == 0`` short-circuits to the synthetic CPU
+        offer, which is what makes the task request ``cpus``/``memory``.
+
+        ``backend_options`` is consumed by the SkyPilot namespace's owner,
+        :func:`kinoforge._adapters.build_provider_for`, which turns
+        ``clouds`` / ``retry_until_up`` into constructor arguments; this
+        provider reads them off ``self`` rather than off ``spec``.
+
+        Returns:
+            The declared field-support mapping.
+        """
+        c, u = FieldSupport.CONSUMED, FieldSupport.UNSUPPORTED
+        return {
+            # -- placement -------------------------------------------------
+            "accelerators": c,  # find_offers ranks the catalog by preference
+            "accelerator_count": u,  # accelerators=f"{gpu_type}:1", hardcoded
+            "min_vram_gb": c,  # filter_offers floor + the CPU short-circuit
+            "min_cuda": c,  # filter_offers excludes below the floor
+            "disk_gb": u,  # disk_size is 60/30 by fiat
+            "spot": c,  # resources["use_spot"]
+            "max_usd_per_hr": u,  # F4: the optimizer never sees the cap
+            # -- spec ------------------------------------------------------
+            "image": c,  # resources["image_id"], docker:-normalised
+            "ports": u,  # the tunnel is ssh-side, never declared to sky
+            "volume_gb": u,  # no volume is attached
+            "volume_mount": u,  # no volume is attached
+            "env": c,  # task_config["envs"]
+            "tags": c,  # the F12 provisional row, then Instance.tags
+            "run_id": c,  # task name + cluster_name
+            "provision_script": c,  # appended to Task.setup
+            "run_cmd": c,  # Task.run, shell-quoted
+            "image_build_script": u,  # Modal-only split
+            "runtime_provision_script": u,  # Modal-only split
+            "lifecycle": c,  # idle_minutes_to_autostop + the watchdog deadline
+            "offer": c,  # resources["accelerators"] / cpus+memory
+            "backend_options": c,  # cloud pin + retry_until_up, via _adapters
+        }
 
     def __init__(
         self,
@@ -815,17 +940,18 @@ class SkyPilotProvider(ComputeProvider):
             is_gpu = bool(spec.offer is not None and spec.offer.gpu_type)
             default_disk_gb = 60 if is_gpu else 30
             resources.setdefault("disk_size", default_disk_gb)
-            # Spot/preemptible: maps spec.spot → SkyPilot's ``use_spot``.
-            # Preemptible T4 quota (``PREEMPTIBLE_NVIDIA_T4_GPUS``) is granted
-            # separately from the on-demand GPU quota (``GPUS_ALL_REGIONS``).
-            if spec.spot:
+            # Spot/preemptible: maps spec.placement.spot → SkyPilot's
+            # ``use_spot``. Preemptible T4 quota (``PREEMPTIBLE_NVIDIA_T4_GPUS``)
+            # is granted separately from the on-demand GPU quota
+            # (``GPUS_ALL_REGIONS``).
+            if spec.placement.spot:
                 resources["use_spot"] = True
             if self._region:
                 resources["region"] = self._region
-            # Pin the LAUNCH cloud to the operator's compute.cloud set. The
+            # Pin the LAUNCH cloud to the operator's clouds set. The
             # _clouds filter only narrows find_offers' CATALOG enumeration; sky's
             # optimizer otherwise still launches on the globally-cheapest cloud
-            # for the accelerator (observed 2026-07-07: a compute.cloud=["vast"]
+            # for the accelerator (observed 2026-07-07: a clouds=["vast"]
             # config provisioned a Lambda A100 at $1.99, defeating the vast pin
             # and the price cap). One cloud → ``cloud``; several → ``any_of``.
             if self._clouds:
@@ -1137,19 +1263,26 @@ _SUPPORTED_CLOUDS = frozenset(
 
 
 class SkyPilotCloudPinSupportedCheck:
-    """STATIC ERROR — every compute.cloud entry must be in the supported set."""
+    """STATIC ERROR — every pinned cloud must be in the supported set.
+
+    Reads ``compute.backend_options.skypilot.clouds`` (compute-seam S1;
+    the pin used to live at the portable ``compute.cloud``).
+    """
 
     name: str = "skypilot_cloud_pin_supported"
     category: _CC = _CC.STATIC
     severity: _SEV = _SEV.ERROR
 
     def applies_to(self, cfg: Any) -> bool:  # noqa: ANN401 — Check Protocol
-        """Apply iff a compute block sets cloud to a non-null list."""
-        return cfg.compute is not None and cfg.compute.cloud is not None
+        """Apply iff the skypilot namespace pins a non-null cloud list."""
+        return (
+            cfg.compute is not None
+            and cfg.backend_options_for("skypilot").clouds is not None
+        )
 
     def run(self, cfg: Any) -> _CR:  # noqa: ANN401 — Check Protocol
         """Reject any cloud entry outside _SUPPORTED_CLOUDS."""
-        clouds = cfg.compute.cloud or []
+        clouds = cfg.backend_options_for("skypilot").clouds or []
         bad = [c for c in clouds if c not in _SUPPORTED_CLOUDS]
         if bad:
             return _CR(
@@ -1157,8 +1290,9 @@ class SkyPilotCloudPinSupportedCheck:
                 passed=False,
                 severity=self.severity,
                 message=(
-                    f"compute.cloud has unsupported entr(ies): "
-                    f"{bad}; supported set is {sorted(_SUPPORTED_CLOUDS)}"
+                    f"compute.backend_options.skypilot.clouds has unsupported "
+                    f"entr(ies): {bad}; supported set is "
+                    f"{sorted(_SUPPORTED_CLOUDS)}"
                 ),
                 fix_suggestion=(
                     "remove the unsupported entries, or expand the "

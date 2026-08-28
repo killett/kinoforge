@@ -67,11 +67,11 @@ compute:
   provider: runpod
   image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
   mode: pod
-  requirements:
+  placement:
     min_vram_gb: 24
     min_cuda: "12.4"
     max_usd_per_hr: 0.50
-    gpu_preference:
+    accelerators:
       - "NVIDIA GeForce RTX 4090"
       - "NVIDIA RTX A5000"
       - "NVIDIA GeForce RTX 3090"

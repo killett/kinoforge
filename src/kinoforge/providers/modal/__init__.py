@@ -14,11 +14,14 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
 from kinoforge.core import registry
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.ephemeral import EphemeralSession
 from kinoforge.core.interfaces import (
     ComputeProvider,
+    FieldSupport,
     HardwareRequirements,
     Instance,
     InstanceSpec,
@@ -42,6 +45,27 @@ class ModalProvider(ComputeProvider):
 
     name: str = "modal"
 
+    class Options(BaseModel):
+        """Modal accepts no backend options today — still forbids extras.
+
+        An empty model is a real declaration ("this provider accepts no
+        backend options"), not a placeholder for one that was never written.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+    @classmethod
+    def validate_options(cls, raw: Mapping[str, Any]) -> ModalProvider.Options:
+        """Parse *raw* into this provider's Options, forbidding unknown keys.
+
+        Args:
+            raw: The ``compute.backend_options["modal"]`` mapping.
+
+        Returns:
+            A validated :class:`ModalProvider.Options`.
+        """
+        return cls.Options.model_validate(dict(raw))
+
     @classmethod
     def capabilities(
         cls, shape: WorkloadShape = WorkloadShape.SERVER
@@ -61,6 +85,58 @@ class ModalProvider(ComputeProvider):
                 Capability.ON_INSTANCE_DEADLINE,
             }
         )
+
+    @classmethod
+    def consumes(cls) -> Mapping[str, FieldSupport]:
+        """Declare what :class:`ModalAppRequest` and the catalog filter read.
+
+        Derived by reading :meth:`create_instance` and
+        :func:`kinoforge.providers.modal._catalog.modal_offers`.
+
+        Modal schedules rather than books a host, so most of the placement
+        block has nowhere to land: there is no disk knob, no spot pool, and
+        the accelerator count is fixed at one per function. What survives is
+        the catalog filter, which excludes candidates before the request is
+        built.
+
+        ``max_usd_per_hr`` is UNSUPPORTED, and NOT because the filter is
+        skipped: every entry in ``MODAL_GPU_CATALOG`` carries
+        ``mode="serverless"``, and :func:`~kinoforge.core.offers.filter_offers`
+        applies its price ceiling only to ``mode == "pod"`` offers. The cap
+        is handed over and then structurally ignored.
+
+        ``ports`` is UNSUPPORTED because the request has no port field —
+        ``build_modal_app`` serves a single ``@web_server`` on 8000.
+
+        Returns:
+            The declared field-support mapping.
+        """
+        c, u = FieldSupport.CONSUMED, FieldSupport.UNSUPPORTED
+        return {
+            # -- placement -------------------------------------------------
+            "accelerators": c,  # modal_offers ranks the catalog by preference
+            "accelerator_count": u,  # one GPU per function, hardcoded
+            "min_vram_gb": c,  # filter_offers excludes below the floor
+            "min_cuda": c,  # filter_offers excludes below the floor
+            "disk_gb": u,  # no disk knob on the request
+            "spot": u,  # no spot pool
+            "max_usd_per_hr": u,  # the catalog is serverless; the cap is skipped
+            # -- spec ------------------------------------------------------
+            "image": c,  # ModalAppRequest.image
+            "ports": u,  # the web_server port is fixed at 8000
+            "volume_gb": u,  # the Volume is not sized from the spec
+            "volume_mount": c,  # ModalAppRequest.volume_mount (+ HF_HOME)
+            "env": c,  # ModalAppRequest.env
+            "tags": c,  # Instance.tags
+            "run_id": c,  # ModalAppRequest.run_id, and the app name
+            "provision_script": c,  # required, and the boot-script fallback
+            "run_cmd": c,  # ModalAppRequest.run_cmd
+            "image_build_script": c,  # baked into the image at build time
+            "runtime_provision_script": c,  # preferred as the boot script
+            "lifecycle": c,  # scaledown_window_s + startup_timeout_s
+            "offer": c,  # ModalAppRequest.gpu
+            "backend_options": u,  # Options is empty: no knob to consume
+        }
 
     def __init__(
         self,

@@ -1,4 +1,4 @@
-"""``InstanceSpec.cloud_type`` → RunPod ``cloudType`` wire field.
+"""``backend_options["runpod"]["cloud_type"]`` → RunPod ``cloudType`` wire field.
 
 Motivation (2026-07-03): three consecutive BSA wheel-build pods were
 deleted mid-compile. All three landed on community-cloud hosts because
@@ -6,6 +6,10 @@ deleted mid-compile. All three landed on community-cloud hosts because
 cheapest capacity — community hosts, whose interruption terminates
 zero-volume pods outright. ``cloud_type="secure"`` lets long-running
 one-shot workloads (wheel builds) pin dedicated hosts.
+
+The knob moved off ``InstanceSpec`` and into the RunPod namespace of
+``InstanceSpec.backend_options`` in compute-seam S1. The assertions below
+are unchanged on purpose: what reaches the wire is the whole point.
 """
 
 from __future__ import annotations
@@ -70,7 +74,7 @@ def test_secure_cloud_type_emitted_on_wire() -> None:
         InstanceSpec(
             image="runpod/pytorch:latest",
             offer=_offer(),
-            cloud_type="secure",
+            backend_options={"runpod": {"cloud_type": "secure"}},
         )
     )
     assert _input(captured[0][1])["cloudType"] == "SECURE"
@@ -88,7 +92,7 @@ def test_community_cloud_type_emitted_on_wire() -> None:
         InstanceSpec(
             image="runpod/pytorch:latest",
             offer=_offer(),
-            cloud_type="community",
+            backend_options={"runpod": {"cloud_type": "community"}},
         )
     )
     assert _input(captured[0][1])["cloudType"] == "COMMUNITY"

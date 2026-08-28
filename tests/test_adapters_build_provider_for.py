@@ -1,9 +1,11 @@
-"""Adapter-dispatch tests for Phase 53 Stage C — cfg-aware provider build.
+"""Adapter-dispatch tests — cfg-aware provider build.
 
 Verifies that :func:`kinoforge._adapters.build_provider_for` threads
-``cfg.compute.cloud`` into :class:`SkyPilotProvider` at instantiation time
-so ``sky.launch`` receives the operator-pinned cloud filter instead of
-falling through to whichever enabled cloud has the cheapest matching SKU.
+``compute.backend_options.skypilot`` into :class:`SkyPilotProvider` at
+instantiation time so ``sky.launch`` receives the operator-pinned cloud
+filter (and ``retry_until_up``) instead of falling through to whichever
+enabled cloud has the cheapest matching SKU. The pin lived at the portable
+``compute.cloud`` before compute-seam S1.
 """
 
 from __future__ import annotations
@@ -26,13 +28,19 @@ def _make_cfg(
     *,
     provider: str = "skypilot",
     cloud: list[str] | None = None,
+    retry_until_up: bool | None = None,
 ) -> Config:
+    skypilot: dict[str, object] = {}
+    if cloud is not None:
+        skypilot["clouds"] = cloud
+    if retry_until_up is not None:
+        skypilot["retry_until_up"] = retry_until_up
     return Config(
         compute=ComputeConfig(
             provider=provider,
             image="skypilot/skypilot-gpu:latest",
             lifecycle=LifecycleConfig(budget=10.0),
-            cloud=cloud,
+            backend_options={"skypilot": skypilot} if skypilot else {},
         ),
         engine=EngineConfig(kind="fake", precision="fp16"),
         models=[
@@ -44,11 +52,11 @@ def _make_cfg(
 
 
 def test_build_provider_for_skypilot_threads_single_cloud() -> None:
-    """cfg.compute.cloud = ["lambda"] → SkyPilotProvider._clouds == ["lambda"].
+    """clouds = ["lambda"] → SkyPilotProvider._clouds == ["lambda"].
 
     Without this thread, sky considers every enabled cloud and Vast.ai
     wins on price; the resume target spec calls this out as the entire
-    reason Stage C exists.
+    reason the pin exists.
     """
     cfg = _make_cfg(cloud=["lambda"])
     provider = build_provider_for(cfg)
@@ -57,7 +65,7 @@ def test_build_provider_for_skypilot_threads_single_cloud() -> None:
 
 
 def test_build_provider_for_skypilot_threads_multi_cloud() -> None:
-    """cfg.compute.cloud = ["lambda", "vast"] → both pinned for sky fallthrough.
+    """clouds = ["lambda", "vast"] → both pinned for sky fallthrough.
 
     Bug guard: a single-string-only path would silently drop the second
     cloud and break the Lambda-capacity-falls-through-to-Vast contract.
@@ -69,10 +77,10 @@ def test_build_provider_for_skypilot_threads_multi_cloud() -> None:
 
 
 def test_build_provider_for_skypilot_cloud_none_preserves_legacy() -> None:
-    """cfg.compute.cloud = None → SkyPilotProvider._clouds is None.
+    """No skypilot namespace → SkyPilotProvider._clouds is None.
 
-    Backward compat: pre-Stage-C YAMLs without a cloud key MUST keep
-    sky.list_accelerators(clouds=) unset, matching pre-Phase-53 behaviour.
+    Backward compat: YAMLs without a cloud pin MUST keep
+    sky.list_accelerators(clouds=) unset.
     """
     cfg = _make_cfg(cloud=None)
     provider = build_provider_for(cfg)
@@ -81,15 +89,33 @@ def test_build_provider_for_skypilot_cloud_none_preserves_legacy() -> None:
 
 
 def test_build_provider_for_local_ignores_cloud() -> None:
-    """Non-skypilot providers must not blow up if cfg.compute.cloud is set.
+    """Non-skypilot providers must not reach the skypilot injection branch.
 
-    cfg.compute.cloud is a skypilot-only knob; LocalProvider doesn't
-    accept clouds=. The dispatcher must short-circuit before reaching
-    the skypilot-only injection branch.
+    The cloud pin is a skypilot-only knob; LocalProvider doesn't accept
+    clouds=. The dispatcher must short-circuit before reaching it.
     """
     cfg = _make_cfg(provider="local", cloud=None)
     provider = build_provider_for(cfg)
     assert isinstance(provider, LocalProvider)
+
+
+def test_build_provider_for_skypilot_threads_retry_until_up() -> None:
+    """retry_until_up reaches SkyPilotProvider._retry_until_up.
+
+    Bug caught (verification finding F6): the flag exists on the provider
+    constructor but nothing maps config onto it, so an operator asking sky
+    to keep retrying across zones silently gets a single-shot launch.
+    """
+    provider = build_provider_for(_make_cfg(cloud=["lambda"], retry_until_up=True))
+    assert isinstance(provider, SkyPilotProvider)
+    assert provider._retry_until_up is True
+
+
+def test_build_provider_for_skypilot_retry_until_up_defaults_off() -> None:
+    """No namespace → retry_until_up stays False (pre-S1 launch behaviour)."""
+    provider = build_provider_for(_make_cfg())
+    assert isinstance(provider, SkyPilotProvider)
+    assert provider._retry_until_up is False
 
 
 def test_build_provider_for_hosted_engine_returns_none() -> None:

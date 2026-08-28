@@ -34,11 +34,11 @@ compute:
   # B5a substrate — RunPod podEditJob endpoint stamps last_heartbeat
   # into pod dockerArgs (HB-safe with fake engine per C25 guard).
   heartbeat_mode: graphql-tag
-  requirements:
+  placement:
     min_vram_gb: 8
     min_cuda: "12.0"
     max_usd_per_hr: 0.50
-    gpu_preference:
+    accelerators:
       - "NVIDIA GeForce RTX 4090"
       - "NVIDIA RTX A5000"
       - "NVIDIA GeForce RTX 3090"

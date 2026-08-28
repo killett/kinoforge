@@ -1,0 +1,260 @@
+{
+  "smoke": "compute-seam S1 \u2014 migrated config launches what it launched pre-S1",
+  "task": "task-8 (S1 portable core)",
+  "config": "examples/configs/skypilot-cpu.yaml",
+  "golden": "tests/providers/golden/launch_payloads/skypilot-cpu.json",
+  "cluster_name": "kinoforge-s1-smoke-4f040b52",
+  "region_requested": "us-west-2",
+  "clouds_requested": [
+    "aws"
+  ],
+  "expected_sku": "c6i.large",
+  "preflight": {
+    "command": "pixi run preflight",
+    "exit_code": 0,
+    "passed": true,
+    "note": "run by the operator BEFORE this process started; it cannot be invoked from inside the test because its clean-tree check would fail against the evidence file this test rewrites",
+    "output": "Pixi task (preflight in default): python tools/preflight.py\npreflight: pre-live-spend gate\n  OK   env: ['RUNPOD_API_KEY', 'RUNPOD_TERMINATE_KEY', 'HF_TOKEN'] all set\n  OK   pods: 0 active\n  OK   git: working tree clean\n  OK   sky: 0 active clusters (or skypilot not installed)\npreflight: PASS \u2014 safe to spend\n"
+  },
+  "started_at": "2026-08-27T04:55:14.315969-07:00",
+  "utilisation_samples": [
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s1-smoke-4f040b52: Name or service not known",
+      "at": "2026-08-27T04:56:31.449755-07:00",
+      "elapsed_s": 76.0,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s1-smoke-4f040b52: Name or service not known",
+      "at": "2026-08-27T04:57:47.746978-07:00",
+      "elapsed_s": 152.1,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s1-smoke-4f040b52: Name or service not known",
+      "at": "2026-08-27T04:59:03.885246-07:00",
+      "elapsed_s": 228.4,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": true,
+      "cpu_idle_pct": 100.0,
+      "mem_total_mb": 3816,
+      "mem_used_mb": 1069,
+      "raw": "%Cpu(s):  0.0 us,  0.0 sy,  0.0 ni,100.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st\nMem:            3816        1069         575           2        2172        2446",
+      "note": null,
+      "at": "2026-08-27T05:00:22.350451-07:00",
+      "elapsed_s": 304.6,
+      "sky_status": "ready",
+      "create_thread_alive": false
+    }
+  ],
+  "payload_comparison": {
+    "status": "match",
+    "normalised_fields": [
+      "task_config.name",
+      "launch_kwargs.cluster_name",
+      "task_config.setup:<watchdog deadline epoch>",
+      "task_config.resources.cloud (smoke-only pin)",
+      "task_config.resources.region (smoke-only pin)"
+    ],
+    "live_resources": {
+      "image_id": "docker:runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+      "cpus": "1+",
+      "memory": "2+",
+      "disk_size": 30,
+      "region": "us-west-2",
+      "cloud": "aws"
+    },
+    "live_launch_kwargs": {
+      "cluster_name": "kinoforge-s1-smoke-4f040b52",
+      "idle_minutes_to_autostop": 1,
+      "down": true
+    },
+    "task_config_keys": [
+      "envs",
+      "name",
+      "resources",
+      "run",
+      "setup"
+    ],
+    "setup_sha_equal_after_normalisation": true,
+    "compared_at": "2026-08-27T04:55:15.324622-07:00"
+  },
+  "cluster_state": {
+    "observed_ready": true,
+    "statuses_seen": [
+      "starting",
+      "starting",
+      "starting",
+      "ready"
+    ],
+    "ready_at": "2026-08-27T05:00:22.350817-07:00",
+    "ready_after_s": 304.6
+  },
+  "launched_at": "2026-08-27T04:55:14.316212-07:00",
+  "launch_target_asserted": {
+    "cloud": "aws",
+    "region": "us-west-2"
+  },
+  "sku_launched": [
+    "c6i.large"
+  ],
+  "availability_zones": [
+    "us-west-2a"
+  ],
+  "create_instance_returned": "starting",
+  "teardown": {
+    "started_at": "2026-08-27T05:00:28.269149-07:00",
+    "passes": [
+      {
+        "at": "2026-08-27T05:00:28.269188-07:00",
+        "forced_instance_ids": [
+          "i-0437bc9e97af76380"
+        ],
+        "sky_status": "ready",
+        "destroy_instance": "ok",
+        "ec2_states": [
+          "shutting-down"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      },
+      {
+        "at": "2026-08-27T05:01:03.490238-07:00",
+        "forced_instance_ids": [
+          "i-0437bc9e97af76380"
+        ],
+        "sky_status": null,
+        "ec2_states": [
+          "terminated"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      },
+      {
+        "at": "2026-08-27T05:01:33.420128-07:00",
+        "forced_instance_ids": [
+          "i-0437bc9e97af76380"
+        ],
+        "sky_status": null,
+        "ec2_states": [
+          "terminated"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      }
+    ],
+    "final_ec2_states": [
+      "terminated"
+    ],
+    "final_ec2_readable": true,
+    "final_sky_status": null,
+    "clean_streak": 2,
+    "finished_at": "2026-08-27T05:01:48.495183-07:00",
+    "ledger_forget": "ok"
+  },
+  "outcome": "PROVEN",
+  "finished_at": "2026-08-27T05:01:48.499976-07:00",
+  "captured_at": "2026-08-27T05:01:48.499976-07:00",
+  "billable_wall_clock_s": 394.2,
+  "measured_spend": {
+    "source": "aws ec2 describe-instances LaunchTime + StateTransitionReason, read after the test process exited; the terminate completes after pytest returns so the harness itself cannot observe the closing timestamp",
+    "sku": "c6i.large",
+    "region": "us-west-2",
+    "availability_zone": "us-west-2a",
+    "on_demand_usd_per_hr": 0.085,
+    "price_source": "~/.sky/catalogs/v8/aws/vms.csv (c6i.large, us-west-2)",
+    "this_run_usd": 0.00737,
+    "this_run_envelope_usd": 0.05,
+    "this_run_under_envelope": true,
+    "runs": [
+      {
+        "attempt": 1,
+        "cluster": "kinoforge-s1-smoke-3d077623",
+        "instance_id": "i-01820574ff2b1f9ad",
+        "launch_utc": "2026-08-27T11:15:11+00:00",
+        "terminate_utc": "2026-08-27T11:16:08+00:00",
+        "wall_clock_s": 57,
+        "billed_s": 60,
+        "billed_s_note": "AWS per-second billing with a 60 s minimum",
+        "result": "FAILED on payload comparison (harness bug, not an S1 regression); leaked briefly, destroyed manually",
+        "usd": 0.00142
+      },
+      {
+        "attempt": 2,
+        "cluster": "kinoforge-s1-smoke-980b8e9c",
+        "instance_id": "i-04e1532ae8fef827d",
+        "launch_utc": "2026-08-27T11:21:58+00:00",
+        "terminate_utc": "2026-08-27T11:26:00+00:00",
+        "wall_clock_s": 242,
+        "billed_s": 242,
+        "result": "PASSED (pre-review assertions)",
+        "usd": 0.00571
+      },
+      {
+        "attempt": 3,
+        "cluster": "kinoforge-s1-smoke-4f040b52",
+        "instance_id": "i-0437bc9e97af76380",
+        "launch_utc": "2026-08-27T11:55:22+00:00",
+        "terminate_utc": "2026-08-27T12:00:34+00:00",
+        "wall_clock_s": 312,
+        "billed_s": 312,
+        "result": "PASSED (post-review assertions: launch target + SKU/AZ asserted)",
+        "usd": 0.00737
+      }
+    ],
+    "ebs_usd": 0.00042,
+    "ebs_note": "3 x 30 GB gp3 for 0.0167 + 0.0672 + 0.0867 h at $0.08/GB-month",
+    "cumulative_usd": 0.01492,
+    "cumulative_envelope_usd": 1.0,
+    "under_envelope": true
+  },
+  "teardown_verification_after_exit": {
+    "at": "2026-08-27T05:03-07:00",
+    "kinoforge_list": [
+      "[instance overview] No running instances.",
+      "No instances recorded in ledger."
+    ],
+    "sky_status": "No existing clusters.",
+    "aws_ec2_describe_instances": [
+      "i-01820574ff2b1f9ad\tc6i.large\tterminated\t2026-08-27T11:15:11+00:00",
+      "i-04e1532ae8fef827d\tc6i.large\tterminated\t2026-08-27T11:21:58+00:00",
+      "i-0437bc9e97af76380\tc6i.large\tterminated\t2026-08-27T11:55:22+00:00"
+    ],
+    "note": "all three attempts' instances terminated; nothing outstanding"
+  },
+  "review_findings_closed": {
+    "important_1_unreadable_ec2_is_not_empty": "every teardown pass records ec2_readable; this run: [True, True, True], final_ec2_readable=True",
+    "important_2_ledger_forget_gated_on_clean_teardown": "ledger_forget=ok (reached only because teardown confirmed clean)",
+    "important_3_launch_target_and_sku_asserted": "launch_target_asserted={\"cloud\": \"aws\", \"region\": \"us-west-2\"}, sku_launched=[\"c6i.large\"] asserted == [c6i.large], azs=[\"us-west-2a\"]",
+    "important_4_normalize_replaces_never_creates": "_normalize asserts 'cluster_name' in launch_kwargs before overwriting; verified offline that removing the key raises instead of manufacturing agreement",
+    "minor_remote_log_redaction": "_capture_setup_log pipes through credential_patterns.redact_string and truncates to 4000 chars before anything reaches a log line or this file",
+    "unmet_ac_preflight_recorded": "preflight.exit_code=0; evidence was COMMITTED before invoking preflight so its clean-tree check could pass (the ordering trap)"
+  },
+  "notes": [
+    "sky.launch returns after 'Setup detached.' + 'Job submitted' \u2014 it does NOT wait for Task.setup, so create_instance returned status=starting and opened its ssh tunnel while the ComfyUI/Wan setup was still running detached. Settles Phase A fragility 2.",
+    "'Docker container is up.' landed inside the time to UP, so the 7.4 GB compressed runpod/pytorch cuda-devel image pinned by this config's engine fits and pulls fine on the 30 GB disk sky picks. Phase A fragility 5 does not bite at the reach-UP stage.",
+    "The util probe's `top` idle parse works on the real image (100.0 extracted from '100.0 id'). It reads 100% idle at the UP transition because setup is detached and had only just been dispatched; the >=3-consecutive-probe rule correctly did not fire.",
+    "ssh to the cluster alias is unresolvable until sky finishes provisioning, so utilisation before UP is structurally unobservable on this provider \u2014 the sky cluster status is the only health signal available in that window.",
+    "This run took 305 s to UP vs 228 s on attempt 2; same SKU, same AZ, same image. Normal provisioning variance, not a regression signal."
+  ]
+}

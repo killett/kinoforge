@@ -1,0 +1,21 @@
+{
+  "instance": {
+    "cost_rate_usd_per_hr": 0.0,
+    "env": {},
+    "image": "kinoforge/local:latest",
+    "ports": [
+      "8000"
+    ],
+    "run_cmd": [
+      "sleep",
+      "infinity"
+    ],
+    "status": "ready",
+    "tags": {
+      "kinoforge_engine": "fake",
+      "kinoforge_key": "golden-key"
+    }
+  },
+  "provider": "local",
+  "seam": "LocalProvider.create_instance -> Instance"
+}

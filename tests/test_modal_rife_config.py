@@ -16,14 +16,12 @@ def _render():
 
 
 def test_cfg_loads_modal_provider_no_cloud() -> None:
-    # Bug caught: a stray `cloud:` key (SkyPilot-only) or wrong provider makes
-    # the cfg route to the wrong transport / fail validation at run time.
-    # NB: ComputeConfig.cloud defaults to None (no exclude_none on model_dump),
-    # so the key is always PRESENT — the intent (no SkyPilot pin set) is captured
-    # by asserting the value is None, not by key absence.
+    # Bug caught: a stray skypilot backend_options namespace (SkyPilot-only)
+    # or wrong provider makes the cfg route to the wrong transport / fail
+    # validation at run time.
     d = load_config(_CFG).model_dump()
     assert d["compute"]["provider"] == "modal"
-    assert d["compute"]["cloud"] is None
+    assert "skypilot" not in d["compute"]["backend_options"]
     assert d["interpolate"]["engine"] == "rife"
     assert d["interpolate"]["fps"] == 60.0
 

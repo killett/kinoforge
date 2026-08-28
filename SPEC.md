@@ -569,14 +569,15 @@ models:
 compute:                     # OMIT entirely for a hosted engine (requires_compute = False)
   provider: runpod           # swap to "local", "skypilot", "vast", ... without code changes
   image: "your/engine-image:tag"
-  requirements:                  # filter passed to ComputeProvider.find_offers (HardwareRequirements)
-    gpu_preference: ["RTX 4090", "RTX 5090"]
+  placement:                     # portable resource constraints; every provider reads them the same way
+    accelerators: ["RTX 4090", "RTX 5090"]   # ordered GPU-name preference (pre-S1 name: `gpu_preference`)
     min_vram_gb: 48              # default 48
     min_cuda: "12.8"             # default "12.8"
     max_usd_per_hr: 2.20   # default 2.20; pod-mode only (ignored for serverless — use `lifecycle.budget` instead)
     disk_gb: 100
-  ports: ["8188/http", "22/tcp"]
-  volume: { size_gb: 100, mount: /workspace }
+  backend_options:               # per-provider namespace for anything that does NOT generalize
+    runpod: { cloud_type: secure }         # validated by the owning provider's options model;
+                                           # an unknown key or provider name is a load-time ConfigError
   mode: pod                  # RunPod-specific: "pod" or "serverless". Not all providers have modes (e.g. SkyPilot has none).
   lifecycle:                 # cost-safety guardrails (see Cost-safety section). NOTE: the INVARIANT is universal, but how each guardrail is honored is provider-specific — a direct provider (RunPod) enforces these via the in-pod mechanism; SkyPilot maps idle_timeout onto its autostop and may not honor the others identically (document the mapping in the adapter).
     idle_timeout: 2h         # reap after this long with no jobs (warm-reuse window)

@@ -9,14 +9,14 @@ from __future__ import annotations
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
-    Literal,
     Protocol,
     Self,
     runtime_checkable,
@@ -51,6 +51,48 @@ class HardwareRequirements:
     max_usd_per_hr: float = 2.20
     gpu_preference: tuple[str, ...] = ()
     disk_gb: int = 100
+
+
+@dataclass(frozen=True)
+class Placement:
+    """What to get. Not which SKU to book.
+
+    compute-seam S1: the portable resource block every provider can honour.
+    ``HardwareRequirements`` above describes a CATALOG FILTER — what to
+    EXCLUDE while enumerating offers — which is a RunPod/SkyPilot-shaped
+    question. Placement states the requirement itself, so a provider that
+    schedules rather than enumerates (Modal) can honour it directly. S4
+    inverts selection onto this and deletes the filter.
+
+    Defaults deliberately match the pre-S1 ``HardwareRequirements`` defaults
+    so a config that set no block launches exactly what it launched before.
+
+    Attributes:
+        accelerators: Ordered accelerator preference, most-wanted first.
+            Empty means "no preference"; the pre-S1 name was
+            ``gpu_preference``.
+        accelerator_count: Accelerators per instance.
+        min_vram_gb: Minimum VRAM per accelerator in GB.
+        min_cuda: Minimum CUDA version an offer must report (semantic
+            compare, e.g. ``"12.8"``). Portable despite reading as a vendor
+            knob: kinoforge filters client-side in
+            :func:`kinoforge.core.offers.filter_offers`, over whatever
+            catalog any enumerating provider returns, so the floor applies
+            wherever offers are enumerated — not only where the vendor API
+            can express it.
+        disk_gb: Minimum instance/container disk in GB.
+        spot: Request a spot/preemptible instance when True. Lived on
+            ``InstanceSpec`` before S1, where only SkyPilot ever read it.
+        max_usd_per_hr: Ceiling on the hourly rate.
+    """
+
+    accelerators: tuple[str, ...] = ()
+    accelerator_count: int = 1
+    min_vram_gb: int = 48
+    min_cuda: str = "12.8"
+    disk_gb: int = 100
+    spot: bool = False
+    max_usd_per_hr: float = 2.20
 
 
 @dataclass(frozen=True)
@@ -97,9 +139,6 @@ class Lifecycle:
     max_workers: int = 1
     max_in_flight: int = 1
     boot_timeout_s: float = 900.0
-    #: Max seconds to keep retrying create on a RunPod capacity miss before
-    #: giving up (2026-07-07). 0 = fail on the first miss.
-    capacity_wait_s: float = 300.0
     # C26 — populated by Config.lifecycle() from compute.lifecycle when set.
     stall_window_s: float | None = None
     stall_gpu_threshold: float = 5.0
@@ -178,22 +217,19 @@ class InstanceSpec:
     image_build_script: str | None = None
     runtime_provision_script: str | None = None
     run_cmd: list[str] | None = None
-    spot: bool = False  # Request a spot/preemptible instance when True
-    # C28 A1.5: diagnostic env overlay merged into pod env via setdefault
-    # (user-supplied `env` always wins). Default empty = no behavioural change.
-    diagnostic_env: dict[str, str] = field(default_factory=dict)
-    # C28 A3: when "never" AND provider schema supports it, request the
-    # provider NOT to auto-restart this pod on container exit. Default
-    # "always" preserves pre-C28 behaviour. RunPod schema probed by the A0
-    # sidecar (tests/live/_c28_runpod_input_schema_probe.json); if the field
-    # is absent the provider warns + skips on the wire.
-    restart_policy: Literal["always", "never"] = "always"
-    # 2026-07-03: host-pool pin. "any" preserves the historical
-    # cloudType=ALL behaviour (cheapest capacity, often community hosts —
-    # whose interruption DELETES zero-volume pods outright; three BSA
-    # wheel builds died that way). "secure" pins dedicated hosts for
-    # long-running one-shot workloads; "community" forces the cheap pool.
-    cloud_type: Literal["any", "secure", "community"] = "any"
+    # compute-seam S1: the portable resource block (``cfg.compute.placement``),
+    # populated by build_instance_spec. Carries the spot/preemptible request
+    # that used to be a bare ``spot`` field here; SkyPilot reads
+    # ``spec.placement.spot`` for its ``use_spot`` resource.
+    placement: Placement = field(default_factory=Placement)
+    # compute-seam S1: provider-namespaced escape hatch, populated from
+    # cfg.compute.backend_options by build_instance_spec and validated at
+    # config-load time against the OWNING provider's Options model. Every
+    # vendor-only knob lives here — RunPod reads ``["runpod"]`` for its
+    # ``cloudType`` / ``restartPolicy`` wire fields (S1 Task 3 moved
+    # ``cloud_type`` and ``restart_policy`` off this dataclass); SkyPilot
+    # reads ``["skypilot"]`` for its cloud pin and ``retry_until_up``.
+    backend_options: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -234,6 +270,36 @@ class CredentialProvider(ABC):
         """Return the secret for ``key`` or ``None`` if unset."""
 
 
+class FieldSupport(StrEnum):
+    """Whether a provider honours a portable field.
+
+    CONSUMED    — read and applied; a parity test proves it, either on the
+                  launch payload or on the ``find_offers`` catalog the
+                  selection fields are applied to.
+    UNSUPPORTED — cannot be honoured. Setting it to a non-default value is
+                  reported before launch, never silently discarded. The
+                  severity is set by RISK COVERAGE, not by the declaration:
+                  ERROR when nothing else in the cfg bounds the same risk,
+                  WARN naming the substitute and the bound it actually
+                  enforces when something does. So declaring a field
+                  UNSUPPORTED does not by itself refuse a config — it makes
+                  the discard visible, and
+                  ``validation/checks/field_support.py`` decides how loudly
+                  (operator ruling 2026-08-27; a uniform ERROR would have
+                  refused 15 configs that ship today).
+
+    Deliberately two-valued. A third "read but not enforced" member would be
+    a place to hide exactly the claims this vocabulary exists to force a
+    decision about: ``max_usd_per_hr`` on SkyPilot is read by
+    ``filter_offers`` while enumerating and then ignored by sky's optimizer
+    at launch (verification finding F4), and the honest answer is
+    UNSUPPORTED, not a softer word.
+    """
+
+    CONSUMED = "consumed"
+    UNSUPPORTED = "unsupported"
+
+
 class ComputeProvider(ABC):
     """A place to run GPU workloads. Instances created with cost guardrails."""
 
@@ -262,6 +328,26 @@ class ComputeProvider(ABC):
             The declared capability set.
         """
         return frozenset()
+
+    @classmethod
+    def consumes(cls) -> Mapping[str, FieldSupport]:
+        """Declare, per portable field, whether this provider reads it.
+
+        The portable field set is every field of :class:`Placement` plus the
+        provider-facing fields of :class:`InstanceSpec`;
+        ``tests/providers/test_field_consumption_parity.py`` pins the exact
+        membership and proves every CONSUMED claim against a captured launch
+        payload or the provider's own offer catalog.
+
+        Default empty on purpose, matching :meth:`capabilities`: a provider
+        that has not declared claims nothing, and validation refuses it
+        loudly instead of trusting it. Declaring is part of writing a
+        provider.
+
+        Returns:
+            The declared field-support mapping.
+        """
+        return {}
 
     @abstractmethod
     def find_offers(self, reqs: HardwareRequirements) -> list[Offer]: ...  # noqa: D102

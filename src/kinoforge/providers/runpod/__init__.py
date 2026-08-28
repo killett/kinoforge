@@ -33,10 +33,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict
 
 from kinoforge.core import registry
 from kinoforge.core.boot_liveness import BootVerdict, classify_boot_liveness
@@ -48,6 +50,7 @@ from kinoforge.core.heartbeat_endpoints import HeartbeatEndpoint
 from kinoforge.core.interfaces import (
     ComputeProvider,
     CredentialProvider,
+    FieldSupport,
     HardwareRequirements,
     Instance,
     InstanceSpec,
@@ -320,6 +323,44 @@ class RunPodProvider(ComputeProvider):
 
     name: str = "runpod"
 
+    class Options(BaseModel):
+        """Options only RunPod honours. Unknown keys are a config error.
+
+        Attributes:
+            cloud_type: Host-pool pin. ``"any"`` is the historical
+                ``cloudType=ALL`` behaviour (cheapest capacity, often
+                community hosts — whose interruption DELETES zero-volume
+                pods outright; three BSA wheel builds died that way on
+                2026-07-03). ``"secure"`` pins dedicated hosts for anything
+                that must survive a long window.
+            restart_policy: Container-restart-on-exit policy. ``"never"``
+                is emitted as ``restartPolicy: NEVER`` when the RunPod
+                input schema exposes the field, and warns + falls back
+                otherwise.
+            capacity_wait_s: Max seconds to keep retrying create on a
+                capacity miss before giving up. ``0`` fails on the first
+                miss. Read by
+                :func:`kinoforge._adapters.build_capacity_wait_for`.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+        cloud_type: Literal["any", "secure", "community"] = "any"
+        restart_policy: Literal["always", "never"] = "always"
+        capacity_wait_s: float = 300.0
+
+    @classmethod
+    def validate_options(cls, raw: Mapping[str, Any]) -> RunPodProvider.Options:
+        """Parse *raw* into this provider's Options, forbidding unknown keys.
+
+        Args:
+            raw: The ``compute.backend_options["runpod"]`` mapping.
+
+        Returns:
+            A validated :class:`RunPodProvider.Options`.
+        """
+        return cls.Options.model_validate(dict(raw))
+
     @classmethod
     def capabilities(
         cls, shape: WorkloadShape = WorkloadShape.SERVER
@@ -341,6 +382,60 @@ class RunPodProvider(ComputeProvider):
                 Capability.BALANCE_QUERY,
             }
         )
+
+    @classmethod
+    def consumes(cls) -> Mapping[str, FieldSupport]:
+        """Declare what the create-pod mutation and the catalog filter read.
+
+        Derived by reading :meth:`_build_create_pod_body`,
+        :meth:`_assemble_create_env` and :meth:`find_offers`, not from the
+        pre-S1 sweep.
+
+        The three UNSUPPORTED placement knobs each have a hardcoded
+        counterpart on the wire and are the F5 finding in miniature:
+        ``gpuCount`` is the literal ``1``, ``containerDiskInGb`` the literal
+        ``250``, and ``podFindAndDeployOnDemand`` books on-demand capacity
+        with no spot equivalent. Setting any of the three today changes
+        nothing an operator can observe short of the invoice.
+
+        The four selection fields are CONSUMED through ``find_offers`` ->
+        :func:`kinoforge.core.offers.filter_offers`, not through the launch
+        payload: what reaches the wire is the chosen ``Offer``.
+
+        ``run_cmd`` and the Modal fast-boot script split are UNSUPPORTED
+        because RunPod provisions at container start from the combined
+        ``provision_script``, whose convention is to end in
+        ``exec <run_cmd>``.
+
+        Returns:
+            The declared field-support mapping.
+        """
+        c, u = FieldSupport.CONSUMED, FieldSupport.UNSUPPORTED
+        return {
+            # -- placement -------------------------------------------------
+            "accelerators": c,  # find_offers ranks the catalog by preference
+            "accelerator_count": u,  # "gpuCount": 1, hardcoded
+            "min_vram_gb": c,  # filter_offers excludes below the floor
+            "min_cuda": c,  # filter_offers excludes below the floor
+            "disk_gb": u,  # "containerDiskInGb": 250, hardcoded
+            "spot": u,  # on-demand mutation only
+            "max_usd_per_hr": c,  # filter_offers excludes pod offers above it
+            # -- spec ------------------------------------------------------
+            "image": c,  # "imageName"
+            "ports": c,  # "ports", with the /http suffix defaulted in
+            "volume_gb": c,  # "volumeInGb"
+            "volume_mount": c,  # "volumeMountPath"
+            "env": c,  # "env"
+            "tags": c,  # pod-vs-serverless routing, then Instance.tags
+            "run_id": c,  # "name"
+            "provision_script": c,  # gzip+b64 into KINOFORGE_PROVISION_SCRIPT
+            "run_cmd": u,  # the provision script's trailing exec carries it
+            "image_build_script": u,  # Modal-only split
+            "runtime_provision_script": u,  # Modal-only split
+            "lifecycle": c,  # rendered into KINOFORGE_SELFTERM_SCRIPT
+            "offer": c,  # "gpuTypeId"
+            "backend_options": c,  # "cloudType" / "restartPolicy"
+        }
 
     def __init__(
         self,
@@ -822,9 +917,10 @@ class RunPodProvider(ComputeProvider):
     def _assemble_create_env(self, spec: InstanceSpec) -> dict[str, str]:
         """Assemble the pod env payload for the create-pod mutation.
 
-        Combines user-supplied vars, the C28 diagnostic overlay, the scoped
-        terminate-only key, and the rendered self-terminator script. The main
-        ``RUNPOD_API_KEY`` is never included.
+        Combines user-supplied vars (which already carry the C28 diagnostic
+        overlay merged in by ``build_instance_spec``, compute-seam S1 Task 7),
+        the scoped terminate-only key, and the rendered self-terminator
+        script. The main ``RUNPOD_API_KEY`` is never included.
 
         Args:
             spec: Instance specification.
@@ -835,14 +931,6 @@ class RunPodProvider(ComputeProvider):
         """
         # Build env dict: user-supplied vars + self-terminator key + script.
         env: dict[str, str] = dict(spec.env)
-
-        # C28 A1.5: overlay diagnostic env (S3 bucket/prefix + AWS keys for the
-        # in-pod EXIT trap) without clobbering any explicit user env. The
-        # diagnostic overlay is opt-in via cfg.diagnostic_mode → orchestrator
-        # populates spec.diagnostic_env; outside that path the dict is empty
-        # and this loop is a no-op.
-        for diag_key, diag_value in spec.diagnostic_env.items():
-            env.setdefault(diag_key, diag_value)
 
         # Inject terminate-only key (scoped; NOT the main API key)
         if self._creds is not None:
@@ -920,11 +1008,16 @@ class RunPodProvider(ComputeProvider):
         Returns:
             The GraphQL request body dict.
         """
-        # spec.cloud_type pins the host pool — "secure" for long-running
+        # Vendor knobs ride the runpod namespace of spec.backend_options
+        # (compute-seam S1) — re-validated here so a spec built outside the
+        # config loader still gets this provider's defaults rather than a
+        # silently-missing key.
+        opts = RunPodProvider.validate_options(spec.backend_options.get("runpod", {}))
+        # opts.cloud_type pins the host pool — "secure" for long-running
         # one-shot workloads (community interruption deletes zero-volume
         # pods outright; 3 BSA builds lost 2026-07-03).
         cloud_type = {"any": "ALL", "secure": "SECURE", "community": "COMMUNITY"}[
-            spec.cloud_type
+            opts.cloud_type
         ]
         body: dict[str, Any] = {
             "query": _CREATE_POD_MUTATION,
@@ -938,7 +1031,7 @@ class RunPodProvider(ComputeProvider):
                     # overhead). Was hardcoded 50 GB — caused
                     # `Not enough free disk space` warnings on Task 8
                     # attempt #10 once shards started landing. TODO:
-                    # thread `cfg.compute.requirements.disk_gb` through
+                    # thread `cfg.compute.placement.disk_gb` through
                     # InstanceSpec.container_disk_gb instead of this
                     # blanket bump.
                     "containerDiskInGb": 250,
@@ -952,7 +1045,7 @@ class RunPodProvider(ComputeProvider):
                     # A40 / A6000 / L40S RunPod machines ship with at
                     # least 32 GB CPU RAM, and the marginal headroom
                     # vs 15 GB is enough to clear shard-load. TODO:
-                    # thread cfg.compute.requirements.min_ram_gb
+                    # thread cfg.compute.placement.min_ram_gb
                     # through InstanceSpec.min_memory_gb (sibling of
                     # the containerDiskInGb TODO above).
                     "minMemoryInGb": 32,
@@ -996,12 +1089,13 @@ class RunPodProvider(ComputeProvider):
         # success and failure alike. The C33 (f) warning rewrite makes this
         # explicit so operators reading the log do not mis-read it as
         # "restart-on-failure" (which would imply clean exits stay terminated).
-        if spec.restart_policy == "never":
+        if opts.restart_policy == "never":
             if _restart_policy_supported():
                 body["variables"]["input"]["restartPolicy"] = "NEVER"
             else:
                 logging.getLogger(__name__).warning(
-                    "spec.restart_policy='never' requested but RunPod schema "
+                    "backend_options.runpod.restart_policy='never' requested "
+                    "but RunPod schema "
                     "does not expose restartPolicy (per %s); falling back to "
                     "RunPod's default always-restart-on-every-container-exit "
                     "behaviour (success and failure alike)",
@@ -1451,15 +1545,15 @@ class RunPodCapacityHintCheck:
         self._graphql_url = graphql_url
 
     def applies_to(self, cfg: Any) -> bool:  # noqa: ANN401 — Check Protocol
-        """Apply iff provider is runpod and gpu_preference is non-empty."""
+        """Apply iff provider is runpod and placement.accelerators is non-empty."""
         if cfg.compute is None or cfg.compute.provider != "runpod":
             return False
-        reqs = cfg.compute.requirements
-        return bool(reqs and reqs.gpu_preference)
+        placement = cfg.compute.placement
+        return bool(placement and placement.accelerators)
 
     def run(self, cfg: Any) -> _CR:  # noqa: ANN401 — Check Protocol
         """Query RunPod gpuTypes for current capacity on preferred GPUs."""
-        prefs = list(cfg.compute.requirements.gpu_preference)
+        prefs = list(cfg.compute.placement.accelerators)
         try:
             resp = self._http_post(
                 self._graphql_url,
@@ -1497,7 +1591,7 @@ class RunPodCapacityHintCheck:
                 f"({', '.join(prefs)}); offer-retry will exhaust"
             ),
             fix_suggestion=(
-                "either wait, add more entries to gpu_preference, "
+                "either wait, add more entries to compute.placement.accelerators, "
                 "or raise max_usd_per_hr to admit more SKUs"
             ),
         )

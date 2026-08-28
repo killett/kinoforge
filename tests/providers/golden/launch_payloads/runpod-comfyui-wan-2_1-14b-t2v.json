@@ -1,0 +1,36 @@
+{
+  "input": {
+    "cloudType": "ALL",
+    "containerDiskInGb": 250,
+    "dockerArgs": "bash -c \"echo $KINOFORGE_PROVISION_SCRIPT | base64 -d | gzip -d > /tmp/p.sh && chmod +x /tmp/p.sh && bash /tmp/p.sh\"",
+    "env": [
+      {
+        "key": "HF_TOKEN",
+        "value": "kinoforge-prod-deadbeef"
+      },
+      {
+        "key": "RUNPOD_TERMINATE_KEY",
+        "value": "kinoforge-prod-deadbeef"
+      },
+      {
+        "key": "KINOFORGE_SELFTERM_SCRIPT",
+        "value": "#!/usr/bin/env python3\n\"\"\"Kinoforge in-pod self-terminator.\n\nLifecycle parameters (seconds):\n  idle_timeout    = 1500.0\n  max_lifetime    = 5400.0\n  time_buffer     = 300.0\n\nBoth caps are BOOT-RELATIVE \u2014 they measure pod age, never idleness:\n  effective_deadline = start_time + max_lifetime - time_buffer\n  boot_cap           = start_time + 2 * idle_timeout\n\nThe pod is destroyed when EITHER elapses, so effective lifetime is\nmin(2 * idle_timeout, max_lifetime - time_buffer).\n\nNOTE: boot_cap is a fixed money backstop, NOT a heartbeat dead-man's\nswitch. Nothing inside this pod writes a liveness signal, so activity\ncannot extend it (audit B4, 2026-07-28 \u2014 the timer had been mislabelled\na dead-man's switch since the provider first shipped). A render longer\nthan this cap will be killed mid-job; that is accepted, and the cap is\nkept because it reaps the pod even when the controller dies.\n\nAll termination requests go to the RunPod terminate endpoint authenticated\nwith the RUNPOD_TERMINATE_KEY environment variable (scoped key \u2014 NOT the\nmain RUNPOD_API_KEY).\n\"\"\"\nimport os\nimport time\nimport urllib.request\nimport json\n\n_POD_ID: str = os.environ.get(\"RUNPOD_POD_ID\", \"\")\n_TERMINATE_KEY: str = os.environ.get(\"RUNPOD_TERMINATE_KEY\", \"\")\n_IDLE_TIMEOUT: float = 1500.0\n_MAX_LIFETIME: float = 5400.0\n_TIME_BUFFER: float = 300.0\n\n_BOOT_CAP: float = 2.0 * _IDLE_TIMEOUT\n\n_start_time: float = time.time()\n\n\ndef effective_deadline() -> float:\n    \"\"\"Return the absolute POSIX timestamp after which the pod must terminate.\n\n    effective_deadline = start_time + max_lifetime - time_buffer\n    \"\"\"\n    return _start_time + _MAX_LIFETIME - _TIME_BUFFER\n\n\ndef boot_cap_deadline() -> float:\n    \"\"\"Return the absolute POSIX timestamp of the boot-relative cap.\n\n    boot_cap_deadline = start_time + 2 * idle_timeout\n    \"\"\"\n    return _start_time + _BOOT_CAP\n\n\ndef _terminate() -> None:\n    \"\"\"Best-effort DELETE to the RunPod REST pods endpoint.\n\n    Any HTTP error or transport failure is silently swallowed; the\n    watchdog will retry on the next poll iteration.\n    \"\"\"\n    url = f\"https://rest.runpod.io/v1/pods/{_POD_ID}\"\n    req = urllib.request.Request(\n        url,\n        headers={\n            \"Authorization\": f\"Bearer {_TERMINATE_KEY}\",\n            \"User-Agent\": \"kinoforge-selfterm/0.1\",\n        },\n        method=\"DELETE\",\n    )\n    try:\n        with urllib.request.urlopen(req) as resp:  # noqa: S310\n            resp.read()\n    except Exception:  # noqa: BLE001\n        pass  # best-effort; we are terminating anyway\n\n\ndef _check_and_reap() -> None:\n    \"\"\"Terminate the pod once either boot-relative cap has elapsed.\"\"\"\n    now = time.time()\n\n    # Cap 1: max_lifetime / effective_deadline enforcement\n    if now >= effective_deadline():\n        _terminate()\n        return\n\n    # Cap 2: fixed boot-relative backstop at 2 * idle_timeout. Pod age only \u2014\n    # no activity signal exists in the pod, so nothing postpones this.\n    if now >= boot_cap_deadline():\n        _terminate()\n        return\n\n\nif __name__ == \"__main__\":\n    while True:\n        _check_and_reap()\n        time.sleep(15)\n"
+      },
+      {
+        "key": "KINOFORGE_PROVISION_SCRIPT",
+        "value": "H4sIAABvqmgC/71XbW/bNhD+nl9xNYzY3kbLkt8buFhbpGuXrh3arP0QFAItnWzWEqlQlF+W5r/vJMuOrby5K1DYkMQ78l6e546iEjTAMFUQixgDLsIjEcAFMAmV6tXZm3fvX73/8Mep+/H07avz0w9/uR9ffnjz9/lTdl2BLydgpighXpmpkm1gHlREFCttQCUnoGKU9ZplothKMAwM6qgZr2q/1Ra1RnOhhcG6Spoo50IreVG711ftS6MCx8cg1TSNt87KduFZSRSqCTjPjm04hkAcuTMhVaD0BF1fLWSouF9vwNURQKg8HkKqw1HVPilGKjWjqrNV4jJGz6DvJlM+ql61KfutzqgZSpeyIEXntmLOw1GlQsIbVLcrCMEsrw3YT7aKXXRpKeza2p13nRmm5OAmbNcXOr+PeYKkKESjap2ukkdInkhWaRS6bBops1tJuzbJjcEoNpkfpTcjEBJscKB9Ar7KA6TsPBVFXPrA5sC14I4Hzywf55ZMwzAnYiefrXXtcj1JRnW2tHvAkuzCeBiqBVNz1HmRjIxOkcSekkbIdHecqBAZ8cxCnGM4WnAtSZGkFIheMSGpDjLM2q1G4XWPAVIVDBRh/EpxsClyH/Wo8jylOtPiX26Ekk/hBXKNGnaWlmzu1sgdZr0pejOKbERq5nR7o70FG1sEY4Ed8Vwsv/j9C1UD89fUZGTSSBWjjLcKPVP5VvbwBdBoUsKjVQjyMgHAMC+LfEIELMgckaHrZsy1EZTWHj9eWvDzCIDFvCzT13A4dFnVUOTA3hJt2d5DNwpbr6AF7CWwLLjC9BqFdaLr9PfDLiV/020lXkrztoXomZSHO+K1gDqDlhFdxNwtl/AN+GIGtatYU6lB1b6uNXYs5CFUqmtDFXgyOiAYgCREjKFar3fhl027NRp7UzaNsCMsyC09RvPbMa/7+5EiKW73xuIrmXkvFttH10ePNj98+wZ1Hhs2ofdNGvvcUA9fXuZtUkiFTAz1PrBVrsntlM00MjvZBnDk+WAtlJ4lMffw6AKeZC3yUkXB6p8366KcCANeSKFSVfkYmyntWYyNNZfeFCKe0O4AU2Pi5Kll0dxpOm5SGpaX2eBSyVWk0sTamCzumd+NiHzQS/Mm7ktgmkC5TIXGCKVJmmZpNqF5aWJU5Erl49Yo+8zlJ+Gj+qx5HFM4pbjviG4mvnJx7/qDnGT96h88NY8m27yobqA1GNjOYOw4Hfqhbbf89rDV83r9bguHvM3bnQHvdYfjwkezaTWbBAALDnJnlbFb43Eb4/9nbFM5DxFy9ue7bPzdRGzWPWj0AeB3puwB3u4NvQFHAtfv9Dr2wGn7rSDw+612t9XvjT3fGfbHvcA5EPDCzY8Bfa+RQwDOKXqNITH0MaW3+wFIn6lEyBn36XK/mcOcPcDAXXP3qOgg9h2v1ev6VP/e0B/2PGqC/rDb8b3eEPvjYWvQ6XQOrf2yvx/j5HFrG3KiWXZCZDFEZCBMLF8EQZrQi9pdC9bsBfepLWozx7XZufOJ2Z0XbhAPXOxE7UA2Ex6gQTqU6aJ/7jhzQ21D8DSdTIScBLR7E8vWWd5Omx52802YkqAT3hytiAt5mOMa1H4ocFpP/9ev3PP3Z6fvarfQmnMsAUSSwrT76fmpOw7s3s9B4k53N/k/EtdjiRpcGvrE8GikyzWxp7PSyHTZchkykrCfVw4HuL0B47sjLsOzd9qwdg4AuESv+CaFLK7sS5SxUNDpgo5VzfxHgvyjeGAPBv8BHY+EmW8PAAA="
+      }
+    ],
+    "gpuCount": 1,
+    "gpuTypeId": "NVIDIA GeForce RTX 4090",
+    "imageName": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+    "minMemoryInGb": 32,
+    "minVcpuCount": 2,
+    "name": "golden-run",
+    "ports": "8188/http",
+    "volumeInGb": 0,
+    "volumeMountPath": "/workspace"
+  },
+  "provider": "runpod",
+  "seam": "http_post -> podFindAndDeployOnDemand variables.input"
+}

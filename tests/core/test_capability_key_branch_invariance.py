@@ -41,7 +41,7 @@ def _wan_cfg_with_loras(loras: list[dict[str, object]]) -> dict[str, object]:
             "provider": "runpod",
             "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
             "mode": "pod",
-            "requirements": {
+            "placement": {
                 "min_vram_gb": 80,
                 "min_cuda": "12.4",
                 "max_usd_per_hr": 3.5,

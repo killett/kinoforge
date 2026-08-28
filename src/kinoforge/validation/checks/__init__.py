@@ -8,6 +8,7 @@ their own CheckRegistry instance instead.
 from kinoforge.validation.checks import (  # noqa: F401 — self-register
     capabilities,
     custom_nodes,
+    field_support,
     heartbeat,
     image,
     ledger,

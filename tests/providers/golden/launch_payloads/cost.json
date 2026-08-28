@@ -1,0 +1,32 @@
+{
+  "input": {
+    "cloudType": "ALL",
+    "containerDiskInGb": 250,
+    "dockerArgs": "bash -c \"echo $KINOFORGE_PROVISION_SCRIPT | base64 -d | gzip -d > /tmp/p.sh && chmod +x /tmp/p.sh && bash /tmp/p.sh\"",
+    "env": [
+      {
+        "key": "RUNPOD_TERMINATE_KEY",
+        "value": "kinoforge-prod-deadbeef"
+      },
+      {
+        "key": "KINOFORGE_SELFTERM_SCRIPT",
+        "value": "#!/usr/bin/env python3\n\"\"\"Kinoforge in-pod self-terminator.\n\nLifecycle parameters (seconds):\n  idle_timeout    = 600.0\n  max_lifetime    = 14400.0\n  time_buffer     = 1800.0\n\nBoth caps are BOOT-RELATIVE \u2014 they measure pod age, never idleness:\n  effective_deadline = start_time + max_lifetime - time_buffer\n  boot_cap           = start_time + 2 * idle_timeout\n\nThe pod is destroyed when EITHER elapses, so effective lifetime is\nmin(2 * idle_timeout, max_lifetime - time_buffer).\n\nNOTE: boot_cap is a fixed money backstop, NOT a heartbeat dead-man's\nswitch. Nothing inside this pod writes a liveness signal, so activity\ncannot extend it (audit B4, 2026-07-28 \u2014 the timer had been mislabelled\na dead-man's switch since the provider first shipped). A render longer\nthan this cap will be killed mid-job; that is accepted, and the cap is\nkept because it reaps the pod even when the controller dies.\n\nAll termination requests go to the RunPod terminate endpoint authenticated\nwith the RUNPOD_TERMINATE_KEY environment variable (scoped key \u2014 NOT the\nmain RUNPOD_API_KEY).\n\"\"\"\nimport os\nimport time\nimport urllib.request\nimport json\n\n_POD_ID: str = os.environ.get(\"RUNPOD_POD_ID\", \"\")\n_TERMINATE_KEY: str = os.environ.get(\"RUNPOD_TERMINATE_KEY\", \"\")\n_IDLE_TIMEOUT: float = 600.0\n_MAX_LIFETIME: float = 14400.0\n_TIME_BUFFER: float = 1800.0\n\n_BOOT_CAP: float = 2.0 * _IDLE_TIMEOUT\n\n_start_time: float = time.time()\n\n\ndef effective_deadline() -> float:\n    \"\"\"Return the absolute POSIX timestamp after which the pod must terminate.\n\n    effective_deadline = start_time + max_lifetime - time_buffer\n    \"\"\"\n    return _start_time + _MAX_LIFETIME - _TIME_BUFFER\n\n\ndef boot_cap_deadline() -> float:\n    \"\"\"Return the absolute POSIX timestamp of the boot-relative cap.\n\n    boot_cap_deadline = start_time + 2 * idle_timeout\n    \"\"\"\n    return _start_time + _BOOT_CAP\n\n\ndef _terminate() -> None:\n    \"\"\"Best-effort DELETE to the RunPod REST pods endpoint.\n\n    Any HTTP error or transport failure is silently swallowed; the\n    watchdog will retry on the next poll iteration.\n    \"\"\"\n    url = f\"https://rest.runpod.io/v1/pods/{_POD_ID}\"\n    req = urllib.request.Request(\n        url,\n        headers={\n            \"Authorization\": f\"Bearer {_TERMINATE_KEY}\",\n            \"User-Agent\": \"kinoforge-selfterm/0.1\",\n        },\n        method=\"DELETE\",\n    )\n    try:\n        with urllib.request.urlopen(req) as resp:  # noqa: S310\n            resp.read()\n    except Exception:  # noqa: BLE001\n        pass  # best-effort; we are terminating anyway\n\n\ndef _check_and_reap() -> None:\n    \"\"\"Terminate the pod once either boot-relative cap has elapsed.\"\"\"\n    now = time.time()\n\n    # Cap 1: max_lifetime / effective_deadline enforcement\n    if now >= effective_deadline():\n        _terminate()\n        return\n\n    # Cap 2: fixed boot-relative backstop at 2 * idle_timeout. Pod age only \u2014\n    # no activity signal exists in the pod, so nothing postpones this.\n    if now >= boot_cap_deadline():\n        _terminate()\n        return\n\n\nif __name__ == \"__main__\":\n    while True:\n        _check_and_reap()\n        time.sleep(15)\n"
+      },
+      {
+        "key": "KINOFORGE_PROVISION_SCRIPT",
+        "value": "H4sIAABvqmgC/0tNzshXSEvMTgUAZ8kqwgkAAAA="
+      }
+    ],
+    "gpuCount": 1,
+    "gpuTypeId": "NVIDIA A100 80GB PCIe",
+    "imageName": "kinoforge/runpod:latest",
+    "minMemoryInGb": 32,
+    "minVcpuCount": 2,
+    "name": "golden-run",
+    "ports": "8000/http",
+    "volumeInGb": 0,
+    "volumeMountPath": "/workspace"
+  },
+  "provider": "runpod",
+  "seam": "http_post -> podFindAndDeployOnDemand variables.input"
+}

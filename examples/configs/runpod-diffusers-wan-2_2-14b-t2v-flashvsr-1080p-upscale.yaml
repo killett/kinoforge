@@ -76,9 +76,11 @@ compute:
   # builds + 2 F-multi smoke pods in one day. The multi-stage pipeline
   # holds a pod 30-60 min; community interruption terminates zero-volume
   # pods outright.
-  cloud_type: secure
+  backend_options:
+    runpod:
+      cloud_type: secure
   warm_reuse_auto_attach: true
-  requirements:
+  placement:
     min_vram_gb: 80
     min_cuda: "12.4"
     max_usd_per_hr: 3.00
@@ -87,7 +89,7 @@ compute:
     # for bare tokens like "A100 80GB" (learned on 2026-07-01, T8 attempt
     # #1 burned $0.10 on a CPU-only pod). 80 GB tier covers Wan 2.2 A14B
     # + FlashVSR co-resident memory budget.
-    gpu_preference:
+    accelerators:
       - "NVIDIA A100 80GB PCIe"
       - "NVIDIA A100-SXM4-80GB"
       - "NVIDIA H100 80GB HBM3"

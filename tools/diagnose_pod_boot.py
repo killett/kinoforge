@@ -398,7 +398,7 @@ def main() -> int:
             image=rendered.image,
             offer=offer,
             ports=tuple(rendered.ports),
-            volume_gb=cfg.compute.requirements.disk_gb or 50,
+            volume_gb=cfg.compute.placement.disk_gb or 50,
             volume_mount="/workspace",
             lifecycle=lifecycle,
             env=env,

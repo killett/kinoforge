@@ -339,7 +339,73 @@ A kinoforge YAML config has three top-level blocks. **`engine`** declares the in
 (e.g. `comfyui`, `diffusers`, `fake`, `hosted`) and its parameters. **`models`** lists the base
 checkpoint, optional LoRAs, and VAE — each with a `source` URI that kinoforge resolves
 automatically from HuggingFace, CivitAI, or plain HTTPS. **`compute`** names the cloud provider
-(e.g. `runpod`, `skypilot`, `local`) and its resource requirements (GPU type, VRAM, disk, image).
+(e.g. `runpod`, `skypilot`, `local`) and describes what it needs to run on: a **portable**
+`placement` block plus a per-provider **`backend_options`** namespace for anything that doesn't
+generalize across clouds.
+
+`placement` states resource constraints every provider understands the same way — `accelerators`
+(an ordered GPU-name preference), `accelerator_count`, `min_vram_gb`, `min_cuda`, `disk_gb`,
+`spot`, `max_usd_per_hr`. Anything provider-specific — RunPod's `cloud_type` / `capacity_wait_s`,
+SkyPilot's `clouds` / `retry_until_up` — lives under `backend_options.<provider>.*` and is
+validated by that provider's own options model: an unknown key or an unknown provider name is a
+`ConfigError` at load, not a silently-ignored field.
+
+Before (pre-2026-08 shape) and after:
+
+```yaml
+# before
+compute:
+  provider: skypilot
+  image: ...
+  cloud: [lambda]                 # skypilot-only, silently ignored on other providers
+  cloud_type: secure              # runpod-only, silently ignored on other providers
+  requirements:
+    min_vram_gb: 48
+    min_cuda: "12.8"
+    max_usd_per_hr: 1.09
+    gpu_preference: [A100-80GB, H100]
+    disk_gb: 200
+
+# after
+compute:
+  provider: skypilot
+  image: ...
+  placement:
+    accelerators: [A100-80GB, H100]   # was gpu_preference
+    accelerator_count: 1
+    min_vram_gb: 48
+    min_cuda: "12.8"
+    max_usd_per_hr: 1.09
+    disk_gb: 200
+  backend_options:
+    skypilot: {clouds: [lambda], retry_until_up: true}
+```
+
+`compute.requirements` and top-level `compute.cloud` / `compute.cloud_type` all raise
+`ConfigError` at load, naming the new path — there is no alias and no silent fallback. The old
+`lifecycle.capacity_wait` knob is gone too: capacity-retry is now RunPod-only, configured at
+`compute.backend_options.runpod.capacity_wait_s` (SkyPilot has its own equivalent,
+`backend_options.skypilot.retry_until_up`).
+
+`kinoforge doctor` checks every `placement` field against what the *selected* provider actually
+declares it consumes, and reports what it can't honour. Two things are worth knowing before
+reading a `doctor` WARN as "the migration broke something" — it didn't, and the config still runs:
+
+- **`disk_gb` is a WARN on every provider, not wired anywhere.** RunPod hardcodes
+  `containerDiskInGb`; SkyPilot hardcodes its own `disk_size` by instance tier. The WARN names the
+  provider's actual value so a mismatch is visible, but nothing about the run changes.
+- **SkyPilot's `max_usd_per_hr` is also a WARN**, not read by the optimizer — spend on that path is
+  bounded by the instance-side deadline watchdog, not a per-SKU price filter. Read the WARN text
+  rather than assuming a dollar bound: the watchdog kills at whichever comes first of
+  `budget_usd` ÷ the booked rate or `max_lifetime`, and **at `lifecycle.budget: 0` the budget arm
+  is inactive — nothing bounds that run in dollars, only in time**
+  (`_skypilot_rate_cap`, `validation/checks/field_support.py`).
+- **`accelerator_count` is the one field that is a hard `ConfigError` on the three billed
+  providers** (`runpod`, `skypilot`, `modal`) when set to anything but its default. No provider
+  reads it, and — unlike `disk_gb` or `max_usd_per_hr` — nothing else bounds that risk, so there is
+  no substitute to warn about. On `local` it is a WARN like every other unsupported field:
+  `_PROVIDER_FALLBACK` (`validation/checks/field_support.py`) downgrades the whole provider,
+  because `local` is unbilled and launches nothing.
 
 Canonical example configs in `examples/configs/`:
 

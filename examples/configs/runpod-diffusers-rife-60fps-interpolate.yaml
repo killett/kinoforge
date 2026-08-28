@@ -50,13 +50,15 @@ compute:
   mode: pod
   # Dedicated hosts — RunPod terminated community-adjacent smoke pods mid-run
   # on 2026-07-03; secure pins the host pool for the short interp job.
-  cloud_type: secure
-  requirements:
+  backend_options:
+    runpod:
+      cloud_type: secure
+  placement:
     min_vram_gb: 16
     min_cuda: "12.1"
     max_usd_per_hr: 1.00
     disk_gb: 40
-    gpu_preference:
+    accelerators:
       - "NVIDIA RTX A4000"
       - "NVIDIA GeForce RTX 4090"
       - "NVIDIA RTX A5000"
