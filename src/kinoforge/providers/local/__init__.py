@@ -136,6 +136,11 @@ class LocalProvider(ComputeProvider):
         vacuously — satisfied nonetheless).
 
         ``mode`` is UNSUPPORTED because nothing is started in either mode.
+        ``heartbeat_mode`` likewise: the provider's in-memory ``_heartbeats``
+        dict already answers every liveness question a local run can ask, so
+        the dispatch returns None rather than building a substrate.
+        ``warm_reuse_auto_attach`` is UNSUPPORTED on every provider — the warm
+        scan is a CLI decision taken before ``create_instance`` is called.
 
         ``region`` is UNSUPPORTED in the most literal sense available: the
         instance is this machine, so there is no region to pin.
@@ -161,6 +166,8 @@ class LocalProvider(ComputeProvider):
             "max_usd_per_hr": c,  # filter_offers applies it; local is free
             # -- compute ---------------------------------------------------
             "mode": u,  # nothing is started, in either mode
+            "heartbeat_mode": u,  # the in-memory _heartbeats dict needs no substrate
+            "warm_reuse_auto_attach": u,  # orchestrator-side scan, not provider
             # -- spec ------------------------------------------------------
             "image": u,  # no container is started
             "ports": u,  # nothing listens

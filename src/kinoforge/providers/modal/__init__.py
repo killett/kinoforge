@@ -105,6 +105,12 @@ class ModalProvider(ComputeProvider):
         applies its price ceiling only to ``mode == "pod"`` offers. The cap
         is handed over and then structurally ignored.
 
+        ``heartbeat_mode`` is UNSUPPORTED, and bluntly so: the heartbeat
+        dispatch in ``_adapters`` has no modal branch at all, so any
+        non-``none`` value raises there. ``warm_reuse_auto_attach`` is
+        UNSUPPORTED everywhere — the warm scan is a CLI decision taken before
+        ``create_instance`` is called.
+
         ``mode`` is UNSUPPORTED from the other direction: every Modal app is
         serverless already, and the provider has no second arm to select, so
         neither value of the key changes anything.
@@ -134,6 +140,8 @@ class ModalProvider(ComputeProvider):
             "max_usd_per_hr": u,  # the catalog is serverless; the cap is skipped
             # -- compute ---------------------------------------------------
             "mode": u,  # every Modal app is serverless; the key selects nothing
+            "heartbeat_mode": u,  # no branch at all in the heartbeat dispatch
+            "warm_reuse_auto_attach": u,  # orchestrator-side scan, not provider
             # -- spec ------------------------------------------------------
             "image": c,  # ModalAppRequest.image
             "ports": u,  # the web_server port is fixed at 8000

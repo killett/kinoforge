@@ -84,12 +84,33 @@ _REPRESENTATIVE_CONFIG: dict[str, Path] = {
 }
 
 
-#: Compute-level ``ComputeConfig`` fields that describe WHAT TO LAUNCH and so
-#: need a per-provider declaration, same as the placement axes. S2 opens this
-#: with ``mode``, which 46 shipped configs write; Task 5 widens it to the rest
-#: of the block and derives it from ``ComputeConfig.model_fields`` rather than
-#: naming it here.
-_COMPUTE_PORTABLE = {"mode"}
+#: ``ComputeConfig`` fields that are STRUCTURE rather than a launch decision,
+#: and so need no per-provider declaration:
+#:
+#: * ``provider`` selects which declaration table applies at all.
+#: * ``placement`` is declared through its own sub-fields (``accelerators``,
+#:   ``region``, ...), not as one opaque blob.
+#: * ``lifecycle`` is covered by the ``lifecycle`` row already required of
+#:   every provider via ``_SPEC_PORTABLE``.
+#: * ``backend_options`` is likewise already a required row, and is by
+#:   definition provider-specific.
+#:
+#: Everything else in the block describes WHAT TO LAUNCH and must be declared.
+#: ``test_the_structural_exclusion_set_is_not_stale`` pins this against
+#: ``ComputeConfig.model_fields`` in both directions, so a renamed field
+#: cannot leave a ghost here that quietly stops requiring its replacement.
+_COMPUTE_STRUCTURAL = {"provider", "placement", "lifecycle", "backend_options"}
+
+
+def _compute_portable() -> set[str]:
+    """Return the compute-level fields every provider must declare.
+
+    Returns:
+        ``ComputeConfig``'s fields minus :data:`_COMPUTE_STRUCTURAL`.
+    """
+    from kinoforge.core.config import ComputeConfig  # noqa: PLC0415
+
+    return set(ComputeConfig.model_fields) - _COMPUTE_STRUCTURAL
 
 
 def _expected_fields() -> set[str]:
@@ -101,7 +122,7 @@ def _expected_fields() -> set[str]:
     """
     placement = {f.name for f in dataclasses.fields(Placement)}
     spec = {f.name for f in dataclasses.fields(InstanceSpec)} & _SPEC_PORTABLE
-    return placement | spec | _COMPUTE_PORTABLE
+    return placement | spec | _compute_portable()
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +183,39 @@ def test_declaration_covers_exactly_the_portable_field_set(provider_name: str) -
     )
     assert not stale, f"{provider_name} declares removed fields {sorted(stale)}"
     assert all(isinstance(v, FieldSupport) for v in declared.values())
+
+
+def test_compute_level_fields_are_declared_by_every_provider() -> None:
+    """Every launch-describing key of the compute block has a declaration.
+
+    Bug caught: ``consumes()`` covered ``Placement`` and part of
+    ``InstanceSpec``, so ``compute.mode`` rotted for months — written by 46
+    configs, read by nobody, and invisible to this guard because the guard
+    never looked at the compute block at all.
+    """
+    expected = _compute_portable()
+    assert expected, (
+        "ComputeConfig lost every declarable field — check the exclusion set"
+    )
+    for name in sorted(_EXPECTED_PROVIDERS):
+        cls = registry.provider_class(name)
+        assert cls is not None
+        missing = expected - set(cls.consumes())
+        assert not missing, f"{name} does not declare {sorted(missing)}"
+
+
+def test_the_structural_exclusion_set_is_not_stale() -> None:
+    """``_COMPUTE_STRUCTURAL`` names only fields that still exist.
+
+    Bug caught: a field is renamed, the exclusion set keeps the old name, and
+    the subtraction in :func:`_compute_portable` silently stops requiring the
+    new one — the same class of rot the guard exists to prevent, one level up.
+    """
+    from kinoforge.core.config import ComputeConfig  # noqa: PLC0415
+
+    fields = set(ComputeConfig.model_fields)
+    stale = _COMPUTE_STRUCTURAL - fields
+    assert not stale, f"_COMPUTE_STRUCTURAL names removed fields {sorted(stale)}"
 
 
 def test_spec_portable_set_is_not_stale() -> None:
@@ -424,6 +478,52 @@ def _runpod_mode_selects_its_mutation() -> _Proof:
             return (
                 "mode=serverless did not send the endpoint mutation; sent "
                 f"{serverless[:60]!r}"
+            )
+        return ""
+
+    return proof
+
+
+def _runpod_heartbeat_mode_selects_its_substrate() -> _Proof:
+    """Proof: ``compute.heartbeat_mode`` decides which substrate is built.
+
+    Like ``backend_options``, this field's consumer is the composition root
+    rather than the provider object — ``build_heartbeat_endpoint_for`` maps
+    the value onto a concrete :class:`HeartbeatEndpoint`. So the proof
+    observes what that returns for each value, which is where the operator's
+    setting either takes effect or does not.
+
+    Returns:
+        A proof that fails when both values build the same thing.
+    """
+
+    def proof(provider_name: str) -> str:
+        from kinoforge._adapters import build_heartbeat_endpoint_for  # noqa: PLC0415
+        from kinoforge.providers.runpod.heartbeat import (  # noqa: PLC0415
+            RunPodGraphQLHeartbeatEndpoint,
+        )
+
+        class _KeyedCreds(CredentialProvider):
+            """Answers the one key the graphql-tag branch demands."""
+
+            def get(self, key: str) -> str | None:
+                """Return a synthetic RunPod key, nothing else."""
+                return "kinoforge-prod-deadbeef" if key == "RUNPOD_API_KEY" else None
+
+        from kinoforge.core.config import load_config  # noqa: PLC0415
+
+        def built(mode: str) -> Any:  # noqa: ANN401 — HeartbeatEndpoint | None
+            cfg = load_config(str(_REPRESENTATIVE_CONFIG[provider_name]))
+            assert cfg.compute is not None  # noqa: S101 — representative configs have one
+            cfg.compute.heartbeat_mode = mode
+            return build_heartbeat_endpoint_for(cfg, _KeyedCreds())
+
+        if built("none") is not None:
+            return "heartbeat_mode='none' still built a substrate"
+        if not isinstance(built("graphql-tag"), RunPodGraphQLHeartbeatEndpoint):
+            return (
+                "heartbeat_mode='graphql-tag' did not build the GraphQL "
+                "substrate; the value is not being read"
             )
         return ""
 
@@ -729,6 +829,7 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             expected="COMMUNITY",
         ),
         "mode": _runpod_mode_selects_its_mutation(),
+        "heartbeat_mode": _runpod_heartbeat_mode_selects_its_substrate(),
         "accelerators": _orders_by_preference(),
         "min_vram_gb": _filters(_above_every_vram, axis="min_vram_gb"),
         "min_cuda": _filters(_above_every_cuda, axis="min_cuda"),
