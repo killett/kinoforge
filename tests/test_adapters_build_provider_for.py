@@ -19,6 +19,7 @@ from kinoforge.core.config import (
     EngineConfig,
     LifecycleConfig,
     ModelEntry,
+    PlacementConfig,
 )
 from kinoforge.providers.local import LocalProvider
 from kinoforge.providers.skypilot import SkyPilotProvider
@@ -29,6 +30,7 @@ def _make_cfg(
     provider: str = "skypilot",
     cloud: list[str] | None = None,
     retry_until_up: bool | None = None,
+    region: str | None = None,
 ) -> Config:
     skypilot: dict[str, object] = {}
     if cloud is not None:
@@ -40,6 +42,7 @@ def _make_cfg(
             provider=provider,
             image="skypilot/skypilot-gpu:latest",
             lifecycle=LifecycleConfig(budget=10.0),
+            placement=PlacementConfig(region=region),
             backend_options={"skypilot": skypilot} if skypilot else {},
         ),
         engine=EngineConfig(kind="fake", precision="fp16"),
@@ -116,6 +119,30 @@ def test_build_provider_for_skypilot_retry_until_up_defaults_off() -> None:
     provider = build_provider_for(_make_cfg())
     assert isinstance(provider, SkyPilotProvider)
     assert provider._retry_until_up is False
+
+
+def test_build_provider_for_skypilot_threads_region() -> None:
+    """compute.placement.region reaches SkyPilotProvider._region.
+
+    Bug caught (the other half of verification finding F6): the constructor
+    knob existed and no YAML could reach it, so sky's optimizer picked the
+    region by quota — asia-southeast1 has been observed on a project whose
+    standing rule is Oregon.
+    """
+    provider = build_provider_for(_make_cfg(cloud=["aws"], region="us-west-2"))
+    assert isinstance(provider, SkyPilotProvider)
+    assert provider._region == "us-west-2"
+
+
+def test_build_provider_for_skypilot_region_defaults_to_none() -> None:
+    """No region in the cfg leaves the optimizer free, as before S2.
+
+    Bug caught: pinning a default here would relocate every existing
+    skypilot config in one commit, silently.
+    """
+    provider = build_provider_for(_make_cfg(cloud=["aws"]))
+    assert isinstance(provider, SkyPilotProvider)
+    assert provider._region is None
 
 
 def test_build_provider_for_hosted_engine_returns_none() -> None:
