@@ -15,8 +15,11 @@ first unchecked task without redoing committed work.
   (skypilot watchdog, shipped) + Brief 2 (capability declaration, shipped) — both in.
   **S1 (portable core + `backend_options`) SHIPPED 2026-08-27** — plan
   `docs/superpowers/plans/2026-08-24-compute-seam-s1-portable-core.md`, all 9 tasks done, live
-  smoke PROVEN. See the RESUME SNAPSHOT above for the full ship summary. Next: write the S2 plan
-  (region as a first-class field).
+  smoke PROVEN, merged to `main` at `40f0596c`. See the RESUME SNAPSHOT above for the full ship
+  summary. **S2 (region + the compute-block surface) PLANNED, NOT STARTED** — plan
+  `docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md`
+  (`.tasks.json` co-located, 9 tasks, committed `193b4235`). Execute it next; the RESUME SNAPSHOT
+  carries the two decisions already made and the load-bearing task ordering.
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
@@ -510,9 +513,38 @@ for S3, which legitimately splits setup/run and regenerates goldens as part of t
    plainly intended, or delete the block from all 4 configs), **then** add `extra="forbid"`.
    Doing the forbid first just breaks four configs without answering the question.
 
-**SINGLE NEXT ACTION:** write the S2 plan — region as a first-class `placement.region` field
-(design doc §8), against
-`docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md`.
+**SINGLE NEXT ACTION (updated 2026-08-30): EXECUTE the S2 plan — it is written and committed
+(`193b4235`).** Plan `docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md`
+with `.tasks.json` co-located (9 tasks, 0-8, linear `blockedBy` chain, Task 7 tagged `user-gate`).
+Resume with `/superpowers-extended-cc:executing-plans docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md`,
+or dispatch it task-by-task with subagent-driven-development. Nothing of S2 is implemented yet —
+the branch to date is S1 only, merged to `main` at `40f0596c`.
+
+**What S2 covers and why it is bigger than the design's one-line S2:** the design's declared
+subject is `region` (§8). The rest is what S1's whole-branch review promoted here — `consumes()`
+stops at `compute.placement`, so `compute.mode` (written by 46 configs, read by nothing) and
+`compute.tags` (written by 4, never a field) rotted outside the guard. The plan makes both real,
+extends the guard to the compute block, then forbids unknown compute keys.
+
+**Two calls baked into the plan, so a fresh session does not re-litigate them:**
+1. **Region is pinned on exactly one shipped config.** `us-west-2` is AWS vocabulary; the Lambda
+   and Vast configs use their own, and `skypilot-gpu.yaml` pins no cloud at all. So
+   `skypilot-cpu.yaml` gets `clouds: ["aws"]` + `region: us-west-2` TOGETHER, and the others get a
+   comment saying why they get none. A wrong region is worse than no region.
+2. **S2 spends exactly one golden change, in Task 2, for the region pin only.** That task requires
+   decoding the provision blob and proving its sha256 is unchanged across the regeneration, so the
+   first sanctioned regeneration in this rework is legible rather than a wall of base64. Every
+   other task must leave all 31 goldens byte-identical, and regenerating to make a failing test
+   pass is forbidden everywhere including Task 2.
+
+**Ordering that is load-bearing** (plan self-review): Tasks 3 (`tags`) and 4 (`mode`) must land
+before Task 6 (`extra="forbid"`) or four shipped configs stop loading; Task 5 (guard extension)
+must land after both, or the guard demands declarations for fields that are still fictional.
+
+**Explicitly NOT in S2:** wiring `region` on RunPod (`dataCenterId`) or Modal (`region=`) — both
+are new wire surface wanting their own live proof, and both stay declared-`UNSUPPORTED`, which is
+honest. The setup/run split and `_strip_trailing_exec` are S3; the realized-rate check and the
+`find_offers` inversion are S4.
 
 ---
 
