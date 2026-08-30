@@ -398,6 +398,12 @@ class RunPodProvider(ComputeProvider):
         with no spot equivalent. Setting any of the three today changes
         nothing an operator can observe short of the invoice.
 
+        ``mode`` is the one compute-level field this provider reads:
+        :meth:`create_instance` branches on ``spec.tags["mode"]`` to pick
+        between the pod mutation and the serverless endpoint. Nothing wrote
+        that tag before compute-seam S2, so ``compute.mode: serverless``
+        silently took the pod branch.
+
         ``region`` joins them: RunPod's create mutation accepts a
         data-centre id (``dataCenterId``) and kinoforge sends none, so a
         pinned region reaches nothing. Wiring it is deliberately out of S2 —
@@ -426,6 +432,8 @@ class RunPodProvider(ComputeProvider):
             "region": u,  # dataCenterId is never sent; RunPod picks the DC
             "spot": u,  # on-demand mutation only
             "max_usd_per_hr": c,  # filter_offers excludes pod offers above it
+            # -- compute ---------------------------------------------------
+            "mode": c,  # spec.tags["mode"] selects pod vs serverless
             # -- spec ------------------------------------------------------
             "image": c,  # "imageName"
             "ports": c,  # "ports", with the /http suffix defaulted in

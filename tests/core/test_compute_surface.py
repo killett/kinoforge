@@ -120,6 +120,86 @@ def test_the_four_shipped_configs_deliver_their_smoke_tier() -> None:
         ), path
 
 
+def test_pod_mode_is_the_default_and_reaches_the_spec_tag() -> None:
+    """The default mode arrives as a tag, not as an absent key.
+
+    Bug caught: leaving the tag unwritten keeps RunPod on its own
+    ``.get("mode", "pod")`` fallback, so the cfg and the wire agree only by
+    coincidence — and stop agreeing the moment the fallback changes.
+    """
+    spec = _spec({"provider": "runpod", "image": "i"})
+    assert spec.tags["mode"] == "pod"
+
+
+def test_serverless_mode_reaches_the_serverless_branch() -> None:
+    """`mode: serverless` takes the branch it has always claimed to.
+
+    Bug caught (found by the S1 whole-branch review): compute.mode was
+    written by 46 configs and read by nothing, so `mode: serverless` took the
+    pod branch and produced a byte-identical payload. This captures WHICH
+    branch ran rather than reading the code.
+    """
+    from unittest import mock  # noqa: PLC0415
+
+    from kinoforge.providers.runpod import RunPodProvider  # noqa: PLC0415
+
+    spec = _spec({"provider": "runpod", "image": "i", "mode": "serverless"})
+    assert spec.tags["mode"] == "serverless"
+
+    provider = RunPodProvider(
+        http_post=lambda _url, _body: {},
+        http_get=lambda _url: {},
+    )
+    with (
+        mock.patch.object(RunPodProvider, "_create_serverless") as serverless,
+        mock.patch.object(RunPodProvider, "_create_pod") as pod,
+    ):
+        serverless.return_value = mock.MagicMock(id="sl-1")
+        provider.create_instance(spec)
+    assert serverless.called
+    assert not pod.called
+
+
+def test_pod_mode_takes_the_pod_branch() -> None:
+    """The mirror of the above: the default must not start routing elsewhere.
+
+    Bug caught: a `setdefault`/`update` mix-up that writes "serverless" for
+    every cfg would pass the serverless test alone and silently move all 45
+    pod configs onto a branch that bills differently.
+    """
+    from unittest import mock  # noqa: PLC0415
+
+    from kinoforge.providers.runpod import RunPodProvider  # noqa: PLC0415
+
+    spec = _spec({"provider": "runpod", "image": "i"})
+    provider = RunPodProvider(
+        http_post=lambda _url, _body: {},
+        http_get=lambda _url: {},
+    )
+    with (
+        mock.patch.object(RunPodProvider, "_create_serverless") as serverless,
+        mock.patch.object(RunPodProvider, "_create_pod") as pod,
+    ):
+        pod.return_value = mock.MagicMock(id="pod-1")
+        provider.create_instance(spec)
+    assert pod.called
+    assert not serverless.called
+
+
+def test_a_caller_supplied_mode_tag_still_wins_over_the_cfg() -> None:
+    """RunPod's own internal re-create call passes an explicit mode tag.
+
+    Bug caught: folding the cfg value in with `update` rather than
+    `setdefault` would overwrite the mode a caller deliberately chose for one
+    invocation — including the provider's own internal call site.
+    """
+    spec = _spec(
+        {"provider": "runpod", "image": "i", "mode": "pod"},
+        caller_tags={"mode": "serverless"},
+    )
+    assert spec.tags["mode"] == "serverless"
+
+
 def test_a_shipped_configs_tag_reaches_the_instance_the_ledger_sees() -> None:
     """The cfg tag survives all the way onto the Instance, not just the spec.
 

@@ -641,6 +641,11 @@ class SkyPilotProvider(ComputeProvider):
         read — ``min_vram_gb == 0`` short-circuits to the synthetic CPU
         offer, which is what makes the task request ``cpus``/``memory``.
 
+        ``mode`` is UNSUPPORTED: sky books an instance and kinoforge runs a
+        server on it. There is no serverless arm to route to, so
+        ``mode: serverless`` on a skypilot cfg describes nothing this
+        provider can do.
+
         ``backend_options`` is consumed by the SkyPilot namespace's owner,
         :func:`kinoforge._adapters.build_provider_for`, which turns
         ``clouds`` / ``retry_until_up`` into constructor arguments; this
@@ -663,6 +668,8 @@ class SkyPilotProvider(ComputeProvider):
             "region": c,  # resources["region"], via the _adapters wiring
             "spot": c,  # resources["use_spot"]
             "max_usd_per_hr": u,  # F4: the optimizer never sees the cap
+            # -- compute ---------------------------------------------------
+            "mode": u,  # sky books an instance; there is no serverless arm
             # -- spec ------------------------------------------------------
             "image": c,  # resources["image_id"], docker:-normalised
             "ports": u,  # the tunnel is ssh-side, never declared to sky

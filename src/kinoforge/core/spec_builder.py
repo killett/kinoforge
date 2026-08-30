@@ -71,6 +71,13 @@ def build_instance_spec(
     # kinoforge_key would break warm-reuse matching, which keys off it.
     merged_tags["kinoforge_engine"] = engine_name
     merged_tags["kinoforge_key"] = key_hash
+    # RunPod branches on this tag (providers/runpod/__init__.py, create_instance).
+    # Before S2 nothing wrote it, so `compute.mode: serverless` silently took
+    # the pod branch — the S1 whole-branch review proved the payload was
+    # identical either way. setdefault, not assignment: RunPod's own internal
+    # re-create call passes an explicit mode tag and must keep winning.
+    if cfg.compute is not None:
+        merged_tags.setdefault("mode", cfg.compute.mode)
     backend_options: dict[str, dict[str, Any]] = {
         name: dict(opts)
         for name, opts in (

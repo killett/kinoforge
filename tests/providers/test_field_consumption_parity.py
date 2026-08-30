@@ -84,16 +84,24 @@ _REPRESENTATIVE_CONFIG: dict[str, Path] = {
 }
 
 
+#: Compute-level ``ComputeConfig`` fields that describe WHAT TO LAUNCH and so
+#: need a per-provider declaration, same as the placement axes. S2 opens this
+#: with ``mode``, which 46 shipped configs write; Task 5 widens it to the rest
+#: of the block and derives it from ``ComputeConfig.model_fields`` rather than
+#: naming it here.
+_COMPUTE_PORTABLE = {"mode"}
+
+
 def _expected_fields() -> set[str]:
     """Return the portable field set every provider must declare.
 
     Returns:
-        The union of ``Placement``'s fields and the portable subset of
-        ``InstanceSpec``'s.
+        The union of ``Placement``'s fields, the portable subset of
+        ``InstanceSpec``'s, and the compute-level fields.
     """
     placement = {f.name for f in dataclasses.fields(Placement)}
     spec = {f.name for f in dataclasses.fields(InstanceSpec)} & _SPEC_PORTABLE
-    return placement | spec
+    return placement | spec | _COMPUTE_PORTABLE
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +368,62 @@ def _tracks_cfg(
             return (
                 f"backend_options probe {dict(backend_options)!r} left the "
                 f"payload at {after!r} (wanted {expected!r})"
+            )
+        return ""
+
+    return proof
+
+
+def _runpod_mode_selects_its_mutation() -> _Proof:
+    """Proof: ``spec.tags["mode"]`` decides which RunPod mutation is sent.
+
+    ``compute.mode`` cannot be proven through
+    :func:`~tools.snapshot_launch_payloads.capture_launch` the way the other
+    fields are: that capturer hardcodes the pod mutation's response shape, so
+    a serverless capture would be observing the harness rather than the
+    provider. This drives the real provider twice over one transport instead
+    and compares the two queries — the exact thing that did NOT differ before
+    S2, when 46 configs wrote ``mode`` and nothing read it.
+
+    Returns:
+        A proof that fails when both modes put the same mutation on the wire.
+    """
+
+    def proof(provider_name: str) -> str:
+        spec = _baseline(provider_name).spec
+
+        def sent_query(mode: str) -> str:
+            sent: list[dict[str, Any]] = []
+
+            def post(_url: str, body: dict[str, Any]) -> dict[str, Any]:
+                sent.append(body)
+                return {
+                    "data": {
+                        "podFindAndDeployOnDemand": {"id": "pod-probe"},
+                        "saveTemplate": {"id": "sl-probe"},
+                    }
+                }
+
+            provider = RunPodProvider(
+                _StubCreds(), http_post=post, http_get=lambda _url: {}
+            )
+            provider.create_instance(
+                dataclasses.replace(spec, tags={**spec.tags, "mode": mode})
+            )
+            return str(sent[0]["query"])
+
+        pod, serverless = sent_query("pod"), sent_query("serverless")
+        if pod == serverless:
+            return (
+                "mode=pod and mode=serverless put the SAME mutation on the "
+                "wire; the branch is not reading the tag"
+            )
+        if "podFindAndDeployOnDemand" not in pod:
+            return f"mode=pod did not send the pod mutation; sent {pod[:60]!r}"
+        if "saveTemplate" not in serverless:
+            return (
+                "mode=serverless did not send the endpoint mutation; sent "
+                f"{serverless[:60]!r}"
             )
         return ""
 
@@ -664,6 +728,7 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             backend_options={"runpod": {"cloud_type": "community"}},
             expected="COMMUNITY",
         ),
+        "mode": _runpod_mode_selects_its_mutation(),
         "accelerators": _orders_by_preference(),
         "min_vram_gb": _filters(_above_every_vram, axis="min_vram_gb"),
         "min_cuda": _filters(_above_every_cuda, axis="min_cuda"),

@@ -135,6 +135,8 @@ class LocalProvider(ComputeProvider):
         (LocalProvider is unbilled, so a non-negative cap is satisfied
         vacuously — satisfied nonetheless).
 
+        ``mode`` is UNSUPPORTED because nothing is started in either mode.
+
         ``region`` is UNSUPPORTED in the most literal sense available: the
         instance is this machine, so there is no region to pin.
 
@@ -157,6 +159,8 @@ class LocalProvider(ComputeProvider):
             "region": u,  # this machine is where it runs
             "spot": u,  # nothing is allocated
             "max_usd_per_hr": c,  # filter_offers applies it; local is free
+            # -- compute ---------------------------------------------------
+            "mode": u,  # nothing is started, in either mode
             # -- spec ------------------------------------------------------
             "image": u,  # no container is started
             "ports": u,  # nothing listens

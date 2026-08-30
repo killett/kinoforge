@@ -13,7 +13,8 @@
     "status": "ready",
     "tags": {
       "kinoforge_engine": "fake",
-      "kinoforge_key": "golden-key"
+      "kinoforge_key": "golden-key",
+      "mode": "pod"
     }
   },
   "provider": "local",

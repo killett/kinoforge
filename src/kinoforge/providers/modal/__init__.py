@@ -105,6 +105,10 @@ class ModalProvider(ComputeProvider):
         applies its price ceiling only to ``mode == "pod"`` offers. The cap
         is handed over and then structurally ignored.
 
+        ``mode`` is UNSUPPORTED from the other direction: every Modal app is
+        serverless already, and the provider has no second arm to select, so
+        neither value of the key changes anything.
+
         ``region`` is UNSUPPORTED for the same reason: Modal's
         ``@app.function`` does take a ``region=`` argument, and
         ``build_modal_app`` passes none, so a pinned region is dropped.
@@ -128,6 +132,8 @@ class ModalProvider(ComputeProvider):
             "region": u,  # @app.function(region=…) is never passed
             "spot": u,  # no spot pool
             "max_usd_per_hr": u,  # the catalog is serverless; the cap is skipped
+            # -- compute ---------------------------------------------------
+            "mode": u,  # every Modal app is serverless; the key selects nothing
             # -- spec ------------------------------------------------------
             "image": c,  # ModalAppRequest.image
             "ports": u,  # the web_server port is fixed at 8000

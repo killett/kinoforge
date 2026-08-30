@@ -37,7 +37,7 @@
     {
       "id": 4,
       "subject": "Task 4: `compute.mode` reaches the provider that reads it",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Close the lie S1's review proved: 46 configs write `mode`, nothing reads it, and RunPod branches on a spec tag nobody sets.\n\n**Files:**\n- Modify: `src/kinoforge/core/spec_builder.py`\n- Modify: all four provider modules (`consumes()` gains the compute-level rows — see Task 5 for the guard that requires them)\n- Test: `tests/core/test_compute_surface.py` (extend)\n\n**Acceptance Criteria:**\n- [ ] `build_instance_spec` writes `spec.tags[\"mode\"]` from `cfg.compute.mode`, so `RunPodProvider.create_instance`'s existing `spec.tags.get(\"mode\", \"pod\")` branch (`providers/runpod/__init__.py:569`) actually sees the operator's value.\n- [ ] A config with `mode: pod` (all 45 of them) produces a byte-identical payload — proven by the goldens staying green.\n- [ ] A config with `mode: serverless` reaches `_create_serverless` — proven by a test that captures which branch ran, not by reading the code.\n- [ ] `mode` is declared: `CONSUMED` on runpod, `UNSUPPORTED` on skypilot, modal and local, each with a docstring line saying what it means there.\n\n**Verify:** `pixi run python -m pytest tests/core/test_compute_surface.py tests/providers -q`\n\nFull steps + code: `docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md` Task 4.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/spec_builder.py\", \"src/kinoforge/providers/\", \"tests/core/test_compute_surface.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/core/test_compute_surface.py tests/providers -q\", \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"`build_instance_spec` writes `spec.tags[\\\"mode\\\"]` from `cfg.compute.mode`, so `RunPodProvider.create_instance`'s existing `spec.tags.get(\\\"mode\\\", \\\"pod\\\")` branch (`providers/runpod/__init__.py:569`) actually sees the operator's value.\", \"A config with `mode: pod` (all 45 of them) produces a byte-identical payload \\u2014 proven by the goldens staying green.\", \"A config with `mode: serverless` reaches `_create_serverless` \\u2014 proven by a test that captures which branch ran, not by reading the code.\", \"`mode` is declared: `CONSUMED` on runpod, `UNSUPPORTED` on skypilot, modal and local, each with a docstring line saying what it means there.\"]}\n```",
       "blockedBy": [
         3
@@ -80,5 +80,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-30T01:57:39"
+  "lastUpdated": "2026-08-30T02:27:49"
 }
