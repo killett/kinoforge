@@ -885,6 +885,12 @@ class ComputeConfig(BaseModel):
         provider: Compute provider name (e.g. "runpod").
         image: Container image reference.
         mode: Instance mode; "pod" or "serverless".
+        tags: Operator labels merged onto every instance this cfg launches,
+            below the caller's per-invocation tags (the CLI's and the grid
+            executor's ``build_instance_spec(tags=...)``) and never over the
+            two kinoforge-owned keys ``kinoforge_engine`` / ``kinoforge_key``,
+            which warm-reuse matching keys off. Written by four shipped
+            configs and silently dropped until compute-seam S2.
         placement: Portable resource block — what to get (accelerators,
             VRAM, disk, spot, price ceiling). Replaced the pre-S1
             ``requirements`` catalog-filter block.
@@ -915,6 +921,7 @@ class ComputeConfig(BaseModel):
     provider: str
     image: str
     mode: str = "pod"
+    tags: dict[str, str] = {}
     placement: PlacementConfig = PlacementConfig()
     lifecycle: LifecycleConfig | None = None
     heartbeat_mode: str = "none"
