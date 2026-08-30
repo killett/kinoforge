@@ -48,14 +48,14 @@ see ``_normalize`` for the precise fields and why:
      ``time.time()``; a live run needs a genuine future deadline, not a
      value already hours in the past that would self-terminate the
      instance seconds after boot.
-  3. ``task_config.resources.cloud`` / ``resources.region`` — present only
-     on the live payload. The base config is written cloud-agnostic (see its
-     header); this smoke pins ``clouds=["aws"], region="us-west-2"`` on the
-     provider itself (exactly as the config's own comment says region
-     pinning is "enforced by the smoke test itself, not by this YAML") so
-     the launch lands on a known, cheap, real SKU. That pin is a smoke-only
-     addition, not part of what the S1 shape ratchet certifies, so it is
-     popped before comparison rather than asserted against.
+  3. ``task_config.resources.cloud`` / ``resources.region``. This smoke
+     pins ``clouds=["aws"], region="us-west-2"`` on the provider itself so
+     the launch lands on a known, cheap, real SKU. That was a smoke-only
+     addition when written — the config was cloud-agnostic — and
+     compute-seam S2 has since moved both pins into the config, so they now
+     appear on the golden as well. Either way they are popped before
+     comparison rather than asserted against here, and WHERE the launch
+     landed is checked separately by ``_assert_launch_target``.
 
 Credential safety: the spec is built via
 ``tools.snapshot_launch_payloads.build_spec``, which resolves every
@@ -365,13 +365,17 @@ def _normalize(payload: dict[str, Any]) -> dict[str, Any]:
     task_config["setup"] = setup.replace(match.group(1), _DEADLINE_SENTINEL)
 
     resources = task_config.get("resources", {})
-    # Smoke-only pins (see module docstring point 3) — never present on the
-    # golden, which captures the config as authored (cloud-agnostic). Popped,
-    # not compared. WHERE the launch landed is therefore invisible to this
-    # function by construction, and is asserted separately by
-    # :func:`_assert_launch_target` against the LIVE payload before it gets
-    # here — otherwise a regression that launched in another region on a
-    # different SKU would satisfy every comparison in this file.
+    # Popped from BOTH sides, not compared. They were smoke-only pins when
+    # this was written (the config was cloud-agnostic and only this file
+    # pinned aws/us-west-2); compute-seam S2 moved both pins into the config
+    # itself, so the golden now carries them too. Popping stays correct
+    # either way — and stays necessary, because this normaliser must not be
+    # the thing that decides WHERE a launch landed. That is asserted
+    # separately by :func:`_assert_launch_target` against the LIVE payload
+    # before it gets here; otherwise a regression that launched in another
+    # region on a different SKU would satisfy every comparison in this file.
+    # S2's own smoke (test_compute_seam_s2_region_smoke.py) is the one that
+    # proves the CONFIG supplies those pins.
     resources.pop("cloud", None)
     resources.pop("region", None)
 
