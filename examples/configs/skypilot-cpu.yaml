@@ -2,8 +2,9 @@
 #
 # Demonstrates the bare SkyPilotProvider configuration used by the
 # Phase 31 real-cloud verification smoke (spec §3.3, plan T3):
-#   - Smallest CPU SKU on GCP us-central1 (SkyPilot picks SKU from
-#     cpus/memory requirements; no GPU)
+#   - Smallest CPU SKU on AWS us-west-2 (SkyPilot picks the SKU from
+#     cpus/memory requirements; no GPU). The cloud and region are pinned
+#     below rather than left to the optimizer — see `placement.region`.
 #   - idle_timeout 60 s -> SkyPilot autostop=1 (minute), which is INERT for
 #     this server-mode deploy: run_cmd becomes a never-terminating
 #     Task.run, so is_cluster_idle() is permanently False. Real cleanup is
@@ -27,12 +28,8 @@ models:
 
 compute:
   # SkyPilot picks the concrete SKU from cpus/memory requirements at
-  # launch time; the live smoke uses the smallest CPU class GCP
-  # offers (~e2-micro / n1-standard-1, ~$0.01/hr).  Region pinning
-  # (us-central1) is enforced by the smoke test itself, not by this
-  # YAML — `placement.region` lands in S2
-  # (docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md §8), so today
-  # region is only settable at the call site that builds the InstanceSpec, not from this file.
+  # launch time; the live smoke uses the smallest CPU class AWS offers
+  # (~c6i.large, ~$0.085/hr).
   provider: skypilot
   # Public Ubuntu base. The original `skypilot/skypilot:latest` placeholder
   # the Phase-31 template shipped with does NOT exist on Docker Hub —
@@ -52,6 +49,18 @@ compute:
     min_cuda: "0"
     max_usd_per_hr: 0.50
     disk_gb: 50
+    # A region string belongs to ONE cloud's vocabulary: us-west-2 is AWS.
+    # Pin the cloud alongside it (backend_options.skypilot.clouds below) or
+    # the optimizer may pick a cloud where the region does not exist. Project
+    # rule: pin region everywhere, Oregon by default (AWS us-west-2 /
+    # GCP us-west1 / Azure westus2).
+    region: us-west-2
+  backend_options:
+    skypilot:
+      # Pinned so `placement.region` above is unambiguous. Without it sky is
+      # free to book any enabled cloud, and "us-west-2" would be meaningless
+      # (or refused) on most of them.
+      clouds: ["aws"]
   lifecycle:
     # Maps to SkyPilot autostop (idle_timeout seconds -> autostop minutes via
     # InterfaceLifecycle.idle_timeout_s in SkyPilotProvider.create_instance),

@@ -37,6 +37,9 @@ engine:
 models: []
 
 compute:
+  # Deliberately NO `placement.region`: Vast is a marketplace of individual
+  # hosts with its own geography, not a cloud's region grid — a region string
+  # from another vocabulary would exclude every offer.
   provider: skypilot
   backend_options:
     skypilot:

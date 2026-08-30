@@ -19,7 +19,7 @@
     {
       "id": 2,
       "subject": "Task 2: Pin the region in the shipped SkyPilot config, and regenerate one golden",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Make the standing Oregon rule true of the config that ships, and take the plan's only intended wire change under review.\n\n**Files:**\n- Modify: `examples/configs/skypilot-cpu.yaml`\n- Modify: `tests/providers/golden/launch_payloads/skypilot-cpu.json` (regenerated)\n\n**Acceptance Criteria:**\n- [ ] `skypilot-cpu.yaml` pins BOTH `backend_options.skypilot.clouds: [\"aws\"]` and `placement.region: us-west-2`, with a comment saying a region is only meaningful next to the cloud it belongs to.\n- [ ] `skypilot-gpu.yaml`, `skypilot-lambda-*.yaml` and `skypilot-vast-*.yaml` are NOT given a region: Lambda and Vast use their own region vocabularies, and `skypilot-gpu` pins no cloud. Each gets a one-line comment recording that, replacing the stale \"ComputeConfig has no region field today\" note in `skypilot-gpu.yaml:38-40`.\n- [ ] Exactly ONE golden changes, and its only JSON delta is the added `resources.region` (plus `resources.cloud` if the clouds pin is new to that file).\n- [ ] The decoded provision script inside that golden is byte-identical before and after — proven, not assumed.\n\n**Verify:** `pixi run python -m pytest tests/providers/test_launch_payload_goldens.py -q` → 42 passed; and the diff review below.\n\nFull steps + code: `docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md` Task 2.\n\n```json:metadata\n{\"files\": [\"examples/configs/skypilot-cpu.yaml\", \"examples/configs/skypilot-gpu.yaml\", \"tests/providers/golden/launch_payloads/skypilot-cpu.json\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers/test_launch_payload_goldens.py -q\", \"modelTier\": \"frontier\", \"acceptanceCriteria\": [\"`skypilot-cpu.yaml` pins BOTH `backend_options.skypilot.clouds: [\\\"aws\\\"]` and `placement.region: us-west-2`, with a comment saying a region is only meaningful next to the cloud it belongs to.\", \"`skypilot-gpu.yaml`, `skypilot-lambda-*.yaml` and `skypilot-vast-*.yaml` are NOT given a region: Lambda and Vast use their own region vocabularies, and `skypilot-gpu` pins no cloud. Each gets a one-line comment recording that, replacing the stale \\\"ComputeConfig has no region field today\\\" note in `skypilot-gpu.yaml:38-40`.\", \"Exactly ONE golden changes, and its only JSON delta is the added `resources.region` (plus `resources.cloud` if the clouds pin is new to that file).\", \"The decoded provision script inside that golden is byte-identical before and after \\u2014 proven, not assumed.\"]}\n```",
       "blockedBy": [
         1
@@ -80,5 +80,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-30T01:26:38"
+  "lastUpdated": "2026-08-30T01:41:02"
 }
