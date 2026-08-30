@@ -396,14 +396,23 @@ def test_modal_spot_warns_under_the_same_timeout_bound_as_its_rate_cap() -> None
     assert "discount" in result.message
 
 
-def test_accelerator_count_is_the_only_error_row_a_cfg_can_reach() -> None:
-    """Pins the invariant the severity table now claims.
+def test_only_substitute_free_rows_are_errors() -> None:
+    """Pins the exact set of rows that refuse a load.
 
     Every UNSUPPORTED row on a registered provider must carry a substitute
-    except ``accelerator_count``, whose 1-accelerator pin nothing else can
-    cover. A new row added without a substitute — or an existing substitute
-    deleted — silently reintroduces a refusal path this ruling forbids, and
-    would show up here as a second field name.
+    except two, and both are deliberate:
+
+    * ``accelerator_count`` — every provider pins one accelerator and no
+      other field can deliver a second.
+    * ``region`` (added in S2) — RunPod sends no ``dataCenterId`` and Modal
+      is passed no ``region=``, so the pin reaches nothing, and no timeout or
+      rate cap substitutes for landing in the wrong jurisdiction.
+
+    A THIRD name appearing here means a row was shipped without a substitute
+    and now refuses loads; a name disappearing means a substitute was added
+    (or a declaration flipped to CONSUMED) without anyone saying so. Both are
+    decisions, not accidents, which is why this asserts the set rather than a
+    count.
     """
     from kinoforge.core.capabilities import consumes_for
     from kinoforge.core.interfaces import FieldSupport
@@ -424,16 +433,23 @@ def test_accelerator_count_is_the_only_error_row_a_cfg_can_reach() -> None:
             "min_vram_gb": 79,
             "min_cuda": "12.9",
             "disk_gb": 321,
+            "region": "kf-probe-region",
             "spot": True,
             "max_usd_per_hr": 9.75,
         }
+        # Every UNSUPPORTED row must have a probe value, or the strongest-probe
+        # claim above quietly stops being true for the row nobody added.
+        assert unsupported <= set(probe), sorted(unsupported - set(probe))
         cfg = _cfg(provider, placement={k: probe[k] for k in unsupported})
         errored |= {
             gap.field
             for gap in evaluate_field_gaps(cfg)
             if gap.severity is Severity.ERROR
         }
-    assert errored == {"compute.placement.accelerator_count"}
+    assert errored == {
+        "compute.placement.accelerator_count",
+        "compute.placement.region",
+    }
 
 
 @pytest.mark.parametrize("field", ["disk_gb", "accelerator_count"])

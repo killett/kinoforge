@@ -81,6 +81,12 @@ class Placement:
             wherever offers are enumerated — not only where the vendor API
             can express it.
         disk_gb: Minimum instance/container disk in GB.
+        region: Cloud region to pin, e.g. ``"us-west-2"`` (AWS) /
+            ``"us-west1"`` (GCP). ``None`` means "let the provider or its
+            optimizer decide". The value space is the CLOUD's, not
+            kinoforge's: a region string is only meaningful alongside the
+            cloud it belongs to, so pin it next to the cloud selection
+            (``compute.backend_options.skypilot.clouds``) rather than alone.
         spot: Request a spot/preemptible instance when True. Lived on
             ``InstanceSpec`` before S1, where only SkyPilot ever read it.
         max_usd_per_hr: Ceiling on the hourly rate.
@@ -91,6 +97,7 @@ class Placement:
     min_vram_gb: int = 48
     min_cuda: str = "12.8"
     disk_gb: int = 100
+    region: str | None = None
     spot: bool = False
     max_usd_per_hr: float = 2.20
 

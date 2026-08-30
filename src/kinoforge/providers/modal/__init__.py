@@ -105,6 +105,12 @@ class ModalProvider(ComputeProvider):
         applies its price ceiling only to ``mode == "pod"`` offers. The cap
         is handed over and then structurally ignored.
 
+        ``region`` is UNSUPPORTED for the same reason: Modal's
+        ``@app.function`` does take a ``region=`` argument, and
+        ``build_modal_app`` passes none, so a pinned region is dropped.
+        Wiring it is deliberately out of S2 — new wire surface needs its own
+        live proof.
+
         ``ports`` is UNSUPPORTED because the request has no port field —
         ``build_modal_app`` serves a single ``@web_server`` on 8000.
 
@@ -119,6 +125,7 @@ class ModalProvider(ComputeProvider):
             "min_vram_gb": c,  # filter_offers excludes below the floor
             "min_cuda": c,  # filter_offers excludes below the floor
             "disk_gb": u,  # no disk knob on the request
+            "region": u,  # @app.function(region=…) is never passed
             "spot": u,  # no spot pool
             "max_usd_per_hr": u,  # the catalog is serverless; the cap is skipped
             # -- spec ------------------------------------------------------

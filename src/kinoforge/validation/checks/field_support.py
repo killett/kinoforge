@@ -9,10 +9,15 @@ Severity is by RISK COVERAGE, mirroring
 :mod:`kinoforge.validation.checks.capabilities`:
 
 * **ERROR** when nothing else in the cfg bounds the same risk.
-  ``accelerator_count`` is the archetype, and after the 2026-08-27 review the
-  ONLY row a cfg can reach — every provider pins one accelerator and no other
-  field can deliver a second.
-  ``test_accelerator_count_is_the_only_error_row_a_cfg_can_reach`` pins that,
+  ``accelerator_count`` is the archetype — every provider pins one accelerator
+  and no other field can deliver a second. S2 added the second such row,
+  ``region``: RunPod's create mutation never sends a ``dataCenterId`` and
+  Modal's ``@app.function(region=)`` is never passed, so a pinned region
+  reaches nothing and NOTHING else in the cfg constrains where the run lands
+  — data residency is not something a timeout or a rate cap can substitute
+  for. No shipped config sets ``region`` on either provider, so this refuses
+  nobody today; it refuses the operator who assumes a pin they wrote is being
+  honoured. ``test_only_substitute_free_rows_are_errors`` pins the exact set,
   so a new row shipped without a substitute is caught rather than discovered
   by the operator it refuses.
 * **WARN naming the substitute and the bound it actually enforces**
@@ -90,6 +95,7 @@ _RISK: dict[str, str] = {
     "min_vram_gb": "the run lands on an accelerator with too little VRAM",
     "min_cuda": "the run lands on a host whose CUDA is below the floor",
     "disk_gb": "the run runs out of disk mid-download",
+    "region": "the run lands in a region you did not choose",
     "spot": "the run pays the on-demand rate",
     "max_usd_per_hr": "the run books an instance above the rate ceiling",
 }

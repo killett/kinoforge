@@ -409,10 +409,12 @@ def _capture_skypilot(
     the capture never reaches the ssh-tunnel spawn that follows a real launch.
 
     ``clouds`` / ``retry_until_up`` are pinned from
-    ``cfg.compute.backend_options.skypilot`` exactly as
+    ``cfg.compute.backend_options.skypilot``, and ``region`` from
+    ``cfg.placement()``, exactly as
     :func:`kinoforge._adapters.build_provider_for` does — without the cloud
     pin the ``resources.cloud`` / ``resources.any_of`` keys would never
-    appear.
+    appear, and without the region pin ``resources.region`` never would
+    either, so a capture would show an unpinned launch the CLI does not make.
 
     Args:
         cfg: The loaded config (supplies the cloud pin).
@@ -455,6 +457,7 @@ def _capture_skypilot(
     provider = SkyPilotProvider(
         _CapturingSky(),
         clouds=list(sky_opts.clouds) if sky_opts.clouds else None,
+        region=cfg.placement().region,
         retry_until_up=sky_opts.retry_until_up,
     )
     ledger = _RecordingLedger()

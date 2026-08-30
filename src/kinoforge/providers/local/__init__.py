@@ -135,6 +135,9 @@ class LocalProvider(ComputeProvider):
         (LocalProvider is unbilled, so a non-negative cap is satisfied
         vacuously — satisfied nonetheless).
 
+        ``region`` is UNSUPPORTED in the most literal sense available: the
+        instance is this machine, so there is no region to pin.
+
         ``accelerators`` is UNSUPPORTED and the reason is worth stating:
         the preference list is passed to ``filter_offers``, but both
         synthetic offers share the ``"LOCAL"`` gpu_type, so no ordering an
@@ -151,6 +154,7 @@ class LocalProvider(ComputeProvider):
             "min_vram_gb": c,  # filter_offers excludes below the floor
             "min_cuda": c,  # filter_offers excludes below the floor
             "disk_gb": u,  # nothing is allocated
+            "region": u,  # this machine is where it runs
             "spot": u,  # nothing is allocated
             "max_usd_per_hr": c,  # filter_offers applies it; local is free
             # -- spec ------------------------------------------------------

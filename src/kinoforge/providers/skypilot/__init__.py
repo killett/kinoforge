@@ -645,6 +645,9 @@ class SkyPilotProvider(ComputeProvider):
         :func:`kinoforge._adapters.build_provider_for`, which turns
         ``clouds`` / ``retry_until_up`` into constructor arguments; this
         provider reads them off ``self`` rather than off ``spec``.
+        ``region`` arrives by that same route — ``build_provider_for`` reads
+        ``cfg.placement().region`` onto ``self._region``, which
+        :meth:`create_instance` pins onto ``resources["region"]``.
 
         Returns:
             The declared field-support mapping.
@@ -657,6 +660,7 @@ class SkyPilotProvider(ComputeProvider):
             "min_vram_gb": c,  # filter_offers floor + the CPU short-circuit
             "min_cuda": c,  # filter_offers excludes below the floor
             "disk_gb": u,  # disk_size is 60/30 by fiat
+            "region": c,  # resources["region"], via the _adapters wiring
             "spot": c,  # resources["use_spot"]
             "max_usd_per_hr": u,  # F4: the optimizer never sees the cap
             # -- spec ------------------------------------------------------

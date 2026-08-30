@@ -261,6 +261,33 @@ def _with_backend_options(
     return mutate
 
 
+def _with_placement(overrides: Mapping[str, Any]) -> Callable[[Any], Any]:
+    """Return a config mutator applying ``overrides`` to ``compute.placement``.
+
+    ``region`` is the second portable field (after ``backend_options``) whose
+    consumer is the composition root rather than the provider object: the
+    registry factory takes no arguments, so
+    :func:`kinoforge._adapters.build_provider_for` pins it onto the provider
+    after construction. A spec-level probe could never observe that, so the
+    probe is at config level — the route an operator actually uses.
+
+    Args:
+        overrides: Placement field name to replacement value.
+
+    Returns:
+        A callable suitable for ``capture_launch(mutate_cfg=...)``.
+    """
+
+    def mutate(cfg: Any) -> Any:  # noqa: ANN401 — Config, imported lazily by the tool
+        clone = cfg.model_copy(deep=True)
+        assert clone.compute is not None  # noqa: S101 — every representative config has one
+        for key, value in overrides.items():
+            setattr(clone.compute.placement, key, value)
+        return clone
+
+    return mutate
+
+
 @functools.cache
 def _baseline(provider_name: str) -> Launch:
     """Return the unmutated launch for ``provider_name``'s representative config."""
@@ -333,6 +360,32 @@ def _tracks_cfg(
             return (
                 f"backend_options probe {dict(backend_options)!r} left the "
                 f"payload at {after!r} (wanted {expected!r})"
+            )
+        return ""
+
+    return proof
+
+
+def _tracks_cfg_placement(
+    observe: _Observe,
+    *,
+    placement: Mapping[str, Any],
+    expected: Any,  # noqa: ANN401
+) -> _Proof:
+    """Proof: the observed launch value follows ``compute.placement``."""
+
+    def proof(provider_name: str) -> str:
+        before = observe(_baseline(provider_name))
+        if before == expected:
+            return (
+                f"the unmutated payload already observes {expected!r}; this "
+                "probe cannot tell a read from a constant"
+            )
+        after = observe(_probed(provider_name, cfg=_with_placement(placement)))
+        if after != expected:
+            return (
+                f"placement probe {dict(placement)!r} left the payload at "
+                f"{after!r} (wanted {expected!r})"
             )
         return ""
 
@@ -665,6 +718,13 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             backend_options={"skypilot": {"clouds": ["kfprobe"]}},
             expected="kfprobe",
         ),
+        # Like backend_options, region is pinned by the composition root
+        # after construction, so the probe has to go through the config.
+        "region": _tracks_cfg_placement(
+            lambda ln: _sky_resources(ln).get("region"),
+            placement={"region": "kf-probe-region"},
+            expected="kf-probe-region",
+        ),
         "spot": _tracks(
             lambda ln: _sky_resources(ln).get("use_spot"),
             probe={"placement.spot": True},
@@ -819,6 +879,7 @@ def test_wire_proof_holds(provider_name: str, field: str) -> None:
 _INERT_PLACEMENT_PROBES: list[tuple[str, Any]] = [
     ("accelerator_count", 4),
     ("disk_gb", 777),
+    ("region", "kf-probe-region"),
     ("spot", True),
 ]
 

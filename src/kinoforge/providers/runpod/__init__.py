@@ -398,6 +398,11 @@ class RunPodProvider(ComputeProvider):
         with no spot equivalent. Setting any of the three today changes
         nothing an operator can observe short of the invoice.
 
+        ``region`` joins them: RunPod's create mutation accepts a
+        data-centre id (``dataCenterId``) and kinoforge sends none, so a
+        pinned region reaches nothing. Wiring it is deliberately out of S2 —
+        it is new wire surface needing its own live proof.
+
         The four selection fields are CONSUMED through ``find_offers`` ->
         :func:`kinoforge.core.offers.filter_offers`, not through the launch
         payload: what reaches the wire is the chosen ``Offer``.
@@ -418,6 +423,7 @@ class RunPodProvider(ComputeProvider):
             "min_vram_gb": c,  # filter_offers excludes below the floor
             "min_cuda": c,  # filter_offers excludes below the floor
             "disk_gb": u,  # "containerDiskInGb": 250, hardcoded
+            "region": u,  # dataCenterId is never sent; RunPod picks the DC
             "spot": u,  # on-demand mutation only
             "max_usd_per_hr": c,  # filter_offers excludes pod offers above it
             # -- spec ------------------------------------------------------

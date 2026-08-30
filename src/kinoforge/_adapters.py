@@ -99,6 +99,13 @@ def build_provider_for(cfg: "Config") -> "ComputeProvider | None":
     ask ``sky.launch`` to keep retrying across zones — it was reachable
     only via the constructor before S1 (verification finding F6).
 
+    ``compute.placement.region`` arrives by the same route (S2, the other
+    half of F6): it is portable enough to live on ``Placement``, but only
+    SkyPilot honours it today, and the registry factory takes no arguments,
+    so the pin is an attribute assignment here rather than a constructor
+    call. ``None`` leaves ``sky``'s optimizer free to pick, which is the
+    pre-S2 behaviour every config that omits the key keeps.
+
     Lives here (not in core) for the same reason as
     :func:`build_heartbeat_endpoint_for`: it must import a concrete
     provider class to satisfy ``isinstance`` / attribute assignment,
@@ -133,6 +140,7 @@ def build_provider_for(cfg: "Config") -> "ComputeProvider | None":
         if opts.clouds is not None:
             provider._clouds = list(opts.clouds)
         provider._retry_until_up = opts.retry_until_up
+        provider._region = cfg.placement().region
     return provider
 
 

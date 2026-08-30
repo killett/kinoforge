@@ -792,6 +792,11 @@ class PlacementConfig(BaseModel):
         min_vram_gb: Minimum GPU VRAM in GB.
         min_cuda: Minimum CUDA version string an offer must report.
         disk_gb: Minimum disk in GB.
+        region: Cloud region to pin (e.g. ``us-west-2`` on AWS). ``None``
+            leaves the choice to the provider's optimizer. The string is a
+            CLOUD's vocabulary, so pin it alongside
+            ``compute.backend_options.skypilot.clouds`` — a region name from
+            the wrong cloud is refused or silently relocated.
         spot: Request a spot/preemptible instance when True.
         max_usd_per_hr: Ceiling on cost rate.
     """
@@ -803,6 +808,7 @@ class PlacementConfig(BaseModel):
     min_vram_gb: int = 48
     min_cuda: str = "12.8"
     disk_gb: int = 100
+    region: str | None = None
     spot: bool = False
     max_usd_per_hr: float = 2.20
 
@@ -1594,6 +1600,7 @@ class Config(BaseModel):
             min_vram_gb=p.min_vram_gb,
             min_cuda=p.min_cuda,
             disk_gb=p.disk_gb,
+            region=p.region,
             spot=p.spot,
             max_usd_per_hr=p.max_usd_per_hr,
         )
