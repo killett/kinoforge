@@ -2,16 +2,16 @@
   "smoke": "compute-seam S2 \u2014 a region pinned in YAML reaches the cloud",
   "task": "task-7 (S2 region + compute surface)",
   "config": "examples/configs/skypilot-cpu.yaml",
-  "cluster_name": "kinoforge-s2-smoke-73ac76ef",
+  "cluster_name": "kinoforge-s2-smoke-6db10f30",
   "difference_from_s1": "the provider is built by kinoforge._adapters.build_provider_for; this file passes NO region and NO cloud. S1's smoke pinned both on the constructor, so it could only prove a constructor pin reaches resources \u2014 not that any config path does.",
   "expected_region": "us-west-2",
   "expected_cloud": "aws",
   "expected_sku": "c6i.large",
   "preflight": {
     "exit_code": 0,
-    "log": "preflight: PASS \u2014 safe to spend (env ok; pods 0; tree clean; sky 0 clusters)"
+    "log": "preflight: PASS \u2014 safe to spend (attempt 2; first invocation rc=1 on a transient RunPod SSL handshake timeout, re-run clean)"
   },
-  "started_at": "2026-08-30T03:48:32.862553-07:00",
+  "started_at": "2026-08-30T04:38:53.603414-07:00",
   "utilisation_samples": [
     {
       "reachable": false,
@@ -19,8 +19,8 @@
       "mem_used_mb": null,
       "mem_total_mb": null,
       "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T03:50:16.411853-07:00",
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-6db10f30: Name or service not known",
+      "at": "2026-08-30T04:40:12.204774-07:00",
       "elapsed_s": 75.0,
       "sky_status": "starting",
       "create_thread_alive": true
@@ -31,9 +31,9 @@
       "mem_used_mb": null,
       "mem_total_mb": null,
       "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T03:52:19.203048-07:00",
-      "elapsed_s": 178.5,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-6db10f30: Name or service not known",
+      "at": "2026-08-30T04:41:34.682446-07:00",
+      "elapsed_s": 153.6,
       "sky_status": "starting",
       "create_thread_alive": true
     },
@@ -43,143 +43,11 @@
       "mem_used_mb": null,
       "mem_total_mb": null,
       "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T03:53:52.719094-07:00",
-      "elapsed_s": 301.3,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T03:57:49.345722-07:00",
-      "elapsed_s": 394.9,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Temporary failure in name resolution",
-      "at": "2026-08-30T03:59:31.865783-07:00",
-      "elapsed_s": 631.5,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T04:00:50.437347-07:00",
-      "elapsed_s": 734.0,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T04:02:09.234124-07:00",
-      "elapsed_s": 812.6,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T04:03:38.282776-07:00",
-      "elapsed_s": 891.4,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh not reachable yet (TimeoutExpired(['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10', 'kinoforge-s2-smoke-73ac76ef', \"top -bn1 | awk '/Cpu\\\\(s\\\\)/{print}'; free -m | awk '/Mem:/{print}'\"], 25))",
-      "at": "2026-08-30T04:05:36.326677-07:00",
-      "elapsed_s": 980.4,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T04:06:59.852510-07:00",
-      "elapsed_s": 1098.5,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T04:08:54.515567-07:00",
-      "elapsed_s": 1182.0,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T04:10:13.000359-07:00",
-      "elapsed_s": 1296.7,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-73ac76ef: Name or service not known",
-      "at": "2026-08-30T04:11:52.111090-07:00",
-      "elapsed_s": 1375.1,
-      "sky_status": "starting",
-      "create_thread_alive": true
-    },
-    {
-      "reachable": false,
-      "cpu_idle_pct": null,
-      "mem_used_mb": null,
-      "mem_total_mb": null,
-      "raw": null,
-      "note": "ssh rc=255: Connection timed out during banner exchange\nConnection to UNKNOWN port 65535 timed out",
-      "at": "2026-08-30T04:13:34.004612-07:00",
-      "elapsed_s": 1474.2,
-      "sky_status": "ready",
-      "create_thread_alive": true
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s2-smoke-6db10f30: Name or service not known",
+      "at": "2026-08-30T04:43:12.369395-07:00",
+      "elapsed_s": 236.1,
+      "sky_status": null,
+      "create_thread_alive": false
     }
   ],
   "cfg_region": {
@@ -188,7 +56,7 @@
     "provider_clouds": [
       "aws"
     ],
-    "at": "2026-08-30T03:48:32.862660-07:00"
+    "at": "2026-08-30T04:38:53.603517-07:00"
   },
   "yaml_pinned": {
     "status": "match",
@@ -200,87 +68,54 @@
       "region": "us-west-2",
       "cloud": "aws"
     },
-    "at": "2026-08-30T03:48:32.876170-07:00"
+    "at": "2026-08-30T04:38:53.613056-07:00"
   },
   "realized_az": {
     "status": "not-reached"
   },
   "cluster_state": {
-    "observed_ready": true,
+    "observed_ready": false,
     "statuses_seen": [
       "starting",
       "starting",
-      "starting",
-      "starting",
-      "starting",
-      "starting",
-      "starting",
-      "starting",
-      "starting",
-      "starting",
-      "starting",
-      "starting",
-      "starting",
-      "ready"
+      null,
+      null
     ],
-    "ready_at": "2026-08-30T04:13:34.004721-07:00",
-    "ready_after_s": 1474.2
+    "remote_log_tail": "\n--- stderr ---\nssh: Could not resolve hostname kinoforge-s2-smoke-6db10f30: Name or service not known\n"
   },
-  "launched_at": "2026-08-30T03:48:32.867570-07:00",
+  "launched_at": "2026-08-30T04:38:53.604675-07:00",
+  "create_instance_exception": "ResourcesUnavailableError(\"\\x1b[31mFailed to provision all possible launchable resources.\\x1b[0m Relax the task's resource requirements: 1x AWS(cpus=1+, mem=2+, image_id={'us-west-2': 'docker:runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04'}, disk_size=30)\\nTo keep retrying until the cluster is up, use the `--retry-until-up` flag.\\nReasons for provision failures (for details, please check the log above):\\nProvision failures (tried 1 infra):\\n\\n\u2717 AWS (us-west-2) \u2014 (cpus=2, mem=4, c6i.large, ...)\\n  Failed to acquire resources in all zones in us-west-2 for {AWS(cpus=1+, mem=2+, image_id",
   "teardown": {
-    "started_at": "2026-08-30T04:15:50.966745-07:00",
+    "started_at": "2026-08-30T04:43:34.838891-07:00",
     "passes": [
       {
-        "at": "2026-08-30T04:15:50.966787-07:00",
-        "forced_instance_ids": [
-          "i-03cc1169e342622b4"
-        ],
-        "sky_status": "ready",
-        "destroy_instance": "ok",
-        "ec2_states": [
-          "terminated"
-        ],
+        "at": "2026-08-30T04:43:34.838943-07:00",
+        "forced_instance_ids": [],
+        "sky_status": null,
+        "ec2_states": [],
         "ec2_readable": true,
         "launch_thread_alive": false
       },
       {
-        "at": "2026-08-30T04:18:49.362734-07:00",
-        "forced_instance_ids": [
-          "i-03cc1169e342622b4"
-        ],
+        "at": "2026-08-30T04:44:37.975150-07:00",
+        "forced_instance_ids": [],
         "sky_status": null,
-        "ec2_states": [
-          "terminated"
-        ],
-        "ec2_readable": true,
-        "launch_thread_alive": false
-      },
-      {
-        "at": "2026-08-30T04:19:57.574217-07:00",
-        "forced_instance_ids": [
-          "i-03cc1169e342622b4"
-        ],
-        "sky_status": null,
-        "ec2_states": [
-          "terminated"
-        ],
+        "ec2_states": [],
         "ec2_readable": true,
         "launch_thread_alive": false
       }
     ],
-    "final_ec2_states": [
-      "terminated"
-    ],
+    "final_ec2_states": [],
     "final_ec2_readable": true,
     "final_sky_status": null,
     "clean_streak": 2,
-    "finished_at": "2026-08-30T04:21:50.278792-07:00",
+    "finished_at": "2026-08-30T04:46:06.756415-07:00",
     "ledger_forget": "ok"
   },
   "outcome": "NOT-PROVEN",
-  "finished_at": "2026-08-30T04:21:50.279521-07:00",
-  "captured_at": "2026-08-30T04:21:50.279521-07:00",
-  "billable_wall_clock_s": 1997.4,
-  "estimated_spend_usd": 0.0472,
+  "finished_at": "2026-08-30T04:46:06.757578-07:00",
+  "captured_at": "2026-08-30T04:46:06.757578-07:00",
+  "billable_wall_clock_s": 433.2,
+  "estimated_spend_usd": 0.0102,
   "spend_basis": "list price 0.085 USD/hr for c6i.large in us-west-2, times billable wall clock \u2014 an estimate, not a reading of the invoice"
 }
