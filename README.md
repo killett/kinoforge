@@ -345,10 +345,42 @@ generalize across clouds.
 
 `placement` states resource constraints every provider understands the same way — `accelerators`
 (an ordered GPU-name preference), `accelerator_count`, `min_vram_gb`, `min_cuda`, `disk_gb`,
-`spot`, `max_usd_per_hr`. Anything provider-specific — RunPod's `cloud_type` / `capacity_wait_s`,
-SkyPilot's `clouds` / `retry_until_up` — lives under `backend_options.<provider>.*` and is
-validated by that provider's own options model: an unknown key or an unknown provider name is a
-`ConfigError` at load, not a silently-ignored field.
+`region`, `spot`, `max_usd_per_hr`. Anything provider-specific — RunPod's `cloud_type` /
+`capacity_wait_s`, SkyPilot's `clouds` / `retry_until_up` — lives under
+`backend_options.<provider>.*` and is validated by that provider's own options model: an unknown
+key or an unknown provider name is a `ConfigError` at load, not a silently-ignored field. The
+`compute` block itself now forbids unknown keys too, so `placemnt:` is refused rather than
+silently applying every placement default.
+
+**`placement.region` is portable but cloud-scoped.** `None` (the default) leaves the choice to
+the provider's optimizer, which is what every config that omits the key keeps doing. A region
+*string*, though, belongs to ONE cloud's vocabulary — `us-west-2` is AWS, `us-west1` is GCP — so
+pin it alongside the cloud it belongs to:
+
+```yaml
+compute:
+  placement:
+    region: us-west-2
+  backend_options:
+    skypilot:
+      clouds: ["aws"]
+```
+
+Without the `clouds` pin the optimizer may pick a cloud where that region does not exist, and sky
+will refuse or relocate the launch. The project's standing rule is to pin a region on every cloud,
+Oregon by default (AWS `us-west-2` / GCP `us-west1` / Azure `westus2`). Only SkyPilot honours it
+today; RunPod and Modal declare it `UNSUPPORTED` and `kinoforge doctor` reports setting it there
+as an ERROR, because nothing else in the config bounds where the run lands.
+
+Two more `compute`-level keys are worth knowing:
+
+- **`compute.tags`** — operator labels merged onto every instance the config launches. They reach
+  `Instance.tags`, which is what the ledger, `kinoforge list` and the reaper read. A
+  per-invocation tag (CLI, grid cell) wins over the config's static one; neither can overwrite
+  `kinoforge_engine` / `kinoforge_key`, which warm-reuse matching keys off.
+- **`compute.mode`** (`pod` / `serverless`) now actually reaches RunPod, which is the only
+  provider with two branches to select between. It was written by 46 shipped configs and read by
+  nothing before 2026-08.
 
 Before (pre-2026-08 shape) and after:
 
@@ -406,6 +438,14 @@ reading a `doctor` WARN as "the migration broke something" — it didn't, and th
   no substitute to warn about. On `local` it is a WARN like every other unsupported field:
   `_PROVIDER_FALLBACK` (`validation/checks/field_support.py`) downgrades the whole provider,
   because `local` is unbilled and launches nothing.
+- **`placement.region` is the second such hard `ConfigError`**, on `runpod` and `modal`. RunPod's
+  create mutation sends no `dataCenterId` and Modal is passed no `region=`, so the pin reaches
+  nothing — and no timeout or rate cap substitutes for landing in the wrong jurisdiction. No
+  shipped config sets it on either provider, so this refuses nobody today.
+
+`doctor` covers the `compute` block itself as well as `placement`, so `mode`, `tags`,
+`heartbeat_mode` and `warm_reuse_auto_attach` are checked against the same declarations. Each
+finding names its own path (`compute.mode`, not `compute.placement.mode`).
 
 Canonical example configs in `examples/configs/`:
 

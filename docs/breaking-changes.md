@@ -4,6 +4,50 @@
 
 ## Breaking changes
 
+### Compute-seam S2 — `compute` forbids unknown keys, and `mode: serverless` finally routes
+
+Two changes an existing config can notice.
+
+**1. `ComputeConfig` now carries `extra="forbid"`.** An unknown key under
+`compute:` is a load-time `ConfigError` instead of being dropped. This was
+deferred through S1 on purpose: the permissive default was hiding two keys
+operators legitimately write — `tags`, and `mode` before anything read it — so
+refusing them would have been worse than dropping them. Both are real fields
+now, which makes any remaining unknown key a typo:
+
+```diff
+ compute:
+   provider: runpod
+   image: ...
+-  placemnt:            # silently applied every placement DEFAULT, discarding this block
++  placement:
+     disk_gb: 200
+```
+
+Every shipped config still loads. S1's removed-key messages are unaffected —
+`compute.cloud` still names `compute.backend_options.skypilot.clouds` rather
+than degrading to "Extra inputs are not permitted", because that validator
+runs in `mode="before"`, ahead of pydantic's extra handling.
+
+**2. `compute.mode: serverless` now takes the serverless branch.** 46 shipped
+configs wrote `mode` and nothing read it; `RunPodProvider.create_instance`
+branched on a `spec.tags["mode"]` that no code path ever set, so
+`mode: serverless` silently created a *pod* and produced a byte-identical
+payload. `build_instance_spec` now writes the tag.
+
+If you have a RunPod config that says `mode: serverless` and has been running
+as a pod, it will now create a serverless endpoint — a different resource with
+different billing. Every shipped config is `mode: pod`, which was already the
+branch taken, so nothing in this repo changes behaviour. Change the key to
+`pod` to keep the old effect.
+
+Two related additions that break nothing: `compute.tags` is a real field (it
+was written by four shipped configs and silently dropped), and
+`compute.placement.region` is new with a `None` default meaning "let the
+provider decide". Setting `region` on a `runpod` or `modal` config IS a new
+load-time ERROR — neither provider sends it anywhere, and nothing else in the
+config bounds where the run lands. No shipped config does this.
+
 ### Compute-seam S1 — `compute.requirements` / `compute.cloud` / `compute.cloud_type` / `lifecycle.capacity_wait` removed
 
 Four config keys are gone with **no alias and no deprecation shim**. The
