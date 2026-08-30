@@ -200,6 +200,77 @@ def test_a_caller_supplied_mode_tag_still_wins_over_the_cfg() -> None:
     assert spec.tags["mode"] == "serverless"
 
 
+def test_misspelled_compute_key_is_refused() -> None:
+    """An unknown key under ``compute`` raises instead of vanishing.
+
+    Bug caught: `placemnt:` silently applies every placement default,
+    including a disk and a CUDA floor the operator never chose, and the
+    typo'd block they DID write is discarded without a word.
+    """
+    import pytest  # noqa: PLC0415
+
+    with pytest.raises(Exception) as exc:  # noqa: PT011 — pydantic vs ConfigError
+        Config.model_validate(
+            {
+                **_BASE,
+                "compute": {
+                    "provider": "runpod",
+                    "image": "i",
+                    "placemnt": {"disk_gb": 200},
+                },
+            }
+        )
+    assert "placemnt" in str(exc.value)
+
+
+def test_removed_key_error_still_names_its_replacement() -> None:
+    """S1's migration messages survive the new extra-key refusal.
+
+    Bug caught: `extra="forbid"` fires first and the operator gets
+    "Extra inputs are not permitted" instead of the path their value moved
+    to. The removed-key validator runs in `mode="before"`, which is what
+    keeps it ahead of pydantic's extra handling — this proves that ordering
+    rather than assuming it.
+    """
+    import pytest  # noqa: PLC0415
+
+    from kinoforge.core.errors import ConfigError  # noqa: PLC0415
+
+    with pytest.raises(ConfigError) as exc:
+        Config.model_validate(
+            {
+                **_BASE,
+                "compute": {
+                    "provider": "skypilot",
+                    "image": "i",
+                    "cloud": ["lambda"],
+                },
+            }
+        )
+    assert "compute.backend_options.skypilot.clouds" in str(exc.value)
+
+
+def test_every_shipped_config_still_loads() -> None:
+    """The refusal must not take a config that ships with it.
+
+    Recursive over ``examples/configs/**``, not just the top level: the grid
+    and extras trees are where the unusual compute blocks live. Fragments
+    that fail for a MISSING engine/models block are pre-existing and
+    unrelated; a failure naming an extra compute key would be this change's.
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    offenders: list[str] = []
+    for path in sorted(Path("examples/configs").rglob("*.y*ml")):
+        try:
+            load_config(str(path))
+        except Exception as exc:  # noqa: BLE001 — the message is the assertion
+            text = str(exc)
+            if "Extra inputs are not permitted" in text or "extra_forbidden" in text:
+                offenders.append(f"{path}: {text[:160]}")
+    assert not offenders, offenders
+
+
 def test_a_shipped_configs_tag_reaches_the_instance_the_ledger_sees() -> None:
     """The cfg tag survives all the way onto the Instance, not just the spec.
 

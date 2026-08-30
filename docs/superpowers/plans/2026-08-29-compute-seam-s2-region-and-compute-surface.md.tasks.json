@@ -55,7 +55,7 @@
     {
       "id": 6,
       "subject": "Task 6: `extra=\"forbid\"` on `ComputeConfig`",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Make a misspelled compute key impossible now that the two real keys it was hiding are fields.\n\n**Files:**\n- Modify: `src/kinoforge/core/config.py`\n- Test: `tests/core/test_compute_surface.py` (extend)\n\n**Acceptance Criteria:**\n- [ ] `ComputeConfig` carries `model_config = ConfigDict(extra=\"forbid\")`.\n- [ ] `compute: {placemnt: {...}}` raises rather than silently applying every default.\n- [ ] Every shipped config still loads — run `load_config` over all of `examples/configs/**` recursively, not just the top level, and name any that fail.\n- [ ] The removed-key errors from S1 still fire with their migration messages rather than being swallowed by the new extra-key error — `compute.cloud` must still say `compute.backend_options.skypilot.clouds`.\n\n**Verify:** `pixi run python -m pytest tests/core -q` and the sweep in Step 3.\n\nFull steps + code: `docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md` Task 6.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/config.py\", \"tests/core/test_compute_surface.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/core tests/validation tests/providers -q\", \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"`ComputeConfig` carries `model_config = ConfigDict(extra=\\\"forbid\\\")`.\", \"`compute: {placemnt: {...}}` raises rather than silently applying every default.\", \"Every shipped config still loads \\u2014 run `load_config` over all of `examples/configs/**` recursively, not just the top level, and name any that fail.\", \"The removed-key errors from S1 still fire with their migration messages rather than being swallowed by the new extra-key error \\u2014 `compute.cloud` must still say `compute.backend_options.skypilot.clouds`.\"]}\n```",
       "blockedBy": [
         5
@@ -80,5 +80,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-30T03:01:25"
+  "lastUpdated": "2026-08-30T03:41:52"
 }

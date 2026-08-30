@@ -918,6 +918,15 @@ class ComputeConfig(BaseModel):
             ``backend_options.runpod.*``.
     """
 
+    #: ``extra="forbid"`` (compute-seam S2), matching ``PlacementConfig``.
+    #: Deferred until S2 because the default ``extra="ignore"`` was hiding two
+    #: keys operators legitimately write — ``tags`` and, before it was read,
+    #: ``mode`` — and refusing them would have been worse than dropping them.
+    #: Now that both are fields, an unknown key here is a typo, and a typo'd
+    #: ``placemnt:`` block silently applies every placement default instead of
+    #: the values it contains.
+    model_config = ConfigDict(extra="forbid")
+
     provider: str
     image: str
     mode: str = "pod"
