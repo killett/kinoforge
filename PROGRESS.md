@@ -23,8 +23,14 @@ first unchecked task without redoing committed work.
   $0.0425. `placement.region` is reachable from YAML, `compute.tags` and `compute.mode` are real,
   the parity guard covers the whole `compute` block, and unknown compute keys are refused. See the
   RESUME SNAPSHOT for the one intended behaviour change (`mode: serverless` now routes) and which
-  two goldens moved. **S3 (setup/run split, `_strip_trailing_exec` deleted) is NEXT — not yet
-  planned.**
+  two goldens moved. **S3 (setup/run split, `_strip_trailing_exec` deleted) SHIPPED 2026-08-31** —
+  plan `docs/superpowers/plans/2026-08-31-compute-seam-s3-setup-run-split.md` (`.tasks.json`
+  co-located, 10 tasks, all committed), branch `feat/compute-seam-s3-setup-run-split`, live smoke
+  PROVEN for $0.0087. Engines now emit `(setup_steps, launch)`; `provision_script`,
+  `image_build_script`, `runtime_provision_script` and `run_cmd` are deleted. Fixed two live
+  SkyPilot bugs — the diffusers double-launch and comfyui's lost `cd` — and corrected design doc §7
+  in two places. See the RESUME SNAPSHOT for which 21 goldens moved and why.
+  **S4 (realized-rate check + the `find_offers` inversion) is NEXT — not yet planned.**
 - **NEXT (autonomous) — Modal provider roadmap brief:** `docs/superpowers/briefs/2026-07-08-modal-provider-roadmap.md`
 - **Modal spec 1 (validated):** `docs/superpowers/specs/2026-07-08-modal-provider-design.md`
 - **Modal plan (spec 1, done):** `docs/superpowers/plans/2026-07-08-modal-provider.md` (9 tasks 0-8; `.tasks.json` co-located)
@@ -398,7 +404,101 @@ first unchecked task without redoing committed work.
   longer route anyone into it. GCP's `roles.txt` is still entirely unmeasured — honest and labelled
   as such, rather than green from a caller-evaluated `testIamPermissions`.
 
-## RESUME SNAPSHOT (updated 2026-08-30 — read this, then STOP; below is history)
+## RESUME SNAPSHOT (updated 2026-08-31 — read this, then STOP; below is history)
+
+**Compute-seam S3 (setup/run split, `_strip_trailing_exec` deleted) — SHIPPED 2026-08-31.** Plan
+`docs/superpowers/plans/2026-08-31-compute-seam-s3-setup-run-split.md` (`.tasks.json` co-located),
+all 10 tasks committed on branch `feat/compute-seam-s3-setup-run-split`, commit range
+`9568dc7d`..HEAD. Live smoke **PROVEN** for **$0.0087**.
+
+**The shape.** An engine used to return one bash blob whose last line was, by convention, the
+command that started the workload. Every provider then had to guess where setup ended and the
+server began, and they guessed by substring-matching `" exec "` on the last line. `RenderedProvision`
+and `InstanceSpec` now carry a pair instead — `setup_steps: tuple[SetupStep, ...]` and
+`launch: Launch | None` — and `provision_script`, `image_build_script`, `runtime_provision_script`
+and `run_cmd` are deleted. Each provider maps the pair its own way: RunPod concatenates the steps
+and appends the launch line it needs for PID 1, SkyPilot puts the steps in `Task.setup` and the
+launch in `Task.run`, Modal partitions the steps and passes the launch as `launch_line`.
+
+**Two live bugs fixed, both confirmed from the committed goldens BEFORE the change:**
+
+| golden | `setup` last line, before | `run`, before | `run`, after |
+|---|---|---|---|
+| `skypilot-lambda-diffusers-flashvsr-upscale` | `env PYTORCH_CUDA_ALLOC_CONF=… wan_t2v_server` | the SAME command again | carries it exactly once; setup now ends at `export HF_HUB_OFFLINE=1` |
+| `skypilot-lambda-comfyui` | model download | `python main.py --listen 0.0.0.0 --port 8188` | `cd /workspace/ComfyUI && exec python main.py --listen 0.0.0.0 --port 8188` |
+
+The diffusers launch has no `exec`, so the strip never fired and the server stayed inside
+`Task.setup` — which could then never terminate, so `Task.run` either never started or started a
+second server on a bound port. The comfyui launch DID match, and the strip took
+`cd /workspace/ComfyUI` with it, so `main.py` ran from the login directory where it does not exist.
+
+**Where the plan was wrong, and what was done instead** (both corrected inline in design doc §7):
+
+1. **`Launch` needs three properties, not a bare command.** §7 said the provider appends
+   `exec <run_command>` and called PID-1 "a RunPod deployment detail". True of one of three shipped
+   engines. diffusers deliberately does NOT exec — bash must stay PID 1 so its EXIT trap fires when
+   the server dies — and comfyui needs a `cd`. `Launch(argv, workdir, exec_pid1)` carries all three
+   as properties of the WORKLOAD.
+2. **`SetupStep` needs TWO flags, not just `bakeable`.** A step can be needed at image-build AND at
+   container-start: the diffusers module embed must exist in the image so the build-phase weights
+   fetch resolves `python -m kinoforge...`, and in the container so the server imports. A single
+   boolean drops those lines out of whichever script loses them. `SetupStep(script, bakeable=False,
+   runtime=True)`.
+
+**Which goldens moved, and why.** 21 of 31, in three reviewed batches, each decoded before
+acceptance:
+
+- **Task 4 — 2 RunPod (`cost`, `sweeper`), operator-sanctioned.** The plan asserted fake-engine
+  configs only run on `local`; these two declare `engine.kind: fake` with `compute.provider:
+  runpod`. Giving fake a launch turns their boot script from `echo fake` into
+  `echo fake\nsleep infinity`. Previously that pod echoed and exited. `cost.yaml` documents that
+  the dashboard never runs the engine, so practical impact is nil.
+- **Task 5 — 5 SkyPilot.** The two bugs above. A structural diff proved every key outside
+  `task_config.setup` / `.run` byte-identical.
+- **Task 6 — 5 Modal.** Delta is exactly the launch line MOVING out of `provision_script` into the
+  new `launch_line`. `image_build_script` unchanged in all five, which is what proves the bakeable
+  partition reproduces the old build script.
+- **Task 7 — 13 RunPod + `local-fake`.** The deferred `requirements.disk_gb` -> `placement.disk_gb`
+  comment fix, which rides inside the gzip+base64-embedded `wan_t2v_server.py`. Decoding two levels
+  deep showed **one** changed source line. `local-fake` lost only the `run_cmd` echo from the
+  capture shape; LocalProvider starts nothing either way.
+
+**Live smoke (Task 8).** `tests/live/test_compute_seam_s3_setup_run_smoke.py`, evidence in
+`tests/live/_s3_smoke_evidence.json`. Cluster `kinoforge-s3-smoke-ffd0a873`, `c6i.large` in
+`us-west-2a`, preflight exit 0, ready at t+302.2 s, **$0.0087**. Live `task_config["run"]` was
+byte-identical to `render_launch(spec.launch)` computed offline from the same config before launch,
+and `task_config["setup"]` (234 lines) contained no line equal to the launch. Teardown reused S1's
+`_teardown` by import, converged over three passes, and was verified AFTER the process exited via
+`kinoforge list` (both lines), `sky status` (`No existing clusters`) and EC2 `describe-instances`
+(`i-04b38bf716869733a` = `terminated`). **Deliberately deferred:** the diffusers double-launch is
+proven fixed OFFLINE only (Task 5's goldens + tests); live proof needs a GPU config and ~$1.
+
+**Worth carrying forward:**
+- `render_launch` joins `argv` verbatim and shell-quotes only `workdir`. Deliberate — the diffusers
+  launch is an `env VAR=v python -m mod` prefix form that quoting would collapse into one unrunnable
+  word — and pinned by a test as a trade-off. An engine whose argv needs quoting must do it itself.
+- `launch=None` means BATCH. `assert_launch_capabilities` reads exactly that, and RunPod/Modal
+  refuse a spec with steps but no launch rather than booting a container that serves nothing.
+- SkyPilot's SSH-tunnel "is this a server spec" gate moved off `run_cmd` onto `launch` — a second
+  reader the plan did not list.
+
+**S1/S2 line items CLOSED by S3:** the unreadable provision blob (`wan_t2v_server.py`'s stale
+`requirements.disk_gb` comment) is fixed and shown as a one-line decoded diff.
+
+**S1/S2 line items still OPEN, unchanged by S3:**
+- `region` is wired on skypilot only; RunPod (`dataCenterId`) and Modal (`region=`) stay
+  UNSUPPORTED-and-declared, each wanting its own live proof.
+- The 11 ungated `tests/live` modules.
+- `disk_gb` and skypilot/modal `max_usd_per_hr` remain declared-and-warned, wired to nothing.
+- The golden ratchet's non-recursive glob still misses 7 configs under `grids/` and `extras/`.
+
+**SINGLE NEXT ACTION: write the S4 plan** — the realized-rate check and the `find_offers`
+inversion. Design doc §9/§10. Merge `feat/compute-seam-s3-setup-run-split` to `main` first,
+mirroring how S1 landed at `40f0596c` and S2 at `e7e1df3d`.
+
+---
+
+### Previous snapshot (2026-08-30)
 
 **Compute-seam S2 (region as a first-class field + closing the ComputeConfig surface) — SHIPPED
 2026-08-30.** Plan `docs/superpowers/plans/2026-08-29-compute-seam-s2-region-and-compute-surface.md`

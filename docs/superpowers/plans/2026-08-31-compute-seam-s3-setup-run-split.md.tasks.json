@@ -82,12 +82,12 @@
     {
       "id": 9,
       "subject": "Task 9: Docs, design-doc correction, and PROGRESS",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Leave the record accurate, including the one place the design doc was wrong.\n\n**Files:**\n- Modify: `docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md` section 7\n- Modify: `README.md`, `SPEC.md`, `docs/breaking-changes.md`, `PROGRESS.md`\n\n**Acceptance Criteria:**\n- [ ] Section 7's table and its \"appended by the provider as a trailing `exec <run_command>`\" claim are corrected inline: `Launch` carries `workdir` and `exec_pid1` because comfyui needs a `cd` and diffusers must NOT exec.\n- [ ] `docs/breaking-changes.md` gains an S3 entry: `RenderedProvision.script` is no longer what providers boot, and a custom engine returning only `script` now provisions nothing. Name the migration.\n- [ ] README and `SPEC.md` describe the pair wherever they currently describe the single script.\n- [ ] `rg -n '_strip_trailing_exec|image_build_script|runtime_provision_script'` returns nothing outside dated `docs/superpowers/**`.\n- [ ] PROGRESS's RESUME SNAPSHOT records S3 shipped, the two live bugs fixed with their evidence, which goldens moved and why, the live smoke result, and the next action (write the S4 plan).\n- [ ] S1/S2 follow-ups this stage closed are marked closed; the ones it did not stay listed.\n\n**Verify:** `pixi run test && pixi run typecheck && pixi run lint` -> all green; the `rg` check returns clean.\n\nFull steps + code: plan Task 9.\n\n```json:metadata\n{\"files\": [\"docs/superpowers/specs/2026-08-24-compute-seam-portable-core-design.md\", \"README.md\", \"SPEC.md\", \"docs/breaking-changes.md\", \"PROGRESS.md\"], \"verifyCommand\": \"pixi run test && pixi run typecheck && pixi run lint\", \"modelTier\": \"mechanical\", \"acceptanceCriteria\": [\"design doc section 7 corrected inline for workdir and exec_pid1\", \"breaking-changes gains an S3 entry naming the engine migration\", \"README and SPEC describe the steps/launch pair\", \"rg finds no stale _strip_trailing_exec or split-script references outside dated docs\", \"PROGRESS RESUME SNAPSHOT records S3 shipped with bugs, goldens, smoke and next action\", \"closed S1/S2 follow-ups marked; open ones still listed\"]}\n```",
       "blockedBy": [
         8
       ]
     }
   ],
-  "lastUpdated": "2026-08-31T08:58:13.566520"
+  "lastUpdated": "2026-08-31T09:07:05.777173"
 }

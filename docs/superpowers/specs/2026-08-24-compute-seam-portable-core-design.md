@@ -348,28 +348,58 @@ with the instance id so the reaper can finish the job.
 
 ## 7. Setup / run split, and the death of `_strip_trailing_exec`
 
-The engine emits `(setup_steps, run_command)`. Each provider maps it:
+The engine emits `(setup_steps, launch)`. Each provider maps it:
 
-| Provider | `setup_steps` | `run_command` |
+| Provider | `setup_steps` | `launch` |
 |---|---|---|
-| runpod | all steps concatenated into the `dockerArgs` script | appended by the provider as a trailing `exec <run_command>` |
-| skypilot | concatenated into `Task.setup` | `Task.run` |
-| modal | `bakeable` steps baked into the image at build; the rest run at container start | the web-server command |
+| runpod | all steps concatenated into the `dockerArgs` script | rendered and appended as the script's last line |
+| skypilot | concatenated into `Task.setup` | rendered into `Task.run` |
+| modal | `bakeable` steps baked into the image at build; `runtime` steps run at container start | rendered into `ModalAppRequest.launch_line` |
 
-The PID-1 convention becomes what it always was — a RunPod deployment detail — composed by the
-provider that needs it rather than by the engine, and undone by nobody.
-`_strip_trailing_exec` is deleted, along with the substring heuristic that could eat a legitimate
-last line.
+> **Corrected 2026-08-31, during S3 implementation.** This section originally said the engine emits
+> a `run_command` and that RunPod appends it "as a trailing `exec <run_command>`", calling the
+> PID-1 convention "a RunPod deployment detail". That is true of exactly one of the three shipped
+> engines. Verified at the time:
+>
+> | Engine | Last line of the rendered script | Reconstructible from a bare command? |
+> |---|---|---|
+> | comfyui | `cd /workspace/ComfyUI && exec python main.py <args>` | **No** — the `cd` is lost |
+> | diffusers | `env PYTORCH_CUDA_ALLOC_CONF=… python -m …` — **no `exec`, deliberately** | **No** — an `exec` would be wrong |
+> | fake | `echo fake` — no launch line at all | n/a |
+>
+> The diffusers engine does not exec because bash must remain PID 1 for its EXIT trap to fire when
+> the server dies; a provider appending `exec` unconditionally would delete that trap. So the
+> launch is **not** a bare command a provider can decorate. `Launch(argv, workdir, exec_pid1)`
+> carries all three properties, and they belong to the WORKLOAD rather than to any vendor.
+> `render_launch` joins `argv` verbatim and shell-quotes only `workdir` — deliberate, because the
+> diffusers launch is an `env VAR=v python -m mod` prefix form that quoting would collapse into one
+> unrunnable word. The cost is that an engine whose argv needs quoting must do it itself.
 
-`SetupStep.bakeable` replaces `image_build_script` / `runtime_provision_script`. It is portable
-because it states a property of the step ("safe at image-build time") rather than naming a
-provider's pipeline stage. Providers that provision at runtime ignore the flag by construction —
-which is a real "ignores it" and therefore declared as such in `consumes()`, not left implicit.
+The PID-1 convention is composed by the provider that needs it rather than by the engine, and
+undone by nobody. `_strip_trailing_exec` is deleted, along with the substring heuristic that could
+eat a legitimate last line — which it did: it removed comfyui's `cd` and never fired on diffusers,
+leaving the server inside a `Task.setup` that could then never terminate.
 
-Engines produce the steps; `RenderedProvision.script` / `build_script` / `runtime_script` are
-replaced by `setup_steps`. The byte-identity invariant that `build_script + runtime_script ==
-script` is preserved as an ordering invariant: concatenating all steps in declaration order
-reproduces today's combined script, and the golden payload snapshot (§10) proves it.
+`SetupStep` replaces `image_build_script` / `runtime_provision_script`. It is portable because it
+states properties of the step rather than naming a provider's pipeline stage. Providers that
+provision at runtime ignore the routing by construction — a real "ignores it", declared as such in
+`consumes()` rather than left implicit.
+
+> **Also corrected 2026-08-31.** `bakeable` alone is not sufficient. A step can be needed at BOTH
+> image-build and container-start time: the diffusers module embed must exist in the image so the
+> build-phase weights fetch can resolve `python -m kinoforge...`, and at container start so the
+> server can import it. `SetupStep` therefore carries two independent flags, `bakeable` and
+> `runtime` (default `False` / `True`). A single boolean would drop those lines out of whichever
+> script lost them, and a Modal container booting without `PYTHONPATH=/tmp/kfsrv` fails at import
+> with nothing in a diff to explain why.
+
+Engines produce the steps; `run_cmd`, `build_script` and `runtime_script` are deleted.
+`RenderedProvision.script` survives as a rendering of the steps for the readers that want a
+human-readable whole (`kinoforge doctor`, the C30 probe) — it is explicitly NOT what providers
+boot, and an engine that returns only `script` provisions nothing. The byte-identity invariant is
+preserved as an ordering invariant: concatenating all steps in declaration order and appending the
+rendered launch reproduces the pre-S3 combined script, asserted over every shipped config and
+proven on the wire by the golden payload snapshot (§10).
 
 ---
 

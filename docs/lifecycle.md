@@ -192,7 +192,7 @@ Four cells whose caveat matters more than the checkmark:
   money cap, not idle detection — RunPod idle reaping is controller-side
   only, which does not count as provider-enforced coverage.
 - **`skypilot` `IDLE_AUTOSTOP` holds only at `BATCH`.** A `SERVER`-shape
-  deploy's `run_cmd` is a never-terminating `Task.run`, so
+  deploy's launch is a never-terminating `Task.run`, so
   `is_cluster_idle()` is permanently `False` and autostop cannot fire —
   see `providers/skypilot/watchdog.py` for the guardrail that actually
   holds on that shape (`ON_INSTANCE_DEADLINE`).
