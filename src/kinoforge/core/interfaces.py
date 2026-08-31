@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -158,6 +159,92 @@ class Lifecycle:
     # LoRA-flexible warm-reuse: staleness threshold for the matcher's
     # pod-side free-disk + inventory snapshot. 0 disables the stale check.
     lora_swap_re_probe_after_s: float = 300.0
+
+
+@dataclass(frozen=True)
+class SetupStep:
+    """One provisioning step, with the only property a provider needs to route it.
+
+    compute-seam S3. Replaces the ``build_script`` / ``runtime_script`` pair,
+    which named Modal's pipeline stages rather than a property of the step.
+
+    Attributes:
+        script: Bash fragment. May be multi-line. Empty steps are skipped by
+            :func:`combine_steps`, so an engine can emit one unconditionally
+            for a feature that is switched off.
+        bakeable: True when the step is safe to run at IMAGE-BUILD time —
+            installs, weight fetches, anything idempotent that produces no
+            per-container state. Providers that provision at runtime ignore
+            the flag by construction and declare that they do.
+    """
+
+    script: str
+    bakeable: bool = False
+
+
+@dataclass(frozen=True)
+class Launch:
+    """How to start the workload once the setup steps have run.
+
+    Three properties of the WORKLOAD, not of a provider. ``exec_pid1`` in
+    particular is not a RunPod detail: the diffusers engine deliberately does
+    NOT exec, because bash must stay PID 1 for its EXIT trap to fire when the
+    server dies (``engines/diffusers/__init__.py``). A provider that appended
+    ``exec`` unconditionally would delete that trap.
+
+    Attributes:
+        argv: The command, pre-split. NOT shell-quoted when rendered — see
+            :func:`render_launch`.
+        workdir: Directory to ``cd`` into first; ``""`` means "wherever the
+            setup left us". comfyui needs ``/workspace/ComfyUI``.
+        exec_pid1: Replace the shell with the command, so it becomes PID 1.
+    """
+
+    argv: tuple[str, ...] = ()
+    workdir: str = ""
+    exec_pid1: bool = False
+
+
+def combine_steps(steps: Sequence[SetupStep]) -> str:
+    """Return the steps as one bash script, in declaration order.
+
+    Args:
+        steps: The steps to concatenate. Empty scripts are skipped.
+
+    Returns:
+        The joined script, without a trailing newline.
+    """
+    return "\n".join(step.script for step in steps if step.script)
+
+
+def render_launch(launch: Launch | None) -> str:
+    """Return the single bash line that starts *launch*.
+
+    ``argv`` is joined verbatim rather than shell-quoted. Every shipped engine
+    builds it from literals it has already quoted where needed, and the
+    diffusers launch is an ``env VAR=value python -m module`` prefix form that
+    quoting would collapse into one unrunnable word. ``workdir`` IS quoted,
+    because it is a path an operator could plausibly write with a space in it.
+
+    Args:
+        launch: The launch to render.
+
+    Returns:
+        One line of bash.
+
+    Raises:
+        ValueError: *launch* is None — a caller asking to start a workload
+            that declares no launch is a bug, and an empty string would hide
+            it behind a container that boots and serves nothing.
+    """
+    if launch is None:
+        raise ValueError("cannot render a launch line: this spec declares no launch")
+    command = " ".join(launch.argv)
+    if launch.exec_pid1:
+        command = f"exec {command}"
+    if launch.workdir:
+        return f"cd {shlex.quote(launch.workdir)} && {command}"
+    return command
 
 
 @dataclass(frozen=True)
