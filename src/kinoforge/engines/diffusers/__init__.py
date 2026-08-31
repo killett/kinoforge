@@ -40,8 +40,10 @@ from kinoforge.core.interfaces import (
     GenerationEngine,
     GenerationJob,
     Instance,
+    Launch,
     ModelProfile,
     RenderedProvision,
+    SetupStep,
 )
 from kinoforge.core.lora import LoraEntry
 from kinoforge.engines._wait_ready import poll_until_ready
@@ -1134,9 +1136,16 @@ class DiffusersEngine(GenerationEngine):
         lines: list[str] = list(_preamble)
         runtime_lines: list[str] = list(_preamble)
         build_lines: list[str] = []
+        # compute-seam S3: the same tagging, expressed as data. ``phase`` is
+        # already a ``bakeable`` flag in disguise — "build"/"both" ARE the
+        # bakeable steps — so each _add call records one step beside the line
+        # buckets. The buckets stay because they are what proves byte-identity
+        # while both representations coexist; they die with the legacy fields.
+        # The preamble is runtime-only, hence bakeable=False.
+        steps: list[SetupStep] = [SetupStep("\n".join(_preamble))]
 
         def _add(phase: str, *new: str) -> None:
-            """Append line(s) to the combined stream AND the phase bucket(s).
+            """Append line(s) to the combined stream, the phase bucket(s), AND steps.
 
             phase is "build", "runtime", or "both". "both" is for steps a baked
             image needs at BUILD time yet the runtime container also needs — the
@@ -1144,6 +1153,10 @@ class DiffusersEngine(GenerationEngine):
             ``python -m kinoforge...`` which resolves only against the embedded
             /tmp/kfsrv tree + PYTHONPATH, so that tree must exist in the image at
             bake time; the runtime server needs it too.
+
+            Args:
+                phase: "build", "runtime", or "both".
+                *new: The lines to append.
             """
             for ln in new:
                 lines.append(ln)
@@ -1151,6 +1164,13 @@ class DiffusersEngine(GenerationEngine):
                     build_lines.append(ln)
                 if phase in ("runtime", "both"):
                     runtime_lines.append(ln)
+            steps.append(
+                SetupStep(
+                    "\n".join(new),
+                    bakeable=phase in ("build", "both"),
+                    runtime=phase in ("runtime", "both"),
+                )
+            )
 
         if embed_modules or embed_files:
             embed_lines: list[str] = []
@@ -1248,13 +1268,22 @@ class DiffusersEngine(GenerationEngine):
             # it into the wan_t2v_server process. See wan_t2v_server.py
             # MODEL_ID = os.environ.get("WAN_MODEL_ID", "<14B-default>").
             _add("runtime", f"export WAN_MODEL_ID={shlex.quote(wan_model_id)}")
+        launch: Launch | None = None
         if server_cmd:
             # NOTE: NO `exec` prefix. Bash must remain PID 1 so the
             # EXIT trap can fire when the main server crashes (or
             # exits cleanly). Replacing bash with python via ``exec``
             # would strand the trap and the container would die at
             # the first python error.
-            _add("runtime", " ".join(server_cmd))
+            #
+            # compute-seam S3: that is a property of THIS WORKLOAD, not of a
+            # provider's convention, which is why it rides on Launch and no
+            # provider gets to append an `exec` of its own. The line is still
+            # appended to the two legacy buckets so ``script`` and
+            # ``runtime_script`` keep their current bytes; it is NOT a step.
+            launch = Launch(argv=tuple(server_cmd), exec_pid1=False)
+            lines.append(" ".join(server_cmd))
+            runtime_lines.append(" ".join(server_cmd))
 
         port = _extract_port_from_base_url(base_url)
         # 8001 is the sidecar log-server port; emitted alongside the main
@@ -1271,6 +1300,8 @@ class DiffusersEngine(GenerationEngine):
             script="\n".join(lines),
             build_script=build_script,
             runtime_script=runtime_script,
+            setup_steps=tuple(steps),
+            launch=launch,
             run_cmd=server_cmd,
             image=image,
             ports=ports,

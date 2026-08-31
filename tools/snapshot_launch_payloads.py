@@ -41,7 +41,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from kinoforge.core.config import Config
-    from kinoforge.core.interfaces import Instance, InstanceSpec, Offer
+    from kinoforge.core.interfaces import (
+        Instance,
+        InstanceSpec,
+        Offer,
+        RenderedProvision,
+    )
 
 GOLDEN_DIR = Path("tests/providers/golden/launch_payloads")
 CONFIG_DIR = Path("examples/configs")
@@ -253,6 +258,51 @@ def _diagnostic_env(cfg: Config) -> dict[str, str] | None:
     }
 
 
+def render_provision_for(cfg: Config) -> RenderedProvision:
+    """Return the payload the config's engine renders, without building a spec.
+
+    The engine-render half of :func:`build_spec`, lifted out so a test can
+    assert on what an ENGINE emits (``setup_steps`` / ``launch`` / ``script``)
+    without going through provider capture. ``build_spec`` calls this, so the
+    two can never drift.
+
+    Args:
+        cfg: The loaded config (must have a ``compute`` block).
+
+    Returns:
+        The engine's rendered provision payload.
+
+    Raises:
+        ValueError: ``cfg`` has no ``compute`` block.
+    """
+    import kinoforge._adapters  # noqa: F401 — registers engines + providers
+    from kinoforge.core import registry
+
+    if cfg.compute is None:
+        raise ValueError("render_provision_for requires a config with a compute block")
+
+    engine = registry.get_engine(cfg.engine.kind)()
+    cfg_dict: dict[str, Any] = cfg.model_dump()
+    # The orchestrator lifts the resolved Lifecycle onto cfg_dict so engines
+    # can read canonical _s-suffixed keys; render_provision depends on it.
+    cfg_dict["lifecycle"] = dataclasses.asdict(cfg.lifecycle())
+    return engine.render_provision(cfg_dict)
+
+
+def render_for_config(config_path: Path) -> RenderedProvision:
+    """Return the payload the engine renders for the config at *config_path*.
+
+    Args:
+        config_path: Path to a YAML config carrying a ``compute:`` block.
+
+    Returns:
+        The engine's rendered provision payload.
+    """
+    from kinoforge.core.config import load_config
+
+    return render_provision_for(load_config(str(config_path)))
+
+
 def build_spec(cfg: Config) -> InstanceSpec:
     """Build the InstanceSpec the orchestrator would build, deterministically.
 
@@ -280,11 +330,7 @@ def build_spec(cfg: Config) -> InstanceSpec:
 
     engine = registry.get_engine(cfg.engine.kind)()
     lifecycle = cfg.lifecycle()
-    cfg_dict: dict[str, Any] = cfg.model_dump()
-    # The orchestrator lifts the resolved Lifecycle onto cfg_dict so engines
-    # can read canonical _s-suffixed keys; render_provision depends on it.
-    cfg_dict["lifecycle"] = dataclasses.asdict(lifecycle)
-    rendered = engine.render_provision(cfg_dict)
+    rendered = render_provision_for(cfg)
     return build_instance_spec(
         cfg=cfg,
         rendered=rendered,

@@ -176,10 +176,19 @@ class SetupStep:
             installs, weight fetches, anything idempotent that produces no
             per-container state. Providers that provision at runtime ignore
             the flag by construction and declare that they do.
+        runtime: True when the step must ALSO run at container start. The two
+            flags are independent because a step can be both: the diffusers
+            module embed has to exist in the image so the build-phase weights
+            fetch can resolve ``python -m kinoforge...``, AND at container
+            start so the server can. A single flag would force such a step out
+            of one of the two scripts, and whichever one lost it would boot
+            without ``PYTHONPATH=/tmp/kfsrv``. ``bakeable=False, runtime=True``
+            is the default and the common case.
     """
 
     script: str
     bakeable: bool = False
+    runtime: bool = True
 
 
 @dataclass(frozen=True)

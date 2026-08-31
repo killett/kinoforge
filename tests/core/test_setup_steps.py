@@ -38,10 +38,32 @@ def test_combining_no_steps_is_the_empty_string() -> None:
     assert combine_steps(()) == ""
 
 
-def test_bakeable_defaults_to_false() -> None:
-    """Bug caught: defaulting to True would bake a runtime step — an ``export``
-    or a keep-alive trap — into an image where it runs once and never again."""
+def test_bakeable_defaults_to_false_and_runtime_defaults_to_true() -> None:
+    """Bug caught: defaulting ``bakeable`` to True would bake a runtime step —
+    an ``export`` or a keep-alive trap — into an image where it runs once and
+    never again. Defaulting ``runtime`` to False would drop every unannotated
+    step out of the container-start script entirely."""
     assert SetupStep("x").bakeable is False
+    assert SetupStep("x").runtime is True
+
+
+def test_the_two_flags_are_independent_so_a_step_can_be_both() -> None:
+    """The tri-state the engines actually need, expressed as two booleans.
+
+    Bug caught: a single flag cannot express "runs at bake time AND at
+    container start". The diffusers module embed is exactly that — the image
+    needs ``/tmp/kfsrv`` so the build-phase weights fetch resolves
+    ``python -m kinoforge...``, and the container needs it so the server
+    imports. Collapsing the two would drop those lines from one of the two
+    scripts, and a container booting without ``PYTHONPATH=/tmp/kfsrv`` fails
+    at import with nothing in the diff to show why.
+    """
+    both = SetupStep("embed", bakeable=True, runtime=True)
+    build_only = SetupStep("pip install", bakeable=True, runtime=False)
+    runtime_only = SetupStep("export A=1", bakeable=False, runtime=True)
+    steps = (both, build_only, runtime_only)
+    assert combine_steps(tuple(s for s in steps if s.bakeable)) == "embed\npip install"
+    assert combine_steps(tuple(s for s in steps if s.runtime)) == "embed\nexport A=1"
 
 
 def test_setup_step_and_launch_are_frozen() -> None:
