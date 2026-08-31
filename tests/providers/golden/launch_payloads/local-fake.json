@@ -6,10 +6,6 @@
     "ports": [
       "8000"
     ],
-    "run_cmd": [
-      "sleep",
-      "infinity"
-    ],
     "status": "ready",
     "tags": {
       "kinoforge_engine": "fake",

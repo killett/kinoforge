@@ -36,8 +36,10 @@ from kinoforge.core.interfaces import (
     HardwareRequirements,
     Instance,
     InstanceSpec,
+    Launch,
     Lifecycle,
     Offer,
+    SetupStep,
 )
 
 # Module-level constants
@@ -1246,8 +1248,6 @@ def _watchdog_spec(**overrides: Any) -> InstanceSpec:
             cost_rate_usd_per_hr=0.0,
             mode="pod",
         ),
-        "provision_script": "",
-        "run_cmd": [],
     }
     base.update(overrides)
     return InstanceSpec(**base)
@@ -1270,7 +1270,7 @@ def test_setup_is_always_present_and_carries_the_arming_step() -> None:
     assert "# --- kinoforge watchdog arm" in config["setup"]
 
 
-def test_arming_precedes_the_provision_script() -> None:
+def test_arming_precedes_the_setup_steps() -> None:
     """The watchdog is armed before the heavy installs, not after.
 
     A bug this catches: appending the arming step, so a cluster that dies
@@ -1282,7 +1282,7 @@ def test_arming_precedes_the_provision_script() -> None:
     fake = _FakeSky()
     provider = SkyPilotProvider(sky_client=fake)
     provider.create_instance(
-        _watchdog_spec(provision_script="pip install --quiet torch\n")
+        _watchdog_spec(setup_steps=(SetupStep("pip install --quiet torch\n"),))
     )
     setup = fake.Task.from_yaml_config_calls[-1]["setup"]
     assert setup.index("# --- kinoforge watchdog arm") < setup.index(
@@ -1456,7 +1456,9 @@ def test_tunnel_failure_keeps_the_provisional_row() -> None:
 
     with pytest.raises(ProvisionFailed):
         provider.create_instance(
-            _watchdog_spec(run_id="kf-orphan", run_cmd=["sleep", "1"])
+            # A launch is what makes this a SERVER spec, which is what makes
+            # create_instance attempt the tunnel this test forces to fail.
+            _watchdog_spec(run_id="kf-orphan", launch=Launch(("sleep", "1")))
         )
 
     assert ledger.forgotten == [], ledger.forgotten

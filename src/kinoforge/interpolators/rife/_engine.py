@@ -108,7 +108,6 @@ class RifeEngine(PodHTTPClientMixin, InterpolatorEngine):
         )
         return RenderedProvision(
             script=script,
-            run_cmd=[],
             image="",
             ports=[],
             env_required=["HF_TOKEN"],

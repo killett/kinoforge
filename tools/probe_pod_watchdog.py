@@ -232,7 +232,9 @@ def main() -> int:
     from kinoforge.core.interfaces import (
         HardwareRequirements,
         InstanceSpec,
+        Launch,
         Lifecycle,
+        SetupStep,
     )
     from kinoforge.providers.runpod.selfterm import RENDER as render_selfterm
 
@@ -278,8 +280,8 @@ def main() -> int:
         env={"KINOFORGE_SELFTERM_SCRIPT": selfterm_script},
         tags={"mode": "pod", "kinoforge_purpose": "selfterm_probe"},
         run_id="kinoforge-watchdog-probe",
-        provision_script=bootstrap,
-        run_cmd=["sleep", "600"],
+        setup_steps=(SetupStep(bootstrap),),
+        launch=Launch(("sleep", "600")),
     )
 
     def _create_pod_and_get_id() -> str:

@@ -100,31 +100,14 @@ def build_instance_spec(
         tags=merged_tags,
         env=merged_env,
         run_id=run_id,
-        # Empty -> None, matching the image_build_script / runtime_provision_script
-        # coercion below. rendered.script is a required `str` (never None) on
-        # RenderedProvision, so the bare `deploy()` call site — which has no
-        # real provision script — must express "none" as "" and rely on this
-        # coercion; without it RunPod's `_encode_provision_script` sees a
-        # non-None "" and wraps it in a base64/gzip decode-and-run docker
-        # command instead of leaving dockerArgs empty.
-        # This also changes `deploy_session`, whose pre-S1 closure passed
-        # `rendered.script` through verbatim: an engine that rendered `script=""`
-        # used to get that same empty decode-and-run wrapper and now gets an
-        # empty dockerArgs. Inert today — all three engines (comfyui, diffusers,
-        # fake) render a non-empty script on that path, so no shipped config
-        # reaches the delta, which is why the golden ratchet shows no movement.
-        # It is called out because it landed in the one commit window the
-        # ratchet could not cover; a future engine that legitimately renders an
-        # empty script gets the (correct) empty-dockerArgs behaviour, not the
-        # old no-op wrapper.
-        provision_script=(rendered.script or None),
-        # Modal fast-boot split: bake image_build_script into the image,
-        # boot with runtime_provision_script only. Empty -> None so
-        # non-splitting engines/providers see no change (RunPod uses the
-        # combined provision_script above regardless).
-        image_build_script=(rendered.build_script or None),
-        runtime_provision_script=(rendered.runtime_script or None),
-        run_cmd=rendered.run_cmd,
+        # compute-seam S3: the setup/run pair rides through untouched. No
+        # coercion and no synthesis — an engine that emits no steps gets `()`
+        # and one that starts nothing gets `None`, and a provider is entitled
+        # to tell those apart. An engine that renders a `script` but no steps
+        # provisions NOTHING, deliberately: a synthesised launch is the guess
+        # this stage exists to remove.
+        setup_steps=tuple(rendered.setup_steps),
+        launch=rendered.launch,
         # compute-seam S1: the portable resource block travels on the spec so
         # a provider reads what to get from one place (SkyPilot's use_spot,
         # S4's declarative selection) instead of re-deriving it from cfg.

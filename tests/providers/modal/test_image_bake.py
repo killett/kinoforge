@@ -13,7 +13,7 @@ import base64
 import gzip
 from typing import Any
 
-from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer
+from kinoforge.core.interfaces import InstanceSpec, Launch, Lifecycle, Offer, SetupStep
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.providers.modal._app import ModalAppRequest, build_modal_app
 
@@ -96,7 +96,7 @@ def test_build_modal_app_bakes_build_script() -> None:
         image="python:3.13-slim",
         gpu="A100-80GB",
         provision_script="exec server\n",
-        run_cmd=["python", "-m", "s"],
+        launch_line="python -m s",
         image_build_script="set -euo pipefail\npip install torch==2.6.0\n",
     )
     build_modal_app(req, fake_modal)
@@ -136,7 +136,7 @@ def test_no_build_script_skips_run_commands() -> None:
         image="python:3.13-slim",
         gpu="A10",
         provision_script="exec server\n",
-        run_cmd=["python", "-m", "s"],
+        launch_line="python -m s",
         image_build_script=None,
     )
     build_modal_app(req, _FakeModal(calls))
@@ -157,16 +157,17 @@ def _spec(**over: Any) -> InstanceSpec:
             cost_rate_usd_per_hr=3.0,
         ),
         run_id="run1",
-        run_cmd=["python", "-m", "s"],
+        setup_steps=(SetupStep("echo hi"),),
+        launch=Launch(("python", "-m", "s")),
         lifecycle=Lifecycle(boot_timeout_s=1800.0),
     )
     base.update(over)
     return InstanceSpec(**base)
 
 
-def test_boot_payload_uses_runtime_script_only() -> None:
-    # create_instance must pass the runtime script (no pip/BSA) as the boot
-    # payload and forward the build script for the image bake.
+def test_boot_payload_uses_the_runtime_steps_only() -> None:
+    # create_instance must pass the runtime partition (no pip/BSA) as the boot
+    # payload and the bakeable partition for the image bake.
     captured: dict[str, Any] = {}
 
     def _factory(req: ModalAppRequest, _mod: object) -> tuple[object, object]:
@@ -179,28 +180,31 @@ def test_boot_payload_uses_runtime_script_only() -> None:
         clock=lambda: 0.0,
     )
     spec = _spec(
-        provision_script="set -e\npip install torch\nexec server\n",
-        runtime_provision_script="set -e\nexec server\n",
-        image_build_script="set -e\npip install torch\n",
+        setup_steps=(
+            SetupStep("pip install torch", bakeable=True, runtime=False),
+            SetupStep("echo starting"),
+        ),
+        launch=Launch(("exec-server",)),
     )
     provider.create_instance(spec)
     req = captured["req"]
     assert "pip install" not in req.provision_script
-    assert "exec server" in req.provision_script
+    assert "echo starting" in req.provision_script
+    assert req.launch_line == "exec-server"
     assert req.image_build_script and "pip install" in req.image_build_script
 
 
-def test_boot_payload_falls_back_to_combined_when_no_runtime_split() -> None:
-    # A non-splitting engine (runtime_provision_script None) still boots via the
-    # combined provision_script — backward compatible.
+def test_an_engine_with_no_bakeable_steps_bakes_nothing() -> None:
+    # A non-splitting engine (every step runtime-only) boots the whole thing at
+    # container start and skips the image bake entirely.
     captured: dict[str, Any] = {}
     provider = ModalProvider(
         app_factory=lambda req, _m: (captured.setdefault("req", req), ("a", "s"))[1],
         deployer=lambda a, s: "https://x.modal.run",
         clock=lambda: 0.0,
     )
-    provider.create_instance(_spec(provision_script="set -e\nexec server\n"))
-    assert "exec server" in captured["req"].provision_script
+    provider.create_instance(_spec(setup_steps=(SetupStep("set -e\necho ready"),)))
+    assert "echo ready" in captured["req"].provision_script
     assert captured["req"].image_build_script is None
 
 
@@ -221,14 +225,10 @@ def test_baked_flashvsr_boot_payload_has_no_heavy_installs() -> None:
         deployer=lambda a, s: "https://x.modal.run",
         clock=lambda: 0.0,
     )
-    spec = _spec(
-        provision_script=rendered.script,
-        runtime_provision_script=rendered.runtime_script,
-        image_build_script=rendered.build_script,
-    )
+    spec = _spec(setup_steps=rendered.setup_steps, launch=rendered.launch)
     provider.create_instance(spec)
-    # The boot payload is provision_script + `exec run_cmd`.
-    payload = captured["req"].provision_script
+    # The boot payload is the runtime steps plus the rendered launch line.
+    payload = captured["req"].provision_script + "\n" + captured["req"].launch_line
     assert "wan_t2v_server" in payload
     assert "pip install" not in payload
     assert "block_sparse_attn" not in payload
@@ -249,7 +249,7 @@ def test_baked_payload_decodes_clean_in_secret_env() -> None:
         image="python:3.13-slim",
         gpu="A100-80GB",
         provision_script="set -e\nexec server\n",
-        run_cmd=["python", "-m", "s"],
+        launch_line="python -m s",
         image_build_script="pip install torch\n",
     )
     env = _payload_secret_env(_boot_payload(req))

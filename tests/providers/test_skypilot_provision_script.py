@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kinoforge.core.interfaces import InstanceSpec
+from kinoforge.core.interfaces import InstanceSpec, Launch, SetupStep
 from kinoforge.providers.skypilot import SkyPilotProvider
 
 
@@ -74,7 +74,7 @@ def test_create_instance_with_provision_script_maps_to_setup() -> None:
     p = SkyPilotProvider(sky_client=sky)
     spec = InstanceSpec(
         image="img:latest",
-        provision_script="set -e\necho hi\n",
+        setup_steps=(SetupStep("set -e\necho hi\n"),),
     )
     p.create_instance(spec)
     task_config = sky.launches[0][0]
@@ -88,109 +88,117 @@ def test_create_instance_with_run_cmd_maps_shell_quoted_to_run() -> None:
     p = SkyPilotProvider(sky_client=sky)
     spec = InstanceSpec(
         image="img:latest",
-        run_cmd=["python", "main.py", "--listen", "0.0.0.0"],
+        launch=Launch(("python", "main.py", "--listen", "0.0.0.0")),
     )
     p.create_instance(spec)
     task_config = sky.launches[0][0]
     assert task_config["run"] == "python main.py --listen 0.0.0.0"
 
 
-def test_create_instance_with_args_containing_spaces_shell_quotes_them() -> None:
+def test_create_instance_joins_launch_argv_verbatim_without_quoting() -> None:
+    """``run`` is ``render_launch``'s output, and that does NOT quote argv.
+
+    This is a deliberate asymmetry, pinned here because it is a real trade-off
+    rather than an oversight. Before compute-seam S3 this provider rebuilt the
+    line by ``shlex.quote``-joining ``run_cmd``, which is exactly what dropped
+    comfyui's ``cd`` and its ``exec``. ``render_launch`` therefore emits argv
+    as written; the diffusers launch is an ``env VAR=v python -m mod`` prefix
+    form that quoting would collapse into one unrunnable word.
+
+    The cost: an engine whose argv contains shell metacharacters must quote
+    them itself. No shipped engine does — all three build argv from literals —
+    and the golden ratchet would catch one that started.
+    """
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
     spec = InstanceSpec(
         image="img:latest",
-        run_cmd=["python", "-c", "print('hello world')"],
+        launch=Launch(("python", "-c", "print('hello world')")),
     )
     p.create_instance(spec)
-    task_config = sky.launches[0][0]
-    # shlex.quote wraps the arg with single quotes when it contains shell meta-chars
-    assert task_config["run"] == "python -c 'print('\"'\"'hello world'\"'\"')'"
+    assert sky.launches[0][0]["run"] == "python -c print('hello world')"
 
 
-def test_create_instance_with_empty_run_cmd_omits_run_key() -> None:
-    """Empty run_cmd is treated as 'not set' — no `run` key emitted."""
+def test_create_instance_without_a_launch_omits_the_run_key() -> None:
+    """No launch means no ``run`` key — a BATCH spec, not a server."""
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
-    spec = InstanceSpec(image="img:latest", run_cmd=[])
+    spec = InstanceSpec(image="img:latest", setup_steps=(SetupStep("echo hi"),))
     p.create_instance(spec)
     task_config = sky.launches[0][0]
     assert "run" not in task_config
 
 
-def test_create_instance_with_empty_provision_script_still_carries_watchdog_arm() -> (
-    None
-):
-    """Empty provision_script contributes nothing extra, but ``setup`` is still armed."""
+def test_create_instance_with_no_steps_still_carries_watchdog_arm() -> None:
+    """A step-less spec contributes nothing extra, but ``setup`` is still armed."""
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
-    spec = InstanceSpec(image="img:latest", provision_script="")
+    spec = InstanceSpec(image="img:latest")
     p.create_instance(spec)
     task_config = sky.launches[0][0]
     assert "# --- kinoforge watchdog arm" in task_config["setup"]
 
 
-def test_create_instance_with_only_run_cmd_still_carries_watchdog_arm() -> None:
-    """Setting run_cmd alone still arms the watchdog in `setup` — no spurious script content."""
+def test_create_instance_with_only_a_launch_still_carries_watchdog_arm() -> None:
+    """A launch with no steps still arms the watchdog — no spurious setup content."""
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
-    spec = InstanceSpec(image="img:latest", run_cmd=["python", "main.py"])
+    spec = InstanceSpec(image="img:latest", launch=Launch(("python", "main.py")))
     p.create_instance(spec)
     task_config = sky.launches[0][0]
     assert "# --- kinoforge watchdog arm" in task_config["setup"]
     assert task_config["run"] == "python main.py"
 
 
-def test_create_instance_strips_trailing_exec_from_setup_script() -> None:
-    """provision_script ending in `exec <cmd>` has that line removed in Task.setup."""
-    sky = _FakeSky()
-    p = SkyPilotProvider(sky_client=sky)
-    script = (
-        "set -euo pipefail\n"
-        "cd /workspace\n"
-        "git clone --depth 1 https://example/x.git\n"
-        "cd /workspace/ComfyUI && exec python main.py --port 8188\n"
-    )
-    spec = InstanceSpec(
-        image="img:latest",
-        provision_script=script,
-        run_cmd=["python", "main.py", "--port", "8188"],
-    )
-    p.create_instance(spec)
-    task_config = sky.launches[0][0]
-    assert "exec " not in task_config["setup"], task_config["setup"]
-    assert "python main.py" in task_config["run"]
+def test_create_instance_appends_the_steps_verbatim() -> None:
+    """The steps land after the watchdog arm unchanged.
 
-
-def test_create_instance_preserves_script_without_trailing_exec() -> None:
-    """provision_script without a trailing exec line is appended after the watchdog arm unchanged."""
+    Nothing is stripped off the end any more. ``_strip_trailing_exec`` used to
+    remove the last line whenever it contained ``" exec "``, which is how
+    comfyui's ``cd /workspace/ComfyUI &&`` got discarded; the launch now
+    arrives as data on ``spec.launch`` instead of being guessed at here.
+    """
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
     script = "set -euo pipefail\necho preparing\n"
-    spec = InstanceSpec(image="img:latest", provision_script=script)
+    spec = InstanceSpec(image="img:latest", setup_steps=(SetupStep(script),))
     p.create_instance(spec)
     assert sky.launches[0][0]["setup"].endswith(script)
 
 
-def test_create_instance_strips_diffusers_bare_exec_line() -> None:
-    """Diffusers script ends with `exec python -m diffusers_server` (bare exec, no &&).
+def test_create_instance_maps_setup_steps_to_setup_and_launch_to_run() -> None:
+    """The split, at the provider's own seam.
 
-    Regression for the dual-exec hazard — _strip_trailing_exec must handle both
-    ComfyUI's `cd ... && exec ...` shape AND Diffusers' bare `exec ...` shape.
+    Bug caught: putting the launch in ``setup`` (or the steps in ``run``)
+    reproduces the exact hang this stage removed — ``Task.setup`` cannot
+    terminate while it is running a server, so ``Task.run`` never starts.
     """
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
-    script = (
-        "set -euo pipefail\n"
-        "pip install -q diffusers transformers\n"
-        "exec python -m diffusers_server\n"
-    )
     spec = InstanceSpec(
         image="img:latest",
-        provision_script=script,
-        run_cmd=["python", "-m", "diffusers_server"],
+        setup_steps=(SetupStep("pip install -q x"), SetupStep("echo ready")),
+        launch=Launch(("python", "main.py"), workdir="/srv", exec_pid1=True),
     )
     p.create_instance(spec)
     task_config = sky.launches[0][0]
-    assert "exec " not in task_config["setup"], task_config["setup"]
-    assert task_config["run"] == "python -m diffusers_server"
+    assert task_config["setup"].endswith("pip install -q x\necho ready")
+    assert task_config["run"] == "cd /srv && exec python main.py"
+
+
+def test_create_instance_renders_the_launch_rather_than_rejoining_argv() -> None:
+    """``run`` is ``render_launch``'s output, workdir and all.
+
+    Bug caught: re-deriving the line by shell-quoting and joining the argv is
+    exactly what dropped comfyui's ``cd`` and its ``exec``, and it would do so
+    silently while every other test here stayed green.
+    """
+    sky = _FakeSky()
+    p = SkyPilotProvider(sky_client=sky)
+    spec = InstanceSpec(
+        image="img:latest",
+        setup_steps=(SetupStep("echo hi"),),
+        launch=Launch(("python", "main.py"), workdir="/workspace/ComfyUI"),
+    )
+    p.create_instance(spec)
+    assert sky.launches[0][0]["run"] == "cd /workspace/ComfyUI && python main.py"

@@ -108,9 +108,10 @@ def test_render_provision_script_ends_with_server_cmd_no_exec() -> None:
     assert not rp.script.rstrip().endswith("exec python -m diffusers_server")
 
 
-def test_render_provision_run_cmd_matches_server_cmd() -> None:
+def test_render_provision_launch_matches_server_cmd() -> None:
     rp = _make_engine().render_provision(_minimal_cfg())
-    assert rp.run_cmd == ["python", "-m", "diffusers_server"]
+    assert rp.launch is not None
+    assert rp.launch.argv == ("python", "-m", "diffusers_server")
 
 
 def test_render_provision_default_image_is_stock_runpod_pytorch() -> None:

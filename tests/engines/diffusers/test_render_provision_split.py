@@ -2,9 +2,14 @@
 
 The Modal fast-boot image-bake feature (2026-07-10) needs the slow install
 steps (pip, BSA wheel, FlashVSR weights) separated from the fast container-start
-steps (log surface, trap, embed, exec server) so Modal can bake the former into
-the image at build time. RunPod still provisions at runtime and must see the
-combined ``script`` unchanged — hence the golden byte-identity test.
+steps (log surface, trap, embed) so Modal can bake the former into the image at
+build time. RunPod still provisions at runtime and must see the combined
+``script`` unchanged — hence the golden byte-identity test.
+
+compute-seam S3 replaced the ``build_script`` / ``runtime_script`` string pair
+with per-step ``bakeable`` / ``runtime`` flags, and moved the server launch out
+of the scripts entirely onto ``RenderedProvision.launch``. The partitions below
+are what Modal now composes, so these assertions still pin the same behaviour.
 """
 
 import importlib.resources
@@ -15,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from kinoforge.core.config import load_config
-from kinoforge.core.interfaces import RenderedProvision
+from kinoforge.core.interfaces import RenderedProvision, combine_steps
 from kinoforge.engines.diffusers import DiffusersEngine, _render_embed_lines
 
 _GOLDEN = json.loads(Path("tests/engines/diffusers/_golden_provision.json").read_text())
@@ -25,6 +30,16 @@ _WAN = "examples/configs/modal-diffusers-wan-2_1-1_3b-t2v.yaml"
 
 def _render(path: str) -> RenderedProvision:
     return DiffusersEngine().render_provision(load_config(path).model_dump())
+
+
+def _build_script(rp: RenderedProvision) -> str:
+    """Return the steps Modal bakes into the image."""
+    return combine_steps(tuple(s for s in rp.setup_steps if s.bakeable))
+
+
+def _runtime_script(rp: RenderedProvision) -> str:
+    """Return the steps Modal runs at container start."""
+    return combine_steps(tuple(s for s in rp.setup_steps if s.runtime))
 
 
 def test_script_is_byte_identical_to_golden():
@@ -38,7 +53,7 @@ def test_flashvsr_build_script_has_installs_not_runtime():
     # Bug caught: pip/BSA/weights leak out of build_script -> Modal can't bake
     # them, or runtime-only bits (server exec, sidecar, trap) get baked into the
     # image where they don't belong.
-    b = _render(_FLASHVSR).build_script
+    b = _build_script(_render(_FLASHVSR))
     assert "pip install" in b
     assert "block_sparse_attn" in b  # BSA wheel curl+install (composed upscaler)
     assert "FlashVSR" in b or "flashvsr" in b  # weights fetch
@@ -57,8 +72,10 @@ def test_flashvsr_runtime_script_has_server_not_installs():
     # Bug caught: the heavy installs stay in runtime_script -> Modal re-downloads
     # everything at container start, re-opening the ~15min preemption window that
     # killed the 2026-07-09 FlashVSR live run.
-    r = _render(_FLASHVSR).runtime_script
-    assert "wan_t2v_server" in r  # the server_cmd line
+    r = _runtime_script(_render(_FLASHVSR))
+    # The module tree is embedded at container start (S3 moved the server
+    # COMMAND out to `launch`; the embedded `wan_t2v_server.py` file stays).
+    assert "wan_t2v_server.py" in r
     assert "/tmp/bootstrap.log" in r  # runtime log redirect
     assert "sleep infinity" in r  # keep-alive trap preamble
     assert "block_sparse_attn" not in r  # BSA is baked, not runtime
@@ -73,7 +90,7 @@ def test_flashvsr_build_script_embeds_before_weights_fetch():
     # ModuleNotFoundError and the Modal image bake fails before any GPU spend.
     # The embed (+ PYTHONPATH export) must appear in build_script BEFORE the
     # fetch line.
-    b = _render(_FLASHVSR).build_script
+    b = _build_script(_render(_FLASHVSR))
     pythonpath_pos = b.find("export PYTHONPATH=/tmp/kfsrv")
     # Match the fetch INVOCATION, not the embed's .../_fetch_weights.py write.
     fetch_pos = b.find("python -m kinoforge.upscalers.flashvsr._fetch_weights")
@@ -81,7 +98,7 @@ def test_flashvsr_build_script_embeds_before_weights_fetch():
     assert fetch_pos != -1, "weights fetch missing from build_script"
     assert pythonpath_pos < fetch_pos, "PYTHONPATH must be set before the fetch"
     # The embed is ALSO in runtime (the server needs it) — appears in both.
-    assert "export PYTHONPATH=/tmp/kfsrv" in _render(_FLASHVSR).runtime_script
+    assert "export PYTHONPATH=/tmp/kfsrv" in _runtime_script(_render(_FLASHVSR))
 
 
 class _FakeResource:
@@ -134,9 +151,13 @@ def test_wan_cfg_without_upscaler_has_no_build_script():
     # Bug caught: a plain Wan t2v cfg (pip only) should still populate build_script
     # with its pip line but never with upscaler/server bits; runtime carries server.
     rp = _render(_WAN)
-    assert "pip install" in rp.build_script
-    # server EXEC (module -m invocation) is runtime, not build:
+    assert "pip install" in _build_script(rp)
+    # The server launch is in NEITHER script any more — it is the launch, which
+    # is the whole point of S3: a provider composes it where its own convention
+    # needs it rather than finding it at the end of a script.
     exec_line = "python -m kinoforge.engines.diffusers.servers.wan_t2v_server"
-    assert exec_line not in rp.build_script
-    assert exec_line in rp.runtime_script
-    assert "pip install" not in rp.runtime_script
+    assert exec_line not in _build_script(rp)
+    assert exec_line not in _runtime_script(rp)
+    assert rp.launch is not None
+    assert " ".join(rp.launch.argv) == exec_line
+    assert "pip install" not in _runtime_script(rp)

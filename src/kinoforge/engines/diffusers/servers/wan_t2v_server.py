@@ -46,7 +46,7 @@ from typing import Any, Literal, TypedDict
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 # Pin HF cache onto the /workspace volume so the 70 GB shard download
 # does not exhaust the 50 GB container disk. /workspace is the RunPod
-# volume mount (volumeInGb in the cfg's requirements.disk_gb).
+# volume mount (volumeInGb in the cfg's placement.disk_gb).
 os.environ.setdefault("HF_HOME", "/workspace/.hf_cache")
 
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402

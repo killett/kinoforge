@@ -154,10 +154,18 @@ def test_render_provision_script_ends_with_exec_run_cmd() -> None:
     )
 
 
-def test_render_provision_run_cmd_matches_launch_args() -> None:
-    """run_cmd mirrors the launch_args list with python main.py prefix."""
+def test_render_provision_launch_matches_launch_args() -> None:
+    """The launch argv mirrors launch_args with a python main.py prefix."""
     rp = _make_engine().render_provision(_minimal_cfg())
-    assert rp.run_cmd == ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188"]
+    assert rp.launch is not None
+    assert rp.launch.argv == (
+        "python",
+        "main.py",
+        "--listen",
+        "0.0.0.0",
+        "--port",
+        "8188",
+    )
 
 
 def test_render_provision_port_parsed_from_launch_args() -> None:

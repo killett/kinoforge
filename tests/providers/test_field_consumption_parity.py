@@ -43,6 +43,11 @@ from kinoforge.core.interfaces import (
     Offer,
     Placement,
 )
+
+# Aliased: ``Launch`` is already the name of the CAPTURED-launch record this
+# module imports from the snapshot tool. These two are the spec fields.
+from kinoforge.core.interfaces import Launch as SpecLaunch
+from kinoforge.core.interfaces import SetupStep as SpecSetupStep
 from kinoforge.providers.local import LocalProvider
 from kinoforge.providers.modal import ModalProvider
 from kinoforge.providers.runpod import RunPodProvider
@@ -57,10 +62,8 @@ _SPEC_PORTABLE = {
     "env",
     "tags",
     "run_id",
-    "provision_script",
-    "run_cmd",
-    "image_build_script",
-    "runtime_provision_script",
+    "setup_steps",
+    "launch",
     "lifecycle",
     "offer",
     "backend_options",
@@ -806,9 +809,20 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"run_id": "kf-probe-run"},
             expected="kf-probe-run",
         ),
-        "provision_script": _tracks(
-            lambda ln: "kf-probe-provision-marker" in _runpod_provision_script(ln),
-            probe={"provision_script": _PROBE_SCRIPT},
+        # S3: the engine emits steps + a launch and RunPod composes the script
+        # from them, so these two are what reach the wire. Both proofs decode
+        # the gzip+base64 blob — an envelope-only check would pass against a
+        # script that never moved.
+        "setup_steps": _tracks(
+            lambda ln: "kf-probe-step-marker" in _runpod_provision_script(ln),
+            probe={"setup_steps": (SpecSetupStep("echo kf-probe-step-marker"),)},
+            expected=True,
+        ),
+        "launch": _tracks(
+            lambda ln: (
+                _runpod_provision_script(ln).rstrip().endswith("kf-probe-launch")
+            ),
+            probe={"launch": SpecLaunch(("kf-probe-launch",))},
             expected=True,
         ),
         # Lifecycle rides the wire inside the rendered self-terminator, which
@@ -856,14 +870,17 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"run_id": "kf-probe-run"},
             expected="kf-probe-run",
         ),
-        "provision_script": _tracks(
-            lambda ln: "kf-probe-provision-marker" in _sky_task(ln)["setup"],
-            probe={"provision_script": _PROBE_SCRIPT},
+        # S3: the steps are Task.setup and the launch is Task.run. Observing
+        # the two separately is the point — the bug this replaced was a
+        # provider that could not tell them apart.
+        "setup_steps": _tracks(
+            lambda ln: "kf-probe-step-marker" in _sky_task(ln)["setup"],
+            probe={"setup_steps": (SpecSetupStep("echo kf-probe-step-marker"),)},
             expected=True,
         ),
-        "run_cmd": _tracks(
+        "launch": _tracks(
             lambda ln: _sky_task(ln).get("run"),
-            probe={"run_cmd": ["kf-probe-cmd", "--flag"]},
+            probe={"launch": SpecLaunch(("kf-probe-cmd", "--flag"))},
             expected="kf-probe-cmd --flag",
         ),
         "lifecycle": _tracks(
@@ -917,39 +934,30 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"run_id": "kf-probe-run"},
             expected="kf-probe-run",
         ),
-        # Modal boots from runtime_provision_script when the engine split one
-        # out, so proving the fallback means clearing it first.
-        "provision_script": _tracks(
-            lambda ln: (
-                "kf-probe-provision-marker"
-                in (_modal_request(ln)["provision_script"] or "")
-            ),
-            probe={
-                "runtime_provision_script": None,
-                "provision_script": _PROBE_SCRIPT,
-            },
-            expected=True,
-        ),
-        "runtime_provision_script": _tracks(
+        # S3: Modal partitions the steps on their own flags. Two proofs,
+        # because the partition has two sides and a provider that dropped
+        # either one would still satisfy the other.
+        "setup_steps": _tracks(
             lambda ln: (
                 "kf-probe-runtime-marker"
-                in (_modal_request(ln)["provision_script"] or "")
-            ),
-            probe={"runtime_provision_script": _PROBE_RUNTIME_SCRIPT},
-            expected=True,
-        ),
-        "image_build_script": _tracks(
-            lambda ln: (
+                in (_modal_request(ln)["provision_script"] or ""),
                 "kf-probe-build-marker"
-                in (_modal_request(ln)["image_build_script"] or "")
+                in (_modal_request(ln)["image_build_script"] or ""),
             ),
-            probe={"image_build_script": _PROBE_BUILD_SCRIPT},
-            expected=True,
+            probe={
+                "setup_steps": (
+                    SpecSetupStep("echo kf-probe-runtime-marker"),
+                    SpecSetupStep(
+                        "echo kf-probe-build-marker", bakeable=True, runtime=False
+                    ),
+                )
+            },
+            expected=(True, True),
         ),
-        "run_cmd": _tracks(
-            lambda ln: _modal_request(ln)["run_cmd"],
-            probe={"run_cmd": ["kf-probe-cmd", "--flag"]},
-            expected=["kf-probe-cmd", "--flag"],
+        "launch": _tracks(
+            lambda ln: _modal_request(ln)["launch_line"],
+            probe={"launch": SpecLaunch(("kf-probe-cmd", "--flag"))},
+            expected="kf-probe-cmd --flag",
         ),
         "volume_mount": _tracks(
             lambda ln: _modal_request(ln)["volume_mount"],

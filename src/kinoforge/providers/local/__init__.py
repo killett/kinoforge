@@ -122,8 +122,8 @@ class LocalProvider(ComputeProvider):
 
         :meth:`create_instance` reads exactly one field of the spec —
         ``tags`` — and fabricates everything else. No container is started,
-        so ``image``, ``ports``, ``env``, ``run_cmd`` and both provision
-        scripts are genuinely dropped (see
+        so ``image``, ``ports``, ``env`` and the whole setup/launch pair
+        are genuinely dropped (see
         ``tests/providers/test_local_ignores_provision_script.py``), and no
         clock guardrail runs, so ``lifecycle`` is dropped too. That is not a
         gap to be closed; it is what "local" means.
@@ -176,10 +176,8 @@ class LocalProvider(ComputeProvider):
             "env": u,  # no process to hand it to
             "tags": c,  # Instance.tags
             "run_id": u,  # the id is a fresh uuid4
-            "provision_script": u,  # deliberately ignored
-            "run_cmd": u,  # nothing is executed
-            "image_build_script": u,  # Modal-only split
-            "runtime_provision_script": u,  # Modal-only split
+            "setup_steps": u,  # nothing is provisioned; never CONSUMED
+            "launch": u,  # nothing is executed; never CONSUMED
             "lifecycle": u,  # no guardrail runs in-process
             "offer": u,  # cost_rate is the literal 0.0
             "backend_options": u,  # Options is empty: no knob to consume

@@ -319,8 +319,8 @@ def _cmd_provision(args: argparse.Namespace, ctx: SessionContext) -> int:
             ports=tuple(rendered.ports),
             lifecycle=cfg.lifecycle(),
             env=rendered_env,
-            provision_script=rendered.script,
-            run_cmd=rendered.run_cmd,
+            setup_steps=tuple(rendered.setup_steps),
+            launch=rendered.launch,
             placement=cfg.placement(),
             backend_options=(
                 cfg.compute.backend_options if cfg.compute is not None else {}

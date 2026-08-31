@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kinoforge.core.interfaces import InstanceSpec
+from kinoforge.core.interfaces import InstanceSpec, Launch, SetupStep
 from kinoforge.providers.local import LocalProvider
 
 
@@ -11,8 +11,8 @@ def test_local_provider_ignores_provision_script_and_run_cmd() -> None:
     p = LocalProvider()
     spec = InstanceSpec(
         image="ignored",
-        provision_script="set -e\necho should-not-run",
-        run_cmd=["never", "executed"],
+        setup_steps=(SetupStep("set -e\necho should-not-run"),),
+        launch=Launch(("never", "executed")),
     )
     instance = p.create_instance(spec)
     assert instance.provider == "local"

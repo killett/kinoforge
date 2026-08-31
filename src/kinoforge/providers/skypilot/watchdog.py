@@ -1,7 +1,7 @@
 """Instance-side deadline watchdog for SkyPilot clusters.
 
 SkyPilot's ``idle_minutes_to_autostop`` is inert for kinoforge's server-mode
-deploys: ``spec.run_cmd`` becomes ``Task.run``, which is submitted as a
+deploys: ``spec.launch`` becomes ``Task.run``, which is submitted as a
 cluster job and never terminates, so ``job_lib.is_cluster_idle()`` is
 permanently False and the 60 s ``AutostopEvent`` tick resets the idleness
 timer forever (finding F1,

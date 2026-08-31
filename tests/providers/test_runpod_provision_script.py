@@ -7,7 +7,7 @@ import gzip
 from collections.abc import Callable
 from typing import Any
 
-from kinoforge.core.interfaces import InstanceSpec, Offer
+from kinoforge.core.interfaces import InstanceSpec, Launch, Offer, SetupStep
 from kinoforge.providers.runpod import RunPodProvider
 
 
@@ -57,8 +57,8 @@ def test_create_pod_provision_script_gzip_base64_round_trips() -> None:
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        provision_script=script,
-        run_cmd=["python", "main.py"],
+        setup_steps=(SetupStep(script),),
+        launch=Launch(("python", "main.py")),
     )
     p.create_instance(spec)
     body = captured[0][1]
@@ -66,7 +66,9 @@ def test_create_pod_provision_script_gzip_base64_round_trips() -> None:
     env_map = {item["key"]: item["value"] for item in env_list}
     assert "KINOFORGE_PROVISION_SCRIPT" in env_map
     raw = base64.b64decode(env_map["KINOFORGE_PROVISION_SCRIPT"])
-    assert gzip.decompress(raw).decode("utf-8") == script
+    # The wire script is the steps PLUS the launch line RunPod composes —
+    # that trailing line is this provider's own PID-1 convention.
+    assert gzip.decompress(raw).decode("utf-8") == script + "\npython main.py"
 
 
 def test_create_pod_gzip_shrinks_large_provision_script() -> None:
@@ -81,8 +83,8 @@ def test_create_pod_gzip_shrinks_large_provision_script() -> None:
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        provision_script=script,
-        run_cmd=["python", "main.py"],
+        setup_steps=(SetupStep(script),),
+        launch=Launch(("python", "main.py")),
     )
     p.create_instance(spec)
     env_map = {
@@ -91,7 +93,9 @@ def test_create_pod_gzip_shrinks_large_provision_script() -> None:
     value = env_map["KINOFORGE_PROVISION_SCRIPT"]
     plain_b64_len = len(base64.b64encode(script.encode("utf-8")))
     assert len(value) < plain_b64_len / 2
-    assert gzip.decompress(base64.b64decode(value)).decode("utf-8") == script
+    assert gzip.decompress(base64.b64decode(value)).decode("utf-8") == (
+        script + "\npython main.py"
+    )
 
 
 def test_create_pod_with_provision_script_assembles_docker_args() -> None:
@@ -101,8 +105,8 @@ def test_create_pod_with_provision_script_assembles_docker_args() -> None:
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        provision_script="echo hi",
-        run_cmd=["python", "main.py"],
+        setup_steps=(SetupStep("echo hi"),),
+        launch=Launch(("python", "main.py")),
     )
     p.create_instance(spec)
     body = captured[0][1]
@@ -119,8 +123,8 @@ def test_create_pod_image_name_preserved() -> None:
     spec = InstanceSpec(
         image="custom/image:v1",
         offer=_offer(),
-        provision_script="echo",
-        run_cmd=["echo"],
+        setup_steps=(SetupStep("echo"),),
+        launch=Launch(("echo",)),
     )
     p.create_instance(spec)
     body = captured[0][1]
@@ -135,8 +139,8 @@ def test_create_pod_strips_runpod_api_key_from_env() -> None:
         image="runpod/pytorch:latest",
         offer=_offer(),
         env={"RUNPOD_API_KEY": "should-not-leak", "HF_TOKEN": "hf_xxxxxxxxxxxxxx"},
-        provision_script="echo",
-        run_cmd=["echo"],
+        setup_steps=(SetupStep("echo"),),
+        launch=Launch(("echo",)),
     )
     p.create_instance(spec)
     body = captured[0][1]
@@ -147,18 +151,19 @@ def test_create_pod_strips_runpod_api_key_from_env() -> None:
 
 
 def test_create_pod_with_script_but_no_run_cmd_still_encodes_script() -> None:
-    """run_cmd is irrelevant to the provider — only spec.provision_script gates encoding.
+    """Steps alone gate the encoding; the launch supplies the trailing line.
 
-    The engine bakes `exec <run_cmd>` into the rendered script; the provider does not
-    look at spec.run_cmd at all.
+    Bug caught: gating on anything else — a truthy check on the whole spec, or
+    on a field the engine no longer sets — leaves dockerArgs empty and the pod
+    boots the bare image with no provisioning at all.
     """
     captured, post = _capture_post()
     p = RunPodProvider(creds=None, http_post=post, http_get=lambda _: {})
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        provision_script="set -euo pipefail\necho ok",
-        run_cmd=None,  # explicitly None — provider must still encode + assemble docker_args
+        setup_steps=(SetupStep("set -euo pipefail\necho ok"),),
+        launch=Launch(("python", "-m", "server")),
     )
     p.create_instance(spec)
     body = captured[0][1]
@@ -186,8 +191,8 @@ def test_create_pod_base64_envelope_does_not_match_credential_leak_patterns() ->
     spec = InstanceSpec(
         image="runpod/pytorch:latest",
         offer=_offer(),
-        provision_script=script,
-        run_cmd=["python", "main.py"],
+        setup_steps=(SetupStep(script),),
+        launch=Launch(("python", "main.py")),
     )
     p.create_instance(spec)
     body = captured[0][1]

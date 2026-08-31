@@ -42,8 +42,10 @@ from kinoforge.core.interfaces import (
     GenerationEngine,
     GenerationJob,
     Instance,
+    Launch,
     ModelProfile,
     RenderedProvision,
+    SetupStep,
 )
 from kinoforge.engines._proxy_retry import (
     RUNPOD_PROXY_POLICY,
@@ -1387,14 +1389,29 @@ class ComfyUIEngine(GenerationEngine):
 
         port: str = _extract_port(launch_args_raw)
         run_cmd: list[str] = ["python", "main.py"] + launch_args_raw
+        # compute-seam S3: the steps are everything up to but EXCLUDING the
+        # launch line, which is why they are built before it is appended —
+        # that ordering is what makes combine_steps + render_launch reproduce
+        # ``script`` byte-for-byte. One step, not a build/runtime split: this
+        # engine has never had one, and inventing it here would change what a
+        # comfyui container does rather than restate it.
+        setup_steps = (SetupStep("\n".join(lines)),)
+        # The ``cd`` is DATA, not decoration. SkyPilot's old
+        # ``_strip_trailing_exec`` removed this whole line and rebuilt Task.run
+        # from ``run_cmd``, losing the cd and running main.py from the login
+        # directory where it does not exist.
+        launch = Launch(
+            argv=tuple(run_cmd), workdir="/workspace/ComfyUI", exec_pid1=True
+        )
         lines.append(f"cd /workspace/ComfyUI && exec {' '.join(run_cmd)}")
 
         return RenderedProvision(
             script="\n".join(lines),
-            run_cmd=run_cmd,
             image=image,
             ports=[port],
             env_required=sorted(set(env_required)),
+            setup_steps=setup_steps,
+            launch=launch,
         )
 
     def wait_for_ready(

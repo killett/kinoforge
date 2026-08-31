@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from kinoforge.core.errors import ProvisionFailed
-from kinoforge.core.interfaces import InstanceSpec, Offer
+from kinoforge.core.interfaces import InstanceSpec, Launch, Offer, SetupStep
 from kinoforge.providers.skypilot import SkyPilotProvider
 
 
@@ -61,8 +61,8 @@ def _server_spec() -> InstanceSpec:
         ports=("8000",),
         env={},
         run_id="kf-vast-test",
-        provision_script="#!/bin/sh\ntrue\n",
-        run_cmd=["python", "-m", "server"],
+        setup_steps=(SetupStep("#!/bin/sh\ntrue"),),
+        launch=Launch(("python", "-m", "server")),
     )
 
 
@@ -75,8 +75,7 @@ def _cpu_spec() -> InstanceSpec:
         ports=(),
         env={},
         run_id="kf-cpu-test",
-        provision_script="#!/bin/sh\ntrue\n",
-        run_cmd=[],
+        setup_steps=(SetupStep("#!/bin/sh\ntrue\n"),),
     )
 
 
@@ -215,21 +214,22 @@ def test_task_carries_provision_setup_and_server_run() -> None:
         Task = _RecTask  # type: ignore[assignment]
 
     provider = _provider(_RecSky())
-    spec = _server_spec()  # provision_script + run_cmd both set
-    # Provision script whose LAST line is the Layer-Q ``exec <run_cmd>`` hand-off.
-    # SkyPilot's setup phase must terminate for run to start, so create_instance
-    # strips that trailing exec line before mapping the script to Task.setup.
-    spec.provision_script = "#!/bin/sh\nsetup-step\nexec python -m server\n"
+    spec = _server_spec()  # setup_steps + launch both set
+    # compute-seam S3: the engine hands over a setup/run PAIR, so the provider
+    # no longer has to find the boundary itself. It used to guess by removing
+    # the script's last line whenever it contained " exec " — which stripped
+    # comfyui's `cd` and missed diffusers' exec-less launch entirely.
+    spec.setup_steps = (SetupStep("#!/bin/sh\nsetup-step"),)
+    spec.launch = Launch(("python", "-m", "server"), exec_pid1=True)
     provider.create_instance(spec)
 
     cfg = captured["cfg"]
-    # setup ends with provision_script with the trailing exec line removed
-    # (Component C); it is preceded by the watchdog arming step (2026-08-15
-    # instance-deadline design).
+    # setup is the watchdog arm (2026-08-15 instance-deadline design) plus the
+    # steps, and stops there — the server is not in it.
     assert cfg["setup"].endswith("#!/bin/sh\nsetup-step")
     assert "# --- kinoforge watchdog arm" in cfg["setup"]
     assert "exec" not in cfg["setup"]
-    assert cfg["run"] == "python -m server"  # shlex-quoted join of run_cmd
+    assert cfg["run"] == "exec python -m server"
     assert cfg["resources"]["accelerators"] == "RTX_A6000:1"
 
 

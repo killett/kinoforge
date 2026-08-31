@@ -1,7 +1,7 @@
 """Modal serverless-GPU compute provider.
 
 Deploys the kinoforge FastAPI generation server onto Modal as a named App whose
-``@modal.web_server`` runs the same ``provision_script; exec run_cmd`` that RunPod
+``@modal.web_server`` runs the same setup-steps-then-launch bundle that RunPod
 runs, and returns the public ``.modal.run`` URL as ``endpoints["8000"]``. All Modal
 and subprocess touchpoints sit behind injected callables for offline testing.
 """
@@ -26,6 +26,8 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     Offer,
+    combine_steps,
+    render_launch,
 )
 from kinoforge.core.runtime_probe import RuntimeProbe
 from kinoforge.providers.modal._app import (
@@ -150,10 +152,8 @@ class ModalProvider(ComputeProvider):
             "env": c,  # ModalAppRequest.env
             "tags": c,  # Instance.tags
             "run_id": c,  # ModalAppRequest.run_id, and the app name
-            "provision_script": c,  # required, and the boot-script fallback
-            "run_cmd": c,  # ModalAppRequest.run_cmd
-            "image_build_script": c,  # baked into the image at build time
-            "runtime_provision_script": c,  # preferred as the boot script
+            "setup_steps": c,  # partitioned into the image bake + boot script
+            "launch": c,  # ModalAppRequest.launch_line
             "lifecycle": c,  # scaledown_window_s + startup_timeout_s
             "offer": c,  # ModalAppRequest.gpu
             "backend_options": u,  # Options is empty: no knob to consume
@@ -203,18 +203,22 @@ class ModalProvider(ComputeProvider):
         """Build + deploy a Modal App and return its HTTP endpoint.
 
         Args:
-            spec: The instance spec (image, offer, provision_script, run_cmd, env).
+            spec: The instance spec (image, offer, setup_steps, launch, env).
 
         Returns:
             An ``Instance`` in ``starting`` state with ``endpoints["8000"]`` set.
 
         Raises:
-            ValueError: If ``run_cmd``/``provision_script`` or ``offer`` is missing.
+            ValueError: If ``setup_steps``/``launch`` or ``offer`` is missing.
         """
-        if not spec.run_cmd or not spec.provision_script:
+        # A Modal container is a server or it is nothing: the app's web
+        # endpoint IS the instance, so a spec with no launch would deploy an
+        # app that answers nothing.
+        if not spec.setup_steps or spec.launch is None:
             raise ValueError(
-                "ModalProvider requires spec.run_cmd and spec.provision_script "
-                f"(the server boot command); got run_cmd={spec.run_cmd!r}"
+                "ModalProvider requires spec.setup_steps and spec.launch (the "
+                f"server boot command); got setup_steps={len(spec.setup_steps)} "
+                f"launch={spec.launch!r}"
             )
         if spec.offer is None:
             raise ValueError("ModalProvider requires spec.offer (GPU selection)")
@@ -239,24 +243,34 @@ class ModalProvider(ComputeProvider):
         # server's own os.environ.setdefault("HF_HOME", ...) respects this.
         env.setdefault("HF_HOME", volume_mount)
 
-        # Modal fast-boot: the container boots with the RUNTIME script only —
-        # the build script is baked into the image below, so re-running it at
-        # container start would re-download everything and re-open the
-        # preemption window (2026-07-09 FlashVSR failure). Non-splitting engines
-        # leave runtime_provision_script None and fall back to the combined one.
-        boot_script = spec.runtime_provision_script or spec.provision_script
+        # Modal fast-boot: the container boots with the RUNTIME steps only —
+        # the bakeable ones are baked into the image below, so re-running them
+        # at container start would re-download everything and re-open the
+        # preemption window (2026-07-09 FlashVSR failure).
+        #
+        # compute-seam S3: the partition is on the STEP's own flags, not on two
+        # pre-split strings named after this pipeline. The two are independent
+        # because a step can be both — the diffusers module embed has to exist
+        # in the image for the build-phase weights fetch AND at container start
+        # for the server. The build phase runs in isolation, so it carries its
+        # own fail-fast line; the combined script's lives in the runtime
+        # preamble, which a baked image never executes.
+        boot_script = combine_steps(tuple(s for s in spec.setup_steps if s.runtime))
+        bakeable = combine_steps(tuple(s for s in spec.setup_steps if s.bakeable))
+        build_script = "set -euo pipefail\n" + bakeable if bakeable else None
+        launch_line = render_launch(spec.launch)
 
         req = ModalAppRequest(
             run_id=app_run_id,
             image=spec.image,
             gpu=spec.offer.gpu_type,
             provision_script=boot_script,
-            run_cmd=list(spec.run_cmd),
+            launch_line=launch_line,
             env=env,
             volume_mount=volume_mount,
             scaledown_window_s=int(spec.lifecycle.idle_timeout_s),
             startup_timeout_s=int(spec.lifecycle.boot_timeout_s) or 1800,
-            image_build_script=spec.image_build_script,
+            image_build_script=build_script,
         )
         app, server_fn = self._app_factory(req, self._modal_mod())
         url = self._deployer(app, server_fn)

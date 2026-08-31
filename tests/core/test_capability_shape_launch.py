@@ -18,6 +18,7 @@ from kinoforge.core.interfaces import (
     HardwareRequirements,
     Instance,
     InstanceSpec,
+    Launch,
     ModelProfile,
     Offer,
 )
@@ -35,7 +36,7 @@ def test_shape_comes_from_the_spec_not_the_cfg(minimal_skypilot_cfg: Config) -> 
     """Catches a re-check that re-reads cfg and therefore can never catch an
     inference miss: cfg infers SERVER, the spec says batch."""
     gaps = assert_launch_capabilities(
-        minimal_skypilot_cfg, run_cmd=[], logger=logging.getLogger("t")
+        minimal_skypilot_cfg, launch=None, logger=logging.getLogger("t")
     )
     assert all(g.field != "compute.lifecycle.idle_timeout" for g in gaps)
 
@@ -43,7 +44,7 @@ def test_shape_comes_from_the_spec_not_the_cfg(minimal_skypilot_cfg: Config) -> 
 def test_server_spec_still_reports_the_idle_gap(minimal_skypilot_cfg: Config) -> None:
     gaps = assert_launch_capabilities(
         minimal_skypilot_cfg,
-        run_cmd=["python", "-m", "server"],
+        launch=Launch(("python", "-m", "server")),
         logger=logging.getLogger("t"),
     )
     assert any(g.field == "compute.lifecycle.idle_timeout" for g in gaps)
@@ -58,20 +59,20 @@ def test_inference_miss_is_logged_not_swallowed(
     Also catches the message dropping its ``%s, %s`` interpolation, or
     swapping the argument order so it reports "inferred batch, spec says
     server" when the truth is the reverse: ``infer_shape`` always guesses
-    SERVER (Task 4), and ``run_cmd=[]`` here means the authoritative shape
+    SERVER (Task 4), and ``launch=None`` here means the authoritative shape
     is BATCH, so the rendered message must name SERVER as the load-time
-    guess and BATCH as what ``spec.run_cmd`` says — in that order.
+    guess and BATCH as what ``spec.launch`` says — in that order.
     """
     with caplog.at_level(logging.WARNING):
         assert_launch_capabilities(
-            minimal_skypilot_cfg, run_cmd=[], logger=logging.getLogger("kinoforge")
+            minimal_skypilot_cfg, launch=None, logger=logging.getLogger("kinoforge")
         )
     messages = [r.getMessage() for r in caplog.records]
     matches = [m for m in messages if "shape inference miss" in m]
     assert len(matches) == 1
     msg = matches[0]
     assert "load-time inferred server" in msg
-    assert "spec.run_cmd says batch" in msg
+    assert "spec.launch says batch" in msg
 
 
 def test_error_gap_raises_before_create(
@@ -86,7 +87,7 @@ def test_error_gap_raises_before_create(
     with pytest.raises(ValidationError, match="ON_INSTANCE_DEADLINE"):
         assert_launch_capabilities(
             minimal_skypilot_cfg,
-            run_cmd=["python", "-m", "server"],
+            launch=Launch(("python", "-m", "server")),
             logger=logging.getLogger("t"),
         )
 

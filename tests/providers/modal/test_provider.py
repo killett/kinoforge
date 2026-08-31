@@ -1,7 +1,7 @@
 """Behavior: ModalProvider registration, offers, and heartbeat semantics."""
 
 from kinoforge.core import registry
-from kinoforge.core.interfaces import HardwareRequirements
+from kinoforge.core.interfaces import HardwareRequirements, Launch, SetupStep
 from kinoforge.providers.modal import ModalProvider
 
 
@@ -44,8 +44,8 @@ def test_create_instance_deploys_and_returns_endpoint():
         image="runpod/pytorch:2.4.0-cuda12.4",
         offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
         run_id="run777",
-        provision_script="echo hi",
-        run_cmd=["python", "-m", "server"],
+        setup_steps=(SetupStep("echo hi"),),
+        launch=Launch(("python", "-m", "server")),
         env={"HF_HOME": "/cache/hf"},
         lifecycle=Lifecycle(idle_timeout_s=300),
     )
@@ -60,7 +60,12 @@ def test_create_instance_deploys_and_returns_endpoint():
     assert captured["req"].scaledown_window_s == 300
 
 
-def test_create_instance_requires_run_cmd():
+def test_create_instance_requires_a_launch():
+    """A Modal app IS its web endpoint, so a spec with no launch is invalid.
+
+    Bug caught: deploying it anyway produces an app that answers nothing, and
+    the failure surfaces much later as a boot timeout rather than here.
+    """
     from kinoforge.core.interfaces import InstanceSpec, Offer
 
     provider = ModalProvider()
@@ -68,12 +73,12 @@ def test_create_instance_requires_run_cmd():
         image="img",
         offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
         run_id="r",
-        provision_script="echo hi",
-        run_cmd=None,  # no server → invalid for Modal
+        setup_steps=(SetupStep("echo hi"),),
+        launch=None,  # no server → invalid for Modal
     )
     import pytest
 
-    with pytest.raises(ValueError, match="run_cmd"):
+    with pytest.raises(ValueError, match="launch"):
         provider.create_instance(spec)
 
 
@@ -145,8 +150,8 @@ def test_create_instance_uses_opaque_name_under_ephemeral():
         image="python:3.13-slim",
         offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
         run_id="upscale-20260712-200409",  # the leaky id ephemeral must hide
-        provision_script="echo hi",
-        run_cmd=["python", "-m", "server"],
+        setup_steps=(SetupStep("echo hi"),),
+        launch=Launch(("python", "-m", "server")),
         lifecycle=Lifecycle(idle_timeout_s=300),
     )
     with EphemeralSession(enabled=True):
@@ -176,8 +181,8 @@ def test_create_instance_name_unchanged_without_ephemeral():
         image="python:3.13-slim",
         offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
         run_id="run777",
-        provision_script="echo hi",
-        run_cmd=["python", "-m", "server"],
+        setup_steps=(SetupStep("echo hi"),),
+        launch=Launch(("python", "-m", "server")),
         lifecycle=Lifecycle(idle_timeout_s=300),
     )
     inst = provider.create_instance(spec)

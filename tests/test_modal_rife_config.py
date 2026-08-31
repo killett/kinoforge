@@ -1,10 +1,11 @@
 """Offline: the Modal RIFE cfg loads and its provision splits build/runtime.
 
 Milestone 4 rides the M3 fast-boot bake — the composed RIFE install must land in
-build_script (baked into the image) and the server exec in runtime_script.
+the bakeable steps (baked into the image) and the server launch off both.
 """
 
 from kinoforge.core.config import load_config
+from kinoforge.core.interfaces import combine_steps
 from kinoforge.engines.diffusers import DiffusersEngine
 
 _CFG = "examples/configs/modal-diffusers-rife-60fps-interpolate.yaml"
@@ -29,7 +30,7 @@ def test_cfg_loads_modal_provider_no_cloud() -> None:
 def test_build_script_has_rife_install_not_server() -> None:
     # Bug caught: RIFE install leaks out of the bakeable build phase (Modal can't
     # bake it → slow boot → preemption), or the server exec wrongly bakes in.
-    b = _render().build_script
+    b = combine_steps(tuple(s for s in _render().setup_steps if s.bakeable))
     assert "git clone" in b and "Practical-RIFE" in b  # RIFE repo clone
     assert "numpy<2" in b  # RIFE's pip pin
     assert "RIFEv4.26" in b  # weights zip fetch
@@ -44,7 +45,11 @@ def test_build_script_has_rife_install_not_server() -> None:
 def test_runtime_script_has_server_not_rife_install() -> None:
     # Bug caught: the RIFE install stays in the runtime boot → re-downloads at
     # container start, re-opening the preemption window.
-    r = _render().runtime_script
-    assert _SERVER_EXEC in r
+    rendered = _render()
+    r = combine_steps(tuple(s for s in rendered.setup_steps if s.runtime))
+    # S3 moved the server COMMAND out of the scripts onto `launch`; the runtime
+    # partition is what Modal boots BEFORE it, and the launch is what starts it.
+    assert rendered.launch is not None
+    assert _SERVER_EXEC in " ".join(rendered.launch.argv)
     assert "git clone" not in r
     assert "numpy<2" not in r

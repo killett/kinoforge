@@ -1,0 +1,148 @@
+{
+  "smoke": "compute-seam S3 \u2014 Task.setup is setup, Task.run is the launch",
+  "task": "task-8 (S3 setup/run split)",
+  "config": "examples/configs/skypilot-cpu.yaml",
+  "cluster_name": "kinoforge-s3-smoke-ffd0a873",
+  "engine": "comfyui",
+  "why_this_config": "comfyui is the engine whose launch carries a workdir, so it is the one the old _strip_trailing_exec heuristic actively corrupted: it removed `cd /workspace/ComfyUI && exec python main.py ...` wholesale and rebuilt Task.run from run_cmd, losing the cd.",
+  "out_of_scope": "the diffusers-on-SkyPilot DOUBLE LAUNCH (server command left inside Task.setup AND repeated in Task.run) is fixed and proven OFFLINE by Task 5's regenerated goldens and unit tests. Proving it live needs a GPU config and roughly $1; deliberate deferral, not an oversight.",
+  "preflight": {
+    "exit_code": 0,
+    "log": "Pixi task (preflight in default): python tools/preflight.py\npreflight: pre-live-spend gate\n  OK   env: ['RUNPOD_API_KEY', 'RUNPOD_TERMINATE_KEY', 'HF_TOKEN'] all set\n  OK   pods: 0 active\n  OK   git: working tree clean\n  OK   sky: 0 active clusters (or skypilot not installed)\npreflight: PASS \u2014 safe to spend"
+  },
+  "started_at": "2026-08-31T08:50:25.344411-07:00",
+  "utilisation_samples": [
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s3-smoke-ffd0a873: Name or service not known",
+      "at": "2026-08-31T08:51:41.053535-07:00",
+      "elapsed_s": 75.0,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s3-smoke-ffd0a873: Name or service not known",
+      "at": "2026-08-31T08:52:56.807170-07:00",
+      "elapsed_s": 150.7,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": false,
+      "cpu_idle_pct": null,
+      "mem_used_mb": null,
+      "mem_total_mb": null,
+      "raw": null,
+      "note": "ssh rc=255: ssh: Could not resolve hostname kinoforge-s3-smoke-ffd0a873: Name or service not known",
+      "at": "2026-08-31T08:54:12.548068-07:00",
+      "elapsed_s": 226.5,
+      "sky_status": "starting",
+      "create_thread_alive": true
+    },
+    {
+      "reachable": true,
+      "cpu_idle_pct": 100.0,
+      "mem_total_mb": 3816,
+      "mem_used_mb": 1057,
+      "raw": "%Cpu(s):  0.0 us,  0.0 sy,  0.0 ni,100.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st\nMem:            3816        1057         585           2        2174        2458",
+      "note": null,
+      "at": "2026-08-31T08:55:30.667150-07:00",
+      "elapsed_s": 302.2,
+      "sky_status": "ready",
+      "create_thread_alive": false
+    }
+  ],
+  "offline_expectation": {
+    "status": "computed",
+    "expected_run": "cd /workspace/ComfyUI && exec python main.py --listen 0.0.0.0 --port 8188",
+    "launch_workdir": "/workspace/ComfyUI",
+    "launch_exec_pid1": true,
+    "setup_step_count": 1,
+    "at": "2026-08-31T08:50:25.346632-07:00"
+  },
+  "wire_split": {
+    "status": "match",
+    "run": "cd /workspace/ComfyUI && exec python main.py --listen 0.0.0.0 --port 8188",
+    "setup_last_line": "[ ! -f models/checkpoints/diffusion_pytorch_model-00001-of-00006.safetensors ] && _kinoforge_download 'https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B/resolve/main/high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors' 'models/checkpoints/diffusion_pytorch_model-00001-of-00006.safetensors' '' 'HF_TOKEN'",
+    "setup_line_count": 234,
+    "at": "2026-08-31T08:50:25.352296-07:00"
+  },
+  "cluster_state": {
+    "observed_ready": true,
+    "statuses_seen": [
+      "starting",
+      "starting",
+      "starting",
+      "ready"
+    ],
+    "ready_at": "2026-08-31T08:55:30.667421-07:00",
+    "ready_after_s": 302.2
+  },
+  "launched_at": "2026-08-31T08:50:25.346872-07:00",
+  "create_instance_returned": "starting",
+  "teardown": {
+    "started_at": "2026-08-31T08:55:30.667492-07:00",
+    "passes": [
+      {
+        "at": "2026-08-31T08:55:30.667534-07:00",
+        "forced_instance_ids": [
+          "i-04b38bf716869733a"
+        ],
+        "sky_status": "ready",
+        "destroy_instance": "ok",
+        "ec2_states": [
+          "shutting-down"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      },
+      {
+        "at": "2026-08-31T08:56:00.003319-07:00",
+        "forced_instance_ids": [
+          "i-04b38bf716869733a"
+        ],
+        "sky_status": null,
+        "ec2_states": [
+          "terminated"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      },
+      {
+        "at": "2026-08-31T08:56:26.315384-07:00",
+        "forced_instance_ids": [
+          "i-04b38bf716869733a"
+        ],
+        "sky_status": null,
+        "ec2_states": [
+          "terminated"
+        ],
+        "ec2_readable": true,
+        "launch_thread_alive": false
+      }
+    ],
+    "final_ec2_states": [
+      "terminated"
+    ],
+    "final_ec2_readable": true,
+    "final_sky_status": null,
+    "clean_streak": 2,
+    "finished_at": "2026-08-31T08:56:34.851725-07:00",
+    "ledger_forget": "ok"
+  },
+  "outcome": "PROVEN",
+  "finished_at": "2026-08-31T08:56:34.852993-07:00",
+  "captured_at": "2026-08-31T08:56:34.852993-07:00",
+  "billable_wall_clock_s": 369.5,
+  "estimated_spend_usd": 0.0087,
+  "spend_basis": "list price 0.085 USD/hr for c6i.large in us-west-2, times billable wall clock \u2014 an estimate, not a reading of the invoice"
+}

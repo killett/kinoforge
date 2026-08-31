@@ -4,6 +4,57 @@
 
 ## Breaking changes
 
+### Compute-seam S3 — `RenderedProvision.script` is no longer what providers boot
+
+This one cannot break a YAML config. It breaks a **custom engine**.
+
+`RenderedProvision` used to carry one bash blob (`script`) whose last line was, by
+convention, the command that started the workload — plus `run_cmd`, and the
+`build_script` / `runtime_script` pair Modal used to split image-build work from
+container-start work. Providers then had to guess where the setup ended and the
+server began, which they did by substring-matching `" exec "` on the last line.
+That guess was wrong on both shipped engines in opposite directions.
+
+All four fields are gone. An engine now emits a **pair**:
+
+```python
+RenderedProvision(
+    script="…",                                  # still there, see below
+    setup_steps=(SetupStep("pip install …", bakeable=True, runtime=False),
+                 SetupStep("export FOO=1")),     # what a provider RUNS as setup
+    launch=Launch(argv=("python", "main.py"),    # what STARTS the workload
+                  workdir="/workspace/ComfyUI",
+                  exec_pid1=True),
+    image="…", ports=[…], env_required=[…],
+)
+```
+
+**Migration.** An engine that returns only `script` now provisions **nothing** —
+every provider composes from `setup_steps` and `launch`, and neither is
+synthesised from anything else. That silence is deliberate: a guessed launch is
+exactly what this stage removed. Emit the pair:
+
+* `setup_steps` — the provisioning steps in declaration order. `bakeable=True`
+  means "safe to run at image-BUILD time"; `runtime=True` (the default) means
+  "must run at container start". They are independent, because a step can be
+  both — the diffusers module embed has to exist in the image for the
+  build-phase weights fetch AND in the container for the server to import.
+* `launch` — `Launch(argv, workdir="", exec_pid1=False)`. All three are
+  properties of the WORKLOAD, not of a provider: `exec_pid1=False` is how the
+  diffusers engine keeps bash as PID 1 so its EXIT trap fires when the server
+  dies. `argv` is joined **verbatim**, so an argument needing shell quoting must
+  arrive already quoted. `launch=None` is legal and means "this workload starts
+  nothing" (a BATCH shape); RunPod and Modal refuse a spec that declares steps
+  but no launch rather than booting a container that serves nothing.
+
+`RenderedProvision.script` survives, but only as a human-readable rendering for
+`kinoforge doctor` and the C30 diagnostics probe. Nothing boots it.
+
+Two live bugs this fixed, both on shipped configs: SkyPilot + diffusers put the
+server command inside `Task.setup` (which could then never terminate) *and*
+repeated it in `Task.run`; SkyPilot + comfyui lost `cd /workspace/ComfyUI` from
+`Task.run` and ran `main.py` from the login directory.
+
 ### Compute-seam S2 — `compute` forbids unknown keys, and `mode: serverless` finally routes
 
 Two changes an existing config can notice.

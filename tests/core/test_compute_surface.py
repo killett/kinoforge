@@ -13,6 +13,7 @@ from typing import Any
 from kinoforge.core.config import Config, load_config
 from kinoforge.core.interfaces import (
     InstanceSpec,
+    Launch,
     Lifecycle,
     Offer,
     RenderedProvision,
@@ -54,7 +55,7 @@ def _spec(
     cfg = Config.model_validate({**_BASE, "compute": compute})
     rendered = RenderedProvision(
         script="#!/bin/bash\necho hi",
-        run_cmd=["python", "-m", "server"],
+        launch=Launch(("python", "-m", "server")),
         image="img:tag",
         ports=["8000/http"],
         env_required=[],

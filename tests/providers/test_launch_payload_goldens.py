@@ -271,7 +271,7 @@ def test_modal_goldens_carry_a_real_app_request() -> None:
                 "request/provision_script": lambda v: (
                     isinstance(v, str) and len(v) > 500
                 ),
-                "request/run_cmd": lambda v: isinstance(v, list) and bool(v),
+                "request/launch_line": lambda v: isinstance(v, str) and bool(v),
                 "request/scaledown_window_s": lambda v: isinstance(v, int) and v > 0,
                 "request/startup_timeout_s": lambda v: isinstance(v, int) and v > 0,
             },

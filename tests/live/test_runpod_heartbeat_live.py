@@ -115,7 +115,6 @@ def test_runpod_heartbeat_round_trip_against_live_pod() -> None:
         offer=cheapest,
         image="mirror.gcr.io/library/alpine:latest",
         env={},
-        provision_script=None,
     )
 
     instance = provider.create_instance(spec)

@@ -1,7 +1,7 @@
 """Modal App construction (the Option-A reuse hinge) + default deploy/stop/list.
 
 ``build_modal_app`` builds a ``modal.App`` whose serialized ``web_server`` runs the
-same ``provision_script; exec run_cmd`` bundle that RunPod runs, so the existing
+same setup-steps-then-launch bundle that RunPod runs, so the existing
 FastAPI server and ``render_provision`` machinery are reused verbatim. Per-run
 config reaches the remote container through a ``modal.Secret`` (no image rebuild).
 """
@@ -12,7 +12,6 @@ import base64
 import gzip
 import json
 import os
-import shlex
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,7 +30,6 @@ class ModalAppRequest:
     image: str
     gpu: str
     provision_script: str
-    run_cmd: list[str]
     env: dict[str, str] = field(default_factory=dict)
     volume_mount: str = "/cache/hf"
     scaledown_window_s: int = 300
@@ -45,15 +43,27 @@ class ModalAppRequest:
     # weights) baked into the image via Image.run_commands at BUILD time. None =>
     # nothing to bake (the whole provision runs at container start, as before).
     image_build_script: str | None = None
+    # compute-seam S3: the line that starts the workload, composed by the
+    # ENGINE via ``render_launch`` and carried here as data. It used to be
+    # re-derived in :func:`_boot_payload` as ``"exec " + shlex.join(argv)``,
+    # which was both a second launch (the runtime script already ended with
+    # one) and an ``exec`` the diffusers engine explicitly must not have.
+    launch_line: str = ""
 
 
 _VOLUME_NAME = "kinoforge-hf-cache"
 
 
 def _boot_payload(req: ModalAppRequest) -> str:
-    """Compose the container boot script: run provision, then exec the server."""
-    exec_line = "exec " + shlex.join(req.run_cmd)
-    return f"{req.provision_script}\n{exec_line}\n"
+    """Compose the container boot script: run the setup steps, then launch.
+
+    Args:
+        req: The app request carrying the boot script and the launch line.
+
+    Returns:
+        The bash the container runs at start.
+    """
+    return f"{req.provision_script}\n{req.launch_line}\n"
 
 
 def _payload_secret_env(payload: str) -> dict[str, str]:

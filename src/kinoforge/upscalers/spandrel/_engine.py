@@ -118,7 +118,6 @@ class SpandrelEngine(PodHTTPClientMixin, UpscalerEngine):
             )
         return RenderedProvision(
             script="\n".join(script_lines) + "\n",
-            run_cmd=[],
             image="",
             ports=[],
             env_required=["HF_TOKEN"],
