@@ -874,14 +874,17 @@ _WIRE_PROOFS: dict[str, dict[str, _Proof]] = {
             probe={"run_id": "kf-probe-run"},
             expected="kf-probe-run",
         ),
-        "provision_script": _tracks(
-            lambda ln: "kf-probe-provision-marker" in _sky_task(ln)["setup"],
-            probe={"provision_script": _PROBE_SCRIPT},
+        # S3: the steps are Task.setup and the launch is Task.run. Observing
+        # the two separately is the point — the bug this replaced was a
+        # provider that could not tell them apart.
+        "setup_steps": _tracks(
+            lambda ln: "kf-probe-step-marker" in _sky_task(ln)["setup"],
+            probe={"setup_steps": (SpecSetupStep("echo kf-probe-step-marker"),)},
             expected=True,
         ),
-        "run_cmd": _tracks(
+        "launch": _tracks(
             lambda ln: _sky_task(ln).get("run"),
-            probe={"run_cmd": ["kf-probe-cmd", "--flag"]},
+            probe={"launch": SpecLaunch(("kf-probe-cmd", "--flag"))},
             expected="kf-probe-cmd --flag",
         ),
         "lifecycle": _tracks(

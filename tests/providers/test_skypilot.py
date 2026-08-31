@@ -36,6 +36,7 @@ from kinoforge.core.interfaces import (
     HardwareRequirements,
     Instance,
     InstanceSpec,
+    Launch,
     Lifecycle,
     Offer,
 )
@@ -1456,7 +1457,9 @@ def test_tunnel_failure_keeps_the_provisional_row() -> None:
 
     with pytest.raises(ProvisionFailed):
         provider.create_instance(
-            _watchdog_spec(run_id="kf-orphan", run_cmd=["sleep", "1"])
+            # A launch is what makes this a SERVER spec, which is what makes
+            # create_instance attempt the tunnel this test forces to fail.
+            _watchdog_spec(run_id="kf-orphan", launch=Launch(("sleep", "1")))
         )
 
     assert ledger.forgotten == [], ledger.forgotten

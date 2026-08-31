@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kinoforge.core.interfaces import InstanceSpec
+from kinoforge.core.interfaces import InstanceSpec, Launch, SetupStep
 from kinoforge.providers.skypilot import SkyPilotProvider
 
 
@@ -141,29 +141,14 @@ def test_create_instance_with_only_run_cmd_still_carries_watchdog_arm() -> None:
     assert task_config["run"] == "python main.py"
 
 
-def test_create_instance_strips_trailing_exec_from_setup_script() -> None:
-    """provision_script ending in `exec <cmd>` has that line removed in Task.setup."""
-    sky = _FakeSky()
-    p = SkyPilotProvider(sky_client=sky)
-    script = (
-        "set -euo pipefail\n"
-        "cd /workspace\n"
-        "git clone --depth 1 https://example/x.git\n"
-        "cd /workspace/ComfyUI && exec python main.py --port 8188\n"
-    )
-    spec = InstanceSpec(
-        image="img:latest",
-        provision_script=script,
-        run_cmd=["python", "main.py", "--port", "8188"],
-    )
-    p.create_instance(spec)
-    task_config = sky.launches[0][0]
-    assert "exec " not in task_config["setup"], task_config["setup"]
-    assert "python main.py" in task_config["run"]
+def test_create_instance_preserves_a_legacy_script_unchanged() -> None:
+    """A legacy ``provision_script`` is appended after the watchdog arm verbatim.
 
-
-def test_create_instance_preserves_script_without_trailing_exec() -> None:
-    """provision_script without a trailing exec line is appended after the watchdog arm unchanged."""
+    Nothing is stripped off the end any more. ``_strip_trailing_exec`` used to
+    remove the last line whenever it contained ``" exec "``, which is how
+    comfyui's ``cd /workspace/ComfyUI &&`` got discarded; the launch now
+    arrives as data on ``spec.launch`` instead of being guessed at here.
+    """
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
     script = "set -euo pipefail\necho preparing\n"
@@ -172,25 +157,40 @@ def test_create_instance_preserves_script_without_trailing_exec() -> None:
     assert sky.launches[0][0]["setup"].endswith(script)
 
 
-def test_create_instance_strips_diffusers_bare_exec_line() -> None:
-    """Diffusers script ends with `exec python -m diffusers_server` (bare exec, no &&).
+def test_create_instance_maps_setup_steps_to_setup_and_launch_to_run() -> None:
+    """The split, at the provider's own seam.
 
-    Regression for the dual-exec hazard — _strip_trailing_exec must handle both
-    ComfyUI's `cd ... && exec ...` shape AND Diffusers' bare `exec ...` shape.
+    Bug caught: putting the launch in ``setup`` (or the steps in ``run``)
+    reproduces the exact hang this stage removed — ``Task.setup`` cannot
+    terminate while it is running a server, so ``Task.run`` never starts.
     """
     sky = _FakeSky()
     p = SkyPilotProvider(sky_client=sky)
-    script = (
-        "set -euo pipefail\n"
-        "pip install -q diffusers transformers\n"
-        "exec python -m diffusers_server\n"
-    )
     spec = InstanceSpec(
         image="img:latest",
-        provision_script=script,
-        run_cmd=["python", "-m", "diffusers_server"],
+        setup_steps=(SetupStep("pip install -q x"), SetupStep("echo ready")),
+        launch=Launch(("python", "main.py"), workdir="/srv", exec_pid1=True),
     )
     p.create_instance(spec)
     task_config = sky.launches[0][0]
-    assert "exec " not in task_config["setup"], task_config["setup"]
-    assert task_config["run"] == "python -m diffusers_server"
+    assert task_config["setup"].endswith("pip install -q x\necho ready")
+    assert task_config["run"] == "cd /srv && exec python main.py"
+
+
+def test_create_instance_prefers_the_launch_over_a_stale_run_cmd() -> None:
+    """Precedence, pinned.
+
+    Bug caught: reading ``run_cmd`` first re-introduces the shell-quoted
+    reconstruction that dropped comfyui's ``cd`` and its ``exec``, and it would
+    do so silently while every other test here stayed green.
+    """
+    sky = _FakeSky()
+    p = SkyPilotProvider(sky_client=sky)
+    spec = InstanceSpec(
+        image="img:latest",
+        setup_steps=(SetupStep("echo hi"),),
+        launch=Launch(("python", "main.py"), workdir="/workspace/ComfyUI"),
+        run_cmd=["python", "main.py"],
+    )
+    p.create_instance(spec)
+    assert sky.launches[0][0]["run"] == "cd /workspace/ComfyUI && python main.py"

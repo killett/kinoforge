@@ -46,7 +46,7 @@
     {
       "id": 5,
       "subject": "Task 5: SkyPilot splits setup from run; delete the strip",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Fix both live bugs by giving `Task.setup` the steps and `Task.run` the launch, and delete the substring heuristic that caused them.\n\n**Files:**\n- Modify: `src/kinoforge/providers/skypilot/__init__.py:323-347` (delete), `:998-1007`\n- Modify: `tests/providers/test_skypilot_provision_script.py`\n- Modify: `tests/providers/golden/launch_payloads/skypilot-*.json` (regenerated -- sanctioned)\n\n**Acceptance Criteria:**\n- [ ] `_strip_trailing_exec` and its tests are gone; `rg -n '_strip_trailing_exec' src/ tests/` returns nothing.\n- [ ] `task_config[\"setup\"]` is the watchdog arm plus the combined steps; `task_config[\"run\"]` is `render_launch(spec.launch)`, NOT a `shlex.quote`-joined `run_cmd`.\n- [ ] The diffusers SkyPilot golden's `setup` no longer ends with the server command and its `run` carries it exactly once; before/after lines stated in the report.\n- [ ] The comfyui SkyPilot golden's `run` becomes `cd /workspace/ComfyUI && exec python main.py ...`.\n- [ ] Exactly the 5 `skypilot-*` goldens move; the 20 RunPod and 6 Modal goldens must not.\n- [ ] For each moved golden the only deltas are inside `task_config.setup` / `.run`; `envs`, `resources`, `name` and `launch_kwargs` byte-identical, proven with a structural diff.\n\n**Verify:** `pixi run python -m pytest tests/providers -q` and the diff review in Step 4\n\nFull steps + code: plan Task 5.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/providers/skypilot/__init__.py\", \"tests/providers/test_skypilot_provision_script.py\", \"tests/providers/golden/launch_payloads/\"], \"verifyCommand\": \"pixi run python -m pytest tests/providers -q\", \"modelTier\": \"frontier\", \"acceptanceCriteria\": [\"_strip_trailing_exec and its tests deleted, rg returns nothing\", \"setup = watchdog arm + combined steps; run = render_launch(spec.launch)\", \"diffusers golden setup no longer ends with the server command; run carries it once\", \"comfyui golden run keeps cd /workspace/ComfyUI\", \"exactly 5 skypilot goldens move, no runpod or modal golden moves\", \"only task_config.setup/.run differ; envs/resources/launch_kwargs byte-identical\"]}\n```",
       "blockedBy": [
         4
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-31T07:24:29.277512"
+  "lastUpdated": "2026-08-31T07:39:38.272818"
 }

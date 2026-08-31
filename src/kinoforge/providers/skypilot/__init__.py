@@ -80,6 +80,8 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     Offer,
+    combine_steps,
+    render_launch,
 )
 from kinoforge.core.offers import filter_offers
 from kinoforge.providers.skypilot import watchdog
@@ -318,33 +320,6 @@ def _collapse_status(raw: str) -> str:
 # ---------------------------------------------------------------------------
 # Status conversion
 # ---------------------------------------------------------------------------
-
-
-def _strip_trailing_exec(script: str) -> str:
-    """Strip a final line of the form `[<prefix> && ]exec <args>` from *script*.
-
-    ``RenderedProvision.script`` (Layer Q) ends with an ``exec <run_cmd>`` line
-    so the run process becomes PID 1 on RunPod's single-dockerArgs path. On
-    SkyPilot, ``Task.setup`` must terminate so ``Task.run`` can start — the
-    trailing ``exec`` would prevent that. This helper removes the last line if
-    it contains an ``exec`` invocation; otherwise the script is returned
-    unchanged.
-
-    Args:
-        script: The rendered provision script.
-
-    Returns:
-        Script with the trailing ``exec`` line removed (or unchanged if no
-        ``exec`` is found on the last non-empty line).
-    """
-    lines = script.rstrip("\n").split("\n")
-    if not lines:
-        return script
-    last = lines[-1]
-    # " && exec " would be subsumed by the " exec " substring check.
-    if " exec " in last or last.startswith("exec "):
-        return "\n".join(lines[:-1])
-    return script
 
 
 # ---------------------------------------------------------------------------
@@ -687,12 +662,15 @@ class SkyPilotProvider(ComputeProvider):
             "env": c,  # task_config["envs"]
             "tags": c,  # the F12 provisional row, then Instance.tags
             "run_id": c,  # task name + cluster_name
-            "provision_script": c,  # appended to Task.setup
-            "run_cmd": c,  # Task.run, shell-quoted
+            # S3: superseded by setup_steps + launch, both read FIRST. What
+            # remains is a fallback for unmigrated callers, so no shipped
+            # config's value reaches the wire through either. Dies in Task 7.
+            "provision_script": u,
+            "run_cmd": u,  # superseded by launch; requoting it dropped the cd
             "image_build_script": u,  # Modal-only split
             "runtime_provision_script": u,  # Modal-only split
-            "setup_steps": u,  # S3 Task 5 turns this CONSUMED
-            "launch": u,  # S3 Task 5 turns this CONSUMED
+            "setup_steps": c,  # combined into Task.setup
+            "launch": c,  # rendered into Task.run
             "lifecycle": c,  # idle_minutes_to_autostop + the watchdog deadline
             "offer": c,  # resources["accelerators"] / cpus+memory
             "backend_options": c,  # cloud pin + retry_until_up, via _adapters
@@ -915,14 +893,15 @@ class SkyPilotProvider(ComputeProvider):
 
         ``setup`` always starts with the instance-side deadline watchdog's
         arming step (:func:`kinoforge.providers.skypilot.watchdog.RENDER_ARM`)
-        — present even when ``spec.provision_script`` is empty, so a
+        — present even when the spec carries no setup, so a
         provision-script-less deploy (e.g. the CPU smoke) still carries a
-        deadline. When ``spec.provision_script`` is set, it is appended
-        after the arming step (after :func:`_strip_trailing_exec` removes
-        RunPod's trailing ``exec`` line so the setup phase can terminate).
-        When ``spec.run_cmd`` is set, it is shell-quoted via
-        :func:`shlex.quote` and joined into ``run``; empty ``run_cmd``
-        omits the key.
+        deadline. ``spec.setup_steps`` are combined and appended after the
+        arming step, and ``spec.launch`` is rendered into ``run``. The split
+        is the engine's, not a guess: ``Task.setup`` must terminate for
+        ``Task.run`` to start, and before compute-seam S3 this provider tried
+        to find the boundary by substring-matching ``" exec "`` on the script's
+        last line — which left the diffusers server inside ``setup`` and
+        stripped comfyui's ``cd`` out of ``run``.
 
         Args:
             spec: Instance specification.
@@ -982,10 +961,10 @@ class SkyPilotProvider(ComputeProvider):
                 else:
                     resources["any_of"] = [{"cloud": c} for c in self._clouds]
             task_config["resources"] = resources
-        # Layer Q dual-exec hazard resolution: the script's trailing
-        # ``exec <run_cmd>`` line is stripped before it becomes Task.setup so
-        # setup can terminate normally; spec.run_cmd carries the long-running
-        # process into Task.run.
+        # Layer Q's dual-exec hazard is resolved at the source as of S3: the
+        # engine emits setup and launch as separate values, so Task.setup
+        # terminates because it contains no server, not because this provider
+        # managed to spot one and cut it off.
         launch_epoch = time.time()
         deadline_epoch = watchdog.compute_deadline(
             launch_epoch=launch_epoch,
@@ -1002,10 +981,23 @@ class SkyPilotProvider(ComputeProvider):
         setup_parts: list[str] = [
             watchdog.RENDER_ARM(deadline_epoch=deadline_epoch, now=launch_epoch)
         ]
-        if spec.provision_script:
-            setup_parts.append(_strip_trailing_exec(spec.provision_script))
+        # compute-seam S3: the steps ARE the setup and the launch IS the run.
+        # No guessing where one ends and the other begins — the substring
+        # heuristic that used to do the guessing (`_strip_trailing_exec`) was
+        # wrong on both shipped engines, leaving the diffusers server inside
+        # Task.setup (which then never terminated) and stripping comfyui's
+        # `cd /workspace/ComfyUI` so Task.run ran main.py from the login dir.
+        if spec.setup_steps:
+            setup_parts.append(combine_steps(spec.setup_steps))
+        elif spec.provision_script:
+            # Legacy path; dies with provision_script in Task 7.
+            setup_parts.append(spec.provision_script)
         task_config["setup"] = "\n".join(setup_parts)
-        if spec.run_cmd:
+        if spec.launch is not None:
+            # NOT a shlex.quote-joined run_cmd: that reconstruction is what
+            # dropped comfyui's workdir and its exec.
+            task_config["run"] = render_launch(spec.launch)
+        elif spec.run_cmd:
             task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
 
         # Modern sky.launch requires a sky.Task — passing the dict directly
@@ -1071,9 +1063,12 @@ class SkyPilotProvider(ComputeProvider):
         # modern API.
         _resolve(sky, raw)
         endpoints: dict[str, str] = {}
-        # Only a server spec (long-running run_cmd) needs an HTTP tunnel; a
-        # server-less deploy (CPU smoke) gets no tunnel and empty endpoints.
-        if spec.run_cmd:
+        # Only a server spec (one that declares a long-running launch) needs an
+        # HTTP tunnel; a server-less deploy (CPU smoke) gets no tunnel and empty
+        # endpoints. S3 moved the condition off ``run_cmd`` onto ``launch``:
+        # every engine sets the two together or neither, so this is the same
+        # question asked of the field that now answers it.
+        if spec.launch is not None:
             local_port = self._alloc_port()
             try:
                 tunnel = self._ssh_spawn(cluster_name, local_port, _VIDEO_SERVER_PORT)
