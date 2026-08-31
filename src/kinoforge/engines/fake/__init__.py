@@ -33,8 +33,10 @@ from kinoforge.core.interfaces import (
     GenerationEngine,
     GenerationJob,
     Instance,
+    Launch,
     ModelProfile,
     RenderedProvision,
+    SetupStep,
 )
 
 
@@ -303,6 +305,16 @@ class FakeEngine(GenerationEngine):
             image=image,
             ports=["8000"],
             env_required=[],
+            # compute-seam S3: this engine is the one exception to "steps plus
+            # launch reproduce the script". ``script`` is ``echo fake`` and
+            # ``run_cmd`` is ``sleep infinity``, and the two have never been
+            # connected — on RunPod the container echoes and exits. Declaring
+            # the launch makes it reachable for the first time WITHOUT adding a
+            # line to ``script``, which would change what a fake container does.
+            # No golden moves: the only config on this engine runs on the local
+            # provider, which starts nothing.
+            setup_steps=(SetupStep("echo fake"),),
+            launch=Launch(("sleep", "infinity")),
         )
 
     def wait_for_ready(

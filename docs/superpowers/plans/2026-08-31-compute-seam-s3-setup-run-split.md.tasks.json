@@ -19,7 +19,7 @@
     {
       "id": 2,
       "subject": "Task 2: diffusers emits steps and a launch",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Convert the engine whose `_add(\"build\"|\"runtime\"|\"both\", ...)` tagging is already a `bakeable` flag in disguise, and prove the conversion is byte-identical to today's script.\n\n**Files:**\n- Modify: `src/kinoforge/engines/diffusers/__init__.py:1128-1273`\n- Test: `tests/engines/test_engine_setup_steps.py`\n\n**Acceptance Criteria:**\n- [ ] `render_provision` returns `setup_steps` combining to today's `script` MINUS the final launch line, and a `launch` rendering back to exactly that line.\n- [ ] `combine_steps(setup_steps) + \"\\n\" + render_launch(launch) == script` for every shipped diffusers config, asserted over the configs not a fixture.\n- [ ] `bakeable=True` for exactly the lines `_add` tagged `build` or `both`; `both` stays in both buckets.\n- [ ] `launch.exec_pid1 is False`, with a test saying the EXIT trap is why.\n- [ ] `script`, `build_script`, `runtime_script` keep their current values.\n- [ ] All 31 goldens byte-identical.\n\n**Verify:** `pixi run python -m pytest tests/engines/test_engine_setup_steps.py tests/providers/test_launch_payload_goldens.py -q`\n\nFull steps + code: plan Task 2.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/diffusers/__init__.py\", \"tools/snapshot_launch_payloads.py\", \"tests/engines/test_engine_setup_steps.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/test_engine_setup_steps.py tests/providers/test_launch_payload_goldens.py -q\", \"modelTier\": \"frontier\", \"acceptanceCriteria\": [\"steps + rendered launch reproduce script byte-for-byte over every shipped diffusers config\", \"bakeable steps reproduce build_script exactly\", \"launch.exec_pid1 is False so the EXIT trap survives\", \"script/build_script/runtime_script unchanged\", \"All 31 goldens byte-identical\"]}\n```",
       "blockedBy": [
         1
@@ -28,7 +28,7 @@
     {
       "id": 3,
       "subject": "Task 3: comfyui and fake emit steps and a launch",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Convert the remaining two engines. comfyui is the one with a `workdir`; fake is the one with no launch line in its script at all, which is its own finding.\n\n**Files:**\n- Modify: `src/kinoforge/engines/comfyui/__init__.py:1390`, `src/kinoforge/engines/fake/__init__.py:300-306`\n- Test: `tests/engines/test_engine_setup_steps.py` (extend)\n\n**Acceptance Criteria:**\n- [ ] comfyui returns `Launch(argv=(\"python\",\"main.py\",*launch_args), workdir=\"/workspace/ComfyUI\", exec_pid1=True)` and satisfies the reproduce-the-script invariant.\n- [ ] comfyui's steps are a single `SetupStep` up to but excluding the launch line, `bakeable=False`.\n- [ ] fake returns `setup_steps=(SetupStep(\"echo fake\"),)` and `Launch((\"sleep\",\"infinity\"))`. Its `script` gains NO launch line, so the invariant does not hold for fake and the test says so explicitly.\n- [ ] Task 2's invariant test widens to every shipped config with a `compute:` block except the fake one, naming fake in the exclusion with the reason.\n- [ ] All 31 goldens byte-identical, `local-fake.json` included.\n\n**Verify:** `pixi run python -m pytest tests/engines/test_engine_setup_steps.py tests/providers/test_launch_payload_goldens.py -q`\n\nFull steps + code: plan Task 3.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/engines/comfyui/__init__.py\", \"src/kinoforge/engines/fake/__init__.py\", \"tests/engines/test_engine_setup_steps.py\"], \"verifyCommand\": \"pixi run python -m pytest tests/engines/test_engine_setup_steps.py tests/providers/test_launch_payload_goldens.py -q\", \"modelTier\": \"standard\", \"acceptanceCriteria\": [\"comfyui launch carries workdir=/workspace/ComfyUI and exec_pid1=True\", \"comfyui steps are one non-bakeable step and reproduce the script\", \"fake declares a launch its script never had, with the exception documented\", \"invariant test widened to all compute configs except local-fake\", \"All 31 goldens byte-identical\"]}\n```",
       "blockedBy": [
         2
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-31T01:24:26.551319"
+  "lastUpdated": "2026-08-31T01:36:43.716872"
 }

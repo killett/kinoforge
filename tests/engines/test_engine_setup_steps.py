@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from kinoforge.core.config import load_config
-from kinoforge.core.interfaces import combine_steps, render_launch
+from kinoforge.core.interfaces import Launch, SetupStep, combine_steps, render_launch
 from tools.snapshot_launch_payloads import compute_configs, render_for_config
 
 #: The build phase runs the bakeable steps in ISOLATION, so it needs its own
@@ -24,36 +24,58 @@ from tools.snapshot_launch_payloads import compute_configs, render_for_config
 _BUILD_PREAMBLE = "set -euo pipefail\n"
 
 
-def _diffusers_configs() -> list[Path]:
-    """Return every shipped config whose engine is diffusers.
+#: The FAKE ENGINE is the one thing the reproduce-the-script invariant does NOT
+#: cover, and it is excluded by engine kind — not by filename, which would miss
+#: ``cost.yaml`` and ``sweeper.yaml``, two configs that also run it. Its script
+#: is ``echo fake`` while its launch is ``sleep infinity``: the two have never
+#: been connected, so declaring the launch (Task 3) deliberately does not add a
+#: line to the script. ``test_fake_engine_declares_a_launch_its_script_never_had``
+#: pins that exception directly.
+_INVARIANT_EXCLUDED_ENGINE = "fake"
+
+
+def _configs_for(engine_kind: str | None = None) -> list[Path]:
+    """Return shipped compute configs, optionally narrowed to one engine.
 
     Selected by the config's declared engine rather than by filename, so a
-    diffusers config that does not say "diffusers" in its name is still
-    covered.
+    config that does not name its engine in its filename is still covered.
+
+    Args:
+        engine_kind: When given, keep only configs declaring this engine.
 
     Returns:
-        Sorted config paths.
+        Sorted config paths, excluding every config on the fake engine.
     """
+    kinds = {p: load_config(str(p)).engine.kind for p in compute_configs()}
     return [
-        p for p in compute_configs() if load_config(str(p)).engine.kind == "diffusers"
+        p
+        for p, kind in kinds.items()
+        if kind != _INVARIANT_EXCLUDED_ENGINE
+        and (engine_kind is None or kind == engine_kind)
     ]
 
 
-_DIFFUSERS_CONFIGS = _diffusers_configs()
+_DIFFUSERS_CONFIGS = _configs_for("diffusers")
+_ALL_CONFIGS = _configs_for()
 
 
-def test_the_diffusers_config_set_is_not_empty() -> None:
+def test_the_config_sets_are_not_empty_and_cover_more_than_one_engine() -> None:
     """Tripwire.
 
     Bug caught: a selector that matches nothing turns every parametrized test
     below into zero cases, which reads as a green suite while proving nothing.
+    The engine-count half catches a widened set that is still diffusers-only,
+    which would leave comfyui's workdir unproven.
     """
     assert len(_DIFFUSERS_CONFIGS) >= 10
+    assert len(_ALL_CONFIGS) > len(_DIFFUSERS_CONFIGS)
+    kinds = {load_config(str(p)).engine.kind for p in _ALL_CONFIGS}
+    assert "comfyui" in kinds
 
 
-@pytest.mark.parametrize("cfg_path", _DIFFUSERS_CONFIGS, ids=lambda p: p.stem)
+@pytest.mark.parametrize("cfg_path", _ALL_CONFIGS, ids=lambda p: p.stem)
 def test_steps_plus_launch_reproduce_the_script(cfg_path: Path) -> None:
-    """The ordering invariant, over every shipped diffusers config.
+    """The ordering invariant, over every shipped config but the fake one.
 
     Bug caught: a step emitted out of declaration order, a dropped newline
     between the last step and the launch, or a launch that no longer renders
@@ -111,6 +133,56 @@ def test_diffusers_launch_does_not_exec_because_bash_must_stay_pid_1() -> None:
     assert rendered.launch is not None
     assert rendered.launch.exec_pid1 is False
     assert rendered.launch.workdir == ""
+
+
+def test_comfyui_launch_carries_the_workdir_the_strip_used_to_eat() -> None:
+    """Bug caught, and it is live today: ``_strip_trailing_exec`` removes
+    ``cd /workspace/ComfyUI && exec python main.py ...`` wholesale, so SkyPilot's
+    Task.run is ``python main.py`` from the login directory — where main.py does
+    not exist. The workdir has to survive as data.
+    """
+    rendered = render_for_config(Path("examples/configs/skypilot-lambda-comfyui.yaml"))
+    assert rendered.launch is not None
+    assert rendered.launch.workdir == "/workspace/ComfyUI"
+    assert rendered.launch.exec_pid1 is True
+    assert rendered.launch.argv[:2] == ("python", "main.py")
+    rebuilt = (
+        combine_steps(rendered.setup_steps) + "\n" + render_launch(rendered.launch)
+    )
+    assert rebuilt == rendered.script
+
+
+def test_comfyui_emits_one_non_bakeable_step() -> None:
+    """comfyui has no build/runtime split today.
+
+    Bug caught: inventing one here would be a behaviour change wearing a
+    refactor's clothes — Modal would bake comfyui's model downloads into an
+    image that no comfyui config asks for, and the step would stop re-running
+    per container.
+    """
+    rendered = render_for_config(Path("examples/configs/skypilot-lambda-comfyui.yaml"))
+    assert len(rendered.setup_steps) == 1
+    assert rendered.setup_steps[0].bakeable is False
+    assert rendered.setup_steps[0].runtime is True
+
+
+def test_fake_engine_declares_a_launch_its_script_never_had() -> None:
+    """The fake engine is the exception to the reproduce-the-script invariant.
+
+    Its script is ``echo fake`` and its run_cmd is ``sleep infinity``, and the
+    two have never been connected: on RunPod the container runs ``echo fake``
+    and exits. Declaring the launch makes that reachable for the first time. It
+    moves no golden because the only config using this engine runs on the local
+    provider, which starts nothing.
+
+    Bug caught: quietly letting fake inherit the invariant would force a
+    ``sleep infinity`` line into its script and change what a fake-engine
+    container does.
+    """
+    rendered = render_for_config(Path("examples/configs/local-fake.yaml"))
+    assert rendered.setup_steps == (SetupStep("echo fake"),)
+    assert rendered.launch == Launch(("sleep", "infinity"))
+    assert "sleep" not in rendered.script
 
 
 def test_diffusers_launch_argv_is_the_server_command() -> None:
