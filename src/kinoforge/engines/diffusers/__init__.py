@@ -1127,43 +1127,34 @@ class DiffusersEngine(GenerationEngine):
             "nohup python3 /tmp/selfterm.py > /tmp/selfterm.log 2>&1 & "
             "fi",
         ]
-        # Fast-boot split (2026-07-10): every appended segment is tagged either
-        # "build" (bakeable install — pip, composed upscaler/interpolator) or
-        # "runtime" (container-start — embed, exports, server exec). ``lines`` is
-        # the combined stream RunPod still boots verbatim; the two buckets feed
-        # RenderedProvision.build_script / runtime_script so Modal can bake the
-        # installs into the image. The preamble is all runtime.
+        # Fast-boot split (2026-07-10, reshaped by compute-seam S3): every
+        # appended segment is tagged "build" (bakeable install — pip, composed
+        # upscaler/interpolator), "runtime" (container-start — embed, exports)
+        # or "both", and that tag becomes the step's own routing flags. Modal
+        # partitions on them to bake the installs into the image; RunPod
+        # ignores them and concatenates everything. ``lines`` is the combined
+        # stream, kept for ``script`` — which is what ``kinoforge doctor`` and
+        # the C30 probe read, NOT what any provider boots. The preamble is
+        # runtime-only.
         lines: list[str] = list(_preamble)
-        runtime_lines: list[str] = list(_preamble)
-        build_lines: list[str] = []
-        # compute-seam S3: the same tagging, expressed as data. ``phase`` is
-        # already a ``bakeable`` flag in disguise — "build"/"both" ARE the
-        # bakeable steps — so each _add call records one step beside the line
-        # buckets. The buckets stay because they are what proves byte-identity
-        # while both representations coexist; they die with the legacy fields.
-        # The preamble is runtime-only, hence bakeable=False.
         steps: list[SetupStep] = [SetupStep("\n".join(_preamble))]
 
         def _add(phase: str, *new: str) -> None:
-            """Append line(s) to the combined stream, the phase bucket(s), AND steps.
+            """Append line(s) to the combined stream AND record them as a step.
 
             phase is "build", "runtime", or "both". "both" is for steps a baked
             image needs at BUILD time yet the runtime container also needs — the
             module embed: the composed FlashVSR weights-fetch runs
             ``python -m kinoforge...`` which resolves only against the embedded
             /tmp/kfsrv tree + PYTHONPATH, so that tree must exist in the image at
-            bake time; the runtime server needs it too.
+            bake time; the runtime server needs it too. That is why the two
+            flags are independent rather than one ``bakeable`` boolean.
 
             Args:
                 phase: "build", "runtime", or "both".
                 *new: The lines to append.
             """
-            for ln in new:
-                lines.append(ln)
-                if phase in ("build", "both"):
-                    build_lines.append(ln)
-                if phase in ("runtime", "both"):
-                    runtime_lines.append(ln)
+            lines.extend(new)
             steps.append(
                 SetupStep(
                     "\n".join(new),
@@ -1278,31 +1269,21 @@ class DiffusersEngine(GenerationEngine):
             #
             # compute-seam S3: that is a property of THIS WORKLOAD, not of a
             # provider's convention, which is why it rides on Launch and no
-            # provider gets to append an `exec` of its own. The line is still
-            # appended to the two legacy buckets so ``script`` and
-            # ``runtime_script`` keep their current bytes; it is NOT a step.
+            # provider gets to append an `exec` of its own. It is appended to
+            # ``lines`` so the human-readable ``script`` still shows how the
+            # server starts; it is NOT a step, because a step is something a
+            # provider runs as setup.
             launch = Launch(argv=tuple(server_cmd), exec_pid1=False)
             lines.append(" ".join(server_cmd))
-            runtime_lines.append(" ".join(server_cmd))
 
         port = _extract_port_from_base_url(base_url)
         # 8001 is the sidecar log-server port; emitted alongside the main
         # server port so the provider exposes both via its proxy URLs.
         ports = [port, "8001"] if port != "8001" else [port]
-        build_script = ""
-        if build_lines:
-            # build_lines run at image-BUILD (Modal) — give them their own
-            # fail-fast preamble (the combined script's set -e lives in the
-            # runtime preamble, which the baked image does not run).
-            build_script = "set -euo pipefail\n" + "\n".join(build_lines)
-        runtime_script = "\n".join(runtime_lines)
         return RenderedProvision(
             script="\n".join(lines),
-            build_script=build_script,
-            runtime_script=runtime_script,
             setup_steps=tuple(steps),
             launch=launch,
-            run_cmd=server_cmd,
             image=image,
             ports=ports,
             # HF_TOKEN is required because huggingface_hub's anonymous

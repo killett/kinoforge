@@ -551,14 +551,13 @@ def _capture_local(
             "provider": "local",
             "seam": "LocalProvider.create_instance -> Instance",
             "instance": {
-                # NOTE: image / ports / env / run_cmd are echoed from the SPEC,
-                # not read off the Instance — LocalProvider ignores all four.
+                # NOTE: image / ports / env are echoed from the SPEC, not
+                # read off the Instance — LocalProvider ignores all three.
                 # Anything proving a local declaration must observe the
-                # Instance (below), never these four keys.
+                # Instance (below), never these keys.
                 "image": spec.image,
                 "ports": list(spec.ports),
                 "env": dict(spec.env),
-                "run_cmd": list(spec.run_cmd or []),
                 "cost_rate_usd_per_hr": instance.cost_rate_usd_per_hr,
                 "status": instance.status,
                 "tags": dict(instance.tags),

@@ -47,7 +47,10 @@ from kinoforge.core.dotenv_loader import load_env_file
 from kinoforge.core.interfaces import (
     HardwareRequirements,
     InstanceSpec,
+    Launch,
     Lifecycle,
+    SetupStep,
+    combine_steps,
 )
 from kinoforge.providers.runpod import RunPodProvider
 
@@ -194,7 +197,6 @@ curl -sSL --fail-with-body -X POST \\
 echo ""
 echo "=== UPLOAD_DONE ==="
 _upload_log
-sleep infinity
 """
 
 
@@ -225,7 +227,11 @@ def _spec_for_build(release_id: int, gh_token: str) -> InstanceSpec:
         env={"GH_TOKEN": gh_token},
         tags={"mode": "pod", "kinoforge_purpose": "bsa-wheel-build"},
         run_id="bsa-wheel-builder",
-        provision_script=_build_provision_script(release_id),
+        setup_steps=(SetupStep(_build_provision_script(release_id)),),
+        # The pod must stay up after the build so the log can be pulled;
+        # `sleep infinity` used to be the script's last line, which meant
+        # RunPod could not tell setup from the thing that outlives it.
+        launch=Launch(("sleep", "infinity")),
     )
 
 
@@ -363,7 +369,7 @@ def main() -> int:
     )
 
     spec = replace(_spec_for_build(release_id, gh_token), offer=offer)  # type: ignore[arg-type]
-    _log(f"provision script len={len(spec.provision_script or '')} bytes")
+    _log(f"provision script len={len(combine_steps(spec.setup_steps))} bytes")
 
     inst = provider.create_instance(spec)
     _log(f"pod created id={inst.id} status={inst.status}")

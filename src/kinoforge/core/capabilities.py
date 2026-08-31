@@ -58,10 +58,10 @@ class Capability(StrEnum):
 class WorkloadShape(StrEnum):
     """Whether the deploy leaves a long-lived process on the instance.
 
-    SERVER — ``spec.run_cmd`` non-empty; the job never terminates, so
+    SERVER — ``spec.launch`` is set; the job never terminates, so
              provider-side idle detection can never fire (verification doc
              F1, confirmed against skypilot 0.12.3.post1).
-    BATCH  — ``spec.run_cmd`` empty; the provision script runs and exits, so
+    BATCH  — ``spec.launch`` is None; the setup steps run and exit, so
              the instance genuinely reaches idle.
     """
 

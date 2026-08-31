@@ -37,7 +37,13 @@ from pathlib import Path
 from typing import Any
 
 from kinoforge.core.config import load_config
-from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer, RenderedProvision
+from kinoforge.core.interfaces import (
+    InstanceSpec,
+    Launch,
+    Lifecycle,
+    Offer,
+    RenderedProvision,
+)
 from kinoforge.core.spec_builder import build_instance_spec
 from kinoforge.providers.runpod import RunPodProvider
 from tools.snapshot_launch_payloads import GOLDEN_RUN_ID, STUB_SECRET, capture_launch
@@ -71,7 +77,7 @@ def _offer() -> Offer:
 def _rendered() -> RenderedProvision:
     return RenderedProvision(
         script="#!/bin/bash\necho hi\nexec python -m server",
-        run_cmd=["python", "-m", "server"],
+        launch=Launch(("python", "-m", "server")),
         image="img:tag",
         ports=["8000/http"],
         env_required=[],

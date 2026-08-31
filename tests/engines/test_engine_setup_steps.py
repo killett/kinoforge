@@ -16,14 +16,6 @@ from kinoforge.core.config import load_config
 from kinoforge.core.interfaces import Launch, SetupStep, combine_steps, render_launch
 from tools.snapshot_launch_payloads import compute_configs, render_for_config
 
-#: The build phase runs the bakeable steps in ISOLATION, so it needs its own
-#: fail-fast line: the combined script's ``set -euo pipefail`` lives in the
-#: runtime preamble, which a baked image never executes. That prefix is
-#: therefore the one byte-difference between ``build_script`` and the bakeable
-#: steps, and it is stated here rather than derived from the engine.
-_BUILD_PREAMBLE = "set -euo pipefail\n"
-
-
 #: The FAKE ENGINE is the one thing the reproduce-the-script invariant does NOT
 #: cover, and it is excluded by engine kind — not by filename, which would miss
 #: ``cost.yaml`` and ``sweeper.yaml``, two configs that also run it. Its script
@@ -90,37 +82,35 @@ def test_steps_plus_launch_reproduce_the_script(cfg_path: Path) -> None:
 
 
 @pytest.mark.parametrize("cfg_path", _DIFFUSERS_CONFIGS, ids=lambda p: p.stem)
-def test_bakeable_steps_reproduce_the_build_script(cfg_path: Path) -> None:
-    """``bakeable`` is exactly the old build bucket.
+def test_every_step_runs_somewhere(cfg_path: Path) -> None:
+    """No step may fall through both routing flags.
 
-    Bug caught: a step mis-tagged bakeable gets baked into the image and never
-    re-runs per container — an ``export`` or a keep-alive trap tagged that way is
-    silently absent at runtime, which is a boot failure nobody can see in a diff.
-    The reverse mis-tag leaves a multi-GB weights fetch at container start, which
-    is the boot stall the fast-boot image bake exists to prevent.
+    Bug caught: a step tagged neither ``bakeable`` nor ``runtime`` is baked
+    into no image and run in no container — it simply never executes, and
+    because it still appears in the human-readable ``script`` there is nothing
+    in a diff to show it. Modal is the provider that would silently lose it.
     """
     rendered = render_for_config(cfg_path)
-    bakeable = combine_steps(tuple(s for s in rendered.setup_steps if s.bakeable))
-    expected = _BUILD_PREAMBLE + bakeable if bakeable else ""
-    assert expected == rendered.build_script
+    orphans = [s for s in rendered.setup_steps if not s.bakeable and not s.runtime]
+    assert orphans == [], f"{cfg_path} has steps that execute nowhere"
 
 
 @pytest.mark.parametrize("cfg_path", _DIFFUSERS_CONFIGS, ids=lambda p: p.stem)
-def test_non_bakeable_steps_plus_launch_reproduce_the_runtime_script(
-    cfg_path: Path,
-) -> None:
-    """The other half of the partition, which is what Modal boots.
+def test_the_module_embed_is_in_both_partitions(cfg_path: Path) -> None:
+    """A step can be bakeable AND runtime, and one of them has to be.
 
-    Bug caught: collapsing ``bakeable`` and ``runtime`` into one flag drops the
-    module-embed lines — which are BOTH — out of whichever script loses them.
-    Modal boots this partition, so it would start without
-    ``PYTHONPATH=/tmp/kfsrv`` and the server would not import.
+    Bug caught: collapsing the two flags into one drops the module-embed lines
+    out of whichever partition loses them. The image needs ``/tmp/kfsrv`` so
+    the build-phase weights fetch can resolve ``python -m kinoforge...``, and
+    the container needs it so the server imports — a Modal container booting
+    without ``PYTHONPATH=/tmp/kfsrv`` dies at import with nothing in the diff
+    to explain why.
     """
     rendered = render_for_config(cfg_path)
-    assert rendered.launch is not None
-    runtime = combine_steps(tuple(s for s in rendered.setup_steps if s.runtime))
-    rebuilt = runtime + "\n" + render_launch(rendered.launch)
-    assert rebuilt == rendered.runtime_script
+    embed = [s for s in rendered.setup_steps if "PYTHONPATH=/tmp/kfsrv" in s.script]
+    if not embed:
+        pytest.skip("this config embeds no module tree")
+    assert all(s.bakeable and s.runtime for s in embed)
 
 
 def test_diffusers_launch_does_not_exec_because_bash_must_stay_pid_1() -> None:
@@ -193,5 +183,9 @@ def test_diffusers_launch_argv_is_the_server_command() -> None:
         Path("examples/configs/runpod-diffusers-wan-2_2-14b-t2v.yaml")
     )
     assert rendered.launch is not None
-    assert tuple(rendered.run_cmd) == rendered.launch.argv
-    assert "wan_t2v_server" in " ".join(rendered.launch.argv)
+    server_cmd = " ".join(rendered.launch.argv)
+    assert "wan_t2v_server" in server_cmd
+    # And the COMMAND is not left behind in the steps — that is what lets
+    # SkyPilot's Task.setup terminate. (The embedded `wan_t2v_server.py` FILE
+    # legitimately appears in a step; the command form is what matters.)
+    assert not any(server_cmd in s.script for s in rendered.setup_steps)

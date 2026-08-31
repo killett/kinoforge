@@ -20,7 +20,7 @@ import dataclasses
 import logging
 import os
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +59,7 @@ from kinoforge.core.interfaces import (
     ImageProfileProvider,
     Instance,
     InstanceSpec,
+    Launch,
     ModelProfile,
     ModelProfileProvider,
     Offer,
@@ -728,7 +729,7 @@ def _build_start_heartbeat_closure(
 def assert_launch_capabilities(
     cfg: Config,
     *,
-    run_cmd: Sequence[str] | None,
+    launch: Launch | None,
     logger: logging.Logger = _log,
 ) -> list[Gap]:
     """Re-evaluate capability gaps against the authoritative workload shape.
@@ -736,12 +737,14 @@ def assert_launch_capabilities(
     Load-time ``infer_shape`` reads nothing and returns SERVER
     unconditionally — it refuses to guess (see its docstring for why every
     heuristic it could use guesses in the dangerous direction). Here
-    ``run_cmd`` is the authoritative, rendered thing, so a spec that really
+    ``launch`` is the authoritative, rendered thing, so a spec that really
     is BATCH is caught rather than mis-reported, and the mismatch is logged.
 
     Args:
         cfg: The loaded Config.
-        run_cmd: The rendered provision's run command. Empty/None -> BATCH.
+        launch: The rendered provision's launch. None -> BATCH, because an
+            engine that declares no launch starts nothing that outlives the
+            provision.
         logger: Injected for testability.
 
     Returns:
@@ -761,12 +764,12 @@ def assert_launch_capabilities(
         infer_shape,
     )
 
-    shape = WorkloadShape.BATCH if not run_cmd else WorkloadShape.SERVER
+    shape = WorkloadShape.BATCH if launch is None else WorkloadShape.SERVER
     inferred = infer_shape(cfg)
     if inferred is not shape:
         logger.warning(
             "[capabilities] shape inference miss: load-time inferred %s, "
-            "spec.run_cmd says %s — the launch-time shape wins",
+            "spec.launch says %s — the launch-time shape wins",
             inferred.value,
             shape.value,
         )
@@ -866,7 +869,7 @@ def _provision_instance_and_build_backend(
         CapabilityMismatch: Engine rejected its own capability key; instance destroyed.
         ValidationError: Two distinct sites. (1) ``assert_launch_capabilities``
             finds an ERROR-severity capability gap. It runs once, after
-            ``render_provision`` (it needs the authoritative ``run_cmd``) and
+            ``render_provision`` (it needs the authoritative launch) and
             above the offer-retry / capacity-wait loops — so it raises before
             ``find_offers`` or ``create_instance`` are reached and nothing
             exists yet to destroy. (2) Spec validation fails inside ``_provision_compute_once``
@@ -907,13 +910,13 @@ def _provision_instance_and_build_backend(
             raise AuthError(f"missing required env var: {var}")
         rendered_env[var] = value
 
-    # Capability re-check against the AUTHORITATIVE rendered run_cmd, hoisted
+    # Capability re-check against the AUTHORITATIVE rendered launch, hoisted
     # above the offer-retry / capacity-wait loops on purpose: it depends only
-    # on (cfg, rendered.run_cmd), neither of which varies per offer. Inside
+    # on (cfg, rendered.launch), neither of which varies per offer. Inside
     # _build_spec it re-raised the same ERROR and re-emitted every WARN line
     # once per offer AND again per capacity-wait retry, which reads to an
     # operator as several distinct guardrail problems instead of one.
-    assert_launch_capabilities(cfg, run_cmd=rendered.run_cmd)
+    assert_launch_capabilities(cfg, launch=rendered.launch)
 
     def _build_spec(offer: Offer) -> InstanceSpec:
         return build_instance_spec(
@@ -1710,7 +1713,7 @@ def deploy(
         return build_instance_spec(
             cfg=cfg,
             rendered=RenderedProvision(
-                script="", run_cmd=[], image=image, ports=[], env_required=[]
+                script="", image=image, ports=[], env_required=[]
             ),
             offer=offer,
             engine_name=resolved_engine.name,

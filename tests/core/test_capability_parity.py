@@ -26,7 +26,14 @@ import pytest
 from kinoforge.core.balance_endpoints import provider_balance_supported
 from kinoforge.core.capabilities import Capability, WorkloadShape
 from kinoforge.core.heartbeat_endpoints import provider_heartbeat_supported
-from kinoforge.core.interfaces import ComputeProvider, InstanceSpec, Lifecycle, Offer
+from kinoforge.core.interfaces import (
+    ComputeProvider,
+    InstanceSpec,
+    Launch,
+    Lifecycle,
+    Offer,
+    SetupStep,
+)
 from kinoforge.core.util_endpoints import provider_util_supported
 from kinoforge.providers.local import LocalProvider
 from kinoforge.providers.modal import ModalProvider
@@ -183,8 +190,8 @@ def test_modal_idle_autostop_declaration_matches_the_built_app_request() -> None
             image="img:latest",
             offer=Offer("A10", "A10", 24, "12.4", 1.10, mode="serverless"),
             run_id="r1",
-            provision_script="echo hi",
-            run_cmd=["python", "-m", "server"],
+            setup_steps=(SetupStep("echo hi"),),
+            launch=Launch(("python", "-m", "server")),
             lifecycle=Lifecycle(idle_timeout_s=420.0),
         )
     )
@@ -234,7 +241,7 @@ def test_skypilot_on_instance_deadline_declaration_matches_the_rendered_setup() 
 
     sky = _FakeSky()
     SkyPilotProvider(sky_client=sky).create_instance(
-        InstanceSpec(image="img:latest", provision_script="echo provision")
+        InstanceSpec(image="img:latest", setup_steps=(SetupStep("echo provision"),))
     )
     setup = sky.launches[0]["setup"]
     declared = Capability.ON_INSTANCE_DEADLINE in SkyPilotProvider.capabilities()

@@ -78,7 +78,7 @@ def _req():
         image="runpod/pytorch:2.4.0-cuda12.4",
         gpu="A10",
         provision_script="echo provisioning; pip install foo",
-        run_cmd=["python", "-m", "kinoforge.engines.diffusers.servers.wan_t2v_server"],
+        launch_line="python -m kinoforge.engines.diffusers.servers.wan_t2v_server",
         env={"HF_HOME": "/cache/hf"},
         volume_mount="/cache/hf",
         scaledown_window_s=300,

@@ -64,7 +64,7 @@
     {
       "id": 7,
       "subject": "Task 7: Delete the old script fields",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Remove `provision_script`, `image_build_script`, `runtime_provision_script` and `run_cmd` now that every producer and consumer has moved, and fix the stale comment S1 deferred.\n\n**Files:**\n- Modify: `src/kinoforge/core/interfaces.py`, `src/kinoforge/core/spec_builder.py`, all four providers, `src/kinoforge/cli/_commands.py:322`, `src/kinoforge/diagnostics/c30_probe.py:263-318`\n- Modify: `src/kinoforge/engines/diffusers/servers/wan_t2v_server.py` (stale `requirements.disk_gb` comment)\n- Modify: the ~54 test modules constructing these fields\n\n**Acceptance Criteria:**\n- [ ] `rg -n 'provision_script|image_build_script|runtime_provision_script|run_cmd' src/` returns only `setup_steps` / `launch` call sites and the diagnostics probe's own local variable.\n- [ ] `RenderedProvision` keeps `script` for the diagnostics/doctor one-off path, documented as a rendering of the steps rather than the thing providers boot.\n- [ ] The `wan_t2v_server.py` comment naming `requirements.disk_gb` is corrected to `placement.disk_gb`.\n- [ ] RunPod goldens move by exactly that comment inside the gzip blob; decode and show the one-line diff.\n- [ ] `pixi run test` green; `pixi run typecheck` and `pixi run lint` clean.\n\n**Verify:** `pixi run test && pixi run typecheck && pixi run lint`\n\nFull steps + code: plan Task 7.\n\n```json:metadata\n{\"files\": [\"src/kinoforge/core/interfaces.py\", \"src/kinoforge/core/spec_builder.py\", \"src/kinoforge/providers/\", \"src/kinoforge/cli/_commands.py\", \"src/kinoforge/diagnostics/c30_probe.py\", \"src/kinoforge/engines/diffusers/servers/wan_t2v_server.py\"], \"verifyCommand\": \"pixi run test && pixi run typecheck && pixi run lint\", \"modelTier\": \"frontier\", \"acceptanceCriteria\": [\"rg over src/ finds no legacy script fields outside the diagnostics local\", \"RenderedProvision.script survives only as the diagnostics one-off, documented as such\", \"wan_t2v_server.py comment corrected to placement.disk_gb\", \"RunPod goldens move by exactly that comment, shown as a decoded one-line diff\", \"full suite, typecheck and lint green\"]}\n```",
       "blockedBy": [
         6
@@ -89,5 +89,5 @@
       ]
     }
   ],
-  "lastUpdated": "2026-08-31T07:47:01.494697"
+  "lastUpdated": "2026-08-31T08:47:09.564653"
 }

@@ -261,13 +261,12 @@ class RenderedProvision:
     """Engine-emitted bootstrap payload for a remote pod / VM.
 
     Attributes:
-        script: Self-contained bash script. Must be idempotent on warm pods.
-            Reference credentials only via ``$VAR``; never embed literal
-            credential values. The orchestrator lifts ``env_required``
-            entries onto ``spec.env`` before pod creation.
-        run_cmd: Long-running command launched after the script completes.
-            Convention: the script ends with ``exec <run_cmd>`` so the run
-            cmd becomes the container's PID 1.
+        script: The setup steps rendered as one bash script, for readers that
+            want a human-readable whole — ``kinoforge doctor`` and the C30
+            diagnostics probe. It is NOT what providers boot: each of those
+            composes from ``setup_steps`` and ``launch``, because only the pair
+            says where the setup ends and the workload starts. An engine that
+            returns only ``script`` therefore provisions nothing.
         image: Container image to boot. Defaults to a stock provider image
             (see engine impl).
         ports: Ports the engine listens on. Provider exposes via its native
@@ -276,31 +275,19 @@ class RenderedProvision:
             Orchestrator validates each is reachable via the configured
             ``CredentialProvider`` before ``provider.create_instance``;
             lifts onto ``spec.env``.
-        build_script: Bakeable install steps only (pip deps, composed
-            upscaler/interpolator install — BSA wheel, model weights). Safe to
-            run at image-build time. Empty when the engine emits no installs.
-            Modal bakes this into the image so container boot is seconds.
-        runtime_script: Container-start steps only (log surface, keep-alive
-            trap, sidecar/selfterm, embed decode, ``export`` env, server exec).
-            Never re-runs the heavy installs. ``build_script`` +
-            ``runtime_script`` together equal ``script`` (byte-identical); the
-            split exists so a provider that provisions at IMAGE-build (Modal)
-            can separate the two. Providers that provision at RUNTIME (RunPod)
-            keep using the combined ``script`` unchanged.
+        setup_steps: The provisioning steps, in declaration order. Each
+            carries its own ``bakeable`` / ``runtime`` routing, which replaced
+            the ``build_script`` / ``runtime_script`` pair — field names that
+            described Modal's pipeline rather than a property of the step.
+        launch: How to start the workload once the steps have run, or None for
+            an engine that starts nothing. Never synthesised from anything
+            else: a guessed launch is what compute-seam S3 removed.
     """
 
     script: str
-    run_cmd: list[str]
     image: str
     ports: list[str]
     env_required: list[str]
-    build_script: str = ""
-    runtime_script: str = ""
-    # compute-seam S3: the setup/run split that supersedes ``script`` +
-    # ``run_cmd`` + the two phase splits above. Defaults are deliberately inert
-    # — an engine that has not migrated emits no steps and NO launch, rather
-    # than a synthesised one, so a provider falls back to the legacy fields
-    # instead of booting a launch nobody wrote.
     setup_steps: tuple[SetupStep, ...] = ()
     launch: Launch | None = None
 
@@ -318,21 +305,14 @@ class InstanceSpec:
     env: dict[str, str] = field(default_factory=dict)
     tags: dict[str, str] = field(default_factory=dict)
     run_id: str = ""
-    provision_script: str | None = None
-    # Modal fast-boot (2026-07-10): the engine's bakeable install steps and its
-    # runtime-only steps, split out of ``provision_script``. RunPod ignores both
-    # and provisions from the combined ``provision_script``; Modal bakes
-    # ``image_build_script`` into the image at build time and boots the container
-    # with ``runtime_provision_script`` only (so nothing heavy re-runs at start).
-    image_build_script: str | None = None
-    runtime_provision_script: str | None = None
-    run_cmd: list[str] | None = None
     # compute-seam S3: the portable setup/run pair. Each provider composes it
     # its own way — RunPod concatenates the steps and appends the launch line
     # it needs for PID 1, SkyPilot puts the steps in ``Task.setup`` and the
-    # launch in ``Task.run``, Modal partitions on ``SetupStep.bakeable``. The
-    # four legacy fields above are the pre-S3 representation and die once every
-    # producer and consumer has moved.
+    # launch in ``Task.run``, Modal partitions on the steps' own
+    # ``bakeable`` / ``runtime`` flags. This replaced ``provision_script``,
+    # ``image_build_script``, ``runtime_provision_script`` and ``run_cmd``:
+    # one blob whose last line was a provider-specific launch convention, plus
+    # two splits named after Modal's pipeline.
     setup_steps: tuple[SetupStep, ...] = ()
     launch: Launch | None = None
     # compute-seam S1: the portable resource block (``cfg.compute.placement``),

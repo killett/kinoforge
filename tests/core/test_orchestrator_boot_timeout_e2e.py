@@ -17,6 +17,7 @@ import kinoforge.sources.huggingface  # noqa: F401 — registers hf: source for 
 from kinoforge.core.config import load_config
 from kinoforge.core.interfaces import (
     Instance,
+    Launch,
     Offer,
     RenderedProvision,
 )
@@ -82,7 +83,7 @@ def test_orchestrator_passes_boot_timeout_from_yaml_through_to_engine_provision(
         def render_provision(self, cfg_dict: dict[str, object]) -> RenderedProvision:
             return RenderedProvision(
                 script="echo hi",
-                run_cmd=["sleep", "1"],
+                launch=Launch(("sleep", "1")),
                 image="img:latest",
                 ports=["8000"],
                 env_required=[],

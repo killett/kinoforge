@@ -84,7 +84,7 @@ def test_c27_phase_a2_alpine_restart_loop_live() -> None:
     from kinoforge.core.cancel import CancelToken
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.heartbeat_loop import HeartbeatLoop
-    from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec
+    from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec, SetupStep
     from kinoforge.providers.runpod import RunPodProvider
     from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
 
@@ -120,7 +120,7 @@ def test_c27_phase_a2_alpine_restart_loop_live() -> None:
         image="mirror.gcr.io/library/alpine:latest",
         offer=cheapest,
         env={},
-        provision_script="sleep 5; exit 1",
+        setup_steps=(SetupStep("sleep 5; exit 1"),),
     )
     instance = provider.create_instance(spec)
     instance_id = instance.id

@@ -22,6 +22,7 @@ from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
     Offer,
+    combine_steps,
 )
 
 _CFG = (
@@ -107,10 +108,10 @@ def test_provision_spec_carries_rendered_ports(tmp_path: Path) -> None:
 
 
 def test_provision_spec_carries_bootstrap_script(tmp_path: Path) -> None:
-    """Bug caught: no provision_script → pod boots the bare image and
+    """Bug caught: no setup steps → pod boots the bare image and
     the engine server never starts."""
     spy = _run(tmp_path)
-    assert spy.specs[0].provision_script == "echo fake"
+    assert combine_steps(spy.specs[0].setup_steps) == "echo fake"
 
 
 def test_provision_spec_threads_backend_options(tmp_path: Path) -> None:

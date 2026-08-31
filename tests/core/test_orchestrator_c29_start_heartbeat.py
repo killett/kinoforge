@@ -29,6 +29,7 @@ from unittest.mock import MagicMock
 from kinoforge.core import orchestrator
 from kinoforge.core.interfaces import (
     Instance,
+    Launch,
     Lifecycle,
     Offer,
     RenderedProvision,
@@ -57,7 +58,7 @@ def _fake_engine() -> MagicMock:
     engine.requires_local_weights = False
     engine.render_provision.return_value = RenderedProvision(
         script="echo hi",
-        run_cmd=["python", "-m", "x"],
+        launch=Launch(("python", "-m", "x")),
         image="fake:latest",
         ports=["8000"],
         env_required=["HF_TOKEN"],

@@ -24,7 +24,13 @@ pytestmark = [
 
 def test_modal_transport_end_to_end():
     from kinoforge.core.dotenv_loader import load_env_file
-    from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer
+    from kinoforge.core.interfaces import (
+        InstanceSpec,
+        Launch,
+        Lifecycle,
+        Offer,
+        SetupStep,
+    )
     from kinoforge.providers.modal import ModalProvider
 
     load_env_file()
@@ -37,8 +43,8 @@ def test_modal_transport_end_to_end():
         image="python:3.13-slim",
         offer=Offer("T4", "T4", 16, "12.4", 0.59, mode="serverless"),
         run_id=f"smoke{int(time.time())}",
-        provision_script="echo 'no provisioning needed'",
-        run_cmd=["python", "-m", "http.server", "8000", "--bind", "0.0.0.0"],
+        setup_steps=(SetupStep("echo 'no provisioning needed'"),),
+        launch=Launch(("python", "-m", "http.server", "8000", "--bind", "0.0.0.0")),
         env={},
         lifecycle=Lifecycle(idle_timeout_s=60, boot_timeout_s=300),
     )

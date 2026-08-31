@@ -468,13 +468,13 @@ def evaluate_capability_gaps(cfg: Config, shape: WorkloadShape) -> list[Gap]:
 def infer_shape(cfg: Config) -> WorkloadShape:
     """Infer the workload shape from cfg — always SERVER, deliberately.
 
-    Nothing in kinoforge renders an empty ``run_cmd`` into the InstanceSpec
-    that *provisions* an instance:
+    Nothing in kinoforge renders a launch-less InstanceSpec that *provisions*
+    an instance:
 
-    * ``engines/diffusers/__init__.py:1274`` sets ``run_cmd=server_cmd``
-      unconditionally; ``upscale_only`` only adds ``KINOFORGE_SKIP_WAN_LOAD=1``
+    * the diffusers engine sets ``launch`` from ``server_cmd`` whenever that
+      is non-empty; ``upscale_only`` only adds ``KINOFORGE_SKIP_WAN_LOAD=1``
       to the env, leaving the long-lived server process in place.
-    * The ``run_cmd=[]`` renders in ``upscalers/*/_engine.py`` and
+    * The launch-less renders in ``upscalers/*/_engine.py`` and
       ``interpolators/rife/_engine.py`` belong to pipeline STAGES, which the
       orchestrator constructs with ``instance=session.instance``
       (``core/orchestrator.py:2008-2022`` and ``:2031-2035``) — an
@@ -488,9 +488,9 @@ def infer_shape(cfg: Config) -> WorkloadShape:
     design exists to end, so the inference refuses to guess.
 
     :class:`WorkloadShape` and skypilot's BATCH-only ``IDLE_AUTOSTOP``
-    declaration stay: the substrate claim is real, and BATCH arises in Task 5
-    from the authoritative ``spec.run_cmd`` at launch rather than from a cfg
-    guess here.
+    declaration stay: the substrate claim is real, and BATCH arises from the
+    authoritative ``spec.launch`` at launch time rather than from a cfg guess
+    here.
 
     Args:
         cfg: The loaded Config.

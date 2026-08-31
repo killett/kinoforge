@@ -16,9 +16,12 @@ import pytest
 from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
+    Launch,
     Lifecycle,
     Offer,
     RenderedProvision,
+    SetupStep,
+    combine_steps,
 )
 from kinoforge.core.orchestrator import _provision_instance_and_build_backend
 
@@ -77,39 +80,47 @@ def _drive(rendered: RenderedProvision) -> InstanceSpec:
     return provider.create_instance.call_args[0][0]
 
 
-def test_spec_carries_build_and_runtime_scripts() -> None:
-    # Bug caught: without threading, ModalProvider can't distinguish the bakeable
-    # install steps from the runtime boot -> fast-boot feature is dead.
+def test_spec_carries_the_setup_steps_with_their_routing_flags() -> None:
+    # Bug caught: without threading, ModalProvider cannot distinguish the
+    # bakeable install steps from the runtime boot -> fast-boot feature is dead.
     rendered = RenderedProvision(
         script="COMBINED-SCRIPT",
-        run_cmd=["python", "-m", "x"],
+        setup_steps=(
+            SetupStep("pip install torch", bakeable=True, runtime=False),
+            SetupStep("export A=1"),
+        ),
+        launch=Launch(("python", "-m", "x")),
         image="fake:latest",
         ports=["8000"],
         env_required=["HF_TOKEN"],
-        build_script="set -euo pipefail\npip install torch",
-        runtime_script="set -euo pipefail\nexec server",
     )
     spec = _drive(rendered)
-    assert spec.provision_script == "COMBINED-SCRIPT"  # combined unchanged
-    assert spec.image_build_script == "set -euo pipefail\npip install torch"
-    assert spec.runtime_provision_script == "set -euo pipefail\nexec server"
+    assert spec.setup_steps == rendered.setup_steps
+    assert spec.launch == Launch(("python", "-m", "x"))
+    assert combine_steps(tuple(s for s in spec.setup_steps if s.bakeable)) == (
+        "pip install torch"
+    )
+    assert combine_steps(tuple(s for s in spec.setup_steps if s.runtime)) == (
+        "export A=1"
+    )
 
 
-def test_empty_build_script_threads_as_none() -> None:
-    # Engines that emit no installs (empty build_script) must leave
-    # image_build_script None so Modal skips the run_commands bake entirely.
+def test_a_spec_with_no_bakeable_steps_bakes_nothing() -> None:
+    # Engines that emit no installs must leave Modal's build script empty so it
+    # skips the run_commands bake entirely.
     rendered = RenderedProvision(
         script="COMBINED",
-        run_cmd=["python", "-m", "x"],
+        setup_steps=(SetupStep("export A=1"),),
+        launch=Launch(("python", "-m", "x")),
         image="fake:latest",
         ports=["8000"],
         env_required=["HF_TOKEN"],
-        build_script="",
-        runtime_script="exec server",
     )
     spec = _drive(rendered)
-    assert spec.image_build_script is None
-    assert spec.runtime_provision_script == "exec server"
+    assert combine_steps(tuple(s for s in spec.setup_steps if s.bakeable)) == ""
+    assert (
+        combine_steps(tuple(s for s in spec.setup_steps if s.runtime)) == "export A=1"
+    )
 
 
 @pytest.mark.parametrize(
@@ -117,17 +128,16 @@ def test_empty_build_script_threads_as_none() -> None:
 )
 def test_flashvsr_cfg_threads_real_split(cfg_path: str) -> None:
     # End-to-end with the real engine + real cfg: the FlashVSR split reaches the
-    # spec with pip/BSA in build and the server exec in runtime.
+    # spec with pip/BSA bakeable and the server launch off the scripts entirely.
     from kinoforge.core.config import load_config
     from kinoforge.engines.diffusers import DiffusersEngine
 
     rendered = DiffusersEngine().render_provision(load_config(cfg_path).model_dump())
     spec = _drive(rendered)
-    assert spec.image_build_script and "pip install" in spec.image_build_script
-    assert "block_sparse_attn" in spec.image_build_script
-    assert (
-        spec.runtime_provision_script
-        and "wan_t2v_server" in spec.runtime_provision_script
-    )
-    assert "pip install" not in spec.runtime_provision_script
-    assert spec.provision_script == rendered.script
+    bakeable = combine_steps(tuple(s for s in spec.setup_steps if s.bakeable))
+    runtime = combine_steps(tuple(s for s in spec.setup_steps if s.runtime))
+    assert "pip install" in bakeable
+    assert "block_sparse_attn" in bakeable
+    assert "pip install" not in runtime
+    assert spec.launch is not None
+    assert "wan_t2v_server" in " ".join(spec.launch.argv)

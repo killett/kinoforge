@@ -59,6 +59,7 @@ if _REASONS:
 from kinoforge.core.interfaces import (  # noqa: E402
     HardwareRequirements,
     InstanceSpec,
+    Launch,
     Lifecycle,
     Placement,
 )
@@ -184,8 +185,7 @@ def _t4_smoke_spec(cluster_name: str, offer: Any) -> InstanceSpec:
         tags={"layer": "layer-w-beta-smoke"},
         lifecycle=lifecycle,
         offer=offer,
-        provision_script="",
-        run_cmd=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+        launch=Launch(("nvidia-smi", "--query-gpu=name", "--format=csv,noheader")),
         # use preemptible — GCP GPUS_ALL_REGIONS=0; PREEMPTIBLE_T4=1
         placement=Placement(spot=True),
     )
@@ -308,8 +308,7 @@ def test_skypilot_live_e2e_cpu_lifecycle_smoke() -> None:
             tags={"layer": "phase-31-smoke"},
             lifecycle=lifecycle,
             offer=offers[0],
-            provision_script="",
-            run_cmd=["sleep", "60"],
+            launch=Launch(("sleep", "60")),
         )
         _log.info(
             "launching cluster=%s region=us-central1 cpus=1+ memory=2+ autostop=1",

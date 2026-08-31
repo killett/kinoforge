@@ -15,9 +15,12 @@ from kinoforge.core.errors import (
 from kinoforge.core.interfaces import (
     Instance,
     InstanceSpec,
+    Launch,
     Lifecycle,
     Offer,
     RenderedProvision,
+    SetupStep,
+    combine_steps,
 )
 from kinoforge.core.orchestrator import _provision_instance_and_build_backend
 
@@ -28,7 +31,8 @@ def fake_engine() -> MagicMock:
     engine.name = "fakeengine"
     engine.render_provision.return_value = RenderedProvision(
         script="echo hi",
-        run_cmd=["python", "-m", "x"],
+        setup_steps=(SetupStep("echo hi"),),
+        launch=Launch(("python", "-m", "x")),
         image="fake:latest",
         ports=["8000"],
         env_required=["HF_TOKEN"],
@@ -181,8 +185,8 @@ def test_orchestrator_spec_carries_rendered_provision_payload(
     )
     spec_arg: InstanceSpec = fake_provider.create_instance.call_args[0][0]
     assert spec_arg.image == "fake:latest"
-    assert spec_arg.provision_script == "echo hi"
-    assert spec_arg.run_cmd == ["python", "-m", "x"]
+    assert combine_steps(spec_arg.setup_steps) == "echo hi"
+    assert spec_arg.launch == Launch(("python", "-m", "x"))
     assert spec_arg.env.get("HF_TOKEN") == "hf_REAL"
 
 

@@ -43,7 +43,7 @@ When ``sky_client is None`` the real path is taken: every method calls
 Cost model
 ----------
 ``idle_timeout_s`` is still mapped to SkyPilot's ``idle_minutes_to_autostop``,
-but that mechanism is INERT for kinoforge's server-mode deploys: ``run_cmd``
+but that mechanism is INERT for kinoforge's server-mode deploys: the launch
 becomes ``Task.run``, a job that never terminates, so ``is_cluster_idle()``
 is permanently False and the 60 s ``AutostopEvent`` tick resets the idleness
 timer forever (finding F1, verified against skypilot-0.12.3.post1). It
@@ -61,7 +61,6 @@ Self-registers under ``"skypilot"`` when this module is imported.
 from __future__ import annotations
 
 import logging
-import shlex
 import socket
 import subprocess
 import time
@@ -577,7 +576,7 @@ class SkyPilotProvider(ComputeProvider):
 
         ON_INSTANCE_DEADLINE is the watchdog armed at the top of ``Task.setup``
         (providers/skypilot/watchdog.py). IDLE_AUTOSTOP holds only at BATCH:
-        a server spec's ``run_cmd`` becomes a never-terminating ``Task.run``,
+        a server spec's launch becomes a never-terminating ``Task.run``,
         so ``job_lib.is_cluster_idle()`` is permanently False (verification
         doc F1) and the 60 s AutostopEvent tick resets the timer forever.
         """
@@ -662,13 +661,6 @@ class SkyPilotProvider(ComputeProvider):
             "env": c,  # task_config["envs"]
             "tags": c,  # the F12 provisional row, then Instance.tags
             "run_id": c,  # task name + cluster_name
-            # S3: superseded by setup_steps + launch, both read FIRST. What
-            # remains is a fallback for unmigrated callers, so no shipped
-            # config's value reaches the wire through either. Dies in Task 7.
-            "provision_script": u,
-            "run_cmd": u,  # superseded by launch; requoting it dropped the cd
-            "image_build_script": u,  # Modal-only split
-            "runtime_provision_script": u,  # Modal-only split
             "setup_steps": c,  # combined into Task.setup
             "launch": c,  # rendered into Task.run
             "lifecycle": c,  # idle_minutes_to_autostop + the watchdog deadline
@@ -989,16 +981,11 @@ class SkyPilotProvider(ComputeProvider):
         # `cd /workspace/ComfyUI` so Task.run ran main.py from the login dir.
         if spec.setup_steps:
             setup_parts.append(combine_steps(spec.setup_steps))
-        elif spec.provision_script:
-            # Legacy path; dies with provision_script in Task 7.
-            setup_parts.append(spec.provision_script)
         task_config["setup"] = "\n".join(setup_parts)
         if spec.launch is not None:
-            # NOT a shlex.quote-joined run_cmd: that reconstruction is what
+            # NOT a shlex.quote-joined argv: re-deriving the line is what
             # dropped comfyui's workdir and its exec.
             task_config["run"] = render_launch(spec.launch)
-        elif spec.run_cmd:
-            task_config["run"] = " ".join(shlex.quote(c) for c in spec.run_cmd)
 
         # Modern sky.launch requires a sky.Task — passing the dict directly
         # raises ``TypeError: launch() got an unexpected ... type``. Build the
@@ -1220,7 +1207,7 @@ class SkyPilotProvider(ComputeProvider):
         the method must exist — but nothing is written to or read from the
         cluster. SkyPilot exposes no wire-level liveness signal, and
         autostop cannot stand in for one at SERVER shape: a server spec's
-        ``run_cmd`` becomes a never-terminating ``Task.run``, so
+        the launch becomes a never-terminating ``Task.run``, so
         ``is_cluster_idle()`` is permanently False (verification doc F1),
         which is exactly why :meth:`capabilities` refuses to declare
         ``IDLE_AUTOSTOP`` at that shape. What actually bounds a skypilot run

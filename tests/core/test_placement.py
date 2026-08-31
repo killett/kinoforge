@@ -151,9 +151,7 @@ def test_built_spec_carries_the_placement_block():
     cfg = _load({"provider": "skypilot", "image": "i", "placement": {"spot": True}})
     spec = build_instance_spec(
         cfg=cfg,
-        rendered=RenderedProvision(
-            script="", run_cmd=[], image="i", ports=[], env_required=[]
-        ),
+        rendered=RenderedProvision(script="", image="i", ports=[], env_required=[]),
         offer=None,
         engine_name="diffusers",
         key_hash="k",

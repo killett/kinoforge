@@ -256,12 +256,14 @@ def main() -> int:
             "cd /workspace\n"
             "exec python3 -m http.server 8188\n"
         )
+        from kinoforge.core.interfaces import Launch, SetupStep
         from kinoforge.core.interfaces import RenderedProvision as _RP
 
         port_str = "8188" + (f"/{args.ports_protocol}" if args.ports_protocol else "")
         rendered = _RP(
             script=phonehome,
-            run_cmd=["python3", "-m", "http.server", "8188"],
+            setup_steps=(SetupStep(phonehome),),
+            launch=Launch(("python3", "-m", "http.server", "8188")),
             image=args.image_override or rendered.image,
             ports=[port_str],
             env_required=[],
@@ -353,11 +355,13 @@ def main() -> int:
             "log 'STEP 8: keep diag server alive'\n"
             "exec sleep 1500\n"
         )
+        from kinoforge.core.interfaces import Launch, SetupStep
         from kinoforge.core.interfaces import RenderedProvision as _RP
 
         rendered = _RP(
             script=instrumented,
-            run_cmd=["bash", "-c", "exec sleep 1500"],
+            setup_steps=(SetupStep(instrumented),),
+            launch=Launch(("bash", "-c", "exec sleep 1500")),
             image=args.image_override or rendered.image,
             ports=["8188/http", "9000/http"],
             env_required=rendered.env_required,
@@ -404,8 +408,8 @@ def main() -> int:
             env=env,
             tags={"mode": "pod", "kinoforge_purpose": "diagnostic"},
             run_id="kinoforge-diagnose",
-            provision_script=rendered.script,
-            run_cmd=rendered.run_cmd,
+            setup_steps=tuple(rendered.setup_steps),
+            launch=rendered.launch,
         )
         try:
             print(f"\ntrying offer {offer.gpu_type} @ ${offer.cost_rate_usd_per_hr}/hr")

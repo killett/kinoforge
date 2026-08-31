@@ -92,7 +92,7 @@ def test_c29_phase_b_boot_restart_loop_reap_fires_during_provision() -> None:
     from kinoforge.core.cancel import CancelToken
     from kinoforge.core.credentials import EnvCredentialProvider
     from kinoforge.core.heartbeat_loop import HeartbeatLoop
-    from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec
+    from kinoforge.core.interfaces import HardwareRequirements, InstanceSpec, SetupStep
     from kinoforge.providers.runpod import RunPodProvider
     from kinoforge.providers.runpod.util import RunPodGraphQLUtilEndpoint
 
@@ -127,7 +127,7 @@ def test_c29_phase_b_boot_restart_loop_reap_fires_during_provision() -> None:
         image="mirror.gcr.io/library/alpine:latest",
         offer=cheapest,
         env={},
-        provision_script="sleep 5; exit 1",
+        setup_steps=(SetupStep("sleep 5; exit 1"),),
     )
     instance = provider.create_instance(spec)
     instance_id = instance.id

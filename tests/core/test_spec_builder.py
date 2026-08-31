@@ -10,7 +10,14 @@ start (the 2026-07-09 FlashVSR preemption failure).
 from __future__ import annotations
 
 from kinoforge.core.config import load_config
-from kinoforge.core.interfaces import InstanceSpec, Lifecycle, Offer, RenderedProvision
+from kinoforge.core.interfaces import (
+    InstanceSpec,
+    Launch,
+    Lifecycle,
+    Offer,
+    RenderedProvision,
+    SetupStep,
+)
 from kinoforge.core.spec_builder import build_instance_spec
 
 _CFG = "examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml"
@@ -19,12 +26,9 @@ _CFG = "examples/configs/runpod-diffusers-rife-60fps-interpolate.yaml"
 def _rendered(**over: object) -> RenderedProvision:
     base: dict[str, object] = {
         "script": "#!/bin/bash\necho hi\nexec python -m server",
-        "run_cmd": ["python", "-m", "server"],
         "image": "img:tag",
         "ports": ["8000/http"],
         "env_required": [],
-        "build_script": "",
-        "runtime_script": "",
     }
     base.update(over)
     return RenderedProvision(**base)  # type: ignore[arg-type]
@@ -84,39 +88,24 @@ def test_caller_tags_merge_but_cannot_hijack_the_kinoforge_keys():
     assert spec.tags["extra"] == "x"
 
 
-def test_empty_build_script_becomes_none_not_empty_string():
-    # Bug caught: "" is falsy but not None; Modal's
-    # `spec.runtime_provision_script or spec.provision_script` fallback works
-    # either way, but the image-bake branch checks `is not None`.
+def test_a_rendered_payload_with_no_steps_threads_an_empty_pair():
+    # Bug caught: synthesising a launch (or an empty-string step) here would
+    # make the bare deploy() call site — which has no rendered script at all —
+    # look like a server spec, and RunPod would wrap an empty script in the
+    # base64/gzip decode-and-run dockerArgs instead of leaving it blank.
     spec = _build()
-    assert spec.image_build_script is None
-    assert spec.runtime_provision_script is None
+    assert spec.setup_steps == ()
+    assert spec.launch is None
 
 
-def test_empty_provision_script_becomes_none_not_empty_string():
-    # Bug caught: the bare deploy() call site has no real rendered script and
-    # passes RenderedProvision(script="", ...) to stand in for "no script" —
-    # RenderedProvision.script is a required `str`, not `str | None`, so ""
-    # is the only way to express that. Without this coercion spec
-    # .provision_script would be "" rather than None, and RunPodProvider
-    # ._encode_provision_script branches on `is not None`: an empty string
-    # would wrongly enter the base64/gzip wrap-and-run branch instead of
-    # leaving dockerArgs == "" like the pre-extraction closure produced.
-    spec = _build(rendered=_rendered(script=""))
-    assert spec.provision_script is None
-
-
-def test_nonempty_provision_script_is_carried_through_unchanged():
-    spec = _build(rendered=_rendered(script="#!/bin/bash\nexec real-cmd"))
-    assert spec.provision_script == "#!/bin/bash\nexec real-cmd"
-
-
-def test_split_scripts_are_carried_when_the_engine_emits_them():
-    spec = _build(
-        rendered=_rendered(build_script="pip install x", runtime_script="exec s")
-    )
-    assert spec.image_build_script == "pip install x"
-    assert spec.runtime_provision_script == "exec s"
+def test_steps_and_launch_are_carried_through_unchanged():
+    # Bug caught: any coercion here (dropping empty steps, defaulting a launch)
+    # would make the spec disagree with what the engine actually emitted, and
+    # the provider composes the boot script from exactly these two.
+    steps = (SetupStep("pip install x", bakeable=True, runtime=False),)
+    spec = _build(rendered=_rendered(setup_steps=steps, launch=Launch(("s",))))
+    assert spec.setup_steps == steps
+    assert spec.launch == Launch(("s",))
 
 
 def test_ports_come_from_rendered_as_a_tuple():

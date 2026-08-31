@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from kinoforge.core.errors import CapacityError
-from kinoforge.core.interfaces import InstanceSpec, Offer
+from kinoforge.core.interfaces import InstanceSpec, Launch, Offer, SetupStep
 from kinoforge.providers.runpod import RunPodProvider
 
 
@@ -25,7 +25,8 @@ def _spec() -> InstanceSpec:
         ports=("8000",),
         env={},
         run_id="r",
-        provision_script="#!/bin/sh\ntrue\n",
+        setup_steps=(SetupStep("#!/bin/sh\ntrue\n"),),
+        launch=Launch(("sleep", "infinity")),
     )
 
 

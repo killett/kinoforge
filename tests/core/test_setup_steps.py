@@ -116,13 +116,12 @@ def test_render_launch_refuses_none() -> None:
         render_launch(None)
 
 
-def test_spec_builder_threads_the_new_pair_and_keeps_the_old_fields() -> None:
-    """Additive migration: both representations coexist until Task 7.
+def test_spec_builder_threads_the_new_pair() -> None:
+    """The builder carries the pair through untouched.
 
-    Bug caught: switching the spec over in one commit would strand every one of
-    the ~54 test modules that construct an InstanceSpec with provision_script.
-    A builder that accepts the new fields but drops them on the floor is caught
-    too — the provider would then see ``()`` and fall back forever.
+    Bug caught: a builder that accepts the new fields but drops them on the
+    floor — the provider then sees ``()`` and provisions an empty script, and
+    the pod comes up bare with nothing saying so.
     """
     from kinoforge.core.config import Config
     from kinoforge.core.interfaces import (
@@ -142,7 +141,6 @@ def test_spec_builder_threads_the_new_pair_and_keeps_the_old_fields() -> None:
     )
     rendered = RenderedProvision(
         script="install\nrun-server",
-        run_cmd=["run-server"],
         image="img:tag",
         ports=["8000"],
         env_required=[],
@@ -164,9 +162,6 @@ def test_spec_builder_threads_the_new_pair_and_keeps_the_old_fields() -> None:
     )
     assert spec.setup_steps == (SetupStep("install", bakeable=True),)
     assert spec.launch == Launch(("run-server",))
-    # The old representation is untouched — that is what keeps the tree green.
-    assert spec.provision_script == "install\nrun-server"
-    assert spec.run_cmd == ["run-server"]
 
 
 def test_an_engine_that_emits_no_steps_gets_no_synthesised_launch() -> None:
@@ -177,7 +172,6 @@ def test_an_engine_that_emits_no_steps_gets_no_synthesised_launch() -> None:
 
     rendered = RenderedProvision(
         script="echo hi",
-        run_cmd=["sleep", "infinity"],
         image="i",
         ports=[],
         env_required=[],

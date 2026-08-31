@@ -99,30 +99,15 @@ def test_runpod_refuses_steps_without_a_launch() -> None:
     assert captured == [], "a pod must not be created for an unlaunchable spec"
 
 
-def test_runpod_still_boots_a_legacy_spec_from_provision_script() -> None:
-    """The fallback that keeps the tree green until Task 7 deletes it.
+def test_runpod_sends_no_script_at_all_for_a_spec_with_no_steps() -> None:
+    """The bare ``deploy()`` path, which provisions nothing.
 
-    Bug caught: removing it early makes every spec built by an unmigrated
-    caller boot an EMPTY script — the pod comes up bare and nothing says so.
+    Bug caught: encoding an EMPTY string instead of sending nothing wraps it in
+    the base64/gzip decode-and-run dockerArgs command, so the pod boots running
+    a no-op wrapper rather than the image's own entrypoint.
     """
     captured, post = _capture_post()
-    _provider(post).create_instance(_spec(provision_script="legacy\nexec serve"))
-    assert _decoded_script(captured[0]) == "legacy\nexec serve"
-
-
-def test_runpod_prefers_the_steps_over_a_stale_provision_script() -> None:
-    """Precedence, pinned.
-
-    Bug caught: reading ``provision_script`` first would make every migrated
-    engine's launch composition dead code, and the two shipped bugs this stage
-    fixes would still be live while the tests looked green.
-    """
-    captured, post = _capture_post()
-    _provider(post).create_instance(
-        _spec(
-            provision_script="stale-legacy-script",
-            setup_steps=(SetupStep("fresh-step"),),
-            launch=Launch(("serve",)),
-        )
-    )
-    assert _decoded_script(captured[0]) == "fresh-step\nserve"
+    _provider(post).create_instance(_spec())
+    env = {e["key"]: e["value"] for e in captured[0]["variables"]["input"]["env"]}
+    assert "KINOFORGE_PROVISION_SCRIPT" not in env
+    assert captured[0]["variables"]["input"]["dockerArgs"] == ""

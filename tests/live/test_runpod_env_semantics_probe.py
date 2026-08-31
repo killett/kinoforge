@@ -84,7 +84,6 @@ def test_runpod_env_array_merge_semantics() -> None:
         offer=cheapest,
         image="mirror.gcr.io/library/alpine:latest",
         env={_PROBE_KEEP_A[0]: _PROBE_KEEP_A[1], _PROBE_KEEP_B[0]: _PROBE_KEEP_B[1]},
-        provision_script=None,
     )
     instance = provider.create_instance(spec)
     instance_id = instance.id

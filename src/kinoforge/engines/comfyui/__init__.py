@@ -1407,7 +1407,6 @@ class ComfyUIEngine(GenerationEngine):
 
         return RenderedProvision(
             script="\n".join(lines),
-            run_cmd=run_cmd,
             image=image,
             ports=[port],
             env_required=sorted(set(env_required)),

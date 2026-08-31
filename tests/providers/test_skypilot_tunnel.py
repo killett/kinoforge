@@ -75,8 +75,7 @@ def _cpu_spec() -> InstanceSpec:
         ports=(),
         env={},
         run_id="kf-cpu-test",
-        provision_script="#!/bin/sh\ntrue\n",
-        run_cmd=[],
+        setup_steps=(SetupStep("#!/bin/sh\ntrue\n"),),
     )
 
 

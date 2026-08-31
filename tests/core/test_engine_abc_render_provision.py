@@ -17,7 +17,8 @@ def test_fake_engine_render_provision_returns_stub_payload() -> None:
     rp = engine.render_provision({})
     assert isinstance(rp, RenderedProvision)
     assert rp.script == "echo fake"
-    assert rp.run_cmd == ["sleep", "infinity"]
+    assert rp.launch is not None
+    assert rp.launch.argv == ("sleep", "infinity")
     assert rp.image == "fake:latest"
     assert rp.ports == ["8000"]
     assert rp.env_required == []

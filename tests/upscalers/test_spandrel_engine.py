@@ -83,7 +83,9 @@ class TestRenderProvision:
         from kinoforge.upscalers.spandrel import SpandrelEngine
 
         rp = SpandrelEngine().render_provision(_cfg())
-        assert rp.run_cmd == []
+        # A composed upscaler starts no server of its own — the diffusers
+        # engine owns that process — so it declares no launch at all.
+        assert rp.launch is None
 
 
 class TestUpscale:

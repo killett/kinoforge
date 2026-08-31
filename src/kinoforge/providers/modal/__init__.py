@@ -1,7 +1,7 @@
 """Modal serverless-GPU compute provider.
 
 Deploys the kinoforge FastAPI generation server onto Modal as a named App whose
-``@modal.web_server`` runs the same ``provision_script; exec run_cmd`` that RunPod
+``@modal.web_server`` runs the same setup-steps-then-launch bundle that RunPod
 runs, and returns the public ``.modal.run`` URL as ``endpoints["8000"]``. All Modal
 and subprocess touchpoints sit behind injected callables for offline testing.
 """
@@ -152,13 +152,6 @@ class ModalProvider(ComputeProvider):
             "env": c,  # ModalAppRequest.env
             "tags": c,  # Instance.tags
             "run_id": c,  # ModalAppRequest.run_id, and the app name
-            # S3: superseded by setup_steps + launch, all three read FIRST.
-            # What remains is a fallback for unmigrated callers, so no shipped
-            # config's value reaches the wire through them. Die in Task 7.
-            "provision_script": u,
-            "run_cmd": u,  # superseded by launch.argv
-            "image_build_script": u,  # superseded by the bakeable partition
-            "runtime_provision_script": u,  # superseded by the runtime partition
             "setup_steps": c,  # partitioned into the image bake + boot script
             "launch": c,  # ModalAppRequest.launch_line
             "lifecycle": c,  # scaledown_window_s + startup_timeout_s
@@ -210,28 +203,22 @@ class ModalProvider(ComputeProvider):
         """Build + deploy a Modal App and return its HTTP endpoint.
 
         Args:
-            spec: The instance spec (image, offer, provision_script, run_cmd, env).
+            spec: The instance spec (image, offer, setup_steps, launch, env).
 
         Returns:
             An ``Instance`` in ``starting`` state with ``endpoints["8000"]`` set.
 
         Raises:
-            ValueError: If ``run_cmd``/``provision_script`` or ``offer`` is missing.
+            ValueError: If ``setup_steps``/``launch`` or ``offer`` is missing.
         """
         # A Modal container is a server or it is nothing: the app's web
         # endpoint IS the instance, so a spec with no launch would deploy an
-        # app that answers nothing. S3 asks that of the new fields, falling
-        # back to the legacy pair for unmigrated callers (dies in Task 7).
-        if spec.setup_steps:
-            if spec.launch is None:
-                raise ValueError(
-                    "ModalProvider requires spec.launch (the server boot "
-                    "command); got setup_steps with no launch"
-                )
-        elif not spec.run_cmd or not spec.provision_script:
+        # app that answers nothing.
+        if not spec.setup_steps or spec.launch is None:
             raise ValueError(
-                "ModalProvider requires spec.run_cmd and spec.provision_script "
-                f"(the server boot command); got run_cmd={spec.run_cmd!r}"
+                "ModalProvider requires spec.setup_steps and spec.launch (the "
+                f"server boot command); got setup_steps={len(spec.setup_steps)} "
+                f"launch={spec.launch!r}"
             )
         if spec.offer is None:
             raise ValueError("ModalProvider requires spec.offer (GPU selection)")
@@ -267,26 +254,17 @@ class ModalProvider(ComputeProvider):
         # in the image for the build-phase weights fetch AND at container start
         # for the server. The build phase runs in isolation, so it carries its
         # own fail-fast line; the combined script's lives in the runtime
-        # preamble, which a baked image never executes. The `else` is the
-        # legacy path and dies with the old fields in Task 7.
-        if spec.setup_steps:
-            boot_script: str = combine_steps(
-                tuple(s for s in spec.setup_steps if s.runtime)
-            )
-            bakeable = combine_steps(tuple(s for s in spec.setup_steps if s.bakeable))
-            build_script = "set -euo pipefail\n" + bakeable if bakeable else None
-            launch_line = render_launch(spec.launch)
-        else:
-            boot_script = spec.runtime_provision_script or spec.provision_script or ""
-            build_script = spec.image_build_script
-            launch_line = ""
+        # preamble, which a baked image never executes.
+        boot_script = combine_steps(tuple(s for s in spec.setup_steps if s.runtime))
+        bakeable = combine_steps(tuple(s for s in spec.setup_steps if s.bakeable))
+        build_script = "set -euo pipefail\n" + bakeable if bakeable else None
+        launch_line = render_launch(spec.launch)
 
         req = ModalAppRequest(
             run_id=app_run_id,
             image=spec.image,
             gpu=spec.offer.gpu_type,
             provision_script=boot_script,
-            run_cmd=list(spec.run_cmd or []),
             launch_line=launch_line,
             env=env,
             volume_mount=volume_mount,

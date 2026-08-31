@@ -91,6 +91,7 @@ if _REASONS:
 from kinoforge.core.interfaces import (  # noqa: E402
     HardwareRequirements,
     InstanceSpec,
+    Launch,
     Lifecycle,
 )
 from kinoforge.core.lifecycle import Ledger  # noqa: E402
@@ -388,10 +389,9 @@ def test_skypilot_cluster_dies_without_its_client() -> None:
             tags={"smoke": "skypilot-watchdog"},
             lifecycle=Lifecycle(idle_timeout_s=600, max_lifetime_s=_DEADLINE_S),
             offer=offers[0],
-            provision_script="",
             # Never terminates -> the cluster can never go idle. This is the
             # exact server-mode shape that makes autostop inert (F1).
-            run_cmd=["sleep", "3600"],
+            launch=Launch(("sleep", "3600")),
         )
         _log.info(
             "launching %s in %s with a %.0fs deadline",
